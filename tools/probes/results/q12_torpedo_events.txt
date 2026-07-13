@@ -1,0 +1,120 @@
+-- environment -------------------------------------------------
+python_version = 1.5.2 (#0, Jan 17 2002, 03:24:04) [MSC 32 bit (Intel)]
+frame = 29238
+game_time = 152.0
+armed = 1
+-- event constant values ---------------------------------------
+ET_TORPEDO_FIRED = 8388710 (0x00800066)
+ET_TORPEDO_RELOAD = 8388709 (0x00800065)
+ET_WEAPON_FIRED = 8388732 (0x0080007C)
+ET_CANT_FIRE = 8388663 (0x00800037)
+ET_TORPEDO_START_HOMING = 8388742 (0x00800086)
+-- player torpedo config ---------------------------------------
+player_ship = Player
+torp_system = Torpedoes
+num_tubes = 6
+num_ammo_types = 1
+current_ammo = Photon
+tube[0] = name='Forward Torpedo 1' maxready=1 numready=0 immediate=0.25 reload=40.0 lastfire=126.0
+tube[1] = name='Forward Torpedo 2' maxready=1 numready=0 immediate=0.25 reload=40.0 lastfire=126.75
+tube[2] = name='Forward Torpedo 3' maxready=1 numready=1 immediate=0.25 reload=40.0 lastfire=54.75
+tube[3] = name='Forward Torpedo 4' maxready=1 numready=1 immediate=0.25 reload=40.0 lastfire=80.5
+tube[4] = name='Aft Torpedo 1' maxready=1 numready=0 immediate=0.25 reload=40.0 lastfire=135.25
+tube[5] = name='Aft Torpedo 2' maxready=1 numready=0 immediate=0.25 reload=40.0 lastfire=141.25
+-- captured events (96) ----------------------------------------
+e000 = ET_WEAPON_FIRED | t=51.250 frame=18289 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Forward Beam') objid=15133 | DST ShipClass(name='Keldon-1') objid=15013
+e001 = ET_TORPEDO_FIRED | t=53.750 frame=18558 type=8388710 ammo=Photon | SRC Torpedo(parent=13323 target=15013) objid=38689 | DST TorpedoTube(name='Forward Torpedo 1' ready=0) ShipSubsystem(name='Forward Torpedo 1') objid=13444
+e002 = ET_WEAPON_FIRED | t=53.750 frame=18558 type=8388732 ammo=Photon | SRC TorpedoTube(name='Forward Torpedo 1' ready=0) ShipSubsystem(name='Forward Torpedo 1') objid=13444 | DST ShipClass(name='Player') objid=13323
+e003 = ET_TORPEDO_FIRED | t=54.250 frame=18609 type=8388710 ammo=Photon | SRC Torpedo(parent=13323 target=15013) objid=38714 | DST TorpedoTube(name='Forward Torpedo 2' ready=0) ShipSubsystem(name='Forward Torpedo 2') objid=13450
+e004 = ET_WEAPON_FIRED | t=54.250 frame=18609 type=8388732 ammo=Photon | SRC TorpedoTube(name='Forward Torpedo 2' ready=0) ShipSubsystem(name='Forward Torpedo 2') objid=13450 | DST ShipClass(name='Player') objid=13323
+e005 = ET_TORPEDO_FIRED | t=54.750 frame=18658 type=8388710 ammo=Photon | SRC Torpedo(parent=13323 target=15013) objid=38762 | DST TorpedoTube(name='Forward Torpedo 3' ready=0) ShipSubsystem(name='Forward Torpedo 3') objid=13456
+e006 = ET_WEAPON_FIRED | t=54.750 frame=18658 type=8388732 ammo=Photon | SRC TorpedoTube(name='Forward Torpedo 3' ready=0) ShipSubsystem(name='Forward Torpedo 3') objid=13456 | DST ShipClass(name='Player') objid=13323
+e007 = ET_WEAPON_FIRED | t=56.500 frame=18829 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Star Beam') objid=15145 | DST ShipClass(name='Keldon-1') objid=15013
+e008 = ET_WEAPON_FIRED | t=64.250 frame=19614 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Star Beam') objid=15145 | DST ShipClass(name='Keldon-1') objid=15013
+e009 = ET_CANT_FIRE | t=64.750 frame=19665 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e010 = ET_CANT_FIRE | t=64.750 frame=19665 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e011 = ET_CANT_FIRE | t=64.750 frame=19665 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e012 = ET_CANT_FIRE | t=65.000 frame=19692 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e013 = ET_CANT_FIRE | t=65.000 frame=19692 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e014 = ET_CANT_FIRE | t=65.000 frame=19692 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e015 = ET_CANT_FIRE | t=65.500 frame=19743 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e016 = ET_TORPEDO_FIRED | t=65.500 frame=19743 type=8388710 ammo=Photon | SRC Torpedo(parent=13323 target=15013) objid=39989 | DST TorpedoTube(name='Aft Torpedo 1' ready=0) ShipSubsystem(name='Aft Torpedo 1') objid=13468
+e017 = ET_WEAPON_FIRED | t=65.500 frame=19743 type=8388732 ammo=Photon | SRC TorpedoTube(name='Aft Torpedo 1' ready=0) ShipSubsystem(name='Aft Torpedo 1') objid=13468 | DST ShipClass(name='Player') objid=13323
+e018 = ET_TORPEDO_FIRED | t=66.750 frame=19866 type=8388710 ammo=Photon | SRC Torpedo(parent=13323 target=15013) objid=40118 | DST TorpedoTube(name='Aft Torpedo 2' ready=0) ShipSubsystem(name='Aft Torpedo 2') objid=13474
+e019 = ET_WEAPON_FIRED | t=66.750 frame=19866 type=8388732 ammo=Photon | SRC TorpedoTube(name='Aft Torpedo 2' ready=0) ShipSubsystem(name='Aft Torpedo 2') objid=13474 | DST ShipClass(name='Player') objid=13323
+e020 = ET_CANT_FIRE | t=67.250 frame=19916 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e021 = ET_CANT_FIRE | t=67.750 frame=19965 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e022 = ET_CANT_FIRE | t=68.250 frame=20014 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e023 = ET_CANT_FIRE | t=68.500 frame=20039 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e024 = ET_CANT_FIRE | t=69.000 frame=20087 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e025 = ET_WEAPON_FIRED | t=71.750 frame=20361 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Forward Beam') objid=15133 | DST ShipClass(name='Keldon-1') objid=15013
+e026 = ET_WEAPON_FIRED | t=72.500 frame=20430 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Forward Beam') objid=15133 | DST ShipClass(name='Keldon-1') objid=15013
+e027 = ET_CANT_FIRE | t=78.000 frame=20919 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e028 = ET_CANT_FIRE | t=78.250 frame=20938 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e029 = ET_CANT_FIRE | t=78.750 frame=20974 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e030 = ET_CANT_FIRE | t=79.250 frame=21023 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e031 = ET_CANT_FIRE | t=79.750 frame=21075 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e032 = ET_CANT_FIRE | t=80.000 frame=21102 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e033 = ET_TORPEDO_FIRED | t=80.500 frame=21153 type=8388710 ammo=Photon | SRC Torpedo(parent=13323 target=15013) objid=40734 | DST TorpedoTube(name='Forward Torpedo 4' ready=0) ShipSubsystem(name='Forward Torpedo 4') objid=13462
+e034 = ET_WEAPON_FIRED | t=80.500 frame=21153 type=8388732 ammo=Photon | SRC TorpedoTube(name='Forward Torpedo 4' ready=0) ShipSubsystem(name='Forward Torpedo 4') objid=13462 | DST ShipClass(name='Player') objid=13323
+e035 = ET_TORPEDO_RELOAD | t=93.750 frame=22330 type=8388709 ammo=Photon | SRC None | DST TorpedoTube(name='Forward Torpedo 1' ready=1) ShipSubsystem(name='Forward Torpedo 1') objid=13444
+e036 = ET_TORPEDO_RELOAD | t=94.250 frame=22360 type=8388709 ammo=Photon | SRC None | DST TorpedoTube(name='Forward Torpedo 2' ready=1) ShipSubsystem(name='Forward Torpedo 2') objid=13450
+e037 = ET_TORPEDO_RELOAD | t=94.750 frame=22402 type=8388709 ammo=Photon | SRC None | DST TorpedoTube(name='Forward Torpedo 3' ready=1) ShipSubsystem(name='Forward Torpedo 3') objid=13456
+e038 = ET_TORPEDO_FIRED | t=95.000 frame=22426 type=8388710 ammo=Photon | SRC Torpedo(parent=15013 target=13323) objid=41120 | DST TorpedoTube(name='Forward Torpedo' ready=1) ShipSubsystem(name='Forward Torpedo') objid=15157
+e039 = ET_WEAPON_FIRED | t=95.000 frame=22426 type=8388732 ammo=Photon | SRC TorpedoTube(name='Forward Torpedo' ready=1) ShipSubsystem(name='Forward Torpedo') objid=15157 | DST ShipClass(name='Keldon-1') objid=15013
+e040 = ET_CANT_FIRE | t=95.500 frame=22489 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e041 = ET_CANT_FIRE | t=95.750 frame=22527 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e042 = ET_CANT_FIRE | t=96.000 frame=22560 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e043 = ET_CANT_FIRE | t=96.500 frame=22614 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e044 = ET_TORPEDO_FIRED | t=96.500 frame=22614 type=8388710 ammo=Photon | SRC Torpedo(parent=15013 target=13323) objid=41151 | DST TorpedoTube(name='Forward Torpedo' ready=0) ShipSubsystem(name='Forward Torpedo') objid=15157
+e045 = ET_WEAPON_FIRED | t=96.500 frame=22614 type=8388732 ammo=Photon | SRC TorpedoTube(name='Forward Torpedo' ready=0) ShipSubsystem(name='Forward Torpedo') objid=15157 | DST ShipClass(name='Keldon-1') objid=15013
+e046 = ET_CANT_FIRE | t=97.000 frame=22650 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e047 = ET_CANT_FIRE | t=97.500 frame=22689 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e048 = ET_CANT_FIRE | t=97.750 frame=22719 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e049 = ET_WEAPON_FIRED | t=98.000 frame=22731 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Forward Beam') objid=15133 | DST ShipClass(name='Keldon-1') objid=15013
+e050 = ET_WEAPON_FIRED | t=99.250 frame=22883 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Star Beam') objid=15145 | DST ShipClass(name='Keldon-1') objid=15013
+e051 = ET_WEAPON_FIRED | t=103.250 frame=23310 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Aft Beam') objid=15235 | DST ShipClass(name='Keldon-1') objid=15013
+e052 = ET_TORPEDO_FIRED | t=105.000 frame=23474 type=8388710 ammo=Photon | SRC Torpedo(parent=15013 target=13323) objid=41736 | DST TorpedoTube(name='Aft Torpedo' ready=0) ShipSubsystem(name='Aft Torpedo') objid=15163
+e053 = ET_WEAPON_FIRED | t=105.000 frame=23474 type=8388732 ammo=Photon | SRC TorpedoTube(name='Aft Torpedo' ready=0) ShipSubsystem(name='Aft Torpedo') objid=15163 | DST ShipClass(name='Keldon-1') objid=15013
+e054 = ET_TORPEDO_RELOAD | t=105.500 frame=23517 type=8388709 ammo=Photon | SRC None | DST TorpedoTube(name='Aft Torpedo 1' ready=1) ShipSubsystem(name='Aft Torpedo 1') objid=13468
+e055 = ET_WEAPON_FIRED | t=106.000 frame=23563 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Port Beam') objid=15139 | DST ShipClass(name='Keldon-1') objid=15013
+e056 = ET_TORPEDO_RELOAD | t=106.750 frame=23632 type=8388709 ammo=Photon | SRC None | DST TorpedoTube(name='Aft Torpedo 2' ready=1) ShipSubsystem(name='Aft Torpedo 2') objid=13474
+e057 = ET_TORPEDO_RELOAD | t=118.750 frame=24753 type=8388709 ammo=Photon | SRC None | DST TorpedoTube(name='Forward Torpedo' ready=1) ShipSubsystem(name='Forward Torpedo') objid=15157
+e058 = ET_TORPEDO_RELOAD | t=120.250 frame=24904 type=8388709 ammo=Photon | SRC None | DST TorpedoTube(name='Forward Torpedo' ready=2) ShipSubsystem(name='Forward Torpedo') objid=15157
+e059 = ET_TORPEDO_RELOAD | t=120.500 frame=24929 type=8388709 ammo=Photon | SRC None | DST TorpedoTube(name='Forward Torpedo 4' ready=1) ShipSubsystem(name='Forward Torpedo 4') objid=13462
+e060 = ET_WEAPON_FIRED | t=124.500 frame=25329 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Forward Beam') objid=15133 | DST ShipClass(name='Keldon-1') objid=15013
+e061 = ET_CANT_FIRE | t=126.000 frame=25469 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e062 = ET_CANT_FIRE | t=126.000 frame=25469 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e063 = ET_TORPEDO_FIRED | t=126.000 frame=25469 type=8388710 ammo=Photon | SRC Torpedo(parent=13323 target=15013) objid=43001 | DST TorpedoTube(name='Forward Torpedo 1' ready=0) ShipSubsystem(name='Forward Torpedo 1') objid=13444
+e064 = ET_WEAPON_FIRED | t=126.000 frame=25469 type=8388732 ammo=Photon | SRC TorpedoTube(name='Forward Torpedo 1' ready=0) ShipSubsystem(name='Forward Torpedo 1') objid=13444 | DST ShipClass(name='Player') objid=13323
+e065 = ET_TORPEDO_FIRED | t=126.750 frame=25534 type=8388710 ammo=Photon | SRC Torpedo(parent=13323 target=15013) objid=43300 | DST TorpedoTube(name='Forward Torpedo 2' ready=0) ShipSubsystem(name='Forward Torpedo 2') objid=13450
+e066 = ET_WEAPON_FIRED | t=126.750 frame=25534 type=8388732 ammo=Photon | SRC TorpedoTube(name='Forward Torpedo 2' ready=0) ShipSubsystem(name='Forward Torpedo 2') objid=13450 | DST ShipClass(name='Player') objid=13323
+e067 = ET_WEAPON_FIRED | t=128.000 frame=25644 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Star Beam') objid=15145 | DST ShipClass(name='Keldon-1') objid=15013
+e068 = ET_TORPEDO_RELOAD | t=128.750 frame=25713 type=8388709 ammo=Photon | SRC None | DST TorpedoTube(name='Aft Torpedo' ready=1) ShipSubsystem(name='Aft Torpedo') objid=15163
+e069 = ET_WEAPON_FIRED | t=129.750 frame=25805 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Port Beam') objid=15139 | DST ShipClass(name='Keldon-1') objid=15013
+e070 = ET_CANT_FIRE | t=130.750 frame=25901 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e071 = ET_CANT_FIRE | t=130.750 frame=25901 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e072 = ET_CANT_FIRE | t=130.750 frame=25901 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e073 = ET_CANT_FIRE | t=130.750 frame=25901 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e074 = ET_CANT_FIRE | t=131.500 frame=25967 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e075 = ET_CANT_FIRE | t=131.500 frame=25967 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e076 = ET_CANT_FIRE | t=131.500 frame=25967 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e077 = ET_CANT_FIRE | t=131.500 frame=25967 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e078 = ET_CANT_FIRE | t=135.250 frame=26270 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e079 = ET_CANT_FIRE | t=135.250 frame=26270 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=13438 | DST ShipClass(name='Player') objid=13323
+e080 = ET_TORPEDO_FIRED | t=135.250 frame=26270 type=8388710 ammo=Photon | SRC Torpedo(parent=13323 target=15013) objid=44249 | DST TorpedoTube(name='Aft Torpedo 1' ready=0) ShipSubsystem(name='Aft Torpedo 1') objid=13468
+e081 = ET_WEAPON_FIRED | t=135.250 frame=26270 type=8388732 ammo=Photon | SRC TorpedoTube(name='Aft Torpedo 1' ready=0) ShipSubsystem(name='Aft Torpedo 1') objid=13468 | DST ShipClass(name='Player') objid=13323
+e082 = ET_WEAPON_FIRED | t=137.000 frame=26402 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Forward Beam') objid=15133 | DST ShipClass(name='Keldon-1') objid=15013
+e083 = ET_TORPEDO_FIRED | t=141.250 frame=26767 type=8388710 ammo=Photon | SRC Torpedo(parent=13323 target=15013) objid=44897 | DST TorpedoTube(name='Aft Torpedo 2' ready=0) ShipSubsystem(name='Aft Torpedo 2') objid=13474
+e084 = ET_WEAPON_FIRED | t=141.250 frame=26767 type=8388732 ammo=Photon | SRC TorpedoTube(name='Aft Torpedo 2' ready=0) ShipSubsystem(name='Aft Torpedo 2') objid=13474 | DST ShipClass(name='Player') objid=13323
+e085 = ET_WEAPON_FIRED | t=144.750 frame=27182 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Star Beam') objid=15145 | DST ShipClass(name='Keldon-1') objid=15013
+e086 = ET_CANT_FIRE | t=145.250 frame=27241 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e087 = ET_TORPEDO_FIRED | t=145.250 frame=27241 type=8388710 ammo=Photon | SRC Torpedo(parent=15013 target=13323) objid=45047 | DST TorpedoTube(name='Aft Torpedo' ready=0) ShipSubsystem(name='Aft Torpedo') objid=15163
+e088 = ET_WEAPON_FIRED | t=145.250 frame=27241 type=8388732 ammo=Photon | SRC TorpedoTube(name='Aft Torpedo' ready=0) ShipSubsystem(name='Aft Torpedo') objid=15163 | DST ShipClass(name='Keldon-1') objid=15013
+e089 = ET_CANT_FIRE | t=146.000 frame=27331 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e090 = ET_WEAPON_FIRED | t=146.000 frame=27331 type=8388732 ammo=Photon | SRC ShipSubsystem(name='Star Beam') objid=15145 | DST ShipClass(name='Keldon-1') objid=15013
+e091 = ET_CANT_FIRE | t=146.250 frame=27361 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e092 = ET_CANT_FIRE | t=146.500 frame=27389 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e093 = ET_CANT_FIRE | t=147.000 frame=27446 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e094 = ET_CANT_FIRE | t=147.250 frame=27476 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
+e095 = ET_CANT_FIRE | t=147.500 frame=27506 type=8388663 ammo=Photon | SRC TorpedoSystem(name='Torpedoes') ShipSubsystem(name='Torpedoes') objid=15151 | DST ShipClass(name='Keldon-1') objid=15013
