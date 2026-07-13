@@ -10,16 +10,22 @@ ET_KEYBOARD_EVENT: int = 0x1000
 ET_WEAPON_HIT:     int = 0x1100  # reserved range above input-event ids
 ET_WARP_BUTTON_PRESSED: int = 0x1200   # warp button activated (synthesized from CEF Set Course)
 
-# Torpedo tube reloaded one round.  Destination = the TUBE
-# (Conditions/ConditionTorpsReady.py:140,169).  Value is from our own private
-# block -- App.py:762 declares our event ids "arbitrary but stable" and nothing
-# interoperates with BC's numbering.  0x1321 is the current high water mark.
+# ── Torpedo events — REAL BC values, measured, not invented ────────────────
+# Both were read out of the ORIGINAL GAME by probe q12
+# (tools/probes/results/q12_torpedo_events.txt; runbook
+# docs/instrumented_experiments/2026-07-12-torpedo-event-probe.md).  ET_TORPEDO_RELOAD
+# previously held an invented 0x1322 because we could not measure the real one.
 #
-# NOTE: ET_TORPEDO_FIRED is deliberately NOT defined here.  It is blocked on
-# probe q12 (docs/instrumented_experiments/2026-07-12-torpedo-event-probe.md):
-# Episode7.TorpedoFired destroys the event's GetDestination() subsystem on a 10%
-# roll, and nobody has RE'd the torpedo projectile path that posts it.
-ET_TORPEDO_RELOAD: int = 0x1322
+#   ET_TORPEDO_RELOAD  Source = None (BC posts NO source).  Destination = the TUBE.
+#   ET_TORPEDO_FIRED   Source = the TORPEDO PROJECTILE.     Destination = the TUBE.
+#
+# The destination of ET_TORPEDO_FIRED is load-bearing AND dangerous:
+# Maelstrom/Episode7/Episode7.py:88-115 DESTROYS pEvent.GetDestination() on a 10%
+# roll (the E7M1 phased-plasma story beat).  Post it with the wrong destination and
+# the game destroys the wrong subsystem.  q12 also proved it fires for ORDINARY
+# photons, so the Phased-Plasma filter is in Episode7's handler, not the engine.
+ET_TORPEDO_RELOAD: int = 0x00800065
+ET_TORPEDO_FIRED:  int = 0x00800066
 
 # SPACE-bar bridge/tactical toggle. Value must stay in sync with the SDK's
 # event id; App.py re-exports this name (missions reference it as

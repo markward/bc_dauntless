@@ -1961,8 +1961,15 @@ class TorpedoTube(Weapon):
         except ImportError:
             return
 
-        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor(),
-                          spread_unit=spread_unit, homing_delay=homing_delay)
+        torp = _spawn_projectile(self, mod,
+                                 drf_override=self.GetDamageRadiusFactor(),
+                                 spread_unit=spread_unit,
+                                 homing_delay=homing_delay)
+        # ET_TORPEDO_FIRED carries the PROJECTILE as its source, so it can only be
+        # posted once the projectile exists.  Posted here rather than inside
+        # _spawn_projectile because that helper is shared with pulse cannons, and
+        # q12 shows this event's destination is always a TorpedoTube.
+        self._broadcast_torpedo_fired(torp)
 
     # FireDumb is inherited from Weapon — it was a byte-identical duplicate here,
     # and keeping the override would have skipped the base's new CanFire() gate.
@@ -2040,14 +2047,19 @@ class TorpedoTube(Weapon):
         self._broadcast_reload()
 
     def _broadcast_reload(self) -> None:
-        """Post ET_TORPEDO_RELOAD with the TUBE as Destination.
+        """Post ET_TORPEDO_RELOAD: Destination = the TUBE, NO Source.
+
+        Both halves are MEASURED, from probe q12 against the original game
+        (tools/probes/results/q12_torpedo_events.txt, e035):
+
+            ET_TORPEDO_RELOAD | SRC None | DST TorpedoTube(name='Forward Torpedo 1' ready=1)
 
         Destination is load-bearing: ConditionTorpsReady.py:140 registers with a
         tube destination-filter, and :169 casts GetDestination() to a TorpedoTube.
 
-        Source = the parent TorpedoSystem. This is a CHOICE, not a finding -- no
-        SDK script reads GetSource() on a reload event and the decompile does not
-        say. Probe q12 will confirm or correct it.
+        We previously set Source to the parent TorpedoSystem and labelled it "a
+        CHOICE, not a finding". The probe says BC posts NO source. Corrected —
+        do not re-add one.
         """
         import App
         from engine import dev_mode
@@ -2055,10 +2067,45 @@ class TorpedoTube(Weapon):
             evt = App.TGEvent_Create()
             evt.SetEventType(App.ET_TORPEDO_RELOAD)
             evt.SetDestination(self)
-            evt.SetSource(self.GetParentSubsystem())
             App.g_kEventManager.AddEvent(evt)
         except Exception as _e:
             dev_mode.log_swallowed("ET_TORPEDO_RELOAD broadcast", _e)
+
+    def _broadcast_torpedo_fired(self, torp) -> None:
+        """Post ET_TORPEDO_FIRED: Source = the PROJECTILE, Destination = the TUBE.
+
+        Measured, from probe q12 against the original game
+        (tools/probes/results/q12_torpedo_events.txt, e001):
+
+            ET_TORPEDO_FIRED | SRC Torpedo(parent=13323 target=15013)
+                             | DST TorpedoTube(name='Forward Torpedo 1' ready=0)
+
+        ⚠️ THE DESTINATION IS DANGEROUS. Maelstrom/Episode7/Episode7.py:88-115
+        listens for this event and DESTROYS pEvent.GetDestination() outright
+        (MissionLib.SetConditionPercentage(pLauncher, 0)) on a 10% roll — the
+        E7M1 phased-plasma story beat, where the unstable experimental torpedoes
+        blow out the tube that fired them. Post this with the wrong destination
+        and the game destroys the WRONG subsystem. It must be the TUBE.
+
+        Posted UNCONDITIONALLY, for every torpedo: q12 captured `ammo=Photon` on
+        every ET_TORPEDO_FIRED, so the engine does not filter by ammo type. The
+        Phased-Plasma check lives in Episode7's HANDLER, not here.
+
+        Only torpedo tubes post this. _spawn_projectile is shared with pulse
+        cannons, hence the call site is here in TorpedoTube, not in that helper.
+        """
+        if torp is None:
+            return
+        import App
+        from engine import dev_mode
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_TORPEDO_FIRED)
+            evt.SetSource(torp)
+            evt.SetDestination(self)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("ET_TORPEDO_FIRED broadcast", _e)
 
     def UnloadTorpedo(self) -> None:
         """Remove one ready round; its slot goes back into cooldown.

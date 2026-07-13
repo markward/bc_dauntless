@@ -5,7 +5,7 @@ from engine.appc.events import (
     TGBoolEvent, TGBoolEvent_Create,
     TGKeyboardEvent, ET_KEYBOARD_EVENT,
     WeaponHitEvent, ET_WEAPON_HIT, ET_WARP_BUTTON_PRESSED,
-    ET_TORPEDO_RELOAD,
+    ET_TORPEDO_RELOAD, ET_TORPEDO_FIRED,
     ObjectExplodingEvent, ObjectExplodingEvent_Create,
     TGEventHandlerObject, TGEventManager,
     TGPythonInstanceWrapper,

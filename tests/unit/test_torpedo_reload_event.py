@@ -55,5 +55,8 @@ def test_reload_broadcasts_with_the_tube_as_destination(clock):
     assert tube.GetNumReady() == 1
     assert len(seen) == 1
     assert seen[0].GetDestination() is tube          # THE load-bearing assertion
-    assert seen[0].GetSource() is system
+    # BC posts NO source (probe q12, e035: "SRC None"). We had guessed the parent
+    # TorpedoSystem here — the guess was labelled as such in the code, and the
+    # probe corrected it. See tests/unit/test_torpedo_fired_event.py.
+    assert seen[0].GetSource() is None
     assert seen[0].GetEventType() == App.ET_TORPEDO_RELOAD
