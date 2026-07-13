@@ -33,9 +33,22 @@ std::vector<glm::mat4> compose_node_worlds(
 /// Sample a clip's node tracks against a model at time `t`, returning a
 /// node_index -> local_transform override for every track whose
 /// target_node_name matches a model node. Tracks with no matching node (e.g. a
-/// chair clip's baked "Camera captain" view-path) are skipped. Each omitted
-/// channel (T/R/S) falls back to the node's static local. `t` is clamped to
+/// chair clip's baked "Camera captain" view-path) are skipped. `t` is clamped to
 /// [0, clip.duration_seconds].
+///
+/// The clip's motion is RETARGETED onto the model as a delta against the clip's
+/// own rest pose (`AnimationClip::rest_locals`, the rest local of the clip's
+/// SOURCE NIF):
+///
+///     override = model_local * inverse(clip_rest) * clip_sampled
+///
+/// This is what makes an EXTERNAL clip NIF (the lift doors) correct: its keys are
+/// in ITS OWN root frame, while the model's node hangs under a parent that
+/// already carries the placement — sampling straight into the node's local would
+/// apply that placement TWICE. Each channel the track omits falls back to the
+/// CLIP's rest for that channel (so the delta stays in one frame). When the clip
+/// records no rest local for the node, the sampled pose is used as the node's
+/// local directly (the historic behaviour).
 std::unordered_map<int, glm::mat4> sample_node_overrides(
     const assets::AnimationClip& clip, const assets::Model& model, float t);
 

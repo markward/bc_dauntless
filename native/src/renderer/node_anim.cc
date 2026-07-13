@@ -46,6 +46,26 @@ std::vector<glm::mat4> compose_node_worlds(
     return world;
 }
 
+namespace {
+
+// Split a TRS matrix into translation / rotation / uniform scale, so a track
+// that OMITS a channel can fall back to that channel of the base pose.
+void decompose_trs(const glm::mat4& m, glm::vec3& t, glm::quat& r, float& s) {
+    t = glm::vec3(m[3]);
+    glm::mat3 m3(m);
+    s = glm::length(m3[0]);
+    if (s > 1e-8f) {
+        m3[0] /= s;
+        m3[1] /= glm::max(glm::length(m3[1]), 1e-8f);
+        m3[2] /= glm::max(glm::length(m3[2]), 1e-8f);
+    } else {
+        s = 1.0f;
+    }
+    r = glm::quat_cast(m3);
+}
+
+}  // namespace
+
 std::unordered_map<int, glm::mat4> sample_node_overrides(
     const assets::AnimationClip& clip, const assets::Model& model, float t) {
     t = std::clamp(t, 0.0f, clip.duration_seconds);
@@ -60,20 +80,38 @@ std::unordered_map<int, glm::mat4> sample_node_overrides(
     for (const auto& tr : clip.tracks) {
         auto it = index_of.find(tr.target_node_name);
         if (it == index_of.end()) continue;            // e.g. "Camera captain"
-        const glm::mat4& base = model.nodes[it->second].local_transform;
-        const glm::vec3 base_t = glm::vec3(base[3]);
-        glm::mat3 m3(base);
-        float base_s = glm::length(m3[0]);
-        if (base_s > 1e-8f) {
-            m3[0] /= base_s;
-            m3[1] /= glm::max(glm::length(m3[1]), 1e-8f);
-            m3[2] /= glm::max(glm::length(m3[2]), 1e-8f);
-        } else {
-            base_s = 1.0f;
-        }
-        const glm::quat base_r = glm::quat_cast(m3);
-        overrides[it->second] =
+        const glm::mat4& model_local = model.nodes[it->second].local_transform;
+
+        // RETARGET the clip's motion onto the model's node. An EXTERNAL clip NIF
+        // (the lift doors: data/animations/DB_door_L1.nif) keys its nodes in ITS
+        // OWN root frame, while in the bridge model those nodes hang under a
+        // parent that already carries their placement. Writing the clip's key
+        // straight in as the node's LOCAL transform applies the placement twice
+        // (the door teleports out of the doorway by exactly its own rest vector).
+        // So take the clip's motion as a DELTA against the clip's OWN rest pose
+        // and apply it in the model node's frame:
+        //
+        //     override = model_local * inverse(clip_rest) * clip_sampled
+        //
+        // At t=0 the sampled pose IS the clip's rest -> delta = identity -> the
+        // node sits exactly at its model rest. For the bridge's EMBEDDED clip the
+        // clip rest EQUALS the model local, so this collapses to the sampled pose
+        // (unchanged). For a rotation-only clip (the chairs) the delta is a pure
+        // rotation about the node's own origin, so the seat turns without moving.
+        auto rit = clip.rest_locals.find(tr.target_node_name);
+        const bool have_rest = rit != clip.rest_locals.end();
+        // Sample in the CLIP's frame: channels the track omits must fall back to
+        // the CLIP's rest, not the model's, or the delta mixes two frames.
+        const glm::mat4& base = have_rest ? rit->second : model_local;
+
+        glm::vec3 base_t; glm::quat base_r; float base_s;
+        decompose_trs(base, base_t, base_r, base_s);
+        const glm::mat4 sampled =
             assets::sample_track_trs(tr, t, base_t, base_r, base_s);
+
+        overrides[it->second] =
+            have_rest ? model_local * glm::inverse(base) * sampled
+                      : sampled;   // no rest recorded: legacy in-model sampling
     }
     return overrides;
 }

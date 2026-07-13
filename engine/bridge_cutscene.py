@@ -45,8 +45,8 @@ class BridgeCutsceneController:
         self._pending_camera = (action, str(clip_name))
 
     def request_object_anim(self, action, anim_node, clip_name):
-        self._pending_doors.append(
-            (action, getattr(anim_node, "owner", None), str(clip_name)))
+        owner = getattr(anim_node, "owner", None)
+        self._pending_doors.append((action, owner, str(clip_name)))
 
     def has_pending_camera(self):
         """True when a camera path is queued or actively playing."""

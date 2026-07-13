@@ -83,6 +83,128 @@ TEST(SampleNodeOverrides, EmptyClipProducesNoOverrides) {
     EXPECT_TRUE(ov.empty());
 }
 
+// --- External-clip retargeting (the lift-door double-transform bug) -------
+//
+// An EXTERNAL clip NIF (data/animations/DB_door_L1.nif) keys its nodes in ITS
+// OWN root frame. In the bridge model those same nodes hang under a parent that
+// already carries their placement. Writing the clip's root-frame key straight in
+// as the node's LOCAL transform applies the placement TWICE. Retarget instead:
+//     override_local = model_local * inverse(clip_rest_local) * clip_sampled
+namespace {
+// The door's placement lives on its PARENT; the leaf's own local is identity.
+// rest world of "door 04a" = (172.9, 182.7, 69.0), matching the live game.
+const glm::vec3 kDoorRest(172.9f, 182.7f, 69.0f);
+
+assets::Model door_under_placed_parent() {
+    assets::Model m;
+    assets::Node root; root.name = "root"; root.parent_index = -1;
+    root.local_transform = glm::mat4(1.0f);
+    assets::Node frame; frame.name = "lift frame"; frame.parent_index = 0;
+    frame.local_transform = glm::translate(glm::mat4(1.0f), kDoorRest);
+    assets::Node leaf; leaf.name = "door 04a"; leaf.parent_index = 1;
+    leaf.local_transform = glm::mat4(1.0f);      // placement is on the PARENT
+    m.nodes = {root, frame, leaf};
+    m.root_node = 0;
+    return m;
+}
+
+// External door clip: keys are in the CLIP's root frame (= the bridge world
+// frame), so its t=0 key IS the door's rest world position. It slides +18 on Y.
+assets::AnimationClip external_door_clip() {
+    assets::AnimationClip clip; clip.duration_seconds = 1.0f;
+    assets::AnimationClip::NodeTrack d; d.target_node_name = "door 04a";
+    d.translation = {{0.0f, kDoorRest},
+                     {1.0f, kDoorRest + glm::vec3(0, 18, 0)}};
+    clip.tracks = {d};
+    clip.rest_locals["door 04a"] =
+        glm::translate(glm::mat4(1.0f), kDoorRest);   // the CLIP's own rest
+    return clip;
+}
+}  // namespace
+
+TEST(SampleNodeOverrides, ExternalClipAtRestLeavesTheDoorInItsDoorway) {
+    auto m = door_under_placed_parent();
+    auto clip = external_door_clip();
+    auto ov = renderer::sample_node_overrides(clip, m, 0.0f);
+    auto w = renderer::compose_node_worlds(m, glm::mat4(1.0f), ov);
+    // At t=0 the clip's sampled pose IS its rest, so the door must not move.
+    const glm::vec3 pos(w[2][3]);
+    EXPECT_NEAR(pos.x, kDoorRest.x, 1e-3f);
+    EXPECT_NEAR(pos.y, kDoorRest.y, 1e-3f);
+    EXPECT_NEAR(pos.z, kDoorRest.z, 1e-3f);
+    // Guard the exact signature of the bug: displacement by |rest| (260.8).
+    EXPECT_LT(glm::length(pos - kDoorRest), 1e-3f);
+}
+
+TEST(SampleNodeOverrides, ExternalClipMidwayMovesByTheAuthoredDeltaOnly) {
+    auto m = door_under_placed_parent();
+    auto clip = external_door_clip();
+    auto ov = renderer::sample_node_overrides(clip, m, 0.5f);
+    auto w = renderer::compose_node_worlds(m, glm::mat4(1.0f), ov);
+    const glm::vec3 pos(w[2][3]);
+    const glm::vec3 want = kDoorRest + glm::vec3(0, 9, 0);   // half of the 18 slide
+    EXPECT_NEAR(pos.x, want.x, 1e-3f);
+    EXPECT_NEAR(pos.y, want.y, 1e-3f);
+    EXPECT_NEAR(pos.z, want.z, 1e-3f);
+}
+
+TEST(SampleNodeOverrides, EmbeddedClipRestEqualsModelLocalSamplesAsBefore) {
+    // The bridge's OWN embedded clip is authored in the model's frame, so its
+    // rest_locals equal the model node locals -> the retarget collapses to the
+    // sampled pose (identical to the pre-fix behaviour).
+    auto m = two_node();                       // "console seat 01" local = T(0,5,0)
+    assets::AnimationClip clip; clip.duration_seconds = 1.0f;
+    assets::AnimationClip::NodeTrack s; s.target_node_name = "console seat 01";
+    s.translation = {{0.0f, glm::vec3(0, 5, 0)}, {1.0f, glm::vec3(0, 9, 0)}};
+    clip.tracks = {s};
+    clip.rest_locals["console seat 01"] =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0, 5, 0));   // == model local
+
+    auto ov = renderer::sample_node_overrides(clip, m, 1.0f);
+    ASSERT_TRUE(ov.count(1));
+    EXPECT_NEAR(ov[1][3].y, 9.0f, 1e-4f);     // exactly the sampled key
+    EXPECT_NEAR(ov[1][3].x, 0.0f, 1e-4f);
+}
+
+TEST(SampleNodeOverrides, ExternalRotationOnlyClipRotatesInPlace) {
+    // The chair clips (db_chair_*.nif) are external too but carry ROTATION keys
+    // only. They must keep rotating the seat about its OWN origin without moving
+    // it -- even though the clip's rest is in the clip's root frame.
+    auto m = two_node();     // "console seat 01" local = T(0,5,0), no rotation
+    assets::AnimationClip clip; clip.duration_seconds = 1.0f;
+    assets::AnimationClip::NodeTrack s; s.target_node_name = "console seat 01";
+    glm::quat q = glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1));
+    s.rotation = {{0.0f, glm::quat(1, 0, 0, 0)}, {1.0f, q}};
+    clip.tracks = {s};
+    // Clip's own rest: the seat placed somewhere else entirely (root frame).
+    clip.rest_locals["console seat 01"] =
+        glm::translate(glm::mat4(1.0f), glm::vec3(30, 40, 50));
+
+    auto ov = renderer::sample_node_overrides(clip, m, 1.0f);
+    ASSERT_TRUE(ov.count(1));
+    auto w = renderer::compose_node_worlds(m, glm::mat4(1.0f), ov);
+    // Did not move: still at its model rest (0,5,0) -- NOT at the clip's (30,40,50).
+    EXPECT_NEAR(w[1][3].x, 0.0f, 1e-3f);
+    EXPECT_NEAR(w[1][3].y, 5.0f, 1e-3f);
+    EXPECT_NEAR(w[1][3].z, 0.0f, 1e-3f);
+    // But it DID rotate 90deg about Z: local +X -> +Y.
+    glm::vec3 col0 = glm::normalize(glm::vec3(w[1][0]));
+    EXPECT_NEAR(col0.y, 1.0f, 1e-3f);
+}
+
+TEST(SampleNodeOverrides, NoRestLocalForNodeKeepsLegacyBehaviour) {
+    // A clip with no rest_locals entry for the node falls back to the old path:
+    // the key is written straight in as the node's local transform.
+    auto m = door_under_placed_parent();
+    auto clip = external_door_clip();
+    clip.rest_locals.clear();                       // no rest pose recorded
+    auto ov = renderer::sample_node_overrides(clip, m, 0.0f);
+    ASSERT_TRUE(ov.count(2));
+    EXPECT_NEAR(ov[2][3].x, kDoorRest.x, 1e-3f);    // key AS the local transform
+    EXPECT_NEAR(ov[2][3].y, kDoorRest.y, 1e-3f);
+    EXPECT_NEAR(ov[2][3].z, kDoorRest.z, 1e-3f);
+}
+
 // --- Duplicate-name resolution (the chair-coupling bug) -------------------
 namespace {
 // Model with TWO nodes named "console seat 01" (like the real DBridge NIF),
