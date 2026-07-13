@@ -216,4 +216,57 @@ game file is modified.
 
 ## Findings
 
-(To be filled in when the probe runs.)
+Ran 2026-07-13, both phases (menu + Scenario A, Galaxy vs Galaxy QuickBattle).
+Results: `tools/probes/results/q14_env_{menu,battle}.txt`.
+
+### Q14-1 / Q14-2 — the import surface (now the authoritative reference)
+
+Copied into `console-probe-workflow.md` → "Authoritative import census". Key
+results: 22 compiled-in builtins; `math`/`struct`/`marshal`/`operator`/
+`cPickle`/`cStringIO` **present**; `os`/`re`/`types`/`pickle`/`copy`/`random`/
+`traceback` **absent**. Two surprises: **`nt` and `regex` are builtins** (so
+low-level OS queries and regex are reachable despite `os`/`re` being gone), and
+`types` is genuinely absent (vindicates q13's hand-built type sentinels).
+
+### Q14-3 — mission import graph
+
+`sys.modules` grew 140 (menu) → 348 (battle). The battle-only delta is the
+QuickBattle-Galaxy import graph: the whole `AI.*` tree, every `Conditions.*`
+class, `ships.Hardpoints.galaxy`, `Tactical.Projectiles.PhotonTorpedo`,
+`Bridge.Characters.*` + the animation modules, `GlobalPropertyTemplates`,
+`LoadBridge`. Useful as the checklist of what our headless `_SDKFinder` must
+resolve.
+
+### Q14-4 — interpreter vitals
+
+Python 1.5.2 (MSC 32-bit, Jan 17 2002 build). `maxint = 2147483647` (32-bit,
+so q13's hex formatting is safe). `platform = win32`. `sys.prefix` empty.
+`sys.path = ['.\Scripts', '.', '<game-dir>', 'scripts/Icons']` — confirms the
+game dir is importable (why pushed probes resolve).
+
+### Q14-5 — harness validation (the load-bearing outcome)
+
+The in-game run **found and fixed three latent bugs** in the shared set-walk
+before q16/q17 could inherit them (commit `161d9f45`):
+
+1. **Scenario misclassification.** QuickBattle *also* has an episode object
+   (`QuickBattleEpisode`), so the "episode ⇒ Scenario B" heuristic labeled a QB
+   as a mission. Fixed by keying scenario off the **set name**
+   (`QuickBattleRegion`), not episode-presence.
+2. **Set iterator advances by OBJID, not by the object.**
+   `pSet.GetNextObject(pObj)` returns `None` after the first element;
+   `pSet.GetNextObject(pObj.GetObjID())` is the correct form. Symptom:
+   `roster_scanned` stuck at 1.
+3. **The set iterator is CIRCULAR.** After the last object it wraps to the
+   first rather than returning `None`, so the walk must dedup on objid and stop
+   on a repeat, or it never terminates. Symptom: `Player, Galaxy-1, Player,
+   Galaxy-1, …` repeating to the 4000-row guard.
+
+The corrected walk is extracted as **`probe_harness.iter_set_objids(pSet)`**
+(dedup'd, terminating) — q16/q17 must use it rather than re-rolling the loop.
+Final validated roster in a Galaxy-vs-Galaxy QB: `{Player, Galaxy-1}`, 5
+distinct objects scanned, clean termination.
+
+**These three gotchas are the single most valuable output of q14** — they are
+exactly the kind of iterator subtlety that would have silently corrupted q16's
+object-graph dump (0 ships, or a runaway duplicate walk).

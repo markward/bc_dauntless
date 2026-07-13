@@ -90,6 +90,38 @@ What **does** work: `sys`, `time`, `struct`, `App`, partial `nt` (no I/O),
 `print`, `sys.stdout.write()` (in `-TestMode` only — crashes outside it),
 `sys.stdout.getvalue()` (StringO buffer accumulator).
 
+### Authoritative import census (q14, measured in-game)
+
+Stop guessing whether a module is importable — q14
+(`tools/probes/q14_env.py`) dumped `sys.builtin_module_names` and probed a
+candidate list live. This is the ground truth; guard only what is genuinely
+absent.
+
+**Compiled-in builtins (22)** — `App`c, `__builtin__`, `__main__`, `_locale`,
+`array`, `binascii`, `cPickle`, `cStringIO`, `cmath`, `errno`, `imp`,
+`marshal`, `math`, `new`, `nt`, `operator`, `regex`, `strop`, `struct`,
+`sys`, `thread`, `time`.
+
+| Want | In-game reality | Use |
+|---|---|---|
+| `math` | **present** (was hedged as "may be absent" — it is not) | `import math` |
+| `struct` / `marshal` / `operator` / `array` / `binascii` | present (builtins) | import directly |
+| `cPickle` / `cStringIO` | present | prefer over `pickle` / `StringIO` |
+| `os` | **absent**, but `nt` is a builtin | `import nt` for path/env (I/O still securelevel-blocked) |
+| `re` | **absent**, but `regex` (old engine) is a builtin | `import regex` (different API from `re`) |
+| `pickle` | absent | `import cPickle` |
+| `StringIO` | absent | `import cStringIO` |
+| `types` | **absent** | build type sentinels by hand: `type(0)`, `type('')`, `type(0.0)`, `type(0L)` (as q13 does) |
+| `copy` / `random` / `traceback` | absent | reimplement the one bit you need, inline |
+
+Two surprises worth remembering: **`nt` and `regex` are builtins**, so
+low-level OS queries and regex are reachable even though `os` and `re` are
+gone. And `types` really is absent — never `import types` in a probe.
+
+`sys.path` in-game is `['.\\Scripts', '.', '<game-dir>', 'scripts/Icons']`, so
+`<game-dir>` (where `push.py` drops probes) is importable — that is why
+`import probe_harness` / `import q12_torpedo_events` resolve.
+
 ### Two SDK-specific gotchas the template already handles
 
 1. **Singletons vs classes.** `App.UtopiaModule` is a *class*; calling
