@@ -30,8 +30,8 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 2 | TorpedoTube | GetMaxCharge | 1394148 | 7/11 | 2026-07-12 12:57 UTC | 2026-07-13 |
 | 3 | CharacterAction | _clip | 57942 | 9/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
 | 4 | Waypoint | IsDying | 23372 | 4/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
-| 5 | WeaponHitEvent | GetWeaponType | 16023 | 5/11 | 2026-07-12 12:57 UTC |  |
-| 6 | WeaponHitEvent | TRACTOR_BEAM | 16023 | 5/11 | 2026-07-12 12:57 UTC |  |
+| 5 | WeaponHitEvent | GetWeaponType | 16023 | 5/11 | 2026-07-12 12:57 UTC | 2026-07-13 |
+| 6 | WeaponHitEvent | TRACTOR_BEAM | 16023 | 5/11 | 2026-07-12 12:57 UTC | 2026-07-13 |
 | 7 | Planet | GetVelocity | 4924 | 1/11 | 2026-07-10 21:53 UTC |  |
 | 8 | Planet | GetVelocity.x | 4924 | 1/11 | 2026-07-10 21:53 UTC |  |
 | 9 | Planet | GetVelocity.y | 4924 | 1/11 | 2026-07-10 21:53 UTC |  |

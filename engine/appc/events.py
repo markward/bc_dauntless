@@ -27,6 +27,14 @@ ET_WARP_BUTTON_PRESSED: int = 0x1200   # warp button activated (synthesized from
 ET_TORPEDO_RELOAD: int = 0x00800065
 ET_TORPEDO_FIRED:  int = 0x00800066
 
+# ── Friendly-fire events — REAL BC values from the q13 live constant dump
+# (tools/probes/results/q13_constants_menu.txt:364-366).  MissionLib's
+# FriendlyFireHandler raises REPORT when the accumulator crosses a warning
+# point and GAME_OVER when it crosses the tolerance.
+ET_FRIENDLY_FIRE_DAMAGE:    int = 0x00800104
+ET_FRIENDLY_FIRE_REPORT:    int = 0x00800105
+ET_FRIENDLY_FIRE_GAME_OVER: int = 0x00800107
+
 # SPACE-bar bridge/tactical toggle. Value must stay in sync with the SDK's
 # event id; App.py re-exports this name (missions reference it as
 # App.ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL when registering
@@ -127,7 +135,27 @@ class WeaponHitEvent(TGEvent):
     shield facing absorbed it. SDK conditions Conditions/ConditionAttacked
     and Conditions/ConditionAttackedBy read it to split hull damage from
     shield damage (1 → AddShipDamage, 0 → AddShieldDamage).
+
+    `GetWeaponType()` returns one of PHASER / TORPEDO / TRACTOR_BEAM — the
+    three values the real engine exposes, read off the live game by probe q13
+    (tools/probes/results/q13_constants_menu.txt:4059-4062).  MissionLib's
+    FriendlyFireHandler excludes TRACTOR_BEAM hits from the friendly-fire
+    accumulator (you tow friendlies); E3M1.AmagonHit gates a mission beat on
+    PHASER and E8M2.WeaponHitMatan on TORPEDO — the latter two off the CLASS
+    (App.WeaponHitEvent.PHASER), which is why these are real class attributes.
     """
+    # Engine weapon-type enum — exact values from the q13 dump. Do not invent.
+    PHASER       = 0
+    TORPEDO      = 1
+    TRACTOR_BEAM = 2
+    # OURS, not BC's: kinetic hits (ship-on-ship collisions, warp-core-breach
+    # shockwaves) are not weapon fire and have no engine enum value. They must
+    # not masquerade as a phaser — E3M1 advances a mission beat on
+    # `GetWeaponType() == PHASER`, so a ram would falsely trip it. A negative
+    # sentinel matches none of the three, which also lets MissionLib's
+    # `not (type == TRACTOR_BEAM)` friendly-fire check count ram damage.
+    NON_WEAPON   = -1
+
     def __init__(self, is_hull_hit=False):
         super().__init__()
         self._event_type = ET_WEAPON_HIT
@@ -138,6 +166,7 @@ class WeaponHitEvent(TGEvent):
         self._normal = None
         self._radius: float = 0.0
         self._is_hull_hit: int = 1 if is_hull_hit else 0
+        self._weapon_type: int = self.NON_WEAPON
 
     def GetTarget(self):              return self._target
     def SetTarget(self, tgt) -> None: self._target = tgt
@@ -151,6 +180,11 @@ class WeaponHitEvent(TGEvent):
     def SetNormal(self, n) -> None:   self._normal = n
     def GetRadius(self) -> float:     return self._radius
     def SetRadius(self, r) -> None:   self._radius = float(r)
+
+    def GetWeaponType(self) -> int:
+        """PHASER / TORPEDO / TRACTOR_BEAM, or NON_WEAPON for a kinetic hit."""
+        return self._weapon_type
+    def SetWeaponType(self, t) -> None: self._weapon_type = int(t)
 
     def IsHullHit(self) -> int:
         """1 if the hit reached the hull, 0 if shields absorbed it.
