@@ -93,6 +93,35 @@ def _resolve_bank_aim_world(bank, target):
     return _resolve_aim_world(ship, None)
 
 
+def _emitter_world_direction(emitter, ship) -> TGPoint3:
+    """The emitter's mount direction rotated into WORLD space.
+
+    This is what BC's Weapon::CalculateRoughDirection returns.  Evidence:
+    AI/Preprocessors.py:447-456 dots the result against a world-space target
+    delta, and AI/PlainAI/IntelligentCircleObject.py:204,234 converts it
+    world->model explicitly ("Change it to model space").
+
+    DISTINCT from GetDirection(), which stays MODEL space — ConditionTorpsReady
+    .py:128 dots that against a model-space restriction vector.  Do not conflate.
+
+    Orphaned emitter (no owning ship): return the un-rotated body direction.
+
+    Guards on hasattr, not isinstance(emitter, ShipSubsystem): _emitter_in_arc
+    reuses this helper with duck-typed test doubles (see
+    tests/unit/test_property_set_orientation.py::_FakeEmitter) that implement
+    GetDirection() without subclassing ShipSubsystem.
+    """
+    local = emitter.GetDirection() if hasattr(emitter, "GetDirection") else None
+    if not isinstance(local, TGPoint3):
+        local = TGPoint3(0.0, 1.0, 0.0)     # BC model-forward default
+    world = TGPoint3(local.x, local.y, local.z)
+    if ship is not None and hasattr(ship, "GetWorldRotation"):
+        rot = ship.GetWorldRotation()
+        if isinstance(rot, TGMatrix3):
+            world.MultMatrixLeft(rot)       # v_world = R . v_body (column-vector)
+    return world
+
+
 def _emitter_in_arc(emitter, ship, aim_world):
     """Returns True if `aim_world` (unit vector) lies inside the emitter's
     firing arc, rotated into world space via the ship's rotation.
@@ -110,12 +139,7 @@ def _emitter_in_arc(emitter, ship, aim_world):
         return True
     if not isinstance(local_dir, TGPoint3):
         return True
-    # Rotate emitter direction into world space.
-    world_dir = TGPoint3(local_dir.x, local_dir.y, local_dir.z)
-    if ship is not None and hasattr(ship, "GetWorldRotation"):
-        rot = ship.GetWorldRotation()
-        if isinstance(rot, TGMatrix3):
-            world_dir.MultMatrixLeft(rot)
+    world_dir = _emitter_world_direction(emitter, ship)
 
     # Emitter without explicit arc bounds (torpedo tubes) — fall back to
     # a 90° dot-product cone.  ShipSubsystem always exposes a typed
@@ -551,8 +575,15 @@ class Weapon(ShipSubsystem):
         self.Fire(target=None, offset=None)
 
     def CalculateRoughDirection(self) -> TGPoint3:
-        """WORLD-space mount direction.  Implemented in Task 2."""
-        raise NotImplementedError
+        """WORLD-space mount direction.  SDK AI/Preprocessors.py:456 and
+        AI/PlainAI/IntelligentCircleObject.py:234.
+
+        _climb_to_ship() — NOT GetParentShip().  ShipClass._attach_subsystem
+        (ships.py:690-700) sets _parent_ship only on TOP-LEVEL subsystems.  A
+        torpedo tube is a CHILD of the TorpedoSystem, so its _parent_ship is
+        None and GetParentShip() would silently return None on every real tube.
+        """
+        return _emitter_world_direction(self, self._climb_to_ship())
 
     def CalculateWeaponAppeal(self) -> float:
         """SDK AI/PlainAI/IntelligentCircleObject.py:238.  The AI sums appeal
@@ -1776,14 +1807,6 @@ class TorpedoTube(Weapon):
         target/offset come from upstream FireScript state in Phase 1.
         """
         self.Fire(target=None, offset=None)
-
-    def CalculateRoughDirection(self):
-        """SDK Preprocessors.py:456 — returns the tube's local forward
-        vector. Per-tube arcs are deferred to Slice D; until then, all
-        tubes share the parent ship's forward vector. Orphaned tubes
-        (no parent ship) return the model's +Y axis as a safe default."""
-        import App
-        return App.TGPoint3_GetModelForward()
 
     def IsFiring(self) -> int:
         return 1 if self._firing else 0
