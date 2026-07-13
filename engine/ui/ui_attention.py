@@ -36,16 +36,41 @@ def highlight_color(wid):
     return _colors.get(wid)
 
 
-def apply(node: dict, wid: int) -> None:
-    """Set `node["highlighted"]` (+ `node["highlightColor"]` when set) for
-    widget id `wid`. The single source of truth for the flag-setting
-    two-liner: every id-bearing node in a CEF-facing snapshot -- menu/button
-    nodes, the EngRepairPaneWidget node itself, and each eng_repair_pane
-    row -- must call this so none of them are silently un-highlightable."""
-    node["highlighted"] = wid in highlighted_ids()
+def apply(node: dict, wid: int, widget) -> None:
+    """Stamp BOTH of BC's attention flags onto a CEF-facing snapshot node.
+
+    The single source of truth for the flag-setting lines: every id-bearing
+    node in a snapshot -- menu/submenu rows, STButton leaves, the
+    EngRepairPaneWidget node itself, and each eng_repair_pane row -- must call
+    this, so none of them is silently un-highlightable. `widget` is required
+    (not defaulted) precisely so a new node path cannot forget it and quietly
+    lose a flag; that class of miss has bitten this snapshot twice.
+
+    Two flags, because BC has two distinct verbs and they must not look alike:
+
+      node["attention"]   <- MissionLib.ShowPointerArrow. BC drew an LCARS
+                             arrow beside the widget; we pulse a ring around
+                             it. Means "look here".  (+ node["attentionColor"]
+                             when the call passed a kColor.)
+
+      node["highlighted"] <- TGUIObject.SetHighlighted, driven by E1M1's
+                             SetUIObjectHighlighted script action. BC's own
+                             selected/lit widget state; we render it steady.
+                             NOT tutorial-only -- Multiplayer's
+                             MissionMenusShared.py:352 uses it as plain list
+                             selection, which must not pulse like an arrow.
+    """
+    node["attention"] = wid in highlighted_ids()
     color = highlight_color(wid)
     if color is not None:
-        node["highlightColor"] = color
+        node["attentionColor"] = color
+    # __dict__, never getattr: TGObject.__getattr__ answers any missing
+    # attribute with a TRUTHY _Stub, and the repair pane's rows are
+    # ShipSubsystems rather than TG widgets -- so getattr(widget,
+    # "_highlighted", False) would light every repair row forever. Same
+    # reasoning (and the same read) as CrewMenuPanel._contains.
+    # See docs/stub_heatmap.md.
+    node["highlighted"] = bool(widget.__dict__.get("_highlighted", False))
 
 
 def _coerce_highlight_color(kColor):

@@ -145,7 +145,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 133 | TGParagraph | SetString | 3 | 3/11 | 2026-07-12 12:57 UTC |  |
 | 134 | PhaserSystem | GetObjType | 2 | 1/11 | 2026-07-10 21:58 UTC |  |
 | 135 | Sun | IsScannable | 2 | 2/11 | 2026-07-10 22:08 UTC |  |
-| 136 | WarpEngineSubsystem | TransitionToState | 2 | 1/11 | 2026-07-10 22:08 UTC |  |
+| 136 | WarpEngineSubsystem | TransitionToState | 2 | 1/11 | 2026-07-10 22:08 UTC | 2026-07-13 |
 | 137 | STButton | GetConceptualParent | 1 | 1/11 | 2026-07-10 22:08 UTC |  |
 | 138 | STButton | GetConceptualParent.GetText | 1 | 1/11 | 2026-07-10 22:08 UTC |  |
 | 139 | STButton | GetText.GetString | 1 | 1/11 | 2026-07-10 22:08 UTC |  |

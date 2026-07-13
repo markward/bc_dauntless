@@ -45,7 +45,7 @@ def test_snapshot_splits_repair_waiting_destroyed():
     destroyed_labels = [r["label"] for r in snap["destroyed"]]
     assert "Shield Generator" in destroyed_labels
     for row in snap["repair"] + snap["waiting"] + snap["destroyed"]:
-        assert set(row) == {"id", "label", "icon", "pct", "highlighted"}
+        assert set(row) == {"id", "label", "icon", "pct", "attention", "highlighted"}
 
 
 def test_snapshot_none_ship_or_bay_is_empty():
@@ -144,7 +144,7 @@ def test_repair_queue_row_highlighted_when_marked():
         snap = repair_pane_snapshot(ship, lambda *_a: None)
         row = snap["repair"][0]
         assert row["id"] == wid
-        assert row["highlighted"] is True
+        assert row["attention"] is True
     finally:
         ui_attention.hide_pointer_arrows()
 
@@ -154,13 +154,13 @@ def test_repair_queue_row_unhighlighted_by_default():
     ship.GetSensorSubsystem().SetCondition(4000.0)
     ui_attention.hide_pointer_arrows()
     snap = repair_pane_snapshot(ship, lambda *_a: None)
-    assert snap["repair"][0]["highlighted"] is False
+    assert snap["repair"][0]["attention"] is False
 
 
 def test_repair_pane_widget_node_highlighted_when_marked():
     """Task 3 gap: the EngRepairPaneWidget branch in
     CrewMenuPanel._snapshot_node built and returned its own dict before ever
-    reaching the shared node["highlighted"] lines, so the repair-pane node
+    reaching the shared node["attention"] lines, so the repair-pane node
     itself was id-bearing but un-highlightable."""
     from engine.ui.crew_menu_panel import CrewMenuPanel
 
@@ -172,7 +172,7 @@ def test_repair_pane_widget_node_highlighted_when_marked():
         panel = CrewMenuPanel()
         node = panel._snapshot_node(widget)
         assert node["id"] == wid
-        assert node["highlighted"] is True
+        assert node["attention"] is True
     finally:
         ui_attention.hide_pointer_arrows()
 
@@ -184,4 +184,4 @@ def test_repair_pane_widget_node_unhighlighted_by_default():
     ui_attention.hide_pointer_arrows()
     panel = CrewMenuPanel()
     node = panel._snapshot_node(widget)
-    assert node["highlighted"] is False
+    assert node["attention"] is False

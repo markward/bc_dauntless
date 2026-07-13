@@ -398,9 +398,9 @@ def _poll_skip_dialogue(host, input_map) -> None:
     the Appc endpoint directly.  A double SkipEvents from both paths is harmless —
     the second call finds nothing left to skip.
 
-    Rising-edge only.  The callsite sits inside the `not pause.is_open` sim block,
-    so Backspace typed into pause-menu panels (Controls remap capture, config
-    fields) never skips dialogue.
+    Rising-edge only.  The callsite sits inside the `not pause.sim_frozen` sim
+    block, so Backspace typed into pause-menu panels (Controls remap capture,
+    config fields) never skips dialogue.
     """
     global _skip_dialogue_prev
     del host  # noqa: F841 — key reads go through host_io, not this handle.
@@ -1811,6 +1811,28 @@ def _pump_bridge_doors(cutscene, renderer, *, paused: bool) -> None:
     cutscene._update_doors(renderer, _App.g_kAnimationManager)
 
 
+def _devtools_frozen(h) -> bool:
+    """True while the CEF DevTools window (F12) is open.
+
+    Editing the overlay's DOM/CSS in DevTools is useless if the world keeps
+    running underneath — the UI state you are inspecting scrolls away and
+    per-frame panel pushes overwrite your edits. So DevTools freezes the sim
+    exactly like the pause menu, minus the menu itself (see
+    _PauseMenuController.sim_frozen).
+
+    Reads the live window state, not an F12 latch, so closing DevTools via its
+    own close button also unfreezes. The AttributeError fallback is for fake
+    hosts in tests: the real binary can't be missing this binding —
+    renderer._REQUIRED_BINDINGS hard-fails at boot if it is.
+    """
+    if h is None:
+        return False
+    try:
+        return bool(h.cef_devtools_open())
+    except AttributeError:
+        return False
+
+
 class _PauseMenuController:
     """ESC-toggled pause-menu overlay.
 
@@ -1820,14 +1842,32 @@ class _PauseMenuController:
     rendering (frozen) and the CEF overlay paints a placeholder; AI,
     physics, weapons, combat, ship/camera input, and audio tick all
     skip.
+
+    Two distinct questions, deliberately separate properties:
+      is_open    — is the MENU up? Drives menu visibility, cursor unlock,
+                   pause-menu input routing, mouse forwarding to CEF.
+      sim_frozen — must the WORLD hold still? is_open, OR an external freeze
+                   (today: the DevTools window). The host loop gates the
+                   simulation on this one, so DevTools can stop the world
+                   without raising a menu over the UI being inspected.
     """
 
     def __init__(self):
         self._open = False
         self._quit_requested = False
+        self._external_freeze = False
 
     @property
     def is_open(self) -> bool: return self._open
+
+    @property
+    def sim_frozen(self) -> bool:
+        return self._open or self._external_freeze
+
+    def set_external_freeze(self, frozen: bool) -> None:
+        """Freeze the sim without opening the menu. Host loop calls this once
+        per frame from _devtools_frozen()."""
+        self._external_freeze = bool(frozen)
 
     @property
     def quit_requested(self) -> bool: return self._quit_requested
@@ -3655,6 +3695,16 @@ class HostController:
         try:
             from engine import warp_vfx as _wv
             _wv.get().stop()
+        except Exception:
+            pass
+        try:
+            # end_flythrough() (no ship) releases EVERY registered ship and
+            # sets each back to WES_NOT_WARPING — not warp_state.reset(),
+            # which only drops the registration and leaves the ship's own
+            # warp state untouched. It is a strict superset of reset() and
+            # harmless on a ship about to be destroyed by this same swap.
+            from engine.appc import warp_state as _warp_state
+            _warp_state.end_flythrough()
         except Exception:
             pass
         try:
@@ -5945,13 +5995,16 @@ def run(mission_name: Optional[str] = None,
 
             # --- Sim advance: fixed-timestep accumulator ---
             # frame_dt is the real wall-clock since the previous frame.
-            # During pause we force it to 0 so the accumulator cannot
+            # While frozen we force it to 0 so the accumulator cannot
             # grow and there is no catch-up burst on resume. The cap
             # bounds the inner while-loop after a stalled render frame.
+            # Frozen = pause menu OR the DevTools window (which stops the
+            # world so the overlay under inspection holds still).
+            pause.set_external_freeze(_devtools_frozen(_h))
             _now = time.monotonic()
             _frame_dt = _now - _previous_real_time
             _previous_real_time = _now
-            if pause.is_open:
+            if pause.sim_frozen:
                 _frame_dt = 0.0
             _accumulator, _sim_ticks_this_frame = step_accumulator(
                 _accumulator, _frame_dt, TICK_DT, MAX_FRAME_DT
@@ -5964,7 +6017,7 @@ def run(mission_name: Optional[str] = None,
             # Galaxy 360° yaw collapses from 24 s to 12 s). Clamp
             # matches step_accumulator's spiral-of-death cap so a
             # stalled frame doesn't teleport the player.
-            _player_dt = 0.0 if pause.is_open else min(max(_frame_dt, 0.0), MAX_FRAME_DT)
+            _player_dt = 0.0 if pause.sim_frozen else min(max(_frame_dt, 0.0), MAX_FRAME_DT)
             _interp_alpha = _accumulator / TICK_DT  # in [0, 1) after step_accumulator
             if _sim_ticks_this_frame > 0:
                 _xform_buf.roll()
@@ -6082,6 +6135,13 @@ def run(mission_name: Optional[str] = None,
                     if _cmd_held or _ctrl_held:
                         _h.cef_reload()
 
+            # Everything below is SIMULATION — ship/camera input, firing,
+            # weapons, combat, sensors, nebula — so it gates on sim_frozen,
+            # not on the menu. The DevTools keys above deliberately sit in the
+            # is_open block instead: DevTools freezes the sim, so gating F12 on
+            # sim_frozen would make it impossible to press F12 a second time to
+            # close DevTools again.
+            if not pause.sim_frozen:
                 # Apply keyboard input to the player ship's transform and to the
                 # orbit camera (see _apply_input below).
 
@@ -6156,7 +6216,7 @@ def run(mission_name: Optional[str] = None,
                 # mouse_button_pressed consumes the edge, so we only call it once
                 # we've decided to intercept — leaving genuine empty-space clicks
                 # to fire phasers.
-                if view_mode.is_bridge and not pause.is_open and _h is not None:
+                if view_mode.is_bridge and _h is not None:
                     _bridge_left_pick_active = bridge_officer_picking.handle_click(
                         _h, r, bridge_camera, crew_menu_panel,
                         _bridge_left_pick_active)
@@ -6186,7 +6246,7 @@ def run(mission_name: Optional[str] = None,
                 # Sensor contact identification → drives the SDK bridge Hail /
                 # scan buttons + unlocks target-info panels (all gate on
                 # IsObjectKnown). Throttled ~4 Hz; cheap once contacts are known.
-                # Sim-gated by the enclosing `not pause.is_open`.
+                # Sim-gated by the enclosing `not pause.sim_frozen`.
                 if player is not None:
                     import App  # deferred: matches host-loop convention
                     global _last_identify_gt
@@ -6199,7 +6259,7 @@ def run(mission_name: Optional[str] = None,
 
                 # Nebula membership → enter/exit events, environmental
                 # damage, sensor scaling. Sim dt (TICK_DT); gated by the
-                # enclosing `not pause.is_open` (no effects while frozen);
+                # enclosing `not pause.sim_frozen` (no effects while frozen);
                 # no-op for sets without a nebula.
                 _neb_set = _resolve_active_set(player)
                 if _neb_set is not None:
@@ -6299,6 +6359,17 @@ def run(mission_name: Optional[str] = None,
                 # the player integrator — the collision-velocity overlay is
                 # real-time motion, so it advances/decays on real elapsed time,
                 # not the fixed sim TICK_DT.
+                # Advance BC's warp FSM before collisions: a ship in warp is
+                # non-collidable (collisions._collisions_enabled), so a dewarp
+                # that completes this frame must be collidable THIS frame, not
+                # next. sync_flythrough is the leak guard — once the warp
+                # animator is inactive the flythrough ship cannot still read as
+                # warping, however the sequence ended.
+                from engine.appc import warp_state as _warp_state
+                from engine import warp_vfx as _wv_state
+                _warp_state.tick_warp_states(_player_dt)
+                _warp_state.sync_flythrough(_wv_state.get().is_active())
+
                 collisions.tick_collisions(
                     _player_dt,
                     ship_instances=(session.ship_instances if session is not None else None),
@@ -6335,7 +6406,7 @@ def run(mission_name: Optional[str] = None,
             # but sees the exterior; get_explicit_rendered_set() is the
             # render-target authority; bridge_flag()/GetRenderedSet() are
             # untouched). Reverts when CutsceneCameraEnd pops the mode.
-            _cc = None if pause.is_open else _active_cutscene_camera()
+            _cc = None if pause.sim_frozen else _active_cutscene_camera()
             _apply_bridge_pass_state(
                 view_mode.is_bridge and _cc is None, _h, view_mode)
             # AT_MOVE walk completion advances the mission TGSequence (E1M1
@@ -6343,10 +6414,10 @@ def run(mission_name: Optional[str] = None,
             # pumped every unpaused frame regardless of view — NOT inside the
             # is_bridge render block below (that block is purely visual). See
             # _pump_walk_controller.
-            _pump_walk_controller(walk_ctrl, r, _player_dt, paused=pause.is_open)
+            _pump_walk_controller(walk_ctrl, r, _player_dt, paused=pause.sim_frozen)
             # The door half of the bridge cutscene pump is likewise
             # view-independent — see _pump_bridge_doors.
-            _pump_bridge_doors(cutscene, r, paused=pause.is_open)
+            _pump_bridge_doors(cutscene, r, paused=pause.sim_frozen)
             if fixed_camera:
                 fixed_radius = player.GetRadius() if player is not None else 1.0
                 eye = (0.0, 0.0, CAM_MAX_RADII * fixed_radius)
@@ -6366,11 +6437,11 @@ def run(mission_name: Optional[str] = None,
                 eye, target, up_vec = camera_shake.perturb(eye, target, up_vec)
                 # If a cutscene camera path is queued or playing, pull the
                 # view back to bridge so the update pump below can reach it.
-                if cutscene.has_pending_camera() and not pause.is_open:
+                if cutscene.has_pending_camera() and not pause.sim_frozen:
                     view_mode.set_bridge()
                 if view_mode.is_bridge:
                     import App as _App
-                    if not pause.is_open:
+                    if not pause.sim_frozen:
                         # CAMERA half only — the door half (_update_doors) is
                         # pumped view-independently above (_pump_bridge_doors).
                         cutscene.update(
@@ -6401,7 +6472,7 @@ def run(mission_name: Optional[str] = None,
                     # delta (so it doesn't snap the look on resume) but
                     # skip the yaw/pitch advance so the bridge camera
                     # stays frozen alongside the rest of the world.
-                    if not pause.is_open:
+                    if not pause.sim_frozen:
                         # Zoom-to-officer still runs while a crew menu is open
                         # (that's what frames the station). But the cursor is
                         # freed to click the menu, so zero the mouse-look delta
@@ -6605,7 +6676,7 @@ def run(mission_name: Optional[str] = None,
                 is_bridge=view_mode.is_bridge and _cc is None, spv_open=_spv_open)
 
             # Audio listener (skipped while paused — silence the rumble).
-            if not pause.is_open:
+            if not pause.sim_frozen:
                 # Compute audio listener forward from (eye → target).
                 _fx0 = target[0] - eye[0]
                 _fy0 = target[1] - eye[1]
@@ -6621,7 +6692,7 @@ def run(mission_name: Optional[str] = None,
 
             active_set = _resolve_active_set(player)
 
-            if not pause.is_open:
+            if not pause.sim_frozen:
                 _update_ui_for_tick(player, view_mode, session, active_set)
 
             ambient, directionals = _aggregate_lights(active_set)

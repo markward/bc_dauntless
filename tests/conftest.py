@@ -764,6 +764,15 @@ def _reset_leakable_engine_globals():
         reset_defensive_cloak_state()
     except Exception:
         pass
+    # Warp-state facade: begin_flythrough registers a ship on the module
+    # global _flythrough_ship and nothing else clears it. A leaked ship from
+    # a prior test would make sync_flythrough act on a stale/foreign object in
+    # an unrelated later test.
+    try:
+        from engine.appc import warp_state
+        warp_state.reset()
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True)

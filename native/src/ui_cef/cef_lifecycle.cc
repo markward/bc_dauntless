@@ -199,6 +199,12 @@ void toggle_devtools() {
     }
 }
 
+bool devtools_open() {
+    if (!g_client || !g_client->browser()) return false;
+    auto host = g_client->browser()->GetHost();
+    return host && host->HasDevTools();
+}
+
 void reload() {
     if (g_client && g_client->browser()) g_client->browser()->Reload();
 }
