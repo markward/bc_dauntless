@@ -1,7 +1,7 @@
 """Torpedo reload runs on GAME time, with one timer slot per MaxReady.
 
 Model recovered from stbc.exe --
-docs/original_game_reference/gameplay/combat-and-damage.md:740-830:
+docs/gameplay/combat-and-damage.md:740-830:
 
     last_fire_time   float, GAME time, init -1000.0
     reload_timers    float[], ONE SLOT PER MaxReady;  -1.0 == loaded

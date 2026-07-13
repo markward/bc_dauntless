@@ -679,7 +679,7 @@ class DamageableObject(PhysicsObjectClass):
     # methods route authored + runtime visible damage into our hull-carve
     # renderer via engine.appc.visible_damage (deferred until the ship's render
     # instance is realized). See
-    # docs/original_game_reference/engine/damagetool-and-hull-damage-gaps.md.
+    # docs/engine/damagetool-and-hull-damage-gaps.md.
 
     def AddObjectDamageVolume(self, x, y, z, influRad, strength) -> None:
         """Authored body-frame damage sphere (SDK pre-wreck Damage*.py scripts)."""

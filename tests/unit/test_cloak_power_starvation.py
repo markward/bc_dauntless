@@ -4,7 +4,7 @@ When the backup battery is fully depleted (PSM_BACKUP_ONLY cloak draws
 nothing → efficiency 0.0 < AUTO_DECLOAK_EFFICIENCY threshold) the
 CloakingSubsystem must force itself back to DECLOAKED.
 
-Reference: docs/original_game_reference/gameplay/ship-subsystems.md:187-189.
+Reference: docs/gameplay/ship-subsystems.md:187-189.
 """
 import App
 import pytest

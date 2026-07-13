@@ -18,7 +18,7 @@ triggers it, and what its numeric event ID is — plus the same for
 We are reimplementing `App.TorpedoTube` for Dauntless. Two of the three evidence
 tiers we have disagree, and the third is silent:
 
-- **RE'd binary** (`docs/original_game_reference/gameplay/combat-and-damage.md:793-810`):
+- **RE'd binary** (`docs/gameplay/combat-and-damage.md:793-810`):
   the tube's `Fire` (`FUN_0057C9E0`) posts **`ET_WEAPON_FIRED`**, with an explicit
   annotation *"NB: NOT `ET_TORPEDO_FIRED`"*. `ReloadTorpedo` (`FUN_0057D8A0`)
   posts the reload event.

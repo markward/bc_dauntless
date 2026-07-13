@@ -9,7 +9,7 @@ namespace voxel {
 /// Maps an interior-node fill cell (i,j,k) on the (nx-1,ny-1,nz-1) lattice to
 /// the first plane-palette index found at that cell, as decoded from the
 /// NiBinaryVoxelData `bytes2` index tree + 6-byte leaf records (§6/§7 of
-/// docs/original_game_reference/engine/nibinaryvoxeldata-format-v3.1.md).
+/// docs/engine/nibinaryvoxeldata-format-v3.1.md).
 class PlaneIndexMap {
 public:
     /// First plane-palette index for interior-node cell (i,j,k), or -1 if the

@@ -37,7 +37,7 @@ _SPREAD_DELAY = 0.2
 
 # ── Torpedo reload slots ───────────────────────────────────────────────────
 # BC stores one float per MaxReady at TorpedoTube+0xAC
-# (docs/original_game_reference/gameplay/combat-and-damage.md:748).  We store the
+# (docs/gameplay/combat-and-damage.md:748).  We store the
 # GAME TIME at which each slot began cooling; _SLOT_LOADED means "ready".
 _SLOT_LOADED = -1.0
 
@@ -1765,7 +1765,7 @@ class TorpedoTube(Weapon):
     lives on the parent's slot table; this class owns per-tube reload state.
 
     Reload model recovered from stbc.exe
-    (docs/original_game_reference/gameplay/combat-and-damage.md:740-830):
+    (docs/gameplay/combat-and-damage.md:740-830):
     reload state is a per-slot timer array, one slot per MaxReady, driven by
     the GAME clock (not wall time, so a paused sim makes no reload progress).
     ImmediateDelay is a CanFire refire gate (gameTime - last_fire_time >=

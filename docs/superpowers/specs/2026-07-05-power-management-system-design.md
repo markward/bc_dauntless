@@ -12,8 +12,8 @@ power-grid UI.
 |---|---|
 | `sdk/Build/scripts/App.py` (PoweredSubsystem 5696–5708, PowerSubsystem 5739–5756, PowerProperty 9793–9802, PoweredSubsystemProperty 9169–9170, EngPowerCtrl 8636–8649) | Exact Python-visible method surface — the contract dauntless must satisfy |
 | `sdk/Build/scripts/Bridge/PowerDisplay.py` | The Engineering panel: EngPowerCtrl construction, 0.5 s refresh, battery readouts, `AdjustPower` auto-balance, tractor/cloak siphon rendering |
-| `docs/original_game_reference/gameplay/ship-subsystems.md` § Power and reactor | RE'd binary internals: tick math, conduit asymmetry, draw modes, constants, per-ship deficit table |
-| `docs/original_game_reference/gameplay/power-system.md` | Manual-derived player-facing intent (banded Power Used bar, 125% rule, alert-state behaviour) |
+| `docs/gameplay/ship-subsystems.md` § Power and reactor | RE'd binary internals: tick math, conduit asymmetry, draw modes, constants, per-ship deficit table |
+| `../STBC-Reverse-Engineering-1/docs/gameplay/power-system.md` | Manual-derived player-facing intent (banded Power Used bar, 125% rule, alert-state behaviour) |
 | `sdk/Build/scripts/ships/Hardpoints/*.py` (e.g. galaxy.py) | Authored values: `PowerProperty_Create` + `SetNormalPowerPerSecond` per consumer |
 
 ## Decisions made during brainstorming

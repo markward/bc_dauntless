@@ -503,7 +503,7 @@ the TorpedoSystem, so their _parent_ship is None."
 ## Task 3: Decompiled reload model — game clock, per-slot timers, `ImmediateDelay` gate
 
 Rewrite the tube's reload state to the model recovered from `stbc.exe`
-(`docs/original_game_reference/gameplay/combat-and-damage.md:740-830`).
+(`docs/gameplay/combat-and-damage.md:740-830`).
 
 Three defects being fixed:
 1. **Wall-clock stamp.** `_last_fire_time` is `time.monotonic()` (`:1668`). Wall time runs while the sim is frozen, so after a 40 s pause (or alt-tab, or a long mission load) **every tube instantly reloads**.
@@ -528,7 +528,7 @@ Three defects being fixed:
 """Torpedo reload runs on GAME time, with one timer slot per MaxReady.
 
 Model recovered from stbc.exe --
-docs/original_game_reference/gameplay/combat-and-damage.md:740-830:
+docs/gameplay/combat-and-damage.md:740-830:
 
     last_fire_time   float, GAME time, init -1000.0
     reload_timers    float[], ONE SLOT PER MaxReady;  -1.0 == loaded
@@ -673,7 +673,7 @@ In `engine/appc/weapon_subsystems.py`, add near the top-level helpers (after `_S
 ```python
 # ── Torpedo reload slots ───────────────────────────────────────────────────
 # BC stores one float per MaxReady at TorpedoTube+0xAC
-# (docs/original_game_reference/gameplay/combat-and-damage.md:748).  We store the
+# (docs/gameplay/combat-and-damage.md:748).  We store the
 # GAME TIME at which each slot began cooling; _SLOT_LOADED means "ready".
 _SLOT_LOADED = -1.0
 

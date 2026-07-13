@@ -2,7 +2,7 @@
 //
 // Inspector for BC's NiBinaryVoxelData blocks (the per-ship solid-voxel grid
 // stored in *_vox.nif files). The format is FULLY SOLVED (see
-// docs/original_game_reference/engine/nif-voxel-format.md). Dumps the parsed
+// docs/engine/nif-voxel-format.md). Dumps the parsed
 // header (dims + cellSize + aabbMin/Max), the raw payload size, hex of the
 // payload head/tail, a byte-value histogram, and sanity arithmetic. Supports
 // multiple modes for decode verification and IoU comparison.

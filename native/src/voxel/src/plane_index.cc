@@ -1,6 +1,6 @@
 // native/src/voxel/src/plane_index.cc
 // Parse the NiBinaryVoxelData `bytes2` index tree into a cell->plane map.
-// See docs/original_game_reference/engine/nibinaryvoxeldata-format-v3.1.md §6/§7.
+// See docs/engine/nibinaryvoxeldata-format-v3.1.md §6/§7.
 //
 // STATUS (this task): the leaf tail and plane-index field are CONFIRMED against
 // the Galaxy anchors; the recursive head-tree descent that maps a cell (i,j,k)

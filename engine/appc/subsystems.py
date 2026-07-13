@@ -1887,7 +1887,7 @@ class PowerSubsystem(ShipSubsystem):
                 self._add_power_to_batteries(self.GetPowerOutput() * elapsed)
             # Deliberate asymmetry: recharge is gated on reactor-offline, but
             # conduit budgets (capacity*elapsed) are computed UNCONDITIONALLY.
-            # BC-faithful per docs/original_game_reference/gameplay/ship-subsystems.md:122-127
+            # BC-faithful per docs/gameplay/ship-subsystems.md:122-127
             # (ComputeAvailablePower is an unconditional sibling step; batteries
             # still deliver through conduits even when the reactor is down).
             # Per-interval budget = min(battery, rated*condPct*elapsed). Use the
@@ -1976,7 +1976,7 @@ class RepairSubsystem(PoweredSubsystem):
     SDK surface (App.py:6639-6662): AddSubsystem, AddToRepairList,
     IsBeingRepaired, plus the inherited ShipSubsystem/PoweredSubsystem
     methods. Queue semantics + tick formula are RE-verified
-    (docs/original_game_reference/gameplay/ship-subsystems.md §Repair):
+    (docs/gameplay/ship-subsystems.md §Repair):
     duplicates rejected, destroyed (condition<=0) rejected, undamaged
     rejected; first NumRepairTeams entries are "being repaired".
     """
@@ -2184,7 +2184,7 @@ class CloakingSubsystem(PoweredSubsystem):
 
     # Cloak runs off the backup grid only — it is locked off the main conduit
     # so cloaking never starves the ship's other systems of main-battery power
-    # (docs/original_game_reference/gameplay/ship-subsystems.md:185).
+    # (docs/gameplay/ship-subsystems.md:185).
     POWER_MODE = PSM_BACKUP_ONLY
 
     # Power starvation: the cloak runs off the BACKUP battery; when that reserve

@@ -6,7 +6,7 @@
 
 **Architecture:** Decode the rest of the vox payload (plane palette + `bytes2` cell→plane index tree). A pure dual-contouring extractor turns the 0–127 fill (isovalue ≈63–64) into a mesh, using each surface cell's palette plane as the QEF Hermite constraint → sharp vertices. A per-instance carved copy of the fill is re-extracted on hit; the resulting interior mesh renders through the 2a fragment-clip holes with triplanar `Damage.tga`.
 
-**Tech Stack:** C++17, OpenGL 4.1 / GLSL 330, glm, GoogleTest. Builds on the merged 2a + voxel foundation. **Read the format spec first:** `docs/original_game_reference/engine/nibinaryvoxeldata-format-v3.1.md` (§4 fill, §5 palette, §6 tree, §7 leaves, §10 extraction). Reference design: `docs/superpowers/specs/2026-06-17-hull-breach-2b-dual-contouring-interior-design.md`.
+**Tech Stack:** C++17, OpenGL 4.1 / GLSL 330, glm, GoogleTest. Builds on the merged 2a + voxel foundation. **Read the format spec first:** `docs/engine/nibinaryvoxeldata-format-v3.1.md` (§4 fill, §5 palette, §6 tree, §7 leaves, §10 extraction). Reference design: `docs/superpowers/specs/2026-06-17-hull-breach-2b-dual-contouring-interior-design.md`.
 
 **Sequencing note:** The extractor is the novel risk, so Tasks 1–4 build and **validate it on static (uncarved) data** before any carve/render wiring (Tasks 5–7). Same "prove the core first" discipline as the decoder.
 

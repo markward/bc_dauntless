@@ -6,7 +6,7 @@
 
 ## Motivation
 
-2a opened see-through holes but left two problems: (1) a breach reveals straight through the single-sided ship to stars (no interior surface), and (2) the interior is a flat candy-rainbow cube splat. The fix is the **runtime voxel remesh** this whole approach was named for, now unblocked: BC's `*_vox.nif` is fully decoded, including the **0–127 scalar fill field**, the **deduplicated plane palette** (Hesse-form `(n̂,d)` surface orientations), and the **`bytes2` index tree** mapping each fill cell to its palette plane. That is exactly the Hermite data dual contouring needs to reconstruct **sharp hull facets** — the authentic look (BC was smooth-with-hard-corners, not blocky). Reference: `docs/original_game_reference/engine/nibinaryvoxeldata-format-v3.1.md`.
+2a opened see-through holes but left two problems: (1) a breach reveals straight through the single-sided ship to stars (no interior surface), and (2) the interior is a flat candy-rainbow cube splat. The fix is the **runtime voxel remesh** this whole approach was named for, now unblocked: BC's `*_vox.nif` is fully decoded, including the **0–127 scalar fill field**, the **deduplicated plane palette** (Hesse-form `(n̂,d)` surface orientations), and the **`bytes2` index tree** mapping each fill cell to its palette plane. That is exactly the Hermite data dual contouring needs to reconstruct **sharp hull facets** — the authentic look (BC was smooth-with-hard-corners, not blocky). Reference: `docs/engine/nibinaryvoxeldata-format-v3.1.md`.
 
 ## REFRAME 2 (in-game verification, 2026-06-17): render the INSIDE of the volume, not the outside — Path C
 

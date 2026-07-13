@@ -409,7 +409,7 @@ struct NiBinaryVoxelExtraData {
 /// voxel::from_nif_voxel_data(). raw_voxel_payload retains the full payload
 /// (fillField + planes + bytes2 + trailer) for consumers that need the
 /// unparsed sub-structures. planes and bytes2 are not sub-parsed here.
-/// See docs/original_game_reference/engine/nif-voxel-format.md (FULLY SOLVED).
+/// See docs/engine/nif-voxel-format.md (FULLY SOLVED).
 struct NiBinaryVoxelData {
     std::uint16_t dim_x = 0;               // grid resolution, X (was unknown_short1)
     std::uint16_t dim_y = 0;               // grid resolution, Y (was unknown_short2)

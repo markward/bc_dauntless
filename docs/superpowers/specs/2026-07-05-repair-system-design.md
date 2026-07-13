@@ -26,7 +26,7 @@ make the surface the SDK calls real, and emit the events the SDK listens for.
 | `sdk/Build/scripts/App.py:6639–6662` | `RepairSubsystem(PoweredSubsystem)` — exactly three own methods: `AddSubsystem`, `AddToRepairList`, `IsBeingRepaired` |
 | `sdk/Build/scripts/App.py:9714–9734` | `RepairSubsystemProperty(PoweredSubsystemProperty)` — `Get/SetMaxRepairPoints`, `Get/SetNumRepairTeams` |
 | `sdk/Build/scripts/App.py:5671` | `ShipSubsystem.Repair(fRepairPoints)` on every subsystem |
-| `docs/original_game_reference/gameplay/ship-subsystems.md` §Repair | RE-verified tick formula, queue semantics, priority toggle, event flow, `EngRepairPane` areas |
+| `docs/gameplay/ship-subsystems.md` §Repair | RE-verified tick formula, queue semantics, priority toggle, event flow, `EngRepairPane` areas |
 | `sdk/Build/scripts/Bridge/EngineerCharacterHandlers.py` | All seven emitters: registration (lines 66–95), watcher setup (145–200), handlers + voice-line keys |
 | `sdk/Build/scripts/Bridge/EngineerMenuHandlers.py:84` | `App.EngRepairPane_Create(1.0, 0.4, 3)` attached to the Engineering menu |
 | `sdk/Build/scripts/ships/Hardpoints/*.py` | Authoring: Galaxy 50 pts / 3 teams / complexity 2.0; Keldon 20 / 2 / 4.0; Sovereign 50 pts, complexity 1.0. Every subsystem property authors `SetRepairComplexity` + `SetDisabledPercentage`. |

@@ -23,7 +23,7 @@
 
 ## Reference: the RE-verified repair tick
 
-From `docs/original_game_reference/gameplay/ship-subsystems.md` §Repair:
+From `docs/gameplay/ship-subsystems.md` §Repair:
 
 ```
 rawRepair = MaxRepairPoints * (bay.condition / bay.maxCondition) * dt
@@ -662,7 +662,7 @@ class RepairSubsystem(PoweredSubsystem):
     SDK surface (App.py:6639-6662): AddSubsystem, AddToRepairList,
     IsBeingRepaired, plus the inherited ShipSubsystem/PoweredSubsystem
     methods. Queue semantics + tick formula are RE-verified
-    (docs/original_game_reference/gameplay/ship-subsystems.md §Repair):
+    (docs/gameplay/ship-subsystems.md §Repair):
     duplicates rejected, destroyed (condition<=0) rejected, undamaged
     rejected; first NumRepairTeams entries are "being repaired".
     """

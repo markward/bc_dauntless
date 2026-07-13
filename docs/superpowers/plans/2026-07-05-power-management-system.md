@@ -9,7 +9,7 @@
 **Tech Stack:** Python (engine/appc), existing tg_ui widget-shim conventions, CEF Panel/PanelRegistry pattern, pytest.
 
 **Spec:** `docs/superpowers/specs/2026-07-05-power-management-system-design.md`
-**RE reference:** `docs/original_game_reference/gameplay/ship-subsystems.md` § Power and reactor
+**RE reference:** `docs/gameplay/ship-subsystems.md` § Power and reactor
 
 ## Global Constraints
 

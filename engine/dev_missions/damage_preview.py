@@ -14,7 +14,7 @@ wreck is a friendly contact so it stays out of the way. Registered into the dev
 mission picker ("Developer" family) by engine/host_loop.py — dev mode only, never
 present in production builds.
 
-See docs/original_game_reference/engine/damagetool-and-hull-damage-gaps.md.
+See docs/engine/damagetool-and-hull-damage-gaps.md.
 """
 import importlib
 

@@ -16,7 +16,7 @@ the main battery is fully depleted.
 
 The dauntless EPS model (`engine/appc/subsystems.py`) follows the layout
 documented in
-`docs/original_game_reference/gameplay/ship-subsystems.md` §Power-and-reactor.
+`docs/gameplay/ship-subsystems.md` §Power-and-reactor.
 The key mechanism is `ComputeAvailablePower`:
 
 ```
@@ -40,13 +40,13 @@ conduit's 1200/s ceiling.  Our model predicts:
   implementation therefore expects sliders to **stay at 1.25**.
 
 The player manual
-(`docs/original_game_reference/gameplay/power-system.md`) describes the reserve
+(`../STBC-Reverse-Engineering-1/docs/gameplay/power-system.md`) describes the reserve
 battery as a last resort: *"At Red Alert you will begin draining battery power"*
 and shows a band sequence (main → yellow → reserve), implying reserve is only
 drawn after main empties.  Which story does the C++ engine actually implement?
 
 Reference values for a Galaxy (from
-`docs/original_game_reference/gameplay/ship-subsystems.md` §Reference-values):
+`docs/gameplay/ship-subsystems.md` §Reference-values):
 Output 1000/s, normal-load total draw 1651/s, deficit −651/s.  At all sliders
 1.25 × normal + tractor, total demand rises above the main conduit cap (1000/s
 for Galaxy scaled by conditionPct 1.0), so backup must contribute.

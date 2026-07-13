@@ -491,7 +491,7 @@ class RandomAI(ArtificialIntelligence):
 
     Picks one child at random and ticks it each frame; when that child
     reaches US_DONE it re-picks a new random child on the next tick
-    (docs/original_game_reference/gameplay/ai-architecture.md, RandomAI
+    (../STBC-Reverse-Engineering-1/docs/gameplay/ai-architecture.md, RandomAI
     section: "Picks one child at random; on completion, picks another").
     Typically wraps several maneuver children inside a forever-looping
     SequenceAI (sdk/.../AI/Compound/Parts/NoSensorsEvasive.py:47-52,

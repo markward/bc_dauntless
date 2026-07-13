@@ -323,7 +323,7 @@ host loop, no PyBullet.
   [`engine/host_loop.py:1922`](../../../engine/host_loop.py)
   (`_compute_camera`, `_relocate_eye_for_target_lock`).
 - BC binding reference:
-  [`docs/original_game_reference/ui/keyboard-mouse-reference.md`](../../original_game_reference/ui/keyboard-mouse-reference.md)
+  [`docs/ui/keyboard-mouse-reference.md`](../../docs/ui/keyboard-mouse-reference.md)
   § Camera Commands — Tactical Mode.
 - Rotation-matrix convention: [`CLAUDE.md`](../../../CLAUDE.md)
   § "Rotation matrix convention — column-vector, always".

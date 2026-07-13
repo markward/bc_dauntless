@@ -5,7 +5,7 @@ test_combat_skips_powered_down_shields.py — that test exercises the
 IsOn axis (cloak / green alert), this one exercises the IsDisabled /
 IsDestroyed axis (subsystem damage).
 
-BC reference (docs/original_game_reference/gameplay/combat-and-damage.md
+BC reference (docs/gameplay/combat-and-damage.md
 §"Shield bypass paths"): both `shieldClass+0x9C == 0` (powered-down) and
 `FUN_0056C350(...)` (subsystem destroyed) bypass absorption. HP on the
 faces is preserved — only absorption + recharge stop.

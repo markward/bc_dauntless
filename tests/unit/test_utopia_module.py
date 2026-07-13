@@ -13,7 +13,7 @@ def test_friendly_fire_ceilings_default_to_the_engine_values():
     default. A 0 tolerance makes MissionLib:3727's `>= tolerance` game-over
     branch always win, so the warning REPORT (the elif) can never fire and the
     XO stays silent. Both values are decoded from a real BC save taken in E8M1,
-    a mission that sets neither: docs/original_game_reference/engine/
+    a mission that sets neither: docs/engine/
     bcs-save-format.md preamble scalars 1 and 3."""
     fresh = App._UtopiaModule()
     assert fresh.GetMaxFriendlyFire() == 5000.0

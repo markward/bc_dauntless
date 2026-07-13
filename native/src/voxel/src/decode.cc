@@ -1,7 +1,7 @@
 // native/src/voxel/src/decode.cc
 // Decode a NiBinaryVoxelData block's fill field into a VoxelVolume.
 //
-// Fill-field spec (from docs/original_game_reference/engine/nif-voxel-format.md
+// Fill-field spec (from docs/engine/nif-voxel-format.md
 // §"fill-field encoding"):
 //
 //   N = (nx-1)*(ny-1)*(nz-1)          interior node count

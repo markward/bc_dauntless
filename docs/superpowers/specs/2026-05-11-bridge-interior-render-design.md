@@ -440,7 +440,7 @@ loads in
 [SovereignBridge.py:201-223](../../../sdk/Build/scripts/Bridge/SovereignBridge.py#L201-L223)).
 
 **Crew identities** (from
-[docs/original_game_reference/ui/bridge-mode.md:48-57](../../../docs/original_game_reference/ui/bridge-mode.md#L48-L57)):
+[docs/ui/bridge-mode.md:48-57](../../../docs/ui/bridge-mode.md#L48-L57)):
 
 | Station | Default character | Position |
 |---|---|---|

@@ -2,7 +2,7 @@
 //
 // Confirms that the NiBinaryVoxelData header fields parse to the
 // cleanroom-confirmed values for the Galaxy ship vox file.
-// See docs/original_game_reference/engine/nif-voxel-format.md.
+// See docs/engine/nif-voxel-format.md.
 #include <gtest/gtest.h>
 #include <nif/block.h>
 #include <nif/file.h>

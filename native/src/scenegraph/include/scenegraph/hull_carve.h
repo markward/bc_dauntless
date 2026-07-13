@@ -17,7 +17,7 @@ namespace scenegraph {
 // shuttle or a starbase (so a hole is a bigger fraction of a small hull — correct
 // physically). Per-ship scaling is BC's authored `DamageRadMod` multiplier
 // (default 1.0; only the big fixed structures set it), applied by the caller. See
-// docs/original_game_reference/engine/damagetool-and-hull-damage-gaps.md.
+// docs/engine/damagetool-and-hull-damage-gaps.md.
 inline constexpr float kHullCarveStrengthIso       = 150.0f;   // absorbed-hull before geometry starts breaking
 inline constexpr float kHullCarveRadiusAtIso       = 0.03f;    // GU at the iso (emerges small)
 inline constexpr float kHullCarveRadiusPerStrength = 0.0006f;  // GU per strength above iso

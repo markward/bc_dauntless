@@ -379,7 +379,7 @@ renderer, no host loop, no PyBullet.
   [`sdk/Build/scripts/CameraModes.py`](../../../sdk/Build/scripts/CameraModes.py)
   (`ZoomTarget` mode constructor with `Distance=4`, `MinimumDistance=4`,
   `MaximumDistance=20`); manual:
-  [`docs/original_game_reference/ui/keyboard-mouse-reference.md`](../../original_game_reference/ui/keyboard-mouse-reference.md)
+  [`docs/ui/keyboard-mouse-reference.md`](../../docs/ui/keyboard-mouse-reference.md)
   § Camera Commands — Tactical Mode.
 - Rotation-matrix convention: [`CLAUDE.md`](../../../CLAUDE.md)
   § "Rotation matrix convention — column-vector, always".

@@ -35,7 +35,7 @@ NIF_REGISTER_BLOCK(NiBinaryVoxelExtraData, [](Reader& r) -> Block {
 //
 // Cleanroom analysis of all 84 *_vox.nif files in the BC asset corpus
 // confirmed the header is exactly 34 bytes (documented in
-// docs/original_game_reference/engine/nif-voxel-format.md):
+// docs/engine/nif-voxel-format.md):
 //
 //   3 × uint16  grid dimensions (dim_x, dim_y, dim_z)
 //   1 × float   cell edge length (cell_size)
@@ -49,7 +49,7 @@ NIF_REGISTER_BLOCK(NiBinaryVoxelExtraData, [](Reader& r) -> Block {
 // lattice; voxel::from_nif_voxel_data() decodes them from raw_voxel_payload.
 // The planes and bytes2 sub-structures are not parsed here — they are retained
 // in raw_voxel_payload for future consumers. See
-// docs/original_game_reference/engine/nif-voxel-format.md.
+// docs/engine/nif-voxel-format.md.
 //
 // NiBinaryVoxelData is always the last block before the EOF sentinel across
 // the entire corpus. We walk byte-by-byte after the header until the next

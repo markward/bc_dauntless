@@ -15,7 +15,7 @@ It guards the WHOLE chain, which had two independent breaks:
    QuickBattle's warning handler listens for) was unreachable. QuickBattle never
    calls SetMaxFriendlyFire; it relies on the engine default, which a real BC
    save from E8M1 (a mission that sets neither value) pins at 5000.0 /
-   300.0 warning points — docs/original_game_reference/engine/bcs-save-format.md.
+   300.0 warning points — docs/engine/bcs-save-format.md.
 
 Shooting ENEMIES never warns, in BC or here: QuickBattle's friendly group holds
 only the player and ships added on the Friendly side (QuickBattle.py:2778-2782).

@@ -11,7 +11,7 @@
 // while the voxelizer rasterizes surface triangles and handles boundary cells
 // differently. 0.4 is a honest regression floor (well below current ~0.46),
 // NOT a "high agreement" claim. See design spec §4 and
-// docs/original_game_reference/engine/nif-voxel-format.md §5 for context.
+// docs/engine/nif-voxel-format.md §5 for context.
 //
 // Path choice: collect_hull_triangles_from_nif (GL-free NIF walk) rather than
 // assets::build_model + collect_hull_triangles, because build_model requires a

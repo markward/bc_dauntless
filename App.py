@@ -1065,7 +1065,7 @@ class _UtopiaModule:
         # (MissionLib.py SetMaxFriendlyFire; read back as GetFriendlyFireTolerance).
         # 5000.0 is the ENGINE DEFAULT, decoded from a real BC save taken in E8M1
         # — a mission that sets neither this nor the warning points, so the saved
-        # values ARE the defaults (docs/original_game_reference/engine/
+        # values ARE the defaults (docs/engine/
         # bcs-save-format.md, preamble scalars 1 and 3).
         #
         # This default is load-bearing, not cosmetic. MissionLib:3727 reads

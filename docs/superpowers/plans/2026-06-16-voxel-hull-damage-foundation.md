@@ -25,7 +25,7 @@
 - `native/tests/voxel/` — new gtest target `voxel_tests` (`volume_test.cc`, `voxelize_test.cc`, `decode_test.cc`).
 - `native/tests/voxel/CMakeLists.txt` + register in `native/tests/CMakeLists.txt`.
 - `native/tools/voxel_inspect/` — investigation + point-dump CLI.
-- `docs/original_game_reference/engine/nif-voxel-format.md` — **created in Task 6**: the recovered format spec.
+- `docs/engine/nif-voxel-format.md` — **created in Task 6**: the recovered format spec.
 
 ---
 
@@ -577,14 +577,14 @@ git commit -m "feat(voxel): voxelize() orchestrator (bbox -> surface -> solidify
 
 ## Phase B — Decode (reverse-engineering)
 
-> Re-read these tasks' findings doc (`docs/original_game_reference/engine/nif-voxel-format.md`, created in Task 6) before implementing Tasks 7–8. The exact byte offsets / packing are recovered in Task 6 and referenced — not guessed — in 7–8.
+> Re-read these tasks' findings doc (`docs/engine/nif-voxel-format.md`, created in Task 6) before implementing Tasks 7–8. The exact byte offsets / packing are recovered in Task 6 and referenced — not guessed — in 7–8.
 
 ### Task 6: Capture fixture + decode investigation (the format gate)
 
 **Files:**
 - Create: `native/tools/voxel_inspect/main.cc`
 - Create: `native/tools/voxel_inspect/CMakeLists.txt` (+ register in `native/tools/CMakeLists.txt`)
-- Create: `docs/original_game_reference/engine/nif-voxel-format.md` (findings)
+- Create: `docs/engine/nif-voxel-format.md` (findings)
 
 This task is **investigation**, not TDD. It produces (a) a tool that prints candidate parses of a `*_vox.nif`, and (b) a written format spec. Success = a documented layout whose decoded dims/bounds are plausible against the Galaxy hull AABB.
 
@@ -619,12 +619,12 @@ Determine, by inspection across the four files:
 
 - [ ] **Step 4: Write the findings doc**
 
-Write `docs/original_game_reference/engine/nif-voxel-format.md` with: exact field meanings of the 3 shorts + 7 floats, the payload encoding (bit-packed vs RLE) with the precise unpacking procedure, the index/bit order, and the Galaxy's decoded dims/bounds vs. its mesh AABB. This doc is the contract Tasks 7–8 implement.
+Write `docs/engine/nif-voxel-format.md` with: exact field meanings of the 3 shorts + 7 floats, the payload encoding (bit-packed vs RLE) with the precise unpacking procedure, the index/bit order, and the Galaxy's decoded dims/bounds vs. its mesh AABB. This doc is the contract Tasks 7–8 implement.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add native/tools/voxel_inspect native/tools/CMakeLists.txt docs/original_game_reference/engine/nif-voxel-format.md
+git add native/tools/voxel_inspect native/tools/CMakeLists.txt docs/engine/nif-voxel-format.md
 git commit -m "feat(voxel): vox-format inspect tool + recovered format spec"
 ```
 
@@ -742,7 +742,7 @@ Declare in `voxelize.h`:
 namespace nif { struct NiBinaryVoxelData; }
 namespace voxel {
 /// Decode a parsed NiBinaryVoxelData block into a VoxelVolume, following the
-/// layout in docs/original_game_reference/engine/nif-voxel-format.md.
+/// layout in docs/engine/nif-voxel-format.md.
 VoxelVolume from_nif_voxel_data(const nif::NiBinaryVoxelData& vd);
 }
 ```

@@ -19,7 +19,7 @@ clutter) and emits all of a ship's volumes at once.
 `strength` (Gap 2) is accepted for call-shape fidelity but unused here; only the
 sphere position + radius drive a Gap-1 carve.
 
-See docs/original_game_reference/engine/damagetool-and-hull-damage-gaps.md.
+See docs/engine/damagetool-and-hull-damage-gaps.md.
 """
 import engine.dev_mode as dev_mode
 from engine import host_io
