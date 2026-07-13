@@ -53,6 +53,12 @@ void composite();
 void toggle_devtools();
 void reload();
 
+// True while the DevTools window for the overlay browser is open. The host
+// loop freezes the simulation on this so the UI you are inspecting cannot
+// advance out from under you. Tracks the real window, so closing DevTools
+// via its own close button also unfreezes. False if no browser is alive.
+bool devtools_open();
+
 // Execute a JavaScript string in the main frame of the overlay browser.
 // No-op if no browser is alive. Used to drive DOM mutation from Python
 // (e.g. toggling visibility of pause-menu HTML).

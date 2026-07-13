@@ -32,7 +32,8 @@ InstanceId = _h.InstanceId
 _REQUIRED_BINDINGS = frozenset({
     "add_cylinder_region", "add_sphere_region",
     "assemble_officer", "bridge_pass_set_enabled",
-    "cef_composite", "cef_initialize", "cef_pump", "cef_reload", "cef_shutdown",
+    "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
+    "cef_reload", "cef_shutdown",
     "cef_toggle_devtools", "clear_hologram_ship", "clear_subsystem_pins",
     "clear_viewscreen_comm_source", "clear_viewscreen_scene_source",
     "consume_mouse_delta", "create_bridge_instance", "create_comm_instance",
@@ -803,6 +804,11 @@ def cef_shutdown() -> None:
 def cef_toggle_devtools() -> None:
     """Open or close the DevTools window for the overlay browser."""
     _h.cef_toggle_devtools()
+
+
+def cef_devtools_open() -> bool:
+    """True while the overlay browser's DevTools window is open."""
+    return bool(_h.cef_devtools_open())
 
 
 def cef_reload() -> None:
