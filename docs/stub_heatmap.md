@@ -8,10 +8,26 @@ _Regression check: a resolved stub hit again (lastSeenOn > markedResolvedOn) is 
 
 _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell and commit — it moves to Resolved on the next regeneration, and is flagged again if it is ever hit after that date._
 
+> **Not every top hit is a missing feature.** `TorpedoTube.UpdateCharge` and
+> `TorpedoTube.GetMaxCharge` — ranks 1 and 2, ~6.4M hits between them — were
+> **phantoms**, and were resolved on 2026-07-13 by **deletion, not implementation**.
+> Charge is an `EnergyWeapon` concept (`sdk/Build/scripts/App.py:6426-6440`); BC's
+> `TorpedoTube` never had those methods. The hits came entirely from our own code
+> probing a tube for them with `hasattr` — which is **vacuously true** on any
+> subsystem, because `TGObject.__getattr__` returns a truthy `_Stub` (and records a
+> hit) for any missing attribute. `host_loop` then *called* the no-op stub on every
+> tube, every frame. Fixed by dispatching on `isinstance`
+> (`engine/host_loop.py`, `engine/ui/weapons_display_panel.py`).
+>
+> **When triaging this table, first ask whether the SDK actually calls the method
+> on that owner.** If it doesn't, the bug is the caller, not a missing feature — and
+> "implementing" it would be a faithfulness regression. The regression check still
+> applies: reintroduce a `hasattr` probe and these rows light up again.
+
 | rank | owner | attr | total hits | coverage | lastSeenOn | markedResolvedOn |
 |---|---|---|---|---|---|---|
-| 1 | TorpedoTube | UpdateCharge | 4988686 | 11/11 | 2026-07-12 13:20 UTC |  |
-| 2 | TorpedoTube | GetMaxCharge | 1394148 | 7/11 | 2026-07-12 12:57 UTC |  |
+| 1 | TorpedoTube | UpdateCharge | 4988686 | 11/11 | 2026-07-12 13:20 UTC | 2026-07-13 |
+| 2 | TorpedoTube | GetMaxCharge | 1394148 | 7/11 | 2026-07-12 12:57 UTC | 2026-07-13 |
 | 3 | CharacterAction | _clip | 57942 | 9/11 | 2026-07-12 13:20 UTC |  |
 | 4 | Waypoint | IsDying | 23372 | 4/11 | 2026-07-12 13:20 UTC |  |
 | 5 | WeaponHitEvent | GetWeaponType | 16023 | 5/11 | 2026-07-12 12:57 UTC |  |
