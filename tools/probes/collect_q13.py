@@ -31,6 +31,13 @@ STREAMS = {
     "menu":    ("BCProbe_q13_menu",   "q13_constants_menu.txt"),
     "battle":  ("BCProbe_q13_battle", "q13_constants_battle.txt"),
     "methods": ("BCProbe_q13b",       "q13b_method_surface.txt"),
+    # q13c-h: the static ABI surface veins (see 2026-07-13-abi-surface-probe.md)
+    "q13c":    ("BCProbe_q13c",       "q13c_symbol_map.txt"),
+    "q13d":    ("BCProbe_q13d",       "q13d_signatures.txt"),
+    "q13e":    ("BCProbe_q13e",       "q13e_data_members.txt"),
+    "q13f":    ("BCProbe_q13f",       "q13f_globals.txt"),
+    "q13g":    ("BCProbe_q13g",       "q13g_flat_appc.txt"),
+    "q13h":    ("BCProbe_q13h",       "q13h_inheritance.txt"),
 }
 DEFAULT_STREAMS = ("menu", "battle")
 
@@ -61,7 +68,8 @@ def collect_stream(stream: str) -> bool:
         if m:
             declared = int(m.group(1))
             break
-    dump_lines = [ln for ln in lines if ln.startswith("App.")]
+    # dump rows are fully-qualified: "App.<...>" or "Appc.<...>" (q13f/q13g).
+    dump_lines = [ln for ln in lines if ln.startswith("App")]
 
     RESULTS.mkdir(exist_ok=True)
     out = RESULTS / out_name

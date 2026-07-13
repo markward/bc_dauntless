@@ -49,51 +49,73 @@ full-surface dump.
 
 ## Probes
 
-- **`tools/probes/q18a_abi_recon.py`** *(authored)* — tests all six veins on a
-  handful of representative targets (`ShipClass`, `TorpedoTube`, `EnergyWeapon`,
-  `TorpedoAmmoType`, `ObjectClass`, `NiPoint3`; methods `GetHull`, `Fire`,
-  `GetMaxCharge`, `GetName`). Small output, so per-line `print` is fine. Writes
-  `game/BCProbe_q18a.cfg`.
-- **`q18b_signatures.py`** *(planned, GATED on q18a vein 2)* — only worth building
-  if `im_func.__doc__` carries a prototype. Full-surface dump: every method →
-  `Cls_M` symbol + docstring/signature. Print-light (this will be ~36k lines like
-  q13b), chunked-capable, same completeness invariant.
-- **`q18c_members_and_globals.py`** *(planned)* — full dump of the 20 data-member
-  classes (field names + live scalar values where readable) and the complete
-  `dir(Appc.globals)` with scalar values. Certain to yield data regardless of q18a.
+**Recon (optional fast pre-check):**
+- **`tools/probes/q18a_abi_recon.py`** — tests all six veins on a handful of
+  representative targets (`ShipClass`, `TorpedoTube`, `EnergyWeapon`,
+  `TorpedoAmmoType`, `ObjectClass`, `NiPoint3`). ~15 lines of output; run it first
+  to eyeball the **vein-2 signature verdict** before the two heavy per-method
+  dumps. Collect with generic `collect.py q18a`.
 
-## How to run (q18a recon)
+**Full-surface dumps — one per vein (`q13c`–`q13h`):** all print-light + heartbeat;
+`q13c/q13d/q13g` are chunk-capable (`_CHUNK = 1`) for the large ones. Collect each
+with `collect_q13.py <stream>` (handles single-file **and** chunk-merge + the
+`total_dump_lines` completeness check).
+
+| Probe | Vein | Emits | Collect |
+|---|---|---|---|
+| `q13c_symbol_map.py` | 1 | `App.Cls.M -> Cls_M` (C symbol per method) | `collect_q13.py q13c` |
+| `q13d_signatures.py` | 2 | `App.Cls.M = <repr(doc)>` + `methods_with_nonempty_doc` verdict | `collect_q13.py q13d` |
+| `q13e_data_members.py` | 3 | `App.Cls.member = r/w/rw` (the ~20 struct classes) | `collect_q13.py q13e` |
+| `q13f_globals.py` | 4 | `Appc.globals.<name> = <value/type>` | `collect_q13.py q13f` |
+| `q13g_flat_appc.py` | 5 | `Appc.<name> = shared/only <type>` | `collect_q13.py q13g` |
+| `q13h_inheritance.py` | 6 | `App.Cls : Base1, Base2` | `collect_q13.py q13h` |
+
+## How to run (the full batch)
 
 ```
-uv run python tools/probes/push.py q18a          # dev side
+uv run python tools/probes/push.py q13c
+uv run python tools/probes/push.py q13d
+uv run python tools/probes/push.py q13e
+uv run python tools/probes/push.py q13f
+uv run python tools/probes/push.py q13g
+uv run python tools/probes/push.py q13h
 ```
-Then in `stbc.exe -TestMode` at the **main menu**:
+Then in `stbc.exe -TestMode` at the **main menu**, run each (any order; all
+state-invariant):
 ```python
-execfile('q18a_abi_recon.py')
+execfile('q13c_symbol_map.py')
+execfile('q13d_signatures.py')
+execfile('q13e_data_members.py')
+execfile('q13f_globals.py')
+execfile('q13g_flat_appc.py')
+execfile('q13h_inheritance.py')
 ```
-It prints each vein's result and writes the cfg. Collect with the **generic**
-collector (single unnumbered file, no phase suffix):
+Each prints a startup marker, a heartbeat every 100 classes (for the class
+walkers), and `wrote BCProbe_q13X.cfg … / done`. If any prints `save FAILED`, set
+`_CHUNK = 1` at the top of that file and re-run (only `q13c/d/g` need it).
+
+Collect on the dev side:
 ```
-uv run python tools/probes/collect.py q18a       # -> results/q18a_abi_recon.txt
+uv run python tools/probes/collect_q13.py q13c q13d q13e q13f q13g q13h
 ```
 
 ## Expected output / how to read it
 
-- **Vein 2 verdict:** look at the `*.im_func.__doc__ (signature?)` lines. If they
-  contain a C-style prototype (e.g. `GetHull(ShipClass self) -> float` or the raw
-  `float ShipClass_GetHull(ShipClass *)`), **the prize is real** → build q18b. If
-  they are `None` or an empty/generic string, signatures were stripped → skip q18b,
-  and the method surface stays name-only (still valuable via vein 1's symbol map).
-- **Vein 1:** `im_func.__name__` should read `ShipClass_GetHull` etc. — the C
-  symbol map is confirmed the moment these are non-generic.
-- **Veins 3/4/6:** member-name lists, the `Appc.globals` roster, and `__bases__`
-  chains print directly.
-- **Vein 5:** `count_Appc_only` + sample = raw functions the shadow layer hides.
+- **Vein 2 verdict (q13d):** read `methods_with_nonempty_doc` in the inventory.
+  `>0` → SWIG embedded prototypes and the per-method `= '<doc>'` lines are the
+  **typed API reference**. `0` → docstrings were stripped; the method surface
+  stays name-only (still valuable via q13c's symbol map).
+- **Vein 1 (q13c):** the `-> Cls_M` symbols are the Python↔C symbol map for RE.
+- **Veins 3/4/6 (q13e/f/h):** member schemas, the `Appc.globals` roster, and the
+  `__bases__` chains dump directly.
+- **Vein 5 (q13g):** `count_Appc_only` + the `only`-tagged rows are the raw engine
+  functions the shadow layer hides.
 
 ## Cleanup
 
-Delete `game/q18a_abi_recon.py` and `game/BCProbe_q18a.cfg`. The probe scrubs its
-own cfg keys after writing; `Options.cfg` is untouched.
+Delete `game/q18a_abi_recon.py`, `game/q13[c-h]_*.py`, and every
+`game/BCProbe_q18a.cfg` / `game/BCProbe_q13[c-h]*.cfg`. The probes scrub their own
+cfg keys after writing; `Options.cfg` is untouched.
 
 ## Findings
 
