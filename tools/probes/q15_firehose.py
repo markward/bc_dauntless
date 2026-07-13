@@ -220,6 +220,13 @@ def _hex(v):
         return str(v)
 
 
+def _f2(v):
+    try:
+        return "%.2f" % v
+    except:
+        return str(v)
+
+
 def _cmp_count(a, b):
     """Descending by count (Python 1.5 list.sort takes a cmp func)."""
     ca = a[1]["count"]
@@ -242,22 +249,30 @@ def Dump():
     _h.record("armed", _armed)
     _h.record("distinct_types_fired", len(_tallies))
 
-    # fired types, most frequent first
+    # fired types, most frequent first. cfg-SAFE FORMAT (q15 crash lesson):
+    # BC's SaveConfigFile choked on q15's first attempt. Avoid the cfg's
+    # structural chars '|' '[' ']' in values, and keep every line short --
+    # src/dst go on their own keys rather than one 150-char pipe-joined line.
     _h.section("fired events (by count)")
     items = []
     for itype in _tallies.keys():
         items.append((itype, _tallies[itype]))
     items.sort(_cmp_count)
+    idx = 0
     for it in items:
         itype = it[0]
         rec = it[1]
-        _h.emit("%s (%s) | count=%d | t=[%s..%s] | src0=%s | dst0=%s | nsrc=%s ndst=%s"
-                % (_name_of(itype), _hex(itype), rec["count"],
-                   str(rec["first_t"]), str(rec["last_t"]),
-                   rec["first_src"], rec["first_dst"],
+        _h.emit("e%03d = %s %s n=%d tf=%s tl=%s nsrc=%s ndst=%s"
+                % (idx, _name_of(itype), _hex(itype), rec["count"],
+                   _f2(rec["first_t"]), _f2(rec["last_t"]),
                    _card(rec["src_ids"]), _card(rec["dst_ids"])))
+        _h.emit("e%03d.s = %s" % (idx, rec["first_src"]))
+        _h.emit("e%03d.d = %s" % (idx, rec["first_dst"]))
+        idx = idx + 1
 
-    # declared-but-silent types (Q15-4)
+    # declared-but-silent types (Q15-4). CRITICAL: emit in SMALL batches -- a
+    # single string.join over ~300 names is a ~6000-char value, which is what
+    # crashed the cfg writer on the first run. 8 names per line stays short.
     _h.section("never fired (declared but silent this scenario)")
     silent = []
     for nm in _et_names():
@@ -269,7 +284,12 @@ def Dump():
             silent.append(nm)
     silent.sort()
     _h.record("n_never_fired", len(silent))
-    _h.emit(string.join(silent, ", "))
+    _si = 0
+    while _si < len(silent):
+        # 4 per line: ET_ names are long, and 8 could exceed the harness's
+        # 180-char cap and clip a name.
+        _h.emit("silent = " + string.join(silent[_si:_si + 4], ", "))
+        _si = _si + 4
 
     # focus raw log (Q15-5), if any
     if _focus_log:

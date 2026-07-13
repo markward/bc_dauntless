@@ -63,8 +63,17 @@ def echo(msg):
     print msg
 
 
+MAX_LINE = 180        # hard cap on a buffered line's length -- see below
+
 def emit(line):
-    """Buffer a pre-formatted line. BUFFER-ONLY (see the discipline note above)."""
+    """Buffer a pre-formatted line. BUFFER-ONLY (see the discipline note above).
+
+    SAFETY CAP: BC's SaveConfigFile crashes the game on an over-long value --
+    q15 lost a run to a single ~6000-char line (a string.join over ~300 event
+    names). We hard-truncate here so no probe can trip the writer. 180 is well
+    above a normal line (~120 seen in practice) and far below the danger zone."""
+    if len(line) > MAX_LINE:
+        line = line[:MAX_LINE] + "..(cut)"
     _log.append(line)
     if VERBOSE:
         print line
