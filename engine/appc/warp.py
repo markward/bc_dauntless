@@ -196,6 +196,16 @@ class _WarpVfxBeginAction(TGAction):
             MissionLib.RemoveControl()
         except Exception:
             pass
+        # Enter BC's warp FSM. This is the state BC's own scripts read
+        # (WarpSequence.py:638, HelmMenuHandlers.py:2465), and it is what makes
+        # the ship non-collidable for the flight (collisions._collisions_enabled).
+        try:
+            from engine.appc import warp_state
+            from engine.appc.subsystems import WarpEngineSubsystem
+            warp_state.begin_flythrough(self._ship)
+            warp_state.set_state(self._ship, WarpEngineSubsystem.WES_WARP_INITIATED)
+        except Exception:
+            pass
         # Ship motion during warp is driven by the host's _PlayerControl warp
         # speed profile — a ship-level SetSpeed here is inert for the player and
         # is intentionally omitted.
@@ -230,6 +240,13 @@ class _WarpVfxEndAction(TGAction):
                 _vfx_stop()
             except Exception:
                 pass
+        # Leave the warp FSM: the decel tail is done, the ship is back at
+        # impulse, and it becomes collidable again.
+        try:
+            from engine.appc import warp_state
+            warp_state.end_flythrough()
+        except Exception:
+            pass
 
 
 def _module_is_empty(module):
@@ -376,6 +393,13 @@ class _WarpDepartAction(TGAction):
         from engine.appc.sets import SetClass_Create
         src = self._source
         ship = self._ship
+        # Burst: the ship is now at warp.
+        try:
+            from engine.appc import warp_state
+            from engine.appc.subsystems import WarpEngineSubsystem
+            warp_state.set_state(ship, WarpEngineSubsystem.WES_WARPING)
+        except Exception:
+            pass
         # 1. Silence looping weapon SFX on every source-set ship (incl. the
         #    player) before the set is deleted — otherwise a bank firing at the
         #    moment of warp loops on into transit / the new system.
@@ -424,6 +448,17 @@ class _ArriveFinalizeAction(TGAction):
     def _do_play(self):
         import App
         src = self._source
+        # Arrival: the exit-decel glide starts now, so the ship is dewarping —
+        # still non-collidable until the animator finishes and _WarpVfxEndAction
+        # clears the state. On the hard-cut path there is no flythrough ship
+        # registered, so this correctly stays a no-op.
+        try:
+            from engine.appc import warp_state
+            from engine.appc.subsystems import WarpEngineSubsystem
+            if self._ship is not None and warp_state.flythrough_ship() is self._ship:
+                warp_state.set_state(self._ship, WarpEngineSubsystem.WES_DEWARP_ENDING)
+        except Exception:
+            pass
         # Silence looping weapon SFX before we leave: the warping ship (which
         # has already moved to the destination) plus every ship left behind in
         # the source set (about to be torn down). Otherwise a phaser fired at
