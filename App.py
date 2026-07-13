@@ -1061,13 +1061,24 @@ class _UtopiaModule:
         # ("Friendly Fire") fire when this exceeds a threshold; SDK clears it
         # to 0 between missions.  Float (damage units), default 0.
         self._friendly_fire = 0.0
-        # Maximum permitted friendly-fire accumulation before triggering the
-        # full reaction (MissionLib.py SetMaxFriendlyFire).  Default 0 = engine
-        # default which scripts override per-mission.
-        self._friendly_fire_max = 0.0
+        # Maximum permitted friendly-fire accumulation before the full reaction
+        # (MissionLib.py SetMaxFriendlyFire; read back as GetFriendlyFireTolerance).
+        # 5000.0 is the ENGINE DEFAULT, decoded from a real BC save taken in E8M1
+        # — a mission that sets neither this nor the warning points, so the saved
+        # values ARE the defaults (docs/original_game_reference/engine/
+        # bcs-save-format.md, preamble scalars 1 and 3).
+        #
+        # This default is load-bearing, not cosmetic. MissionLib:3727 reads
+        #     if total >= tolerance: GAME_OVER  elif <crossed a warning>: REPORT
+        # so a 0 tolerance makes the first branch always win and the REPORT
+        # unreachable — which silently killed the XO's friendly-fire warning in
+        # QuickBattle (it sets warning points but never a tolerance).
+        self._friendly_fire_max = 5000.0
         # Threshold below the max that triggers the warning ("watch your fire")
         # rather than the full violation (MissionLib.py SetFriendlyFireWarningPoints).
-        self._friendly_fire_warning_points = 0.0
+        # 300.0 is the engine default from the same save; QuickBattle.py:770
+        # setting exactly 300 corroborates it.
+        self._friendly_fire_warning_points = 300.0
         # Tractor-time accumulator: seconds the player has held a friendly
         # ship in tractor (MissionLib.py:3870-3873).  Triggers warnings when
         # held too long.  Float (seconds), default 0.
