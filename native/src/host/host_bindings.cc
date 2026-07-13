@@ -48,6 +48,7 @@
 #include <renderer/subsystem_pin_pass.h>
 #include <renderer/debug_volume_pass.h>
 #include <renderer/target_reticle_pass.h>
+#include <renderer/letterbox_pass.h>
 #include <renderer/bridge_pass.h>
 #include <renderer/viewscreen_static_pass.h>
 #include <renderer/hdr_target.h>
@@ -552,6 +553,13 @@ void shutdown() {
     g_bridge_ambient_scale = 1.0f;
     g_bridge_pass_enabled = false;
     g_viewscreen_enabled = false;
+    // g_covered (native/src/renderer/letterbox_pass.cc) is a TU-static, not
+    // owned by this file, but it is re-established from Python state every
+    // frame by _pump_letterbox before r.frame() runs (see the comment on
+    // g_covered itself) -- zero it defensively anyway for symmetry with the
+    // other flag resets above, in case a future caller ever reads
+    // renderer::letterbox::covered() between shutdown() and the next init().
+    renderer::letterbox::set_covered(0.0f);
 }
 
 bool should_close() {
@@ -995,6 +1003,23 @@ void frame() {
             if (!last) { cur_tex = targets[dst_idx]->color_texture(); dst_idx ^= 1; }
         }
     }
+
+    // Cutscene letterbox — the final image is now in FBO 0 whether or not the
+    // post chain ran. Draw the bars over the scene but BEFORE the CEF
+    // composite below, so every UI element (subtitles, crew menus, info boxes,
+    // pause menu) lands on top of them. No-op outside a cutscene.
+    //
+    // Skipped in viewer_mode: the Ship Property Viewer owns the whole frame
+    // (it already skips the space scene AND the bridge pass above), and the
+    // bars are scene framing, not a UI overlay -- the SPV can be opened from
+    // the pause menu mid-cutscene (ESC freezes _player_dt at 0, which holds
+    // the animator's last value), and without this gate the frozen bars sit
+    // over the hologram and its subsystem pins. This is NOT the same as the
+    // "unconditional, not view-gated" rule from the design spec, which is
+    // about bridge-vs-exterior view (BC letterboxes bridge cutscenes too,
+    // and that must keep working) -- viewer_mode isn't a view, it's a
+    // separate full-frame override that pre-empts the space scene entirely.
+    if (!viewer_mode) renderer::letterbox::draw(fw, fh);
 
     // Cache this exterior frame's view-projection for next frame's motion blur.
     // Non-exterior frames invalidate it so re-entering the exterior view skips
@@ -2463,6 +2488,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("enabled"),
           "Toggle the space-dust pass at runtime. Default: on.");
+
+    m.def("letterbox_set",
+          [](float covered) { renderer::letterbox::set_covered(covered); },
+          py::arg("covered"),
+          "Set the cutscene letterbox TOTAL covered fraction (BC's "
+          "fCoveredArea; 0.125 => 6.25% per bar). Clamped to [0, 1]. The bars "
+          "draw over the 3D scene and under the whole CEF overlay.");
 
     m.def("specular_set_enabled",
           [](bool enabled) { dauntless_specular::set_enabled(enabled); },

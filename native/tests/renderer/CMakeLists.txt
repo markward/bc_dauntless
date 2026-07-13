@@ -11,6 +11,7 @@ add_executable(renderer_tests
     backdrop_pass_test.cc
     sun_pass_test.cc
     dust_pass_test.cc
+    letterbox_pass_test.cc
     aabb_test.cc
     bone_palette_test.cc
     pose_sampler_test.cc
