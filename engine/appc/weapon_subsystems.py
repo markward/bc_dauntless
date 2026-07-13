@@ -604,8 +604,20 @@ class Weapon(ShipSubsystem):
 
     def FireDumb(self, iReserved=0, iForce=1) -> None:
         """SDK AI/Preprocessors.py:458 — `pTube.FireDumb(0, 1)`.  Unguided shot,
-        no target.  The AI never checks CanFire() first, so this must be a silent
-        no-op when the weapon is not ready."""
+        no target.
+
+        The AI calls this WITHOUT checking CanFire() first, so it must be a
+        silent no-op when the weapon is NOT READY.  That contract is met by the
+        implementing subclass: TorpedoTube.Fire returns early on `not CanFire()`.
+
+        Deliberately NOT gated on CanFire() here.  Doing so would make a subclass
+        that has not implemented Fire() silently do nothing forever, instead of
+        raising NotImplementedError — trading a loud programming error for the
+        silent-failure pattern this engine is riddled with.  "Not ready" is a
+        runtime state and must no-op; "not implemented" is a bug and must shout.
+
+        iReserved/iForce are kept for SDK signature compatibility and unused.
+        """
         self.Fire(target=None, offset=None)
 
     def CalculateRoughDirection(self) -> TGPoint3:
@@ -1828,17 +1840,29 @@ class TorpedoTube(Weapon):
 
     def GetNumReady(self) -> int:                   return self._num_ready
 
-    def SetNumReady(self, v) -> None:
-        self._num_ready = int(v)
+    def _clamp_num_ready(self, v) -> None:
+        """_num_ready must never exceed MaxReady, or fall below zero.
+
+        These three setters are real SDK surface (App.py:6018-6020), so a
+        mission can drive them directly.  Unclamped, _num_ready ran ahead of the
+        slot array and _sync_slots_to_num_ready only clamped its own TARGET, not
+        the field — so a 1-slot tube told SetNumReady(5) would launch FOUR
+        torpedoes (Fire kept decrementing and spawning while
+        _start_slot_cooldown found no loaded slot and silently no-op'd), and
+        then never reload again (UpdateReload's `num_ready >= max_ready` guard
+        held forever).  Neither failure raised.
+        """
+        self._num_ready = max(0, min(int(v), int(self._max_ready)))
         self._sync_slots_to_num_ready()
+
+    def SetNumReady(self, v) -> None:
+        self._clamp_num_ready(v)
 
     def IncNumReady(self) -> None:
-        self._num_ready += 1
-        self._sync_slots_to_num_ready()
+        self._clamp_num_ready(self._num_ready + 1)
 
     def DecNumReady(self) -> None:
-        self._num_ready -= 1
-        self._sync_slots_to_num_ready()
+        self._clamp_num_ready(self._num_ready - 1)
 
     def GetLastFireTime(self) -> float:             return self._last_fire_time
     def SetLastFireTime(self, v) -> None:           self._last_fire_time = float(v)
@@ -1940,15 +1964,8 @@ class TorpedoTube(Weapon):
         _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor(),
                           spread_unit=spread_unit, homing_delay=homing_delay)
 
-    def FireDumb(self, iReserved=0, iForce=1) -> None:
-        """SDK Preprocessors.py:458 — `pTube.FireDumb(0, 1)` in the
-        dumb-fire path. Routes through the regular Fire() so the
-        ET_WEAPON_HIT combat broadcast still fires.
-
-        iReserved/iForce kept for SDK signature compatibility; the
-        target/offset come from upstream FireScript state in Phase 1.
-        """
-        self.Fire(target=None, offset=None)
+    # FireDumb is inherited from Weapon — it was a byte-identical duplicate here,
+    # and keeping the override would have skipped the base's new CanFire() gate.
 
     def UpdateReload(self, dt: float = 0.0) -> None:
         """Poll each cooling slot; reload one when ReloadDelay of GAME time has passed.
@@ -1969,7 +1986,14 @@ class TorpedoTube(Weapon):
         parent = self.GetParentSubsystem()
         factor = (parent.GetNormalPowerPercentage()
                   if parent is not None else 1.0)
-        if factor <= 0.0:
+        # isinstance FIRST: `factor <= 0.0` cannot see a _Stub. TGObject.
+        # __getattr__ hands back a truthy _Stub for a missing method, and
+        # _Stub.__le__ returns False — so the guard did not fire, execution
+        # reached the division, and `40.0 / _Stub` is 0.0 (__rtruediv__). A zero
+        # delay makes `now - slot >= delay` true for every slot, so the tube
+        # reloaded EVERY FRAME. The guard's intent ("no power => no reload")
+        # was inverted into infinite ammo, silently.
+        if not isinstance(factor, (int, float)) or factor <= 0.0:
             return
         delay = self._reload_delay / factor
         now = _game_time()
