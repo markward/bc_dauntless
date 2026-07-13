@@ -9,6 +9,17 @@ ET_KEYBOARD_EVENT: int = 0x1000
 ET_WEAPON_HIT:     int = 0x1100  # reserved range above input-event ids
 ET_WARP_BUTTON_PRESSED: int = 0x1200   # warp button activated (synthesized from CEF Set Course)
 
+# Torpedo tube reloaded one round.  Destination = the TUBE
+# (Conditions/ConditionTorpsReady.py:140,169).  Value is from our own private
+# block -- App.py:762 declares our event ids "arbitrary but stable" and nothing
+# interoperates with BC's numbering.  0x1321 is the current high water mark.
+#
+# NOTE: ET_TORPEDO_FIRED is deliberately NOT defined here.  It is blocked on
+# probe q12 (docs/instrumented_experiments/2026-07-12-torpedo-event-probe.md):
+# Episode7.TorpedoFired destroys the event's GetDestination() subsystem on a 10%
+# roll, and nobody has RE'd the torpedo projectile path that posts it.
+ET_TORPEDO_RELOAD: int = 0x1322
+
 # SPACE-bar bridge/tactical toggle. Value must stay in sync with the SDK's
 # event id; App.py re-exports this name (missions reference it as
 # App.ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL when registering

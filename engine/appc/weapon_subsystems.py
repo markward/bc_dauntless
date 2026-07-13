@@ -2002,6 +2002,28 @@ class TorpedoTube(Weapon):
             return
         self._reload_timers[oldest_i] = _SLOT_LOADED
         self._num_ready += 1
+        self._broadcast_reload()
+
+    def _broadcast_reload(self) -> None:
+        """Post ET_TORPEDO_RELOAD with the TUBE as Destination.
+
+        Destination is load-bearing: ConditionTorpsReady.py:140 registers with a
+        tube destination-filter, and :169 casts GetDestination() to a TorpedoTube.
+
+        Source = the parent TorpedoSystem. This is a CHOICE, not a finding -- no
+        SDK script reads GetSource() on a reload event and the decompile does not
+        say. Probe q12 will confirm or correct it.
+        """
+        import App
+        from engine import dev_mode
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_TORPEDO_RELOAD)
+            evt.SetDestination(self)
+            evt.SetSource(self.GetParentSubsystem())
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("ET_TORPEDO_RELOAD broadcast", _e)
 
     def UnloadTorpedo(self) -> None:
         """Remove one ready round; its slot goes back into cooldown.
