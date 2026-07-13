@@ -1,9 +1,11 @@
 # Engine constant dump — ground-truth values for every `App` constant
 
-Status: PENDING
+Status: ANSWERED — menu + battle phases captured & analyzed 2026-07-13. Surface
+        confirmed state-invariant. Shim fix pass (226 wrong + ~1600 unique
+        missing) is the remaining follow-up work, tracked separately.
 Author: Claude session (q13 constant-surface probe plan)
 Created: 2026-07-13
-Closed:  —
+Closed:  2026-07-13
 
 ## Goal
 
@@ -385,4 +387,69 @@ game file.
 
 ## Findings
 
-(To be filled in when the probe runs.)
+### Menu phase — captured 2026-07-13 (`results/q13_constants_menu.txt`)
+
+The single-file write handled the full section cleanly (232 KB, 4156 lines,
+**no truncation** — collector reported `3831/3831 rows (complete)`), so chunked
+mode was not needed. The probe ran for a few minutes with **no console output
+until the end** (it gathers everything before printing); the game window looks
+frozen throughout because the dump runs on the single game-loop thread. Not a
+hang — just slow and silent. (A future revision should print progress markers
+and cut per-line console spam.)
+
+**Q13-3 inventory (menu):** `dir(App)` = 2681 names → 1319 module scalars,
+2512 class scalars across 630 classes, 128 instances, 604 others.
+`total_dump_lines = 3831`.
+
+**Q13-1/Q13-2 — analyzer buckets vs. our shim** (`analyze_q13_constants.py`,
+735 shim constants): `wrong=226  missing=3298  live=1  extra=202`.
+
+Headline results:
+
+- **`CharacterClass` state constants are BITFLAGS; our shim made them
+  sequential.** `CS_TURNED=4, CS_UI_DISABLED=8, CS_HIDDEN=16, … CS_UI_ENABLED=2048`
+  are consecutive powers of two meant to be OR'd/masked, and
+  `CS_STOP_INITIATIVE=4056` is a composite mask. Our shim's `3,4,5,…` breaks any
+  bitwise character-state logic. `CAT_*` has the **inverse** error (we used
+  bitflags; engine is sequential 0–6). `CSP_MISSION_CRITICAL`/`CSP_SPONTANEOUS`
+  are **swapped** (engine 0 / 2, shim 2 / 0).
+- **Every `ET_*` value is wrong.** Engine events live in the `0x800000+` band
+  (base 8388608), e.g. `ET_AI_TIMER=8388640` (shim `100`),
+  `ET_DELETE_OBJECT_PUBLIC=1` (shim `200`). Incidentally answers q12:
+  `ET_TORPEDO_FIRED=8388710`, `ET_WEAPON_FIRED=8388732`.
+- **Bucket 3 (live-hit, the payoff):** `WeaponHitEvent.TRACTOR_BEAM=2` — 16,023
+  recorded stub hits (heatmap rank #6), currently stubbed. High-priority fix.
+
+Read-correctly caveats:
+- `missing=3298` is **inflated by SWIG `*Ptr` twins** — every `App.Foo.BAR` also
+  appears as `App.FooPtr.BAR`. Unique count is roughly half; the fix pass should
+  dedupe on the non-`Ptr` class.
+- `live=1` is **expected**: the heatmap's high-hit rows are mostly *methods*
+  (`UpdateCharge`, `GetMaxCharge`), which are not constants, so only
+  constant-shaped stubs can match.
+- `extra=202` (shim defines, engine dump lacks) does **not** shrink in the battle
+  phase (see Q13-4 below), so these are genuinely shim-invented — our fabricated
+  `ET_*` (e.g. `ET_SET_PLAYER`, `ET_EXITED_SET`, `ET_OBJECT_GROUP_*`) and other
+  shim-only additions that have no engine counterpart. When replacing shim values
+  with real ones, drop / re-home these rather than assign them fake values.
+
+### Battle phase — Q13-4 (state-invariance): ANSWERED — surface is invariant
+
+Battle dump (`results/q13_constants_battle.txt`) = 3832 constants, clean, no
+truncation. Diff against the menu dump (3831):
+
+- **Zero value changes. Zero constants dropped.**
+- **Exactly one name added in battle: `App.iNumFires = 0`** — and it is **not an
+  engine constant.** `sdk/Build/scripts/Bridge/BridgeMenus.py:22` does
+  `App.iNumFires = 0`, an SDK script hanging a global fire-counter onto the `App`
+  module namespace; it appears only because the bridge ran during the battle.
+
+Conclusions:
+
+- The engine constant surface is **state-invariant**. The
+  runtime-registered-event-type hypothesis (Q13-4's motivation — our shim's
+  dynamic `Game_GetNextEventType()` allocator) is **disproven**: every `ET_*` is
+  compiled-in and already present at the boot menu.
+- **`menu` is the canonical dump** — it is the real engine surface without the
+  `iNumFires` script-noise. Use `results/q13_constants_menu.txt` for the shim fix
+  pass. (Any future static-surface probe can dump in a single state.)
