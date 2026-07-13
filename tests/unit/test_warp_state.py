@@ -96,3 +96,54 @@ def test_reset_drops_the_flythrough_registration():
     warp_state.begin_flythrough(s)
     warp_state.reset()
     assert warp_state.flythrough_ship() is None
+
+
+def test_a_second_flythrough_registration_does_not_orphan_the_first_ship():
+    # C-1: a single global _flythrough_ship meant registering a second ship
+    # (e.g. an NPC warping out mid-align) silently overwrote the first
+    # registration. When the animator later stops, sync_flythrough could only
+    # ever release the MOST RECENT registrant — leaving the first ship's warp
+    # state stuck non-WES_NOT_WARPING forever (permanently non-collidable).
+    player = _ship_with_warp("player")
+    npc = _ship_with_warp("npc")
+
+    warp_state.begin_flythrough(player)
+    warp_state.set_state(player, WarpEngineSubsystem.WES_WARP_INITIATED)
+
+    warp_state.begin_flythrough(npc)
+    warp_state.set_state(npc, WarpEngineSubsystem.WES_WARPING)
+
+    warp_state.sync_flythrough(False)   # animator stops: both must release
+
+    assert warp_state.get_state(player) == WarpEngineSubsystem.WES_NOT_WARPING
+    assert warp_state.get_state(npc) == WarpEngineSubsystem.WES_NOT_WARPING
+    assert warp_state.is_ship_warping(player) is False
+    assert warp_state.is_ship_warping(npc) is False
+
+
+def test_is_flythrough_tracks_registration_of_a_specific_ship():
+    player = _ship_with_warp("player")
+    npc = _ship_with_warp("npc")
+    warp_state.begin_flythrough(player)
+    warp_state.begin_flythrough(npc)
+    assert warp_state.is_flythrough(player) is True
+    assert warp_state.is_flythrough(npc) is True
+    warp_state.end_flythrough(npc)
+    assert warp_state.is_flythrough(npc) is False
+    assert warp_state.is_flythrough(player) is True
+
+
+def test_end_flythrough_with_a_specific_ship_releases_only_that_ship():
+    player = _ship_with_warp("player")
+    npc = _ship_with_warp("npc")
+    warp_state.begin_flythrough(player)
+    warp_state.set_state(player, WarpEngineSubsystem.WES_WARPING)
+    warp_state.begin_flythrough(npc)
+    warp_state.set_state(npc, WarpEngineSubsystem.WES_WARPING)
+
+    warp_state.end_flythrough(npc)
+
+    assert warp_state.get_state(npc) == WarpEngineSubsystem.WES_NOT_WARPING
+    assert warp_state.get_state(player) == WarpEngineSubsystem.WES_WARPING
+    assert warp_state.is_flythrough(npc) is False
+    assert warp_state.is_flythrough(player) is True

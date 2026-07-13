@@ -232,7 +232,17 @@ class _WarpVfxEndAction(TGAction):
     """Defensive late-stop for the WarpVFX manager. The manager self-deactivates
     after its post-arrival decel tail (the host drives the speed glide-down to 0
     over those final seconds); this action is scheduled to fire just after the
-    tail as a belt-and-suspenders stop. Fail-open."""
+    tail as a belt-and-suspenders stop. Fail-open.
+
+    Takes the ship this sequence belongs to and releases only THAT ship's
+    flythrough registration — the registry can hold more than one ship at
+    once (e.g. an NPC warping out mid-align alongside the player), and
+    releasing everyone here would clear a still-in-flight ship's state early.
+    """
+
+    def __init__(self, ship):
+        super().__init__()
+        self._ship = ship
 
     def _do_play(self):
         if _vfx_stop is not None:
@@ -244,7 +254,7 @@ class _WarpVfxEndAction(TGAction):
         # impulse, and it becomes collidable again.
         try:
             from engine.appc import warp_state
-            warp_state.end_flythrough()
+            warp_state.end_flythrough(self._ship)
         except Exception:
             pass
 
@@ -455,7 +465,7 @@ class _ArriveFinalizeAction(TGAction):
         try:
             from engine.appc import warp_state
             from engine.appc.subsystems import WarpEngineSubsystem
-            if self._ship is not None and warp_state.flythrough_ship() is self._ship:
+            if self._ship is not None and warp_state.is_flythrough(self._ship):
                 warp_state.set_state(self._ship, WarpEngineSubsystem.WES_DEWARP_ENDING)
         except Exception:
             pass
@@ -562,7 +572,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # glide the ship from in-system warp speed down to 0; schedule the
         # defensive stop just past that tail (the manager also self-deactivates).
         from engine.warp_vfx import _T_EXIT_DECEL
-        seq.AppendAction(_WarpVfxEndAction(), _T_EXIT_DECEL + 0.5)
+        seq.AppendAction(_WarpVfxEndAction(ship), _T_EXIT_DECEL + 0.5)
         return seq
 
     # Falsy destination => no set change/placement/teardown: the whole warp

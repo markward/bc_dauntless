@@ -75,7 +75,7 @@ def test_vfx_end_action_clears_the_warp_state():
     player = _player_in_set()
     warp_state.begin_flythrough(player)
     warp_state.set_state(player, WES.WES_DEWARP_ENDING)
-    warp._WarpVfxEndAction()._do_play()
+    warp._WarpVfxEndAction(player)._do_play()
     assert warp_state.get_state(player) == WES.WES_NOT_WARPING
     assert warp_state.flythrough_ship() is None
 
@@ -88,3 +88,28 @@ def test_hard_cut_path_never_marks_the_ship_warping():
     warp.WarpSequence_Create(player, "FakeSys.D", placement="Player Start").Play()
     assert warp_state.get_state(player) == WES.WES_NOT_WARPING
     assert warp_state.flythrough_ship() is None
+
+
+def test_vfx_end_action_for_one_ship_does_not_release_a_second_in_flight_ship():
+    # C-1 reproduced at the warp.py level: WarpSequence_Create takes the
+    # flythrough branch for ANY ship (no player check), so an NPC's own
+    # flythrough can be registered while the player's is still mid-flight.
+    # _WarpVfxEndAction must release only the ship its own sequence belongs
+    # to — not clobber (nor be blocked by) an unrelated ship still in transit.
+    player = _player_in_set()
+    npc = App.ShipClass_Create()
+    npc.SetName("npc")
+    npc.SetWarpEngineSubsystem(WES("Warp Engines"))
+
+    warp_state.begin_flythrough(player)
+    warp_state.set_state(player, WES.WES_WARP_INITIATED)
+    warp_state.begin_flythrough(npc)
+    warp_state.set_state(npc, WES.WES_WARPING)
+
+    warp._WarpVfxEndAction(npc)._do_play()
+
+    assert warp_state.get_state(npc) == WES.WES_NOT_WARPING
+    assert warp_state.is_flythrough(npc) is False
+    # The player's own flythrough must be untouched.
+    assert warp_state.get_state(player) == WES.WES_WARP_INITIATED
+    assert warp_state.is_flythrough(player) is True
