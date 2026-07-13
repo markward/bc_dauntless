@@ -222,13 +222,24 @@ def _validate_event_type(event_type, where: str) -> bool:
     """
     if isinstance(event_type, int):
         return True
-    name = str(getattr(event_type, "_name", None) or repr(event_type))
+    # Read the INSTANCE __dict__ directly -- never `getattr(event_type, ...)`
+    # for a stub-carried name. Both stub hierarchies vend a fresh truthy stub
+    # from __getattr__ for ANY missing attribute (including a wrong guess at
+    # the name field), so a `getattr(...) or repr(...)` fallback never reaches
+    # `repr`: App._NamedStub stores the name at `_name`; engine.core.ids._Stub
+    # stores it at `_stub_name` (no `_name` at all) -- guessing `_name` on the
+    # latter silently vends another stub, whose default object.__repr__ embeds
+    # the object id, so the "once per name" guard below keys on id() and never
+    # collapses (unbounded warnings + telemetry rows keyed on garbage ids).
+    d = getattr(event_type, "__dict__", {})
+    name = d.get("_name") or d.get("_stub_name") or repr(event_type)
     stub_telemetry.record_attr("EventType", name)
     if name not in _warned_event_types:
         _warned_event_types.add(name)
         print(
             "WARNING: %s registered on undefined event type %s -- this handler "
-            "can never fire. Define it in engine/appc/events.py."
+            "may never fire unless the same object is reused as the dispatch "
+            "key. Define it in engine/appc/events.py."
             % (where, name),
             file=sys.stderr,
         )
