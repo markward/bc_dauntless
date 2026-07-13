@@ -26,6 +26,7 @@ from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
 from engine.ui.reticle_text import build_reticle_text, _ReticleCam
+from engine.ui.letterbox import LetterboxAnimator
 
 import math as _math
 
@@ -1809,6 +1810,27 @@ def _pump_bridge_doors(cutscene, renderer, *, paused: bool) -> None:
         return
     import App as _App
     cutscene._update_doors(renderer, _App.g_kAnimationManager)
+
+
+def _pump_letterbox(renderer, animator, dt: float) -> float:
+    """Drive the GL cutscene letterbox from TopWindow's cutscene state.
+
+    The bars are a renderer pass, not CEF DOM, so the whole UI overlay draws on
+    top of them by construction (they used to be a z-index:5 div that swallowed
+    every HUD root without a z-index of its own — that is how E1M1's XO menu
+    went invisible). Nothing else animates them now, so the ease lives in
+    LetterboxAnimator and is ticked here.
+
+    Unconditional — NOT view-gated. BC letterboxes bridge cutscenes as well as
+    exterior ones. `dt` is _player_dt, which is 0 while the sim is frozen, so
+    the bars hold still under the pause menu instead of sliding on wall-clock.
+
+    Spec: docs/superpowers/specs/2026-07-13-letterbox-renderer-pass-design.md
+    """
+    from engine.appc.top_window import TopWindow_GetTopWindow
+    covered = animator.update(dt, TopWindow_GetTopWindow().letterbox_snapshot())
+    renderer.letterbox_set(covered)
+    return covered
 
 
 def _devtools_frozen(h) -> bool:
@@ -5588,6 +5610,7 @@ def run(mission_name: Optional[str] = None,
         from engine.appc.sdk_mirror_panel import SDKMirrorPanel
         sdk_mirror = SDKMirrorPanel()
         registry.register(sdk_mirror)
+        _letterbox_anim = LetterboxAnimator()
         from engine.ui.setting_course_panel import SettingCoursePanel
         setting_course_panel = SettingCoursePanel(on_course_set=on_course_set)
         from engine.ui.crew_menu_panel import CrewMenuPanel
@@ -6041,6 +6064,7 @@ def run(mission_name: Optional[str] = None,
                     idle_gestures.reset()
                     node_anim.reset(renderer=r)
                     lip_runtime.clear()
+                    _letterbox_anim.reset()
                 controller._drain_pending_swap()
                 if had_pending_swap:
                     director.snap()
@@ -6841,6 +6865,8 @@ def run(mission_name: Optional[str] = None,
             r.set_lens_flares(lens_flares)
 
             _push_cloak_refraction(r, session, player)
+
+            _pump_letterbox(r, _letterbox_anim, _player_dt)
 
             if verbose and ticks == 0:
                 print(f"[host_loop] tick 0 camera eye={eye} target={target}", flush=True)
