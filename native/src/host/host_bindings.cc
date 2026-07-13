@@ -3267,6 +3267,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           []() { dauntless::ui_cef::toggle_devtools(); },
           "Open or close the DevTools window for the overlay browser.");
 
+    m.def("cef_devtools_open",
+          []() { return dauntless::ui_cef::devtools_open(); },
+          "True while the overlay browser's DevTools window is open. The host "
+          "loop freezes the simulation on this.");
+
     m.def("cef_reload",
           []() { dauntless::ui_cef::reload(); },
           "Reload the overlay browser's current document.");
@@ -3357,6 +3362,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("cef_composite",       []() {});
     m.def("cef_shutdown",        []() {});
     m.def("cef_toggle_devtools", []() {});
+    m.def("cef_devtools_open",   []() { return false; });
     m.def("cef_reload",          []() {});
     m.def("cef_execute_javascript", [](const std::string&) {});
     m.def("cef_send_mouse_move",  [](int, int) {});

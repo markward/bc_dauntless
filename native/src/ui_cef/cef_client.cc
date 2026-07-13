@@ -36,12 +36,16 @@ bool DauntlessCefClient::GetScreenInfo(CefRefPtr<CefBrowser> /*browser*/,
     return true;
 }
 
-void DauntlessCefClient::OnPaint(CefRefPtr<CefBrowser> /*browser*/,
+void DauntlessCefClient::OnPaint(CefRefPtr<CefBrowser> browser,
                                   PaintElementType type,
                                   const RectList& /*dirtyRects*/,
                                   const void* buffer,
                                   int width, int height) {
     if (type != PET_VIEW) return;
+    // Only the OSR overlay may write the bitmap the composite pass blits.
+    // ShowDevTools shares this client, so a windowless DevTools browser would
+    // otherwise paint its own page over the game's UI.
+    if (browser_ && !browser->IsSame(browser_)) return;
     const size_t bytes = static_cast<size_t>(width) * height * 4;
     if (bitmap_.size() != bytes) bitmap_.resize(bytes);
     std::memcpy(bitmap_.data(), buffer, bytes);
@@ -54,11 +58,19 @@ void DauntlessCefClient::OnPaint(CefRefPtr<CefBrowser> /*browser*/,
 }
 
 void DauntlessCefClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
-    browser_ = browser;
+    // toggle_devtools() passes THIS client to ShowDevTools, so CEF routes the
+    // DevTools browser's lifespan through here too. Latch only the first
+    // browser — the OSR overlay. Storing the DevTools browser instead would
+    // silently redirect execute_javascript() / reload() / mouse / resize at
+    // the DevTools page: every Python UI push then lands in a devtools://
+    // frame as "setReticleText is not defined".
+    if (!browser_) browser_ = browser;
 }
 
-void DauntlessCefClient::OnBeforeClose(CefRefPtr<CefBrowser> /*browser*/) {
-    browser_ = nullptr;
+void DauntlessCefClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
+    // Same reason: closing the DevTools window must not drop the handle to
+    // the still-live OSR overlay (which would kill the UI until restart).
+    if (browser_ && browser->IsSame(browser_)) browser_ = nullptr;
 }
 
 bool DauntlessCefClient::OnConsoleMessage(CefRefPtr<CefBrowser> /*browser*/,
@@ -94,9 +106,14 @@ void DauntlessCefClient::set_load_end_handler(std::function<void()> handler) {
     load_end_handler_ = std::move(handler);
 }
 
-void DauntlessCefClient::OnLoadEnd(CefRefPtr<CefBrowser> /*browser*/,
+void DauntlessCefClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
                                    CefRefPtr<CefFrame> frame,
                                    int /*httpStatusCode*/) {
+    // The DevTools page shares this client and loads its own main frame. Its
+    // load is not our page's load: firing load_end_handler_ for it would make
+    // the host treat the overlay as freshly reloaded (dropping every panel
+    // snapshot cache and re-pushing the dev flag) on every F12.
+    if (browser_ && !browser->IsSame(browser_)) return;
     if (frame && frame->IsMain() && load_end_handler_) {
         load_end_handler_();
     }
