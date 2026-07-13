@@ -1,0 +1,37 @@
+-- provenance --------------------------------------------------
+scenario = B (mission, set=bridge)
+set_name = bridge
+game_time = 11.138671875
+frame = 3538
+roster_ships = 0
+roster_scanned = 11
+-- bridge set --------------------------------------------------
+bridge_set = present
+n_bridge_objects = 11
+b000 = Character name='Tactical' objid=5872
+b001 = Character name='Helm' objid=5877
+b002 = Character name='XO' objid=5881
+b003 = Character name='Science' objid=5885
+b004 = Character name='Engineer' objid=5889
+b005 = Character name='FemaleExtra1' objid=5894
+b006 = Character name='FemaleExtra2' objid=5899
+b007 = Character name='FemaleExtra3' objid=5904
+b008 = name='viewscreen' objid=5909
+b009 = BridgeObject name='bridge' objid=5912
+b010 = Character name='Picard' objid=6101
+-- officers (by station) ---------------------------------------
+Helm = Kiska
+Tactical = Felix
+Science = Miguel
+Engineer = Brex
+XO = Saffi
+-- character node recon ----------------------------------------
+recon_char = Kiska
+GetRootNode = None/absent
+GetAnimNode = present repr=<C TGAnimNode instance at _d2ac218_p_TGAnimNode>
+GetAnimNode.dir = this, thisown
+GetAnimNode.class_dir = Copy, FindNode, GetBlendTime, GetRootNode, IsAnimate, SetBlendTime
+GetAnimNode.class_dir = SetExclusiveAnimation, SetExclusiveAnimationUseDefault, SetNonExclusiveAnimation, SetRootNode, Stop, StopNonExclusiveAnimation
+GetAnimNode.class_dir = UseAnimation, UseAnimationPosition, __doc__, __init__, __module__, __repr__
+-- summary -----------------------------------------------------
+data_lines = 35

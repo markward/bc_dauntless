@@ -1,9 +1,9 @@
 # Bridge & character graph — the live interior tree (q17)
 
-Status: PENDING
+Status: DONE (Scenario B captured + analyzed; Q17-4 decisive)
 Author: Claude session (q17 bridge-graph plan)
 Created: 2026-07-13
-Closed:  —
+Closed:  2026-07-13
 Depends on: q14 (`probe_harness`), q16 (shared cast ladder / subsystem-tree walker)
 
 ## Goal
@@ -171,4 +171,57 @@ modification.
 
 ## Findings
 
-(To be filled in when the probe runs.)
+Ran 2026-07-13 in E1M1 bridge view. Result:
+`tools/probes/results/q17_bridge_graph_B.txt`.
+
+### Q17-1 — bridge object roster (11 objects)
+
+8 `Character`s + a `viewscreen` + the `bridge` object. The characters: the 5
+station slots (`GetName` = "Helm"/"Tactical"/"Science"/"Engineer"/"XO"), three
+`FemaleExtra1/2/3` background crew, and **Picard** (the captain, separate from
+the stations). Access mirrors the SDK: `App.BridgeSet_Cast(GetSet("bridge"))`
+then walk with the hardened `iter_set_objids`.
+
+### Q17-2 — officer roster by station
+
+`App.CharacterClass_GetObject(pBridge, station)` resolves each station to a named
+officer: **Helm=Kiska, Tactical=Felix, Science=Miguel, Engineer=Brex, XO=Saffi**
+(matching the `Bridge.Characters.*` modules q14 saw imported). Two name concepts:
+`GetName` = station role ("Helm"); `GetCharacterName` = person ("Kiska").
+
+### Q17-3 — viewscreen (partial)
+
+A `viewscreen` object exists (objid 5909) but casts to **none** of
+`BridgeWindow_Cast` / `CharacterClass_Cast` / `BridgeObjectClass_Cast` — so the
+in-scene viewscreen is a plain object, and `BridgeWindow` is likely a separate UI
+element, not this object. Left as a minor open item.
+
+### Q17-4 — animation state is CONTROL-only, not readable (decisive)
+
+`Character.GetRootNode()` is absent/None; `GetAnimNode()` returns a **`TGAnimNode`**
+(`<C TGAnimNode instance ...>`). SWIG shadow instance, so methods live on the
+class; `dir(node.__class__)`:
+
+```
+Copy, FindNode, GetBlendTime, GetRootNode, IsAnimate, SetBlendTime,
+SetExclusiveAnimation, SetExclusiveAnimationUseDefault, SetNonExclusiveAnimation,
+SetRootNode, Stop, StopNonExclusiveAnimation, UseAnimation, UseAnimationPosition
+```
+
+This surface is **all animation *control*** (Use/Set/Stop/blend) plus scene-graph
+traversal (`GetRootNode`, `FindNode`) and one boolean (`IsAnimate`). **There is no
+getter for the currently-playing clip or its playhead.** Consequences:
+
+- A **q17b animation-clip sampler is NOT feasible** through this interface — you
+  cannot read "which sequence is playing, at what time" from Python.
+- What IS reachable: `IsAnimate` (animating y/n), `GetBlendTime`, and the scene
+  graph via `GetRootNode()` → `FindNode()` → node transforms.
+- **Therefore Dauntless's character-animation validation must be done at the
+  C++/NIF scene-graph (node-transform) layer, not by reading a clip from Python.**
+  This is the boundary q17 was built to locate.
+
+### Q17-5 — lift/door objects
+
+No separate door/lift objects appeared in the bridge roster (the 11 objects are
+characters + viewscreen + the bridge container); on this bridge, doors are not
+first-class `BridgeObjectClass` nodes in the set.
