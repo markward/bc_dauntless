@@ -1,6 +1,8 @@
 # Static ABI surface — deeper introspection of the engine API (q18)
 
-Status: PENDING (recon q18a authored; full dumps gated on recon results)
+Status: ANSWERED — all six veins (q13c–h) run & analyzed 2026-07-13. Keepers:
+        q13c (symbol/owner map), q13h (hierarchy). Settled negatives: q13d
+        (no signatures), q13f (globals don't enumerate), q13g (no hidden tier).
 Author: Claude session (sparked by q13b's method-name surface)
 Created: 2026-07-13
 Closed:  —
@@ -117,7 +119,74 @@ Delete `game/q18a_abi_recon.py`, `game/q13[c-h]_*.py`, and every
 `game/BCProbe_q18a.cfg` / `game/BCProbe_q13[c-h]*.cfg`. The probes scrub their own
 cfg keys after writing; `Options.cfg` is untouched.
 
-## Findings
+## Findings — all six veins run 2026-07-13 (results/q13[c-h]_*.txt)
 
-(To be filled in when q18a runs — especially the vein-2 signature verdict, which
-decides whether q18b is worth authoring.)
+Verdict per vein: **c ✅ valuable · d ❌ negative · e ⚠ narrow · f ❌ failed ·
+g ❌ negative (useful) · h ✅ valuable.**
+
+### q13c — symbol map ✅ (and richer than hoped)
+36,538 methods → C symbols, no truncation. The symbol *prefix reveals the true
+implementing C++ class*, even for inherited methods. `ShipClass`'s 202 methods
+resolve to their real owners: `ShipClass_*` 55, `PhysicsObjectClass_*` 23,
+`DamageableObject_*` 23, `BaseObjectClass_*` 18, `ObjectClass_*` 14, plus the TG*
+framework bases (`TGAttrObject`, `TGEventHandlerObject`, `TGObject`,
+`TGTemplatedAttrObject`) and ~50 hand-written Python wrappers (bare `GetX`
+`im_func.__name__`, no class prefix — these are the `apply(Appc.X,args)` wrappers
+in App.py, not direct instancemethod bindings). This is a **Python-method →
+C-symbol → owning-class** map: it tells RE which named symbol backs each method,
+and tells the shim which *base class* a method really belongs on.
+
+### q13d — signatures ❌ DEFINITIVE NEGATIVE
+`methods_with_nonempty_doc = 0`. **Every** `im_func.__doc__` is `None` — BC's SWIG
+build stripped docstrings. The typed-signature prize is **not obtainable through
+this interface.** q13d's output is all `= None`; don't pursue signatures this way.
+(q13c's symbol map is the consolation, and it's good.)
+
+### q13e — data members ⚠ confirmed but narrow
+20 classes, 86 members. Almost all are **math/color/UI structs** (`NiPoint3`,
+`NiColor`, `NiFrustum`, `TGPoint3`, `TGColorA`, `NiPoint2`, `GraphicsMenuInfo`,
+`TGGroupPlayer`) — the only gameplay struct is **`TorpedoAmmoType`**
+(`m_fLaunchSpeed`, `m_iMaxTorpedoes`, `m_pcLaunchSound`, `m_pcModule`, all `rw`).
+Takeaway: engine state is almost entirely behind `Get/Set` methods, not exposed
+fields — so there is little "free" struct data to read. Values need a live
+instance (schema only at the menu).
+
+### q13f — globals ❌ FAILED (retry-by-name possible)
+`Appc.globals` imports, but `dir(Appc.globals)` returns **empty** (0 rows) — the
+SWIG globals object resolves attributes via `__getattr__` and does not enumerate.
+We know the names from App.py source (`g_k*` singletons, `ANY_TARGET`,
+`INVALID_DESTINATION`) but can't discover them via `dir()`. If we need their
+values, a follow-up must read a *hard-coded name list* off `Appc.globals`, not
+enumerate it.
+
+### q13g — flat Appc table ❌ negative, but a *useful* negative
+5,802 names; 3,883 `Appc`-only (3,391 builtins + 492 ints). Inspected: the
+"hidden" tier is **not** hidden functionality — it is the **flat binding layer**
+beneath the shadow classes: `Class_Method` bindings (already mapped by q13c via
+`im_func`), `new_X`/`delete_X` ctors/dtors (156 + 228), and flat `Class_CONST`
+aliases of the 492 class constants q13 already captured. **Conclusion: the `App`
+shadow layer is a complete cover of the engine surface — we are not missing
+entry points behind `Appc`.** (This corrects the earlier "whole hidden tier"
+first impression.)
+
+### q13h — inheritance ✅ confirmed + real surprises
+630 classes. Confirms CLAUDE.md's chain *exactly* from the engine and extends it
+to the roots:
+`ShipClass → DamageableObject → PhysicsObjectClass → ObjectClass →
+BaseObjectClass → TGEventHandlerObject`.
+Surprises worth acting on:
+- **`TorpedoTube : Weapon`** and **`EnergyWeapon : Weapon`** share a common
+  `Weapon` base — the structural reason `UpdateCharge` is EnergyWeapon-only
+  (charge is not on the shared `Weapon` base). Directly reinforces q13b's
+  TorpedoTube caller-bug finding.
+- **`Torpedo : PhysicsObjectClass, WeaponPayload`** — real C++ **multiple
+  inheritance** (a physical object *and* a weapon payload).
+- **`ShipSubsystem : TGEventHandlerObject`** — subsystems are a **separate
+  hierarchy** from `ObjectClass` (both descend `TGEventHandlerObject`); a subsystem
+  is *not* an `ObjectClass`.
+
+### Net
+The interface's static reach ends at **names, C-symbols/owning-class, inheritance,
+and a thin struct-field layer** — not types/signatures (stripped) and not any
+hidden functionality (the flat tier is just plumbing). q13c + q13h are the keepers;
+q13d/f/g are settled negatives that stop us guessing.

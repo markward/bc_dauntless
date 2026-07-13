@@ -1,0 +1,5 @@
+-- inventory ---------------------------------------------------
+python_version = 1.5.2 (#0, Jan 17 2002, 03:24:04) [MSC 32 bit (Intel)]
+Appc_importable = 1
+-- Appc.globals ------------------------------------------------
+total_dump_lines = 0

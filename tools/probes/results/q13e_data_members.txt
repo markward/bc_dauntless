@@ -1,0 +1,110 @@
+-- inventory ---------------------------------------------------
+python_version = 1.5.2 (#0, Jan 17 2002, 03:24:04) [MSC 32 bit (Intel)]
+member_classes = 20
+total_dump_lines = 86
+-- class GraphicsMenuInfo --------------------------------------
+App.GraphicsMenuInfo.m_bDataWasChanged = rw
+App.GraphicsMenuInfo.m_bDetect = rw
+App.GraphicsMenuInfo.m_bModeWasChanged = rw
+App.GraphicsMenuInfo.m_bWeAreCanceling = rw
+App.GraphicsMenuInfo.m_bWeAreUndoing = rw
+App.GraphicsMenuInfo.m_kOldMode = rw
+App.GraphicsMenuInfo.m_kSavedTitle = rw
+App.GraphicsMenuInfo.m_kUndoMode = rw
+App.GraphicsMenuInfo.m_pApplyButton = rw
+App.GraphicsMenuInfo.m_pColorDepthToggle = rw
+App.GraphicsMenuInfo.m_pSizeToggle = rw
+App.GraphicsMenuInfo.ms_pDatabase = rw
+App.GraphicsMenuInfo.ms_pGraphicsMenu = rw
+-- class GraphicsMenuInfoPtr -----------------------------------
+App.GraphicsMenuInfoPtr.m_bDataWasChanged = rw
+App.GraphicsMenuInfoPtr.m_bDetect = rw
+App.GraphicsMenuInfoPtr.m_bModeWasChanged = rw
+App.GraphicsMenuInfoPtr.m_bWeAreCanceling = rw
+App.GraphicsMenuInfoPtr.m_bWeAreUndoing = rw
+App.GraphicsMenuInfoPtr.m_kOldMode = rw
+App.GraphicsMenuInfoPtr.m_kSavedTitle = rw
+App.GraphicsMenuInfoPtr.m_kUndoMode = rw
+App.GraphicsMenuInfoPtr.m_pApplyButton = rw
+App.GraphicsMenuInfoPtr.m_pColorDepthToggle = rw
+App.GraphicsMenuInfoPtr.m_pSizeToggle = rw
+App.GraphicsMenuInfoPtr.ms_pDatabase = rw
+App.GraphicsMenuInfoPtr.ms_pGraphicsMenu = rw
+-- class NiColor -----------------------------------------------
+App.NiColor.b = rw
+App.NiColor.g = rw
+App.NiColor.r = rw
+-- class NiColorA ----------------------------------------------
+App.NiColorA.a = rw
+App.NiColorA.b = rw
+App.NiColorA.g = rw
+App.NiColorA.r = rw
+-- class NiColorAPtr -------------------------------------------
+App.NiColorAPtr.a = rw
+App.NiColorAPtr.b = rw
+App.NiColorAPtr.g = rw
+App.NiColorAPtr.r = rw
+-- class NiColorPtr --------------------------------------------
+App.NiColorPtr.b = rw
+App.NiColorPtr.g = rw
+App.NiColorPtr.r = rw
+-- class NiFrustum ---------------------------------------------
+App.NiFrustum.m_fBottom = rw
+App.NiFrustum.m_fFar = rw
+App.NiFrustum.m_fLeft = rw
+App.NiFrustum.m_fNear = rw
+App.NiFrustum.m_fRight = rw
+App.NiFrustum.m_fTop = rw
+-- class NiFrustumPtr ------------------------------------------
+App.NiFrustumPtr.m_fBottom = rw
+App.NiFrustumPtr.m_fFar = rw
+App.NiFrustumPtr.m_fLeft = rw
+App.NiFrustumPtr.m_fNear = rw
+App.NiFrustumPtr.m_fRight = rw
+App.NiFrustumPtr.m_fTop = rw
+-- class NiPoint2 ----------------------------------------------
+App.NiPoint2.x = rw
+App.NiPoint2.y = rw
+-- class NiPoint2Ptr -------------------------------------------
+App.NiPoint2Ptr.x = rw
+App.NiPoint2Ptr.y = rw
+-- class NiPoint3 ----------------------------------------------
+App.NiPoint3.x = rw
+App.NiPoint3.y = rw
+App.NiPoint3.z = rw
+-- class NiPoint3Ptr -------------------------------------------
+App.NiPoint3Ptr.x = rw
+App.NiPoint3Ptr.y = rw
+App.NiPoint3Ptr.z = rw
+-- class TGColorA ----------------------------------------------
+App.TGColorA.a = rw
+App.TGColorA.b = rw
+App.TGColorA.g = rw
+App.TGColorA.r = rw
+-- class TGColorAPtr -------------------------------------------
+App.TGColorAPtr.a = rw
+App.TGColorAPtr.b = rw
+App.TGColorAPtr.g = rw
+App.TGColorAPtr.r = rw
+-- class TGGroupPlayer -----------------------------------------
+App.TGGroupPlayer.m_iNetID = rw
+-- class TGGroupPlayerPtr --------------------------------------
+App.TGGroupPlayerPtr.m_iNetID = rw
+-- class TGPoint3 ----------------------------------------------
+App.TGPoint3.x = rw
+App.TGPoint3.y = rw
+App.TGPoint3.z = rw
+-- class TGPoint3Ptr -------------------------------------------
+App.TGPoint3Ptr.x = rw
+App.TGPoint3Ptr.y = rw
+App.TGPoint3Ptr.z = rw
+-- class TorpedoAmmoType ---------------------------------------
+App.TorpedoAmmoType.m_fLaunchSpeed = rw
+App.TorpedoAmmoType.m_iMaxTorpedoes = rw
+App.TorpedoAmmoType.m_pcLaunchSound = rw
+App.TorpedoAmmoType.m_pcModule = rw
+-- class TorpedoAmmoTypePtr ------------------------------------
+App.TorpedoAmmoTypePtr.m_fLaunchSpeed = rw
+App.TorpedoAmmoTypePtr.m_iMaxTorpedoes = rw
+App.TorpedoAmmoTypePtr.m_pcLaunchSound = rw
+App.TorpedoAmmoTypePtr.m_pcModule = rw
