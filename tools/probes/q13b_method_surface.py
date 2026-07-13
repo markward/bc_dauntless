@@ -55,11 +55,17 @@ def _exc_name(e):
         return str(type(e))
 
 def _emit(line):
+    # LOG ONLY -- no console echo. Per-line print to the TestMode console is
+    # O(n) (or worse) per line and was the 30-min tar pit; the bulk dump goes
+    # to the cfg, not the screen. Progress is visible via _section headers and
+    # the gather heartbeat below.
     _log.append(line)
-    print line
 
 def _record(label, value):
-    _emit("%s = %s" % (str(label), str(value)))
+    # _record DOES echo (few lines: inventory + heartbeats).
+    line = "%s = %s" % (str(label), str(value))
+    _log.append(line)
+    print line
 
 def _section(title):
     bar = "-- " + str(title) + " " + ("-" * max(1, 60 - len(str(title))))
@@ -129,6 +135,7 @@ def _flush_chunked():
 # === PROBE BODY ================================================================
 
 try:
+    print "q13b: scanning dir(App) ..."
     _dir_app = []
     try:
         _dir_app = dir(App)
@@ -145,12 +152,18 @@ try:
         if type(_v) == _T_CLASS:
             _class_names.append(_name)
     _class_names.sort()
+    _ntotal = len(_class_names)
+    print "q13b: %d classes to walk" % _ntotal
 
     # for each class: attribute names that are NOT scalars and NOT dunders =
     # its method / callable surface.
     _class_blocks = []          # list of (classname, [sorted method names])
     _method_total = 0
+    _idx = 0
     for _cname in _class_names:
+        _idx = _idx + 1
+        if (_idx % 100) == 0:                  # gather heartbeat -- pinpoints a hang
+            print "q13b: walked %d/%d classes" % (_idx, _ntotal)
         try:
             _cls = getattr(App, _cname)
         except:

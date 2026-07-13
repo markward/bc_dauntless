@@ -70,12 +70,17 @@ def _exc_name(e):
         return str(type(e))
 
 def _emit(line):
-    """Append a fully-formed dump line and echo it."""
+    """Append a fully-formed dump line -- LOG ONLY, no console echo. Per-line
+    print to the TestMode console is O(n) (or worse) per line and is the tar pit
+    that made a full dump take tens of minutes; the bulk goes to the cfg, not
+    the screen. Progress is visible via _section headers + the gather heartbeat."""
     _log.append(line)
-    print line
 
 def _record(label, value):
-    _emit("%s = %s" % (str(label), str(value)))
+    """_record DOES echo (few lines: inventory + heartbeats)."""
+    line = "%s = %s" % (str(label), str(value))
+    _log.append(line)
+    print line
 
 def _section(title):
     bar = "-- " + str(title) + " " + ("-" * max(1, 60 - len(str(title))))
@@ -189,6 +194,7 @@ def _flush_chunked():
 try:
     # ---- module scope: classify every dir(App) name -----------------------
     _dir_app = []
+    print "q13: scanning dir(App) ..."
     try:
         _dir_app = dir(App)
     except:
@@ -215,11 +221,17 @@ try:
             _n_others = _n_others + 1
     _module_scalar_lines.sort()
     _class_names.sort()
+    _ntotal = len(_class_names)
+    print "q13: %d classes to walk" % _ntotal
 
     # ---- class scope: scalars on every class (Q13-2) -----------------------
     _class_blocks = []          # list of (classname, [sorted lines])
     _class_scalar_total = 0
+    _idx = 0
     for _cname in _class_names:
+        _idx = _idx + 1
+        if (_idx % 100) == 0:                  # gather heartbeat -- pinpoints a hang
+            print "q13: walked %d/%d classes" % (_idx, _ntotal)
         try:
             _cls = getattr(App, _cname)
         except:

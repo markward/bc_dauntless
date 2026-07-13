@@ -394,8 +394,14 @@ The single-file write handled the full section cleanly (232 KB, 4156 lines,
 mode was not needed. The probe ran for a few minutes with **no console output
 until the end** (it gathers everything before printing); the game window looks
 frozen throughout because the dump runs on the single game-loop thread. Not a
-hang — just slow and silent. (A future revision should print progress markers
-and cut per-line console spam.)
+hang — just slow and silent.
+
+**Fixed after this run:** per-line `print` to the TestMode console was the tar
+pit (O(n)-or-worse per line; q13b's ~30k-line method dump ran for 30+ min). The
+probes are now **print-light** — bulk dump lines are log-only (cfg only), with a
+startup marker, a gather heartbeat every 100 classes, and per-class section
+headers as the only console output. Re-runs should be fast. `SaveConfigFile`
+itself was never the bottleneck (232 KB in seconds).
 
 **Q13-3 inventory (menu):** `dir(App)` = 2681 names → 1319 module scalars,
 2512 class scalars across 630 classes, 128 instances, 604 others.
