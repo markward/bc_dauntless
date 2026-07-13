@@ -1212,6 +1212,25 @@ class ImpulseEngineSubsystem(PoweredSubsystem):
 
     def GetMaxSpeed(self) -> float:           return self._max_speed
     def SetMaxSpeed(self, v: float) -> None:  self._max_speed = float(v)
+
+    def GetCurMaxSpeed(self) -> float:
+        """The speed cap the ship can reach *right now*, in GU/s.
+
+        The authored MaxSpeed derated by the same two terms the flight model
+        already flies by (ship_motion._effective_motion): the fraction of
+        impulse pods still online, times the fraction of wanted power actually
+        reaching the engines. Undamaged and fully powered it equals
+        GetMaxSpeed() — the only point the q16 live-engine object-graph walk
+        pins down (Galaxy 6.3, Shuttle 4.0, both == authored MaxSpeed;
+        tools/probes/results/q16_object_graph_B.txt:43,106).
+
+        Read by the NPC torpedo preprocessor (AI/Preprocessors.py:523) to
+        weight torp types against how fast the target can run, and by
+        SSDiag.py:114.
+        """
+        return (impulse_online_fraction(self)
+                * self.GetNormalPowerPercentage()
+                * self._max_speed)
     def GetMaxAccel(self) -> float:           return self._max_accel
     def SetMaxAccel(self, v: float) -> None:  self._max_accel = float(v)
     def GetMaxAngularVelocity(self) -> float: return self._max_angular_velocity

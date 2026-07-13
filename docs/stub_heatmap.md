@@ -37,7 +37,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 9 | Planet | GetVelocity.y | 4924 | 1/11 | 2026-07-10 21:53 UTC |  |
 | 10 | Planet | GetVelocity.z | 4924 | 1/11 | 2026-07-10 21:53 UTC |  |
 | 11 | Planet | IsDying | 3578 | 1/11 | 2026-07-10 21:53 UTC | 2026-07-13 |
-| 12 | ImpulseEngineSubsystem | GetCurMaxSpeed | 3491 | 4/11 | 2026-07-12 12:57 UTC |  |
+| 12 | ImpulseEngineSubsystem | GetCurMaxSpeed | 3491 | 4/11 | 2026-07-12 12:57 UTC | 2026-07-13 |
 | 13 | TorpedoSystem | ShouldBeAimed | 3491 | 4/11 | 2026-07-12 12:57 UTC |  |
 | 14 | PhaserSystem | ShouldBeAimed | 2700 | 4/11 | 2026-07-12 12:57 UTC |  |
 | 15 | Game | LoadDatabaseSoundInGroup | 2423 | 10/11 | 2026-07-12 13:20 UTC |  |

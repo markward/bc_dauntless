@@ -79,6 +79,26 @@ def test_configure_torpedo_with_smart_selection_calls_choose_torp_type():
     assert len(called) == 1
 
 
+def test_configure_torpedo_gets_targets_real_speed_not_a_stub():
+    """Preprocessors.py:517-525 reads the target's GetCurMaxSpeed() to weight
+    torp types by how fast the target can run. Before GetCurMaxSpeed existed the
+    name fell through to a truthy _Stub, so every NPC chose ordnance as if its
+    target were stationary."""
+    from engine.appc.subsystems import ImpulseEngineSubsystem
+    inst, target = _build_fire_script_with_target()
+    ies = ImpulseEngineSubsystem("Impulse Engines")
+    ies.SetMaxSpeed(6.3)                     # Galaxy, sdk/.../galaxy.py:785
+    target.SetImpulseEngineSubsystem(ies)
+    inst.bChooseTorpsWisely = 1
+    called = []
+    inst.ChooseTorpType = lambda *a: called.append(a)
+    inst.ConfigureWeaponSystem(TorpedoSystem("T"), target, None)
+
+    speed_gups = called[0][2]
+    assert type(speed_gups) is float
+    assert abs(speed_gups - 6.3) < 1e-6
+
+
 def test_configure_default_weapon_returns_one():
     """A weapon system that's not phaser/torp/tractor passes through
     as configured-OK without per-type setup."""
