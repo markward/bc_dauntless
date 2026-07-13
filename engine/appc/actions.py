@@ -11,6 +11,7 @@ still resolve fully synchronously within the launching Play() call; only real
 delays or deferred completions span frames.  See
 docs/superpowers/specs/2026-06-11-action-sequence-timing-design.md.
 """
+import re
 import sys
 from engine.appc.events import TGEventHandlerObject, TGEvent
 from engine.core.ids import get_object_by_id, register, unregister
@@ -811,6 +812,33 @@ def TGActionManager_SkipEvents() -> None:
                 action.Skip()
         except Exception:
             pass
+
+
+# BC ships the episode title as one TGL string: 'Episode 1 - "Picking up the
+# Pieces"'. Dauntless renders it as a two-tier card (purple eyebrow + large
+# title), so the string has to be split -- and because EpisodeTitleAction and
+# MissionLib.TextBanner both create a TGCreditAction aimed at the subtitle
+# window, "does this parse as an episode title?" is also the only honest
+# discriminator between the two. Anchored on the `Episode <n>` prefix rather
+# than split on the first hyphen, so Ep8's 'Arise, Fair Sun...' survives.
+_EPISODE_TITLE_RE = re.compile(
+    r'^\s*Episode\s+(\d+)\s*[-–—:]\s*["“\']?(.+?)["”\']?\s*$',
+    re.IGNORECASE,
+)
+
+
+def parse_episode_title(text) -> tuple[str, str] | None:
+    """Split an episode-title string into (eyebrow, title), or None.
+
+    Returns None for any text that is not shaped like a BC episode title --
+    those are transient banners and must render in the caption box instead.
+    """
+    if not isinstance(text, str):
+        return None
+    m = _EPISODE_TITLE_RE.match(text)
+    if m is None:
+        return None
+    return ("Episode " + m.group(1), m.group(2).strip())
 
 
 # ── TGCreditAction ──────────────────────────────────────────────────────────
