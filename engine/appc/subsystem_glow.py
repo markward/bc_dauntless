@@ -69,7 +69,7 @@ def commanded_impulse_frac(ship, throttle_override=None) -> float:
     commanded = abs(float(sp[0]))
     ies = (ship.GetImpulseEngineSubsystem()
            if hasattr(ship, "GetImpulseEngineSubsystem") else None)
-    max_speed = float(ies.GetMaxSpeed()) if ies is not None else 0.0
+    max_speed = float(ies.GetAuthoredMaxSpeed()) if ies is not None else 0.0
     if max_speed <= 0.0:
         return 0.0
     return _clamp01(commanded / max_speed)

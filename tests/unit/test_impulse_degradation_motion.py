@@ -1,4 +1,12 @@
-"""Effective-limit + keep-rule helpers for impulse degradation."""
+"""Effective-limit + keep-rule helpers for impulse degradation.
+
+The derating law is BC's (ImpulseEngineSubsystem::GetMaxSpeed, FUN_00561230 —
+clean-room 2026-07-13): pods are condition-WEIGHTED, and the power term is the
+engine slider. It supersedes the binary online/offline pod fraction of
+docs/superpowers/specs/2026-06-10-impulse-engine-degradation-design.md §3.
+_effective_motion therefore just reads the subsystem's already-derated live
+limits; the drift trigger (every pod out) is still impulse_online_fraction.
+"""
 from engine.appc.math import TGPoint3
 from engine.appc.objects import PhysicsObjectClass
 from engine.appc.ship_motion import (
@@ -6,6 +14,8 @@ from engine.appc.ship_motion import (
 )
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import ShipSubsystem
+
+POD_MAX_CONDITION = 2600.0
 
 
 def _galaxy():
@@ -16,13 +26,24 @@ def _galaxy():
     ies.SetMaxAngularVelocity(0.28)
     ies.SetMaxAngularAccel(0.12)
     for i in range(3):
-        ies.AddChildSubsystem(ShipSubsystem("pod%d" % i))
+        pod = ShipSubsystem("pod%d" % i)
+        pod.SetMaxCondition(POD_MAX_CONDITION)   # also seeds condition to max
+        ies.AddChildSubsystem(pod)
     return ship
 
 
+def _kill_pods(ship, n):
+    ies = ship.GetImpulseEngineSubsystem()
+    for i in range(n):
+        ies.GetChildSubsystem("pod%d" % i).SetCondition(0.0)
+
+
 def test_effective_motion_scales_all_four_limits():
+    # Half the engine output: BC's clamp is on the pod sum, so reach 0.5 with
+    # the power slider (one-and-a-half pods is not a thing).
     ship = _galaxy()
-    em = _effective_motion(ship, 0.5)
+    ship.GetImpulseEngineSubsystem().SetPowerPercentageWanted(0.5)
+    em = _effective_motion(ship)
     assert em.has_linear is True
     assert abs(em.max_speed - 3.15) < 1e-9
     assert abs(em.max_accel - 0.75) < 1e-9
@@ -31,11 +52,28 @@ def test_effective_motion_scales_all_four_limits():
     assert abs(em.max_ang_accel - 0.06) < 1e-9
 
 
-def test_effective_motion_full_fraction_is_base():
-    ship = _galaxy()
-    em = _effective_motion(ship, 1.0)
+def test_effective_motion_undamaged_is_base():
+    em = _effective_motion(_galaxy())
     assert abs(em.max_speed - 6.3) < 1e-9
     assert abs(em.max_accel - 1.5) < 1e-9
+
+
+def test_effective_motion_one_pod_out_of_three_costs_a_third():
+    ship = _galaxy()
+    _kill_pods(ship, 1)
+    em = _effective_motion(ship)
+    assert abs(em.max_speed - 6.3 * 2.0 / 3.0) < 1e-9
+    assert abs(em.max_accel - 1.5 * 2.0 / 3.0) < 1e-9
+
+
+def test_effective_motion_half_health_pod_costs_half_its_share():
+    """The condition-weighted term: the binary law reported this ship at FULL
+    speed, which is the bug the clean-room dump exposed."""
+    ship = _galaxy()
+    ies = ship.GetImpulseEngineSubsystem()
+    ies.GetChildSubsystem("pod0").SetCondition(POD_MAX_CONDITION * 0.5)
+    em = _effective_motion(ship)
+    assert abs(em.max_speed - 6.3 * (1.0 - (1.0 / 3.0) * 0.5)) < 1e-9
 
 
 def test_effective_motion_fallback_ship_has_no_real_limits():
@@ -43,15 +81,17 @@ def test_effective_motion_fallback_ship_has_no_real_limits():
     # → None), so neither axis group has real limits.
     from engine.appc.ships import ShipClass
     ship = ShipClass()
-    em = _effective_motion(ship, 1.0)
+    em = _effective_motion(ship)
     assert em.has_linear is False
     assert em.has_angular is False
 
 
-def test_effective_motion_zero_fraction_zeros_all_limits():
-    # f == 0 is the total-loss / drift trigger: every scaled limit is zero.
+def test_effective_motion_all_pods_out_zeros_all_limits():
+    # Total loss (the drift trigger): every limit is zero, but the ship still
+    # HAS real limits — it must not fall through to fallback snap semantics.
     ship = _galaxy()
-    em = _effective_motion(ship, 0.0)
+    _kill_pods(ship, 3)
+    em = _effective_motion(ship)
     assert em.has_linear is True and em.has_angular is True
     assert em.max_speed == 0.0 and em.max_accel == 0.0
     assert em.max_ang_vel == 0.0 and em.max_ang_accel == 0.0

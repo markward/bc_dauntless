@@ -52,6 +52,36 @@ The current code (`ship_motion.py` and `host_loop.py:_PlayerControl`) gates
 only on `_is_offline(master)`, which combat never triggers, and on trigger
 drags the ship to a full stop. Both facts are replaced here.
 
+## 2b. SUPERSEDED (2026-07-13) — the derating law is now BC's own
+
+The **shape** of the derating below (§3's first four bullets) was our own
+invention, made before we could read the engine. A clean-room decompile of
+`stbc.exe`'s `ImpulseEngineSubsystem::GetMaxSpeed` (FUN_00561230) has since
+given us the real law, and it differs in two ways:
+
+- **Pods are condition-WEIGHTED, not binary.** BC subtracts, per pod,
+  `share = base/n` scaled by `(1 - conditionRatio)`; a *disabled* pod costs its
+  entire share. So a pod at 50% health costs half its share and speed bleeds
+  continuously — where our binary `online/total` fraction reported a ship with
+  three half-dead pods at **full** speed.
+- **The power term is the SLIDER, not the received power.** BC multiplies by
+  `GetPowerPercentageWanted()` (+0x90), not `received/normal` (+0x94/+0x98). A
+  ship whose reactor is starving it still makes its **requested** speed. The
+  `[0, base]` clamp lands *before* the multiply, so the slider's 1.25 ceiling
+  really does buy 125% of the authored maximum.
+
+Also: BC's **`GetMaxSpeed` is the live, derated value** — the authored figure
+lives on the `ImpulseEngineProperty`. `GetCurMaxSpeed` is a *cached* float
+(+0xAC) that we model as equal to the live value; its per-tick writer was not
+found in the dump, so a spool-up/lerp remains possible (SSDiag.py:114 prints
+both as "Maximum/current max speed").
+
+Implemented in `subsystems.impulse_output_fraction`; the four `Get*` limits now
+carry the derating themselves, so `ship_motion._effective_motion` no longer
+scales them. What **survives** from §3: the drift regime (total pod loss →
+inertial coast), the non-braking `_cap_keep` rule, the no-pods → full-capability
+fallback, and the all-four-limits-scale-together decision.
+
 ## 3. Locked decisions
 
 - **Effectiveness fraction `f` = online pods / total pods.** Linear. No

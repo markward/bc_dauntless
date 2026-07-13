@@ -184,7 +184,7 @@ class ShipClass(DamageableObject):
         _PlayerControl.GetTargetSpeed.
         """
         ies = self.GetImpulseEngineSubsystem()
-        max_speed = ies.GetMaxSpeed() if ies is not None else 0.0
+        max_speed = ies.GetAuthoredMaxSpeed() if ies is not None else 0.0
         if max_speed > 0.0:
             speed = float(speed) * max_speed
         self.SetSpeed(speed, direction, frame)

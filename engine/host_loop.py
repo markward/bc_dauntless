@@ -1335,25 +1335,27 @@ class _PlayerControl:
         return getter() if getter else None
 
     def GetTargetSpeed(self, player) -> float:
-        """Convert impulse_level into the throttle-commanded target speed,
-        scaled by the impulse engine power factor so the command and the
-        _effective_motion cap agree.
+        """Convert impulse_level into the throttle-commanded target speed.
 
-        Throttle is a fraction of the *effective* (power-scaled) max speed:
-        at 125 % power, full throttle targets 1.25 × authored MaxSpeed; at
-        50 % power, full throttle targets 0.5 × authored MaxSpeed. The
-        _cap_keep clamp in apply() still prevents over-driving, but now the
-        command reaches the boosted cap instead of stopping at raw MaxSpeed.
+        Throttle is a fraction of the engine's LIVE max speed — GetMaxSpeed()
+        already carries BC's derating (damaged pods x the engine power slider,
+        subsystems.impulse_output_fraction), so it must NOT be scaled again
+        here. At the slider's 125 % ceiling full throttle targets 1.25 x the
+        authored MaxSpeed; with a pod shot out it targets correspondingly less,
+        which is exactly the cap _effective_motion enforces, so command and cap
+        agree by construction.
 
         Forward speed is additionally multiplied by WARP_BOOST_FACTOR when
         the in-system warp toggle is on (Ctrl+I); reverse is unaffected.
         """
         ies = self._get_ies(player)
-        raw_max = ies.GetMaxSpeed() if ies is not None else 0.0
-        power_factor = ies.GetNormalPowerPercentage() if ies is not None else 1.0
-        effective_max = raw_max * power_factor
+        # The AUTHORED value decides whether this ship has real limits at all;
+        # the live one can legitimately be 0 (engines out) without meaning
+        # "fallback ship".
+        authored_max = ies.GetAuthoredMaxSpeed() if ies is not None else 0.0
+        effective_max = ies.GetMaxSpeed() if ies is not None else 0.0
         boost = self.WARP_BOOST_FACTOR if self._warp_boost else 1.0
-        if raw_max > 0.0:
+        if authored_max > 0.0:
             if self.impulse_level >= 0:
                 return (self.impulse_level / 9.0) * effective_max * boost
             return -self.REVERSE_FRACTION * effective_max
@@ -1617,7 +1619,7 @@ class _PlayerControl:
             self._current_speed = self._drift_velocity.Length()
             self._drift_velocity = None
 
-        em = _effective_motion(player, f)
+        em = _effective_motion(player)
 
         # Linear ramp toward (capped) target.
         commanded = self.GetTargetSpeed(player)
@@ -2820,7 +2822,9 @@ def _warp_phase_speeds(player):
     try:
         ies = player.GetImpulseEngineSubsystem()
         if ies is not None:
-            ms = ies.GetMaxSpeed()
+            # Nominal (authored) figure: the warp-align profile shouldn't
+            # shrink because a pod is damaged or the power slider is down.
+            ms = ies.GetAuthoredMaxSpeed()
     except Exception:
         ms = 0.0
     if ms <= 0.0:

@@ -88,6 +88,63 @@ def impulse_online_fraction(ies) -> float:
     return online / float(n)
 
 
+def impulse_output_fraction(ies) -> float:
+    """The scalar BC multiplies an impulse engine's authored limits by.
+
+    Decompiled from stbc.exe's ImpulseEngineSubsystem::GetMaxSpeed
+    (FUN_00561230), clean-room 2026-07-13:
+
+        if IsDisabled() or not on: return 0
+        cur = base                                 # property maxSpeed, prop+0x4C
+        for each child pod:
+            share = base / childCount
+            if pod not disabled: share *= (1 - pod->conditionRatio)   # pod+0x34
+            cur -= share               # a disabled pod costs its ENTIRE share
+        if tractorBeam: cur *= (1 - dragFraction)
+        clamp cur to [0, base]
+        return cur * powerSetting                  # +0x90 — the SLIDER
+
+    Expressed as a fraction of base. Two things to hold on to, both of which
+    contradict the binary-pod model this supersedes (see
+    docs/superpowers/specs/2026-06-10-impulse-engine-degradation-design.md §3):
+
+      * pods are condition-WEIGHTED — a pod at 50% health costs half its share,
+        so partial damage bleeds speed continuously rather than at a cliff;
+      * the power term is the requested SLIDER fraction
+        (GetPowerPercentageWanted), NOT received/normal power. A ship whose
+        reactor is starving it still makes its requested speed. The slider's
+        1.25 ceiling is applied AFTER the [0, base] clamp, so overdriving the
+        engines really does buy 125% of the authored maximum.
+
+    The tractor-drag term is not modelled: we have no IES->tractor link and no
+    drag-fraction field (our tractor drag is positional — engine/appc/tractor.py).
+
+    Returns 1.0 for a None subsystem (bare test ships), 0.0 when the master is
+    offline or switched off.
+    """
+    if ies is None:
+        return 1.0
+    if _is_offline(ies) or not ies.IsOn():
+        return 0.0
+    n = ies.GetNumChildSubsystems()
+    if n == 0:
+        cur = 1.0
+    else:
+        # BC subtracts each pod's share of the base: share = 1/n, scaled by
+        # (1 - conditionRatio) unless the pod is disabled (which costs the whole
+        # share). Summing what each pod CONTRIBUTES is the same algebra —
+        # cur = (1/n) * sum(disabled ? 0 : conditionRatio) — and lands exactly on
+        # 0.0 with every pod out, where the subtraction form leaves float residue.
+        contrib = 0.0
+        for i in range(n):
+            pod = ies.GetChildSubsystem(i)
+            if not pod.IsDisabled():
+                contrib += pod.GetConditionPercentage()
+        cur = contrib / n
+    cur = max(0.0, min(1.0, cur))
+    return cur * ies.GetPowerPercentageWanted()
+
+
 def active_impulse_emitters(player) -> list:
     """Active impulse-engine pods as wake emitters.
 
@@ -1210,35 +1267,62 @@ class ImpulseEngineSubsystem(PoweredSubsystem):
         self._max_angular_velocity = 0.0
         self._max_angular_accel = 0.0
 
-    def GetMaxSpeed(self) -> float:           return self._max_speed
+    # ── Authored limits ──────────────────────────────────────────────────────
+    # The values the hardpoint wrote (BC: the ImpulseEngineProperty template,
+    # prop+0x4C..). NOT BC surface — engine-internal, for the "does this ship
+    # have populated limits at all" guards and for readouts that want the
+    # ship's nominal figure rather than its damaged one. Everything BC exposes
+    # to Python derates these; see impulse_output_fraction.
+    def GetAuthoredMaxSpeed(self) -> float:       return self._max_speed
+    def GetAuthoredMaxAccel(self) -> float:       return self._max_accel
+    def GetAuthoredMaxAngularVelocity(self) -> float:
+        return self._max_angular_velocity
+    def GetAuthoredMaxAngularAccel(self) -> float:
+        return self._max_angular_accel
+
     def SetMaxSpeed(self, v: float) -> None:  self._max_speed = float(v)
-
-    def GetCurMaxSpeed(self) -> float:
-        """The speed cap the ship can reach *right now*, in GU/s.
-
-        The authored MaxSpeed derated by the same two terms the flight model
-        already flies by (ship_motion._effective_motion): the fraction of
-        impulse pods still online, times the fraction of wanted power actually
-        reaching the engines. Undamaged and fully powered it equals
-        GetMaxSpeed() — the only point the q16 live-engine object-graph walk
-        pins down (Galaxy 6.3, Shuttle 4.0, both == authored MaxSpeed;
-        tools/probes/results/q16_object_graph_B.txt:43,106).
-
-        Read by the NPC torpedo preprocessor (AI/Preprocessors.py:523) to
-        weight torp types against how fast the target can run, and by
-        SSDiag.py:114.
-        """
-        return (impulse_online_fraction(self)
-                * self.GetNormalPowerPercentage()
-                * self._max_speed)
-    def GetMaxAccel(self) -> float:           return self._max_accel
     def SetMaxAccel(self, v: float) -> None:  self._max_accel = float(v)
-    def GetMaxAngularVelocity(self) -> float: return self._max_angular_velocity
     def SetMaxAngularVelocity(self, v: float) -> None:
         self._max_angular_velocity = float(v)
-    def GetMaxAngularAccel(self) -> float:    return self._max_angular_accel
     def SetMaxAngularAccel(self, v: float) -> None:
         self._max_angular_accel = float(v)
+
+    # ── Live limits (BC FUN_00561230 and siblings) ───────────────────────────
+    # Counter-intuitively, BC's GetMaxSpeed is the LIVE, damage-and-power-
+    # adjusted figure — not the authored one. The SDK relies on that: the AI's
+    # Intercept/Ram/MoveToObjectSide/FollowWaypoints all command
+    # GetImpulseEngineSubsystem().GetMaxSpeed(), so a damaged NPC asks only for
+    # the speed it can actually make.
+    def GetMaxSpeed(self) -> float:
+        return self._max_speed * impulse_output_fraction(self)
+
+    def GetMaxAccel(self) -> float:
+        return self._max_accel * impulse_output_fraction(self)
+
+    def GetMaxAngularVelocity(self) -> float:
+        return self._max_angular_velocity * impulse_output_fraction(self)
+
+    def GetMaxAngularAccel(self) -> float:
+        return self._max_angular_accel * impulse_output_fraction(self)
+
+    # ── Cached live limits (+0xAC..+0xB8) ────────────────────────────────────
+    # In BC these four are plain reads of cached floats; the SWIG wrapper for
+    # GetCurMaxSpeed (0x0061B640) is literally
+    # PyFloat_FromDouble(*(float*)(this + 0xAC)). Their per-tick writer is
+    # presumed to be ImpulseEngineSubsystem::Update (~0x005617E0, an address
+    # range that holds no functions in our Ghidra dump), so whether the cache
+    # equals the live value verbatim or lags it (spool-up) is NOT established —
+    # SSDiag.py:114 prints both as "Maximum/current max speed", which implies
+    # they can diverge. We model the cache as exact; if a spool-up ever turns
+    # up, it belongs here and nowhere else.
+    #
+    # GetCurMaxSpeed is read by the NPC torpedo preprocessor
+    # (AI/Preprocessors.py:523) to weight torp types against how fast the
+    # target can run.
+    def GetCurMaxSpeed(self) -> float:           return self.GetMaxSpeed()
+    def GetCurMaxAccel(self) -> float:           return self.GetMaxAccel()
+    def GetCurMaxAngularVelocity(self) -> float: return self.GetMaxAngularVelocity()
+    def GetCurMaxAngularAccel(self) -> float:    return self.GetMaxAngularAccel()
 
 
 class WarpEngineSubsystem(PoweredSubsystem):

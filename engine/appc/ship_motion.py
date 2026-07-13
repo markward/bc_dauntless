@@ -1,15 +1,17 @@
 """Per-tick kinematic integrator for AI-controlled ships.
 
 Reads each ship's `_speed_setpoint` / `_target_angular_velocity_setpoint`
-and ramps `_current_speed` / `_current_angular_velocity` toward them under
-limits scaled by the ship's online impulse-pod fraction f (see
-`impulse_online_fraction`). At f in (0, 1] flight runs under f-scaled
-MaxSpeed / MaxAccel / MaxAngularVelocity / MaxAngularAccel with a
-non-braking `_cap_keep` clamp; ships with no populated ImpulseEngineSubsystem
-fall back to FALLBACK_MAX_ACCEL snap semantics. At f == 0 the ship drifts on
-inertia: the world-space velocity is snapshotted into `_drift_velocity` and
-position integrates by that frozen vector while residual angular momentum
-still tumbles the hull (velocity decoupled from facing, no thrust, no decay).
+and ramps `_current_speed` / `_current_angular_velocity` toward them under the
+impulse subsystem's LIVE limits — `GetMaxSpeed` / `GetMaxAccel` /
+`GetMaxAngularVelocity` / `GetMaxAngularAccel` already carry BC's
+damage-and-power derating (`impulse_output_fraction`), so the integrator does
+NOT scale them again. Clamping is via the non-braking `_cap_keep`; ships with
+no populated ImpulseEngineSubsystem fall back to FALLBACK_MAX_ACCEL snap
+semantics. When every pod is out (`impulse_online_fraction` == 0) the ship
+drifts on inertia: the world-space velocity is snapshotted into
+`_drift_velocity` and position integrates by that frozen vector while residual
+angular momentum still tumbles the hull (velocity decoupled from facing, no
+thrust, no decay).
 
 The per-tick rotation delta is built as pitch/yaw/roll matrices and
 post-multiplied into the world rotation (`_integrate_rotation`) — matches the
@@ -46,9 +48,9 @@ _X_AXIS = TGPoint3(1.0, 0.0, 0.0)
 _Y_AXIS = TGPoint3(0.0, 1.0, 0.0)
 _Z_AXIS = TGPoint3(0.0, 0.0, 1.0)
 
-# Per-tick effective motion limits at engine-fraction f. has_linear /
-# has_angular are False for fallback ships (no populated IES limits); the
-# integrator then uses FALLBACK_MAX_ACCEL snap semantics for that axis group.
+# Per-tick effective motion limits. has_linear / has_angular are False for
+# fallback ships (no populated IES limits); the integrator then uses
+# FALLBACK_MAX_ACCEL snap semantics for that axis group.
 @dataclass(frozen=True)
 class _EffectiveMotion:
     has_linear: bool
@@ -59,25 +61,29 @@ class _EffectiveMotion:
     max_ang_accel: float
 
 
-def _effective_motion(ship, f: float) -> "_EffectiveMotion":
-    """Resolve a ship's impulse limits scaled by online-fraction f."""
+def _effective_motion(ship) -> "_EffectiveMotion":
+    """Resolve a ship's LIVE impulse limits.
+
+    The four getters already carry BC's derating (damaged pods x power slider,
+    see subsystems.impulse_output_fraction), so there is nothing to scale here.
+    Whether a ship HAS real limits is decided on the AUTHORED values: a ship
+    whose engines are shot out still has a populated Galaxy hardpoint and must
+    keep flying under (zeroed) real limits, not fall through to the
+    FALLBACK_MAX_ACCEL snap semantics meant for ships with no engines at all.
+    """
     getter = getattr(ship, "GetImpulseEngineSubsystem", None)
     ies = getter() if getter is not None else None
-    power_factor = ies.GetNormalPowerPercentage() if ies is not None else 1.0
-    f = f * power_factor
-    raw_speed = ies.GetMaxSpeed() if ies is not None else 0.0
-    raw_ang_vel = ies.GetMaxAngularVelocity() if ies is not None else 0.0
-    has_lin = raw_speed > 0.0
-    has_ang = raw_ang_vel > 0.0
-    accel = ies.GetMaxAccel() if has_lin else 0.0
-    ang_accel = ies.GetMaxAngularAccel() if has_ang else 0.0
+    if ies is None:
+        return _EffectiveMotion(False, 0.0, 0.0, False, 0.0, 0.0)
+    has_lin = ies.GetAuthoredMaxSpeed() > 0.0
+    has_ang = ies.GetAuthoredMaxAngularVelocity() > 0.0
     return _EffectiveMotion(
         has_linear=has_lin,
-        max_speed=f * raw_speed if has_lin else 0.0,
-        max_accel=f * accel if (has_lin and accel > 0.0) else 0.0,
+        max_speed=ies.GetMaxSpeed() if has_lin else 0.0,
+        max_accel=ies.GetMaxAccel() if has_lin else 0.0,
         has_angular=has_ang,
-        max_ang_vel=f * raw_ang_vel if has_ang else 0.0,
-        max_ang_accel=f * ang_accel if (has_ang and ang_accel > 0.0) else 0.0,
+        max_ang_vel=ies.GetMaxAngularVelocity() if has_ang else 0.0,
+        max_ang_accel=ies.GetMaxAngularAccel() if has_ang else 0.0,
     )
 
 
@@ -122,9 +128,10 @@ def _step_ship_motion(ship, dt: float) -> None:
     Skips entirely when no setpoint has ever been written so the manually
     flown player ship (driven via `_PlayerControl`, which yields to this
     integrator whenever a helm AI is installed) and freshly-spawned non-AI
-    props are left alone. Otherwise: at engine-fraction f in (0, 1] flies under f-scaled
-    limits with a non-braking cap; at f == 0 drifts on inertia (frozen
-    world-space velocity + residual angular momentum). Spec
+    props are left alone. Otherwise: flies under the impulse subsystem's live
+    (already damage- and power-derated) limits with a non-braking cap; with
+    every pod out it drifts on inertia (frozen world-space velocity + residual
+    angular momentum). Spec
     docs/superpowers/specs/2026-06-10-impulse-engine-degradation-design.md.
     """
     # An immobile ship (SetStatic / SetStationary) is a fixed anchor: never
@@ -187,7 +194,7 @@ def _step_ship_motion(ship, dt: float) -> None:
         ship._current_speed = drift.Length()
         ship._drift_velocity = None
 
-    em = _effective_motion(ship, f)
+    em = _effective_motion(ship)
 
     # -- Linear ramp toward (capped) target --
     if em.has_linear:
@@ -266,7 +273,10 @@ def _step_in_system_warp(ship, dt: float) -> None:
 
     getter = getattr(ship, "GetImpulseEngineSubsystem", None)
     ies = getter() if getter is not None else None
-    base = ies.GetMaxSpeed() if ies is not None else 0.0
+    # In-system warp cruises on the WARP engines: scale off the authored
+    # impulse figure (a ship-size proxy), not the live impulse-damaged one —
+    # otherwise a shot-out impulse pod would slow a warp transit.
+    base = ies.GetAuthoredMaxSpeed() if ies is not None else 0.0
     if base <= 0.0:
         base = ShipClass.IN_SYSTEM_WARP_FALLBACK_BASE
     warp_speed = ShipClass.IN_SYSTEM_WARP_SPEED_FACTOR * base

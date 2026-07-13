@@ -196,7 +196,7 @@ class _ImpulseSub(_Pod):
         super().__init__(pos, radius)
         self._on, self._max_speed = on, max_speed
     def IsOn(self): return self._on
-    def GetMaxSpeed(self): return self._max_speed
+    def GetAuthoredMaxSpeed(self): return self._max_speed
 
 
 class _AIShip(_Ship):
@@ -304,7 +304,7 @@ def test_controller_registers_boost_region_per_impulse_pod():
         def __init__(self, kids): self._kids = kids
         def GetNumChildSubsystems(self): return len(self._kids)
         def GetChildSubsystem(self, i): return self._kids[i]
-        def GetMaxSpeed(self): return 10.0
+        def GetAuthoredMaxSpeed(self): return 10.0
     port = _ImpulseSub(_Point(-1.22, -0.20, 0.32), max_speed=10.0)
     star = _ImpulseSub(_Point(1.22, -0.20, 0.32), max_speed=10.0)
     center = _ImpulseSub(_Point(0.0, -1.10, -0.08), max_speed=10.0)
