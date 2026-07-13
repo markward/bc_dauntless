@@ -1,9 +1,9 @@
 # Event firehose — a census of every event the engine actually fires (q15)
 
-Status: PENDING
+Status: DONE (both scenarios captured + analyzed)
 Author: Claude session (q15 event firehose plan)
 Created: 2026-07-13
-Closed:  —
+Closed:  2026-07-13
 Depends on: q13 (the `ET_*` name list), q14 (`probe_harness` persistent owner)
 
 ## Goal
@@ -189,4 +189,61 @@ file modification.
 
 ## Findings
 
-(To be filled in when the probe runs.)
+Ran 2026-07-13. Results: `tools/probes/results/q15_firehose_{A,B}.txt`.
+Scenario A = Galaxy vs Galaxy QuickBattle (fight to a kill). Scenario B = the
+campaign run through E1M1 into the start of E1M2.
+
+### Coverage
+
+**106 of 377 declared `ET_*` types fired** across both scenarios — 86 in A, 53
+in B, 33 shared. The two canonical scenarios cover the core single-player loop;
+the ~271 silent types need other contexts (multiplayer, cloak, tractor, nebula,
+save/load, other missions).
+
+### Q15-1/Q15-3 — the census validates against known ground truth
+
+q15 independently reproduced **every** q12 torpedo finding (numeric IDs and
+source→destination), confirming the one-handler-for-all-types design:
+`ET_TORPEDO_FIRED 0x00800066` src=`Torpedo` dst=`TorpedoTube`; `ET_TORPEDO_RELOAD
+0x00800065` src=`None` dst=`TorpedoTube`; `ET_WEAPON_FIRED 0x0080007C`
+src=subsystem dst=ship. It also captured the full **kill cascade** (`ET_OBJECT_
+EXPLODING → CONVERTED_TO_HULK → OBJECT_DESTROYED → EXITED_SET → AI_DONE`) and the
+**subsystem-damage lifecycle** (`SUBSYSTEM_DAMAGED → DISABLED → COMPLETELY_
+DISABLED → DESTROYED → COMPLETELY_DESTROYED`, src=subsystem dst=ship).
+
+### Q15-2 — the A-vs-B diff (the substrate split)
+
+- **B-only (mission / nav / script layer):** `ET_MISSION_START`,
+  `ET_LOAD_MISSION`, the warp cycle (`SET_WARP_SEQUENCE`, `START_WARP_NOTIFY`,
+  `IN_SYSTEM_WARP`, `EXITED_WARP`, `SET_COURSE`, `WARP_BUTTON_PRESSED`), `ET_DOCK`
+  + `ET_PLAYER_DOCKED_WITH_STARBASE`, `ET_AI_REACHED_WAYPOINT`,
+  `ET_AI_FINISHED_BUILDING`, `ET_PROXIMITY_PLANET`, `ET_CAMERA_ANIMATION_DONE`,
+  `ET_SUBSYSTEM_STATE_CHANGED`, `ET_NAME_CHANGE`, `ET_GAME_SAVED`.
+- **A-only (combat):** the phaser fire/hit cycle, the subsystem-damage cascade,
+  the death sequence, shields, and manual-flight input (`ET_INPUT_TURN_*`,
+  `ET_INPUT_ROLL_*`).
+
+This tells Dauntless which events belong to the combat subsystem vs. the
+mission/navigation subsystem.
+
+### Q15-4 — object lifecycle uses `ET_DELETE_OBJECT_PUBLIC`, not `ET_OBJECT_DELETED`
+
+`ET_OBJECT_DELETED` never fired in either scenario despite kills and object
+churn; `ET_DELETE_OBJECT_PUBLIC (0x00000001)` carried it (57× in A, 194× in B).
+A "don't implement the obvious-looking one" signal.
+
+### Structural / process findings
+
+- **Handler persistence proven.** B captured events across the whole
+  E1M1→E1M2 run (MISSION_START early → warp mid → docking → Haven proximity
+  late), so **episode-owned broadcast handlers survive set transitions** as
+  `persistent_owner()` intended. `Rearm()` was available but the episode owner
+  made it largely unnecessary; re-arming only inflates counts, never the fired
+  type-set.
+- **ID bands:** script `0x0080xxxx`, input `0x008001xx–02xx` + `ET_KEYBOARD/
+  MOUSE 0x0003xxxx`, low-level `0x0000xxxx`, audio `0x0002xxxx`.
+- **The SaveConfigFile crash lesson.** The first Dump() hard-crashed the game:
+  the never-fired section `string.join`ed ~300 names into a single ~6000-char
+  cfg value, overflowing the writer's line buffer. Fixed by batching + a hard
+  180-char cap in `probe_harness.emit()`. Recorded in
+  `console-probe-workflow.md` so q16/q17 authors keep lines short.

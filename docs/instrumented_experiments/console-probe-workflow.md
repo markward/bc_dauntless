@@ -85,6 +85,7 @@ every probe file because the host is genuinely Python 1.5.
 | No `os`, `socket`, `mmap`, `_winreg`, `msvcrt`, `select`, `tempfile`, `posix` | not compiled into the static build | use `__import__('name')` if unsure; guard with `try: ... except ImportError:` |
 | All file I/O is blocked | C-level "Securelevel" intercept on `open()`, `nt.open()`, `nt.listdir()` | `App.g_kConfigMapping.SaveConfigFile` is the **only** write path |
 | `file` removed from builtins | part of the securelevel sandbox | n/a — use cfg |
+| **Over-long cfg values crash the game** | `SaveConfigFile` has a fixed per-line buffer; a ~6000-char value (q15's `string.join` over ~300 never-fired event names) corrupted the write and hard-crashed mid-file | keep every emitted line short. `probe_harness.emit()` hard-caps at **180 chars**; split long content across multiple keys rather than one giant value |
 
 What **does** work: `sys`, `time`, `struct`, `App`, partial `nt` (no I/O),
 `print`, `sys.stdout.write()` (in `-TestMode` only — crashes outside it),
