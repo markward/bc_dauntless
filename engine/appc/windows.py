@@ -210,10 +210,11 @@ class TacticalControlWindow(TGEventHandlerObject):
 
 
 # ── SubtitleWindow ──────────────────────────────────────────────────────────
-# Singleton main window that hosts mission-objective / cinematic banner text.
-# TGCreditAction.Play() calls _add_text(text, duration); the mirror panel
-# snapshots (and prunes expired entries) once per tick.
-# Spec: docs/superpowers/specs/2026-06-03-cef-sdk-ui-mirror-design.md
+# Singleton main window hosting three independent text slots: crew-speech
+# captions (set_crew_line), mission banners (_add_text, from TGCreditAction),
+# and the episode title card (_add_episode_title). The mirror panel snapshots
+# (and prunes expired entries) once per tick, computing fade opacity in Python.
+# Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md
 
 class _SubtitleWindow:
     # SM_* constants are duplicated on the exported SubtitleWindow class
@@ -225,11 +226,18 @@ class _SubtitleWindow:
         self._id = "subtitle-0"
         self._visible = False
         self._mode = self._SM_TACTICAL
-        self._active_texts: list[tuple[str, float]] = []
+        # (text, start, expiry, fade_in, fade_out) -- mission banners.
+        self._active_texts: list[tuple[str, float, float, float, float]] = []
         # Single replaceable crew-speech slot (speaker, text, expiry). Separate
         # from _active_texts so a SpeakLine preemption is a clean replacement
         # and never collides with a mission banner. Owned by CrewSpeechBus.
+        # Captions carry no SDK fade args: they pop on and pop off.
         self._crew_line: tuple[str, str, float] | None = None
+        # (eyebrow, title, start, expiry, fade_in, fade_out) -- the episode
+        # title card. Single slot: a second title replaces the first.
+        self._episode_title: (
+            tuple[str, str, float, float, float, float] | None
+        ) = None
 
     def SetOn(self) -> None:    self._visible = True
     def SetOff(self) -> None:   self._visible = False
@@ -255,26 +263,74 @@ class _SubtitleWindow:
         # instead of letting it dwell to its original expiry.
         self._crew_line = None
 
-    def _add_text(self, text: str, duration_s: float) -> None:
-        self._active_texts.append((str(text), time.monotonic() + float(duration_s)))
+    def _add_text(
+        self, text: str, duration_s: float,
+        fade_in: float = 0.0, fade_out: float = 0.0,
+    ) -> None:
+        now = time.monotonic()
+        self._active_texts.append((
+            str(text), now, now + float(duration_s),
+            float(fade_in), float(fade_out),
+        ))
+
+    def _add_episode_title(
+        self, eyebrow: str, title: str, duration_s: float,
+        fade_in: float = 0.0, fade_out: float = 0.0,
+    ) -> None:
+        now = time.monotonic()
+        self._episode_title = (
+            str(eyebrow), str(title), now, now + float(duration_s),
+            float(fade_in), float(fade_out),
+        )
+
+    @staticmethod
+    def _fade_opacity(
+        now: float, start: float, expiry: float,
+        fade_in: float, fade_out: float,
+    ) -> float:
+        # Computed here, in Python, and pushed per-frame -- NOT a CSS
+        # transition. A CSS transition runs on wall-clock and would keep
+        # animating while the sim is frozen (pause / DevTools); the letterbox
+        # pass learned this the hard way.
+        alpha = 1.0
+        if fade_in > 0.0:
+            alpha = min(alpha, (now - start) / fade_in)
+        if fade_out > 0.0:
+            alpha = min(alpha, (expiry - now) / fade_out)
+        return max(0.0, min(1.0, alpha))
 
     def _snapshot(self, now: float) -> dict | None:
-        self._active_texts = [(t, e) for (t, e) in self._active_texts if e > now]
+        self._active_texts = [e for e in self._active_texts if e[2] > now]
         if self._crew_line is not None and self._crew_line[2] <= now:
             self._crew_line = None
+        if self._episode_title is not None and self._episode_title[3] <= now:
+            self._episode_title = None
         has_crew = self._crew_line is not None
-        if not self._visible and not self._active_texts and not has_crew:
+        has_title = self._episode_title is not None
+        if (not self._visible and not self._active_texts
+                and not has_crew and not has_title):
             return None
         snap = {
             "type": "subtitle",
             "id": self._id,
-            "visible": self._visible or bool(self._active_texts) or has_crew,
+            "visible": (self._visible or bool(self._active_texts)
+                        or has_crew or has_title),
             "mode": self._mode,
-            "lines": [t for (t, _) in self._active_texts],
+            "lines": [
+                {"text": t, "opacity": self._fade_opacity(now, s, e, fi, fo)}
+                for (t, s, e, fi, fo) in self._active_texts
+            ],
         }
         if has_crew:
             snap["speaker"] = self._crew_line[0]
             snap["speech"] = self._crew_line[1]
+        if has_title:
+            eyebrow, title, start, expiry, fade_in, fade_out = self._episode_title
+            snap["title_eyebrow"] = eyebrow
+            snap["title_text"] = title
+            snap["title_opacity"] = self._fade_opacity(
+                now, start, expiry, fade_in, fade_out,
+            )
         return snap
 
 

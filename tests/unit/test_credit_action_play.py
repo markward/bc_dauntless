@@ -10,7 +10,7 @@ def test_play_calls_host_add_text():
     ca = TGCreditAction_Create("Disable the patrol", host, 0.5, 0.5, 5.0, 0.25, 0.5, 16)
     ca.Play()
     assert len(host._active_texts) == 1
-    text, _expires = host._active_texts[0]
+    text, _start, _expires, _fade_in, _fade_out = host._active_texts[0]
     assert text == "Disable the patrol"
 
 
@@ -18,7 +18,7 @@ def test_play_uses_duration_from_args():
     host = _SubtitleWindow()
     ca = TGCreditAction_Create("hi", host, 0.0, 0.0, 7.5)
     ca.Play()
-    text, expires = host._active_texts[0]
+    text, start, expires, fade_in, fade_out = host._active_texts[0]
     # Expiry is monotonic-now + 7.5; just check that 7.5 went through.
     # Approximate by reading the action's stored duration.
     assert ca._duration_s == 7.5

@@ -40,7 +40,7 @@ def test_credit_action_text_reaches_mirror_payload(monkeypatch):
     out = panel.render_payload()
     body = _decode(out)
     subtitle_entry = next(e for e in body["entries"] if e["type"] == "subtitle")
-    assert subtitle_entry["lines"] == ["Disable the patrol"]
+    assert subtitle_entry["lines"] == [{"text": "Disable the patrol", "opacity": 1.0}]
 
     # Same state → next render returns None.
     assert panel.render_payload() is None
