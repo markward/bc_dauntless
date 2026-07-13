@@ -51,12 +51,28 @@ def _overlay_vec(obj):
 
 
 def _collisions_enabled(obj):
-    """Per-object DamageableObject.SetCollisionsOn flag; default True.
+    """Whether this object takes part in collision resolution.
 
-    Same obj.__dict__ pattern as _overlay_vec: the flag is only ever set as an
-    instance attribute, and getattr would hit TGObject.__getattr__'s truthy
-    _Stub on objects that never had it set (e.g. Planet)."""
-    return obj.__dict__.get("_collisions_on", True)
+    Two independent gates, which COMPOSE (neither overrides the other):
+
+    1. The SDK's per-object DamageableObject.SetCollisionsOn flag; default True.
+       Same obj.__dict__ pattern as _overlay_vec: the flag is only ever set as
+       an instance attribute, and getattr would hit TGObject.__getattr__'s
+       truthy _Stub on objects that never had it set (e.g. Planet).
+
+    2. Engine warp suppression: a ship in warp is non-collidable. Our flythrough
+       flies the ship through populated sets at 100x max speed, where a contact
+       is instantly lethal (_ke_damage is quadratic in closing speed) and the
+       sphere broadphase can tunnel clean through a hull. BC never had this
+       problem — it teleports the warping ship into an isolated warp set — so
+       suppression restores BC's outcome, not a new behaviour.
+       warp_state.is_ship_warping is isinstance(ShipClass)-guarded: do not
+       inline it as a getattr probe, or every planet becomes non-collidable.
+    """
+    if not obj.__dict__.get("_collisions_on", True):
+        return False
+    from engine.appc.warp_state import is_ship_warping
+    return not is_ship_warping(obj)
 
 
 _EMPTY_DISABLED = frozenset()
