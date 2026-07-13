@@ -47,6 +47,7 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 | Developer Options menu | `engine/ui/developer_options_panel.py`, `engine/dev_combat_cheats.py`, `native/assets/ui-cef/js/developer_options.js`, `docs/superpowers/specs/2026-06-08-developer-options-menu-design.md` | Developer-only "Developer Options…" pause-menu modal styled like the configuration panel (reuses its `cp-*` CSS + shared backdrop). Combat tab toggles God Mode, 2× player weapon strength, and Disable NPC Shields — all hook `combat.apply_hit` via the dev-mode-gated flags in `dev_combat_cheats` (`*_active()` getters AND with `dev_mode.is_enabled()`, so production combat is byte-identical). God mode skips damage mutation but keeps hit feedback (`persist_decal=False` suppresses only the permanent scar). Off by default, not persisted across launches. |
 | Ship Property Viewer | `engine/ui/ship_property_viewer.py`, `engine/ui/ship_property_viewer_panel.py`, `native/src/renderer/{hologram_pass,subsystem_pin_pass}.cc`, `native/assets/ui-cef/js/ship_property_viewer.js`, `docs/superpowers/specs/2026-06-08-ship-property-viewer-design.md` | Developer-only "Ship Property Viewer" pause-menu modal: the player ship rendered as a translucent Fresnel hologram (`opacity = 0.70 − 0.50·\|N·V\|`, facing→0.20 grazing→0.70, blue back-face glow; `hologram_pass` re-draws the real ship instance with the solid hull hidden via `set_visible(iid, False)`) with camera-facing billboard pins per subsystem (white disc + black class Damage glyph, `subsystem_pin_pass`, world-scaled `kPinWorldSize`, drawn depth-test-off so none hide behind the hull). Pins sit at `subsystem_world_position` mounts (ship world-loc + R·local, **no scale**). Orbit camera + projection + pin-picking are pure Python in `ship_property_viewer.py` (the GL passes get the same camera via `set_camera`, so picks match by construction). Click a pin → property popover. Everything is absolute world space; the camera orbits the subsystem centroid (no re-centring). Opens from the dev pause menu (sim already frozen via `frame_dt=0`); off by default; production render path byte-identical (panel never constructed without `--developer`). The two GL passes take `(camera, viewport_rect)` for a future render-to-texture windowed mode. |
 | **Stub heatmap — CHECK BEFORE CLAIMING A NO-OP** | `docs/stub_heatmap.md`, `tools/stub_heatmap.py`, `engine/core/stub_telemetry.py` | **Trigger: any time you suspect — or are about to assert — that an SDK call is (or isn't) a silent no-op, READ `docs/stub_heatmap.md` FIRST. Never assert stub behaviour from reasoning alone.** It ranks unimplemented attrs by live hit count, plus **Boolean-test call sites (truthiness risk)** and **Numeric-coercion call sites (`int()==0` risk)** tables. Since 2026-07-12 it covers **both** stub paths: the *instance* path (`TGObject.__getattr__` → `_Stub`) **and** the *App-module* path (`App.<name>` → `_NamedStub`), including the silent-collapse operators — so an undefined **constant** (`App.<CLASS>.<CONST>`) now shows up instead of quietly degrading to truthy / `int()==0`. That class had already caused ≥4 real bugs (keyboard `WC_*`; `TGUIObject.ALIGN_*` collapsing every `AlignTo` to `ALIGN_UL`; `EngRepairPane.REPAIR_AREA`; `STTopLevelMenu_GetOpenMenu` making BC's cutscene menu-drop a no-op) — **if you see a name in the coercion/truthiness tables, treat it as a live bug, not noise.** Note the stubs still *behave* the same (truthy / 0); the telemetry only observes. Whole SDK **modules** can also be silently stubbed in the twin stub lists (`tools/mission_harness.py` AND `tests/conftest.py` — fix BOTH), and **never unstub a whole module to reach one function** — its body needs engine surface we lack; reimplement that one behaviour at the equivalent engine hook. |
+| Cutscene letterbox — a RENDERER pass, not UI | `native/src/renderer/letterbox_pass.cc`, `engine/ui/letterbox.py`, `docs/superpowers/specs/2026-07-13-letterbox-renderer-pass-design.md` | The `StartCutscene..EndCutscene` bars are **GL, drawn below the whole UI layer** — `glScissor`+`glClear` into FBO 0 in `host_bindings.cc:frame()`, after the post chain resolves and **before `ui_cef::composite()`**. That ordering IS the feature: every CEF element (subtitles, crew menus, info boxes, pause menu) lands on top of the bars **by construction**, with no z-index to forget. **Do NOT re-add them as DOM.** They were `.sdk-letterbox` at `z-index: 5` and every HUD root here has *no* z-index (`#tactical-left-column`, `#tactical-bottom-row`, reticle text, `#ai-inspector-panel`) → CSS painted the bars *over* the UI; that shipped a real bug (E1M1's XO menu vanished under them mid-tutorial — see `tests/ui/test_sdk_panel_positions.py`). Flow: `TopWindow.letterbox_snapshot()` → `LetterboxAnimator` (smoothstep ease; replaces the old CSS `transition`; `transition_s == 0` snaps for `AbortCutscene`) → `_pump_letterbox` (host loop, **every frame, unconditional**) → `renderer.letterbox_set(covered)`. `covered` is BC's `fCoveredArea` — the **TOTAL** fraction across both bars (0.125 ⇒ 6.25% each); the native pass halves it. Fed `_player_dt`, so the bars **freeze under pause/DevTools** instead of sliding on wall-clock. Reset in the mission-swap block (the animator outlives `TopWindow`). Skipped in hologram-only mode (the SPV owns the frame). |
 | Game-unit conversion | `engine/units.py` | BC stores **everything** spatial (positions, velocities, distances, radii) in a single internal unit, "game units" (GU). **1 GU = 175 m = 0.175 km, 1 GU/s = 630 km/h.** Derived from Galaxy `SetMaxSpeed(6.3)` → 3969 kph in BC's helm tooltip (`sdk/.../BridgeHandlers.py:1389` via `Appc.UtopiaModule_ConvertGameUnitsToKilometers`). Physics, renderer, and camera stay in GU end-to-end; **only convert at display boundaries** via `GU_TO_KM` / `GUPS_TO_KPH`. Never call any variable `*_m` / `*_mps` — speed/range inside the engine is **always** `*_gu` / `*_gups`. |
 
 ## Open questions status
@@ -201,6 +202,44 @@ tests rarely exercised pitched orientations. The radar branch
 Branch `worktree-matrix-convention-unify` consolidated everything onto
 column. If you see `GetRow(1)` in code that's reading a ship's world
 forward, it is a regression — fix it.
+
+## Shared checkout — NEVER run destructive git
+
+This working tree is shared by **concurrent Claude sessions**, and feature
+branches live in it directly (not in worktrees). Work is often deliberately
+**uncommitted** for long stretches. In that situation, any git command that
+restores the working tree from the index or from HEAD is a **destructive
+command** — it silently deletes another session's (or your own) in-flight work,
+and git offers no undo for uncommitted content.
+
+**Banned outright — do not run these, and tell every subagent you dispatch not
+to either (reviewers included):**
+
+```
+git checkout -- <path>     git checkout .      git restore <path>
+git stash                  git clean           git reset --hard
+git add -A / git add .     (sweeps other sessions' files into your commit)
+```
+
+`git checkout -b <new>` and `git checkout <branch>` are fine. Read-only git is
+fine. Always stage with an **explicit pathspec**.
+
+**To mutate a file temporarily** — which reviewers legitimately need to do, to
+prove a test actually catches the bug it claims to — back it up and restore by
+copy, never by git:
+
+```bash
+cp path/to/file /tmp/bak            # 1. back up
+# ...mutate with Edit, run the test, watch it FAIL...
+cp /tmp/bak path/to/file            # 2. restore
+diff path/to/file /tmp/bak          # 3. PROVE the restore is byte-identical
+```
+
+**Why this rule exists:** during the letterbox work a *reviewer* subagent used
+`git checkout --` to revert its own probe mutation and wiped the task's real,
+uncommitted edit along with it. It only recovered because it happened to
+re-check. A PreToolUse hook now denies these commands, but the hook is a net,
+not the rule — do not go looking for a way around it.
 
 ## Build layout — single source of truth
 

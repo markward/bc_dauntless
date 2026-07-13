@@ -41,7 +41,8 @@ _REQUIRED_BINDINGS = frozenset({
     "destroy_instance", "dust_set_density", "dust_set_enabled", "filmic_enabled",
     "filmic_set_enabled", "frame", "get_instance_bounds",
     "get_instance_head_center", "hdr_lens_flare_enabled",
-    "hdr_lens_flare_set_enabled", "hdr_set_enabled", "init", "load_animation_clips",
+    "hdr_lens_flare_set_enabled", "hdr_set_enabled", "init", "letterbox_set",
+    "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "motion_blur_enabled",
     "motion_blur_set_enabled", "nebula_lightning_enabled",
     "nebula_lightning_set_enabled", "play_instance_gesture", "play_instance_idle",
@@ -381,6 +382,13 @@ def set_dust_planets(planets: list) -> None:
     density scaling. Each entry is a dict {position: (x,y,z), radius: r}
     in game units. Applied each frame()."""
     _h.set_dust_planets(planets)
+
+
+def letterbox_set(covered: float) -> None:
+    """Set the cutscene letterbox TOTAL covered fraction (BC's fCoveredArea;
+    0.125 => 6.25% per bar). Clamped native-side to [0, 1]. The bars draw over
+    the 3D scene and under the entire CEF overlay, so all UI sits on top."""
+    _h.letterbox_set(float(covered))
 
 
 def set_nebulae(nebulae: list) -> None:

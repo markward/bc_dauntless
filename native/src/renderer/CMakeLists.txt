@@ -135,6 +135,7 @@ add_library(renderer STATIC
     subsystem_pin_pass.cc
     debug_volume_pass.cc
     target_reticle_pass.cc
+    letterbox_pass.cc
     bridge_pass.cc
     viewscreen_static_pass.cc
     light_matrix.cc

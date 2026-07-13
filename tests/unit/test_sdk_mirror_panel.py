@@ -47,35 +47,19 @@ def _entries(out):
     return json.loads(out[len("setSdkMirror("):-len(");")])["entries"]
 
 
-def test_letterbox_absent_until_cutscene():
-    """Idle: no letterbox entry (empty state still pushes nothing)."""
-    _seed_subtitle()
-    p = SDKMirrorPanel()
-    assert p.render_payload() is None
-
-
-def test_letterbox_emitted_on_cutscene_start():
+def test_letterbox_is_never_emitted():
+    """The cutscene letterbox is a RENDERER pass now (letterbox_pass.cc),
+    driven by _pump_letterbox from TopWindow's snapshot. It must not also come
+    through the CEF mirror: as DOM it was a z-index:5 element that painted over
+    every HUD root without a z-index (E1M1's XO menu vanished under it). See
+    docs/superpowers/specs/2026-07-13-letterbox-renderer-pass-design.md
+    """
     _seed_subtitle()
     p = SDKMirrorPanel()
     top_window._the_top_window.StartCutscene(1.0, 0.125, 1)
     out = p.render_payload()
-    lb = [e for e in _entries(out) if e["type"] == "letterbox"]
-    assert lb and lb[0]["visible"] is True and lb[0]["covered"] == 0.125
-
-
-def test_letterbox_hide_update_then_silent():
-    _seed_subtitle()
-    p = SDKMirrorPanel()
-    top_window._the_top_window.StartCutscene(1.0, 0.125, 1)
-    p.render_payload()                                   # visible
-    top_window._the_top_window.EndCutscene(1.0)
-    out = p.render_payload()                             # one hide update
-    lb = [e for e in _entries(out) if e["type"] == "letterbox"]
-    assert lb and lb[0]["visible"] is False
-    # Settles: next payload carries no letterbox entry, then dedups to None.
-    out2 = p.render_payload()
-    assert not any(e["type"] == "letterbox" for e in _entries(out2))
-    assert p.render_payload() is None
+    entries = _entries(out) if out is not None else []
+    assert not any(e["type"] == "letterbox" for e in entries)
 
 
 def test_dedup_returns_none_on_unchanged_state():
