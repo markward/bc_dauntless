@@ -1,0 +1,180 @@
+# Event firehose — a census of every event the engine actually fires (q15)
+
+Status: PENDING
+Author: Claude session (q15 event firehose plan)
+Created: 2026-07-13
+Closed:  —
+Depends on: q13 (the `ET_*` name list), q14 (`probe_harness` persistent owner)
+
+## Goal
+
+q12 observed **5** torpedo/weapon events by hand. The SDK declares **363** `ET_*`
+constants. This probe answers: **which of the 363 events actually fire during real
+gameplay, who sends each one to whom, and how often** — across both canonical
+scenarios — so we build Dauntless's event system to match what the engine really
+does, not the handful of events we happen to have looked at.
+
+## Background
+
+Our `engine/appc/` event system implements the events the SDK scripts we've read
+happen to consume. That is inference, and it has two blind spots:
+
+- **Events that fire but no SDK script we've read listens for** — engine-internal
+  or UI events we may still need to emit for other listeners to work.
+- **Events we assume matter but that never actually fire** in normal play — effort
+  we could deprioritise.
+
+A live census replaces both guesses with a frequency-ranked, source→destination-
+annotated list. Combined with q13 (which gives the numeric ID and name of every
+`ET_*`), it is the definitive map of the event layer.
+
+## The load-bearing design decision — ONE handler, not 363
+
+q12 registered a *named* handler per event because it watched 5. That does not
+scale, and `AddBroadcastPythonFuncHandler` resolves handlers by the string
+`"module.FunctionName"` — you cannot bind the event-type into a closure.
+
+Instead: define **one** handler `q15_firehose.OnEvent(TGObject, pEvent)` and
+register that *same* string as a broadcast handler for **every** `ET_*` type. When
+any event fires, `OnEvent` reads `pEvent.GetEventType()` to learn which type it was
+and tallies it. This is O(1) source code for O(363) coverage and is the crux of the
+probe.
+
+```python
+# registration loop (Install)
+for name in _ALL_ET_NAMES:            # every "ET_*" in dir(App)
+    try:
+        itype = getattr(App, name)
+        App.g_kEventManager.AddBroadcastPythonFuncHandler(
+            itype, _owner, "q15_firehose.OnEvent")
+        _TYPE_NAME[itype] = name       # reverse map id -> name for the report
+    except:
+        _skipped.append(name)
+```
+
+Enumerate `ET_*` names **dynamically** from `dir(App)` (filter `name[:3] == "ET_"`)
+so the probe needs no hard-coded 363-entry list and automatically covers whatever
+q13 reveals — including any runtime-registered types q13-Q4 finds.
+
+## What `OnEvent` records — bounded, so it survives a firehose
+
+Some events (heartbeats, UI/mouse, per-frame ticks) fire *constantly*. Recording a
+line per event would blow the `SaveConfigFile` budget in seconds. So `OnEvent`
+keeps **aggregates**, not a raw log:
+
+Per event type, a small record:
+- `count` — total firings.
+- `first_t`, `last_t` — game-time of first and last firing.
+- `first_src`, `first_dst` — the `_describe()` cast-ladder identification (from
+  q12/q16) captured **only on the first firing** of that type (bounded work).
+- `n_distinct_src`, `n_distinct_dst` — cheap cardinality via a small dict of objids
+  seen (capped, e.g. first 16, then stop growing).
+
+Total memory is O(number of *distinct* event types that fire) ≈ tens, not the raw
+event count — safe for an entire E1M1 run.
+
+## Specific questions
+
+- **Q15-1** — Which `ET_*` types fire at all in Scenario A (Galaxy v Galaxy QB)?
+  Ranked by count.
+- **Q15-2** — Which fire in Scenario B (E1M1) that do **not** fire in A? (The
+  mission/script/AI/set-transition layer QuickBattle never exercises.)
+- **Q15-3** — For each fired type, first source→destination (via the cast ladder) —
+  a who-talks-to-whom map of the event graph.
+- **Q15-4** — Which of the 363 declared types **never fire** in either scenario?
+  (Candidates to deprioritise — with the caveat "not in these two scenarios".)
+- **Q15-5** — Ordering/coupling spot-checks the aggregate can seed (e.g. does
+  `ET_OBJECT_DELETED` always follow an `ET_..._DESTROYED`?), confirmed by a short
+  targeted per-type raw log if warranted (see "focus mode").
+
+## Handler-lifetime — the E1M1 trap
+
+The broadcast handler's owner (`probe_harness.persistent_owner()`) is the episode,
+which outlives set transitions. **But** to be safe against the case where the
+engine drops handlers on a set unload, `Install()` also registers for
+`ET_SET_LOAD_FILE` / the set-transition events and, in `OnEvent`, if it sees one,
+**re-arms** any handler that came back missing. Simplest robust version: expose a
+`Rearm()` the operator can call manually at each E1M1 checkpoint (the runbook says
+when), and treat auto-rearm as a stretch. A firehose that quietly went deaf halfway
+through E1M1 is the failure mode we must engineer against.
+
+## The probe — `tools/probes/q15_firehose.py`
+
+**Imported, not `execfile`'d** (same reason as q12: the engine resolves
+`"q15_firehose.OnEvent"` by importing the module). Console flow:
+
+```python
+import q15_firehose
+q15_firehose.Install()      # prints owner + N handlers armed
+# ... play the scenario to its checkpoints ...
+q15_firehose.Rearm()        # (E1M1 only) at each set-transition checkpoint
+q15_firehose.Dump()         # writes BCProbe_q15_<scenario>.cfg
+```
+
+`Install()` prints the armed count and any skipped types. `Dump()` emits, sorted by
+descending count: `NAME (0xID) | count=N | t=[first..last] | src0=… dst0=… |
+nsrc=… ndst=…`, plus a trailing block listing the **never-fired** declared types
+for Q15-4.
+
+### Focus mode (optional, for Q15-5)
+
+A `Focus(["ET_FOO", "ET_BAR"])` call switches those specific types from aggregate
+to **raw per-event logging** (like q12), capped at `_MAX_FOCUS = 300` lines, for
+ordering/coupling questions the aggregate can only hint at. Off by default.
+
+## How to run
+
+Push `probe_harness.py` + `q15_firehose.py`. Then per scenario:
+
+**Scenario A — Galaxy v Galaxy QB.** Start the battle, fly, `import q15_firehose;
+Install()`, acquire target and fight for ~60 s (fire weapons, take damage, destroy
+the enemy so death/cleanup events fire), then `Dump()`. Writes
+`BCProbe_q15_A.cfg`.
+
+**Scenario B — E1M1 full run.** `Install()` right after the mission loads and you
+have a ship. Play the mission through; call `Rearm()` at each set transition /
+major checkpoint named in the E1M1 runbook (undock, arrival, combat, docking).
+`Dump()` at the end. Writes `BCProbe_q15_B.cfg`.
+
+Collect (`collect_q15.py`, phase/scenario-suffixed like collect_q13) and commit
+both.
+
+## Expected output
+
+```
+-- provenance ------------------------------------------------
+scenario = A (Galaxy vs Galaxy QB?)
+...
+-- fired events (by count) -----------------------------------
+ET_WEAPON_FIRED (0x0080007C) | count=214 | t=[51.2..147.5] | src0=ShipSubsystem(Forward Beam) dst0=ShipClass(Keldon-1) | nsrc=6 ndst=2
+ET_CANT_FIRE (0x00800037)    | count=58  | ...
+ET_TORPEDO_FIRED (0x00800066)| count=11  | ...
+...
+-- never fired (declared but silent this scenario) -----------
+ET_LOAD_EPISODE, ET_SAVE_GAME, ET_CHARACTER_ANIMATION_DONE, ...
+```
+
+## Analysis
+
+- **A vs B diff** is the headline: intersection = combat-universal events (build
+  these first, they're load-bearing); B-only = mission/script/AI events; A-only =
+  pure-combat events. This directly prioritises event-system work in Dauntless.
+- **Cross-reference the fired set against `engine/appc/` handlers** — any
+  high-count fired event we do **not** post or handle is a gap; any event we post
+  that never appears here is possibly speculative.
+- **Feed Q15-3's src→dst map into the object model** — it says which object *types*
+  originate which events (subsystem vs ship vs projectile vs system), which
+  constrains where we emit them.
+- Numeric IDs cross-check q13 (`GetEventType()` here must equal q13's dumped value
+  for the same name).
+
+## Cleanup
+
+Delete `game\q15_firehose.py`, `game\BCProbe_q15_*.cfg`, and `probe_harness.py` if
+unused elsewhere. The probe registers broadcast handlers on a throwaway
+episode/player object for the session only; they die with the set. Makes no game-
+file modification.
+
+## Findings
+
+(To be filled in when the probe runs.)
