@@ -79,6 +79,7 @@ from engine.appc.ship_death import _out_of_action as _oa
 from engine.appc.ship_motion import _effective_motion, _cap_keep, _asymptote_step
 from engine.appc.subsystems import (
     TorpedoTube,
+    _EnergyWeaponFireMixin,
     _emitter_in_arc,
     _is_offline,
     _resolve_bank_aim_world,
@@ -484,10 +485,17 @@ def _advance_weapons(ships, dt: float) -> None:
                 emitter = group.GetWeapon(i)
                 if emitter is None:
                     continue
-                if hasattr(emitter, "UpdateCharge"):
-                    emitter.UpdateCharge(dt)
+                # isinstance, NOT hasattr: TGObject.__getattr__ returns a truthy
+                # _Stub for any missing attribute, so hasattr() is vacuously True
+                # on every subsystem. The old hasattr(emitter, "UpdateCharge")
+                # guard therefore CALLED a no-op stub on every torpedo tube, every
+                # frame -- ranks 1 and 2 of docs/stub_heatmap.md, 4.5M hits.
+                # Charge is an EnergyWeapon concept (App.py:6426-6440); a
+                # TorpedoTube cannot have it.
                 if isinstance(emitter, TorpedoTube):
                     emitter.UpdateReload(dt)
+                elif isinstance(emitter, _EnergyWeaponFireMixin):
+                    emitter.UpdateCharge(dt)
 
 
 def _phaser_damage_for_tick(max_damage: float,
