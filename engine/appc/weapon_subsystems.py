@@ -50,11 +50,22 @@ def _game_time() -> float:
     established idiom in this module (see _spawn_torpedo).
 
     The import lives INSIDE the try: an ImportError here must fall through to
-    the same 0.0 sentinel as any other clock failure, not escape uncaught."""
+    the same 0.0 sentinel as any other clock failure, not escape uncaught.
+
+    The 0.0 fallback is silent by design (a per-frame weapon loop must never
+    raise), but silent-and-permanent is dangerous here: CanFire's gate
+    (0 - 0 = 0 < ImmediateDelay) and UpdateReload's gate (0 - 0 = 0 <
+    ReloadDelay) both stay false forever once every stamp is 0.0, bricking
+    every torpedo tube with no exception anywhere. Route the swallow through
+    dev_mode.log_swallowed (same idiom as _broadcast_reload below) so a
+    developer can see it happened instead of just watching torpedoes stop
+    reloading."""
     try:
         import App
         return float(App.g_kUtopiaModule.GetGameTime())
-    except Exception:
+    except Exception as _e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("torpedo tube _game_time clock read", _e)
         return 0.0
 
 
@@ -2027,8 +2038,14 @@ class TorpedoTube(Weapon):
 
     def UnloadTorpedo(self) -> None:
         """Remove one ready round; its slot goes back into cooldown.
-        BC FUN_0057D9A0 — used by SetAmmoType(type, immediate=1), which unloads
-        every tube on an ammo-type switch (combat-and-damage.md:833-838)."""
+
+        Mirrors BC's decompiled FUN_0057D9A0 (combat-and-damage.md:833-838),
+        which stock BC calls on an ammo-type switch. SDK-facing surface only:
+        our TorpedoSystem.SetAmmoType (weapon_subsystems.py — see its
+        docstring) SELECTS a slot and explicitly ignores its second arg; it
+        never calls UnloadTorpedo. As of this writing UnloadTorpedo has zero
+        callers anywhere in this engine, the tests, or the SDK — do not infer
+        that SetAmmoType wires it in."""
         if self._num_ready <= 0:
             return
         self._num_ready -= 1

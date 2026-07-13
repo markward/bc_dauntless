@@ -209,7 +209,7 @@ def _validate_event_type(event_type, where: str) -> bool:
     __getattr__ (App.py:1935) to a _NamedStub. We key handlers on the raw
     object; _Stub.__hash__ is id(self) and __getattr__ does NOT memoize ET_*
     names, so every access mints a FRESH key -- the handler becomes unreachable
-    forever. 89 stub ET_ names across ~270 SDK sites are dead this way.
+    forever. 120 stub ET_ names across ~270 SDK sites are dead this way.
 
     We RECORD (surfacing it in docs/stub_heatmap.md) and warn once per name. We
     do NOT refuse: Tactical/Interface/CinematicInterfaceHandlers.py:15 keeps a
