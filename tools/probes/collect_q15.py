@@ -52,7 +52,7 @@ def collect_stream(stream: str) -> bool:
     out = RESULTS / out_name
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     rel = out.relative_to(PROBES.parent.parent)
-    fired = [ln for ln in lines if " | count=" in ln]
+    fired = [ln for ln in lines if " tf=" in ln]
     print(f"  {stream}: wrote {rel}  ({len(lines)} lines, {len(fired)} fired types, {len(files)} file(s))")
     return True
 
