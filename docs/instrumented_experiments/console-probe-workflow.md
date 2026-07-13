@@ -81,6 +81,7 @@ every probe file because the host is genuinely Python 1.5.
 | No `x if cond else y` ternary | Python 2.5+ syntax | explicit `if/else` block, or `(cond and x) or y` |
 | `except SomeError, e:` (comma, not `as`) | Python 1.5 syntax | always use comma form |
 | `print` is a *statement* | Python 2.x and below | `print x` not `print(x)` |
+| No `"sep".join(list)` | str methods incl. `join` added in Python 2.0 | `string.join(list, sep)` (guard the `string` import) or join by hand in a loop |
 | No `os`, `socket`, `mmap`, `_winreg`, `msvcrt`, `select`, `tempfile`, `posix` | not compiled into the static build | use `__import__('name')` if unsure; guard with `try: ... except ImportError:` |
 | All file I/O is blocked | C-level "Securelevel" intercept on `open()`, `nt.open()`, `nt.listdir()` | `App.g_kConfigMapping.SaveConfigFile` is the **only** write path |
 | `file` removed from builtins | part of the securelevel sandbox | n/a — use cfg |

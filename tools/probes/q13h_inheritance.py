@@ -47,6 +47,15 @@ def _base_names(cls):
     except: pass
     return out
 
+def _join(items, sep):
+    # Python 1.5 has NO str.join method (added in 2.0); string.join may be
+    # absent from the static build too. Join by hand.
+    s = ""
+    for i in range(len(items)):
+        if i: s = s + sep
+        s = s + str(items[i])
+    return s
+
 def _flush():
     n = len(_log)
     for i in range(n): _cfg.SetStringValue(_SECTION, "r%d" % i, _log[i])
@@ -75,7 +84,7 @@ try:
         try: _cls = getattr(App, _cname)
         except: continue
         _bn = _base_names(_cls)
-        if _bn: _lines.append("App.%s : %s" % (_cname, ", ".join(_bn)))
+        if _bn: _lines.append("App.%s : %s" % (_cname, _join(_bn, ", ")))
         else:   _lines.append("App.%s : (root)" % _cname)
     _lines.sort()
 
