@@ -6,6 +6,7 @@ subsystem → hull bleed, then broadcasts WeaponHitEvent so mission
 handlers (FriendlyFireHandler etc.) see the hit.
 """
 from engine.appc.math import TGPoint3
+from engine.appc.events import WeaponHitEvent
 from engine import host_io
 import engine.dev_mode as dev_mode
 
@@ -332,6 +333,19 @@ def cloak_shields_suspended(ship) -> bool:
         return False
 
 
+# apply_hit's weapon_type string → the engine's WeaponHitEvent enum. BC's
+# disruptor/pulse bolts are Torpedo payloads (sdk/.../Tactical/Projectiles/
+# CardassianDisruptor.py builds a pTorp), so they belong on TORPEDO. Anything
+# not in this table — collisions (weapon_type=None), warp-core-breach
+# shockwaves — is NOT weapon fire and reports NON_WEAPON rather than silently
+# passing for a phaser (0).
+_WEAPON_TYPE_IDS = {
+    "phaser":  WeaponHitEvent.PHASER,
+    "torpedo": WeaponHitEvent.TORPEDO,
+    "tractor": WeaponHitEvent.TRACTOR_BEAM,
+}
+
+
 def apply_hit(ship, damage: float, hit_point, source, *,
               normal=None, ship_instances=None,
               weapon_type: str | None = None,
@@ -359,8 +373,9 @@ def apply_hit(ship, damage: float, hit_point, source, *,
         ship_instances       — ship→renderer-instance map, passed to
                               hit_feedback.dispatch. Native touches route
                               through host_io, not a raw host handle.
-        weapon_type         — "phaser" / "torpedo" / None. Used by dispatch
-                              for audio routing.
+        weapon_type         — "phaser" / "torpedo" / "tractor" / None. Used by
+                              dispatch for audio routing, and mapped onto the
+                              engine's WeaponHitEvent type by _WEAPON_TYPE_IDS.
         hardpoint_weapon    — WeaponProperty on the firing ship's hardpoint
                               (used to resolve R_hit). None for legacy callers.
         payload_template    — projectile-type template (used to resolve R_hit
@@ -533,6 +548,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     evt.SetNormal(normal)
     evt.SetRadius(r_hit)
     evt.SetSubsystem(primary_subsystem)
+    evt.SetWeaponType(_WEAPON_TYPE_IDS.get(weapon_type, WeaponHitEvent.NON_WEAPON))
     if isinstance(ship, App.TGEventHandlerObject):
         evt.SetDestination(ship)
     App.g_kEventManager.AddEvent(evt)

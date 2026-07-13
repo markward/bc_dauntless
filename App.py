@@ -6,6 +6,7 @@ from engine.appc.events import (
     TGKeyboardEvent, ET_KEYBOARD_EVENT,
     WeaponHitEvent, ET_WEAPON_HIT, ET_WARP_BUTTON_PRESSED,
     ET_TORPEDO_RELOAD, ET_TORPEDO_FIRED,
+    ET_FRIENDLY_FIRE_DAMAGE, ET_FRIENDLY_FIRE_REPORT, ET_FRIENDLY_FIRE_GAME_OVER,
     ObjectExplodingEvent, ObjectExplodingEvent_Create,
     TGEventHandlerObject, TGEventManager,
     TGPythonInstanceWrapper,
@@ -1095,6 +1096,12 @@ class _UtopiaModule:
         self._friendly_fire_max = float(value)
 
     def GetMaxFriendlyFire(self) -> float:
+        return self._friendly_fire_max
+
+    def GetFriendlyFireTolerance(self) -> float:
+        """SWIG's asymmetric getter for the SetMaxFriendlyFire value
+        (sdk/.../App.py:3259-3260). MissionLib.FriendlyFireHandler:3726 reads
+        the game-over ceiling back through THIS name, not GetMaxFriendlyFire."""
         return self._friendly_fire_max
 
     def SetFriendlyFireWarningPoints(self, value) -> None:
