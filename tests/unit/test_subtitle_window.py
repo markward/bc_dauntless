@@ -141,6 +141,20 @@ def test_snapshot_crew_line_expires_exactly_at_expiry(monkeypatch):
     assert sw._snapshot(now=3.0) is None                          # exact boundary → gone
 
 
+def test_snapshot_banner_expires_exactly_at_expiry(monkeypatch):
+    # Boundary case: a banner whose expiry == now is treated as expired.
+    # _active_texts' prune keeps only `e[2] > now`, i.e. it drops an entry
+    # once `now` reaches its expiry exactly -- the same boundary direction
+    # as the crew-line prune above (`<= now` clears), just spelled as a
+    # keep-condition instead of a clear-condition.
+    sw = _SubtitleWindow()
+    monkeypatch.setattr("engine.appc.windows.time.monotonic", lambda: 0.0)
+    sw._add_text("Friendly Fire", 3.0)  # expiry == 3.0
+    snap = sw._snapshot(now=2.999)
+    assert snap["lines"] == [{"text": "Friendly Fire", "opacity": 1.0}]  # just live
+    assert sw._snapshot(now=3.0) is None                                 # exact boundary -> gone
+
+
 def test_snapshot_omits_speaker_keys_when_no_crew_line():
     sw = _SubtitleWindow()
     sw.SetOn()
@@ -192,6 +206,22 @@ def test_crew_line_has_no_fade(monkeypatch):
     assert "speech_opacity" not in snap   # no fade channel for captions
 
 
+def test_fade_opacity_clamps_negative_alpha_to_zero():
+    # now < start makes the fade-in term (now - start) / fade_in negative;
+    # without the `max(0.0, ...)` clamp in _fade_opacity, alpha would go
+    # negative instead of floored at 0.0. Not reachable through
+    # _add_text/_add_episode_title + _snapshot in production -- both
+    # `start` and `now` are drawn from the same time.monotonic() clock,
+    # and `start` is always recorded strictly before any `now` a later
+    # snapshot supplies -- so this pins _fade_opacity directly (it is a
+    # @staticmethod) as a defensive unit-level guard rather than inventing
+    # an unrealistic call sequence.
+    alpha = _SubtitleWindow._fade_opacity(
+        now=0.0, start=10.0, expiry=20.0, fade_in=5.0, fade_out=0.0,
+    )
+    assert alpha == 0.0
+
+
 # ── episode title slot ──────────────────────────────────────────────────────
 
 def test_add_episode_title_records_slot(monkeypatch):
@@ -231,6 +261,18 @@ def test_snapshot_prunes_expired_episode_title(monkeypatch):
     sw._add_episode_title("Episode 1", "Picking up the Pieces", 5.0, 0.25, 0.5)
     assert sw._snapshot(now=10.0) is None       # expired, nothing else live
     assert sw._episode_title is None
+
+
+def test_snapshot_episode_title_expires_exactly_at_expiry(monkeypatch):
+    # Boundary case: an episode title whose expiry == now is treated as
+    # expired -- the prune is `self._episode_title[3] <= now`, the same
+    # boundary direction as the crew-line and banner prunes above.
+    sw = _SubtitleWindow()
+    monkeypatch.setattr("engine.appc.windows.time.monotonic", lambda: 0.0)
+    sw._add_episode_title("Episode 1", "Picking up the Pieces", 3.0)  # expiry == 3.0
+    snap = sw._snapshot(now=2.999)
+    assert snap["title_text"] == "Picking up the Pieces"  # just live
+    assert sw._snapshot(now=3.0) is None                   # exact boundary -> gone
 
 
 def test_second_episode_title_replaces_the_first(monkeypatch):
