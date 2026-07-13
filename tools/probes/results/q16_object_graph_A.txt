@@ -1,0 +1,91 @@
+-- provenance --------------------------------------------------
+scenario = A (QuickBattle, set=QuickBattleRegion)
+set_name = QuickBattleRegion
+game_time = 21.8486328125
+frame = 50991
+ship0 = ShipClass(name='Player') objid=8978
+ship1 = ShipClass(name='Galaxy-1') objid=10668
+roster_ships = 2
+roster_scanned = 5
+-- sets --------------------------------------------------------
+all_sets = (<C SetClass instance at _d4cbbe8_p_SetClass>, <C BridgeSet instance at _d17c730_p_BridgeSet>)
+-- objects (rendered set) --------------------------------------
+n_objects = 5
+o000 = objid=3623 pos=(0.0,0.0,0.0)
+o001 = objid=3628 pos=(-23.8,-23.1,-7.0)
+o002 = objid=3633 pos=(-23.8,-23.1,-7.0)
+o003 = ShipClass(name='Player') objid=8978 pos=(-23.8,-5.7,-8.7)
+o004 = ShipClass(name='Galaxy-1') objid=10668 pos=(-55.3,204.3,-10.6)
+n_ships = 2
+-- ship 'Player' objid=8978 subsystems (34) ct_ok=1 iter_ok=1 --
+ss000 HullClass name='Hull' parent='-' nchild=0 cond=15000.0 maxcond=15000.0
+ss001 PowerSubsystem name='Warp Core' parent='-' nchild=0 cond=7000.0 maxcond=7000.0
+ss002 ShieldClass name='Shield Generator' parent='-' nchild=0 cond=12000.0 maxcond=12000.0
+ss003 SensorSubsystem name='Sensor Array' parent='-' nchild=0 cond=8000.0 maxcond=8000.0
+ss004 TorpedoSystem name='Torpedoes' parent='-' nchild=6 cond=8000.0 maxcond=8000.0
+ss005 PhaserSystem name='Phasers' parent='-' nchild=8 cond=4000.0 maxcond=4000.0
+ss006 ImpulseEngineSubsystem name='Impulse Engines' parent='-' nchild=3 cond=2400.0 maxcond=2400.0
+ss007 WarpEngineSubsystem name='Warp Engines' parent='-' nchild=2 cond=500.0 maxcond=500.0
+ss008 TractorBeamSystem name='Tractors' parent='-' nchild=4 cond=3000.0 maxcond=3000.0
+ss009 HullClass name='Bridge' parent='-' nchild=0 cond=12000.0 maxcond=12000.0
+ss010 RepairSubsystem name='Engineering' parent='-' nchild=0 cond=12000.0 maxcond=12000.0
+ss011 TorpedoTube name='Forward Torpedo 1' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss012 TorpedoTube name='Forward Torpedo 2' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss013 TorpedoTube name='Forward Torpedo 3' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss014 TorpedoTube name='Forward Torpedo 4' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss015 TorpedoTube name='Aft Torpedo 1' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss016 TorpedoTube name='Aft Torpedo 2' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss017 PhaserBank name='Ventral Phaser 1' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss018 PhaserBank name='Ventral Phaser 2' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss019 PhaserBank name='Ventral Phaser 3' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss020 PhaserBank name='Ventral Phaser 4' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss021 PhaserBank name='Dorsal Phaser 1' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss022 PhaserBank name='Dorsal Phaser 2' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss023 PhaserBank name='Dorsal Phaser 3' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss024 PhaserBank name='Dorsal Phaser 4' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss025 ShipSubsystem name='Port Impulse' parent='Impulse Engines' nchild=0 cond=2600.0 maxcond=2600.0
+ss026 ShipSubsystem name='Star Impulse' parent='Impulse Engines' nchild=0 cond=2600.0 maxcond=2600.0
+ss027 ShipSubsystem name='Center Impulse' parent='Impulse Engines' nchild=0 cond=2600.0 maxcond=2600.0
+ss028 ShipSubsystem name='Port Warp' parent='Warp Engines' nchild=0 cond=5000.0 maxcond=5000.0
+ss029 ShipSubsystem name='Star Warp' parent='Warp Engines' nchild=0 cond=5000.0 maxcond=5000.0
+ss030 ShipSubsystem name='Aft Tractor 2' parent='Tractors' nchild=0 cond=1500.0 maxcond=1500.0
+ss031 ShipSubsystem name='Aft Tractor 1' parent='Tractors' nchild=0 cond=1500.0 maxcond=1500.0
+ss032 ShipSubsystem name='Forward Tractor 1' parent='Tractors' nchild=0 cond=1500.0 maxcond=1500.0
+ss033 ShipSubsystem name='Forward Tractor 2' parent='Tractors' nchild=0 cond=1500.0 maxcond=1500.0
+-- ship 'Galaxy-1' objid=10668 subsystems (34) ct_ok=1 iter_ok=1 -
+ss000 HullClass name='Hull' parent='-' nchild=0 cond=15000.0 maxcond=15000.0
+ss001 PowerSubsystem name='Warp Core' parent='-' nchild=0 cond=7000.0 maxcond=7000.0
+ss002 ShieldClass name='Shield Generator' parent='-' nchild=0 cond=12000.0 maxcond=12000.0
+ss003 SensorSubsystem name='Sensor Array' parent='-' nchild=0 cond=8000.0 maxcond=8000.0
+ss004 TorpedoSystem name='Torpedoes' parent='-' nchild=6 cond=8000.0 maxcond=8000.0
+ss005 PhaserSystem name='Phasers' parent='-' nchild=8 cond=4000.0 maxcond=4000.0
+ss006 ImpulseEngineSubsystem name='Impulse Engines' parent='-' nchild=3 cond=2400.0 maxcond=2400.0
+ss007 WarpEngineSubsystem name='Warp Engines' parent='-' nchild=2 cond=500.0 maxcond=500.0
+ss008 TractorBeamSystem name='Tractors' parent='-' nchild=4 cond=3000.0 maxcond=3000.0
+ss009 HullClass name='Bridge' parent='-' nchild=0 cond=12000.0 maxcond=12000.0
+ss010 RepairSubsystem name='Engineering' parent='-' nchild=0 cond=12000.0 maxcond=12000.0
+ss011 TorpedoTube name='Forward Torpedo 1' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss012 TorpedoTube name='Forward Torpedo 2' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss013 TorpedoTube name='Forward Torpedo 3' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss014 TorpedoTube name='Forward Torpedo 4' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss015 TorpedoTube name='Aft Torpedo 1' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss016 TorpedoTube name='Aft Torpedo 2' parent='Torpedoes' nchild=0 cond=2400.0 maxcond=2400.0
+ss017 PhaserBank name='Ventral Phaser 1' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss018 PhaserBank name='Ventral Phaser 2' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss019 PhaserBank name='Ventral Phaser 3' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss020 PhaserBank name='Ventral Phaser 4' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss021 PhaserBank name='Dorsal Phaser 1' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss022 PhaserBank name='Dorsal Phaser 2' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss023 PhaserBank name='Dorsal Phaser 3' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss024 PhaserBank name='Dorsal Phaser 4' parent='Phasers' nchild=0 cond=1000.0 maxcond=1000.0
+ss025 ShipSubsystem name='Port Impulse' parent='Impulse Engines' nchild=0 cond=2600.0 maxcond=2600.0
+ss026 ShipSubsystem name='Star Impulse' parent='Impulse Engines' nchild=0 cond=2600.0 maxcond=2600.0
+ss027 ShipSubsystem name='Center Impulse' parent='Impulse Engines' nchild=0 cond=2600.0 maxcond=2600.0
+ss028 ShipSubsystem name='Port Warp' parent='Warp Engines' nchild=0 cond=5000.0 maxcond=5000.0
+ss029 ShipSubsystem name='Star Warp' parent='Warp Engines' nchild=0 cond=5000.0 maxcond=5000.0
+ss030 ShipSubsystem name='Aft Tractor 2' parent='Tractors' nchild=0 cond=1500.0 maxcond=1500.0
+ss031 ShipSubsystem name='Aft Tractor 1' parent='Tractors' nchild=0 cond=1500.0 maxcond=1500.0
+ss032 ShipSubsystem name='Forward Tractor 1' parent='Tractors' nchild=0 cond=1500.0 maxcond=1500.0
+ss033 ShipSubsystem name='Forward Tractor 2' parent='Tractors' nchild=0 cond=1500.0 maxcond=1500.0
+-- summary -----------------------------------------------------
+data_lines = 89

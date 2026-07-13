@@ -67,6 +67,8 @@ _GENERIC_GETTERS = [
     ("curmaxspeed", "GetCurMaxSpeed"),
 ]
 
+_diag = {}          # last _collect_subsystems diagnostics (ct_ok / iter_ok)
+
 
 def _pos(obj):
     v = _h._safe(obj, "GetWorldLocation", ())
@@ -79,10 +81,15 @@ def _pos(obj):
 
 
 def _subtype(pSub):
+    """Return (label, cast_pointer). The cast pointer matters: type-specific
+    getters (GetMaxReady on a TorpedoTube) live on the cast type, not the base
+    ShipSubsystem wrapper the iterator hands back -- calling them on the base
+    silently returns None (the same q11 gotcha, one level down)."""
     for pair in _SUB_CASTS:
-        if _h._cast(pair[1], pSub):
-            return pair[0]
-    return "UNKNOWN"
+        c = _h._cast(pair[1], pSub)
+        if c:
+            return (pair[0], c)
+    return ("UNKNOWN", None)
 
 
 def _subprops(pSub, stype):
@@ -110,11 +117,18 @@ def _collect_subsystems(pShip):
     (e.g. tubes under the torpedo system) the flat match may not include."""
     seen = {}
     result = []
-    it = None
+    # Guard the constant separately so iter_ok can distinguish "constant missing"
+    # from "method failed".
+    ct = None
     try:
-        it = _h._safe(pShip, "StartGetSubsystemMatch", (App.CT_SHIP_SUBSYSTEM,))
+        ct = App.CT_SHIP_SUBSYSTEM
     except:
-        it = None
+        ct = None
+    it = None
+    if ct is not None:
+        it = _h._safe(pShip, "StartGetSubsystemMatch", (ct,))
+    _diag["ct_ok"] = (ct is not None)
+    _diag["iter_ok"] = (it is not None)
     if it is not None:
         sub = _h._safe(pShip, "GetNextSubsystemMatch", (it,))
         guard = 0
@@ -178,8 +192,12 @@ try:
     for pair in objs:
         obj = pair[1]
         _h.emit("o%03d = %s %s" % (idx, _h.describe(obj), _pos(obj)))
-        if _h._cast("ShipClass_Cast", obj):
-            ships.append(obj)
+        # Set iteration hands back BASE ObjectClass wrappers; type-specific
+        # methods (StartGetSubsystemMatch) need the CAST ShipClass pointer, so
+        # store the cast result -- not the base wrapper (q11 gotcha #4).
+        pShipCast = _h._cast("ShipClass_Cast", obj)
+        if pShipCast:
+            ships.append(pShipCast)
         idx = idx + 1
     _h.record("n_ships", len(ships))
 
@@ -189,11 +207,16 @@ try:
         nm = _h._safe(pShip, "GetName", ())
         oid = _h._safe(pShip, "GetObjID", ())
         subs = _collect_subsystems(pShip)
-        _h.section("ship '%s' objid=%s subsystems (%d)"
-                   % (str(nm), str(oid), len(subs)))
+        _h.section("ship '%s' objid=%s subsystems (%d) ct_ok=%s iter_ok=%s"
+                   % (str(nm), str(oid), len(subs),
+                      str(_diag.get("ct_ok")), str(_diag.get("iter_ok"))))
         sidx = 0
         for sub in subs:
-            stype = _subtype(sub)
+            tinfo = _subtype(sub)
+            stype = tinfo[0]
+            pTyped = tinfo[1]                 # cast pointer for type-specific getters
+            if pTyped is None:
+                pTyped = sub
             sname = _h._safe(sub, "GetName", ())
             par = _h._safe(sub, "GetParentSubsystem", ())
             parname = "-"
@@ -201,7 +224,7 @@ try:
                 pn = _h._safe(par, "GetName", ())
                 if pn is not None:
                     parname = str(pn)
-            props = _subprops(sub, stype)
+            props = _subprops(pTyped, stype)
             _h.emit("ss%03d %s name='%s' parent='%s' %s"
                     % (sidx, stype, str(sname), parname, string.join(props, " ")))
             sidx = sidx + 1
