@@ -1,9 +1,9 @@
 # Object & subsystem graph — the live space-side tree (q16)
 
-Status: PENDING
+Status: DONE (both scenarios captured + analyzed)
 Author: Claude session (q16 object-graph plan)
 Created: 2026-07-13
-Closed:  —
+Closed:  2026-07-13
 Depends on: q14 (`probe_harness` provenance preamble)
 
 ## Goal
@@ -163,4 +163,57 @@ modification.
 
 ## Findings
 
-(To be filled in when the probe runs.)
+Ran 2026-07-13. Results: `tools/probes/results/q16_object_graph_{A,B}.txt`.
+A = Galaxy vs Galaxy QuickBattle. B = the campaign opening (the **DryDock** set).
+
+### Q16-3 — the symmetry oracle passes
+
+The two Galaxies in A are **byte-for-byte identical across all 34 subsystems**
+(modulo objid) — the expected result for two pristine identical hulls, and a
+clean validation of the whole walk. Any asymmetry would have flagged a bug or a
+player-only path; there was none.
+
+### Q16-2 — the Galaxy subsystem tree (34 subsystems)
+
+11 top-level + 23 children. Systems are the typed containers (Hull 15000, Warp
+Core `PowerSubsystem` 7000, Shield 12000, Sensor 8000, Torpedoes `TorpedoSystem`
+[6 tubes], Phasers `PhaserSystem` [8 banks], Impulse/Warp/Tractor systems, a
+second Hull "Bridge" 12000, Engineering `RepairSubsystem` 12000). **The `cond`/
+`maxcond` values match `GlobalPropertyTemplates`/`galaxy.py` exactly**, cross-
+validating our ship-construction reference against the live engine. The per-
+emitter leaves (individual impulse/warp/tractor nodes) cast only to base
+`ShipSubsystem` — the *system* is the typed unit, not the emitter.
+
+### Q16-1 / Q16-5 — roster + cast coverage
+
+- A: 5 rendered-set objects (2 Galaxies + 3 `UNKNOWN` camera/region markers).
+- B: 14 objects, **9 ships** of 5 distinct hull types, and **zero `UNKNOWN`
+  subsystems** — the 18-entry subsystem cast ladder fully covers Station,
+  Shuttle, DryDock, Nightingale, and Galaxy. Our subsystem-type model has no
+  gaps against the mission roster.
+
+### Scenario B — hull archetypes A can't show
+
+- **Station** (5 subs): defensive only — Hull **55000**, Shield 40000, Sensor/
+  Power/Engineering, no weapons or engines.
+- **Shuttle** (15 subs): full ship in miniature — Hull 1600, 1 phaser bank,
+  impulse (`curmaxspeed=4.0` vs Galaxy 6.3), warp, tractor.
+- **Dry Dock** (10 subs): a `ShipClass` with Hull/Shield/Sensor/Power/
+  Engineering + 4 docking tractors, no weapons.
+- Multiple `SetClass` instances load simultaneously (Q16-4).
+
+### Two cast gotchas fixed (both the q11 base-wrapper trap)
+
+1. **Ship identity:** the set-walk returns base `ObjectClass` wrappers;
+   `StartGetSubsystemMatch` is a `ShipClass` method and silently no-ops on the
+   base wrapper (first run: 0 subsystems). Fix: store the **cast** `ShipClass`
+   pointer.
+2. **Subsystem-specific getters:** `GetMaxReady`/`GetReloadDelay`/`GetCurMaxSpeed`
+   live on the cast subsystem type, not the base `ShipSubsystem` the iterator
+   yields. Fix: `_subtype()` returns the cast pointer; props are read through it.
+   (Base-class getters like `GetName`/`GetCondition` worked on the wrapper, which
+   is why structure/condition were always right — only type-specific props were
+   blank.) The committed A result predates fix #2 (blank tube props); B has them.
+
+The corrected `iter_set_objids` + `describe` + these cast rules are the walk
+q17 (bridge graph) reuses.
