@@ -1020,6 +1020,18 @@ ET_SUBSYSTEM_OPERATIONAL          = 0x131F
 ET_REPAIR_INCREASE_PRIORITY       = 0x1320
 # A damaged subsystem entered the repair queue.
 ET_ADD_TO_REPAIR_LIST             = 0x1321
+# ── AI condition watcher event types ─────────────────────────────────────────
+# Stamped by the SDK conditions onto the TGFloatEvent they hand to a
+# FloatRangeWatcher, then fired back at them on a threshold crossing:
+#   Conditions/ConditionSystemBelow.py:88-97   (subsystem condition fraction)
+#   Conditions/ConditionSingleShieldBelow.py:36 (per-face shield fraction)
+# These MUST be real distinct ints. App's module-level __getattr__ returns a
+# fresh _NamedStub per access and _NamedStub hashes by id(), so a handler
+# registered under one access can never match an event fired under another —
+# which is exactly how the two most-used conditions in the AI (31 + 12 SDK
+# uses) silently never updated their status.
+ET_AI_SYSTEM_STATUS_WATCHER       = 0x1322
+ET_AI_SHIELD_WATCHER              = 0x1323
 
 _next_event_type_id = 1200
 
