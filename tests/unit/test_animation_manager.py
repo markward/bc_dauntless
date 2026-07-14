@@ -12,9 +12,45 @@ def test_path_for_unknown_name_returns_none():
     assert m.path_for("nope") is None
 
 
-def test_reload_same_name_overwrites():
+def test_reload_same_name_without_free_is_a_noop():
+    # First registration wins: a second LoadAnimation for a name that is
+    # STILL registered (no intervening FreeAnimation) must not change it.
+    # This used to be last-write-wins ("overwrites"), which is the exact bug
+    # that broke bridge console gestures: CommonAnimations.ConsoleSlide /
+    # PushingButtons re-register the SAME name on every gesture build with an
+    # extension-less path, clobbering the good preload from
+    # GalaxyBridge.PreloadAnimations. See
+    # test_second_load_of_registered_name_does_not_clobber_preloaded_path
+    # below for the exact real-world values.
     m = AnimationManager()
     m.LoadAnimation("a.nif", "x")
+    m.LoadAnimation("b.nif", "x")
+    assert m.path_for("x") == "a.nif"
+
+
+def test_second_load_of_registered_name_does_not_clobber_preloaded_path():
+    # The confirmed real-world bug: GalaxyBridge.PreloadAnimations registers
+    # the good, extensioned path; CommonAnimations.PushingButtons/ConsoleSlide
+    # then re-register the SAME name on every gesture build with a path built
+    # by string concatenation and NO extension. First registration must win.
+    m = AnimationManager()
+    m.LoadAnimation(
+        "data/animations/DB_E_pushing_buttons_A.NIF", "DB_E_pushing_buttons_A")
+    m.LoadAnimation(
+        "data/animations/DB_E_pushing_buttons_A", "DB_E_pushing_buttons_A")
+    assert m.path_for("DB_E_pushing_buttons_A") == (
+        "data/animations/DB_E_pushing_buttons_A.NIF")
+
+
+def test_free_then_load_with_a_different_path_does_take_the_new_path():
+    # The bridge-reload re-point case: LoadBridge.Load calls the OUTGOING
+    # bridge module's UnloadAnimations() (-> FreeAnimation per name) before
+    # the new bridge's PreloadAnimations() runs, so by the time a name is
+    # re-registered it has genuinely been freed first. First-write-wins must
+    # not block this legitimate re-point.
+    m = AnimationManager()
+    m.LoadAnimation("a.nif", "x")
+    m.FreeAnimation("x")
     m.LoadAnimation("b.nif", "x")
     assert m.path_for("x") == "b.nif"
 
@@ -110,8 +146,10 @@ def test_freeing_an_animation_drops_its_cached_duration():
 
 def test_reloading_a_name_with_a_different_path_invalidates_cached_duration():
     """A bridge/mission reload can re-register the same NAME against a
-    DIFFERENT underlying clip (LoadAnimation's own docstring: a re-load of a
-    name overwrites). The cached duration measured against the OLD path must
+    DIFFERENT underlying clip: LoadBridge.Load calls the outgoing bridge's
+    UnloadAnimations() (-> FreeAnimation per name) before the new bridge's
+    PreloadAnimations() runs, so the name is genuinely free before it is
+    re-registered. The cached duration measured against the OLD path must
     not survive - otherwise the walk-off door timing silently uses the FIRST
     mission's clip length forever (g_kAnimationManager is a process-lifetime
     singleton)."""
@@ -120,6 +158,7 @@ def test_reloading_a_name_with_a_different_path_invalidates_cached_duration():
     am.set_duration_provider(lambda path: 4.5 if path.endswith("a.nif") else 9.0)
     assert am.GetAnimationLength("x") == 4.5
 
+    am.FreeAnimation("x")
     am.LoadAnimation("data/animations/b.nif", "x")
     assert am.GetAnimationLength("x") == 9.0
 

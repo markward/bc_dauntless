@@ -18,13 +18,45 @@ class AnimationManager:
 
     def LoadAnimation(self, path, name) -> None:
         # SDK call shape: kAM.LoadAnimation("data/animations/db_stand_t_l.nif",
-        # "db_stand_t_l"). Record name -> path; re-load of a name overwrites.
-        # A re-load can point the same NAME at a DIFFERENT clip (bridge/mission
-        # reload against the process-lifetime g_kAnimationManager singleton),
-        # so any cached duration measured against the OLD path is now stale
-        # and must be dropped.
-        self._paths[str(name)] = str(path)
-        self._durations.pop(str(name), None)
+        # "db_stand_t_l").
+        #
+        # FIRST REGISTRATION WINS while a name is still registered. This
+        # mirrors BC's own TGAnimationManagerClass, which exposes
+        # IsLoaded(name) precisely so callers can skip a redundant reload —
+        # the SDK's gesture builders call LoadAnimation on EVERY gesture
+        # build (hundreds of times per mission), so a real engine reloading
+        # the NIF from disk each time would be absurd.
+        #
+        # This is also load-bearing correctness, not just an optimisation:
+        # Bridge/Characters/CommonAnimations.py's ConsoleSlide/PushingButtons
+        # re-register the SAME name on every build with a path built by
+        # string concatenation and NO file extension (a real SDK content
+        # bug — e.g. "data/animations/DB_E_pushing_buttons_A", no ".NIF").
+        # GalaxyBridge.PreloadAnimations already registered that exact name
+        # against the correct, extensioned path. Under last-write-wins the
+        # extension-less path clobbered the good one and the renderer could
+        # never load the clip — 16 of 199 registered clip names ended up
+        # unloadable, all console-interaction gestures. BC plainly still
+        # plays these gestures, so its LoadAnimation cannot be clobbering
+        # the preload either.
+        #
+        # Do NOT "fix" this by appending a synthesised extension to bare
+        # paths instead: the real files are ".NIF" (uppercase); a lowercase
+        # ".nif" suffix would work on macOS's case-insensitive filesystem
+        # and silently break on Linux. Preserving the SDK's original literal
+        # path — by not touching an already-registered name at all — is the
+        # only case-correct fix.
+        #
+        # The re-point-across-bridge-reload case still works: LoadBridge.Load
+        # calls the OUTGOING bridge module's UnloadAnimations() (->
+        # FreeAnimation per name) before the new bridge's PreloadAnimations()
+        # runs, so by the time a name is re-registered for a new bridge it
+        # has genuinely been freed first, not merely reloaded in place.
+        key = str(name)
+        if key in self._paths:
+            return
+        self._paths[key] = str(path)
+        self._durations.pop(key, None)
 
     def FreeAnimation(self, name) -> None:
         # SDK unloads animations by name on bridge teardown; drop the record so
