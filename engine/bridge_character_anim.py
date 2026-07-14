@@ -116,12 +116,22 @@ class BridgeCharacterAnimController:
         officer's rest pose — which IS the breathe idle (capture_breathing
         feeds set_idle). The restore itself needs the renderer, so it is
         queued for the next update() tick, the same way turns and glances
-        are. Never raises."""
+        are. Never raises.
+
+        If the dropped action carried an on_complete, fire it (best-effort):
+        the owning CharacterAction / mission TGSequence is waiting on that
+        callback, and silently dropping it would stall the sequence forever
+        (same guarantee update() gives at a clip's natural end)."""
         iid = getattr(character, "_render_instance", None)
         if iid is None:
             return
-        self._active.pop(iid, None)          # cancel the transient clip
+        prev = self._active.pop(iid, None)   # cancel the transient clip
         self._pending_defaults.append(iid)   # restore the rest pose next tick
+        if prev is not None and prev.on_complete is not None:
+            try:
+                prev.on_complete()
+            except Exception:
+                pass
 
     def _process_glance(self, renderer, character, detail, on_complete) -> None:
         """Play a quick glance. Fires on_complete exactly once — via the

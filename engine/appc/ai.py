@@ -1558,15 +1558,25 @@ class CharacterAction(TGAction):
                 self.Completed()
                 return
 
+            import App
             if from_file:
-                # BC's escape hatch: a raw NIF name, no registry lookup.
-                clips = [(str(self._detail), 0.0)]
+                # BC's escape hatch (AT_PLAY_ANIMATION_FILE): despite the name,
+                # SDK call sites pass a bare CLIP NAME (e.g. "db_P_Point_C_P",
+                # MaelstromE1M1.py:2025), registered earlier via
+                # g_kAnimationManager.LoadAnimation(path, name) — the name is
+                # NOT itself a resolvable path. Resolve it the same way
+                # bridge_idle_gestures.build_sequence_clips resolves a clip
+                # action's name.
+                clip_path = App.g_kAnimationManager.path_for(self._detail)
+                if not clip_path:
+                    self.Completed()   # unregistered clip name — never stall
+                    return
+                clips = [(clip_path, 0.0)]
             else:
                 module_path = bridge_placement.registered_module_path(cc, self._detail)
                 if not module_path:
                     self.Completed()   # unregistered key (BC no-ops here too)
                     return
-                import App
                 clips = build_sequence_clips(module_path, cc, App.g_kAnimationManager)
             if not clips:
                 self.Completed()
@@ -1574,16 +1584,25 @@ class CharacterAction(TGAction):
 
             category = (CharacterClass.CAT_INTERRUPTABLE if self._flag > 0
                         else CharacterClass.CAT_NON_INTERRUPTABLE)
-            cc.set_current_animation(str(self._detail), category)
 
             def _done():
                 cc.clear_current_animation()
                 self.Completed()
 
-            if not ctrl.submit(cc, clips,
-                               priority=bridge_character_anim._SCRIPTED,
-                               on_complete=_done):
-                _done()                # dropped by the priority guard
+            # Submit BEFORE mutating animation state: submit() rejects an
+            # equal-or-higher-priority action already playing on this officer
+            # (e.g. a second AT_PLAY_ANIMATION arriving while the first is
+            # still in flight). If we set_current_animation first and THEN
+            # get rejected, _done() below clears state that still belongs to
+            # the genuinely-playing first action — corrupting
+            # IsAnimatingNonInterruptable()/GetCurrentAnimation() for the
+            # rest of its playback. Only mutate state once submit() confirms
+            # this action actually owns the officer's animation slot.
+            if ctrl.submit(cc, clips, priority=bridge_character_anim._SCRIPTED,
+                           on_complete=_done):
+                cc.set_current_animation(str(self._detail), category)
+            else:
+                self.Completed()       # dropped by the priority guard
         except Exception:
             try:
                 if cc is not None:
