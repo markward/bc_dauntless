@@ -10,7 +10,15 @@ process. GameLoop.tick() calls manager.tick(game_time, real_time) once
 per 60 Hz frame; the manager fires every process whose next_fire has
 been reached, in priority order (UNSTOPPABLE=0 first, LOW=3 last —
 lower int == higher priority, matching SDK enum order).
+
+Real Appc's C++ TimeSliceProcess ctor self-registers with the scheduler
+and its dtor unregisters. SDK scripts rely on both: they construct a
+process, call SetDelay AFTER construction, never call Add() themselves,
+and stop the process by dropping the reference. TimeSliceProcess.__init__
+mirrors that self-registration here; the manager holds weak references so
+dropping the last Python reference unregisters the process.
 """
+import weakref
 
 
 class TimeSliceProcess:
@@ -20,13 +28,19 @@ class TimeSliceProcess:
     LOW = 3
     NUM_PRIORITIES = 4
 
-    def __init__(self):
+    def __init__(self, manager=None):
         self._priority: int = TimeSliceProcess.NORMAL
         self._delay: float = 0.0
         self._delay_uses_game_time: int = 1
-        # Set on first Add() by the manager — absolute time of next fire
-        # in the relevant time stream.
-        self._next_fire: float = 0.0
+        # None = "not yet scheduled". The manager computes the first fire
+        # time on the first tick that sees this process, because the SDK
+        # calls SetDelay AFTER construction (Conditions/ConditionFacingToward.py:118).
+        self._next_fire = None
+        # Real Appc's C++ ctor registers the process with the scheduler; SDK
+        # scripts never call Add() themselves. The manager holds a weak ref, so
+        # dropping the last Python reference (the SDK's way of stopping a
+        # process: `self.pTimerProcess = None`) unregisters it.
+        (manager if manager is not None else g_kAIManager).Add(self)
 
     def SetPriority(self, p) -> None:
         self._priority = int(p)
@@ -59,8 +73,8 @@ class PythonMethodProcess(TimeSliceProcess):
     The two-arg form matches sdk/.../AI/Setup.py; the one-arg + SetInstance
     form is used by HelmMenuHandlers.ProcessWrapper (py:56-70).
     """
-    def __init__(self):
-        super().__init__()
+    def __init__(self, manager=None):
+        super().__init__(manager)
         self._instance = None
         self._method_name: str = ""
 
@@ -92,44 +106,61 @@ class PythonMethodProcess(TimeSliceProcess):
 class TimeSliceProcessManager:
     """Module-level scheduler. One instance lives as g_kAIManager.
 
-    GameLoop ticks the manager once per frame with the current game-time
-    and real-time absolute clocks. The manager dispatches every process
-    whose next_fire has been reached, lowest priority-int first.
+    GameLoop ticks the manager once per frame with the current game-time and
+    real-time absolute clocks. The manager dispatches every process whose
+    next_fire has been reached, lowest priority-int first.
+
+    Processes are held WEAKLY. Real Appc unregisters a process in its C++
+    destructor, and SDK scripts rely on that: they stop a periodic check by
+    dropping the reference (`self.pTimerProcess = None`,
+    Conditions/ConditionFacingToward.py:100). A strong list would keep every
+    condition's process firing forever.
     """
     def __init__(self):
-        self._procs: list = []
+        self._procs: list = []          # list[weakref.ref[TimeSliceProcess]]
+
+    def _live(self) -> list:
+        """Deref, dropping dead entries. The only way to read the queue."""
+        live = []
+        keep = []
+        for ref in self._procs:
+            proc = ref()
+            if proc is not None:
+                live.append(proc)
+                keep.append(ref)
+        self._procs = keep
+        return live
+
+    def count(self) -> int:
+        return len(self._live())
 
     def Add(self, proc: TimeSliceProcess) -> None:
-        # Snap next_fire to the current time stream's "now + delay" on
-        # registration so SetDelay before Add behaves intuitively.
-        # Manager doesn't know "now" here, so use 0 — manager.tick() will
-        # interpret next_fire == 0 as "fire on the first tick where the
-        # relevant clock reaches the configured delay."
-        if proc not in self._procs:
-            proc._next_fire = proc._delay
-            self._procs.append(proc)
+        if any(p is proc for p in self._live()):
+            return
+        self._procs.append(weakref.ref(proc))
 
     def Remove(self, proc: TimeSliceProcess) -> None:
-        if proc in self._procs:
-            self._procs.remove(proc)
+        self._procs = [r for r in self._procs if r() is not None and r() is not proc]
 
     def tick(self, game_time: float, real_time: float) -> None:
         """Fire every due process in priority order."""
         due = []
-        for proc in self._procs:
+        for proc in self._live():
             t = game_time if proc._delay_uses_game_time else real_time
+            if proc._next_fire is None:
+                # First tick that sees this process: SetDelay has run by now.
+                proc._next_fire = t + proc._delay
+                continue
             if t >= proc._next_fire:
-                due.append((proc._priority, t, proc))
-        due.sort(key=lambda triple: triple[0])
-        for _prio, t_at_fire, proc in due:
+                due.append((proc._priority, proc))
+        due.sort(key=lambda pair: pair[0])
+        for _prio, proc in due:
             proc.Update(proc._delay)
-            # Reschedule at next_fire += delay (avoids drift under
-            # variable tick lengths; same semantics as TGTimer._advance).
             if proc._delay > 0:
+                # Advance rather than restamp: no drift under variable ticks.
                 proc._next_fire += proc._delay
             else:
-                # One-shot: push next_fire far enough out that the process
-                # never fires again unless SetDelay re-arms it.
+                # One-shot: never fires again unless SetDelay re-arms it.
                 proc._next_fire = float("inf")
 
 

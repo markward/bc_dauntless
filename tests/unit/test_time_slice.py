@@ -46,6 +46,7 @@ def test_python_method_process_set_function_invokes_method():
 
     mgr = TimeSliceProcessManager()
     mgr.Add(pmp)
+    mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
     mgr.tick(game_time=0.05, real_time=0.05)
     assert h.calls == 0
     mgr.tick(game_time=0.11, real_time=0.11)
@@ -65,6 +66,7 @@ def test_priority_order_normal_runs_before_low():
 
     mgr = TimeSliceProcessManager()
     mgr.Add(l); mgr.Add(n)  # add LOW first to prove ordering by priority
+    mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
     mgr.tick(game_time=0.11, real_time=0.11)
     assert order == ["N", "L"]
 
@@ -84,6 +86,7 @@ def test_game_time_vs_real_time_isolated():
 
     mgr = TimeSliceProcessManager()
     mgr.Add(g); mgr.Add(r)
+    mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
     mgr.tick(game_time=1.0, real_time=0.0)
     assert fired == ["G"]
     mgr.tick(game_time=1.0, real_time=1.0)
@@ -100,6 +103,7 @@ def test_reschedule_after_fire():
     p.SetDelayUsesGameTime(1)
     mgr = TimeSliceProcessManager()
     mgr.Add(p)
+    mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
     mgr.tick(game_time=1.0, real_time=0.0)
     mgr.tick(game_time=1.5, real_time=0.0)  # not due yet
     mgr.tick(game_time=2.0, real_time=0.0)
@@ -141,6 +145,7 @@ def test_sdk_convention_one_arg_form_receives_float_time_budget():
 
     mgr = TimeSliceProcessManager()
     mgr.Add(pmp)
+    mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
     mgr.tick(game_time=0.25, real_time=0.0)
 
     assert len(received) == 1
@@ -164,6 +169,7 @@ def test_sdk_convention_two_arg_form_receives_float_time_budget():
 
     mgr = TimeSliceProcessManager()
     mgr.Add(pmp)
+    mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
     mgr.tick(game_time=0.5, real_time=0.0)
 
     assert len(received) == 1
