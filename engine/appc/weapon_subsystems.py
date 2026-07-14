@@ -664,6 +664,33 @@ class WeaponSystem(PoweredSubsystem):
         self._next_emitter_index: int = 0
         self._currently_firing: list = []
 
+    def ShouldBeAimed(self) -> int:
+        """Does this weapon system have to bear on the target to fire?
+
+        Decompiled stbc.exe (WeaponSystem::ShouldBeAimed, 0x00584070):
+
+            iVar1 = FUN_00584050();                    // this->GetProperty()
+            return *(undefined1 *)(iVar1 + 0x51);      // property->m_bAimedWeapon
+
+        i.e. it is *purely* a read of the authored WeaponSystemProperty
+        flag written by SetAimedWeapon (+0x51) — no per-class constant, no
+        separate storage. The property ctor (0x0069afe0) defaults it to 0,
+        and TorpedoSystemProperty's ctor (0x00693f60) does not override it,
+        so an unauthored system is free-fire for every weapon type.
+
+        Consumer: AI/Preprocessors.py:642-647 (FireScript.CheckGoodShot)
+        skips the whole directional check when this is false.
+        """
+        prop = self.GetProperty()
+        # getattr-with-default, not hasattr: our leaf emitters (PhaserBank,
+        # TorpedoTube) also inherit WeaponSystem but carry a PhaserProperty /
+        # TorpedoTubeProperty, which has no AimedWeapon byte. The SDK only
+        # asks the aggregator, so falling back to the ctor default is inert.
+        is_aimed = getattr(prop, "IsAimedWeapon", None)
+        if is_aimed is None:
+            return 0
+        return is_aimed()
+
     # ── Parent-aggregator predicates ───────────────────────────────────
     # WeaponSystem parents own their hardpoint emitters (PhaserBank,
     # TorpedoTube, PulseWeapon, TractorBeam) as _children. Damage lands

@@ -775,6 +775,33 @@ class WeaponSystemProperty(PoweredSubsystemProperty):
         # by SetFiringChainString. Empty on most ships — only Galaxy and
         # Sovereign use a non-empty chain string in stock BC.
         self._firing_chains: list[tuple[str, list[int]]] = []
+        # "This weapon system must be aimed" — the byte the C++ ctor
+        # WeaponSystemProperty::WeaponSystemProperty (0x0069afe0) zeroes at
+        # property+0x51:
+        #     *(undefined1 *)((int)this + 0x51) = 0;
+        # SetAimedWeapon (swig 0x0063b770) writes it; IsAimedWeapon
+        # (swig 0x0063b6f0) reads it; and WeaponSystem::ShouldBeAimed
+        # (0x00584070) reads the SAME byte through GetProperty (0x00584050),
+        # which is why ShouldBeAimed has no storage of its own.
+        # TorpedoSystemProperty's ctor (0x00693f60) sets only the
+        # weapon-system-type field and never touches +0x51, so every weapon
+        # system type shares this default.  Stock hardpoints author it
+        # explicitly anyway (52 x 0, 18 x 1 — the 1s are Torpedoes and
+        # two ships' DisruptorCannons).
+        self._aimed_weapon: int = 0
+
+    def SetAimedWeapon(self, value) -> None:
+        # C++ writes `param != 0` into a bool byte.
+        self._aimed_weapon = 1 if value else 0
+
+    def IsAimedWeapon(self) -> int:
+        return self._aimed_weapon
+
+    # SWIG only binds IsAimedWeapon, but engine code (ships.py's hardpoint
+    # -> subsystem copy) reads it through the Get* spelling that the
+    # TGModelProperty data-bag used to synthesize. Keep that name working.
+    def GetAimedWeapon(self) -> int:
+        return self._aimed_weapon
 
     def SetTorpedoScript(self, slot, module_name) -> None:
         self._torpedo_scripts[int(slot)] = str(module_name)
