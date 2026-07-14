@@ -1430,6 +1430,9 @@ class CharacterAction(TGAction):
         if at in (self.AT_PLAY_ANIMATION, self.AT_PLAY_ANIMATION_FILE):
             self._queue_play_animation(from_file=(at == self.AT_PLAY_ANIMATION_FILE))
             return
+        if at in (self.AT_DEFAULT, self.AT_BREATHE, self.AT_FORCE_BREATHE):
+            self._queue_default()
+            return
         # Speak types (and the remaining no-op types) keep the prior flow.
         dur = self._do_play()
         self._complete_after(dur or 0.0)
@@ -1610,6 +1613,39 @@ class CharacterAction(TGAction):
             except Exception:
                 pass
             self.Completed()
+
+    def _queue_default(self) -> None:
+        """AT_DEFAULT / AT_BREATHE / AT_FORCE_BREATHE — return the officer to rest.
+
+        The rest pose IS the breathe idle (bridge_placement.capture_breathing feeds
+        BridgeCharacterAnimController.set_idle), which is why all three verbs land
+        here: BC's AT_DEFAULT restores the default pose, and an officer at rest is
+        an officer breathing. Completes INLINE — restoring a pose is instant, and
+        sequences supply their own delays.
+
+        Ordering note (re-entrancy): request_default() fires the dropped transient
+        action's on_complete SYNCHRONOUSLY (see BridgeCharacterAnimController.
+        request_default). That callback can be another CharacterAction's _done(),
+        whose Completed() can advance the owning TGSequence and submit a brand-new
+        gesture on this SAME officer — including a fresh cc.set_current_animation()
+        call — before request_default() returns. We therefore clear_current_animation()
+        BEFORE calling request_default(), not after: clearing first means any
+        re-entrant set_current_animation() lands on a clean slate and is never wiped
+        out by a clear that runs afterward and would otherwise stomp the newly
+        started action's state instead of the cancelled one's.
+        """
+        from engine.appc.characters import CharacterClass_Cast
+        from engine import bridge_character_anim
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_character_anim.get_controller()
+            if cc is not None:
+                cc.clear_current_animation()
+                if ctrl is not None:
+                    ctrl.request_default(cc)
+        except Exception:
+            pass
+        self.Completed()
 
     def _menu_action(self, *, up: bool) -> None:
         # AT_MENU_UP/AT_MENU_DOWN are the sequenceable wrappers around BC's

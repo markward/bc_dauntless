@@ -243,3 +243,25 @@ def test_request_default_swallows_a_raising_on_complete(monkeypatch):
     ctrl.request_default(ch)             # must not raise
 
     assert ctrl.is_busy(ch) is False
+
+
+import pytest
+
+
+@pytest.mark.parametrize("verb", [
+    CharacterAction.AT_DEFAULT,
+    CharacterAction.AT_BREATHE,
+    CharacterAction.AT_FORCE_BREATHE,
+])
+def test_default_and_breathe_restore_the_rest_pose(monkeypatch, verb):
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    ch.set_current_animation("PushingButtons", CharacterClass.CAT_NON_INTERRUPTABLE)
+    ctrl = _FakeController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+
+    action = CharacterAction(ch, verb)
+    action.Play()
+
+    assert ctrl.submitted == [(ch, "DEFAULT", None, None)]
+    assert action.IsPlaying() == 0          # completes inline
+    assert ch.IsAnimating() == 0            # gate reopens
