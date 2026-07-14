@@ -18,11 +18,16 @@ function renderSubtitle(entry) {
   if (!entry || !entry.visible || (lines.length === 0 && !hasSpeech)) {
     el.hidden = true;
     el.innerHTML = "";
+    // Reset so a fading banner never leaves the box dimmed for whatever
+    // (caption or banner) shows in it next.
+    el.style.opacity = "1";
     return;
   }
   el.hidden = false;
-  // Banner lines carry their own fade opacity (computed in Python, so it
-  // freezes under pause); crew captions pop on and off at full opacity.
+  // Banner lines carry their own fade opacity, computed in Python and
+  // rewritten every frame (runs on wall-clock, does NOT freeze under
+  // pause -- see sdk_mirror.css); crew captions pop on and off at full
+  // opacity.
   const parts = lines.map(line =>
     '<span class="sdk-subtitle__line" style="opacity:' +
     Number(line.opacity).toFixed(3) + '">' + escapeHtml(line.text) + "</span>"
@@ -33,6 +38,21 @@ function renderSubtitle(entry) {
         escapeHtml(entry.speaker) + "</span>"
       : "";
     parts.push(speaker + escapeHtml(entry.speech));
+    // A caption must never be dimmed by a co-resident banner's fade: hold
+    // the container at full opacity and let only the (unfaded) line spans
+    // control text opacity.
+    el.style.opacity = "1";
+  } else {
+    // No crew line: this is a banner-only render. Mirror the box's opacity
+    // onto its own fade so the dark body + salmon rule fade with the text
+    // instead of popping in/out at full alpha around faded-out letters.
+    // Multiple banner lines can be at different points in their own fade;
+    // use the strongest one so the box isn't hidden while any line is
+    // still visible.
+    const maxLineOpacity = lines.length > 0
+      ? Math.max(...lines.map(line => Number(line.opacity)))
+      : 1;
+    el.style.opacity = maxLineOpacity.toFixed(3);
   }
   el.innerHTML = parts.join("<br>");
 }

@@ -6,10 +6,14 @@
    dictated by these slot rules.
 
    Fades are driven by a per-frame `opacity` written into the payload from
-   Python, NOT by a CSS transition or animation: a CSS transition runs on
-   wall-clock and would keep animating while the sim is frozen (pause /
-   F12 DevTools) -- the letterbox pass shipped exactly that bug once. Do not
-   add `transition`/`animation` properties or `@keyframes` to this file.
+   Python, NOT by a CSS transition or animation: that payload value is
+   authoritative and rewritten every frame, and a CSS transition would
+   interpolate between those per-frame writes and fight the Python-driven
+   fade (smearing/lagging it behind the value Python actually computed). Do
+   not add `transition`/`animation` properties or `@keyframes` to this file.
+   (Note: dwell and fade both run on wall-clock time -- time.monotonic() --
+   same as before this change, so pausing mid-fade does not freeze it; see
+   the spec for why.)
    Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md */
 
 #sdk-subtitle {
@@ -50,7 +54,15 @@
 #sdk-episode-title {
   position: absolute;
   left: 5vw;
-  bottom: 16vh;
+  /* 28vh clears a THREE-line caption box (worst case for #sdk-subtitle's
+     52vw max-width): 14vh base + 22px padding + 16px speaker block + three
+     17px/1.25 lines is ~14vh tall, occupying 14vh-28vh. E2M1's
+     Ep2Cutscene.py chains EpisodeTitleAction directly into three spoken
+     lines for Saffi, so the two elements ARE on screen at the same time in
+     a shipped mission -- this is not a hypothetical. Do not lower this
+     back toward 16vh without re-checking caption-box clearance. */
+  bottom: 28vh;
+  max-width: 62vw;
   font-family: "Antonio", sans-serif;
   text-align: left;
   z-index: 50;

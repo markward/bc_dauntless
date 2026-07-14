@@ -289,9 +289,16 @@ class _SubtitleWindow:
         fade_in: float, fade_out: float,
     ) -> float:
         # Computed here, in Python, and pushed per-frame -- NOT a CSS
-        # transition. A CSS transition runs on wall-clock and would keep
-        # animating while the sim is frozen (pause / DevTools); the letterbox
-        # pass learned this the hard way.
+        # transition. The payload's opacity is authoritative and rewritten
+        # every frame; a CSS transition would interpolate between those
+        # per-frame writes and fight this fade (smearing/lagging it). Note
+        # this runs on time.monotonic() (wall clock), same as dwell/expiry
+        # above, so it does NOT freeze under pause -- pausing mid-fade lets
+        # the fade keep running and the item can expire while the sim is
+        # frozen. That's an accepted limitation, not a bug: crew captions
+        # must track their still-playing MP3 (real time, not game time),
+        # and this panel is pumped while paused (the pause menu is itself a
+        # panel). See the spec for the full rationale.
         alpha = 1.0
         if fade_in > 0.0:
             alpha = min(alpha, (now - start) / fade_in)

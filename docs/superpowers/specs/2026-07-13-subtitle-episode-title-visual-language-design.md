@@ -25,7 +25,8 @@ salmon/orange + purple house tokens. There is no episode title *card* at all —
 - Captions and episode titles read as part of Dauntless's UI (Antonio, house tokens,
   the `bc-panel` chrome tells).
 - Episode titles become a real two-tier display card (purple eyebrow + large title).
-- SDK-authored fade/duration timings are honoured, and freeze correctly under pause.
+- SDK-authored fade/duration timings are honoured (see Decision 4 for the
+  known wall-clock/pause limitation this carries forward unchanged).
 
 ## Non-goals
 
@@ -52,14 +53,29 @@ slot routing. CEF never sees the raw string — the payload carries the two tier
 separate fields. A naive JS split on `-` would both mis-route banners and mangle
 `Episode 8 - "Arise, Fair Sun..."`.
 
-**3. Fade opacity is computed in Python, not by CSS transitions.** A CSS transition
-runs on wall-clock and would keep animating while the sim is frozen (pause, F12
-DevTools). The letterbox pass hit exactly this and moved to an engine-pumped
-animator; we do the same, shipping an `opacity` float in the snapshot each frame.
+**3. Fade opacity is computed in Python, not by CSS transitions.** The `opacity`
+value in the snapshot is authoritative and rewritten every frame; a CSS
+transition/animation would interpolate between those per-frame writes and fight
+the Python-driven fade, smearing or lagging it behind the value Python actually
+computed. So we compute the fade curve ourselves in Python and ship a plain
+`opacity` float each frame instead. (This is a different failure mode from the
+letterbox pass's wall-clock-vs-game-time bug -- see Decision 4 for how this
+system relates to pause.)
 
 **4. Dwell/expiry stays on `time.monotonic()`** (as today). Crew-caption duration is
 derived from the real MP3 length, so moving captions to the game clock would desync a
-caption from its own audio. Fades use the same clock, so dwell and fade never disagree.
+caption from its own audio. Fades use the same clock, so dwell and fade never disagree
+with each other.
+
+Known, accepted limitation: because both clocks are wall-clock, a pause (or F12
+DevTools) does NOT freeze a dwell or a fade in progress -- `SDKMirrorPanel.render_payload()`
+snapshots `time.monotonic()` and `PanelRegistry.render_all()` runs unconditionally in
+the host loop before the `pause.sim_frozen` check (panels, including the pause menu
+itself, must keep rendering while paused). Pausing while an episode title is
+mid-fade lets it keep fading and expire on wall-clock time, never to return on
+resume. This is not a regression -- pre-existing subtitle/banner behaviour was the
+same before this change -- and is not being fixed here: plumbing a game clock
+through this path is out of scope (see Non-goals).
 
 ## Design
 
