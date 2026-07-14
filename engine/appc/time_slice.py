@@ -60,8 +60,13 @@ class TimeSliceProcess:
     def GetDelayUsesGameTime(self) -> int:
         return self._delay_uses_game_time
 
-    def Update(self) -> None:
-        """Default Update — overridden by PythonMethodProcess."""
+    def Update(self, dTimeAvailable: float = 0.0) -> None:
+        """Default Update — overridden by PythonMethodProcess.
+
+        Signature must match PythonMethodProcess.Update: the manager
+        dispatches every registered process (base class included, since
+        construction now self-registers) as proc.Update(proc._delay).
+        """
         pass
 
 

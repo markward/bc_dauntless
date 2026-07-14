@@ -118,9 +118,25 @@ def test_remove_stops_dispatch():
     p.SetDelayUsesGameTime(1)
     mgr = TimeSliceProcessManager()
     mgr.Add(p)
+    mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
     mgr.Remove(p)
     mgr.tick(game_time=1.0, real_time=0.0)
     assert fired == []
+
+
+def test_bare_time_slice_process_update_does_not_raise_when_ticked():
+    """A bare TimeSliceProcess (or any subclass that inherits Update rather
+    than overriding it) self-registers at construction. The manager
+    dispatches every live process as proc.Update(proc._delay); the base
+    Update must accept that argument or GameLoop.tick() raises TypeError
+    every frame for any such process left registered."""
+    mgr = TimeSliceProcessManager()
+    p = TimeSliceProcess(manager=mgr)
+    p.SetDelay(0.1)
+    p.SetDelayUsesGameTime(1)
+
+    mgr.tick(game_time=0.0, real_time=0.0)  # first tick just arms next_fire
+    mgr.tick(game_time=0.2, real_time=0.2)  # due: dispatches Update(0.1)
 
 
 def test_sdk_convention_one_arg_form_receives_float_time_budget():

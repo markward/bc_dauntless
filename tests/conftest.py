@@ -709,6 +709,20 @@ def _reset_leakable_engine_globals():
                 _mgr._timers.clear()
         except Exception:
             pass
+    # TimeSliceProcess scheduler: TimeSliceProcess.__init__ now self-registers
+    # with g_kAIManager (mirrors real Appc's C++ ctor). SDK module globals hold
+    # some processes STRONGLY for the interpreter's lifetime -- e.g.
+    # Bridge/HelmMenuHandlers.py:269 g_pCollisionCheckProcess and
+    # Bridge/PowerDisplay.py:328 g_pPowerRefreshProcess -- so once any test
+    # builds the helm menu or power display, those processes stay registered
+    # and fire on every later GameLoop.tick() in the session. The manager
+    # itself only holds weak refs, so clearing its process list here is safe:
+    # any process a test still needs re-adds itself (or was never dropped by
+    # the SDK module, in which case it's the leak we're clearing).
+    try:
+        App.g_kAIManager._procs.clear()
+    except Exception:
+        pass
     # Skip-candidate registry tracks actions whose deferred-completion timers
     # live in the managers just cleared above; drop it in lockstep so a leaked
     # action can't be "skipped" (Completed against reset singletons) later.

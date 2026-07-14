@@ -36,7 +36,12 @@ def test_process_self_registers_and_fires_on_its_delay():
     assert target.calls == 0
 
     mgr.tick(game_time=0.5, real_time=0.5)
-    assert target.calls == 1, "first fire is at construction-time + delay"
+    # Arming happens lazily on the first tick that SEES the process (here
+    # t=0.0, same instant as construction, so the two coincide) rather than
+    # at construction time itself, because the SDK convention is to call
+    # SetDelay AFTER construction (Conditions/ConditionFacingToward.py:118)
+    # -- arming at construction would capture delay=0.0 and fire immediately.
+    assert target.calls == 1, "first fire is at first-tick-that-sees-it + delay"
 
     mgr.tick(game_time=1.0, real_time=1.0)
     assert target.calls == 2, "re-arms every delay"
