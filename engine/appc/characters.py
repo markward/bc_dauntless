@@ -676,7 +676,9 @@ class CharacterClass(ObjectClass):
     def GetRandomAnimationChance(self) -> float:
         return float(self._data.get("RandomAnimationChance", 0.0))
 
-    def IsSpeaking(self) -> int:                  return 0
+    def IsSpeaking(self) -> int:
+        from engine.appc import crew_speech
+        return 1 if crew_speech.is_speaking(self._character_name) else 0
     def IsReadyToSpeak(self) -> int:              return 1
     def IsAnimating(self) -> int:                 return 0
     def IsGoingToAnimate(self) -> int:            return 0

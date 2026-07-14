@@ -1,4 +1,5 @@
 from engine.appc.characters import CharacterClass
+from engine.appc import crew_speech
 from engine.core import stub_telemetry
 
 
@@ -23,3 +24,16 @@ def test_numeric_getters_return_floats_not_none():
     assert isinstance(ch.GetRandomAnimationChance(), float)
     ch.SetRandomAnimationChance(0.75)
     assert ch.GetRandomAnimationChance() == 0.75
+
+
+def test_is_speaking_tracks_the_active_speaker():
+    bus = crew_speech.bus()
+    bus.reset()
+    # speak() takes (speaker, text, wav, priority, now); a text-only line gets an
+    # estimated duration >= _MIN_DURATION_S (2.0s).
+    dur = bus.speak("Kiska", "Aye, Captain.", None, 1, now=100.0)
+    assert dur > 0.0
+    assert crew_speech.is_speaking("Kiska", now=100.5) is True
+    assert crew_speech.is_speaking("Felix", now=100.5) is False   # no cross-talk
+    assert crew_speech.is_speaking("Kiska", now=100.0 + dur + 0.1) is False
+    bus.reset()

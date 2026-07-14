@@ -94,6 +94,7 @@ class CrewSpeechBus:
     def __init__(self) -> None:
         self._active_priority: int = -1
         self._active_expiry: float = 0.0
+        self._active_speaker: str = ""
         self._active_handle = None   # _PlayingSound of the line on the channel
         # Game-time each character last spoke, keyed by character name. Backs
         # CharacterClass.GetLastTalkTime (BC's engine-internal talk-time stamp);
@@ -104,6 +105,7 @@ class CrewSpeechBus:
         self._stop_active_voice()
         self._active_priority = -1
         self._active_expiry = 0.0
+        self._active_speaker = ""
         self._last_talk.clear()
 
     def _stop_active_voice(self) -> None:
@@ -160,6 +162,7 @@ class CrewSpeechBus:
         if line_live:
             self._stop_active_voice()
         self._active_priority = priority
+        self._active_speaker = str(speaker)
         # Real decoded length when the voice is loadable; estimate otherwise.
         real, self._active_handle = self._play_voice(str(wav)) if wav else (0.0, None)
         duration = real if real > 0.0 else _estimate_duration(text, wav)
@@ -305,3 +308,21 @@ def bus() -> CrewSpeechBus:
     if _bus is None:
         _bus = CrewSpeechBus()
     return _bus
+
+
+def is_speaking(name, now=None) -> bool:
+    """True while *name*'s line still holds the speech channel.
+
+    Backs CharacterClass.IsSpeaking, which the SDK uses as a re-entrancy guard
+    (`if (pOfficer.IsHidden() or ... or pOfficer.IsSpeaking()): return`, e.g.
+    Bridge/EngineerCharacterHandlers.py:514 and 22 more sites).
+
+    NOTE this reports the CURRENT bus, which serialises all crew speech. BC gives
+    every character its own speaking queue and lets two officers talk over each
+    other; that divergence is tracked separately (the speech-architecture spec)
+    and does not change this predicate's contract.
+    """
+    if now is None:
+        now = time.monotonic()
+    b = bus()
+    return bool(name) and b._active_speaker == str(name) and now < b._active_expiry
