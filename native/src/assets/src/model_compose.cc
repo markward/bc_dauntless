@@ -253,44 +253,34 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
         body.materials.push_back(std::move(copy));
     }
 
-    // Re-base offset: the head NIF and body NIF are SEPARATE character templates
-    // whose skeletons need not share the same attach-bone (Bip01 Head) bind
-    // height. The head verts are baked in the HEAD NIF's bind-model space but
-    // posed by the BODY's Bip01 Head palette, so a bind-height mismatch renders
-    // the grafted head off the neck — the head telescopes into the shoulders
-    // ("negative neck" / head-in-chest). BC bodies (e.g. BodyMaleM) carry only a
-    // neck stump, so the character head NIF is meant to sit exactly on the body's
-    // Bip01 Head. Shift the head verts by the attach-bone bind-world delta
-    // (body − head) so the head lands where the body's neck expects it. Zero when
-    // the skeletons agree (identity binds -> no shift), so single-NIF grafts and
-    // the CPU unit tests are unaffected.
-    glm::vec3 rebase(0.0f);
-    {
-        const int head_attach = find_bone(head.skeleton, attach_bone);
-        if (head_attach >= 0) {
-            const glm::vec3 body_p(glm::inverse(
-                body.skeleton.bones[attach_idx].inverse_bind_pose)[3]);
-            const glm::vec3 head_p(glm::inverse(
-                head.skeleton.bones[head_attach].inverse_bind_pose)[3]);
-            rebase = body_p - head_p;
-        }
-    }
+    // §3.5 bone rebinding — the BC "weld". Map every head-skeleton bone onto
+    // the body skeleton by name; grafted verts keep their AUTHORED weights and
+    // only their indices are rewritten. Degenerate heads with no skeleton
+    // (synthetic fixtures) keep the old rigid attach-bone bind.
+    std::vector<int> bone_map;
+    if (!head.skeleton.bones.empty())
+        bone_map = weld_head_bones(body.skeleton, head.skeleton);
 
-    // Build one rigid-bound MeshCpu per graftable head mesh.
     std::vector<MeshCpu> out;
     out.reserve(graftable.size());
     for (const MeshCpu* src : graftable) {
         MeshCpu cpu = *src;  // deep copy of vertices/indices/extra_uvs
         for (auto& v : cpu.vertices) {
-            // Align the head NIF's head onto the body's Bip01 Head (see rebase).
-            v.position += rebase;
-            // The head NIF builds its verts already in character-bind-model
-            // space (the head sits at its character head height), so binding to
-            // the head bone with weight 1 lets the body's bone palette pose it
-            // exactly like a rigid body shape — no extra transform.
-            v.bone_indices = glm::u8vec4(static_cast<std::uint8_t>(attach_idx),
-                                         0, 0, 0);
-            v.bone_weights = glm::u8vec4(255, 0, 0, 0);
+            if (bone_map.empty()) {
+                v.bone_indices = glm::u8vec4(
+                    static_cast<std::uint8_t>(attach_idx), 0, 0, 0);
+                v.bone_weights = glm::u8vec4(255, 0, 0, 0);
+                continue;
+            }
+            for (int k = 0; k < 4; ++k) {
+                if (v.bone_weights[k] == 0) { v.bone_indices[k] = 0; continue; }
+                const int old = v.bone_indices[k];
+                const int mapped =
+                    (old >= 0 && old < static_cast<int>(bone_map.size()))
+                        ? bone_map[old] : -1;
+                v.bone_indices[k] = static_cast<std::uint8_t>(
+                    std::clamp(mapped < 0 ? attach_idx : mapped, 0, 255));
+            }
         }
         const int src_mat = src->material_index;
         cpu.material_index =

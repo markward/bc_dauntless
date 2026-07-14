@@ -5,10 +5,11 @@
 // A bridge officer is authored as two NIFs: a skinned body (carrying the
 // Bip01 skeleton + animations) and a separate head. To render them as one
 // skinned instance they must share a single skeleton and material palette.
-// `graft_head` appends the head's meshes into the body Model, rigid-binding
-// every grafted vertex to the body skeleton's attach bone (e.g.
-// "Bip01 Head"), and appends the head's materials/textures with the index
-// remapping that an append implies.
+// `graft_head` appends the head's meshes into the body Model, welding them to
+// the body skeleton BC-style (§3.5): each vertex keeps its authored skin
+// weights and its bone indices are remapped by bone NAME via weld_head_bones
+// (alias bones absorb bind-pose mismatches; head-only bones are appended).
+// Materials/textures are appended with the index remapping an append implies.
 //
 // The work is split so the CPU-side composition is testable without a GL
 // context:
@@ -39,14 +40,12 @@ namespace assets {
 ///   * MOVES the head's textures into body.textures (assets::Texture is a
 ///     move-only RAII owner of its GL handle — it cannot be copied, so the
 ///     head is cannibalized; callers pass an owned head they no longer need);
-///   * returns one ready-to-upload MeshCpu per head mesh that had cpu_data,
-///     with every vertex re-based by the attach-bone bind-world delta (body −
-///     head) so the head sits on the BODY's neck rather than the head NIF's own
-///     (a different-height "Bip01 Head" would otherwise drop the head into the
-///     shoulders), then rigid-bound to the attach bone (bone_indices (idx,0,0,0),
-///     bone_weights (255,0,0,0)), material_index pointing at the appended
-///     material, and node_index set to the node the GL mesh must be registered
-///     on. The re-base is zero when the skeletons' binds agree.
+///   * returns one ready-to-upload MeshCpu per head mesh that had cpu_data, with
+///     vertex positions UNTOUCHED and bone indices remapped onto the body
+///     skeleton by name (weld_head_bones; authored weights preserved). Heads
+///     with no skeleton fall back to a rigid bind on the attach bone.
+///     material_index points at the appended material; node_index is the node
+///     the GL mesh must be registered on.
 /// Returns an empty vector and leaves `body` unchanged when `attach_bone` is
 /// not found in body.skeleton, or when the head has no graftable meshes.
 /// `out_node_index` (if non-null) receives the body node index the new meshes

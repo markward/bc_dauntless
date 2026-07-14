@@ -145,7 +145,10 @@ TEST(GraftHeadCpu, GraftsHeadMeshNotParentedUnderAttachNode) {
     }
 }
 
-TEST(GraftHeadCpu, BindsGraftedVerticesToAttachBoneRigid) {
+// Degenerate heads (no skeleton — synthetic fixtures; real BC head NIFs are
+// full character templates and always carry one) keep the old rigid bind to
+// the attach bone. Also covers the material/texture append plumbing.
+TEST(GraftHeadCpu, RigidFallbackWhenHeadModelHasNoSkeleton) {
     assets::Model body = make_body();
     assets::Model head = make_head();
     const std::size_t head_tex_count = head.textures.size();
@@ -251,16 +254,16 @@ TEST(SetBaseTextureCpu, EmptyPathAndLoadFailureAreNoOps) {
     EXPECT_EQ(m.materials[0].stages[base].texture_index, orig);
 }
 
-// The head NIF and body NIF are separate character templates whose skeletons
-// may place "Bip01 Head" at different bind heights. The grafted head verts must
-// be re-based by the attach-bone bind-world delta (body − head) so the head
-// lands on the BODY's neck instead of telescoping into the shoulders (the Soams
-// "negative neck" / head-in-chest bug). When the two binds agree the shift is 0.
-TEST(GraftHeadCpu, RebasesHeadToBodyAttachBoneBindHeight) {
+// §3.5: a bind-height mismatch between body and head templates is absorbed by
+// an ALIAS BONE carrying the head's inverse bind — vertex data is never
+// touched (BC never moves verts; the translation-only rebase this replaces
+// moved them and was only exact for single-bone bindings). Replaces
+// RebasesHeadToBodyAttachBoneBindHeight.
+TEST(GraftHeadCpu, BindMismatchUsesAliasBoneAndLeavesVertsUntouched) {
     const auto base_slot =
         static_cast<std::size_t>(assets::Material::StageSlot::Base);
 
-    // Body: "Bip01 Head" bind-world at Z = 10 (inverse_bind = translate -10).
+    // Body: "Bip01 Head" bind-world at Z = 10.
     assets::Model body;
     assets::Bone broot; broot.name = "Bip01"; broot.parent_index = -1;
     assets::Bone bhead; bhead.name = "Bip01 Head"; bhead.parent_index = 0;
@@ -273,7 +276,8 @@ TEST(GraftHeadCpu, RebasesHeadToBodyAttachBoneBindHeight) {
     body.textures.emplace_back(0, 1, 1, false);
     body.materials.emplace_back();
 
-    // Head: "Bip01 Head" bind-world at Z = 4; one mesh vertex at (1, 2, 3).
+    // Head: "Bip01 Head" bind-world at Z = 4; one vertex at (1,2,3) authored
+    // fully onto the head skeleton's "Bip01 Head" (index 1).
     assets::Model head;
     assets::Bone hroot; hroot.name = "Bip01"; hroot.parent_index = -1;
     assets::Bone hhead; hhead.name = "Bip01 Head"; hhead.parent_index = 0;
@@ -286,6 +290,8 @@ TEST(GraftHeadCpu, RebasesHeadToBodyAttachBoneBindHeight) {
     head.materials.push_back(mat);
     assets::MeshCpu hc; hc.vertices.resize(1);
     hc.vertices[0].position = glm::vec3(1.0f, 2.0f, 3.0f);
+    hc.vertices[0].bone_indices = {1, 0, 0, 0};
+    hc.vertices[0].bone_weights = {255, 0, 0, 0};
     hc.indices = {0, 0, 0}; hc.material_index = 0;
     assets::Mesh hm(0, 0, 0, 3, 0, -1); hm.set_cpu_data(hc);
     head.meshes.push_back(std::move(hm));
@@ -295,10 +301,72 @@ TEST(GraftHeadCpu, RebasesHeadToBodyAttachBoneBindHeight) {
     std::vector<assets::MeshCpu> grafted =
         assets::graft_head_cpu(body, head, "Bip01 Head");
     ASSERT_EQ(grafted.size(), 1u);
-    // rebase = body(10) − head(4) = +6 in Z: vertex (1,2,3) -> (1,2,9).
+
+    // Vertex position UNTOUCHED (no rebase).
     EXPECT_FLOAT_EQ(grafted[0].vertices[0].position.x, 1.0f);
     EXPECT_FLOAT_EQ(grafted[0].vertices[0].position.y, 2.0f);
-    EXPECT_FLOAT_EQ(grafted[0].vertices[0].position.z, 9.0f);
+    EXPECT_FLOAT_EQ(grafted[0].vertices[0].position.z, 3.0f);
+
+    // Body skeleton gained the alias; the vertex points at it, weight kept.
+    ASSERT_EQ(body.skeleton.bones.size(), 3u);
+    EXPECT_EQ(body.skeleton.bones[2].name,
+              std::string("Bip01 Head") +
+                  std::string(assets::kHeadBindAliasSuffix));
+    EXPECT_EQ(grafted[0].vertices[0].bone_indices.x, 2);
+    EXPECT_EQ(grafted[0].vertices[0].bone_weights.x, 255);
+}
+
+// The weld preserves authored multi-bone weights byte-for-byte, remapping only
+// the INDICES by bone name (head skeleton bone order deliberately differs from
+// the body's). Zero-weight slots are normalized to index 0.
+TEST(GraftHeadCpu, RemapsMultiBoneWeightsByName) {
+    const auto base_slot =
+        static_cast<std::size_t>(assets::Material::StageSlot::Base);
+
+    // Body skeleton: [Bip01, Bip01 Neck, Bip01 Head], identity binds.
+    assets::Model body;
+    assets::Bone b0; b0.name = "Bip01";      b0.parent_index = -1;
+    assets::Bone b1; b1.name = "Bip01 Neck"; b1.parent_index = 0;
+    assets::Bone b2; b2.name = "Bip01 Head"; b2.parent_index = 1;
+    body.skeleton.bones = {b0, b1, b2};
+    body.skeleton.root_bone_index = 0;
+    assets::Node bnode; bnode.name = "Bip01 Head"; bnode.parent_index = -1;
+    body.nodes = {bnode}; body.root_node = 0;
+    body.textures.emplace_back(0, 1, 1, false);
+    body.materials.emplace_back();
+
+    // Head skeleton REVERSED: [Bip01 Head, Bip01 Neck, Bip01], identity binds.
+    assets::Model head;
+    assets::Bone h0; h0.name = "Bip01 Head"; h0.parent_index = 1;
+    assets::Bone h1; h1.name = "Bip01 Neck"; h1.parent_index = 2;
+    assets::Bone h2; h2.name = "Bip01";      h2.parent_index = -1;
+    head.skeleton.bones = {h0, h1, h2};
+    head.skeleton.root_bone_index = 2;
+    head.textures.emplace_back(0, 1, 1, false);
+    assets::Material mat; mat.stages[base_slot].texture_index = 0;
+    head.materials.push_back(mat);
+    assets::MeshCpu hc; hc.vertices.resize(1);
+    // Authored: 2/3 head-skeleton "Bip01 Head" (idx 0), 1/3 "Bip01 Neck" (1).
+    hc.vertices[0].bone_indices = {0, 1, 0, 0};
+    hc.vertices[0].bone_weights = {170, 85, 0, 0};
+    hc.indices = {0, 0, 0}; hc.material_index = 0;
+    assets::Mesh hm(0, 0, 0, 3, 0, -1); hm.set_cpu_data(hc);
+    head.meshes.push_back(std::move(hm));
+    assets::Node hn; hn.name = "head"; hn.parent_index = -1;
+    head.nodes = {hn}; head.root_node = 0; head.nodes[0].meshes.push_back(0);
+
+    std::vector<assets::MeshCpu> grafted =
+        assets::graft_head_cpu(body, head, "Bip01 Head");
+    ASSERT_EQ(grafted.size(), 1u);
+    ASSERT_EQ(body.skeleton.bones.size(), 3u);  // binds equal: no appends
+
+    const auto& v = grafted[0].vertices[0];
+    EXPECT_EQ(v.bone_indices.x, 2);   // head "Bip01 Head"(0) -> body 2
+    EXPECT_EQ(v.bone_indices.y, 1);   // head "Bip01 Neck"(1) -> body 1
+    EXPECT_EQ(v.bone_weights.x, 170); // weights byte-preserved
+    EXPECT_EQ(v.bone_weights.y, 85);
+    EXPECT_EQ(v.bone_weights.z, 0);
+    EXPECT_EQ(v.bone_weights.w, 0);
 }
 
 // Four SDK characters (Admiral_Liu, Barel, CardCapt, Korbus) register their
