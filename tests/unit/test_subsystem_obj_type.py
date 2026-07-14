@@ -226,3 +226,62 @@ def test_condition_critical_system_below_flips_on_hull_damage_and_repair():
     # Repair it back above the threshold -> status returns false.
     hull.SetCondition(80.0)
     assert cs.GetStatus() == 0
+
+
+# ── 7. Guard test: every concrete WeaponSystem subclass is classified ──────────
+#
+#    The tuples _WEAPON_SYSTEM_CLASSES and _ENERGY_WEAPON_CLASSES in
+#    subsystem_types.py are hand-maintained lists used by ct_for_subsystem()
+#    to assign CT_* type tokens to weapon subsystems. If a new concrete
+#    weapon class is added to engine/appc/weapon_subsystems.py but forgotten
+#    from these tuples, ct_for_subsystem() silently falls through to the base
+#    CT_SHIP_SUBSYSTEM — AI decisions (FireScript targeting,
+#    ConditionCriticalSystemBelow) degrade to no-ops with NO test failure.
+#
+#    This guard ensures every concrete non-private WeaponSystem subclass is
+#    listed in exactly one tuple, so adding a new weapon system or leaf
+#    emitter without classifying it will LOUDLY fail the test suite, not
+#    silently brick AI. If this test fails:
+#      1. Add the new class to the appropriate tuple in subsystem_types.py:
+#         - _WEAPON_SYSTEM_CLASSES for weapon-system CONTAINERS
+#           (PhaserSystem, PulseWeaponSystem, TractorBeamSystem, TorpedoSystem)
+#         - _ENERGY_WEAPON_CLASSES for leaf energy EMITTERS
+#           (PhaserBank, PulseWeapon, TractorBeam)
+#      2. Re-run the test to confirm it passes.
+def test_all_weapon_system_subclasses_are_classified():
+    """Every concrete WeaponSystem subclass is in exactly one of the two
+    classification tuples, not zero (unclassified) and not both (contradictory)."""
+    from engine.appc.subsystem_types import _WEAPON_SYSTEM_CLASSES, _ENERGY_WEAPON_CLASSES
+    from engine.appc.weapon_subsystems import WeaponSystem
+
+    # Recursively walk the WeaponSystem hierarchy to find all subclasses.
+    def _walk_subclasses(cls):
+        for sub in cls.__subclasses__():
+            yield sub
+            yield from _walk_subclasses(sub)
+
+    concrete_classes = [
+        c for c in _walk_subclasses(WeaponSystem)
+        if not c.__name__.startswith("_")  # Exclude private/abstract helpers
+    ]
+
+    # Flatten the tuples into a set for membership testing.
+    weapon_system_set = set(_WEAPON_SYSTEM_CLASSES)
+    energy_weapon_set = set(_ENERGY_WEAPON_CLASSES)
+
+    for cls in concrete_classes:
+        in_weapon_systems = cls in weapon_system_set
+        in_energy_weapons = cls in energy_weapon_set
+
+        assert (in_weapon_systems or in_energy_weapons), (
+            f"WeaponSystem subclass {cls.__name__} is not classified in either "
+            f"_WEAPON_SYSTEM_CLASSES or _ENERGY_WEAPON_CLASSES. "
+            f"It will silently fall through to CT_SHIP_SUBSYSTEM, breaking AI. "
+            f"Add it to the appropriate tuple in engine/appc/subsystem_types.py."
+        )
+
+        assert not (in_weapon_systems and in_energy_weapons), (
+            f"WeaponSystem subclass {cls.__name__} appears in BOTH "
+            f"_WEAPON_SYSTEM_CLASSES and _ENERGY_WEAPON_CLASSES — contradictory. "
+            f"Remove it from one tuple."
+        )
