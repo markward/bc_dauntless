@@ -19,14 +19,14 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 7 | SparkEmitterProperty_Create() | GetName | 307 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 8 | SmokeEmitterProperty_Create() | SetOrientation | 254 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 9 | SmokeEmitterProperty_Create() | SetPosition | 254 | 10/16 | 2026-07-13 19:30 UTC |  |
-| 10 | App | Weapon_Cast | 250 | 3/16 | 2026-07-13 20:23 UTC |  |
+| 10 | App | Weapon_Cast | 250 | 3/16 | 2026-07-13 20:23 UTC | 2026-07-14 |
 | 11 | STCharacterMenu | GetNextChild | 242 | 11/16 | 2026-07-13 20:01 UTC |  |
 | 12 | App | SmokeEmitterProperty_Create | 184 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 13 | SmokeEmitterProperty_Create() | GetName | 184 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 14 | TGParagraph | GetRight | 168 | 13/16 | 2026-07-13 20:23 UTC |  |
-| 15 | App | PulseWeaponSystem_Cast | 151 | 1/16 | 2026-07-13 20:01 UTC |  |
+| 15 | App | PulseWeaponSystem_Cast | 151 | 1/16 | 2026-07-13 20:01 UTC | 2026-07-14 |
 | 16 | PhaserSystem | ShouldBeAimed | 151 | 1/16 | 2026-07-13 20:01 UTC |  |
-| 17 | PulseWeaponSystem_Cast() | GetNumChildSubsystems | 151 | 1/16 | 2026-07-13 20:01 UTC |  |
+| 17 | PulseWeaponSystem_Cast() | GetNumChildSubsystems | 151 | 1/16 | 2026-07-13 20:01 UTC | 2026-07-14 |
 | 18 | TorpedoSystem | ShouldBeAimed | 151 | 1/16 | 2026-07-13 20:01 UTC |  |
 | 19 | STCharacterMenu | GetNextChild.SetDisabled | 144 | 11/16 | 2026-07-13 20:01 UTC |  |
 | 20 | TGPane | GetRight | 140 | 13/16 | 2026-07-13 20:23 UTC |  |

@@ -570,6 +570,36 @@ def PulseWeapon_Cast(obj):
     return obj if isinstance(obj, PulseWeapon) else None
 
 
+def PulseWeaponSystem_Cast(obj):
+    """SDK AI/Preprocessors.py:771 (FireScript) —
+    `pPulseSystem = App.PulseWeaponSystem_Cast(pWeaponSystem)`, then
+    `range(pPulseSystem.GetNumChildSubsystems())`. Was undefined, so the
+    truthy _NamedStub took the branch and int()-coerced GetNumChildSubsystems
+    to 0 — the AI never enumerated pulse-weapon firing directions at all."""
+    return obj if isinstance(obj, PulseWeaponSystem) else None
+
+
+def Weapon_Cast(obj):
+    """SDK AI/PlainAI/IntelligentCircleObject.py:62-64 —
+    `pWeapon = App.Weapon_Cast(pSystem.GetChildSubsystem(i))`, `if pWeapon:`.
+    Was undefined, so the truthy _NamedStub made the script build its entire
+    weapon list out of stubs.
+
+    Casts to the per-emitter LEAF subsystem (phaser bank / pulse weapon /
+    tractor beam / torpedo tube), never the containing WeaponSystem — "a
+    System is a container of weapons, not a weapon."  Our engine's
+    PhaserBank/PulseWeapon/TractorBeam inherit WeaponSystem rather than
+    Weapon (weapon_subsystems.py — they mix in _EnergyWeaponFireMixin for
+    charge/fire behaviour instead of deriving from Weapon), so a plain
+    `isinstance(obj, Weapon)` would reject them.  Reuse
+    engine.appc.subsystem_types's CT_WEAPON class tuple — the single source
+    of truth for exactly this leaf-emitter split — rather than inventing a
+    second, divergent notion of "weapon" here."""
+    from engine.appc.subsystem_types import subsystem_class_for_ct
+    weapon_classes = subsystem_class_for_ct(CT_WEAPON)
+    return obj if isinstance(obj, weapon_classes) else None
+
+
 # ── FuzzyLogic ───────────────────────────────────────────────────────────────
 # Used by SDK PlainAI scripts (TorpedoRun, FollowObject, etc.) for
 # behaviour smoothing. Two forms:
