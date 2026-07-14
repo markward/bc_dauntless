@@ -575,11 +575,7 @@ def PulseWeapon_Cast(obj):
 # behaviour smoothing. Two forms:
 #   - FuzzyLogic_BreakIntoSets: pure function, triangular memberships
 #     in N bands defined by N threshold peaks.
-#   - FuzzyLogic class: rule-based Mamdani inference engine.
-#
-# Phase 1 implementation favours plausible behaviour over pixel-perfect SDK
-# fidelity (the SDK C++ implementation is unavailable; semantics inferred
-# from PlainAI callers).
+#   - FuzzyLogic class: weighted-edge rule engine (see class docstring below).
 
 def FuzzyLogic_BreakIntoSets(value, thresholds):
     """Return tuple of N floats summing to 1.0, representing triangular
@@ -621,45 +617,76 @@ def FuzzyLogic_BreakIntoSets(value, thresholds):
 
 
 class FuzzyLogic:
-    """Rule-based Mamdani-style fuzzy inference.
+    """Weighted-edge fuzzy inference — a faithful port of Appc's FuzzyLogic.
 
-    SDK callers (sdk/Build/scripts/AI/PlainAI/FollowObject.py:54-62)
-    use this shape:
+    Ground truth: STBC-Reverse-Engineering-1/docs/gameplay/ai-architecture.md
+    sec.12 (ctor 0x0047cd10, GetResultBySet 0x0047d0b0). A "rule" is literally a
+    weighted edge `inputSet --confidence--> outputSet` carrying a runtime
+    percentage-in-set scratch value. A script fuzzifies its inputs with
+    FuzzyLogic_BreakIntoSets, pushes the memberships in with SetPercentageInSet,
+    and reads back the UNNORMALIZED weighted sum of confidence x percentage over
+    every edge targeting an output set. There is no defuzzification, no centroid,
+    no normalization and no clamping — all blending is done in Python by the
+    caller, which compares the raw sums against each other
+    (AI/PlainAI/FollowObject.py:150-152).
 
-        pFuzzy = App.FuzzyLogic()
-        pFuzzy.SetMaxRules(6)
-        pFuzzy.AddRule(input_set_id, output_set_id)
-        pFuzzy.SetPercentageInSet(input_set_id, value)
-        result = pFuzzy.GetResultBySet(output_set_id)
-
-    Phase 1 semantics: GetResultBySet(o) = max over all rules whose
-    output_id == o of the rule's input membership. Matches Mamdani max-
-    aggregation for single-antecedent rules, which is what every SDK
-    caller uses."""
+    Every SDK caller uses the 2-arg AddRule(in, out) form, so confidence
+    defaults to 1.0.
+    """
 
     def __init__(self):
         self._max_rules: int = 0
+        # Each rule: [input_set, output_set, confidence, percentage].
         self._rules: list = []
-        self._percentages: dict = {}
 
     def SetMaxRules(self, n) -> None:
         self._max_rules = int(n)
 
-    def AddRule(self, input_set_id, output_set_id) -> None:
-        self._rules.append((int(input_set_id), int(output_set_id)))
+    def GetMaxRules(self) -> int:
+        return self._max_rules
+
+    def AddRule(self, input_set, output_set, confidence: float = 1.0) -> int:
+        """Append a rule; return its index, or -1 at capacity."""
+        if self._max_rules and len(self._rules) >= self._max_rules:
+            return -1
+        self._rules.append([int(input_set), int(output_set), float(confidence), 0.0])
+        return len(self._rules) - 1
+
+    def GetRule(self, index):
+        i = int(index)
+        if not (0 <= i < len(self._rules)):
+            return None
+        in_set, out_set, conf, _pct = self._rules[i]
+        return (in_set, out_set, conf)
+
+    def RemoveRule(self, index) -> None:
+        """SWAP-REMOVE — the last rule is copied over `index`. Rule indices are
+        NOT stable across removal (ai-architecture.md sec.12, 0x0047cdf0)."""
+        i = int(index)
+        if not (0 <= i < len(self._rules)):
+            return
+        last = self._rules.pop()
+        if i < len(self._rules):
+            self._rules[i] = last
+
+    def SetRuleConfidence(self, index, confidence) -> None:
+        i = int(index)
+        if 0 <= i < len(self._rules):
+            self._rules[i][2] = float(confidence)
 
     def SetPercentageInSet(self, set_id, value) -> None:
-        self._percentages[int(set_id)] = float(value)
+        """Write the percentage onto every rule whose INPUT set matches."""
+        sid = int(set_id)
+        v = float(value)
+        for rule in self._rules:
+            if rule[0] == sid:
+                rule[3] = v
 
-    def GetResultBySet(self, output_set_id) -> float:
-        out = 0.0
-        for in_id, out_id in self._rules:
-            if out_id != output_set_id:
-                continue
-            v = self._percentages.get(in_id, 0.0)
-            if v > out:
-                out = v
-        return out
+    def GetResultBySet(self, set_id) -> float:
+        """Unnormalized sum of confidence x percentage over every rule whose
+        OUTPUT set matches."""
+        sid = int(set_id)
+        return sum(rule[2] * rule[3] for rule in self._rules if rule[1] == sid)
 
 
 # ── AIScriptAssist helpers ───────────────────────────────────────────────────
