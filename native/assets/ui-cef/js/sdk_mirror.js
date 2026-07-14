@@ -15,6 +15,18 @@ function renderSubtitle(entry) {
   if (!el) return;
   const lines = (entry && entry.lines) || [];
   const hasSpeech = !!(entry && entry.speech);
+  // Same liveness check as renderEpisodeTitle's -- entry is the SAME
+  // "subtitle" payload object passed to both, so this always agrees with
+  // whether the card is actually showing. Only E2M1 puts both a title and
+  // a caption on screen at once; lifting the caption here (rather than
+  // permanently raising the card) is what keeps every other mission's
+  // caption at its normal height -- see the CSS comment on
+  // .sdk-subtitle--title-live.
+  if (entry && entry.visible && entry.title_text) {
+    el.classList.add("sdk-subtitle--title-live");
+  } else {
+    el.classList.remove("sdk-subtitle--title-live");
+  }
   if (!entry || !entry.visible || (lines.length === 0 && !hasSpeech)) {
     el.hidden = true;
     el.innerHTML = "";

@@ -38,6 +38,22 @@
   pointer-events: none;
 }
 
+/* Only E2M1 (Ep2Cutscene.py:216-219) puts the episode card and a live
+   crew caption on screen at the same time -- EpisodeTitleAction chains
+   directly into three of Saffi's spoken lines, so TGCreditAction's captions
+   fill this box for the card's whole 5s dwell. sdk_mirror.js adds this
+   class to #sdk-subtitle whenever the payload's title_text is live, and
+   removes it the instant the title expires, so every other mission (one
+   element or the other, never both) keeps the caption at its normal 14vh.
+
+   Clearance arithmetic (see the matching #sdk-episode-title comment for the
+   card's own extent): card top edge ~= 27.74vh from the bottom of the
+   viewport. This adds a ~2.26vh gap above that and rounds to a clean 30vh
+   so the caption box clears the card with room to spare. */
+#sdk-subtitle.sdk-subtitle--title-live {
+  bottom: 30vh;
+}
+
 .sdk-subtitle__speaker {
   display: block;                           /* own line, no colon */
   color: #d88450;                           /* chrome orange, per reticle names */
@@ -54,14 +70,22 @@
 #sdk-episode-title {
   position: absolute;
   left: 5vw;
-  /* 28vh clears a THREE-line caption box (worst case for #sdk-subtitle's
-     52vw max-width): 14vh base + 22px padding + 16px speaker block + three
-     17px/1.25 lines is ~14vh tall, occupying 14vh-28vh. E2M1's
-     Ep2Cutscene.py chains EpisodeTitleAction directly into three spoken
-     lines for Saffi, so the two elements ARE on screen at the same time in
-     a shipped mission -- this is not a hypothetical. Do not lower this
-     back toward 16vh without re-checking caption-box clearance. */
-  bottom: 28vh;
+  /* 12vh is the mockup position. This card does NOT move to clear the
+     caption box -- see .sdk-subtitle--title-live above, which lifts the
+     CAPTION instead on the one mission (E2M1) where both are live at once.
+
+     Card top-edge extent above this `bottom`, worst case (title wraps to
+     two lines at max-width: 62vw, line-height: 1.0):
+       eyebrow font-size   20px
+       eyebrow margin      6px
+       title x2 lines      144px  (clamp(...) maxes at 72px/line)
+       ------------------------
+       total               170px
+     At a 1080px reference viewport height that is 170/1080*100 ~= 15.74vh,
+     so the card's top edge sits at ~12 + 15.74 = 27.74vh. See the
+     --title-live comment on #sdk-subtitle for how that feeds the lifted
+     caption's `bottom`. */
+  bottom: 12vh;
   max-width: 62vw;
   font-family: "Antonio", sans-serif;
   text-align: left;

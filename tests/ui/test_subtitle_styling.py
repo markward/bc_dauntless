@@ -74,24 +74,67 @@ def _vh(rule: str, prop: str) -> float:
     return float(m.group(1))
 
 
-# A three-line #sdk-subtitle caption (padding 10+12, the speaker block's
-# 13px + 3px margin, three 17px/1.25 lines) is ~14vh tall -- see the
-# design-review finding this test pins and the matching comment on
-# #sdk-episode-title in sdk_mirror.css.
-THREE_LINE_CAPTION_HEIGHT_VH = 14.0
+def _px(rule: str, prop: str) -> float:
+    m = re.search(prop + r"\s*:\s*([\d.]+)px", rule)
+    assert m, "%r not found as a px value in rule" % prop
+    return float(m.group(1))
 
 
-def test_episode_card_clears_a_three_line_caption_box():
-    # Finding 1: E2M1's Ep2Cutscene.py appends EpisodeTitleAction and chains
-    # three of Saffi's spoken lines right after it, so the title card and a
-    # long, wrapped caption ARE on screen together in a shipped mission. The
-    # card's `bottom` must clear the caption box's `bottom` plus a
-    # worst-case three-line caption, or the card's opaque glyphs paint over
-    # the caption box. A future edit that lowers the card back toward the
-    # caption band must fail this.
+def _clamp_max_px(rule: str) -> float:
+    m = re.search(r"clamp\([^,]+,[^,]+,\s*([\d.]+)px\)", rule)
+    assert m, "no clamp(...) max found in rule"
+    return float(m.group(1))
+
+
+# Reference viewport height used to convert the card's px-based type sizes
+# into the same vh unit as its `bottom` offset, matching the arithmetic in
+# the sdk_mirror.css comments. The ratio (not any one exact resolution) is
+# what matters here.
+REFERENCE_VIEWPORT_HEIGHT_PX = 1080.0
+
+
+def test_episode_card_is_at_the_mockup_height():
+    # Mark's design mockup puts the card's text block ~12vh off the bottom
+    # edge -- at or below the caption box's normal 14vh `bottom`. Clearance
+    # from the caption now comes from LIFTING THE CAPTION on the one
+    # mission where both are live (E2M1), not from raising the card; see
+    # test_title_live_caption_clears_the_cards_two_line_top_edge below. A
+    # future edit that floats the card back up above the caption's normal
+    # position must fail this.
     caption_bottom_vh = _vh(_rule(CSS, "#sdk-subtitle"), "bottom")
     episode_bottom_vh = _vh(_rule(CSS, "#sdk-episode-title"), "bottom")
-    assert episode_bottom_vh >= caption_bottom_vh + THREE_LINE_CAPTION_HEIGHT_VH
+    assert episode_bottom_vh <= caption_bottom_vh
+
+
+def test_title_live_caption_clears_the_cards_two_line_top_edge():
+    # Finding 1 (original review): E2M1's Ep2Cutscene.py appends
+    # EpisodeTitleAction and chains three of Saffi's spoken lines right
+    # after it, so the title card and a live caption ARE on screen together
+    # in a shipped mission. Compute the card's actual top edge from its own
+    # CSS -- its `bottom`, plus the eyebrow, plus a worst-case two-line
+    # title (it can wrap at max-width: 62vw) -- and assert the
+    # `--title-live` modifier's `bottom` clears it. This tracks the CSS
+    # instead of hardcoding a number, so retuning any of eyebrow size,
+    # title clamp, or the card's `bottom` without revisiting the modifier
+    # fails here.
+    card_bottom_vh = _vh(_rule(CSS, "#sdk-episode-title"), "bottom")
+
+    eyebrow_rule = _rule(CSS, ".sdk-episode__eyebrow")
+    eyebrow_px = _px(eyebrow_rule, "font-size")
+    eyebrow_margin_px = _px(eyebrow_rule, "margin-bottom")
+
+    title_rule = _rule(CSS, ".sdk-episode__title")
+    title_max_px = _clamp_max_px(title_rule)
+    two_line_title_px = title_max_px * 2  # line-height: 1.0, worst-case wrap
+
+    card_top_extent_px = eyebrow_px + eyebrow_margin_px + two_line_title_px
+    card_top_extent_vh = card_top_extent_px / REFERENCE_VIEWPORT_HEIGHT_PX * 100
+    card_top_vh = card_bottom_vh + card_top_extent_vh
+
+    live_bottom_vh = _vh(
+        _rule(CSS, "#sdk-subtitle.sdk-subtitle--title-live"), "bottom"
+    )
+    assert live_bottom_vh >= card_top_vh
 
 
 @pytest.mark.parametrize("selector", [
@@ -133,7 +176,16 @@ _NODE_HARNESS = r"""
 const fs = require("fs");
 
 function makeEl() {
-  return {hidden: false, innerHTML: "", style: {}, querySelector: function () { return null; }};
+  const classes = new Set();
+  return {
+    hidden: false, innerHTML: "", style: {},
+    querySelector: function () { return null; },
+    classList: {
+      add: function (c) { classes.add(c); },
+      remove: function (c) { classes.delete(c); },
+      contains: function (c) { return classes.has(c); },
+    },
+  };
 }
 
 const els = {"sdk-subtitle": makeEl()};
@@ -171,6 +223,22 @@ els["sdk-subtitle"].style.opacity = "0.123";
 setSdkMirror({entries: [{type: "subtitle", visible: false, lines: []}]});
 out.hiddenReset = els["sdk-subtitle"].style.opacity;
 
+// A live episode title (title_text present on the SAME subtitle entry)
+// must add the modifier class that lifts the caption box clear of the
+// card -- see .sdk-subtitle--title-live in sdk_mirror.css.
+setSdkMirror({entries: [{
+  type: "subtitle", visible: true, title_text: "The Long Way Home", lines: [],
+}]});
+out.titleLiveClassAdded =
+  els["sdk-subtitle"].classList.contains("sdk-subtitle--title-live");
+
+// When the title expires (payload drops title_text), the modifier must
+// come back off so the caption returns to its normal height for whatever
+// mission plays next.
+setSdkMirror({entries: [{type: "subtitle", visible: true, lines: []}]});
+out.titleLiveClassRemovedAfterExpiry =
+  els["sdk-subtitle"].classList.contains("sdk-subtitle--title-live");
+
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -195,3 +263,5 @@ def test_banner_box_fades_with_its_text_but_a_caption_box_never_dims():
     assert out["bannerOnly"] == "0.400"
     assert out["captionWithFadingBannerLine"] == "1"
     assert out["hiddenReset"] == "1"
+    assert out["titleLiveClassAdded"] is True
+    assert out["titleLiveClassRemovedAfterExpiry"] is False

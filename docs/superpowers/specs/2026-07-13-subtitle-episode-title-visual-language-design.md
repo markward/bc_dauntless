@@ -214,7 +214,8 @@ New `renderEpisodeTitle(entry)` fills the two divs, sets `el.style.opacity` from
 
 #sdk-episode-title {
   position: absolute;
-  left: 5vw; bottom: 16vh;
+  left: 5vw; bottom: 12vh;
+  max-width: 62vw;
   font-family: "Antonio", sans-serif;
   text-align: left;
   z-index: 50; pointer-events: none;
@@ -234,11 +235,46 @@ New `renderEpisodeTitle(entry)` fills the two divs, sets `el.style.opacity` from
   color: #fff;
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.75);
 }
+
+/* Lifts the caption box, NOT the card, on the one mission where both are
+   live at once (E2M1) -- see "Layout" below. */
+#sdk-subtitle.sdk-subtitle--title-live {
+  bottom: 30vh;
+}
 ```
 
 The card has no box or border — it floats on the letterboxed shot. Both slots sit at
 `z-index: 50` and are drawn above the letterbox bars by construction (the bars are a
 GL pass beneath the whole CEF layer).
+
+### Layout
+
+`#sdk-episode-title` sits at `bottom: 12vh` — the mockup position, where the design
+review's finished dwell shot puts the card's text block. `#sdk-subtitle` sits at its
+original `bottom: 14vh`. **Only** `sdk/Build/scripts/Maelstrom/Episode2/E2M1/Ep2Cutscene.py:216-219`
+puts both elements on screen at once: `EpisodeTitleAction` is appended and then
+immediately chained into three of Saffi's spoken lines, so `TGCreditAction`'s captions
+render in `#sdk-subtitle` for the card's whole 5-second dwell. Both slots are
+`z-index: 50` and the card comes later in `index.html`'s DOM order, so if they overlap
+the card's opaque glyphs paint over the caption box's body.
+
+An earlier pass resolved this by raising the card itself to `bottom: 28vh`, clearing the
+caption band permanently — but that also moved it far above the mockup for every other
+mission, which is what Mark's live-verify pass flagged. The fix inverts it: the card
+stays at the mockup height, and `js/sdk_mirror.js` adds a `sdk-subtitle--title-live`
+class to `#sdk-subtitle` whenever the same subtitle-entry payload carries a live
+`title_text` (removing it the instant the title expires), lifting the caption to
+`bottom: 30vh` only while a title card is actually showing. Every other mission shows
+one element or the other, never both, so the caption sits at its normal `14vh` the rest
+of the time.
+
+The `30vh` is derived, not guessed: the card's top edge, worst case (the title can wrap
+to two lines at `max-width: 62vw`, `line-height: 1.0`), is `12vh` (the card's `bottom`)
+plus the eyebrow (20px font-size + 6px margin) plus two title lines at the clamp's max
+(72px each) = 170px total. At a 1080px reference viewport height that is
+`170 / 1080 * 100 ≈ 15.74vh`, so the card's top edge sits at `≈ 27.74vh`. `30vh` adds a
+small (`≈2.26vh`) gap above that. The arithmetic is repeated as CSS comments in
+`sdk_mirror.css` beside both rules, since the number would otherwise look arbitrary.
 
 ## Tests
 
