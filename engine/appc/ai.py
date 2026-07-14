@@ -1675,7 +1675,23 @@ class CharacterAction(TGAction):
             # this action actually owns the officer's animation slot.
             if ctrl.submit(cc, clips, priority=bridge_character_anim._SCRIPTED,
                            on_complete=_done):
-                cc.set_current_animation(str(self._detail), category)
+                # submit() can rescue-and-fire a PREEMPTED action's on_complete
+                # SYNCHRONOUSLY (BridgeCharacterAnimController.submit). Event
+                # dispatch is synchronous, so that rescued callback can advance
+                # the owning TGSequence into a brand-new CharacterAction on this
+                # SAME officer (e.g. AT_DEFAULT) before submit() has even
+                # returned -- and that action's request_default() pops THIS
+                # gesture's freshly-installed _Action and fires our own _done()
+                # (clear_current_animation + Completed()) re-entrantly, all
+                # still inside this submit() call. TGAction.Completed() clears
+                # _playing, so IsPlaying() tells us whether that already
+                # happened. Skipping set_current_animation here is what keeps
+                # this action's already-cleared state from being stomped back
+                # to "animating" -- without this guard the officer's
+                # IsAnimatingNonInterruptable() gate jams shut for the rest of
+                # the mission (docs: this seam has bitten twice).
+                if self.IsPlaying():
+                    cc.set_current_animation(str(self._detail), category)
             else:
                 self.Completed()       # dropped by the priority guard
         except Exception:

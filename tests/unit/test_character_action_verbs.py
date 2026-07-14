@@ -489,3 +489,92 @@ def test_skip_during_the_forward_turn_does_not_speak_afterwards(monkeypatch):
         cb()
     assert spoken == []                          # the skipped line never speaks
     assert len(completions) == 1                 # and never completes twice
+
+
+def test_gesture_preempting_a_synchronously_completed_turn_does_not_jam_the_officer(
+        monkeypatch):
+    # Reproduced (not theoretical): an officer is mid turn-to-captain when a
+    # scripted gesture lands on him.
+    #
+    #   gesture.Play() -> _queue_play_animation -> ctrl.submit()
+    #     preempts the in-flight turn action (priority _TURN < _SCRIPTED) and
+    #     rescues its on_complete SYNCHRONOUSLY -> turn_action.Completed()
+    #     -> (event dispatch is synchronous) the owning TGSequence advances
+    #     into default_action (AT_DEFAULT) on the SAME officer
+    #     -> default_action.Play() -> _queue_default() -> ctrl.request_default()
+    #     pops the brand-new gesture _Action (installed a moment ago by the
+    #     very submit() call still on the stack) and fires ITS on_complete
+    #     (_done(): clear_current_animation() + gesture.Completed()) --
+    #     all of this happens BEFORE ctrl.submit() returns True to
+    #     _queue_play_animation.
+    #
+    # This drives the REAL BridgeCharacterAnimController and a REAL TGSequence
+    # (not a fake that fires on_complete synchronously by construction) so the
+    # re-entrant chain is genuine. Without the self.IsPlaying() guard,
+    # _queue_play_animation then calls cc.set_current_animation(...) on an
+    # action that has ALREADY completed, leaving IsAnimating() /
+    # IsAnimatingNonInterruptable() permanently stuck at 1 with nothing
+    # actually playing -- the officer's re-entrancy gate jams shut for the
+    # rest of the mission.
+    import App
+    from engine import bridge_character_anim as bca
+    from engine.appc.actions import TGSequence_Create
+
+    ch = App.CharacterClass_Create(
+        "data/Models/Characters/Bodies/BodyMaleL/BodyMaleL.nif",
+        "data/Models/Characters/Heads/HeadFelix/felix_head.nif",
+    )
+    ch.SetCharacterName("Test")
+    ch.SetLocation("DBEngineer")
+    # Real SDK-registered TurnCaptain builder, resolved the same way
+    # capture_registered_clip does in production (test_bridge_registered_clip.py).
+    ch.AddAnimation("DBEngineerTurnCaptain",
+                    "Bridge.Characters.SmallAnimations.TurnAtETowardsCaptain")
+    ch.AddAnimation("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    ch._render_instance = 555
+    ch.SetHidden(0)
+
+    ctrl = bca.BridgeCharacterAnimController()
+    monkeypatch.setattr(bca, "get_controller", lambda: ctrl)
+    monkeypatch.setattr("engine.bridge_idle_gestures.build_sequence_clips",
+                        lambda path, character, anim_mgr: [("gesture.nif", 5.0)])
+
+    class _Renderer:
+        def load_instance_clip(self, iid, path):
+            return 1
+
+        def play_instance_gesture(self, iid, ci):
+            pass
+
+        def play_instance_idle(self, iid, ci):
+            pass
+
+        def restore_rest_pose(self, iid):
+            pass
+
+        def load_animation_clips(self, path):
+            # Nonzero duration + a rotation track -> body-driven turn, so
+            # _process_turn genuinely submits a body _Action (not chair-only).
+            return [{"duration": 5.0,
+                     "tracks": [{"rotation": [(0.0, (0, 0, 0, 1))]}]}]
+
+    r = _Renderer()
+
+    turn_action = CharacterAction(ch, CharacterAction.AT_TURN, "Captain")
+    default_action = CharacterAction(ch, CharacterAction.AT_DEFAULT)
+    seq = TGSequence_Create()
+    seq.AddAction(turn_action)
+    seq.AppendAction(default_action)
+
+    seq.Play()                        # turn_action.Play() queues the turn request
+    ctrl.update(0.0, renderer=r)      # drains the pending turn -> installs the body _Action
+    assert ctrl.is_busy(ch) is True
+    assert turn_action.IsPlaying() is True   # genuinely mid-turn, not settled
+
+    gesture = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION, "PushingButtons")
+    gesture.Play()
+
+    assert gesture.IsPlaying() == 0           # completed via the re-entrant chain
+    assert ch.IsAnimating() == 0              # NOT jammed
+    assert ch.IsAnimatingNonInterruptable() == 0
+    assert ch.GetCurrentAnimation() == ""
