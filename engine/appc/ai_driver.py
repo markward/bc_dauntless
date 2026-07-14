@@ -623,13 +623,7 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     # decision-making is gated. ForceUpdate() resets _next_update_time to 0.0
     # so an asynchronous event (e.g. a target cloaking) re-runs the
     # preprocessor on the very next tick instead of after its full cadence.
-    #
-    # Skip calling Update once the preprocessor has reported PS_DONE. SDK
-    # semantics: PS_DONE means "this preprocessor's job is finished", not "the
-    # whole subtree is done". An "Unused"-style preprocessor like ManagePower
-    # returns PS_DONE unconditionally (AI/Preprocessors.py:2148) and would
-    # otherwise kill the wrapper subtree on tick 1.
-    if not ai._preprocess_done and game_time >= ai._next_update_time:
+    if game_time >= ai._next_update_time:
         bound = getattr(inst, method)
         if arity >= 1:
             result = bound(game_time + 1.0)
@@ -655,29 +649,41 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
         interval = float(nxt) if nxt is not None else 0.0
         ai._next_update_time = game_time + interval
 
-        if result == PS_DONE:
-            # Remember not to call Update again; do NOT mark the wrapper
-            # US_DONE. Fall through to contained_ai dispatch.
-            ai._preprocess_done = True
-        elif result == PS_SKIP_DORMANT:
-            ai._status = US_DORMANT
-            return ai._status
-        elif result == PS_SKIP_ACTIVE:
+        if result == PS_SKIP_ACTIVE:
             ai._status = US_ACTIVE
             return ai._status
+        if result == PS_SKIP_DORMANT:
+            ai._status = US_DORMANT
+            return ai._status
+        if result != PS_NORMAL:
+            # PS_DONE (3) and PS_INVALID (4) both map to US_DONE — "this node is
+            # finished" — and US_DONE is what tears an AI down (LostFocus ->
+            # SetInactive -> unlink + delete). Verified in the binary 2026-07-14
+            # (PreprocessingAI::Update switch at 0x48eab1: the default arm of the
+            # PS_* switch is US_DONE).
+            #
+            # No SDK preprocessor we run reaches here: the only one that returned
+            # PS_DONE was ManagePower, and engine/appc/ai_optimized.py swaps it
+            # out at bind time exactly as the original engine did.
+            ai._status = US_DONE
+            return ai._status
         # PS_NORMAL falls through to contained_ai dispatch below.
-    elif not ai._preprocess_done:
+    else:
         # Cadence-skipped tick: the preprocessor didn't run this tick, so
         # reproduce its last decision rather than blindly dispatching. A
         # targetless SelectTarget that reported PS_SKIP_DORMANT must stay
         # dormant (not run its combat list against a None target) until its
-        # next scheduled update or a ForceUpdate.
+        # next scheduled update or a ForceUpdate. Same three-way mapping as the
+        # live branch above — a node that reported PS_DONE stays done.
         last = ai._last_preprocess_status
+        if last == PS_SKIP_ACTIVE:
+            ai._status = US_ACTIVE
+            return ai._status
         if last == PS_SKIP_DORMANT:
             ai._status = US_DORMANT
             return ai._status
-        if last == PS_SKIP_ACTIVE:
-            ai._status = US_ACTIVE
+        if last != PS_NORMAL:
+            ai._status = US_DONE
             return ai._status
         # PS_NORMAL (or never-run) falls through to contained_ai dispatch.
 

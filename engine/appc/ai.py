@@ -675,14 +675,6 @@ class PreprocessingAI(ArtificialIntelligence):
         self._contained_ai = None
         self._preprocessing_method: str = ""
         self._preprocessing_instance: "_AIScriptInstance | None" = None
-        # Set to True when the preprocessor's Update returns PS_DONE.
-        # SDK semantics: "this preprocessor's job is finished" — stop
-        # calling Update on it, but the wrapper PreprocessingAI is NOT
-        # done; the contained_ai continues to dispatch normally. Without
-        # this gate, an "Unused"-style preprocessor (e.g. ManagePower
-        # which returns PS_DONE unconditionally) would kill the whole
-        # subtree on the first tick.
-        self._preprocess_done: bool = False
         # Last PS_* result from the preprocessor's Update, so cadence-skipped
         # ticks (game_time < _next_update_time) can reproduce its effect
         # instead of blindly dispatching the contained AI. See
@@ -713,8 +705,19 @@ class PreprocessingAI(ArtificialIntelligence):
             self._preprocessing_instance = _AIScriptInstance(self)
         elif len(args) >= 2:
             # (script_instance, method_name) — keep the caller's object so
-            # GetPreprocessingInstance returns what they constructed.
-            self._preprocessing_instance = args[0]
+            # GetPreprocessingInstance returns what they constructed…
+            #
+            # …unless the engine has an optimized version of it. Appc's
+            # SetContainedAI runs the node through GetOptimizedVersion (vtable
+            # +0x34) and stores what comes BACK, swapping Python preprocessors
+            # for compiled C++ ones and deleting the Python-backed node. We do
+            # the equivalent at bind time, by class name. Critically this
+            # replaces the SDK's ManagePower, whose `# Unused. return PS_DONE`
+            # body never runs in the shipped game and would otherwise delete the
+            # ship's whole AI (PS_DONE -> US_DONE). See engine/appc/ai_optimized.py.
+            from engine.appc.ai_optimized import optimized_version_of
+            instance = optimized_version_of(args[0])
+            self._preprocessing_instance = instance
             self._preprocessing_method = args[1]
             # SDK preprocessor classes (SelectTarget, FireScript) call
             # self.pCodeAI.GetShip()/GetAllAIsInTree() throughout their
@@ -722,8 +725,9 @@ class PreprocessingAI(ArtificialIntelligence):
             # SetPreprocessingMethod runs; Phase 1 has no optimization,
             # so we wire it here. Slice B test fixtures set this
             # explicitly; NonFedAttack/FedAttack SDK CreateAI doesn't.
+            # Bound onto the REPLACEMENT, never the discarded original.
             try:
-                args[0].pCodeAI = self
+                instance.pCodeAI = self
             except (AttributeError, TypeError):
                 # Instance refuses attribute assignment (e.g. slotted
                 # class); skip — caller is responsible.
@@ -739,7 +743,7 @@ class PreprocessingAI(ArtificialIntelligence):
             # OptimizedSelectTarget ctor did that work — ai_driver's
             # _ensure_select_target_initialized still stands in for the C++
             # class.
-            code_ai_set = getattr(args[0], "CodeAISet", None)
+            code_ai_set = getattr(instance, "CodeAISet", None)
             if callable(code_ai_set):
                 try:
                     code_ai_set()
