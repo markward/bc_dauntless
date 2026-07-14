@@ -475,10 +475,10 @@ def _sync_fire_script_target_subsystem(inst) -> None:
     and only for AI-driven FireScript nodes, so the player is unaffected.
     See docs/superpowers/specs/2026-07-07-npc-subsystem-targeting-design.md.
     """
-    # Gate: FireScript instances only. lWeapons is the FireScript marker
-    # (also used by _ensure_fire_script_initialized); idTargetedSubsystem is
-    # set in FireScript.__init__ so it lives in __dict__ (bypass the _Stub
-    # __getattr__ that would otherwise mask a missing attr).
+    # Gate: FireScript instances only. lWeapons is the FireScript marker;
+    # idTargetedSubsystem is set in FireScript.__init__ so it lives in
+    # __dict__ (bypass the _Stub __getattr__ that would otherwise mask a
+    # missing attr).
     if not hasattr(inst, "lWeapons"):
         return
     if "idTargetedSubsystem" not in getattr(inst, "__dict__", {}):
@@ -539,11 +539,9 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     if callable(getattr(inst, "DamageEvent", None)) and getattr(inst, "pCodeAI", None) is not None:
         _ensure_select_target_initialized(inst)
 
-    # FireScript init (Slice C Task 5): instances with lWeapons +
-    # pCodeAI; FireScript has no DamageEvent. The two gates are
-    # independent — no SDK preprocessor has both markers.
-    if hasattr(inst, "lWeapons") and getattr(inst, "pCodeAI", None) is not None:
-        _ensure_fire_script_initialized(inst)
+    # FireScript's own CodeAISet (AI/Preprocessors.py:137-145) registers the
+    # SetTarget external function; ai.py's SetPreprocessingMethod now calls
+    # it generically at bind time, so no driver-side hack is needed here.
 
     # Focus model surrogate — a PreprocessingAI reached on the active
     # dispatch path holds focus this tick. SelectTarget gates the
@@ -721,30 +719,6 @@ def _ensure_select_target_initialized(inst) -> None:
         pShip.SetTarget(inst.sCurrentTarget)
 
     inst._dauntless_codeaiset_done = True
-
-
-def _ensure_fire_script_initialized(inst) -> None:
-    """First-tick CodeAISet analog for FireScript instances.
-
-    SDK Preprocessors.py:137-145 — FireScript.CodeAISet registers the
-    SetTarget external function on its pCodeAI so SelectTarget's
-    `CallExternalFunction("SetTarget", name)` dispatch reaches us.
-
-    Duck-typed gate: instance must have an lWeapons attribute (the
-    FireScript-specific marker — SelectTarget has neither lWeapons
-    nor needs SetTarget registered). FireScript does NOT define
-    DamageEvent, unlike SelectTarget — keep the two init paths
-    independent.
-
-    Idempotent via _dauntless_fs_init_done sentinel on the instance.
-    """
-    if getattr(inst, "_dauntless_fs_init_done", False):
-        return
-    code_ai = getattr(inst, "pCodeAI", None)
-    if code_ai is None:
-        return
-    code_ai.RegisterExternalFunction("SetTarget", {"Name": "SetTarget"})
-    inst._dauntless_fs_init_done = True
 
 
 def _tick_builder(ai: BuilderAI, game_time: float) -> int:

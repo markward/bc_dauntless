@@ -134,13 +134,14 @@ def test_fire_script_receives_set_target_dispatch_from_select_target():
     the registered external function. After two ticks, FireScript.sTarget
     should match what SelectTarget picked.
 
-    Two ticks are required because the engine's CodeAISet analog for
-    FireScript (registering SetTarget on its pCodeAI) runs lazily on the
-    first time pp_fire itself is ticked — see
-    engine/appc/ai_driver._ensure_fire_script_initialized. SelectTarget's
-    CallSetTargetFunctions on tick 1 fires before pp_fire is reached, so
-    the registration isn't in place yet; tick 2's target re-confirmation
-    propagates after FireScript has registered."""
+    FireScript.CodeAISet (registering SetTarget on its pCodeAI) now runs
+    generically at bind time — ai.py's SetPreprocessingMethod calls it as
+    soon as pCodeAI is wired (see tests/unit/test_codeaiset_bind.py), so
+    the registration is already in place before tick 1. Two ticks are still
+    required here because SelectTarget only calls CallSetTargetFunctions on
+    a target *change*: sCurrentTarget is forced to None between ticks so
+    tick 2's re-dispatch is what we're proving reaches FireScript.SetTarget,
+    rather than relying on residual bind-time state."""
     pSet = App.SetClass_Create(); pSet.SetName("S")
     App.g_kSetManager._sets["S"] = pSet
     ours, phaser, _torp = _kitted_attacker_with_weapons()
@@ -153,11 +154,9 @@ def test_fire_script_receives_set_target_dispatch_from_select_target():
     st, pp_select, fs = _wire_select_target_and_fire_script(
         ours, phaser, bare_torp, "Target")
 
-    # Tick 1: pp_select runs Update -> SelectTarget picks "Target",
-    # CallSetTargetFunctions walks the tree but pp_fire hasn't run its
-    # FireScript CodeAISet analog yet -> registration deferred.
-    # Then PS_NORMAL -> tick the contained AI (plist) -> pp_fire ticks
-    # -> _ensure_fire_script_initialized registers SetTarget on pp_fire.
+    # Tick 1: pp_fire's CodeAISet already registered SetTarget at bind time
+    # (see _wire_select_target_and_fire_script), so pp_select's
+    # CallSetTargetFunctions on this tick reaches FireScript immediately.
     tick_ai(pp_select, game_time=0.0)
     # Clear FireScript's target so we can prove tick 2's dispatch wrote
     # to it (rather than relying on residual init state).

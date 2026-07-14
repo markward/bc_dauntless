@@ -1,8 +1,12 @@
-"""ai_driver first-tick CodeAISet analog for FireScript instances.
+"""FireScript's CodeAISet fires generically at SetPreprocessingMethod bind time.
 
-Mirrors Slice B's SelectTarget init in _tick_preprocessing. Duck-typed
-gate: lWeapons attribute (FireScript-specific marker — SelectTarget has
-no lWeapons; FireScript has no DamageEvent)."""
+Historically this covered a driver-side duck-typed hack
+(_ensure_fire_script_initialized) that hand-reimplemented FireScript.CodeAISet
+(AI/Preprocessors.py:137-145) on first tick. ai.py's SetPreprocessingMethod now
+calls the instance's real CodeAISet() generically once pCodeAI is bound (see
+tests/unit/test_codeaiset_bind.py), so the SetTarget external function is
+already registered by the time _wire_ship_with_fire_script returns — these
+tests exercise that same end state through the generic path instead."""
 import pytest
 
 import App
@@ -48,15 +52,18 @@ def _wire_ship_with_fire_script(target_name="Target"):
 
 def test_first_tick_registers_set_target_external_function():
     """SDK CodeAISet at Preprocessors.py:141 — RegisterExternalFunction.
-    After first tick, pCodeAI should have SetTarget in its external function
-    map so SelectTarget's dispatch loop reaches FireScript.SetTarget."""
+    SetPreprocessingMethod already ran CodeAISet() at bind time (inside
+    _wire_ship_with_fire_script), so pCodeAI has SetTarget in its external
+    function map before the first tick, and ticking must not disturb it —
+    SelectTarget's dispatch loop reaches FireScript.SetTarget either way."""
     inst, pp, _ours, _target = _wire_ship_with_fire_script()
     tick_ai(pp, game_time=0.0)
     assert "SetTarget" in pp._external_functions
 
 
 def test_first_tick_is_idempotent():
-    """Multiple ticks don't re-register / re-wire — sentinel guards."""
+    """Multiple ticks don't re-register / re-wire — bind-time CodeAISet()
+    fires exactly once, and ticking never calls it again."""
     inst, pp, _ours, _target = _wire_ship_with_fire_script()
     tick_ai(pp, game_time=0.0)
     snapshot = dict(pp._external_functions)
@@ -66,9 +73,10 @@ def test_first_tick_is_idempotent():
 
 
 def test_duck_typed_gate_skips_select_target_only_instance():
-    """A SelectTarget-shaped instance (DamageEvent + no lWeapons) must NOT
-    trigger the FireScript-specific init path. Slice B's SelectTarget init
-    path remains the one that runs for those instances."""
+    """A SelectTarget-shaped instance (DamageEvent + no lWeapons, and no
+    CodeAISet method at all) must NOT register SetTarget. Slice B's
+    SelectTarget init path (_ensure_select_target_initialized) remains the
+    one that runs for those instances."""
     # Build a non-FireScript instance that has DamageEvent but no lWeapons.
     class _OnlySelectTargetShape:
         def DamageEvent(self, *args, **kwargs): pass

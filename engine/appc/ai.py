@@ -666,6 +666,23 @@ class PreprocessingAI(ArtificialIntelligence):
                 # Instance refuses attribute assignment (e.g. slotted
                 # class); skip — caller is responsible.
                 pass
+            # Appc's SetPreprocessingMethod calls the instance's CodeAISet()
+            # hook once pCodeAI is bound (ai-architecture.md sec.4,
+            # 0x0048e400). Four shipped preprocessors define a real one:
+            # FireScript (registers the SetTarget external function),
+            # UpdateAIStatus (registers QueryAIStatus), UseShipTarget
+            # (installs the target-changed handler) and the
+            # ChainFollowThroughWarp / TractorDockTargets compounds.
+            # SelectTarget's is commented out in the SDK because the native
+            # OptimizedSelectTarget ctor did that work — ai_driver's
+            # _ensure_select_target_initialized still stands in for the C++
+            # class.
+            code_ai_set = getattr(args[0], "CodeAISet", None)
+            if callable(code_ai_set):
+                try:
+                    code_ai_set()
+                except Exception as _e:
+                    dev_mode.log_swallowed("CodeAISet", _e)
 
     def GetPreprocessingInstance(self):
         if self._preprocessing_instance is None:
