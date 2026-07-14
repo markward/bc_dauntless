@@ -34,7 +34,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 22 | App | ET_LAUNCH_PROBE | 110 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 23 | ExplodeEmitterProperty_Create() | SetOrientation | 106 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 24 | ExplodeEmitterProperty_Create() | SetPosition | 106 | 10/16 | 2026-07-13 19:30 UTC |  |
-| 25 | App | ET_TARGET_WAS_CHANGED | 102 | 13/16 | 2026-07-13 20:23 UTC |  |
+| 25 | App | ET_TARGET_WAS_CHANGED | 102 | 13/16 | 2026-07-13 20:23 UTC | 2026-07-14 |
 | 26 | ShipClass | SetSplashDamage | 100 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 27 | TGInputManager | MoveMouseCursorTo | 97 | 16/16 | 2026-07-13 20:23 UTC |  |
 | 28 | Waypoint | GetPhaserSystem.GetNumChildSubsystems | 90 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
@@ -55,7 +55,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 43 | App | ET_TRACTOR_BEAM_STOPPED_FIRING | 56 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 44 | EngPowerCtrl | GetBottom | 56 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 45 | TGIcon | GetRight | 56 | 13/16 | 2026-07-13 20:23 UTC |  |
-| 46 | EventType | ET_TARGET_WAS_CHANGED | 54 | 8/16 | 2026-07-13 20:23 UTC |  |
+| 46 | EventType | ET_TARGET_WAS_CHANGED | 54 | 8/16 | 2026-07-13 20:23 UTC | 2026-07-14 |
 | 47 | STCharacterMenu | GetNextChild.SetEnabled | 54 | 3/16 | 2026-07-13 20:01 UTC |  |
 | 48 | ShipClass | GetTargetOffsetTG | 50 | 4/16 | 2026-07-13 20:23 UTC |  |
 | 49 | App | g_kMainMenuButton2HighlightedColor | 49 | 7/16 | 2026-07-13 19:30 UTC |  |

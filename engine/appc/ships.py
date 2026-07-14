@@ -1304,6 +1304,7 @@ class ShipClass(DamageableObject):
         sdk/.../TacticalInterfaceHandlers.py:709,733 which resolves against
         whatever object pool the target-menu rows were built from.
         """
+        old_target = self._target
         if isinstance(target, str):
             pSet = self.GetContainingSet()
             if pSet is not None:
@@ -1328,6 +1329,29 @@ class ShipClass(DamageableObject):
                 self._target = resolved
         else:
             self._target = target
+        # Fire ET_TARGET_WAS_CHANGED only on an actual change of the
+        # RESOLVED object (not the raw name/object passed in — SelectTarget
+        # calls this every tick with a string, and re-resolving the same
+        # name must not spam the event). Set the new target BEFORE firing
+        # (above) so a re-entrant handler that calls SetTarget again sees
+        # the new state, per AddEvent's synchronous dispatch.
+        #
+        # Deliberately UNguarded (no try/except around AddEvent), matching
+        # sets.py's ET_ENTERED_SET/ET_EXITED_SET — the closest analog (a
+        # real gameplay event with the ship as destination, consumed by the
+        # same bridge modules). events.py:AddEvent documents destination
+        # dispatch as intentionally unguarded so a crashing handler surfaces
+        # rather than vanishing; several of this event's consumers
+        # (Camera, HelmMenuHandlers, ScienceMenuHandlers) have never once
+        # run in this engine, so swallowing here would hide the first real
+        # signal of a bug in code that has never executed.
+        if self._target is not old_target:
+            import App
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_TARGET_WAS_CHANGED)
+            evt.SetSource(self)
+            evt.SetDestination(self)
+            App.g_kEventManager.AddEvent(evt)
     def GetTargetSubsystem(self):                 return self._target_subsystem
     def SetTargetSubsystem(self, s) -> None:      self._target_subsystem = s
 

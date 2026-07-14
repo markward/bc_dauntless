@@ -1099,6 +1099,19 @@ ET_AI_SHIELD_WATCHER              = 0x1323
 # conditions listen for it on their children (Conditions/
 # ConditionCriticalSystemBelow.py). Real int for the same reason as above.
 ET_AI_CONDITION_CHANGED           = 0x1324
+# Posted by ShipClass.SetTarget whenever the resolved target actually
+# changes (Appc-side: ShipClass::SetTarget). Consumers register with
+# AddPythonFuncHandlerForInstance ON THE SHIP (Camera.py:719 on the player,
+# Bridge/HelmMenuHandlers.py:280, Bridge/ScienceMenuHandlers.py:133,
+# Maelstrom/Episode1/E1M2/E1M2.py:1152) and AI/Preprocessors.py's
+# UseShipTarget.CodeAISet registers a broadcast method handler filtered to
+# the ship. Must be a real distinct int for the same reason as the AI
+# condition watchers above: App's module __getattr__ returns a fresh
+# id()-hashed _NamedStub per access, so a handler registered under one
+# access could never match an event fired under another -- which is exactly
+# how UseShipTarget stayed dead even after Task 9 made its CodeAISet hook
+# finally run.
+ET_TARGET_WAS_CHANGED             = 0x1325
 
 _next_event_type_id = 1200
 
