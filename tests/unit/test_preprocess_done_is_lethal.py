@@ -318,3 +318,42 @@ def test_a_shipless_avoid_obstacles_does_not_kill_the_ai():
     assert status != ArtificialIntelligence.US_DONE
     assert status == ArtificialIntelligence.US_DORMANT
     assert child.updates == 0
+
+
+# --- Pickling non-lethal wrapped instances ------------------------------------
+
+
+def test_a_wrapped_fire_script_can_be_pickled_and_unpickled():
+    """The non-lethal wrapper creates a dynamic subclass with no module-level
+    name. Without registering it in the module's globals, pickle cannot find it
+    at unpickle time (AttributeError: can't find FireScript_NonLethal). This test
+    verifies that wrapped instances round-trip through pickle.dumps/loads."""
+    import pickle
+    import AI.Preprocessors
+
+    # Create a FireScript instance (the SDK class defines __getstate__/__setstate__).
+    sdk_inst = AI.Preprocessors.FireScript("Target")
+
+    # Wrap it via the non-lethal factory.
+    wrapped = ai_optimized._wrap_non_lethal(sdk_inst)
+
+    # Pickle and unpickle.
+    pickled = pickle.dumps(wrapped)
+    restored = pickle.loads(pickled)
+
+    # Verify the restored object is still a wrapped FireScript.
+    assert type(restored).__name__ == "FireScript_NonLethal"
+    assert isinstance(restored, AI.Preprocessors.FireScript)
+    assert restored.sTarget == "Target"
+
+
+def test_an_unwrapped_sdk_preprocessor_still_pickles():
+    """The underlying SDK class (e.g. FireScript) already defines
+    __getstate__/__setstate__, so it should still be picklable."""
+    import pickle
+    import AI.Preprocessors
+
+    sdk_inst = AI.Preprocessors.FireScript("Target")
+    pickled = pickle.dumps(sdk_inst)
+    restored = pickle.loads(pickled)
+    assert restored.sTarget == "Target"

@@ -150,6 +150,10 @@ def _non_lethal_class(base: type) -> type:
         },
     )
     _NON_LETHAL_CLASSES[base] = cls
+    # Register the dynamic class in the module globals so pickle can find it at
+    # unpickle time via attribute lookup. Repeated calls are idempotent due to
+    # the cache check above (we only create one class per base type).
+    globals()[cls.__name__] = cls
     return cls
 
 
