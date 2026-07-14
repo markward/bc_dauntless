@@ -597,10 +597,12 @@ def SequenceAI_Create(pShip=None, name: str = "") -> SequenceAI:
 class RandomAI(ArtificialIntelligence):
     """SDK App.py:5019 — sibling of PriorityListAI/SequenceAI.
 
-    Picks one child at random and ticks it each frame; when that child
-    reaches US_DONE it re-picks a new random child on the next tick
-    (../STBC-Reverse-Engineering-1/docs/gameplay/ai-architecture.md, RandomAI
-    section: "Picks one child at random; on completion, picks another").
+    Draws children WITHOUT replacement: the C++ node keeps a per-child
+    "already tried" byte array (+0x2C) and draws a new child from the
+    un-tried entries, clearing the flag and re-drawing on DORMANT/DONE
+    (ai-architecture.md sec.1/sec.2). Once every child has been drawn, the
+    pool refills and a new cycle begins — this is what stops the same
+    evasive maneuver from repeating back-to-back.
     Typically wraps several maneuver children inside a forever-looping
     SequenceAI (sdk/.../AI/Compound/Parts/NoSensorsEvasive.py:47-52,
     sdk/.../QuickBattle/QuickBattleAI.py:51-58). Dispatch lives in
@@ -611,10 +613,16 @@ class RandomAI(ArtificialIntelligence):
         self._ais: list = []
         # The child currently being ticked; re-picked when it reaches DONE.
         self._current_child = None
+        # Children not yet drawn this cycle. The C++ node keeps this as an
+        # "already tried" byte array (+0x2C) and draws only from the un-tried
+        # entries, refilling when they run out — so every maneuver runs before any
+        # repeats (ai-architecture.md sec.1/sec.2).
+        self._untried: list = []
 
     def AddAI(self, ai) -> None:
         """SDK Appc.RandomAI_AddAI — append a child AI."""
         self._ais.append(ai)
+        self._untried.append(ai)
 
     def GetAIs(self) -> list:
         """Return the child AI list (used by the AI inspector)."""

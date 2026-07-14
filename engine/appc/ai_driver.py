@@ -395,15 +395,17 @@ def _tick_sequence(ai: SequenceAI, game_time: float) -> int:
 
 
 def _tick_random(ai: RandomAI, game_time: float) -> int:
-    """Pick one child at random and tick it; re-pick when it finishes.
+    """Draw a child from the un-tried pool and tick it; re-draw when it finishes.
 
-    SDK semantics (docs/.../ai-architecture.md, RandomAI): "Picks one child
-    at random; on completion, picks another." RandomAI is used as an
-    infinite maneuver picker inside a forever-looping SequenceAI
-    (sdk/.../QuickBattle/QuickBattleAI.py:51-58,
-    sdk/.../AI/Compound/Parts/NoSensorsEvasive.py:47-52), so the RandomAI
-    itself stays US_ACTIVE while a child runs and does NOT terminate just
-    because one child reached US_DONE — it re-picks on the next tick.
+    Ground truth (ai-architecture.md sec.2, RandomAI::Update 0x004917f0): the node
+    keeps a per-child "already tried" array and draws from the un-tried entries,
+    clearing the flag and re-drawing on DORMANT/DONE. Drawing with replacement
+    would let the same evasive maneuver repeat back-to-back.
+
+    RandomAI is used as an infinite maneuver picker inside a forever-looping
+    SequenceAI (AI/Compound/Parts/NoSensorsEvasive.py:47-52,
+    QuickBattle/QuickBattleAI.py:51-58), so it stays US_ACTIVE while a child runs
+    and does not terminate just because one child finished.
 
     An empty RandomAI has nothing to run and completes immediately.
     """
@@ -411,10 +413,12 @@ def _tick_random(ai: RandomAI, game_time: float) -> int:
         ai._status = US_DONE
         return ai._status
     child = ai._current_child
-    if child is None or child._status == US_DONE:
-        child = random.choice(ai._ais)
-        # Reset the freshly-picked child to ACTIVE so a previously-DONE
-        # child runs again (mirrors how the SDK re-arms a re-selected child).
+    if child is None or child._status in (US_DONE, US_DORMANT):
+        if not ai._untried:
+            ai._untried = list(ai._ais)       # cycle exhausted: refill
+        child = random.choice(ai._untried)
+        ai._untried.remove(child)
+        # Re-arm the freshly-drawn child so a previously-finished one runs again.
         child._status = US_ACTIVE
         ai._current_child = child
     tick_ai(child, game_time)
