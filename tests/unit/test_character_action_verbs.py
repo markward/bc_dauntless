@@ -323,3 +323,70 @@ def test_queue_default_survives_reentrant_gesture_submitted_by_dropped_on_comple
     assert ch.GetCurrentAnimation() == "GestureB"
     assert ch.IsAnimatingNonInterruptable() == 1
     assert ctrl.is_busy(ch) is True
+
+
+class _TurnRecordingController(_FakeController):
+    def __init__(self):
+        super().__init__()
+        self.turns = []
+
+    def request_turn_to(self, character, detail, *, back=False, now=False,
+                        hold=True, on_complete=None):
+        self.turns.append(("back" if back else "to", detail))
+        if on_complete is not None:
+            on_complete()          # settle immediately, so the test is synchronous
+
+
+def test_say_line_turns_to_the_captain_and_back(monkeypatch):
+    ch = _character_with("IncomingMsg6", "Some.Module.Unused")
+    ctrl = _TurnRecordingController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    spoken = []
+    monkeypatch.setattr(CharacterAction, "_do_play",
+                        lambda self: (spoken.append(self._detail), 1.5)[1])
+
+    action = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+                             "IncomingMsg6", "Captain", 1)
+    action.Play()
+
+    # The line genuinely BLOCKS the sequence for its real (mocked) 1.5s
+    # duration -- _do_play's returned dur drives a real deferred timer via
+    # _complete_after(dur, on_elapsed=...), exactly like every other speak
+    # action (see test_actions.py's _advance_real_time-driven tests). The
+    # turn-back only fires once that timer elapses, not synchronously with
+    # Play().
+    import App
+    App.g_kRealtimeTimerManager.tick(1.5)
+
+    assert ctrl.turns == [("to", "Captain"), ("back", "Captain")]
+    assert spoken == ["IncomingMsg6"]
+
+
+def test_say_line_without_a_turn_target_just_speaks(monkeypatch):
+    # (None, 0) — speaks with no turn at all. The regression guard.
+    ch = _character_with("IncomingMsg6", "Some.Module.Unused")
+    ctrl = _TurnRecordingController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    spoken = []
+    monkeypatch.setattr(CharacterAction, "_do_play",
+                        lambda self: (spoken.append(self._detail), 1.5)[1])
+
+    action = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+                             "IncomingMsg6", None, 0)
+    action.Play()
+
+    assert ctrl.turns == []
+    assert spoken == ["IncomingMsg6"]
+
+
+def test_say_line_turns_to_but_does_not_turn_back(monkeypatch):
+    ch = _character_with("IncomingMsg6", "Some.Module.Unused")
+    ctrl = _TurnRecordingController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    monkeypatch.setattr(CharacterAction, "_do_play", lambda self: 1.5)
+
+    action = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+                             "IncomingMsg6", "Captain", 0)
+    action.Play()
+
+    assert ctrl.turns == [("to", "Captain")]

@@ -45,6 +45,7 @@ class TGAction(TGEventHandlerObject):
         self._playing: bool = False
         self._skippable: bool = False
         self._deferred_timer = None   # (manager, TGTimer) while a deferral is pending
+        self._deferred_on_elapsed = None  # callback to run instead of Completed()
 
     def IsPlaying(self) -> bool:
         return self._playing
@@ -64,12 +65,21 @@ class TGAction(TGEventHandlerObject):
         for ev in events:
             App.g_kEventManager.AddEvent(ev)
 
-    def _complete_after(self, duration_real_s) -> None:
+    def _complete_after(self, duration_real_s, on_elapsed=None) -> None:
         """Complete this action after duration_real_s wall-clock seconds via
         g_kRealtimeTimerManager. duration <= 0 (or None) completes inline,
-        preserving synchronous behavior when there is no audio to wait on."""
+        preserving synchronous behavior when there is no audio to wait on.
+
+        `on_elapsed`, when supplied, is called INSTEAD of self.Completed()
+        once the duration elapses (or immediately, for duration <= 0) — the
+        callback then becomes responsible for completing this action. Used
+        by AT_SAY_LINE to turn the officer back only after the line's real
+        duration has played out."""
         if not duration_real_s or duration_real_s <= 0:
-            self.Completed()
+            if on_elapsed is not None:
+                on_elapsed()
+            else:
+                self.Completed()
             return
         import App
         mgr = App.g_kRealtimeTimerManager
@@ -82,6 +92,7 @@ class TGAction(TGEventHandlerObject):
         timer.SetEvent(ev)
         mgr.AddTimer(timer)
         self._deferred_timer = (mgr, timer)
+        self._deferred_on_elapsed = on_elapsed
         _deferred_playing.add(self)
 
     def _cancel_deferred_timer(self) -> None:
@@ -90,6 +101,7 @@ class TGAction(TGEventHandlerObject):
             mgr, timer = rec
             mgr.RemoveTimer(timer)
             self._deferred_timer = None
+        self._deferred_on_elapsed = None
         _deferred_playing.discard(self)
 
     def Play(self) -> None:
@@ -104,7 +116,11 @@ class TGAction(TGEventHandlerObject):
         if event.GetEventType() == _ET_ACTION_DEFERRED_COMPLETE:
             self._deferred_timer = None
             _deferred_playing.discard(self)
-            self.Completed()
+            on_elapsed, self._deferred_on_elapsed = self._deferred_on_elapsed, None
+            if on_elapsed is not None:
+                on_elapsed()
+            else:
+                self.Completed()
             return
         super().ProcessEvent(event)
 

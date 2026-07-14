@@ -1433,6 +1433,9 @@ class CharacterAction(TGAction):
         if at in (self.AT_DEFAULT, self.AT_BREATHE, self.AT_FORCE_BREATHE):
             self._queue_default()
             return
+        if at in (self.AT_SAY_LINE, self.AT_SAY_LINE_AFTER_TURN):
+            self._queue_say_line()
+            return
         # Speak types (and the remaining no-op types) keep the prior flow.
         dur = self._do_play()
         self._complete_after(dur or 0.0)
@@ -1513,6 +1516,61 @@ class CharacterAction(TGAction):
                                      on_complete=self.Completed)
         except Exception:
             self.Completed()
+
+    def _queue_say_line(self) -> None:
+        """AT_SAY_LINE / AT_SAY_LINE_AFTER_TURN — the SDK's workhorse (3977 sites).
+
+        Args 4 and 5 are turnTo / turnBack: ("Captain", 1) means turn to the
+        captain, speak, and turn back — with the chair swivelling under the
+        officer, because the SDK's turn builder animates the body clip and the
+        chair clip as parallel siblings of one sequence. (None, 0) speaks with no
+        turn at all.
+
+        The line still BLOCKS the sequence for its real duration (BC does), via
+        the existing _do_play/_complete_after path.
+        """
+        from engine.appc.characters import CharacterClass_Cast
+        from engine import bridge_character_anim
+
+        turn_to = self._set_name
+        turn_back = self._flag > 0
+
+        def _speak_then_turn_back():
+            dur = 0.0
+            try:
+                dur = self._do_play() or 0.0
+            except Exception:
+                dur = 0.0
+            if not (turn_to and turn_back):
+                self._complete_after(dur)
+                return
+            # Turn back once the line has finished, then complete.
+            def _turn_back_now():
+                try:
+                    cc = CharacterClass_Cast(self._character)
+                    ctrl = bridge_character_anim.get_controller()
+                    if cc is not None and ctrl is not None:
+                        ctrl.request_turn_to(cc, str(turn_to), back=True, now=False,
+                                             on_complete=self.Completed)
+                        return
+                except Exception:
+                    pass
+                self.Completed()
+            self._complete_after(dur, on_elapsed=_turn_back_now)
+
+        if not turn_to:
+            _speak_then_turn_back()
+            return
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_character_anim.get_controller()
+            if cc is None or ctrl is None:
+                _speak_then_turn_back()      # headless: speak without turning
+                return
+            ctrl.request_turn_to(cc, str(turn_to), back=False, now=False,
+                                 on_complete=_speak_then_turn_back)
+        except Exception:
+            _speak_then_turn_back()
 
     def _queue_glance(self) -> None:
         # Quick glance (AT_GLANCE_AT/AWAY). Best-effort: completes inline on any

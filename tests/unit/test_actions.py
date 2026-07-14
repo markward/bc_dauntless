@@ -683,6 +683,35 @@ def test_complete_after_duration_defers_until_timer():
     assert done == [True]                      # one-shot: no re-fire
 
 
+def test_complete_after_zero_calls_on_elapsed_instead_of_completed():
+    a = TGAction()
+    done = []
+    elapsed = []
+    a.Completed = lambda: done.append(True)    # type: ignore
+    a._playing = True
+    a._complete_after(0.0, on_elapsed=lambda: elapsed.append(True))
+    assert elapsed == [True]                   # on_elapsed fires inline
+    assert done == []                          # Completed() is NOT called directly
+
+
+def test_complete_after_duration_calls_on_elapsed_when_timer_fires():
+    a = TGAction()
+    done = []
+    elapsed = []
+    a.Completed = lambda: done.append(True)    # type: ignore
+    a._playing = True
+    a._complete_after(0.5, on_elapsed=lambda: elapsed.append(True))
+    assert elapsed == []                       # not yet
+    assert done == []
+    _advance_real_time(0.25)
+    assert elapsed == []                       # still waiting at t=0.25
+    _advance_real_time(0.4)                    # past 0.5s total
+    assert elapsed == [True]                   # fires exactly once
+    assert done == []                          # Completed() is NOT called directly
+    _advance_real_time(1.0)
+    assert elapsed == [True]                   # one-shot: no re-fire
+
+
 def test_cancel_deferred_timer_prevents_completion():
     a = TGAction()
     done = []

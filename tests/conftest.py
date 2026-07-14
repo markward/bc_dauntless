@@ -646,6 +646,22 @@ def _reset_leakable_engine_globals():
         _set_current_game(None)
     except Exception:
         pass
+    # Bridge character-animation controller: host_loop.run() registers a REAL
+    # BridgeCharacterAnimController via bridge_character_anim.set_controller()
+    # for the lifetime of the run, and nothing tears it down. AT_SAY_LINE's
+    # turnTo/turnBack handling (CharacterAction._queue_say_line) now calls
+    # bridge_character_anim.get_controller(), so a controller leaked from an
+    # earlier host-loop test makes a LATER, unrelated unit test's turn/speak
+    # calls route through request_turn_to()'s queue-for-next-update() path
+    # instead of the headless (controller-is-None) inline-speak fallback --
+    # silently dropping the spoken line and any subtitle/GetLastTalkTime
+    # side effects the test expects synchronously. Clear it so each test
+    # starts headless (no controller) unless it registers its own.
+    try:
+        from engine import bridge_character_anim
+        bridge_character_anim.clear_controller()
+    except Exception:
+        pass
     # Global AI/game difficulty is now a mutable module global (set via the
     # Configuration > Gameplay > AI Difficulty control). Reset to MEDIUM so a
     # test that changes it can't leak into another test's multiplier accessors.
