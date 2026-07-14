@@ -1319,17 +1319,17 @@ class ShipClass(DamageableObject):
         WeaponSystem and its subclasses (PhaserSystem, TorpedoSystem,
         PulseWeaponSystem, TractorBeamSystem) match CT_WEAPON_SYSTEM.
 
+        The CT_* -> subsystem-class table lives in
+        engine.appc.subsystem_types (shared with GetObjType/IsTypeOf — see
+        that module for why a shared table exists at all).
+
         Returns an opaque iterator handle. `None` filter terminates
         immediately (SDK pattern: callers expect either matches or a
         clean exit; mid-walk None is undefined)."""
-        # Function-local imports — App imports ships at module level,
-        # so a top-level `import App` here would loop. Same for
-        # WeaponSystem (sibling module also imported by App).
-        import App
-        from engine.appc.subsystems import (
-            ShipSubsystem, WeaponSystem, SensorSubsystem, ImpulseEngineSubsystem,
-            WarpEngineSubsystem, ShieldSubsystem, HullSubsystem, CloakingSubsystem,
-        )
+        # Function-local import — App imports ships at module level, so a
+        # top-level import here would loop; subsystem_types itself imports
+        # App lazily for the same reason.
+        from engine.appc.subsystem_types import subsystem_class_for_ct
         if match_type is None:
             return iter(())
         candidates = [
@@ -1345,27 +1345,14 @@ class ShipClass(DamageableObject):
         # (NoSensorsEvasive's ConditionSystemDisabled),
         # CT_WARP_ENGINE_SUBSYSTEM (WarpBeforeDeath), CT_HULL_SUBSYSTEM /
         # CT_SHIELD_SUBSYSTEM / CT_IMPULSE_ENGINE_SUBSYSTEM
-        # (SelectTarget.RateSubsystemForTargeting).
-        if match_type is App.CT_WEAPON_SYSTEM:
-            target_class = WeaponSystem
-        elif match_type is App.CT_SENSOR_SUBSYSTEM:
-            target_class = SensorSubsystem
-        elif match_type is App.CT_IMPULSE_ENGINE_SUBSYSTEM:
-            target_class = ImpulseEngineSubsystem
-        elif match_type is App.CT_WARP_ENGINE_SUBSYSTEM:
-            target_class = WarpEngineSubsystem
-        elif match_type is App.CT_SHIELD_SUBSYSTEM:
-            target_class = ShieldSubsystem
-        elif match_type is App.CT_HULL_SUBSYSTEM:
-            target_class = HullSubsystem
-        elif match_type is App.CT_CLOAKING_SUBSYSTEM:
-            target_class = CloakingSubsystem
-        elif match_type is App.CT_SHIP_SUBSYSTEM:
-            # ShipSubsystem is the base class — every subsystem matches.
-            target_class = ShipSubsystem
-        else:
-            # Unknown match type — return empty iter so SDK while-loops
-            # terminate cleanly.
+        # (SelectTarget.RateSubsystemForTargeting), CT_PHASER_SYSTEM /
+        # CT_TORPEDO_SYSTEM / etc. (Conditions/ConditionCriticalSystemBelow
+        # via pSubsystem.GetObjType()). CT_SHIP_SUBSYSTEM is the base class —
+        # every subsystem matches. Unknown/stub match_type -> subsystem_class_
+        # for_ct returns None -> empty iter, so SDK while-loops terminate
+        # cleanly.
+        target_class = subsystem_class_for_ct(match_type)
+        if target_class is None:
             return iter(())
         return iter([s for s in candidates if s is not None and isinstance(s, target_class)])
 

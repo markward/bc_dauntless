@@ -462,16 +462,60 @@ class ShipSubsystem(TGEventHandlerObject):
                 self._position_2d = (float(v[0]), float(v[1]))
 
     def IsTypeOf(self, cls) -> int:
-        """SDK class-id check. Returns 1 when this subsystem's source
-        property is an instance of `cls`, else 0.
+        """SDK class-id check — AI/Preprocessors.py:153:
+        `pSystem.IsTypeOf(pExistingSystem.GetObjType())`.
+
+        `cls` is a `CT_*` Property-class constant (`CT_WEAPON_SYSTEM =
+        WeaponSystemProperty`, ...), NOT a subsystem class, so it must be
+        resolved through the shared engine.appc.subsystem_types table before
+        testing — a `PhaserSystem`'s own `_property` is a
+        `WeaponSystemProperty` template (see ships.py `SetupProperties`),
+        never a `PhaserProperty`, so comparing `cls` against `_property`
+        directly (the historical implementation) can never answer the
+        most-specific CT_* constants correctly.
+
+        `PhaserSystem.IsTypeOf(CT_WEAPON_SYSTEM)` must be 1 (a phaser system
+        IS a weapon system); `PhaserSystem.IsTypeOf(CT_TORPEDO_SYSTEM)` must
+        be 0.
 
         `cls` may be a fall-through stub (e.g. App.CT_UNKNOWN_THING
         returns an App._NamedStub instance), so guard with
         isinstance(cls, type) before testing.
+
+        Fallback: `cls` values OUTSIDE the shared table (e.g.
+        `CT_WEAPON`/`CT_ENERGY_WEAPON` — leaf `Weapon`-hierarchy Property
+        classes, not one of the top-level subsystem CT_* this task's table
+        covers) fall back to the historical source-property isinstance
+        check, so leaf emitters (PhaserBank, TorpedoTube, ...) whose
+        `_property` genuinely IS e.g. a `PhaserProperty` keep answering
+        `IsTypeOf(CT_ENERGY_WEAPON)` / `IsTypeOf(CT_WEAPON)` exactly as
+        before (AI/Preprocessors.py:993 `RateSubsystemForTargeting`,
+        loadspacehelper.py:229).
         """
-        if self._property is None or not isinstance(cls, type):
+        if not isinstance(cls, type):
+            return 0
+        from engine.appc.subsystem_types import subsystem_class_for_ct
+        target = subsystem_class_for_ct(cls)
+        if target is not None:
+            return 1 if isinstance(self, target) else 0
+        if self._property is None:
             return 0
         return 1 if isinstance(self._property, cls) else 0
+
+    def GetObjType(self):
+        """The subsystem's own most-specific `CT_*` type constant.
+
+        SDK consumers: Conditions/ConditionCriticalSystemBelow.py:76 (one
+        child ConditionSystemBelow per critical subsystem, keyed by this) and
+        AI/Preprocessors.py:153 (FireScript's weapon-system matching). This
+        was implemented nowhere, so it fell through to TGObject.__getattr__'s
+        truthy `_Stub`, StartGetSubsystemMatch(stub) hit its `else: return
+        iter(())` branch, and the caller matched zero subsystems — silently,
+        forever. See engine.appc.subsystem_types for why this needs a shared
+        table rather than just returning `type(self)`.
+        """
+        from engine.appc.subsystem_types import ct_for_subsystem
+        return ct_for_subsystem(self)
 
     def GetParentShip(self):
         return self._parent_ship

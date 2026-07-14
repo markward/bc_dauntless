@@ -1,4 +1,11 @@
-"""ShipSubsystem.IsTypeOf — SDK class-id check via source-property type."""
+"""ShipSubsystem.IsTypeOf — SDK class-id check via the shared CT_* <->
+subsystem-class table in engine/appc/subsystem_types.py (task 3b).
+
+`cls` is a CT_* Property-class constant (e.g. CT_SHIELD_SUBSYSTEM =
+ShieldProperty); IsTypeOf resolves it through subsystem_class_for_ct() and
+tests isinstance(self, that_class) -- it answers "is this subsystem
+instance of this kind", independent of whether SetProperty has ever been
+called (see test_is_type_of_one_with_no_property)."""
 import App
 from engine.appc.subsystems import (
     ShipSubsystem, ShieldSubsystem, ImpulseEngineSubsystem,
@@ -8,10 +15,16 @@ from engine.appc.properties import (
 )
 
 
-def test_default_is_type_of_zero_with_no_property():
+def test_is_type_of_one_with_no_property():
+    """IsTypeOf answers a runtime class-id check (this subsystem's own
+    class), not whether a hardpoint property template has been mirrored
+    onto it yet -- see engine/appc/subsystem_types.py. Task 3b replaced the
+    historical property-based implementation (which conflated "class
+    identity" with "has SetProperty run"): a ShieldSubsystem genuinely IS a
+    CT_SHIELD_SUBSYSTEM the instant it's constructed."""
     s = ShieldSubsystem("Shield Generator")
     # No SetProperty called.
-    assert s.IsTypeOf(ShieldProperty) == 0
+    assert s.IsTypeOf(ShieldProperty) == 1
 
 
 def test_is_type_of_matches_property_class():
