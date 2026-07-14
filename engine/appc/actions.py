@@ -11,6 +11,7 @@ still resolve fully synchronously within the launching Play() call; only real
 delays or deferred completions span frames.  See
 docs/superpowers/specs/2026-06-11-action-sequence-timing-design.md.
 """
+import re
 import sys
 from engine.appc.events import TGEventHandlerObject, TGEvent
 from engine.core.ids import get_object_by_id, register, unregister
@@ -813,10 +814,40 @@ def TGActionManager_SkipEvents() -> None:
             pass
 
 
+# BC ships the episode title as one TGL string: 'Episode 1 - "Picking up the
+# Pieces"'. Dauntless renders it as a two-tier card (purple eyebrow + large
+# title), so the string has to be split -- and because EpisodeTitleAction and
+# MissionLib.TextBanner both create a TGCreditAction aimed at the subtitle
+# window, "does this parse as an episode title?" is also the only honest
+# discriminator between the two. Anchored on the `Episode <n>` prefix rather
+# than split on the first hyphen, so Ep8's 'Arise, Fair Sun...' survives.
+_EPISODE_TITLE_RE = re.compile(
+    r'^\s*Episode\s+(\d+)\s*[-–—:]\s*["“\']?(.+?)["”\']?\s*$',
+    re.IGNORECASE,
+)
+
+
+def parse_episode_title(text) -> tuple[str, str] | None:
+    """Split an episode-title string into (eyebrow, title), or None.
+
+    Returns None for any text that is not shaped like a BC episode title --
+    those are transient banners and must render in the caption box instead.
+    """
+    if not isinstance(text, str):
+        return None
+    m = _EPISODE_TITLE_RE.match(text)
+    if m is None:
+        return None
+    return ("Episode " + m.group(1), m.group(2).strip())
+
+
 # ── TGCreditAction ──────────────────────────────────────────────────────────
-# Credit-roll text overlay used by mission-summary screens (MissionLib.py:5416)
-# and the friendly-fire / game-over banners.  Phase 1 stores the text+layout
-# args; rendering is Phase 2.
+# Timed text overlay on the SubtitleWindow. Two SDK callers: MissionLib.
+# TextBanner (transient notices) and MissionLib.EpisodeTitleAction (the episode
+# title card) -- told apart by parse_episode_title(). We honour the SDK's
+# duration and fade args; its x/y/font-size/colour are deliberately ignored
+# (our layout owns placement).
+# Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md
 
 class TGCreditAction(TGTimedAction):
     JUSTIFY_LEFT   = 0
@@ -836,6 +867,8 @@ class TGCreditAction(TGTimedAction):
         self._text = args[0] if args else ""
         self._subtitle = args[1] if len(args) > 1 else None
         self._duration_s = float(args[4]) if len(args) > 4 else self._DEFAULT_DURATION_S
+        self._fade_in = float(args[5]) if len(args) > 5 else 0.0
+        self._fade_out = float(args[6]) if len(args) > 6 else 0.0
         self._color = _credit_default_color
         self._played = False
 
@@ -851,9 +884,22 @@ class TGCreditAction(TGTimedAction):
         if self._played: return
         self._played = True
         host = self._subtitle
+
+        # EpisodeTitleAction and MissionLib.TextBanner both land here, aimed at
+        # the same SubtitleWindow. The text's shape is the only discriminator:
+        # if it parses as an episode title it gets the two-tier card, else it is
+        # a transient banner in the caption box.
+        parsed = parse_episode_title(self._text)
+        add_title = getattr(host, "_add_episode_title", None)
+        if parsed is not None and add_title is not None:
+            eyebrow, title = parsed
+            add_title(eyebrow, title, self._duration_s,
+                      self._fade_in, self._fade_out)
+            return
+
         adder = getattr(host, "_add_text", None)
         if adder is None: return
-        adder(self._text, self._duration_s)
+        adder(self._text, self._duration_s, self._fade_in, self._fade_out)
 
     def Restart(self) -> None:
         # TGSequence.Restart() re-fires Play on every child. Reset the

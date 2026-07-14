@@ -25,7 +25,8 @@ salmon/orange + purple house tokens. There is no episode title *card* at all —
 - Captions and episode titles read as part of Dauntless's UI (Antonio, house tokens,
   the `bc-panel` chrome tells).
 - Episode titles become a real two-tier display card (purple eyebrow + large title).
-- SDK-authored fade/duration timings are honoured, and freeze correctly under pause.
+- SDK-authored fade/duration timings are honoured (see Decision 4 for the
+  known wall-clock/pause limitation this carries forward unchanged).
 
 ## Non-goals
 
@@ -52,14 +53,29 @@ slot routing. CEF never sees the raw string — the payload carries the two tier
 separate fields. A naive JS split on `-` would both mis-route banners and mangle
 `Episode 8 - "Arise, Fair Sun..."`.
 
-**3. Fade opacity is computed in Python, not by CSS transitions.** A CSS transition
-runs on wall-clock and would keep animating while the sim is frozen (pause, F12
-DevTools). The letterbox pass hit exactly this and moved to an engine-pumped
-animator; we do the same, shipping an `opacity` float in the snapshot each frame.
+**3. Fade opacity is computed in Python, not by CSS transitions.** The `opacity`
+value in the snapshot is authoritative and rewritten every frame; a CSS
+transition/animation would interpolate between those per-frame writes and fight
+the Python-driven fade, smearing or lagging it behind the value Python actually
+computed. So we compute the fade curve ourselves in Python and ship a plain
+`opacity` float each frame instead. (This is a different failure mode from the
+letterbox pass's wall-clock-vs-game-time bug -- see Decision 4 for how this
+system relates to pause.)
 
 **4. Dwell/expiry stays on `time.monotonic()`** (as today). Crew-caption duration is
 derived from the real MP3 length, so moving captions to the game clock would desync a
-caption from its own audio. Fades use the same clock, so dwell and fade never disagree.
+caption from its own audio. Fades use the same clock, so dwell and fade never disagree
+with each other.
+
+Known, accepted limitation: because both clocks are wall-clock, a pause (or F12
+DevTools) does NOT freeze a dwell or a fade in progress -- `SDKMirrorPanel.render_payload()`
+snapshots `time.monotonic()` and `PanelRegistry.render_all()` runs unconditionally in
+the host loop before the `pause.sim_frozen` check (panels, including the pause menu
+itself, must keep rendering while paused). Pausing while an episode title is
+mid-fade lets it keep fading and expire on wall-clock time, never to return on
+resume. This is not a regression -- pre-existing subtitle/banner behaviour was the
+same before this change -- and is not being fixed here: plumbing a game clock
+through this path is out of scope (see Non-goals).
 
 ## Design
 
@@ -198,7 +214,8 @@ New `renderEpisodeTitle(entry)` fills the two divs, sets `el.style.opacity` from
 
 #sdk-episode-title {
   position: absolute;
-  left: 5vw; bottom: 16vh;
+  left: 5vw; bottom: 12vh;
+  max-width: 62vw;
   font-family: "Antonio", sans-serif;
   text-align: left;
   z-index: 50; pointer-events: none;
@@ -218,11 +235,46 @@ New `renderEpisodeTitle(entry)` fills the two divs, sets `el.style.opacity` from
   color: #fff;
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.75);
 }
+
+/* Lifts the caption box, NOT the card, on the one mission where both are
+   live at once (E2M1) -- see "Layout" below. */
+#sdk-subtitle.sdk-subtitle--title-live {
+  bottom: 30vh;
+}
 ```
 
 The card has no box or border — it floats on the letterboxed shot. Both slots sit at
 `z-index: 50` and are drawn above the letterbox bars by construction (the bars are a
 GL pass beneath the whole CEF layer).
+
+### Layout
+
+`#sdk-episode-title` sits at `bottom: 12vh` — the mockup position, where the design
+review's finished dwell shot puts the card's text block. `#sdk-subtitle` sits at its
+original `bottom: 14vh`. **Only** `sdk/Build/scripts/Maelstrom/Episode2/E2M1/Ep2Cutscene.py:216-219`
+puts both elements on screen at once: `EpisodeTitleAction` is appended and then
+immediately chained into three of Saffi's spoken lines, so `TGCreditAction`'s captions
+render in `#sdk-subtitle` for the card's whole 5-second dwell. Both slots are
+`z-index: 50` and the card comes later in `index.html`'s DOM order, so if they overlap
+the card's opaque glyphs paint over the caption box's body.
+
+An earlier pass resolved this by raising the card itself to `bottom: 28vh`, clearing the
+caption band permanently — but that also moved it far above the mockup for every other
+mission, which is what Mark's live-verify pass flagged. The fix inverts it: the card
+stays at the mockup height, and `js/sdk_mirror.js` adds a `sdk-subtitle--title-live`
+class to `#sdk-subtitle` whenever the same subtitle-entry payload carries a live
+`title_text` (removing it the instant the title expires), lifting the caption to
+`bottom: 30vh` only while a title card is actually showing. Every other mission shows
+one element or the other, never both, so the caption sits at its normal `14vh` the rest
+of the time.
+
+The `30vh` is derived, not guessed: the card's top edge, worst case (the title can wrap
+to two lines at `max-width: 62vw`, `line-height: 1.0`), is `12vh` (the card's `bottom`)
+plus the eyebrow (20px font-size + 6px margin) plus two title lines at the clamp's max
+(72px each) = 170px total. At a 1080px reference viewport height that is
+`170 / 1080 * 100 ≈ 15.74vh`, so the card's top edge sits at `≈ 27.74vh`. `30vh` adds a
+small (`≈2.26vh`) gap above that. The arithmetic is repeated as CSS comments in
+`sdk_mirror.css` beside both rules, since the number would otherwise look arbitrary.
 
 ## Tests
 

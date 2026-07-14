@@ -555,9 +555,15 @@
 
     <!-- SDK UI mirror slots — receive payloads from SDKMirrorPanel.
          #sdk-subtitle: bottom-anchored mission-objective/banner strip.
+         #sdk-episode-title: bottom-left two-tier episode title card.
          #sdk-stylized-stack: centred dauntless-styled modal stack.
-         Spec: docs/superpowers/specs/2026-06-03-cef-sdk-ui-mirror-design.md -->
+         Spec: docs/superpowers/specs/2026-06-03-cef-sdk-ui-mirror-design.md
+         Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md -->
     <div id="sdk-subtitle" class="sdk-mirror" hidden></div>
+    <div id="sdk-episode-title" class="sdk-mirror" hidden>
+      <div class="sdk-episode__eyebrow"></div>
+      <div class="sdk-episode__title"></div>
+    </div>
     <div id="sdk-stylized-stack" class="sdk-mirror"></div>
     <!-- #sdk-infobox: centred modal stack for MissionLib info boxes.
          Spec: docs/superpowers/specs/2026-06-17-sdk-info-box-rendering-design.md -->
