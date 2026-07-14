@@ -207,6 +207,12 @@ class ShipSubsystem(TGEventHandlerObject):
         # Brex.py:108 registers hull-status thresholds on it). Lazy so the
         # thousands of subsystems that never hand one out pay nothing.
         self._combined_watcher = None
+        # Lazily-created FloatRangeWatcher on GetConditionPercentage(), handed
+        # out by GetConditionWatcher(). SEPARATE from _combined_watcher: each
+        # consumer registers and removes range checks BY INDEX, so sharing one
+        # watcher would let the engineer's status reports and the AI's
+        # ConditionSystemBelow disturb each other's registrations.
+        self._condition_watcher = None
         self._radius = 0.0
         self._position = TGPoint3(0.0, 0.0, 0.0)
         # Body-space mounting axes — defaults match the SDK convention
@@ -542,6 +548,8 @@ class ShipSubsystem(TGEventHandlerObject):
         engine/appc/objects.py calls SetCondition)."""
         if self._combined_watcher is not None:
             self._combined_watcher._update(self.GetConditionPercentage())
+        if self._condition_watcher is not None:
+            self._condition_watcher._update(self.GetConditionPercentage())
         new_state = self._threshold_state_now()
         old_state = self._threshold_state
         if new_state != old_state:
@@ -813,7 +821,19 @@ class ShipSubsystem(TGEventHandlerObject):
         return None
 
     def GetConditionWatcher(self):
-        return None
+        """FloatRangeWatcher on this subsystem's condition FRACTION (0.0-1.0).
+
+        SDK consumer: Conditions/ConditionSystemBelow.py:94 — the most-used
+        condition in the AI (31 call sites). It registers a range check at its
+        threshold and reads GetWatchedVariable() for the initial state. This
+        returned a hardcoded None, so AddRangeCheck raised inside the condition's
+        __init__, ConditionScript swallowed it, and the condition sat at status 0
+        forever — the AI never learned that a subsystem had been damaged.
+        """
+        if self._condition_watcher is None:
+            self._condition_watcher = FloatRangeWatcher(
+                self.GetConditionPercentage())
+        return self._condition_watcher
 
     def GetCombinedPercentageWatcher(self):
         """FloatRangeWatcher on this subsystem's condition FRACTION
