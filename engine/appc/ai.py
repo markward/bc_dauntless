@@ -75,12 +75,13 @@ class TGCondition:
         # a real change — NOT gated on _active, which only governs the direct
         # handler list.
         #
-        # NOT wrapped in try/except. Dispatch is synchronous, so a swallow here
-        # would hide exceptions raised INSIDE the newly-woken handlers
-        # (Conditions/ConditionCriticalSystemBelow) — code that has never run
-        # before this branch, i.e. exactly where the first real signal of a bug
-        # shows up. Matches ShipClass.SetTarget's AddEvent, which deliberately
-        # refuses the same swallow.
+        # NOT wrapped in try/except. Removing the swallow allows event construction
+        # and dispatch infrastructure errors to surface. Handler body exceptions are
+        # caught and logged by design (see events.py:501-506, the broadcast path guard),
+        # matching original BC's behavior of printing tracebacks while the loop continues.
+        # The benefit: event setup errors in never-before-run code now propagate instead of
+        # vanishing. Matches ShipClass.SetTarget's AddEvent, which deliberately refuses
+        # the same swallow.
         import App
         evt = App.TGIntEvent_Create()
         evt.SetEventType(App.ET_AI_CONDITION_CHANGED)

@@ -175,11 +175,12 @@ class ObjectClass(TGEventHandlerObject):
         if new_value == self._scannable:
             return
         self._scannable = new_value
-        # NOT wrapped in try/except: AddEvent dispatches synchronously, so a
-        # swallow here would hide exceptions raised inside the ScienceMenuHandlers
-        # broadcast handler this branch wakes for the first time. Matches
-        # ShipClass.SetTarget's AddEvent — the first real signal of a bug in
-        # never-before-run code must not be silently discarded.
+        # NOT wrapped in try/except. Removing the swallow allows event construction
+        # and dispatch infrastructure errors to surface. Handler body exceptions are
+        # caught and logged by design (see events.py:501-506, the broadcast path guard),
+        # matching original BC's behavior of printing tracebacks while the loop continues.
+        # The benefit: event setup errors in never-before-run code now propagate instead
+        # of vanishing. Matches ShipClass.SetTarget's AddEvent.
         import App
         evt = App.TGBoolEvent_Create()
         evt.SetEventType(App.ET_SCANNABLE_CHANGE)
