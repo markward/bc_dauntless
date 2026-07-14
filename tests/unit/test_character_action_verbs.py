@@ -50,3 +50,68 @@ def test_request_default_clears_the_active_action():
     assert ctrl.is_busy(ch) is True
     ctrl.request_default(ch)
     assert ctrl.is_busy(ch) is False
+
+
+from engine.appc.ai import CharacterAction
+
+
+class _FakeController:
+    def __init__(self, accept=True):
+        self.accept = accept
+        self.submitted = []
+
+    def is_busy(self, character):
+        return False
+
+    def submit(self, character, clips, priority, hold=False, on_complete=None):
+        self.submitted.append((character, list(clips), priority, on_complete))
+        return self.accept
+
+    def request_default(self, character):
+        self.submitted.append((character, "DEFAULT", None, None))
+
+
+def test_play_animation_submits_the_registered_gesture(monkeypatch):
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    ctrl = _FakeController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    monkeypatch.setattr("engine.bridge_idle_gestures.build_sequence_clips",
+                        lambda path, character, anim_mgr: [("clip.nif", 1.0)])
+
+    action = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION, "PushingButtons")
+    action.Play()
+
+    assert len(ctrl.submitted) == 1
+    _c, clips, priority, _cb = ctrl.submitted[0]
+    assert clips == [("clip.nif", 1.0)]
+    assert priority == bridge_character_anim._SCRIPTED
+    # flag defaults to 0 => BC's non-interruptable mode => the SDK gate closes
+    assert ch.IsAnimatingNonInterruptable() == 1
+
+
+def test_play_animation_flag_1_is_interruptable(monkeypatch):
+    # MissionLib.py:3543 passes flag=1 explicitly.
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    ctrl = _FakeController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    monkeypatch.setattr("engine.bridge_idle_gestures.build_sequence_clips",
+                        lambda path, character, anim_mgr: [("clip.nif", 1.0)])
+
+    action = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION,
+                             "PushingButtons", None, 1)
+    action.Play()
+    assert ch.IsAnimatingInterruptable() == 1
+    assert ch.IsAnimatingNonInterruptable() == 0
+
+
+def test_play_animation_unregistered_key_completes_immediately(monkeypatch):
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    ctrl = _FakeController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+
+    action = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION, "Nonexistent")
+    action.Play()
+
+    assert ctrl.submitted == []          # nothing submitted
+    assert action.IsPlaying() == 0       # completed inline — never stalls a sequence
+    assert ch.IsAnimating() == 0         # and left no state behind

@@ -1427,6 +1427,9 @@ class CharacterAction(TGAction):
         if at in (self.AT_MENU_UP, self.AT_MENU_DOWN):
             self._menu_action(up=(at == self.AT_MENU_UP))
             return
+        if at in (self.AT_PLAY_ANIMATION, self.AT_PLAY_ANIMATION_FILE):
+            self._queue_play_animation(from_file=(at == self.AT_PLAY_ANIMATION_FILE))
+            return
         # Speak types (and the remaining no-op types) keep the prior flow.
         dur = self._do_play()
         self._complete_after(dur or 0.0)
@@ -1522,6 +1525,71 @@ class CharacterAction(TGAction):
             detail = str(self._detail) if self._detail is not None else "Away"
             ctrl.request_glance(cc, detail, on_complete=self.Completed)
         except Exception:
+            self.Completed()
+
+    def _queue_play_animation(self, *, from_file: bool) -> None:
+        """AT_PLAY_ANIMATION / AT_PLAY_ANIMATION_FILE — BC's scripted gesture.
+
+        The key is LITERAL (no location prefix): "PushingButtons", registered by
+        every officer. The registered value is a dotted PYTHON PATH; calling it
+        returns a TGSequence, which we flatten to clips and hand to the character
+        anim controller — a character-node TGAnimAction does not play by itself
+        (actions.py:655), gestures reach the renderer only via the controller.
+
+        Interruptability comes from the action's `flag` (BC's PlayAnimation mode
+        arg): flag > 0 => CAT_INTERRUPTABLE; flag == 0 => CAT_NON_INTERRUPTABLE.
+        Evidence: MissionLib.py:3543 passes flag=1; the bare handler call sites
+        (EngineerCharacterHandlers.py:531 et al) leave it 0. BC's mode 0 also
+        disables the UI for the duration — that interlock needs the CS_ flag
+        rework and is deliberately not implemented here.
+
+        Best-effort: any failure or unresolved key completes inline so a mission
+        TGSequence can never stall on a gesture.
+        """
+        from engine.appc.characters import CharacterClass, CharacterClass_Cast
+        from engine import bridge_character_anim
+        from engine.bridge_idle_gestures import build_sequence_clips
+        from engine.appc import bridge_placement
+        cc = None
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_character_anim.get_controller()
+            if cc is None or ctrl is None or self._detail is None:
+                self.Completed()
+                return
+
+            if from_file:
+                # BC's escape hatch: a raw NIF name, no registry lookup.
+                clips = [(str(self._detail), 0.0)]
+            else:
+                module_path = bridge_placement.registered_module_path(cc, self._detail)
+                if not module_path:
+                    self.Completed()   # unregistered key (BC no-ops here too)
+                    return
+                import App
+                clips = build_sequence_clips(module_path, cc, App.g_kAnimationManager)
+            if not clips:
+                self.Completed()
+                return
+
+            category = (CharacterClass.CAT_INTERRUPTABLE if self._flag > 0
+                        else CharacterClass.CAT_NON_INTERRUPTABLE)
+            cc.set_current_animation(str(self._detail), category)
+
+            def _done():
+                cc.clear_current_animation()
+                self.Completed()
+
+            if not ctrl.submit(cc, clips,
+                               priority=bridge_character_anim._SCRIPTED,
+                               on_complete=_done):
+                _done()                # dropped by the priority guard
+        except Exception:
+            try:
+                if cc is not None:
+                    cc.clear_current_animation()
+            except Exception:
+                pass
             self.Completed()
 
     def _menu_action(self, *, up: bool) -> None:
