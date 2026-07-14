@@ -25,6 +25,7 @@ add_executable(renderer_tests
     lens_flare_pass_test.cc
     bridge_pass_test.cc
     skinned_bridge_test.cc
+    head_weld_seam_test.cc
     hdr_target_test.cc
     cubemap_target_test.cc
     resolve_pass_test.cc
