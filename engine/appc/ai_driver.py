@@ -42,6 +42,7 @@ PS_DONE = PreprocessingAI.PS_DONE
 _focus_depth = 0
 _reached_this_tick: list = []
 _reached_this_tick_all: list = []
+_reached_this_tick_all_ids: set = set()
 
 
 def tick_ai(ai, game_time: float) -> int:
@@ -54,11 +55,12 @@ def tick_ai(ai, game_time: float) -> int:
     last tick but not this one -- and, generally, calls SetActive()/
     SetInactive() on every node as it enters/leaves the active dispatch path.
     Recursive calls into children just dispatch."""
-    global _focus_depth, _reached_this_tick, _reached_this_tick_all
+    global _focus_depth, _reached_this_tick, _reached_this_tick_all, _reached_this_tick_all_ids
     is_root = _focus_depth == 0
     if is_root:
         _reached_this_tick = []
         _reached_this_tick_all = []
+        _reached_this_tick_all_ids = set()
     _focus_depth += 1
     try:
         status = _dispatch_ai(ai, game_time)
@@ -82,7 +84,13 @@ def _dispatch_ai(ai, game_time: float) -> int:
     # Record every node type reached on the active dispatch path this root
     # tick -- the single funnel every _tick_* function passes through, so
     # this is the one place that needs to record (see _reconcile_active).
-    _reached_this_tick_all.append(ai)
+    # Identity-dedup: a node dispatched more than once in the same root tick
+    # (e.g. re-entered via a looping SequenceAI) must only appear once, else
+    # _reconcile_active's `reached` list — and the _active_nodes snapshot
+    # derived from it — carries duplicates.
+    if id(ai) not in _reached_this_tick_all_ids:
+        _reached_this_tick_all_ids.add(id(ai))
+        _reached_this_tick_all.append(ai)
     if isinstance(ai, BuilderAI):
         return _tick_builder(ai, game_time)
     if isinstance(ai, PreprocessingAI):
@@ -127,17 +135,16 @@ def _reconcile_active(root_ai, reached) -> None:
     lets a ConditionalAI picked back up by its PriorityListAI re-activate its
     conditions and re-arm a ConditionTimer.
 
-    Gated on isinstance(node, ArtificialIntelligence): some tests wire bare
-    duck-typed AI doubles (carrying only ``_status``/``GetShip``, to exercise
-    _dispatch_ai's "matches none of the known AI classes" fallback) that were
-    never meant to grow this lifecycle."""
+    Every node `_dispatch_ai` can reach is a real ArtificialIntelligence
+    subclass (production AI classes, or a test double that subclasses it --
+    see tests/integration/test_defensive_cloak_cadence.py's _InertAI), so
+    SetActive/SetInactive are called unconditionally here."""
     reached_ids = {id(n) for n in reached}
     for node in getattr(root_ai, "_active_nodes", ()):
-        if id(node) not in reached_ids and isinstance(node, ArtificialIntelligence):
+        if id(node) not in reached_ids:
             node.SetInactive()
     for node in reached:
-        if isinstance(node, ArtificialIntelligence):
-            node.SetActive()
+        node.SetActive()
     root_ai._active_nodes = list(reached)
 
 

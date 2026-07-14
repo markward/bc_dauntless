@@ -114,6 +114,7 @@ class ShipClass(DamageableObject):
         self._ai = ai
         self._insystem_warp_transit = None
         if old is not None and old is not ai:
+            self._deactivate_ai_tree(old)
             from engine.appc.ai_driver import fire_ai_done
             fire_ai_done(self, old)
 
@@ -128,8 +129,42 @@ class ShipClass(DamageableObject):
         self._ai = None
         self._insystem_warp_transit = None
         if old is not None:
+            self._deactivate_ai_tree(old)
             from engine.appc.ai_driver import fire_ai_done
             fire_ai_done(self, old)
+
+    @staticmethod
+    def _deactivate_ai_tree(ai) -> None:
+        """Clear tree-activation state across `ai`'s whole subtree.
+
+        `ai_driver._reconcile_active` tracks the active-node set PER ROOT
+        (``root_ai._active_nodes``), so a node's ``_is_active_in_tree`` flag
+        can only be cleared by the same root that set it. That breaks the
+        SDK's real re-parenting idiom (HelmMenuHandlers.OverrideAIInternal):
+        ``pOverrideAI.AddAI(pOldAI, 2)`` grafts the SAME old AI object onto a
+        new root at lower priority, THEN ``pShip.ClearAI(0, pOldAI)`` detaches
+        it from the ship (bDelete=0 — reuse, not destroy), THEN
+        ``pShip.SetAI(pOverrideAI)`` installs the new root. Without this,
+        every node under the detached root stays latched
+        ``_is_active_in_tree = True`` from when the OLD root was ticking it
+        directly — so when the new root's dispatch reaches those same nodes
+        again, ``SetActive()``'s edge guard swallows the transition
+        entirely: a ``ConditionalAI`` never re-registers its condition list
+        (a re-armed ``ConditionTimer`` never re-fires; a polling condition's
+        ``Activate()``-started timer never restarts).
+
+        Called from both detach points (``ClearAI`` and the old-AI branch of
+        ``SetAI``) so a tree is always deactivated the moment it stops being
+        *this* ship's installed AI, whether or not it goes on to live as a
+        child of something else.
+        """
+        get_tree = getattr(ai, "GetAllAIsInTree", None)
+        if not callable(get_tree):
+            return
+        for node in get_tree():
+            set_inactive = getattr(node, "SetInactive", None)
+            if callable(set_inactive):
+                set_inactive()
 
     def GetAI(self):
         return self._ai
