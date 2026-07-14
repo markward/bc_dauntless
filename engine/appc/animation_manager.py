@@ -18,11 +18,39 @@ class AnimationManager:
 
     def LoadAnimation(self, path, name) -> None:
         # SDK call shape: kAM.LoadAnimation("data/animations/db_stand_t_l.nif",
-        # "db_stand_t_l"). Record name -> path; re-load of a name overwrites.
-        # A re-load can point the same NAME at a DIFFERENT clip (bridge/mission
-        # reload against the process-lifetime g_kAnimationManager singleton),
-        # so any cached duration measured against the OLD path is now stale
-        # and must be dropped.
+        # "db_stand_t_l"). Record name -> path; a re-load of a name OVERWRITES
+        # (LAST-write-wins). A re-load can point the same NAME at a DIFFERENT
+        # clip (bridge/mission reload against the process-lifetime
+        # g_kAnimationManager singleton), so any cached duration measured
+        # against the OLD path is now stale and must be dropped.
+        #
+        # LAST-write-wins is LOAD-BEARING — do not "optimise" it into
+        # first-write-wins (that was tried, in 20c62e96, and broke E1M1's
+        # entire opening). BC re-registers a name precisely in order to
+        # CORRECT it. Measured on a real LoadBridge.Load("GalaxyBridge"),
+        # exactly two names are registered twice with different paths:
+        #
+        #   DBCameraSitDown  1st 'data/animations/DB_Camera_Sit_Downp.nif'
+        #                        <- GalaxyBridge.py:193, a TYPO ("Downp"):
+        #                           no such file exists
+        #                    2nd 'data/animations/DB_Camera_Sit_Down.nif'
+        #                        <- the animation builder's CORRECT path
+        #   H_Talk_E_M       1st 'data/animations/DB_C_Talk_E_M.NIF'
+        #                    2nd 'data/animations/DB_C_Talk_S_M.NIF'
+        #                        <- BC's known cross-registration defect
+        #
+        # Let the typo win and the captain's sit/stand camera clip becomes
+        # unloadable: GetAnimationLength returns 0.0, every sequence delay of
+        # the form `GetAnimationLength(x) - 1.7` goes NEGATIVE, TGSequence
+        # fires it immediately, and the whole scene collapses to t=0.
+        #
+        # The other re-registration in play — CommonAnimations.py:647,655's
+        # console-gesture builders registering an extension-less path
+        # ("data/animations/DB_E_pushing_buttons_A", no ".NIF") — is BC content
+        # too, and is tolerated where BC tolerates it: in the FILE LOADER. See
+        # engine/host_loop.py::_resolve_asset_path, which probes the directory
+        # case-insensitively for the real ".NIF"/".nif" file. Fixing it here,
+        # in the registry, is what broke DBCameraSitDown.
         self._paths[str(name)] = str(path)
         self._durations.pop(str(name), None)
 

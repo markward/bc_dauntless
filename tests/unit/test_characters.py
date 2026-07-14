@@ -84,13 +84,27 @@ def test_clear_animations():
     assert c._animations == []
 
 
-def test_clear_animations_of_type_filters():
+def test_clear_animations_of_type_is_a_recorded_no_op():
+    # ClearAnimationsOfType keys on the animation's CAT_ category, which the
+    # AddAnimation registry (name -> python path) does not carry, and zero SDK
+    # call sites use it — so it must not mutate _animations, only record the
+    # gap in stub telemetry.
+    from engine.core import stub_telemetry
     c = CharacterClass_Create()
-    c.AddAnimation(CharacterClass.CAT_BREATHE, 1.0)
-    c.AddAnimation(CharacterClass.CAT_TURN, 1.0)
-    c.ClearAnimationsOfType(CharacterClass.CAT_BREATHE)
-    assert len(c._animations) == 1
-    assert c._animations[0][0] == CharacterClass.CAT_TURN
+    c.AddAnimation("walk", 1.0)
+    c.AddAnimation("idle", 1.0)
+    stub_telemetry.reset()
+    stub_telemetry.set_enabled(True)
+    try:
+        c.ClearAnimationsOfType(CharacterClass.CAT_BREATHE)
+        snap = stub_telemetry.snapshot()
+    finally:
+        stub_telemetry.set_enabled(False)
+        stub_telemetry.reset()
+    assert len(c._animations) == 2
+    assert any(
+        "ClearAnimationsOfType" in str(k) for bucket in snap.values() for k in bucket
+    ), snap
 
 
 # ── State flags ──────────────────────────────────────────────────────────────
@@ -526,7 +540,7 @@ def test_app_exposes_character_constants():
     assert App.CharacterClass.MALE == 0
     assert App.CharacterClass.FEMALE == 1
     assert App.CharacterClass.CS_HIDDEN == 5
-    assert App.CharacterClass.CAT_BREATHE == 1
+    assert App.CharacterClass.CAT_BREATHE == 0
 
 
 def test_app_exposes_menu_classes():

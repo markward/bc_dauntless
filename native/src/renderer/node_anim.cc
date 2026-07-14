@@ -48,6 +48,26 @@ std::vector<glm::mat4> compose_node_worlds(
 
 namespace {
 
+// Find the model node a clip track should DRIVE, given every node with that
+// name. BC set NIFs nest a DUPLICATE: an outer node carrying the PLACEMENT and
+// an identity-local CHILD of the same name holding the mesh (DBridge.nif's
+// [217]/[220] 'console seat 01'; the lift doors have the same shape). BC's
+// NiKeyframeController overwrites its TARGET node's local outright, and the
+// clip's keys are the absolute local TRS of the PLACED node — so pick the
+// candidate whose own local TRANSLATION matches the clip's rest translation.
+// Translation only: the clip's rest ROTATION is exactly the quantity we cannot
+// trust (see sample_node_overrides). Returns -1 when nothing matches.
+int placed_node_for(const assets::Model& model, const std::string& name,
+                    const glm::mat4& clip_rest) {
+    const glm::vec3 want(clip_rest[3]);
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        if (model.nodes[i].name != name) continue;
+        const glm::vec3 got(model.nodes[i].local_transform[3]);
+        if (glm::length(got - want) < 1e-3f) return static_cast<int>(i);
+    }
+    return -1;
+}
+
 // Split a TRS matrix into translation / rotation / uniform scale, so a track
 // that OMITS a channel can fall back to that channel of the base pose.
 void decompose_trs(const glm::mat4& m, glm::vec3& t, glm::quat& r, float& s) {
@@ -80,28 +100,24 @@ std::unordered_map<int, glm::mat4> sample_node_overrides(
     for (const auto& tr : clip.tracks) {
         auto it = index_of.find(tr.target_node_name);
         if (it == index_of.end()) continue;            // e.g. "Camera captain"
-        const glm::mat4& model_local = model.nodes[it->second].local_transform;
 
-        // RETARGET the clip's motion onto the model's node. An EXTERNAL clip NIF
-        // (the lift doors: data/animations/DB_door_L1.nif) keys its nodes in ITS
-        // OWN root frame, while in the bridge model those nodes hang under a
-        // parent that already carries their placement. Writing the clip's key
-        // straight in as the node's LOCAL transform applies the placement twice
-        // (the door teleports out of the doorway by exactly its own rest vector).
-        // So take the clip's motion as a DELTA against the clip's OWN rest pose
-        // and apply it in the model node's frame:
-        //
-        //     override = model_local * inverse(clip_rest) * clip_sampled
-        //
-        // At t=0 the sampled pose IS the clip's rest -> delta = identity -> the
-        // node sits exactly at its model rest. For the bridge's EMBEDDED clip the
-        // clip rest EQUALS the model local, so this collapses to the sampled pose
-        // (unchanged). For a rotation-only clip (the chairs) the delta is a pure
-        // rotation about the node's own origin, so the seat turns without moving.
         auto rit = clip.rest_locals.find(tr.target_node_name);
         const bool have_rest = rit != clip.rest_locals.end();
+
+        // Prefer the PLACED node (the outer duplicate whose own local carries the
+        // placement) over `index_of`'s last-wins pick (the identity-local mesh
+        // CHILD of the same name). BC's NiKeyframeController overwrites its
+        // target's local outright, so the clip's keys ARE that placed node's
+        // absolute local TRS in the set's frame — write the sampled pose in
+        // DIRECTLY. Nothing is double-applied: the mesh child is identity-local.
+        const int placed =
+            have_rest ? placed_node_for(model, tr.target_node_name, rit->second)
+                      : -1;
+        const int target = placed >= 0 ? placed : it->second;
+        const glm::mat4& model_local = model.nodes[target].local_transform;
+
         // Sample in the CLIP's frame: channels the track omits must fall back to
-        // the CLIP's rest, not the model's, or the delta mixes two frames.
+        // the CLIP's rest, not the model's, or the two frames get mixed.
         const glm::mat4& base = have_rest ? rit->second : model_local;
 
         glm::vec3 base_t; glm::quat base_r; float base_s;
@@ -109,9 +125,25 @@ std::unordered_map<int, glm::mat4> sample_node_overrides(
         const glm::mat4 sampled =
             assets::sample_track_trs(tr, t, base_t, base_r, base_s);
 
-        overrides[it->second] =
-            have_rest ? model_local * glm::inverse(base) * sampled
-                      : sampled;   // no rest recorded: legacy in-model sampling
+        // FALLBACK (no placed duplicate found): retarget the clip's motion as a
+        // DELTA against its own rest, applied in the model node's frame —
+        //
+        //     override = model_local * inverse(clip_rest) * clip_sampled
+        //
+        // — because such a clip's keys are in ITS OWN root frame while the model
+        // node hangs under a parent that already carries the placement; writing
+        // the key straight in would apply that placement TWICE.
+        //
+        // This path is DELIBERATELY not the default: it consults the clip's rest
+        // ROTATION, which BC does not author reliably. BC bakes each *_reverse /
+        // *_in chair clip's rest to that clip's FIRST KEY, not to the set's rest
+        // pose (db_chair_H_face_capt_reverse rest = Rz(-60), keys -60 -> 0), so
+        // inverse(clip_rest) MIRRORS it: the chair swings OUT to +60 and holds
+        // there. It only ever worked for doors by luck — a door's baked rest
+        // rotation genuinely IS its placement rotation, so the term cancels.
+        overrides[target] = (placed < 0 && have_rest)
+                                ? model_local * glm::inverse(base) * sampled
+                                : sampled;
     }
     return overrides;
 }

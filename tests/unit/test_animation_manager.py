@@ -19,6 +19,30 @@ def test_reload_same_name_overwrites():
     assert m.path_for("x") == "b.nif"
 
 
+def test_a_later_registration_must_win_or_the_captains_sit_camera_breaks():
+    """LAST-write-wins is load-bearing: BC re-registers a name to CORRECT it.
+
+    GalaxyBridge.py:193's PreloadAnimations has a TYPO - it registers
+    "DBCameraSitDown" against 'DB_Camera_Sit_Downp.nif' ("Downp"), a file that
+    does not exist. The animation builder later re-registers the SAME name
+    against the correct 'DB_Camera_Sit_Down.nif'. The correct path must win.
+
+    Making this first-write-wins (commit 20c62e96) let the TYPO win:
+    GetAnimationLength("DBCameraSitDown") went to 0.0, every sequence delay of
+    the form `GetAnimationLength(x) - 1.7` went NEGATIVE, TGSequence treats a
+    negative delay as fire-now, and E1M1's whole opening collapsed to t=0 (the
+    captain's walk-on skipped, all timers firing at once, Admiral Liu on the
+    viewscreen while Helm was still announcing her call).
+
+    The extension-less console-gesture paths are tolerated at LOAD time
+    instead - see engine/host_loop.py::_resolve_asset_path.
+    """
+    m = AnimationManager()
+    m.LoadAnimation("data/animations/DB_Camera_Sit_Downp.nif", "DBCameraSitDown")
+    m.LoadAnimation("data/animations/DB_Camera_Sit_Down.nif", "DBCameraSitDown")
+    assert m.path_for("DBCameraSitDown") == "data/animations/DB_Camera_Sit_Down.nif"
+
+
 def test_free_animation_removes_entry():
     m = AnimationManager()
     m.LoadAnimation("data/animations/x.nif", "x")

@@ -1365,6 +1365,9 @@ class CharacterAction(TGAction):
         self._priority = int(priority)
         self._sub_priority: int = 0
         self._use_name_and_set: bool = False
+        # Skip (Backspace) bookkeeping — see _queue_say_line / Skip.
+        self._skipped: bool = False
+        self._turn_owed = None      # detail of a turn-back this action still owes
         # Spoken lines are skippable by default (Backspace →
         # TGActionManager_SkipEvents), matching BC where dialogue lines skip
         # without the SDK marking each CharacterAction explicitly.
@@ -1426,6 +1429,15 @@ class CharacterAction(TGAction):
             return
         if at in (self.AT_MENU_UP, self.AT_MENU_DOWN):
             self._menu_action(up=(at == self.AT_MENU_UP))
+            return
+        if at in (self.AT_PLAY_ANIMATION, self.AT_PLAY_ANIMATION_FILE):
+            self._queue_play_animation(from_file=(at == self.AT_PLAY_ANIMATION_FILE))
+            return
+        if at in (self.AT_DEFAULT, self.AT_BREATHE, self.AT_FORCE_BREATHE):
+            self._queue_default()
+            return
+        if at in (self.AT_SAY_LINE, self.AT_SAY_LINE_AFTER_TURN):
+            self._queue_say_line()
             return
         # Speak types (and the remaining no-op types) keep the prior flow.
         dur = self._do_play()
@@ -1508,6 +1520,116 @@ class CharacterAction(TGAction):
         except Exception:
             self.Completed()
 
+    def _queue_say_line(self) -> None:
+        """AT_SAY_LINE / AT_SAY_LINE_AFTER_TURN — the SDK's workhorse (3977 sites).
+
+        Args 4 and 5 are turnTo / turnBack: ("Captain", 1) means turn to the
+        captain, speak, and turn back — with the chair swivelling under the
+        officer, because the SDK's turn builder animates the body clip and the
+        chair clip as parallel siblings of one sequence. (None, 0) speaks with no
+        turn at all.
+
+        GROUND TRUTH (Ghidra, retail stbc.exe 1.1 — docs/gameplay/
+        bridge-character-system.md §8.3). Both verbs route CharacterAction::Play
+        -> CharacterClass::SayLine -> a builder that assembles an inner
+        TGSequence of prerequisite-chained sub-actions, EVERY DELAY 0:
+
+            TURN(turnTo) -> SPEAK_LINE(lineID) -> TURN_BACK (if the flag is set)
+
+        The two dispatch cases are byte-identical except one immediate — the
+        opening turn's sub-type:
+
+          AT_SAY_LINE (12)            opening turn = AT_TURN_NOW: starts the
+                                      animated turn and SELF-COMPLETES at once,
+                                      so the line begins while the officer is
+                                      still visibly turning (overlap, not a snap).
+          AT_SAY_LINE_AFTER_TURN (13) opening turn = AT_TURN: awaited; the line
+                                      starts when the turn animation settles.
+
+        The turn-back is chained on the SPEAK action's completion (sound-done),
+        and is itself fire-and-forget: it self-completes as soon as it STARTS the
+        swivel. So this CharacterAction completes at END-OF-LINE for BOTH verbs,
+        and the next action in the outer TGSequence begins with the turn-back
+        playing out underneath it. (We previously serialised turn -> speak ->
+        awaited turn-back, adding both animation durations to ~1600 turned
+        lines — dialogue dragged.)
+
+        The line still BLOCKS the sequence for its real duration (BC does), via
+        the existing _do_play/_complete_after path.
+
+        Skip (Backspace) interlock: `_turn_owed` records the turn-back this
+        action still owes the officer, so Skip() can perform it even though it
+        cancels the deferred timer that would otherwise have run _turn_back_now.
+        `_skipped` makes a deferred _speak a no-op if the controller settles an
+        AFTER_TURN forward turn after the skip — the player skipped this line, so
+        it must not belatedly speak or complete a second time.
+        """
+        from engine.appc.characters import CharacterClass_Cast
+        from engine import bridge_character_anim
+
+        turn_to = self._set_name
+        turn_back = self._flag > 0
+        after_turn = self._action_type == self.AT_SAY_LINE_AFTER_TURN
+        self._turn_owed = str(turn_to) if (turn_to and turn_back) else None
+        spoke = []                       # one-shot latch: _speak runs exactly once
+
+        def _speak():
+            if self._skipped or spoke:
+                return                   # skipped mid-turn: never speak it now
+            spoke.append(True)
+            dur = 0.0
+            try:
+                dur = self._do_play() or 0.0
+            except Exception:
+                dur = 0.0
+            try:
+                if not (turn_to and turn_back):
+                    self._complete_after(dur)
+                    return
+
+                def _turn_back_now():
+                    # End of line: START the turn-back and complete NOW. BC's
+                    # TurnBack sub-action self-completes on starting the swivel —
+                    # the sequence must not wait for it.
+                    self._turn_owed = None       # this path is discharging it
+                    self._issue_turn_back(turn_to)
+                    self.Completed()
+                self._complete_after(dur, on_elapsed=_turn_back_now)
+            except Exception:
+                # `spoke` is already latched above, so this except is the
+                # ONLY remaining path to Completed() if _complete_after (or,
+                # for dur<=0, the on_elapsed it runs inline) raises -- e.g.
+                # the realtime timer manager was torn down mid mission-swap.
+                # Without this, the action is left _playing with no timer
+                # scheduled and the owning TGSequence stalls forever. Guard
+                # on _playing so we never double-fire Completed() if it had
+                # already run (and set _playing False) before raising partway
+                # through its own completed-event dispatch.
+                if self._playing:
+                    self.Completed()
+
+        if not turn_to:
+            _speak()
+            return
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_character_anim.get_controller()
+            if cc is None or ctrl is None:
+                _speak()                     # headless: speak without turning
+                return
+            if after_turn:
+                # AT_TURN: awaited — the line waits for the turn to settle.
+                ctrl.request_turn_to(cc, str(turn_to), back=False, now=False,
+                                     on_complete=_speak)
+            else:
+                # AT_TURN_NOW: the turn animates, but is not awaited — the line
+                # starts essentially at turn start.
+                ctrl.request_turn_to(cc, str(turn_to), back=False, now=True,
+                                     on_complete=None)
+                _speak()
+        except Exception:
+            _speak()
+
     def _queue_glance(self) -> None:
         # Quick glance (AT_GLANCE_AT/AWAY). Best-effort: completes inline on any
         # failure so the sequence never stalls. Detail "Away" when bare.
@@ -1523,6 +1645,139 @@ class CharacterAction(TGAction):
             ctrl.request_glance(cc, detail, on_complete=self.Completed)
         except Exception:
             self.Completed()
+
+    def _queue_play_animation(self, *, from_file: bool) -> None:
+        """AT_PLAY_ANIMATION / AT_PLAY_ANIMATION_FILE — BC's scripted gesture.
+
+        The key is LITERAL (no location prefix): "PushingButtons", registered by
+        every officer. The registered value is a dotted PYTHON PATH; calling it
+        returns a TGSequence, which we flatten to clips and hand to the character
+        anim controller — a character-node TGAnimAction does not play by itself
+        (actions.py:655), gestures reach the renderer only via the controller.
+
+        Interruptability comes from the action's `flag` (BC's PlayAnimation mode
+        arg): flag > 0 => CAT_INTERRUPTABLE; flag == 0 => CAT_NON_INTERRUPTABLE.
+        Evidence: MissionLib.py:3543 passes flag=1; the bare handler call sites
+        (EngineerCharacterHandlers.py:531 et al) leave it 0. BC's mode 0 also
+        disables the UI for the duration — that interlock needs the CS_ flag
+        rework and is deliberately not implemented here.
+
+        Best-effort: any failure or unresolved key completes inline so a mission
+        TGSequence can never stall on a gesture.
+        """
+        from engine.appc.characters import CharacterClass, CharacterClass_Cast
+        from engine import bridge_character_anim
+        from engine.bridge_idle_gestures import build_sequence_clips
+        from engine.appc import bridge_placement
+        cc = None
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_character_anim.get_controller()
+            if cc is None or ctrl is None or self._detail is None:
+                self.Completed()
+                return
+
+            import App
+            if from_file:
+                # BC's escape hatch (AT_PLAY_ANIMATION_FILE): despite the name,
+                # SDK call sites pass a bare CLIP NAME (e.g. "db_P_Point_C_P",
+                # MaelstromE1M1.py:2025), registered earlier via
+                # g_kAnimationManager.LoadAnimation(path, name) — the name is
+                # NOT itself a resolvable path. Resolve it the same way
+                # bridge_idle_gestures.build_sequence_clips resolves a clip
+                # action's name.
+                clip_path = App.g_kAnimationManager.path_for(self._detail)
+                if not clip_path:
+                    self.Completed()   # unregistered clip name — never stall
+                    return
+                clips = [(clip_path, 0.0)]
+            else:
+                module_path = bridge_placement.registered_module_path(cc, self._detail)
+                if not module_path:
+                    self.Completed()   # unregistered key (BC no-ops here too)
+                    return
+                clips = build_sequence_clips(module_path, cc, App.g_kAnimationManager)
+            if not clips:
+                self.Completed()
+                return
+
+            category = (CharacterClass.CAT_INTERRUPTABLE if self._flag > 0
+                        else CharacterClass.CAT_NON_INTERRUPTABLE)
+
+            def _done():
+                cc.clear_current_animation()
+                self.Completed()
+
+            # Submit BEFORE mutating animation state: submit() rejects an
+            # equal-or-higher-priority action already playing on this officer
+            # (e.g. a second AT_PLAY_ANIMATION arriving while the first is
+            # still in flight). If we set_current_animation first and THEN
+            # get rejected, _done() below clears state that still belongs to
+            # the genuinely-playing first action — corrupting
+            # IsAnimatingNonInterruptable()/GetCurrentAnimation() for the
+            # rest of its playback. Only mutate state once submit() confirms
+            # this action actually owns the officer's animation slot.
+            if ctrl.submit(cc, clips, priority=bridge_character_anim._SCRIPTED,
+                           on_complete=_done):
+                # submit() can rescue-and-fire a PREEMPTED action's on_complete
+                # SYNCHRONOUSLY (BridgeCharacterAnimController.submit). Event
+                # dispatch is synchronous, so that rescued callback can advance
+                # the owning TGSequence into a brand-new CharacterAction on this
+                # SAME officer (e.g. AT_DEFAULT) before submit() has even
+                # returned -- and that action's request_default() pops THIS
+                # gesture's freshly-installed _Action and fires our own _done()
+                # (clear_current_animation + Completed()) re-entrantly, all
+                # still inside this submit() call. TGAction.Completed() clears
+                # _playing, so IsPlaying() tells us whether that already
+                # happened. Skipping set_current_animation here is what keeps
+                # this action's already-cleared state from being stomped back
+                # to "animating" -- without this guard the officer's
+                # IsAnimatingNonInterruptable() gate jams shut for the rest of
+                # the mission (docs: this seam has bitten twice).
+                if self.IsPlaying():
+                    cc.set_current_animation(str(self._detail), category)
+            else:
+                self.Completed()       # dropped by the priority guard
+        except Exception:
+            try:
+                if cc is not None:
+                    cc.clear_current_animation()
+            except Exception:
+                pass
+            self.Completed()
+
+    def _queue_default(self) -> None:
+        """AT_DEFAULT / AT_BREATHE / AT_FORCE_BREATHE — return the officer to rest.
+
+        The rest pose IS the breathe idle (bridge_placement.capture_breathing feeds
+        BridgeCharacterAnimController.set_idle), which is why all three verbs land
+        here: BC's AT_DEFAULT restores the default pose, and an officer at rest is
+        an officer breathing. Completes INLINE — restoring a pose is instant, and
+        sequences supply their own delays.
+
+        Ordering note (re-entrancy): request_default() fires the dropped transient
+        action's on_complete SYNCHRONOUSLY (see BridgeCharacterAnimController.
+        request_default). That callback can be another CharacterAction's _done(),
+        whose Completed() can advance the owning TGSequence and submit a brand-new
+        gesture on this SAME officer — including a fresh cc.set_current_animation()
+        call — before request_default() returns. We therefore clear_current_animation()
+        BEFORE calling request_default(), not after: clearing first means any
+        re-entrant set_current_animation() lands on a clean slate and is never wiped
+        out by a clear that runs afterward and would otherwise stomp the newly
+        started action's state instead of the cancelled one's.
+        """
+        from engine.appc.characters import CharacterClass_Cast
+        from engine import bridge_character_anim
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_character_anim.get_controller()
+            if cc is not None:
+                cc.clear_current_animation()
+                if ctrl is not None:
+                    ctrl.request_default(cc)
+        except Exception:
+            pass
+        self.Completed()
 
     def _menu_action(self, *, up: bool) -> None:
         # AT_MENU_UP/AT_MENU_DOWN are the sequenceable wrappers around BC's
@@ -1602,7 +1857,42 @@ class CharacterAction(TGAction):
                                  self.AT_SAY_LINE_AFTER_TURN):
             from engine.appc import crew_speech
             crew_speech.bus().skip_current()
+        # Skipping a turned AT_SAY_LINE must still turn the officer back.
+        # TGAction.Skip cancels the deferred timer, and with it the pending
+        # _turn_back_now — the forward turn was hold=True, so the officer AND
+        # his chair would otherwise stay swivelled at the captain for the rest
+        # of the scene. Issue the turn-back HERE (fire-and-forget: no
+        # on_complete, because Skip must complete this action NOW so dependents
+        # advance immediately — that is TGAction::Skip's contract).
+        #
+        # Order matters: set _skipped BEFORE requesting the turn. A skip that
+        # lands while the FORWARD turn is still in flight evicts it inside
+        # _process_turn, which synchronously rescues and fires its on_complete
+        # (_speak, installed as AT_SAY_LINE_AFTER_TURN's awaited on_complete) —
+        # and that callback checks _skipped so the skipped line neither speaks
+        # nor completes a second time.
+        self._skipped = True
+        turn_to, self._turn_owed = self._turn_owed, None
+        if turn_to:
+            self._issue_turn_back(turn_to)
         super().Skip()
+
+    def _issue_turn_back(self, detail) -> None:
+        """BC's TurnBack sub-action: START the reverse swivel and do not await it
+        (it self-completes on starting the animation), so the caller owns — and
+        may immediately fire — this action's completion. Used both at end-of-line
+        and on Skip(). Best-effort; never raises (Skip() must not throw into the
+        action manager, and Play() must never stall a mission TGSequence)."""
+        from engine.appc.characters import CharacterClass_Cast
+        from engine import bridge_character_anim
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_character_anim.get_controller()
+            if cc is not None and ctrl is not None:
+                ctrl.request_turn_to(cc, str(detail), back=True, now=True,
+                                     on_complete=None)
+        except Exception:
+            pass
 
 
 def CharacterAction_Create(

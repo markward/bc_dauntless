@@ -14,6 +14,9 @@ from engine.appc.bridge_placement import capture_registered_clip, capture_chair_
 _IDLE = 0
 _REACTION = 1
 _TURN = 1       # turn-to-captain preempts idle (0); same band as reactions
+_SCRIPTED = 2   # AT_PLAY_ANIMATION: a scripted mission beat outranks both —
+                # submit() drops an equal-or-lower priority onto a busy officer,
+                # and a scripted gesture must never lose to an idle fidget.
 
 # Floor for a clip with no SDK duration AND no resolvable natural length (e.g.
 # a single-frame pose clip whose duration parses as 0). Keeps it on screen
@@ -49,6 +52,7 @@ class BridgeCharacterAnimController:
         self._pending_turns = []    # [(character, detail, back, hold, now,
                                      #   on_complete), ...]
         self._pending_glances = []  # [(character, detail, on_complete), ...]
+        self._pending_defaults = []  # [iid, ...]
         self._resolve = asset_resolver or (lambda p: p)
         self._node_ctrl = None      # BridgeNodeAnimController (optional)
 
@@ -76,6 +80,18 @@ class BridgeCharacterAnimController:
         if cur is not None and priority <= cur.priority:
             return False            # don't preempt equal/higher priority
         self._active[iid] = _Action(iid, list(clips), priority, hold, on_complete)
+        # Rescue the preempted action's on_complete (same guarantee _process_turn
+        # and request_default give): a preempted _TURN can be carrying an
+        # AT_SAY_LINE's speak-then-turn-back callback, and a mission TGSequence
+        # is waiting on it — silently discarding it stalls that sequence forever.
+        # Fire it only AFTER _active[iid] is replaced, so a re-entrant submit /
+        # request_default from the callback sees the new state, never the stale
+        # one. It cannot double-fire: `cur` is already out of _active.
+        if cur is not None and cur.on_complete is not None:
+            try:
+                cur.on_complete()
+            except Exception:
+                pass
         return True
 
     def set_idle(self, iid, clip_index) -> None:
@@ -107,6 +123,28 @@ class BridgeCharacterAnimController:
         "Glance"+detail; a graceful inline no-op if unregistered (niche action)."""
         self._pending_glances.append((character, str(detail), on_complete))
 
+    def request_default(self, character) -> None:
+        """AT_DEFAULT / AT_BREATHE: drop any transient clip and restore the
+        officer's rest pose — which IS the breathe idle (capture_breathing
+        feeds set_idle). The restore itself needs the renderer, so it is
+        queued for the next update() tick, the same way turns and glances
+        are. Never raises.
+
+        If the dropped action carried an on_complete, fire it (best-effort):
+        the owning CharacterAction / mission TGSequence is waiting on that
+        callback, and silently dropping it would stall the sequence forever
+        (same guarantee update() gives at a clip's natural end)."""
+        iid = getattr(character, "_render_instance", None)
+        if iid is None:
+            return
+        prev = self._active.pop(iid, None)   # cancel the transient clip
+        self._pending_defaults.append(iid)   # restore the rest pose next tick
+        if prev is not None and prev.on_complete is not None:
+            try:
+                prev.on_complete()
+            except Exception:
+                pass
+
     def _process_glance(self, renderer, character, detail, on_complete) -> None:
         """Play a quick glance. Fires on_complete exactly once — via the
         submitted _Action when submit() succeeds, else inline (unresolved clip
@@ -130,6 +168,7 @@ class BridgeCharacterAnimController:
         self._idle_clips = {}
         self._pending_turns = []
         self._pending_glances = []
+        self._pending_defaults = []
 
     def update(self, dt, *, renderer, anim_mgr=None) -> None:
         if self._pending_turns:
@@ -140,8 +179,21 @@ class BridgeCharacterAnimController:
             pending, self._pending_glances = self._pending_glances, []
             for character, detail, on_complete in pending:
                 self._process_glance(renderer, character, detail, on_complete)
-        done = []
-        for iid, act in self._active.items():
+        if self._pending_defaults:
+            pending, self._pending_defaults = self._pending_defaults, []
+            for iid in pending:
+                self._return_to_default(renderer, iid)
+        # Iterate a SNAPSHOT: an on_complete below is a CharacterAction's
+        # Completed(), event dispatch is synchronous, so it advances the owning
+        # TGSequence and Play()s the next action — which can submit() /
+        # request_default() on this or another officer, mutating _active from
+        # inside this loop (RuntimeError: dictionary changed size during
+        # iteration).
+        for iid, act in list(self._active.items()):
+            if self._active.get(iid) is not act:
+                # Replaced (or cancelled) by a re-entrant call earlier in this
+                # same drain/loop — the slot no longer belongs to `act`.
+                continue
             if not act.started or act.index < 0:
                 self._start_clip(renderer, act, 0)
                 continue
@@ -151,19 +203,26 @@ class BridgeCharacterAnimController:
             nxt = act.index + 1
             if nxt < len(act.clips):
                 self._start_clip(renderer, act, nxt)
-            else:
-                if not act.hold:
-                    self._return_to_default(renderer, iid)
-                # hold=True leaves the native renderer holding the last frame
-                # (the turned-to-captain pose) until the reverse turn replaces it.
-                if act.on_complete is not None:
-                    try:
-                        act.on_complete()
-                    except Exception:
-                        pass
-                done.append(iid)
-        for iid in done:
-            self._active.pop(iid, None)
+                continue
+            if not act.hold:
+                self._return_to_default(renderer, iid)
+            # hold=True leaves the native renderer holding the last frame
+            # (the turned-to-captain pose) until the reverse turn replaces it.
+            #
+            # Remove the finished action BEFORE firing its on_complete: a
+            # re-entrant submit() from the callback then lands in a CLEAN slot
+            # and cannot be clobbered by a deferred pop afterwards (which used
+            # to delete the brand-new action — its on_complete never fired, so
+            # _current_anim leaked and the mission sequence froze). Only ever
+            # remove `act` itself, never a replacement installed under the
+            # same iid.
+            if self._active.get(iid) is act:
+                del self._active[iid]
+            if act.on_complete is not None:
+                try:
+                    act.on_complete()
+                except Exception:
+                    pass
 
     def _body_turns_officer(self, renderer, move) -> bool:
         """True if the captured body turn clip actually rotates the officer.

@@ -242,6 +242,153 @@ TEST(ResolveOverriddenNode, ReturnsMinusOneForUnknownName) {
     EXPECT_EQ(renderer::resolve_overridden_node(m, "no such node", empty), -1);
 }
 
+// --- Rest-BAKED clip on the nested duplicate node (the chair desync bug) ---
+//
+// DBridge.nif nests a DUPLICATE node: the outer 'console seat 01' carries the
+// PLACEMENT and its identity-local CHILD of the same name holds the mesh. BC's
+// NiKeyframeController overwrites the target node's local OUTRIGHT, so a clip's
+// keys are the absolute local TRS of the PLACED node. And BC bakes each
+// *_reverse / *_in clip's rest local to that clip's FIRST KEY, not to the set's
+// rest pose (db_chair_H_face_capt_reverse rest = Rz(-60), keys -60 -> 0).
+// Retargeting through inverse(clip_rest) therefore MIRRORS those clips: the
+// chair swings OUT to +60 and holds there. Bind to the PLACED node and write
+// the sampled pose in directly.
+namespace {
+// DBridge.nif's placed 'console seat 01' translation (all chair clips share it).
+const glm::vec3 kSeatT(33.44f, -104.74f, 9.33f);
+
+glm::mat4 rot_z(float deg) {
+    return glm::rotate(glm::mat4(1.0f), glm::radians(deg), glm::vec3(0, 0, 1));
+}
+
+// Outer PLACED node + identity-local child of the SAME name (the mesh holder).
+assets::Model nested_dup_seat() {
+    assets::Model m;
+    assets::Node root; root.name = "root"; root.parent_index = -1;
+    root.local_transform = glm::mat4(1.0f);
+    assets::Node placed; placed.name = "console seat 01"; placed.parent_index = 0;
+    placed.local_transform = glm::translate(glm::mat4(1.0f), kSeatT);  // R = I
+    assets::Node mesh; mesh.name = "console seat 01"; mesh.parent_index = 1;
+    mesh.local_transform = glm::mat4(1.0f);          // identity-local duplicate
+    m.nodes = {root, placed, mesh};
+    m.root_node = 0;
+    return m;
+}
+
+// db_chair_H_face_capt_reverse.NIF: clip rest bakes the TURNED pose (Rz(-60)),
+// keys run turned -> console-facing. Rotation-only track (translation is a
+// no-op: identical across every chair clip, so BC omits/repeats it).
+assets::AnimationClip rest_baked_reverse_clip() {
+    assets::AnimationClip clip; clip.duration_seconds = 1.0f;
+    assets::AnimationClip::NodeTrack s; s.target_node_name = "console seat 01";
+    s.rotation = {{0.0f, glm::angleAxis(glm::radians(-60.0f), glm::vec3(0, 0, 1))},
+                  {1.0f, glm::quat(1, 0, 0, 0)}};
+    clip.tracks = {s};
+    clip.rest_locals["console seat 01"] =
+        glm::translate(glm::mat4(1.0f), kSeatT) * rot_z(-60.0f);   // BAKED turn
+    return clip;
+}
+
+// Compare a transform's rotation to a Z rotation by `deg` via its local +X axis.
+void expect_rot_z(const glm::mat4& m, float deg, float tol = 1e-3f) {
+    const glm::vec3 got = glm::normalize(glm::vec3(m[0]));
+    const glm::vec3 want = glm::vec3(rot_z(deg)[0]);
+    EXPECT_NEAR(got.x, want.x, tol);
+    EXPECT_NEAR(got.y, want.y, tol);
+    EXPECT_NEAR(got.z, want.z, tol);
+}
+}  // namespace
+
+TEST(SampleNodeOverrides, RestBakedClipBindsToThePlacedDuplicateNotTheMeshChild) {
+    auto m = nested_dup_seat();          // 1 = placed, 2 = identity-local mesh
+    auto clip = rest_baked_reverse_clip();
+    auto ov = renderer::sample_node_overrides(clip, m, 0.0f);
+    ASSERT_EQ(ov.size(), 1u);
+    EXPECT_TRUE(ov.count(1)) << "must override the PLACED node (index 1)";
+    EXPECT_FALSE(ov.count(2)) << "must NOT override the identity-local mesh child";
+}
+
+TEST(SampleNodeOverrides, RestBakedReverseClipStartsAtItsFirstKeyPose) {
+    auto m = nested_dup_seat();
+    auto clip = rest_baked_reverse_clip();
+    auto ov = renderer::sample_node_overrides(clip, m, 0.0f);
+    auto w = renderer::compose_node_worlds(m, glm::mat4(1.0f), ov);
+    // t=0 is the clip's FIRST key: the seat is TURNED toward the captain (-60).
+    expect_rot_z(w[2], -60.0f);
+    const glm::vec3 pos(w[2][3]);        // and it never leaves its placement
+    EXPECT_NEAR(pos.x, kSeatT.x, 1e-3f);
+    EXPECT_NEAR(pos.y, kSeatT.y, 1e-3f);
+    EXPECT_NEAR(pos.z, kSeatT.z, 1e-3f);
+}
+
+TEST(SampleNodeOverrides, RestBakedReverseClipEndsAtTheModelRestPose) {
+    auto m = nested_dup_seat();
+    auto clip = rest_baked_reverse_clip();
+    auto ov = renderer::sample_node_overrides(clip, m, 1.0f);
+    auto w = renderer::compose_node_worlds(m, glm::mat4(1.0f), ov);
+    // t=end is the clip's LAST key: back to console-facing (= the model rest).
+    // The bug produced +60 here (mirrored: rotated OUT and held).
+    expect_rot_z(w[2], 0.0f);
+    const glm::vec3 col0 = glm::normalize(glm::vec3(w[2][0]));
+    EXPECT_LT(col0.y, 0.1f) << "chair must not swing OUT to +60 (the reported bug)";
+    const glm::vec3 pos(w[2][3]);
+    EXPECT_NEAR(pos.x, kSeatT.x, 1e-3f);
+    EXPECT_NEAR(pos.y, kSeatT.y, 1e-3f);
+    EXPECT_NEAR(pos.z, kSeatT.z, 1e-3f);
+}
+
+TEST(SampleNodeOverrides, PlacementBakedDoorClipOnNestedDuplicateStillSlides) {
+    // REGRESSION GUARD for ef058220: a DOOR clip's baked rest IS its placement
+    // (rotation included), and the door hangs off the same nested-duplicate
+    // shape. It must still sit in its doorway at t=0 and slide by the authored
+    // delta only -- no double-applied placement.
+    const glm::vec3 kDoorT(172.9f, 182.7f, 69.0f);
+    assets::Model m;
+    assets::Node root; root.name = "root"; root.parent_index = -1;
+    root.local_transform = glm::mat4(1.0f);
+    assets::Node placed; placed.name = "door 04a"; placed.parent_index = 0;
+    placed.local_transform =
+        glm::translate(glm::mat4(1.0f), kDoorT) * rot_z(30.0f);   // placement
+    assets::Node mesh; mesh.name = "door 04a"; mesh.parent_index = 1;
+    mesh.local_transform = glm::mat4(1.0f);
+    m.nodes = {root, placed, mesh};
+    m.root_node = 0;
+
+    assets::AnimationClip clip; clip.duration_seconds = 1.0f;
+    assets::AnimationClip::NodeTrack d; d.target_node_name = "door 04a";
+    d.translation = {{0.0f, kDoorT}, {1.0f, kDoorT + glm::vec3(0, 18, 0)}};
+    clip.tracks = {d};
+    clip.rest_locals["door 04a"] =
+        glm::translate(glm::mat4(1.0f), kDoorT) * rot_z(30.0f);   // == placement
+
+    auto w0 = renderer::compose_node_worlds(
+        m, glm::mat4(1.0f), renderer::sample_node_overrides(clip, m, 0.0f));
+    EXPECT_NEAR(glm::length(glm::vec3(w0[2][3]) - kDoorT), 0.0f, 1e-3f);
+    expect_rot_z(w0[2], 30.0f);                     // placement rotation intact
+
+    auto w1 = renderer::compose_node_worlds(
+        m, glm::mat4(1.0f), renderer::sample_node_overrides(clip, m, 0.5f));
+    const glm::vec3 want = kDoorT + glm::vec3(0, 9, 0);
+    EXPECT_NEAR(glm::length(glm::vec3(w1[2][3]) - want), 0.0f, 1e-3f);
+    expect_rot_z(w1[2], 30.0f);
+}
+
+TEST(ResolveOverriddenNode, ResolvesToThePlacedNodeTheRestBakedClipOverrides) {
+    // The chair coupling reads anim vs rest at the SAME node. With the binding
+    // on the PLACED duplicate, the resolver must follow it there.
+    auto m = nested_dup_seat();
+    auto clip = rest_baked_reverse_clip();
+    auto ov = renderer::sample_node_overrides(clip, m, 0.0f);
+    const int idx = renderer::resolve_overridden_node(m, "console seat 01", ov);
+    EXPECT_EQ(idx, 1) << "coupling must read the PLACED (overridden) node";
+    // rest at that node is the console-facing placement; anim at t=0 is turned.
+    std::unordered_map<int, glm::mat4> empty;
+    auto rest = renderer::compose_node_worlds(m, glm::mat4(1.0f), empty);
+    auto anim = renderer::compose_node_worlds(m, glm::mat4(1.0f), ov);
+    expect_rot_z(rest[idx], 0.0f);
+    expect_rot_z(anim[idx], -60.0f);
+}
+
 TEST(ResolveOverriddenNode, AnimAndRestResolveToSameOverriddenNode) {
     // The coupling reads anim (with overrides) and rest (compose ignores them,
     // but resolution must still target the overridden node so anim/rest are the

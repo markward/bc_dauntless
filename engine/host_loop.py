@@ -1083,11 +1083,61 @@ def _apply_alert_keys(h, player) -> None:
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+_NIF_EXTENSIONS = ("nif",)          # lower-cased; the shipped tree has .nif AND .NIF
+_ASSET_PATH_CACHE: dict = {}        # (root, rel path) -> resolved absolute path
+
+
+def _resolve_asset_path(rel_path, root):
+    """Absolute path for a game-relative asset, probing for a MISSING extension.
+
+    BC content registers some animation clips with no file extension at all:
+    Bridge/Characters/CommonAnimations.py:647,655 (the console-gesture
+    builders) build the path by string concatenation --
+
+        kAM.LoadAnimation("data/animations/" + pcAnimName, pcAnimName)
+
+    -- yielding e.g. "data/animations/DB_E_pushing_buttons_A" while the file on
+    disk is "DB_E_pushing_buttons_A.NIF". BC's own file loader resolves the
+    extension, so ours must too, and this (the single choke point feeding both
+    _clip_duration and every bridge controller's asset_resolver) is where.
+
+    Do NOT instead sanitise the registry: g_kAnimationManager is last-write-wins
+    on purpose, because BC re-registers names to CORRECT typos - see
+    engine/appc/animation_manager.py::LoadAnimation.
+
+    The probe is case-INSENSITIVE (the shipped assets use both ".nif" and
+    ".NIF"; synthesising a lowercase ".nif" would work on macOS's
+    case-insensitive filesystem and silently break on Linux), and its result is
+    cached - this runs per clip load.
+    """
+    if not rel_path:
+        return None
+    key = (str(root), str(rel_path))
+    cached = _ASSET_PATH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    candidate = Path(root) / rel_path
+    resolved = str(candidate)
+    if not candidate.suffix and not candidate.exists():
+        want = candidate.name.lower()
+        try:
+            entries = list(candidate.parent.iterdir())
+        except OSError:
+            entries = []                      # no such directory: degrade, never raise
+        for entry in entries:
+            stem, dot, ext = entry.name.rpartition(".")
+            if dot and ext.lower() in _NIF_EXTENSIONS and stem.lower() == want:
+                resolved = str(entry)
+                break
+    _ASSET_PATH_CACHE[key] = resolved
+    return resolved
+
+
 def _game_asset_path(p):
     """Resolve a game-relative asset path to an absolute path string.
     Mirrors _place_one_character's local _abs helper; defined here so it can
     be passed to BridgeCharacterAnimController as the asset_resolver."""
-    return str(PROJECT_ROOT / "game" / p) if p else None
+    return _resolve_asset_path(p, PROJECT_ROOT / "game")
 
 
 def _clip_duration(renderer, rel_path) -> float:
@@ -1812,6 +1862,38 @@ def _pump_bridge_doors(cutscene, renderer, *, paused: bool) -> None:
         return
     import App as _App
     cutscene._update_doors(renderer, _App.g_kAnimationManager)
+
+
+def _pump_char_anim(char_anim, renderer, dt, *, paused: bool) -> None:
+    """Advance the bridge character transient-animation controller every
+    unpaused frame, regardless of view mode.
+
+    Like _pump_walk_controller and _pump_bridge_doors, this is deliberately NOT
+    gated on ``view_mode.is_bridge``. BridgeCharacterAnimController.update() is
+    not merely visual: it DRAINS the pending turn/glance/default queues and
+    fires each settled _Action's on_complete — which is a CharacterAction's
+    Completed(), which advances the mission TGSequence.
+
+    AT_SAY_LINE_AFTER_TURN (the awaited-turn sibling of AT_SAY_LINE, the SDK's
+    workhorse with ~1,600 sites carrying a turn target) defers the SPEECH
+    ITSELF behind request_turn_to(on_complete=_speak), and request_turn_to
+    only QUEUES. With the update() call living inside the bridge render
+    block, any AT_SAY_LINE_AFTER_TURN fired while the player was in
+    tactical/exterior view never drained -> the line was never spoken and the
+    owning sequence hung until the player happened to look at the bridge.
+    (Plain AT_SAY_LINE does not defer: it fires the turn fire-and-forget and
+    speaks immediately, overlapping the turn animation -- but that turn
+    animation itself still needs this same always-on drain to play out.)
+
+    Playing clips into the renderer off-view is harmless and already the
+    established pattern (the walk controller does exactly that): the instance
+    keeps correct pose state, so the bridge is right the moment it is drawn
+    again. Idle gestures stay in the bridge render block — those ARE purely
+    visual. Idle when nothing is queued/active, so the always-on pump is free."""
+    if paused:
+        return
+    import App as _App
+    char_anim.update(dt, renderer=renderer, anim_mgr=_App.g_kAnimationManager)
 
 
 def _pump_letterbox(renderer, animator, dt: float) -> float:
@@ -6446,6 +6528,13 @@ def run(mission_name: Optional[str] = None,
             # The door half of the bridge cutscene pump is likewise
             # view-independent — see _pump_bridge_doors.
             _pump_bridge_doors(cutscene, r, paused=pause.sim_frozen)
+            # ...and so is the character anim controller: it drains the pending
+            # turn/glance/default queues and fires the settled actions'
+            # on_complete, which advances the mission TGSequence (an AT_SAY_LINE
+            # with a turn target defers the LINE ITSELF behind its turn). Gating
+            # it on bridge view left every such line unspoken and its sequence
+            # hung whenever the player was in tactical view. See _pump_char_anim.
+            _pump_char_anim(char_anim, r, _player_dt, paused=pause.sim_frozen)
             if fixed_camera:
                 fixed_radius = player.GetRadius() if player is not None else 1.0
                 eye = (0.0, 0.0, CAM_MAX_RADII * fixed_radius)
@@ -6479,13 +6568,15 @@ def run(mission_name: Optional[str] = None,
                             renderer=r,
                             anim_mgr=_App.g_kAnimationManager,
                         )
+                        # Idle fidgets ARE purely visual — they stay view-gated.
+                        # They submit into char_anim, which is pumped
+                        # view-independently above (_pump_char_anim); do NOT
+                        # call char_anim.update() here as well, or every clip
+                        # steps twice per frame in bridge view.
                         idle_gestures.update(
                             _player_dt, _live_bridge_characters(),
                             renderer=r, anim_mgr=_App.g_kAnimationManager,
                             controller=char_anim)
-                        char_anim.update(
-                            _player_dt, renderer=r,
-                            anim_mgr=_App.g_kAnimationManager)
                         # walk_ctrl is pumped view-independently above
                         # (_pump_walk_controller) — its completion drives the
                         # mission sequence and must not be gated on bridge view.

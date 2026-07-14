@@ -373,14 +373,20 @@ class CharacterClass(ObjectClass):
     EST_ATTACK_ENGINEERING                = 41
     EST_ATTACK_TRACTOR_BEAM               = 42
 
-    # Animation-type bitmask constants.
-    CAT_BREATHE             = 1
-    CAT_INTERRUPTABLE       = 2
-    CAT_NON_INTERRUPTABLE   = 4
-    CAT_TURN                = 8
-    CAT_TURN_BACK           = 16
-    CAT_GLANCE              = 32
-    CAT_GLANCE_BACK         = 64
+    # Animation-category constants. BC's are plain ordinals, NOT a bitmask —
+    # proven from the binary's own predicates: IsAnimatingInterruptable
+    # (0x0066A5D0) accepts {0,1,5,6}; IsAnimatingNonInterruptable (0x0066A630)
+    # tests == 2. (BC's CS_ state flags ARE a bitmask; we had the two backwards.)
+    CAT_BREATHE             = 0
+    CAT_INTERRUPTABLE       = 1
+    CAT_NON_INTERRUPTABLE   = 2
+    CAT_TURN                = 3
+    CAT_TURN_BACK           = 4
+    CAT_GLANCE              = 5
+    CAT_GLANCE_BACK         = 6
+
+    _INTERRUPTABLE_CATEGORIES = (CAT_BREATHE, CAT_INTERRUPTABLE,
+                                 CAT_GLANCE, CAT_GLANCE_BACK)
 
     # Phoneme-channel constants.
     CPT_DEFAULT = 0
@@ -428,6 +434,7 @@ class CharacterClass(ObjectClass):
         self._phonemes: list = []
         self._states: set = set()         # CS_* flags currently set
         self._location_name: str = ""
+        self._current_anim: tuple | None = None   # (name, CAT_) while playing
         # Remaining SDK setter surface goes through the data-bag below.
         self._data: dict = {}
 
@@ -516,10 +523,30 @@ class CharacterClass(ObjectClass):
         self._animations.clear()
 
     def ClearAnimationsOfType(self, anim_type) -> None:
-        self._animations = [a for a in self._animations if not (a and a[0] == anim_type)]
+        # BC keys this on the animation's CAT_ category, which our AddAnimation
+        # registry (name -> python path) does not carry. Zero SDK call sites, so
+        # rather than invent a category per registration we record it and no-op.
+        from engine.core import stub_telemetry
+        stub_telemetry.record_attr("CharacterClass", "ClearAnimationsOfType")
 
     def ClearExtraAnimations(self) -> None:
         self._random_animations.clear()
+
+    def set_current_animation(self, name, category) -> None:
+        """Mark this character as playing *name* in category *category* (a CAT_).
+
+        BC keeps the playing animation in a record on the character; the SDK
+        reads it back through IsAnimatingNonInterruptable() to refuse a second
+        gesture on a busy officer. The verb dispatch (CharacterAction) is the
+        only thing that starts these, so it owns setting and clearing this.
+        """
+        self._current_anim = (str(name), int(category))
+
+    def clear_current_animation(self) -> None:
+        self._current_anim = None
+
+    def GetCurrentAnimation(self) -> str:
+        return self._current_anim[0] if self._current_anim else ""
 
     # ── State flags ─────────────────────────────────────────────────────────
     @staticmethod
@@ -665,12 +692,31 @@ class CharacterClass(ObjectClass):
         from engine.appc import crew_speech
         return crew_speech.last_talk_time(self._character_name)
 
-    def IsSpeaking(self) -> int:                  return 0
+    # Explicit numeric getters. WITHOUT these the __getattr__ data-bag returns
+    # None for a never-set field, and `GetGameTime() - GetBlinkChance()` becomes
+    # `float - None` (TypeError, swallowed by event dispatch). BC's defaults:
+    # BlinkChance 0.1f (ctor), RandomAnimationChance per-character (0.75 for
+    # station officers, 0.01 for guests/extras — MissionLib.py:1578).
+    def GetBlinkChance(self) -> float:
+        return float(self._data.get("BlinkChance", 0.1))
+
+    def GetRandomAnimationChance(self) -> float:
+        return float(self._data.get("RandomAnimationChance", 0.0))
+
+    def IsSpeaking(self) -> int:
+        from engine.appc import crew_speech
+        return 1 if crew_speech.is_speaking(self._character_name) else 0
     def IsReadyToSpeak(self) -> int:              return 1
-    def IsAnimating(self) -> int:                 return 0
-    def IsGoingToAnimate(self) -> int:            return 0
-    def IsAnimatingInterruptable(self) -> int:    return 0
-    def IsAnimatingNonInterruptable(self) -> int: return 0
+    def IsAnimating(self) -> int:                 return 1 if self._current_anim else 0
+    def IsGoingToAnimate(self) -> int:            return 1 if self._current_anim else 0
+    def IsAnimatingInterruptable(self) -> int:
+        if not self._current_anim:
+            return 0
+        return 1 if self._current_anim[1] in self._INTERRUPTABLE_CATEGORIES else 0
+    def IsAnimatingNonInterruptable(self) -> int:
+        if not self._current_anim:
+            return 0
+        return 1 if self._current_anim[1] == self.CAT_NON_INTERRUPTABLE else 0
     def IsRandomAnimationEnabled(self) -> int:
         return 1 if self._data.get("RandomAnimationEnabled", True) else 0
     def IsMenuEnabled(self) -> int:
@@ -770,6 +816,8 @@ class CharacterClass(ObjectClass):
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
+        from engine.core import stub_telemetry
+        stub_telemetry.record_attr("CharacterClass", name)
         data = self._data
         if name.startswith("Set") or name.startswith("Add"):
             field = name[3:]

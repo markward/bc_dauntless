@@ -70,28 +70,44 @@ def capture_placement(character):
     }
 
 
-def _resolve_builder_sequence(character, suffix):
-    """Look up the SDK-registered builder for ``<location>+suffix`` and call it.
+# BC ships a real bug: MissionLib.PushButtons (MissionLib.py:5092) and 40 other
+# call sites request animation key "PushButtons", but all 14 character
+# registrations spell it "PushingButtons" — so in the original those calls are
+# SILENT NO-OPS. The 18 correctly-spelled sites (all of EngineerCharacterHandlers,
+# ScienceCharacterHandlers and HelmMenuHandlers) do work.
+#
+# We deliberately DIVERGE and fix the typo: the authors plainly meant them to
+# fire. Consequence to know about: officers now gesture in ~41 mission beats
+# where BC left them still. If a scripted scene looks over-animated, this is the
+# first suspect — it is one entry, here.
+_KEY_ALIASES = {"PushButtons": "PushingButtons"}
 
-    Returns the resulting TGSequence if it is non-None and has at least one
-    action, else None.  Wraps the import / builder call in try/except so any
-    import error or builder exception collapses to None.
+
+def registered_module_path(character, key):
+    """The dotted Python builder path the character registered under *key*, or None.
+
+    This is BC's core indirection (RE bridge-character-system.md §4): an animation
+    NAME resolves to a Python FUNCTION PATH, never to an asset.
+    """
+    key = _KEY_ALIASES.get(str(key), str(key))
+    for entry in getattr(character, "_animations", []):
+        if entry and len(entry) >= 2 and str(entry[0]) == key:
+            return entry[1]
+    return None
+
+
+def resolve_builder(character, key):
+    """Call the SDK builder registered under the literal *key* and return its
+    TGSequence, or None (unregistered / import error / empty sequence).
+
+    The builder RETURNS the sequence; it does not play it. That is BC's contract.
     """
     import importlib
     import App  # noqa: F401 — side-effects: registers path_for entries
 
-    location = character.GetLocation()
-    if not location:
-        return None
-    key = str(location) + suffix
-    module_path = None
-    for entry in getattr(character, "_animations", []):
-        if entry and len(entry) >= 2 and str(entry[0]) == key:
-            module_path = entry[1]
-            break
+    module_path = registered_module_path(character, key)
     if not module_path:
         return None
-
     try:
         mod_name, func_name = module_path.rsplit(".", 1)
         func = getattr(importlib.import_module(mod_name), func_name)
@@ -101,6 +117,18 @@ def _resolve_builder_sequence(character, suffix):
     if seq is None or seq.GetNumActions() == 0:
         return None
     return seq
+
+
+def _resolve_builder_sequence(character, suffix):
+    """Look up the SDK-registered builder for ``<location>+suffix`` and call it.
+
+    The composed-key form (AT_MOVE / AT_TURN / AT_BREATHE / hit reactions).
+    AT_PLAY_ANIMATION uses resolve_builder() with a LITERAL key instead.
+    """
+    location = character.GetLocation()
+    if not location:
+        return None
+    return resolve_builder(character, str(location) + suffix)
 
 
 def _nif_path_for_clip(clip_name):
