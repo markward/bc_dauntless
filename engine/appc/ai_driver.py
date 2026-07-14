@@ -109,11 +109,12 @@ def _dispatch_ai(ai, game_time: float) -> int:
 
 
 def _reconcile_focus(root_ai, reached) -> None:
-    """Dispatch LostFocus() to preprocessors focused last tick but not this one.
+    """Dispatch LostFocus() to nodes focused last tick but not this one.
 
-    Identity-based: `reached` holds the PreprocessingAI nodes ticked this root
-    tick. Any node in the root's previous focused set that is not among them has
-    left the active dispatch path."""
+    Identity-based: `reached` holds the PreprocessingAI and PlainAI nodes
+    ticked this root tick (see _tick_preprocessing / _tick_plain). Any node in
+    the root's previous focused set that is not among them has left the active
+    dispatch path."""
     reached_ids = {id(n) for n in reached}
     for node in getattr(root_ai, "_focused_preprocessors", ()):
         if id(node) not in reached_ids:
@@ -148,10 +149,21 @@ def _reconcile_active(root_ai, reached) -> None:
     root_ai._active_nodes = list(reached)
 
 
+def _focus_instance_of(node):
+    """The Python script instance that carries a node's focus hooks.
+
+    PlainAI keeps it in _script_instance; PreprocessingAI in
+    _preprocessing_instance. Read from __dict__ so TGObject.__getattr__ can't
+    hand back a truthy _Stub for a node type that has neither.
+    """
+    d = getattr(node, "__dict__", {})
+    return d.get("_script_instance") or d.get("_preprocessing_instance")
+
+
 def _dispatch_lost_focus(node) -> None:
-    """Call the preprocessor instance's LostFocus() (if any) and clear the
-    node's focus latches so a later re-entry re-fires GotFocus()."""
-    inst = getattr(node, "_preprocessing_instance", None)
+    """Call the node's script instance's LostFocus() (if any) and clear the
+    focus latches so a later re-entry re-fires GotFocus()."""
+    inst = _focus_instance_of(node)
     lost = getattr(inst, "LostFocus", None) if inst is not None else None
     if callable(lost):
         lost()
@@ -159,9 +171,37 @@ def _dispatch_lost_focus(node) -> None:
     node.__dict__["_got_focus_called"] = False
 
 
+def _dispatch_got_focus(node) -> None:
+    """Call the node's script instance's GotFocus() once per activation.
+
+    SDK leaves put real work here: StarbaseAttack.GotFocus starts firing
+    (AI/PlainAI/StarbaseAttack.py:54). Guarded by a sentinel in __dict__ so
+    repeat ticks don't re-fire; _dispatch_lost_focus clears it.
+    """
+    if node.__dict__.get("_got_focus_called", False):
+        return
+    inst = _focus_instance_of(node)
+    got = getattr(inst, "GotFocus", None) if inst is not None else None
+    if callable(got):
+        got()
+    node.__dict__["_got_focus_called"] = True
+
+
 def _tick_plain(ai: PlainAI, game_time: float) -> int:
     if ai._status != US_ACTIVE:
         return ai._status
+
+    # A PlainAI reached on the active dispatch path holds focus this tick — the
+    # same surrogate the PreprocessingAI path uses. Four shipped leaf scripts
+    # put real work in these hooks, and every LostFocus body is cleanup that
+    # MUST run: Warp.py:217 re-enables the collisions it disabled (an
+    # interrupted warp otherwise leaves the ship permanently non-collidable),
+    # RunAction.py:50 aborts the running action, Intercept.py:70 stops the
+    # in-system warp, StarbaseAttack.py:58 stops firing.
+    ai._has_focus = True
+    _reached_this_tick.append(ai)
+    _dispatch_got_focus(ai)
+
     if game_time < ai._next_update_time:
         return ai._status
     inst = ai.GetScriptInstance()
@@ -178,11 +218,13 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     if status is None:
         status = US_ACTIVE
     ai._status = int(status)
-    # Reschedule based on the script's reported interval. Fallback
-    # _AIScriptInstance returns None for unknown Get*; treat as 1 sec.
+    # Reschedule from the script's reported interval. Appc's PlainAI::Update
+    # bridge returns 0.0 when the Python call fails, which makes the AI run
+    # every tick (ai-architecture.md sec.3: "There is no default interval in
+    # C++") — matches PlainAI::GetNextUpdateTime (0x0048d320).
     next_update_fn = getattr(inst, "GetNextUpdateTime", None)
     next_update = next_update_fn() if callable(next_update_fn) else None
-    interval = float(next_update) if next_update is not None else 1.0
+    interval = float(next_update) if next_update is not None else 0.0
     ai._next_update_time = game_time + interval
     return ai._status
 
@@ -516,11 +558,7 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     # PreprocessingAI ticks". Guarded by a sentinel so subsequent
     # ticks don't re-fire. Duck-typed — no-op for preprocessors
     # without GotFocus.
-    if not ai.__dict__.get("_got_focus_called", False):
-        got_focus = getattr(inst, "GotFocus", None)
-        if callable(got_focus):
-            got_focus()
-        ai._got_focus_called = True
+    _dispatch_got_focus(ai)
 
     # Introspect once per PreprocessingAI instance whether the method
     # takes a positional dEndTime arg (SDK SelectTarget/FireScript) or
