@@ -2,10 +2,13 @@
 #include <assets/model_compose.h>
 
 #include <cctype>
+#include <cmath>
 #include <cstdio>
+#include <functional>
 #include <fstream>
 #include <set>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 #include <algorithm>
@@ -99,6 +102,13 @@ int choose_attach_node(const Model& body, std::string_view attach_bone) {
     return body.root_node;
 }
 
+bool binds_equal(const glm::mat4& a, const glm::mat4& b) {
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 3; ++r)  // row 3 is constant (0,0,0,1) — skip
+            if (std::fabs(a[c][r] - b[c][r]) > 1e-4f) return false;
+    return true;
+}
+
 }  // namespace
 
 std::vector<fs::path> face_texture_candidates(const fs::path& path) {
@@ -141,6 +151,55 @@ std::vector<fs::path> face_texture_candidates(const fs::path& path) {
         push(head_infix_variant(out[i]));
 
     return out;
+}
+
+std::vector<int> weld_head_bones(Skeleton& body, const Skeleton& head) {
+    std::unordered_map<std::string, int> body_by_name;
+    for (std::size_t i = 0; i < body.bones.size(); ++i)
+        body_by_name.emplace(body.bones[i].name, static_cast<int>(i));
+
+    std::vector<int> map(head.bones.size(), -1);
+
+    // Recursive resolve: a head-only bone's PARENT must map first, and the
+    // head skeleton's array order doesn't guarantee parents precede children.
+    std::function<int(int)> resolve = [&](int hi) -> int {
+        if (hi < 0 || hi >= static_cast<int>(head.bones.size())) return -1;
+        if (map[hi] != -1) return map[hi];
+        const Bone& hb = head.bones[hi];
+        auto it = body_by_name.find(hb.name);
+        if (it != body_by_name.end()) {
+            if (binds_equal(body.bones[it->second].inverse_bind_pose,
+                            hb.inverse_bind_pose))
+                return map[hi] = it->second;
+            // Bind mismatch: alias rides the body bone's pose but skins with
+            // the HEAD's bind (BC: body node world x head bind offset).
+            const std::string alias_name =
+                hb.name + std::string(kHeadBindAliasSuffix);
+            for (std::size_t i = 0; i < body.bones.size(); ++i)
+                if (body.bones[i].name == alias_name)
+                    return map[hi] = static_cast<int>(i);
+            Bone alias;
+            alias.name = alias_name;
+            alias.parent_index = it->second;
+            alias.local_transform = glm::mat4(1.0f);
+            alias.inverse_bind_pose = hb.inverse_bind_pose;
+            body.bones.push_back(std::move(alias));
+            return map[hi] = static_cast<int>(body.bones.size()) - 1;
+        }
+        // Head-only bone: append for real, under its name-matched parent,
+        // keeping name/local so animation clips may drive it.
+        const int parent = resolve(hb.parent_index);
+        Bone extra;
+        extra.name = hb.name;
+        extra.parent_index = parent;
+        extra.local_transform = hb.local_transform;
+        extra.inverse_bind_pose = hb.inverse_bind_pose;
+        body.bones.push_back(std::move(extra));
+        return map[hi] = static_cast<int>(body.bones.size()) - 1;
+    };
+    for (std::size_t i = 0; i < head.bones.size(); ++i)
+        resolve(static_cast<int>(i));
+    return map;
 }
 
 std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,

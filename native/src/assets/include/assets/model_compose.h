@@ -55,6 +55,26 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
                                     std::string_view attach_bone,
                                     int* out_node_index = nullptr);
 
+/// Suffix for alias bones appended by weld_head_bones. The suffix guarantees
+/// no clip track or rest_locals entry ever matches the alias by name, so its
+/// posed local stays identity and build_bone_palette yields
+/// posed_body_bone_world * head_inverse_bind — BC's exact §3.5 semantics.
+inline constexpr std::string_view kHeadBindAliasSuffix = "@head-bind";
+
+/// §3.5 bone rebinding (the BC "weld"). Maps every head-skeleton bone onto the
+/// body skeleton by NAME, returning head-bone-index -> body-palette-index:
+///   * name found, inverse binds equal (1e-4 component epsilon): the body
+///     bone's own index — 18 of the 22 SDK body/head pairs are bit-identical;
+///   * name found, binds differ (4 SDK pairs, per-bone translation deltas up
+///     to ~5.9 units): appends an ALIAS bone (parent = the matched body bone,
+///     local = identity, inverse_bind_pose = the HEAD's, name suffixed with
+///     kHeadBindAliasSuffix) and maps to it. Reused if already appended.
+///   * name missing from the body (e.g. "Bip01 Ponytail1"): appends a REAL
+///     bone (name/local/inverse_bind from the head, parent = the mapped index
+///     of its head-skeleton parent, resolved recursively).
+/// Mutates `body` only by appending bones; existing indices stay valid.
+std::vector<int> weld_head_bones(Skeleton& body, const Skeleton& head);
+
 /// Full graft: graft_head_cpu + GL upload. Appends one GL Mesh to body.meshes
 /// per grafted MeshCpu and registers each on the chosen body node's mesh list.
 /// Requires a current GL context. `head` is cannibalized (its textures are

@@ -7,6 +7,7 @@ add_executable(assets_tests
     cpu/mesh_build_test.cc
     cpu/model_build_test.cc
     cpu/model_compose_test.cc
+    cpu/head_weld_test.cc
     cpu/officer_clip_load_test.cc
     cpu/animation_load_test.cc
     cpu/path_resolver_test.cc
