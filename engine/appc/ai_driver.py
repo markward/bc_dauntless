@@ -616,6 +616,24 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
         cache = ai._preprocess_arity_cache
 
     arity = cache[2]
+
+    # Appc bypasses the preprocess switch entirely — running the child
+    # unconditionally — when the child is ACTIVE and NOT interruptable
+    # (IsInterruptable is BaseAI vtable +0x04, default 1; verified 2026-07-14).
+    # A node that calls SetInterruptable(0) is asking not to be pre-empted
+    # mid-action by its parent's preprocessor (AI/Compound/Defend.py,
+    # AI/Compound/CallDamageAI.py). This must run before the cadence gate and
+    # skip BOTH its live and cadence-skipped arms — including the lethal
+    # PS_DONE/PS_INVALID mapping — since the whole switch is bypassed, not
+    # just one branch of it.
+    contained = ai._contained_ai
+    if (contained is not None
+            and contained._status == US_ACTIVE
+            and not contained.IsInterruptable()):
+        ai._status = US_ACTIVE
+        tick_ai(contained, game_time)
+        return ai._status
+
     # Cadence gate: run the preprocessor's own Update only when it is due
     # (game_time >= _next_update_time), mirroring _tick_plain and BC's C++
     # dispatcher, which honours every node's GetNextUpdateTime. The contained
