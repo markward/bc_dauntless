@@ -329,21 +329,117 @@ class _TurnRecordingController(_FakeController):
     def __init__(self):
         super().__init__()
         self.turns = []
+        self.turn_calls = []      # (kind, detail, now) — full call shape
+        self.pending = []         # on_completes we were handed but have not fired
 
     def request_turn_to(self, character, detail, *, back=False, now=False,
                         hold=True, on_complete=None):
-        self.turns.append(("back" if back else "to", detail))
+        kind = "back" if back else "to"
+        self.turns.append((kind, detail))
+        self.turn_calls.append((kind, detail, bool(now)))
         if on_complete is not None:
+            self.pending.append(on_complete)
             on_complete()          # settle immediately, so the test is synchronous
+
+
+class _DeferringTurnController(_TurnRecordingController):
+    """Like the real controller: an awaited turn's on_complete fires LATER
+    (when the animation settles), not synchronously with the request."""
+
+    def request_turn_to(self, character, detail, *, back=False, now=False,
+                        hold=True, on_complete=None):
+        kind = "back" if back else "to"
+        self.turns.append((kind, detail))
+        self.turn_calls.append((kind, detail, bool(now)))
+        if on_complete is not None:
+            self.pending.append(on_complete)
+
+
+def _spy_speech(monkeypatch):
+    spoken = []
+    monkeypatch.setattr(CharacterAction, "_do_play",
+                        lambda self: (spoken.append(self._detail), 1.5)[1])
+    return spoken
+
+
+def test_say_line_overlaps_the_turn_with_the_line(monkeypatch):
+    # GROUND TRUTH (Ghidra, stbc.exe 1.1): AT_SAY_LINE's opening turn is an
+    # AT_TURN_NOW sub-action — it starts the animated turn and self-completes
+    # IMMEDIATELY, so the line begins while the officer is still visibly
+    # turning. It is NOT awaited (that is AT_SAY_LINE_AFTER_TURN's job) and it
+    # is NOT an orientation snap.
+    ch = _character_with("IncomingMsg6", "Some.Module.Unused")
+    ctrl = _DeferringTurnController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    spoken = _spy_speech(monkeypatch)
+
+    action = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+                             "IncomingMsg6", "Captain", 1)
+    action.Play()
+
+    assert ctrl.turn_calls == [("to", "Captain", True)]   # fire-and-forget turn
+    assert ctrl.pending == []                             # nothing awaited
+    assert spoken == ["IncomingMsg6"]                     # line already started
+    assert action.IsPlaying() is True                     # ...and still blocks
+
+
+def test_say_line_after_turn_waits_for_the_turn_to_settle(monkeypatch):
+    # AT_SAY_LINE_AFTER_TURN differs from AT_SAY_LINE by ONE immediate: its
+    # opening turn is AT_TURN (awaited), so the line does not start until the
+    # turn animation settles.
+    ch = _character_with("IncomingMsg6", "Some.Module.Unused")
+    ctrl = _DeferringTurnController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    spoken = _spy_speech(monkeypatch)
+
+    action = CharacterAction(ch, CharacterAction.AT_SAY_LINE_AFTER_TURN,
+                             "IncomingMsg6", "Captain", 1)
+    action.Play()
+
+    assert ctrl.turn_calls == [("to", "Captain", False)]  # awaited turn
+    assert spoken == []                                   # not yet — still turning
+    assert len(ctrl.pending) == 1
+
+    ctrl.pending.pop()()                                  # the turn settles
+
+    assert spoken == ["IncomingMsg6"]
+
+
+@pytest.mark.parametrize("verb", [
+    CharacterAction.AT_SAY_LINE,
+    CharacterAction.AT_SAY_LINE_AFTER_TURN,
+])
+def test_turn_back_is_fire_and_forget_and_the_action_completes_at_end_of_line(
+        monkeypatch, verb):
+    # The CharacterAction completes at END-OF-LINE, not after the turn-back:
+    # BC's TurnBack sub-action self-completes as soon as it STARTS the swivel.
+    # The next action in the outer TGSequence therefore begins the moment the
+    # audio ends, with the turn-back playing out underneath it.
+    ch = _character_with("IncomingMsg6", "Some.Module.Unused")
+    ctrl = _DeferringTurnController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    spoken = _spy_speech(monkeypatch)
+
+    action = CharacterAction(ch, verb, "IncomingMsg6", "Captain", 1)
+    action.Play()
+    if verb == CharacterAction.AT_SAY_LINE_AFTER_TURN:
+        ctrl.pending.pop()()                  # the opening turn settles
+    assert spoken == ["IncomingMsg6"]
+    assert action.IsPlaying() is True         # the line still blocks the sequence
+
+    import App
+    App.g_kRealtimeTimerManager.tick(1.5)     # the line's real duration elapses
+
+    assert ctrl.turn_calls[-1] == ("back", "Captain", True)   # started, not awaited
+    assert ctrl.pending == []                 # nobody is waiting on the swivel
+    assert action.IsPlaying() is False        # completed at end-of-line
 
 
 def test_say_line_turns_to_the_captain_and_back(monkeypatch):
     ch = _character_with("IncomingMsg6", "Some.Module.Unused")
     ctrl = _TurnRecordingController()
     monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
-    spoken = []
-    monkeypatch.setattr(CharacterAction, "_do_play",
-                        lambda self: (spoken.append(self._detail), 1.5)[1])
+    spoken = _spy_speech(monkeypatch)
 
     action = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
                              "IncomingMsg6", "Captain", 1)
@@ -390,6 +486,7 @@ def test_say_line_turns_to_but_does_not_turn_back(monkeypatch):
     action.Play()
 
     assert ctrl.turns == [("to", "Captain")]
+    assert ctrl.turn_calls == [("to", "Captain", True)]
 
 
 def _count_completions(monkeypatch):
@@ -425,6 +522,8 @@ def test_skipped_say_line_still_turns_the_officer_back(monkeypatch):
     action.Skip()                                # Backspace mid-line
 
     assert ctrl.turns == [("to", "Captain"), ("back", "Captain")]
+    # fire-and-forget, like BC's TurnBack sub-action
+    assert ctrl.turn_calls[-1] == ("back", "Captain", True)
     assert action.IsPlaying() is False           # skip completes immediately
     assert len(completions) == 1                 # exactly once
 
@@ -453,31 +552,23 @@ def test_skipped_say_line_without_a_turn_is_unchanged(monkeypatch):
 
 
 def test_skip_during_the_forward_turn_does_not_speak_afterwards(monkeypatch):
-    # Skipped BEFORE the forward turn settles: the queued _speak_then_turn_back
-    # callback is still live in the controller (and _process_turn rescues it when
-    # the turn-back evicts the forward turn). It must NOT then speak the line the
+    # Skipped BEFORE the forward turn settles: the queued speak callback is
+    # still live in the controller (and _process_turn rescues it when the
+    # turn-back evicts the forward turn). It must NOT then speak the line the
     # player just skipped, and must not complete the action a second time.
+    #
+    # AT_SAY_LINE_AFTER_TURN is the verb whose speak is deferred behind the
+    # opening turn's on_complete (AT_SAY_LINE overlaps the two by design and
+    # has already spoken by the time Play() returns), so it is the one that can
+    # be skipped mid-turn-before-line.
     ch = _character_with("IncomingMsg6", "Some.Module.Unused")
 
-    class _DeferringController(_TurnRecordingController):
-        def __init__(self):
-            super().__init__()
-            self.pending = []
-
-        def request_turn_to(self, character, detail, *, back=False, now=False,
-                            hold=True, on_complete=None):
-            self.turns.append(("back" if back else "to", detail))
-            if on_complete is not None:
-                self.pending.append(on_complete)     # settles LATER, like the real one
-
-    ctrl = _DeferringController()
+    ctrl = _DeferringTurnController()
     monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
-    spoken = []
-    monkeypatch.setattr(CharacterAction, "_do_play",
-                        lambda self: (spoken.append(self._detail), 1.5)[1])
+    spoken = _spy_speech(monkeypatch)
     completions = _count_completions(monkeypatch)
 
-    action = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+    action = CharacterAction(ch, CharacterAction.AT_SAY_LINE_AFTER_TURN,
                              "IncomingMsg6", "Captain", 1)
     action.Play()
     assert spoken == []                          # still turning

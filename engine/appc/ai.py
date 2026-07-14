@@ -1529,26 +1529,54 @@ class CharacterAction(TGAction):
         chair clip as parallel siblings of one sequence. (None, 0) speaks with no
         turn at all.
 
+        GROUND TRUTH (Ghidra, retail stbc.exe 1.1 — docs/gameplay/
+        bridge-character-system.md §8.3). Both verbs route CharacterAction::Play
+        -> CharacterClass::SayLine -> a builder that assembles an inner
+        TGSequence of prerequisite-chained sub-actions, EVERY DELAY 0:
+
+            TURN(turnTo) -> SPEAK_LINE(lineID) -> TURN_BACK (if the flag is set)
+
+        The two dispatch cases are byte-identical except one immediate — the
+        opening turn's sub-type:
+
+          AT_SAY_LINE (12)            opening turn = AT_TURN_NOW: starts the
+                                      animated turn and SELF-COMPLETES at once,
+                                      so the line begins while the officer is
+                                      still visibly turning (overlap, not a snap).
+          AT_SAY_LINE_AFTER_TURN (13) opening turn = AT_TURN: awaited; the line
+                                      starts when the turn animation settles.
+
+        The turn-back is chained on the SPEAK action's completion (sound-done),
+        and is itself fire-and-forget: it self-completes as soon as it STARTS the
+        swivel. So this CharacterAction completes at END-OF-LINE for BOTH verbs,
+        and the next action in the outer TGSequence begins with the turn-back
+        playing out underneath it. (We previously serialised turn -> speak ->
+        awaited turn-back, adding both animation durations to ~1600 turned
+        lines — dialogue dragged.)
+
         The line still BLOCKS the sequence for its real duration (BC does), via
         the existing _do_play/_complete_after path.
 
         Skip (Backspace) interlock: `_turn_owed` records the turn-back this
         action still owes the officer, so Skip() can perform it even though it
         cancels the deferred timer that would otherwise have run _turn_back_now.
-        `_skipped` makes the deferred _speak_then_turn_back a no-op if the
-        controller settles the forward turn AFTER the skip — the player skipped
-        this line, so it must not belatedly speak or complete a second time.
+        `_skipped` makes a deferred _speak a no-op if the controller settles an
+        AFTER_TURN forward turn after the skip — the player skipped this line, so
+        it must not belatedly speak or complete a second time.
         """
         from engine.appc.characters import CharacterClass_Cast
         from engine import bridge_character_anim
 
         turn_to = self._set_name
         turn_back = self._flag > 0
+        after_turn = self._action_type == self.AT_SAY_LINE_AFTER_TURN
         self._turn_owed = str(turn_to) if (turn_to and turn_back) else None
+        spoke = []                       # one-shot latch: _speak runs exactly once
 
-        def _speak_then_turn_back():
-            if self._skipped:
+        def _speak():
+            if self._skipped or spoke:
                 return                   # skipped mid-turn: never speak it now
+            spoke.append(True)
             dur = 0.0
             try:
                 dur = self._do_play() or 0.0
@@ -1557,34 +1585,37 @@ class CharacterAction(TGAction):
             if not (turn_to and turn_back):
                 self._complete_after(dur)
                 return
-            # Turn back once the line has finished, then complete.
+
             def _turn_back_now():
+                # End of line: START the turn-back and complete NOW. BC's
+                # TurnBack sub-action self-completes on starting the swivel —
+                # the sequence must not wait for it.
                 self._turn_owed = None       # this path is discharging it
-                try:
-                    cc = CharacterClass_Cast(self._character)
-                    ctrl = bridge_character_anim.get_controller()
-                    if cc is not None and ctrl is not None:
-                        ctrl.request_turn_to(cc, str(turn_to), back=True, now=False,
-                                             on_complete=self.Completed)
-                        return
-                except Exception:
-                    pass
+                self._issue_turn_back(turn_to)
                 self.Completed()
             self._complete_after(dur, on_elapsed=_turn_back_now)
 
         if not turn_to:
-            _speak_then_turn_back()
+            _speak()
             return
         try:
             cc = CharacterClass_Cast(self._character) if self._character is not None else None
             ctrl = bridge_character_anim.get_controller()
             if cc is None or ctrl is None:
-                _speak_then_turn_back()      # headless: speak without turning
+                _speak()                     # headless: speak without turning
                 return
-            ctrl.request_turn_to(cc, str(turn_to), back=False, now=False,
-                                 on_complete=_speak_then_turn_back)
+            if after_turn:
+                # AT_TURN: awaited — the line waits for the turn to settle.
+                ctrl.request_turn_to(cc, str(turn_to), back=False, now=False,
+                                     on_complete=_speak)
+            else:
+                # AT_TURN_NOW: the turn animates, but is not awaited — the line
+                # starts essentially at turn start.
+                ctrl.request_turn_to(cc, str(turn_to), back=False, now=True,
+                                     on_complete=None)
+                _speak()
         except Exception:
-            _speak_then_turn_back()
+            _speak()
 
     def _queue_glance(self) -> None:
         # Quick glance (AT_GLANCE_AT/AWAY). Best-effort: completes inline on any
@@ -1833,15 +1864,18 @@ class CharacterAction(TGAction):
         super().Skip()
 
     def _issue_turn_back(self, detail) -> None:
-        """Best-effort reverse turn with no completion callback (the caller owns
-        completion). Never raises — Skip() must not throw into the action manager."""
+        """BC's TurnBack sub-action: START the reverse swivel and do not await it
+        (it self-completes on starting the animation), so the caller owns — and
+        may immediately fire — this action's completion. Used both at end-of-line
+        and on Skip(). Best-effort; never raises (Skip() must not throw into the
+        action manager, and Play() must never stall a mission TGSequence)."""
         from engine.appc.characters import CharacterClass_Cast
         from engine import bridge_character_anim
         try:
             cc = CharacterClass_Cast(self._character) if self._character is not None else None
             ctrl = bridge_character_anim.get_controller()
             if cc is not None and ctrl is not None:
-                ctrl.request_turn_to(cc, str(detail), back=True, now=False,
+                ctrl.request_turn_to(cc, str(detail), back=True, now=True,
                                      on_complete=None)
         except Exception:
             pass

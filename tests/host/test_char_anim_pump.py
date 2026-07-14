@@ -1,19 +1,25 @@
-"""Regression: AT_SAY_LINE's turn must NOT be gated on bridge view.
+"""Regression: a say-line's turn must NOT be gated on bridge view.
 
 _queue_say_line defers the SPEECH ITSELF behind request_turn_to(...,
-on_complete=_speak_then_turn_back). request_turn_to only QUEUES into
+on_complete=_speak) for AT_SAY_LINE_AFTER_TURN. request_turn_to only QUEUES into
 _pending_turns; the queue is drained by BridgeCharacterAnimController.update().
 
 The ONLY call site of char_anim.update() used to sit inside the host loop's
-``if view_mode.is_bridge:`` render block. So any AT_SAY_LINE WITH a turn target
-(~1,600 SDK sites) issued while the player was in tactical/exterior view had its
-turn queued, _speak_then_turn_back never ran, the line was never spoken and the
-mission TGSequence hung until the player happened to switch to bridge view.
+``if view_mode.is_bridge:`` render block. So any turned say-line issued while the
+player was in tactical/exterior view had its turn queued, the deferred speak
+never ran, the line was never spoken and the mission TGSequence hung until the
+player happened to switch to bridge view.
 
 ``_pump_char_anim`` is the view-independent seam (alongside _pump_walk_controller
 and _pump_bridge_doors) that runs every unpaused frame regardless of view. These
-tests drive an AT_SAY_LINE to completion through that seam alone — with no bridge
+tests drive a say-line to completion through that seam alone — with no bridge
 view anywhere.
+
+NOTE the verbs differ (Ghidra ground truth, docs/gameplay/
+bridge-character-system.md §8.3): AT_SAY_LINE_AFTER_TURN awaits its opening turn
+(so its speech is what the pump releases), while AT_SAY_LINE overlaps the turn
+with the line and speaks immediately — its turn still has to reach the renderer
+through this same pump, and its turn-back is fire-and-forget.
 """
 import App
 from engine import bridge_character_anim
@@ -72,7 +78,7 @@ def _wire(monkeypatch):
     return ctrl
 
 
-def test_say_line_with_a_turn_completes_through_the_view_independent_pump(
+def test_say_line_after_turn_completes_through_the_view_independent_pump(
         monkeypatch):
     """The line SPEAKS and the action COMPLETES when driven only by
     _pump_char_anim — i.e. with no bridge view involved at all."""
@@ -83,7 +89,7 @@ def test_say_line_with_a_turn_completes_through_the_view_independent_pump(
     monkeypatch.setattr(CharacterAction, "_do_play",
                         lambda self: (spoken.append(self._detail), 1.5)[1])
 
-    act = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+    act = CharacterAction(ch, CharacterAction.AT_SAY_LINE_AFTER_TURN,
                           "IncomingMsg6", "Captain", 1)
     act.Play()
     assert act.IsPlaying() is True
@@ -96,9 +102,37 @@ def test_say_line_with_a_turn_completes_through_the_view_independent_pump(
     assert spoken == ["IncomingMsg6"]
 
     App.g_kRealtimeTimerManager.tick(1.5)        # line plays out -> turn back
-    _pump_char_anim(ctrl, r, 0.0, paused=False)  # drain the reverse turn
-    _pump_char_anim(ctrl, r, 2.0, paused=False)  # it settles -> Completed()
-    assert act.IsPlaying() is False              # the sequence advances
+    assert act.IsPlaying() is False              # completes AT END-OF-LINE...
+    _pump_char_anim(ctrl, r, 0.0, paused=False)  # ...with the swivel starting now
+    assert ctrl.is_busy(ch) is True              # the turn-back genuinely plays
+    _pump_char_anim(ctrl, r, 2.0, paused=False)  # and settles underneath
+    assert ctrl.is_busy(ch) is False             # nothing leaked
+
+
+def test_say_line_speaks_at_once_and_still_turns_through_the_pump(monkeypatch):
+    """AT_SAY_LINE overlaps: the line starts immediately (no pump needed), while
+    the turn itself still reaches the renderer through the view-independent pump."""
+    ctrl = _wire(monkeypatch)
+    r = _FakeRenderer(clip_dur=1.0)
+    ch = _Char()
+    spoken = []
+    monkeypatch.setattr(CharacterAction, "_do_play",
+                        lambda self: (spoken.append(self._detail), 1.5)[1])
+
+    act = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+                          "IncomingMsg6", "Captain", 1)
+    act.Play()
+    assert spoken == ["IncomingMsg6"]            # speaks while still turning
+    assert act.IsPlaying() is True               # the line still blocks
+    assert ctrl._pending_turns != []             # the turn is queued for the pump
+
+    _pump_char_anim(ctrl, r, 0.0, paused=False)  # drain -> submit the body turn
+    assert ctrl.is_busy(ch) is True
+
+    App.g_kRealtimeTimerManager.tick(1.5)        # line plays out
+    assert act.IsPlaying() is False              # completes at end-of-line
+    _pump_char_anim(ctrl, r, 0.0, paused=False)
+    _pump_char_anim(ctrl, r, 2.0, paused=False)  # the turn-back settles
     assert ctrl.is_busy(ch) is False             # nothing leaked
 
 
@@ -128,7 +162,7 @@ def test_char_anim_pump_skipped_while_paused(monkeypatch):
     monkeypatch.setattr(CharacterAction, "_do_play",
                         lambda self: (spoken.append(self._detail), 1.5)[1])
 
-    act = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+    act = CharacterAction(ch, CharacterAction.AT_SAY_LINE_AFTER_TURN,
                           "IncomingMsg6", "Captain", 1)
     act.Play()
     _pump_char_anim(ctrl, r, 5.0, paused=True)
