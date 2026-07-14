@@ -1613,6 +1613,30 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     def GetChargeLevel(self) -> float:              return self._charge_level
     def GetCooldownTime(self) -> float:             return self._cooldown_time
 
+    def GetLaunchSpeed(self) -> float:
+        """SDK AI/Preprocessors.py:778 (FireScript.GetWeaponInfo) — used to
+        lead the AI's aim point on pulse-weapon fire (fTime = fDistance /
+        fSpeed, Preprocessors.py:742). There is no authored per-weapon
+        launch-speed field; the real value lives on the bound projectile
+        module (e.g. Tactical/Projectiles/PulseDisruptor.py:43
+        GetLaunchSpeed() -> 55.0), same as the launch speed Fire() itself
+        uses via _spawn_projectile (weapon_subsystems.py:308). Resolve it
+        the same way: PulseWeaponProperty.GetModuleName() names the
+        projectile script; import it and read its GetLaunchSpeed(). Returns
+        0.0 (not a hardcoded default) if the property, module name, module,
+        or attribute is genuinely absent — matching _spawn_projectile's own
+        missing-module fallback rather than inventing a number."""
+        prop = self.GetProperty()
+        script = prop.GetModuleName() if (prop is not None and hasattr(prop, "GetModuleName")) else ""
+        if not script:
+            return 0.0
+        import importlib
+        try:
+            mod = importlib.import_module(script)
+        except ImportError:
+            return 0.0
+        return float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
+
     def GetChargeWatcher(self):
         """FloatRangeWatcher on the charge FRACTION
         (Conditions/ConditionPulseReady.py:163)."""

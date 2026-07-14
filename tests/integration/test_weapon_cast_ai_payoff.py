@@ -21,7 +21,13 @@ on a real ship instead of silently degrading:
    `range()` coerces it via `int() == 0` — so the loop body never ran and
    `lDirections` stayed empty no matter how many pulse weapons the ship had.
    After the fix, `PulseWeaponSystem_Cast` returns the real system and the
-   loop enumerates every child pulse weapon's firing direction.
+   loop enumerates every child pulse weapon's firing direction, AND
+   `pWeapon.GetLaunchSpeed()` (a separate, real engine gap this task also
+   closes — `PulseWeapon` had no `GetLaunchSpeed` at all, so the `_Stub`'s
+   always-False `__gt__`/`__lt__` silently left `fSpeed` pinned at its 1.0
+   seed) now returns the authored value read from the bound projectile
+   module (`Tactical.Projectiles.PulseDisruptor.GetLaunchSpeed() -> 55.0`),
+   not a test double.
 """
 import App
 from engine.appc.ai import PreprocessingAI_Create, PlainAI_Create
@@ -32,6 +38,8 @@ from engine.appc.weapon_subsystems import (
     PulseWeaponSystem, PulseWeapon, TractorBeamSystem, TractorBeam,
 )
 from engine.appc.properties import PulseWeaponProperty
+
+_PULSE_DISRUPTOR_MODULE = "Tactical.Projectiles.PulseDisruptor"
 
 
 def _reset_app_state():
@@ -108,16 +116,24 @@ def test_fire_script_pulse_branch_enumerates_real_directions():
     """Ranks 15/17 stub (151 hits/session): App.PulseWeaponSystem_Cast.
 
     Drives the real AI/Preprocessors.py FireScript.GetWeaponInfo pulse
-    branch on a PulseWeaponSystem with two pulse-weapon children. Before
-    this fix the branch always produced an empty lDirections regardless of
-    how many pulse weapons the ship had (int()-coercion of the
+    branch on a PulseWeaponSystem with two REAL disruptor-armed
+    PulseWeapon children (PulseWeaponProperty.SetModuleName pointing at the
+    stock SDK Tactical.Projectiles.PulseDisruptor module -- no test double).
+    Before this fix the branch always produced an empty lDirections
+    regardless of how many pulse weapons the ship had (int()-coercion of the
     GetNumChildSubsystems() stub to 0); after the fix it walks both real
     children.
 
-    GetLaunchSpeed() on a leaf PulseWeapon is a separate, unrelated
-    engine gap (never implemented on PulseWeapon/WeaponSystem) --
-    stubbed here per-instance purely so this SDK function can run to
-    completion; it is explicitly NOT part of this task's fix."""
+    fSpeed also proves the companion PulseWeapon.GetLaunchSpeed() fix: before
+    it existed, the _Stub's always-False comparison operators
+    (engine/core/ids.py's _Stub defines __gt__/__lt__/etc. all returning
+    False -- NOT a TypeError/crash) meant `pWeapon.GetLaunchSpeed() >
+    fSpeed` never won, so fSpeed stayed silently pinned at its 1.0 seed on
+    every disruptor-armed NPC in the game -- a 55x aim-lead error, not a
+    visible failure. fSpeed must now equal the module's own authored
+    GetLaunchSpeed() (55.0), read via the real Fire()-path resolution
+    (PulseWeaponProperty.GetModuleName() -> import -> GetLaunchSpeed()),
+    not a monkeypatched value."""
     _reset_app_state()
     pSet = App.SetClass_Create()
     pSet.SetName("S")
@@ -130,9 +146,9 @@ def test_fire_script_pulse_branch_enumerates_real_directions():
     pulse_a = PulseWeapon("PW1")
     pulse_b = PulseWeapon("PW2")
     for pw in (pulse_a, pulse_b):
-        pw.SetProperty(PulseWeaponProperty("PWProp"))
-        # Orthogonal, out-of-scope gap -- see docstring above.
-        pw.GetLaunchSpeed = lambda: 30.0
+        prop = PulseWeaponProperty("PWProp")
+        prop.SetModuleName(_PULSE_DISRUPTOR_MODULE)
+        pw.SetProperty(prop)
     pulses.AddChildSubsystem(pulse_a)
     pulses.AddChildSubsystem(pulse_b)
     ship.SetPulseWeaponSystem(pulses)
@@ -149,6 +165,13 @@ def test_fire_script_pulse_branch_enumerates_real_directions():
         "expected FireScript.GetWeaponInfo to enumerate both pulse-weapon "
         "children; before the fix this was always empty"
     )
-    assert fSpeed == 30.0
+    # Authored value from Tactical/Projectiles/PulseDisruptor.py:43 --
+    # matches import App.PulseWeaponSystem_Cast et al; not a hardcoded/
+    # invented constant in the engine or the test.
+    import Tactical.Projectiles.PulseDisruptor as _disruptor
+    assert fSpeed == _disruptor.GetLaunchSpeed() == 55.0, (
+        "fSpeed should be the authored disruptor launch speed, not the "
+        "1.0 seed value FireScript.GetWeaponInfo starts with"
+    )
 
     _reset_app_state()

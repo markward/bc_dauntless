@@ -595,8 +595,14 @@ def Weapon_Cast(obj):
     engine.appc.subsystem_types's CT_WEAPON class tuple — the single source
     of truth for exactly this leaf-emitter split — rather than inventing a
     second, divergent notion of "weapon" here."""
-    from engine.appc.subsystem_types import subsystem_class_for_ct
-    weapon_classes = subsystem_class_for_ct(CT_WEAPON)
+    try:
+        from engine.appc.subsystem_types import subsystem_class_for_ct
+    except ImportError:
+        return None
+    # subsystem_class_for_ct returns None for an unmapped CT -- `or ()`
+    # keeps the isinstance() call total (isinstance(obj, None) raises
+    # TypeError; isinstance(obj, ()) is a clean, always-false match).
+    weapon_classes = subsystem_class_for_ct(CT_WEAPON) or ()
     return obj if isinstance(obj, weapon_classes) else None
 
 

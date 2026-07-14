@@ -67,3 +67,14 @@ def test_weapon_cast_rejects_other_weapon_system_containers():
     assert App.Weapon_Cast(TorpedoSystem()) is None
     assert App.Weapon_Cast(TractorBeamSystem()) is None
     assert App.Weapon_Cast(PulseWeaponSystem()) is None
+
+
+def test_weapon_cast_does_not_crash_when_ct_weapon_is_unmapped(monkeypatch):
+    """Minor fix: subsystem_class_for_ct(CT_WEAPON) can return None for an
+    unmapped/undefined CT_* constant (e.g. a _NamedStub fall-through) --
+    isinstance(obj, None) raises TypeError, not a clean rejection. Weapon_Cast
+    must stay total: reject cleanly (return None) instead of crashing."""
+    import engine.appc.subsystem_types as subsystem_types
+    monkeypatch.setattr(subsystem_types, "subsystem_class_for_ct", lambda ct: None)
+    tube = TorpedoTube()
+    assert App.Weapon_Cast(tube) is None
