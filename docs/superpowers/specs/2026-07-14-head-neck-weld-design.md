@@ -176,10 +176,12 @@ behaviour is updated in the same change (never orphaned).
 
 ### 5. Branch / sequencing
 
-Implementation starts only after `feat/character-action-verb-table` wraps, on
-a fresh branch off it (or off `main` once it merges). This spec is committed to
-the current branch (explicit pathspec — shared checkout, no branch switching
-while the sibling session is active). Files owned by the sibling branch
+`feat/character-action-verb-table` is already merged (`2104ac3c`), but its
+session may still be active — implementation waits until it wraps. This spec
+is committed on `feat/head-neck-weld` (branched off post-merge `main`), which
+is also where implementation will land; the shared checkout stays on `main`
+until work starts (no branch switching under an active sibling session).
+Files owned by the sibling branch
 (`engine/appc/*.py` character/anim modules, `engine/bridge_character_anim.py`)
 are not touched by this design at all — the whole change lives in
 `native/src/assets/` + tests.
