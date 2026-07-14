@@ -271,6 +271,13 @@ class ArtificialIntelligence:
         # base so every node type — not just PlainAI — can be rescheduled by
         # ForceUpdate. Interior nodes that don't self-gate simply ignore it.
         self._next_update_time: float = 0.0
+        # Node-in-tree activation state (BaseAI vtable +0x20/+0x24 in
+        # ai-architecture.md Sec.6) -- distinct from IsActive()/_status
+        # (US_ACTIVE vs US_DORMANT/US_DONE, "is this node's own work
+        # currently eligible"). This is "has the AI driver's dispatch
+        # reached this node on the active path this tick", set/cleared by
+        # SetActive()/SetInactive() below.
+        self._is_active_in_tree: bool = False
         type(self)._allocate_id(self)
 
     @classmethod
@@ -349,6 +356,35 @@ class ArtificialIntelligence:
 
     def GetExternalFunctions(self) -> dict:
         return dict(self._external_functions)
+
+    # ── Tree activation lifecycle ────────────────────────────────────────────
+    # Mirrors BaseAI's SetActive/SetInactive (vtable +0x20/+0x24,
+    # ai-architecture.md Sec.6): fired when a node becomes active/inactive IN
+    # THE TREE (i.e. reached / not reached on the AI driver's active dispatch
+    # path this tick), guarded so each fires exactly once per transition --
+    # not every tick. This is a different question from IsActive()
+    # (US_ACTIVE vs DORMANT/DONE) above; do not conflate the two.
+    def SetActive(self) -> None:
+        """Node became active in the tree. Appc guards this with a byte flag
+        so it fires ONCE per activation, not every tick (BaseAI vtable
+        +0x20)."""
+        if self._is_active_in_tree:
+            return
+        self._is_active_in_tree = True
+        self._on_activated()
+
+    def SetInactive(self) -> None:
+        """Node was deactivated (BaseAI vtable +0x24). Matching edge."""
+        if not self._is_active_in_tree:
+            return
+        self._is_active_in_tree = False
+        self._on_deactivated()
+
+    def _on_activated(self) -> None:
+        """Subclass hook. Base does nothing."""
+
+    def _on_deactivated(self) -> None:
+        """Subclass hook. Base does nothing."""
 
     # ── Forced reschedule ────────────────────────────────────────────────────
     def ForceUpdate(self) -> None:
@@ -707,14 +743,33 @@ class ConditionalAI(ArtificialIntelligence, TGConditionHandler):
     def AddCondition(self, cond: TGCondition) -> None:
         self._conditions.append(cond)
         cond.AddHandler(self)
-        # Appc's ConditionalAI drives SetActive/SetInactive across its condition
-        # list (its C++ side multiply-inherits the condition-handler base and its
-        # only confirmed overrides are SetActive / SetInactive / LostFocus).
-        # SetActive is what reaches ConditionTimer.Activate() and re-arms it.
-        cond.SetActive()
+        # Appc's ConditionalAI drives SetActive/SetInactive across its
+        # condition list from the NODE's own tree-activation lifecycle (see
+        # _on_activated/_on_deactivated below), not at wiring time. A
+        # condition added to a node that isn't active in the tree yet must
+        # stay inactive until the node itself activates; a condition added
+        # to an already-active node (late add on a live branch) activates
+        # immediately so it isn't left stranded.
+        if self._is_active_in_tree:
+            cond.SetActive()
 
     def GetConditions(self) -> list:
         return list(self._conditions)
+
+    # ── Tree activation lifecycle (drives the condition list) ──────────────
+    # ai-architecture.md Sec.6: ConditionalAI's only confirmed C++ overrides
+    # are SetActive/SetInactive/LostFocus, "all of which register/unregister
+    # against the condition list". SetActive is what reaches
+    # ConditionTimer.Activate() and re-arms it -- but only when the AI
+    # driver actually calls it on node (re)activation (see ai_driver.py
+    # _reconcile_active), not once at AddCondition time.
+    def _on_activated(self) -> None:
+        for cond in self._conditions:
+            cond.SetActive()
+
+    def _on_deactivated(self) -> None:
+        for cond in self._conditions:
+            cond.SetInactive()
 
 
 def ConditionalAI_Create(pShip=None, name: str = "") -> ConditionalAI:

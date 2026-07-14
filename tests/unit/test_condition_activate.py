@@ -40,10 +40,17 @@ def test_set_active_calls_the_scripts_activate():
 
 
 def test_conditional_ai_activates_the_conditions_it_is_given():
+    """AddCondition alone does NOT activate a condition until the node is
+    active in the tree (Task 4b) -- ConditionalAI._on_activated is what
+    drives SetActive across the condition list, on node activation, not at
+    wiring time (see tests/unit/test_ai_activation_lifecycle.py)."""
     cond = _Spy()
     ai = ConditionalAI(None, "gate")
     ai.AddCondition(cond)
-    assert cond.activated == 1, "ConditionalAI must activate its conditions"
+    assert cond.activated == 0, "AddCondition alone must not activate a condition"
+
+    ai.SetActive()   # node becomes active in the tree
+    assert cond.activated == 1, "node activation must activate its conditions"
 
 
 def test_plain_tgcondition_without_an_instance_is_unaffected():

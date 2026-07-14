@@ -70,7 +70,7 @@ class TGTimerManager:
         timer._fire_pending = False
         self._timers[timer.GetObjID()] = timer
 
-    def RemoveTimer(self, timer) -> None:
+    def RemoveTimer(self, timer: "TGTimer | int") -> None:
         # Real Appc's RemoveTimer accepts either a TGTimer object or its
         # GetObjID() int. Conditions/ConditionTimer.py:73 -- the only SDK call
         # site -- passes the int; internal engine callers pass the object.

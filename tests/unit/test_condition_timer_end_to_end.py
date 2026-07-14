@@ -23,22 +23,9 @@ tests/unit/test_timers.py::test_remove_timer_accepts_an_obj_id_int for the
 isolated regression test on the timer manager itself.
 """
 import App
-from engine.appc.ships import ShipClass_Create
-
-
-def _build_set_with_ship():
-    App.g_kSetManager._sets.clear()
-    pSet = App.SetClass_Create()
-    pSet.SetName("S")
-    ship = ShipClass_Create("Test")
-    pSet.AddObjectToSet(ship, "Test Ship")
-    App.g_kSetManager._sets["S"] = pSet
-    return pSet, ship
 
 
 def test_condition_timer_fires_after_its_delay():
-    _build_set_with_ship()
-
     cs = App.ConditionScript_Create("Conditions.ConditionTimer", "ConditionTimer", 5.0)
     assert cs._init_error is None, cs._init_error
     assert cs._instance is not None
@@ -53,8 +40,6 @@ def test_condition_timer_rearms_on_set_active_after_firing():
     status 0 and it must fire again after another full delay -- the
     ConditionalAI.AddCondition(cond) path (cond.SetActive()) is what makes
     this happen for every repeating-timer branch in the SDK."""
-    _build_set_with_ship()
-
     cs = App.ConditionScript_Create("Conditions.ConditionTimer", "ConditionTimer", 5.0)
     App.g_kTimerManager.tick(6.0)
     assert cs.GetStatus() == 1
@@ -74,8 +59,6 @@ def test_condition_timer_rearms_mid_flight_before_firing():
     "timer already exists" branch (Conditions/ConditionTimer.py:70-75),
     which removes and re-adds the SAME TGTimer with a new start time. This
     is the branch that exposed the RemoveTimer(int) bug."""
-    _build_set_with_ship()
-
     cs = App.ConditionScript_Create("Conditions.ConditionTimer", "ConditionTimer", 5.0)
     App.g_kTimerManager.tick(2.0)
     assert cs.GetStatus() == 0

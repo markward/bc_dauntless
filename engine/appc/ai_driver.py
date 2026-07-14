@@ -36,21 +36,29 @@ PS_DONE = PreprocessingAI.PS_DONE
 # Focus-loss lifecycle state. tick_ai is single-threaded (one ship at a time),
 # so module-level scratch is safe. _reached_this_tick collects the
 # PreprocessingAI nodes reached (== focused) during the current root tick.
+# _reached_this_tick_all collects EVERY node type reached (== active in the
+# tree, ai-architecture.md Sec.6 BaseAI SetActive/SetInactive) -- the driver
+# for Task 4's ConditionScript.SetActive forwarding.
 _focus_depth = 0
 _reached_this_tick: list = []
+_reached_this_tick_all: list = []
 
 
 def tick_ai(ai, game_time: float) -> int:
-    """Tick one AI subtree; reconcile preprocessor focus at the root call.
+    """Tick one AI subtree; reconcile preprocessor focus and tree-activation
+    at the root call.
 
     The outermost tick_ai call (one per ship, from tick_all_ai) is the root: it
     collects which PreprocessingAI nodes were reached (== on the active path ==
     focused) this tick, then dispatches LostFocus() to any node that was focused
-    last tick but not this one. Recursive calls into children just dispatch."""
-    global _focus_depth, _reached_this_tick
+    last tick but not this one -- and, generally, calls SetActive()/
+    SetInactive() on every node as it enters/leaves the active dispatch path.
+    Recursive calls into children just dispatch."""
+    global _focus_depth, _reached_this_tick, _reached_this_tick_all
     is_root = _focus_depth == 0
     if is_root:
         _reached_this_tick = []
+        _reached_this_tick_all = []
     _focus_depth += 1
     try:
         status = _dispatch_ai(ai, game_time)
@@ -58,6 +66,7 @@ def tick_ai(ai, game_time: float) -> int:
         _focus_depth -= 1
     if is_root and ai is not None:
         _reconcile_focus(ai, _reached_this_tick)
+        _reconcile_active(ai, _reached_this_tick_all)
     return status
 
 
@@ -70,6 +79,10 @@ def _dispatch_ai(ai, game_time: float) -> int:
     ship = ai.GetShip() if hasattr(ai, "GetShip") else None
     if ship is not None and ship_death._out_of_action(ship):
         return US_DONE
+    # Record every node type reached on the active dispatch path this root
+    # tick -- the single funnel every _tick_* function passes through, so
+    # this is the one place that needs to record (see _reconcile_active).
+    _reached_this_tick_all.append(ai)
     if isinstance(ai, BuilderAI):
         return _tick_builder(ai, game_time)
     if isinstance(ai, PreprocessingAI):
@@ -98,6 +111,34 @@ def _reconcile_focus(root_ai, reached) -> None:
         if id(node) not in reached_ids:
             _dispatch_lost_focus(node)
     root_ai._focused_preprocessors = list(reached)
+
+
+def _reconcile_active(root_ai, reached) -> None:
+    """Dispatch SetActive()/SetInactive() to every AI node as it enters/leaves
+    the active dispatch path this root tick.
+
+    Identity-based, mirroring _reconcile_focus: `reached` holds every node
+    _dispatch_ai actually ran this root tick (recorded there -- the single
+    funnel every node type passes through). A node in the root's previous
+    active set that is not among them has left the tree's active path and is
+    deactivated; every reached node is (re)activated. SetActive/SetInactive
+    are edge-guarded (ArtificialIntelligence._is_active_in_tree), so calling
+    SetActive on a node that's already active is a safe no-op -- this is what
+    lets a ConditionalAI picked back up by its PriorityListAI re-activate its
+    conditions and re-arm a ConditionTimer.
+
+    Gated on isinstance(node, ArtificialIntelligence): some tests wire bare
+    duck-typed AI doubles (carrying only ``_status``/``GetShip``, to exercise
+    _dispatch_ai's "matches none of the known AI classes" fallback) that were
+    never meant to grow this lifecycle."""
+    reached_ids = {id(n) for n in reached}
+    for node in getattr(root_ai, "_active_nodes", ()):
+        if id(node) not in reached_ids and isinstance(node, ArtificialIntelligence):
+            node.SetInactive()
+    for node in reached:
+        if isinstance(node, ArtificialIntelligence):
+            node.SetActive()
+    root_ai._active_nodes = list(reached)
 
 
 def _dispatch_lost_focus(node) -> None:
