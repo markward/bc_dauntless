@@ -153,6 +153,30 @@ class ConditionScript(TGCondition):
     def GetArguments(self) -> tuple:
         return self._args
 
+    # Real Appc's ConditionScript::SetActive / ::SetInactive forward to the
+    # wrapped Python instance's optional Activate() / Deactivate(). Five shipped
+    # conditions define Activate(); the load-bearing one is ConditionTimer
+    # (65 SDK uses), whose Activate() re-arms the timer when bResetOnActivate is
+    # set (Conditions/ConditionTimer.py:66-81). Without the forward it fires once
+    # and latches true forever.
+    def SetActive(self, *args) -> None:
+        super().SetActive(*args)
+        activate = getattr(self._instance, "Activate", None) if self._instance else None
+        if callable(activate):
+            try:
+                activate()
+            except Exception as _e:
+                dev_mode.log_swallowed("condition Activate", _e)
+
+    def SetInactive(self, *args) -> None:
+        super().SetInactive(*args)
+        deactivate = getattr(self._instance, "Deactivate", None) if self._instance else None
+        if callable(deactivate):
+            try:
+                deactivate()
+            except Exception as _e:
+                dev_mode.log_swallowed("condition Deactivate", _e)
+
 
 def ConditionScript_Create(module_name: str, class_name: str, *args) -> ConditionScript:
     return ConditionScript(module_name, class_name, *args)
@@ -683,6 +707,11 @@ class ConditionalAI(ArtificialIntelligence, TGConditionHandler):
     def AddCondition(self, cond: TGCondition) -> None:
         self._conditions.append(cond)
         cond.AddHandler(self)
+        # Appc's ConditionalAI drives SetActive/SetInactive across its condition
+        # list (its C++ side multiply-inherits the condition-handler base and its
+        # only confirmed overrides are SetActive / SetInactive / LostFocus).
+        # SetActive is what reaches ConditionTimer.Activate() and re-arms it.
+        cond.SetActive()
 
     def GetConditions(self) -> list:
         return list(self._conditions)
