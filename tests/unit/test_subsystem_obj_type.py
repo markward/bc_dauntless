@@ -106,15 +106,18 @@ def test_is_type_of_matches_another_subsystem_of_the_same_type():
     assert torps.IsTypeOf(phaser_b.GetObjType()) == 0
 
 
-# ── 3b. IsTypeOf fallback: CT_* constants OUTSIDE the shared subsystem
-#    table (leaf Weapon-hierarchy Property classes, e.g. CT_ENERGY_WEAPON)
-#    must keep answering via the historical source-property isinstance
-#    check, so leaf emitters (PhaserBank, TorpedoTube, ...) whose
-#    _property genuinely IS e.g. a PhaserProperty are unaffected by this
-#    task (AI/Preprocessors.py:993 RateSubsystemForTargeting,
-#    loadspacehelper.py:229). ─────────────────────────────────────────────
+# ── 3b. Leaf CT_WEAPON / CT_ENERGY_WEAPON: PhaserBank/PulseWeapon/
+#    TractorBeam are leaf emitters (real SDK: EnergyWeapon(Weapon)), NOT
+#    weapon systems, even though this engine's PhaserBank/PulseWeapon/
+#    TractorBeam happen to inherit WeaponSystem (see
+#    engine/appc/subsystem_types.py). Task 3b fix: these are now a
+#    class-identity check via the shared table, independent of whether
+#    SetProperty has run (same contract as every other CT_* — see
+#    test_subsystem_istypeof.py:test_is_type_of_one_with_no_property) —
+#    NOT a fallback to the historical source-property isinstance check,
+#    which is retired. ─────────────────────────────────────────────────────
 
-def test_is_type_of_falls_back_to_property_for_ct_outside_the_table():
+def test_is_type_of_leaf_energy_weapon_matches_ct_energy_weapon_and_ct_weapon():
     from engine.appc.properties import PhaserProperty
     bank = PhaserBank("Dorsal Phaser 1")
     bank.SetProperty(PhaserProperty("template"))
@@ -122,10 +125,50 @@ def test_is_type_of_falls_back_to_property_for_ct_outside_the_table():
     assert bank.IsTypeOf(App.CT_WEAPON) == 1
 
 
-def test_is_type_of_falls_back_to_zero_with_no_property_for_ct_outside_the_table():
+def test_is_type_of_leaf_energy_weapon_matches_even_without_property():
+    """Class identity, not "has SetProperty run" — see
+    test_subsystem_istypeof.py:test_is_type_of_one_with_no_property for the
+    same contract on a top-level subsystem. A PhaserBank genuinely IS a
+    CT_ENERGY_WEAPON the instant it's constructed."""
     bank = PhaserBank("Dorsal Phaser 1")
     # No SetProperty called.
-    assert bank.IsTypeOf(App.CT_ENERGY_WEAPON) == 0
+    assert bank.IsTypeOf(App.CT_ENERGY_WEAPON) == 1
+    assert bank.IsTypeOf(App.CT_WEAPON) == 1
+
+
+def test_is_type_of_leaf_energy_weapon_is_not_a_weapon_system():
+    """Minor 1 fix: PhaserBank/PulseWeapon/TractorBeam inherit WeaponSystem
+    in this engine's class hierarchy (see engine/appc/weapon_subsystems.py),
+    but they
+    are leaf emitters INSIDE a weapon system, not weapon systems themselves
+    — App.CT_WEAPON_SYSTEM must not match them."""
+    from engine.appc.weapon_subsystems import PulseWeapon, TractorBeam
+    assert PhaserBank("Dorsal Phaser 1").IsTypeOf(App.CT_WEAPON_SYSTEM) == 0
+    assert PulseWeapon("Pulse 1").IsTypeOf(App.CT_WEAPON_SYSTEM) == 0
+    assert TractorBeam("Tractor 1").IsTypeOf(App.CT_WEAPON_SYSTEM) == 0
+    # The containing systems still answer 1.
+    assert PhaserSystem("Phasers").IsTypeOf(App.CT_WEAPON_SYSTEM) == 1
+
+
+def test_is_type_of_torpedo_tube_is_ct_weapon_not_ct_energy_weapon():
+    """A TorpedoTube is a leaf Weapon, but not an EnergyWeapon (real SDK:
+    TorpedoTube(Weapon), sibling of EnergyWeapon(Weapon), not a descendant
+    of it) — torpedoes have no charge."""
+    from engine.appc.weapon_subsystems import TorpedoTube
+    tube = TorpedoTube("Tube 1")
+    assert tube.IsTypeOf(App.CT_WEAPON) == 1
+    assert tube.IsTypeOf(App.CT_ENERGY_WEAPON) == 0
+
+
+def test_get_obj_type_for_leaf_weapon_emitters():
+    """GetObjType() on a leaf emitter must resolve to its own leaf CT_*
+    constant, not the containing system's CT_WEAPON_SYSTEM (the bug this
+    task fixes: all three leaf classes used to collapse onto one type)."""
+    from engine.appc.weapon_subsystems import PulseWeapon, TractorBeam, TorpedoTube
+    assert PhaserBank("Dorsal Phaser 1").GetObjType() is App.CT_ENERGY_WEAPON
+    assert PulseWeapon("Pulse 1").GetObjType() is App.CT_ENERGY_WEAPON
+    assert TractorBeam("Tractor 1").GetObjType() is App.CT_ENERGY_WEAPON
+    assert TorpedoTube("Tube 1").GetObjType() is App.CT_WEAPON
 
 
 # ── 4. Non-regression: planet/sun IsTypeOf (ObjectClass.IsTypeOf) is
@@ -144,6 +187,16 @@ def test_sun_is_type_of_planet_and_sun_unaffected():
 # ── 5. End-to-end: the real SDK ConditionCriticalSystemBelow script,
 #    against a real ship with a critical subsystem, flips status on damage
 #    and clears it on repair. This is the point of the task. ──────────────
+
+# ── 6. Minor 2 fix: the CT_* table is memoised, not rebuilt (and App
+#    re-imported) on every IsTypeOf/GetObjType call. ────────────────────────
+
+def test_ct_table_is_memoised_across_calls():
+    from engine.appc.subsystem_types import _ct_table
+    first = _ct_table()
+    second = _ct_table()
+    assert first is second, "_ct_table() rebuilt the table instead of caching it"
+
 
 def test_condition_critical_system_below_flips_on_hull_damage_and_repair():
     _reset_app_state()

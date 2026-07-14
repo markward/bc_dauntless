@@ -476,31 +476,30 @@ class ShipSubsystem(TGEventHandlerObject):
 
         `PhaserSystem.IsTypeOf(CT_WEAPON_SYSTEM)` must be 1 (a phaser system
         IS a weapon system); `PhaserSystem.IsTypeOf(CT_TORPEDO_SYSTEM)` must
-        be 0.
+        be 0. Leaf emitters (PhaserBank/PulseWeapon/TractorBeam/TorpedoTube)
+        answer `IsTypeOf(CT_ENERGY_WEAPON)`/`IsTypeOf(CT_WEAPON)` from the
+        table too (AI/Preprocessors.py:993 `RateSubsystemForTargeting`,
+        loadspacehelper.py:229,242) and, being leaf emitters rather than
+        weapon-system containers, correctly answer 0 for
+        `IsTypeOf(CT_WEAPON_SYSTEM)`.
 
         `cls` may be a fall-through stub (e.g. App.CT_UNKNOWN_THING
         returns an App._NamedStub instance), so guard with
         isinstance(cls, type) before testing.
 
-        Fallback: `cls` values OUTSIDE the shared table (e.g.
-        `CT_WEAPON`/`CT_ENERGY_WEAPON` — leaf `Weapon`-hierarchy Property
-        classes, not one of the top-level subsystem CT_* this task's table
-        covers) fall back to the historical source-property isinstance
-        check, so leaf emitters (PhaserBank, TorpedoTube, ...) whose
-        `_property` genuinely IS e.g. a `PhaserProperty` keep answering
-        `IsTypeOf(CT_ENERGY_WEAPON)` / `IsTypeOf(CT_WEAPON)` exactly as
-        before (AI/Preprocessors.py:993 `RateSubsystemForTargeting`,
-        loadspacehelper.py:229).
+        No property-based fallback: this is a class-identity check,
+        independent of whether SetProperty has ever run — see
+        engine.appc.subsystem_types, whose table now covers every CT_*
+        constant any real SDK caller passes to a ShipSubsystem.IsTypeOf
+        (verified by grep across sdk/Build/scripts/ — task 3b fix).
         """
         if not isinstance(cls, type):
             return 0
         from engine.appc.subsystem_types import subsystem_class_for_ct
         target = subsystem_class_for_ct(cls)
-        if target is not None:
-            return 1 if isinstance(self, target) else 0
-        if self._property is None:
+        if target is None:
             return 0
-        return 1 if isinstance(self._property, cls) else 0
+        return 1 if isinstance(self, target) else 0
 
     def GetObjType(self):
         """The subsystem's own most-specific `CT_*` type constant.
