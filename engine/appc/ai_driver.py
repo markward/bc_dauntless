@@ -35,10 +35,17 @@ PS_DONE = PreprocessingAI.PS_DONE
 
 # Focus-loss lifecycle state. tick_ai is single-threaded (one ship at a time),
 # so module-level scratch is safe. _reached_this_tick collects the
-# PreprocessingAI nodes reached (== focused) during the current root tick.
-# _reached_this_tick_all collects EVERY node type reached (== active in the
-# tree, ai-architecture.md Sec.6 BaseAI SetActive/SetInactive) -- the driver
-# for Task 4's ConditionScript.SetActive forwarding.
+# PreprocessingAI and PlainAI nodes reached (== focused) during the current
+# root tick. _reached_this_tick_all collects EVERY node type reached (==
+# active in the tree, ai-architecture.md Sec.6 BaseAI SetActive/SetInactive)
+# -- the driver for Task 4's ConditionScript.SetActive forwarding.
+#
+# Unlike _reached_this_tick_all (identity-deduped below, see _dispatch_ai),
+# _reached_this_tick has no dedup. This is not an oversight: every container
+# that appends to it (_tick_priority_list, _tick_sequence, _tick_conditional,
+# _tick_preprocessing, _tick_random, _tick_builder) dispatches AT MOST ONE
+# child per root tick, so a PreprocessingAI/PlainAI leaf cannot be reached
+# twice in the same root tick and a duplicate can't be constructed.
 _focus_depth = 0
 _reached_this_tick: list = []
 _reached_this_tick_all: list = []
@@ -157,7 +164,10 @@ def _focus_instance_of(node):
     hand back a truthy _Stub for a node type that has neither.
     """
     d = getattr(node, "__dict__", {})
-    return d.get("_script_instance") or d.get("_preprocessing_instance")
+    script_inst = d.get("_script_instance")
+    if script_inst is not None:
+        return script_inst
+    return d.get("_preprocessing_instance")
 
 
 def _dispatch_lost_focus(node) -> None:
@@ -177,11 +187,17 @@ def _dispatch_got_focus(node) -> None:
     SDK leaves put real work here: StarbaseAttack.GotFocus starts firing
     (AI/PlainAI/StarbaseAttack.py:54). Guarded by a sentinel in __dict__ so
     repeat ticks don't re-fire; _dispatch_lost_focus clears it.
+
+    A PlainAI ticked before SetScriptModule() lands has no instance yet
+    (inst is None) -- the latch must NOT be set on that tick, or the real
+    script's GotFocus would never fire once the module does land.
     """
     if node.__dict__.get("_got_focus_called", False):
         return
     inst = _focus_instance_of(node)
-    got = getattr(inst, "GotFocus", None) if inst is not None else None
+    if inst is None:
+        return
+    got = getattr(inst, "GotFocus", None)
     if callable(got):
         got()
     node.__dict__["_got_focus_called"] = True

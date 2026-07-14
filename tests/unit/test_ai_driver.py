@@ -49,6 +49,37 @@ def test_plain_ai_respects_get_next_update_time():
     assert leaf.calls == 2
 
 
+def test_plain_ai_missing_get_next_update_time_runs_next_tick_not_throttled():
+    """A script instance that omits GetNextUpdateTime (the _AIScriptInstance
+    data-bag fallback SetScriptModule installs when a module fails to import
+    or is unset) must run Update on the very next tick, not be throttled by
+    a made-up 1.0s interval. Appc's PlainAI::Update bridge returns 0.0 when
+    the Python call fails, which is "run every tick" -- there is no default
+    interval in C++ (ai-architecture.md sec.3).
+
+    All 25 real AI/PlainAI/*.py script classes define GetNextUpdateTime, so
+    this fallback is reachable only through the data-bag shape exercised
+    here (SetScriptModule with an unresolvable module name)."""
+    ship = ShipClass()
+    pai = PlainAI(ship, "fake")
+    pai.SetScriptModule("NoSuchAIScript_ForCadenceFallbackTest")
+    inst = pai.GetScriptInstance()
+    calls = []
+    # Override just Update (instance attribute shadows the data-bag's
+    # __getattr__); GetNextUpdateTime stays absent from the data bag, so
+    # the fallback (getattr returns the no-op lambda, which returns None)
+    # is exercised exactly as in production.
+    inst.Update = lambda: calls.append(1)
+
+    tick_ai(pai, game_time=0.0)
+    tick_ai(pai, game_time=0.1)
+
+    assert len(calls) == 2, (
+        "missing GetNextUpdateTime must fall back to 0.0s (every tick); "
+        "a 1.0s fallback would throttle the second tick out"
+    )
+
+
 def test_plain_ai_status_propagates():
     leaf = _FakeLeaf(status=ArtificialIntelligence.US_DONE)
     pai = _make_plain(ShipClass(), leaf)
