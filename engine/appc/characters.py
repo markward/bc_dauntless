@@ -665,6 +665,17 @@ class CharacterClass(ObjectClass):
         from engine.appc import crew_speech
         return crew_speech.last_talk_time(self._character_name)
 
+    # Explicit numeric getters. WITHOUT these the __getattr__ data-bag returns
+    # None for a never-set field, and `GetGameTime() - GetBlinkChance()` becomes
+    # `float - None` (TypeError, swallowed by event dispatch). BC's defaults:
+    # BlinkChance 0.1f (ctor), RandomAnimationChance per-character (0.75 for
+    # station officers, 0.01 for guests/extras — MissionLib.py:1578).
+    def GetBlinkChance(self) -> float:
+        return float(self._data.get("BlinkChance", 0.1))
+
+    def GetRandomAnimationChance(self) -> float:
+        return float(self._data.get("RandomAnimationChance", 0.0))
+
     def IsSpeaking(self) -> int:                  return 0
     def IsReadyToSpeak(self) -> int:              return 1
     def IsAnimating(self) -> int:                 return 0
@@ -770,6 +781,8 @@ class CharacterClass(ObjectClass):
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
+        from engine.core import stub_telemetry
+        stub_telemetry.record_attr("CharacterClass", name)
         data = self._data
         if name.startswith("Set") or name.startswith("Add"):
             field = name[3:]
