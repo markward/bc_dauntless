@@ -331,21 +331,27 @@ def _tick_sequence(ai: SequenceAI, game_time: float) -> int:
         ai._status = US_DONE
         return ai._status
     n = len(ai._ais)
-    looping = int(getattr(ai, "_loop_count", 1)) < 0
     idx = getattr(ai, "_current_index", 0)
 
     def _wrap_or_finish(i):
-        """Index walked off the end: wrap+re-arm a forever-loop, else finish.
+        """Index walked off the end: consume a loop, wrap + re-arm, else finish.
 
-        Returns the new index to keep scanning from, or None if the sequence
-        is finished (status already set to US_DONE)."""
-        if looping:
-            for child in ai._ais:
-                child._status = US_ACTIVE
-            return 0
-        ai._current_index = i
-        ai._status = US_DONE
-        return None
+        Returns the new index to keep scanning from, or None if the sequence is
+        finished (status already set to US_DONE). ai-architecture.md sec.2:
+        wrapping decrements the remaining-loop counter; -1 = loop forever.
+        """
+        remaining = int(getattr(ai, "_loops_remaining", 1))
+        if remaining > 0:
+            remaining -= 1
+            ai._loops_remaining = remaining
+        if remaining == 0:
+            ai._current_index = i
+            ai._status = US_DONE
+            return None
+        # Forever (-1) or passes still owed: re-arm the children and wrap.
+        for child in ai._ais:
+            child._status = US_ACTIVE
+        return 0
 
     # Bound the scan so a list of all-DONE children can't spin forever.
     for _ in range(n + 1):
@@ -357,6 +363,13 @@ def _tick_sequence(ai: SequenceAI, game_time: float) -> int:
         if isinstance(child, ConditionalAI):
             _refresh_conditional_status(child)
         if child._status == US_DORMANT:
+            if int(getattr(ai, "_skip_dormant", 0)):
+                # SetSkipDormant(1): a dormant child is stepped over.
+                idx += 1
+                continue
+            # SetSkipDormant(0) — what all nine E7 trees ask for
+            # (Maelstrom/Episode7/E7M2/EnemyAI.py:63): a dormant child HOLDS the
+            # sequence in place rather than being skipped.
             ai._current_index = idx
             ai._status = US_ACTIVE
             return ai._status
@@ -373,10 +386,11 @@ def _tick_sequence(ai: SequenceAI, game_time: float) -> int:
         ai._current_index = idx
         ai._status = US_ACTIVE
         return ai._status
-    # Scan exhausted without an eligible child (all DONE). A forever-loop
-    # re-runs from the top next tick; a finite sequence is finished.
+    # Scan exhausted without an eligible child (all DONE). A forever/finite
+    # loop with passes remaining re-runs from the top next tick; an exhausted
+    # sequence is finished.
     ai._current_index = 0
-    ai._status = US_ACTIVE if looping else US_DONE
+    ai._status = US_ACTIVE if int(getattr(ai, "_loops_remaining", 1)) != 0 else US_DONE
     return ai._status
 
 

@@ -544,6 +544,9 @@ class SequenceAI(ArtificialIntelligence):
         super().__init__(pShip, name)
         self._ais: list = []
         self._loop_count: int = 1
+        # Passes remaining. -1 = forever (ai-architecture.md sec.2: the C++ node
+        # keeps the remaining-loop count at +0x34 and decrements it on wrap).
+        self._loops_remaining: int = 1
         self._reset_if_interrupted: bool = False
         self._double_check_all_done: bool = False
         self._skip_dormant: bool = False
@@ -564,10 +567,24 @@ class SequenceAI(ArtificialIntelligence):
             return self._ais[int(index)]
         return None
 
-    def SetLoopCount(self, n) -> None:        self._loop_count = int(n)
+    def SetLoopCount(self, n) -> None:
+        self._loop_count = int(n)
+        self._loops_remaining = int(n)
+
     def GetLoopCount(self) -> int:            return self._loop_count
-    def SetResetIfInterrupted(self, v) -> None: self._reset_if_interrupted = bool(v)
-    def SetDoubleCheckAllDone(self, v) -> None: self._double_check_all_done = bool(v)
+
+    def SetResetIfInterrupted(self, v) -> None:
+        # Stored-but-unused: no tree we currently run depends on this flag,
+        # and its exact semantics are not established by the RE corpus
+        # (ai-architecture.md sec.2 names the field but not its precise
+        # effect). Do not invent behaviour for it.
+        self._reset_if_interrupted = bool(v)
+
+    def SetDoubleCheckAllDone(self, v) -> None:
+        # Stored-but-unused — see SetResetIfInterrupted above; same
+        # ai-architecture.md sec.2 caveat applies.
+        self._double_check_all_done = bool(v)
+
     def SetSkipDormant(self, v) -> None:      self._skip_dormant = bool(v)
 
 
