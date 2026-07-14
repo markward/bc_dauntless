@@ -322,6 +322,20 @@ class ArtificialIntelligence:
             out.extend(contained.GetAllAIsInTree())
         return out
 
+    def GetFocusAIs(self) -> list:
+        """The AIs on the current focus path, self first if self has focus.
+
+        Appc hand-registers this on ArtificialIntelligence (0x00470f70;
+        ai-architecture.md sec.4). AI/Preprocessors.py:2230
+        (FelixReportStatus.Update) walks it and calls CallExternalFunction(
+        "QueryAIStatus", lStatus) on each node, which is how the crew report
+        what the AI is currently doing. Every AI/Player tree roots one of these.
+
+        The focus latch is written by ai_driver for every node it reaches on the
+        active dispatch path, so "reached this tick" == "has focus".
+        """
+        return [ai for ai in self.GetAllAIsInTree() if ai.HasFocus()]
+
     # ── Status ───────────────────────────────────────────────────────────────
     def IsActive(self) -> int:            return 1 if self._status == self.US_ACTIVE else 0
     def HasFocus(self) -> int:            return 1 if self._has_focus else 0
