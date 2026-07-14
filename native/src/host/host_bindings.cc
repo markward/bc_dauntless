@@ -1384,10 +1384,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const assets::Model* m = resolve_model(in->model_handle);
               if (!m) return py::none();
               // Resolve robustly to the OVERRIDDEN duplicate: BC bridge models
-              // have two nodes with the same name (e.g. "console seat 01"), and
-              // the chair clip's override lands on the one its name->index map
-              // kept. A naive first-match would read the other (un-animated)
-              // duplicate, so a coupling would see anim == rest (no motion).
+              // NEST two nodes with the same name (e.g. "console seat 01" — an
+              // outer PLACED node and its identity-local mesh child), and the
+              // chair clip's override lands on the PLACED one. A naive
+              // first-match could read the other (un-animated) duplicate, so a
+              // coupling would see anim == rest (no motion).
               int idx = renderer::resolve_overridden_node(
                   *m, node_name, in->node_overrides);
               if (idx < 0) return py::none();
