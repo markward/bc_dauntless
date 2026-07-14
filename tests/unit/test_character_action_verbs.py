@@ -265,3 +265,61 @@ def test_default_and_breathe_restore_the_rest_pose(monkeypatch, verb):
     assert ctrl.submitted == [(ch, "DEFAULT", None, None)]
     assert action.IsPlaying() == 0          # completes inline
     assert ch.IsAnimating() == 0            # gate reopens
+
+
+def test_queue_default_survives_reentrant_gesture_submitted_by_dropped_on_complete(
+        monkeypatch):
+    # Regression for the ordering requirement documented on _queue_default:
+    # it must call cc.clear_current_animation() BEFORE ctrl.request_default(cc),
+    # never after. request_default() fires the DROPPED transient action's
+    # on_complete SYNCHRONOUSLY (BridgeCharacterAnimController.request_default),
+    # and our event dispatch is synchronous, so that callback can re-enter:
+    # a cancelled gesture's _done() runs Completed(), which can advance the
+    # owning TGSequence and submit a BRAND-NEW gesture on the SAME officer —
+    # including a fresh set_current_animation() call — before request_default()
+    # returns. If _queue_default cleared AFTER request_default, that trailing
+    # clear would wipe the state belonging to the newly-started gesture instead
+    # of the cancelled one's, leaving the officer visibly gesturing while
+    # IsAnimating()/IsAnimatingNonInterruptable() report idle.
+    #
+    # This drives the REAL BridgeCharacterAnimController (not _FakeController,
+    # whose request_default is a stub that never fires on_complete and so can
+    # never exercise re-entrancy). Gesture A's on_complete is a callback that
+    # performs exactly what a real _done() -> Completed() -> TGSequence-advance
+    # chain would do to submit gesture B: ctrl.submit(...) + set_current_animation
+    # (see CharacterAction._queue_play_animation's _done(), which does the same
+    # two calls). We inline that pair directly rather than building a full
+    # TGSequence/CharacterAction B, because the two calls ARE the entirety of
+    # what the real chain contributes at this boundary — building the sequence
+    # machinery around them would not change what request_default() observes.
+    from engine import bridge_character_anim as bca
+
+    ch = _character_with("GestureA", "Mod.A")
+    ch.AddAnimation("GestureB", "Mod.B")
+    ch._render_instance = 123
+    ch.SetHidden(0)
+    ctrl = bca.BridgeCharacterAnimController()
+
+    def _a_on_complete():
+        # Simulates the re-entrant chain: a dropped gesture's completion
+        # submits and marks a NEW gesture (B) on the SAME officer, all from
+        # inside request_default()'s synchronous callback.
+        assert ctrl.submit(ch, [("clipB.nif", 5.0)],
+                           priority=bca._SCRIPTED) is True
+        ch.set_current_animation("GestureB", CharacterClass.CAT_NON_INTERRUPTABLE)
+
+    assert ctrl.submit(ch, [("clipA.nif", 5.0)], priority=bca._SCRIPTED,
+                       on_complete=_a_on_complete) is True
+    ch.set_current_animation("GestureA", CharacterClass.CAT_NON_INTERRUPTABLE)
+    assert ctrl.is_busy(ch) is True
+
+    monkeypatch.setattr(bca, "get_controller", lambda: ctrl)
+    action = CharacterAction(ch, CharacterAction.AT_DEFAULT)
+    action.Play()
+
+    # B is the gesture ACTUALLY playing on the controller — it must survive
+    # _queue_default's clear/request_default sequence intact, not read back
+    # as idle.
+    assert ch.GetCurrentAnimation() == "GestureB"
+    assert ch.IsAnimatingNonInterruptable() == 1
+    assert ctrl.is_busy(ch) is True
