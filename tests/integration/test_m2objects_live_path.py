@@ -154,7 +154,7 @@ def test_m2objects_live_path_fires_phasers():
                       f"sTarget={getattr(inst, 'sTarget', '?')!r}  "
                       f"bTargetVisible={getattr(inst, 'bTargetVisible', '?')}  "
                       f"iLastUpdate={getattr(inst, 'iLastUpdate', '?')}  "
-                      f"preprocess_done={node._preprocess_done}  "
+                      f"last_preprocess_status={node._last_preprocess_status}  "
                       f"_fire_held={getattr(ship.GetPhaserSystem(), '_fire_held', '?')}")
     print(f"\nFire events in 15s: {len(fire_log)}")
     for t, nm, b in fire_log[:10]:

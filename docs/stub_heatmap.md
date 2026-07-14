@@ -19,22 +19,22 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 7 | SparkEmitterProperty_Create() | GetName | 307 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 8 | SmokeEmitterProperty_Create() | SetOrientation | 254 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 9 | SmokeEmitterProperty_Create() | SetPosition | 254 | 10/16 | 2026-07-13 19:30 UTC |  |
-| 10 | App | Weapon_Cast | 250 | 3/16 | 2026-07-13 20:23 UTC |  |
+| 10 | App | Weapon_Cast | 250 | 3/16 | 2026-07-13 20:23 UTC | 2026-07-14 |
 | 11 | STCharacterMenu | GetNextChild | 242 | 11/16 | 2026-07-13 20:01 UTC |  |
 | 12 | App | SmokeEmitterProperty_Create | 184 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 13 | SmokeEmitterProperty_Create() | GetName | 184 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 14 | TGParagraph | GetRight | 168 | 13/16 | 2026-07-13 20:23 UTC |  |
-| 15 | App | PulseWeaponSystem_Cast | 151 | 1/16 | 2026-07-13 20:01 UTC |  |
-| 16 | PhaserSystem | ShouldBeAimed | 151 | 1/16 | 2026-07-13 20:01 UTC |  |
-| 17 | PulseWeaponSystem_Cast() | GetNumChildSubsystems | 151 | 1/16 | 2026-07-13 20:01 UTC |  |
-| 18 | TorpedoSystem | ShouldBeAimed | 151 | 1/16 | 2026-07-13 20:01 UTC |  |
+| 15 | App | PulseWeaponSystem_Cast | 151 | 1/16 | 2026-07-13 20:01 UTC | 2026-07-14 |
+| 16 | PhaserSystem | ShouldBeAimed | 151 | 1/16 | 2026-07-13 20:01 UTC | 2026-07-14 |
+| 17 | PulseWeaponSystem_Cast() | GetNumChildSubsystems | 151 | 1/16 | 2026-07-13 20:01 UTC | 2026-07-14 |
+| 18 | TorpedoSystem | ShouldBeAimed | 151 | 1/16 | 2026-07-13 20:01 UTC | 2026-07-14 |
 | 19 | STCharacterMenu | GetNextChild.SetDisabled | 144 | 11/16 | 2026-07-13 20:01 UTC |  |
 | 20 | TGPane | GetRight | 140 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 21 | ShipClass | GetSceneNodeId | 113 | 16/16 | 2026-07-13 20:23 UTC |  |
 | 22 | App | ET_LAUNCH_PROBE | 110 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 23 | ExplodeEmitterProperty_Create() | SetOrientation | 106 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 24 | ExplodeEmitterProperty_Create() | SetPosition | 106 | 10/16 | 2026-07-13 19:30 UTC |  |
-| 25 | App | ET_TARGET_WAS_CHANGED | 102 | 13/16 | 2026-07-13 20:23 UTC |  |
+| 25 | App | ET_TARGET_WAS_CHANGED | 102 | 13/16 | 2026-07-13 20:23 UTC | 2026-07-14 |
 | 26 | ShipClass | SetSplashDamage | 100 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 27 | TGInputManager | MoveMouseCursorTo | 97 | 16/16 | 2026-07-13 20:23 UTC |  |
 | 28 | Waypoint | GetPhaserSystem.GetNumChildSubsystems | 90 | 2/16 | 2026-07-13 12:09 UTC | 2026-07-13 |
@@ -48,14 +48,14 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 36 | App | ET_CANT_FIRE | 64 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 37 | App | ET_PLAYER_TORPEDO_TYPE_CHANGED | 64 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 38 | TorpedoSystem | SetSingleFire | 64 | 13/16 | 2026-07-13 20:23 UTC |  |
-| 39 | ShipClass | IsScannable | 63 | 13/16 | 2026-07-13 20:23 UTC |  |
+| 39 | ShipClass | IsScannable | 63 | 13/16 | 2026-07-13 20:23 UTC | 2026-07-14 |
 | 40 | STTopLevelMenu | GetContainingWindow | 60 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 41 | App | ET_TRACTOR_BEAM_STARTED_FIRING | 58 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 42 | App | ET_SET_TARGET | 56 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 43 | App | ET_TRACTOR_BEAM_STOPPED_FIRING | 56 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 44 | EngPowerCtrl | GetBottom | 56 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 45 | TGIcon | GetRight | 56 | 13/16 | 2026-07-13 20:23 UTC |  |
-| 46 | EventType | ET_TARGET_WAS_CHANGED | 54 | 8/16 | 2026-07-13 20:23 UTC |  |
+| 46 | EventType | ET_TARGET_WAS_CHANGED | 54 | 8/16 | 2026-07-13 20:23 UTC | 2026-07-14 |
 | 47 | STCharacterMenu | GetNextChild.SetEnabled | 54 | 3/16 | 2026-07-13 20:01 UTC |  |
 | 48 | ShipClass | GetTargetOffsetTG | 50 | 4/16 | 2026-07-13 20:23 UTC |  |
 | 49 | App | g_kMainMenuButton2HighlightedColor | 49 | 7/16 | 2026-07-13 19:30 UTC |  |
@@ -264,7 +264,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 252 | Planet | GetVelocity.x | 11 | 1/16 | 2026-07-13 08:53 UTC | 2026-07-13 |
 | 253 | Planet | GetVelocity.y | 11 | 1/16 | 2026-07-13 08:53 UTC | 2026-07-13 |
 | 254 | Planet | GetVelocity.z | 11 | 1/16 | 2026-07-13 08:53 UTC | 2026-07-13 |
-| 255 | Planet | IsScannable | 11 | 10/16 | 2026-07-13 19:30 UTC |  |
+| 255 | Planet | IsScannable | 11 | 10/16 | 2026-07-13 19:30 UTC | 2026-07-14 |
 | 256 | App | ET_IN_SYSTEM_WARP | 10 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 257 | App | ET_MOUSE | 10 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 258 | App | ET_NAME_CHANGE | 10 | 10/16 | 2026-07-13 19:30 UTC |  |

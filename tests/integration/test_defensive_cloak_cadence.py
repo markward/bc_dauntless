@@ -14,16 +14,20 @@ from engine.appc.subsystems import CloakingSubsystem, HullSubsystem, PowerSubsys
 from engine.appc.properties import PowerProperty
 
 
-class _InertAI:
+class _InertAI(ArtificialIntelligence):
     """Minimal AI whose SDK tick is a harmless no-op: tick_ai's type-dispatch
-    matches none of the AI classes and falls through to `return ai._status`, so
-    this must carry `_status` (and GetShip for the inert-coast gate). Used so a
-    ship that EXITS defensive mode and resumes its SDK AI doesn't crash the loop."""
+    matches none of the leaf AI classes (BuilderAI/PreprocessingAI/
+    ConditionalAI/PriorityListAI/SequenceAI/RandomAI/PlainAI) and falls
+    through to `return ai._status`. Used so a ship that EXITS defensive mode
+    and resumes its SDK AI doesn't crash the loop.
+
+    Subclasses ArtificialIntelligence (rather than duck-typing _status/
+    GetShip standalone) so it participates in the real tree-activation
+    lifecycle (SetActive/SetInactive/_is_active_in_tree) that ai_driver
+    drives on every real AI node — it is a bare no-op node, not an
+    exemption from that contract."""
     def __init__(self, ship):
-        self._ship = ship
-        self._status = ArtificialIntelligence.US_ACTIVE
-    def GetShip(self):
-        return self._ship
+        super().__init__(ship, "_InertAI")
 
 
 @pytest.fixture(autouse=True)

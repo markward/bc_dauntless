@@ -664,6 +664,33 @@ class WeaponSystem(PoweredSubsystem):
         self._next_emitter_index: int = 0
         self._currently_firing: list = []
 
+    def ShouldBeAimed(self) -> int:
+        """Does this weapon system have to bear on the target to fire?
+
+        Decompiled stbc.exe (WeaponSystem::ShouldBeAimed, 0x00584070):
+
+            iVar1 = FUN_00584050();                    // this->GetProperty()
+            return *(undefined1 *)(iVar1 + 0x51);      // property->m_bAimedWeapon
+
+        i.e. it is *purely* a read of the authored WeaponSystemProperty
+        flag written by SetAimedWeapon (+0x51) — no per-class constant, no
+        separate storage. The property ctor (0x0069afe0) defaults it to 0,
+        and TorpedoSystemProperty's ctor (0x00693f60) does not override it,
+        so an unauthored system is free-fire for every weapon type.
+
+        Consumer: AI/Preprocessors.py:642-647 (FireScript.CheckGoodShot)
+        skips the whole directional check when this is false.
+        """
+        prop = self.GetProperty()
+        # getattr-with-default, not hasattr: our leaf emitters (PhaserBank,
+        # TorpedoTube) also inherit WeaponSystem but carry a PhaserProperty /
+        # TorpedoTubeProperty, which has no AimedWeapon byte. The SDK only
+        # asks the aggregator, so falling back to the ctor default is inert.
+        is_aimed = getattr(prop, "IsAimedWeapon", None)
+        if is_aimed is None:
+            return 0
+        return is_aimed()
+
     # ── Parent-aggregator predicates ───────────────────────────────────
     # WeaponSystem parents own their hardpoint emitters (PhaserBank,
     # TorpedoTube, PulseWeapon, TractorBeam) as _children. Damage lands
@@ -1612,6 +1639,30 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     def GetRechargeRate(self) -> float:             return self._recharge_rate
     def GetChargeLevel(self) -> float:              return self._charge_level
     def GetCooldownTime(self) -> float:             return self._cooldown_time
+
+    def GetLaunchSpeed(self) -> float:
+        """SDK AI/Preprocessors.py:778 (FireScript.GetWeaponInfo) — used to
+        lead the AI's aim point on pulse-weapon fire (fTime = fDistance /
+        fSpeed, Preprocessors.py:742). There is no authored per-weapon
+        launch-speed field; the real value lives on the bound projectile
+        module (e.g. Tactical/Projectiles/PulseDisruptor.py:43
+        GetLaunchSpeed() -> 55.0), same as the launch speed Fire() itself
+        uses via _spawn_projectile (weapon_subsystems.py:308). Resolve it
+        the same way: PulseWeaponProperty.GetModuleName() names the
+        projectile script; import it and read its GetLaunchSpeed(). Returns
+        0.0 (not a hardcoded default) if the property, module name, module,
+        or attribute is genuinely absent — matching _spawn_projectile's own
+        missing-module fallback rather than inventing a number."""
+        prop = self.GetProperty()
+        script = prop.GetModuleName() if (prop is not None and hasattr(prop, "GetModuleName")) else ""
+        if not script:
+            return 0.0
+        import importlib
+        try:
+            mod = importlib.import_module(script)
+        except ImportError:
+            return 0.0
+        return float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
 
     def GetChargeWatcher(self):
         """FloatRangeWatcher on the charge FRACTION

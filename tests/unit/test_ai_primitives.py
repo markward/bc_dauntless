@@ -332,7 +332,11 @@ def test_condition_event_creator_subscribes_and_fires_event():
         cond.SetStatus(1)  # change → fires
     finally:
         App.g_kEventManager.AddEvent = real_add
-    assert captured == [evt]
+    # cond.SetStatus also broadcasts ET_AI_CONDITION_CHANGED (real Appc posts
+    # it from ConditionScript::SetStatus on every transition -- see
+    # engine/appc/ai.py TGCondition.SetStatus); assert the creator's own
+    # stored event fired rather than exact-matching the full captured list.
+    assert evt in captured
 
 
 def test_condition_event_creator_set_event_round_trip():

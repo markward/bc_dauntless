@@ -64,9 +64,31 @@ class TGCondition:
         new_status = int(status)
         changed = (new_status != self._status)
         self._status = new_status
-        if changed and self._active:
+        if not changed:
+            return
+        if self._active:
             for h in list(self._handlers):
                 h.ConditionChanged(self)
+        # Real Appc posts ET_AI_CONDITION_CHANGED from ConditionScript::SetStatus
+        # so composite conditions can watch their children
+        # (Conditions/ConditionCriticalSystemBelow.py). Fired unconditionally on
+        # a real change — NOT gated on _active, which only governs the direct
+        # handler list.
+        #
+        # NOT wrapped in try/except. Removing the swallow allows event construction
+        # and dispatch infrastructure errors to surface. Handler body exceptions are
+        # caught and logged by design (see events.py:501-506, the broadcast path guard),
+        # matching original BC's behavior of printing tracebacks while the loop continues.
+        # The benefit: event setup errors in never-before-run code now propagate instead of
+        # vanishing. Matches ShipClass.SetTarget's AddEvent, which deliberately refuses
+        # the same swallow.
+        import App
+        evt = App.TGIntEvent_Create()
+        evt.SetEventType(App.ET_AI_CONDITION_CHANGED)
+        evt.SetInt(new_status)
+        evt.SetSource(self)
+        evt.SetDestination(self)
+        App.g_kEventManager.AddEvent(evt)
 
     def AddHandler(self, handler) -> None:
         if handler not in self._handlers:
@@ -136,6 +158,30 @@ class ConditionScript(TGCondition):
     def GetArguments(self) -> tuple:
         return self._args
 
+    # Real Appc's ConditionScript::SetActive / ::SetInactive forward to the
+    # wrapped Python instance's optional Activate() / Deactivate(). Five shipped
+    # conditions define Activate(); the load-bearing one is ConditionTimer
+    # (65 SDK uses), whose Activate() re-arms the timer when bResetOnActivate is
+    # set (Conditions/ConditionTimer.py:66-81). Without the forward it fires once
+    # and latches true forever.
+    def SetActive(self, *args) -> None:
+        super().SetActive(*args)
+        activate = getattr(self._instance, "Activate", None) if self._instance else None
+        if callable(activate):
+            try:
+                activate()
+            except Exception as _e:
+                dev_mode.log_swallowed("condition Activate", _e)
+
+    def SetInactive(self, *args) -> None:
+        super().SetInactive(*args)
+        deactivate = getattr(self._instance, "Deactivate", None) if self._instance else None
+        if callable(deactivate):
+            try:
+                deactivate()
+            except Exception as _e:
+                dev_mode.log_swallowed("condition Deactivate", _e)
+
 
 def ConditionScript_Create(module_name: str, class_name: str, *args) -> ConditionScript:
     return ConditionScript(module_name, class_name, *args)
@@ -196,6 +242,10 @@ class _AIScriptInstance:
 # ── ArtificialIntelligence ────────────────────────────────────────────────────
 
 class ArtificialIntelligence:
+    # Values read from the binary's swig_const_info table (0x0090d9ac+), 2026-07-14.
+    # ai-architecture.md sec.2 lists DORMANT/DONE swapped — the DOC is wrong, and
+    # that error is what made its PreprocessingAI::Update switch look inverted.
+    # Pinned by tests/unit/test_ai_reset_and_status_values.py.
     US_ACTIVE = 0
     US_DONE = 1
     US_DORMANT = 2
@@ -230,6 +280,13 @@ class ArtificialIntelligence:
         # base so every node type — not just PlainAI — can be rescheduled by
         # ForceUpdate. Interior nodes that don't self-gate simply ignore it.
         self._next_update_time: float = 0.0
+        # Node-in-tree activation state (BaseAI vtable +0x20/+0x24 in
+        # ai-architecture.md Sec.6) -- distinct from IsActive()/_status
+        # (US_ACTIVE vs US_DORMANT/US_DONE, "is this node's own work
+        # currently eligible"). This is "has the AI driver's dispatch
+        # reached this node on the active path this tick", set/cleared by
+        # SetActive()/SetInactive() below.
+        self._is_active_in_tree: bool = False
         type(self)._allocate_id(self)
 
     @classmethod
@@ -274,13 +331,46 @@ class ArtificialIntelligence:
             out.extend(contained.GetAllAIsInTree())
         return out
 
+    def GetFocusAIs(self) -> list:
+        """The AIs on the current focus path, self first if self has focus.
+
+        Appc hand-registers this on ArtificialIntelligence (0x00470f70;
+        ai-architecture.md sec.4). AI/Preprocessors.py:2230
+        (FelixReportStatus.Update) walks it and calls CallExternalFunction(
+        "QueryAIStatus", lStatus) on each node, which is how the crew report
+        what the AI is currently doing. Every AI/Player tree roots one of these.
+
+        The focus latch is written by ai_driver for every node it reaches on the
+        active dispatch path, so "reached this tick" == "has focus".
+        """
+        return [ai for ai in self.GetAllAIsInTree() if ai.HasFocus()]
+
     # ── Status ───────────────────────────────────────────────────────────────
     def IsActive(self) -> int:            return 1 if self._status == self.US_ACTIVE else 0
     def HasFocus(self) -> int:            return 1 if self._has_focus else 0
     def Pause(self) -> None:              self._paused = True
     def Unpause(self) -> None:            self._paused = False
     def IsPaused(self) -> int:            return 1 if self._paused else 0
-    def Reset(self) -> None:              self._status = self.US_ACTIVE
+    def Reset(self) -> None:
+        """Re-arm this node: ACTIVE, due immediately, and tell the script.
+
+        Appc's Reset zeroes nextUpdateTime so the node updates on the very next
+        tick (ai-architecture.md sec.3). Four PlainAI scripts define a script-side
+        Reset() — FollowWaypoints (rewinds the waypoint cursor), Warp,
+        ManeuverLoop, IntelligentCircleObject — and
+        AI/Compound/TractorDockTargets.py:20 calls it on its contained AI.
+        """
+        self._status = self.US_ACTIVE
+        self._next_update_time = 0.0
+        d = getattr(self, "__dict__", {})
+        inst = d.get("_script_instance") or d.get("_preprocessing_instance")
+        reset = getattr(inst, "Reset", None) if inst is not None else None
+        if callable(reset):
+            try:
+                reset()
+            except Exception as _e:
+                dev_mode.log_swallowed("AI script Reset", _e)
+
     def SetInterruptable(self, v) -> None: self._interruptable = bool(v)
     def IsInterruptable(self) -> int:     return 1 if self._interruptable else 0
 
@@ -308,6 +398,35 @@ class ArtificialIntelligence:
 
     def GetExternalFunctions(self) -> dict:
         return dict(self._external_functions)
+
+    # ── Tree activation lifecycle ────────────────────────────────────────────
+    # Mirrors BaseAI's SetActive/SetInactive (vtable +0x20/+0x24,
+    # ai-architecture.md Sec.6): fired when a node becomes active/inactive IN
+    # THE TREE (i.e. reached / not reached on the AI driver's active dispatch
+    # path this tick), guarded so each fires exactly once per transition --
+    # not every tick. This is a different question from IsActive()
+    # (US_ACTIVE vs DORMANT/DONE) above; do not conflate the two.
+    def SetActive(self) -> None:
+        """Node became active in the tree. Appc guards this with a byte flag
+        so it fires ONCE per activation, not every tick (BaseAI vtable
+        +0x20)."""
+        if self._is_active_in_tree:
+            return
+        self._is_active_in_tree = True
+        self._on_activated()
+
+    def SetInactive(self) -> None:
+        """Node was deactivated (BaseAI vtable +0x24). Matching edge."""
+        if not self._is_active_in_tree:
+            return
+        self._is_active_in_tree = False
+        self._on_deactivated()
+
+    def _on_activated(self) -> None:
+        """Subclass hook. Base does nothing."""
+
+    def _on_deactivated(self) -> None:
+        """Subclass hook. Base does nothing."""
 
     # ── Forced reschedule ────────────────────────────────────────────────────
     def ForceUpdate(self) -> None:
@@ -453,6 +572,9 @@ class SequenceAI(ArtificialIntelligence):
         super().__init__(pShip, name)
         self._ais: list = []
         self._loop_count: int = 1
+        # Passes remaining. -1 = forever (ai-architecture.md sec.2: the C++ node
+        # keeps the remaining-loop count at +0x34 and decrements it on wrap).
+        self._loops_remaining: int = 1
         self._reset_if_interrupted: bool = False
         self._double_check_all_done: bool = False
         self._skip_dormant: bool = False
@@ -473,10 +595,24 @@ class SequenceAI(ArtificialIntelligence):
             return self._ais[int(index)]
         return None
 
-    def SetLoopCount(self, n) -> None:        self._loop_count = int(n)
+    def SetLoopCount(self, n) -> None:
+        self._loop_count = int(n)
+        self._loops_remaining = int(n)
+
     def GetLoopCount(self) -> int:            return self._loop_count
-    def SetResetIfInterrupted(self, v) -> None: self._reset_if_interrupted = bool(v)
-    def SetDoubleCheckAllDone(self, v) -> None: self._double_check_all_done = bool(v)
+
+    def SetResetIfInterrupted(self, v) -> None:
+        # Stored-but-unused: no tree we currently run depends on this flag,
+        # and its exact semantics are not established by the RE corpus
+        # (ai-architecture.md sec.2 names the field but not its precise
+        # effect). Do not invent behaviour for it.
+        self._reset_if_interrupted = bool(v)
+
+    def SetDoubleCheckAllDone(self, v) -> None:
+        # Stored-but-unused — see SetResetIfInterrupted above; same
+        # ai-architecture.md sec.2 caveat applies.
+        self._double_check_all_done = bool(v)
+
     def SetSkipDormant(self, v) -> None:      self._skip_dormant = bool(v)
 
 
@@ -489,10 +625,12 @@ def SequenceAI_Create(pShip=None, name: str = "") -> SequenceAI:
 class RandomAI(ArtificialIntelligence):
     """SDK App.py:5019 — sibling of PriorityListAI/SequenceAI.
 
-    Picks one child at random and ticks it each frame; when that child
-    reaches US_DONE it re-picks a new random child on the next tick
-    (../STBC-Reverse-Engineering-1/docs/gameplay/ai-architecture.md, RandomAI
-    section: "Picks one child at random; on completion, picks another").
+    Draws children WITHOUT replacement: the C++ node keeps a per-child
+    "already tried" byte array (+0x2C) and draws a new child from the
+    un-tried entries, clearing the flag and re-drawing on DORMANT/DONE
+    (ai-architecture.md sec.1/sec.2). Once every child has been drawn, the
+    pool refills and a new cycle begins — this is what stops the same
+    evasive maneuver from repeating back-to-back.
     Typically wraps several maneuver children inside a forever-looping
     SequenceAI (sdk/.../AI/Compound/Parts/NoSensorsEvasive.py:47-52,
     sdk/.../QuickBattle/QuickBattleAI.py:51-58). Dispatch lives in
@@ -503,10 +641,16 @@ class RandomAI(ArtificialIntelligence):
         self._ais: list = []
         # The child currently being ticked; re-picked when it reaches DONE.
         self._current_child = None
+        # Children not yet drawn this cycle. The C++ node keeps this as an
+        # "already tried" byte array (+0x2C) and draws only from the un-tried
+        # entries, refilling when they run out — so every maneuver runs before any
+        # repeats (ai-architecture.md sec.1/sec.2).
+        self._untried: list = []
 
     def AddAI(self, ai) -> None:
         """SDK Appc.RandomAI_AddAI — append a child AI."""
         self._ais.append(ai)
+        self._untried.append(ai)
 
     def GetAIs(self) -> list:
         """Return the child AI list (used by the AI inspector)."""
@@ -536,14 +680,6 @@ class PreprocessingAI(ArtificialIntelligence):
         self._contained_ai = None
         self._preprocessing_method: str = ""
         self._preprocessing_instance: "_AIScriptInstance | None" = None
-        # Set to True when the preprocessor's Update returns PS_DONE.
-        # SDK semantics: "this preprocessor's job is finished" — stop
-        # calling Update on it, but the wrapper PreprocessingAI is NOT
-        # done; the contained_ai continues to dispatch normally. Without
-        # this gate, an "Unused"-style preprocessor (e.g. ManagePower
-        # which returns PS_DONE unconditionally) would kill the whole
-        # subtree on the first tick.
-        self._preprocess_done: bool = False
         # Last PS_* result from the preprocessor's Update, so cadence-skipped
         # ticks (game_time < _next_update_time) can reproduce its effect
         # instead of blindly dispatching the contained AI. See
@@ -574,8 +710,19 @@ class PreprocessingAI(ArtificialIntelligence):
             self._preprocessing_instance = _AIScriptInstance(self)
         elif len(args) >= 2:
             # (script_instance, method_name) — keep the caller's object so
-            # GetPreprocessingInstance returns what they constructed.
-            self._preprocessing_instance = args[0]
+            # GetPreprocessingInstance returns what they constructed…
+            #
+            # …unless the engine has an optimized version of it. Appc's
+            # SetContainedAI runs the node through GetOptimizedVersion (vtable
+            # +0x34) and stores what comes BACK, swapping Python preprocessors
+            # for compiled C++ ones and deleting the Python-backed node. We do
+            # the equivalent at bind time, by class name. Critically this
+            # replaces the SDK's ManagePower, whose `# Unused. return PS_DONE`
+            # body never runs in the shipped game and would otherwise delete the
+            # ship's whole AI (PS_DONE -> US_DONE). See engine/appc/ai_optimized.py.
+            from engine.appc.ai_optimized import optimized_version_of
+            instance = optimized_version_of(args[0])
+            self._preprocessing_instance = instance
             self._preprocessing_method = args[1]
             # SDK preprocessor classes (SelectTarget, FireScript) call
             # self.pCodeAI.GetShip()/GetAllAIsInTree() throughout their
@@ -583,12 +730,36 @@ class PreprocessingAI(ArtificialIntelligence):
             # SetPreprocessingMethod runs; Phase 1 has no optimization,
             # so we wire it here. Slice B test fixtures set this
             # explicitly; NonFedAttack/FedAttack SDK CreateAI doesn't.
+            # Bound onto the REPLACEMENT, never the discarded original.
             try:
-                args[0].pCodeAI = self
+                instance.pCodeAI = self
             except (AttributeError, TypeError):
                 # Instance refuses attribute assignment (e.g. slotted
                 # class); skip — caller is responsible.
                 pass
+            # Appc's SetPreprocessingMethod calls the instance's CodeAISet()
+            # hook once pCodeAI is bound (ai-architecture.md sec.4,
+            # 0x0048e400). Four shipped preprocessors define a real one:
+            # FireScript (registers the SetTarget external function),
+            # UpdateAIStatus (registers QueryAIStatus), UseShipTarget
+            # (installs the target-changed handler) and the
+            # ChainFollowThroughWarp / TractorDockTargets compounds.
+            # SelectTarget's is commented out in the SDK because the native
+            # OptimizedSelectTarget ctor did that work — ai_driver's
+            # _ensure_select_target_initialized still stands in for the C++
+            # class.
+            #
+            # NOT wrapped in try/except. This call IS the whole payoff of the
+            # CodeAISet wiring — UpdateAIStatus, TractorDockTargets,
+            # ChainFollowThroughWarp and UseShipTarget all run their engine-side
+            # registration here for the FIRST TIME. A swallow would let the
+            # feature silently do nothing while the suite stayed green
+            # (dev_mode.log_swallowed is a no-op without --developer, which is
+            # never on under pytest). Same call as ShipClass.SetTarget's AddEvent:
+            # let it propagate.
+            code_ai_set = getattr(instance, "CodeAISet", None)
+            if callable(code_ai_set):
+                code_ai_set()
 
     def GetPreprocessingInstance(self):
         if self._preprocessing_instance is None:
@@ -666,9 +837,33 @@ class ConditionalAI(ArtificialIntelligence, TGConditionHandler):
     def AddCondition(self, cond: TGCondition) -> None:
         self._conditions.append(cond)
         cond.AddHandler(self)
+        # Appc's ConditionalAI drives SetActive/SetInactive across its
+        # condition list from the NODE's own tree-activation lifecycle (see
+        # _on_activated/_on_deactivated below), not at wiring time. A
+        # condition added to a node that isn't active in the tree yet must
+        # stay inactive until the node itself activates; a condition added
+        # to an already-active node (late add on a live branch) activates
+        # immediately so it isn't left stranded.
+        if self._is_active_in_tree:
+            cond.SetActive()
 
     def GetConditions(self) -> list:
         return list(self._conditions)
+
+    # ── Tree activation lifecycle (drives the condition list) ──────────────
+    # ai-architecture.md Sec.6: ConditionalAI's only confirmed C++ overrides
+    # are SetActive/SetInactive/LostFocus, "all of which register/unregister
+    # against the condition list". SetActive is what reaches
+    # ConditionTimer.Activate() and re-arms it -- but only when the AI
+    # driver actually calls it on node (re)activation (see ai_driver.py
+    # _reconcile_active), not once at AddCondition time.
+    def _on_activated(self) -> None:
+        for cond in self._conditions:
+            cond.SetActive()
+
+    def _on_deactivated(self) -> None:
+        for cond in self._conditions:
+            cond.SetInactive()
 
 
 def ConditionalAI_Create(pShip=None, name: str = "") -> ConditionalAI:

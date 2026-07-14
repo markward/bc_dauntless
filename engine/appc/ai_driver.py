@@ -35,22 +35,39 @@ PS_DONE = PreprocessingAI.PS_DONE
 
 # Focus-loss lifecycle state. tick_ai is single-threaded (one ship at a time),
 # so module-level scratch is safe. _reached_this_tick collects the
-# PreprocessingAI nodes reached (== focused) during the current root tick.
+# PreprocessingAI and PlainAI nodes reached (== focused) during the current
+# root tick. _reached_this_tick_all collects EVERY node type reached (==
+# active in the tree, ai-architecture.md Sec.6 BaseAI SetActive/SetInactive)
+# -- the driver for Task 4's ConditionScript.SetActive forwarding.
+#
+# Unlike _reached_this_tick_all (identity-deduped below, see _dispatch_ai),
+# _reached_this_tick has no dedup. This is not an oversight: every container
+# that appends to it (_tick_priority_list, _tick_sequence, _tick_conditional,
+# _tick_preprocessing, _tick_random, _tick_builder) dispatches AT MOST ONE
+# child per root tick, so a PreprocessingAI/PlainAI leaf cannot be reached
+# twice in the same root tick and a duplicate can't be constructed.
 _focus_depth = 0
 _reached_this_tick: list = []
+_reached_this_tick_all: list = []
+_reached_this_tick_all_ids: set = set()
 
 
 def tick_ai(ai, game_time: float) -> int:
-    """Tick one AI subtree; reconcile preprocessor focus at the root call.
+    """Tick one AI subtree; reconcile preprocessor focus and tree-activation
+    at the root call.
 
     The outermost tick_ai call (one per ship, from tick_all_ai) is the root: it
     collects which PreprocessingAI nodes were reached (== on the active path ==
     focused) this tick, then dispatches LostFocus() to any node that was focused
-    last tick but not this one. Recursive calls into children just dispatch."""
-    global _focus_depth, _reached_this_tick
+    last tick but not this one -- and, generally, calls SetActive()/
+    SetInactive() on every node as it enters/leaves the active dispatch path.
+    Recursive calls into children just dispatch."""
+    global _focus_depth, _reached_this_tick, _reached_this_tick_all, _reached_this_tick_all_ids
     is_root = _focus_depth == 0
     if is_root:
         _reached_this_tick = []
+        _reached_this_tick_all = []
+        _reached_this_tick_all_ids = set()
     _focus_depth += 1
     try:
         status = _dispatch_ai(ai, game_time)
@@ -58,6 +75,7 @@ def tick_ai(ai, game_time: float) -> int:
         _focus_depth -= 1
     if is_root and ai is not None:
         _reconcile_focus(ai, _reached_this_tick)
+        _reconcile_active(ai, _reached_this_tick_all)
     return status
 
 
@@ -70,6 +88,16 @@ def _dispatch_ai(ai, game_time: float) -> int:
     ship = ai.GetShip() if hasattr(ai, "GetShip") else None
     if ship is not None and ship_death._out_of_action(ship):
         return US_DONE
+    # Record every node type reached on the active dispatch path this root
+    # tick -- the single funnel every _tick_* function passes through, so
+    # this is the one place that needs to record (see _reconcile_active).
+    # Identity-dedup: a node dispatched more than once in the same root tick
+    # (e.g. re-entered via a looping SequenceAI) must only appear once, else
+    # _reconcile_active's `reached` list — and the _active_nodes snapshot
+    # derived from it — carries duplicates.
+    if id(ai) not in _reached_this_tick_all_ids:
+        _reached_this_tick_all_ids.add(id(ai))
+        _reached_this_tick_all.append(ai)
     if isinstance(ai, BuilderAI):
         return _tick_builder(ai, game_time)
     if isinstance(ai, PreprocessingAI):
@@ -88,11 +116,12 @@ def _dispatch_ai(ai, game_time: float) -> int:
 
 
 def _reconcile_focus(root_ai, reached) -> None:
-    """Dispatch LostFocus() to preprocessors focused last tick but not this one.
+    """Dispatch LostFocus() to nodes focused last tick but not this one.
 
-    Identity-based: `reached` holds the PreprocessingAI nodes ticked this root
-    tick. Any node in the root's previous focused set that is not among them has
-    left the active dispatch path."""
+    Identity-based: `reached` holds the PreprocessingAI and PlainAI nodes
+    ticked this root tick (see _tick_preprocessing / _tick_plain). Any node in
+    the root's previous focused set that is not among them has left the active
+    dispatch path."""
     reached_ids = {id(n) for n in reached}
     for node in getattr(root_ai, "_focused_preprocessors", ()):
         if id(node) not in reached_ids:
@@ -100,10 +129,51 @@ def _reconcile_focus(root_ai, reached) -> None:
     root_ai._focused_preprocessors = list(reached)
 
 
+def _reconcile_active(root_ai, reached) -> None:
+    """Dispatch SetActive()/SetInactive() to every AI node as it enters/leaves
+    the active dispatch path this root tick.
+
+    Identity-based, mirroring _reconcile_focus: `reached` holds every node
+    _dispatch_ai actually ran this root tick (recorded there -- the single
+    funnel every node type passes through). A node in the root's previous
+    active set that is not among them has left the tree's active path and is
+    deactivated; every reached node is (re)activated. SetActive/SetInactive
+    are edge-guarded (ArtificialIntelligence._is_active_in_tree), so calling
+    SetActive on a node that's already active is a safe no-op -- this is what
+    lets a ConditionalAI picked back up by its PriorityListAI re-activate its
+    conditions and re-arm a ConditionTimer.
+
+    Every node `_dispatch_ai` can reach is a real ArtificialIntelligence
+    subclass (production AI classes, or a test double that subclasses it --
+    see tests/integration/test_defensive_cloak_cadence.py's _InertAI), so
+    SetActive/SetInactive are called unconditionally here."""
+    reached_ids = {id(n) for n in reached}
+    for node in getattr(root_ai, "_active_nodes", ()):
+        if id(node) not in reached_ids:
+            node.SetInactive()
+    for node in reached:
+        node.SetActive()
+    root_ai._active_nodes = list(reached)
+
+
+def _focus_instance_of(node):
+    """The Python script instance that carries a node's focus hooks.
+
+    PlainAI keeps it in _script_instance; PreprocessingAI in
+    _preprocessing_instance. Read from __dict__ so TGObject.__getattr__ can't
+    hand back a truthy _Stub for a node type that has neither.
+    """
+    d = getattr(node, "__dict__", {})
+    script_inst = d.get("_script_instance")
+    if script_inst is not None:
+        return script_inst
+    return d.get("_preprocessing_instance")
+
+
 def _dispatch_lost_focus(node) -> None:
-    """Call the preprocessor instance's LostFocus() (if any) and clear the
-    node's focus latches so a later re-entry re-fires GotFocus()."""
-    inst = getattr(node, "_preprocessing_instance", None)
+    """Call the node's script instance's LostFocus() (if any) and clear the
+    focus latches so a later re-entry re-fires GotFocus()."""
+    inst = _focus_instance_of(node)
     lost = getattr(inst, "LostFocus", None) if inst is not None else None
     if callable(lost):
         lost()
@@ -111,9 +181,43 @@ def _dispatch_lost_focus(node) -> None:
     node.__dict__["_got_focus_called"] = False
 
 
+def _dispatch_got_focus(node) -> None:
+    """Call the node's script instance's GotFocus() once per activation.
+
+    SDK leaves put real work here: StarbaseAttack.GotFocus starts firing
+    (AI/PlainAI/StarbaseAttack.py:54). Guarded by a sentinel in __dict__ so
+    repeat ticks don't re-fire; _dispatch_lost_focus clears it.
+
+    A PlainAI ticked before SetScriptModule() lands has no instance yet
+    (inst is None) -- the latch must NOT be set on that tick, or the real
+    script's GotFocus would never fire once the module does land.
+    """
+    if node.__dict__.get("_got_focus_called", False):
+        return
+    inst = _focus_instance_of(node)
+    if inst is None:
+        return
+    got = getattr(inst, "GotFocus", None)
+    if callable(got):
+        got()
+    node.__dict__["_got_focus_called"] = True
+
+
 def _tick_plain(ai: PlainAI, game_time: float) -> int:
     if ai._status != US_ACTIVE:
         return ai._status
+
+    # A PlainAI reached on the active dispatch path holds focus this tick — the
+    # same surrogate the PreprocessingAI path uses. Four shipped leaf scripts
+    # put real work in these hooks, and every LostFocus body is cleanup that
+    # MUST run: Warp.py:217 re-enables the collisions it disabled (an
+    # interrupted warp otherwise leaves the ship permanently non-collidable),
+    # RunAction.py:50 aborts the running action, Intercept.py:70 stops the
+    # in-system warp, StarbaseAttack.py:58 stops firing.
+    ai._has_focus = True
+    _reached_this_tick.append(ai)
+    _dispatch_got_focus(ai)
+
     if game_time < ai._next_update_time:
         return ai._status
     inst = ai.GetScriptInstance()
@@ -130,11 +234,13 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     if status is None:
         status = US_ACTIVE
     ai._status = int(status)
-    # Reschedule based on the script's reported interval. Fallback
-    # _AIScriptInstance returns None for unknown Get*; treat as 1 sec.
+    # Reschedule from the script's reported interval. Appc's PlainAI::Update
+    # bridge returns 0.0 when the Python call fails, which makes the AI run
+    # every tick (ai-architecture.md sec.3: "There is no default interval in
+    # C++") — matches PlainAI::GetNextUpdateTime (0x0048d320).
     next_update_fn = getattr(inst, "GetNextUpdateTime", None)
     next_update = next_update_fn() if callable(next_update_fn) else None
-    interval = float(next_update) if next_update is not None else 1.0
+    interval = float(next_update) if next_update is not None else 0.0
     ai._next_update_time = game_time + interval
     return ai._status
 
@@ -225,21 +331,27 @@ def _tick_sequence(ai: SequenceAI, game_time: float) -> int:
         ai._status = US_DONE
         return ai._status
     n = len(ai._ais)
-    looping = int(getattr(ai, "_loop_count", 1)) < 0
     idx = getattr(ai, "_current_index", 0)
 
     def _wrap_or_finish(i):
-        """Index walked off the end: wrap+re-arm a forever-loop, else finish.
+        """Index walked off the end: consume a loop, wrap + re-arm, else finish.
 
-        Returns the new index to keep scanning from, or None if the sequence
-        is finished (status already set to US_DONE)."""
-        if looping:
-            for child in ai._ais:
-                child._status = US_ACTIVE
-            return 0
-        ai._current_index = i
-        ai._status = US_DONE
-        return None
+        Returns the new index to keep scanning from, or None if the sequence is
+        finished (status already set to US_DONE). ai-architecture.md sec.2:
+        wrapping decrements the remaining-loop counter; -1 = loop forever.
+        """
+        remaining = int(getattr(ai, "_loops_remaining", 1))
+        if remaining > 0:
+            remaining -= 1
+            ai._loops_remaining = remaining
+        if remaining == 0:
+            ai._current_index = i
+            ai._status = US_DONE
+            return None
+        # Forever (-1) or passes still owed: re-arm the children and wrap.
+        for child in ai._ais:
+            child._status = US_ACTIVE
+        return 0
 
     # Bound the scan so a list of all-DONE children can't spin forever.
     for _ in range(n + 1):
@@ -251,6 +363,13 @@ def _tick_sequence(ai: SequenceAI, game_time: float) -> int:
         if isinstance(child, ConditionalAI):
             _refresh_conditional_status(child)
         if child._status == US_DORMANT:
+            if int(getattr(ai, "_skip_dormant", 0)):
+                # SetSkipDormant(1): a dormant child is stepped over.
+                idx += 1
+                continue
+            # SetSkipDormant(0) — what all nine E7 trees ask for
+            # (Maelstrom/Episode7/E7M2/EnemyAI.py:63): a dormant child HOLDS the
+            # sequence in place rather than being skipped.
             ai._current_index = idx
             ai._status = US_ACTIVE
             return ai._status
@@ -267,23 +386,26 @@ def _tick_sequence(ai: SequenceAI, game_time: float) -> int:
         ai._current_index = idx
         ai._status = US_ACTIVE
         return ai._status
-    # Scan exhausted without an eligible child (all DONE). A forever-loop
-    # re-runs from the top next tick; a finite sequence is finished.
+    # Scan exhausted without an eligible child (all DONE). A forever/finite
+    # loop with passes remaining re-runs from the top next tick; an exhausted
+    # sequence is finished.
     ai._current_index = 0
-    ai._status = US_ACTIVE if looping else US_DONE
+    ai._status = US_ACTIVE if int(getattr(ai, "_loops_remaining", 1)) != 0 else US_DONE
     return ai._status
 
 
 def _tick_random(ai: RandomAI, game_time: float) -> int:
-    """Pick one child at random and tick it; re-pick when it finishes.
+    """Draw a child from the un-tried pool and tick it; re-draw when it finishes.
 
-    SDK semantics (docs/.../ai-architecture.md, RandomAI): "Picks one child
-    at random; on completion, picks another." RandomAI is used as an
-    infinite maneuver picker inside a forever-looping SequenceAI
-    (sdk/.../QuickBattle/QuickBattleAI.py:51-58,
-    sdk/.../AI/Compound/Parts/NoSensorsEvasive.py:47-52), so the RandomAI
-    itself stays US_ACTIVE while a child runs and does NOT terminate just
-    because one child reached US_DONE — it re-picks on the next tick.
+    Ground truth (ai-architecture.md sec.2, RandomAI::Update 0x004917f0): the node
+    keeps a per-child "already tried" array and draws from the un-tried entries,
+    clearing the flag and re-drawing on DORMANT/DONE. Drawing with replacement
+    would let the same evasive maneuver repeat back-to-back.
+
+    RandomAI is used as an infinite maneuver picker inside a forever-looping
+    SequenceAI (AI/Compound/Parts/NoSensorsEvasive.py:47-52,
+    QuickBattle/QuickBattleAI.py:51-58), so it stays US_ACTIVE while a child runs
+    and does not terminate just because one child finished.
 
     An empty RandomAI has nothing to run and completes immediately.
     """
@@ -291,10 +413,12 @@ def _tick_random(ai: RandomAI, game_time: float) -> int:
         ai._status = US_DONE
         return ai._status
     child = ai._current_child
-    if child is None or child._status == US_DONE:
-        child = random.choice(ai._ais)
-        # Reset the freshly-picked child to ACTIVE so a previously-DONE
-        # child runs again (mirrors how the SDK re-arms a re-selected child).
+    if child is None or child._status in (US_DONE, US_DORMANT):
+        if not ai._untried:
+            ai._untried = list(ai._ais)       # cycle exhausted: refill
+        child = random.choice(ai._untried)
+        ai._untried.remove(child)
+        # Re-arm the freshly-drawn child so a previously-finished one runs again.
         child._status = US_ACTIVE
         ai._current_child = child
     tick_ai(child, game_time)
@@ -369,10 +493,10 @@ def _sync_fire_script_target_subsystem(inst) -> None:
     and only for AI-driven FireScript nodes, so the player is unaffected.
     See docs/superpowers/specs/2026-07-07-npc-subsystem-targeting-design.md.
     """
-    # Gate: FireScript instances only. lWeapons is the FireScript marker
-    # (also used by _ensure_fire_script_initialized); idTargetedSubsystem is
-    # set in FireScript.__init__ so it lives in __dict__ (bypass the _Stub
-    # __getattr__ that would otherwise mask a missing attr).
+    # Gate: FireScript instances only. lWeapons is the FireScript marker;
+    # idTargetedSubsystem is set in FireScript.__init__ so it lives in
+    # __dict__ (bypass the _Stub __getattr__ that would otherwise mask a
+    # missing attr).
     if not hasattr(inst, "lWeapons"):
         return
     if "idTargetedSubsystem" not in getattr(inst, "__dict__", {}):
@@ -433,11 +557,9 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     if callable(getattr(inst, "DamageEvent", None)) and getattr(inst, "pCodeAI", None) is not None:
         _ensure_select_target_initialized(inst)
 
-    # FireScript init (Slice C Task 5): instances with lWeapons +
-    # pCodeAI; FireScript has no DamageEvent. The two gates are
-    # independent — no SDK preprocessor has both markers.
-    if hasattr(inst, "lWeapons") and getattr(inst, "pCodeAI", None) is not None:
-        _ensure_fire_script_initialized(inst)
+    # FireScript's own CodeAISet (AI/Preprocessors.py:137-145) registers the
+    # SetTarget external function; ai.py's SetPreprocessingMethod now calls
+    # it generically at bind time, so no driver-side hack is needed here.
 
     # Focus model surrogate — a PreprocessingAI reached on the active
     # dispatch path holds focus this tick. SelectTarget gates the
@@ -468,11 +590,7 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     # PreprocessingAI ticks". Guarded by a sentinel so subsequent
     # ticks don't re-fire. Duck-typed — no-op for preprocessors
     # without GotFocus.
-    if not ai.__dict__.get("_got_focus_called", False):
-        got_focus = getattr(inst, "GotFocus", None)
-        if callable(got_focus):
-            got_focus()
-        ai._got_focus_called = True
+    _dispatch_got_focus(ai)
 
     # Introspect once per PreprocessingAI instance whether the method
     # takes a positional dEndTime arg (SDK SelectTarget/FireScript) or
@@ -498,6 +616,24 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
         cache = ai._preprocess_arity_cache
 
     arity = cache[2]
+
+    # Appc bypasses the preprocess switch entirely — running the child
+    # unconditionally — when the child is ACTIVE and NOT interruptable
+    # (IsInterruptable is BaseAI vtable +0x04, default 1; verified 2026-07-14).
+    # A node that calls SetInterruptable(0) is asking not to be pre-empted
+    # mid-action by its parent's preprocessor (AI/Compound/Defend.py,
+    # AI/Compound/CallDamageAI.py). This must run before the cadence gate and
+    # skip BOTH its live and cadence-skipped arms — including the lethal
+    # PS_DONE/PS_INVALID mapping — since the whole switch is bypassed, not
+    # just one branch of it.
+    contained = ai._contained_ai
+    if (contained is not None
+            and contained._status == US_ACTIVE
+            and not contained.IsInterruptable()):
+        ai._status = US_ACTIVE
+        tick_ai(contained, game_time)
+        return ai._status
+
     # Cadence gate: run the preprocessor's own Update only when it is due
     # (game_time >= _next_update_time), mirroring _tick_plain and BC's C++
     # dispatcher, which honours every node's GetNextUpdateTime. The contained
@@ -505,13 +641,7 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     # decision-making is gated. ForceUpdate() resets _next_update_time to 0.0
     # so an asynchronous event (e.g. a target cloaking) re-runs the
     # preprocessor on the very next tick instead of after its full cadence.
-    #
-    # Skip calling Update once the preprocessor has reported PS_DONE. SDK
-    # semantics: PS_DONE means "this preprocessor's job is finished", not "the
-    # whole subtree is done". An "Unused"-style preprocessor like ManagePower
-    # returns PS_DONE unconditionally (AI/Preprocessors.py:2148) and would
-    # otherwise kill the wrapper subtree on tick 1.
-    if not ai._preprocess_done and game_time >= ai._next_update_time:
+    if game_time >= ai._next_update_time:
         bound = getattr(inst, method)
         if arity >= 1:
             result = bound(game_time + 1.0)
@@ -537,29 +667,46 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
         interval = float(nxt) if nxt is not None else 0.0
         ai._next_update_time = game_time + interval
 
-        if result == PS_DONE:
-            # Remember not to call Update again; do NOT mark the wrapper
-            # US_DONE. Fall through to contained_ai dispatch.
-            ai._preprocess_done = True
-        elif result == PS_SKIP_DORMANT:
-            ai._status = US_DORMANT
-            return ai._status
-        elif result == PS_SKIP_ACTIVE:
+        if result == PS_SKIP_ACTIVE:
             ai._status = US_ACTIVE
             return ai._status
+        if result == PS_SKIP_DORMANT:
+            ai._status = US_DORMANT
+            return ai._status
+        if result != PS_NORMAL:
+            # PS_DONE (3) and PS_INVALID (4) both map to US_DONE — "this node is
+            # finished" — and US_DONE is what tears an AI down (LostFocus ->
+            # SetInactive -> unlink + delete). Verified in the binary 2026-07-14
+            # (PreprocessingAI::Update switch at 0x48eab1: the default arm of the
+            # PS_* switch is US_DONE).
+            #
+            # Three SDK preprocessors have a PS_DONE path (ManagePower's stub
+            # body, FireScript with no target, AvoidObstacles with no ship). All
+            # three are in the binary's native registry, so none of those Python
+            # bodies runs in the shipped game — and engine/appc/ai_optimized.py
+            # mirrors that registry at bind time (a replacement for ManagePower,
+            # non-lethal wrappers for the other two). This arm is therefore
+            # reached only by a preprocessor the shipped engine did NOT replace,
+            # i.e. one whose PS_DONE really does mean "tear me down".
+            ai._status = US_DONE
+            return ai._status
         # PS_NORMAL falls through to contained_ai dispatch below.
-    elif not ai._preprocess_done:
+    else:
         # Cadence-skipped tick: the preprocessor didn't run this tick, so
         # reproduce its last decision rather than blindly dispatching. A
         # targetless SelectTarget that reported PS_SKIP_DORMANT must stay
         # dormant (not run its combat list against a None target) until its
-        # next scheduled update or a ForceUpdate.
+        # next scheduled update or a ForceUpdate. Same three-way mapping as the
+        # live branch above — a node that reported PS_DONE stays done.
         last = ai._last_preprocess_status
+        if last == PS_SKIP_ACTIVE:
+            ai._status = US_ACTIVE
+            return ai._status
         if last == PS_SKIP_DORMANT:
             ai._status = US_DORMANT
             return ai._status
-        if last == PS_SKIP_ACTIVE:
-            ai._status = US_ACTIVE
+        if last != PS_NORMAL:
+            ai._status = US_DONE
             return ai._status
         # PS_NORMAL (or never-run) falls through to contained_ai dispatch.
 
@@ -619,30 +766,6 @@ def _ensure_select_target_initialized(inst) -> None:
         pShip.SetTarget(inst.sCurrentTarget)
 
     inst._dauntless_codeaiset_done = True
-
-
-def _ensure_fire_script_initialized(inst) -> None:
-    """First-tick CodeAISet analog for FireScript instances.
-
-    SDK Preprocessors.py:137-145 — FireScript.CodeAISet registers the
-    SetTarget external function on its pCodeAI so SelectTarget's
-    `CallExternalFunction("SetTarget", name)` dispatch reaches us.
-
-    Duck-typed gate: instance must have an lWeapons attribute (the
-    FireScript-specific marker — SelectTarget has neither lWeapons
-    nor needs SetTarget registered). FireScript does NOT define
-    DamageEvent, unlike SelectTarget — keep the two init paths
-    independent.
-
-    Idempotent via _dauntless_fs_init_done sentinel on the instance.
-    """
-    if getattr(inst, "_dauntless_fs_init_done", False):
-        return
-    code_ai = getattr(inst, "pCodeAI", None)
-    if code_ai is None:
-        return
-    code_ai.RegisterExternalFunction("SetTarget", {"Name": "SetTarget"})
-    inst._dauntless_fs_init_done = True
 
 
 def _tick_builder(ai: BuilderAI, game_time: float) -> int:

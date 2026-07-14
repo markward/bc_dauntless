@@ -214,6 +214,23 @@ def test_fire_plays_launch_sound():
     _active.clear()
 
 
+# ── GetLaunchSpeed (AI/Preprocessors.py:778 FireScript.GetWeaponInfo) ───────
+
+def test_get_launch_speed_reads_from_the_bound_projectile_module():
+    """FireScript.GetWeaponInfo leads its aim point with
+    ``pWeapon.GetLaunchSpeed()``; it must resolve the authored value from the
+    projectile module bound via PulseWeaponProperty.GetModuleName() (same
+    resolution Fire()/_spawn_projectile use), not a hardcoded/default number.
+    Tactical.Projectiles.PulseDisruptor.GetLaunchSpeed() -> 55.0."""
+    cannon = _pulse_weapon()
+    assert cannon.GetLaunchSpeed() == 55.0
+
+
+def test_get_launch_speed_empty_module_name_returns_zero():
+    cannon = _pulse_weapon(module_name="")
+    assert cannon.GetLaunchSpeed() == 0.0
+
+
 def test_stock_values_re_arm_and_refire_after_recharge():
     """Regression: with the STOCK BoP charge margin (MaxCharge 3.8,
     MinFiringCharge 3.6) a cannon must re-arm and fire again after it

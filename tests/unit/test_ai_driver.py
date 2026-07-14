@@ -49,6 +49,37 @@ def test_plain_ai_respects_get_next_update_time():
     assert leaf.calls == 2
 
 
+def test_plain_ai_missing_get_next_update_time_runs_next_tick_not_throttled():
+    """A script instance that omits GetNextUpdateTime (the _AIScriptInstance
+    data-bag fallback SetScriptModule installs when a module fails to import
+    or is unset) must run Update on the very next tick, not be throttled by
+    a made-up 1.0s interval. Appc's PlainAI::Update bridge returns 0.0 when
+    the Python call fails, which is "run every tick" -- there is no default
+    interval in C++ (ai-architecture.md sec.3).
+
+    All 25 real AI/PlainAI/*.py script classes define GetNextUpdateTime, so
+    this fallback is reachable only through the data-bag shape exercised
+    here (SetScriptModule with an unresolvable module name)."""
+    ship = ShipClass()
+    pai = PlainAI(ship, "fake")
+    pai.SetScriptModule("NoSuchAIScript_ForCadenceFallbackTest")
+    inst = pai.GetScriptInstance()
+    calls = []
+    # Override just Update (instance attribute shadows the data-bag's
+    # __getattr__); GetNextUpdateTime stays absent from the data bag, so
+    # the fallback (getattr returns the no-op lambda, which returns None)
+    # is exercised exactly as in production.
+    inst.Update = lambda: calls.append(1)
+
+    tick_ai(pai, game_time=0.0)
+    tick_ai(pai, game_time=0.1)
+
+    assert len(calls) == 2, (
+        "missing GetNextUpdateTime must fall back to 0.0s (every tick); "
+        "a 1.0s fallback would throttle the second tick out"
+    )
+
+
 def test_plain_ai_status_propagates():
     leaf = _FakeLeaf(status=ArtificialIntelligence.US_DONE)
     pai = _make_plain(ShipClass(), leaf)
@@ -195,31 +226,28 @@ def test_preprocessing_skip_dormant_marks_dormant():
     assert pp._status == ArtificialIntelligence.US_DORMANT
 
 
-def test_preprocessing_done_marks_preprocess_done_but_keeps_dispatching():
-    """SDK semantics: PS_DONE means 'this preprocessor's job is finished',
-    not 'the whole subtree is done'. The wrapper PreprocessingAI continues
-    to dispatch its contained AI; the preprocessor's Update just stops
-    being called.
+def test_preprocessing_done_marks_the_node_done_and_stops_the_child():
+    """PS_DONE means 'this node is finished' -> US_DONE, which tears the node
+    down. Binary-verified 2026-07-14: PreprocessingAI::Update's PS_* switch
+    (0x48eab1) maps PS_DONE and PS_INVALID to US_DONE via its default arm.
 
-    NonFedAttack's ManagePower preprocessor returns PS_DONE unconditionally
-    as an 'Unused' marker (sdk/.../AI/Preprocessors.py:2148); without this
-    behaviour an entire combat subtree dies on tick 1."""
-    # next_update=0 so the contained PlainAI dispatches every tick.
+    This test used to assert the opposite ('keep dispatching the child'), a
+    wrong lesson drawn from ManagePower's `# Unused. return PS_DONE` body —
+    which never runs in the shipped game, because the engine swaps that node for
+    a native one (see engine/appc/ai_optimized.py and
+    tests/unit/test_preprocess_done_is_lethal.py)."""
+    # next_update=0 so the contained PlainAI would dispatch every tick if it
+    # were reached at all.
     leaf = _FakeLeaf(next_update=0.0)
     child = _make_plain(ShipClass(), leaf)
     pp, inst = _make_pp(PreprocessingAI.PS_DONE, child)
     tick_ai(pp, game_time=0.01)
-    # Contained AI still dispatched on the tick PS_DONE was returned.
-    assert leaf.calls == 1
-    # Preprocessor flagged done; wrapper status is US_ACTIVE.
-    assert pp._preprocess_done is True
-    assert pp._status == ArtificialIntelligence.US_ACTIVE
-    # Second tick: preprocessor's Update is NOT called again; contained
-    # AI continues to dispatch.
-    preprocess_calls_after_first_tick = inst.calls
+    assert pp._status == ArtificialIntelligence.US_DONE
+    assert leaf.calls == 0, "PS_DONE must not fall through to the contained AI"
+    # Still done on a later tick; the child is never reached.
     tick_ai(pp, game_time=1.0)
-    assert inst.calls == preprocess_calls_after_first_tick  # not re-called
-    assert leaf.calls == 2  # but contained AI is dispatched again
+    assert pp._status == ArtificialIntelligence.US_DONE
+    assert leaf.calls == 0
 
 
 def test_random_ai_ticks_a_child():

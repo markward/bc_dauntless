@@ -114,6 +114,7 @@ class ShipClass(DamageableObject):
         self._ai = ai
         self._insystem_warp_transit = None
         if old is not None and old is not ai:
+            self._deactivate_ai_tree(old)
             from engine.appc.ai_driver import fire_ai_done
             fire_ai_done(self, old)
 
@@ -128,8 +129,76 @@ class ShipClass(DamageableObject):
         self._ai = None
         self._insystem_warp_transit = None
         if old is not None:
+            self._deactivate_ai_tree(old)
             from engine.appc.ai_driver import fire_ai_done
             fire_ai_done(self, old)
+
+    @staticmethod
+    def _deactivate_ai_tree(ai) -> None:
+        """Clear tree-activation AND focus state across `ai`'s whole subtree.
+
+        `ai_driver._reconcile_active` tracks the active-node set PER ROOT
+        (``root_ai._active_nodes``), so a node's ``_is_active_in_tree`` flag
+        can only be cleared by the same root that set it. That breaks the
+        SDK's real re-parenting idiom (HelmMenuHandlers.OverrideAIInternal):
+        ``pOverrideAI.AddAI(pOldAI, 2)`` grafts the SAME old AI object onto a
+        new root at lower priority, THEN ``pShip.ClearAI(0, pOldAI)`` detaches
+        it from the ship (bDelete=0 — reuse, not destroy), THEN
+        ``pShip.SetAI(pOverrideAI)`` installs the new root. Without this,
+        every node under the detached root stays latched
+        ``_is_active_in_tree = True`` from when the OLD root was ticking it
+        directly — so when the new root's dispatch reaches those same nodes
+        again, ``SetActive()``'s edge guard swallows the transition
+        entirely: a ``ConditionalAI`` never re-registers its condition list
+        (a re-armed ``ConditionTimer`` never re-fires; a polling condition's
+        ``Activate()``-started timer never restarts).
+
+        The FOCUS lifecycle has exactly the same per-root latching design
+        (``root_ai._focused_preprocessors``, ``node._has_focus``,
+        ``node._got_focus_called`` — see ``ai_driver._reconcile_focus``) and so
+        needs exactly the same teardown, for three reasons:
+
+        * ``AI/PlainAI/Warp.LostFocus`` (:217) RE-ENABLES THE COLLISIONS IT
+          DISABLED. Detach a warping ship's AI without dispatching it and the
+          ship is permanently non-collidable.
+        * In the fleet-override idiom above, ``SetActive()`` re-fires on the
+          old subtree when the priority list falls back to it — but
+          ``GotFocus()`` could not, because ``_got_focus_called`` was still
+          latched from the old root. Re-activated but never re-focused is a
+          self-contradictory state (``StarbaseAttack.GotFocus`` starts firing;
+          it would never run again).
+        * ``HasFocus()`` stayed 1 on detached nodes, so
+          ``ArtificialIntelligence.GetFocusAIs()`` reported nodes that are on
+          no focus path at all.
+
+        Called from both detach points (``ClearAI`` and the old-AI branch of
+        ``SetAI``) so a tree is always deactivated the moment it stops being
+        *this* ship's installed AI, whether or not it goes on to live as a
+        child of something else.
+        """
+        get_tree = getattr(ai, "GetAllAIsInTree", None)
+        if not callable(get_tree):
+            return
+        # Local import: ai_driver imports engine.appc.ai, and ships is imported
+        # from the driver's dispatch path — keep the module-level graph acyclic
+        # (this file already uses local imports for fire_ai_done above).
+        from engine.appc.ai_driver import _dispatch_lost_focus
+        for node in get_tree():
+            # Focus teardown first: the script's LostFocus() cleanup may want to
+            # touch a node that is still nominally active (Warp's StopTowing).
+            # _dispatch_lost_focus calls the script's LostFocus() and clears BOTH
+            # _has_focus and the _got_focus_called latch.
+            if node.HasFocus():
+                _dispatch_lost_focus(node)
+            set_inactive = getattr(node, "SetInactive", None)
+            if callable(set_inactive):
+                set_inactive()
+        # The root's own bookkeeping lists: a detached root is not ticking, so
+        # nothing would ever reconcile these again. Leaving them populated keeps
+        # strong references to a torn-down tree and, if the root is re-installed
+        # later, would make the next reconciliation diff against a stale snapshot.
+        ai._focused_preprocessors = []
+        ai._active_nodes = []
 
     def GetAI(self):
         return self._ai
@@ -1269,6 +1338,7 @@ class ShipClass(DamageableObject):
         sdk/.../TacticalInterfaceHandlers.py:709,733 which resolves against
         whatever object pool the target-menu rows were built from.
         """
+        old_target = self._target
         if isinstance(target, str):
             pSet = self.GetContainingSet()
             if pSet is not None:
@@ -1293,6 +1363,29 @@ class ShipClass(DamageableObject):
                 self._target = resolved
         else:
             self._target = target
+        # Fire ET_TARGET_WAS_CHANGED only on an actual change of the
+        # RESOLVED object (not the raw name/object passed in — SelectTarget
+        # calls this every tick with a string, and re-resolving the same
+        # name must not spam the event). Set the new target BEFORE firing
+        # (above) so a re-entrant handler that calls SetTarget again sees
+        # the new state, per AddEvent's synchronous dispatch.
+        #
+        # Deliberately UNguarded (no try/except around AddEvent), matching
+        # sets.py's ET_ENTERED_SET/ET_EXITED_SET — the closest analog (a
+        # real gameplay event with the ship as destination, consumed by the
+        # same bridge modules). events.py:AddEvent documents destination
+        # dispatch as intentionally unguarded so a crashing handler surfaces
+        # rather than vanishing; several of this event's consumers
+        # (Camera, HelmMenuHandlers, ScienceMenuHandlers) have never once
+        # run in this engine, so swallowing here would hide the first real
+        # signal of a bug in code that has never executed.
+        if self._target is not old_target:
+            import App
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_TARGET_WAS_CHANGED)
+            evt.SetSource(self)
+            evt.SetDestination(self)
+            App.g_kEventManager.AddEvent(evt)
     def GetTargetSubsystem(self):                 return self._target_subsystem
     def SetTargetSubsystem(self, s) -> None:      self._target_subsystem = s
 
@@ -1319,17 +1412,17 @@ class ShipClass(DamageableObject):
         WeaponSystem and its subclasses (PhaserSystem, TorpedoSystem,
         PulseWeaponSystem, TractorBeamSystem) match CT_WEAPON_SYSTEM.
 
+        The CT_* -> subsystem-class table lives in
+        engine.appc.subsystem_types (shared with GetObjType/IsTypeOf — see
+        that module for why a shared table exists at all).
+
         Returns an opaque iterator handle. `None` filter terminates
         immediately (SDK pattern: callers expect either matches or a
         clean exit; mid-walk None is undefined)."""
-        # Function-local imports — App imports ships at module level,
-        # so a top-level `import App` here would loop. Same for
-        # WeaponSystem (sibling module also imported by App).
-        import App
-        from engine.appc.subsystems import (
-            ShipSubsystem, WeaponSystem, SensorSubsystem, ImpulseEngineSubsystem,
-            WarpEngineSubsystem, ShieldSubsystem, HullSubsystem, CloakingSubsystem,
-        )
+        # Function-local import — App imports ships at module level, so a
+        # top-level import here would loop; subsystem_types itself imports
+        # App lazily for the same reason.
+        from engine.appc.subsystem_types import subsystem_class_for_ct
         if match_type is None:
             return iter(())
         candidates = [
@@ -1345,27 +1438,14 @@ class ShipClass(DamageableObject):
         # (NoSensorsEvasive's ConditionSystemDisabled),
         # CT_WARP_ENGINE_SUBSYSTEM (WarpBeforeDeath), CT_HULL_SUBSYSTEM /
         # CT_SHIELD_SUBSYSTEM / CT_IMPULSE_ENGINE_SUBSYSTEM
-        # (SelectTarget.RateSubsystemForTargeting).
-        if match_type is App.CT_WEAPON_SYSTEM:
-            target_class = WeaponSystem
-        elif match_type is App.CT_SENSOR_SUBSYSTEM:
-            target_class = SensorSubsystem
-        elif match_type is App.CT_IMPULSE_ENGINE_SUBSYSTEM:
-            target_class = ImpulseEngineSubsystem
-        elif match_type is App.CT_WARP_ENGINE_SUBSYSTEM:
-            target_class = WarpEngineSubsystem
-        elif match_type is App.CT_SHIELD_SUBSYSTEM:
-            target_class = ShieldSubsystem
-        elif match_type is App.CT_HULL_SUBSYSTEM:
-            target_class = HullSubsystem
-        elif match_type is App.CT_CLOAKING_SUBSYSTEM:
-            target_class = CloakingSubsystem
-        elif match_type is App.CT_SHIP_SUBSYSTEM:
-            # ShipSubsystem is the base class — every subsystem matches.
-            target_class = ShipSubsystem
-        else:
-            # Unknown match type — return empty iter so SDK while-loops
-            # terminate cleanly.
+        # (SelectTarget.RateSubsystemForTargeting), CT_PHASER_SYSTEM /
+        # CT_TORPEDO_SYSTEM / etc. (Conditions/ConditionCriticalSystemBelow
+        # via pSubsystem.GetObjType()). CT_SHIP_SUBSYSTEM is the base class —
+        # every subsystem matches. Unknown/stub match_type -> subsystem_class_
+        # for_ct returns None -> empty iter, so SDK while-loops terminate
+        # cleanly.
+        target_class = subsystem_class_for_ct(match_type)
+        if target_class is None:
             return iter(())
         return iter([s for s in candidates if s is not None and isinstance(s, target_class)])
 

@@ -104,6 +104,33 @@ def test_timer_manager_tracks_absolute_time():
     assert abs(tm.get_time() - 2 * TICK) < 1e-9
 
 
+def test_remove_timer_accepts_an_obj_id_int():
+    """Real Appc's TGTimerManager::RemoveTimer takes the timer's object ID.
+    Conditions/ConditionTimer.py:73 -- the only SDK call site -- calls
+    App.g_kTimerManager.RemoveTimer(self.pTimer.GetObjID()), an int, not a
+    TGTimer instance."""
+    called = []
+    mod = types.ModuleType("_tt5")
+    mod.cb = lambda obj, ev: called.append(True)
+    sys.modules["_tt5"] = mod
+
+    em, tm, dest, ev = _make_stack()
+    dest.AddPythonFuncHandlerForInstance(ET_TEST, "_tt5.cb")
+
+    timer = TGTimer_Create()
+    timer.SetTimerStart(TICK)
+    timer.SetDelay(TICK)
+    timer.SetDuration(-1.0)
+    timer.SetEvent(ev)
+    tm.AddTimer(timer)
+
+    tm.RemoveTimer(timer.GetObjID())  # int, not the TGTimer object
+
+    tm.tick(TICK)
+    tm.tick(TICK)
+    assert called == []  # removed before it ever fired
+
+
 def test_delete_timer_stops_firing():
     called = []
     mod = types.ModuleType("_tt4")

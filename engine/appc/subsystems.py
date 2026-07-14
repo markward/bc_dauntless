@@ -207,6 +207,12 @@ class ShipSubsystem(TGEventHandlerObject):
         # Brex.py:108 registers hull-status thresholds on it). Lazy so the
         # thousands of subsystems that never hand one out pay nothing.
         self._combined_watcher = None
+        # Lazily-created FloatRangeWatcher on GetConditionPercentage(), handed
+        # out by GetConditionWatcher(). SEPARATE from _combined_watcher: each
+        # consumer registers and removes range checks BY INDEX, so sharing one
+        # watcher would let the engineer's status reports and the AI's
+        # ConditionSystemBelow disturb each other's registrations.
+        self._condition_watcher = None
         self._radius = 0.0
         self._position = TGPoint3(0.0, 0.0, 0.0)
         # Body-space mounting axes — defaults match the SDK convention
@@ -456,16 +462,59 @@ class ShipSubsystem(TGEventHandlerObject):
                 self._position_2d = (float(v[0]), float(v[1]))
 
     def IsTypeOf(self, cls) -> int:
-        """SDK class-id check. Returns 1 when this subsystem's source
-        property is an instance of `cls`, else 0.
+        """SDK class-id check — AI/Preprocessors.py:153:
+        `pSystem.IsTypeOf(pExistingSystem.GetObjType())`.
+
+        `cls` is a `CT_*` Property-class constant (`CT_WEAPON_SYSTEM =
+        WeaponSystemProperty`, ...), NOT a subsystem class, so it must be
+        resolved through the shared engine.appc.subsystem_types table before
+        testing — a `PhaserSystem`'s own `_property` is a
+        `WeaponSystemProperty` template (see ships.py `SetupProperties`),
+        never a `PhaserProperty`, so comparing `cls` against `_property`
+        directly (the historical implementation) can never answer the
+        most-specific CT_* constants correctly.
+
+        `PhaserSystem.IsTypeOf(CT_WEAPON_SYSTEM)` must be 1 (a phaser system
+        IS a weapon system); `PhaserSystem.IsTypeOf(CT_TORPEDO_SYSTEM)` must
+        be 0. Leaf emitters (PhaserBank/PulseWeapon/TractorBeam/TorpedoTube)
+        answer `IsTypeOf(CT_ENERGY_WEAPON)`/`IsTypeOf(CT_WEAPON)` from the
+        table too (AI/Preprocessors.py:993 `RateSubsystemForTargeting`,
+        loadspacehelper.py:229,242) and, being leaf emitters rather than
+        weapon-system containers, correctly answer 0 for
+        `IsTypeOf(CT_WEAPON_SYSTEM)`.
 
         `cls` may be a fall-through stub (e.g. App.CT_UNKNOWN_THING
         returns an App._NamedStub instance), so guard with
         isinstance(cls, type) before testing.
+
+        No property-based fallback: this is a class-identity check,
+        independent of whether SetProperty has ever run — see
+        engine.appc.subsystem_types, whose table now covers every CT_*
+        constant any real SDK caller passes to a ShipSubsystem.IsTypeOf
+        (verified by grep across sdk/Build/scripts/ — task 3b fix).
         """
-        if self._property is None or not isinstance(cls, type):
+        if not isinstance(cls, type):
             return 0
-        return 1 if isinstance(self._property, cls) else 0
+        from engine.appc.subsystem_types import subsystem_class_for_ct
+        target = subsystem_class_for_ct(cls)
+        if target is None:
+            return 0
+        return 1 if isinstance(self, target) else 0
+
+    def GetObjType(self):
+        """The subsystem's own most-specific `CT_*` type constant.
+
+        SDK consumers: Conditions/ConditionCriticalSystemBelow.py:76 (one
+        child ConditionSystemBelow per critical subsystem, keyed by this) and
+        AI/Preprocessors.py:153 (FireScript's weapon-system matching). This
+        was implemented nowhere, so it fell through to TGObject.__getattr__'s
+        truthy `_Stub`, StartGetSubsystemMatch(stub) hit its `else: return
+        iter(())` branch, and the caller matched zero subsystems — silently,
+        forever. See engine.appc.subsystem_types for why this needs a shared
+        table rather than just returning `type(self)`.
+        """
+        from engine.appc.subsystem_types import ct_for_subsystem
+        return ct_for_subsystem(self)
 
     def GetParentShip(self):
         return self._parent_ship
@@ -542,6 +591,8 @@ class ShipSubsystem(TGEventHandlerObject):
         engine/appc/objects.py calls SetCondition)."""
         if self._combined_watcher is not None:
             self._combined_watcher._update(self.GetConditionPercentage())
+        if self._condition_watcher is not None:
+            self._condition_watcher._update(self.GetConditionPercentage())
         new_state = self._threshold_state_now()
         old_state = self._threshold_state
         if new_state != old_state:
@@ -813,7 +864,19 @@ class ShipSubsystem(TGEventHandlerObject):
         return None
 
     def GetConditionWatcher(self):
-        return None
+        """FloatRangeWatcher on this subsystem's condition FRACTION (0.0-1.0).
+
+        SDK consumer: Conditions/ConditionSystemBelow.py:94 — the most-used
+        condition in the AI (31 call sites). It registers a range check at its
+        threshold and reads GetWatchedVariable() for the initial state. This
+        returned a hardcoded None, so AddRangeCheck raised inside the condition's
+        __init__, ConditionScript swallowed it, and the condition sat at status 0
+        forever — the AI never learned that a subsystem had been damaged.
+        """
+        if self._condition_watcher is None:
+            self._condition_watcher = FloatRangeWatcher(
+                self.GetConditionPercentage())
+        return self._condition_watcher
 
     def GetCombinedPercentageWatcher(self):
         """FloatRangeWatcher on this subsystem's condition FRACTION

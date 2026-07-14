@@ -570,16 +570,48 @@ def PulseWeapon_Cast(obj):
     return obj if isinstance(obj, PulseWeapon) else None
 
 
+def PulseWeaponSystem_Cast(obj):
+    """SDK AI/Preprocessors.py:771 (FireScript) —
+    `pPulseSystem = App.PulseWeaponSystem_Cast(pWeaponSystem)`, then
+    `range(pPulseSystem.GetNumChildSubsystems())`. Was undefined, so the
+    truthy _NamedStub took the branch and int()-coerced GetNumChildSubsystems
+    to 0 — the AI never enumerated pulse-weapon firing directions at all."""
+    return obj if isinstance(obj, PulseWeaponSystem) else None
+
+
+def Weapon_Cast(obj):
+    """SDK AI/PlainAI/IntelligentCircleObject.py:62-64 —
+    `pWeapon = App.Weapon_Cast(pSystem.GetChildSubsystem(i))`, `if pWeapon:`.
+    Was undefined, so the truthy _NamedStub made the script build its entire
+    weapon list out of stubs.
+
+    Casts to the per-emitter LEAF subsystem (phaser bank / pulse weapon /
+    tractor beam / torpedo tube), never the containing WeaponSystem — "a
+    System is a container of weapons, not a weapon."  Our engine's
+    PhaserBank/PulseWeapon/TractorBeam inherit WeaponSystem rather than
+    Weapon (weapon_subsystems.py — they mix in _EnergyWeaponFireMixin for
+    charge/fire behaviour instead of deriving from Weapon), so a plain
+    `isinstance(obj, Weapon)` would reject them.  Reuse
+    engine.appc.subsystem_types's CT_WEAPON class tuple — the single source
+    of truth for exactly this leaf-emitter split — rather than inventing a
+    second, divergent notion of "weapon" here."""
+    try:
+        from engine.appc.subsystem_types import subsystem_class_for_ct
+    except ImportError:
+        return None
+    # subsystem_class_for_ct returns None for an unmapped CT -- `or ()`
+    # keeps the isinstance() call total (isinstance(obj, None) raises
+    # TypeError; isinstance(obj, ()) is a clean, always-false match).
+    weapon_classes = subsystem_class_for_ct(CT_WEAPON) or ()
+    return obj if isinstance(obj, weapon_classes) else None
+
+
 # ── FuzzyLogic ───────────────────────────────────────────────────────────────
 # Used by SDK PlainAI scripts (TorpedoRun, FollowObject, etc.) for
 # behaviour smoothing. Two forms:
 #   - FuzzyLogic_BreakIntoSets: pure function, triangular memberships
 #     in N bands defined by N threshold peaks.
-#   - FuzzyLogic class: rule-based Mamdani inference engine.
-#
-# Phase 1 implementation favours plausible behaviour over pixel-perfect SDK
-# fidelity (the SDK C++ implementation is unavailable; semantics inferred
-# from PlainAI callers).
+#   - FuzzyLogic class: weighted-edge rule engine (see class docstring below).
 
 def FuzzyLogic_BreakIntoSets(value, thresholds):
     """Return tuple of N floats summing to 1.0, representing triangular
@@ -621,45 +653,76 @@ def FuzzyLogic_BreakIntoSets(value, thresholds):
 
 
 class FuzzyLogic:
-    """Rule-based Mamdani-style fuzzy inference.
+    """Weighted-edge fuzzy inference — a faithful port of Appc's FuzzyLogic.
 
-    SDK callers (sdk/Build/scripts/AI/PlainAI/FollowObject.py:54-62)
-    use this shape:
+    Ground truth: STBC-Reverse-Engineering-1/docs/gameplay/ai-architecture.md
+    sec.12 (ctor 0x0047cd10, GetResultBySet 0x0047d0b0). A "rule" is literally a
+    weighted edge `inputSet --confidence--> outputSet` carrying a runtime
+    percentage-in-set scratch value. A script fuzzifies its inputs with
+    FuzzyLogic_BreakIntoSets, pushes the memberships in with SetPercentageInSet,
+    and reads back the UNNORMALIZED weighted sum of confidence x percentage over
+    every edge targeting an output set. There is no defuzzification, no centroid,
+    no normalization and no clamping — all blending is done in Python by the
+    caller, which compares the raw sums against each other
+    (AI/PlainAI/FollowObject.py:150-152).
 
-        pFuzzy = App.FuzzyLogic()
-        pFuzzy.SetMaxRules(6)
-        pFuzzy.AddRule(input_set_id, output_set_id)
-        pFuzzy.SetPercentageInSet(input_set_id, value)
-        result = pFuzzy.GetResultBySet(output_set_id)
-
-    Phase 1 semantics: GetResultBySet(o) = max over all rules whose
-    output_id == o of the rule's input membership. Matches Mamdani max-
-    aggregation for single-antecedent rules, which is what every SDK
-    caller uses."""
+    Every SDK caller uses the 2-arg AddRule(in, out) form, so confidence
+    defaults to 1.0.
+    """
 
     def __init__(self):
         self._max_rules: int = 0
+        # Each rule: [input_set, output_set, confidence, percentage].
         self._rules: list = []
-        self._percentages: dict = {}
 
     def SetMaxRules(self, n) -> None:
         self._max_rules = int(n)
 
-    def AddRule(self, input_set_id, output_set_id) -> None:
-        self._rules.append((int(input_set_id), int(output_set_id)))
+    def GetMaxRules(self) -> int:
+        return self._max_rules
+
+    def AddRule(self, input_set, output_set, confidence: float = 1.0) -> int:
+        """Append a rule; return its index, or -1 at capacity."""
+        if self._max_rules and len(self._rules) >= self._max_rules:
+            return -1
+        self._rules.append([int(input_set), int(output_set), float(confidence), 0.0])
+        return len(self._rules) - 1
+
+    def GetRule(self, index):
+        i = int(index)
+        if not (0 <= i < len(self._rules)):
+            return None
+        in_set, out_set, conf, _pct = self._rules[i]
+        return (in_set, out_set, conf)
+
+    def RemoveRule(self, index) -> None:
+        """SWAP-REMOVE — the last rule is copied over `index`. Rule indices are
+        NOT stable across removal (ai-architecture.md sec.12, 0x0047cdf0)."""
+        i = int(index)
+        if not (0 <= i < len(self._rules)):
+            return
+        last = self._rules.pop()
+        if i < len(self._rules):
+            self._rules[i] = last
+
+    def SetRuleConfidence(self, index, confidence) -> None:
+        i = int(index)
+        if 0 <= i < len(self._rules):
+            self._rules[i][2] = float(confidence)
 
     def SetPercentageInSet(self, set_id, value) -> None:
-        self._percentages[int(set_id)] = float(value)
+        """Write the percentage onto every rule whose INPUT set matches."""
+        sid = int(set_id)
+        v = float(value)
+        for rule in self._rules:
+            if rule[0] == sid:
+                rule[3] = v
 
-    def GetResultBySet(self, output_set_id) -> float:
-        out = 0.0
-        for in_id, out_id in self._rules:
-            if out_id != output_set_id:
-                continue
-            v = self._percentages.get(in_id, 0.0)
-            if v > out:
-                out = v
-        return out
+    def GetResultBySet(self, set_id) -> float:
+        """Unnormalized sum of confidence x percentage over every rule whose
+        OUTPUT set matches."""
+        sid = int(set_id)
+        return sum(rule[2] * rule[3] for rule in self._rules if rule[1] == sid)
 
 
 # ── AIScriptAssist helpers ───────────────────────────────────────────────────
@@ -964,6 +1027,13 @@ ET_REPORT                   = 1077
 # Game_GetNextEventType allocator floor.
 ET_PLAYER_DOCKED_WITH_STARBASE = 1078
 ET_TRACTOR_TARGET_DOCKED       = 1079
+# Fired by ObjectClass.SetScannable on an actual change of the flag (mirrors
+# ET_HAILABLE_CHANGE above). Bridge/ScienceMenuHandlers.CreateMenus registers
+# a broadcast handler for it (PropertyChange) that refreshes the Scan Object
+# menu's per-ship button when a ship's scannability toggles at runtime (e.g.
+# Maelstrom/Episode6/E6M4's cloaked-Kessok reveal). 1080 is the next free
+# value in this block.
+ET_SCANNABLE_CHANGE            = 1080
 
 # ── FloatRangeWatcher condition event ─────────────────────────────────────────
 # Crossing event broadcast by a power subsystem's battery watcher when the
@@ -1020,6 +1090,35 @@ ET_SUBSYSTEM_OPERATIONAL          = 0x131F
 ET_REPAIR_INCREASE_PRIORITY       = 0x1320
 # A damaged subsystem entered the repair queue.
 ET_ADD_TO_REPAIR_LIST             = 0x1321
+# ── AI condition watcher event types ─────────────────────────────────────────
+# Stamped by the SDK conditions onto the TGFloatEvent they hand to a
+# FloatRangeWatcher, then fired back at them on a threshold crossing:
+#   Conditions/ConditionSystemBelow.py:88-97   (subsystem condition fraction)
+#   Conditions/ConditionSingleShieldBelow.py:36 (per-face shield fraction)
+# These MUST be real distinct ints. App's module-level __getattr__ returns a
+# fresh _NamedStub per access and _NamedStub hashes by id(), so a handler
+# registered under one access can never match an event fired under another —
+# which is exactly how the two most-used conditions in the AI (31 + 12 SDK
+# uses) silently never updated their status.
+ET_AI_SYSTEM_STATUS_WATCHER       = 0x1322
+ET_AI_SHIELD_WATCHER              = 0x1323
+# Broadcast by TGCondition.SetStatus on every status transition. Composite
+# conditions listen for it on their children (Conditions/
+# ConditionCriticalSystemBelow.py). Real int for the same reason as above.
+ET_AI_CONDITION_CHANGED           = 0x1324
+# Posted by ShipClass.SetTarget whenever the resolved target actually
+# changes (Appc-side: ShipClass::SetTarget). Consumers register with
+# AddPythonFuncHandlerForInstance ON THE SHIP (Camera.py:719 on the player,
+# Bridge/HelmMenuHandlers.py:280, Bridge/ScienceMenuHandlers.py:133,
+# Maelstrom/Episode1/E1M2/E1M2.py:1152) and AI/Preprocessors.py's
+# UseShipTarget.CodeAISet registers a broadcast method handler filtered to
+# the ship. Must be a real distinct int for the same reason as the AI
+# condition watchers above: App's module __getattr__ returns a fresh
+# id()-hashed _NamedStub per access, so a handler registered under one
+# access could never match an event fired under another -- which is exactly
+# how UseShipTarget stayed dead even after Task 9 made its CodeAISet hook
+# finally run.
+ET_TARGET_WAS_CHANGED             = 0x1325
 
 _next_event_type_id = 1200
 
