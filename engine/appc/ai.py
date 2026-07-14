@@ -237,6 +237,10 @@ class _AIScriptInstance:
 # ── ArtificialIntelligence ────────────────────────────────────────────────────
 
 class ArtificialIntelligence:
+    # Values read from the binary's swig_const_info table (0x0090d9ac+), 2026-07-14.
+    # ai-architecture.md sec.2 lists DORMANT/DONE swapped — the DOC is wrong, and
+    # that error is what made its PreprocessingAI::Update switch look inverted.
+    # Pinned by tests/unit/test_ai_reset_and_status_values.py.
     US_ACTIVE = 0
     US_DONE = 1
     US_DORMANT = 2
@@ -342,7 +346,26 @@ class ArtificialIntelligence:
     def Pause(self) -> None:              self._paused = True
     def Unpause(self) -> None:            self._paused = False
     def IsPaused(self) -> int:            return 1 if self._paused else 0
-    def Reset(self) -> None:              self._status = self.US_ACTIVE
+    def Reset(self) -> None:
+        """Re-arm this node: ACTIVE, due immediately, and tell the script.
+
+        Appc's Reset zeroes nextUpdateTime so the node updates on the very next
+        tick (ai-architecture.md sec.3). Four PlainAI scripts define a script-side
+        Reset() — FollowWaypoints (rewinds the waypoint cursor), Warp,
+        ManeuverLoop, IntelligentCircleObject — and
+        AI/Compound/TractorDockTargets.py:20 calls it on its contained AI.
+        """
+        self._status = self.US_ACTIVE
+        self._next_update_time = 0.0
+        d = getattr(self, "__dict__", {})
+        inst = d.get("_script_instance") or d.get("_preprocessing_instance")
+        reset = getattr(inst, "Reset", None) if inst is not None else None
+        if callable(reset):
+            try:
+                reset()
+            except Exception as _e:
+                dev_mode.log_swallowed("AI script Reset", _e)
+
     def SetInterruptable(self, v) -> None: self._interruptable = bool(v)
     def IsInterruptable(self) -> int:     return 1 if self._interruptable else 0
 
