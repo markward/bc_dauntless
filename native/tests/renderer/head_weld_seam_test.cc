@@ -126,6 +126,10 @@ std::vector<SeamPair> find_nearest_pairs(const std::vector<SkinnedVert>& body,
                                          const std::vector<SkinnedVert>& head,
                                          float pair_eps) {
     std::vector<SeamPair> pairs;
+    // Multiple head verts can pick the SAME best_b (a many-to-one mapping is
+    // expected, not a bug): UV-seam vertex duplication means several body
+    // verts share one position, so distinct head verts near that seam all
+    // land on whichever duplicate happens to be closest/first.
     for (std::size_t h = 0; h < head.size(); ++h) {
         float best_d = std::numeric_limits<float>::max();
         std::size_t best_b = 0;

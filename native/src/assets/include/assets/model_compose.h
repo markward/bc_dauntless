@@ -14,7 +14,8 @@
 // The work is split so the CPU-side composition is testable without a GL
 // context:
 //   * graft_head_cpu — pure: remaps materials/textures into `body`, builds the
-//     rigid-bound MeshCpu list, attaches them to a node. No GL.
+//     welded MeshCpu list (authored weights kept, indices remapped by name),
+//     attaches them to a node. No GL.
 //   * graft_head     — calls graft_head_cpu, uploads each MeshCpu, appends the
 //     GL Mesh to body.meshes. Needs a current GL context.
 #pragma once

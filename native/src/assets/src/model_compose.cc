@@ -263,6 +263,7 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
 
     std::vector<MeshCpu> out;
     out.reserve(graftable.size());
+    bool warned_overflow = false;
     for (const MeshCpu* src : graftable) {
         MeshCpu cpu = *src;  // deep copy of vertices/indices/extra_uvs
         for (auto& v : cpu.vertices) {
@@ -278,8 +279,15 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
                 const int mapped =
                     (old >= 0 && old < static_cast<int>(bone_map.size()))
                         ? bone_map[old] : -1;
+                const int resolved = mapped < 0 ? attach_idx : mapped;
+                if (resolved > 255 && !warned_overflow) {
+                    std::fprintf(stderr,
+                        "[model_compose] welded bone index %d exceeds 255; "
+                        "clamping (vertex will mis-bind)\n", resolved);
+                    warned_overflow = true;
+                }
                 v.bone_indices[k] = static_cast<std::uint8_t>(
-                    std::clamp(mapped < 0 ? attach_idx : mapped, 0, 255));
+                    std::clamp(resolved, 0, 255));
             }
         }
         const int src_mat = src->material_index;
