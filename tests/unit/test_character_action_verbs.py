@@ -390,3 +390,102 @@ def test_say_line_turns_to_but_does_not_turn_back(monkeypatch):
     action.Play()
 
     assert ctrl.turns == [("to", "Captain")]
+
+
+def _count_completions(monkeypatch):
+    """Count Completed() calls — a skipped action must complete exactly once."""
+    calls = []
+    orig = CharacterAction.Completed
+
+    def _counted(self):
+        calls.append(self)
+        orig(self)
+    monkeypatch.setattr(CharacterAction, "Completed", _counted)
+    return calls
+
+
+def test_skipped_say_line_still_turns_the_officer_back(monkeypatch):
+    # Backspace -> TGActionManager_SkipEvents -> TGAction.Skip ->
+    # _cancel_deferred_timer(), which drops _deferred_on_elapsed — so the
+    # _turn_back_now closure never ran. The forward turn used hold=True, so the
+    # officer AND his chair held the turned-to-captain pose for the rest of the
+    # scene. Skipping dialogue is routine in BC.
+    ch = _character_with("IncomingMsg6", "Some.Module.Unused")
+    ctrl = _TurnRecordingController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    monkeypatch.setattr(CharacterAction, "_do_play", lambda self: 1.5)
+    completions = _count_completions(monkeypatch)
+
+    action = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+                             "IncomingMsg6", "Captain", 1)
+    action.Play()
+    assert ctrl.turns == [("to", "Captain")]     # turned, line playing
+    assert completions == []
+
+    action.Skip()                                # Backspace mid-line
+
+    assert ctrl.turns == [("to", "Captain"), ("back", "Captain")]
+    assert action.IsPlaying() is False           # skip completes immediately
+    assert len(completions) == 1                 # exactly once
+
+    import App
+    App.g_kRealtimeTimerManager.tick(5.0)        # the cancelled timer is gone
+    assert len(completions) == 1                 # still exactly once
+    assert ctrl.turns == [("to", "Captain"), ("back", "Captain")]
+
+
+def test_skipped_say_line_without_a_turn_is_unchanged(monkeypatch):
+    # The Skip() contract for every other case is untouched: no turn owed, no
+    # turn issued, still exactly one completion.
+    ch = _character_with("IncomingMsg6", "Some.Module.Unused")
+    ctrl = _TurnRecordingController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    monkeypatch.setattr(CharacterAction, "_do_play", lambda self: 1.5)
+    completions = _count_completions(monkeypatch)
+
+    action = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+                             "IncomingMsg6", None, 0)
+    action.Play()
+    action.Skip()
+
+    assert ctrl.turns == []
+    assert len(completions) == 1
+
+
+def test_skip_during_the_forward_turn_does_not_speak_afterwards(monkeypatch):
+    # Skipped BEFORE the forward turn settles: the queued _speak_then_turn_back
+    # callback is still live in the controller (and _process_turn rescues it when
+    # the turn-back evicts the forward turn). It must NOT then speak the line the
+    # player just skipped, and must not complete the action a second time.
+    ch = _character_with("IncomingMsg6", "Some.Module.Unused")
+
+    class _DeferringController(_TurnRecordingController):
+        def __init__(self):
+            super().__init__()
+            self.pending = []
+
+        def request_turn_to(self, character, detail, *, back=False, now=False,
+                            hold=True, on_complete=None):
+            self.turns.append(("back" if back else "to", detail))
+            if on_complete is not None:
+                self.pending.append(on_complete)     # settles LATER, like the real one
+
+    ctrl = _DeferringController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    spoken = []
+    monkeypatch.setattr(CharacterAction, "_do_play",
+                        lambda self: (spoken.append(self._detail), 1.5)[1])
+    completions = _count_completions(monkeypatch)
+
+    action = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+                             "IncomingMsg6", "Captain", 1)
+    action.Play()
+    assert spoken == []                          # still turning
+    action.Skip()                                # Backspace before the turn settles
+    assert ("back", "Captain") in ctrl.turns
+    assert len(completions) == 1
+
+    for cb in list(ctrl.pending):                # the controller settles the turns
+        cb()
+    assert spoken == []                          # the skipped line never speaks
+    assert len(completions) == 1                 # and never completes twice

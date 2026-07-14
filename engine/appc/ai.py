@@ -1365,6 +1365,9 @@ class CharacterAction(TGAction):
         self._priority = int(priority)
         self._sub_priority: int = 0
         self._use_name_and_set: bool = False
+        # Skip (Backspace) bookkeeping — see _queue_say_line / Skip.
+        self._skipped: bool = False
+        self._turn_owed = None      # detail of a turn-back this action still owes
         # Spoken lines are skippable by default (Backspace →
         # TGActionManager_SkipEvents), matching BC where dialogue lines skip
         # without the SDK marking each CharacterAction explicitly.
@@ -1528,14 +1531,24 @@ class CharacterAction(TGAction):
 
         The line still BLOCKS the sequence for its real duration (BC does), via
         the existing _do_play/_complete_after path.
+
+        Skip (Backspace) interlock: `_turn_owed` records the turn-back this
+        action still owes the officer, so Skip() can perform it even though it
+        cancels the deferred timer that would otherwise have run _turn_back_now.
+        `_skipped` makes the deferred _speak_then_turn_back a no-op if the
+        controller settles the forward turn AFTER the skip — the player skipped
+        this line, so it must not belatedly speak or complete a second time.
         """
         from engine.appc.characters import CharacterClass_Cast
         from engine import bridge_character_anim
 
         turn_to = self._set_name
         turn_back = self._flag > 0
+        self._turn_owed = str(turn_to) if (turn_to and turn_back) else None
 
         def _speak_then_turn_back():
+            if self._skipped:
+                return                   # skipped mid-turn: never speak it now
             dur = 0.0
             try:
                 dur = self._do_play() or 0.0
@@ -1546,6 +1559,7 @@ class CharacterAction(TGAction):
                 return
             # Turn back once the line has finished, then complete.
             def _turn_back_now():
+                self._turn_owed = None       # this path is discharging it
                 try:
                     cc = CharacterClass_Cast(self._character)
                     ctrl = bridge_character_anim.get_controller()
@@ -1783,7 +1797,38 @@ class CharacterAction(TGAction):
                                  self.AT_SAY_LINE_AFTER_TURN):
             from engine.appc import crew_speech
             crew_speech.bus().skip_current()
+        # Skipping a turned AT_SAY_LINE must still turn the officer back.
+        # TGAction.Skip cancels the deferred timer, and with it the pending
+        # _turn_back_now — the forward turn was hold=True, so the officer AND
+        # his chair would otherwise stay swivelled at the captain for the rest
+        # of the scene. Issue the turn-back HERE (fire-and-forget: no
+        # on_complete, because Skip must complete this action NOW so dependents
+        # advance immediately — that is TGAction::Skip's contract).
+        #
+        # Order matters: set _skipped BEFORE requesting the turn. A skip that
+        # lands while the FORWARD turn is still in flight evicts it inside
+        # _process_turn, which synchronously rescues and fires its on_complete
+        # (_speak_then_turn_back) — and that callback checks _skipped so the
+        # skipped line neither speaks nor completes a second time.
+        self._skipped = True
+        turn_to, self._turn_owed = self._turn_owed, None
+        if turn_to:
+            self._issue_turn_back(turn_to)
         super().Skip()
+
+    def _issue_turn_back(self, detail) -> None:
+        """Best-effort reverse turn with no completion callback (the caller owns
+        completion). Never raises — Skip() must not throw into the action manager."""
+        from engine.appc.characters import CharacterClass_Cast
+        from engine import bridge_character_anim
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            ctrl = bridge_character_anim.get_controller()
+            if cc is not None and ctrl is not None:
+                ctrl.request_turn_to(cc, str(detail), back=True, now=False,
+                                     on_complete=None)
+        except Exception:
+            pass
 
 
 def CharacterAction_Create(
