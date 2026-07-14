@@ -36,18 +36,38 @@ an entry here, for two different reasons:
   FireScript node; targets die and leave sets), and US_DONE is unrecoverable in
   our driver — ``_tick_priority_list`` skips US_DONE children forever. So the
   wrapper delegates every call to the real SDK body and translates ONLY a
-  PS_DONE return into PS_SKIP_DORMANT.
+  PS_DONE return into PS_NORMAL.
 
   *** KNOWN DIVERGENCE — READ THIS BEFORE TRUSTING IT. ***
   We do NOT know what the native FireScript / AvoidObstacles return when they
-  have no target / no ship. That is an OPEN QUESTION for the RE project. The one
-  thing we know for certain is that it is NOT lethal: a Federation ship in the
-  shipped game that loses its target does not lose its AI — it re-acquires and
-  keeps fighting. PS_SKIP_DORMANT ("nothing to do this tick; don't run the
-  child") is our choice, not an observed value. The nearest evidence for it is
-  that the SDK's own SelectTarget reports its no-target state as
-  PS_SKIP_DORMANT (``eNoTargetPreprocessStatus``). This is a guess constrained by
-  one hard fact — do not read it as faithfulness.
+  have no target / no ship. That remains an OPEN QUESTION for the RE project.
+  The one thing we know for certain is that it is NOT lethal: a Federation ship
+  in the shipped game that loses its target does not lose its AI — it re-acquires
+  and keeps fighting.
+
+  THE CHOSEN VALUE IS PS_NORMAL ("run the contained AI"), for two reasons:
+
+  1. It is exactly what shipped before this branch. The old driver mapped PS_DONE
+     to "stop calling the preprocessor, fall through and dispatch the child", so
+     the node stayed US_ACTIVE and its subtree kept running. PS_NORMAL reproduces
+     that behaviour and adds nothing — it is the minimum change that removes the
+     lethality. (It is even strictly better: the old mapping *latched* the
+     preprocessor off forever, so a FireScript that once lost its target never
+     fired again; PS_NORMAL lets it re-run on its next cadence and re-acquire.)
+  2. PS_SKIP_DORMANT (the earlier guess) maps to US_DORMANT, and US_DORMANT is a
+     ONE-WAY TRAP in our driver: ``_tick_priority_list`` skips US_DORMANT children
+     forever (they are never re-dispatched, so they can never leave dormancy), and
+     a ``SequenceAI`` with ``skip_dormant = 0`` HOLDS on a dormant child. An
+     ``AvoidObstacles`` node is a direct ``SequenceAI`` child in 7+ shipped trees
+     (AI/Compound/TractorDockTargets.py:213, Maelstrom/Episode1/E1M1/UndockAI.py:63,
+     E1M1_AI_Devore.py:47, E2M0_AI_Warbird.py:260, E2M1_AI_WarbirdTow.py:94,
+     E4M6/CenterFieldAI.py:43), so a momentary no-ship tick would permanently wedge
+     the sequence. Trading one unrecoverable state for another is no fix.
+
+  The nearest evidence FOR a dormant return is that the SDK's own SelectTarget
+  reports its no-target state as PS_SKIP_DORMANT (``eNoTargetPreprocessStatus``) —
+  but that is a different class, and it is not worth buying a new wedge with. Read
+  PS_NORMAL as "the pre-branch behaviour, minus the lethality", not as faithfulness.
 
 * ``SelectTarget`` is deliberately NOT registered, even though the binary
   replaces it. Its Python body cannot return PS_DONE at all (its no-target path
@@ -108,7 +128,7 @@ _NON_LETHAL_CLASSES: dict = {}
 
 def _non_lethal_class(base: type) -> type:
     """Build (once per SDK class) a subclass whose only difference is that a
-    PS_DONE return from the SDK's ``Update`` becomes PS_SKIP_DORMANT.
+    PS_DONE return from the SDK's ``Update`` becomes PS_NORMAL.
 
     A subclass, not a delegating proxy, because the driver and the SDK bodies
     duck-type all over the instance (``inst.__dict__["idTargetedSubsystem"]``,
@@ -129,13 +149,18 @@ def _non_lethal_class(base: type) -> type:
         if result == App.PreprocessingAI.PS_DONE:
             # *** THE DIVERGENCE. *** The shipped engine never ran this Python
             # body — it ran a native class whose no-target/no-ship return value
-            # we do NOT know (open question for the RE project). We know only
-            # that it was NOT lethal: BC ships that lose a target keep their AI
-            # and re-acquire. PS_DONE -> US_DONE is unrecoverable in our driver,
-            # so we translate to PS_SKIP_DORMANT ("nothing to do this tick; do
-            # not run the child"), which is also how the SDK's own SelectTarget
-            # reports a no-target state. A constrained guess, not faithfulness.
-            return App.PreprocessingAI.PS_SKIP_DORMANT
+            # we do NOT know (still an open question for the RE project). We know
+            # only that it was NOT lethal: BC ships that lose a target keep their
+            # AI and re-acquire.
+            #
+            # PS_NORMAL = "run the contained AI". That is EXACTLY what the driver
+            # did with PS_DONE before this branch, so this reproduces the
+            # shipping behaviour minus the lethality and introduces no new state.
+            # PS_SKIP_DORMANT was considered and rejected: US_DORMANT is a one-way
+            # trap in our driver (_tick_priority_list skips dormant children
+            # forever; a skip_dormant=0 SequenceAI — which is how 7+ shipped trees
+            # parent AvoidObstacles — HOLDS on one). See the module docstring.
+            return App.PreprocessingAI.PS_NORMAL
         return result
 
     cls = type(
@@ -145,7 +170,7 @@ def _non_lethal_class(base: type) -> type:
             "Update": Update,
             "__doc__": (
                 "SDK %s with its lethal PS_DONE return translated to "
-                "PS_SKIP_DORMANT. See engine/appc/ai_optimized.py." % base.__name__
+                "PS_NORMAL. See engine/appc/ai_optimized.py." % base.__name__
             ),
         },
     )

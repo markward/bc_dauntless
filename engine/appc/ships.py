@@ -135,7 +135,7 @@ class ShipClass(DamageableObject):
 
     @staticmethod
     def _deactivate_ai_tree(ai) -> None:
-        """Clear tree-activation state across `ai`'s whole subtree.
+        """Clear tree-activation AND focus state across `ai`'s whole subtree.
 
         `ai_driver._reconcile_active` tracks the active-node set PER ROOT
         (``root_ai._active_nodes``), so a node's ``_is_active_in_tree`` flag
@@ -153,6 +153,24 @@ class ShipClass(DamageableObject):
         (a re-armed ``ConditionTimer`` never re-fires; a polling condition's
         ``Activate()``-started timer never restarts).
 
+        The FOCUS lifecycle has exactly the same per-root latching design
+        (``root_ai._focused_preprocessors``, ``node._has_focus``,
+        ``node._got_focus_called`` — see ``ai_driver._reconcile_focus``) and so
+        needs exactly the same teardown, for three reasons:
+
+        * ``AI/PlainAI/Warp.LostFocus`` (:217) RE-ENABLES THE COLLISIONS IT
+          DISABLED. Detach a warping ship's AI without dispatching it and the
+          ship is permanently non-collidable.
+        * In the fleet-override idiom above, ``SetActive()`` re-fires on the
+          old subtree when the priority list falls back to it — but
+          ``GotFocus()`` could not, because ``_got_focus_called`` was still
+          latched from the old root. Re-activated but never re-focused is a
+          self-contradictory state (``StarbaseAttack.GotFocus`` starts firing;
+          it would never run again).
+        * ``HasFocus()`` stayed 1 on detached nodes, so
+          ``ArtificialIntelligence.GetFocusAIs()`` reported nodes that are on
+          no focus path at all.
+
         Called from both detach points (``ClearAI`` and the old-AI branch of
         ``SetAI``) so a tree is always deactivated the moment it stops being
         *this* ship's installed AI, whether or not it goes on to live as a
@@ -161,10 +179,26 @@ class ShipClass(DamageableObject):
         get_tree = getattr(ai, "GetAllAIsInTree", None)
         if not callable(get_tree):
             return
+        # Local import: ai_driver imports engine.appc.ai, and ships is imported
+        # from the driver's dispatch path — keep the module-level graph acyclic
+        # (this file already uses local imports for fire_ai_done above).
+        from engine.appc.ai_driver import _dispatch_lost_focus
         for node in get_tree():
+            # Focus teardown first: the script's LostFocus() cleanup may want to
+            # touch a node that is still nominally active (Warp's StopTowing).
+            # _dispatch_lost_focus calls the script's LostFocus() and clears BOTH
+            # _has_focus and the _got_focus_called latch.
+            if node.HasFocus():
+                _dispatch_lost_focus(node)
             set_inactive = getattr(node, "SetInactive", None)
             if callable(set_inactive):
                 set_inactive()
+        # The root's own bookkeeping lists: a detached root is not ticking, so
+        # nothing would ever reconcile these again. Leaving them populated keeps
+        # strong references to a torn-down tree and, if the root is re-installed
+        # later, would make the next reconciliation diff against a stale snapshot.
+        ai._focused_preprocessors = []
+        ai._active_nodes = []
 
     def GetAI(self):
         return self._ai

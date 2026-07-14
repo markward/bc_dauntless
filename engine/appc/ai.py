@@ -74,16 +74,20 @@ class TGCondition:
         # (Conditions/ConditionCriticalSystemBelow.py). Fired unconditionally on
         # a real change — NOT gated on _active, which only governs the direct
         # handler list.
-        try:
-            import App
-            evt = App.TGIntEvent_Create()
-            evt.SetEventType(App.ET_AI_CONDITION_CHANGED)
-            evt.SetInt(new_status)
-            evt.SetSource(self)
-            evt.SetDestination(self)
-            App.g_kEventManager.AddEvent(evt)
-        except Exception as _e:
-            dev_mode.log_swallowed("condition changed event", _e)
+        #
+        # NOT wrapped in try/except. Dispatch is synchronous, so a swallow here
+        # would hide exceptions raised INSIDE the newly-woken handlers
+        # (Conditions/ConditionCriticalSystemBelow) — code that has never run
+        # before this branch, i.e. exactly where the first real signal of a bug
+        # shows up. Matches ShipClass.SetTarget's AddEvent, which deliberately
+        # refuses the same swallow.
+        import App
+        evt = App.TGIntEvent_Create()
+        evt.SetEventType(App.ET_AI_CONDITION_CHANGED)
+        evt.SetInt(new_status)
+        evt.SetSource(self)
+        evt.SetDestination(self)
+        App.g_kEventManager.AddEvent(evt)
 
     def AddHandler(self, handler) -> None:
         if handler not in self._handlers:
@@ -743,12 +747,18 @@ class PreprocessingAI(ArtificialIntelligence):
             # OptimizedSelectTarget ctor did that work — ai_driver's
             # _ensure_select_target_initialized still stands in for the C++
             # class.
+            #
+            # NOT wrapped in try/except. This call IS the whole payoff of the
+            # CodeAISet wiring — UpdateAIStatus, TractorDockTargets,
+            # ChainFollowThroughWarp and UseShipTarget all run their engine-side
+            # registration here for the FIRST TIME. A swallow would let the
+            # feature silently do nothing while the suite stayed green
+            # (dev_mode.log_swallowed is a no-op without --developer, which is
+            # never on under pytest). Same call as ShipClass.SetTarget's AddEvent:
+            # let it propagate.
             code_ai_set = getattr(instance, "CodeAISet", None)
             if callable(code_ai_set):
-                try:
-                    code_ai_set()
-                except Exception as _e:
-                    dev_mode.log_swallowed("CodeAISet", _e)
+                code_ai_set()
 
     def GetPreprocessingInstance(self):
         if self._preprocessing_instance is None:

@@ -263,29 +263,41 @@ def test_a_fire_script_that_loses_its_target_does_not_kill_the_ai():
     assert tick_ai(node, 0.0) == ArtificialIntelligence.US_ACTIVE
     assert child.updates == 1
 
-    # Target destroyed / left the set. FireScript.GetTarget -> None -> PS_DONE.
+    # Target destroyed / left the set. FireScript.GetTarget -> None -> PS_DONE,
+    # translated to PS_NORMAL: the node stays ACTIVE and its subtree keeps
+    # running (exactly what shipped before the PS_DONE mapping was fixed).
     pSet.RemoveObjectFromSet("Target")
     status = tick_ai(node, 1.0)
     assert status != ArtificialIntelligence.US_DONE, (
         "a targetless FireScript must not delete the ship's AI")
-    assert status == ArtificialIntelligence.US_DORMANT
-    assert child.updates == 1, "no target: the combat subtree must not run"
+    assert status == ArtificialIntelligence.US_ACTIVE
+    assert child.updates == 2, "the combat subtree keeps running with no target"
+
+
+def test_a_targetless_fire_script_never_reports_dormant():
+    """US_DORMANT is a one-way trap in our driver (_tick_priority_list skips
+    DORMANT children forever; a skip_dormant=0 SequenceAI HOLDS on one). The
+    non-lethal translation must not swap the lethal state for a wedged one."""
+    node, _child, pSet, _target = _wire_ship_with_fire_script()
+    tick_ai(node, 0.0)
+    pSet.RemoveObjectFromSet("Target")
+    assert tick_ai(node, 1.0) != ArtificialIntelligence.US_DORMANT
 
 
 def test_the_ai_recovers_when_a_fire_script_re_acquires_a_target():
     """US_DONE is unrecoverable in our driver (_tick_priority_list skips DONE
     children forever). The whole point of the non-lethal translation is that the
-    node comes back the moment the SDK body says PS_NORMAL again."""
+    node keeps ticking and picks the target back up."""
     node, child, pSet, target = _wire_ship_with_fire_script()
     assert tick_ai(node, 0.0) == ArtificialIntelligence.US_ACTIVE
 
     pSet.RemoveObjectFromSet("Target")
-    assert tick_ai(node, 1.0) == ArtificialIntelligence.US_DORMANT
+    assert tick_ai(node, 1.0) == ArtificialIntelligence.US_ACTIVE
 
     # A new contact turns up under the same name (FireScript targets by name).
     pSet.AddObjectToSet(target, "Target")
     assert tick_ai(node, 2.0) == ArtificialIntelligence.US_ACTIVE
-    assert child.updates == 2, "the AI must resume firing, not stay dead"
+    assert child.updates == 3, "the AI must resume firing, not stay dead"
 
 
 def test_the_wrapped_fire_script_is_still_the_real_sdk_fire_script():
@@ -302,9 +314,15 @@ def test_the_wrapped_fire_script_is_still_the_real_sdk_fire_script():
     assert "SetTarget" in node._external_functions
 
 
-def test_a_shipless_avoid_obstacles_does_not_kill_the_ai():
+def test_a_shipless_avoid_obstacles_does_not_kill_or_wedge_the_ai():
     """AvoidObstacles.Update: `if pShip == None: return PS_DONE`
-    (AI/Preprocessors.py:1688). Same lethal edge, same wrapper."""
+    (AI/Preprocessors.py:1688). Same lethal edge, same wrapper.
+
+    US_DORMANT would be just as bad here as US_DONE: pAvoidObstacles is a DIRECT
+    SequenceAI child in 7+ shipped trees (AI/Compound/TractorDockTargets.py:213,
+    E1M1/UndockAI.py:63, E2M0_AI_Warbird.py:260, ...) and a SequenceAI with
+    skip_dormant = 0 HOLDS on a dormant child — a permanent wedge. PS_NORMAL:
+    the node stays ACTIVE and runs its contained AI."""
     import AI.Preprocessors
 
     node = PreprocessingAI_Create(None, "AvoidObstacles")   # no ship
@@ -316,8 +334,9 @@ def test_a_shipless_avoid_obstacles_does_not_kill_the_ai():
 
     status = tick_ai(node, 0.0)
     assert status != ArtificialIntelligence.US_DONE
-    assert status == ArtificialIntelligence.US_DORMANT
-    assert child.updates == 0
+    assert status != ArtificialIntelligence.US_DORMANT
+    assert status == ArtificialIntelligence.US_ACTIVE
+    assert child.updates == 1
 
 
 # --- Pickling non-lethal wrapped instances ------------------------------------

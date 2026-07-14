@@ -175,16 +175,17 @@ class ObjectClass(TGEventHandlerObject):
         if new_value == self._scannable:
             return
         self._scannable = new_value
-        try:
-            import App
-            evt = App.TGBoolEvent_Create()
-            evt.SetEventType(App.ET_SCANNABLE_CHANGE)
-            evt.SetSource(self)
-            evt.SetBool(1 if new_value else 0)
-            App.g_kEventManager.AddEvent(evt)
-        except Exception as _e:
-            import engine.dev_mode as dev_mode
-            dev_mode.log_swallowed("SetScannable broadcast", _e)
+        # NOT wrapped in try/except: AddEvent dispatches synchronously, so a
+        # swallow here would hide exceptions raised inside the ScienceMenuHandlers
+        # broadcast handler this branch wakes for the first time. Matches
+        # ShipClass.SetTarget's AddEvent — the first real signal of a bug in
+        # never-before-run code must not be silently discarded.
+        import App
+        evt = App.TGBoolEvent_Create()
+        evt.SetEventType(App.ET_SCANNABLE_CHANGE)
+        evt.SetSource(self)
+        evt.SetBool(1 if new_value else 0)
+        App.g_kEventManager.AddEvent(evt)
 
     def IsScannable(self) -> int:
         return 1 if self._scannable else 0
