@@ -18,45 +18,41 @@ class AnimationManager:
 
     def LoadAnimation(self, path, name) -> None:
         # SDK call shape: kAM.LoadAnimation("data/animations/db_stand_t_l.nif",
-        # "db_stand_t_l").
+        # "db_stand_t_l"). Record name -> path; a re-load of a name OVERWRITES
+        # (LAST-write-wins). A re-load can point the same NAME at a DIFFERENT
+        # clip (bridge/mission reload against the process-lifetime
+        # g_kAnimationManager singleton), so any cached duration measured
+        # against the OLD path is now stale and must be dropped.
         #
-        # FIRST REGISTRATION WINS while a name is still registered. This
-        # mirrors BC's own TGAnimationManagerClass, which exposes
-        # IsLoaded(name) precisely so callers can skip a redundant reload —
-        # the SDK's gesture builders call LoadAnimation on EVERY gesture
-        # build (hundreds of times per mission), so a real engine reloading
-        # the NIF from disk each time would be absurd.
+        # LAST-write-wins is LOAD-BEARING — do not "optimise" it into
+        # first-write-wins (that was tried, in 20c62e96, and broke E1M1's
+        # entire opening). BC re-registers a name precisely in order to
+        # CORRECT it. Measured on a real LoadBridge.Load("GalaxyBridge"),
+        # exactly two names are registered twice with different paths:
         #
-        # This is also load-bearing correctness, not just an optimisation:
-        # Bridge/Characters/CommonAnimations.py's ConsoleSlide/PushingButtons
-        # re-register the SAME name on every build with a path built by
-        # string concatenation and NO file extension (a real SDK content
-        # bug — e.g. "data/animations/DB_E_pushing_buttons_A", no ".NIF").
-        # GalaxyBridge.PreloadAnimations already registered that exact name
-        # against the correct, extensioned path. Under last-write-wins the
-        # extension-less path clobbered the good one and the renderer could
-        # never load the clip — 16 of 199 registered clip names ended up
-        # unloadable, all console-interaction gestures. BC plainly still
-        # plays these gestures, so its LoadAnimation cannot be clobbering
-        # the preload either.
+        #   DBCameraSitDown  1st 'data/animations/DB_Camera_Sit_Downp.nif'
+        #                        <- GalaxyBridge.py:193, a TYPO ("Downp"):
+        #                           no such file exists
+        #                    2nd 'data/animations/DB_Camera_Sit_Down.nif'
+        #                        <- the animation builder's CORRECT path
+        #   H_Talk_E_M       1st 'data/animations/DB_C_Talk_E_M.NIF'
+        #                    2nd 'data/animations/DB_C_Talk_S_M.NIF'
+        #                        <- BC's known cross-registration defect
         #
-        # Do NOT "fix" this by appending a synthesised extension to bare
-        # paths instead: the real files are ".NIF" (uppercase); a lowercase
-        # ".nif" suffix would work on macOS's case-insensitive filesystem
-        # and silently break on Linux. Preserving the SDK's original literal
-        # path — by not touching an already-registered name at all — is the
-        # only case-correct fix.
+        # Let the typo win and the captain's sit/stand camera clip becomes
+        # unloadable: GetAnimationLength returns 0.0, every sequence delay of
+        # the form `GetAnimationLength(x) - 1.7` goes NEGATIVE, TGSequence
+        # fires it immediately, and the whole scene collapses to t=0.
         #
-        # The re-point-across-bridge-reload case still works: LoadBridge.Load
-        # calls the OUTGOING bridge module's UnloadAnimations() (->
-        # FreeAnimation per name) before the new bridge's PreloadAnimations()
-        # runs, so by the time a name is re-registered for a new bridge it
-        # has genuinely been freed first, not merely reloaded in place.
-        key = str(name)
-        if key in self._paths:
-            return
-        self._paths[key] = str(path)
-        self._durations.pop(key, None)
+        # The other re-registration in play — CommonAnimations.py:647,655's
+        # console-gesture builders registering an extension-less path
+        # ("data/animations/DB_E_pushing_buttons_A", no ".NIF") — is BC content
+        # too, and is tolerated where BC tolerates it: in the FILE LOADER. See
+        # engine/host_loop.py::_resolve_asset_path, which probes the directory
+        # case-insensitively for the real ".NIF"/".nif" file. Fixing it here,
+        # in the registry, is what broke DBCameraSitDown.
+        self._paths[str(name)] = str(path)
+        self._durations.pop(str(name), None)
 
     def FreeAnimation(self, name) -> None:
         # SDK unloads animations by name on bridge teardown; drop the record so

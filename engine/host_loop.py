@@ -1083,11 +1083,61 @@ def _apply_alert_keys(h, player) -> None:
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+_NIF_EXTENSIONS = ("nif",)          # lower-cased; the shipped tree has .nif AND .NIF
+_ASSET_PATH_CACHE: dict = {}        # (root, rel path) -> resolved absolute path
+
+
+def _resolve_asset_path(rel_path, root):
+    """Absolute path for a game-relative asset, probing for a MISSING extension.
+
+    BC content registers some animation clips with no file extension at all:
+    Bridge/Characters/CommonAnimations.py:647,655 (the console-gesture
+    builders) build the path by string concatenation --
+
+        kAM.LoadAnimation("data/animations/" + pcAnimName, pcAnimName)
+
+    -- yielding e.g. "data/animations/DB_E_pushing_buttons_A" while the file on
+    disk is "DB_E_pushing_buttons_A.NIF". BC's own file loader resolves the
+    extension, so ours must too, and this (the single choke point feeding both
+    _clip_duration and every bridge controller's asset_resolver) is where.
+
+    Do NOT instead sanitise the registry: g_kAnimationManager is last-write-wins
+    on purpose, because BC re-registers names to CORRECT typos - see
+    engine/appc/animation_manager.py::LoadAnimation.
+
+    The probe is case-INSENSITIVE (the shipped assets use both ".nif" and
+    ".NIF"; synthesising a lowercase ".nif" would work on macOS's
+    case-insensitive filesystem and silently break on Linux), and its result is
+    cached - this runs per clip load.
+    """
+    if not rel_path:
+        return None
+    key = (str(root), str(rel_path))
+    cached = _ASSET_PATH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    candidate = Path(root) / rel_path
+    resolved = str(candidate)
+    if not candidate.suffix and not candidate.exists():
+        want = candidate.name.lower()
+        try:
+            entries = list(candidate.parent.iterdir())
+        except OSError:
+            entries = []                      # no such directory: degrade, never raise
+        for entry in entries:
+            stem, dot, ext = entry.name.rpartition(".")
+            if dot and ext.lower() in _NIF_EXTENSIONS and stem.lower() == want:
+                resolved = str(entry)
+                break
+    _ASSET_PATH_CACHE[key] = resolved
+    return resolved
+
+
 def _game_asset_path(p):
     """Resolve a game-relative asset path to an absolute path string.
     Mirrors _place_one_character's local _abs helper; defined here so it can
     be passed to BridgeCharacterAnimController as the asset_resolver."""
-    return str(PROJECT_ROOT / "game" / p) if p else None
+    return _resolve_asset_path(p, PROJECT_ROOT / "game")
 
 
 def _clip_duration(renderer, rel_path) -> float:
