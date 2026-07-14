@@ -80,6 +80,18 @@ class BridgeCharacterAnimController:
         if cur is not None and priority <= cur.priority:
             return False            # don't preempt equal/higher priority
         self._active[iid] = _Action(iid, list(clips), priority, hold, on_complete)
+        # Rescue the preempted action's on_complete (same guarantee _process_turn
+        # and request_default give): a preempted _TURN can be carrying an
+        # AT_SAY_LINE's speak-then-turn-back callback, and a mission TGSequence
+        # is waiting on it — silently discarding it stalls that sequence forever.
+        # Fire it only AFTER _active[iid] is replaced, so a re-entrant submit /
+        # request_default from the callback sees the new state, never the stale
+        # one. It cannot double-fire: `cur` is already out of _active.
+        if cur is not None and cur.on_complete is not None:
+            try:
+                cur.on_complete()
+            except Exception:
+                pass
         return True
 
     def set_idle(self, iid, clip_index) -> None:
@@ -171,8 +183,17 @@ class BridgeCharacterAnimController:
             pending, self._pending_defaults = self._pending_defaults, []
             for iid in pending:
                 self._return_to_default(renderer, iid)
-        done = []
-        for iid, act in self._active.items():
+        # Iterate a SNAPSHOT: an on_complete below is a CharacterAction's
+        # Completed(), event dispatch is synchronous, so it advances the owning
+        # TGSequence and Play()s the next action — which can submit() /
+        # request_default() on this or another officer, mutating _active from
+        # inside this loop (RuntimeError: dictionary changed size during
+        # iteration).
+        for iid, act in list(self._active.items()):
+            if self._active.get(iid) is not act:
+                # Replaced (or cancelled) by a re-entrant call earlier in this
+                # same drain/loop — the slot no longer belongs to `act`.
+                continue
             if not act.started or act.index < 0:
                 self._start_clip(renderer, act, 0)
                 continue
@@ -182,19 +203,26 @@ class BridgeCharacterAnimController:
             nxt = act.index + 1
             if nxt < len(act.clips):
                 self._start_clip(renderer, act, nxt)
-            else:
-                if not act.hold:
-                    self._return_to_default(renderer, iid)
-                # hold=True leaves the native renderer holding the last frame
-                # (the turned-to-captain pose) until the reverse turn replaces it.
-                if act.on_complete is not None:
-                    try:
-                        act.on_complete()
-                    except Exception:
-                        pass
-                done.append(iid)
-        for iid in done:
-            self._active.pop(iid, None)
+                continue
+            if not act.hold:
+                self._return_to_default(renderer, iid)
+            # hold=True leaves the native renderer holding the last frame
+            # (the turned-to-captain pose) until the reverse turn replaces it.
+            #
+            # Remove the finished action BEFORE firing its on_complete: a
+            # re-entrant submit() from the callback then lands in a CLEAN slot
+            # and cannot be clobbered by a deferred pop afterwards (which used
+            # to delete the brand-new action — its on_complete never fired, so
+            # _current_anim leaked and the mission sequence froze). Only ever
+            # remove `act` itself, never a replacement installed under the
+            # same iid.
+            if self._active.get(iid) is act:
+                del self._active[iid]
+            if act.on_complete is not None:
+                try:
+                    act.on_complete()
+                except Exception:
+                    pass
 
     def _body_turns_officer(self, renderer, move) -> bool:
         """True if the captured body turn clip actually rotates the officer.
