@@ -64,9 +64,26 @@ class TGCondition:
         new_status = int(status)
         changed = (new_status != self._status)
         self._status = new_status
-        if changed and self._active:
+        if not changed:
+            return
+        if self._active:
             for h in list(self._handlers):
                 h.ConditionChanged(self)
+        # Real Appc posts ET_AI_CONDITION_CHANGED from ConditionScript::SetStatus
+        # so composite conditions can watch their children
+        # (Conditions/ConditionCriticalSystemBelow.py). Fired unconditionally on
+        # a real change — NOT gated on _active, which only governs the direct
+        # handler list.
+        try:
+            import App
+            evt = App.TGIntEvent_Create()
+            evt.SetEventType(App.ET_AI_CONDITION_CHANGED)
+            evt.SetInt(new_status)
+            evt.SetSource(self)
+            evt.SetDestination(self)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("condition changed event", _e)
 
     def AddHandler(self, handler) -> None:
         if handler not in self._handlers:

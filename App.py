@@ -1032,6 +1032,10 @@ ET_ADD_TO_REPAIR_LIST             = 0x1321
 # uses) silently never updated their status.
 ET_AI_SYSTEM_STATUS_WATCHER       = 0x1322
 ET_AI_SHIELD_WATCHER              = 0x1323
+# Broadcast by TGCondition.SetStatus on every status transition. Composite
+# conditions listen for it on their children (Conditions/
+# ConditionCriticalSystemBelow.py). Real int for the same reason as above.
+ET_AI_CONDITION_CHANGED           = 0x1324
 
 _next_event_type_id = 1200
 
