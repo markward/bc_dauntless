@@ -1814,6 +1814,34 @@ def _pump_bridge_doors(cutscene, renderer, *, paused: bool) -> None:
     cutscene._update_doors(renderer, _App.g_kAnimationManager)
 
 
+def _pump_char_anim(char_anim, renderer, dt, *, paused: bool) -> None:
+    """Advance the bridge character transient-animation controller every
+    unpaused frame, regardless of view mode.
+
+    Like _pump_walk_controller and _pump_bridge_doors, this is deliberately NOT
+    gated on ``view_mode.is_bridge``. BridgeCharacterAnimController.update() is
+    not merely visual: it DRAINS the pending turn/glance/default queues and
+    fires each settled _Action's on_complete — which is a CharacterAction's
+    Completed(), which advances the mission TGSequence.
+
+    AT_SAY_LINE (the SDK's workhorse, ~1,600 sites carry a turn target) defers
+    the SPEECH ITSELF behind request_turn_to(on_complete=_speak_then_turn_back),
+    and request_turn_to only QUEUES. With the update() call living inside the
+    bridge render block, any AT_SAY_LINE fired while the player was in
+    tactical/exterior view never drained -> the line was never spoken and the
+    owning sequence hung until the player happened to look at the bridge.
+
+    Playing clips into the renderer off-view is harmless and already the
+    established pattern (the walk controller does exactly that): the instance
+    keeps correct pose state, so the bridge is right the moment it is drawn
+    again. Idle gestures stay in the bridge render block — those ARE purely
+    visual. Idle when nothing is queued/active, so the always-on pump is free."""
+    if paused:
+        return
+    import App as _App
+    char_anim.update(dt, renderer=renderer, anim_mgr=_App.g_kAnimationManager)
+
+
 def _pump_letterbox(renderer, animator, dt: float) -> float:
     """Drive the GL cutscene letterbox from TopWindow's cutscene state.
 
@@ -6446,6 +6474,13 @@ def run(mission_name: Optional[str] = None,
             # The door half of the bridge cutscene pump is likewise
             # view-independent — see _pump_bridge_doors.
             _pump_bridge_doors(cutscene, r, paused=pause.sim_frozen)
+            # ...and so is the character anim controller: it drains the pending
+            # turn/glance/default queues and fires the settled actions'
+            # on_complete, which advances the mission TGSequence (an AT_SAY_LINE
+            # with a turn target defers the LINE ITSELF behind its turn). Gating
+            # it on bridge view left every such line unspoken and its sequence
+            # hung whenever the player was in tactical view. See _pump_char_anim.
+            _pump_char_anim(char_anim, r, _player_dt, paused=pause.sim_frozen)
             if fixed_camera:
                 fixed_radius = player.GetRadius() if player is not None else 1.0
                 eye = (0.0, 0.0, CAM_MAX_RADII * fixed_radius)
@@ -6479,13 +6514,15 @@ def run(mission_name: Optional[str] = None,
                             renderer=r,
                             anim_mgr=_App.g_kAnimationManager,
                         )
+                        # Idle fidgets ARE purely visual — they stay view-gated.
+                        # They submit into char_anim, which is pumped
+                        # view-independently above (_pump_char_anim); do NOT
+                        # call char_anim.update() here as well, or every clip
+                        # steps twice per frame in bridge view.
                         idle_gestures.update(
                             _player_dt, _live_bridge_characters(),
                             renderer=r, anim_mgr=_App.g_kAnimationManager,
                             controller=char_anim)
-                        char_anim.update(
-                            _player_dt, renderer=r,
-                            anim_mgr=_App.g_kAnimationManager)
                         # walk_ctrl is pumped view-independently above
                         # (_pump_walk_controller) — its completion drives the
                         # mission sequence and must not be gated on bridge view.
