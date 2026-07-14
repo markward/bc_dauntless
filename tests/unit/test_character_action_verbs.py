@@ -489,6 +489,30 @@ def test_say_line_turns_to_but_does_not_turn_back(monkeypatch):
     assert ctrl.turn_calls == [("to", "Captain", True)]
 
 
+def test_say_line_completes_even_when_complete_after_raises(monkeypatch):
+    # Stall-hole regression: _speak() latches `spoke` BEFORE it calls
+    # _complete_after(). If _complete_after then raises (e.g. the realtime
+    # timer manager was torn down mid mission-swap), the old code relied on
+    # the outer `except Exception: _speak()` in _queue_say_line to recover --
+    # but the latch makes that second _speak() call a no-op, so the action
+    # is left _playing with no timer scheduled and no Completed(). The
+    # owning TGSequence then stalls forever. Play() must never do that.
+    ch = _character_with("IncomingMsg6", "Some.Module.Unused")
+    ctrl = _TurnRecordingController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+    monkeypatch.setattr(CharacterAction, "_do_play", lambda self: 1.5)
+
+    def _boom(self, duration_real_s, on_elapsed=None):
+        raise RuntimeError("timer manager torn down")
+    monkeypatch.setattr(CharacterAction, "_complete_after", _boom)
+
+    action = CharacterAction(ch, CharacterAction.AT_SAY_LINE,
+                             "IncomingMsg6", None, 0)
+    action.Play()                                # must not raise
+
+    assert action.IsPlaying() is False           # never left stuck _playing
+
+
 def _count_completions(monkeypatch):
     """Count Completed() calls — a skipped action must complete exactly once."""
     calls = []

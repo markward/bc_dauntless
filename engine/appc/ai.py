@@ -1582,18 +1582,31 @@ class CharacterAction(TGAction):
                 dur = self._do_play() or 0.0
             except Exception:
                 dur = 0.0
-            if not (turn_to and turn_back):
-                self._complete_after(dur)
-                return
+            try:
+                if not (turn_to and turn_back):
+                    self._complete_after(dur)
+                    return
 
-            def _turn_back_now():
-                # End of line: START the turn-back and complete NOW. BC's
-                # TurnBack sub-action self-completes on starting the swivel —
-                # the sequence must not wait for it.
-                self._turn_owed = None       # this path is discharging it
-                self._issue_turn_back(turn_to)
-                self.Completed()
-            self._complete_after(dur, on_elapsed=_turn_back_now)
+                def _turn_back_now():
+                    # End of line: START the turn-back and complete NOW. BC's
+                    # TurnBack sub-action self-completes on starting the swivel —
+                    # the sequence must not wait for it.
+                    self._turn_owed = None       # this path is discharging it
+                    self._issue_turn_back(turn_to)
+                    self.Completed()
+                self._complete_after(dur, on_elapsed=_turn_back_now)
+            except Exception:
+                # `spoke` is already latched above, so this except is the
+                # ONLY remaining path to Completed() if _complete_after (or,
+                # for dur<=0, the on_elapsed it runs inline) raises -- e.g.
+                # the realtime timer manager was torn down mid mission-swap.
+                # Without this, the action is left _playing with no timer
+                # scheduled and the owning TGSequence stalls forever. Guard
+                # on _playing so we never double-fire Completed() if it had
+                # already run (and set _playing False) before raising partway
+                # through its own completed-event dispatch.
+                if self._playing:
+                    self.Completed()
 
         if not turn_to:
             _speak()
@@ -1855,8 +1868,9 @@ class CharacterAction(TGAction):
         # Order matters: set _skipped BEFORE requesting the turn. A skip that
         # lands while the FORWARD turn is still in flight evicts it inside
         # _process_turn, which synchronously rescues and fires its on_complete
-        # (_speak_then_turn_back) — and that callback checks _skipped so the
-        # skipped line neither speaks nor completes a second time.
+        # (_speak, installed as AT_SAY_LINE_AFTER_TURN's awaited on_complete) —
+        # and that callback checks _skipped so the skipped line neither speaks
+        # nor completes a second time.
         self._skipped = True
         turn_to, self._turn_owed = self._turn_owed, None
         if turn_to:

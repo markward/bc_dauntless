@@ -1874,12 +1874,16 @@ def _pump_char_anim(char_anim, renderer, dt, *, paused: bool) -> None:
     fires each settled _Action's on_complete — which is a CharacterAction's
     Completed(), which advances the mission TGSequence.
 
-    AT_SAY_LINE (the SDK's workhorse, ~1,600 sites carry a turn target) defers
-    the SPEECH ITSELF behind request_turn_to(on_complete=_speak_then_turn_back),
-    and request_turn_to only QUEUES. With the update() call living inside the
-    bridge render block, any AT_SAY_LINE fired while the player was in
+    AT_SAY_LINE_AFTER_TURN (the awaited-turn sibling of AT_SAY_LINE, the SDK's
+    workhorse with ~1,600 sites carrying a turn target) defers the SPEECH
+    ITSELF behind request_turn_to(on_complete=_speak), and request_turn_to
+    only QUEUES. With the update() call living inside the bridge render
+    block, any AT_SAY_LINE_AFTER_TURN fired while the player was in
     tactical/exterior view never drained -> the line was never spoken and the
     owning sequence hung until the player happened to look at the bridge.
+    (Plain AT_SAY_LINE does not defer: it fires the turn fire-and-forget and
+    speaks immediately, overlapping the turn animation -- but that turn
+    animation itself still needs this same always-on drain to play out.)
 
     Playing clips into the renderer off-view is harmless and already the
     established pattern (the walk controller does exactly that): the instance
