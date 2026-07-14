@@ -14,6 +14,9 @@ from engine.appc.bridge_placement import capture_registered_clip, capture_chair_
 _IDLE = 0
 _REACTION = 1
 _TURN = 1       # turn-to-captain preempts idle (0); same band as reactions
+_SCRIPTED = 2   # AT_PLAY_ANIMATION: a scripted mission beat outranks both —
+                # submit() drops an equal-or-lower priority onto a busy officer,
+                # and a scripted gesture must never lose to an idle fidget.
 
 # Floor for a clip with no SDK duration AND no resolvable natural length (e.g.
 # a single-frame pose clip whose duration parses as 0). Keeps it on screen
@@ -49,6 +52,7 @@ class BridgeCharacterAnimController:
         self._pending_turns = []    # [(character, detail, back, hold, now,
                                      #   on_complete), ...]
         self._pending_glances = []  # [(character, detail, on_complete), ...]
+        self._pending_defaults = []  # [iid, ...]
         self._resolve = asset_resolver or (lambda p: p)
         self._node_ctrl = None      # BridgeNodeAnimController (optional)
 
@@ -107,6 +111,18 @@ class BridgeCharacterAnimController:
         "Glance"+detail; a graceful inline no-op if unregistered (niche action)."""
         self._pending_glances.append((character, str(detail), on_complete))
 
+    def request_default(self, character) -> None:
+        """AT_DEFAULT / AT_BREATHE: drop any transient clip and restore the
+        officer's rest pose — which IS the breathe idle (capture_breathing
+        feeds set_idle). The restore itself needs the renderer, so it is
+        queued for the next update() tick, the same way turns and glances
+        are. Never raises."""
+        iid = getattr(character, "_render_instance", None)
+        if iid is None:
+            return
+        self._active.pop(iid, None)          # cancel the transient clip
+        self._pending_defaults.append(iid)   # restore the rest pose next tick
+
     def _process_glance(self, renderer, character, detail, on_complete) -> None:
         """Play a quick glance. Fires on_complete exactly once — via the
         submitted _Action when submit() succeeds, else inline (unresolved clip
@@ -130,6 +146,7 @@ class BridgeCharacterAnimController:
         self._idle_clips = {}
         self._pending_turns = []
         self._pending_glances = []
+        self._pending_defaults = []
 
     def update(self, dt, *, renderer, anim_mgr=None) -> None:
         if self._pending_turns:
@@ -140,6 +157,10 @@ class BridgeCharacterAnimController:
             pending, self._pending_glances = self._pending_glances, []
             for character, detail, on_complete in pending:
                 self._process_glance(renderer, character, detail, on_complete)
+        if self._pending_defaults:
+            pending, self._pending_defaults = self._pending_defaults, []
+            for iid in pending:
+                self._return_to_default(renderer, iid)
         done = []
         for iid, act in self._active.items():
             if not act.started or act.index < 0:
