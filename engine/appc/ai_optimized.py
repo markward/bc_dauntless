@@ -12,29 +12,55 @@ Python-backed node outright. The BaseAI default (0x00470750) is
 use me".
 
 Four classes are registered in the binary: ``AvoidObstacles``, ``FireScript``,
-``ManagePower``, ``SelectTarget``.
+``ManagePower``, ``SelectTarget``. In the shipped game all four Python ``Update``
+bodies are DEAD CODE — the native nodes replace them at bind time. We have no
+native versions, so we run those Python bodies. Three of the four therefore need
+an entry here, for two different reasons:
 
-WE REGISTER ONLY ``ManagePower``, and the reason matters:
-
-* ``ManagePower`` MUST be swapped. Its SDK Python body
-  (``AI/Preprocessors.py:2148``) is ``# Unused.  return PS_DONE`` — dead code in
-  the shipped game, because the native class always replaced it. PS_DONE maps to
-  US_DONE, which DESTROYS the AI node. It sits in the live FedAttack /
-  NonFedAttack / CloakAttack chain (AlertLevel -> PowerManagement ->
+* ``ManagePower`` gets a REPLACEMENT (the class below). Its SDK Python body
+  (``AI/Preprocessors.py:2148``) is ``# Unused.  return PS_DONE`` — an explicit
+  stub. PS_DONE maps to US_DONE, which DESTROYS the AI node. It sits in the live
+  FedAttack / NonFedAttack / CloakAttack chain (AlertLevel -> PowerManagement ->
   FleeAttackOrFollow), so running the Python body would delete every Federation
   ship's AI within one 3-second cadence. The ``SetInterruptable(1)`` bypass
   cannot save it: ``FleeAttackOrFollow`` sets that flag itself.
-* ``FireScript``, ``SelectTarget`` and ``AvoidObstacles`` are NOT registered
-  here, even though the shipped engine replaces them too. Their SDK Python
-  bodies are full working implementations that our driver already runs
-  correctly, and we have no native versions to swap in. **This is a deliberate,
-  documented divergence from the original engine — not faithfulness.** If native
-  versions ever land, they go in the registry below.
+* ``FireScript`` and ``AvoidObstacles`` get NON-LETHAL WRAPPERS. Their SDK Python
+  bodies are full working implementations that we NEED and run verbatim — but
+  each has one edge that returns PS_DONE:
+
+      FireScript.Update (:284)     `pTarget = self.GetTarget()`
+                                   `if not pTarget: return PS_DONE`
+      AvoidObstacles.Update (:1688) `if pShip == None: return PS_DONE`
+
+  Those edges are reachable from live doctrine (every Attack doctrine builds a
+  FireScript node; targets die and leave sets), and US_DONE is unrecoverable in
+  our driver — ``_tick_priority_list`` skips US_DONE children forever. So the
+  wrapper delegates every call to the real SDK body and translates ONLY a
+  PS_DONE return into PS_SKIP_DORMANT.
+
+  *** KNOWN DIVERGENCE — READ THIS BEFORE TRUSTING IT. ***
+  We do NOT know what the native FireScript / AvoidObstacles return when they
+  have no target / no ship. That is an OPEN QUESTION for the RE project. The one
+  thing we know for certain is that it is NOT lethal: a Federation ship in the
+  shipped game that loses its target does not lose its AI — it re-acquires and
+  keeps fighting. PS_SKIP_DORMANT ("nothing to do this tick; don't run the
+  child") is our choice, not an observed value. The nearest evidence for it is
+  that the SDK's own SelectTarget reports its no-target state as
+  PS_SKIP_DORMANT (``eNoTargetPreprocessStatus``). This is a guess constrained by
+  one hard fact — do not read it as faithfulness.
+
+* ``SelectTarget`` is deliberately NOT registered, even though the binary
+  replaces it. Its Python body cannot return PS_DONE at all (its no-target path
+  returns PS_SKIP_DORMANT), so running it cannot kill a node — it needs no
+  protection. Pinned by
+  ``tests/unit/test_preprocess_done_is_lethal.py::test_select_targets_sdk_body_cannot_return_ps_done``.
 
 ``AlertLevel`` is deliberately absent from both registries — it is not in the
 binary's either, which is exactly why *its* Python body correctly returns
 PS_NORMAL.
 """
+
+import functools
 
 import App
 
@@ -67,29 +93,101 @@ class ManagePower:
         return App.PreprocessingAI.PS_NORMAL
 
 
-# Python preprocessor class NAME -> engine-side replacement class. Mirrors the
-# binary's DAT_00982A1C name registry; see the module docstring for why only one
-# of its four entries is present here.
+def _replace_manage_power(instance):
+    """Swap the SDK's ManagePower stub for the engine-side class above."""
+    # Carry the ctor arg across the swap, as the native ctor does by reading
+    # bConservePower off the Python instance. __dict__ lookup, not getattr:
+    # TGObject.__getattr__ hands back a truthy _Stub for missing attrs, so
+    # getattr's default would never fire on an engine-backed instance.
+    params = getattr(instance, "__dict__", {})
+    return ManagePower(params.get("bConservePower", 0))
+
+
+_NON_LETHAL_CLASSES: dict = {}
+
+
+def _non_lethal_class(base: type) -> type:
+    """Build (once per SDK class) a subclass whose only difference is that a
+    PS_DONE return from the SDK's ``Update`` becomes PS_SKIP_DORMANT.
+
+    A subclass, not a delegating proxy, because the driver and the SDK bodies
+    duck-type all over the instance (``inst.__dict__["idTargetedSubsystem"]``,
+    ``lWeapons``, ``pCodeAI``, ``DamageEvent``, ``GotFocus``/``LostFocus``,
+    ``CodeAISet``…). Inheritance forwards every one of them to the real SDK code
+    with zero surface to keep in sync.
+    """
+    cached = _NON_LETHAL_CLASSES.get(base)
+    if cached is not None:
+        return cached
+
+    # functools.wraps, so the driver's inspect.signature() arity probe
+    # (ai_driver._tick_preprocessing) still sees the SDK's (self, dEndTime) and
+    # passes the end time through.
+    @functools.wraps(base.Update)
+    def Update(self, *args, **kwargs):
+        result = base.Update(self, *args, **kwargs)
+        if result == App.PreprocessingAI.PS_DONE:
+            # *** THE DIVERGENCE. *** The shipped engine never ran this Python
+            # body — it ran a native class whose no-target/no-ship return value
+            # we do NOT know (open question for the RE project). We know only
+            # that it was NOT lethal: BC ships that lose a target keep their AI
+            # and re-acquire. PS_DONE -> US_DONE is unrecoverable in our driver,
+            # so we translate to PS_SKIP_DORMANT ("nothing to do this tick; do
+            # not run the child"), which is also how the SDK's own SelectTarget
+            # reports a no-target state. A constrained guess, not faithfulness.
+            return App.PreprocessingAI.PS_SKIP_DORMANT
+        return result
+
+    cls = type(
+        base.__name__ + "_NonLethal",
+        (base,),
+        {
+            "Update": Update,
+            "__doc__": (
+                "SDK %s with its lethal PS_DONE return translated to "
+                "PS_SKIP_DORMANT. See engine/appc/ai_optimized.py." % base.__name__
+            ),
+        },
+    )
+    _NON_LETHAL_CLASSES[base] = cls
+    return cls
+
+
+def _wrap_non_lethal(instance):
+    """Return a non-lethal alias of ``instance``.
+
+    The alias shares the original's ``__dict__`` (same state object, no copy),
+    so post-bind mutation by SDK callers — ``AddWeaponSystem``, ``SetTarget``,
+    the subsystem-choice bookkeeping — is visible through both, and the driver's
+    ``inst.__dict__`` probes keep working. The original is then discarded, as the
+    shipped engine discards the Python-backed node it replaces.
+    """
+    cls = _non_lethal_class(type(instance))
+    alias = cls.__new__(cls)
+    alias.__dict__ = instance.__dict__
+    return alias
+
+
+# Python preprocessor class NAME -> factory(original_instance) -> the object the
+# engine actually stores. Mirrors the binary's DAT_00982A1C name registry; see
+# the module docstring for why three of its four entries are here and what kind
+# of object each one yields.
 OPTIMIZED_PREPROCESSORS: dict = {
-    "ManagePower": ManagePower,
+    "ManagePower": _replace_manage_power,     # real replacement (SDK body is a stub)
+    "FireScript": _wrap_non_lethal,           # SDK body, PS_DONE de-fanged
+    "AvoidObstacles": _wrap_non_lethal,       # SDK body, PS_DONE de-fanged
 }
 
 
 def optimized_version_of(instance):
     """Appc's ``GetOptimizedVersion``, dispatched by class name.
 
-    Returns the engine-side replacement (constructed from the original's
-    parameter block) on a registry hit, or the original instance unchanged
-    otherwise — matching the C++ default, which returns ``this``.
+    Returns the engine-side object on a registry hit, or the original instance
+    unchanged otherwise — matching the C++ default, which returns ``this``.
     """
     if instance is None:
         return instance
-    replacement = OPTIMIZED_PREPROCESSORS.get(type(instance).__name__)
-    if replacement is None:
+    factory = OPTIMIZED_PREPROCESSORS.get(type(instance).__name__)
+    if factory is None:
         return instance
-    # Carry the ctor arg across the swap, as the native ctor does by reading
-    # bConservePower off the Python instance. __dict__ lookup, not getattr:
-    # TGObject.__getattr__ hands back a truthy _Stub for missing attrs, so
-    # getattr's default would never fire on an engine-backed instance.
-    params = getattr(instance, "__dict__", {})
-    return replacement(params.get("bConservePower", 0))
+    return factory(instance)

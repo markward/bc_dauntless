@@ -662,9 +662,14 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
             # (PreprocessingAI::Update switch at 0x48eab1: the default arm of the
             # PS_* switch is US_DONE).
             #
-            # No SDK preprocessor we run reaches here: the only one that returned
-            # PS_DONE was ManagePower, and engine/appc/ai_optimized.py swaps it
-            # out at bind time exactly as the original engine did.
+            # Three SDK preprocessors have a PS_DONE path (ManagePower's stub
+            # body, FireScript with no target, AvoidObstacles with no ship). All
+            # three are in the binary's native registry, so none of those Python
+            # bodies runs in the shipped game — and engine/appc/ai_optimized.py
+            # mirrors that registry at bind time (a replacement for ManagePower,
+            # non-lethal wrappers for the other two). This arm is therefore
+            # reached only by a preprocessor the shipped engine did NOT replace,
+            # i.e. one whose PS_DONE really does mean "tear me down".
             ai._status = US_DONE
             return ai._status
         # PS_NORMAL falls through to contained_ai dispatch below.

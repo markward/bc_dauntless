@@ -59,6 +59,16 @@ class _SkipDormantPreproc:
         return App.PreprocessingAI.PS_SKIP_DORMANT
 
 
+class _SlowDonePreproc:
+    """PS_DONE on a 5 s cadence — pins the cadence-SKIPPED arm of the mapping."""
+
+    def GetNextUpdateTime(self):
+        return 5.0
+
+    def Update(self, dEndTime):
+        return App.PreprocessingAI.PS_DONE
+
+
 def _wrap(inst):
     node = PreprocessingAI_Create(None, "wrap")
     child_ai = PlainAI_Create(None, "child")
@@ -101,6 +111,18 @@ def test_cadence_skipped_tick_reproduces_the_last_status():
     assert child.updates == 0
 
 
+def test_cadence_skipped_tick_reproduces_a_ps_done_too():
+    """The lethal arm has to exist in BOTH halves of the mapping. A node that
+    reported PS_DONE stays US_DONE on the ticks where its cadence hasn't
+    elapsed — it must not quietly resurrect and start dispatching its child."""
+    node, child = _wrap(_SlowDonePreproc())
+    assert tick_ai(node, 0.0) == ArtificialIntelligence.US_DONE
+    # 1 s later the 5 s cadence has not elapsed: the preprocessor does not run,
+    # so the driver reproduces its last decision — still done, child untouched.
+    assert tick_ai(node, 1.0) == ArtificialIntelligence.US_DONE
+    assert child.updates == 0
+
+
 def test_the_sdk_manage_power_is_swapped_for_the_engine_replacement():
     """The shipped Compound doctrines build AI.Preprocessors.ManagePower, whose
     Update returns PS_DONE. Unswapped, that would delete every Federation ship's
@@ -136,10 +158,12 @@ def test_conserve_power_argument_is_carried_across_the_swap():
     assert node.GetPreprocessingInstance().bConservePower == 1
 
 
-def test_the_replacement_gets_pcodeai_and_its_codeaiset_runs():
-    """SetPreprocessingMethod binds pCodeAI onto whatever it stores, and calls
-    that object's CodeAISet(). Order matters: swap first, then bind onto the
-    REPLACEMENT (the original is deleted outright in the shipped engine)."""
+def test_pcodeai_is_bound_onto_the_replacement_not_the_discarded_original():
+    """SetPreprocessingMethod binds pCodeAI onto whatever it STORES. Order
+    matters: swap first, then bind onto the REPLACEMENT (the original is deleted
+    outright in the shipped engine). Our ManagePower replacement defines no
+    CodeAISet — the generic CodeAISet() call at bind time is covered by
+    tests/unit/test_codeaiset_bind.py."""
     import AI.Preprocessors
     node = PreprocessingAI_Create(None, "PowerManagement")
     sdk_inst = AI.Preprocessors.ManagePower(0)
@@ -159,9 +183,138 @@ def test_an_unregistered_preprocessor_is_left_alone():
     assert node.GetPreprocessingInstance() is inst
 
 
-def test_fire_script_and_select_target_are_deliberately_not_registered():
-    """The binary swaps four preprocessors; we register only ManagePower. The
-    other three have working SDK Python bodies that our driver runs, and we have
-    no native replacements — a documented divergence, pinned here so nobody
-    "completes" the registry by accident."""
-    assert set(ai_optimized.OPTIMIZED_PREPROCESSORS) == {"ManagePower"}
+def test_the_registry_holds_the_three_classes_whose_python_bodies_can_be_lethal():
+    """The binary registers four preprocessors (AvoidObstacles, FireScript,
+    ManagePower, SelectTarget). We register the three whose SDK Python Update can
+    return PS_DONE: ManagePower (full replacement) plus FireScript and
+    AvoidObstacles (thin non-lethal wrappers around the real SDK bodies).
+
+    SelectTarget is deliberately absent — its Python body cannot return PS_DONE
+    (pinned below), so it needs no protection."""
+    assert set(ai_optimized.OPTIMIZED_PREPROCESSORS) == {
+        "ManagePower", "FireScript", "AvoidObstacles",
+    }
+
+
+def test_select_targets_sdk_body_cannot_return_ps_done():
+    """The reason SelectTarget stays out of the registry. Its no-target path
+    returns PS_SKIP_DORMANT (AI/Preprocessors.py, eNoTargetPreprocessStatus) —
+    it never returns PS_DONE, so running its Python body cannot kill an AI node.
+    If this ever goes red, SelectTarget needs a wrapper like FireScript's."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    src = (root / "sdk/Build/scripts/AI/Preprocessors.py").read_text()
+    # Slice the SelectTarget class body out of the SDK source (the SDK modules
+    # are loaded through a custom finder, so inspect.getsource can't see them).
+    body = re.search(r"^class SelectTarget:\n(.*?)^class ", src, re.S | re.M)
+    assert body is not None, "SelectTarget vanished from the SDK?"
+    assert "PS_DONE" not in body.group(1)
+
+
+# --- FireScript / AvoidObstacles: the SDK bodies CAN return PS_DONE ----------
+#
+# We run those Python bodies (the shipped engine does not — it swaps in native
+# classes). PS_DONE is lethal, and US_DONE is unrecoverable in our driver, so an
+# unwrapped FireScript that momentarily loses its target would permanently delete
+# the ship's AI. The shipped game plainly does not behave that way.
+
+
+def _wire_ship_with_fire_script(target_name="Target"):
+    """A real SDK FireScript on a real ship in a real set, as CreateAI builds it."""
+    from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import HullSubsystem
+    import AI.Preprocessors
+
+    App.g_kSetManager._sets.clear()
+    pSet = App.SetClass_Create()
+    pSet.SetName("S")
+    App.g_kSetManager._sets["S"] = pSet
+
+    ours = ShipClass()
+    ours.SetTranslateXYZ(0, 0, 0)
+    ours._hull = HullSubsystem("H")
+    ours._hull.SetMaxCondition(1000.0)
+    pSet.AddObjectToSet(ours, "Ours")
+
+    target = ShipClass()
+    target.SetTranslateXYZ(0, 100, 0)
+    target._hull = HullSubsystem("H")
+    target._hull.SetMaxCondition(1000.0)
+    pSet.AddObjectToSet(target, target_name)
+
+    node = PreprocessingAI_Create(ours, "FireScript")
+    child_ai = PlainAI_Create(ours, "child")
+    child = _Child()
+    child_ai._script_instance = child
+    node.SetContainedAI(child_ai)
+    node.SetPreprocessingMethod(AI.Preprocessors.FireScript(target_name), "Update")
+    return node, child, pSet, target
+
+
+def test_a_fire_script_that_loses_its_target_does_not_kill_the_ai():
+    """FedAttack/NonFedAttack/CloakAttack all build FireScript nodes. Its Update
+    returns PS_DONE the moment GetTarget() comes back None (target destroyed, or
+    it left the set). Unwrapped that is US_DONE — the AI node dies forever."""
+    node, child, pSet, target = _wire_ship_with_fire_script()
+
+    # Target present: normal dispatch (no weapons added -> PS_NORMAL).
+    assert tick_ai(node, 0.0) == ArtificialIntelligence.US_ACTIVE
+    assert child.updates == 1
+
+    # Target destroyed / left the set. FireScript.GetTarget -> None -> PS_DONE.
+    pSet.RemoveObjectFromSet("Target")
+    status = tick_ai(node, 1.0)
+    assert status != ArtificialIntelligence.US_DONE, (
+        "a targetless FireScript must not delete the ship's AI")
+    assert status == ArtificialIntelligence.US_DORMANT
+    assert child.updates == 1, "no target: the combat subtree must not run"
+
+
+def test_the_ai_recovers_when_a_fire_script_re_acquires_a_target():
+    """US_DONE is unrecoverable in our driver (_tick_priority_list skips DONE
+    children forever). The whole point of the non-lethal translation is that the
+    node comes back the moment the SDK body says PS_NORMAL again."""
+    node, child, pSet, target = _wire_ship_with_fire_script()
+    assert tick_ai(node, 0.0) == ArtificialIntelligence.US_ACTIVE
+
+    pSet.RemoveObjectFromSet("Target")
+    assert tick_ai(node, 1.0) == ArtificialIntelligence.US_DORMANT
+
+    # A new contact turns up under the same name (FireScript targets by name).
+    pSet.AddObjectToSet(target, "Target")
+    assert tick_ai(node, 2.0) == ArtificialIntelligence.US_ACTIVE
+    assert child.updates == 2, "the AI must resume firing, not stay dead"
+
+
+def test_the_wrapped_fire_script_is_still_the_real_sdk_fire_script():
+    """The wrapper delegates: it IS an SDK FireScript (subclass, shared state),
+    so every other behaviour our driver depends on — CodeAISet's SetTarget
+    registration, subsystem choice, weapon lists — is the SDK's, untouched."""
+    import AI.Preprocessors
+    node, _child, _pSet, _target = _wire_ship_with_fire_script()
+    bound = node.GetPreprocessingInstance()
+    assert isinstance(bound, AI.Preprocessors.FireScript)
+    assert bound.sTarget == "Target"
+    assert bound.pCodeAI is node
+    # CodeAISet ran on the bound object.
+    assert "SetTarget" in node._external_functions
+
+
+def test_a_shipless_avoid_obstacles_does_not_kill_the_ai():
+    """AvoidObstacles.Update: `if pShip == None: return PS_DONE`
+    (AI/Preprocessors.py:1688). Same lethal edge, same wrapper."""
+    import AI.Preprocessors
+
+    node = PreprocessingAI_Create(None, "AvoidObstacles")   # no ship
+    child_ai = PlainAI_Create(None, "child")
+    child = _Child()
+    child_ai._script_instance = child
+    node.SetContainedAI(child_ai)
+    node.SetPreprocessingMethod(AI.Preprocessors.AvoidObstacles(), "Update")
+
+    status = tick_ai(node, 0.0)
+    assert status != ArtificialIntelligence.US_DONE
+    assert status == ArtificialIntelligence.US_DORMANT
+    assert child.updates == 0
