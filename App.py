@@ -1027,6 +1027,13 @@ ET_REPORT                   = 1077
 # Game_GetNextEventType allocator floor.
 ET_PLAYER_DOCKED_WITH_STARBASE = 1078
 ET_TRACTOR_TARGET_DOCKED       = 1079
+# Fired by ObjectClass.SetScannable on an actual change of the flag (mirrors
+# ET_HAILABLE_CHANGE above). Bridge/ScienceMenuHandlers.CreateMenus registers
+# a broadcast handler for it (PropertyChange) that refreshes the Scan Object
+# menu's per-ship button when a ship's scannability toggles at runtime (e.g.
+# Maelstrom/Episode6/E6M4's cloaked-Kessok reveal). 1080 is the next free
+# value in this block.
+ET_SCANNABLE_CHANGE            = 1080
 
 # ── FloatRangeWatcher condition event ─────────────────────────────────────────
 # Crossing event broadcast by a power subsystem's battery watcher when the

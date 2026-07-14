@@ -74,6 +74,22 @@ class ObjectClass(TGEventHandlerObject):
         # init (not a __getattr__ _Stub) so IsHailable / the change-guard read
         # a real bool. See SetHailable for the ET_HAILABLE_CHANGE broadcast.
         self._hailable: bool = False
+        # Whether the Science station's "Scan Object"/"Scan Target" menus offer
+        # this object. Defaults True (unlike _hailable): across the SDK,
+        # SetScannable(FALSE) is used ~9 times total, always paired with
+        # SetTargetable(FALSE)/SetHailable(FALSE) to narratively hide a specific
+        # ship until a reveal beat (Maelstrom/Episode6/E6M4's cloaked Kessok +
+        # derelict, Episode6/E6M2's escape pods, Episode3/E3M1's Amagon
+        # asteroid, Episode3/E3M2's invisible Kessok) — the SAME ships are then
+        # SetScannable(TRUE)'d back on reveal. The vast majority of ships in the
+        # SDK never touch SetScannable at all, which only makes sense if the
+        # engine default is scannable=True (matching _targetable's default of
+        # 1 in properties.py/subsystems.py) — otherwise Science's core "scan
+        # any nearby ship" feature would be silently dead for every mission
+        # that doesn't opt in. Eager init so IsScannable / the change-guard
+        # read a real bool. See SetScannable for the ET_SCANNABLE_CHANGE
+        # broadcast.
+        self._scannable: bool = True
 
     # ── Identity ──────────────────────────────────────────────────────────────
 
@@ -148,6 +164,30 @@ class ObjectClass(TGEventHandlerObject):
 
     def IsHailable(self) -> int:
         return 1 if self._hailable else 0
+
+    # ── Scannable state ───────────────────────────────────────────────────────
+    # BC's C++ ObjectClass::SetScannable fires ET_SCANNABLE_CHANGE, which
+    # Bridge/ScienceMenuHandlers.PropertyChange consumes (broadcast handler
+    # registered in CreateMenus) to refresh the object's Scan Object button.
+    # Default True — see the _scannable comment in __init__ for the evidence.
+    def SetScannable(self, value) -> None:
+        new_value = bool(value)
+        if new_value == self._scannable:
+            return
+        self._scannable = new_value
+        try:
+            import App
+            evt = App.TGBoolEvent_Create()
+            evt.SetEventType(App.ET_SCANNABLE_CHANGE)
+            evt.SetSource(self)
+            evt.SetBool(1 if new_value else 0)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            import engine.dev_mode as dev_mode
+            dev_mode.log_swallowed("SetScannable broadcast", _e)
+
+    def IsScannable(self) -> int:
+        return 1 if self._scannable else 0
 
     def ReplaceTexture(self, new_texture_path: str, old_texture_name: str) -> None:
         """BC ObjectClass::ReplaceTexture — swap a texture on this object's model.

@@ -48,7 +48,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 36 | App | ET_CANT_FIRE | 64 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 37 | App | ET_PLAYER_TORPEDO_TYPE_CHANGED | 64 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 38 | TorpedoSystem | SetSingleFire | 64 | 13/16 | 2026-07-13 20:23 UTC |  |
-| 39 | ShipClass | IsScannable | 63 | 13/16 | 2026-07-13 20:23 UTC |  |
+| 39 | ShipClass | IsScannable | 63 | 13/16 | 2026-07-13 20:23 UTC | 2026-07-14 |
 | 40 | STTopLevelMenu | GetContainingWindow | 60 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 41 | App | ET_TRACTOR_BEAM_STARTED_FIRING | 58 | 13/16 | 2026-07-13 20:23 UTC |  |
 | 42 | App | ET_SET_TARGET | 56 | 13/16 | 2026-07-13 20:23 UTC |  |
@@ -264,7 +264,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 252 | Planet | GetVelocity.x | 11 | 1/16 | 2026-07-13 08:53 UTC | 2026-07-13 |
 | 253 | Planet | GetVelocity.y | 11 | 1/16 | 2026-07-13 08:53 UTC | 2026-07-13 |
 | 254 | Planet | GetVelocity.z | 11 | 1/16 | 2026-07-13 08:53 UTC | 2026-07-13 |
-| 255 | Planet | IsScannable | 11 | 10/16 | 2026-07-13 19:30 UTC |  |
+| 255 | Planet | IsScannable | 11 | 10/16 | 2026-07-13 19:30 UTC | 2026-07-14 |
 | 256 | App | ET_IN_SYSTEM_WARP | 10 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 257 | App | ET_MOUSE | 10 | 10/16 | 2026-07-13 19:30 UTC |  |
 | 258 | App | ET_NAME_CHANGE | 10 | 10/16 | 2026-07-13 19:30 UTC |  |
