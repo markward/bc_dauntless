@@ -54,3 +54,44 @@ def test_skip_current_clears_active_speaker():
     assert crew_speech.is_speaking("Helm", now=200.5) is False
     assert bus._active_speaker == ""
     bus.reset()
+
+
+def test_cat_constants_are_bc_ordinals():
+    # BC's CAT_ values are plain ordinals 0..6, proven from the binary's own
+    # predicates: IsAnimatingInterruptable accepts {0,1,5,6}; IsAnimatingNon-
+    # Interruptable tests == 2.
+    assert CharacterClass.CAT_BREATHE == 0
+    assert CharacterClass.CAT_INTERRUPTABLE == 1
+    assert CharacterClass.CAT_NON_INTERRUPTABLE == 2
+    assert CharacterClass.CAT_TURN == 3
+    assert CharacterClass.CAT_TURN_BACK == 4
+    assert CharacterClass.CAT_GLANCE == 5
+    assert CharacterClass.CAT_GLANCE_BACK == 6
+
+
+def test_non_interruptable_animation_closes_the_sdk_gate():
+    ch = CharacterClass("body.nif", "head.nif")
+    assert ch.IsAnimating() == 0
+    assert ch.IsAnimatingNonInterruptable() == 0
+
+    ch.set_current_animation("PushingButtons", CharacterClass.CAT_NON_INTERRUPTABLE)
+    assert ch.IsAnimating() == 1
+    assert ch.IsGoingToAnimate() == 1
+    assert ch.IsAnimatingNonInterruptable() == 1
+    assert ch.IsAnimatingInterruptable() == 0
+    assert ch.GetCurrentAnimation() == "PushingButtons"
+
+    ch.clear_current_animation()
+    assert ch.IsAnimating() == 0
+    assert ch.IsAnimatingNonInterruptable() == 0
+
+
+def test_interruptable_categories_match_the_binary():
+    ch = CharacterClass("body.nif", "head.nif")
+    for cat in (CharacterClass.CAT_BREATHE, CharacterClass.CAT_INTERRUPTABLE,
+                CharacterClass.CAT_GLANCE, CharacterClass.CAT_GLANCE_BACK):
+        ch.set_current_animation("x", cat)
+        assert ch.IsAnimatingInterruptable() == 1, cat
+        assert ch.IsAnimatingNonInterruptable() == 0, cat
+    ch.set_current_animation("x", CharacterClass.CAT_NON_INTERRUPTABLE)
+    assert ch.IsAnimatingInterruptable() == 0
