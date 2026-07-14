@@ -129,6 +129,7 @@ class CrewSpeechBus:
         self._stop_active_voice()
         self._active_expiry = 0.0
         self._active_priority = -1
+        self._active_speaker = ""
         if not line_live:
             return
         try:

@@ -37,3 +37,20 @@ def test_is_speaking_tracks_the_active_speaker():
     assert crew_speech.is_speaking("Felix", now=100.5) is False   # no cross-talk
     assert crew_speech.is_speaking("Kiska", now=100.0 + dur + 0.1) is False
     bus.reset()
+
+
+def test_skip_current_clears_active_speaker():
+    """After skip_current(), is_speaking() must be False and _active_speaker must be empty."""
+    bus = crew_speech.bus()
+    bus.reset()
+    # Speak a line and verify it's active
+    dur = bus.speak("Helm", "Course laid in.", None, 1, now=200.0)
+    assert dur > 0.0
+    assert crew_speech.is_speaking("Helm", now=200.5) is True
+    assert bus._active_speaker == "Helm"
+    # Skip the line
+    bus.skip_current(now=200.5)
+    # Verify the speaker is cleared and is_speaking() reports False
+    assert crew_speech.is_speaking("Helm", now=200.5) is False
+    assert bus._active_speaker == ""
+    bus.reset()
