@@ -25,6 +25,7 @@ public:
     Shader& shield_shader() noexcept     { return *shield_; }
     Shader& lens_flare_shader() noexcept { return *lens_flare_; }
     Shader& torpedo_shader() noexcept    { return *torpedo_; }
+    Shader& disruptor_shader() noexcept  { return *disruptor_; }
     Shader& hit_vfx_shader() noexcept    { return *hit_vfx_; }
     Shader& hull_discharge_shader() noexcept { return *hull_discharge_; }
     Shader& nebula_wake_shader() noexcept { return *nebula_wake_; }
@@ -57,6 +58,7 @@ private:
     std::unique_ptr<Shader> shield_;
     std::unique_ptr<Shader> lens_flare_;
     std::unique_ptr<Shader> torpedo_;
+    std::unique_ptr<Shader> disruptor_;
     std::unique_ptr<Shader> hit_vfx_;
     std::unique_ptr<Shader> hull_discharge_;
     std::unique_ptr<Shader> nebula_wake_;
