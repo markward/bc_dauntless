@@ -11,6 +11,8 @@
 
 #include "host_bindings.h"
 
+#include <algorithm>
+
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
@@ -188,6 +190,10 @@ std::vector<renderer::LensFlareDescriptor> g_lens_flares;
 std::unique_ptr<renderer::LensFlarePass>   g_lens_flare_pass;
 std::vector<renderer::TorpedoDescriptor>   g_torpedoes;
 std::unique_ptr<renderer::TorpedoPass>     g_torpedo_pass;
+// Full-replace per-frame dynamic-light list (Task 10). Empty in production
+// until Task 11 wires a real emitter (torpedo glow); consumed only by the
+// Space-pass opaque submit below.
+std::vector<renderer::DynamicLightDescriptor> g_dynamic_lights;
 std::vector<renderer::ShockwaveDescriptor> g_shockwaves;
 std::unique_ptr<renderer::ShockwavePass>   g_shockwave_pass;
 std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
@@ -411,6 +417,10 @@ void init(int width, int height, const std::string& title) {
     g_submitter = std::make_unique<renderer::FrameSubmitter>();
     g_world = scenegraph::World{};
     g_loaded_models.clear();
+    // ModelHandles are reissued from 1 after every g_loaded_models.clear();
+    // drop the renderer's per-handle bounding-radius cache in lockstep or a
+    // new model recycled onto an old handle inherits the old model's radius.
+    renderer::reset_model_radius_cache();
     g_bridge_node_anims.clear();
     g_bridge_node_ids.clear();
     g_lighting = renderer::Lighting{};
@@ -478,6 +488,9 @@ void shutdown() {
     // renderer::reset_damage_decal_texture().
     renderer::reset_damage_decal_texture();
     g_loaded_models.clear();
+    // Handle-recycling hazard: see the matching call in init(). Pure CPU
+    // state (no GL), safe regardless of context currency.
+    renderer::reset_model_radius_cache();
     g_bridge_node_anims.clear();
     g_bridge_node_ids.clear();
     g_cache.reset();
@@ -501,6 +514,7 @@ void shutdown() {
     g_lens_flare_pass.reset();
     g_torpedoes.clear();
     g_torpedo_pass.reset();
+    g_dynamic_lights.clear();
     g_shockwaves.clear();
     g_shockwave_pass.reset();
     g_hit_vfx.clear();
@@ -658,7 +672,7 @@ void frame() {
         g_submitter->submit_opaque_in_pass(
             g_world, cam, *g_pipeline, lookup, g_lighting,
             scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
-            ambient_scale);
+            ambient_scale, &g_dynamic_lights);
         // Breach scoop pass: for each active carve sphere, draws the front-
         // face-culled sphere inner wall masked by the original hull fill
         // (triplanar Damage.tga). Runs right after the opaque hull
@@ -2098,11 +2112,63 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   t.flares_size_a  = d["flares_size_a"].cast<float>();
                   t.flares_size_b  = d["flares_size_b"].cast<float>();
                   t.age            = d["age"].cast<float>();
+                  t.id             = d["id"].cast<int>();
+                  t.is_disruptor   = d["is_disruptor"].cast<bool>();
+                  auto fwd = d["forward"].cast<std::tuple<float, float, float>>();
+                  t.forward = {std::get<0>(fwd), std::get<1>(fwd), std::get<2>(fwd)};
+                  auto sc = d["shell_color"].cast<std::tuple<float, float, float, float>>();
+                  t.shell_color = {std::get<0>(sc), std::get<1>(sc),
+                                    std::get<2>(sc), std::get<3>(sc)};
+                  auto bcc = d["bolt_core_color"].cast<std::tuple<float, float, float, float>>();
+                  t.bolt_core_color = {std::get<0>(bcc), std::get<1>(bcc),
+                                        std::get<2>(bcc), std::get<3>(bcc)};
+                  t.bolt_length = d["bolt_length"].cast<float>();
+                  t.bolt_width  = d["bolt_width"].cast<float>();
                   g_torpedoes.push_back(std::move(t));
               }
           },
           py::arg("torpedoes"),
           "Set the active torpedo list, applied each frame().");
+
+    m.def("set_dynamic_lights",
+          [](const std::vector<py::dict>& descs) {
+              g_dynamic_lights.clear();
+              // Hard clamp to the native per-frame cap (64): silently ignore
+              // any excess entries rather than raising. There is no shared
+              // warning mechanism in this binding file for a soft-cap
+              // condition (the other full-replace bindings here either parse
+              // unconditionally or degrade via .contains(), never clamp), so
+              // this is a plain comment + hard clamp rather than inventing one.
+              const std::size_t n =
+                  std::min(descs.size(),
+                           static_cast<std::size_t>(renderer::kMaxDynamicLightsPerFrame));
+              g_dynamic_lights.reserve(n);
+              for (std::size_t i = 0; i < n; ++i) {
+                  const auto& d = descs[i];
+                  renderer::DynamicLightDescriptor l;
+                  auto pos = d["position"].cast<std::tuple<float, float, float>>();
+                  l.pos_a = {std::get<0>(pos), std::get<1>(pos), std::get<2>(pos)};
+                  // position_b is the ONE optional key: a point light is a
+                  // degenerate segment (pos_b == pos_a), so absent/None both
+                  // collapse to that same default rather than raising.
+                  if (d.contains("position_b") && !d["position_b"].is_none()) {
+                      auto pos_b = d["position_b"].cast<std::tuple<float, float, float>>();
+                      l.pos_b = {std::get<0>(pos_b), std::get<1>(pos_b), std::get<2>(pos_b)};
+                  } else {
+                      l.pos_b = l.pos_a;
+                  }
+                  auto c = d["color"].cast<std::tuple<float, float, float>>();
+                  l.color = {std::get<0>(c), std::get<1>(c), std::get<2>(c)};
+                  l.radius    = d["radius"].cast<float>();
+                  l.intensity = d["intensity"].cast<float>();
+                  g_dynamic_lights.push_back(l);
+              }
+          },
+          py::arg("lights"),
+          "Replace the active dynamic-light list, applied each frame(). Each "
+          "dict has position (pos_a), color, radius, intensity, plus optional "
+          "position_b (pos_b defaults to position for a point light). Clamped "
+          "to kMaxDynamicLightsPerFrame entries.");
 
     m.def("set_shockwaves",
           [](const std::vector<py::dict>& descs) {

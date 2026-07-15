@@ -29,6 +29,8 @@
 #include "embedded_lens_flare_fs.h"
 #include "embedded_torpedo_vs.h"
 #include "embedded_torpedo_fs.h"
+#include "embedded_disruptor_vs.h"
+#include "embedded_disruptor_fs.h"
 #include "embedded_hit_vfx_vs.h"
 #include "embedded_hit_vfx_fs.h"
 #include "embedded_hull_discharge_vs.h"
@@ -79,6 +81,7 @@ Pipeline::Pipeline() {
     shield_ = std::make_unique<Shader>(shader_src::shield_vs, shader_src::shield_fs);
     lens_flare_ = std::make_unique<Shader>(shader_src::lens_flare_vs, shader_src::lens_flare_fs);
     torpedo_    = std::make_unique<Shader>(shader_src::torpedo_vs,    shader_src::torpedo_fs);
+    disruptor_  = std::make_unique<Shader>(shader_src::disruptor_vs,  shader_src::disruptor_fs);
     hit_vfx_    = std::make_unique<Shader>(shader_src::hit_vfx_vs,    shader_src::hit_vfx_fs);
     hull_discharge_ = std::make_unique<Shader>(shader_src::hull_discharge_vs, shader_src::hull_discharge_fs);
     nebula_wake_ = std::make_unique<Shader>(shader_src::nebula_wake_vs, shader_src::nebula_wake_fs);
