@@ -112,6 +112,57 @@ inline glm::mat3 flare_rotation(uint32_t id, uint32_t flare_index) {
     return glm::mat3(glm::rotate(glm::mat4(1.0f), angle, axis));
 }
 
+/// Camera-facing billboard-root frame for a torpedo (the basis TorpedoPass
+/// draws every layer with). Columns are (X_r, Y_r, Z_r), column-vector
+/// convention: Z_r = normalize(cam_pos - world_pos) is the view axis,
+/// X_r0 = normalize(cross(cam_up, Z_r)), Y_r0 = cross(Z_r, X_r0) (right-
+/// handed), then X/Y are rotated about Z_r by fmod(age * spin_rate, 2pi).
+/// Provisional axis choice -- spin axis = view axis (Z_r); RE Q7 may revise
+/// this to a root-local Y axis instead.
+///
+/// Degenerate cases: cam_pos == world_pos (no view direction) returns
+/// identity; cam_up (nearly) parallel to the view axis falls back to world X
+/// as the up seed -- or world Y when the view axis itself is (nearly) world
+/// X -- so the frame stays orthonormal and NaN-free at every camera pose.
+inline glm::mat3 torpedo_root_frame(const glm::vec3& cam_pos,
+                                    const glm::vec3& world_pos,
+                                    const glm::vec3& cam_up,
+                                    float age, float spin_rate) {
+    const glm::vec3 to_cam = cam_pos - world_pos;
+    const float len2 = glm::dot(to_cam, to_cam);
+    if (len2 < 1e-12f) {
+        return glm::mat3(1.0f);  // camera exactly at the torpedo
+    }
+    const glm::vec3 z_r = to_cam / std::sqrt(len2);
+    glm::vec3 x_r0 = glm::cross(cam_up, z_r);
+    float x_len2 = glm::dot(x_r0, x_r0);
+    if (x_len2 < 1e-12f) {
+        const glm::vec3 fallback_up = (std::fabs(z_r.x) < 0.9f)
+            ? glm::vec3(1.0f, 0.0f, 0.0f)
+            : glm::vec3(0.0f, 1.0f, 0.0f);
+        x_r0 = glm::cross(fallback_up, z_r);
+        x_len2 = glm::dot(x_r0, x_r0);
+    }
+    x_r0 /= std::sqrt(x_len2);
+    const glm::vec3 y_r0 = glm::cross(z_r, x_r0);
+
+    const float theta =
+        std::fmod(age * spin_rate, torpedo_anim_detail::kTwoPi);
+    const glm::mat3 spin =
+        glm::mat3(glm::rotate(glm::mat4(1.0f), theta, z_r));
+    return glm::mat3(spin * x_r0, spin * y_r0, z_r);
+}
+
+/// Per-flare quad basis: the (spun) root frame composed with the fixed
+/// random per-flare rotation. root * R applies R in the root frame's own
+/// basis and re-expresses the result in world space (column-vector
+/// convention) -- columns 0/1 of the product are the flare quad's
+/// world-space axes.
+inline glm::mat3 flare_basis(const glm::mat3& root, uint32_t id,
+                             uint32_t flare_index) {
+    return root * flare_rotation(id, flare_index);
+}
+
 /// Rotation taking model +Y to `forward` (unit input): tube-local +Y maps to
 /// the world velocity direction, i.e. world = R * local. Column-vector,
 /// right-handed. Degenerate cases: forward ~= +Y -> identity; forward ~= -Y

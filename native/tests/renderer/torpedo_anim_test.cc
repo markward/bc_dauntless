@@ -221,6 +221,112 @@ TEST(TorpedoAnimFlareRotation, DiffersAcrossFlareIndices) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// torpedo_root_frame — the billboard-root basis TorpedoPass draws with.
+// Extracted from render() (Task 6 review finding 2) so the axis math is
+// testable without a GL context.
+// ─────────────────────────────────────────────────────────────────────────
+TEST(TorpedoAnimRootFrame, UnspunFrameFacesCameraAndIsOrthonormal) {
+    const glm::vec3 cam_pos(0.0f, 0.0f, 100.0f);
+    const glm::vec3 world_pos(0.0f, 0.0f, 0.0f);
+    const glm::vec3 cam_up(0.0f, 1.0f, 0.0f);
+    const glm::mat3 r = renderer::torpedo_root_frame(
+        cam_pos, world_pos, cam_up, /*age=*/0.0f, /*spin_rate=*/0.0f);
+    // Column 2 (Z_r) points from world_pos toward cam_pos: +Z here.
+    EXPECT_NEAR(r[2].x, 0.0f, 1e-5f);
+    EXPECT_NEAR(r[2].y, 0.0f, 1e-5f);
+    EXPECT_NEAR(r[2].z, 1.0f, 1e-5f);
+    EXPECT_TRUE(is_rotation_matrix(r, 1e-4f));  // orthonormal, det +1
+}
+
+TEST(TorpedoAnimRootFrame, QuarterTurnSpinRotatesXIntoPlusY) {
+    // LOCKS the composition order/sign: with the right-handed basis
+    // (Y_r0 = cross(Z_r, X_r0)) and glm::rotate's counterclockwise-about-
+    // axis convention, age*spin_rate = +pi/2 about Z_r carries X_r0 onto
+    // +Y_r0 (and Y_r0 onto -X_r0).
+    const glm::vec3 cam_pos(0.0f, 0.0f, 100.0f);
+    const glm::vec3 world_pos(0.0f, 0.0f, 0.0f);
+    const glm::vec3 cam_up(0.0f, 1.0f, 0.0f);
+    const glm::mat3 unspun = renderer::torpedo_root_frame(
+        cam_pos, world_pos, cam_up, 0.0f, 0.0f);
+    const float rate = 1.0f;
+    const float age = kPi / 2.0f;  // age * rate == pi/2
+    const glm::mat3 spun = renderer::torpedo_root_frame(
+        cam_pos, world_pos, cam_up, age, rate);
+    for (int row = 0; row < 3; ++row) {
+        EXPECT_NEAR(spun[0][row],  unspun[1][row], 1e-4f) << "row=" << row;
+        EXPECT_NEAR(spun[1][row], -unspun[0][row], 1e-4f) << "row=" << row;
+        EXPECT_NEAR(spun[2][row],  unspun[2][row], 1e-4f) << "row=" << row;
+    }
+    EXPECT_TRUE(is_rotation_matrix(spun, 1e-4f));
+}
+
+TEST(TorpedoAnimRootFrame, DegenerateCameraAtTorpedoReturnsIdentityNoNaN) {
+    const glm::vec3 pos(5.0f, -3.0f, 12.0f);
+    const glm::mat3 r = renderer::torpedo_root_frame(
+        pos, pos, glm::vec3(0.0f, 1.0f, 0.0f), 2.0f, 1.2f);
+    const glm::mat3 identity(1.0f);
+    for (int c = 0; c < 3; ++c) {
+        for (int row = 0; row < 3; ++row) {
+            EXPECT_FALSE(std::isnan(r[c][row])) << "c=" << c << " row=" << row;
+            EXPECT_NEAR(r[c][row], identity[c][row], 1e-6f);
+        }
+    }
+}
+
+TEST(TorpedoAnimRootFrame, CamUpParallelToViewAxisStillOrthonormalNoNaN) {
+    // Camera straight above the torpedo with cam_up parallel to the view
+    // axis: cross(cam_up, Z_r) degenerates; the fallback up axis must keep
+    // the frame orthonormal and NaN-free.
+    const glm::vec3 cam_pos(0.0f, 0.0f, 50.0f);
+    const glm::vec3 world_pos(0.0f, 0.0f, 0.0f);
+    const glm::vec3 cam_up(0.0f, 0.0f, 1.0f);  // parallel to Z_r
+    const glm::mat3 r = renderer::torpedo_root_frame(
+        cam_pos, world_pos, cam_up, 0.7f, 1.2f);
+    for (int c = 0; c < 3; ++c)
+        for (int row = 0; row < 3; ++row)
+            EXPECT_FALSE(std::isnan(r[c][row])) << "c=" << c << " row=" << row;
+    EXPECT_TRUE(is_rotation_matrix(r, 1e-4f));
+    // View axis unchanged by the fallback.
+    EXPECT_NEAR(r[2].z, 1.0f, 1e-5f);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// flare_basis — per-flare quad basis: root frame composed with the fixed
+// random per-flare rotation.
+// ─────────────────────────────────────────────────────────────────────────
+TEST(TorpedoAnimFlareBasis, EqualsRootTimesFlareRotation) {
+    const glm::mat3 root = renderer::torpedo_root_frame(
+        glm::vec3(10.0f, 20.0f, 30.0f), glm::vec3(0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f), 0.4f, 1.2f);
+    const glm::mat3 expected = root * renderer::flare_rotation(42u, 3u);
+    const glm::mat3 actual = renderer::flare_basis(root, 42u, 3u);
+    for (int c = 0; c < 3; ++c)
+        for (int row = 0; row < 3; ++row)
+            EXPECT_FLOAT_EQ(actual[c][row], expected[c][row]);
+}
+
+TEST(TorpedoAnimFlareBasis, IsOrthonormal) {
+    const glm::mat3 root = renderer::torpedo_root_frame(
+        glm::vec3(0.0f, 0.0f, 100.0f), glm::vec3(0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f), 1.3f, 1.2f);
+    const glm::mat3 fb = renderer::flare_basis(root, 7u, 5u);
+    EXPECT_TRUE(is_rotation_matrix(fb, 1e-3f));
+}
+
+TEST(TorpedoAnimFlareBasis, DiffersAcrossFlareIndices) {
+    const glm::mat3 root = renderer::torpedo_root_frame(
+        glm::vec3(0.0f, 0.0f, 100.0f), glm::vec3(0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f), 0.0f, 0.0f);
+    const glm::mat3 a = renderer::flare_basis(root, 11u, 0u);
+    const glm::mat3 b = renderer::flare_basis(root, 11u, 1u);
+    bool any_diff = false;
+    for (int c = 0; c < 3 && !any_diff; ++c)
+        for (int row = 0; row < 3 && !any_diff; ++row)
+            if (std::fabs(a[c][row] - b[c][row]) > 1e-4f) any_diff = true;
+    EXPECT_TRUE(any_diff);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // bolt_align_rotation
 // ─────────────────────────────────────────────────────────────────────────
 TEST(TorpedoAnimBoltAlign, MapsPlusYToForwardPlusX) {

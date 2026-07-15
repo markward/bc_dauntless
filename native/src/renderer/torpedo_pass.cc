@@ -26,7 +26,6 @@
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 
 #include <cmath>
 #include <cstdint>
@@ -46,8 +45,6 @@ constexpr float kQuadCorners[] = {
     +1.0f, +1.0f,
     -1.0f, +1.0f,
 };
-
-constexpr float kTwoPi = 2.0f * 3.14159265358979323846f;
 
 }  // namespace
 
@@ -166,19 +163,21 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
         const auto p = map_torpedo_params(t);
 
         // Root frame: a camera-facing basis that spins about the view axis.
-        // Provisional axis choice -- spin axis = view axis (Z_r); RE Q7 may
-        // revise this to a root-local Y axis instead.
-        const glm::vec3 z_r  = glm::normalize(cam_pos - t.world_pos);
-        const glm::vec3 x_r0 = glm::normalize(glm::cross(cam_up_world, z_r));
-        const glm::vec3 y_r0 = glm::cross(z_r, x_r0);
-
-        const float theta = std::fmod(t.age * p.spin_rate, kTwoPi);
-        const glm::mat3 spin = glm::mat3(glm::rotate(glm::mat4(1.0f), theta, z_r));
-        const glm::vec3 x_r = spin * x_r0;
-        const glm::vec3 y_r = spin * y_r0;
+        // Axis math (incl. degenerate-pose guards and the provisional
+        // spin-axis choice, RE Q7) lives in torpedo_anim.h so it's testable
+        // without a GL context; columns are (X_r, Y_r, Z_r).
+        const glm::mat3 root3 = torpedo_root_frame(
+            cam_pos, t.world_pos, cam_up_world, t.age, p.spin_rate);
+        const glm::vec3 x_r = root3[0];
+        const glm::vec3 y_r = root3[1];
 
         // Glow quad A (animated): one draw at alpha 1.2 is exactly BC's two
-        // emissive passes (0.8 + 0.4) summed under additive blending.
+        // emissive passes (0.8 + 0.4) summed under additive blending. The
+        // 1.2 survives to the GL_SRC_ALPHA blend factor because torpedo.frag
+        // scales only frag_color.a by u_alpha (no alpha-squared error) and
+        // the pass renders into the RGBA16F HDR target -- float attachments
+        // don't clamp fragment outputs before blending. On a normalized
+        // (UNORM) target this would clamp to 1.0 and lose the extra 0.2.
         const float pulse_half_size = 0.5f * glow_pulse_scale(
             t.age, p.pulse_rate, p.scale_lo, p.scale_hi);
         draw_layer(t.glow_texture, t.glow_color, pulse_half_size, t.world_pos,
@@ -190,16 +189,12 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
 
         // Flare star: num_flares quads, each at a random fixed 3D rotation
         // (per id + flare index) composed onto the spun root frame, with a
-        // per-flare de-phased trapezoid alpha twinkle.
-        // root3's columns are X_r, Y_r, Z_r (column-vector convention);
-        // root3 * R applies the per-flare rotation R in the root frame's own
-        // basis and re-expresses the result in world space -- so column 0/1
-        // of the product are the flare quad's world-space axes.
-        const glm::mat3 root3(x_r, y_r, z_r);
+        // per-flare de-phased trapezoid alpha twinkle. Composition order
+        // (root * R, column-vector convention) is documented and lock-tested
+        // at flare_basis in torpedo_anim.h.
         for (int i = 0; i < t.num_flares; ++i) {
-            const glm::mat3 rot = flare_rotation(static_cast<uint32_t>(t.id),
-                                                  static_cast<uint32_t>(i));
-            const glm::mat3 flare_basis = root3 * rot;
+            const glm::mat3 quad_basis = flare_basis(
+                root3, static_cast<uint32_t>(t.id), static_cast<uint32_t>(i));
 
             float alpha = 1.0f;
             if (p.flare_period > 0.0f) {
@@ -214,7 +209,7 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
             if (alpha <= 0.0f) continue;
 
             draw_layer(t.flares_texture, t.flares_color, p.flare_half_size,
-                       t.world_pos, flare_basis[0], flare_basis[1], alpha);
+                       t.world_pos, quad_basis[0], quad_basis[1], alpha);
         }
 
         // Core sprite, drawn last -- order is cosmetic under additive blend
