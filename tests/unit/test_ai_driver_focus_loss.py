@@ -11,27 +11,37 @@ from engine.appc.ships import ShipClass
 
 US_ACTIVE = ArtificialIntelligence.US_ACTIVE
 US_DORMANT = ArtificialIntelligence.US_DORMANT
+PS_NORMAL = PreprocessingAI.PS_NORMAL
+PS_SKIP_DORMANT = PreprocessingAI.PS_SKIP_DORMANT
 
 
+# A node drops off the active path the way a real preprocessor does: its own
+# Update returns dormant (SelectTarget returns PS_SKIP_DORMANT when it has no
+# target). Poking `_status = US_DORMANT` externally is NOT how BC produces
+# dormancy and no longer sticks -- the driver re-dispatches a due dormant
+# PreprocessingAI, and a fixture whose Update returned PS_NORMAL would just
+# reactivate. So the fixtures expose a settable `result` that Update returns.
 class _WithLostFocus:
     def __init__(self):
         self.got = 0
         self.lost = 0
+        self.result = PreprocessingAI.PS_NORMAL
     def GotFocus(self):
         self.got += 1
     def LostFocus(self):
         self.lost += 1
     def Update(self, dEndTime):
-        return PreprocessingAI.PS_NORMAL
+        return self.result
 
 
 class _NoLostFocus:
     def __init__(self):
         self.got = 0
+        self.result = PreprocessingAI.PS_NORMAL
     def GotFocus(self):
         self.got += 1
     def Update(self, dEndTime):
-        return PreprocessingAI.PS_NORMAL
+        return self.result
 
 
 def _pp(inst, name):
@@ -53,8 +63,8 @@ def test_lost_focus_when_node_drops_off_active_path():
     pl = _list_with(a, b)
     tick_ai(pl, 0.0)                     # a eligible -> a focused
     assert ia.got == 1 and ia.lost == 0
-    a._status = US_DORMANT               # a no longer eligible
-    tick_ai(pl, 1.0)                     # b focused, a drops -> a.LostFocus
+    ia.result = PS_SKIP_DORMANT          # a's Update now goes dormant
+    tick_ai(pl, 1.0)                     # a drops -> a.LostFocus; b focused
     assert ia.lost == 1
     assert a._has_focus is False
     assert a.__dict__.get("_got_focus_called") is False
@@ -65,10 +75,10 @@ def test_regaining_focus_refires_got_focus():
     a, b = _pp(ia, "A"), _pp(_WithLostFocus(), "B")
     pl = _list_with(a, b)
     tick_ai(pl, 0.0)                     # a focused, got=1
-    a._status = US_DORMANT
-    tick_ai(pl, 1.0)                     # a drops -> lost=1
-    a._status = US_ACTIVE
-    tick_ai(pl, 2.0)                     # a re-focused -> got=2
+    ia.result = PS_SKIP_DORMANT
+    tick_ai(pl, 1.0)                     # a's Update -> dormant -> lost=1
+    ia.result = PS_NORMAL
+    tick_ai(pl, 2.0)                     # a re-probed (due) -> active -> got=2
     assert ia.got == 2
     assert ia.lost == 1
 
@@ -89,8 +99,8 @@ def test_no_lost_focus_method_is_noop_but_resets_flags():
     a, b = _pp(ia, "A"), _pp(_WithLostFocus(), "B")
     pl = _list_with(a, b)
     tick_ai(pl, 0.0)
-    a._status = US_DORMANT
-    tick_ai(pl, 1.0)                     # a drops; no LostFocus -> no error
+    ia.result = PS_SKIP_DORMANT
+    tick_ai(pl, 1.0)                     # a drops; no LostFocus method -> no error
     assert a._has_focus is False
     assert a.__dict__.get("_got_focus_called") is False
 
@@ -102,7 +112,7 @@ def test_two_ships_focus_isolated():
     pl1, pl2 = _list_with(a1, b1), _list_with(a2, b2)
     tick_ai(pl1, 0.0)
     tick_ai(pl2, 0.0)
-    a1._status = US_DORMANT              # only ship1's A drops
+    ia.result = PS_SKIP_DORMANT          # only ship1's A drops
     tick_ai(pl1, 1.0)
     tick_ai(pl2, 1.0)
     assert ia.lost == 1

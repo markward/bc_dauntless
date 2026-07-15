@@ -441,14 +441,16 @@ class ArtificialIntelligence:
         set / dies, rather than after the 5s ``fNormalUpdateTime`` cadence.
 
         Resetting ``_next_update_time`` to 0.0 (<= every real game_time) is
-        sufficient — no parent/root propagation is needed. The AI tree dispatches
-        to contained/children every driver tick regardless of a node's own
-        cadence, so a node on the active path is *reached* every tick; its own
-        gate is all that stands between it and re-running. (Caveat: this cannot
-        revive a node that has already latched US_DORMANT and is therefore
-        skipped by its parent priority list — e.g. re-acquiring a *decloaking*
-        target. The drop-on-cloak path is unaffected: the node is still US_ACTIVE
-        at the moment it is forced.)
+        sufficient — no parent/root propagation is needed. A node on the active
+        path is *reached* every tick; its own gate is all that stands between it
+        and re-running. A node that has gone US_DORMANT under a PriorityListAI is
+        also revived by this: ``_tick_priority_list`` re-probes a dormant
+        PreprocessingAI child once its cadence gate is due, and ForceUpdate opens
+        that gate (this is what lets a ship re-acquire a decloaking target, or
+        re-engage reinforcements after its target dies). NOTE the revival is
+        specific to PriorityListAI children — a SequenceAI still *holds* on a
+        dormant child by design, so ForceUpdate does not un-wedge a dormant
+        sequence step.
         """
         self._next_update_time = 0.0
 
