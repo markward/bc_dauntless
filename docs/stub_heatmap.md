@@ -40,12 +40,12 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 28 | PulseWeaponSystem | ShouldBeAimed | 270 | 1/44 | 2026-07-14 00:15 UTC |  |
 | 29 | ExplodeEmitterProperty_Create() | SetOrientation | 258 | 23/44 | 2026-07-15 09:38 UTC |  |
 | 30 | ExplodeEmitterProperty_Create() | SetPosition | 258 | 23/44 | 2026-07-15 09:38 UTC |  |
-| 31 | TorpedoSystem | SetForceUpdate | 256 | 8/44 | 2026-07-15 09:45 UTC |  |
+| 31 | TorpedoSystem | SetForceUpdate | 256 | 8/44 | 2026-07-15 09:45 UTC | 2026-07-15 |
 | 32 | ShipClass | subsystems | 237 | 31/44 | 2026-07-15 09:38 UTC |  |
-| 33 | TorpedoSystem | SetSingleFire | 212 | 31/44 | 2026-07-15 09:38 UTC |  |
+| 33 | TorpedoSystem | SetSingleFire | 212 | 31/44 | 2026-07-15 09:38 UTC | 2026-07-15 |
 | 34 | Mission | AddPrecreatedShip | 204 | 23/44 | 2026-07-15 09:38 UTC |  |
 | 35 | STCharacterMenu | GetFirstChild | 182 | 27/44 | 2026-07-15 09:38 UTC |  |
-| 36 | PhaserSystem | SetForceUpdate | 175 | 13/44 | 2026-07-15 11:17 UTC |  |
+| 36 | PhaserSystem | SetForceUpdate | 175 | 13/44 | 2026-07-15 11:17 UTC | 2026-07-15 |
 | 37 | App | ET_CANT_FIRE | 172 | 31/44 | 2026-07-15 09:38 UTC |  |
 | 38 | App | ET_PLAYER_TORPEDO_TYPE_CHANGED | 172 | 31/44 | 2026-07-15 09:38 UTC |  |
 | 39 | App | ExplodeEmitterProperty_Create | 153 | 23/44 | 2026-07-15 09:38 UTC |  |
@@ -337,7 +337,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 325 | ShipClass | CompleteStop | 2 | 2/44 | 2026-07-15 08:23 UTC |  |
 | 326 | ShipClass | IsPlayerShip | 2 | 1/44 | 2026-07-13 13:43 UTC |  |
 | 327 | App | ET_NEW_GAME | 1 | 1/44 | 2026-07-13 23:39 UTC |  |
-| 328 | App | ET_WEAPON_FIRED | 1 | 1/44 | 2026-07-13 23:37 UTC |  |
+| 328 | App | ET_WEAPON_FIRED | 1 | 1/44 | 2026-07-13 23:37 UTC | 2026-07-15 |
 | 329 | App | InterfaceModule_DoTheRightThing | 1 | 1/44 | 2026-07-13 23:39 UTC |  |
 | 330 | App | STStylizedWindow_Create | 1 | 1/44 | 2026-07-13 23:39 UTC |  |
 | 331 | AsteroidField | SetNavPoint | 1 | 1/44 | 2026-07-13 23:37 UTC |  |
