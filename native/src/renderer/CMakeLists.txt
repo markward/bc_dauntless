@@ -91,6 +91,7 @@ add_library(renderer STATIC
     shader.cc
     bone_palette.cc
     pose_sampler.cc
+    channel_binder.cc
     node_anim.cc
     bridge_node_anim_store.cc
     animation_update.cc

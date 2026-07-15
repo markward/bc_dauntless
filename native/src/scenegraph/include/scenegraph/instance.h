@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include "scenegraph/breach_events.h"
 #include "scenegraph/damage_decals.h"
 #include "scenegraph/hull_carve.h"
@@ -78,6 +79,38 @@ struct Instance {
     /// render). Written each frame by the bridge-node animation updater;
     /// consulted by walk_bridge_meshes. Runtime state, never serialized.
     std::unordered_map<int, glm::mat4> node_overrides;
+
+    /// ── Per-channel skeletal animation (BC TGAnimBlender-faithful) ──────────
+    /// One channel per skeleton bone. clip_index < 0 = unbound: the bone shows
+    /// its rest local (SkeletalAnim::rest_locals) or, without a rest pose, the
+    /// skeleton bind local. Channels are (re)bound per bone by
+    /// renderer::bind_clip via BC's exact case-sensitive node-name strcmp;
+    /// bones a clip does not track keep their previous channel untouched
+    /// (per-node last-bind-wins — every bridge animation in BC is
+    /// non-exclusive). Runtime state, never serialized.
+    struct BoneChannel {
+        int    clip_index  = -1;   // into Model::animations
+        int    track_index = -1;   // into clip.tracks (name-matched at bind)
+        double start_wall_time = 0.0;
+        float  blend_in_s = 0.0f;  // 0 = snap; else ramp seed→clip over this
+        bool   loop = false;           // idle loops; gestures/walks clamp+hold
+        bool   root_motion = false;    // root bone: APPLY track translation
+        bool   use_clip_base = false;  // omitted-channel base = clip rest_locals
+        bool   hold_at_start = false;  // evaluate at t=0 and settle immediately
+        bool   settled = false;        // non-loop reached end AND blend done
+        // Blend seed: the bone's local at bind time, decomposed once.
+        glm::vec3 seed_t{0.0f};
+        glm::quat seed_r{1.0f, 0.0f, 0.0f, 0.0f};
+        float     seed_s = 1.0f;
+    };
+    struct SkeletalAnim {
+        std::vector<BoneChannel> channels;   // sized to skeleton at first use
+        std::vector<glm::mat4>  rest_locals; // placement pose, sampled ONCE
+        std::vector<glm::mat4>  last_locals; // last evaluated pose (blend seeds)
+        bool has_rest = false;
+        bool dirty    = true;   // false = everything settled; skip rebuilds
+    };
+    SkeletalAnim anim;
 
     /// SP2 animation playback. clip_index < 0 means "not animated" (palette is
     /// left as set, or bind). The clip lives in the instance's Model::animations.
