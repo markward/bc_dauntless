@@ -81,10 +81,20 @@ struct LensFlareDescriptor {
     std::vector<LensFlareElement>   elements;
 };
 
-/// Torpedo render descriptor.  Populated from the SDK projectile script's
-/// CreateTorpedoModel call (sdk/Build/scripts/Tactical/Projectiles/*.py).
-/// Renderer composites three additive billboards (glow + flares + core) at
-/// world_pos each frame.  Sizes are world-units half-sizes per layer.
+/// Projectile render descriptor, covering BOTH BC projectile families
+/// (weapon-firing-mechanics.md §5.5). Populated from the SDK projectile
+/// script's CreateTorpedoModel / CreateDisruptorModel call
+/// (sdk/Build/scripts/Tactical/Projectiles/*.py):
+///   - Torpedo-style: renderer composites three additive textured billboards
+///     (glow + flares + core) at world_pos each frame, animated per the
+///     audited layer sizes. Sizes are world-units half-sizes per layer.
+///   - Disruptor-style (`is_disruptor`): a two-color tapered tube bolt
+///     aligned to `forward` (the unit velocity direction), built from
+///     `shell_color`/`bolt_core_color`/`bolt_length`/`bolt_width` instead of
+///     the textured quad layers.
+/// Every descriptor carries both families' fields; the family not in use
+/// carries its inert defaults (empty texture paths / zero sizes for a
+/// disruptor bolt, forward=(0,0,1) and zero bolt length/width for a torpedo).
 struct TorpedoDescriptor {
     glm::vec3   world_pos;
     std::string core_texture;
@@ -102,6 +112,13 @@ struct TorpedoDescriptor {
     float       flares_size_a = 0.0f;
     float       flares_size_b = 0.0f;
     float       age           = 0.0f;
+    int         id            = 0;       // stable per-projectile id; seeds per-flare randomness
+    bool        is_disruptor  = false;
+    glm::vec3   forward{0.0f, 0.0f, 1.0f};       // unit velocity direction (disruptor bolt alignment)
+    glm::vec4   shell_color{1.0f};               // disruptor outer shell color
+    glm::vec4   bolt_core_color{1.0f};           // disruptor inner core color
+    float       bolt_length = 0.0f;              // GU
+    float       bolt_width  = 0.0f;              // GU
 };
 
 // One warp-core breach shockwave: a camera-facing ring + core flash centered

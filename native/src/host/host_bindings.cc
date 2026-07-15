@@ -2098,6 +2098,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   t.flares_size_a  = d["flares_size_a"].cast<float>();
                   t.flares_size_b  = d["flares_size_b"].cast<float>();
                   t.age            = d["age"].cast<float>();
+                  t.id             = d["id"].cast<int>();
+                  t.is_disruptor   = d["is_disruptor"].cast<bool>();
+                  auto fwd = d["forward"].cast<std::tuple<float, float, float>>();
+                  t.forward = {std::get<0>(fwd), std::get<1>(fwd), std::get<2>(fwd)};
+                  auto sc = d["shell_color"].cast<std::tuple<float, float, float, float>>();
+                  t.shell_color = {std::get<0>(sc), std::get<1>(sc),
+                                    std::get<2>(sc), std::get<3>(sc)};
+                  auto bcc = d["bolt_core_color"].cast<std::tuple<float, float, float, float>>();
+                  t.bolt_core_color = {std::get<0>(bcc), std::get<1>(bcc),
+                                        std::get<2>(bcc), std::get<3>(bcc)};
+                  t.bolt_length = d["bolt_length"].cast<float>();
+                  t.bolt_width  = d["bolt_width"].cast<float>();
                   g_torpedoes.push_back(std::move(t));
               }
           },
