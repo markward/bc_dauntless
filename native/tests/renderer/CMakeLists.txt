@@ -19,6 +19,7 @@ add_executable(renderer_tests
     bridge_node_anim_store_test.cc
     animation_update_test.cc
     channel_binder_test.cc
+    channel_binder_assets_test.cc
     glow_region_test.cc
     ray_trace_test.cc
     shield_state_test.cc
