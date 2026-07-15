@@ -81,28 +81,92 @@ def test_menu_up_officer_is_suppressed(monkeypatch):
     assert ctrl.submitted == []              # suppressed while menu is up
 
 
-def test_build_sequence_clips_reads_sdk_getduration(monkeypatch):
+# ── build_sequence_clips: the canonical MissionLib-style sequence walk ───────
+# Real App classes throughout — the walk's identity reads are cast-based
+# (TGSequence_Cast / CharacterAction_Cast / TGAnimAction), so duck-typed fakes
+# would not be recognised, exactly as in the native engine.
+
+class _AnimMgr:
+    def __init__(self, table):
+        self._table = table
+    def path_for(self, name):
+        return self._table.get(name)
+
+
+def _install_factory(monkeypatch, seq):
     import sys, types
-    import engine.bridge_idle_gestures as mod
-
-    class _Action:
-        _clip = "looking_left"
-        def GetDuration(self):
-            return 2.5
-
-    class _Seq:
-        def GetNumActions(self):
-            return 1
-        def GetAction(self, i):
-            return _Action()
-
     fake = types.ModuleType("fake_anim_mod")
-    fake.Foo = staticmethod(lambda ch: _Seq())
+    fake.Foo = staticmethod(lambda ch: seq)
     monkeypatch.setitem(sys.modules, "fake_anim_mod", fake)
 
-    class _AnimMgr:
-        def path_for(self, name):
-            return "data/animations/looking_left.nif"
 
-    clips = mod.build_sequence_clips("fake_anim_mod.Foo", object(), _AnimMgr())
+def test_build_sequence_clips_reads_sdk_getduration(monkeypatch):
+    # TGAnimAction extends TGTimedAction, whose SetDuration/GetDuration are
+    # real SWIG surface (sdk App.py:2473-2474) — the SDK's explicit
+    # per-gesture SetDuration (e.g. CommonAnimations.ShrugRight) must land in
+    # the flattened clip list.
+    import App
+    from engine.bridge_idle_gestures import build_sequence_clips
+    seq = App.TGSequence_Create()
+    act = App.TGAnimAction_Create(None, "looking_left", 0, 0)
+    act.SetDuration(2.5)
+    seq.AppendAction(act)
+    _install_factory(monkeypatch, seq)
+    clips = build_sequence_clips(
+        "fake_anim_mod.Foo", object(),
+        _AnimMgr({"looking_left": "data/animations/looking_left.nif"}))
     assert clips == [("data/animations/looking_left.nif", 2.5)]
+
+
+def test_build_sequence_clips_recurses_nested_sequences(monkeypatch):
+    # MissionLib.GetVoiceLinesFromSequence idiom: an entry may itself be a
+    # TGSequence (test with TGSequence_Cast, recurse, bound by GetNumActions).
+    import App
+    from engine.bridge_idle_gestures import build_sequence_clips
+    inner = App.TGSequence_Create()
+    inner.AppendAction(App.TGAnimAction_Create(None, "nod", 0, 0))
+    outer = App.TGSequence_Create()
+    outer.AppendAction(inner)
+    _install_factory(monkeypatch, outer)
+    clips = build_sequence_clips(
+        "fake_anim_mod.Foo", object(),
+        _AnimMgr({"nod": "data/animations/nod.nif"}))
+    assert clips == [("data/animations/nod.nif", 0.0)]
+
+
+def test_build_sequence_clips_flattens_play_animation_file(monkeypatch):
+    # A CharacterAction in the walked sequence is read via the canonical
+    # CharacterAction_Cast + GetActionType/GetDetail idiom. For
+    # AT_PLAY_ANIMATION_FILE the detail is a bare registered clip name, so
+    # path_for(detail) applies directly; there is no native duration (no such
+    # getter on CharacterAction) — 0.0 lets the controller resolve the clip's
+    # real length.
+    import App
+    from engine.bridge_idle_gestures import build_sequence_clips
+    from engine.appc.ai import CharacterAction
+    seq = App.TGSequence_Create()
+    seq.AppendAction(App.CharacterAction_Create(
+        None, CharacterAction.AT_PLAY_ANIMATION_FILE, "db_P_Point_C_P", None, 1))
+    _install_factory(monkeypatch, seq)
+    clips = build_sequence_clips(
+        "fake_anim_mod.Foo", object(),
+        _AnimMgr({"db_P_Point_C_P": "data/animations/point.nif"}))
+    assert clips == [("data/animations/point.nif", 0.0)]
+
+
+def test_build_sequence_clips_skips_non_animation_actions(monkeypatch):
+    # Speak lines (and any other non-animation CharacterAction verb) must not
+    # be flattened into the gesture clip list even when the anim manager could
+    # resolve their detail string to a path — the walk filters on
+    # GetActionType, it does not blindly path_for every detail.
+    import App
+    from engine.bridge_idle_gestures import build_sequence_clips
+    from engine.appc.ai import CharacterAction
+    seq = App.TGSequence_Create()
+    seq.AppendAction(App.CharacterAction_Create(
+        None, CharacterAction.AT_SAY_LINE, "E1M1_HELM_025", None, 1))
+    _install_factory(monkeypatch, seq)
+    clips = build_sequence_clips(
+        "fake_anim_mod.Foo", object(),
+        _AnimMgr({"E1M1_HELM_025": "data/animations/wrong.nif"}))
+    assert clips == []

@@ -14,33 +14,60 @@ from engine.appc.characters import CharacterClass
 
 def build_sequence_clips(module_path, character, anim_mgr):
     """Resolve "pkg.mod.Func", call Func(character) to get a TGSequence, and
-    flatten it to [(nif_path, duration), ...] using anim_mgr.path_for + each
-    action's clip name. Returns [] if anything is unavailable (headless-safe)."""
+    flatten it to [(nif_path, duration), ...]. Returns [] if anything is
+    unavailable (headless-safe).
+
+    The walk is the MissionLib.GetVoiceLinesFromSequence idiom: cast each
+    entry (TGSequence_Cast to recurse, CharacterAction_Cast + GetActionType
+    filter to read a detail) and bound by GetNumActions — the native engine
+    has no other sequence introspection. Durations have no native getter on
+    CharacterAction; TGAnimAction's GetDuration IS real surface
+    (TGTimedAction, sdk App.py:2474). The clip-name → NIF-path mapping is
+    ours: natively these sequences just Play, so flattening for the anim
+    controller is a Dauntless-side mechanism by construction."""
     try:
         mod_name, func_name = module_path.rsplit(".", 1)
         func = getattr(importlib.import_module(mod_name), func_name)
         seq = func(character)
     except Exception:
         return []
+    from engine.appc.actions import TGAnimAction, TGSequence_Cast
+    from engine.appc.ai import CharacterAction, CharacterAction_Cast
+
+    def _path(name):
+        return anim_mgr.path_for(name) if anim_mgr is not None else None
+
     clips = []
-    n = seq.GetNumActions() if hasattr(seq, "GetNumActions") else 0
-    for i in range(n):
-        action = seq.GetAction(i)
-        name = getattr(action, "_clip", "") or getattr(action, "name", "")
-        if not name:
-            continue
-        path = anim_mgr.path_for(name) if anim_mgr is not None else None
-        if not path:
-            continue
-        # The SDK's explicit per-action SetDuration (via GetDuration), or 0.0 if
-        # the action set none — the controller resolves a 0 to the clip's real
-        # length. NOT a fixed 1.0s fallback (that ignored both the SDK duration
-        # and the clip's natural length, so every gesture flashed for 1s).
-        try:
-            dur = float(action.GetDuration())
-        except Exception:
-            dur = 0.0
-        clips.append((path, dur))
+
+    def _walk(seq):
+        n = seq.GetNumActions() if hasattr(seq, "GetNumActions") else 0
+        for i in range(n):
+            action = seq.GetAction(i)
+            sub = TGSequence_Cast(action)
+            if sub is not None:
+                _walk(sub)
+                continue
+            if isinstance(action, TGAnimAction):
+                path = _path(action._clip)
+                if path:
+                    # The SDK's explicit per-action SetDuration, or 0.0 if the
+                    # action set none — the controller resolves a 0 to the
+                    # clip's real length. NOT a fixed 1.0s fallback (that
+                    # ignored both the SDK duration and the clip's natural
+                    # length, so every gesture flashed for 1s).
+                    clips.append((path, float(action.GetDuration())))
+                continue
+            ca = CharacterAction_Cast(action)
+            if ca is not None and \
+                    ca.GetActionType() == CharacterAction.AT_PLAY_ANIMATION_FILE:
+                # Detail is a bare clip name registered via LoadAnimation
+                # (see CharacterAction._queue_play_animation); no native
+                # duration exists — 0.0 resolves to the clip's real length.
+                path = _path(ca.GetDetail())
+                if path:
+                    clips.append((path, 0.0))
+
+    _walk(seq)
     return clips
 
 

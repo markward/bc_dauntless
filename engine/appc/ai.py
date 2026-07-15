@@ -1909,6 +1909,14 @@ def CharacterAction_Create(
     return CharacterAction(character, action_type, detail, set_name, flag, database, priority)
 
 
+def CharacterAction_Cast(obj) -> "CharacterAction | None":
+    """SDK pattern: ``App.CharacterAction_Cast(pAction)`` — RTTI test-and-cast
+    (stbc.exe 0x0066f890).  Returns obj if it's a CharacterAction, else None.
+    MissionLib.GetVoiceLinesFromSequence walks sequences with exactly this
+    idiom (cast, then GetActionType/GetDetail)."""
+    return obj if isinstance(obj, CharacterAction) else None
+
+
 def CharacterAction_CreateByName(name: str, *args) -> CharacterAction:
     """Variant used when the caller has only a character name, not the object."""
     action = CharacterAction(*args)

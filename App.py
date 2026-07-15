@@ -239,6 +239,7 @@ from engine.appc.ai import (
     BuilderAI, BuilderAI_Create,
     ProximityCheck, ProximityCheck_Create, ProximityCheck_CreateWithEvent,
     CharacterAction, CharacterAction_Create, CharacterAction_CreateByName,
+    CharacterAction_Cast,
     CSP_LOW, CSP_NORMAL, CSP_HIGH,
     CSP_SPONTANEOUS, CSP_MISSION_CRITICAL,
     ArtificialIntelligence_GetAIByID,

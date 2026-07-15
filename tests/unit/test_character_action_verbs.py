@@ -55,6 +55,20 @@ def test_request_default_clears_the_active_action():
 from engine.appc.ai import CharacterAction
 
 
+def test_character_action_cast_is_the_missionlib_test_and_cast():
+    # MissionLib.GetVoiceLinesFromSequence walks sequences with
+    # App.CharacterAction_Cast(pAction) — the RTTI test-and-cast (stbc.exe
+    # 0x0066f890). Returns the action itself for a CharacterAction, None for
+    # anything else. Must be the real function on the App shim, not a
+    # _NamedStub (a stub's truthy return would silently corrupt the walk).
+    import App
+    act = App.CharacterAction_Create(
+        None, CharacterAction.AT_SAY_LINE, "E1M1_HELM_1", None, 1)
+    assert App.CharacterAction_Cast(act) is act
+    assert App.CharacterAction_Cast(App.TGAction_CreateNull()) is None
+    assert App.CharacterAction_Cast(None) is None
+
+
 class _FakeController:
     def __init__(self, accept=True):
         self.accept = accept
