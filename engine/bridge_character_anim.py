@@ -155,7 +155,7 @@ class BridgeCharacterAnimController:
         submitted = False
         if iid is not None and clip:
             submitted = self.submit(
-                character, [(self._resolve(clip["clip_nif"]), 0.0)],
+                character, [(clip["clip_nif"], 0.0)],
                 priority=_REACTION, on_complete=on_complete)
         if not submitted and on_complete is not None:
             try:
@@ -302,7 +302,7 @@ class BridgeCharacterAnimController:
             move = capture_registered_clip(character, turn_suffix)
             if move and not chair_driven:
                 body_submitted = self.submit(
-                    character, [(self._resolve(move["clip_nif"]), 0.0)],
+                    character, [(move["clip_nif"], 0.0)],
                     priority=_TURN, hold=hold, on_complete=action_cb)
         else:
             # Turn back: restore normal breathing as the default, then play the
@@ -316,7 +316,7 @@ class BridgeCharacterAnimController:
             move = capture_registered_clip(character, back_suffix)
             if move and not chair_driven:
                 body_submitted = self.submit(
-                    character, [(self._resolve(move["clip_nif"]), 0.0)],
+                    character, [(move["clip_nif"], 0.0)],
                     priority=_TURN, hold=False, on_complete=action_cb)
         # Chair half: rotate the seat (always) + couple the officer only when
         # chair-driven. Standing officers have no chair action -> no-op.
@@ -351,7 +351,15 @@ class BridgeCharacterAnimController:
             renderer.restore_rest_pose(iid)
 
     def _start_clip(self, renderer, act, index) -> None:
+        # Resolve here, at the single choke point every submission funnels
+        # through: idle gestures, hit reactions, scripted AT_PLAY_ANIMATION,
+        # turns and glances all submit raw game-relative paths
+        # ("data/animations/..."), which the native loader misses (cwd is not
+        # game/) — load_instance_clip returns -1 and the gesture is a silent
+        # no-op. This is the ONLY resolve site for submitted clips; direct
+        # loads (_body_turns_officer, the breathe idle) resolve for themselves.
         path, sdk_dur = act.clips[index]
+        path = self._resolve(path)
         act.index = index
         act.elapsed = 0.0
         act.started = True
@@ -370,7 +378,8 @@ class BridgeCharacterAnimController:
 
     def _real_duration(self, renderer, path) -> float:
         """The clip's natural length (seconds), cached per path. 0.0 when the
-        renderer can't report it (e.g. headless FakeRenderer)."""
+        renderer can't report it (e.g. headless FakeRenderer). `path` arrives
+        RESOLVED (_start_clip is the only caller) — do not resolve again."""
         if path in self._dur_cache:
             return self._dur_cache[path]
         dur = 0.0

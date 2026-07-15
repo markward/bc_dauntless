@@ -96,6 +96,36 @@ def test_zero_sdk_duration_holds_for_real_clip_length():
     assert r.restored == [5]
 
 
+def test_start_clip_resolves_submitted_paths_via_asset_resolver():
+    # The dbridge idle-gesture bug: idle/hit/scripted submissions carry raw
+    # game-relative paths ("data/animations/..."). _start_clip must route them
+    # through the controller's asset_resolver before load_instance_clip, or
+    # the native loader misses (cwd != game/) and the gesture is a silent
+    # no-op — the action "plays" invisibly for its duration. Turn/glance
+    # already resolve at submit time; the resolver must be idempotent there.
+    ctrl = BridgeCharacterAnimController(asset_resolver=lambda p: "/abs/" + p)
+    r = _FakeRenderer()
+    ch = _Char(3)
+    ctrl.submit(ch, [("data/animations/g.nif", 1.0)], priority=0)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    assert (3, "/abs/data/animations/g.nif") in r.loaded
+    assert (3, "data/animations/g.nif") not in r.loaded
+
+
+def test_real_duration_lookup_uses_the_resolved_path():
+    # Same choke point for the natural-length probe: sdk_dur == 0 must consult
+    # load_animation_clips with the RESOLVED path.
+    ctrl = BridgeCharacterAnimController(asset_resolver=lambda p: "/abs/" + p)
+    r = _FakeRendererWithDurations({"/abs/g.nif": 2.0})
+    ch = _Char(4)
+    ctrl.submit(ch, [("g.nif", 0.0)], priority=0)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    ctrl.update(1.0, renderer=r, anim_mgr=None)       # 1.0 < 2.0 -> still holding
+    assert ctrl.is_busy(ch)
+    ctrl.update(1.1, renderer=r, anim_mgr=None)       # 2.1 >= 2.0 -> restore
+    assert r.restored == [4]
+
+
 def test_explicit_sdk_duration_is_honored_verbatim():
     # sdk_dur > 0 wins even when shorter than any floor, and real length is
     # NOT consulted.
