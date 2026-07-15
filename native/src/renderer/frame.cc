@@ -215,6 +215,14 @@ unsigned int ensure_damage_decal_texture() {
 // ModelHandle (compute_model_aabb walks every mesh's CPU-data verts, not
 // cheap), reused by every instance of that model. Model-local units; the
 // caller multiplies by the instance's uniform world scale.
+//
+// Reset discipline: ModelHandle values are RECYCLED — host_bindings.cc
+// derives them from g_loaded_models.size() and .clear()s that table in both
+// init() and shutdown(), so after a mission swap / GL-context recreate a
+// DIFFERENT model can be reissued a previously-cached handle. The host must
+// call reset_model_radius_cache() wherever it clears g_loaded_models
+// (mirroring the reset_damage_decal_texture() discipline), or a swapped-in
+// model silently inherits the old model's bounding radius.
 std::unordered_map<scenegraph::ModelHandle, float> g_model_radius_cache;
 
 float model_bounding_radius(scenegraph::ModelHandle handle,
@@ -251,6 +259,10 @@ void reset_damage_decal_texture() {
     g_decal_owner = assets::Texture{};  // glDeleteTextures in the current context
     g_decal_id    = 0;
     g_decal_tried = false;
+}
+
+void reset_model_radius_cache() {
+    g_model_radius_cache.clear();
 }
 
 void draw_model(const assets::Model& model,

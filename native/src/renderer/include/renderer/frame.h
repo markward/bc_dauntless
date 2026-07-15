@@ -263,6 +263,16 @@ void draw_model(const assets::Model& model,
 /// (0x502), surfacing later at the next check_gl (e.g. in upload_mesh).
 void reset_damage_decal_texture();
 
+/// Clear the lazy per-ModelHandle bounding-radius cache used by dynamic-light
+/// selection. MUST be called wherever the host clears g_loaded_models (both
+/// init() and shutdown() in host_bindings.cc): handle values are recycled —
+/// they are derived from g_loaded_models.size(), reissued from 1 after every
+/// clear — so without this reset a different model assigned a previously-
+/// cached handle silently inherits the OLD model's bounding radius after a
+/// mission swap / GL-context recreate. Pure CPU state (no GL objects), so
+/// unlike reset_damage_decal_texture() it has no context-currency requirement.
+void reset_model_radius_cache();
+
 class FrameSubmitter {
 public:
     using ModelLookup = std::function<const assets::Model*(unsigned long long)>;

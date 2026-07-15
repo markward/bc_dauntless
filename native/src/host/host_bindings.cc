@@ -411,6 +411,10 @@ void init(int width, int height, const std::string& title) {
     g_submitter = std::make_unique<renderer::FrameSubmitter>();
     g_world = scenegraph::World{};
     g_loaded_models.clear();
+    // ModelHandles are reissued from 1 after every g_loaded_models.clear();
+    // drop the renderer's per-handle bounding-radius cache in lockstep or a
+    // new model recycled onto an old handle inherits the old model's radius.
+    renderer::reset_model_radius_cache();
     g_bridge_node_anims.clear();
     g_bridge_node_ids.clear();
     g_lighting = renderer::Lighting{};
@@ -478,6 +482,9 @@ void shutdown() {
     // renderer::reset_damage_decal_texture().
     renderer::reset_damage_decal_texture();
     g_loaded_models.clear();
+    // Handle-recycling hazard: see the matching call in init(). Pure CPU
+    // state (no GL), safe regardless of context currency.
+    renderer::reset_model_radius_cache();
     g_bridge_node_anims.clear();
     g_bridge_node_ids.clear();
     g_cache.reset();
