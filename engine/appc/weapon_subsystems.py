@@ -337,10 +337,7 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0):
     target_ship = getattr(emitter, "_target", None)
     if (target_ship is not None
             and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
-        target_sub = (source_ship.GetTargetSubsystem()
-                      if hasattr(source_ship, "GetTargetSubsystem") else None)
         torp._target_ship = target_ship
-        torp._target_subsystem = target_sub
     else:
         torp._target_ship = None
 

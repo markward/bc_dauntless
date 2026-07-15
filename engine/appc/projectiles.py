@@ -23,8 +23,9 @@ class Torpedo(TGObject):
     __slots__ = (
         "_position", "_velocity", "_age", "_ttl",
         "_damage", "_damage_radius_factor",
-        "_target_ship", "_target_subsystem",
-        "_guidance_lifetime", "_max_angular_accel", "_homing_start_age",
+        "_target_ship",
+        "_guidance_lifetime", "_guidance_initial", "_max_angular_accel",
+        "_last_seen_target_pos", "_last_target_vel",
         "_source_ship", "_id",
         "_core_texture", "_core_color", "_core_size_a", "_core_size_b",
         "_glow_texture", "_glow_color", "_glow_size_a", "_glow_size_b", "_glow_size_c",
@@ -37,18 +38,15 @@ class Torpedo(TGObject):
         self._position = TGPoint3(0.0, 0.0, 0.0)
         self._velocity = TGPoint3(0.0, 0.0, 0.0)
         self._age = 0.0
-        self._ttl = 30.0
+        self._ttl = 60.0
         self._damage = 0.0
         self._damage_radius_factor = 0.0
         self._target_ship = None
-        self._target_subsystem = None
-        self._guidance_lifetime = 0.0
-        self._max_angular_accel = 0.0
-        # Age (s) at which homing begins.  0.0 = home immediately.  The
-        # Dual/Quad spread fan-out that used to stamp a non-zero delay here
-        # was removed with the BC-faithful launch rewire (Task 6) — every
-        # shot now stamps 0.0.
-        self._homing_start_age = 0.0
+        self._guidance_lifetime = 4.0
+        self._guidance_initial = 4.0
+        self._max_angular_accel = 0.125
+        self._last_seen_target_pos = None
+        self._last_target_vel = None
         self._source_ship = None
         self._id = 0
         self._core_texture   = ""
@@ -113,7 +111,9 @@ class Torpedo(TGObject):
     def SetDamage(self, v) -> None:               self._damage = float(v)
     def SetDamageRadiusFactor(self, v) -> None:   self._damage_radius_factor = float(v)
     def GetDamageRadiusFactor(self) -> float:     return self._damage_radius_factor
-    def SetGuidanceLifetime(self, v) -> None:     self._guidance_lifetime = float(v)
+    def SetGuidanceLifetime(self, v) -> None:
+        self._guidance_lifetime = float(v)
+        self._guidance_initial = float(v)
     def SetLifetime(self, v) -> None:             self._ttl = float(v)
     def SetMaxAngularAccel(self, v) -> None:      self._max_angular_accel = float(v)
     def SetNetType(self, v) -> None:              pass  # multiplayer; ignored in PR 2b
@@ -159,9 +159,8 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
 
     for t in list(_active):
         # 1. Steer if homing within guidance window.
-        if (t._target_ship is not None
-                and t._homing_start_age <= t._age < t._guidance_lifetime):
-            _steer_toward(t, t._target_ship, dt)
+        if t._target_ship is not None and t._age < t._guidance_lifetime:
+            _guide(t, dt)
         # 2. Advance position + age.
         prev_pos = t._position
         t._position = t._position + t._velocity * dt
@@ -222,47 +221,81 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     return hits
 
 
-def _steer_toward(torpedo: Torpedo, target_ship, dt: float) -> None:
-    """Rotate torpedo._velocity toward the homing point by at most
-    max_angular_accel × dt radians.  Preserves velocity magnitude.
+_LEAD_ACCEL_K = 0.5   # BC _DAT_008887A8 ≈ 0.5 — second-order lead term
 
-    Homes on the locked subsystem's world position when the torpedo carries a
-    subsystem lock (mirrors the launch aim in subsystems.py and the phaser
-    aim), else the target ship's hull centre. ShipSubsystem.GetWorldLocation
-    climbs to its ship, so off-centre nacelle/impulse pods resolve correctly.
-    """
-    sub = torpedo._target_subsystem
-    if sub is not None and hasattr(sub, "GetWorldLocation"):
-        target_pos = sub.GetWorldLocation()
-    else:
-        target_pos = target_ship.GetWorldLocation()
-    to_target = target_pos - torpedo._position
-    dist = to_target.Length()
-    if dist < 1e-6:
+
+def _target_visible(torpedo, target) -> bool:
+    """Cloak/visibility check for the last-seen cache (BC 0x005AC450 via
+    Guide). Observer is the FIRING ship; headless fixtures without a source
+    ship count as visible."""
+    src = torpedo._source_ship
+    if src is None:
+        return True
+    try:
+        from engine.appc.sensor_detection import can_detect
+        return bool(can_detect(src, target))
+    except Exception:
+        return True
+
+
+def _guide(torpedo, dt: float) -> None:
+    """Torpedo::Guide (0x00578CB0), audited §5.5.
+    Order: dead-target ballistic → cloak cache → second-order lead →
+    linearly-decaying turn budget → clamped rotation, speed preserved."""
+    target = torpedo._target_ship
+    if target is None:
         return
-    desired = TGPoint3(to_target.x / dist, to_target.y / dist, to_target.z / dist)
-
+    if hasattr(target, "IsDead") and target.IsDead():
+        return                       # ballistic; NOT the cloak cache
     speed = torpedo._velocity.Length()
     if speed < 1e-6:
         return
-    current = TGPoint3(
-        torpedo._velocity.x / speed,
-        torpedo._velocity.y / speed,
-        torpedo._velocity.z / speed,
-    )
-
+    if _target_visible(torpedo, target):
+        pos = target.GetWorldLocation()
+        torpedo._last_seen_target_pos = TGPoint3(pos.x, pos.y, pos.z)
+        vel = (target.GetVelocityTG()
+               if hasattr(target, "GetVelocityTG") else TGPoint3(0, 0, 0))
+        if not isinstance(vel, TGPoint3):
+            vel = TGPoint3(0.0, 0.0, 0.0)
+        to_t = pos - torpedo._position
+        t_go = to_t.Length() / speed
+        prev_vel = torpedo._last_target_vel
+        if isinstance(prev_vel, TGPoint3) and dt > 1e-9:
+            acc = TGPoint3((vel.x - prev_vel.x) / dt,
+                           (vel.y - prev_vel.y) / dt,
+                           (vel.z - prev_vel.z) / dt)
+        else:
+            acc = TGPoint3(0.0, 0.0, 0.0)
+        torpedo._last_target_vel = TGPoint3(vel.x, vel.y, vel.z)
+        aim = TGPoint3(
+            pos.x + vel.x * t_go + _LEAD_ACCEL_K * acc.x * t_go * t_go,
+            pos.y + vel.y * t_go + _LEAD_ACCEL_K * acc.y * t_go * t_go,
+            pos.z + vel.z * t_go + _LEAD_ACCEL_K * acc.z * t_go * t_go,
+        )
+    else:
+        aim = torpedo._last_seen_target_pos
+        if aim is None:
+            return
+    to_aim = aim - torpedo._position
+    dist = to_aim.Length()
+    if dist < 1e-6:
+        return
+    desired = TGPoint3(to_aim.x / dist, to_aim.y / dist, to_aim.z / dist)
+    current = TGPoint3(torpedo._velocity.x / speed,
+                       torpedo._velocity.y / speed,
+                       torpedo._velocity.z / speed)
+    remaining = max(0.0, torpedo._guidance_lifetime - torpedo._age)
+    initial = torpedo._guidance_initial if torpedo._guidance_initial > 1e-9 else 1.0
+    max_step = (remaining / initial) * torpedo._max_angular_accel * dt
     cos_theta = max(-1.0, min(1.0, current.Dot(desired)))
     theta = math.acos(cos_theta)
-    max_step = torpedo._max_angular_accel * dt
     if theta <= max_step or theta < 1e-6:
         new_dir = desired
     else:
         sin_theta = math.sin(theta)
         a = math.sin(theta - max_step) / sin_theta
         b = math.sin(max_step) / sin_theta
-        new_dir = TGPoint3(
-            current.x * a + desired.x * b,
-            current.y * a + desired.y * b,
-            current.z * a + desired.z * b,
-        )
+        new_dir = TGPoint3(current.x * a + desired.x * b,
+                           current.y * a + desired.y * b,
+                           current.z * a + desired.z * b)
     torpedo._velocity = new_dir * speed

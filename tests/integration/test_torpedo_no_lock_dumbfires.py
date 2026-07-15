@@ -28,7 +28,7 @@ def test_dumbfire_no_target_torpedo_expires_on_ttl(galaxy_red):
     # Snapshot initial velocity.
     vx0, vy0, vz0 = torp._velocity.x, torp._velocity.y, torp._velocity.z
 
-    # Tick 5s — well within 30s TTL, no targets in this test.
+    # Tick 5s — well within 60s TTL, no targets in this test.
     for _ in range(50):
         _advance_combat([ship], dt=0.1)
 
@@ -39,8 +39,8 @@ def test_dumbfire_no_target_torpedo_expires_on_ttl(galaxy_red):
     # Still active.
     assert len(projectiles._active) == 1
 
-    # Tick past TTL (30s default).
-    for _ in range(310):
+    # Tick past TTL (60s default; PhotonTorpedo.py never calls SetLifetime).
+    for _ in range(560):
         _advance_combat([ship], dt=0.1)
 
     assert len(projectiles._active) == 0
