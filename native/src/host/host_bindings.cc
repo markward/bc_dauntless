@@ -1289,10 +1289,23 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Snap the instance back to its stored rest pose (AT_DEFAULT): "
           "unbind every channel; bones fall back to the placement locals.");
 
+    m.def("anim_blend_set",
+          [](float cap_s, float short_factor, int curve) {
+              if (!dauntless::is_developer_mode()) return;
+              renderer::set_blend_params({cap_s, short_factor, curve});
+          },
+          py::arg("cap_s") = 0.34f, py::arg("short_factor") = 0.75f,
+          py::arg("curve") = 0,
+          "DEV ONLY (--developer; no-op otherwise): live-tune the animation "
+          "blend-in dials. BC defaults: cap 0.34 s, short-clip factor 0.75, "
+          "curve 0 = linear (1 = smoothstep). anim_blend_set(0, 0, 0) disables "
+          "blending entirely for A/B against the structural swap.");
+
     m.def("play_instance_idle",
           [bind_instance_clip](scenegraph::InstanceId id, int clip_index) {
               renderer::BindOptions o;
               o.loop = true;
+              o.blend = true;
               bind_instance_clip(id, clip_index, o);
           },
           py::arg("iid"), py::arg("clip_index"),
@@ -1302,7 +1315,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
     m.def("play_instance_gesture",
           [bind_instance_clip](scenegraph::InstanceId id, int clip_index) {
-              bind_instance_clip(id, clip_index, {});
+              renderer::BindOptions o;
+              o.blend = true;
+              bind_instance_clip(id, clip_index, o);
           },
           py::arg("iid"), py::arg("clip_index"),
           "Play a transient gesture on the clip's name-matched bones only: "
@@ -1316,6 +1331,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               renderer::BindOptions o;
               o.root_motion = true;
               o.use_clip_base = true;
+              o.blend = true;
               bind_instance_clip(id, clip_index, o);
           },
           py::arg("iid"), py::arg("clip_index"),

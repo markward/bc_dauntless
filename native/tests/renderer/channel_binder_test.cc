@@ -326,3 +326,12 @@ TEST(EvalChannels, BlendWindowRampsSeedToClipThenSettlesBlendDone) {
     renderer::eval_channels(inst, m, 1.1);
     EXPECT_TRUE(inst.anim.channels[1].settled);
 }
+
+TEST(BlendParams, SetParamsDrivesFormulaAndCurve) {
+    auto saved = renderer::blend_params();
+    renderer::set_blend_params({/*cap_s=*/0.5f, /*short_factor=*/0.5f, /*curve=*/1});
+    EXPECT_NEAR(renderer::blend_in_seconds(1.0f), 0.5f, 1e-6f);
+    EXPECT_NEAR(renderer::blend_in_seconds(0.2f), 0.1f, 1e-6f);
+    renderer::set_blend_params(saved);   // don't leak into other tests
+    EXPECT_NEAR(renderer::blend_in_seconds(1.0f), 0.34f, 1e-6f);
+}
