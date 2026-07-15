@@ -56,7 +56,6 @@ def _make_cannon(name):
     cannon._normal_discharge_rate = 1.0
     cannon._cooldown_time = 0.2
     cannon._charge_level = 10.0
-    cannon._armed = True
     return cannon
 
 

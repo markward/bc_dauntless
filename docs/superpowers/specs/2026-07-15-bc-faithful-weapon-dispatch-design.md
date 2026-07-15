@@ -367,3 +367,5 @@ Nothing else in this design depends on the answer.
   surface we don't have; logged as follow-up).
 - AI-side fire policy (`RandomAI`, preprocessor dumb-fire loop) — separate
   gap doc territory.
+
+**Live verification pending:** Mark runs the §8 QuickBattle pass (items 1-6) before this branch merges.

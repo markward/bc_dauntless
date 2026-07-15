@@ -234,10 +234,8 @@ def test_get_launch_speed_empty_module_name_returns_zero():
 def test_stock_values_re_arm_and_refire_after_recharge():
     """Regression: with the STOCK BoP charge margin (MaxCharge 3.8,
     MinFiringCharge 3.6) a cannon must re-arm and fire again after it
-    recharges.  The phaser re-arm hysteresis (MinFiringCharge + 0.20*MaxCharge
-    = 4.36 > MaxCharge) would strand the cannon armed-once; PulseWeapon sets
-    REFIRE_HEADROOM_FRACTION = 0.0 so it re-arms at exactly MinFiringCharge,
-    with the per-shot cooldown providing anti-flutter instead."""
+    recharges. The per-shot cooldown (0.2s) provides anti-flutter after fire,
+    allowing re-arm at exactly MinFiringCharge when recharge completes."""
     _active.clear()
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):

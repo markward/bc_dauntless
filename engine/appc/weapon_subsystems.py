@@ -1156,9 +1156,9 @@ class TorpedoSystem(WeaponSystem):
         A finite ammo type (hardpoint-declared max) with no rounds left cannot
         fire; unlimited/undeclared types never gate.  The per-launch ammo debit
         lives in TorpedoTube._spawn_torpedo (one round per torpedo actually
-        spawned).  The Dual/Quad spread fan-out was removed with the tick
-        rewire; the launch itself is now BC-faithful (audited §2.4.1):
-        straight out the tube's authored direction, never aimed at a target."""
+        spawned).  Launches chain across tubes via firing_chain walk-out with
+        stagger delay, each firing straight out the tube's authored direction
+        (BC-faithful per §2.4.1), never aimed at a target."""
         ammo = self.GetCurrentAmmoType()
         finite = ammo is not None and not getattr(ammo, "_unlimited", True)
         if finite and ammo.GetAvailable() <= 0:

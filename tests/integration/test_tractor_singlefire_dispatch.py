@@ -56,7 +56,6 @@ def _make_emitter(name):
     emitter._recharge_rate = 0.5
     emitter._normal_discharge_rate = 1.0
     emitter._charge_level = 5.0   # MaxCharge -> CanFire true
-    emitter._armed = True
     return emitter
 
 
