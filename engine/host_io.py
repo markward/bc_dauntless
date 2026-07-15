@@ -43,6 +43,7 @@ _REQUIRED_BINDINGS = frozenset({
     "key_state", "key_pressed", "mouse_button_pressed", "mouse_button_released",
     "consume_mouse_delta", "set_cursor_locked", "framebuffer_size", "window_size",
     "set_torpedoes", "set_shockwaves", "set_hit_vfx", "set_particle_emitters",
+    "set_dynamic_lights",
     "set_phaser_beams", "set_tractor_beams",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
     "ray_trace_mesh",
@@ -186,6 +187,12 @@ def set_shockwaves(shockwaves: list) -> None:
     if _h is None:
         return
     _h.set_shockwaves(shockwaves)
+
+
+def set_dynamic_lights(lights: list) -> None:
+    if _h is None:
+        return
+    _h.set_dynamic_lights(lights)
 
 
 def set_hit_vfx(vfx: list) -> None:
