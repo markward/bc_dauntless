@@ -14,6 +14,7 @@ bottom of subsystems.py guarantees the normal load order).
 """
 
 import math as _math
+import random
 
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.float_range_watcher import FloatRangeWatcher
@@ -690,6 +691,9 @@ class WeaponSystem(PoweredSubsystem):
         self._last_group_fired: int = -1    # +0xBC: resume input, -1 sentinel
         self._target_list: list = []        # +0xC4: pruned per tick
         self._fire_timer: float = 0.0       # BC Weapon+0x9C: inter-shot delay
+        # _HeldFireWeaponSystem and TorpedoSystem set this via SetSingleFire;
+        # guard so the base class always has it too.
+        self._single_fire = getattr(self, "_single_fire", False)
 
     def ShouldBeAimed(self) -> int:
         """Does this weapon system have to bear on the target to fire?
@@ -903,6 +907,106 @@ class WeaponSystem(PoweredSubsystem):
     # TacticalInterfaceHandlers.FireWeapons (PR 2) reads these.
     def GetNumWeapons(self) -> int:               return self.GetNumChildSubsystems()
     def GetWeapon(self, i: int):                  return self.GetChildSubsystem(i)
+
+    # ── BC tick engine (weapon-firing-mechanics.md §3.2/§3.3) ───────────────
+    # Nothing calls these in production yet — StartFiring (above) is still
+    # the live dispatch path.  Wiring them in is future work.
+
+    # BC inter-shot delay threshold (TryFireWeapon, 0x00584E40).
+    FIRE_TIMER_THRESHOLD = 0.33
+
+    def try_fire_weapon(self, weapon, dt, target, offset) -> bool:
+        """TryFireWeapon (0x00584E40), §3.3. Plain bool — BC has no tri-state."""
+        if self._force_update:
+            weapon._fire_timer = self.FIRE_TIMER_THRESHOLD   # bypass this tick
+        else:
+            weapon._fire_timer = getattr(weapon, "_fire_timer", 0.0) + dt
+        if not weapon.IsFiring() and weapon._fire_timer < self.FIRE_TIMER_THRESHOLD:
+            return False
+        # Re-seed reads the PRE-EXISTING state: a continuously-firing weapon
+        # zeroes; everything else draws fresh. BC's draw distribution is
+        # unverified in the corpus — uniform(0, 0.33) is our choice.
+        if weapon.IsFiring():
+            weapon._fire_timer = 0.0
+        else:
+            weapon._fire_timer = random.uniform(0.0, self.FIRE_TIMER_THRESHOLD)
+        if not weapon.CanFire():
+            weapon.StopFiring()      # what makes a beam vanish on charge-out
+            return False
+        before = weapon.fired if hasattr(weapon, "fired") else None
+        result = weapon.Fire(target, offset)
+        if self._weapon_did_fire(weapon, result, before):
+            return True
+        # §3.3 step 6: clear target, retry against the system target list.
+        weapon._target = None
+        for entry in list(self._target_list):
+            if entry is None or (hasattr(entry, "IsDead") and entry.IsDead()):
+                continue
+            before = weapon.fired if hasattr(weapon, "fired") else None
+            result = weapon.Fire(entry, offset)
+            if self._weapon_did_fire(weapon, result, before):
+                return True
+        return False
+
+    @staticmethod
+    def _weapon_did_fire(weapon, result, before) -> bool:
+        """Our Fire() implementations return None; success is observable as
+        IsFiring() (beams/held) or a discrete-shot side effect. Explicit
+        True/False from Fire wins when provided; test fakes expose `fired`."""
+        if isinstance(result, bool):
+            return result
+        if before is not None:
+            return weapon.fired > before
+        return bool(weapon.IsFiring())
+
+    def update_weapons(self, dt) -> bool:
+        """UpdateWeapons (0x00584930), §3.2. Returns did_fire."""
+        did_fire = False
+        ship = self.GetParentShip()
+        if ship is not None and hasattr(ship, "IsDead") and ship.IsDead():
+            return False
+        self._prune_targets()
+        target = self._target_list[0] if self._target_list else None
+        offset = getattr(self, "_held_offset", None)
+        groups = self._active_chain_groups()
+        working = self._resolve_working_group()
+        start_group = working
+        # Round-robin base: captured ONCE before the group-retry loop, not
+        # re-read live. self._last_weapon_idx only mutates on a successful
+        # fire, and a successful fire always breaks out to the next tick
+        # (single-fire breaks the inner loop; multi-fire exhausts the group
+        # and `fired_this_group` stops group-advance) — so reading it live
+        # inside the delta loop double-counted the just-fired slot instead
+        # of advancing to the next group member.
+        base_idx = self._last_weapon_idx
+        while True:
+            self.SetGroupFireMode(working)
+            n = self.GetNumWeapons()
+            fired_this_group = False
+            for delta in range(1, n + 1):
+                idx = (base_idx + delta) % n if n else 0
+                weapon = self.GetWeapon(idx)
+                if weapon is None or not weapon.IsMemberOfGroup(working):
+                    continue
+                if self.try_fire_weapon(weapon, dt, target, offset):
+                    did_fire = fired_this_group = True
+                    self._last_weapon_idx = idx
+                    self._last_group_fired = working
+                    if self._single_fire:
+                        break
+                else:
+                    weapon._target = None      # ClearTarget, NOT a timer reset
+                    if self.GetNumTargets() == 0 and weapon.IsDumbFire():
+                        weapon.FireDumb(0, 1)
+            if fired_this_group or len(groups) <= 1:
+                break
+            # §3.2 step 7: advance to the next group in the chain, wrapping.
+            working = groups[(groups.index(working) + 1) % len(groups)]
+            if working == start_group:
+                self._last_group_fired = -1
+                break
+        self._force_update = False    # one-tick bypass, consumed
+        return did_fire
 
 
 class TorpedoAmmoType:
