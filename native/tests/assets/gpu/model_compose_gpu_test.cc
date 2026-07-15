@@ -8,15 +8,15 @@
 
 #include <cstdio>
 #include <filesystem>
-#include <set>
 
 namespace fs = std::filesystem;
 
 // SP3 Task 6 Step 5: graft a real head NIF onto the real BodyMaleL skeleton via
 // the host-facing compose_officer_model path and confirm the composed model has
 // more meshes than the body alone, that the grafted meshes are attached to a
-// node (so the renderer's node-walk draws them), and that every grafted vertex
-// is rigid-bound to the body's "Bip01 Head" bone.
+// node (so the renderer's node-walk draws them), and (§3.5 weld) that every
+// grafted vertex's authored multi-bone skin weights survive the graft, remapped
+// onto the body skeleton.
 class ModelComposeGpuTest : public assets_test::GLContext {};
 
 TEST_F(ModelComposeGpuTest, GraftRealHeadOntoBodyMaleL) {
@@ -31,63 +31,56 @@ TEST_F(ModelComposeGpuTest, GraftRealHeadOntoBodyMaleL) {
         GTEST_SKIP() << "character NIFs not installed (" << body_nif
                      << " / " << head_nif << ")";
 
-    // Build the body alone first to get its mesh count and the "Bip01 Head"
-    // bone index for the rigid-bind assertion. No skin override here (empty
-    // tex paths) — this test only exercises the graft.
+    // No skin override here (empty tex paths) — this test only exercises the
+    // graft.
     assets::Model composed = assets::compose_officer_model(
         body_nif, /*body_tex=*/{}, head_nif, /*head_tex=*/{}, "Bip01 Head");
 
     ASSERT_FALSE(composed.skeleton.bones.empty());
 
-    int head_bone = -1;
-    for (std::size_t i = 0; i < composed.skeleton.bones.size(); ++i)
-        if (composed.skeleton.bones[i].name == "Bip01 Head")
-            head_bone = static_cast<int>(i);
-    ASSERT_GE(head_bone, 0) << "BodyMaleL skeleton lacks a 'Bip01 Head' bone";
+    // Grafted head meshes are [head_mesh_begin, meshes.size()) — set by
+    // compose_officer_model. The §3.5 weld preserves the head's authored
+    // multi-bone skin, so rigid-bind counting can no longer identify them.
+    ASSERT_GE(composed.head_mesh_begin, 0) << "no head meshes grafted";
+    const int grafted_meshes =
+        static_cast<int>(composed.meshes.size()) - composed.head_mesh_begin;
+    EXPECT_GT(grafted_meshes, 0);
 
-    // The composed model must have grafted head meshes: at least one mesh whose
-    // every vertex is rigid-bound to the head bone (weights (255,0,0,0)).
-    int grafted_meshes = 0;
-    for (const auto& mesh : composed.meshes) {
-        const auto& cpu = mesh.cpu_data();
-        if (!cpu || cpu->vertices.empty()) continue;
-        bool all_head = true;
-        for (const auto& v : cpu->vertices) {
-            if (!(v.bone_indices.x == head_bone && v.bone_weights.x == 255 &&
-                  v.bone_weights.y == 0 && v.bone_weights.z == 0 &&
-                  v.bone_weights.w == 0)) {
-                all_head = false;
-                break;
-            }
-        }
-        if (all_head) ++grafted_meshes;
-    }
-    std::fprintf(stderr,
-                 "compose: %zu total meshes, %d fully head-bone-bound (grafted)\n",
-                 composed.meshes.size(), grafted_meshes);
-    EXPECT_GT(grafted_meshes, 0)
-        << "expected at least one grafted head mesh rigid-bound to 'Bip01 Head'";
-
-    // The grafted head replaces the body's default head: the attach node
-    // ("Bip01 Head") must now carry meshes (the grafted Felix head), and they
-    // must be reachable from a node (the renderer walks nodes). graft_head
-    // clears the body's own head-subtree meshes from the node-walk first, so we
-    // only require that the attach node has grafted, head-bone-bound meshes —
-    // not that EVERY head-bone-bound mesh in the model is node-referenced (the
-    // body's replaced default head is intentionally unreferenced).
-    int attach_node = -1;
-    for (std::size_t i = 0; i < composed.nodes.size(); ++i)
-        if (composed.nodes[i].name == "Bip01 Head") attach_node = static_cast<int>(i);
-    ASSERT_GE(attach_node, 0) << "composed body has no 'Bip01 Head' node";
-    EXPECT_GT(composed.nodes[attach_node].meshes.size(), 0u)
-        << "attach node has no grafted head meshes";
-    for (int mi : composed.nodes[attach_node].meshes) {
+    // Every grafted vertex's weighted slots must reference a valid bone, and
+    // the authored multi-bone weighting must survive: real BC head skins weight
+    // collar verts to Neck/Clavicle/Spine2 (miguel: 51/143 multi-bone), so at
+    // least one grafted vertex must carry >= 2 non-zero weights.
+    int multi_bone_verts = 0;
+    for (auto mi = static_cast<std::size_t>(composed.head_mesh_begin);
+         mi < composed.meshes.size(); ++mi) {
         const auto& cpu = composed.meshes[mi].cpu_data();
         ASSERT_TRUE(cpu);
-        for (const auto& v : cpu->vertices)
-            EXPECT_EQ(v.bone_indices.x, head_bone)
-                << "mesh on attach node not bound to head bone";
+        for (const auto& v : cpu->vertices) {
+            int weighted = 0;
+            for (int k = 0; k < 4; ++k) {
+                if (v.bone_weights[k] == 0) continue;
+                ++weighted;
+                ASSERT_LT(v.bone_indices[k], composed.skeleton.bones.size())
+                    << "grafted vertex references an out-of-range bone";
+            }
+            ASSERT_GT(weighted, 0) << "grafted vertex has no bone weights";
+            if (weighted >= 2) ++multi_bone_verts;
+        }
     }
+    EXPECT_GT(multi_bone_verts, 0)
+        << "head skin collapsed to single-bone — the §3.5 weld regressed to "
+           "the rigid attach-bone bind";
+
+    // The grafted meshes must be node-attached (the renderer walks nodes) on
+    // the attach node, which replaced the body's default head subtree.
+    int attach_node = -1;
+    for (std::size_t i = 0; i < composed.nodes.size(); ++i)
+        if (composed.nodes[i].name == "Bip01 Head")
+            attach_node = static_cast<int>(i);
+    ASSERT_GE(attach_node, 0) << "composed body has no 'Bip01 Head' node";
+    EXPECT_EQ(composed.nodes[attach_node].meshes.size(),
+              static_cast<std::size_t>(grafted_meshes))
+        << "attach node does not carry exactly the grafted head meshes";
 
     // Regression (the "lego skeleton" bug): BC body/head NIFs carry ~30 HIDDEN
     // "Biped Object" skeleton-placeholder boxes that must never render. With
@@ -147,23 +140,11 @@ TEST_F(ModelComposeGpuTest, OverridesBodyAndHeadBaseTextures) {
     const auto base_slot =
         static_cast<std::size_t>(assets::Material::StageSlot::Base);
 
-    // Identify the grafted (head) mesh indices: every vertex rigid-bound to the
-    // "Bip01 Head" bone. Body meshes are the remainder.
-    int head_bone = -1;
-    for (std::size_t i = 0; i < composed.skeleton.bones.size(); ++i)
-        if (composed.skeleton.bones[i].name == "Bip01 Head")
-            head_bone = static_cast<int>(i);
-    ASSERT_GE(head_bone, 0);
-
-    auto is_grafted = [&](const assets::Mesh& m) {
-        const auto& cpu = m.cpu_data();
-        if (!cpu || cpu->vertices.empty()) return false;
-        for (const auto& v : cpu->vertices)
-            if (!(v.bone_indices.x == head_bone && v.bone_weights.x == 255 &&
-                  v.bone_weights.y == 0 && v.bone_weights.z == 0 &&
-                  v.bone_weights.w == 0))
-                return false;
-        return true;
+    // Identify the grafted (head) mesh indices via head_mesh_begin — set by
+    // compose_officer_model. Body meshes are the remainder.
+    ASSERT_GE(composed.head_mesh_begin, 0) << "no head meshes grafted";
+    auto is_grafted = [&](std::size_t mesh_index) {
+        return static_cast<int>(mesh_index) >= composed.head_mesh_begin;
     };
 
     // The override appends new textures, so the composed model must have a
@@ -185,7 +166,7 @@ TEST_F(ModelComposeGpuTest, OverridesBodyAndHeadBaseTextures) {
             continue;
         const int tex_idx =
             composed.materials[mat].stages[base_slot].texture_index;
-        if (is_grafted(composed.meshes[i])) {
+        if (is_grafted(i)) {
             ++head_mat_count;
             if (tex_idx >= static_cast<int>(base_tex_count))
                 head_overridden = true;

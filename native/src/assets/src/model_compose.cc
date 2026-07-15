@@ -2,10 +2,13 @@
 #include <assets/model_compose.h>
 
 #include <cctype>
+#include <cmath>
 #include <cstdio>
+#include <functional>
 #include <fstream>
 #include <set>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 #include <algorithm>
@@ -99,6 +102,13 @@ int choose_attach_node(const Model& body, std::string_view attach_bone) {
     return body.root_node;
 }
 
+bool binds_equal(const glm::mat4& a, const glm::mat4& b) {
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 3; ++r)  // row 3 is constant (0,0,0,1) — skip
+            if (std::fabs(a[c][r] - b[c][r]) > 1e-4f) return false;
+    return true;
+}
+
 }  // namespace
 
 std::vector<fs::path> face_texture_candidates(const fs::path& path) {
@@ -141,6 +151,55 @@ std::vector<fs::path> face_texture_candidates(const fs::path& path) {
         push(head_infix_variant(out[i]));
 
     return out;
+}
+
+std::vector<int> weld_head_bones(Skeleton& body, const Skeleton& head) {
+    std::unordered_map<std::string, int> body_by_name;
+    for (std::size_t i = 0; i < body.bones.size(); ++i)
+        body_by_name.emplace(body.bones[i].name, static_cast<int>(i));
+
+    std::vector<int> map(head.bones.size(), -1);
+
+    // Recursive resolve: a head-only bone's PARENT must map first, and the
+    // head skeleton's array order doesn't guarantee parents precede children.
+    std::function<int(int)> resolve = [&](int hi) -> int {
+        if (hi < 0 || hi >= static_cast<int>(head.bones.size())) return -1;
+        if (map[hi] != -1) return map[hi];
+        const Bone& hb = head.bones[hi];
+        auto it = body_by_name.find(hb.name);
+        if (it != body_by_name.end()) {
+            if (binds_equal(body.bones[it->second].inverse_bind_pose,
+                            hb.inverse_bind_pose))
+                return map[hi] = it->second;
+            // Bind mismatch: alias rides the body bone's pose but skins with
+            // the HEAD's bind (BC: body node world x head bind offset).
+            const std::string alias_name =
+                hb.name + std::string(kHeadBindAliasSuffix);
+            for (std::size_t i = 0; i < body.bones.size(); ++i)
+                if (body.bones[i].name == alias_name)
+                    return map[hi] = static_cast<int>(i);
+            Bone alias;
+            alias.name = alias_name;
+            alias.parent_index = it->second;
+            alias.local_transform = glm::mat4(1.0f);
+            alias.inverse_bind_pose = hb.inverse_bind_pose;
+            body.bones.push_back(std::move(alias));
+            return map[hi] = static_cast<int>(body.bones.size()) - 1;
+        }
+        // Head-only bone: append for real, under its name-matched parent,
+        // keeping name/local so animation clips may drive it.
+        const int parent = resolve(hb.parent_index);
+        Bone extra;
+        extra.name = hb.name;
+        extra.parent_index = parent;
+        extra.local_transform = hb.local_transform;
+        extra.inverse_bind_pose = hb.inverse_bind_pose;
+        body.bones.push_back(std::move(extra));
+        return map[hi] = static_cast<int>(body.bones.size()) - 1;
+    };
+    for (std::size_t i = 0; i < head.bones.size(); ++i)
+        resolve(static_cast<int>(i));
+    return map;
 }
 
 std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
@@ -194,44 +253,42 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
         body.materials.push_back(std::move(copy));
     }
 
-    // Re-base offset: the head NIF and body NIF are SEPARATE character templates
-    // whose skeletons need not share the same attach-bone (Bip01 Head) bind
-    // height. The head verts are baked in the HEAD NIF's bind-model space but
-    // posed by the BODY's Bip01 Head palette, so a bind-height mismatch renders
-    // the grafted head off the neck — the head telescopes into the shoulders
-    // ("negative neck" / head-in-chest). BC bodies (e.g. BodyMaleM) carry only a
-    // neck stump, so the character head NIF is meant to sit exactly on the body's
-    // Bip01 Head. Shift the head verts by the attach-bone bind-world delta
-    // (body − head) so the head lands where the body's neck expects it. Zero when
-    // the skeletons agree (identity binds -> no shift), so single-NIF grafts and
-    // the CPU unit tests are unaffected.
-    glm::vec3 rebase(0.0f);
-    {
-        const int head_attach = find_bone(head.skeleton, attach_bone);
-        if (head_attach >= 0) {
-            const glm::vec3 body_p(glm::inverse(
-                body.skeleton.bones[attach_idx].inverse_bind_pose)[3]);
-            const glm::vec3 head_p(glm::inverse(
-                head.skeleton.bones[head_attach].inverse_bind_pose)[3]);
-            rebase = body_p - head_p;
-        }
-    }
+    // §3.5 bone rebinding — the BC "weld". Map every head-skeleton bone onto
+    // the body skeleton by name; grafted verts keep their AUTHORED weights and
+    // only their indices are rewritten. Degenerate heads with no skeleton
+    // (synthetic fixtures) keep the old rigid attach-bone bind.
+    std::vector<int> bone_map;
+    if (!head.skeleton.bones.empty())
+        bone_map = weld_head_bones(body.skeleton, head.skeleton);
 
-    // Build one rigid-bound MeshCpu per graftable head mesh.
     std::vector<MeshCpu> out;
     out.reserve(graftable.size());
+    bool warned_overflow = false;
     for (const MeshCpu* src : graftable) {
         MeshCpu cpu = *src;  // deep copy of vertices/indices/extra_uvs
         for (auto& v : cpu.vertices) {
-            // Align the head NIF's head onto the body's Bip01 Head (see rebase).
-            v.position += rebase;
-            // The head NIF builds its verts already in character-bind-model
-            // space (the head sits at its character head height), so binding to
-            // the head bone with weight 1 lets the body's bone palette pose it
-            // exactly like a rigid body shape — no extra transform.
-            v.bone_indices = glm::u8vec4(static_cast<std::uint8_t>(attach_idx),
-                                         0, 0, 0);
-            v.bone_weights = glm::u8vec4(255, 0, 0, 0);
+            if (bone_map.empty()) {
+                v.bone_indices = glm::u8vec4(
+                    static_cast<std::uint8_t>(attach_idx), 0, 0, 0);
+                v.bone_weights = glm::u8vec4(255, 0, 0, 0);
+                continue;
+            }
+            for (int k = 0; k < 4; ++k) {
+                if (v.bone_weights[k] == 0) { v.bone_indices[k] = 0; continue; }
+                const int old = v.bone_indices[k];
+                const int mapped =
+                    (old >= 0 && old < static_cast<int>(bone_map.size()))
+                        ? bone_map[old] : -1;
+                const int resolved = mapped < 0 ? attach_idx : mapped;
+                if (resolved > 255 && !warned_overflow) {
+                    std::fprintf(stderr,
+                        "[model_compose] welded bone index %d exceeds 255; "
+                        "clamping (vertex will mis-bind)\n", resolved);
+                    warned_overflow = true;
+                }
+                v.bone_indices[k] = static_cast<std::uint8_t>(
+                    std::clamp(resolved, 0, 255));
+            }
         }
         const int src_mat = src->material_index;
         cpu.material_index =
