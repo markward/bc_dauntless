@@ -141,3 +141,34 @@ TEST(SamplePoseOverBase, RootTrackRotatesButTranslationStaysAnchored) {
     glm::vec3 col0 = glm::normalize(glm::vec3(out[0][0]));
     EXPECT_NEAR(col0.y, 1.0f, 1e-3f);
 }
+
+// BC binds clip channels to nodes by exact, case-sensitive strcmp (stbc.exe
+// FUN_006CC730 via TGAnimationManagerClass::UseAnimation): a channel whose
+// name matches no node is silently cleared and the node idles. Several
+// shipped gesture clips (Console_Look_*.NIF) are rigged entirely to
+// "Kiska …"-named nodes while every officer skeleton is "Bip01 …"-named —
+// those clips are dead ballast in BC and must be VISUAL NO-OPS here too
+// (not a frozen base-pose hold). clip_drives_skeleton is the gate.
+TEST(ClipDrivesSkeleton, TrueWhenAnyTrackMatchesABone) {
+    auto sk = two_bone();
+    assets::AnimationClip clip;
+    assets::AnimationClip::NodeTrack a; a.target_node_name = "Kiska Head";
+    assets::AnimationClip::NodeTrack b; b.target_node_name = "child";
+    clip.tracks = {a, b};
+    EXPECT_TRUE(renderer::clip_drives_skeleton(clip, sk));
+}
+
+TEST(ClipDrivesSkeleton, FalseWhenNoTrackMatches) {
+    auto sk = two_bone();
+    assets::AnimationClip clip;
+    assets::AnimationClip::NodeTrack a; a.target_node_name = "Kiska Head";
+    assets::AnimationClip::NodeTrack b; b.target_node_name = "Kiska Neck";
+    clip.tracks = {a, b};
+    EXPECT_FALSE(renderer::clip_drives_skeleton(clip, sk));
+}
+
+TEST(ClipDrivesSkeleton, FalseForTracklessClip) {
+    auto sk = two_bone();
+    assets::AnimationClip clip;
+    EXPECT_FALSE(renderer::clip_drives_skeleton(clip, sk));
+}

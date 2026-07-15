@@ -86,4 +86,12 @@ std::vector<glm::mat4> sample_pose_over_base(
     return out;
 }
 
+bool clip_drives_skeleton(const assets::AnimationClip& clip,
+                          const assets::Skeleton& skeleton) {
+    for (const auto& tr : clip.tracks)
+        for (const auto& bone : skeleton.bones)
+            if (bone.name == tr.target_node_name) return true;
+    return false;
+}
+
 }  // namespace renderer

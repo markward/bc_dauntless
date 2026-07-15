@@ -1291,6 +1291,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "replaces it.");
     m.def("play_instance_gesture",
           [](scenegraph::InstanceId id, int clip_index) {
+              // BC-faithful dead-clip gate: stbc.exe binds clip channels to
+              // nodes by exact strcmp and silently idles unmatched nodes, so
+              // a clip driving ZERO bones of this skeleton shows nothing in
+              // BC (e.g. the "Kiska …"-rigged Console_Look_*.NIF gestures on
+              // the "Bip01 …" officer rigs). Setting it as the animation here
+              // would instead freeze the officer at the layered base pose for
+              // the clip's duration — so leave the current idle running.
+              scenegraph::Instance* in = g_world.get(id);
+              if (in) {
+                  const assets::Model* m = resolve_model(in->model_handle);
+                  if (m && clip_index >= 0 &&
+                      clip_index < static_cast<int>(m->animations.size()) &&
+                      !renderer::clip_drives_skeleton(
+                          m->animations[clip_index], m->skeleton))
+                      return;
+              }
               scenegraph::Instance::AnimationState st;
               st.clip_index = clip_index;
               st.loop = false;
@@ -1302,7 +1318,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Play a transient gesture/reaction clip LAYERED over the instance's "
           "rest pose: gesture-tracked bones override, the root and untracked "
           "bones stay at the placement pose. Plays once and holds the last "
-          "frame until restore_rest_pose.");
+          "frame until restore_rest_pose. A clip that drives none of this "
+          "skeleton's bones is a visual no-op (BC's exact-strcmp channel "
+          "binding silently idles unmatched nodes).");
     m.def("play_instance_walk",
           [](scenegraph::InstanceId id, int clip_index) {
               scenegraph::Instance::AnimationState st;
