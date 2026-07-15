@@ -38,6 +38,39 @@ assets::AnimationClip clip_tracking(std::initializer_list<const char*> names,
     return c;
 }
 
+// Placement clip (rest_locals only): root at the station (33,-104,23).
+// Gesture clip: rotates "Bip01 Head" 0→90° about Z over 1 s.
+// Walk clip: translates "Bip01" (0,0,0)→(100,0,0) over 1 s, with clip
+// rest_locals placing the head at its bind offset.
+assets::Model officer_like_model() {
+    assets::Model m = three_bone_model();
+    assets::AnimationClip place; place.name = "place";
+    place.duration_seconds = 1.0f;
+    place.rest_locals["Bip01"] =
+        glm::translate(glm::mat4(1.0f), glm::vec3(33, -104, 23));
+    place.rest_locals["Bip01 Head"] = m.skeleton.bones[1].local_transform;
+    place.rest_locals["Bip01 Spine"] = m.skeleton.bones[2].local_transform;
+
+    assets::AnimationClip gesture; gesture.name = "gesture";
+    gesture.duration_seconds = 1.0f;
+    assets::AnimationClip::NodeTrack g; g.target_node_name = "Bip01 Head";
+    g.rotation = {{0.0f, glm::quat(1, 0, 0, 0)},
+                  {1.0f, glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1))}};
+    gesture.tracks = {g};
+
+    assets::AnimationClip walk; walk.name = "walk";
+    walk.duration_seconds = 1.0f;
+    assets::AnimationClip::NodeTrack wr; wr.target_node_name = "Bip01";
+    wr.translation = {{0.0f, glm::vec3(0, 0, 0)}, {1.0f, glm::vec3(100, 0, 0)}};
+    walk.tracks = {wr};
+    walk.rest_locals["Bip01"] = glm::mat4(1.0f);
+    walk.rest_locals["Bip01 Head"] = m.skeleton.bones[1].local_transform;
+    walk.rest_locals["Bip01 Spine"] = m.skeleton.bones[2].local_transform;
+
+    m.animations = {place, gesture, walk};
+    return m;
+}
+
 }  // namespace
 
 TEST(BindClip, ExactStrcmpJoinBindsOnlyMatchedBones) {
@@ -170,4 +203,126 @@ TEST(SetRestPose, SamplesOnceClearsChannelsAndSetsRest) {
     renderer::clear_channels(inst);
     for (const auto& ch : inst.anim.channels) EXPECT_EQ(ch.clip_index, -1);
     EXPECT_TRUE(inst.anim.has_rest) << "clear_channels must keep the rest pose";
+}
+
+TEST(EvalChannels, UnboundBonesShowRestElseBind) {
+    assets::Model m = officer_like_model();
+    scenegraph::World w; scenegraph::Instance& inst = *w.get(w.create_instance(1));
+
+    // No rest, no channels → bind locals.
+    auto locals = renderer::eval_channels(inst, m, 0.0);
+    ASSERT_EQ(locals.size(), 3u);
+    EXPECT_EQ(locals[1], m.skeleton.bones[1].local_transform);
+
+    renderer::set_rest_pose(inst, m, 0, /*at_start=*/false);
+    locals = renderer::eval_channels(inst, m, 0.0);
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(
+        glm::vec3(locals[0][3]), glm::vec3(33, -104, 23), 1e-4f)));
+    EXPECT_FALSE(inst.anim.dirty) << "rest-only instance settles after one eval";
+}
+
+TEST(EvalChannels, GestureRotatesItsBoneOverRestAndClampsSettles) {
+    assets::Model m = officer_like_model();
+    scenegraph::World w; scenegraph::Instance& inst = *w.get(w.create_instance(1));
+    renderer::set_rest_pose(inst, m, 0, false);
+    renderer::bind_clip(inst, m, 1, {}, /*now=*/100.0);
+
+    // Mid-clip: head rotated ~45°, root still at station, spine at rest.
+    auto locals = renderer::eval_channels(inst, m, 100.5);
+    glm::quat head_r = glm::quat_cast(glm::mat3(locals[1]));
+    EXPECT_NEAR(glm::degrees(glm::angle(head_r)), 45.0f, 1.0f);
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(
+        glm::vec3(locals[0][3]), glm::vec3(33, -104, 23), 1e-4f)));
+    EXPECT_FALSE(inst.anim.channels[1].settled);
+    EXPECT_TRUE(inst.anim.dirty);
+
+    // Past the end: clamped at 90°, settled, dirty cleared.
+    locals = renderer::eval_channels(inst, m, 200.0);
+    head_r = glm::quat_cast(glm::mat3(locals[1]));
+    EXPECT_NEAR(glm::degrees(glm::angle(head_r)), 90.0f, 1.0f);
+    EXPECT_TRUE(inst.anim.channels[1].settled);
+    EXPECT_FALSE(inst.anim.dirty);
+    EXPECT_EQ(inst.anim.last_locals.size(), 3u);
+}
+
+TEST(EvalChannels, LoopWrapsViaFmodAndNeverSettles) {
+    assets::Model m = officer_like_model();
+    scenegraph::World w; scenegraph::Instance& inst = *w.get(w.create_instance(1));
+    renderer::set_rest_pose(inst, m, 0, false);
+    renderer::BindOptions o; o.loop = true;
+    renderer::bind_clip(inst, m, 1, o, 0.0);
+
+    auto at = [&](double now) {
+        auto locals = renderer::eval_channels(inst, m, now);
+        return glm::degrees(glm::angle(glm::quat_cast(glm::mat3(locals[1]))));
+    };
+    EXPECT_NEAR(at(0.25), 22.5f, 1.0f);
+    EXPECT_NEAR(at(10.25), 22.5f, 1.0f);   // same phase 10 cycles later
+    EXPECT_FALSE(inst.anim.channels[1].settled);
+    EXPECT_TRUE(inst.anim.dirty);
+}
+
+TEST(EvalChannels, RootMotionAppliesTranslationAnchorOtherwise) {
+    assets::Model m = officer_like_model();
+    scenegraph::World w; scenegraph::Instance& inst = *w.get(w.create_instance(1));
+    renderer::set_rest_pose(inst, m, 0, false);
+
+    // Walk bind: root_motion applies the track translation over the CLIP base.
+    renderer::BindOptions walk; walk.root_motion = true; walk.use_clip_base = true;
+    renderer::bind_clip(inst, m, 2, walk, 0.0);
+    auto locals = renderer::eval_channels(inst, m, 0.5);
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(
+        glm::vec3(locals[0][3]), glm::vec3(50, 0, 0), 1e-3f)));
+
+    // Same clip WITHOUT root_motion: root translation stays at the base
+    // (instance rest → the station), BC's gesture root-anchor.
+    renderer::bind_clip(inst, m, 2, {}, 0.0);
+    locals = renderer::eval_channels(inst, m, 0.5);
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(
+        glm::vec3(locals[0][3]), glm::vec3(33, -104, 23), 1e-3f)));
+}
+
+TEST(EvalChannels, HoldAtStartFreezesAtTZero) {
+    assets::Model m = officer_like_model();
+    scenegraph::World w; scenegraph::Instance& inst = *w.get(w.create_instance(1));
+    renderer::BindOptions o; o.hold_at_start = true;
+    o.root_motion = true; o.use_clip_base = true;
+    renderer::bind_clip(inst, m, 2, o, 0.0);
+
+    auto locals = renderer::eval_channels(inst, m, 500.0);   // way past start
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(
+        glm::vec3(locals[0][3]), glm::vec3(0, 0, 0), 1e-4f)));
+    EXPECT_TRUE(inst.anim.channels[0].settled);
+    EXPECT_FALSE(inst.anim.dirty);
+}
+
+TEST(EvalChannels, BlendWindowRampsSeedToClipThenSettlesBlendDone) {
+    assets::Model m = officer_like_model();
+    scenegraph::World w; scenegraph::Instance& inst = *w.get(w.create_instance(1));
+    renderer::set_rest_pose(inst, m, 0, false);
+
+    // Head displaced by a previous pose: last_locals says head local is +X 40.
+    inst.anim.last_locals = inst.anim.rest_locals;
+    inst.anim.last_locals[1] = glm::translate(glm::mat4(1.0f), glm::vec3(40, 0, 0));
+
+    // Bind the gesture WITH blend. Gesture has no translation channel, so its
+    // sampled head translation = base (+Y 5). Blend must ramp 40→0 on X.
+    renderer::BindOptions b; b.blend = true;
+    renderer::bind_clip(inst, m, 1, b, /*now=*/0.0);
+    ASSERT_NEAR(inst.anim.channels[1].blend_in_s, 0.34f, 1e-6f);
+
+    auto head_x = [&](double now) {
+        return renderer::eval_channels(inst, m, now)[1][3].x;
+    };
+    EXPECT_NEAR(head_x(0.0), 40.0f, 1e-3f);            // w=0 → pure seed
+    EXPECT_NEAR(head_x(0.17), 20.0f, 0.5f);            // w=0.5 linear midpoint
+    EXPECT_NEAR(head_x(0.34), 0.0f, 1e-3f);            // w=1 → pure clip
+    EXPECT_NEAR(head_x(0.5), 0.0f, 1e-3f);             // past window: clip only
+
+    // A non-loop bound bone is settled only once BOTH clip end and blend end
+    // have passed; here dur (1.0) > blend (0.34), so settle at t >= 1.0.
+    renderer::eval_channels(inst, m, 0.9);
+    EXPECT_FALSE(inst.anim.channels[1].settled);
+    renderer::eval_channels(inst, m, 1.1);
+    EXPECT_TRUE(inst.anim.channels[1].settled);
 }

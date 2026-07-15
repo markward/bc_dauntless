@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
 
 #include <assets/model.h>
@@ -123,9 +124,97 @@ void set_rest_pose(scenegraph::Instance& inst, const assets::Model& model,
 std::vector<glm::mat4> eval_channels(scenegraph::Instance& inst,
                                      const assets::Model& model,
                                      double now_wall_time) {
-    (void)now_wall_time;
-    // Implemented in Task 2.
-    return std::vector<glm::mat4>(model.skeleton.bones.size(), glm::mat4(1.0f));
+    const assets::Skeleton& skel = model.skeleton;
+    const std::size_t n = skel.bones.size();
+    std::vector<glm::mat4> locals(n);
+    bool any_live = false;   // anything still animating or blending?
+
+    for (std::size_t i = 0; i < n; ++i) {
+        // Base local: the instance placement pose, else the bind local.
+        const glm::mat4& inst_base =
+            (inst.anim.has_rest && i < inst.anim.rest_locals.size())
+                ? inst.anim.rest_locals[i]
+                : skel.bones[i].local_transform;
+
+        scenegraph::Instance::BoneChannel* ch =
+            i < inst.anim.channels.size() ? &inst.anim.channels[i] : nullptr;
+        if (!ch || ch->clip_index < 0 ||
+            ch->clip_index >= static_cast<int>(model.animations.size())) {
+            locals[i] = inst_base;
+            continue;
+        }
+        const assets::AnimationClip& clip = model.animations[ch->clip_index];
+        if (ch->track_index < 0 ||
+            ch->track_index >= static_cast<int>(clip.tracks.size())) {
+            locals[i] = inst_base;
+            continue;
+        }
+        const assets::AnimationClip::NodeTrack& tr =
+            clip.tracks[ch->track_index];
+
+        // Omitted-channel base: walks/generic clips fall back to the CLIP's
+        // own rest pose (matching the historical non-layered sample_pose);
+        // gestures/idles fall back to the instance placement.
+        glm::mat4 base = inst_base;
+        if (ch->use_clip_base) {
+            auto rit = clip.rest_locals.find(skel.bones[i].name);
+            base = rit != clip.rest_locals.end()
+                       ? rit->second
+                       : skel.bones[i].local_transform;
+        }
+        glm::vec3 base_t; glm::quat base_r; float base_s;
+        decompose_trs(base, base_t, base_r, base_s);
+
+        // Playback time: hold_at_start pins t=0; loop wraps; else clamp+hold.
+        const float dur = clip.duration_seconds;
+        double elapsed = now_wall_time - ch->start_wall_time;
+        if (elapsed < 0.0) elapsed = 0.0;
+        float t;
+        if (ch->hold_at_start) {
+            t = 0.0f;
+            ch->settled = true;
+        } else if (ch->loop) {
+            t = dur > 0.0f ? static_cast<float>(std::fmod(elapsed, dur)) : 0.0f;
+        } else if (elapsed >= dur) {
+            t = dur;
+        } else {
+            t = static_cast<float>(elapsed);
+        }
+
+        glm::vec3 s_t = assets::sample_track_translation(tr, t, base_t);
+        glm::quat s_r = assets::sample_track_rotation(tr, t, base_r);
+        float     s_s = assets::sample_track_scale(tr, t, base_s);
+
+        // BC's gesture root-anchor: keep the clip's root ROTATION but take the
+        // root POSITION from the base unless this bind carries root motion.
+        if (static_cast<int>(i) == skel.root_bone_index && !ch->root_motion)
+            s_t = base_t;
+
+        // Blend window: ramp the bind-time seed toward the sampled value.
+        bool blending = false;
+        if (ch->blend_in_s > 0.0f && elapsed < ch->blend_in_s) {
+            blending = true;
+            float w = static_cast<float>(elapsed) / ch->blend_in_s;
+            if (blend_params().curve == 1) w = w * w * (3.0f - 2.0f * w);
+            s_t = glm::mix(ch->seed_t, s_t, w);
+            s_r = glm::slerp(ch->seed_r, s_r, w);
+            s_s = glm::mix(ch->seed_s, s_s, w);
+        }
+
+        locals[i] = glm::translate(glm::mat4(1.0f), s_t) *
+                    glm::mat4_cast(s_r) *
+                    glm::scale(glm::mat4(1.0f), glm::vec3(s_s));
+
+        // Settle bookkeeping: a channel is done when it neither advances nor
+        // blends. hold_at_start settled above; loops never settle.
+        if (!ch->hold_at_start && !ch->loop)
+            ch->settled = (elapsed >= dur) && !blending;
+        if (!ch->settled) any_live = true;
+    }
+
+    inst.anim.last_locals = locals;
+    inst.anim.dirty = any_live;
+    return locals;
 }
 
 }  // namespace renderer
