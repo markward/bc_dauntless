@@ -13,9 +13,6 @@ public:
     void destroy_instance(InstanceId id);
     void set_world_transform(InstanceId id, const glm::mat4& world);
     void set_bone_palette(InstanceId id, std::vector<glm::mat4> palette);
-    void set_animation(InstanceId id, Instance::AnimationState state);
-    void set_rest_pose(InstanceId id, Instance::AnimationState rest);
-    void restore_rest_pose(InstanceId id);
     void set_visible(InstanceId id, bool visible);
     void set_pass(InstanceId id, Pass pass);
     void set_comm_set_id(InstanceId id, std::uint32_t set_id);

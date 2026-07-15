@@ -25,27 +25,4 @@ std::vector<glm::mat4> sample_pose(const assets::AnimationClip& clip,
                                    const assets::Skeleton& skeleton,
                                    float t);
 
-/// Layered sample: like sample_pose, but each bone's BASE comes from
-/// `base_locals` (per-bone local transforms, same order as skeleton.bones)
-/// instead of the clip's own rest_locals/bind. Bones the clip does NOT track
-/// are copied verbatim from base_locals; tracked bones sample their track over
-/// the decomposed base_locals value (so an omitted channel — e.g. the root
-/// translation gestures never carry — falls back to base_locals, keeping the
-/// officer anchored at the placement pose). base_locals.size() must equal
-/// skeleton.bones.size().
-std::vector<glm::mat4> sample_pose_over_base(
-    const assets::AnimationClip& clip, const assets::Skeleton& skeleton,
-    float t, const std::vector<glm::mat4>& base_locals);
-
-/// True iff any of the clip's tracks targets a bone of `skeleton` (exact,
-/// case-sensitive name match — BC's own binding rule: stbc.exe binds clip
-/// channels to nodes via full-string strcmp and silently idles every
-/// unmatched node). A clip for which this is false is dead ballast on this
-/// skeleton (e.g. the "Kiska …"-rigged Console_Look_*.NIF gestures on the
-/// "Bip01 …" officer rigs) and must not replace a playing animation: BC shows
-/// nothing for such clips, while sampling one would freeze the officer at the
-/// layered base pose for the clip's duration.
-bool clip_drives_skeleton(const assets::AnimationClip& clip,
-                          const assets::Skeleton& skeleton);
-
 }  // namespace renderer
