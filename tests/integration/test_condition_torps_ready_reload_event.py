@@ -85,9 +85,12 @@ def test_condition_torps_ready_flips_true_on_real_reload_broadcast(galaxy_in_set
     # Drain every tube so the ship has ZERO rounds ready anywhere -- the
     # condition's initial-state scan (SetStateFromTorpCount, run only if
     # C-1's fallback lets SetupInitialState find the ship) must read False.
+    # Task 7's ship-wide 0.5s fire stagger means only one tube can launch per
+    # instant, so each drain shot advances the clock past the gate first.
     App.g_kTimerManager._time = 100.0
     for i in range(torps.GetNumWeapons()):
         torps.GetWeapon(i).Fire()
+        App.g_kTimerManager._time += 0.6
     assert all(
         torps.GetWeapon(i).GetNumReady() == 0 for i in range(torps.GetNumWeapons())
     ), "setup bug: every tube must be drained before the condition is built"

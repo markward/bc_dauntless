@@ -17,9 +17,10 @@ def test_dumbfire_no_target_torpedo_expires_on_ttl(galaxy_red):
         App.g_kInputManager.OnKeyDown(App.WC_RBUTTON)
         App.g_kInputManager.OnKeyUp(App.WC_RBUTTON)
 
-    # One tap fires every ready tube in the working group (all 6 — see
-    # test_torpedo_lock_homes_to_target for why; transient until Task 7).
-    assert len(projectiles._active) == 6
+    # Task 7's ship-wide 0.5s stagger throttles one tap to a SINGLE launch
+    # (the first ready tube in the round-robin working group; every other
+    # ready tube's CanFire() fails the stagger gate at the same instant).
+    assert len(projectiles._active) == 1
     torp = projectiles._active[0]
     assert torp._target_ship is None
     assert torp._velocity.Length() > 0.0
@@ -36,7 +37,7 @@ def test_dumbfire_no_target_torpedo_expires_on_ttl(galaxy_red):
     assert torp._velocity.y == vy0
     assert torp._velocity.z == vz0
     # Still active.
-    assert len(projectiles._active) == 6
+    assert len(projectiles._active) == 1
 
     # Tick past TTL (30s default).
     for _ in range(310):

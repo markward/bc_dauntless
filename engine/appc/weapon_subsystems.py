@@ -328,8 +328,13 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0):
             world_dir.z / length * launch_speed + ship_vel.z,
         )
 
-    # Homing state (guidance-only; does not shape the launch):
-    target_ship = source_ship.GetTarget() if source_ship is not None else None
+    # Homing state (guidance-only; does not shape the launch).  Task 7 audited
+    # flow: "Fire stamps the homing state" — read the EMITTER's own _target
+    # (stamped by TorpedoTube.Fire's gated targeted path, cleared/absent on
+    # the dumb path / FireDumb), NOT the ship's target lock.  Previously this
+    # read source_ship.GetTarget() directly, which meant even a dumbfire
+    # inherited the ship's lock; that's wrong per the audited split.
+    target_ship = getattr(emitter, "_target", None)
     if (target_ship is not None
             and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
         target_sub = (source_ship.GetTargetSubsystem()
@@ -1108,6 +1113,12 @@ class TorpedoSystem(WeaponSystem):
         # SetCurrentAmmoSlot / CycleAmmoType so both the readout and the
         # per-shot power cost track the chosen type.
         self._selected_slot = None
+        # Ship-wide fire stagger (Task 7, audited): GAME time of the last
+        # torpedo launched by ANY tube on this system.  A fresh system inits
+        # to -1000.0 (same convention as TorpedoTube._last_fire_time) so the
+        # first shot always passes the 0.5s stagger gate.  Skew-fire tubes
+        # are exempt (TorpedoTube.CanFire checks IsSkewFire() first).
+        self._last_system_fire_time: float = -1000.0
 
     # ── Spread selection state ─────────────────────────────────────────────
     # NOTE: the tube-count heuristic below is the v1 rule for "options the
@@ -1887,6 +1898,72 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
         super().UpdateCharge(dt)
 
 
+# ── Torpedo fire gates (Task 7, audited) ────────────────────────────────────
+# BC's targeted torpedo fire resolves a static aim point (no lead/intercept)
+# and rejects it outside a square +/-30 degree cone about the tube's authored
+# Direction, checked yaw and pitch INDEPENDENTLY.  Neither step touches the
+# launch trajectory itself (that stays BC-faithful per Task 6: straight out
+# the tube's Direction, aim never steers the shot) -- they are pure FIRE
+# gates: fail either and the tube posts ET_WEAPON_FIRE_FAILED and does not
+# launch at all.
+
+_TORPEDO_CONE_HALF_ANGLE = 0.5235984   # BC's literal, NOT math.radians(30)
+
+
+def _resolve_torpedo_aim_point(tube, target):
+    """0x005852A0: target world pos + tube aim offset scaled by target world
+    scale and rotated by target world rotation. None => unresolvable (the
+    caller posts ET_WEAPON_FIRE_FAILED). No speed/velocity/intercept enters."""
+    if target is None or not hasattr(target, "GetWorldLocation"):
+        return None
+    if hasattr(target, "IsDead") and target.IsDead():
+        return None
+    pos = target.GetWorldLocation()
+    offset = getattr(tube, "_target_offset", None)
+    if not isinstance(offset, TGPoint3):
+        return TGPoint3(pos.x, pos.y, pos.z)
+    scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
+    o = TGPoint3(offset.x * scale, offset.y * scale, offset.z * scale)
+    rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
+    if isinstance(rot, TGMatrix3):
+        o.MultMatrixLeft(rot)
+    return TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z)
+
+
+def _in_torpedo_cone(tube, ship, aim_point) -> bool:
+    """0x0057DA90->0x0057DC10: square +/-30 degree cone about the tube
+    direction, yaw and pitch checked INDEPENDENTLY via atan2; forward must
+    be > 0.  No occlusion test -- firing through an asteroid is legal
+    (audited)."""
+    mount = tube._emitter_world_position()
+    to_aim = aim_point - mount
+    if to_aim.Length() < 1e-6:
+        return False
+    d = tube.GetDirection() if hasattr(tube, "GetDirection") else None
+    r = tube.GetRight() if hasattr(tube, "GetRight") else None
+    if not isinstance(d, TGPoint3):
+        d = TGPoint3(0.0, 1.0, 0.0)
+    if not isinstance(r, TGPoint3):
+        r = TGPoint3(1.0, 0.0, 0.0)
+    u = TGPoint3(d.y * r.z - d.z * r.y,      # up = dir x right (local)
+                 d.z * r.x - d.x * r.z,
+                 d.x * r.y - d.y * r.x)
+    rot = ship.GetWorldRotation() if (ship is not None
+              and hasattr(ship, "GetWorldRotation")) else None
+    basis = []
+    for v in (d, r, u):
+        w = TGPoint3(v.x, v.y, v.z)
+        if isinstance(rot, TGMatrix3):
+            w.MultMatrixLeft(rot)
+        basis.append(w)
+    fwd = basis[0].Dot(to_aim)
+    if fwd <= 0.0:
+        return False
+    yaw = _math.atan2(abs(basis[1].Dot(to_aim)), fwd)
+    pitch = _math.atan2(abs(basis[2].Dot(to_aim)), fwd)
+    return yaw <= _TORPEDO_CONE_HALF_ANGLE and pitch <= _TORPEDO_CONE_HALF_ANGLE
+
+
 class TorpedoTube(Weapon):
     """Individual launcher under a parent TorpedoSystem.  Ammo-type tracking
     lives on the parent's slot table; this class owns per-tube reload state.
@@ -2022,17 +2099,28 @@ class TorpedoTube(Weapon):
 
     def CanFire(self) -> int:
         """BC torpedo CanFire (combat-and-damage.md:822-826):
-        powered AND num_ready > 0 AND the ImmediateDelay refire gate has
-        expired AND ammo is available.
+        powered AND num_ready > 0 AND the SHIP-WIDE 0.5s stagger has expired
+        AND the ImmediateDelay refire gate has expired AND ammo is available.
 
         ImmediateDelay is a REFIRE GATE, not a fire->launch latency: it prevents
         rapid double-fires. Hardpoint values run 0.25s (galaxy) to 5.0s.
         The volley-level ammo reserve gate also lives on the parent
         TorpedoSystem.StartFiring; this per-tube check additionally covers
         direct CanFire() callers that bypass StartFiring.
+
+        The stagger gate (Task 7, audited) throttles the WHOLE SYSTEM to one
+        launch per 0.5s of game time: a single tap that would otherwise fire
+        every ready tube in the working group in the same tick now only
+        launches the first one (it stamps parent._last_system_fire_time; the
+        rest fail this gate within the same tick since gameTime delta is 0).
+        Skew-fire tubes are exempt — they're the deliberately-desynced spread
+        pattern, not the ship-wide volley.
         """
         parent = self.GetParentSubsystem()
         if parent is None or not parent.IsOn():
+            return 0
+        if (not self.IsSkewFire() and parent is not None
+                and _game_time() - getattr(parent, "_last_system_fire_time", -1000.0) <= 0.5):
             return 0
         if self._num_ready <= 0:
             return 0
@@ -2044,22 +2132,107 @@ class TorpedoTube(Weapon):
 
     def Fire(self, target=None, offset=None) -> bool:
         """Returns True when a torpedo launched — discrete shooter, so the
-        tick's try_fire_weapon needs the explicit bool (see PulseWeapon.Fire)."""
+        tick's try_fire_weapon needs the explicit bool (see PulseWeapon.Fire).
+
+        Task 7 audited gates, applied AFTER CanFire (power/stagger/reload/
+        ammo) passes:
+
+          * targeted path (``target`` is not None): resolve the static aim
+            point (no lead — Task 7 audited), then the +/-30 degree square
+            cone about the tube's Direction.  Either failure posts
+            ET_WEAPON_FIRE_FAILED and returns False WITHOUT consuming a
+            round or starting the stagger/reload cooldown — a rejected shot
+            never fires.  Only on success does this stamp ``_target``/
+            ``_target_offset`` — "Fire stamps the homing state"; a
+            downstream FireDumb()/dumb call (target=None) never does, so
+            _spawn_projectile's homing lookup (reading THIS tube's
+            ``_target``) stays None for a dumbfire.
+          * dumb path (``target`` is None): straight to bookkeeping, no aim
+            resolve, no cone — matches BC (FireDumb has no target to gate).
+        """
         if not self.CanFire():
             return False
+        if target is not None:
+            aim_point = _resolve_torpedo_aim_point(self, target)
+            if aim_point is None:
+                self._broadcast_weapon_fire_failed()
+                return False
+            if not _in_torpedo_cone(self, self._climb_to_ship(), aim_point):
+                self._broadcast_weapon_fire_failed()
+                return False
+            self._target = target
+            self._target_offset = offset
         self._firing = True
-        self._target = target
-        self._target_offset = offset
         now = _game_time()
         self._num_ready -= 1
         self._last_fire_time = now
+        parent = self.GetParentSubsystem()
+        if parent is not None:
+            parent._last_system_fire_time = now
         self._start_slot_cooldown(now)
 
         self._spawn_torpedo()
 
+        # BC's order (audited): ET_TORPEDO_FIRED (posted inside _spawn_torpedo,
+        # once the projectile exists) THEN ET_WEAPON_FIRED, then the
+        # player-only ET_TORPEDO_AMMO_CONSUMED.
+        self._broadcast_weapon_fired()
+        self._broadcast_ammo_consumed_if_player()
+
         # Discrete-shot — auto-stop after launch.
         self._firing = False
         return True
+
+    def _broadcast_weapon_fired(self) -> None:
+        """Post ET_WEAPON_FIRED: Source = the TUBE, Destination = the owning
+        ship.  Posted AFTER ET_TORPEDO_FIRED on every successful launch
+        (weapon-firing-mechanics.md §1.5/§2.4, audited)."""
+        import App
+        from engine import dev_mode
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_WEAPON_FIRED)
+            evt.SetSource(self)
+            evt.SetDestination(self._climb_to_ship())
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("ET_WEAPON_FIRED broadcast", _e)
+
+    def _broadcast_weapon_fire_failed(self) -> None:
+        """Post ET_WEAPON_FIRE_FAILED: Destination = the TUBE.  Posted when a
+        targeted fire fails the aim-point resolve or the +/-30 degree cone
+        (audited; no shipped SDK script listens — defined for fidelity +
+        mod surface)."""
+        import App
+        from engine import dev_mode
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_WEAPON_FIRE_FAILED)
+            evt.SetDestination(self)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("ET_WEAPON_FIRE_FAILED broadcast", _e)
+
+    def _broadcast_ammo_consumed_if_player(self) -> None:
+        """Post ET_TORPEDO_AMMO_CONSUMED, but ONLY when the firing ship is
+        the player ship (BC locality gate — audited).  Source = the TUBE,
+        Destination = the ship, mirroring ET_WEAPON_FIRED."""
+        ship = self._climb_to_ship()
+        import App
+        try:
+            if ship is None or ship is not App.Game_GetCurrentPlayer():
+                return
+        except Exception:
+            return
+        from engine import dev_mode
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_TORPEDO_AMMO_CONSUMED)
+            evt.SetSource(self)
+            evt.SetDestination(ship)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("ET_TORPEDO_AMMO_CONSUMED broadcast", _e)
 
     def _spawn_torpedo(self) -> None:
         """Look up the parent system's GetTorpedoScript(0), import the SDK

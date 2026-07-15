@@ -91,13 +91,22 @@ def test_skew_perturbs_local_direction_fixed_sign():
 
 def test_target_lock_still_stamped_but_not_used_for_velocity():
     """Guidance (Task 9) still needs the target lock stamped — this task
-    only forbids USING it to steer the launch."""
+    only forbids USING it to steer the launch.
+
+    Task 7 audited: "Fire stamps the homing state" — _spawn_projectile now
+    reads the EMITTER's own ``_target`` (stamped by TorpedoTube.Fire's gated
+    targeted path), not the ship's target lock directly.  This test calls
+    _spawn_projectile in isolation (bypassing Fire's CanFire/cone gates to
+    keep the launch-fidelity harness's test-controlled launch_speed), so it
+    stamps tube._target itself — exactly what Fire's targeted path would
+    have done on a successful gate pass."""
     target = LiveTarget(1000.0, 0.0, 0.0)
     system, ship = system_with_tubes(1, target=target)
     tube = system.GetWeapon(0)
     tube.SetDirection(TGPoint3(0, 1, 0))
     tube.SetRight(TGPoint3(1, 0, 0))
     ship.SetVelocity(TGPoint3(0, 0, 0))
+    tube._target = target
 
     torp = _spawn_projectile(tube, _FakeTorpedoModule(10.0))
     assert torp._target_ship is target
