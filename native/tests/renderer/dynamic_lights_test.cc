@@ -205,6 +205,37 @@ TEST(SelectDynamicLights, InstanceRadiusCreditSelectsLightOtherwiseOutOfRange) {
     EXPECT_EQ(count_credit, 1);
 }
 
+TEST(SelectDynamicLights, EvictionReplacesLowestWhenLaterLightScoresHigher) {
+    // Insertion order gives scores [5, 6, 7, 8, 10], with the HIGHEST-scoring
+    // light (10) arriving AFTER the fixed-size (K=4) array is already full.
+    // All lights sit exactly at the instance center (d=0) with a large shared
+    // radius, so dynamic_light_attenuation(0, radius) == 1 (w=1, d²+1=1) and
+    // score == intensity * luminance(white) == intensity exactly — letting
+    // intensity alone control score, deterministically, with no distance math.
+    std::vector<DynamicLightDescriptor> lights;
+    for (float score : {5.0f, 6.0f, 7.0f, 8.0f, 10.0f}) {
+        lights.push_back(make_point_light(glm::vec3(0.0f), 100.0f,
+                                           glm::vec3(1.0f), score));
+    }
+
+    std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> out{};
+    const int count =
+        select_dynamic_lights(lights, glm::vec3(0.0f), 0.0f, out);
+
+    ASSERT_EQ(count, 4);
+    std::vector<float> selected_intensity;
+    for (int i = 0; i < count; ++i) selected_intensity.push_back(out[i].intensity);
+    std::sort(selected_intensity.begin(), selected_intensity.end());
+    // Top 4 by score are {6, 7, 8, 10} — NOT insertion order's first four
+    // {5, 6, 7, 8}, which is what a broken/missing eviction branch would
+    // produce (the last, highest-scoring light silently dropped).
+    const std::vector<float> expected = {6.0f, 7.0f, 8.0f, 10.0f};
+    ASSERT_EQ(selected_intensity.size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        EXPECT_FLOAT_EQ(selected_intensity[i], expected[i]);
+    }
+}
+
 TEST(SelectDynamicLights, TenInRangeLightsReturnsExactlyCeilingAndTopK) {
     // 10 point lights on the +X axis at distances 1..10, all with a large
     // shared radius. Expected top 4 by score: distances 1, 2, 3, 4.

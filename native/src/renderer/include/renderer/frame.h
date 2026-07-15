@@ -248,7 +248,10 @@ void draw_model(const assets::Model& model,
                 float decal_time,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
-                const scenegraph::HullCarveField& carve);
+                const scenegraph::HullCarveField& carve,
+                const std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>&
+                    dyn_lights = {},
+                int dyn_light_count = 0);
 
 /// Release the process-lifetime damage-decal texture (game/data/Textures/
 /// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.
@@ -278,7 +281,8 @@ public:
                        const ModelLookup& lookup,
                        const Lighting& lighting,
                        float decal_time = 0.0f,
-                       CarveFieldCache* carve_cache = nullptr);
+                       CarveFieldCache* carve_cache = nullptr,
+                       const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
 
     /// Like submit_opaque but only iterates instances tagged with `pass`.
     /// Used by the space pass to exclude bridge-tagged geometry, which
@@ -291,7 +295,8 @@ public:
                                scenegraph::Pass pass,
                                float decal_time = 0.0f,
                                CarveFieldCache* carve_cache = nullptr,
-                               float ambient_scale = 1.0f);
+                               float ambient_scale = 1.0f,
+                               const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
 
 private:
     /// Lazily-allocated 1x1 white texture used as a fallback when a material

@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <renderer/frame.h>
+#include <renderer/dynamic_lights.h>
 #include <renderer/nebula_pass.h>
 #include <renderer/nebula_volumetric_pass.h>
 #include <renderer/nebula_godray_pass.h>
@@ -165,6 +166,109 @@ TEST_F(FrameTest, OpaquePassWithRimEnabledRunsWithoutGLError) {
         [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
         }, lighting, scenegraph::Pass::Space);
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// ── Task 9: dynamic-light list threading (frame.cc) ──────────────────────
+// Task 9 only teaches the shader + submit_* to CONSUME an optional light
+// list; no caller passes a real one yet (that's Task 10). These are
+// GL_NO_ERROR-level smoke tests only — PipelineTest::OpaqueShaderCompilesAndLinks
+// already proves the new uniforms compile/link; no golden-image assertion is
+// added here per the brief (the 7-FrameTest fragile-GL family stays as-is).
+
+TEST_F(FrameTest, OpaquePassWithNullDynamicLightListRunsWithoutGLError) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 1500.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    // dyn_lights left at its default (nullptr) — the production path until
+    // Task 10 wires a real caller.
+    submitter.submit_opaque(world, cam, *p,
+        [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr,
+        /*dyn_lights=*/nullptr);
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(FrameTest, OpaquePassWithExplicitEmptyDynamicLightListRunsWithoutGLError) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 1500.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    std::vector<renderer::DynamicLightDescriptor> empty_lights;
+    submitter.submit_opaque(world, cam, *p,
+        [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr,
+        &empty_lights);
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(FrameTest, OpaquePassWithPopulatedDynamicLightListRunsWithoutGLError) {
+    // Exercises the actual selection + upload path (model-radius cache,
+    // select_dynamic_lights, u_dyn_light_* array upload) that the two tests
+    // above (null / empty) never reach, since both short-circuit to count 0.
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 1500.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    std::vector<renderer::DynamicLightDescriptor> lights;
+    for (int i = 0; i < 6; ++i) {
+        renderer::DynamicLightDescriptor l;
+        l.pos_a = glm::vec3(static_cast<float>(i) * 10.0f, 0.0f, 0.0f);
+        l.pos_b = l.pos_a;  // point light (degenerate segment)
+        l.color = glm::vec3(1.0f, 0.5f, 0.2f);
+        l.radius = 500.0f;
+        l.intensity = 1.0f;
+        lights.push_back(l);
+    }
+    submitter.submit_opaque(world, cam, *p,
+        [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, &lights);
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
