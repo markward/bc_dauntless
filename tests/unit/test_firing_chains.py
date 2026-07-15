@@ -46,6 +46,47 @@ def test_resolve_working_group_resume_semantics():
     assert sys_._resolve_working_group() == 1        # fall back to first
 
 
+def test_quad_chain_sweeps_authored_order_not_shipped_ascending_bitmask():
+    """Pins a DELIBERATE Dauntless-vs-shipped-BC divergence, not a bug.
+
+    Decompiled stbc.exe (docs/superpowers/specs/2026-07-15-bc-faithful-
+    weapon-dispatch-design.md §9) settles how BC's C++ actually parses and
+    sweeps ``FiringChainString``:
+
+      - Parse is per-digit, CONFIRMED: ``WeaponSystem::BuildFiringChains``
+        @ 0x00585020 (called from Ship_SetupProperties) walks the chain
+        string char-by-char, setting bit ``1<<(d-1)`` per digit ``d``.
+        Galaxy's ``"0;Single;123;Dual;53;Quad"`` compiles to stored dwords
+        0, 7, 20 -- so "53" collapses to the bitmask {3, 5} with the
+        authored ORDER destroyed at parse time; only the FiringChain
+        node's ``+4`` name field still carries "Quad".
+      - Sweep is ascending-bit, NOT authored order: ``GetNextGroup`` @
+        0x00586250 scans the stored bitmask low-to-high (wrap via
+        ``GetFirstGroup`` @ 0x00586220), and ``LastGroupFired`` resets to
+        -1 on every fruitless full sweep -- during the 0.5s inter-volley
+        stagger every sweep IS fruitless, so each volley re-seeds at the
+        LOWEST group in the mask. For stock Quad (mask 20 = groups {3, 5})
+        that means shipped BC fires group 3 -- the AFT pair -- before
+        group 5, the four FORWARD tubes -- inverting the author's evident
+        "forward quad first" intent implied by writing the chain digits as
+        "53" rather than "35".
+
+    Dauntless's ruling (Mark, intent-over-shipped -- the same shape as the
+    skew-salvo wire in spec §5, where BC's own SDK docs describe a
+    mechanism retail shipped disconnected): keep the per-digit ORDERED-LIST
+    reading, so Quad's active groups stay ``[5, 3]`` and the very first
+    resolved working group -- from the -1 "no prior fire" sentinel -- is 5,
+    the forward tubes, not shipped's aft-first 3. Shipped's ascending-scan-
+    with-reset is the documented bug-compatible alternative; it is NOT
+    implemented here. Do not "fix" this test toward the binary.
+    """
+    sys_ = _system_with_chains()
+    sys_.SetFiringChainMode(2)           # "Quad" chain ("53" authored digits)
+    assert sys_._active_chain_groups() == [5, 3]      # authored order preserved
+    assert sys_._last_group_fired == -1               # fresh system, no prior fire
+    assert sys_._resolve_working_group() == 5         # forward quad first, not aft
+
+
 def test_target_list_prunes_dead():
     class _T:
         def __init__(self, dead): self._dead = dead

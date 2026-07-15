@@ -385,25 +385,56 @@ tubes never refill mid-combat, which contradicts observable gameplay.
 
 Nothing else in this design depends on the answer.
 
-**Second question for the decomp project (chain parse):**
+**Second question for the decomp project (chain parse) — ANSWERED
+(2026-07-15):**
 
-> How does the C++ parse `FiringChainString` segments into chain masks —
-> per-digit group ids (`"53"` → groups {5,3}) or `atoi` decimal bitmask
-> (`53` → groups {1,3,5,6})? And does the group sweep honour authored
-> segment order or ascending bit order (`GetNextGroup` scans upward, which
-> would try group 3 before 5 in Quad)? Our implementation keeps the
-> per-digit ordered-list reading — it is the only one under which the
-> authored names (Single/Dual/Quad vs tube `SetGroups` masks 25/26/4) make
-> sense.
+Decompiled `stbc.exe` settles both halves of the question:
 
-**Partially answered (2026-07-15):** the BC SDK Model Property Editor
-documentation states "Zero is used for the group of all weapons,
-single-firing" — confirming group `0` is BOTH the chainless fallback *and*
-the authored "Single" chain's group list, and that it specifically means
-single-fire (not merely "no chain authored"). That's the fact the spread
-<->skew wire (§5) keys off: `_active_chain_groups() == [0]` is the one case
-that must clear skew rather than arm it. The segment-parse encoding
-(per-digit vs `atoi` bitmask) and the group-sweep order remain open.
+- **Parse: per-digit, CONFIRMED.** `WeaponSystem::BuildFiringChains` @
+  `0x00585020` (called from `Ship_SetupProperties`) walks the chain string
+  char-by-char; each digit `d` sets bit `1<<(d-1)` in a per-chain stored
+  dword. Galaxy's `"0;Single;123;Dual;53;Quad"` compiles to stored dwords
+  `0`, `7`, `20` — per-digit group-id parsing, not `atoi` decimal. `'0'`
+  sets no bit; the "all weapons" meaning of a zero mask comes from the
+  *consumer* (`group==0 || HasGroup(group)`), not the parser. The
+  `FiringChain` node stores `+0` mask / `+4` name — labels are opaque
+  stored data, not derived from the digits. This also confirms the BC SDK
+  Model Property Editor's "Zero is used for the group of all weapons,
+  single-firing" note (the earlier partial answer): group `0` is both the
+  chainless fallback and the authored "Single" chain's group list, and
+  `_active_chain_groups() == [0]` is the one case the spread↔skew wire
+  (§5) keys off to clear skew rather than arm it.
+- **Sweep order: DIVERGES from our implementation, by design.** The stored
+  representation is a bare bitmask, so authored segment order is destroyed
+  at parse time in shipped BC. `GetNextGroup` @ `0x00586250` scans
+  **ascending** bit order (wrap via `GetFirstGroup` @ `0x00586220`), and
+  `LastGroupFired` resets to −1 on every *fruitless* full sweep — during
+  the 0.5s inter-volley stagger every sweep is fruitless, so each volley
+  re-seeds at the **lowest** group in the mask. Consequence for stock Quad
+  (mask `20` = groups {3, 5}): shipped BC fires group 3 (the **aft** pair)
+  before group 5 (the four **forward** tubes) — inverting the author's
+  evident "forward quad first" intent implied by writing the chain digits
+  as `"53"` rather than `"35"`.
+- **Dauntless's ruling: keep the authored-order sweep.** Per Mark's
+  intent-over-shipped precedent — the same shape as §5's skew-salvo wire,
+  where BC's own SDK docs describe a mechanism retail shipped
+  disconnected — Dauntless's `_active_chain_groups()` keeps the per-digit
+  **ordered list** (`"53"` → `[5, 3]`), so Quad tries the forward tubes
+  first. Shipped's ascending-scan-with-reset behaviour is documented here
+  as the known bug-compatible alternative; it is **not** implemented. See
+  `tests/unit/test_firing_chains.py::test_quad_chain_sweeps_authored_order_not_shipped_ascending_bitmask`.
+- **Resume-reset semantics already match shipped.** `WeaponSystem.
+  update_weapons` resets `self._last_group_fired = -1` when a full wrap
+  through every group in the active chain fires nothing (the
+  `working == start_group` branch in `engine/appc/weapon_subsystems.py`)
+  — the same "reset to −1 on a fruitless sweep" rule the decomp doc
+  describes for `GetNextGroup`/`LastGroupFired`. Only the *order* in which
+  groups are tried diverges (authored vs. ascending); the reset trigger
+  itself needed no change.
+- **Caveat (from the decomp agent):** the strtok delimiter byte
+  (`DAT_008daebc = ';'`) was inferred from token alternation in the
+  disassembly, not read directly from a retail exe byte — high-confidence,
+  not binary-confirmed.
 
 ## 10. Non-goals
 
