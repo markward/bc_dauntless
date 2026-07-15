@@ -1406,6 +1406,20 @@ class _HeldFireWeaponSystem(WeaponSystem):
         """Fire-range gate hook. Default: no gate. PhaserSystem overrides."""
         return True
 
+    def StartFiring(self, target=None, offset=None) -> None:
+        """No-target bail (regression guard): SDK FireWeapons dispatches
+        pShip.GetTarget(), which is legitimately None (no target selected).
+        Energy weapons (phaser/pulse/tractor) have nothing to aim/fire at
+        with no target — latching _fire_held here left host_loop's per-frame
+        damage loop stopping each bank (target is None) while the AI/UI
+        re-called StartFiring every tick, producing a fire/stop flicker with
+        SFX spam (and, for pulse weapons, real forward bolts with no
+        target). Torpedo dumbfire is unaffected: it lives on the WeaponSystem
+        base, which legitimately arms with target=None."""
+        if target is None:
+            return
+        super().StartFiring(target=target, offset=offset)
+
 
 class PhaserSystem(_HeldFireWeaponSystem):
     # Power-level constants from sdk/.../App.py:6444-6446 (three levels).
@@ -2118,7 +2132,8 @@ class TorpedoTube(Weapon):
     def CanFire(self) -> int:
         """BC torpedo CanFire (combat-and-damage.md:822-826):
         powered AND num_ready > 0 AND the SHIP-WIDE 0.5s stagger has expired
-        AND the ImmediateDelay refire gate has expired AND ammo is available.
+        AND this tube is not itself disabled (spec §3.3 audited gate 2) AND
+        the ImmediateDelay refire gate has expired AND ammo is available.
 
         ImmediateDelay is a REFIRE GATE, not a fire->launch latency: it prevents
         rapid double-fires. Hardpoint values run 0.25s (galaxy) to 5.0s.
@@ -2141,6 +2156,12 @@ class TorpedoTube(Weapon):
                 and _game_time() - getattr(parent, "_last_system_fire_time", -1000.0) <= 0.5):
             return 0
         if self._num_ready <= 0:
+            return 0
+        # Audited gate 2 (spec §3.3): this tube must not itself be disabled
+        # (condition damaged at/below DisabledPercentage). Distinct from the
+        # PARENT power-on check above — a healthy powered-on TorpedoSystem
+        # can still have individual tubes crippled by hull damage.
+        if self.IsDisabled():
             return 0
         if _game_time() - self._last_fire_time < self._immediate_delay:
             return 0
@@ -2180,6 +2201,13 @@ class TorpedoTube(Weapon):
                 return False
             self._target = target
             self._target_offset = offset
+        else:
+            # Dumb path: clear any stale lock left by a previous targeted
+            # shot, so _spawn_projectile's homing lookup (reading this
+            # tube's own _target) can't home a dumbfire on a target the
+            # player no longer has selected.
+            self._target = None
+            self._target_offset = None
         self._firing = True
         now = _game_time()
         self._num_ready -= 1
