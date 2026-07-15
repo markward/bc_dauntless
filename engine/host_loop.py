@@ -723,6 +723,7 @@ def _advance_combat(ships, dt: float, ship_instances=None) -> None:
     # _build_* helpers and the combat/carve advances now route through
     # host_io too, so nothing below consumes the raw `host` module.
     host_io.set_torpedoes(_build_torpedo_render_data())
+    host_io.set_dynamic_lights(_build_dynamic_light_render_data())
     from engine.appc import shockwaves as _shockwaves
     host_io.set_shockwaves(_shockwaves.render_data())
     host_io.set_hit_vfx(_build_hit_vfx_render_data())
@@ -822,6 +823,30 @@ def _build_torpedo_render_data():
     return out
 
 
+def _build_dynamic_light_render_data():
+    """One point light per in-flight torpedo-style projectile (BC: the
+    torpedo lights the ships it flies past — weapon-firing-mechanics.md
+    §5.5). Disruptor bolts emit nothing (faithful: the bolt's light slot
+    stays NULL in BC). Radius/intensity are PROVISIONAL calibration knobs;
+    the audited radius source (light node +0x14C) is unpinned — RE Q2.
+    """
+    out = []
+    for t in projectiles._active:
+        if t._is_disruptor:
+            continue
+        radius = _TORPEDO_LIGHT_RADIUS_SCALE * max(
+            t._glow_size_a, t._glow_size_b)
+        if radius <= 0:
+            continue
+        out.append({
+            "position":  (t._position.x, t._position.y, t._position.z),
+            "color":     _color_tuple(t._glow_color)[:3],
+            "radius":    radius,
+            "intensity": _TORPEDO_LIGHT_INTENSITY,
+        })
+    return out
+
+
 def _build_hit_vfx_render_data():
     out = []
     for entry in hit_vfx.snapshot():
@@ -901,6 +926,16 @@ PHASER_BEAM_BRIGHTNESS = 0.75
 # additive alpha 1.2 (BC's two emissive passes, 0.8 + 0.4), so start at 1.0
 # and dial by eye in QuickBattle if the HDR pipeline reads too hot.
 TORPEDO_BRIGHTNESS = 1.0
+
+# BC's firing-ship attach gate is light.radius × 100 (weapon-firing-mechanics
+# audit §5.5); we fold it into the emitted radius because our light
+# attenuates with distance (BC's did not — its radius only gated
+# attachment). Tune live in QuickBattle.
+_TORPEDO_LIGHT_RADIUS_SCALE = 100.0
+
+# Scalar on the torpedo dynamic-light color; calibration knob (VFX
+# convention: start strong, dial back).
+_TORPEDO_LIGHT_INTENSITY = 1.0
 
 
 def _beam_descriptor_pair(ship, bank, ship_instances):
