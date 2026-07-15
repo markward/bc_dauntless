@@ -766,8 +766,27 @@ def _dim_color(c, scale):
     return (c[0] * scale, c[1] * scale, c[2] * scale, c[3])
 
 
+def _torpedo_forward(t) -> tuple:
+    """Unit-length forward vector from a torpedo's velocity, falling back
+    to (0, 0, 1) when the velocity is ~stationary (the disruptor's default
+    __init__ velocity, and any torpedo not yet advanced by physics)."""
+    v = t._velocity
+    mag = (v.x * v.x + v.y * v.y + v.z * v.z) ** 0.5
+    if mag < 1e-6:
+        return (0.0, 0.0, 1.0)
+    return (v.x / mag, v.y / mag, v.z / mag)
+
+
 def _build_torpedo_render_data():
-    """Convert projectiles._active into the dict shape set_torpedoes expects."""
+    """Convert projectiles._active into the dict shape set_torpedoes expects.
+
+    Emits both the torpedo-quad fields (core/glow/flares textured billboards)
+    and the disruptor-bolt fields (authentic procedural tapered-tube bolt —
+    Task 1's CreateDisruptorModel) on EVERY descriptor, for both projectile
+    families: the C++ binding (Task 3) reads every key unconditionally, so a
+    photon torpedo emits neutral-default bolt fields and a disruptor emits
+    empty quad textures/colors (_resolve_game_texture("") already guards
+    falsy input back to "")."""
     out = []
     for t in projectiles._active:
         out.append({
@@ -790,6 +809,15 @@ def _build_torpedo_render_data():
             "flares_size_a": t._flares_size_a,
             "flares_size_b": t._flares_size_b,
             "age":           t._age,
+            "id":              int(t._id),
+            "is_disruptor":    bool(t._is_disruptor),
+            "forward":         _torpedo_forward(t),
+            # Disruptor bolt colors are audit-authentic already — no
+            # TORPEDO_BRIGHTNESS dimming (that knob is for the quad layers).
+            "shell_color":     _color_tuple(t._shell_color),
+            "bolt_core_color": _color_tuple(t._bolt_core_color),
+            "bolt_length":     float(t._bolt_length),
+            "bolt_width":      float(t._bolt_width),
         })
     return out
 
@@ -867,9 +895,12 @@ PHASER_BEAM_WIDTH_MUTATOR = 3.0
 # without touching the hardpoint hue. Mirrors TRACTOR_BEAM_BRIGHTNESS below.
 PHASER_BEAM_BRIGHTNESS = 0.75
 
-# Brightness scale on torpedo/bolt layer colours (core, glow, flares) —
-# projectiles read too hot against the HDR pipeline (tune-by-eye).
-TORPEDO_BRIGHTNESS = 0.75
+# Brightness scale on torpedo quad layer colours (core, glow, flares) — a
+# visual-calibration knob, not an authenticity one. Colors themselves are now
+# audit-authentic (weapon-firing-mechanics.md); the glow layer draws at
+# additive alpha 1.2 (BC's two emissive passes, 0.8 + 0.4), so start at 1.0
+# and dial by eye in QuickBattle if the HDR pipeline reads too hot.
+TORPEDO_BRIGHTNESS = 1.0
 
 
 def _beam_descriptor_pair(ship, bank, ship_instances):

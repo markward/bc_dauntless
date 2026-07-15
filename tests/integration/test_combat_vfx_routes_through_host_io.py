@@ -66,4 +66,15 @@ def test_advance_combat_publishes_torpedo_descriptors_via_host_io():
 
     assert "torps" in captured, "host_io.set_torpedoes was never called"
     assert len(captured["torps"]) == 1
-    assert captured["torps"][0]["position"] == pytest.approx((1.0, 2.0, 3.0))
+    entry = captured["torps"][0]
+    assert entry["position"] == pytest.approx((1.0, 2.0, 3.0))
+    # Task 2: every descriptor also carries the disruptor-bolt fields,
+    # unconditionally, alongside the torpedo-quad fields — the C++ parser
+    # (Task 3) reads every key regardless of family.
+    for key in ("id", "is_disruptor", "forward", "shell_color",
+                "bolt_core_color", "bolt_length", "bolt_width"):
+        assert key in entry, f"{key!r} missing from torpedo descriptor"
+    assert entry["id"] == t._id
+    assert entry["is_disruptor"] is False
+    # t._velocity is (0, 0, 0) above -> zero-velocity fallback.
+    assert entry["forward"] == pytest.approx((0.0, 0.0, 1.0))
