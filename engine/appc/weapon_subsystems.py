@@ -26,16 +26,6 @@ from engine.appc.subsystems import (
 )
 
 
-# ── Torpedo spread-volley tuning (Python, no rebuild) ───────────────────────
-# Divergence angle for spread volleys: each fanned torp launches this far off
-# the base aim (tangent of 15°), so a Dual/Quad spread visibly splays before
-# converging.  _SPREAD_DELAY is the hold-before-homing duration (s): the torp
-# flies straight along its fanned launch direction, then homing engages and it
-# curves back onto the target — a deferred fan then converge.
-_SPREAD_DIVERGENCE_TAN = _math.tan(_math.radians(15.0))  # ≈0.268
-_SPREAD_DELAY = 0.2
-
-
 # ── Torpedo reload slots ───────────────────────────────────────────────────
 # BC stores one float per MaxReady at TorpedoTube+0xAC
 # (docs/gameplay/combat-and-damage.md:748).  We store the
@@ -269,22 +259,17 @@ def _resolve_fire_sound(prop) -> str:
 
 
 
-def _spawn_projectile(emitter, mod, *, drf_override=0.0,
-                      spread_unit=None, homing_delay=0.0):
+def _spawn_projectile(emitter, mod, *, drf_override=0.0):
     """Spawn an in-flight projectile from `emitter` using SDK module `mod`.
 
     Shared by torpedo tubes and pulse-weapon cannons. Builds a Torpedo at the
     emitter's world position, runs mod.Create to populate visuals/behaviour,
-    applies drf_override (the launcher's DamageRadiusFactor) when > 0, computes
-    homing velocity toward the firing ship's live target lock (else dumbfire
-    along the emitter/ship forward), registers it, and plays mod.GetLaunchSound.
-    Returns the Torpedo, or None if mod is unusable.
-
-    `spread_unit` (a world-space unit TGPoint3) tilts the launch direction
-    sideways by _SPREAD_DIVERGENCE_TAN for a fan-out volley; `homing_delay`
-    (s) is stamped onto the torp so homing is suppressed until it has flown
-    straight along the fanned direction for that long.  Defaults (None / 0.0)
-    keep every non-spread shot byte-identical.
+    applies drf_override (the launcher's DamageRadiusFactor) when > 0, and
+    launches it BC-faithfully (audited §2.4.1): straight out the tube's
+    authored Direction (skewed +0.033 x Right when IsSkewFire) rotated to
+    world, at GetLaunchSpeed(), plus the firing ship's own linear velocity —
+    the aim point never steers the launch.  Registers it and plays
+    mod.GetLaunchSound.  Returns the Torpedo, or None if mod is unusable.
     """
     from engine.appc.projectiles import Torpedo, register
     from engine.appc.math import TGPoint3
@@ -308,78 +293,51 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0,
 
     launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
 
+    # ── Launch trajectory (audited §2.4.1): the aim point NEVER steers the
+    # launch. Direction = tube-local Direction (skew: + 0.033 x Right, local
+    # frame, fixed sign) rotated to world; speed from the Python projectile
+    # module; plus the firing ship's own linear velocity.
+    local_dir = None
+    got = emitter.GetDirection() if hasattr(emitter, "GetDirection") else None
+    if isinstance(got, TGPoint3):
+        local_dir = TGPoint3(got.x, got.y, got.z)
+    if local_dir is None:
+        local_dir = TGPoint3(0.0, 1.0, 0.0)
+    if getattr(emitter, "IsSkewFire", None) and emitter.IsSkewFire():
+        right = emitter.GetRight() if hasattr(emitter, "GetRight") else None
+        if isinstance(right, TGPoint3):
+            local_dir = TGPoint3(local_dir.x + 0.033 * right.x,
+                                 local_dir.y + 0.033 * right.y,
+                                 local_dir.z + 0.033 * right.z)
+    world_dir = TGPoint3(local_dir.x, local_dir.y, local_dir.z)
+    if source_ship is not None and hasattr(source_ship, "GetWorldRotation"):
+        rot = source_ship.GetWorldRotation()
+        from engine.appc.math import TGMatrix3
+        if isinstance(rot, TGMatrix3):
+            world_dir.MultMatrixLeft(rot)
+    length = world_dir.Length()
+    ship_vel = (source_ship.GetVelocityTG()
+                if source_ship is not None and hasattr(source_ship, "GetVelocityTG")
+                else TGPoint3(0.0, 0.0, 0.0))
+    if not isinstance(ship_vel, TGPoint3):
+        ship_vel = TGPoint3(0.0, 0.0, 0.0)
+    if length > 1e-6:
+        torp._velocity = TGPoint3(
+            world_dir.x / length * launch_speed + ship_vel.x,
+            world_dir.y / length * launch_speed + ship_vel.y,
+            world_dir.z / length * launch_speed + ship_vel.z,
+        )
+
+    # Homing state (guidance-only; does not shape the launch):
     target_ship = source_ship.GetTarget() if source_ship is not None else None
     if (target_ship is not None
             and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
         target_sub = (source_ship.GetTargetSubsystem()
                       if hasattr(source_ship, "GetTargetSubsystem") else None)
-        aim_target = target_sub if target_sub is not None else target_ship
-        aim_pt = aim_target.GetWorldLocation()
-        direction = aim_pt - torp._position
-        length = direction.Length()
-        if length > 1e-6:
-            torp._velocity = TGPoint3(
-                direction.x / length * launch_speed,
-                direction.y / length * launch_speed,
-                direction.z / length * launch_speed,
-            )
         torp._target_ship = target_ship
         torp._target_subsystem = target_sub
     else:
-        # The catch-all __getattr__ on TGObject returns a _Stub for any
-        # missing attribute, so hasattr is misleading.  Probe for a valid
-        # TGPoint3 explicitly via the type — defensive against the shim.
-        forward = None
-        try:
-            got = emitter.GetDirection()
-            if isinstance(got, TGPoint3):
-                forward = got
-        except Exception:
-            forward = None
-        if forward is None:
-            forward = TGPoint3(0.0, 1.0, 0.0)
-        world_fwd = TGPoint3(forward.x, forward.y, forward.z)
-        if source_ship is not None and hasattr(source_ship, "GetWorldRotation"):
-            rot = source_ship.GetWorldRotation()
-            # Same shim caveat — only use if it's a real TGMatrix3.
-            from engine.appc.math import TGMatrix3
-            if isinstance(rot, TGMatrix3):
-                world_fwd.MultMatrixLeft(rot)
-        length = world_fwd.Length()
-        if length > 1e-6:
-            torp._velocity = TGPoint3(
-                world_fwd.x / length * launch_speed,
-                world_fwd.y / length * launch_speed,
-                world_fwd.z / length * launch_speed,
-            )
         torp._target_ship = None
-
-    # Spread fan-out: tilt the launch direction sideways along spread_unit,
-    # preserving the launch speed magnitude.  Skipped (velocity unchanged) if
-    # no divergence requested, the velocity is degenerate, or the tilted
-    # vector collapses to zero.
-    if spread_unit is not None:
-        speed = torp._velocity.Length()
-        if speed > 1e-6:
-            base = TGPoint3(
-                torp._velocity.x / speed,
-                torp._velocity.y / speed,
-                torp._velocity.z / speed,
-            )
-            new = TGPoint3(
-                base.x + _SPREAD_DIVERGENCE_TAN * spread_unit.x,
-                base.y + _SPREAD_DIVERGENCE_TAN * spread_unit.y,
-                base.z + _SPREAD_DIVERGENCE_TAN * spread_unit.z,
-            )
-            new_len = new.Length()
-            if new_len > 1e-6:
-                torp._velocity = TGPoint3(
-                    new.x / new_len * speed,
-                    new.y / new_len * speed,
-                    new.z / new_len * speed,
-                )
-
-    torp._homing_start_age = float(homing_delay)
 
     register(torp)
 
@@ -610,9 +568,7 @@ class Weapon(ShipSubsystem):
         self._fire_timer: float = 0.0
 
     def Fire(self, target=None, offset=None, **kwargs) -> None:
-        """Discrete shot.  Subclasses implement — the payload differs per weapon
-        (TorpedoTube.Fire additionally takes spread_unit/homing_delay for
-        Dual/Quad spread volleys; see TorpedoSystem.StartFiring)."""
+        """Discrete shot.  Subclasses implement — the payload differs per weapon."""
         raise NotImplementedError
 
     def CanFire(self) -> int:
@@ -1192,9 +1148,8 @@ class TorpedoSystem(WeaponSystem):
         fire; unlimited/undeclared types never gate.  The per-launch ammo debit
         lives in TorpedoTube._spawn_torpedo (one round per torpedo actually
         spawned).  The Dual/Quad spread fan-out was removed with the tick
-        rewire — the fan machinery in _spawn_projectile (spread_unit /
-        homing_delay / _SPREAD_* constants) is now unreachable from here and
-        is deleted by Task 6."""
+        rewire; the launch itself is now BC-faithful (audited §2.4.1):
+        straight out the tube's authored direction, never aimed at a target."""
         ammo = self.GetCurrentAmmoType()
         finite = ammo is not None and not getattr(ammo, "_unlimited", True)
         if finite and ammo.GetAvailable() <= 0:
@@ -2087,8 +2042,7 @@ class TorpedoTube(Weapon):
             return 0
         return 1
 
-    def Fire(self, target=None, offset=None, *,
-             spread_unit=None, homing_delay=0.0) -> bool:
+    def Fire(self, target=None, offset=None) -> bool:
         """Returns True when a torpedo launched — discrete shooter, so the
         tick's try_fire_weapon needs the explicit bool (see PulseWeapon.Fire)."""
         if not self.CanFire():
@@ -2101,21 +2055,18 @@ class TorpedoTube(Weapon):
         self._last_fire_time = now
         self._start_slot_cooldown(now)
 
-        # PR 2b: spawn the projectile via the bound SDK script.  spread_unit /
-        # homing_delay are dormant since the spread fan-out was removed
-        # (Task 6 deletes them from the signature).
-        self._spawn_torpedo(spread_unit=spread_unit, homing_delay=homing_delay)
+        self._spawn_torpedo()
 
         # Discrete-shot — auto-stop after launch.
         self._firing = False
         return True
 
-    def _spawn_torpedo(self, *, spread_unit=None, homing_delay=0.0) -> None:
+    def _spawn_torpedo(self) -> None:
         """Look up the parent system's GetTorpedoScript(0), import the SDK
         projectile module, instantiate a Torpedo, call <module>.Create(t)
-        to populate visuals + behaviour, compute initial velocity (homing
-        if ship has a target lock, dumbfire from emitter direction
-        otherwise), and play the launch sound.
+        to populate visuals + behaviour, launch it BC-faithfully (straight
+        out the tube's authored direction + inherited ship velocity — see
+        _spawn_projectile), and play the launch sound.
 
         Silent no-op when no script is bound (matches BC for unconfigured
         tubes).  Per-tube slot routing is a future polish item — PR 2b
@@ -2146,9 +2097,7 @@ class TorpedoTube(Weapon):
             return
 
         torp = _spawn_projectile(self, mod,
-                                 drf_override=self.GetDamageRadiusFactor(),
-                                 spread_unit=spread_unit,
-                                 homing_delay=homing_delay)
+                                 drf_override=self.GetDamageRadiusFactor())
         # ET_TORPEDO_FIRED carries the PROJECTILE as its source, so it can only be
         # posted once the projectile exists.  Posted here rather than inside
         # _spawn_projectile because that helper is shared with pulse cannons, and

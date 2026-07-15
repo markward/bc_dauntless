@@ -141,7 +141,11 @@ def test_fire_dumbfires_when_no_target_lock():
     _active.clear()
 
 
-def test_fire_homes_when_target_locked():
+def test_fire_stamps_target_lock_but_launch_ignores_its_position():
+    """BC-faithful launch (Task 6, audited §2.4.1): the target lock is still
+    stamped onto the torpedo for guidance, but it never steers the launch
+    velocity — that stays straight out the tube's authored (default,
+    ship-forward) Direction, even though the target sits off to the side."""
     _active.clear()
     tube, _, ship = _galaxy_tube_with_photon_script()
     from engine.appc.math import TGPoint3
@@ -154,7 +158,8 @@ def test_fire_homes_when_target_locked():
         tube.Fire(target=None, offset=None)
     torp = _active[-1]
     assert torp._target_ship is ship._target
-    assert torp._velocity.x > 0.0
+    assert torp._velocity.x == 0.0
+    assert torp._velocity.y > 0.0
     _active.clear()
 
 

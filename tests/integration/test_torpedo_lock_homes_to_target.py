@@ -30,12 +30,23 @@ def test_torpedo_homes_to_target_and_damages_hull(galaxy_red, target_ship_at):
     assert torp._velocity.y > 0.0
     assert torp._target_ship is target
 
-    # Tick until collision (PhotonTorpedo launch_speed = 19; 200 / 19 ≈ 10.5s).
-    for _ in range(200):
+    # BC-faithful launch (Task 6): velocity is straight out each tube's
+    # authored Direction, never aimed at the target.  Galaxy's two AFT tubes
+    # (fixture position/rotation gives them world Direction (0,-1,0)) launch
+    # straight AWAY from a target dead ahead; their limited guidance turn
+    # rate (max_angular_accel) cannot complete a ~180 degree correction
+    # within guidance_lifetime, so those two never reach the target and
+    # instead run out their flight-time TTL. The 4 forward tubes still home
+    # in and hit. Task 7's per-tube launch cone is what restores BC's actual
+    # walk-out (narrow spread, no tubes firing backward); until then this
+    # test ticks past TTL (30s) so the strays expire on time-out instead of
+    # impact.
+    for _ in range(320):
         _advance_combat([ship, target], dt=0.1)
         if len(projectiles._active) == 0:
             break
 
     final_hull = target.GetHull().GetCondition()
     assert final_hull < initial_hull, "target should have taken damage"
-    assert len(projectiles._active) == 0, "torpedo should have expired on impact"
+    assert len(projectiles._active) == 0, \
+        "every torpedo should have resolved (impact or TTL expiry)"

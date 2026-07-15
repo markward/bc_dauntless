@@ -44,10 +44,10 @@ class Torpedo(TGObject):
         self._target_subsystem = None
         self._guidance_lifetime = 0.0
         self._max_angular_accel = 0.0
-        # Age (s) at which homing begins.  0.0 = home immediately (every
-        # non-spread torp).  Spread volleys set this to _SPREAD_DELAY so the
-        # torp flies straight along its fanned-out launch direction first,
-        # then curves toward the target over the remaining guidance window.
+        # Age (s) at which homing begins.  0.0 = home immediately.  The
+        # Dual/Quad spread fan-out that used to stamp a non-zero delay here
+        # was removed with the BC-faithful launch rewire (Task 6) — every
+        # shot now stamps 0.0.
         self._homing_start_age = 0.0
         self._source_ship = None
         self._id = 0
