@@ -682,6 +682,14 @@ class WeaponSystem(PoweredSubsystem):
         # currently firing (for StopFiring to halt the right ones).
         self._next_emitter_index: int = 0
         self._currently_firing: list = []
+        # ── BC tick state (weapon-firing-mechanics.md §3.1-3.3) ──────────
+        self._force_update: bool = False    # +0xAC: bypass 0.33s delay this tick
+        self._group_fire_mode: int = 0      # +0xB0: published working group
+        self._last_weapon_idx: int = -1     # +0xB4: round-robin cursor
+        self._firing_chain_mode: int = 0    # +0xB8: active chain index
+        self._last_group_fired: int = -1    # +0xBC: resume input, -1 sentinel
+        self._target_list: list = []        # +0xC4: pruned per tick
+        self._fire_timer: float = 0.0       # BC Weapon+0x9C: inter-shot delay
 
     def ShouldBeAimed(self) -> int:
         """Does this weapon system have to bear on the target to fire?
@@ -714,6 +722,72 @@ class WeaponSystem(PoweredSubsystem):
         """Weapon systems are not dumbfire-capable by default. Only TorpedoTube
         (which is a Weapon, not a system) overrides this to return 1."""
         return 0
+
+    def IsMemberOfGroup(self, g) -> int:
+        """WeaponSystem::IsMemberOfGroup (0x00583240). Group ids are 1-BASED bits
+        in the property's Groups mask; group 0 means 'all weapons'.
+
+        Inherited by PhaserBank, PulseWeapon, TractorBeam (leaf emitters that are
+        also WeaponSystem subclasses)."""
+        g = int(g)
+        if g == 0:
+            return 1
+        prop = self.GetProperty()
+        get = getattr(prop, "GetGroups", None) if prop is not None else None
+        mask = get() if callable(get) else 0
+        return 1 if (int(mask) & (1 << (g - 1))) else 0
+
+    def SetForceUpdate(self, flag) -> None:  self._force_update = bool(flag)
+    def GetForceUpdate(self) -> int:         return 1 if self._force_update else 0
+
+    def GetFiringChains(self) -> list:
+        prop = self.GetProperty()
+        get = getattr(prop, "GetFiringChains", None) if prop is not None else None
+        chains = get() if callable(get) else []
+        return chains if isinstance(chains, list) else []
+
+    def SetFiringChainMode(self, n) -> None:
+        """WeaponSystem::SetFiringChainMode (0x00584FA0): clamped below the
+        chain count. This is what BC's tactical 'torpedo spread' toggle calls."""
+        chains = self.GetFiringChains()
+        hi = max(0, len(chains) - 1)
+        self._firing_chain_mode = max(0, min(int(n), hi))
+
+    def GetFiringChainMode(self) -> int:     return self._firing_chain_mode
+
+    def SetGroupFireMode(self, g) -> None:   self._group_fire_mode = int(g)
+    def GetGroupFireMode(self) -> int:       return self._group_fire_mode
+
+    def _active_chain_groups(self) -> list:
+        """Ordered group ids of the active chain; [0] ('all weapons') when
+        the ship authors no chains (67 of 70 stock hardpoints)."""
+        chains = self.GetFiringChains()
+        if not chains:
+            return [0]
+        _label, groups = chains[self._firing_chain_mode % len(chains)]
+        return list(groups) if groups else [0]
+
+    def _resolve_working_group(self) -> int:
+        """§3.2 step 3 — LastGroupFired is an INPUT: keep firing the group we
+        last fired while it is still in the chain; else the chain's first."""
+        groups = self._active_chain_groups()
+        if self._last_group_fired != -1 and self._last_group_fired in groups:
+            return self._last_group_fired
+        return groups[0]
+
+    def _add_target(self, target) -> None:
+        if target is not None and target not in self._target_list:
+            self._target_list.append(target)
+
+    def _prune_targets(self) -> None:
+        """§3.2 step 2 — unlink anything dead or unresolvable."""
+        self._target_list = [
+            t for t in self._target_list
+            if t is not None
+            and not (hasattr(t, "IsDead") and t.IsDead())
+        ]
+
+    def GetNumTargets(self) -> int:          return len(self._target_list)
 
     # ── Parent-aggregator predicates ───────────────────────────────────
     # WeaponSystem parents own their hardpoint emitters (PhaserBank,
