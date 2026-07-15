@@ -1,11 +1,14 @@
-"""End-to-end sequential firing with direction gating: Galaxy has 4
-forward + 2 aft torpedo tubes.  With no target locked, StartFiring
-aims along the ship's body +Y axis, so only the 4 forward tubes (whose
-SetDirection is +Y) are eligible — the 2 aft tubes (-Y) are skipped.
+"""End-to-end torpedo trigger under the BC weapon tick: Galaxy has 4
+forward + 2 aft torpedo tubes, authored SetSingleFire(0) and firing chain
+"Single" = group 0 (all weapons).  One right-click therefore fires EVERY
+ready tube in the same tick — all 6, aft included, since the tick carries
+no per-tube direction gate yet.
 
-After 4 right-clicks the forward tubes are empty and subsequent clicks
-are silent no-ops.  The aft tubes never fire in this scenario; they'd
-fire only when the aim direction points astern (target behind the ship).
+This is the task's transitional state, pinned deliberately: Task 7 adds
+BC's ship-wide 0.5 s launch stagger (one tube per tick, walk-out under a
+held trigger) and the per-tube ±30° launch cone (which blocks the aft
+tubes at a forward aim), restoring the audited BC behaviour.  Update these
+assertions there.
 """
 import importlib
 import sys
@@ -72,10 +75,10 @@ def _aft_indices(torps):
             if torps.GetWeapon(i).GetDirection().y < 0]
 
 
-def test_four_clicks_drain_forward_tubes_only(galaxy_red):
-    """With no target locked the aim direction is the ship's body +Y axis,
-    so only the 4 forward tubes are eligible.  4 clicks empty them; the
-    2 aft tubes remain loaded."""
+def test_one_click_fires_all_ready_tubes(galaxy_red):
+    """SetSingleFire(0) + chain "Single" (group 0 = all weapons): one click
+    empties every ready tube in the same tick — all 6 (Task 7's stagger +
+    launch cone will shrink this back to one forward tube per tick)."""
     ship = galaxy_red
     torps = ship.GetTorpedoSystem()
     assert torps.GetNumWeapons() == 6, "Galaxy should have 6 torpedo tubes"
@@ -89,39 +92,31 @@ def test_four_clicks_drain_forward_tubes_only(galaxy_red):
     assert all(n == 1 for n in initial), f"All tubes should start ready, got: {initial}"
 
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        for _ in range(4):
-            App.g_kInputManager.OnKeyDown(App.WC_RBUTTON)
-            App.g_kInputManager.OnKeyUp(App.WC_RBUTTON)
+        App.g_kInputManager.OnKeyDown(App.WC_RBUTTON)
+        App.g_kInputManager.OnKeyUp(App.WC_RBUTTON)
 
     after = [torps.GetWeapon(i).GetNumReady() for i in range(6)]
-    assert all(after[i] == 0 for i in fwd), (
-        f"Forward tubes should be empty after 4 shots, got: {after} (fwd={fwd})"
-    )
-    assert all(after[i] == 1 for i in aft), (
-        f"Aft tubes should still be loaded, got: {after} (aft={aft})"
+    assert after == [0] * 6, (
+        f"One click should empty every ready tube, got: {after}"
     )
 
 
-def test_fifth_click_with_empty_forward_tubes_is_silent(galaxy_red):
-    """Once the 4 forward tubes are drained the 5th right-click finds no
-    eligible emitter (aft tubes face the wrong way) and is a silent
-    no-op — aft tube counts must not change."""
+def test_click_with_empty_tubes_is_silent(galaxy_red):
+    """Once every tube is drained the next right-click finds no eligible
+    emitter (per-tube CanFire: NumReady == 0, 40 s reload pending) and is a
+    silent no-op — tube counts must not change and nothing raises."""
     ship = galaxy_red
     torps = ship.GetTorpedoSystem()
-    aft = _aft_indices(torps)
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        for _ in range(4):
-            App.g_kInputManager.OnKeyDown(App.WC_RBUTTON)
-            App.g_kInputManager.OnKeyUp(App.WC_RBUTTON)
+        App.g_kInputManager.OnKeyDown(App.WC_RBUTTON)
+        App.g_kInputManager.OnKeyUp(App.WC_RBUTTON)
         before = [torps.GetWeapon(i).GetNumReady() for i in range(6)]
+        assert before == [0] * 6
 
         App.g_kInputManager.OnKeyDown(App.WC_RBUTTON)
         App.g_kInputManager.OnKeyUp(App.WC_RBUTTON)
         after = [torps.GetWeapon(i).GetNumReady() for i in range(6)]
 
     assert after == before, (
-        f"5th click changed tube counts: before={before} after={after}"
-    )
-    assert all(after[i] == 1 for i in aft), (
-        f"Aft tubes must remain loaded, got: {after} (aft={aft})"
+        f"Click with empty tubes changed counts: before={before} after={after}"
     )

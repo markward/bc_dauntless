@@ -6,13 +6,14 @@ PulseWeaponSystem, so:
 
 1. SingleFire(1) (what every tractor hardpoint sets) keeps exactly ONE beam
    locked on the target per engage — a single grab beam.
-2. retry_held_fire sustains that beam while the trigger (toggle) stays on; the
-   beam does NOT auto-stop on charge depletion the way a phaser does
-   (TractorBeam.UpdateCharge sustains it) — it is still firing well past the
-   ~5 s its discharge rate would otherwise empty it.
+2. update_weapons (the tractor's per-frame maintenance, driven by
+   host_loop._pump_held_weapons) sustains that beam while the trigger (toggle)
+   stays on; the beam does NOT auto-stop on charge depletion the way a phaser
+   does (TractorBeam.UpdateCharge sustains it) — it is still firing well past
+   the ~5 s its discharge rate would otherwise empty it.
 3. _can_engage gates on TRACTOR_MAX_RANGE_GU: a target beyond range never
    engages, and a held beam whose target drifts out of range is dropped on the
-   next retry_held_fire.
+   next update_weapons.
 
 Mirrors tests/integration/test_pulse_singlefire_modes.py.
 """
@@ -107,12 +108,12 @@ def test_single_fire_engages_exactly_one_emitter():
     assert parent.IsTryingToFire() == 1
 
 
-def test_retry_held_fire_keeps_single_beam_engaged():
+def test_held_tick_keeps_single_beam_engaged():
     ship, parent = _build()
     target = _target_ahead()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         parent.StartFiring(target, "hit")
-        parent.retry_held_fire()
+        parent.update_weapons(0.34)
     # Still exactly one beam — SingleFire branch must not light the second.
     assert _num_firing(parent) == 1
 
@@ -130,7 +131,7 @@ def test_tractor_sustains_past_depletion_window():
         for _ in range(100):
             for i in range(parent.GetNumWeapons()):
                 parent.GetWeapon(i).UpdateCharge(0.1)
-            parent.retry_held_fire()
+            parent.update_weapons(0.34)
     assert _num_firing(parent) == 1, "tractor must sustain past the discharge window"
 
 
@@ -153,7 +154,7 @@ def test_held_beam_drops_when_target_leaves_range():
         assert _num_firing(parent) == 1
         # Target warps out beyond tractor range -> next retry drops the beam.
         target.SetWorldLocation(TGPoint3(0.0, TRACTOR_MAX_RANGE_GU + 100.0, 0.0))
-        parent.retry_held_fire()
+        parent.update_weapons(0.34)
     assert _num_firing(parent) == 0
     assert parent.IsFiring() == 0
 
@@ -168,12 +169,12 @@ def test_arc_loss_drops_beam_then_reacquires():
         assert _num_firing(parent) == 1
         # A tight turn swings the target behind — out of every emitter's arc.
         target.SetWorldLocation(TGPoint3(0.0, -50.0, 0.0))
-        parent.retry_held_fire()
+        parent.update_weapons(0.34)
         assert _num_firing(parent) == 0, "out-of-arc target must drop the beam"
         # Still engaged (never toggled off): swing it back into the arc and the
         # beam re-fires automatically on the next retry.
         target.SetWorldLocation(TGPoint3(0.0, 50.0, 0.0))
-        parent.retry_held_fire()
+        parent.update_weapons(0.34)
         assert _num_firing(parent) == 1, "in-arc target must re-acquire the beam"
 
 
@@ -221,5 +222,5 @@ def test_shields_raised_mid_grip_drops_beam():
         sh = target.GetShieldSubsystem()
         for f in range(ShieldSubsystem.NUM_SHIELDS):
             sh.SetCurrentShields(f, 100.0)
-        parent.retry_held_fire()
+        parent.update_weapons(0.34)
         assert _num_firing(parent) == 0

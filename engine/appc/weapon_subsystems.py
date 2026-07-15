@@ -407,6 +407,19 @@ class _EnergyWeaponFireMixin:
     # fraction × MaxCharge before CanFire returns true again.
     REFIRE_HEADROOM_FRACTION = 0.20
 
+    def _aim_in_arc(self, target) -> bool:
+        """Firing-arc gate in the weapon's OWN fire path (spec §2.4: the
+        dispatch-level `_emitter_in_arc` checks moved here, logic unchanged,
+        when StartFiring became a tick-arm — BC puts arc in the weapon's fire
+        path, not in the system tick).  Aim originates at this emitter's
+        mount Position (research doc § Bug F); no target → ship-forward."""
+        ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
+        if target is not None:
+            aim_world = _resolve_bank_aim_world(self, target)
+        else:
+            aim_world = _resolve_aim_world(ship, None)
+        return _emitter_in_arc(self, ship, aim_world)
+
     def CanFire(self) -> int:
         parent = self.GetParentSubsystem()
         on = parent is not None and parent.IsOn()
@@ -417,9 +430,13 @@ class _EnergyWeaponFireMixin:
         charged = self._charge_level >= self._min_firing_charge
         return 1 if charged else 0
 
-    def Fire(self, target=None, offset=None) -> None:
+    def Fire(self, target=None, offset=None) -> bool:
+        """Returns True when the beam is firing after this call — the tick's
+        try_fire_weapon consumes the explicit bool (§3.3 step 5)."""
         if not self.CanFire():
-            return
+            return False
+        if not self._aim_in_arc(target):
+            return False
         # Edge-trigger the SFX. AI scripts call StartFiring on every
         # evaluation tick; without this gate, each call would spawn a
         # fresh "Phaser Loop" _PlayingSound handle and overwrite
@@ -432,6 +449,7 @@ class _EnergyWeaponFireMixin:
         self._target_offset = offset
         if not was_firing:
             self._play_fire_sfx()
+        return True
 
     def StopFiring(self) -> None:
         was_firing = self._firing
@@ -679,10 +697,9 @@ class WeaponSystem(PoweredSubsystem):
         super().__init__(name)
         self._target = None
         self._weapon_system_type: int = 0
-        # Round-robin cursor into child emitters and the set of indices
-        # currently firing (for StopFiring to halt the right ones).
+        # Round-robin cursor into child emitters (tractor _engage_beam; the
+        # BC tick uses _last_weapon_idx below instead).
         self._next_emitter_index: int = 0
-        self._currently_firing: list = []
         # ── BC tick state (weapon-firing-mechanics.md §3.1-3.3) ──────────
         self._force_update: bool = False    # +0xAC: bypass 0.33s delay this tick
         self._group_fire_mode: int = 0      # +0xB0: published working group
@@ -691,6 +708,12 @@ class WeaponSystem(PoweredSubsystem):
         self._last_group_fired: int = -1    # +0xBC: resume input, -1 sentinel
         self._target_list: list = []        # +0xC4: pruned per tick
         self._fire_timer: float = 0.0       # BC Weapon+0x9C: inter-shot delay
+        # Held-trigger state (press = StartFiring arms, release = StopFiring
+        # disarms).  host_loop._pump_held_weapons runs update_weapons once per
+        # frame for every system with _fire_held set.
+        self._fire_held: bool = False
+        self._held_target = None
+        self._held_offset = None
         # _HeldFireWeaponSystem and TorpedoSystem set this via SetSingleFire;
         # guard so the base class always has it too.
         self._single_fire = getattr(self, "_single_fire", False)
@@ -845,6 +868,10 @@ class WeaponSystem(PoweredSubsystem):
         return 1
 
     def StartFiring(self, target=None, offset=None) -> None:
+        """Arms the tick (BC StartFiring reads no spread/skew state — §2.10).
+        The actual dispatch is update_weapons, pumped per frame by host_loop;
+        SetForceUpdate(1) + one immediate update makes a tap fire this frame
+        (SDK FireWeapons does exactly StartFiring + SetForceUpdate(1))."""
         if not self.IsOn():
             return
         # Disabled-weapons gate: when every child reports disabled (Project 2
@@ -858,37 +885,30 @@ class WeaponSystem(PoweredSubsystem):
         # ship can't detect — cloaked, nebula-hidden, or out of sensor range.
         if _target_undetectable(self, target):
             return
-        n = self.GetNumWeapons()
-        if n == 0:
+        # Engageability gate (per-class hook, e.g. PhaserSystem's global fire
+        # range): an out-of-range trigger must NOT latch _fire_held — an AI
+        # re-calls StartFiring every tick, and a latched-but-unengageable held
+        # state would flicker fire/stop each frame (the "ship's horn" loop).
+        if (target is not None and hasattr(self, "_can_engage")
+                and not self._can_engage(self.GetParentShip(), target)):
             return
-        # Resolve aim per-bank: the firing arc originates at each bank's
-        # mount Position, not the ship centre. See research doc § Bug F.
-        ship = self.GetParentShip()
-
-        start = self._next_emitter_index % n
-        for delta in range(n):
-            idx = (start + delta) % n
-            emitter = self.GetWeapon(idx)
-            if emitter is None:
-                continue
-            aim_world = (_resolve_bank_aim_world(emitter, target)
-                         if target is not None
-                         else _resolve_aim_world(ship, None))
-            if not _emitter_in_arc(emitter, ship, aim_world):
-                continue
-            if hasattr(emitter, "CanFire") and emitter.CanFire():
-                emitter.Fire(target, offset)
-                self._currently_firing.append(idx)
-                self._next_emitter_index = (idx + 1) % n
-                return
-        # No eligible emitter — silent no-op.
+        self._add_target(target)
+        self._held_target = target
+        self._held_offset = offset
+        self._fire_held = True
+        self.SetForceUpdate(1)
+        self.update_weapons(0.0)
 
     def StopFiring(self, *args) -> None:
-        for idx in self._currently_firing:
-            emitter = self.GetWeapon(idx)
-            if emitter is not None and hasattr(emitter, "StopFiring"):
-                emitter.StopFiring()
-        self._currently_firing = []
+        self._fire_held = False
+        self._held_target = None
+        self._held_offset = None
+        self._target_list = []
+        self._last_group_fired = -1
+        for i in range(self.GetNumWeapons()):
+            w = self.GetWeapon(i)
+            if w is not None and hasattr(w, "StopFiring"):
+                w.StopFiring()
 
     def StopFiringAtTarget(self, pTarget) -> None:
         """SDK Preprocessors.py:274/469 — alias for StopFiring() since
@@ -896,7 +916,13 @@ class WeaponSystem(PoweredSubsystem):
         self.StopFiring()
 
     def IsFiring(self) -> int:
-        return 1 if self._currently_firing else 0
+        if self._fire_held:
+            return 1
+        for i in range(self.GetNumWeapons()):
+            w = self.GetWeapon(i)
+            if w is not None and hasattr(w, "IsFiring") and w.IsFiring():
+                return 1
+        return 0
 
     def GetTarget(self):                          return self._target
     def SetTarget(self, target) -> None:          self._target = target
@@ -909,8 +935,9 @@ class WeaponSystem(PoweredSubsystem):
     def GetWeapon(self, i: int):                  return self.GetChildSubsystem(i)
 
     # ── BC tick engine (weapon-firing-mechanics.md §3.2/§3.3) ───────────────
-    # Nothing calls these in production yet — StartFiring (above) is still
-    # the live dispatch path.  Wiring them in is future work.
+    # This IS the live dispatch path: StartFiring (above) arms the tick and
+    # host_loop._pump_held_weapons runs update_weapons once per armed system
+    # per frame.
 
     # BC inter-shot delay threshold (TryFireWeapon, 0x00584E40).
     FIRE_TIMER_THRESHOLD = 0.33
@@ -933,7 +960,7 @@ class WeaponSystem(PoweredSubsystem):
         if not weapon.CanFire():
             weapon.StopFiring()      # what makes a beam vanish on charge-out
             return False
-        before = weapon.fired if hasattr(weapon, "fired") else None
+        before = self._fired_counter(weapon)
         result = weapon.Fire(target, offset)
         if self._weapon_did_fire(weapon, result, before):
             return True
@@ -942,17 +969,31 @@ class WeaponSystem(PoweredSubsystem):
         for entry in list(self._target_list):
             if entry is None or (hasattr(entry, "IsDead") and entry.IsDead()):
                 continue
-            before = weapon.fired if hasattr(weapon, "fired") else None
+            before = self._fired_counter(weapon)
             result = weapon.Fire(entry, offset)
             if self._weapon_did_fire(weapon, result, before):
                 return True
         return False
 
     @staticmethod
+    def _fired_counter(weapon):
+        """Stub-safe read of the test-fake `fired` shot counter.
+
+        NOT hasattr: TGObject.__getattr__ manufactures a truthy _Stub for any
+        unknown public name, so hasattr(weapon, "fired") is vacuously True on
+        every REAL weapon — `before` became a _Stub, `_weapon_did_fire`'s
+        counter comparison silently evaluated False, and every successful
+        discrete shot fell into the §3.3 step-6 retry and fired TWICE (seen
+        as a double ammo debit).  The stub-heatmap phantom lesson: our own
+        probes must read the instance dict, not hasattr."""
+        d = getattr(weapon, "__dict__", None)
+        return d.get("fired") if isinstance(d, dict) else None
+
+    @staticmethod
     def _weapon_did_fire(weapon, result, before) -> bool:
-        """Our Fire() implementations return None; success is observable as
-        IsFiring() (beams/held) or a discrete-shot side effect. Explicit
-        True/False from Fire wins when provided; test fakes expose `fired`."""
+        """Success detection, in priority order: explicit True/False returned
+        by Fire (all production weapons since the tick rewire), a test fake's
+        `fired` counter increment, else IsFiring() (held beams)."""
         if isinstance(result, bool):
             return result
         if before is not None:
@@ -1145,93 +1186,20 @@ class TorpedoSystem(WeaponSystem):
             self._spread = n
 
     def StartFiring(self, target=None, offset=None) -> None:
-        """Fire GetSpread() torpedoes as a fan-out volley in one trigger.
+        """Arm the BC tick (base StartFiring) behind the ammo reserve gate.
 
-        Single(1) delegates to the base round-robin single shot (byte-identical
-        to the pre-spread path).  Dual(2)/Quad(4) pre-scan the eligible tubes,
-        clamp the count to how many are actually ready+in-arc, then fire the
-        first N with per-shot world divergence axes (±right / ±up) and a
-        _SPREAD_DELAY hold-before-homing so the volley splays then converges.
-        """
-        if not self.IsOn():
-            return
-        if _is_offline(self):
-            return
-        if _cloak_blocks_fire(self):
-            return
-        n = self.GetNumWeapons()
-        if n == 0:
-            return
-        ship = self.GetParentShip()
-
-        # Reserve gate: a finite ammo type (hardpoint-declared max) with no
-        # rounds left cannot fire.  Unlimited/undeclared types never gate, so
-        # the legacy firing path stays byte-identical.
+        A finite ammo type (hardpoint-declared max) with no rounds left cannot
+        fire; unlimited/undeclared types never gate.  The per-launch ammo debit
+        lives in TorpedoTube._spawn_torpedo (one round per torpedo actually
+        spawned).  The Dual/Quad spread fan-out was removed with the tick
+        rewire — the fan machinery in _spawn_projectile (spread_unit /
+        homing_delay / _SPREAD_* constants) is now unreachable from here and
+        is deleted by Task 6."""
         ammo = self.GetCurrentAmmoType()
         finite = ammo is not None and not getattr(ammo, "_unlimited", True)
         if finite and ammo.GetAvailable() <= 0:
             return
-
-        # Pre-scan eligible tubes in round-robin order (same aim/arc/CanFire
-        # gates the base StartFiring applies per emitter).
-        eligible: list[int] = []
-        start = self._next_emitter_index % n
-        for delta in range(n):
-            idx = (start + delta) % n
-            emitter = self.GetWeapon(idx)
-            if emitter is None:
-                continue
-            aim_world = (_resolve_bank_aim_world(emitter, target)
-                         if target is not None
-                         else _resolve_aim_world(ship, None))
-            if not _emitter_in_arc(emitter, ship, aim_world):
-                continue
-            if hasattr(emitter, "CanFire") and emitter.CanFire():
-                eligible.append(idx)
-
-        effective = min(self.GetSpread(), len(eligible))
-        # Can't launch more torpedoes than are loaded for a finite type.
-        if finite:
-            effective = min(effective, ammo.GetAvailable())
-
-        # Torpedoes launched this trigger = growth of _currently_firing across
-        # the fire, whichever branch runs (base appends 1, spread appends N).
-        fired_before = len(self._currently_firing)
-
-        if effective <= 1:
-            # Straight single shot — unchanged.
-            super().StartFiring(target, offset)
-        else:
-            # World divergence axes from the ship rotation (column-vector
-            # convention: GetCol(0)=starboard, GetCol(2)=up).  A shim rotation
-            # (not a real TGMatrix3) has no usable axes → fall back to a single
-            # straight shot rather than crash.
-            rot = ship.GetWorldRotation() if (
-                ship is not None and hasattr(ship, "GetWorldRotation")) else None
-            if not isinstance(rot, TGMatrix3):
-                super().StartFiring(target, offset)
-            else:
-                right = rot.GetCol(0)
-                up = rot.GetCol(2)
-                axes = [
-                    right,
-                    TGPoint3(-right.x, -right.y, -right.z),
-                    up,
-                    TGPoint3(-up.x, -up.y, -up.z),
-                ]
-                for k in range(effective):
-                    idx = eligible[k]
-                    emitter = self.GetWeapon(idx)
-                    emitter.Fire(target, offset,
-                                 spread_unit=axes[k], homing_delay=_SPREAD_DELAY)
-                    self._currently_firing.append(idx)
-                    self._next_emitter_index = (idx + 1) % n
-
-        # Expend one round of the current type per torpedo actually launched.
-        if finite:
-            consumed = len(self._currently_firing) - fired_before
-            if consumed > 0:
-                ammo.AddAvailable(-consumed)
+        super().StartFiring(target, offset)
 
     def GetNumAmmoTypes(self) -> int:
         return len(self._ammo_by_slot)
@@ -1387,8 +1355,9 @@ PHASER_MAX_RANGE_GU = 700.0
 # Tractor-beam engagement range.  BC's tractor emitters carry a per-bank
 # MaxDamageDistance ≈ 118-120 GU (galaxy.py AftTractor2 = 118, vorcha = 120);
 # unlike phasers there is no single engine-wide constant, so we gate the whole
-# system on a representative 120 GU.  A target drifting past this ends the held
-# beam (retry_held_fire calls StopFiring via _can_engage), matching phasers.
+# system on a representative 120 GU.  A target drifting past this drops the
+# beam (update_weapons re-checks _can_engage per frame; the ENGAGE intent
+# persists so the beam re-acquires when back in range).
 TRACTOR_MAX_RANGE_GU = 120.0
 
 
@@ -1447,26 +1416,24 @@ def _target_within_range_gu(ship, target, max_range_gu: float) -> bool:
 
 
 class _HeldFireWeaponSystem(WeaponSystem):
-    """Shared held-fire dispatch for energy-emitter aggregators
-    (PhaserSystem, PulseWeaponSystem).
+    """Energy-emitter aggregator base (PhaserSystem, PulseWeaponSystem).
 
-    Holds the SingleFire mode and the held-trigger state, and implements
-    StartFiring / StopFiring / retry_held_fire / _dispatch_one_or_all.  The
-    per-frame combat tick calls retry_held_fire so banks/cannons re-engage
-    as they recharge while the trigger stays down.
+    Since the BC tick rewire the shared dispatch lives on WeaponSystem
+    (StartFiring arms the tick, host_loop._pump_held_weapons runs
+    update_weapons per frame).  This class only keeps the SingleFire mode
+    and the _can_engage fire-range hook.
 
-    SingleFire(1): one eligible emitter fires per trigger, round-robin via
-    _next_emitter_index.  SingleFire(0): every eligible emitter engages.
+    SingleFire(1): one eligible emitter fires per tick, round-robin via
+    _last_weapon_idx.  SingleFire(0): the tick walks the whole group.
 
     Subclasses override _can_engage(ship, target) to add a fire-range gate
     (phasers do; pulse weapons don't — a bolt's lifetime bounds its range).
+    StartFiring consults it (no latch out of range) and the host_loop pump
+    re-checks it per frame (held burst stops when the target drifts out).
     """
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._single_fire: int = 0
-        self._fire_held: bool = False
-        self._held_target = None
-        self._held_offset = None
 
     def GetSingleFire(self) -> int:                 return self._single_fire
     def SetSingleFire(self, v) -> None:             self._single_fire = int(v)
@@ -1474,116 +1441,6 @@ class _HeldFireWeaponSystem(WeaponSystem):
     def _can_engage(self, ship, target) -> bool:
         """Fire-range gate hook. Default: no gate. PhaserSystem overrides."""
         return True
-
-    def StartFiring(self, target=None, offset=None) -> None:
-        if not self.IsOn() or target is None:
-            return
-        # Disabled-weapons gate: parent aggregates child IsDisabled (Project 2).
-        # When all emitters are disabled the parent flips disabled and we bail.
-        if _is_offline(self):
-            return
-        # Cloak gate: a cloaked / cloaking ship cannot fire (BC rule).
-        if _cloak_blocks_fire(self):
-            return
-        # Detectability gate: don't start a held burst (nor its warm-up SFX) at
-        # a target the ship can't detect. See _target_undetectable.
-        if _target_undetectable(self, target):
-            return
-        ship = self.GetParentShip()
-        if not self._can_engage(ship, target):
-            return
-        self._fire_held = True
-        self._held_target = target
-        self._held_offset = offset
-        self._currently_firing = []
-        self._dispatch_one_or_all(target, offset, ship)
-
-    def StopFiring(self, *args) -> None:
-        self._fire_held = False
-        self._held_target = None
-        self._held_offset = None
-        super().StopFiring(*args)
-
-    def retry_held_fire(self) -> None:
-        """Re-attempt firing while the trigger is held.  In SingleFire mode
-        only re-fires when no emitter is currently firing — preserving the
-        one-at-a-time cadence (a no-op for discrete pulse cannons, which
-        never stay IsFiring).  In multi-fire mode tops up any emitter that
-        climbed back past its CanFire threshold."""
-        if not self._fire_held or self._held_target is None:
-            return
-        if not self.IsOn():
-            return
-        # Disabled-weapons gate: system flipped disabled mid-burst — stop
-        # cleanly (clears _fire_held + walks _currently_firing).
-        if _is_offline(self):
-            self.StopFiring()
-            return
-        ship = self.GetParentShip()
-        target = self._held_target
-        if hasattr(target, "IsDead") and target.IsDead():
-            self.StopFiring()
-            return
-        # Detectability gate: the target cloaked / slipped into a nebula / left
-        # sensor range mid-burst — stop the held state entirely so the warm-up
-        # SFX doesn't restart every tick (the "ship's horn" loop). Re-engaging
-        # requires a fresh trigger (or a fresh AI StartFiring once detectable).
-        if _target_undetectable(self, target):
-            self.StopFiring()
-            return
-        if not self._can_engage(ship, target):
-            # Target drifted out of range during a held burst — stop the held
-            # state entirely; re-engaging requires a fresh trigger.
-            self.StopFiring()
-            return
-        if self._single_fire:
-            # If any emitter is still firing, don't dispatch another — wait
-            # for the active one to deplete before the round-robin advances.
-            for i in range(self.GetNumWeapons()):
-                emitter = self.GetWeapon(i)
-                if emitter is not None and emitter.IsFiring():
-                    return
-        self._dispatch_one_or_all(target, self._held_offset, ship)
-
-    def _dispatch_one_or_all(self, target, offset, ship) -> None:
-        """SingleFire: fire one eligible emitter starting from the round-robin
-        cursor, then advance the cursor.  Otherwise fire every eligible
-        emitter simultaneously.
-
-        Aim is resolved per-emitter via _resolve_bank_aim_world so each
-        emitter's arc gate sees the direction from its own mount Position
-        to the target — see research doc § Bug F.
-        """
-        n = self.GetNumWeapons()
-        if n == 0:
-            return
-        if self._single_fire:
-            start = self._next_emitter_index % n
-            for delta in range(n):
-                idx = (start + delta) % n
-                emitter = self.GetWeapon(idx)
-                if emitter is None:
-                    continue
-                aim_world = _resolve_bank_aim_world(emitter, target)
-                if not _emitter_in_arc(emitter, ship, aim_world):
-                    continue
-                if hasattr(emitter, "CanFire") and emitter.CanFire():
-                    emitter.Fire(target, offset)
-                    self._currently_firing.append(idx)
-                    self._next_emitter_index = (idx + 1) % n
-                    return
-            return
-        # Multi-emitter — every eligible one engages.
-        for i in range(n):
-            emitter = self.GetWeapon(i)
-            if emitter is None:
-                continue
-            aim_world = _resolve_bank_aim_world(emitter, target)
-            if not _emitter_in_arc(emitter, ship, aim_world):
-                continue
-            if hasattr(emitter, "CanFire") and emitter.CanFire():
-                emitter.Fire(target, offset)
-                self._currently_firing.append(i)
 
 
 class PhaserSystem(_HeldFireWeaponSystem):
@@ -1631,11 +1488,11 @@ class PhaserSystem(_HeldFireWeaponSystem):
 class PulseWeaponSystem(_HeldFireWeaponSystem):
     """Pulse-weapon (disruptor/cannon) aggregator.
 
-    Inherits the held-fire dispatch from _HeldFireWeaponSystem.  Unlike
-    PhaserSystem its emitters fire discrete projectile bolts and it keeps the
-    base's no-op _can_engage (no fire-range gate — a bolt's lifetime bounds
-    its range, so the only fire gates are arc + charge + cooldown).  Held-fire
-    is driven per-frame by retry_held_fire from host_loop._advance_combat.
+    Rides the shared BC tick (WeaponSystem.StartFiring arms, host_loop's
+    pump runs update_weapons per frame).  Unlike PhaserSystem its emitters
+    fire discrete projectile bolts and it keeps the base's no-op _can_engage
+    (no fire-range gate — a bolt's lifetime bounds its range, so the only
+    fire gates are arc + charge + cooldown).
     """
     pass
 
@@ -1643,11 +1500,15 @@ class PulseWeaponSystem(_HeldFireWeaponSystem):
 class TractorBeamSystem(_HeldFireWeaponSystem):
     """Tractor-beam aggregator.
 
-    Shares the held-fire dispatch with PhaserSystem / PulseWeaponSystem: a
-    tractor is a UI *toggle* (StartFiring = engage, StopFiring = toggle-off),
-    and retry_held_fire (driven from host_loop._advance_combat) sustains the
-    beam while the target stays in range.  The hardpoints set SingleFire(1),
-    so the SingleFire branch keeps exactly one beam locked on the target.
+    A tractor is a UI *toggle* (StartFiring = engage, StopFiring =
+    toggle-off).  Unlike phasers/pulse it does NOT ride the generic BC tick:
+    its per-frame maintenance (update_weapons below) keeps the ENGAGE intent
+    (`_fire_held`) alive even when the beam can't currently grip — shields
+    up, out of range, out of arc — and re-acquires automatically when the
+    geometry allows.  `_pump_self_managed` tells host_loop's pump to call
+    update_weapons directly instead of hard-stopping via the generic
+    `_can_engage` / detectability gates (which would kill the intent).
+    The hardpoints set SingleFire(1), so exactly one beam locks the target.
 
     Unlike phasers/pulse, a firing tractor does NOT auto-stop on charge
     depletion (TractorBeam.UpdateCharge sustains it), and per frame
@@ -1656,6 +1517,9 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     HOLD world-point / TOW body-frame offset); it is invalidated on StopFiring
     and on any mode change.
     """
+    # host_loop._pump_held_weapons: skip the generic hard-stop gates and hand
+    # the frame straight to update_weapons (it owns its own stop conditions).
+    _pump_self_managed = True
     # q10 ground truth (tools/probes/results/q10_battery_drain.txt): the tractor
     # is a DIRECT main-battery siphon — it bypasses the conduit budget and is
     # unscaled by the power slider (measured 600/s flat with sliders at 1.25).
@@ -1712,28 +1576,34 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         """The persistent toggle *intent*, independent of the instantaneous
         IsFiring() beam state.  The HUD / F2 menu tractor toggle reflects THIS:
         while engaged the beam auto-fires whenever the target is in range (and
-        re-acquires each frame via retry_held_fire), so the button stays "On"
+        re-acquires each frame via update_weapons), so the button stays "On"
         even if the beam momentarily isn't gripping."""
         return 1 if self._fire_held else 0
 
     def StartFiring(self, target=None, offset=None) -> None:
         """Record the held ENGAGE intent even when the target isn't immediately
-        grippable, so retry_held_fire re-acquires the beam when the geometry
-        allows.  (Mirrors the base _HeldFireWeaponSystem.StartFiring but records
-        intent BEFORE the engageability check instead of bailing.)"""
+        grippable, so update_weapons re-acquires the beam when the geometry
+        allows.  (Mirrors WeaponSystem.StartFiring but records intent BEFORE
+        the engageability check instead of bailing.)"""
         if not self.IsOn() or target is None:
             return
         if _is_offline(self):
             return
         if _cloak_blocks_fire(self):
             return
+        self._add_target(target)
         self._fire_held = True
         self._held_target = target
         self._held_offset = offset
         ship = self.GetParentShip()
         if self._can_engage(ship, target):
-            self._currently_firing = []
-            self._dispatch_one_or_all(target, offset, ship)
+            self._engage_beam(target, offset, ship)
+
+    def IsFiring(self) -> int:
+        """Instantaneous BEAM state only — deliberately NOT OR'd with
+        `_fire_held` like the base: the engaged-but-not-gripping intent is
+        surfaced separately via IsEngaged() (the HUD toggle reads that)."""
+        return 1 if self._any_child_firing() else 0
 
     def _can_engage(self, ship, target) -> bool:
         # Range gate AND shield gate: a tractor grips only targets whose shields
@@ -1741,28 +1611,30 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         return (_target_within_range_gu(ship, target, TRACTOR_MAX_RANGE_GU)
                 and _target_tractorable(target))
 
-    def retry_held_fire(self) -> None:
-        """Per-frame held-fire maintenance with arc/shield re-acquisition.
+    def update_weapons(self, dt=0.0) -> bool:
+        """Per-frame held-fire maintenance with arc/shield re-acquisition
+        (the tractor's whole tick — replaces the base BC group walk; was
+        retry_held_fire before the tick rewire).
 
-        Unlike the base (which drops the whole held state when the target leaves
-        range), a tractor stays ENGAGED until the player toggles it off: if the
-        firing emitter swings out of arc on a tight turn — or the target raises
-        shields / drifts out of range — the beam switches off but `_fire_held`
-        is kept, so it re-fires automatically from any in-arc emitter the moment
-        the geometry allows again.
+        Unlike phasers/pulse (whose held burst hard-stops when the target
+        leaves range), a tractor stays ENGAGED until the player toggles it
+        off: if the firing emitter swings out of arc on a tight turn — or the
+        target raises shields / drifts out of range — the beam switches off
+        but `_fire_held` is kept, so it re-fires automatically from any
+        in-arc emitter the moment the geometry allows again.
         """
         if not self._fire_held or self._held_target is None:
-            return
+            return False
         if not self.IsOn():
-            return
+            return False
         if _is_offline(self):
             self.StopFiring()           # system disabled — fully disengage
-            return
+            return False
         ship = self.GetParentShip()
         target = self._held_target
         if hasattr(target, "IsDead") and target.IsDead():
             self.StopFiring()           # target gone — fully disengage
-            return
+            return False
         engageable = self._can_engage(ship, target)   # range + shields
         # Drop any emitter that can no longer hold the beam (out of range /
         # shields up / rotated out of arc).  Keep _fire_held so it re-acquires.
@@ -1773,18 +1645,50 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
             aim = _resolve_bank_aim_world(em, target)
             if (not engageable) or (not _emitter_in_arc(em, ship, aim)):
                 em.StopFiring()
-                try:
-                    self._currently_firing.remove(i)
-                except ValueError:
-                    pass
         if not engageable:
-            return
+            return False
         # Re-dispatch one eligible in-arc emitter if none is currently firing.
         for i in range(self.GetNumWeapons()):
             em = self.GetWeapon(i)
             if em is not None and em.IsFiring():
-                return
-        self._dispatch_one_or_all(target, self._held_offset, ship)
+                return False
+        return self._engage_beam(target, self._held_offset, ship)
+
+    def _engage_beam(self, target, offset, ship) -> bool:
+        """Fire one eligible in-arc emitter (SingleFire round-robin via
+        _next_emitter_index) or every eligible emitter (multi-fire).  This is
+        the old shared `_dispatch_one_or_all` dispatch, kept tractor-local:
+        beams are sustained grips, not the discrete BC tick cadence."""
+        n = self.GetNumWeapons()
+        if n == 0:
+            return False
+        if self._single_fire:
+            start = self._next_emitter_index % n
+            for delta in range(n):
+                idx = (start + delta) % n
+                emitter = self.GetWeapon(idx)
+                if emitter is None:
+                    continue
+                aim_world = _resolve_bank_aim_world(emitter, target)
+                if not _emitter_in_arc(emitter, ship, aim_world):
+                    continue
+                if hasattr(emitter, "CanFire") and emitter.CanFire():
+                    emitter.Fire(target, offset)
+                    self._next_emitter_index = (idx + 1) % n
+                    return True
+            return False
+        fired = False
+        for i in range(n):
+            emitter = self.GetWeapon(i)
+            if emitter is None:
+                continue
+            aim_world = _resolve_bank_aim_world(emitter, target)
+            if not _emitter_in_arc(emitter, ship, aim_world):
+                continue
+            if hasattr(emitter, "CanFire") and emitter.CanFire():
+                emitter.Fire(target, offset)
+                fired = True
+        return fired
 
     def StopFiring(self, *args) -> None:
         self._engage_state = None
@@ -1910,23 +1814,30 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
             return 0
         return _EnergyWeaponFireMixin.CanFire(self)
 
-    def Fire(self, target=None, offset=None) -> None:
+    def Fire(self, target=None, offset=None) -> bool:
+        """Returns True when a bolt launched — a discrete shooter reports
+        IsFiring() False right after a successful shot, so the tick's
+        try_fire_weapon needs the explicit bool (else its §3.3 step-6 retry
+        would double-fire every successful shot)."""
         if not self.CanFire():
-            return
+            return False
+        if not self._aim_in_arc(target):
+            return False
         prop = self.GetProperty()
         script = prop.GetModuleName() if (prop is not None and hasattr(prop, "GetModuleName")) else ""
         if not script:
-            return
+            return False
         import importlib
         try:
             mod = importlib.import_module(script)
         except ImportError:
-            return
+            return False
         _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor())
         # Discrete drain: dump accumulated charge + start cooldown. No held beam.
         self._charge_level = 0.0
         self._cooldown_remaining = self.GetCooldownTime()
         self._armed = False  # re-arms in UpdateCharge once past the refire threshold
+        return True
 
     def UpdateCharge(self, dt: float) -> None:
         if self._cooldown_remaining > 0.0:
@@ -2177,9 +2088,11 @@ class TorpedoTube(Weapon):
         return 1
 
     def Fire(self, target=None, offset=None, *,
-             spread_unit=None, homing_delay=0.0) -> None:
+             spread_unit=None, homing_delay=0.0) -> bool:
+        """Returns True when a torpedo launched — discrete shooter, so the
+        tick's try_fire_weapon needs the explicit bool (see PulseWeapon.Fire)."""
         if not self.CanFire():
-            return
+            return False
         self._firing = True
         self._target = target
         self._target_offset = offset
@@ -2189,13 +2102,13 @@ class TorpedoTube(Weapon):
         self._start_slot_cooldown(now)
 
         # PR 2b: spawn the projectile via the bound SDK script.  spread_unit /
-        # homing_delay are only non-default when the parent TorpedoSystem is
-        # firing a Dual/Quad spread volley.
+        # homing_delay are dormant since the spread fan-out was removed
+        # (Task 6 deletes them from the signature).
         self._spawn_torpedo(spread_unit=spread_unit, homing_delay=homing_delay)
 
-        # Discrete-shot — auto-stop after launch.  WeaponSystem's
-        # _currently_firing list still tracks us until StopFiring is called.
+        # Discrete-shot — auto-stop after launch.
         self._firing = False
+        return True
 
     def _spawn_torpedo(self, *, spread_unit=None, homing_delay=0.0) -> None:
         """Look up the parent system's GetTorpedoScript(0), import the SDK
@@ -2211,6 +2124,14 @@ class TorpedoTube(Weapon):
         parent = self.GetParentSubsystem()
         if parent is None:
             return
+        # Per-launch ammo debit (moved here from TorpedoSystem.StartFiring's
+        # volley accounting when StartFiring became a pure tick-arm): expend
+        # one round of the parent's selected type per torpedo launched.
+        # Finite types only — unlimited/undeclared magazines never decrement.
+        ammo = (parent.GetCurrentAmmoType()
+                if hasattr(parent, "GetCurrentAmmoType") else None)
+        if ammo is not None and not getattr(ammo, "_unlimited", True):
+            ammo.AddAvailable(-1)
         parent_prop = parent.GetProperty() if hasattr(parent, "GetProperty") else None
         if parent_prop is None or not hasattr(parent_prop, "GetTorpedoScript"):
             return

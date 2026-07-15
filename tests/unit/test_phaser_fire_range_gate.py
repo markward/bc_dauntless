@@ -1,5 +1,5 @@
-"""PhaserSystem.StartFiring + retry_held_fire honour the global phaser
-fire-range gate (PHASER_MAX_RANGE_GU = 700 GU ≈ 122.5 km).
+"""PhaserSystem.StartFiring + the host_loop held-trigger pump honour the
+global phaser fire-range gate (PHASER_MAX_RANGE_GU = 700 GU ≈ 122.5 km).
 
 In stock BC the gate is a single engine-wide constant, not per-bank —
 MaxDamageDistance controls damage falloff shape, not firing range.
@@ -58,6 +58,11 @@ class _FakeBank:
         return TGPoint3(0.0, 1.0, 0.0)
     def GetFiringArc(self):
         return 360.0  # wide arc so direction never gates
+    # BC tick surface (update_weapons group walk).
+    def IsMemberOfGroup(self, g):
+        return 1
+    def IsDumbFire(self):
+        return 0
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -155,12 +160,14 @@ def test_start_firing_dispatches_when_target_in_range():
     assert sys._fire_held is True
 
 
-# ── retry_held_fire gate ──────────────────────────────────────────────────
+# ── held-trigger pump gate (host_loop._pump_held_weapons) ─────────────────
 
-def test_retry_held_fire_stops_when_target_drifts_out_of_range():
+def test_pump_stops_when_target_drifts_out_of_range():
+    from engine.host_loop import _pump_held_weapons
     ship = _Ship(0, 0, 0)
     bank = _FakeBank(max_damage_distance=60.0, can_fire=False)
     sys = _build_system([bank], ship)
+    ship.GetPhaserSystem = lambda: sys   # pump walks ship getters
 
     # Simulate trigger held with target initially in range.
     in_range = _Target(50, 0, 0)
@@ -171,7 +178,7 @@ def test_retry_held_fire_stops_when_target_drifts_out_of_range():
     sys._held_target = _Target(PHASER_MAX_RANGE_GU + 100.0, 0, 0)
 
     bank.fire_calls.clear()
-    sys.retry_held_fire()
+    _pump_held_weapons([ship], 0.34)
 
     assert bank.fire_calls == []
     # StopFiring should fire — clears _fire_held + _held_target.
@@ -179,7 +186,7 @@ def test_retry_held_fire_stops_when_target_drifts_out_of_range():
     assert sys._held_target is None
 
 
-def test_retry_held_fire_continues_when_target_in_range():
+def test_held_tick_continues_when_target_in_range():
     ship = _Ship(0, 0, 0)
     target = _Target(50, 0, 0)
     bank = _FakeBank(max_damage_distance=60.0, can_fire=True)
@@ -189,7 +196,7 @@ def test_retry_held_fire_continues_when_target_in_range():
     bank.fire_calls.clear()
     bank._firing = False   # Simulate bank cycled
 
-    sys.retry_held_fire()
+    sys.update_weapons(0.34)   # 0.34 > the 0.33 inter-shot threshold
 
     assert len(bank.fire_calls) == 1
     assert sys._fire_held is True

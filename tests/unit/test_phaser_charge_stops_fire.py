@@ -83,9 +83,22 @@ def test_fire_starts_loop_sound_and_stop_silences_it(galaxy_red):
     StopFiring() stops the looped handle (no separate 'Stop' sound is
     used — BC's convention, see LoadTacticalSounds.py:32-33)."""
     from unittest.mock import MagicMock
+    from engine.appc.math import TGPoint3
     ship = galaxy_red
     bank = ship.GetPhaserSystem().GetWeapon(0)
     bank._charge_level = bank._max_charge
+
+    # Fire() now carries the firing-arc gate (relocated from the old
+    # dispatch level), so aim at a target straight along the bank's own
+    # mount direction — guaranteed in-arc for any authored bank.
+    d = bank.GetDirection()
+
+    class _Tgt:
+        def GetWorldLocation(self):
+            return TGPoint3(d.x * 100.0, d.y * 100.0, d.z * 100.0)
+        def IsDead(self):
+            return 0
+
     with patch("engine.audio.tg_sound.TGSoundManager.instance") as inst:
         mgr = inst.return_value
         loop_sound = MagicMock()
@@ -93,7 +106,7 @@ def test_fire_starts_loop_sound_and_stop_silences_it(galaxy_red):
         loop_sound.Play.return_value = loop_handle
         mgr.GetSound.return_value = loop_sound
 
-        bank.Fire()
+        bank.Fire(_Tgt())
         # Start one-shot was fetched via GetSound and Play()ed.
         # (PlaySound is no longer used — _play_fire_sfx now calls
         # GetSound+Play so the attach_node can be forwarded.)

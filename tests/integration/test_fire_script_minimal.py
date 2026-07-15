@@ -90,7 +90,7 @@ def test_select_target_plus_fire_script_starts_weapon_firing():
     """Wire SelectTarget + FireScript on the same ship. Tick enough times
     to walk the iLastUpdate cycle (-2 visibility, -1 subsystem, 0..N-1
     fire). Assert at least one weapon reaches StartFiring (the WeaponSystem
-    contract — _currently_firing non-empty / IsFiring()==1)."""
+    contract — held trigger armed / IsFiring()==1)."""
     pSet = App.SetClass_Create(); pSet.SetName("S")
     App.g_kSetManager._sets["S"] = pSet
     ours, phaser, torp = _kitted_attacker_with_weapons()
@@ -114,18 +114,17 @@ def test_select_target_plus_fire_script_starts_weapon_firing():
         tick_ai(pp_select, game_time=float(i) * 0.25)
 
     # Some firing must have happened on at least one weapon system.
-    # PhaserSystem.StartFiring sets _fire_held=True and appends to
-    # _currently_firing (when an emitter accepts the dispatch).
-    # TorpedoSystem inherits WeaponSystem.StartFiring which only
-    # populates _currently_firing.  IsFiring() unifies both.
+    # StartFiring arms the tick (_fire_held) and the immediate forced
+    # update dispatches eligible emitters.  IsFiring() unifies the held
+    # trigger and any actively-firing child.
     fired = bool(phaser.IsFiring()) or bool(torp.IsFiring()) \
             or phaser._fire_held
     assert fired, (
         "no weapon ever started firing — "
-        "phaser._fire_held=%s phaser._currently_firing=%s "
-        "torp._currently_firing=%s fs.iLastUpdate=%s fs.bTargetVisible=%s"
-        % (phaser._fire_held, phaser._currently_firing,
-           torp._currently_firing, fs.iLastUpdate, fs.bTargetVisible)
+        "phaser._fire_held=%s phaser.IsFiring()=%s "
+        "torp.IsFiring()=%s fs.iLastUpdate=%s fs.bTargetVisible=%s"
+        % (phaser._fire_held, phaser.IsFiring(),
+           torp.IsFiring(), fs.iLastUpdate, fs.bTargetVisible)
     )
 
 

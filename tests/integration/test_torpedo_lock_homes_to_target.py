@@ -21,8 +21,11 @@ def test_torpedo_homes_to_target_and_damages_hull(galaxy_red, target_ship_at):
         App.g_kInputManager.OnKeyDown(App.WC_RBUTTON)
         App.g_kInputManager.OnKeyUp(App.WC_RBUTTON)
 
-    # Torpedo spawned and homing.
-    assert len(projectiles._active) == 1
+    # Torpedoes spawned and homing.  One tap fires EVERY ready tube in the
+    # working group (Galaxy chain "Single" = group 0 = all 6 tubes,
+    # SetSingleFire(0) multi-fire) — a transient mid-branch state: Task 7's
+    # ship-wide 0.5 s stagger + per-tube launch cone restore the BC walk-out.
+    assert len(projectiles._active) == 6
     torp = projectiles._active[0]
     assert torp._velocity.y > 0.0
     assert torp._target_ship is target

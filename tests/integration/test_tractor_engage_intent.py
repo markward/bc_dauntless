@@ -3,7 +3,7 @@
 Bug fixed here (found live): the panel/menu toggle reflected IsFiring() (the
 instantaneous beam state).  It now reflects IsEngaged() — the sticky intent that
 stays ON while the player wants the tractor engaged, re-acquiring the beam each
-frame via retry_held_fire.  Crucially IsEngaged stays 1 even when the beam can't
+frame via update_weapons.  Crucially IsEngaged stays 1 even when the beam can't
 currently grip (target's shields up / out of range), so the button doesn't flip
 back to Off.  Firing/grip semantics (range + shields-down) are unchanged.
 

@@ -43,8 +43,11 @@ def test_friendly_fire_event_broadcast(galaxy_red, target_ship_at):
             if spy:
                 break
 
-        assert len(spy) == 1
-        assert spy[0] is target
+        # One tap launches every ready tube (BC tick, SetSingleFire(0));
+        # multiple torpedoes can land within the same combat step, so at
+        # least one hit event — every one carrying the friendly target.
+        assert len(spy) >= 1
+        assert all(t is target for t in spy)
     finally:
         App.g_kEventManager.RemoveBroadcastHandler(
             App.ET_WEAPON_HIT, None, "_test_friendly_fire_spy.handler")

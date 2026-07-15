@@ -52,8 +52,8 @@ def test_fire_with_none_target_succeeds():
 
 def test_fire_auto_stops_firing():
     """Torpedoes are discrete-shot — _firing flips False immediately after
-    the launch.  WeaponSystem.IsFiring() derives from _currently_firing
-    which stays populated until StopFiring."""
+    the launch.  The parent WeaponSystem.IsFiring() unifies child firing
+    state with the held trigger."""
     tube = _loaded_tube()
     tube.Fire(target=None, offset=None)
     assert tube.IsFiring() == 0

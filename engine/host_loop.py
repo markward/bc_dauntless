@@ -86,6 +86,7 @@ from engine.appc.subsystems import (
     _resolve_bank_aim_world,
     impulse_online_fraction,
 )
+from engine.appc.weapon_subsystems import _target_undetectable
 from engine.ui.target_list_visibility import update_target_list_visibility
 
 _alert_listener: "AlertAudioListener" = AlertAudioListener()
@@ -527,6 +528,46 @@ def _phaser_damage_for_tick(max_damage: float,
     return max_damage * (max_damage_distance / dist) * dt   # R/d beyond
 
 
+def _pump_held_weapons(ships_list, dt: float) -> None:
+    """BC WeaponSystem tick (weapon-firing-mechanics.md §3.2): one
+    update_weapons per ARMED system per frame.  Replaces the per-class
+    retry_held_fire pumps.
+
+    Stop conditions (checked per frame while the trigger stays held):
+    offline/powered-down, target undetectable (the anti-horn-loop stop —
+    a held burst at a target that cloaks must end, not restart its warm-up
+    SFX every tick), and the per-class _can_engage range gate (phaser
+    global fire range).  Systems that manage their own stop conditions
+    (TractorBeamSystem — its ENGAGE intent must survive out-of-range /
+    shields-up and re-acquire) set _pump_self_managed and get the frame
+    handed straight to their update_weapons.
+    """
+    for ship in ships_list:
+        for getter in ("GetPhaserSystem", "GetPulseWeaponSystem",
+                       "GetTractorBeamSystem", "GetTorpedoSystem"):
+            sys_ = getattr(ship, getter)() if hasattr(ship, getter) else None
+            if sys_ is None or not getattr(sys_, "_fire_held", False):
+                continue
+            if getattr(sys_, "_pump_self_managed", False):
+                sys_.update_weapons(dt)
+                continue
+            if _is_offline(sys_) or not sys_.IsOn():
+                sys_.StopFiring()
+                continue
+            held = getattr(sys_, "_held_target", None)
+            if held is not None and (hasattr(held, "IsDead") and held.IsDead()):
+                sys_.StopFiring()      # target destroyed — end the burst
+                continue
+            if held is not None and _target_undetectable(sys_, held):
+                sys_.StopFiring()      # preserves the anti-horn-loop stop
+                continue
+            if held is not None and hasattr(sys_, "_can_engage") \
+                    and not sys_._can_engage(ship, held):
+                sys_.StopFiring()      # range gate (phaser global range etc.)
+                continue
+            sys_.update_weapons(dt)
+
+
 def _advance_combat(ships, dt: float, ship_instances=None) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
 
@@ -574,9 +615,12 @@ def _advance_combat(ships, dt: float, ship_instances=None) -> None:
     visible_damage.advance(dt, ship_instances=ship_instances)
     camera_shake.update(dt)
 
+    # BC WeaponSystem tick: one update_weapons per armed system per frame.
+    _pump_held_weapons(ships_list, dt)
+
     # Continuous phaser damage tick.  Each ship's PhaserSystem has banks
-    # set firing by StartFiring; advance them here: re-check arc (auto-
-    # stop drifters), compute distance falloff, and route damage through
+    # set firing by the weapon tick above; advance them here: re-check arc
+    # (auto-stop drifters), compute distance falloff, and route damage through
     # apply_hit (which routes shields → subsystem → hull, calls
     # hit_feedback.dispatch, and broadcasts WeaponHitEvent).
     for ship in ships_list:
@@ -594,11 +638,6 @@ def _advance_combat(ships, dt: float, ship_instances=None) -> None:
         if _is_offline(sys_) or not sys_.IsOn():
             sys_.StopFiring()
             continue
-        # While LBUTTON is held, re-fire banks that recharged above the
-        # minimum threshold (BC behavior: continuous fire keeps re-firing
-        # individual banks as they cycle through their charge curves).
-        if hasattr(sys_, "retry_held_fire"):
-            sys_.retry_held_fire()
         for i in range(sys_.GetNumWeapons()):
             bank = sys_.GetWeapon(i)
             if bank is None or not bank.IsFiring():
@@ -670,29 +709,11 @@ def _advance_combat(ships, dt: float, ship_instances=None) -> None:
                           hardpoint_weapon=bank,
                           damage_hull=damage_hull)
 
-    # Held-trigger pulse weapons (disruptors/cannons): re-fire eligible cannons
-    # as they recharge while the trigger stays down — mirrors the phaser
-    # retry_held_fire above. No damage routing here: pulse bolts are spawned
-    # into projectiles._active by PulseWeapon.Fire and handled by the torpedo
-    # hit loop / render push above. retry_held_fire self-stops if the system
-    # is offline or the target died, and no-ops unless the trigger is held.
-    for ship in ships_list:
-        psys = (ship.GetPulseWeaponSystem()
-                if hasattr(ship, "GetPulseWeaponSystem") else None)
-        if psys is not None:
-            psys.retry_held_fire()
-
-    # Tractor beams (hold/tow/pull/push/dock): sustain the held grab beam as the
-    # target stays in range, then apply the mode's physics to the target.
-    # retry_held_fire keeps one sustained beam (SingleFire) and self-stops if the
-    # system is offline / target died / target left range; advance_tractors moves
-    # the target (and reciprocally the source) via direct position displacement.
-    # Both no-op for ships without a firing tractor (production stays identical).
-    for ship in ships_list:
-        tsys = (ship.GetTractorBeamSystem()
-                if hasattr(ship, "GetTractorBeamSystem") else None)
-        if tsys is not None and hasattr(tsys, "retry_held_fire"):
-            tsys.retry_held_fire()
+    # Tractor beams (hold/tow/pull/push/dock): the weapon tick above sustains
+    # the held grab beam (TractorBeamSystem.update_weapons re-acquires while
+    # engaged); advance_tractors applies the mode's physics — it moves the
+    # target (and reciprocally the source) via direct position displacement.
+    # No-op for ships without a firing tractor (production stays identical).
     from engine.appc import tractor as _tractor
     _tractor.advance_tractors(ships_list, dt)
 

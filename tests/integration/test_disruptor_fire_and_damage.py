@@ -8,13 +8,13 @@ Two behaviours pinned here:
    drops.
 
 2. Continuity via the hook: after a single StartFiring, _advance_combat's
-   per-frame retry_held_fire hook keeps re-firing cannons as they recharge
+   per-frame weapon tick (_pump_held_weapons) keeps re-firing cannons as they recharge
    past the refire threshold while the trigger stays held — WITHOUT any
    further StartFiring call. More than one bolt is spawned over time.
 
 Pulse bolts are spawned into projectiles._active by PulseWeapon.Fire and the
 existing torpedo hit loop in _advance_combat routes their damage; this step
-adds only the retry_held_fire driver. See
+adds only the per-frame tick driver. See
 tests/integration/test_pulse_singlefire_modes.py for the ship/cannon build,
 tests/integration/test_phaser_damage_applied_through_apply_hit.py for the
 apply_hit damage assertion, and test_torpedo_run_smoke.py for the
@@ -115,7 +115,7 @@ def test_held_disruptor_fire_damages_target_through_apply_hit():
 
 
 def test_held_trigger_refires_via_advance_combat_hook():
-    """After a single StartFiring, _advance_combat's retry_held_fire hook
+    """After a single StartFiring, _advance_combat's weapon tick
     keeps re-firing the cannon as it recharges — MORE than one bolt spawns
     over time WITHOUT calling StartFiring again. Bolts impact/expire and
     leave _active, so we count cumulative register() calls, not len(_active)."""
@@ -140,7 +140,7 @@ def test_held_trigger_refires_via_advance_combat_hook():
             "StartFiring should fire one bolt, got %d" % bolts_after_start
         )
         # Step long enough for the cannon to clear cooldown + recharge past
-        # the refire threshold several times. retry_held_fire (inside
+        # the refire threshold several times. The weapon tick (inside
         # _advance_combat) is the ONLY thing that can re-fire it.
         for _ in range(80):
             _advance_weapons([ship, target], 0.1)

@@ -66,7 +66,7 @@ def test_phaser_system_all_children_disabled_blocks_startfiring():
     # No bank should have transitioned to firing.
     for i in range(4):
         assert sys_.GetWeapon(i).IsFiring() == 0
-    assert sys_._currently_firing == []
+    assert sys_._fire_held is False
 
 
 def test_phaser_system_one_healthy_child_still_fires():
@@ -91,13 +91,13 @@ def test_phaser_system_repair_restores_firing():
     for i in range(4):
         sys_.GetWeapon(i)._condition = 10.0
     sys_.StartFiring(target=target)
-    assert sys_._currently_firing == []
+    assert all(sys_.GetWeapon(i).IsFiring() == 0 for i in range(4))
 
     # Repair one child; parent re-enabled.
     sys_.GetWeapon(0)._condition = 100.0
     assert sys_.IsDisabled() == 0
     sys_.StartFiring(target=target)
-    assert len(sys_._currently_firing) >= 1
+    assert any(sys_.GetWeapon(i).IsFiring() == 1 for i in range(4))
 
 
 def test_weapon_system_base_startfiring_gates_on_offline():
@@ -122,12 +122,15 @@ def test_weapon_system_base_startfiring_gates_on_offline():
     assert sys_.IsDisabled() == 1
     # StartFiring should be a no-op.
     sys_.StartFiring()
-    assert sys_._currently_firing == []
+    assert sys_._fire_held is False
+    assert child.IsFiring() == 0
 
 
-def test_retry_held_fire_stops_on_offline_mid_burst():
+def test_pump_stops_on_offline_mid_burst():
     """LBUTTON held, system fires, then all children flip disabled
-    mid-burst: retry_held_fire calls StopFiring (clears _fire_held)."""
+    mid-burst: the host_loop weapon pump calls StopFiring (clears
+    _fire_held) instead of ticking the system."""
+    from engine.host_loop import _pump_held_weapons
     ship, sys_ = _firing_phaser_system()
     target = _target()
     sys_.StartFiring(target=target)
@@ -138,7 +141,7 @@ def test_retry_held_fire_stops_on_offline_mid_burst():
         sys_.GetWeapon(i)._condition = 10.0
     assert sys_.IsDisabled() == 1
 
-    sys_.retry_held_fire()
+    _pump_held_weapons([ship], 1.0 / 60)
     # Held state cleared, no banks firing.
     assert sys_._fire_held is False
     for i in range(4):

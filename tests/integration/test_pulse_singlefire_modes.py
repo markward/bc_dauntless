@@ -1,10 +1,10 @@
 """PulseWeaponSystem dispatch — SingleFire round-robin vs multi-fire all.
 
-Mirrors PhaserSystem's _dispatch_one_or_all behaviour, but the emitters are
-pulse cannons that fire discrete projectile bolts (no beam, no global range
-gate). SingleFire(0) fires every eligible cannon together; SingleFire(1)
+Shares the BC weapon tick with PhaserSystem, but the emitters are pulse
+cannons that fire discrete projectile bolts (no beam, no global range gate).
+SingleFire(0) fires every eligible cannon together; SingleFire(1)
 round-robins one eligible cannon per trigger. Held-fire is driven per-frame
-by retry_held_fire (host_loop._advance_combat). See
+by update_weapons (host_loop._pump_held_weapons). See
 sdk/Build/scripts/ships/Hardpoints/birdofprey.py (SetSingleFire(0)) and
 warbird.py (SetSingleFire(1)).
 """
@@ -133,18 +133,18 @@ def test_single_fire_round_robins_one_cannon_per_trigger():
     _active.clear()
 
 
-# ── retry_held_fire: gated by cooldown, re-fires after recharge ─────────────
+# ── held tick: gated by cooldown, re-fires after recharge ───────────────────
 
-def test_retry_held_fire_blocked_during_cooldown_then_refires():
+def test_held_tick_blocked_during_cooldown_then_refires():
     _active.clear()
     ship, parent = _build(single_fire=0)
     target = _target_ahead()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         parent.StartFiring(target, "hit")
         assert len(_active) == 2
-        # Both cannons drained + on cooldown. retry while on cooldown -> nothing.
-        parent.retry_held_fire()
-    assert len(_active) == 2, "retry during cooldown must not spawn new bolts"
+        # Both cannons drained + on cooldown. Tick while on cooldown -> nothing.
+        parent.update_weapons(0.34)   # 0.34 > the 0.33 inter-shot threshold
+    assert len(_active) == 2, "tick during cooldown must not spawn new bolts"
 
     # Step enough simulated dt to clear cooldown AND recharge past the
     # refire threshold so the cannons re-arm.
@@ -152,14 +152,15 @@ def test_retry_held_fire_blocked_during_cooldown_then_refires():
         for _ in range(200):
             for i in range(parent.GetNumWeapons()):
                 parent.GetWeapon(i).UpdateCharge(0.1)
-        parent.retry_held_fire()
-    assert len(_active) == 4, f"retry after recharge should re-fire both, got {len(_active)}"
+        parent.update_weapons(0.34)
+    assert len(_active) == 4, f"tick after recharge should re-fire both, got {len(_active)}"
     _active.clear()
 
 
 # ── StopFiring clears held state ────────────────────────────────────────────
 
 def test_stop_firing_clears_held_state():
+    from engine.host_loop import _pump_held_weapons
     _active.clear()
     ship, parent = _build(single_fire=0)
     target = _target_ahead()
@@ -168,12 +169,13 @@ def test_stop_firing_clears_held_state():
         assert len(_active) == 2
         parent.StopFiring()
         assert parent._fire_held is False
-        # Recharge then retry — nothing fires because the trigger is released.
+        # Recharge then pump — nothing fires because the trigger is released
+        # (the host pump skips systems whose _fire_held is clear).
         for _ in range(200):
             for i in range(parent.GetNumWeapons()):
                 parent.GetWeapon(i).UpdateCharge(0.1)
-        parent.retry_held_fire()
-    assert len(_active) == 2, "retry after StopFiring must not fire"
+        _pump_held_weapons([ship], 0.34)
+    assert len(_active) == 2, "pump after StopFiring must not fire"
     _active.clear()
 
 

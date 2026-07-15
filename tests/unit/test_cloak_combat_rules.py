@@ -67,7 +67,7 @@ def test_cloaking_ship_cannot_fire():
     sys_.StartFiring(target=target)
     for i in range(4):
         assert sys_.GetWeapon(i).IsFiring() == 0
-    assert sys_._currently_firing == []
+    assert sys_._fire_held is False
 
 
 def test_engaging_cloak_stops_active_fire():
@@ -81,7 +81,7 @@ def test_engaging_cloak_stops_active_fire():
     ship.GetCloakingSubsystem().StartCloaking()
     for i in range(4):
         assert sys_.GetWeapon(i).IsFiring() == 0
-    assert sys_._currently_firing == []
+    assert sys_._fire_held is False
 
 
 def test_fully_cloaked_ship_cannot_fire():
@@ -89,7 +89,8 @@ def test_fully_cloaked_ship_cannot_fire():
     target = _target()
     ship.GetCloakingSubsystem().InstantCloak()    # CLOAKED
     sys_.StartFiring(target=target)
-    assert sys_._currently_firing == []
+    assert all(sys_.GetWeapon(i).IsFiring() == 0 for i in range(4))
+    assert sys_._fire_held is False
 
 
 def test_decloaked_ship_fires_normally():
