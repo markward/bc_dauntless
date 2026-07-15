@@ -1,21 +1,35 @@
 // native/src/renderer/torpedo_pass.cc
 //
-// Renders the TORPEDO projectile family -- every TorpedoDescriptor with
-// is_disruptor == false -- as BC's audited "billboard root" construction
-// (weapon-firing-mechanics.md §5.5): a camera-facing quad basis that spins
-// about the view axis, carrying two additive glow quads (one scale-pulsing,
-// one a fixed clone), a flare star of `num_flares` quads at random fixed 3D
-// rotations with per-flare trapezoid alpha twinkle, and a core sprite drawn
-// last. All layers are additive (GL_SRC_ALPHA, GL_ONE), depth test on, depth
-// write off, cull off (double-sided flares come free).
+// Renders BOTH BC projectile families carried by TorpedoDescriptor --
+// weapon-firing-mechanics.md §5.5 audited these as two ENTIRELY DIFFERENT
+// animation architectures sharing one descriptor struct:
 //
-// The underlying math (glow_pulse_scale, flare_trapezoid, hash01,
-// flare_rotation) lives in renderer/torpedo_anim.h and is pinned there --
-// see that header's PROVISIONAL MAPPING banner for the open RE questions
-// (Q4/Q7) this implementation stands in for. Disruptor bolts
-// (is_disruptor == true) are SKIPPED here entirely; they render via a
-// dedicated tube-mesh pass added in Task 7 (one-commit invisibility of
-// disruptor bolts is an accepted transitional state).
+//   TORPEDO (is_disruptor == false): a controller-driven "billboard root"
+//   construction -- a camera-facing quad basis that spins about the view
+//   axis, carrying two additive glow quads (one scale-pulsing, one a fixed
+//   clone), a flare star of `num_flares` quads at random fixed 3D rotations
+//   with per-flare trapezoid alpha twinkle, and a core sprite drawn last.
+//   All layers are additive (GL_SRC_ALPHA, GL_ONE), depth test on, depth
+//   write off, cull off (double-sided flares come free). The underlying math
+//   (glow_pulse_scale, flare_trapezoid, hash01, flare_rotation) lives in
+//   renderer/torpedo_anim.h -- see that header's PROVISIONAL MAPPING banner
+//   for the open RE questions (Q4/Q7) this implementation stands in for.
+//
+//   DISRUPTOR (is_disruptor == true): no controller, no texture, no light --
+//   a procedural tapered-tube mesh (renderer::build_bolt_mesh) whose ONLY
+//   animation is imperative per-frame re-orientation of the tube's +Y axis
+//   onto the current velocity vector (renderer::bolt_align_rotation). Two
+//   concentric uniform-color sub-draws (shell then a smaller, shorter core)
+//   stand in for BC's two per-vertex bolt colors -- geometrically equivalent
+//   and cheaper than authoring a two-color vertex stream; see the per-draw
+//   comment in render() for the 0.5/0.8 core-scale provenance. Same additive
+//   GL state as the torpedo family, drawn via the separate `disruptor_shader`
+//   program (flat unlit, no texture unit).
+//
+// Both families are additive and share the pass's GL state block; the two
+// are drawn as separate sub-loops (torpedo program bound once, then the
+// disruptor program bound once) so per-entry program switching never
+// happens -- see render()'s two-pass structure below.
 #include "renderer/torpedo_pass.h"
 
 #include "renderer/pipeline.h"
@@ -51,6 +65,9 @@ constexpr float kQuadCorners[] = {
 TorpedoPass::TorpedoPass() = default;
 
 TorpedoPass::~TorpedoPass() {
+    if (bolt_ebo_) glDeleteBuffers(1, &bolt_ebo_);
+    if (bolt_vbo_) glDeleteBuffers(1, &bolt_vbo_);
+    if (bolt_vao_) glDeleteVertexArrays(1, &bolt_vao_);
     if (quad_vbo_) glDeleteBuffers(1, &quad_vbo_);
     if (quad_vao_) glDeleteVertexArrays(1, &quad_vao_);
 }
@@ -67,6 +84,32 @@ void TorpedoPass::ensure_quad_mesh() {
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float),
                           reinterpret_cast<void*>(0));
     glBindVertexArray(0);
+}
+
+void TorpedoPass::ensure_bolt_mesh() {
+    if (bolt_vao_ != 0) return;
+    const BoltMesh mesh = build_bolt_mesh();  // default 12 segments (SWIG default, never overridden)
+
+    glGenVertexArrays(1, &bolt_vao_);
+    glBindVertexArray(bolt_vao_);
+
+    glGenBuffers(1, &bolt_vbo_);
+    glBindBuffer(GL_ARRAY_BUFFER, bolt_vbo_);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(mesh.vertices.size() * sizeof(glm::vec3)),
+                 mesh.vertices.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3),
+                          reinterpret_cast<void*>(0));
+
+    glGenBuffers(1, &bolt_ebo_);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bolt_ebo_);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(uint32_t)),
+                 mesh.indices.data(), GL_STATIC_DRAW);
+
+    glBindVertexArray(0);
+    bolt_index_count_ = static_cast<int>(mesh.indices.size());
 }
 
 assets::Texture* TorpedoPass::ensure_texture(const std::string& path) {
@@ -158,7 +201,7 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
     };
 
     for (const auto& t : torpedoes) {
-        if (t.is_disruptor) continue;  // Task 7: disruptor bolts render via a dedicated tube-mesh pass
+        if (t.is_disruptor) continue;  // drawn below, by the disruptor sub-loop
 
         const auto p = map_torpedo_params(t);
 
@@ -216,6 +259,60 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
         // (kept for readability, matching the old code's convention).
         draw_layer(t.core_texture, t.core_color, p.core_half_size,
                    t.world_pos, x_r, y_r, 1.0f);
+    }
+
+    // Disruptor sub-loop: a second pass over the SAME list, so the disruptor
+    // program is bound at most once per frame rather than thrashing programs
+    // per entry (a single sorted/interleaved loop would rebind on every
+    // family transition). Skip the whole sub-loop -- including the lazy mesh
+    // upload and the program bind -- when nothing needs it.
+    bool has_disruptor = false;
+    for (const auto& t : torpedoes) {
+        if (t.is_disruptor) { has_disruptor = true; break; }
+    }
+    if (has_disruptor) {
+        ensure_bolt_mesh();
+        auto& bolt_shader = pipeline.disruptor_shader();
+        bolt_shader.use();
+        bolt_shader.set_mat4("u_view_proj", vp);  // set once per frame, not per bolt
+        glBindVertexArray(bolt_vao_);
+
+        for (const auto& t : torpedoes) {
+            if (!t.is_disruptor) continue;
+            // Defensive only -- marshal (Task 2) always sends real values for
+            // disruptor entries; a non-positive length/width would otherwise
+            // scale the tube to a degenerate (zero-volume or inside-out) mesh.
+            if (t.bolt_length <= 0.0f || t.bolt_width <= 0.0f) continue;
+
+            // Tube axis re-orientation is the disruptor's ONLY animation
+            // (§5.5) -- no controller, computed fresh every frame from the
+            // current velocity direction.
+            const glm::mat4 rotate = glm::mat4(bolt_align_rotation(t.forward));
+            const glm::mat4 translate = glm::translate(glm::mat4(1.0f), t.world_pos);
+
+            // Two concentric uniform-color sub-draws stand in for BC's two
+            // per-vertex bolt colors (shell + core) -- geometrically
+            // equivalent under a flat-shaded, unlit tube and cheaper than a
+            // two-color vertex stream. Column-vector convention: M = T * R * S.
+
+            // Shell: full bolt_width/bolt_length, shell_color.
+            const glm::mat4 shell_model = translate * rotate *
+                glm::scale(glm::mat4(1.0f), glm::vec3(t.bolt_width, t.bolt_length, t.bolt_width));
+            bolt_shader.set_mat4("u_model", shell_model);
+            bolt_shader.set_vec4("u_color", t.shell_color);
+            glDrawElements(GL_TRIANGLES, bolt_index_count_, GL_UNSIGNED_INT, nullptr);
+
+            // Core: 0.5x width / 0.8x length, bolt_core_color. These are BC's
+            // never-overridden optional SWIG defaults -- PROVISIONAL
+            // interpretation by analogy with the phaser CoreScale constant
+            // (RE Q5; not independently confirmed for the disruptor bolt).
+            const glm::mat4 core_model = translate * rotate *
+                glm::scale(glm::mat4(1.0f),
+                           glm::vec3(0.5f * t.bolt_width, 0.8f * t.bolt_length, 0.5f * t.bolt_width));
+            bolt_shader.set_mat4("u_model", core_model);
+            bolt_shader.set_vec4("u_color", t.bolt_core_color);
+            glDrawElements(GL_TRIANGLES, bolt_index_count_, GL_UNSIGNED_INT, nullptr);
+        }
     }
 
     glBindVertexArray(0);
