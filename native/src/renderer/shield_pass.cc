@@ -166,14 +166,14 @@ void ShieldPass::submit(const scenegraph::World& world,
         }
         if (mesh == nullptr) {
             // Ellipsoid path: either mode=Ellipsoid, or skin build failed.
-            // 1.32× padding (1.1 base × 1.2 user-requested bump) so the
-            // bubble clears the hull on ships whose AABB walks miss
-            // orphan meshes or whose NIF geometry sits asymmetric to its
-            // pivot point.
+            // BC's geometric fit: semi-axes = half-extents × √3 so all 8
+            // AABB corners land on the bubble surface and the hull is
+            // inside by construction (see kShieldEllipsoidAxisScale).
             mesh = sphere;
             ship_local = glm::translate(glm::mat4(1.0f), state.aabb_center)
                        * glm::scale(glm::mat4(1.0f),
-                                     state.aabb_half_extents * 1.32f);
+                                     state.aabb_half_extents
+                                         * kShieldEllipsoidAxisScale);
         }
 
         shader.set_mat4("u_world", inst->world);

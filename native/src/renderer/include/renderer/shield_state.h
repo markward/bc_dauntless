@@ -25,6 +25,13 @@ namespace renderer {
 
 enum class ShieldMode : std::uint8_t { Ellipsoid = 0, Skin = 1 };
 
+/// BC's bubble sizing (producer at 0x005ABAC0): ellipsoid semi-axis =
+/// AABB half-extent × √3, the minimal factor that puts every corner of the
+/// vertex-swept bounding box exactly on the ellipsoid surface — the whole
+/// hull fits by construction, no per-ship tuning. Same single-precision
+/// literal as the binary (0x3FDDB3D7).
+inline constexpr float kShieldEllipsoidAxisScale = 1.7320508f;
+
 struct Hit {
     glm::vec3 point_world{0.0f};
     glm::vec4 color_rgba{0.0f};

@@ -146,3 +146,31 @@ TEST(ShieldState, TextureIndexStableAcrossTicks) {
     EXPECT_EQ(idx_before, 3);
     EXPECT_EQ(idx_after, 3);
 }
+
+// BC sizes the shield bubble as ellipsoid semi-axes = AABB half-extents × √3
+// (single-precision literal 0x3FDDB3D7 in the decompiled producer at
+// 0x005ABAC0). √3 is the minimal factor for which every corner of the
+// bounding box lands exactly ON the ellipsoid surface, so the whole hull is
+// guaranteed inside the bubble. The old eyeballed 1.32× padding left box
+// corners poking out ((1/1.32)²·3 ≈ 1.72 > 1).
+TEST(ShieldState, EllipsoidScaleMatchesBcSqrt3) {
+    // Exact BC literal, bit-for-bit.
+    EXPECT_EQ(kShieldEllipsoidAxisScale, 1.7320508f);
+}
+
+TEST(ShieldState, EllipsoidCircumscribesAabbCorners) {
+    // Deliberately anisotropic box (saucer-and-nacelles shape).
+    const glm::vec3 h(120.0f, 310.0f, 45.0f);
+    const glm::vec3 semi = h * kShieldEllipsoidAxisScale;
+    for (int sx = -1; sx <= 1; sx += 2)
+        for (int sy = -1; sy <= 1; sy += 2)
+            for (int sz = -1; sz <= 1; sz += 2) {
+                const glm::vec3 corner(sx * h.x, sy * h.y, sz * h.z);
+                const glm::vec3 n = corner / semi;
+                const float d = glm::dot(n, n);
+                // Corners lie ON the unit-sphere surface (inside-or-on, and
+                // tight: the ellipsoid is minimal, not padded).
+                EXPECT_NEAR(d, 1.0f, 1e-4f);
+                EXPECT_LE(d, 1.0f + 1e-4f);
+            }
+}
