@@ -1156,6 +1156,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "NIF, or None. Parse-only; no GL context required.");
 
     py::class_<scenegraph::InstanceId>(m, "InstanceId")
+        .def(py::init<>())
         .def_readonly("index", &scenegraph::InstanceId::index)
         .def_readonly("generation", &scenegraph::InstanceId::generation);
 
@@ -1339,6 +1340,58 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "moves the character across the set. Plays once and settles at the "
           "last frame. Bones the clip does not track keep their channels "
           "(BC walk-ons are non-exclusive).");
+
+    m.def("debug_instance_anim",
+          [](scenegraph::InstanceId id) {
+              py::list out;
+              scenegraph::Instance* in = g_world.get(id);
+              if (!in) return out;
+              const assets::Model* m = resolve_model(in->model_handle);
+              for (std::size_t i = 0; i < in->anim.channels.size(); ++i) {
+                  const auto& ch = in->anim.channels[i];
+                  if (ch.clip_index < 0) continue;
+                  py::dict d;
+                  d["bone"] = (m && i < m->skeleton.bones.size())
+                                  ? m->skeleton.bones[i].name
+                                  : std::to_string(i);
+                  d["clip"] = ch.clip_index;
+                  d["start"] = ch.start_wall_time;
+                  d["loop"] = ch.loop;
+                  d["settled"] = ch.settled;
+                  d["blend_in_s"] = ch.blend_in_s;
+                  out.append(d);
+              }
+              return out;
+          },
+          py::arg("iid"),
+          "DEV: list this instance's BOUND bone channels "
+          "[{bone, clip, start, loop, settled, blend_in_s}]. Empty for a bad "
+          "id or an instance with no bound channels.");
+
+    m.def("debug_bone_palette_row",
+          [](scenegraph::InstanceId id, const std::string& bone_name)
+              -> py::object {
+              scenegraph::Instance* in = g_world.get(id);
+              if (!in) return py::none();
+              const assets::Model* m = resolve_model(in->model_handle);
+              if (!m) return py::none();
+              for (std::size_t i = 0; i < m->skeleton.bones.size(); ++i) {
+                  if (m->skeleton.bones[i].name != bone_name) continue;
+                  if (i >= in->bone_palette.size()) return py::none();
+                  const glm::mat4& p = in->bone_palette[i];
+                  py::list row;
+                  for (int c = 0; c < 4; ++c)
+                      for (int r = 0; r < 4; ++r) row.append(p[c][r]);
+                  return row;
+              }
+              return py::none();
+          },
+          py::arg("iid"), py::arg("bone_name"),
+          "DEV: the named bone's current 4x4 palette matrix as 16 floats "
+          "(column-major), or None if the id/bone/palette is missing. Live "
+          "oracle: grep stdout while printing this per frame — body bones "
+          "keep oscillating through a gesture, the gesture bone plays it.");
+
     // ── Bridge-node (non-skinned) animation bindings ─────────────────────────
     m.def("play_instance_node_anim",
           [](scenegraph::InstanceId id, int clip_index, bool loop, bool reverse) {
