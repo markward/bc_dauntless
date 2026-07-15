@@ -1305,6 +1305,33 @@ class TorpedoSystem(WeaponSystem):
             if w is not None and hasattr(w, "SetSkewFire"):
                 w.SetSkewFire(flag)
 
+    def SetFiringChainMode(self, n) -> None:
+        """Wire BC's INTENDED torpedo-spread <-> skew-fire connection
+        (2026-07-15 decomp update).
+
+        The BC SDK's Model Property Editor documentation (modelpropertyeditor
+        .html:255) says of a torpedo tube's Right vector: "the right vector
+        will be used to change the firing direction slightly if torpedoes
+        are fired in non-single-fire mode" — i.e. selecting a non-Single
+        firing chain was ALWAYS meant to arm skew fire. Retail shipped this
+        disconnected: the intended hook is a vtable-only salvo setter
+        (0x0057B1F0) with zero callers anywhere in stbc.exe. Dauntless
+        deliberately wires the intended design over the shipped bug: a
+        non-Single chain fans a true simultaneous salvo (skew tubes are
+        exempt from the 0.5s ship-wide stagger — see TorpedoTube.CanFire —
+        so every member of the active chain group launches in the same
+        tick, geometry from each tube's authored Right vector); Single
+        restores BC's shipped walk-out.
+
+        [0] is BOTH the chainless fallback and the SDK-documented "group of
+        all weapons, single-firing" (i.e. authored Single) — either way it
+        means single-fire, so it's the one case that must clear skew rather
+        than set it.
+        """
+        super().SetFiringChainMode(n)
+        groups = self._active_chain_groups()
+        self.SetSkewFire(0 if groups == [0] else 1)
+
 
 # Global phaser fire-range gate. Reconstructed from disassembly:
 # Appc.dll exposes PhaserBank_GetMaxPhaserRange (sdk/.../App.py:11511) as

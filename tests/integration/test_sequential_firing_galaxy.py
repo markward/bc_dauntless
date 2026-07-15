@@ -123,6 +123,58 @@ def test_sequential_clicks_beyond_the_stagger_walk_out_every_tube(galaxy_red):
     assert after == [0] * 6, f"6 spaced clicks should drain every tube, got: {after}"
 
 
+def test_quad_chain_fans_forward_tubes_single_restores_walkout(galaxy_red):
+    """2026-07-15 decomp update (BC-intended spread<->skew wire): cycling the
+    tactical spread selector to 'Quad' arms skew fire on every tube (this
+    task's ``TorpedoSystem.SetFiringChainMode`` override), so one click
+    launches all 4 forward tubes (Galaxy's group 5) simultaneously instead of
+    BC's shipped one-per-click walk-out; cycling back to 'Single' clears
+    skew and restores the original one-click-one-tube behaviour asserted by
+    ``test_one_click_fires_exactly_one_tube`` above (that test is untouched
+    and must keep passing unchanged — Galaxy defaults to chain mode 0 =
+    "Single", so nothing here calls SetFiringChainMode before it runs)."""
+    ship = galaxy_red
+    torps = ship.GetTorpedoSystem()
+    assert torps.GetFiringChainMode() == 0        # Galaxy defaults to "Single"
+    assert all(torps.GetWeapon(i).IsSkewFire() == 0 for i in range(6))
+
+    from engine.appc import weapon_config
+    weapon_config.cycle_torpedo_spread(ship)       # Single -> Dual
+    weapon_config.cycle_torpedo_spread(ship)       # Dual -> Quad
+    assert torps.GetFiringChainMode() == 2
+    assert all(torps.GetWeapon(i).IsSkewFire() == 1 for i in range(6))
+
+    fwd = _forward_indices(torps)
+    aft = _aft_indices(torps)
+
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        App.g_kInputManager.OnKeyDown(App.WC_RBUTTON)
+        App.g_kInputManager.OnKeyUp(App.WC_RBUTTON)
+
+    after = [torps.GetWeapon(i).GetNumReady() for i in range(6)]
+    assert all(after[i] == 0 for i in fwd), (
+        f"Quad's group 5 (all 4 forward tubes) must launch simultaneously, got: {after}"
+    )
+    assert all(after[i] == 1 for i in aft), (
+        f"aft tubes are a separate chain group -- untouched by this click, got: {after}"
+    )
+
+    weapon_config.cycle_torpedo_spread(ship)       # Quad -> wraps to Single
+    assert torps.GetFiringChainMode() == 0
+    assert all(torps.GetWeapon(i).IsSkewFire() == 0 for i in range(6))
+
+    App.g_kTimerManager._time = App.g_kTimerManager.get_time() + 0.6
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        App.g_kInputManager.OnKeyDown(App.WC_RBUTTON)
+        App.g_kInputManager.OnKeyUp(App.WC_RBUTTON)
+
+    after2 = [torps.GetWeapon(i).GetNumReady() for i in range(6)]
+    drained_this_click = sum(1 for b, a in zip(after, after2) if b != a)
+    assert drained_this_click == 1, (
+        f"Single restores the shipped one-click-one-tube walk-out, got: {after} -> {after2}"
+    )
+
+
 def test_click_with_empty_tubes_is_silent(galaxy_red):
     """Once every tube is drained (via spaced clicks, past the stagger) the
     next right-click finds no eligible emitter (per-tube CanFire: NumReady

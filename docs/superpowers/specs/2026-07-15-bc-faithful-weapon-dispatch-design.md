@@ -230,6 +230,45 @@ selector** (audited §2.10: the toggle callback calls
 - `engine/appc/weapon_config.py`'s cycle function and the panel JS follow
   the new getter/setter; UI plumbing otherwise unchanged.
 
+### Intended-design wire (2026-07-15 decomp update)
+
+New decomp-project evidence, confirmed against the official BC SDK Model
+Property Editor documentation (`modelpropertyeditor.html:255`): the spread
+selector and skew fire (§3.4) were **one feature that shipped
+disconnected**, not two independent systems. The doc says of a torpedo
+tube's Right vector:
+
+> "the right vector will be used to change the firing direction slightly if
+> torpedoes are fired in non-single-fire mode"
+
+i.e. selecting a non-Single firing chain was always meant to arm skew fire.
+Retail never wired the connection — the intended hook is a vtable-only
+salvo setter (`0x0057B1F0`) with zero callers anywhere in `stbc.exe`, so
+stock BC's spread selector only ever changed which tubes are eligible
+(chain group membership); it never actually fanned or desynced them.
+
+**Dauntless wires the intended behaviour, not the shipped bug.**
+`TorpedoSystem.SetFiringChainMode` now broadcasts `SetSkewFire` to every
+child tube based on the newly-active chain's groups (`_active_chain_groups
+()`):
+
+- **Non-Single chain** (any active-group list other than `[0]`) → skew ON
+  for every tube. Skew tubes are exempt from the 0.5s ship-wide stagger
+  (§3.3), so every member of the working group launches in the **same
+  tick** — a true simultaneous salvo, fanned by each tube's authored Right
+  vector (Galaxy's four forward tubes: Rights `(-1,0,0)`, `(0,0,-1)`,
+  `(1,0,0)`, `(0,0,1)` → a 4-way fan cross on ±X/±Z).
+- **Single chain** (active groups `== [0]`, also the chainless fallback) →
+  skew OFF, restoring BC's shipped one-per-click walk-out (§3.2/§3.3 as
+  already described above).
+
+This is a deliberate divergence from literal retail behaviour, ruled by
+Mark: the disconnection is a shipped bug, not an authored design choice —
+BC's own SDK documentation describes the intended mechanism in the present
+tense, and the salvo setter exists in the vtable with no caller, not as
+dead/removed code. See `TorpedoSystem.SetFiringChainMode` (engine/appc/
+weapon_subsystems.py) and `tests/unit/test_spread_skew_wiring.py`.
+
 ## 6. Events
 
 | Event | Id | Change |
@@ -356,6 +395,15 @@ Nothing else in this design depends on the answer.
 > per-digit ordered-list reading — it is the only one under which the
 > authored names (Single/Dual/Quad vs tube `SetGroups` masks 25/26/4) make
 > sense.
+
+**Partially answered (2026-07-15):** the BC SDK Model Property Editor
+documentation states "Zero is used for the group of all weapons,
+single-firing" — confirming group `0` is BOTH the chainless fallback *and*
+the authored "Single" chain's group list, and that it specifically means
+single-fire (not merely "no chain authored"). That's the fact the spread
+<->skew wire (§5) keys off: `_active_chain_groups() == [0]` is the one case
+that must clear skew rather than arm it. The segment-parse encoding
+(per-digit vs `atoi` bitmask) and the group-sweep order remain open.
 
 ## 10. Non-goals
 
