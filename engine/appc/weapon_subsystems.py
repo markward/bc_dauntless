@@ -757,6 +757,15 @@ class WeaponSystem(PoweredSubsystem):
         (which is a Weapon, not a system) overrides this to return 1."""
         return 0
 
+    def IsSkewFire(self) -> int:
+        """Skew-salvo is a TorpedoTube concept; leaf emitters that are
+        WeaponSystem subclasses (PulseWeapon, PhaserBank, TractorBeam) never
+        skew. Hoisted here — same hierarchy trap as IsDumbFire/SetSingleFire —
+        so _spawn_projectile's skew probe reaches a real 0 instead of the
+        truthy _Stub (stub-heatmap row PulseWeapon.IsSkewFire; harmless today
+        only because the isinstance(GetRight(), TGPoint3) guard masks it)."""
+        return 0
+
     def IsMemberOfGroup(self, g) -> int:
         """WeaponSystem::IsMemberOfGroup (0x00583240). Group ids are 1-BASED bits
         in the property's Groups mask; group 0 means 'all weapons'.
