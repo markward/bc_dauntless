@@ -37,6 +37,7 @@ def test_create_torpedo_model_stores_all_visual_fields():
     assert t._num_flares     == 8
     assert t._flares_size_a  == 0.7
     assert t._flares_size_b  == 0.4
+    assert t._is_disruptor   is False
 
 
 def test_create_torpedo_model_coerces_numeric_types():
