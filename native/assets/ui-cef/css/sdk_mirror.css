@@ -30,7 +30,7 @@
   border-top-right-radius: 14px;            /* the bc-panel tell — no other radius */
 
   font-family: "Antonio", sans-serif;
-  font-size: 17px;
+  font-size: 13px;
   line-height: 1.25;
   color: rgb(235, 225, 255);                /* --bc-label-text */
   text-shadow: 0 0 3px #000;
