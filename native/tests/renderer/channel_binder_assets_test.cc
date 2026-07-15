@@ -42,16 +42,16 @@ const fs::path kAnims = kRoot / "game" / "data" / "Animations";
 
 class ChannelBinderAssets : public ::testing::Test {
 protected:
-    std::unique_ptr<renderer::Window> w_;
+    std::unique_ptr<renderer::Window> w_;  // Keeps GL context alive for compose_officer_model uploads.
     assets::Model model_;
 
     void SetUp() override {
         if (!fs::is_regular_file(
                 kChars / "Bodies/BodyFemM/BodyFemM.NIF"))
-            GTEST_SKIP() << "character NIFs not installed";
+            GTEST_SKIP() << "BodyFemM.NIF not installed";
         if (!fs::is_regular_file(
                 kChars / "Heads/HeadKiska/kiska_head.NIF"))
-            GTEST_SKIP() << "character NIFs not installed";
+            GTEST_SKIP() << "kiska_head.NIF not installed";
         try {
             w_ = std::make_unique<renderer::Window>(64, 64, "binder-assets-test",
                                                     false);
@@ -160,7 +160,11 @@ TEST_F(ChannelBinderAssets, TiltHeadMovesHeadWhileBodyBreathesUninterrupted) {
             }
         }
     }
-    EXPECT_TRUE(head_moved) << "tilt gesture produced no head motion";
+    // The tilt is bound in the [1.0, 1.1) window and the loop continues to
+    // t=1.9, so ~0.9s of the clip is sampled. If this ever fails vacuously,
+    // the tilt clip's early keys are identity and the window should be widened,
+    // not the assertion deleted.
+    EXPECT_TRUE(head_moved) << "tilt gesture produced no palette change on any directly-driven bone within 0.9s of binding";
 }
 
 TEST_F(ChannelBinderAssets, KiskaRiggedClipIsBitIdenticalNoOp) {
@@ -187,11 +191,9 @@ TEST_F(ChannelBinderAssets, KiskaRiggedClipIsBitIdenticalNoOp) {
 }
 
 TEST_F(ChannelBinderAssets, WalkChannelsReproduceSamplePoseOnTrackedBones) {
-    // Any shipped placement/walk clip with a "Bip01" root translation works;
-    // db_LtoH walk-family clips live in game/data/Animations. Use
-    // tilt_head_left as the tracked-bone reference too — the invariant is
-    // channels == sample_pose for TRACKED bones at matching t, for a
-    // root-motion, clip-base bind (the walk configuration).
+    // The invariant is clip-agnostic: channels must reproduce sample_pose for
+    // TRACKED bones under a root-motion/clip-base bind (the walk configuration).
+    // tilt_head_left.NIF is used because it is a known-good Bip01-rigged clip.
     int walk = load_clip("tilt_head_left.NIF");
     ASSERT_GE(walk, 0);
     const assets::AnimationClip& clip = model_.animations[walk];
