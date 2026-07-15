@@ -1,15 +1,35 @@
 // native/src/renderer/torpedo_pass.cc
+//
+// Renders the TORPEDO projectile family -- every TorpedoDescriptor with
+// is_disruptor == false -- as BC's audited "billboard root" construction
+// (weapon-firing-mechanics.md §5.5): a camera-facing quad basis that spins
+// about the view axis, carrying two additive glow quads (one scale-pulsing,
+// one a fixed clone), a flare star of `num_flares` quads at random fixed 3D
+// rotations with per-flare trapezoid alpha twinkle, and a core sprite drawn
+// last. All layers are additive (GL_SRC_ALPHA, GL_ONE), depth test on, depth
+// write off, cull off (double-sided flares come free).
+//
+// The underlying math (glow_pulse_scale, flare_trapezoid, hash01,
+// flare_rotation) lives in renderer/torpedo_anim.h and is pinned there --
+// see that header's PROVISIONAL MAPPING banner for the open RE questions
+// (Q4/Q7) this implementation stands in for. Disruptor bolts
+// (is_disruptor == true) are SKIPPED here entirely; they render via a
+// dedicated tube-mesh pass added in Task 7 (one-commit invisibility of
+// disruptor bolts is an accepted transitional state).
 #include "renderer/torpedo_pass.h"
 
 #include "renderer/pipeline.h"
+#include "renderer/torpedo_anim.h"
 
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 
@@ -27,13 +47,7 @@ constexpr float kQuadCorners[] = {
     -1.0f, +1.0f,
 };
 
-// SDK Create() params for PhotonTorpedo.py read as:
-//   core_a=0.2  core_b=1.2   ⇒ small bright pinpoint
-//   glow_a=3.0  glow_b=0.3  glow_c=0.6   ⇒ larger soft halo
-//   flares_a=0.7  flares_b=0.4  num_flares=8   ⇒ rotating star
-// We interpret size_a as the renderer half-size in world units; size_b/c
-// (when present) modulate intensity / aspect.
-constexpr float kSizeScale = 0.5f;
+constexpr float kTwoPi = 2.0f * 3.14159265358979323846f;
 
 }  // namespace
 
@@ -101,18 +115,18 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
     shader.use();
 
     const glm::mat4 vp = camera.proj_matrix() * camera.view_matrix();
-    // Extract camera right/up from the view matrix.  Camera basis vectors
-    // in world space are the rows of the view matrix's upper-left 3×3.
+    // Camera basis vectors in world space are the rows of the view matrix's
+    // upper-left 3x3 (unchanged from the old code) -- cam_up_world seeds the
+    // spinning billboard-root frame below.
     const glm::mat4 view = camera.view_matrix();
-    const glm::vec3 cam_right = glm::vec3(view[0][0], view[1][0], view[2][0]);
-    const glm::vec3 cam_up    = glm::vec3(view[0][1], view[1][1], view[2][1]);
+    const glm::vec3 cam_up_world = glm::vec3(view[0][1], view[1][1], view[2][1]);
+    const glm::vec3 cam_pos = camera.eye;
 
-    shader.set_mat4("u_view_proj",     vp);
-    shader.set_vec3("u_camera_right",  cam_right);
-    shader.set_vec3("u_camera_up",     cam_up);
-    shader.set_int ("u_texture",       0);
+    shader.set_mat4("u_view_proj", vp);
+    shader.set_int ("u_texture",   0);
 
-    // Additive blend, depth-test against scene, depth-write off.
+    // Additive blend, depth-test against scene, depth-write off, cull off
+    // (double-sided flares come free).
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glEnable(GL_DEPTH_TEST);
@@ -122,43 +136,91 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
     glBindVertexArray(quad_vao_);
     glActiveTexture(GL_TEXTURE0);
 
+    // A single quad layer: world-space unit axes (axis_x/axis_y) replace the
+    // old camera-billboard + in-plane-rotation uniforms so every layer
+    // (root-spin glow/core, per-flare random 3D rotation) shares one vertex
+    // shader interface (torpedo.vert).
     auto draw_layer = [&](const std::string& path,
                           const glm::vec4& color,
                           float size,
                           const glm::vec3& world_pos,
-                          float rotation,
+                          const glm::vec3& axis_x,
+                          const glm::vec3& axis_y,
                           float alpha) {
         if (path.empty() || size <= 0.0f) return;
         assets::Texture* tex = ensure_texture(path);
         if (!tex) return;
         glBindTexture(GL_TEXTURE_2D, tex->id());
         shader.set_vec3 ("u_world_position", world_pos);
-        shader.set_float("u_size",           size * kSizeScale);
+        shader.set_vec3 ("u_axis_x",         axis_x);
+        shader.set_vec3 ("u_axis_y",         axis_y);
+        shader.set_float("u_size",           size);
         shader.set_vec4 ("u_tint",           color);
-        shader.set_float("u_rotation",       rotation);
         shader.set_float("u_alpha",          alpha);
         glDrawArrays(GL_TRIANGLES, 0, 6);
     };
 
     for (const auto& t : torpedoes) {
-        // Animation: flares spin slowly around billboard centre; glow
-        // pulses subtly in brightness; core stays steady.
-        constexpr float kFlaresSpinRate = 1.2f;   // radians per second
-        constexpr float kGlowPulseRate  = 6.0f;   // radians per second
-        constexpr float kGlowPulseDepth = 0.15f;  // ±15% brightness swing
-        const float flares_rot  = t.age * kFlaresSpinRate;
-        const float glow_alpha  = 1.0f - kGlowPulseDepth
-                                  + kGlowPulseDepth * std::sin(t.age * kGlowPulseRate);
-        // Draw order: glow (largest, dimmest), then flares, then core
-        // (smallest, brightest) — additive so order is mostly cosmetic.
-        draw_layer(t.glow_texture,   t.glow_color,   t.glow_size_a,   t.world_pos,
-                   0.0f, glow_alpha);
-        draw_layer(t.flares_texture, t.flares_color, t.flares_size_a, t.world_pos,
-                   flares_rot, 1.0f);
-        // Core size is the product of size_a (~0.2) × size_b (~1.2) = ~0.24.
-        draw_layer(t.core_texture,   t.core_color,
-                    t.core_size_a * t.core_size_b, t.world_pos,
-                    0.0f, 1.0f);
+        if (t.is_disruptor) continue;  // Task 7: disruptor bolts render via a dedicated tube-mesh pass
+
+        const auto p = map_torpedo_params(t);
+
+        // Root frame: a camera-facing basis that spins about the view axis.
+        // Provisional axis choice -- spin axis = view axis (Z_r); RE Q7 may
+        // revise this to a root-local Y axis instead.
+        const glm::vec3 z_r  = glm::normalize(cam_pos - t.world_pos);
+        const glm::vec3 x_r0 = glm::normalize(glm::cross(cam_up_world, z_r));
+        const glm::vec3 y_r0 = glm::cross(z_r, x_r0);
+
+        const float theta = std::fmod(t.age * p.spin_rate, kTwoPi);
+        const glm::mat3 spin = glm::mat3(glm::rotate(glm::mat4(1.0f), theta, z_r));
+        const glm::vec3 x_r = spin * x_r0;
+        const glm::vec3 y_r = spin * y_r0;
+
+        // Glow quad A (animated): one draw at alpha 1.2 is exactly BC's two
+        // emissive passes (0.8 + 0.4) summed under additive blending.
+        const float pulse_half_size = 0.5f * glow_pulse_scale(
+            t.age, p.pulse_rate, p.scale_lo, p.scale_hi);
+        draw_layer(t.glow_texture, t.glow_color, pulse_half_size, t.world_pos,
+                   x_r, y_r, 1.2f);
+
+        // Glow quad B (fixed clone) -- same axes, fixed size, same alpha.
+        draw_layer(t.glow_texture, t.glow_color, 0.5f * p.clone_scale,
+                   t.world_pos, x_r, y_r, 1.2f);
+
+        // Flare star: num_flares quads, each at a random fixed 3D rotation
+        // (per id + flare index) composed onto the spun root frame, with a
+        // per-flare de-phased trapezoid alpha twinkle.
+        // root3's columns are X_r, Y_r, Z_r (column-vector convention);
+        // root3 * R applies the per-flare rotation R in the root frame's own
+        // basis and re-expresses the result in world space -- so column 0/1
+        // of the product are the flare quad's world-space axes.
+        const glm::mat3 root3(x_r, y_r, z_r);
+        for (int i = 0; i < t.num_flares; ++i) {
+            const glm::mat3 rot = flare_rotation(static_cast<uint32_t>(t.id),
+                                                  static_cast<uint32_t>(i));
+            const glm::mat3 flare_basis = root3 * rot;
+
+            float alpha = 1.0f;
+            if (p.flare_period > 0.0f) {
+                // Strictly periodic with a random per-flare phase offset is a
+                // provisional stand-in for BC's respawn-with-fresh-random-
+                // start (RE Q4).
+                const float phi = hash01(static_cast<uint32_t>(t.id),
+                                          static_cast<uint32_t>(i), 1u);
+                const float u = std::fmod(t.age / p.flare_period + phi, 1.0f);
+                alpha = flare_trapezoid(u);
+            }
+            if (alpha <= 0.0f) continue;
+
+            draw_layer(t.flares_texture, t.flares_color, p.flare_half_size,
+                       t.world_pos, flare_basis[0], flare_basis[1], alpha);
+        }
+
+        // Core sprite, drawn last -- order is cosmetic under additive blend
+        // (kept for readability, matching the old code's convention).
+        draw_layer(t.core_texture, t.core_color, p.core_half_size,
+                   t.world_pos, x_r, y_r, 1.0f);
     }
 
     glBindVertexArray(0);

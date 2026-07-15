@@ -22,9 +22,14 @@ public:
     TorpedoPass(const TorpedoPass&)            = delete;
     TorpedoPass& operator=(const TorpedoPass&) = delete;
 
-    /// Render every torpedo as three additive billboards (glow, flares,
-    /// core) at its world position.  Caller pushes the descriptor list
-    /// via host's set_torpedoes binding before each frame.
+    /// Render the TORPEDO family (TorpedoDescriptor::is_disruptor == false)
+    /// via BC's audited billboard-root construction: a camera-facing quad
+    /// basis that spins about the view axis, carrying two additive glow
+    /// quads, a flare star, and a core sprite -- see torpedo_pass.cc's
+    /// file-top comment and renderer/torpedo_anim.h for the math. Disruptor
+    /// entries are skipped (Task 7 renders those separately). Caller pushes
+    /// the descriptor list via host's set_torpedoes binding before each
+    /// frame.
     void render(const std::vector<TorpedoDescriptor>& torpedoes,
                 const scenegraph::Camera& camera,
                 Pipeline& pipeline);
