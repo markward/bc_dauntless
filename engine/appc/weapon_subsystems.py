@@ -570,10 +570,11 @@ class Weapon(ShipSubsystem):
     and no charge.  Power lives on the parent WeaponSystem; charge lives on
     EnergyWeapon (App.py:6426-6440), which torpedo tubes do not inherit.
 
-    Only the surface the SDK actually calls on a leaf weapon.  DELIBERATELY
-    ABSENT (verified zero SDK call sites on a tube): SetFiring,
-    IsMemberOfGroup, GetTargetID, IsDumbFire, GetOverallConditionPercentage,
-    IsInArc, CanHit, SetSkewFire, IsSkewFire.  IsInArc/CanHit are additionally
+    Surface the SDK actually calls on a leaf weapon.  IsMemberOfGroup, IsDumbFire,
+    SetSkewFire, and IsSkewFire are now implemented for the BC-faithful dispatch
+    tick (weapon-firing-mechanics.md §3.1/§2.10).  DELIBERATELY ABSENT (verified
+    zero SDK call sites on a tube): SetFiring, GetTargetID,
+    GetOverallConditionPercentage, IsInArc, CanHit.  IsInArc/CanHit are additionally
     unspecifiable — their BC signatures cannot be recovered from the SDK.
 
     GetProperty/SetProperty are inherited from ShipSubsystem (subsystems.py:273).
@@ -586,6 +587,8 @@ class Weapon(ShipSubsystem):
         self._firing: bool = False
         self._target = None
         self._target_offset = None
+        # BC Weapon+0x9C — inter-shot delay accumulator for TryFireWeapon.
+        self._fire_timer: float = 0.0
 
     def Fire(self, target=None, offset=None, **kwargs) -> None:
         """Discrete shot.  Subclasses implement — the payload differs per weapon
@@ -642,6 +645,22 @@ class Weapon(ShipSubsystem):
         """
         return 0.0 if self.IsDisabled() else 1.0
 
+    def IsMemberOfGroup(self, g) -> int:
+        """Weapon::IsMemberOfGroup (0x00583240). Group ids are 1-BASED bits
+        in the property's Groups mask; group 0 means 'all weapons'."""
+        g = int(g)
+        if g == 0:
+            return 1
+        prop = self.GetProperty()
+        get = getattr(prop, "GetGroups", None) if prop is not None else None
+        mask = get() if callable(get) else 0
+        return 1 if (int(mask) & (1 << (g - 1))) else 0
+
+    def IsDumbFire(self) -> int:
+        """Weapon::IsDumbFire (0x00583270, property+0x48). Only torpedo
+        tubes are dumbfire-capable in our surface (AI/Preprocessors.py:458)."""
+        return 0
+
 
 class WeaponSystem(PoweredSubsystem):
     """Weapon system — has firing state and an optional target.
@@ -690,6 +709,11 @@ class WeaponSystem(PoweredSubsystem):
         if is_aimed is None:
             return 0
         return is_aimed()
+
+    def IsDumbFire(self) -> int:
+        """Weapon systems are not dumbfire-capable by default. Only TorpedoTube
+        (which is a Weapon, not a system) overrides this to return 1."""
+        return 0
 
     # ── Parent-aggregator predicates ───────────────────────────────────
     # WeaponSystem parents own their hardpoint emitters (PhaserBank,
@@ -1162,6 +1186,14 @@ class TorpedoSystem(WeaponSystem):
         except ValueError:
             idx = 0
         self._selected_slot = slots[(idx + 1) % len(slots)]
+
+    def SetSkewFire(self, flag) -> None:
+        """Pure broadcast to child tubes (0x0057B1C0) — NO system-level
+        state; audited §2.10. Dormant in stock play (zero SDK call sites)."""
+        for i in range(self.GetNumWeapons()):
+            w = self.GetWeapon(i)
+            if w is not None and hasattr(w, "SetSkewFire"):
+                w.SetSkewFire(flag)
 
 
 # Global phaser fire-range gate. Reconstructed from disassembly:
@@ -1835,6 +1867,8 @@ class TorpedoTube(Weapon):
         self._max_ready: int = 0
         # One slot per MaxReady. Value = game time cooling began; _SLOT_LOADED = ready.
         self._reload_timers: list[float] = []
+        # Skew-fire flag — persistent across firing, set by TorpedoSystem or mission.
+        self._skew_fire: bool = False
 
     def _resize_slots(self) -> None:
         """(Re)build the per-slot reload array to MaxReady, all slots loaded.
@@ -2172,3 +2206,17 @@ class TorpedoTube(Weapon):
             return
         self._num_ready -= 1
         self._start_slot_cooldown(_game_time())
+
+    def IsDumbFire(self) -> int:
+        """Torpedo tubes are dumbfire-capable in BC (no guidance).
+        Overrides Weapon.IsDumbFire() which returns 0."""
+        return 1
+
+    def SetSkewFire(self, flag) -> None:
+        """Set skew-fire flag on this tube.  The flag is persistent and
+        survives StopFiring (never cleared by firing lifecycle)."""
+        self._skew_fire = bool(flag)
+
+    def IsSkewFire(self) -> int:
+        """Return 1 if skew-fire is enabled on this tube, else 0."""
+        return 1 if self._skew_fire else 0

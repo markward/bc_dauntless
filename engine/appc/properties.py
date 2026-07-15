@@ -413,6 +413,15 @@ class WeaponProperty(SubsystemProperty):
     def SetDamageRadiusFactor(self, v) -> None:
         self._damage_radius_factor = float(v)
 
+    def SetGroups(self, mask) -> None:
+        """Weapon-group bitmask (uint, 1-based group ids — decompiled
+        WeaponProperty+0x50). Previously a silent _Stub no-op even though
+        every stock hardpoint authors it (galaxy.py:22 etc.)."""
+        self._groups = int(mask)
+
+    def GetGroups(self) -> int:
+        return int(getattr(self, "_groups", 0))
+
 
 class EnergyWeaponProperty(WeaponProperty):
     """Energy-weapon hardpoint template — phasers, pulse cannons, tractors.
