@@ -87,13 +87,6 @@ _HANDLER_PATH = "engine.appc.weapon_tactical_commands._on_command"
 
 # ── Label helpers ─────────────────────────────────────────────────────────────
 
-_SPREAD_WORDS = {1: "Single", 2: "Dual", 4: "Quad"}
-
-
-def _spread_word(spread) -> str:
-    return _SPREAD_WORDS.get(int(spread), "Single")
-
-
 def _next_torpedo_type_name(ship) -> str:
     """Name of the ammo type ``cycle_torpedo_type`` would advance to (wraps).
 
@@ -149,7 +142,10 @@ def _type_label(ship, cfg) -> str:
 
 
 def _spread_label(ship, cfg) -> str:
-    return "Torpedo Spread " + _spread_word(cfg.get("spread", 1))
+    # BC's "spread" toggle IS the firing-chain selector (SetFiringChainMode,
+    # audited §2.10) — the label is the hardpoint-authored chain name
+    # (Single/Dual/Quad on Galaxy/Sovereign), not a computed word.
+    return "Torpedo Spread " + cfg.get("spread", "")
 
 
 def _tractor_label(ship, cfg) -> str:
@@ -175,7 +171,7 @@ _COMMANDS = [
     ),
     _Command(
         "torp_spread", 3,
-        lambda cfg: len(cfg.get("spread_options", [1])) > 1,
+        lambda cfg: len(cfg.get("spread_options", [])) > 1,
         _spread_label,
         weapon_config.cycle_torpedo_spread,
     ),

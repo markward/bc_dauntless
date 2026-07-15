@@ -6,6 +6,7 @@ from engine.appc.events import (
     TGKeyboardEvent, ET_KEYBOARD_EVENT,
     WeaponHitEvent, ET_WEAPON_HIT, ET_WARP_BUTTON_PRESSED,
     ET_TORPEDO_RELOAD, ET_TORPEDO_FIRED,
+    ET_WEAPON_FIRED, ET_WEAPON_FIRE_FAILED, ET_TORPEDO_AMMO_CONSUMED,
     ET_FRIENDLY_FIRE_DAMAGE, ET_FRIENDLY_FIRE_REPORT, ET_FRIENDLY_FIRE_GAME_OVER,
     ObjectExplodingEvent, ObjectExplodingEvent_Create,
     TGEventHandlerObject, TGEventManager,

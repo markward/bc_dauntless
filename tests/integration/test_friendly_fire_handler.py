@@ -43,8 +43,12 @@ def test_friendly_fire_event_broadcast(galaxy_red, target_ship_at):
             if spy:
                 break
 
+        # A single tap launches exactly one torpedo (Task 7's ship-wide 0.5s
+        # stagger gate — SetSingleFire(0) no longer means "every ready tube
+        # in the same tick"; the stagger throttles the whole system to one
+        # launch per tap).
         assert len(spy) == 1
-        assert spy[0] is target
+        assert all(t is target for t in spy)
     finally:
         App.g_kEventManager.RemoveBroadcastHandler(
             App.ET_WEAPON_HIT, None, "_test_friendly_fire_spy.handler")

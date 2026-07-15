@@ -27,6 +27,21 @@ ET_WARP_BUTTON_PRESSED: int = 0x1200   # warp button activated (synthesized from
 ET_TORPEDO_RELOAD: int = 0x00800065
 ET_TORPEDO_FIRED:  int = 0x00800066
 
+# ── Weapon-fire events — ids from decompiled stbc.exe (weapon-firing-
+# mechanics.md §1.5/§2.4; RE-tier evidence, not SDK inference).
+#   ET_WEAPON_FIRED          posted by TorpedoTube fire (AFTER ET_TORPEDO_FIRED,
+#                            BC's order) and by phaser first-shot (beam start).
+#                            Bound to (weapon, owner ship). SDK name: App.py:12958.
+#   ET_WEAPON_FIRE_FAILED    posted when a targeted torpedo fire fails the
+#                            aim-point resolve or the ±30° cone (0x00800037).
+#                            No SDK symbol; no shipped script listens — defined
+#                            for fidelity + mod surface.
+#   ET_TORPEDO_AMMO_CONSUMED 0x00800067, posted on torpedo fire ONLY when the
+#                            firing ship is the player ship (BC locality gate).
+ET_WEAPON_FIRED:           int = 0x0080007C
+ET_WEAPON_FIRE_FAILED:     int = 0x00800037
+ET_TORPEDO_AMMO_CONSUMED:  int = 0x00800067
+
 # ── Friendly-fire events — REAL BC values from the q13 live constant dump
 # (tools/probes/results/q13_constants_menu.txt:364-366).  MissionLib's
 # FriendlyFireHandler raises REPORT when the accumulator crosses a warning

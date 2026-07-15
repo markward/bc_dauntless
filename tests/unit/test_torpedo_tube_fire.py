@@ -1,6 +1,7 @@
 """TorpedoTube.Fire — discrete shot. Decrements _num_ready, stamps
 _last_fire_time, auto-stops _firing.  Gated on (parent on AND _num_ready > 0).
 """
+from engine.appc.math import TGPoint3
 from engine.appc.subsystems import TorpedoTube, TorpedoSystem
 
 
@@ -13,6 +14,14 @@ def _loaded_tube(num_ready=1, max_ready=1):
     tube._num_ready = num_ready
     tube._reload_delay = 40.0
     return tube
+
+
+class _AheadTarget:
+    """A live target dead ahead of a default-oriented tube (Direction (0,1,0)),
+    so Task 7's aim-resolve + +/-30 degree cone gate both pass — used by
+    tests that only care about Fire's bookkeeping, not the gates themselves."""
+    def GetWorldLocation(self): return TGPoint3(0.0, 100.0, 0.0)
+    def IsDead(self): return 0
 
 
 def test_can_fire_true_when_loaded_and_on():
@@ -38,9 +47,13 @@ def test_fire_decrements_num_ready():
 
 
 def test_fire_records_target():
+    """Task 7: a targeted Fire only stamps _target/_target_offset once the
+    aim-point resolve + cone both pass (a bare string has no world position
+    to resolve, so it can no longer stand in for the target here)."""
     tube = _loaded_tube()
-    tube.Fire(target="enemy_ship", offset="hit_point")
-    assert tube._target == "enemy_ship"
+    target = _AheadTarget()
+    tube.Fire(target=target, offset="hit_point")
+    assert tube._target is target
     assert tube._target_offset == "hit_point"
 
 
@@ -52,8 +65,8 @@ def test_fire_with_none_target_succeeds():
 
 def test_fire_auto_stops_firing():
     """Torpedoes are discrete-shot — _firing flips False immediately after
-    the launch.  WeaponSystem.IsFiring() derives from _currently_firing
-    which stays populated until StopFiring."""
+    the launch.  The parent WeaponSystem.IsFiring() unifies child firing
+    state with the held trigger."""
     tube = _loaded_tube()
     tube.Fire(target=None, offset=None)
     assert tube.IsFiring() == 0
@@ -141,20 +154,32 @@ def test_fire_dumbfires_when_no_target_lock():
     _active.clear()
 
 
-def test_fire_homes_when_target_locked():
+def test_fire_stamps_target_lock_but_launch_ignores_its_position():
+    """BC-faithful launch (Task 6, audited §2.4.1): the target lock is still
+    stamped onto the torpedo for guidance, but it never steers the launch
+    velocity — that stays straight out the tube's authored (default,
+    ship-forward) Direction, even though the target sits off to the side.
+
+    Task 7: only a TARGETED Fire (target passed explicitly, and only once it
+    clears the aim-resolve + +/-30 degree cone gates) stamps the homing
+    state — mirrors the real dispatch path, where update_weapons passes the
+    ship's locked target straight into Fire().  The target sits at bearing
+    ~14 degrees (off-axis, inside the cone) so the gate passes but the
+    launch-ignores-aim assertion below still has something to prove."""
     _active.clear()
     tube, _, ship = _galaxy_tube_with_photon_script()
     from engine.appc.math import TGPoint3
     class _Tgt:
-        def GetWorldLocation(self): return TGPoint3(100, 0, 0)
+        def GetWorldLocation(self): return TGPoint3(50, 200, 0)
         def IsDead(self): return 0
     ship._target = _Tgt()
     ship._target_subsystem = None
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        tube.Fire(target=None, offset=None)
+        assert tube.Fire(target=ship._target, offset=None) is True
     torp = _active[-1]
     assert torp._target_ship is ship._target
-    assert torp._velocity.x > 0.0
+    assert torp._velocity.x == 0.0
+    assert torp._velocity.y > 0.0
     _active.clear()
 
 

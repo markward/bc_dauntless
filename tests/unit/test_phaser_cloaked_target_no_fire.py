@@ -1,9 +1,9 @@
-"""PhaserSystem.StartFiring + retry_held_fire must NOT fire (nor start the
-warm-up SFX) at a target the firing ship cannot detect — fully cloaked being
-the canonical case.
+"""PhaserSystem.StartFiring + the host_loop held-trigger pump must NOT fire
+(nor start the warm-up SFX) at a target the firing ship cannot detect — fully
+cloaked being the canonical case.
 
 Bug ("ship's horn"): an AI re-calls StartFiring every tick and the host loop
-re-calls retry_held_fire every frame. Without a detectability gate at fire-
+pumps every armed system every frame. Without a detectability gate at fire-
 initiation, each call reached emitter.Fire() → _play_fire_sfx (the warm-up
 sound); the per-tick damage chokepoint (host_loop, can_detect) then StopFiring'd
 it the same frame; next tick it restarted → a continuous start/stop/restart
@@ -79,6 +79,11 @@ class _FakeBank:
         return TGPoint3(0.0, 1.0, 0.0)
     def GetFiringArc(self):
         return 360.0
+    # BC tick surface (update_weapons group walk).
+    def IsMemberOfGroup(self, g):
+        return 1
+    def IsDumbFire(self):
+        return 0
 
 
 def _build_system(banks, ship):
@@ -104,7 +109,7 @@ def test_start_firing_no_op_and_no_sfx_when_target_cloaked():
 
     assert bank.fire_calls == []            # emitter.Fire never reached → no SFX
     assert bank.IsFiring() == 0
-    # Held state must NOT latch — otherwise retry_held_fire would keep trying.
+    # Held state must NOT latch — otherwise the host pump would keep trying.
     assert sys._fire_held is False
 
 
@@ -121,12 +126,14 @@ def test_start_firing_dispatches_when_target_detectable():
     assert sys._fire_held is True
 
 
-# ── retry_held_fire gate ──────────────────────────────────────────────────
+# ── held-trigger pump gate (host_loop._pump_held_weapons) ─────────────────
 
-def test_retry_held_fire_stops_when_target_cloaks_mid_burst():
+def test_pump_stops_when_target_cloaks_mid_burst():
+    from engine.host_loop import _pump_held_weapons
     ship = _Ship(0, 0, 0)
     bank = _FakeBank(can_fire=True)
     sys = _build_system([bank], ship)
+    ship.GetPhaserSystem = lambda: sys   # pump walks ship getters
 
     # Start on a detectable target (latches held state).
     sys.StartFiring(target=_PlainTarget(50, 0, 0))
@@ -135,14 +142,14 @@ def test_retry_held_fire_stops_when_target_cloaks_mid_burst():
     # Target cloaks mid-burst.
     sys._held_target = _CloakedTarget(50, 0, 0)
     bank.fire_calls.clear()
-    sys.retry_held_fire()
+    _pump_held_weapons([ship], 0.34)
 
     assert bank.fire_calls == []            # no re-fire → no restarted SFX
     assert sys._fire_held is False          # held state cleared
     assert sys._held_target is None
 
 
-def test_retry_held_fire_continues_when_target_detectable():
+def test_held_tick_continues_when_target_detectable():
     """Control: a detectable held target keeps re-firing as banks recycle."""
     ship = _Ship(0, 0, 0)
     target = _PlainTarget(50, 0, 0)
@@ -153,7 +160,7 @@ def test_retry_held_fire_continues_when_target_detectable():
     bank.fire_calls.clear()
     bank._firing = False  # bank cycled
 
-    sys.retry_held_fire()
+    sys.update_weapons(0.34)   # 0.34 > the 0.33 inter-shot threshold
 
     assert len(bank.fire_calls) == 1
     assert sys._fire_held is True

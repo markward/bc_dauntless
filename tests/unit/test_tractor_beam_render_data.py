@@ -34,7 +34,6 @@ def _make_emitter(name):
     emitter._normal_discharge_rate = 1.0
     emitter._recharge_rate = 0.5
     emitter._charge_level = 5.0
-    emitter._armed = True
     return emitter
 
 

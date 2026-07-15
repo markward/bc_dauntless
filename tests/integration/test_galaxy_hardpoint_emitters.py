@@ -87,6 +87,10 @@ def test_galaxy_phaser_charge_fields_match_hardpoint(galaxy_ship):
     NormalDischargeRate=1.0, RechargeRate=0.08 (galaxy.py:209-214 and
     matching blocks for the other seven banks)."""
     phasers = galaxy_ship.GetPhaserSystem()
+    # GetChargePercentage() reads 0.0 while the parent system is unpowered
+    # (Task 10, audited §1.6/§7.4); power it on to check the field-copy
+    # fidelity this test targets.
+    phasers.TurnOn()
     for i in range(phasers.GetNumWeapons()):
         bank = phasers.GetWeapon(i)
         assert isinstance(bank, PhaserBank)

@@ -14,6 +14,7 @@ bottom of subsystems.py guarantees the normal load order).
 """
 
 import math as _math
+import random
 
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.float_range_watcher import FloatRangeWatcher
@@ -23,16 +24,6 @@ from engine.appc.subsystems import (
     _is_offline,
     subsystem_world_position,
 )
-
-
-# ── Torpedo spread-volley tuning (Python, no rebuild) ───────────────────────
-# Divergence angle for spread volleys: each fanned torp launches this far off
-# the base aim (tangent of 15°), so a Dual/Quad spread visibly splays before
-# converging.  _SPREAD_DELAY is the hold-before-homing duration (s): the torp
-# flies straight along its fanned launch direction, then homing engages and it
-# curves back onto the target — a deferred fan then converge.
-_SPREAD_DIVERGENCE_TAN = _math.tan(_math.radians(15.0))  # ≈0.268
-_SPREAD_DELAY = 0.2
 
 
 # ── Torpedo reload slots ───────────────────────────────────────────────────
@@ -250,14 +241,6 @@ def _init_energy_weapon_state(self):
     self._charge_level: float = 0.0
     # Looped SFX handle started by Fire(), stopped by StopFiring().
     self._loop_handle = None
-    # Refire hysteresis.  Cleared the moment the bank auto-stops because
-    # of depletion; restored once charge climbs past
-    # _min_firing_charge + REFIRE_HEADROOM_FRACTION × _max_charge.
-    # Without this the bank "blinks" — drops below min for one tick,
-    # back above min the next, fires for one frame, repeats.
-    # SDK has no setter for this threshold (confirmed against
-    # EnergyWeaponProperty); 20% of MaxCharge is a feel-tuned nominal.
-    self._armed: bool = True
 
 
 def _resolve_fire_sound(prop) -> str:
@@ -268,22 +251,17 @@ def _resolve_fire_sound(prop) -> str:
 
 
 
-def _spawn_projectile(emitter, mod, *, drf_override=0.0,
-                      spread_unit=None, homing_delay=0.0):
+def _spawn_projectile(emitter, mod, *, drf_override=0.0):
     """Spawn an in-flight projectile from `emitter` using SDK module `mod`.
 
     Shared by torpedo tubes and pulse-weapon cannons. Builds a Torpedo at the
     emitter's world position, runs mod.Create to populate visuals/behaviour,
-    applies drf_override (the launcher's DamageRadiusFactor) when > 0, computes
-    homing velocity toward the firing ship's live target lock (else dumbfire
-    along the emitter/ship forward), registers it, and plays mod.GetLaunchSound.
-    Returns the Torpedo, or None if mod is unusable.
-
-    `spread_unit` (a world-space unit TGPoint3) tilts the launch direction
-    sideways by _SPREAD_DIVERGENCE_TAN for a fan-out volley; `homing_delay`
-    (s) is stamped onto the torp so homing is suppressed until it has flown
-    straight along the fanned direction for that long.  Defaults (None / 0.0)
-    keep every non-spread shot byte-identical.
+    applies drf_override (the launcher's DamageRadiusFactor) when > 0, and
+    launches it BC-faithfully (audited §2.4.1): straight out the tube's
+    authored Direction (skewed +0.033 x Right when IsSkewFire) rotated to
+    world, at GetLaunchSpeed(), plus the firing ship's own linear velocity —
+    the aim point never steers the launch.  Registers it and plays
+    mod.GetLaunchSound.  Returns the Torpedo, or None if mod is unusable.
     """
     from engine.appc.projectiles import Torpedo, register
     from engine.appc.math import TGPoint3
@@ -307,78 +285,53 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0,
 
     launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
 
-    target_ship = source_ship.GetTarget() if source_ship is not None else None
+    # ── Launch trajectory (audited §2.4.1): the aim point NEVER steers the
+    # launch. Direction = tube-local Direction (skew: + 0.033 x Right, local
+    # frame, fixed sign) rotated to world; speed from the Python projectile
+    # module; plus the firing ship's own linear velocity.
+    local_dir = None
+    got = emitter.GetDirection() if hasattr(emitter, "GetDirection") else None
+    if isinstance(got, TGPoint3):
+        local_dir = TGPoint3(got.x, got.y, got.z)
+    if local_dir is None:
+        local_dir = TGPoint3(0.0, 1.0, 0.0)
+    if getattr(emitter, "IsSkewFire", None) and emitter.IsSkewFire():
+        right = emitter.GetRight() if hasattr(emitter, "GetRight") else None
+        if isinstance(right, TGPoint3):
+            local_dir = TGPoint3(local_dir.x + 0.033 * right.x,
+                                 local_dir.y + 0.033 * right.y,
+                                 local_dir.z + 0.033 * right.z)
+    world_dir = TGPoint3(local_dir.x, local_dir.y, local_dir.z)
+    if source_ship is not None and hasattr(source_ship, "GetWorldRotation"):
+        rot = source_ship.GetWorldRotation()
+        from engine.appc.math import TGMatrix3
+        if isinstance(rot, TGMatrix3):
+            world_dir.MultMatrixLeft(rot)
+    length = world_dir.Length()
+    ship_vel = (source_ship.GetVelocityTG()
+                if source_ship is not None and hasattr(source_ship, "GetVelocityTG")
+                else TGPoint3(0.0, 0.0, 0.0))
+    if not isinstance(ship_vel, TGPoint3):
+        ship_vel = TGPoint3(0.0, 0.0, 0.0)
+    if length > 1e-6:
+        torp._velocity = TGPoint3(
+            world_dir.x / length * launch_speed + ship_vel.x,
+            world_dir.y / length * launch_speed + ship_vel.y,
+            world_dir.z / length * launch_speed + ship_vel.z,
+        )
+
+    # Homing state (guidance-only; does not shape the launch).  Task 7 audited
+    # flow: "Fire stamps the homing state" — read the EMITTER's own _target
+    # (stamped by TorpedoTube.Fire's gated targeted path, cleared/absent on
+    # the dumb path / FireDumb), NOT the ship's target lock.  Previously this
+    # read source_ship.GetTarget() directly, which meant even a dumbfire
+    # inherited the ship's lock; that's wrong per the audited split.
+    target_ship = getattr(emitter, "_target", None)
     if (target_ship is not None
             and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
-        target_sub = (source_ship.GetTargetSubsystem()
-                      if hasattr(source_ship, "GetTargetSubsystem") else None)
-        aim_target = target_sub if target_sub is not None else target_ship
-        aim_pt = aim_target.GetWorldLocation()
-        direction = aim_pt - torp._position
-        length = direction.Length()
-        if length > 1e-6:
-            torp._velocity = TGPoint3(
-                direction.x / length * launch_speed,
-                direction.y / length * launch_speed,
-                direction.z / length * launch_speed,
-            )
         torp._target_ship = target_ship
-        torp._target_subsystem = target_sub
     else:
-        # The catch-all __getattr__ on TGObject returns a _Stub for any
-        # missing attribute, so hasattr is misleading.  Probe for a valid
-        # TGPoint3 explicitly via the type — defensive against the shim.
-        forward = None
-        try:
-            got = emitter.GetDirection()
-            if isinstance(got, TGPoint3):
-                forward = got
-        except Exception:
-            forward = None
-        if forward is None:
-            forward = TGPoint3(0.0, 1.0, 0.0)
-        world_fwd = TGPoint3(forward.x, forward.y, forward.z)
-        if source_ship is not None and hasattr(source_ship, "GetWorldRotation"):
-            rot = source_ship.GetWorldRotation()
-            # Same shim caveat — only use if it's a real TGMatrix3.
-            from engine.appc.math import TGMatrix3
-            if isinstance(rot, TGMatrix3):
-                world_fwd.MultMatrixLeft(rot)
-        length = world_fwd.Length()
-        if length > 1e-6:
-            torp._velocity = TGPoint3(
-                world_fwd.x / length * launch_speed,
-                world_fwd.y / length * launch_speed,
-                world_fwd.z / length * launch_speed,
-            )
         torp._target_ship = None
-
-    # Spread fan-out: tilt the launch direction sideways along spread_unit,
-    # preserving the launch speed magnitude.  Skipped (velocity unchanged) if
-    # no divergence requested, the velocity is degenerate, or the tilted
-    # vector collapses to zero.
-    if spread_unit is not None:
-        speed = torp._velocity.Length()
-        if speed > 1e-6:
-            base = TGPoint3(
-                torp._velocity.x / speed,
-                torp._velocity.y / speed,
-                torp._velocity.z / speed,
-            )
-            new = TGPoint3(
-                base.x + _SPREAD_DIVERGENCE_TAN * spread_unit.x,
-                base.y + _SPREAD_DIVERGENCE_TAN * spread_unit.y,
-                base.z + _SPREAD_DIVERGENCE_TAN * spread_unit.z,
-            )
-            new_len = new.Length()
-            if new_len > 1e-6:
-                torp._velocity = TGPoint3(
-                    new.x / new_len * speed,
-                    new.y / new_len * speed,
-                    new.z / new_len * speed,
-                )
-
-    torp._homing_start_age = float(homing_delay)
 
     register(torp)
 
@@ -388,6 +341,25 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0,
             TGSoundManager.instance().PlaySound(sound_name)
 
     return torp
+
+
+def _post_weapon_fired(weapon) -> None:
+    """Post ET_WEAPON_FIRED: Source = the firing weapon, Destination = the
+    owning ship (resolved via ``_climb_to_ship``).  Shared by TorpedoTube.Fire
+    (posted AFTER ET_TORPEDO_FIRED — see TorpedoTube._broadcast_weapon_fired)
+    and PhaserBank.Fire (posted on the was-not-firing edge, Task 10, audited
+    §1.6/§6 — the SDK surface for the event bounds it to (weapon, owner ship)
+    regardless of weapon type)."""
+    import App
+    from engine import dev_mode
+    try:
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_WEAPON_FIRED)
+        evt.SetSource(weapon)
+        evt.SetDestination(weapon._climb_to_ship())
+        App.g_kEventManager.AddEvent(evt)
+    except Exception as _e:
+        dev_mode.log_swallowed("ET_WEAPON_FIRED broadcast", _e)
 
 
 class _EnergyWeaponFireMixin:
@@ -401,24 +373,66 @@ class _EnergyWeaponFireMixin:
     sdk/Build/scripts/LoadTacticalSounds.py invoked at audio init.
     """
 
-    # Refire hysteresis headroom (fraction of MaxCharge).  Once a bank
-    # auto-stops via depletion, it must recharge MinFiringCharge + this
-    # fraction × MaxCharge before CanFire returns true again.
-    REFIRE_HEADROOM_FRACTION = 0.20
+    def _aim_in_arc(self, target) -> bool:
+        """Firing-arc gate in the weapon's OWN fire path (spec §2.4: the
+        dispatch-level `_emitter_in_arc` checks moved here, logic unchanged,
+        when StartFiring became a tick-arm — BC puts arc in the weapon's fire
+        path, not in the system tick).  Aim originates at this emitter's
+        mount Position (research doc § Bug F); no target → ship-forward."""
+        ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
+        if target is not None:
+            aim_world = _resolve_bank_aim_world(self, target)
+        else:
+            aim_world = _resolve_aim_world(ship, None)
+        return _emitter_in_arc(self, ship, aim_world)
 
     def CanFire(self) -> int:
+        """Audited §1.6, three gates (the invented refire-hysteresis is
+        gone — this asymmetry between the two charge branches below IS
+        BC's hysteresis, no separate latch needed):
+
+          * ship alive — a dead ship's weapons never fire.
+          * charge — ``> 0`` to SUSTAIN an already-firing beam, but
+            ``>= MinFiringCharge`` to START one.  A depleted bank that
+            auto-stopped must climb back to MinFiringCharge (no extra
+            headroom) before it can restart.
+          * disabled-product — the bank's own condition times the parent
+            system's condition must clear the authored DisabledPercentage
+            threshold (``GetOverallConditionPercentage`` in the audit); a
+            damaged system throttles a healthy bank the same way a
+            damaged bank throttles a healthy system.
+
+        The existing parent-IsOn gate is unchanged (BC gates power
+        elsewhere, not inside this predicate)."""
         parent = self.GetParentSubsystem()
         on = parent is not None and parent.IsOn()
         if not on:
             return 0
-        if not self._armed:
+        ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
+        if ship is not None and hasattr(ship, "IsDead") and ship.IsDead():
             return 0
-        charged = self._charge_level >= self._min_firing_charge
-        return 1 if charged else 0
+        if self._firing:
+            charged = self._charge_level > 0.0
+        else:
+            charged = self._charge_level >= self._min_firing_charge
+        if not charged:
+            return 0
+        # `parent` is guaranteed non-None here (the IsOn gate above already
+        # returned 0 otherwise); GetDisabledPercentage() lives on self
+        # (ShipSubsystem field, sane 0.25 default) so this never raises even
+        # on a bank with no property bound.
+        combined = self.GetConditionPercentage() * parent.GetConditionPercentage()
+        if self.GetDisabledPercentage() >= combined:
+            return 0
+        return 1
 
-    def Fire(self, target=None, offset=None) -> None:
+    def Fire(self, target=None, offset=None) -> bool:
+        """Returns True when the beam is firing after this call — the tick's
+        try_fire_weapon consumes the explicit bool (§3.3 step 5)."""
         if not self.CanFire():
-            return
+            return False
+        if not self._aim_in_arc(target):
+            return False
         # Edge-trigger the SFX. AI scripts call StartFiring on every
         # evaluation tick; without this gate, each call would spawn a
         # fresh "Phaser Loop" _PlayingSound handle and overwrite
@@ -431,6 +445,7 @@ class _EnergyWeaponFireMixin:
         self._target_offset = offset
         if not was_firing:
             self._play_fire_sfx()
+        return True
 
     def StopFiring(self) -> None:
         was_firing = self._firing
@@ -452,26 +467,27 @@ class _EnergyWeaponFireMixin:
                 # to 0 while firing (visible on the WeaponsDisplay as the
                 # full black → red → yellow → green sweep during recharge)
                 # — MinFiringCharge gates fire-start only, not the
-                # continuous discharge. _armed stays cleared until the
-                # bank recharges past the hysteresis threshold below.
-                self._armed = False
+                # continuous discharge.  Restart requires climbing back to
+                # MinFiringCharge (CanFire's start/sustain asymmetry —
+                # audited §1.6, no headroom on top of it).
                 # Route via StopFiring so the looped SFX handle is silenced.
                 self.StopFiring()
         else:
             parent = self.GetParentSubsystem()
             if parent is None or parent.IsOn():
-                factor = max(0.0, parent.GetNormalPowerPercentage()
-                             if parent is not None else 1.0)
+                power_factor = max(0.0, parent.GetNormalPowerPercentage()
+                                    if parent is not None else 1.0)
+                # Audited §1.6: recharge also scales with the bank's OWN
+                # condition — a damaged bank recharges proportionally
+                # slower.  (BC's audited non-local 1.25x boost near a
+                # friendly starbase never triggers in single-player — no
+                # code path applies it; documented here, not implemented.)
+                condition_factor = self.GetConditionPercentage()
                 headroom = self._max_charge - self._charge_level
                 if headroom > 0.0:
-                    want = min(self._recharge_rate * factor * dt, headroom)
+                    want = min(self._recharge_rate * power_factor
+                               * condition_factor * dt, headroom)
                     self._charge_level += want
-            # Re-arm once we cleared the headroom threshold.
-            if not self._armed:
-                refire_threshold = (self._min_firing_charge
-                                    + self.REFIRE_HEADROOM_FRACTION * self._max_charge)
-                if self._charge_level >= refire_threshold:
-                    self._armed = True
 
     def _play_fire_sfx(self) -> None:
         """Play the firing bank's Start one-shot + Loop sustained tone.
@@ -570,10 +586,11 @@ class Weapon(ShipSubsystem):
     and no charge.  Power lives on the parent WeaponSystem; charge lives on
     EnergyWeapon (App.py:6426-6440), which torpedo tubes do not inherit.
 
-    Only the surface the SDK actually calls on a leaf weapon.  DELIBERATELY
-    ABSENT (verified zero SDK call sites on a tube): SetFiring,
-    IsMemberOfGroup, GetTargetID, IsDumbFire, GetOverallConditionPercentage,
-    IsInArc, CanHit, SetSkewFire, IsSkewFire.  IsInArc/CanHit are additionally
+    Surface the SDK actually calls on a leaf weapon.  IsMemberOfGroup, IsDumbFire,
+    SetSkewFire, and IsSkewFire are now implemented for the BC-faithful dispatch
+    tick (weapon-firing-mechanics.md §3.1/§2.10).  DELIBERATELY ABSENT (verified
+    zero SDK call sites on a tube): SetFiring, GetTargetID,
+    GetOverallConditionPercentage, IsInArc, CanHit.  IsInArc/CanHit are additionally
     unspecifiable — their BC signatures cannot be recovered from the SDK.
 
     GetProperty/SetProperty are inherited from ShipSubsystem (subsystems.py:273).
@@ -586,11 +603,11 @@ class Weapon(ShipSubsystem):
         self._firing: bool = False
         self._target = None
         self._target_offset = None
+        # BC Weapon+0x9C — inter-shot delay accumulator for TryFireWeapon.
+        self._fire_timer: float = 0.0
 
     def Fire(self, target=None, offset=None, **kwargs) -> None:
-        """Discrete shot.  Subclasses implement — the payload differs per weapon
-        (TorpedoTube.Fire additionally takes spread_unit/homing_delay for
-        Dual/Quad spread volleys; see TorpedoSystem.StartFiring)."""
+        """Discrete shot.  Subclasses implement — the payload differs per weapon."""
         raise NotImplementedError
 
     def CanFire(self) -> int:
@@ -642,6 +659,22 @@ class Weapon(ShipSubsystem):
         """
         return 0.0 if self.IsDisabled() else 1.0
 
+    def IsMemberOfGroup(self, g) -> int:
+        """Weapon::IsMemberOfGroup (0x00583240). Group ids are 1-BASED bits
+        in the property's Groups mask; group 0 means 'all weapons'."""
+        g = int(g)
+        if g == 0:
+            return 1
+        prop = self.GetProperty()
+        get = getattr(prop, "GetGroups", None) if prop is not None else None
+        mask = get() if callable(get) else 0
+        return 1 if (int(mask) & (1 << (g - 1))) else 0
+
+    def IsDumbFire(self) -> int:
+        """Weapon::IsDumbFire (0x00583270, property+0x48). Only torpedo
+        tubes are dumbfire-capable in our surface (AI/Preprocessors.py:458)."""
+        return 0
+
 
 class WeaponSystem(PoweredSubsystem):
     """Weapon system — has firing state and an optional target.
@@ -659,10 +692,26 @@ class WeaponSystem(PoweredSubsystem):
         super().__init__(name)
         self._target = None
         self._weapon_system_type: int = 0
-        # Round-robin cursor into child emitters and the set of indices
-        # currently firing (for StopFiring to halt the right ones).
+        # Round-robin cursor into child emitters (tractor _engage_beam; the
+        # BC tick uses _last_weapon_idx below instead).
         self._next_emitter_index: int = 0
-        self._currently_firing: list = []
+        # ── BC tick state (weapon-firing-mechanics.md §3.1-3.3) ──────────
+        self._force_update: bool = False    # +0xAC: bypass 0.33s delay this tick
+        self._group_fire_mode: int = 0      # +0xB0: published working group
+        self._last_weapon_idx: int = -1     # +0xB4: round-robin cursor
+        self._firing_chain_mode: int = 0    # +0xB8: active chain index
+        self._last_group_fired: int = -1    # +0xBC: resume input, -1 sentinel
+        self._target_list: list = []        # +0xC4: pruned per tick
+        self._fire_timer: float = 0.0       # BC Weapon+0x9C: inter-shot delay
+        # Held-trigger state (press = StartFiring arms, release = StopFiring
+        # disarms).  host_loop._pump_held_weapons runs update_weapons once per
+        # frame for every system with _fire_held set.
+        self._fire_held: bool = False
+        self._held_target = None
+        self._held_offset = None
+        # _HeldFireWeaponSystem and TorpedoSystem set this via SetSingleFire;
+        # guard so the base class always has it too.
+        self._single_fire = getattr(self, "_single_fire", False)
 
     def ShouldBeAimed(self) -> int:
         """Does this weapon system have to bear on the target to fire?
@@ -690,6 +739,77 @@ class WeaponSystem(PoweredSubsystem):
         if is_aimed is None:
             return 0
         return is_aimed()
+
+    def IsDumbFire(self) -> int:
+        """Weapon systems are not dumbfire-capable by default. Only TorpedoTube
+        (which is a Weapon, not a system) overrides this to return 1."""
+        return 0
+
+    def IsMemberOfGroup(self, g) -> int:
+        """WeaponSystem::IsMemberOfGroup (0x00583240). Group ids are 1-BASED bits
+        in the property's Groups mask; group 0 means 'all weapons'.
+
+        Inherited by PhaserBank, PulseWeapon, TractorBeam (leaf emitters that are
+        also WeaponSystem subclasses)."""
+        g = int(g)
+        if g == 0:
+            return 1
+        prop = self.GetProperty()
+        get = getattr(prop, "GetGroups", None) if prop is not None else None
+        mask = get() if callable(get) else 0
+        return 1 if (int(mask) & (1 << (g - 1))) else 0
+
+    def SetForceUpdate(self, flag) -> None:  self._force_update = bool(flag)
+    def GetForceUpdate(self) -> int:         return 1 if self._force_update else 0
+
+    def GetFiringChains(self) -> list:
+        prop = self.GetProperty()
+        get = getattr(prop, "GetFiringChains", None) if prop is not None else None
+        chains = get() if callable(get) else []
+        return chains if isinstance(chains, list) else []
+
+    def SetFiringChainMode(self, n) -> None:
+        """WeaponSystem::SetFiringChainMode (0x00584FA0): clamped below the
+        chain count. This is what BC's tactical 'torpedo spread' toggle calls."""
+        chains = self.GetFiringChains()
+        hi = max(0, len(chains) - 1)
+        self._firing_chain_mode = max(0, min(int(n), hi))
+
+    def GetFiringChainMode(self) -> int:     return self._firing_chain_mode
+
+    def SetGroupFireMode(self, g) -> None:   self._group_fire_mode = int(g)
+    def GetGroupFireMode(self) -> int:       return self._group_fire_mode
+
+    def _active_chain_groups(self) -> list:
+        """Ordered group ids of the active chain; [0] ('all weapons') when
+        the ship authors no chains (67 of 70 stock hardpoints)."""
+        chains = self.GetFiringChains()
+        if not chains:
+            return [0]
+        _label, groups = chains[self._firing_chain_mode % len(chains)]
+        return list(groups) if groups else [0]
+
+    def _resolve_working_group(self) -> int:
+        """§3.2 step 3 — LastGroupFired is an INPUT: keep firing the group we
+        last fired while it is still in the chain; else the chain's first."""
+        groups = self._active_chain_groups()
+        if self._last_group_fired != -1 and self._last_group_fired in groups:
+            return self._last_group_fired
+        return groups[0]
+
+    def _add_target(self, target) -> None:
+        if target is not None and target not in self._target_list:
+            self._target_list.append(target)
+
+    def _prune_targets(self) -> None:
+        """§3.2 step 2 — unlink anything dead or unresolvable."""
+        self._target_list = [
+            t for t in self._target_list
+            if t is not None
+            and not (hasattr(t, "IsDead") and t.IsDead())
+        ]
+
+    def GetNumTargets(self) -> int:          return len(self._target_list)
 
     # ── Parent-aggregator predicates ───────────────────────────────────
     # WeaponSystem parents own their hardpoint emitters (PhaserBank,
@@ -743,6 +863,10 @@ class WeaponSystem(PoweredSubsystem):
         return 1
 
     def StartFiring(self, target=None, offset=None) -> None:
+        """Arms the tick (BC StartFiring reads no spread/skew state — §2.10).
+        The actual dispatch is update_weapons, pumped per frame by host_loop;
+        SetForceUpdate(1) + one immediate update makes a tap fire this frame
+        (SDK FireWeapons does exactly StartFiring + SetForceUpdate(1))."""
         if not self.IsOn():
             return
         # Disabled-weapons gate: when every child reports disabled (Project 2
@@ -756,37 +880,30 @@ class WeaponSystem(PoweredSubsystem):
         # ship can't detect — cloaked, nebula-hidden, or out of sensor range.
         if _target_undetectable(self, target):
             return
-        n = self.GetNumWeapons()
-        if n == 0:
+        # Engageability gate (per-class hook, e.g. PhaserSystem's global fire
+        # range): an out-of-range trigger must NOT latch _fire_held — an AI
+        # re-calls StartFiring every tick, and a latched-but-unengageable held
+        # state would flicker fire/stop each frame (the "ship's horn" loop).
+        if (target is not None and hasattr(self, "_can_engage")
+                and not self._can_engage(self.GetParentShip(), target)):
             return
-        # Resolve aim per-bank: the firing arc originates at each bank's
-        # mount Position, not the ship centre. See research doc § Bug F.
-        ship = self.GetParentShip()
-
-        start = self._next_emitter_index % n
-        for delta in range(n):
-            idx = (start + delta) % n
-            emitter = self.GetWeapon(idx)
-            if emitter is None:
-                continue
-            aim_world = (_resolve_bank_aim_world(emitter, target)
-                         if target is not None
-                         else _resolve_aim_world(ship, None))
-            if not _emitter_in_arc(emitter, ship, aim_world):
-                continue
-            if hasattr(emitter, "CanFire") and emitter.CanFire():
-                emitter.Fire(target, offset)
-                self._currently_firing.append(idx)
-                self._next_emitter_index = (idx + 1) % n
-                return
-        # No eligible emitter — silent no-op.
+        self._add_target(target)
+        self._held_target = target
+        self._held_offset = offset
+        self._fire_held = True
+        self.SetForceUpdate(1)
+        self.update_weapons(0.0)
 
     def StopFiring(self, *args) -> None:
-        for idx in self._currently_firing:
-            emitter = self.GetWeapon(idx)
-            if emitter is not None and hasattr(emitter, "StopFiring"):
-                emitter.StopFiring()
-        self._currently_firing = []
+        self._fire_held = False
+        self._held_target = None
+        self._held_offset = None
+        self._target_list = []
+        self._last_group_fired = -1
+        for i in range(self.GetNumWeapons()):
+            w = self.GetWeapon(i)
+            if w is not None and hasattr(w, "StopFiring"):
+                w.StopFiring()
 
     def StopFiringAtTarget(self, pTarget) -> None:
         """SDK Preprocessors.py:274/469 — alias for StopFiring() since
@@ -794,7 +911,13 @@ class WeaponSystem(PoweredSubsystem):
         self.StopFiring()
 
     def IsFiring(self) -> int:
-        return 1 if self._currently_firing else 0
+        if self._fire_held:
+            return 1
+        for i in range(self.GetNumWeapons()):
+            w = self.GetWeapon(i)
+            if w is not None and hasattr(w, "IsFiring") and w.IsFiring():
+                return 1
+        return 0
 
     def GetTarget(self):                          return self._target
     def SetTarget(self, target) -> None:          self._target = target
@@ -805,6 +928,121 @@ class WeaponSystem(PoweredSubsystem):
     # TacticalInterfaceHandlers.FireWeapons (PR 2) reads these.
     def GetNumWeapons(self) -> int:               return self.GetNumChildSubsystems()
     def GetWeapon(self, i: int):                  return self.GetChildSubsystem(i)
+
+    # ── BC tick engine (weapon-firing-mechanics.md §3.2/§3.3) ───────────────
+    # This IS the live dispatch path: StartFiring (above) arms the tick and
+    # host_loop._pump_held_weapons runs update_weapons once per armed system
+    # per frame.
+
+    # BC inter-shot delay threshold (TryFireWeapon, 0x00584E40).
+    FIRE_TIMER_THRESHOLD = 0.33
+
+    def try_fire_weapon(self, weapon, dt, target, offset) -> bool:
+        """TryFireWeapon (0x00584E40), §3.3. Plain bool — BC has no tri-state."""
+        if self._force_update:
+            weapon._fire_timer = self.FIRE_TIMER_THRESHOLD   # bypass this tick
+        else:
+            weapon._fire_timer = getattr(weapon, "_fire_timer", 0.0) + dt
+        if not weapon.IsFiring() and weapon._fire_timer < self.FIRE_TIMER_THRESHOLD:
+            return False
+        # Re-seed reads the PRE-EXISTING state: a continuously-firing weapon
+        # zeroes; everything else draws fresh. BC's draw distribution is
+        # unverified in the corpus — uniform(0, 0.33) is our choice.
+        if weapon.IsFiring():
+            weapon._fire_timer = 0.0
+        else:
+            weapon._fire_timer = random.uniform(0.0, self.FIRE_TIMER_THRESHOLD)
+        if not weapon.CanFire():
+            weapon.StopFiring()      # what makes a beam vanish on charge-out
+            return False
+        before = self._fired_counter(weapon)
+        result = weapon.Fire(target, offset)
+        if self._weapon_did_fire(weapon, result, before):
+            return True
+        # §3.3 step 6: clear target, retry against the system target list.
+        weapon._target = None
+        for entry in list(self._target_list):
+            if entry is None or (hasattr(entry, "IsDead") and entry.IsDead()):
+                continue
+            before = self._fired_counter(weapon)
+            result = weapon.Fire(entry, offset)
+            if self._weapon_did_fire(weapon, result, before):
+                return True
+        return False
+
+    @staticmethod
+    def _fired_counter(weapon):
+        """Stub-safe read of the test-fake `fired` shot counter.
+
+        NOT hasattr: TGObject.__getattr__ manufactures a truthy _Stub for any
+        unknown public name, so hasattr(weapon, "fired") is vacuously True on
+        every REAL weapon — `before` became a _Stub, `_weapon_did_fire`'s
+        counter comparison silently evaluated False, and every successful
+        discrete shot fell into the §3.3 step-6 retry and fired TWICE (seen
+        as a double ammo debit).  The stub-heatmap phantom lesson: our own
+        probes must read the instance dict, not hasattr."""
+        d = getattr(weapon, "__dict__", None)
+        return d.get("fired") if isinstance(d, dict) else None
+
+    @staticmethod
+    def _weapon_did_fire(weapon, result, before) -> bool:
+        """Success detection, in priority order: explicit True/False returned
+        by Fire (all production weapons since the tick rewire), a test fake's
+        `fired` counter increment, else IsFiring() (held beams)."""
+        if isinstance(result, bool):
+            return result
+        if before is not None:
+            return weapon.fired > before
+        return bool(weapon.IsFiring())
+
+    def update_weapons(self, dt) -> bool:
+        """UpdateWeapons (0x00584930), §3.2. Returns did_fire."""
+        did_fire = False
+        ship = self.GetParentShip()
+        if ship is not None and hasattr(ship, "IsDead") and ship.IsDead():
+            return False
+        self._prune_targets()
+        target = self._target_list[0] if self._target_list else None
+        offset = getattr(self, "_held_offset", None)
+        groups = self._active_chain_groups()
+        working = self._resolve_working_group()
+        start_group = working
+        # Round-robin base: captured ONCE before the group-retry loop, not
+        # re-read live. self._last_weapon_idx only mutates on a successful
+        # fire, and a successful fire always breaks out to the next tick
+        # (single-fire breaks the inner loop; multi-fire exhausts the group
+        # and `fired_this_group` stops group-advance) — so reading it live
+        # inside the delta loop double-counted the just-fired slot instead
+        # of advancing to the next group member.
+        base_idx = self._last_weapon_idx
+        while True:
+            self.SetGroupFireMode(working)
+            n = self.GetNumWeapons()
+            fired_this_group = False
+            for delta in range(1, n + 1):
+                idx = (base_idx + delta) % n if n else 0
+                weapon = self.GetWeapon(idx)
+                if weapon is None or not weapon.IsMemberOfGroup(working):
+                    continue
+                if self.try_fire_weapon(weapon, dt, target, offset):
+                    did_fire = fired_this_group = True
+                    self._last_weapon_idx = idx
+                    self._last_group_fired = working
+                    if self._single_fire:
+                        break
+                else:
+                    weapon._target = None      # ClearTarget, NOT a timer reset
+                    if self.GetNumTargets() == 0 and weapon.IsDumbFire():
+                        weapon.FireDumb(0, 1)
+            if fired_this_group or len(groups) <= 1:
+                break
+            # §3.2 step 7: advance to the next group in the chain, wrapping.
+            working = groups[(groups.index(working) + 1) % len(groups)]
+            if working == start_group:
+                self._last_group_fired = -1
+                break
+        self._force_update = False    # one-tick bypass, consumed
+        return did_fire
 
 
 class TorpedoAmmoType:
@@ -899,137 +1137,33 @@ class TorpedoSystem(WeaponSystem):
         # SetAmmoType(index) SELECTS a slot (mission/AI ammo switching);
         # it never writes here.  GetNumAmmoTypes counts populated slots.
         self._ammo_by_slot: dict = {}
-        # Selected torpedo spread: how many tubes fire per trigger.
-        # Single=1 (default), Dual=2, Quad=4.  Pure selection state — the
-        # firing path does not consult it yet (future work).
-        self._spread: int = 1
         # Selected ammo slot.  None == "lowest populated slot" (the historical
         # default); an int selects that slot when it is populated.  UI type
         # cycling (weapon_config.cycle_torpedo_type) drives this via
         # SetCurrentAmmoSlot / CycleAmmoType so both the readout and the
         # per-shot power cost track the chosen type.
         self._selected_slot = None
-
-    # ── Spread selection state ─────────────────────────────────────────────
-    # NOTE: the tube-count heuristic below is the v1 rule for "options the
-    # loadout can fire".  BC's authored FiringChainString / firing groups are
-    # a later refinement; until a body needs them, tube count is faithful.
-    def GetSpreadOptions(self) -> list:
-        """Spread counts this loadout can fire, derived from tube count.
-
-        Single (1) is always available.  Dual (2) needs >=2 tubes, Quad (4)
-        needs >=4 tubes.  Returned sorted ascending, e.g. [1], [1, 2] or
-        [1, 2, 4]."""
-        n = self.GetNumWeapons()
-        options = [1]
-        if n >= 2:
-            options.append(2)
-        if n >= 4:
-            options.append(4)
-        return options
-
-    def GetSpread(self) -> int:
-        """Current torpedo spread — tubes fired per trigger (Single=1,
-        Dual=2, Quad=4).  Defaults to Single."""
-        return self._spread
-
-    def SetSpread(self, n) -> None:
-        """Select the torpedo spread (Single=1 / Dual=2 / Quad=4).
-
-        Silently clamps to a supported option: if ``n`` is not in
-        GetSpreadOptions() the current value is left unchanged."""
-        n = int(n)
-        if n in self.GetSpreadOptions():
-            self._spread = n
+        # Ship-wide fire stagger (Task 7, audited): GAME time of the last
+        # torpedo launched by ANY tube on this system.  A fresh system inits
+        # to -1000.0 (same convention as TorpedoTube._last_fire_time) so the
+        # first shot always passes the 0.5s stagger gate.  Skew-fire tubes
+        # are exempt (TorpedoTube.CanFire checks IsSkewFire() first).
+        self._last_system_fire_time: float = -1000.0
 
     def StartFiring(self, target=None, offset=None) -> None:
-        """Fire GetSpread() torpedoes as a fan-out volley in one trigger.
+        """Arm the BC tick (base StartFiring) behind the ammo reserve gate.
 
-        Single(1) delegates to the base round-robin single shot (byte-identical
-        to the pre-spread path).  Dual(2)/Quad(4) pre-scan the eligible tubes,
-        clamp the count to how many are actually ready+in-arc, then fire the
-        first N with per-shot world divergence axes (±right / ±up) and a
-        _SPREAD_DELAY hold-before-homing so the volley splays then converges.
-        """
-        if not self.IsOn():
-            return
-        if _is_offline(self):
-            return
-        if _cloak_blocks_fire(self):
-            return
-        n = self.GetNumWeapons()
-        if n == 0:
-            return
-        ship = self.GetParentShip()
-
-        # Reserve gate: a finite ammo type (hardpoint-declared max) with no
-        # rounds left cannot fire.  Unlimited/undeclared types never gate, so
-        # the legacy firing path stays byte-identical.
+        A finite ammo type (hardpoint-declared max) with no rounds left cannot
+        fire; unlimited/undeclared types never gate.  The per-launch ammo debit
+        lives in TorpedoTube._spawn_torpedo (one round per torpedo actually
+        spawned).  Launches chain across tubes via firing_chain walk-out with
+        stagger delay, each firing straight out the tube's authored direction
+        (BC-faithful per §2.4.1), never aimed at a target."""
         ammo = self.GetCurrentAmmoType()
         finite = ammo is not None and not getattr(ammo, "_unlimited", True)
         if finite and ammo.GetAvailable() <= 0:
             return
-
-        # Pre-scan eligible tubes in round-robin order (same aim/arc/CanFire
-        # gates the base StartFiring applies per emitter).
-        eligible: list[int] = []
-        start = self._next_emitter_index % n
-        for delta in range(n):
-            idx = (start + delta) % n
-            emitter = self.GetWeapon(idx)
-            if emitter is None:
-                continue
-            aim_world = (_resolve_bank_aim_world(emitter, target)
-                         if target is not None
-                         else _resolve_aim_world(ship, None))
-            if not _emitter_in_arc(emitter, ship, aim_world):
-                continue
-            if hasattr(emitter, "CanFire") and emitter.CanFire():
-                eligible.append(idx)
-
-        effective = min(self.GetSpread(), len(eligible))
-        # Can't launch more torpedoes than are loaded for a finite type.
-        if finite:
-            effective = min(effective, ammo.GetAvailable())
-
-        # Torpedoes launched this trigger = growth of _currently_firing across
-        # the fire, whichever branch runs (base appends 1, spread appends N).
-        fired_before = len(self._currently_firing)
-
-        if effective <= 1:
-            # Straight single shot — unchanged.
-            super().StartFiring(target, offset)
-        else:
-            # World divergence axes from the ship rotation (column-vector
-            # convention: GetCol(0)=starboard, GetCol(2)=up).  A shim rotation
-            # (not a real TGMatrix3) has no usable axes → fall back to a single
-            # straight shot rather than crash.
-            rot = ship.GetWorldRotation() if (
-                ship is not None and hasattr(ship, "GetWorldRotation")) else None
-            if not isinstance(rot, TGMatrix3):
-                super().StartFiring(target, offset)
-            else:
-                right = rot.GetCol(0)
-                up = rot.GetCol(2)
-                axes = [
-                    right,
-                    TGPoint3(-right.x, -right.y, -right.z),
-                    up,
-                    TGPoint3(-up.x, -up.y, -up.z),
-                ]
-                for k in range(effective):
-                    idx = eligible[k]
-                    emitter = self.GetWeapon(idx)
-                    emitter.Fire(target, offset,
-                                 spread_unit=axes[k], homing_delay=_SPREAD_DELAY)
-                    self._currently_firing.append(idx)
-                    self._next_emitter_index = (idx + 1) % n
-
-        # Expend one round of the current type per torpedo actually launched.
-        if finite:
-            consumed = len(self._currently_firing) - fired_before
-            if consumed > 0:
-                ammo.AddAvailable(-consumed)
+        super().StartFiring(target, offset)
 
     def GetNumAmmoTypes(self) -> int:
         return len(self._ammo_by_slot)
@@ -1163,6 +1297,41 @@ class TorpedoSystem(WeaponSystem):
             idx = 0
         self._selected_slot = slots[(idx + 1) % len(slots)]
 
+    def SetSkewFire(self, flag) -> None:
+        """Pure broadcast to child tubes (0x0057B1C0) — NO system-level
+        state; audited §2.10. Dormant in stock play (zero SDK call sites)."""
+        for i in range(self.GetNumWeapons()):
+            w = self.GetWeapon(i)
+            if w is not None and hasattr(w, "SetSkewFire"):
+                w.SetSkewFire(flag)
+
+    def SetFiringChainMode(self, n) -> None:
+        """Wire BC's INTENDED torpedo-spread <-> skew-fire connection
+        (2026-07-15 decomp update).
+
+        The BC SDK's Model Property Editor documentation (modelpropertyeditor
+        .html:255) says of a torpedo tube's Right vector: "the right vector
+        will be used to change the firing direction slightly if torpedoes
+        are fired in non-single-fire mode" — i.e. selecting a non-Single
+        firing chain was ALWAYS meant to arm skew fire. Retail shipped this
+        disconnected: the intended hook is a vtable-only salvo setter
+        (0x0057B1F0) with zero callers anywhere in stbc.exe. Dauntless
+        deliberately wires the intended design over the shipped bug: a
+        non-Single chain fans a true simultaneous salvo (skew tubes are
+        exempt from the 0.5s ship-wide stagger — see TorpedoTube.CanFire —
+        so every member of the active chain group launches in the same
+        tick, geometry from each tube's authored Right vector); Single
+        restores BC's shipped walk-out.
+
+        [0] is BOTH the chainless fallback and the SDK-documented "group of
+        all weapons, single-firing" (i.e. authored Single) — either way it
+        means single-fire, so it's the one case that must clear skew rather
+        than set it.
+        """
+        super().SetFiringChainMode(n)
+        groups = self._active_chain_groups()
+        self.SetSkewFire(0 if groups == [0] else 1)
+
 
 # Global phaser fire-range gate. Reconstructed from disassembly:
 # Appc.dll exposes PhaserBank_GetMaxPhaserRange (sdk/.../App.py:11511) as
@@ -1177,8 +1346,9 @@ PHASER_MAX_RANGE_GU = 700.0
 # Tractor-beam engagement range.  BC's tractor emitters carry a per-bank
 # MaxDamageDistance ≈ 118-120 GU (galaxy.py AftTractor2 = 118, vorcha = 120);
 # unlike phasers there is no single engine-wide constant, so we gate the whole
-# system on a representative 120 GU.  A target drifting past this ends the held
-# beam (retry_held_fire calls StopFiring via _can_engage), matching phasers.
+# system on a representative 120 GU.  A target drifting past this drops the
+# beam (update_weapons re-checks _can_engage per frame; the ENGAGE intent
+# persists so the beam re-acquires when back in range).
 TRACTOR_MAX_RANGE_GU = 120.0
 
 
@@ -1237,26 +1407,24 @@ def _target_within_range_gu(ship, target, max_range_gu: float) -> bool:
 
 
 class _HeldFireWeaponSystem(WeaponSystem):
-    """Shared held-fire dispatch for energy-emitter aggregators
-    (PhaserSystem, PulseWeaponSystem).
+    """Energy-emitter aggregator base (PhaserSystem, PulseWeaponSystem).
 
-    Holds the SingleFire mode and the held-trigger state, and implements
-    StartFiring / StopFiring / retry_held_fire / _dispatch_one_or_all.  The
-    per-frame combat tick calls retry_held_fire so banks/cannons re-engage
-    as they recharge while the trigger stays down.
+    Since the BC tick rewire the shared dispatch lives on WeaponSystem
+    (StartFiring arms the tick, host_loop._pump_held_weapons runs
+    update_weapons per frame).  This class only keeps the SingleFire mode
+    and the _can_engage fire-range hook.
 
-    SingleFire(1): one eligible emitter fires per trigger, round-robin via
-    _next_emitter_index.  SingleFire(0): every eligible emitter engages.
+    SingleFire(1): one eligible emitter fires per tick, round-robin via
+    _last_weapon_idx.  SingleFire(0): the tick walks the whole group.
 
     Subclasses override _can_engage(ship, target) to add a fire-range gate
     (phasers do; pulse weapons don't — a bolt's lifetime bounds its range).
+    StartFiring consults it (no latch out of range) and the host_loop pump
+    re-checks it per frame (held burst stops when the target drifts out).
     """
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._single_fire: int = 0
-        self._fire_held: bool = False
-        self._held_target = None
-        self._held_offset = None
 
     def GetSingleFire(self) -> int:                 return self._single_fire
     def SetSingleFire(self, v) -> None:             self._single_fire = int(v)
@@ -1266,114 +1434,18 @@ class _HeldFireWeaponSystem(WeaponSystem):
         return True
 
     def StartFiring(self, target=None, offset=None) -> None:
-        if not self.IsOn() or target is None:
+        """No-target bail (regression guard): SDK FireWeapons dispatches
+        pShip.GetTarget(), which is legitimately None (no target selected).
+        Energy weapons (phaser/pulse/tractor) have nothing to aim/fire at
+        with no target — latching _fire_held here left host_loop's per-frame
+        damage loop stopping each bank (target is None) while the AI/UI
+        re-called StartFiring every tick, producing a fire/stop flicker with
+        SFX spam (and, for pulse weapons, real forward bolts with no
+        target). Torpedo dumbfire is unaffected: it lives on the WeaponSystem
+        base, which legitimately arms with target=None."""
+        if target is None:
             return
-        # Disabled-weapons gate: parent aggregates child IsDisabled (Project 2).
-        # When all emitters are disabled the parent flips disabled and we bail.
-        if _is_offline(self):
-            return
-        # Cloak gate: a cloaked / cloaking ship cannot fire (BC rule).
-        if _cloak_blocks_fire(self):
-            return
-        # Detectability gate: don't start a held burst (nor its warm-up SFX) at
-        # a target the ship can't detect. See _target_undetectable.
-        if _target_undetectable(self, target):
-            return
-        ship = self.GetParentShip()
-        if not self._can_engage(ship, target):
-            return
-        self._fire_held = True
-        self._held_target = target
-        self._held_offset = offset
-        self._currently_firing = []
-        self._dispatch_one_or_all(target, offset, ship)
-
-    def StopFiring(self, *args) -> None:
-        self._fire_held = False
-        self._held_target = None
-        self._held_offset = None
-        super().StopFiring(*args)
-
-    def retry_held_fire(self) -> None:
-        """Re-attempt firing while the trigger is held.  In SingleFire mode
-        only re-fires when no emitter is currently firing — preserving the
-        one-at-a-time cadence (a no-op for discrete pulse cannons, which
-        never stay IsFiring).  In multi-fire mode tops up any emitter that
-        climbed back past its CanFire threshold."""
-        if not self._fire_held or self._held_target is None:
-            return
-        if not self.IsOn():
-            return
-        # Disabled-weapons gate: system flipped disabled mid-burst — stop
-        # cleanly (clears _fire_held + walks _currently_firing).
-        if _is_offline(self):
-            self.StopFiring()
-            return
-        ship = self.GetParentShip()
-        target = self._held_target
-        if hasattr(target, "IsDead") and target.IsDead():
-            self.StopFiring()
-            return
-        # Detectability gate: the target cloaked / slipped into a nebula / left
-        # sensor range mid-burst — stop the held state entirely so the warm-up
-        # SFX doesn't restart every tick (the "ship's horn" loop). Re-engaging
-        # requires a fresh trigger (or a fresh AI StartFiring once detectable).
-        if _target_undetectable(self, target):
-            self.StopFiring()
-            return
-        if not self._can_engage(ship, target):
-            # Target drifted out of range during a held burst — stop the held
-            # state entirely; re-engaging requires a fresh trigger.
-            self.StopFiring()
-            return
-        if self._single_fire:
-            # If any emitter is still firing, don't dispatch another — wait
-            # for the active one to deplete before the round-robin advances.
-            for i in range(self.GetNumWeapons()):
-                emitter = self.GetWeapon(i)
-                if emitter is not None and emitter.IsFiring():
-                    return
-        self._dispatch_one_or_all(target, self._held_offset, ship)
-
-    def _dispatch_one_or_all(self, target, offset, ship) -> None:
-        """SingleFire: fire one eligible emitter starting from the round-robin
-        cursor, then advance the cursor.  Otherwise fire every eligible
-        emitter simultaneously.
-
-        Aim is resolved per-emitter via _resolve_bank_aim_world so each
-        emitter's arc gate sees the direction from its own mount Position
-        to the target — see research doc § Bug F.
-        """
-        n = self.GetNumWeapons()
-        if n == 0:
-            return
-        if self._single_fire:
-            start = self._next_emitter_index % n
-            for delta in range(n):
-                idx = (start + delta) % n
-                emitter = self.GetWeapon(idx)
-                if emitter is None:
-                    continue
-                aim_world = _resolve_bank_aim_world(emitter, target)
-                if not _emitter_in_arc(emitter, ship, aim_world):
-                    continue
-                if hasattr(emitter, "CanFire") and emitter.CanFire():
-                    emitter.Fire(target, offset)
-                    self._currently_firing.append(idx)
-                    self._next_emitter_index = (idx + 1) % n
-                    return
-            return
-        # Multi-emitter — every eligible one engages.
-        for i in range(n):
-            emitter = self.GetWeapon(i)
-            if emitter is None:
-                continue
-            aim_world = _resolve_bank_aim_world(emitter, target)
-            if not _emitter_in_arc(emitter, ship, aim_world):
-                continue
-            if hasattr(emitter, "CanFire") and emitter.CanFire():
-                emitter.Fire(target, offset)
-                self._currently_firing.append(i)
+        super().StartFiring(target=target, offset=offset)
 
 
 class PhaserSystem(_HeldFireWeaponSystem):
@@ -1391,7 +1463,10 @@ class PhaserSystem(_HeldFireWeaponSystem):
         self._aimed_weapon: int = 0
 
     def SetPowerLevel(self, level) -> None:
-        self._power_level = int(level)
+        # BC ships an uninitialized-stack-damage bug for out-of-range levels
+        # (the audit's own recommendation is to clamp on write rather than
+        # reproduce the corruption) — clamp to the three defined levels.
+        self._power_level = max(0, min(2, int(level)))
 
     def GetPowerLevel(self) -> int:
         return self._power_level
@@ -1421,11 +1496,11 @@ class PhaserSystem(_HeldFireWeaponSystem):
 class PulseWeaponSystem(_HeldFireWeaponSystem):
     """Pulse-weapon (disruptor/cannon) aggregator.
 
-    Inherits the held-fire dispatch from _HeldFireWeaponSystem.  Unlike
-    PhaserSystem its emitters fire discrete projectile bolts and it keeps the
-    base's no-op _can_engage (no fire-range gate — a bolt's lifetime bounds
-    its range, so the only fire gates are arc + charge + cooldown).  Held-fire
-    is driven per-frame by retry_held_fire from host_loop._advance_combat.
+    Rides the shared BC tick (WeaponSystem.StartFiring arms, host_loop's
+    pump runs update_weapons per frame).  Unlike PhaserSystem its emitters
+    fire discrete projectile bolts and it keeps the base's no-op _can_engage
+    (no fire-range gate — a bolt's lifetime bounds its range, so the only
+    fire gates are arc + charge + cooldown).
     """
     pass
 
@@ -1433,11 +1508,15 @@ class PulseWeaponSystem(_HeldFireWeaponSystem):
 class TractorBeamSystem(_HeldFireWeaponSystem):
     """Tractor-beam aggregator.
 
-    Shares the held-fire dispatch with PhaserSystem / PulseWeaponSystem: a
-    tractor is a UI *toggle* (StartFiring = engage, StopFiring = toggle-off),
-    and retry_held_fire (driven from host_loop._advance_combat) sustains the
-    beam while the target stays in range.  The hardpoints set SingleFire(1),
-    so the SingleFire branch keeps exactly one beam locked on the target.
+    A tractor is a UI *toggle* (StartFiring = engage, StopFiring =
+    toggle-off).  Unlike phasers/pulse it does NOT ride the generic BC tick:
+    its per-frame maintenance (update_weapons below) keeps the ENGAGE intent
+    (`_fire_held`) alive even when the beam can't currently grip — shields
+    up, out of range, out of arc — and re-acquires automatically when the
+    geometry allows.  `_pump_self_managed` tells host_loop's pump to call
+    update_weapons directly instead of hard-stopping via the generic
+    `_can_engage` / detectability gates (which would kill the intent).
+    The hardpoints set SingleFire(1), so exactly one beam locks the target.
 
     Unlike phasers/pulse, a firing tractor does NOT auto-stop on charge
     depletion (TractorBeam.UpdateCharge sustains it), and per frame
@@ -1446,6 +1525,9 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     HOLD world-point / TOW body-frame offset); it is invalidated on StopFiring
     and on any mode change.
     """
+    # host_loop._pump_held_weapons: skip the generic hard-stop gates and hand
+    # the frame straight to update_weapons (it owns its own stop conditions).
+    _pump_self_managed = True
     # q10 ground truth (tools/probes/results/q10_battery_drain.txt): the tractor
     # is a DIRECT main-battery siphon — it bypasses the conduit budget and is
     # unscaled by the power slider (measured 600/s flat with sliders at 1.25).
@@ -1502,28 +1584,34 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         """The persistent toggle *intent*, independent of the instantaneous
         IsFiring() beam state.  The HUD / F2 menu tractor toggle reflects THIS:
         while engaged the beam auto-fires whenever the target is in range (and
-        re-acquires each frame via retry_held_fire), so the button stays "On"
+        re-acquires each frame via update_weapons), so the button stays "On"
         even if the beam momentarily isn't gripping."""
         return 1 if self._fire_held else 0
 
     def StartFiring(self, target=None, offset=None) -> None:
         """Record the held ENGAGE intent even when the target isn't immediately
-        grippable, so retry_held_fire re-acquires the beam when the geometry
-        allows.  (Mirrors the base _HeldFireWeaponSystem.StartFiring but records
-        intent BEFORE the engageability check instead of bailing.)"""
+        grippable, so update_weapons re-acquires the beam when the geometry
+        allows.  (Mirrors WeaponSystem.StartFiring but records intent BEFORE
+        the engageability check instead of bailing.)"""
         if not self.IsOn() or target is None:
             return
         if _is_offline(self):
             return
         if _cloak_blocks_fire(self):
             return
+        self._add_target(target)
         self._fire_held = True
         self._held_target = target
         self._held_offset = offset
         ship = self.GetParentShip()
         if self._can_engage(ship, target):
-            self._currently_firing = []
-            self._dispatch_one_or_all(target, offset, ship)
+            self._engage_beam(target, offset, ship)
+
+    def IsFiring(self) -> int:
+        """Instantaneous BEAM state only — deliberately NOT OR'd with
+        `_fire_held` like the base: the engaged-but-not-gripping intent is
+        surfaced separately via IsEngaged() (the HUD toggle reads that)."""
+        return 1 if self._any_child_firing() else 0
 
     def _can_engage(self, ship, target) -> bool:
         # Range gate AND shield gate: a tractor grips only targets whose shields
@@ -1531,28 +1619,30 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         return (_target_within_range_gu(ship, target, TRACTOR_MAX_RANGE_GU)
                 and _target_tractorable(target))
 
-    def retry_held_fire(self) -> None:
-        """Per-frame held-fire maintenance with arc/shield re-acquisition.
+    def update_weapons(self, dt=0.0) -> bool:
+        """Per-frame held-fire maintenance with arc/shield re-acquisition
+        (the tractor's whole tick — replaces the base BC group walk; was
+        retry_held_fire before the tick rewire).
 
-        Unlike the base (which drops the whole held state when the target leaves
-        range), a tractor stays ENGAGED until the player toggles it off: if the
-        firing emitter swings out of arc on a tight turn — or the target raises
-        shields / drifts out of range — the beam switches off but `_fire_held`
-        is kept, so it re-fires automatically from any in-arc emitter the moment
-        the geometry allows again.
+        Unlike phasers/pulse (whose held burst hard-stops when the target
+        leaves range), a tractor stays ENGAGED until the player toggles it
+        off: if the firing emitter swings out of arc on a tight turn — or the
+        target raises shields / drifts out of range — the beam switches off
+        but `_fire_held` is kept, so it re-fires automatically from any
+        in-arc emitter the moment the geometry allows again.
         """
         if not self._fire_held or self._held_target is None:
-            return
+            return False
         if not self.IsOn():
-            return
+            return False
         if _is_offline(self):
             self.StopFiring()           # system disabled — fully disengage
-            return
+            return False
         ship = self.GetParentShip()
         target = self._held_target
         if hasattr(target, "IsDead") and target.IsDead():
             self.StopFiring()           # target gone — fully disengage
-            return
+            return False
         engageable = self._can_engage(ship, target)   # range + shields
         # Drop any emitter that can no longer hold the beam (out of range /
         # shields up / rotated out of arc).  Keep _fire_held so it re-acquires.
@@ -1563,18 +1653,50 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
             aim = _resolve_bank_aim_world(em, target)
             if (not engageable) or (not _emitter_in_arc(em, ship, aim)):
                 em.StopFiring()
-                try:
-                    self._currently_firing.remove(i)
-                except ValueError:
-                    pass
         if not engageable:
-            return
+            return False
         # Re-dispatch one eligible in-arc emitter if none is currently firing.
         for i in range(self.GetNumWeapons()):
             em = self.GetWeapon(i)
             if em is not None and em.IsFiring():
-                return
-        self._dispatch_one_or_all(target, self._held_offset, ship)
+                return False
+        return self._engage_beam(target, self._held_offset, ship)
+
+    def _engage_beam(self, target, offset, ship) -> bool:
+        """Fire one eligible in-arc emitter (SingleFire round-robin via
+        _next_emitter_index) or every eligible emitter (multi-fire).  This is
+        the old shared `_dispatch_one_or_all` dispatch, kept tractor-local:
+        beams are sustained grips, not the discrete BC tick cadence."""
+        n = self.GetNumWeapons()
+        if n == 0:
+            return False
+        if self._single_fire:
+            start = self._next_emitter_index % n
+            for delta in range(n):
+                idx = (start + delta) % n
+                emitter = self.GetWeapon(idx)
+                if emitter is None:
+                    continue
+                aim_world = _resolve_bank_aim_world(emitter, target)
+                if not _emitter_in_arc(emitter, ship, aim_world):
+                    continue
+                if hasattr(emitter, "CanFire") and emitter.CanFire():
+                    emitter.Fire(target, offset)
+                    self._next_emitter_index = (idx + 1) % n
+                    return True
+            return False
+        fired = False
+        for i in range(n):
+            emitter = self.GetWeapon(i)
+            if emitter is None:
+                continue
+            aim_world = _resolve_bank_aim_world(emitter, target)
+            if not _emitter_in_arc(emitter, ship, aim_world):
+                continue
+            if hasattr(emitter, "CanFire") and emitter.CanFire():
+                emitter.Fire(target, offset)
+                fired = True
+        return fired
 
     def StopFiring(self, *args) -> None:
         self._engage_state = None
@@ -1585,7 +1707,8 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
     """Individual phaser emitter under a parent PhaserSystem
     (WeaponSystemProperty WST_PHASER).  Charge fields populated by Pass 4
     from the parent PhaserProperty (galaxy.py:209-214 for typical values).
-    Inherits Fire/CanFire/StopFiring/UpdateCharge from the mixin.
+    Inherits CanFire/StopFiring/UpdateCharge from the mixin; Fire wraps the
+    mixin's implementation to post ET_WEAPON_FIRED (Task 10).
     """
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -1594,6 +1717,18 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
         self._target = None
         self._target_offset = None
 
+    def Fire(self, target=None, offset=None) -> bool:
+        """Wraps the shared beam-fire mixin to post ET_WEAPON_FIRED on the
+        was-not-firing edge — the same edge the mixin already uses for the
+        SFX one-shot (Task 10, audited §1.6/§6; spec §7). TractorBeam and
+        PulseWeapon do not post this event yet — out of scope for the
+        "phaser safe group"."""
+        was_firing = self._firing
+        fired = _EnergyWeaponFireMixin.Fire(self, target, offset)
+        if fired and not was_firing:
+            _post_weapon_fired(self)
+        return fired
+
     def GetMaxCharge(self) -> float:                return self._max_charge
     def GetMinFiringCharge(self) -> float:          return self._min_firing_charge
     def GetNormalDischargeRate(self) -> float:      return self._normal_discharge_rate
@@ -1601,7 +1736,15 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
     def GetChargeLevel(self) -> float:              return self._charge_level
 
     def GetChargePercentage(self) -> float:
+        """0.0 when the parent system is off or this bank is disabled
+        (Task 10, audited §1.6/§7.4) — otherwise the WeaponsDisplay would
+        keep showing a charge bar for a bank that cannot fire."""
         if self._max_charge <= 0.0:
+            return 0.0
+        parent = self.GetParentSubsystem()
+        if parent is not None and not parent.IsOn():
+            return 0.0
+        if self.IsDisabled():
             return 0.0
         return self._charge_level / self._max_charge
 
@@ -1684,45 +1827,48 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     # Pulse cannons fire projectile bolts, not held beams: Fire spawns one
     # bolt, dumps accumulated charge, and starts a per-shot cooldown. There
     # is no looping SFX and _firing never stays True — so the mixin's
-    # UpdateCharge always takes the RECHARGE branch (see below).
-
-    # Re-arm at exactly MinFiringCharge — no phaser-style headroom. Stock
-    # pulse cannons have a tiny charge margin (BoP: MaxCharge 3.8,
-    # MinFiringCharge 3.6); the phaser default (0.20·MaxCharge) would push
-    # the refire threshold to 4.36 > MaxCharge, so the cannon could fire
-    # exactly once and never re-arm. For pulse weapons the per-shot cooldown
-    # (SetCooldownTime, BoP 0.2s) is the anti-flutter mechanism, not charge
-    # hysteresis — so RechargeRate alone governs cadence (~9s from empty).
-    REFIRE_HEADROOM_FRACTION = 0.0
+    # CanFire always takes the ">= MinFiringCharge" branch (never the
+    # ">0 sustain" branch, since _firing is always False here) and
+    # UpdateCharge always takes the RECHARGE branch (see below). Re-arm is
+    # therefore already "at exactly MinFiringCharge, no headroom" (Task 10,
+    # audited §1.6) — the per-shot cooldown (SetCooldownTime, BoP 0.2s) is
+    # the anti-flutter mechanism, not charge hysteresis.
 
     def CanFire(self) -> int:
         if self._cooldown_remaining > 0.0:
             return 0
         return _EnergyWeaponFireMixin.CanFire(self)
 
-    def Fire(self, target=None, offset=None) -> None:
+    def Fire(self, target=None, offset=None) -> bool:
+        """Returns True when a bolt launched — a discrete shooter reports
+        IsFiring() False right after a successful shot, so the tick's
+        try_fire_weapon needs the explicit bool (else its §3.3 step-6 retry
+        would double-fire every successful shot)."""
         if not self.CanFire():
-            return
+            return False
+        if not self._aim_in_arc(target):
+            return False
         prop = self.GetProperty()
         script = prop.GetModuleName() if (prop is not None and hasattr(prop, "GetModuleName")) else ""
         if not script:
-            return
+            return False
         import importlib
         try:
             mod = importlib.import_module(script)
         except ImportError:
-            return
+            return False
         _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor())
         # Discrete drain: dump accumulated charge + start cooldown. No held beam.
         self._charge_level = 0.0
         self._cooldown_remaining = self.GetCooldownTime()
-        self._armed = False  # re-arms in UpdateCharge once past the refire threshold
+        return True
 
     def UpdateCharge(self, dt: float) -> None:
         if self._cooldown_remaining > 0.0:
             self._cooldown_remaining = max(0.0, self._cooldown_remaining - dt)
         # _firing stays False for pulse weapons, so the mixin takes the
-        # RECHARGE branch and re-arms via the existing hysteresis threshold.
+        # RECHARGE branch; CanFire re-arms at exactly MinFiringCharge (no
+        # headroom — see the class docstring above).
         _EnergyWeaponFireMixin.UpdateCharge(self, dt)
         # Drive the charge watcher with the charge FRACTION so
         # Conditions/ConditionPulseReady.py fires its ET_CHARGE_TOGGLE
@@ -1774,10 +1920,10 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
         A tractor holds CONTINUOUSLY while engaged (you can pin a ship
         indefinitely), so a firing tractor must not deplete to 0 and stop the
         way a phaser bank does.  While firing we drain slowly toward — but
-        never below — MinFiringCharge (so the beam stays armed and CanFire
-        keeps returning true), gated by parent power: if the line goes down
-        the beam drops.  When idle we fall back to the mixin's normal
-        recharge + re-arm hysteresis.
+        never below — MinFiringCharge (so charge stays ``> 0`` and the
+        mixin's CanFire sustain branch keeps returning true), gated by
+        parent power: if the line goes down the beam drops.  When idle we
+        fall back to the mixin's normal condition-scaled recharge.
         """
         if self._firing:
             parent = self.GetParentSubsystem()
@@ -1800,15 +1946,81 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
                 self._charge_level = max(
                     floor, self._charge_level - self._normal_discharge_rate * dt
                 )
-            # _armed stays set while sustaining — no depletion auto-stop.
+            # Charge stays > 0 while sustaining — no depletion auto-stop.
             return
         # Idle fall-through note: an idle TractorBeamSystem doesn't want power
         # (_wants_power False -> factor zeroed by the pump), so the mixin's
         # factor-scaled recharge is 0 while idle. Harmless by design: the firing
-        # sustain path never drains below _min_firing_charge, StopFiring keeps
-        # _armed set, and CanFire passes at the floor — charge above the floor
-        # has no gameplay effect for tractors.
+        # sustain path never drains below _min_firing_charge, so CanFire's
+        # start-branch (>= MinFiringCharge) passes at the floor — charge above
+        # the floor has no gameplay effect for tractors.
         super().UpdateCharge(dt)
+
+
+# ── Torpedo fire gates (Task 7, audited) ────────────────────────────────────
+# BC's targeted torpedo fire resolves a static aim point (no lead/intercept)
+# and rejects it outside a square +/-30 degree cone about the tube's authored
+# Direction, checked yaw and pitch INDEPENDENTLY.  Neither step touches the
+# launch trajectory itself (that stays BC-faithful per Task 6: straight out
+# the tube's Direction, aim never steers the shot) -- they are pure FIRE
+# gates: fail either and the tube posts ET_WEAPON_FIRE_FAILED and does not
+# launch at all.
+
+_TORPEDO_CONE_HALF_ANGLE = 0.5235984   # BC's literal, NOT math.radians(30)
+
+
+def _resolve_torpedo_aim_point(tube, target):
+    """0x005852A0: target world pos + tube aim offset scaled by target world
+    scale and rotated by target world rotation. None => unresolvable (the
+    caller posts ET_WEAPON_FIRE_FAILED). No speed/velocity/intercept enters."""
+    if target is None or not hasattr(target, "GetWorldLocation"):
+        return None
+    if hasattr(target, "IsDead") and target.IsDead():
+        return None
+    pos = target.GetWorldLocation()
+    offset = getattr(tube, "_target_offset", None)
+    if not isinstance(offset, TGPoint3):
+        return TGPoint3(pos.x, pos.y, pos.z)
+    scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
+    o = TGPoint3(offset.x * scale, offset.y * scale, offset.z * scale)
+    rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
+    if isinstance(rot, TGMatrix3):
+        o.MultMatrixLeft(rot)
+    return TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z)
+
+
+def _in_torpedo_cone(tube, ship, aim_point) -> bool:
+    """0x0057DA90->0x0057DC10: square +/-30 degree cone about the tube
+    direction, yaw and pitch checked INDEPENDENTLY via atan2; forward must
+    be > 0.  No occlusion test -- firing through an asteroid is legal
+    (audited)."""
+    mount = tube._emitter_world_position()
+    to_aim = aim_point - mount
+    if to_aim.Length() < 1e-6:
+        return False
+    d = tube.GetDirection() if hasattr(tube, "GetDirection") else None
+    r = tube.GetRight() if hasattr(tube, "GetRight") else None
+    if not isinstance(d, TGPoint3):
+        d = TGPoint3(0.0, 1.0, 0.0)
+    if not isinstance(r, TGPoint3):
+        r = TGPoint3(1.0, 0.0, 0.0)
+    u = TGPoint3(d.y * r.z - d.z * r.y,      # up = dir x right (local)
+                 d.z * r.x - d.x * r.z,
+                 d.x * r.y - d.y * r.x)
+    rot = ship.GetWorldRotation() if (ship is not None
+              and hasattr(ship, "GetWorldRotation")) else None
+    basis = []
+    for v in (d, r, u):
+        w = TGPoint3(v.x, v.y, v.z)
+        if isinstance(rot, TGMatrix3):
+            w.MultMatrixLeft(rot)
+        basis.append(w)
+    fwd = basis[0].Dot(to_aim)
+    if fwd <= 0.0:
+        return False
+    yaw = _math.atan2(abs(basis[1].Dot(to_aim)), fwd)
+    pitch = _math.atan2(abs(basis[2].Dot(to_aim)), fwd)
+    return yaw <= _TORPEDO_CONE_HALF_ANGLE and pitch <= _TORPEDO_CONE_HALF_ANGLE
 
 
 class TorpedoTube(Weapon):
@@ -1835,6 +2047,8 @@ class TorpedoTube(Weapon):
         self._max_ready: int = 0
         # One slot per MaxReady. Value = game time cooling began; _SLOT_LOADED = ready.
         self._reload_timers: list[float] = []
+        # Skew-fire flag — persistent across firing, set by TorpedoSystem or mission.
+        self._skew_fire: bool = False
 
     def _resize_slots(self) -> None:
         """(Re)build the per-slot reload array to MaxReady, all slots loaded.
@@ -1944,19 +2158,37 @@ class TorpedoTube(Weapon):
 
     def CanFire(self) -> int:
         """BC torpedo CanFire (combat-and-damage.md:822-826):
-        powered AND num_ready > 0 AND the ImmediateDelay refire gate has
-        expired AND ammo is available.
+        powered AND num_ready > 0 AND the SHIP-WIDE 0.5s stagger has expired
+        AND this tube is not itself disabled (spec §3.3 audited gate 2) AND
+        the ImmediateDelay refire gate has expired AND ammo is available.
 
         ImmediateDelay is a REFIRE GATE, not a fire->launch latency: it prevents
         rapid double-fires. Hardpoint values run 0.25s (galaxy) to 5.0s.
         The volley-level ammo reserve gate also lives on the parent
         TorpedoSystem.StartFiring; this per-tube check additionally covers
         direct CanFire() callers that bypass StartFiring.
+
+        The stagger gate (Task 7, audited) throttles the WHOLE SYSTEM to one
+        launch per 0.5s of game time: a single tap that would otherwise fire
+        every ready tube in the working group in the same tick now only
+        launches the first one (it stamps parent._last_system_fire_time; the
+        rest fail this gate within the same tick since gameTime delta is 0).
+        Skew-fire tubes are exempt — they're the deliberately-desynced spread
+        pattern, not the ship-wide volley.
         """
         parent = self.GetParentSubsystem()
         if parent is None or not parent.IsOn():
             return 0
+        if (not self.IsSkewFire() and parent is not None
+                and _game_time() - getattr(parent, "_last_system_fire_time", -1000.0) <= 0.5):
+            return 0
         if self._num_ready <= 0:
+            return 0
+        # Audited gate 2 (spec §3.3): this tube must not itself be disabled
+        # (condition damaged at/below DisabledPercentage). Distinct from the
+        # PARENT power-on check above — a healthy powered-on TorpedoSystem
+        # can still have individual tubes crippled by hull damage.
+        if self.IsDisabled():
             return 0
         if _game_time() - self._last_fire_time < self._immediate_delay:
             return 0
@@ -1964,33 +2196,116 @@ class TorpedoTube(Weapon):
             return 0
         return 1
 
-    def Fire(self, target=None, offset=None, *,
-             spread_unit=None, homing_delay=0.0) -> None:
+    def Fire(self, target=None, offset=None) -> bool:
+        """Returns True when a torpedo launched — discrete shooter, so the
+        tick's try_fire_weapon needs the explicit bool (see PulseWeapon.Fire).
+
+        Task 7 audited gates, applied AFTER CanFire (power/stagger/reload/
+        ammo) passes:
+
+          * targeted path (``target`` is not None): resolve the static aim
+            point (no lead — Task 7 audited), then the +/-30 degree square
+            cone about the tube's Direction.  Either failure posts
+            ET_WEAPON_FIRE_FAILED and returns False WITHOUT consuming a
+            round or starting the stagger/reload cooldown — a rejected shot
+            never fires.  Only on success does this stamp ``_target``/
+            ``_target_offset`` — "Fire stamps the homing state"; a
+            downstream FireDumb()/dumb call (target=None) never does, so
+            _spawn_projectile's homing lookup (reading THIS tube's
+            ``_target``) stays None for a dumbfire.
+          * dumb path (``target`` is None): straight to bookkeeping, no aim
+            resolve, no cone — matches BC (FireDumb has no target to gate).
+        """
         if not self.CanFire():
-            return
+            return False
+        if target is not None:
+            aim_point = _resolve_torpedo_aim_point(self, target)
+            if aim_point is None:
+                self._broadcast_weapon_fire_failed()
+                return False
+            if not _in_torpedo_cone(self, self._climb_to_ship(), aim_point):
+                self._broadcast_weapon_fire_failed()
+                return False
+            self._target = target
+            self._target_offset = offset
+        else:
+            # Dumb path: clear any stale lock left by a previous targeted
+            # shot, so _spawn_projectile's homing lookup (reading this
+            # tube's own _target) can't home a dumbfire on a target the
+            # player no longer has selected.
+            self._target = None
+            self._target_offset = None
         self._firing = True
-        self._target = target
-        self._target_offset = offset
         now = _game_time()
         self._num_ready -= 1
         self._last_fire_time = now
+        parent = self.GetParentSubsystem()
+        if parent is not None:
+            parent._last_system_fire_time = now
         self._start_slot_cooldown(now)
 
-        # PR 2b: spawn the projectile via the bound SDK script.  spread_unit /
-        # homing_delay are only non-default when the parent TorpedoSystem is
-        # firing a Dual/Quad spread volley.
-        self._spawn_torpedo(spread_unit=spread_unit, homing_delay=homing_delay)
+        self._spawn_torpedo()
 
-        # Discrete-shot — auto-stop after launch.  WeaponSystem's
-        # _currently_firing list still tracks us until StopFiring is called.
+        # BC's order (audited): ET_TORPEDO_FIRED (posted inside _spawn_torpedo,
+        # once the projectile exists) THEN ET_WEAPON_FIRED, then the
+        # player-only ET_TORPEDO_AMMO_CONSUMED.
+        self._broadcast_weapon_fired()
+        self._broadcast_ammo_consumed_if_player()
+
+        # Discrete-shot — auto-stop after launch.
         self._firing = False
+        return True
 
-    def _spawn_torpedo(self, *, spread_unit=None, homing_delay=0.0) -> None:
+    def _broadcast_weapon_fired(self) -> None:
+        """Post ET_WEAPON_FIRED: Source = the TUBE, Destination = the owning
+        ship.  Posted AFTER ET_TORPEDO_FIRED on every successful launch
+        (weapon-firing-mechanics.md §1.5/§2.4, audited).  Delegates to the
+        module-level ``_post_weapon_fired`` shared with PhaserBank.Fire
+        (Task 10)."""
+        _post_weapon_fired(self)
+
+    def _broadcast_weapon_fire_failed(self) -> None:
+        """Post ET_WEAPON_FIRE_FAILED: Destination = the TUBE.  Posted when a
+        targeted fire fails the aim-point resolve or the +/-30 degree cone
+        (audited; no shipped SDK script listens — defined for fidelity +
+        mod surface)."""
+        import App
+        from engine import dev_mode
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_WEAPON_FIRE_FAILED)
+            evt.SetDestination(self)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("ET_WEAPON_FIRE_FAILED broadcast", _e)
+
+    def _broadcast_ammo_consumed_if_player(self) -> None:
+        """Post ET_TORPEDO_AMMO_CONSUMED, but ONLY when the firing ship is
+        the player ship (BC locality gate — audited).  Source = the TUBE,
+        Destination = the ship, mirroring ET_WEAPON_FIRED."""
+        ship = self._climb_to_ship()
+        import App
+        try:
+            if ship is None or ship is not App.Game_GetCurrentPlayer():
+                return
+        except Exception:
+            return
+        from engine import dev_mode
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_TORPEDO_AMMO_CONSUMED)
+            evt.SetSource(self)
+            evt.SetDestination(ship)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("ET_TORPEDO_AMMO_CONSUMED broadcast", _e)
+
+    def _spawn_torpedo(self) -> None:
         """Look up the parent system's GetTorpedoScript(0), import the SDK
         projectile module, instantiate a Torpedo, call <module>.Create(t)
-        to populate visuals + behaviour, compute initial velocity (homing
-        if ship has a target lock, dumbfire from emitter direction
-        otherwise), and play the launch sound.
+        to populate visuals + behaviour, launch it BC-faithfully (straight
+        out the tube's authored direction + inherited ship velocity — see
+        _spawn_projectile), and play the launch sound.
 
         Silent no-op when no script is bound (matches BC for unconfigured
         tubes).  Per-tube slot routing is a future polish item — PR 2b
@@ -1999,6 +2314,14 @@ class TorpedoTube(Weapon):
         parent = self.GetParentSubsystem()
         if parent is None:
             return
+        # Per-launch ammo debit (moved here from TorpedoSystem.StartFiring's
+        # volley accounting when StartFiring became a pure tick-arm): expend
+        # one round of the parent's selected type per torpedo launched.
+        # Finite types only — unlimited/undeclared magazines never decrement.
+        ammo = (parent.GetCurrentAmmoType()
+                if hasattr(parent, "GetCurrentAmmoType") else None)
+        if ammo is not None and not getattr(ammo, "_unlimited", True):
+            ammo.AddAvailable(-1)
         parent_prop = parent.GetProperty() if hasattr(parent, "GetProperty") else None
         if parent_prop is None or not hasattr(parent_prop, "GetTorpedoScript"):
             return
@@ -2013,9 +2336,7 @@ class TorpedoTube(Weapon):
             return
 
         torp = _spawn_projectile(self, mod,
-                                 drf_override=self.GetDamageRadiusFactor(),
-                                 spread_unit=spread_unit,
-                                 homing_delay=homing_delay)
+                                 drf_override=self.GetDamageRadiusFactor())
         # ET_TORPEDO_FIRED carries the PROJECTILE as its source, so it can only be
         # posted once the projectile exists.  Posted here rather than inside
         # _spawn_projectile because that helper is shared with pulse cannons, and
@@ -2172,3 +2493,17 @@ class TorpedoTube(Weapon):
             return
         self._num_ready -= 1
         self._start_slot_cooldown(_game_time())
+
+    def IsDumbFire(self) -> int:
+        """Torpedo tubes are dumbfire-capable in BC (no guidance).
+        Overrides Weapon.IsDumbFire() which returns 0."""
+        return 1
+
+    def SetSkewFire(self, flag) -> None:
+        """Set skew-fire flag on this tube.  The flag is persistent and
+        survives StopFiring (never cleared by firing lifecycle)."""
+        self._skew_fire = bool(flag)
+
+    def IsSkewFire(self) -> int:
+        """Return 1 if skew-fire is enabled on this tube, else 0."""
+        return 1 if self._skew_fire else 0

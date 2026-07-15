@@ -87,20 +87,22 @@ def galaxy_in_red_alert():
 
 
 def test_right_click_fires_torpedo(galaxy_in_red_alert):
-    """OnKeyDown(WC_RBUTTON) at RED alert decrements one torpedo tube's ready count."""
+    """OnKeyDown(WC_RBUTTON) at RED alert launches a torpedo: Task 7's
+    ship-wide 0.5s fire stagger throttles same-tick multi-fire to ONE
+    launch — the first tube in the working group stamps
+    TorpedoSystem._last_system_fire_time, and every other ready tube's
+    CanFire() fails the stagger gate within the same tick (gameTime delta
+    is 0)."""
     ship = galaxy_in_red_alert
     torps = ship.GetTorpedoSystem()
-    initial_ready = sum(
-        torps.GetWeapon(i).GetNumReady() for i in range(torps.GetNumWeapons())
-    )
+    n = torps.GetNumWeapons()
+    initial_ready = sum(torps.GetWeapon(i).GetNumReady() for i in range(n))
 
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         App.g_kInputManager.OnKeyDown(App.WC_RBUTTON)
         App.g_kInputManager.OnKeyUp(App.WC_RBUTTON)
 
-    final_ready = sum(
-        torps.GetWeapon(i).GetNumReady() for i in range(torps.GetNumWeapons())
-    )
+    final_ready = sum(torps.GetWeapon(i).GetNumReady() for i in range(n))
     assert final_ready == initial_ready - 1
 
 

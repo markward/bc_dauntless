@@ -15,7 +15,7 @@ def _color(r, g, b, a=1.0):
 
 def test_set_lifetime_sets_ttl():
     t = Torpedo()
-    assert t._ttl == 30.0  # default
+    assert t._ttl == 60.0  # default
     t.SetLifetime(8.0)
     assert isinstance(t._ttl, float) and t._ttl == 8.0
 

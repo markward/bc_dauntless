@@ -56,7 +56,6 @@ class _FakeBank(_EnergyWeaponFireMixin):
         self._target = None
         self._target_offset = None
         self._loop_handle = None
-        self._armed = True
         self._charge_level = 1.0
         self._min_firing_charge = 0.0
         self._parent_sys = _FakeSystem()

@@ -21,18 +21,26 @@ def test_torpedo_homes_to_target_and_damages_hull(galaxy_red, target_ship_at):
         App.g_kInputManager.OnKeyDown(App.WC_RBUTTON)
         App.g_kInputManager.OnKeyUp(App.WC_RBUTTON)
 
-    # Torpedo spawned and homing.
+    # Task 7's ship-wide 0.5s stagger throttles one tap to ONE launch: the
+    # first tube in the round-robin working group (Forward Torpedo 1, index
+    # 0), the only one that also clears the +/-30 degree cone against a
+    # dead-ahead target — Galaxy's two AFT tubes (world Direction (0,-1,0))
+    # would fail the cone outright and never launch at all (this restores
+    # BC's actual walk-out: no tube ever fires backward at a forward target).
     assert len(projectiles._active) == 1
     torp = projectiles._active[0]
     assert torp._velocity.y > 0.0
     assert torp._target_ship is target
 
-    # Tick until collision (PhotonTorpedo launch_speed = 19; 200 / 19 ≈ 10.5s).
-    for _ in range(200):
+    # STRICT impact expectation (Task 7): every launch is now forward-facing
+    # and cone-gated onto the resolved aim point, so the homing torpedo
+    # should actually strike — no more TTL-timeout stray torpedoes to
+    # paper over the assertion.
+    for _ in range(320):
         _advance_combat([ship, target], dt=0.1)
         if len(projectiles._active) == 0:
             break
 
     final_hull = target.GetHull().GetCondition()
-    assert final_hull < initial_hull, "target should have taken damage"
-    assert len(projectiles._active) == 0, "torpedo should have expired on impact"
+    assert final_hull < initial_hull, "target should have taken damage from an impact"
+    assert len(projectiles._active) == 0, "the torpedo should have resolved"

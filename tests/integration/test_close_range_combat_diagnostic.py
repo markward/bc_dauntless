@@ -246,11 +246,15 @@ def _snapshot_firing_state(ship: ShipClass) -> dict:
     if p is not None:
         out["phaser_on"] = bool(p.IsOn())
         out["phaser_fire_held"] = getattr(p, "_fire_held", False)
-        out["phaser_firing_n"] = len(getattr(p, "_currently_firing", []))
+        out["phaser_firing_n"] = sum(
+            1 for i in range(p.GetNumWeapons())
+            if p.GetWeapon(i) is not None and p.GetWeapon(i).IsFiring())
     t = ship.GetTorpedoSystem()
     if t is not None:
         out["torp_on"] = bool(t.IsOn())
-        out["torp_firing_n"] = len(getattr(t, "_currently_firing", []))
+        out["torp_firing_n"] = sum(
+            1 for i in range(t.GetNumWeapons())
+            if t.GetWeapon(i) is not None and t.GetWeapon(i).IsFiring())
     return out
 
 

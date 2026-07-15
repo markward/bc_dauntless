@@ -27,7 +27,14 @@
 //     config: {                        // weapon-settings block (weapon_config.py)
 //       show_settings, has_any_config,
 //       has_torpedoes, torp_type, torp_count, torp_types_cyclable,
-//       spread, spread_options,
+//       spread, spread_options,       // BC's tactical "spread" toggle IS the
+//                                     // firing-chain selector; both are
+//                                     // already-formatted chain-label
+//                                     // strings ("Single"/"Dual"/"Quad" on
+//                                     // Galaxy/Sovereign), spread == "" and
+//                                     // spread_options == [] with no
+//                                     // authored FiringChainString (67 of
+//                                     // 70 stock hulls) — the control hides.
 //       has_phasers, phaser_intensity,
 //       tractor_present, tractor_on, cloak_present, cloak_on
 //     }
@@ -103,10 +110,6 @@
             .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
-    function spreadWord(n) {
-        return n === 4 ? "Quad" : (n === 2 ? "Dual" : "Single");
-    }
-
     // Build the weapon-settings view markup from the config block. Sections
     // gate on subsystem presence (mirrors read_weapon_config): no torpedo
     // launchers -> no Torpedoes section; no phasers -> no Phasers section; a
@@ -117,17 +120,25 @@
             var typeCls = "torp-btn torp-btn--type"
                         + (cfg.torp_types_cyclable ? "" : " torp-btn--static");
             var typeAct = cfg.torp_types_cyclable ? ' data-act="cycle-type"' : "";
+            // Spread control is BC's tactical firing-chain selector — only
+            // shown when the hardpoint authors a FiringChainString (Galaxy /
+            // Sovereign; 67 of 70 stock hulls author none and hide it).
+            // spread_options entries are already chain labels ("Single" /
+            // "Dual" / "Quad") — render them directly, no formatting.
+            var hasSpread = !!(cfg.spread_options && cfg.spread_options.length);
             html += '<div class="section-head"><span>Torpedoes</span></div>'
                   + '<div class="section-rule"></div>'
                   + '<div class="torp-row">'
                   +   '<div class="' + typeCls + '"' + typeAct + '>'
                   +     '<span class="name">' + escHtml(cfg.torp_type) + '</span>'
                   +     '<span class="qty">(' + (cfg.torp_count | 0) + ')</span>'
-                  +   '</div>'
-                  +   '<div class="torp-btn torp-btn--spread" data-act="cycle-spread">'
-                  +     '<span class="spread">' + spreadWord(cfg.spread) + '</span>'
-                  +   '</div>'
-                  + '</div>';
+                  +   '</div>';
+            if (hasSpread) {
+                html += '<div class="torp-btn torp-btn--spread" data-act="cycle-spread">'
+                      +   '<span class="spread">' + escHtml(cfg.spread) + '</span>'
+                      + '</div>';
+            }
+            html += '</div>';
         }
         if (cfg.has_phasers) {
             html += '<div class="section-head"><span>Phasers</span></div>'

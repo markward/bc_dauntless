@@ -383,6 +383,7 @@ def test_exhausted_finite_ammo_blocks_canfire_and_reload():
 def test_unlimited_ammo_never_gates_canfire_or_reload():
     """Unlimited/undeclared ammo types must NEVER gate CanFire or
     ReloadTorpedo -- the legacy/undeclared firing path stays byte-identical."""
+    import App
     from engine.appc import projectiles
     projectiles._active.clear()
     parent, tgt = _firing_system_with_reserve(max_torpedoes=None)
@@ -391,6 +392,10 @@ def test_unlimited_ammo_never_gates_canfire_or_reload():
         parent.StartFiring(target=tgt, offset=None)
     ready_after_fire = tube.GetNumReady()
     assert ready_after_fire < tube.GetMaxReady()
+
+    # Clear the Task 7 ship-wide 0.5s stagger (separate gate from ammo) so this
+    # assertion isolates the ammo/reload behaviour it's actually testing.
+    App.g_kTimerManager._time = App.g_kTimerManager.get_time() + 0.6
 
     assert tube.CanFire() == 1                          # not gated by (unlimited) ammo
 

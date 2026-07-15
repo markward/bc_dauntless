@@ -60,7 +60,6 @@ def _bank_snapshot(bank):
         "charge": round(getattr(bank, "_charge_level", -1.0), 2),
         "min":    round(getattr(bank, "_min_firing_charge", -1.0), 2),
         "max":    round(getattr(bank, "_max_charge", -1.0), 2),
-        "armed":  getattr(bank, "_armed", "?"),
     }
 
 

@@ -5,7 +5,7 @@ Collision: sphere_hit against any ship except source; first hit wins.
 """
 import pytest
 from engine.appc.math import TGPoint3, TGMatrix3
-from engine.appc.projectiles import Torpedo, register, update_all, _active, _steer_toward
+from engine.appc.projectiles import Torpedo, register, update_all, _active, _guide
 from engine.appc.subsystems import ShipSubsystem
 
 
@@ -16,9 +16,11 @@ class _RotShip:
     def GetWorldRotation(self): return self._rot
 
 
-def test_steer_toward_homes_on_locked_subsystem():
-    """Guidance must steer toward the locked subsystem's world position, not
-    the target ship's hull centre, when the torpedo carries a subsystem lock."""
+def test_guide_homes_on_center_mass_ignoring_subsystem_lock():
+    """Audited Torpedo::Guide always homes the target ship's hull centre —
+    the fire-time subsystem aim offset is dead weight in flight (BC never
+    re-reads it during guidance). A subsystem attached to the ship must NOT
+    pull the steer toward its own position."""
     R = TGMatrix3(); R.MakeIdentity()
     ship = _RotShip(TGPoint3(0.0, 0.0, 0.0), R)
     sub = ShipSubsystem("Port Nacelle")
@@ -26,16 +28,19 @@ def test_steer_toward_homes_on_locked_subsystem():
     sub.SetParentShip(ship)
 
     t = Torpedo()
-    t._position = TGPoint3(100.0, 0.0, 0.0)
-    t._velocity = TGPoint3(-10.0, 0.0, 0.0)    # heading straight at hull centre
-    t._max_angular_accel = 10.0                # ample turn authority
+    # Position chosen so the bearing to the hull centre (0,0,0) and the
+    # bearing to the subsystem (0,50,0) diverge.
+    t._position = TGPoint3(100.0, -50.0, 0.0)
+    t._velocity = TGPoint3(-10.0, 0.0, 0.0)
+    t._max_angular_accel = 1000.0              # ample turn authority
     t._target_ship = ship
-    t._target_subsystem = sub
 
-    _steer_toward(t, ship, dt=0.05)
-    # The subsystem at (0,50,0) is +Y of the hull centre; homing on it must
-    # introduce a +Y velocity component (homing on the centre would not).
-    assert t._velocity.y > 1e-6
+    _guide(t, dt=0.05)
+    speed = t._velocity.Length()
+    dir_y = t._velocity.y / speed
+    # Bearing to hull centre from (100,-50,0): (-100,50,0) normalized -> y ~= 0.4472
+    # Bearing to subsystem from (100,-50,0): (-100,100,0) normalized -> y ~= 0.7071
+    assert dir_y == pytest.approx(0.4472, abs=1e-3)
 
 
 @pytest.fixture(autouse=True)

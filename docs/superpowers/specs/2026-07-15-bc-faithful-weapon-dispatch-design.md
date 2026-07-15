@@ -230,6 +230,45 @@ selector** (audited §2.10: the toggle callback calls
 - `engine/appc/weapon_config.py`'s cycle function and the panel JS follow
   the new getter/setter; UI plumbing otherwise unchanged.
 
+### Intended-design wire (2026-07-15 decomp update)
+
+New decomp-project evidence, confirmed against the official BC SDK Model
+Property Editor documentation (`modelpropertyeditor.html:255`): the spread
+selector and skew fire (§3.4) were **one feature that shipped
+disconnected**, not two independent systems. The doc says of a torpedo
+tube's Right vector:
+
+> "the right vector will be used to change the firing direction slightly if
+> torpedoes are fired in non-single-fire mode"
+
+i.e. selecting a non-Single firing chain was always meant to arm skew fire.
+Retail never wired the connection — the intended hook is a vtable-only
+salvo setter (`0x0057B1F0`) with zero callers anywhere in `stbc.exe`, so
+stock BC's spread selector only ever changed which tubes are eligible
+(chain group membership); it never actually fanned or desynced them.
+
+**Dauntless wires the intended behaviour, not the shipped bug.**
+`TorpedoSystem.SetFiringChainMode` now broadcasts `SetSkewFire` to every
+child tube based on the newly-active chain's groups (`_active_chain_groups
+()`):
+
+- **Non-Single chain** (any active-group list other than `[0]`) → skew ON
+  for every tube. Skew tubes are exempt from the 0.5s ship-wide stagger
+  (§3.3), so every member of the working group launches in the **same
+  tick** — a true simultaneous salvo, fanned by each tube's authored Right
+  vector (Galaxy's four forward tubes: Rights `(-1,0,0)`, `(0,0,-1)`,
+  `(1,0,0)`, `(0,0,1)` → a 4-way fan cross on ±X/±Z).
+- **Single chain** (active groups `== [0]`, also the chainless fallback) →
+  skew OFF, restoring BC's shipped one-per-click walk-out (§3.2/§3.3 as
+  already described above).
+
+This is a deliberate divergence from literal retail behaviour, ruled by
+Mark: the disconnection is a shipped bug, not an authored design choice —
+BC's own SDK documentation describes the intended mechanism in the present
+tense, and the salvo setter exists in the vtable with no caller, not as
+dead/removed code. See `TorpedoSystem.SetFiringChainMode` (engine/appc/
+weapon_subsystems.py) and `tests/unit/test_spread_skew_wiring.py`.
+
 ## 6. Events
 
 | Event | Id | Change |
@@ -346,6 +385,57 @@ tubes never refill mid-combat, which contradicts observable gameplay.
 
 Nothing else in this design depends on the answer.
 
+**Second question for the decomp project (chain parse) — ANSWERED
+(2026-07-15):**
+
+Decompiled `stbc.exe` settles both halves of the question:
+
+- **Parse: per-digit, CONFIRMED.** `WeaponSystem::BuildFiringChains` @
+  `0x00585020` (called from `Ship_SetupProperties`) walks the chain string
+  char-by-char; each digit `d` sets bit `1<<(d-1)` in a per-chain stored
+  dword. Galaxy's `"0;Single;123;Dual;53;Quad"` compiles to stored dwords
+  `0`, `7`, `20` — per-digit group-id parsing, not `atoi` decimal. `'0'`
+  sets no bit; the "all weapons" meaning of a zero mask comes from the
+  *consumer* (`group==0 || HasGroup(group)`), not the parser. The
+  `FiringChain` node stores `+0` mask / `+4` name — labels are opaque
+  stored data, not derived from the digits. This also confirms the BC SDK
+  Model Property Editor's "Zero is used for the group of all weapons,
+  single-firing" note (the earlier partial answer): group `0` is both the
+  chainless fallback and the authored "Single" chain's group list, and
+  `_active_chain_groups() == [0]` is the one case the spread↔skew wire
+  (§5) keys off to clear skew rather than arm it.
+- **Sweep order: DIVERGES from our implementation, by design.** The stored
+  representation is a bare bitmask, so authored segment order is destroyed
+  at parse time in shipped BC. `GetNextGroup` @ `0x00586250` scans
+  **ascending** bit order (wrap via `GetFirstGroup` @ `0x00586220`), and
+  `LastGroupFired` resets to −1 on every *fruitless* full sweep — during
+  the 0.5s inter-volley stagger every sweep is fruitless, so each volley
+  re-seeds at the **lowest** group in the mask. Consequence for stock Quad
+  (mask `20` = groups {3, 5}): shipped BC fires group 3 (the **aft** pair)
+  before group 5 (the four **forward** tubes) — inverting the author's
+  evident "forward quad first" intent implied by writing the chain digits
+  as `"53"` rather than `"35"`.
+- **Dauntless's ruling: keep the authored-order sweep.** Per Mark's
+  intent-over-shipped precedent — the same shape as §5's skew-salvo wire,
+  where BC's own SDK docs describe a mechanism retail shipped
+  disconnected — Dauntless's `_active_chain_groups()` keeps the per-digit
+  **ordered list** (`"53"` → `[5, 3]`), so Quad tries the forward tubes
+  first. Shipped's ascending-scan-with-reset behaviour is documented here
+  as the known bug-compatible alternative; it is **not** implemented. See
+  `tests/unit/test_firing_chains.py::test_quad_chain_sweeps_authored_order_not_shipped_ascending_bitmask`.
+- **Resume-reset semantics already match shipped.** `WeaponSystem.
+  update_weapons` resets `self._last_group_fired = -1` when a full wrap
+  through every group in the active chain fires nothing (the
+  `working == start_group` branch in `engine/appc/weapon_subsystems.py`)
+  — the same "reset to −1 on a fruitless sweep" rule the decomp doc
+  describes for `GetNextGroup`/`LastGroupFired`. Only the *order* in which
+  groups are tried diverges (authored vs. ascending); the reset trigger
+  itself needed no change.
+- **Caveat (from the decomp agent):** the strtok delimiter byte
+  (`DAT_008daebc = ';'`) was inferred from token alternation in the
+  disassembly, not read directly from a retail exe byte — high-confidence,
+  not binary-confirmed.
+
 ## 10. Non-goals
 
 - Wire formats / MP relay (§2.8, §2.9, §3.5 of the RE doc).
@@ -356,3 +446,5 @@ Nothing else in this design depends on the answer.
   surface we don't have; logged as follow-up).
 - AI-side fire policy (`RandomAI`, preprocessor dumb-fire loop) — separate
   gap doc territory.
+
+**Live verification pending:** Mark runs the §8 QuickBattle pass (items 1-6) before this branch merges.
