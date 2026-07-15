@@ -121,6 +121,21 @@ struct TorpedoDescriptor {
     float       bolt_width  = 0.0f;              // GU
 };
 
+/// One world-space dynamic light (point or segment). A point light is a
+/// degenerate segment (pos_a == pos_b). Consumed by the opaque Space pass
+/// only; no shadow interaction. First consumer: torpedo glow
+/// (weapon-firing-mechanics.md §5.5 — BC torpedoes light the ships they
+/// fly past); future: hardpoint-attached point/line lights.
+struct DynamicLightDescriptor {
+    glm::vec3 pos_a{0.0f};       // world GU; point position or segment end A
+    glm::vec3 pos_b{0.0f};       // == pos_a for point lights
+    glm::vec3 color{1.0f};       // linear RGB (HDR-capable)
+    float     radius    = 0.0f;  // GU; attenuation reaches exactly 0 here
+    float     intensity = 1.0f;  // scalar multiplier on color
+};
+inline constexpr int kMaxDynamicLightsPerFrame = 64;
+inline constexpr int kMaxDynamicLightsPerDraw  = 4;
+
 // One warp-core breach shockwave: a camera-facing ring + core flash centered
 // at world_center, expanding to max_radius over lifetime. age/lifetime drive
 // the shader animation (same age-based shape as TorpedoDescriptor).

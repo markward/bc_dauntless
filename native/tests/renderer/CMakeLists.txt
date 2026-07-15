@@ -47,6 +47,7 @@ add_executable(renderer_tests
     shadow_map_target_test.cc
     torpedo_anim_test.cc
     torpedo_pass_test.cc
+    dynamic_lights_test.cc
 )
 
 target_link_libraries(renderer_tests
