@@ -65,8 +65,11 @@ def test_photon_torpedo_emits_exactly_one_light():
     assert entry["radius"] == pytest.approx(
         _TORPEDO_LIGHT_RADIUS_SCALE * 3.0)
     assert entry["radius"] == pytest.approx(100.0 * 3.0)
+    # Intensity is a tuning knob (VFX calibrate-up-then-down convention), not
+    # audit-pinned evidence, so pin it against the named constant rather than
+    # a bare literal — plus a sanity floor so a future accidental 0.0 fails.
     assert entry["intensity"] == _TORPEDO_LIGHT_INTENSITY
-    assert entry["intensity"] == 1.0
+    assert entry["intensity"] > 0
     assert "position_b" not in entry
 
 

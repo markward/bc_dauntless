@@ -829,6 +829,11 @@ def _build_dynamic_light_render_data():
     §5.5). Disruptor bolts emit nothing (faithful: the bolt's light slot
     stays NULL in BC). Radius/intensity are PROVISIONAL calibration knobs;
     the audited radius source (light node +0x14C) is unpinned — RE Q2.
+
+    Mirror point: this is the SECOND interpreter of the torpedo glow floats
+    (radius base = max(glow_size_a, glow_size_b)) alongside native's
+    map_torpedo_params in torpedo_anim.h — a re-pin from RE Q1/Q2 must
+    update both sites.
     """
     out = []
     for t in projectiles._active:
@@ -934,8 +939,15 @@ TORPEDO_BRIGHTNESS = 1.0
 _TORPEDO_LIGHT_RADIUS_SCALE = 100.0
 
 # Scalar on the torpedo dynamic-light color; calibration knob (VFX
-# convention: start strong, dial back).
-_TORPEDO_LIGHT_INTENSITY = 1.0
+# convention: start strong, dial back). Our windowed inverse-square
+# attenuation (denominator d^2+1 in GU) makes a bare 1.0 imperceptible — a
+# 2 GU flyby contributes only ~0.2, a 10 GU pass ~0.01 — whereas BC's
+# original torpedo light was un-attenuated full glow color anywhere inside
+# the gate radius. 20.0 is chosen so a several-GU flyby visibly tints the
+# hull (att ~= 1/(d^2+1) => ~0.8 at 5 GU with intensity 20); deliberately
+# strong for the first live pass — dial DOWN in QuickBattle. Since BC's
+# original was un-attenuated within the gate, err bright rather than dim.
+_TORPEDO_LIGHT_INTENSITY = 20.0
 
 
 def _beam_descriptor_pair(ship, bank, ship_instances):

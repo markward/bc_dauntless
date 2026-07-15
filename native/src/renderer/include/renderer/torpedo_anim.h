@@ -41,6 +41,11 @@ struct TorpedoAnimParams {
 // The audit pinned the controller's storage slots (+0x30 spinRate, +0x3C/+0x40
 // scale lo/hi, +0x48 pulseRate, +0x50 flare period) but NOT which Python float
 // feeds which. This function is the ENTIRE re-pin surface.
+//
+// NOT the only interpreter of these floats: engine/host_loop.py's
+// _build_dynamic_light_render_data ALSO reads glow_size_a/glow_size_b (light
+// radius base = max(glow_size_a, glow_size_b)) to build the torpedo's
+// dynamic-light descriptor. A re-pin from RE Q1/Q2 must update BOTH sites.
 inline TorpedoAnimParams map_torpedo_params(const TorpedoDescriptor& d) {
     TorpedoAnimParams p;
     p.core_half_size  = d.core_size_a;    // photon 0.2
