@@ -144,12 +144,15 @@ def test_same_type_in_multiple_slots_not_cyclable():
     assert cfg["torp_types_cyclable"] is False
 
 
-def test_spread_options_reflect_tube_count():
+def test_spread_options_empty_with_no_authored_tube_count():
+    # Tube count alone no longer implies spread options (that was the
+    # invented v1 heuristic) — only an authored FiringChainString does; see
+    # tests/unit/test_firing_chain_selection.py.
     ship = _bare_ship()
     _attach_torpedoes(ship, num_tubes=4, ammo_names=("Photon",))
     cfg = weapon_config.read_weapon_config(ship)
-    assert cfg["spread"] == 1
-    assert cfg["spread_options"] == [1, 2, 4]
+    assert cfg["spread"] == ""
+    assert cfg["spread_options"] == []
 
 
 def test_phasers_present_and_intensity_full_default():
@@ -223,24 +226,18 @@ def test_cycle_torpedo_type_absent_no_crash():
 
 
 # ── cycle_torpedo_spread ────────────────────────────────────────────────────
+# BC's tactical "torpedo spread" toggle IS the firing-chain selector
+# (WeaponSystem::SetFiringChainMode — audited §2.10); see
+# tests/unit/test_firing_chain_selection.py for the full chain-mode
+# coverage. This confirms a stock hull with NO authored FiringChainString
+# (67 of 70) leaves the toggle a no-op — the historical tube-count heuristic
+# is gone.
 
-def test_cycle_torpedo_spread_wraps():
+def test_cycle_torpedo_spread_no_chains_no_op():
     ship = _bare_ship()
     _attach_torpedoes(ship, num_tubes=4, ammo_names=("Photon",))
-    assert weapon_config.read_weapon_config(ship)["spread"] == 1
-    weapon_config.cycle_torpedo_spread(ship)
-    assert weapon_config.read_weapon_config(ship)["spread"] == 2
-    weapon_config.cycle_torpedo_spread(ship)
-    assert weapon_config.read_weapon_config(ship)["spread"] == 4
-    weapon_config.cycle_torpedo_spread(ship)  # wraps to 1
-    assert weapon_config.read_weapon_config(ship)["spread"] == 1
-
-
-def test_cycle_torpedo_spread_single_option_no_op():
-    ship = _bare_ship()
-    _attach_torpedoes(ship, num_tubes=1, ammo_names=("Photon",))
-    weapon_config.cycle_torpedo_spread(ship)
-    assert weapon_config.read_weapon_config(ship)["spread"] == 1
+    weapon_config.cycle_torpedo_spread(ship)  # no chains authored -> no-op
+    assert weapon_config.read_weapon_config(ship)["spread"] == ""
 
 
 def test_cycle_torpedo_spread_absent_no_crash():

@@ -1120,8 +1120,9 @@ class ShipClass(DamageableObject):
             # (Photon/Quantum/Phased) and carrying its declared max as the reserve.
             # The SDK then curates this list at runtime with ZERO UI-side
             # filtering: QuickBattle.RemoveAmmoType prunes PhasedPlasma; missions
-            # LoadAmmoType top up. Tubes are launchers and matter only for spread
-            # (GetSpreadOptions) — ammo TYPES are an independent declaration.
+            # LoadAmmoType top up. Tubes are launchers, gating the authored
+            # FiringChainString's chain selection — ammo TYPES are an
+            # independent declaration.
             #
             # Legacy/undeclared hulls (no SetNumAmmoTypes, or a plain
             # WeaponSystemProperty) fall back to a single unlimited Photon type

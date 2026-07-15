@@ -68,6 +68,17 @@ def make_ship_with_two_tubes():
     return ship, system, (t1, t2)
 
 
+def make_ship_with_torpedo_chains(firing_chain_string: str, *, num_tubes=4):
+    """A ship whose TorpedoSystem authors ``firing_chain_string`` on its
+    WeaponSystemProperty (Galaxy/Sovereign-style — Task 3's
+    ``SetFiringChainString``).  BC's tactical "torpedo spread" toggle IS the
+    firing-chain selector (``SetFiringChainMode``); this fixture builds a
+    loadout for Task 8's chain-selection tests.  Returns the ship."""
+    system, ship = system_with_tubes(num_tubes)
+    system.GetProperty().SetFiringChainString(firing_chain_string)
+    return ship
+
+
 def make_target_at(pos: TGPoint3) -> LiveTarget:
     """A live target at the given world position."""
     return LiveTarget(pos.x, pos.y, pos.z)

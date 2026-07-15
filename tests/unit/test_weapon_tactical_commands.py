@@ -39,10 +39,13 @@ def _bare_ship():
 
 
 def _attach_torpedoes(ship, *, num_tubes=2, ammo_names=("Photon", "Quantum"),
-                      ready_per_tube=100):
+                      ready_per_tube=100, firing_chain_string=None):
     parent = TorpedoSystem("Torpedoes")
     parent.TurnOn()
-    parent.SetProperty(WeaponSystemProperty("Torpedoes"))
+    prop = WeaponSystemProperty("Torpedoes")
+    parent.SetProperty(prop)
+    if firing_chain_string is not None:
+        prop.SetFiringChainString(firing_chain_string)
     parent._parent_ship = ship
     for i, name in enumerate(ammo_names):
         parent.AddAmmoType(TorpedoAmmoType(name, power_cost=20.0 + i))
@@ -116,10 +119,12 @@ def setup_function(_):
 # ── Gating: only equipped commands are added ─────────────────────────────────
 
 def test_galaxy_like_ship_adds_phasers_spread_tractor_no_cloak_no_type():
-    # Phasers + 4 tubes single-ammo (spread cyclable, type NOT cyclable) + tractor.
+    # Phasers + Galaxy-style firing chains (spread cyclable, type NOT
+    # cyclable — single ammo) + tractor.
     ship = _bare_ship()
     _attach_phasers(ship)
-    _attach_torpedoes(ship, num_tubes=4, ammo_names=("Photon",))
+    _attach_torpedoes(ship, num_tubes=4, ammo_names=("Photon",),
+                       firing_chain_string="0;Single;123;Dual;53;Quad")
     _attach_tractor(ship)
     _tcw, menu = _make_tactical_menu()
 
@@ -137,7 +142,8 @@ def test_galaxy_like_ship_adds_phasers_spread_tractor_no_cloak_no_type():
 def test_cloak_multitype_ship_adds_all_five():
     ship = _bare_ship()
     _attach_phasers(ship)
-    _attach_torpedoes(ship, num_tubes=4, ammo_names=("Photon", "Quantum"))
+    _attach_torpedoes(ship, num_tubes=4, ammo_names=("Photon", "Quantum"),
+                       firing_chain_string="0;Single;123;Dual;53;Quad")
     _attach_tractor(ship)
     _attach_cloak(ship)
     _tcw, menu = _make_tactical_menu()
@@ -236,17 +242,18 @@ def test_phaser_label_flips_after_toggle():
 
 def test_spread_label_advances_after_cycle():
     ship = _bare_ship()
-    _attach_torpedoes(ship, num_tubes=4, ammo_names=("Photon",))
+    _attach_torpedoes(ship, num_tubes=4, ammo_names=("Photon",),
+                       firing_chain_string="0;Single;123;Dual;53;Quad")
     _tcw, menu = _make_tactical_menu()
 
     wtc.sync(ship)
     assert _find_button(menu, "Spread").GetLabel() == "Torpedo Spread Single"
 
-    weapon_config.cycle_torpedo_spread(ship)  # -> 2
+    weapon_config.cycle_torpedo_spread(ship)  # chain mode -> 1 (Dual)
     wtc.sync(ship)
     assert _find_button(menu, "Spread").GetLabel() == "Torpedo Spread Dual"
 
-    weapon_config.cycle_torpedo_spread(ship)  # -> 4
+    weapon_config.cycle_torpedo_spread(ship)  # chain mode -> 2 (Quad)
     wtc.sync(ship)
     assert _find_button(menu, "Spread").GetLabel() == "Torpedo Spread Quad"
 

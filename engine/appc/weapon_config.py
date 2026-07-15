@@ -80,8 +80,14 @@ def read_weapon_config(ship) -> dict:
     torp_count = 0
     torp_types: list[str] = []
     torp_types_cyclable = False
-    spread = 1
-    spread_options = [1]
+    # BC's tactical "torpedo spread" toggle IS the firing-chain selector
+    # (WeaponSystem::SetFiringChainMode — audited §2.10, no tube-count
+    # parameter exists anywhere in BC).  Labels come straight from the
+    # hardpoint's authored FiringChainString; 67 of 70 stock hardpoints
+    # author none, so spread == "" / spread_options == [] and the panel
+    # hides the control.
+    spread = ""
+    spread_options: list[str] = []
     if has_torpedoes:
         ammo = torps.GetCurrentAmmoType() if hasattr(torps, "GetCurrentAmmoType") else None
         if ammo is not None and hasattr(ammo, "GetAmmoName"):
@@ -96,14 +102,14 @@ def read_weapon_config(ship) -> dict:
         # types — no string surgery, no UI-side filtering.  Cyclable when >1.
         torp_types = _distinct_torpedo_type_names(torps)
         torp_types_cyclable = len(torp_types) > 1
-        try:
-            spread = int(torps.GetSpread())
-        except Exception:
-            spread = 1
-        try:
-            spread_options = list(torps.GetSpreadOptions())
-        except Exception:
-            spread_options = [1]
+        chains = torps.GetFiringChains() if hasattr(torps, "GetFiringChains") else []
+        spread_options = [label for (label, _groups) in chains]
+        if spread_options:
+            try:
+                mode = int(torps.GetFiringChainMode())
+            except Exception:
+                mode = 0
+            spread = spread_options[mode % len(spread_options)]
 
     phasers = _phaser_system(ship)
     has_phasers = phasers is not None
@@ -212,21 +218,17 @@ def cycle_torpedo_type(ship) -> None:
 
 
 def cycle_torpedo_spread(ship) -> None:
-    """Advance the torpedo spread to the next available option (wraps).
-    No-op with ≤1 option or no torpedo system."""
+    """Advance the torpedo firing chain (BC's tactical 'spread' toggle IS
+    the chain selector — SetFiringChainMode; audited §2.10). Wraps; no-op
+    when the hardpoint authors fewer than two chains."""
     torps = _torpedo_system(ship)
-    if torps is None:
+    if torps is None or not hasattr(torps, "GetFiringChains"):
         return
     try:
-        options = list(torps.GetSpreadOptions())
-        if len(options) <= 1:
+        n = len(torps.GetFiringChains())
+        if n < 2:
             return
-        current = int(torps.GetSpread())
-        try:
-            idx = options.index(current)
-        except ValueError:
-            idx = 0
-        torps.SetSpread(options[(idx + 1) % len(options)])
+        torps.SetFiringChainMode((torps.GetFiringChainMode() + 1) % n)
     except Exception:
         pass
 

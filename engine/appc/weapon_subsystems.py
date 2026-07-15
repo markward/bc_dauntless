@@ -1103,10 +1103,6 @@ class TorpedoSystem(WeaponSystem):
         # SetAmmoType(index) SELECTS a slot (mission/AI ammo switching);
         # it never writes here.  GetNumAmmoTypes counts populated slots.
         self._ammo_by_slot: dict = {}
-        # Selected torpedo spread: how many tubes fire per trigger.
-        # Single=1 (default), Dual=2, Quad=4.  Pure selection state — the
-        # firing path does not consult it yet (future work).
-        self._spread: int = 1
         # Selected ammo slot.  None == "lowest populated slot" (the historical
         # default); an int selects that slot when it is populated.  UI type
         # cycling (weapon_config.cycle_torpedo_type) drives this via
@@ -1119,38 +1115,6 @@ class TorpedoSystem(WeaponSystem):
         # first shot always passes the 0.5s stagger gate.  Skew-fire tubes
         # are exempt (TorpedoTube.CanFire checks IsSkewFire() first).
         self._last_system_fire_time: float = -1000.0
-
-    # ── Spread selection state ─────────────────────────────────────────────
-    # NOTE: the tube-count heuristic below is the v1 rule for "options the
-    # loadout can fire".  BC's authored FiringChainString / firing groups are
-    # a later refinement; until a body needs them, tube count is faithful.
-    def GetSpreadOptions(self) -> list:
-        """Spread counts this loadout can fire, derived from tube count.
-
-        Single (1) is always available.  Dual (2) needs >=2 tubes, Quad (4)
-        needs >=4 tubes.  Returned sorted ascending, e.g. [1], [1, 2] or
-        [1, 2, 4]."""
-        n = self.GetNumWeapons()
-        options = [1]
-        if n >= 2:
-            options.append(2)
-        if n >= 4:
-            options.append(4)
-        return options
-
-    def GetSpread(self) -> int:
-        """Current torpedo spread — tubes fired per trigger (Single=1,
-        Dual=2, Quad=4).  Defaults to Single."""
-        return self._spread
-
-    def SetSpread(self, n) -> None:
-        """Select the torpedo spread (Single=1 / Dual=2 / Quad=4).
-
-        Silently clamps to a supported option: if ``n`` is not in
-        GetSpreadOptions() the current value is left unchanged."""
-        n = int(n)
-        if n in self.GetSpreadOptions():
-            self._spread = n
 
     def StartFiring(self, target=None, offset=None) -> None:
         """Arm the BC tick (base StartFiring) behind the ammo reserve gate.
