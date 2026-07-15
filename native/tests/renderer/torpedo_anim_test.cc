@@ -154,6 +154,22 @@ TEST(TorpedoAnimHash, DiffersAcrossId) {
     EXPECT_NE(a, b);
 }
 
+TEST(TorpedoAnimHash, WorstCaseFinalizerOutputStaysBelowOne) {
+    // id = 0x876C6E7A with index = 0, salt = 0 drives the finalized integer
+    // hash to exactly 0xFFFFFFFF (computed by inverting the finalizer mix).
+    // The naive `static_cast<float>(h) / 4294967296.0f` conversion rounds
+    // float32(0xFFFFFFFF) UP to 4294967296.0f (24-bit mantissa; ulp = 256 at
+    // that magnitude) and returns exactly 1.0f, violating the [0, 1) contract.
+    // The top-24-bit conversion `(h >> 8) * (1/2^24)` is exact and < 1.
+    const float v = renderer::hash01(0x876C6E7Au, 0u, 0u);
+    EXPECT_GE(v, 0.0f);
+    EXPECT_LT(v, 1.0f);
+    // The conversion expression itself, at the absolute worst case: every one
+    // of the top 24 bits set is still strictly below 1.
+    const float worst = static_cast<float>(0xFFFFFFFFu >> 8) * (1.0f / 16777216.0f);
+    EXPECT_LT(worst, 1.0f);
+}
+
 TEST(TorpedoAnimHash, AllOutputsInZeroOneOverManySamples) {
     for (uint32_t id = 0; id < 20; ++id) {
         for (uint32_t index = 0; index < 20; ++index) {

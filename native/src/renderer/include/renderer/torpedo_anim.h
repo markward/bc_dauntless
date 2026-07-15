@@ -87,8 +87,11 @@ inline float hash01(uint32_t id, uint32_t index, uint32_t salt) {
     h ^= h >> 12;
     h *= 0x297A2D39u;
     h ^= h >> 15;
-    // 2^32 as a float; result is strictly < 1.0 since h <= 0xFFFFFFFF.
-    return static_cast<float>(h) / 4294967296.0f;
+    // Top 24 bits only: (h >> 8) <= 0xFFFFFF is exactly representable in
+    // float32 (24-bit mantissa), so the product is provably < 1.0. Dividing
+    // the full 32-bit h by 2^32 is NOT safe — float32(h) rounds UP to 2^32
+    // for h in [0xFFFFFF80, 0xFFFFFFFF], returning exactly 1.0.
+    return static_cast<float>(h >> 8) * (1.0f / 16777216.0f);
 }
 
 /// A random 3D rotation, fixed per (id, flare_index): a uniform-ish random
