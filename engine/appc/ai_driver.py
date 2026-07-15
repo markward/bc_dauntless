@@ -245,14 +245,69 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     return ai._status
 
 
+def _dispatch_priority_child(child, game_time: float) -> int:
+    """Dispatch one PriorityList child, guarding its focus bookkeeping.
+
+    If the child does NOT end up US_ACTIVE, the focus/active records it appended
+    this tick are rolled back and its own focus latches restored — so it does
+    not count as "on the active path" and the root reconciliation deactivates it
+    (firing its LostFocus if it was focused last tick). This mirrors BC's
+    PriorityListAI::Update (0x00490340): a child whose Update returns
+    US_DORMANT/US_DONE, or a dormant child re-probed and still dormant, never
+    holds focus. Returns the child's post-dispatch status."""
+    focus_n = len(_reached_this_tick)
+    all_n = len(_reached_this_tick_all)
+    had_focus = child._has_focus
+    had_got = child.__dict__.get("_got_focus_called", False)
+    tick_ai(child, game_time)
+    if child._status != US_ACTIVE:
+        del _reached_this_tick[focus_n:]
+        del _reached_this_tick_all[all_n:]
+        _reached_this_tick_all_ids.clear()
+        _reached_this_tick_all_ids.update(id(n) for n in _reached_this_tick_all)
+        child._has_focus = had_focus
+        child.__dict__["_got_focus_called"] = had_got
+    return child._status
+
+
 def _tick_priority_list(ai: PriorityListAI, game_time: float) -> int:
     # ai._ais is sorted lowest priority-int first (highest priority).
-    # Skip both DORMANT and DONE children: DORMANT means "not eligible
-    # right now" and DONE means "already finished" — neither should
-    # gate lower-priority entries. Without the DONE skip, a high-prio
-    # child that latches DONE on tick 1 (e.g. NonFedAttack's
-    # CheckWarpBeforeDeath / WarpOutBeforeDeath, which reports DONE when
-    # the ship is healthy) starves the SelectTarget combat subtree.
+    #
+    # Dormancy is NOT a parent-side latch. The decompiled
+    # PriorityListAI::Update (0x00490340) keeps a per-entry "skip" byte
+    # (entry+0x04) and sets it **only** when a child's Update returns US_DONE
+    # (iVar4 == 1) — it never sets that byte for US_DORMANT, and never clears
+    # it. So DONE is the only latch; a dormant child keeps its entry and is
+    # re-probed every Update through the child's live IsDormant (vtable +0x38).
+    # For a PreprocessingAI that predicate (0x0048ec20) re-derives — recursing
+    # into the contained subtree — whenever a ForceUpdate is pending, which is
+    # exactly what SelectTarget's set-entry / target-gone handlers trigger
+    # (AI/Preprocessors.py:1277-1302, "This may change us from being Dormant to
+    # being Active"). Treating US_DORMANT as a permanent skip (as this function
+    # used to) made an NPC whose target died never re-engage reinforcements
+    # that warped in: FedAttack/NonFedAttack/CloakAttack all add SelectTarget as
+    # a DIRECT PriorityList child (FedAttack.py:1384), SelectTarget returns
+    # PS_SKIP_DORMANT → US_DORMANT when it has no target (Preprocessors.py:1092),
+    # and once dormant the node was never reached again, so ForceUpdate could
+    # not help — its own cadence gate was never consulted.
+    #
+    # DONE stays a latch (skip below). A dormant PreprocessingAI child is the
+    # one case that must be re-dispatched: its status can only change by running
+    # its own Update, so it needs to be reached to leave dormancy. We gate that
+    # re-dispatch on its cadence being due (game_time >= _next_update_time) —
+    # ForceUpdate resets that to 0.0, and its natural cadence elapses anyway —
+    # which is our faithful analog of BC re-probing IsDormant. Other node types
+    # are re-evaluated WITHOUT a dispatch and stay skipped while dormant (so they
+    # correctly fall off the active path → LostFocus / SetInactive): a
+    # ConditionalAI is refreshed by _refresh_conditional_status above; a PlainAI
+    # cannot self-leave dormancy (its Update runs only while US_ACTIVE).
+    #
+    # The established one-active-child-per-tick dispatch is otherwise unchanged:
+    # the first eligible child that is dispatched holds the walk (we return),
+    # exactly as before. The ONLY behavioural addition is that a due dormant
+    # PreprocessingAI now gets a re-evaluation probe: if it reactivates it takes
+    # the list; if it stays dormant we roll back its focus bookkeeping and keep
+    # walking to lower-priority siblings, just as skipping it would have.
     for _prio, child in ai._ais:
         # Re-evaluate each ConditionalAI child's status against its
         # current condition values *before* deciding eligibility.
@@ -267,11 +322,37 @@ def _tick_priority_list(ai: PriorityListAI, game_time: float) -> int:
         # never dispatched and no phasers fired.
         if isinstance(child, ConditionalAI):
             _refresh_conditional_status(child)
-        if child._status == US_DORMANT or child._status == US_DONE:
+        if child._status == US_DONE:
             continue
-        tick_ai(child, game_time)
+        if child._status == US_DORMANT:
+            # Only a dormant PreprocessingAI that is due gets a re-evaluation
+            # probe; anything else stays skipped this tick (see block comment).
+            # BuilderAI is a PreprocessingAI subclass — it builds once and is not
+            # a dormant combat child, so this is harmless for it.
+            if not (isinstance(child, PreprocessingAI)
+                    and game_time >= child._next_update_time):
+                continue
+            # Probe it. If it reactivated it holds the list; if it stayed dormant
+            # the focus guard already rolled it back, so keep walking (as a skip
+            # would have) to lower-priority siblings.
+            if _dispatch_priority_child(child, game_time) == US_ACTIVE:
+                ai._status = US_ACTIVE
+                return ai._status
+            continue
+        # Active child: dispatch it and hold the walk here — one active child
+        # per tick, exactly as before. If its own Update turns it US_DORMANT/
+        # US_DONE this tick, the focus guard rolls its focus back (BC clears the
+        # focused child's focus when its Update returns dormant/done) and we
+        # still stop here rather than walking into lower siblings — preserving
+        # the prior one-child-per-tick dispatch.
+        if _dispatch_priority_child(child, game_time) == US_ACTIVE:
+            ai._status = US_ACTIVE
         return ai._status  # one child per tick (SDK semantics)
-    # All children dormant/done or list empty.
+    # All children dormant/done or list empty. Preserve the historical tail:
+    # only latch the list itself DONE when every child is DONE. (BC additionally
+    # reports US_DORMANT for an all-dormant list, but changing this list's own
+    # reported status alters how a *parent* list treats it as a nested child,
+    # which is outside the scope of the dormant-child re-dispatch fix.)
     if ai._ais and all(c._status == US_DONE for _p, c in ai._ais):
         ai._status = US_DONE
     return ai._status
