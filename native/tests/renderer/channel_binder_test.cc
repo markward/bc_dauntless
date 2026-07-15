@@ -335,3 +335,71 @@ TEST(BlendParams, SetParamsDrivesFormulaAndCurve) {
     renderer::set_blend_params(saved);   // don't leak into other tests
     EXPECT_NEAR(renderer::blend_in_seconds(1.0f), 0.34f, 1e-6f);
 }
+
+TEST(EvalChannels, SmoothstepCurveRemapsBlendWeightNonLinearly) {
+    // Pins the curve==1 branch: at w=0.25 smoothstep gives 0.15625, NOT 0.25.
+    // Setup mirrors BlendWindowRampsSeedToClipThenSettlesBlendDone.
+    auto saved = renderer::blend_params();
+    renderer::set_blend_params({/*cap_s=*/0.34f, /*short_factor=*/0.75f, /*curve=*/1});
+
+    assets::Model m = officer_like_model();
+    scenegraph::World w; scenegraph::Instance& inst = *w.get(w.create_instance(1));
+    renderer::set_rest_pose(inst, m, 0, false);
+
+    // Displace head to x=40 via last_locals (seed source).
+    inst.anim.last_locals = inst.anim.rest_locals;
+    inst.anim.last_locals[1] = glm::translate(glm::mat4(1.0f), glm::vec3(40, 0, 0));
+
+    // Bind gesture with blend. Gesture's head translation base is +Y5; no X
+    // track so sampled head_x = 0 (pure base Y). Blend ramps 40→0 on X.
+    renderer::BindOptions b; b.blend = true;
+    renderer::bind_clip(inst, m, 1, b, /*now=*/0.0);
+    ASSERT_NEAR(inst.anim.channels[1].blend_in_s, 0.34f, 1e-6f);
+
+    auto head_x = [&](double now) {
+        return renderer::eval_channels(inst, m, now)[1][3].x;
+    };
+
+    // At elapsed=0.085: w=0.25, smoothstep(0.25)=0.15625.
+    // Expected head_x = 40*(1-0.15625) = 33.75.
+    const float at_quarter = head_x(0.085);
+    EXPECT_NEAR(at_quarter, 33.75f, 0.5f);
+
+    // The key differentiator: linear at w=0.25 would give 40*(1-0.25)=30.0.
+    // Smoothstep must differ from 30.0 by more than the tolerance.
+    EXPECT_GT(std::abs(at_quarter - 30.0f), 0.5f)
+        << "curve==1 must remap w != linear; got " << at_quarter;
+
+    // At elapsed=0.17: w=0.5, smoothstep(0.5)=0.5 — same midpoint as linear.
+    EXPECT_NEAR(head_x(0.17), 20.0f, 0.5f);
+
+    renderer::set_blend_params(saved);  // restore: no leakage
+}
+
+TEST(BindClip, SeedComesFromRestLocalsWhenLastLocalsEmpty) {
+    // Middle tier of seed precedence: last_locals is empty but a rest pose
+    // exists. bind_clip must seed from rest_locals, not bind locals.
+    // This mirrors the "create officer → set_rest_pose → immediately bind
+    // gesture" path (instance never evaluated; last_locals is empty).
+    assets::Model m = officer_like_model();
+    scenegraph::World w;
+    auto id = w.create_instance(1);
+    scenegraph::Instance& inst = *w.get(id);
+
+    // Apply rest pose (placement clip 0 puts head at bind +Y5).
+    renderer::set_rest_pose(inst, m, 0, /*at_start=*/false);
+
+    // Confirm precondition: last_locals must be empty (instance never eval'd).
+    ASSERT_TRUE(inst.anim.last_locals.empty())
+        << "test precondition: last_locals must be empty before first eval";
+
+    // Bind the head-tracking gesture clip WITH blend so seed_t is populated.
+    renderer::BindOptions b; b.blend = true;
+    renderer::bind_clip(inst, m, 1, b, /*now=*/0.0);
+
+    // Rest local for head bone is the bind offset (0, 5, 0), as placed by the
+    // placement clip's rest_locals["Bip01 Head"] = bones[1].local_transform.
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(
+        inst.anim.channels[1].seed_t, glm::vec3(0, 5, 0), 1e-5f)))
+        << "seed must come from rest_locals when last_locals is empty";
+}

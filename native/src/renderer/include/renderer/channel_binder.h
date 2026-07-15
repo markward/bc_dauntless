@@ -55,7 +55,10 @@ void clear_channels(scenegraph::Instance& inst);
 
 /// Sample the placement clip ONCE (t=0 if at_start else t=duration) into
 /// rest_locals via sample_pose, set has_rest, and clear all channels. Snap —
-/// no blend (BC's positioning path bypasses blending).
+/// no blend (BC's positioning path bypasses blending). NOTE: does NOT clear
+/// last_locals, so a bind_clip issued before the next eval seeds its blend
+/// from the previously evaluated pose (falling back to the new rest_locals
+/// only when last_locals is empty).
 void set_rest_pose(scenegraph::Instance& inst, const assets::Model& model,
                    int clip_index, bool at_start);
 

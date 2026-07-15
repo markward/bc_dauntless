@@ -20,7 +20,6 @@
 #include <renderer/window.h>
 #include <renderer/pipeline.h>
 #include <renderer/bone_palette.h>
-#include <renderer/pose_sampler.h>
 #include <renderer/animation_update.h>
 #include <renderer/channel_binder.h>
 #include <renderer/frame.h>
