@@ -346,6 +346,17 @@ tubes never refill mid-combat, which contradicts observable gameplay.
 
 Nothing else in this design depends on the answer.
 
+**Second question for the decomp project (chain parse):**
+
+> How does the C++ parse `FiringChainString` segments into chain masks —
+> per-digit group ids (`"53"` → groups {5,3}) or `atoi` decimal bitmask
+> (`53` → groups {1,3,5,6})? And does the group sweep honour authored
+> segment order or ascending bit order (`GetNextGroup` scans upward, which
+> would try group 3 before 5 in Quad)? Our implementation keeps the
+> per-digit ordered-list reading — it is the only one under which the
+> authored names (Single/Dual/Quad vs tube `SetGroups` masks 25/26/4) make
+> sense.
+
 ## 10. Non-goals
 
 - Wire formats / MP relay (§2.8, §2.9, §3.5 of the RE doc).

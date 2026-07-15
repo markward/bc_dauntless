@@ -54,6 +54,11 @@ def test_phaser_bank_inherits_property_charge_fields():
     assert bank.GetRechargeRate() == 0.08
     # Fresh ships spawn with phasers fully charged.
     assert bank.GetChargeLevel() == 5.0
+    # GetChargePercentage() reads 0.0 while the parent system is unpowered
+    # (Task 10, audited §1.6/§7.4 — the WeaponsDisplay shows an empty bar for
+    # an offline array even though the capacitor itself is full); power the
+    # system on to check the field-copy fidelity this test targets.
+    ship.GetPhaserSystem().TurnOn()
     assert bank.GetChargePercentage() == 1.0
 
 

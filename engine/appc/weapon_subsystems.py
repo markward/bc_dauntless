@@ -241,14 +241,6 @@ def _init_energy_weapon_state(self):
     self._charge_level: float = 0.0
     # Looped SFX handle started by Fire(), stopped by StopFiring().
     self._loop_handle = None
-    # Refire hysteresis.  Cleared the moment the bank auto-stops because
-    # of depletion; restored once charge climbs past
-    # _min_firing_charge + REFIRE_HEADROOM_FRACTION × _max_charge.
-    # Without this the bank "blinks" — drops below min for one tick,
-    # back above min the next, fires for one frame, repeats.
-    # SDK has no setter for this threshold (confirmed against
-    # EnergyWeaponProperty); 20% of MaxCharge is a feel-tuned nominal.
-    self._armed: bool = True
 
 
 def _resolve_fire_sound(prop) -> str:
@@ -351,6 +343,25 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0):
     return torp
 
 
+def _post_weapon_fired(weapon) -> None:
+    """Post ET_WEAPON_FIRED: Source = the firing weapon, Destination = the
+    owning ship (resolved via ``_climb_to_ship``).  Shared by TorpedoTube.Fire
+    (posted AFTER ET_TORPEDO_FIRED — see TorpedoTube._broadcast_weapon_fired)
+    and PhaserBank.Fire (posted on the was-not-firing edge, Task 10, audited
+    §1.6/§6 — the SDK surface for the event bounds it to (weapon, owner ship)
+    regardless of weapon type)."""
+    import App
+    from engine import dev_mode
+    try:
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_WEAPON_FIRED)
+        evt.SetSource(weapon)
+        evt.SetDestination(weapon._climb_to_ship())
+        App.g_kEventManager.AddEvent(evt)
+    except Exception as _e:
+        dev_mode.log_swallowed("ET_WEAPON_FIRED broadcast", _e)
+
+
 class _EnergyWeaponFireMixin:
     """Shared Fire/CanFire/StopFiring/UpdateCharge for PhaserBank / PulseWeapon
     / TractorBeam.  Per-emitter state initialised by _init_energy_weapon_state.
@@ -361,11 +372,6 @@ class _EnergyWeaponFireMixin:
     bare "<name>" (tractor convention).  Names map to WAV assets via
     sdk/Build/scripts/LoadTacticalSounds.py invoked at audio init.
     """
-
-    # Refire hysteresis headroom (fraction of MaxCharge).  Once a bank
-    # auto-stops via depletion, it must recharge MinFiringCharge + this
-    # fraction × MaxCharge before CanFire returns true again.
-    REFIRE_HEADROOM_FRACTION = 0.20
 
     def _aim_in_arc(self, target) -> bool:
         """Firing-arc gate in the weapon's OWN fire path (spec §2.4: the
@@ -381,14 +387,44 @@ class _EnergyWeaponFireMixin:
         return _emitter_in_arc(self, ship, aim_world)
 
     def CanFire(self) -> int:
+        """Audited §1.6, three gates (the invented refire-hysteresis is
+        gone — this asymmetry between the two charge branches below IS
+        BC's hysteresis, no separate latch needed):
+
+          * ship alive — a dead ship's weapons never fire.
+          * charge — ``> 0`` to SUSTAIN an already-firing beam, but
+            ``>= MinFiringCharge`` to START one.  A depleted bank that
+            auto-stopped must climb back to MinFiringCharge (no extra
+            headroom) before it can restart.
+          * disabled-product — the bank's own condition times the parent
+            system's condition must clear the authored DisabledPercentage
+            threshold (``GetOverallConditionPercentage`` in the audit); a
+            damaged system throttles a healthy bank the same way a
+            damaged bank throttles a healthy system.
+
+        The existing parent-IsOn gate is unchanged (BC gates power
+        elsewhere, not inside this predicate)."""
         parent = self.GetParentSubsystem()
         on = parent is not None and parent.IsOn()
         if not on:
             return 0
-        if not self._armed:
+        ship = self._climb_to_ship() if hasattr(self, "_climb_to_ship") else None
+        if ship is not None and hasattr(ship, "IsDead") and ship.IsDead():
             return 0
-        charged = self._charge_level >= self._min_firing_charge
-        return 1 if charged else 0
+        if self._firing:
+            charged = self._charge_level > 0.0
+        else:
+            charged = self._charge_level >= self._min_firing_charge
+        if not charged:
+            return 0
+        # `parent` is guaranteed non-None here (the IsOn gate above already
+        # returned 0 otherwise); GetDisabledPercentage() lives on self
+        # (ShipSubsystem field, sane 0.25 default) so this never raises even
+        # on a bank with no property bound.
+        combined = self.GetConditionPercentage() * parent.GetConditionPercentage()
+        if self.GetDisabledPercentage() >= combined:
+            return 0
+        return 1
 
     def Fire(self, target=None, offset=None) -> bool:
         """Returns True when the beam is firing after this call — the tick's
@@ -431,26 +467,27 @@ class _EnergyWeaponFireMixin:
                 # to 0 while firing (visible on the WeaponsDisplay as the
                 # full black → red → yellow → green sweep during recharge)
                 # — MinFiringCharge gates fire-start only, not the
-                # continuous discharge. _armed stays cleared until the
-                # bank recharges past the hysteresis threshold below.
-                self._armed = False
+                # continuous discharge.  Restart requires climbing back to
+                # MinFiringCharge (CanFire's start/sustain asymmetry —
+                # audited §1.6, no headroom on top of it).
                 # Route via StopFiring so the looped SFX handle is silenced.
                 self.StopFiring()
         else:
             parent = self.GetParentSubsystem()
             if parent is None or parent.IsOn():
-                factor = max(0.0, parent.GetNormalPowerPercentage()
-                             if parent is not None else 1.0)
+                power_factor = max(0.0, parent.GetNormalPowerPercentage()
+                                    if parent is not None else 1.0)
+                # Audited §1.6: recharge also scales with the bank's OWN
+                # condition — a damaged bank recharges proportionally
+                # slower.  (BC's audited non-local 1.25x boost near a
+                # friendly starbase never triggers in single-player — no
+                # code path applies it; documented here, not implemented.)
+                condition_factor = self.GetConditionPercentage()
                 headroom = self._max_charge - self._charge_level
                 if headroom > 0.0:
-                    want = min(self._recharge_rate * factor * dt, headroom)
+                    want = min(self._recharge_rate * power_factor
+                               * condition_factor * dt, headroom)
                     self._charge_level += want
-            # Re-arm once we cleared the headroom threshold.
-            if not self._armed:
-                refire_threshold = (self._min_firing_charge
-                                    + self.REFIRE_HEADROOM_FRACTION * self._max_charge)
-                if self._charge_level >= refire_threshold:
-                    self._armed = True
 
     def _play_fire_sfx(self) -> None:
         """Play the firing bank's Start one-shot + Loop sustained tone.
@@ -1385,7 +1422,10 @@ class PhaserSystem(_HeldFireWeaponSystem):
         self._aimed_weapon: int = 0
 
     def SetPowerLevel(self, level) -> None:
-        self._power_level = int(level)
+        # BC ships an uninitialized-stack-damage bug for out-of-range levels
+        # (the audit's own recommendation is to clamp on write rather than
+        # reproduce the corruption) — clamp to the three defined levels.
+        self._power_level = max(0, min(2, int(level)))
 
     def GetPowerLevel(self) -> int:
         return self._power_level
@@ -1626,7 +1666,8 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
     """Individual phaser emitter under a parent PhaserSystem
     (WeaponSystemProperty WST_PHASER).  Charge fields populated by Pass 4
     from the parent PhaserProperty (galaxy.py:209-214 for typical values).
-    Inherits Fire/CanFire/StopFiring/UpdateCharge from the mixin.
+    Inherits CanFire/StopFiring/UpdateCharge from the mixin; Fire wraps the
+    mixin's implementation to post ET_WEAPON_FIRED (Task 10).
     """
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -1635,6 +1676,18 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
         self._target = None
         self._target_offset = None
 
+    def Fire(self, target=None, offset=None) -> bool:
+        """Wraps the shared beam-fire mixin to post ET_WEAPON_FIRED on the
+        was-not-firing edge — the same edge the mixin already uses for the
+        SFX one-shot (Task 10, audited §1.6/§6; spec §7). TractorBeam and
+        PulseWeapon do not post this event yet — out of scope for the
+        "phaser safe group"."""
+        was_firing = self._firing
+        fired = _EnergyWeaponFireMixin.Fire(self, target, offset)
+        if fired and not was_firing:
+            _post_weapon_fired(self)
+        return fired
+
     def GetMaxCharge(self) -> float:                return self._max_charge
     def GetMinFiringCharge(self) -> float:          return self._min_firing_charge
     def GetNormalDischargeRate(self) -> float:      return self._normal_discharge_rate
@@ -1642,7 +1695,15 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
     def GetChargeLevel(self) -> float:              return self._charge_level
 
     def GetChargePercentage(self) -> float:
+        """0.0 when the parent system is off or this bank is disabled
+        (Task 10, audited §1.6/§7.4) — otherwise the WeaponsDisplay would
+        keep showing a charge bar for a bank that cannot fire."""
         if self._max_charge <= 0.0:
+            return 0.0
+        parent = self.GetParentSubsystem()
+        if parent is not None and not parent.IsOn():
+            return 0.0
+        if self.IsDisabled():
             return 0.0
         return self._charge_level / self._max_charge
 
@@ -1725,16 +1786,12 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     # Pulse cannons fire projectile bolts, not held beams: Fire spawns one
     # bolt, dumps accumulated charge, and starts a per-shot cooldown. There
     # is no looping SFX and _firing never stays True — so the mixin's
-    # UpdateCharge always takes the RECHARGE branch (see below).
-
-    # Re-arm at exactly MinFiringCharge — no phaser-style headroom. Stock
-    # pulse cannons have a tiny charge margin (BoP: MaxCharge 3.8,
-    # MinFiringCharge 3.6); the phaser default (0.20·MaxCharge) would push
-    # the refire threshold to 4.36 > MaxCharge, so the cannon could fire
-    # exactly once and never re-arm. For pulse weapons the per-shot cooldown
-    # (SetCooldownTime, BoP 0.2s) is the anti-flutter mechanism, not charge
-    # hysteresis — so RechargeRate alone governs cadence (~9s from empty).
-    REFIRE_HEADROOM_FRACTION = 0.0
+    # CanFire always takes the ">= MinFiringCharge" branch (never the
+    # ">0 sustain" branch, since _firing is always False here) and
+    # UpdateCharge always takes the RECHARGE branch (see below). Re-arm is
+    # therefore already "at exactly MinFiringCharge, no headroom" (Task 10,
+    # audited §1.6) — the per-shot cooldown (SetCooldownTime, BoP 0.2s) is
+    # the anti-flutter mechanism, not charge hysteresis.
 
     def CanFire(self) -> int:
         if self._cooldown_remaining > 0.0:
@@ -1763,14 +1820,14 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         # Discrete drain: dump accumulated charge + start cooldown. No held beam.
         self._charge_level = 0.0
         self._cooldown_remaining = self.GetCooldownTime()
-        self._armed = False  # re-arms in UpdateCharge once past the refire threshold
         return True
 
     def UpdateCharge(self, dt: float) -> None:
         if self._cooldown_remaining > 0.0:
             self._cooldown_remaining = max(0.0, self._cooldown_remaining - dt)
         # _firing stays False for pulse weapons, so the mixin takes the
-        # RECHARGE branch and re-arms via the existing hysteresis threshold.
+        # RECHARGE branch; CanFire re-arms at exactly MinFiringCharge (no
+        # headroom — see the class docstring above).
         _EnergyWeaponFireMixin.UpdateCharge(self, dt)
         # Drive the charge watcher with the charge FRACTION so
         # Conditions/ConditionPulseReady.py fires its ET_CHARGE_TOGGLE
@@ -1822,10 +1879,10 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
         A tractor holds CONTINUOUSLY while engaged (you can pin a ship
         indefinitely), so a firing tractor must not deplete to 0 and stop the
         way a phaser bank does.  While firing we drain slowly toward — but
-        never below — MinFiringCharge (so the beam stays armed and CanFire
-        keeps returning true), gated by parent power: if the line goes down
-        the beam drops.  When idle we fall back to the mixin's normal
-        recharge + re-arm hysteresis.
+        never below — MinFiringCharge (so charge stays ``> 0`` and the
+        mixin's CanFire sustain branch keeps returning true), gated by
+        parent power: if the line goes down the beam drops.  When idle we
+        fall back to the mixin's normal condition-scaled recharge.
         """
         if self._firing:
             parent = self.GetParentSubsystem()
@@ -1848,14 +1905,14 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
                 self._charge_level = max(
                     floor, self._charge_level - self._normal_discharge_rate * dt
                 )
-            # _armed stays set while sustaining — no depletion auto-stop.
+            # Charge stays > 0 while sustaining — no depletion auto-stop.
             return
         # Idle fall-through note: an idle TractorBeamSystem doesn't want power
         # (_wants_power False -> factor zeroed by the pump), so the mixin's
         # factor-scaled recharge is 0 while idle. Harmless by design: the firing
-        # sustain path never drains below _min_firing_charge, StopFiring keeps
-        # _armed set, and CanFire passes at the floor — charge above the floor
-        # has no gameplay effect for tractors.
+        # sustain path never drains below _min_firing_charge, so CanFire's
+        # start-branch (>= MinFiringCharge) passes at the floor — charge above
+        # the floor has no gameplay effect for tractors.
         super().UpdateCharge(dt)
 
 
@@ -2147,17 +2204,10 @@ class TorpedoTube(Weapon):
     def _broadcast_weapon_fired(self) -> None:
         """Post ET_WEAPON_FIRED: Source = the TUBE, Destination = the owning
         ship.  Posted AFTER ET_TORPEDO_FIRED on every successful launch
-        (weapon-firing-mechanics.md §1.5/§2.4, audited)."""
-        import App
-        from engine import dev_mode
-        try:
-            evt = App.TGEvent_Create()
-            evt.SetEventType(App.ET_WEAPON_FIRED)
-            evt.SetSource(self)
-            evt.SetDestination(self._climb_to_ship())
-            App.g_kEventManager.AddEvent(evt)
-        except Exception as _e:
-            dev_mode.log_swallowed("ET_WEAPON_FIRED broadcast", _e)
+        (weapon-firing-mechanics.md §1.5/§2.4, audited).  Delegates to the
+        module-level ``_post_weapon_fired`` shared with PhaserBank.Fire
+        (Task 10)."""
+        _post_weapon_fired(self)
 
     def _broadcast_weapon_fire_failed(self) -> None:
         """Post ET_WEAPON_FIRE_FAILED: Destination = the TUBE.  Posted when a
