@@ -46,27 +46,6 @@ void World::set_officer_face(InstanceId id, std::uint32_t tex_a,
     }
 }
 
-void World::set_animation(InstanceId id, Instance::AnimationState state) {
-    if (Instance* in = get(id)) { in->animation = state; in->animation.settled = false; }
-}
-
-void World::set_rest_pose(InstanceId id, Instance::AnimationState rest) {
-    Instance* in = get(id);
-    if (!in) return;
-    rest.settled = false;
-    in->rest_pose = rest;
-    in->has_rest_pose = true;
-    in->animation = rest;                  // adopt the rest pose now
-}
-
-void World::restore_rest_pose(InstanceId id) {
-    Instance* in = get(id);
-    if (!in || !in->has_rest_pose) return;
-    Instance::AnimationState rest = in->rest_pose;
-    rest.settled = false;                  // force one re-sample
-    in->animation = rest;
-}
-
 void World::set_visible(InstanceId id, bool visible) {
     if (auto* inst = get(id)) inst->visible = visible;
 }

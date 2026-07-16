@@ -62,36 +62,4 @@ std::vector<glm::mat4> sample_pose(const assets::AnimationClip& clip,
     return out;
 }
 
-std::vector<glm::mat4> sample_pose_over_base(
-    const assets::AnimationClip& clip, const assets::Skeleton& skeleton,
-    float t, const std::vector<glm::mat4>& base_locals) {
-    t = std::clamp(t, 0.0f, clip.duration_seconds);
-    std::unordered_map<std::string, const assets::AnimationClip::NodeTrack*> by_name;
-    for (const auto& tr : clip.tracks) by_name[tr.target_node_name] = &tr;
-
-    std::vector<glm::mat4> out(skeleton.bones.size());
-    for (std::size_t i = 0; i < skeleton.bones.size(); ++i) {
-        const glm::mat4 base =
-            i < base_locals.size() ? base_locals[i] : skeleton.bones[i].local_transform;
-        auto it = by_name.find(skeleton.bones[i].name);
-        out[i] = pose_bone(it == by_name.end() ? nullptr : it->second, base, t);
-        // Anchor the ROOT translation to the placement: turn clips that carry a
-        // Bip01 root translation (e.g. eb_face_capt) would slide the officer off
-        // the station. Keep the clip's root ROTATION but take the root POSITION
-        // from the placement base. Root-less clips (breathe, neck turns) already
-        // carry the base translation here, so this is a no-op for them.
-        if (static_cast<int>(i) == skeleton.root_bone_index)
-            out[i][3] = base[3];
-    }
-    return out;
-}
-
-bool clip_drives_skeleton(const assets::AnimationClip& clip,
-                          const assets::Skeleton& skeleton) {
-    for (const auto& tr : clip.tracks)
-        for (const auto& bone : skeleton.bones)
-            if (bone.name == tr.target_node_name) return true;
-    return false;
-}
-
 }  // namespace renderer

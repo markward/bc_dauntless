@@ -1,59 +1,20 @@
 #include "renderer/animation_update.h"
 #include "renderer/bone_palette.h"
-#include "renderer/pose_sampler.h"
+#include "renderer/channel_binder.h"
 #include <assets/model.h>
-#include <cmath>
 
 namespace renderer {
 
 void update_animations(scenegraph::World& world, const ModelLookup& lookup,
                        double now_wall_time) {
     world.for_each_alive([&](scenegraph::Instance& inst) {
-        auto& a = inst.animation;
-        if (a.clip_index < 0) return;
-        if (a.settled && !a.loop) return;            // frozen after hold
+        // Nothing bound and no rest pose ⇒ not a skeletal-animated instance.
+        if (!inst.anim.dirty) return;                    // settled: skip
+        if (inst.anim.channels.empty() && !inst.anim.has_rest) return;
         const assets::Model* m = lookup(inst.model_handle);
-        if (!m || a.clip_index >= static_cast<int>(m->animations.size())) return;
-        const assets::AnimationClip& clip = m->animations[a.clip_index];
-        const float dur = clip.duration_seconds;
-        double elapsed = now_wall_time - a.start_wall_time;
-        if (elapsed < 0.0) elapsed = 0.0;
-        float t;
-        if (a.sample_at_start) {
-            // Movement clips (e.g. db_StoL1_S "Science to L1") place the officer
-            // AT the station at t=0 and walk AWAY by t=dur. A stationed officer
-            // holds the start frame: evaluate at t=0 and freeze immediately.
-            t = 0.0f;
-            a.settled = true;
-        } else if (a.sample_at_end) {
-            // Rest "stand"/"seated" clips place the officer AT the station on
-            // the LAST frame. A stationed officer holds it: evaluate at t=dur
-            // and freeze immediately — no play-through (the load-time bug fix).
-            t = dur;
-            a.settled = true;
-        } else if (a.loop) {
-            t = dur > 0.0f ? static_cast<float>(std::fmod(elapsed, dur)) : 0.0f;
-        } else if (elapsed >= dur) {
-            t = dur;
-            a.settled = true;                        // last rebuild, then freeze
-        } else {
-            t = static_cast<float>(elapsed);
-        }
-        std::vector<glm::mat4> pose;
-        if (a.layer_over_rest && inst.has_rest_pose &&
-            inst.rest_pose.clip_index >= 0 &&
-            inst.rest_pose.clip_index < static_cast<int>(m->animations.size())) {
-            const assets::AnimationClip& rest_clip =
-                m->animations[inst.rest_pose.clip_index];
-            const float rest_t =
-                inst.rest_pose.sample_at_end ? rest_clip.duration_seconds : 0.0f;
-            std::vector<glm::mat4> base_locals =
-                sample_pose(rest_clip, m->skeleton, rest_t);
-            pose = sample_pose_over_base(clip, m->skeleton, t, base_locals);
-        } else {
-            pose = sample_pose(clip, m->skeleton, t);
-        }
-        inst.bone_palette = build_bone_palette(m->skeleton, &pose);
+        if (!m || m->skeleton.bones.empty()) return;
+        std::vector<glm::mat4> locals = eval_channels(inst, *m, now_wall_time);
+        inst.bone_palette = build_bone_palette(m->skeleton, &locals);
     });
 }
 

@@ -22,8 +22,8 @@
 #include <renderer/window.h>
 #include <renderer/pipeline.h>
 #include <renderer/bone_palette.h>
-#include <renderer/pose_sampler.h>
 #include <renderer/animation_update.h>
+#include <renderer/channel_binder.h>
 #include <renderer/frame.h>
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
@@ -1169,6 +1169,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "NIF, or None. Parse-only; no GL context required.");
 
     py::class_<scenegraph::InstanceId>(m, "InstanceId")
+        .def(py::init<>())
         .def_readonly("index", &scenegraph::InstanceId::index)
         .def_readonly("generation", &scenegraph::InstanceId::generation);
 
@@ -1251,105 +1252,159 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "slots ('neutral','a','e','u','blink1','blink2','eyesclosed') by mix "
           "in [0,1]. 'neutral' = the head's own base texture. No-op for a bad "
           "id or a non-officer model.");
+    // Bind a clip onto an instance's channel table. Returns bones bound
+    // (0 = dead clip on this skeleton — BC's silent no-op).
+    auto bind_instance_clip = [](scenegraph::InstanceId id, int clip_index,
+                                 const renderer::BindOptions& opts) -> int {
+        scenegraph::Instance* in = g_world.get(id);
+        if (!in) return 0;
+        const assets::Model* m = resolve_model(in->model_handle);
+        if (!m) return 0;
+        return renderer::bind_clip(*in, *m, clip_index, opts, glfwGetTime());
+    };
+
     m.def("set_instance_animation",
-          [](scenegraph::InstanceId id, int clip_index, bool loop,
-             bool sample_at_start) {
-              auto* in = g_world.get(id);
-              if (!in) return;
-              scenegraph::Instance::AnimationState st;
-              st.clip_index = clip_index;
-              st.loop = loop;
-              st.sample_at_start = sample_at_start;
-              // Same wall clock frame() threads into update_animations /
-              // draw_model / flip controllers, so animation t=0 lines up with
-              // the per-frame sample. (frame() reads glfwGetTime() into `now`.)
-              st.start_wall_time = glfwGetTime();
-              g_world.set_animation(id, st);
+          [bind_instance_clip](scenegraph::InstanceId id, int clip_index,
+                               bool loop, bool sample_at_start) {
+              renderer::BindOptions o;
+              o.loop = loop;
+              o.root_motion = true;
+              o.use_clip_base = true;
+              o.hold_at_start = sample_at_start;
+              bind_instance_clip(id, clip_index, o);
           },
           py::arg("iid"), py::arg("clip_index"), py::arg("loop") = false,
           py::arg("sample_at_start") = false,
-          "SP2: play model.animations[clip_index] on this instance. loop=false "
-          "(default) plays once and holds the last frame; the renderer rebuilds "
-          "the bone palette each frame until it settles.");
+          "SP2: bind model.animations[clip_index]'s name-matched tracks onto "
+          "this instance's bone channels (full clip: root motion applied, "
+          "omitted channels fall back to the clip's own rest pose). loop=false "
+          "plays once and holds; sample_at_start holds frame 0.");
+
     m.def("set_instance_rest_pose",
           [](scenegraph::InstanceId id, int clip_index, bool at_start) {
-              scenegraph::Instance::AnimationState st;
-              st.clip_index = clip_index;
-              st.loop = false;
-              st.sample_at_start = at_start;
-              st.sample_at_end = !at_start;
-              st.start_wall_time = glfwGetTime();
-              g_world.set_rest_pose(id, st);
+              scenegraph::Instance* in = g_world.get(id);
+              if (!in) return;
+              const assets::Model* m = resolve_model(in->model_handle);
+              if (!m) return;
+              renderer::set_rest_pose(*in, *m, clip_index, at_start);
           },
           py::arg("iid"), py::arg("clip_index"), py::arg("at_start") = false,
-          "Freeze an officer at the static placement pose: at_start=true holds "
-          "the clip's first frame (move-from-station clips), false holds the "
-          "last frame (stand/seated clips). No play-through.");
+          "Freeze the officer's placement pose: sample the clip once "
+          "(at_start=true → first frame, else last) into the per-bone rest "
+          "locals and unbind every channel. Snap — no blend (BC positioning).");
+
     m.def("restore_rest_pose",
-          [](scenegraph::InstanceId id) { g_world.restore_rest_pose(id); },
-          py::arg("iid"),
-          "Snap the instance back to its stored rest pose (AT_DEFAULT).");
-    m.def("play_instance_idle",
-          [](scenegraph::InstanceId id, int clip_index) {
-              scenegraph::Instance::AnimationState st;
-              st.clip_index = clip_index;
-              st.loop = true;
-              st.layer_over_rest = true;
-              st.start_wall_time = glfwGetTime();
-              g_world.set_animation(id, st);
-          },
-          py::arg("iid"), py::arg("clip_index"),
-          "Loop a layered idle (e.g. breathing) over the instance's rest pose: "
-          "the idle clip drives the body, the placement supplies the root + any "
-          "bones the idle doesn't track. Loops until a gesture or restore "
-          "replaces it.");
-    m.def("play_instance_gesture",
-          [](scenegraph::InstanceId id, int clip_index) {
-              // BC-faithful dead-clip gate: stbc.exe binds clip channels to
-              // nodes by exact strcmp and silently idles unmatched nodes, so
-              // a clip driving ZERO bones of this skeleton shows nothing in
-              // BC (e.g. the "Kiska …"-rigged Console_Look_*.NIF gestures on
-              // the "Bip01 …" officer rigs). Setting it as the animation here
-              // would instead freeze the officer at the layered base pose for
-              // the clip's duration — so leave the current idle running.
+          [](scenegraph::InstanceId id) {
               scenegraph::Instance* in = g_world.get(id);
-              if (in) {
-                  const assets::Model* m = resolve_model(in->model_handle);
-                  if (m && clip_index >= 0 &&
-                      clip_index < static_cast<int>(m->animations.size()) &&
-                      !renderer::clip_drives_skeleton(
-                          m->animations[clip_index], m->skeleton))
-                      return;
-              }
-              scenegraph::Instance::AnimationState st;
-              st.clip_index = clip_index;
-              st.loop = false;
-              st.layer_over_rest = true;
-              st.start_wall_time = glfwGetTime();
-              g_world.set_animation(id, st);
+              if (!in || !in->anim.has_rest) return;
+              renderer::clear_channels(*in);
+          },
+          py::arg("iid"),
+          "Snap the instance back to its stored rest pose (AT_DEFAULT): "
+          "unbind every channel; bones fall back to the placement locals.");
+
+    m.def("anim_blend_set",
+          [](float cap_s, float short_factor, int curve) {
+              if (!dauntless::is_developer_mode()) return;
+              renderer::set_blend_params({cap_s, short_factor, curve});
+          },
+          py::arg("cap_s") = 0.34f, py::arg("short_factor") = 0.75f,
+          py::arg("curve") = 0,
+          "DEV ONLY (--developer; no-op otherwise): live-tune the animation "
+          "blend-in dials. BC defaults: cap 0.34 s, short-clip factor 0.75, "
+          "curve 0 = linear (1 = smoothstep). anim_blend_set(0, 0, 0) disables "
+          "blending entirely for A/B against the structural swap.");
+
+    m.def("play_instance_idle",
+          [bind_instance_clip](scenegraph::InstanceId id, int clip_index) {
+              renderer::BindOptions o;
+              o.loop = true;
+              o.blend = true;
+              bind_instance_clip(id, clip_index, o);
           },
           py::arg("iid"), py::arg("clip_index"),
-          "Play a transient gesture/reaction clip LAYERED over the instance's "
-          "rest pose: gesture-tracked bones override, the root and untracked "
-          "bones stay at the placement pose. Plays once and holds the last "
-          "frame until restore_rest_pose. A clip that drives none of this "
-          "skeleton's bones is a visual no-op (BC's exact-strcmp channel "
-          "binding silently idles unmatched nodes).");
+          "Loop an idle (e.g. breathing) on the clip's name-matched bones; "
+          "every other bone keeps its current channel or rest local. Loops "
+          "until a later bind takes its bones (per-bone last-bind-wins).");
+
+    m.def("play_instance_gesture",
+          [bind_instance_clip](scenegraph::InstanceId id, int clip_index) {
+              renderer::BindOptions o;
+              o.blend = true;
+              bind_instance_clip(id, clip_index, o);
+          },
+          py::arg("iid"), py::arg("clip_index"),
+          "Play a transient gesture on the clip's name-matched bones only: "
+          "those bones clamp+hold at the last frame until the next bind; all "
+          "other bones keep running their idle (BC's non-exclusive layering). "
+          "A clip matching zero bones binds nothing — BC's exact-strcmp "
+          "channel join makes dead clips silent no-ops by construction.");
+
     m.def("play_instance_walk",
-          [](scenegraph::InstanceId id, int clip_index) {
-              scenegraph::Instance::AnimationState st;
-              st.clip_index = clip_index;
-              st.loop = false;
-              st.layer_over_rest = false;   // FULL clip: root translation applied
-              st.sample_at_start = false;
-              st.sample_at_end = false;
-              st.start_wall_time = glfwGetTime();
-              g_world.set_animation(id, st);
+          [bind_instance_clip](scenegraph::InstanceId id, int clip_index) {
+              renderer::BindOptions o;
+              o.root_motion = true;
+              o.use_clip_base = true;
+              o.blend = true;
+              bind_instance_clip(id, clip_index, o);
           },
           py::arg("iid"), py::arg("clip_index"),
-          "Play a full clip with ROOT MOTION applied (non-layered): the clip's "
-          "baked Bip01 root translation moves the character across the set (e.g. "
-          "a turbolift walk-on). Plays once and settles at the last frame.");
+          "Play a walk clip WITH ROOT MOTION: the baked Bip01 root translation "
+          "moves the character across the set. Plays once and settles at the "
+          "last frame. Bones the clip does not track keep their channels "
+          "(BC walk-ons are non-exclusive).");
+
+    m.def("debug_instance_anim",
+          [](scenegraph::InstanceId id) {
+              py::list out;
+              scenegraph::Instance* in = g_world.get(id);
+              if (!in) return out;
+              const assets::Model* m = resolve_model(in->model_handle);
+              for (std::size_t i = 0; i < in->anim.channels.size(); ++i) {
+                  const auto& ch = in->anim.channels[i];
+                  if (ch.clip_index < 0) continue;
+                  py::dict d;
+                  d["bone"] = (m && i < m->skeleton.bones.size())
+                                  ? m->skeleton.bones[i].name
+                                  : std::to_string(i);
+                  d["clip"] = ch.clip_index;
+                  d["start"] = ch.start_wall_time;
+                  d["loop"] = ch.loop;
+                  d["settled"] = ch.settled;
+                  d["blend_in_s"] = ch.blend_in_s;
+                  out.append(d);
+              }
+              return out;
+          },
+          py::arg("iid"),
+          "DEV: list this instance's BOUND bone channels "
+          "[{bone, clip, start, loop, settled, blend_in_s}]. Empty for a bad "
+          "id or an instance with no bound channels.");
+
+    m.def("debug_bone_palette_row",
+          [](scenegraph::InstanceId id, const std::string& bone_name)
+              -> py::object {
+              scenegraph::Instance* in = g_world.get(id);
+              if (!in) return py::none();
+              const assets::Model* m = resolve_model(in->model_handle);
+              if (!m) return py::none();
+              for (std::size_t i = 0; i < m->skeleton.bones.size(); ++i) {
+                  if (m->skeleton.bones[i].name != bone_name) continue;
+                  if (i >= in->bone_palette.size()) return py::none();
+                  const glm::mat4& p = in->bone_palette[i];
+                  py::list row;
+                  for (int c = 0; c < 4; ++c)
+                      for (int r = 0; r < 4; ++r) row.append(p[c][r]);
+                  return row;
+              }
+              return py::none();
+          },
+          py::arg("iid"), py::arg("bone_name"),
+          "DEV: the named bone's current 4x4 palette matrix as 16 floats "
+          "(column-major), or None if the id/bone/palette is missing. Live "
+          "oracle: grep stdout while printing this per frame — body bones "
+          "keep oscillating through a gesture, the gesture bone plays it.");
+
     // ── Bridge-node (non-skinned) animation bindings ─────────────────────────
     m.def("play_instance_node_anim",
           [](scenegraph::InstanceId id, int clip_index, bool loop, bool reverse) {
