@@ -224,9 +224,36 @@ class KeyboardBinding(TGObject):
             return
         event_type, flags, value = binding
         out = self._build_event(event_type, flags, value)
-        if self._default_destination is not None:
-            out.SetDestination(self._default_destination)
+        dest = self._resolve_destination(event_type)
+        if dest is not None:
+            out.SetDestination(dest)
         self._event_manager.AddEvent(out)
+
+    def _resolve_destination(self, event_type: int):
+        """BC bubbles keyboard-bound events up the window chain; our
+        ProcessEvent dispatches on one object only.  Scan the known
+        keyboard consumers — default destination (TCW), its tactical
+        menu, TopWindow — for the first that actually registered an
+        instance handler for this event type.  Fall back to the default
+        destination (today's behaviour) when none did."""
+        from engine.core import ids
+        candidates = []
+        tcw = self._default_destination
+        if tcw is not None:
+            candidates.append(tcw)
+            if ids.implements(tcw, "GetTacticalMenu"):
+                menu = tcw.GetTacticalMenu()
+                if menu is not None:
+                    candidates.append(menu)
+        import App  # deferred: input is imported during App bootstrap
+        top = App.TopWindow_GetTopWindow()
+        if top is not None:
+            candidates.append(top)
+        for cand in candidates:
+            handlers = getattr(cand, "_handlers", None)
+            if isinstance(handlers, dict) and handlers.get(int(event_type)):
+                return cand
+        return tcw
 
     def _build_event(self, event_type: int, flags: int, value) -> TGEvent:
         if flags == self.GET_BOOL_EVENT:

@@ -104,3 +104,73 @@ def test_int_event_binding_delivers_value():
     out = dest.received[0]
     assert out.GetEventType() == App.ET_MANAGE_POWER
     assert out.GetInt() == 2
+
+
+# ── Destination resolution — window-chain bubbling for keyboard-bound events ──
+#
+# TGEventManager.AddEvent delivers a destination event straight to
+# dest.ProcessEvent with no parent-window bubbling, but the SDK registers
+# ManagePower on TopWindow (EngineerMenuHandlers.py:145) and Maneuver on the
+# tactical menu (TacticalMenuHandlers.py:397), while the binding's default
+# destination is the TCW (host_loop.py:169,2771).  _resolve_destination scans
+# [default destination, its tactical menu, TopWindow] for the first object
+# with a registered instance handler for the event type.
+
+_resolver_hits = []
+
+
+def _resolver_probe(pObject, pEvent):
+    _resolver_hits.append(pObject)
+
+
+def test_keyboard_event_routes_to_object_with_handler(monkeypatch):
+    import App
+    from engine.appc.input import KS_NORMAL
+
+    del _resolver_hits[:]
+    em = TGEventManager()
+    kb = KeyboardBinding(em)
+
+    tcw = TGEventHandlerObject()          # no handler for ET_MANAGE_POWER
+    top = TGEventHandlerObject()
+    top.AddPythonFuncHandlerForInstance(
+        App.ET_MANAGE_POWER, __name__ + "._resolver_probe")
+    kb.SetDefaultDestination(tcw)
+    monkeypatch.setattr(App, "TopWindow_GetTopWindow", lambda: top)
+
+    kb.BindKey(App.WC_ALT_1, KS_NORMAL, App.ET_MANAGE_POWER,
+               KeyboardBinding.GET_INT_EVENT, 0,
+               KeyboardBinding.KBT_SINGLE_KEY_TO_EVENT)
+    evt = TGKeyboardEvent()
+    evt.SetUnicodeKey(App.WC_ALT_1)
+    evt.SetKeyState(KS_NORMAL)
+    kb.OnKeyboardEvent(None, evt)
+
+    assert _resolver_hits == [top], \
+        "ET_MANAGE_POWER must route to the object that registered the handler"
+
+
+def test_keyboard_event_prefers_default_destination_when_it_handles(monkeypatch):
+    import App
+
+    del _resolver_hits[:]
+    em = TGEventManager()
+    kb = KeyboardBinding(em)
+
+    tcw = TGEventHandlerObject()
+    tcw.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_CLEAR_TARGET, __name__ + "._resolver_probe")
+    top = TGEventHandlerObject()
+    top.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_CLEAR_TARGET, __name__ + "._resolver_probe")
+    kb.SetDefaultDestination(tcw)
+    monkeypatch.setattr(App, "TopWindow_GetTopWindow", lambda: top)
+
+    kb.BindKey(App.WC_CTRL_T, KS_KEYDOWN, App.ET_INPUT_CLEAR_TARGET)
+    evt = TGKeyboardEvent()
+    evt.SetUnicodeKey(App.WC_CTRL_T)
+    evt.SetKeyState(KS_KEYDOWN)
+    kb.OnKeyboardEvent(None, evt)
+
+    assert _resolver_hits == [tcw], \
+        "default destination wins when it has a handler"
