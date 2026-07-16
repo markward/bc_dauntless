@@ -29,9 +29,14 @@ public:
                                        const uint8_t* pcm, size_t bytes) = 0;
     virtual void destroy_buffer(BufferHandle) = 0;
 
-    // Guide §8: `priority` is a voice-stealing RANK (BC TGSound+0x68), never
-    // a gain. It is stored so AudioSystem can pick an eviction victim; the
-    // backend itself never maps it to AL_GAIN or any other volume control.
+    // Guide §8: `priority` is stored at BC TGSound+0x68 (SWIG-proven offset)
+    // and is not a gain (mutation-proven: it never reaches AL_GAIN). Reading
+    // it as a voice-stealing RANK is our best inference, not verified --
+    // BC's actual consumer of the field was never identified; see the honest
+    // caveat in audio_system.cc above kMaxSoundsAtOnce. The backend stores it
+    // on its own Source struct only for symmetry with AudioSystem::Source;
+    // nothing reads it back from the backend today -- AudioSystem::play
+    // picks its eviction victim from its own sources_ map, never from here.
     virtual SourceHandle play(BufferHandle, bool looping, float gain,
                               Category, bool positional,
                               float x, float y, float z, float priority) = 0;

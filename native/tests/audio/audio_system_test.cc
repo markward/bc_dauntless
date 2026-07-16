@@ -244,6 +244,82 @@ TEST(AudioSystem, ListenerVelocityZeroOnFirstUpdate) {
     EXPECT_TRUE(saw);
 }
 
+TEST(AudioSystem, EvictionFillStealTieDropAndBelowCap) {
+    // Guide §8: pins the eviction comparator in audio_system.cc, which
+    // shipped with no direct test. Exercises all five branches the review
+    // called for against a single 128-slot pool.
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    NullBackend* raw = backend.get();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+
+    auto wav = tiny_wav();
+    ASSERT_TRUE(sys.load_sound("sfx/test.wav", "S", wav.data(), wav.size(),
+                               /*positional*/ false));
+
+    // Fill: 128 plays at priority=0.5 each return non-zero.
+    for (int i = 0; i < 128; ++i) {
+        PlayingId pid = sys.play_sound("S", /*looping*/ true, 1.0f, Category::SFX,
+                                       false, 0.f, 0.f, 0.f,
+                                       /*force_non_positional*/ false,
+                                       /*priority*/ 0.5f);
+        ASSERT_NE(pid, 0u) << "play " << i << " of 128 must succeed";
+    }
+
+    // Steal: a higher-priority play against the full pool succeeds and stops
+    // a victim. sources_ is private, so prove the pool stayed at the cap by
+    // stealing again -- if eviction had failed to erase, a second steal would
+    // also succeed regardless, but combined with the "stop" log below this
+    // pins that the pool size did not grow unbounded.
+    raw->clear_command_log();
+    PlayingId stolen = sys.play_sound("S", true, 1.0f, Category::SFX,
+                                      false, 0.f, 0.f, 0.f, false,
+                                      /*priority*/ 0.9f);
+    ASSERT_NE(stolen, 0u);
+    bool saw_stop = false;
+    for (const auto& c : raw->command_log())
+        if (c.op == "stop") saw_stop = true;
+    EXPECT_TRUE(saw_stop) << "a successful steal must stop the evicted victim";
+
+    // TIE: pool is now 127 sources at priority=0.5 plus one at 0.9 (128
+    // total, full again). A new priority=0.5 play against it is a tie against
+    // the lowest-priority (0.5) victim.
+    //
+    // PINNED, NOT VERIFIED: the comparator is a STRICT `victim->priority <
+    // priority`, and BC_DEFAULT_PRIORITY == REMOTE_PULSE_PRIORITY == 0.5, so
+    // the realistic full pool is all-0.5 and every new pulse/tractor voice is
+    // DROPPED rather than round-robined. This tie rule is an arbitrary,
+    // unverified reading (guide §8) -- do not "fix" it later on the
+    // assumption that ties steal.
+    raw->clear_command_log();
+    PlayingId tied = sys.play_sound("S", true, 1.0f, Category::SFX,
+                                    false, 0.f, 0.f, 0.f, false,
+                                    /*priority*/ 0.5f);
+    EXPECT_EQ(tied, 0u) << "a tie must drop the new voice, not steal";
+
+    // Drop: priority=0.4 against the full pool returns 0 and must not
+    // disturb the pool (no "stop" logged for a failed steal).
+    raw->clear_command_log();
+    PlayingId dropped = sys.play_sound("S", true, 1.0f, Category::SFX,
+                                       false, 0.f, 0.f, 0.f, false,
+                                       /*priority*/ 0.4f);
+    EXPECT_EQ(dropped, 0u);
+    for (const auto& c : raw->command_log())
+        EXPECT_NE(c.op, "stop") << "a failed steal must not stop anything";
+
+    // Below the cap: free a slot, then a low-priority play at 127/128 must
+    // succeed without evicting anything.
+    sys.stop(stolen);
+    raw->clear_command_log();
+    PlayingId below_cap = sys.play_sound("S", true, 1.0f, Category::SFX,
+                                         false, 0.f, 0.f, 0.f, false,
+                                         /*priority*/ 0.1f);
+    EXPECT_NE(below_cap, 0u);
+    for (const auto& c : raw->command_log())
+        EXPECT_NE(c.op, "stop") << "below the cap, nothing should be evicted";
+}
+
 TEST(AudioSystem, ListenerVelocityZeroedOnDiscontinuity) {
     // Review #1: a discontinuous camera cut (bridge<->tactical toggle,
     // cutscene cut, mission swap) must not be differentiated as motion.

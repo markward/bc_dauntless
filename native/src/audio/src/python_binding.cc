@@ -161,7 +161,7 @@ void register_python_bindings(py::module_& parent) {
           py::arg("gain") = 1.0f, py::arg("category") = "SFX",
           py::arg("position") = py::none(),
           py::arg("force_non_positional") = false,
-          py::arg("priority") = 0.5f);
+          py::arg("priority") = kBcDefaultPriority);
     m.def("stop", &stop_impl);
     m.def("set_position", &set_position_impl);
     m.def("set_velocity", &set_velocity_impl);

@@ -17,4 +17,11 @@ namespace dauntless::audio {
 // not real motion.
 constexpr float kSpeedOfSoundGU = 343.3f;
 
+// Guide §8: BC's shipped default voice priority (TGSound.BC_DEFAULT_PRIORITY
+// on the Python side, engine/audio/tg_sound.py). Single source of truth so
+// audio_system.h's two `priority = ...` parameter defaults and
+// python_binding.cc's `py::arg("priority") = ...` cannot drift from each
+// other or from the Python constant.
+constexpr float kBcDefaultPriority = 0.5f;
+
 }  // namespace dauntless::audio

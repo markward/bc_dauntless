@@ -1,5 +1,6 @@
 #pragma once
 #include <audio/audio_backend.h>
+#include <audio/audio_constants.h>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -30,11 +31,13 @@ public:
     // TGSound.BC_DEFAULT_PRIORITY on the Python side).
     PlayingId play_sound(const std::string& name, bool looping, float gain,
                          Category, bool position_provided, float x, float y, float z,
-                         bool force_non_positional = false, float priority = 0.5f);
+                         bool force_non_positional = false,
+                         float priority = kBcDefaultPriority);
 
     PlayingId play(SoundId, bool looping, float gain, Category,
                    bool position_provided, float x, float y, float z,
-                   bool force_non_positional = false, float priority = 0.5f);
+                   bool force_non_positional = false,
+                   float priority = kBcDefaultPriority);
 
     void stop(PlayingId);
 

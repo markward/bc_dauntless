@@ -70,11 +70,30 @@ PlayingId AudioSystem::play(SoundId id, bool looping, float gain, Category cat,
 
     // Guide §8: pool is full -- evict the lowest-priority playing source if
     // this new one outranks it, else drop the new one. See kMaxSoundsAtOnce.
+    //
+    // Spec divergence (guide §8): the spec prescribes reclaim-then-evict --
+    // first reclaim any source whose backend state is already stopped, only
+    // evict if none are free. This goes straight to eviction; a finished
+    // one-shot is only reclaimed by update()'s reap pass, once per frame. So
+    // 128 one-shots that finished earlier in the SAME frame (not yet reaped)
+    // would wrongly drop a new voice despite 128 genuinely-free slots.
+    // Tolerated: 128 truly-concurrent sources in one frame is rare, and
+    // adding a reclaim pass here is out of scope for this task.
     if (sources_.size() >= kMaxSoundsAtOnce) {
         auto victim = sources_.end();
         for (auto sit = sources_.begin(); sit != sources_.end(); ++sit)
             if (victim == sources_.end() || sit->second.priority < victim->second.priority)
                 victim = sit;
+        // TIE RULE, PINNED BUT UNVERIFIED (guide §8): strict `<` means a tie
+        // (victim->priority == priority) falls to the else branch and DROPS
+        // the new voice rather than stealing. BC_DEFAULT_PRIORITY ==
+        // REMOTE_PULSE_PRIORITY == 0.5, so the realistic full pool is
+        // all-0.5, and every new pulse/tractor voice is dropped rather than
+        // round-robined once the pool is saturated. This tiebreak is
+        // arbitrary and was never verified against the original engine --
+        // see AudioSystemTest.EvictionFillStealTieDropAndBelowCap, which
+        // pins exactly this behaviour. Do not "fix" it later on the
+        // assumption that ties should steal.
         if (victim != sources_.end() && victim->second.priority < priority) {
             backend_->stop(victim->second.backend);
             sources_.erase(victim);

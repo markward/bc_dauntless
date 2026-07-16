@@ -108,8 +108,10 @@ public:
         }
         alSourcePlay(al);
         SourceHandle h = ++next_src_;
-        // Guide §8: priority is a voice-stealing rank stored for eviction
-        // bookkeeping only — never mapped to AL_GAIN or any other AL param.
+        // Guide §8: priority is never mapped to AL_GAIN or any other AL
+        // param. Stored here only for symmetry with AudioSystem::Source --
+        // nothing reads it back from this backend today; AudioSystem picks
+        // its eviction victim from its own sources_ map, not this one.
         sources_[h] = {al, cat, gain, priority};
         return h;
     }
