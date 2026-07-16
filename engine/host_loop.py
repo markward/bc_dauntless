@@ -6018,13 +6018,19 @@ def run(mission_name: Optional[str] = None,
         # Ordered modal blockers (highest priority first). Each is a CEF
         # panel exposing is_open()/handle_key_esc(); the keyboard-input
         # ones (developer options, ship property viewer, configuration)
-        # also expose handle_input(). The mission picker is click-only.
+        # also expose handle_input(). The mission picker and the quick
+        # battle setup panel are click-only.
         # In production (no --developer) the first three are _NULL_PICKER
         # whose is_open() is False, so they never fire. One list drives
         # ESC routing, pause-menu visibility, and pause-input routing.
+        # Quick Battle Setup belongs here for the same reason Set Course
+        # does: it is a centred modal opened from a crew menu, so it must
+        # take ESC before the crew menu underneath it can (that ordering
+        # bug closed the XO menu under the modal, leaving it un-closable).
         _modal_blockers = [mission_picker, developer_options_panel,
                            ship_property_viewer, ai_inspector,
-                           configuration_panel, setting_course_panel]
+                           configuration_panel, setting_course_panel,
+                           quick_battle_setup_panel]
 
         while not r.should_close():
             # --- Track window resizes: re-lay-out the CEF overlay at the new

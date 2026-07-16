@@ -464,5 +464,8 @@ class QuickBattleSetupPanel(Panel):
         self._last_pushed = None
 
     def handle_key_esc(self) -> None:
+        # Route through the Close button's path, not a bare close(): that only
+        # clears our view flag and leaves g_bDialogUp set, so
+        # _sync_quick_battle_panel would reopen the panel on the next tick.
         if self._visible:
-            self.close()
+            self.dispatch_event("close")

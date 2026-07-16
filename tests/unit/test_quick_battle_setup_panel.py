@@ -491,6 +491,23 @@ def test_close_fires_close_dialog_event(qb_panel, monkeypatch):
     assert posted[0].GetDestination() is qb_panel._qb_module.g_pXO
 
 
+def test_handle_key_esc_fires_close_dialog_event(qb_panel, monkeypatch):
+    """ESC must close the panel the same way the Close button does.
+
+    A bare close() only clears our view flag and leaves the SDK's g_bDialogUp
+    set, so _sync_quick_battle_panel reopens the panel on the very next tick.
+    ESC therefore has to post ET_CLOSE_DIALOG too.
+    """
+    import App
+    posted = []
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent", lambda e: posted.append(e))
+    qb_panel.handle_key_esc()
+    assert qb_panel.is_open() is False
+    assert len(posted) == 1
+    assert posted[0].GetEventType() == qb_panel._qb_module.ET_CLOSE_DIALOG
+    assert posted[0].GetDestination() is qb_panel._qb_module.g_pXO
+
+
 def test_start_fires_close_dialog_then_callback(monkeypatch):
     import App
     posted = []
