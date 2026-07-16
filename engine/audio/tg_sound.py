@@ -69,15 +69,24 @@ class TGSound:
     SS_UNLOADED = 2
     SS_UNKNOWN = 3
 
+    # BC's TGSound::SetupFromFile shipped defaults (0x0070B360), recovered in
+    # docs/architecture/sound-system-openal-guide.md §5. SetMinMaxDistance has
+    # exactly three xrefs in the original binary and no weapon code touches it,
+    # so this one pair sets the loudness balance of essentially all BC combat
+    # audio. The ship engine hum is the sole exception (see hum_allocator).
+    BC_DEFAULT_MIN_DISTANCE = 50.0
+    BC_DEFAULT_MAX_DISTANCE = 700.0
+    BC_DEFAULT_PRIORITY = 0.5
+
     def __init__(self, name: str, positional: bool) -> None:
         self._name = name
         self._positional = positional
         self._looping = False
         self._gain = 1.0
         self._category_tag = "SFX"
-        self._priority = 0.0
-        self._min_dist = 100.0
-        self._max_dist = 100000.0
+        self._priority = TGSound.BC_DEFAULT_PRIORITY
+        self._min_dist = TGSound.BC_DEFAULT_MIN_DISTANCE
+        self._max_dist = TGSound.BC_DEFAULT_MAX_DISTANCE
         self._loaded = _audio is not None and _audio.get_sound(name) != 0
         self._active: list[_PlayingSound] = []
         self._region = None  # set by TGSoundRegion.AddSound; gates launch gain

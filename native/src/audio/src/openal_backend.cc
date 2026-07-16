@@ -32,6 +32,11 @@ public:
             device_ = nullptr;
             return false;
         }
+        // Guide §2/§14.1: THE faithful model — the same law DS3D uses. This is
+        // already OpenAL's default, but pin it explicitly: AL_LINEAR_DISTANCE
+        // cuts off at max where BC/DS3D clamps, and that is the one change
+        // that makes BC's audio sound wrong.
+        alDistanceModel(AL_INVERSE_DISTANCE_CLAMPED);
         return true;
     }
 
@@ -76,8 +81,12 @@ public:
         if (positional) {
             alSourcei(al, AL_SOURCE_RELATIVE, AL_FALSE);
             alSource3f(al, AL_POSITION, x, y, z);
-            alSourcef(al, AL_REFERENCE_DISTANCE, 100.0f);
-            alSourcef(al, AL_ROLLOFF_FACTOR, 1.0f);
+            // BC TGSound::SetupFromFile defaults (guide §5). TGSound.Play
+            // overwrites these via set_min_max_distance; they are the floor
+            // for any caller that does not.
+            alSourcef(al, AL_REFERENCE_DISTANCE, 50.0f);
+            alSourcef(al, AL_MAX_DISTANCE,       700.0f);
+            alSourcef(al, AL_ROLLOFF_FACTOR,     1.0f);
         } else {
             // Non-positional source: place 1 unit in front of the listener
             // (RELATIVE -Z) rather than exactly at origin so HRTF/panning
