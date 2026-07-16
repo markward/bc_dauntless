@@ -232,9 +232,14 @@ class KeyboardBinding(TGObject):
         if flags == self.GET_BOOL_EVENT:
             ev = TGBoolEvent()
             ev.SetBool(value)
+        elif flags == self.GET_INT_EVENT:
+            # ManagePower/Maneuver read GetInt() for the preset/order index.
+            import App  # deferred — _TGIntEvent lives in the App shim
+            ev = App.TGIntEvent_Create()
+            ev.SetInt(int(value))
         else:
-            # GET_INT_EVENT / GET_FLOAT_EVENT not used by ET_INPUT_FIRE_*;
-            # add when a real consumer needs them.
+            # GET_FLOAT_EVENT: no polled consumer yet (the impulse number
+            # row isn't polled); add with its first real consumer.
             ev = TGEvent()
         ev.SetEventType(event_type)
         return ev

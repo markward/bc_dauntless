@@ -80,3 +80,27 @@ def test_unbound_key_state_no_op():
     evt = TGKeyboardEvent(); evt.SetUnicodeKey(WC_RBUTTON); evt.SetKeyState(KS_KEYDOWN)
     kb.OnKeyboardEvent(None, evt)
     assert dest.received == []
+
+
+def test_int_event_binding_delivers_value():
+    import App
+    from engine.appc.input import KS_NORMAL
+
+    em = TGEventManager()
+    kb = KeyboardBinding(em)
+    dest = _Dest()
+    kb.SetDefaultDestination(dest)
+
+    kb.BindKey(App.WC_ALT_3, KS_NORMAL, App.ET_MANAGE_POWER,
+               KeyboardBinding.GET_INT_EVENT, 2,
+               KeyboardBinding.KBT_SINGLE_KEY_TO_EVENT)
+
+    evt = TGKeyboardEvent()
+    evt.SetUnicodeKey(App.WC_ALT_3)
+    evt.SetKeyState(KS_NORMAL)
+    kb.OnKeyboardEvent(None, evt)
+
+    assert len(dest.received) == 1
+    out = dest.received[0]
+    assert out.GetEventType() == App.ET_MANAGE_POWER
+    assert out.GetInt() == 2
