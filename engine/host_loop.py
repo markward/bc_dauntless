@@ -135,10 +135,11 @@ def shutdown_audio() -> None:
 def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> None:
     if _audio_mod is None:
         return
-    # Copy attached nodes' world transforms into their sources before
-    # set_listener, so the positional math sees up-to-date source positions.
-    from engine.audio import attached_sources
+    from engine.audio import attached_sources, hum_allocator
+    # Guide §9, in order: (1) attached emitters from their nodes,
+    # (2) the nearest-≤4 hum allocator, (3) the listener from the active camera.
     attached_sources.pump(dt)
+    hum_allocator.update(listener_pos=camera_position)
     px, py, pz = camera_position
     fx, fy, fz = camera_forward
     ux, uy, uz = camera_up

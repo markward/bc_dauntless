@@ -691,6 +691,7 @@ def _reset_leakable_engine_globals():
         ("engine.appc.ship_death", "_active"),
         ("engine.appc.visible_damage", "_pending"),
         ("engine.audio.attached_sources", "_attached"),
+        ("engine.audio.hum_allocator", "_humming"),
     ):
         try:
             _m = sys.modules.get(_mod)
