@@ -49,6 +49,11 @@ public:
         return true;
     }
 
+    // Guide §9: the analog of DS3D's deferred commit -- a frame's listener
+    // and emitter moves apply atomically instead of tearing mid-frame.
+    void begin_frame() override { if (context_) alcSuspendContext(context_); }
+    void end_frame()   override { if (context_) alcProcessContext(context_); }
+
     void shutdown() override {
         for (auto& [_, src] : sources_) alDeleteSources(1, &src.al);
         sources_.clear();

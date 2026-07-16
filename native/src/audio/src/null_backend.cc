@@ -4,6 +4,8 @@ namespace dauntless::audio {
 
 bool NullBackend::init() { log_.push_back({"init"}); return true; }
 void NullBackend::shutdown() { log_.push_back({"shutdown"}); }
+void NullBackend::begin_frame() { log_.push_back({"begin_frame"}); }
+void NullBackend::end_frame() { log_.push_back({"end_frame"}); }
 
 BufferHandle NullBackend::create_buffer(const PcmDesc& d, const uint8_t*, size_t n) {
     LoggedCall c{"create_buffer"};

@@ -25,6 +25,13 @@ public:
     virtual bool init() = 0;
     virtual void shutdown() = 0;
 
+    // Guide §9/§14.12: batch a frame's listener + emitter moves so the
+    // backend applies them atomically -- the analog of DS3D's deferred
+    // commit. Call begin_frame() before any per-frame set_listener/
+    // set_position/set_velocity calls and end_frame() after the last one.
+    virtual void begin_frame() = 0;
+    virtual void end_frame() = 0;
+
     virtual BufferHandle create_buffer(const PcmDesc& desc,
                                        const uint8_t* pcm, size_t bytes) = 0;
     virtual void destroy_buffer(BufferHandle) = 0;

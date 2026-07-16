@@ -18,6 +18,8 @@ class NullBackend : public IAudioBackend {
 public:
     bool init() override;
     void shutdown() override;
+    void begin_frame() override;
+    void end_frame() override;
 
     BufferHandle create_buffer(const PcmDesc&, const uint8_t*, size_t) override;
     void destroy_buffer(BufferHandle) override;

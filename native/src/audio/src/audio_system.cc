@@ -2,6 +2,7 @@
 #include <audio/audio_constants.h>
 #include <audio/wav.h>
 #include <audio/mp3.h>
+#include <cstdio>
 #include <cstring>
 
 namespace dauntless::audio {
@@ -29,6 +30,17 @@ bool AudioSystem::load_sound(const std::string&, const std::string& name,
     const bool decoded = is_wav ? decode_wav(wav_bytes, wav_len, wav)
                                 : decode_mp3(wav_bytes, wav_len, wav);
     if (!decoded) return false;
+    // Guide §14.5: OpenAL only spatialises mono buffers -- a stereo buffer
+    // plays 2D regardless of position, with no error. All of BC's 3D sfx are
+    // mono; a stereo one loaded LS_3D is an asset bug, so fail loudly here
+    // rather than silently de-spatialising it.
+    if (positional && wav.channels != 1) {
+        std::fprintf(stderr,
+                     "[audio] '%s' is %u-channel but was loaded LS_3D; "
+                     "OpenAL only spatialises mono. Refusing.\n",
+                     name.c_str(), static_cast<unsigned>(wav.channels));
+        return false;
+    }
     double duration_sec = 0.0;
     const uint32_t bytes_per_sample = wav.bits_per_sample / 8;
     const uint64_t denom =
@@ -176,6 +188,11 @@ SourceHandle AudioSystem::debug_backend_handle(PlayingId pid) const {
 void AudioSystem::update(float lx, float ly, float lz,
                          float fx, float fy, float fz,
                          float ux, float uy, float uz, float dt) {
+    // Guide §9/§14.12: batch the whole per-frame update -- listener move plus
+    // the one-shot reap below -- so the backend applies it atomically instead
+    // of tearing mid-frame (the analog of DS3D's deferred commit).
+    backend_->begin_frame();
+
     // Guide §4/§6: listener velocity for doppler, derived from the camera's
     // position delta. Raw game units per second — see the units note in
     // openal_backend.cc's init().
@@ -216,6 +233,8 @@ void AudioSystem::update(float lx, float ly, float lz,
             ++it;
         }
     }
+
+    backend_->end_frame();
 }
 
 }  // namespace dauntless::audio

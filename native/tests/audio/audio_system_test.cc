@@ -19,6 +19,17 @@ std::vector<uint8_t> tiny_wav() {
     return b;
 }
 
+std::vector<uint8_t> tiny_stereo_wav() {
+    std::vector<uint8_t> b;
+    auto p32=[&](uint32_t v){for(int i=0;i<4;i++)b.push_back(static_cast<uint8_t>((v>>(i*8))&0xff));};
+    auto p16=[&](uint16_t v){for(int i=0;i<2;i++)b.push_back(static_cast<uint8_t>((v>>(i*8))&0xff));};
+    auto pn =[&](const char*s,size_t n){for(size_t i=0;i<n;i++)b.push_back(static_cast<uint8_t>(s[i]));};
+    pn("RIFF",4); p32(36+4); pn("WAVE",4);
+    pn("fmt ",4); p32(16); p16(1); p16(2); p32(22050); p32(88200); p16(4); p16(16);
+    pn("data",4); p32(4); p16(0); p16(0);
+    return b;
+}
+
 TEST(AudioSystem, LoadGetPlayStop) {
     using namespace dauntless::audio;
     auto backend = std::make_unique<NullBackend>();
@@ -346,6 +357,38 @@ TEST(AudioSystem, ListenerVelocityZeroedOnDiscontinuity) {
         }
     }
     EXPECT_TRUE(saw);
+}
+
+TEST(AudioSystem, UpdateIsBatched) {
+    // Guide §9/§14.12: batch with alcSuspendContext/alcProcessContext so a
+    // frame's listener + emitter moves apply atomically.
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    NullBackend* raw = backend.get();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+    raw->clear_command_log();
+
+    sys.update(0,0,0, 0,1,0, 0,0,1, 0.016f);
+
+    ASSERT_GE(raw->command_log().size(), 2u);
+    EXPECT_EQ(raw->command_log().front().op, "begin_frame");
+    EXPECT_EQ(raw->command_log().back().op,  "end_frame");
+}
+
+TEST(AudioSystem, StereoBufferCannotBePositional) {
+    // Guide §14.5: OpenAL only spatialises mono. A stereo 3D sfx would play
+    // unspatialised with no error — reject it loudly at load instead.
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+
+    auto wav = tiny_stereo_wav();
+    EXPECT_FALSE(sys.load_sound("sfx/s.wav", "Stereo3D",
+                                wav.data(), wav.size(), /*positional*/ true));
+    EXPECT_TRUE(sys.load_sound("sfx/s.wav", "Stereo2D",
+                               wav.data(), wav.size(), /*positional*/ false));
 }
 
 }  // namespace
