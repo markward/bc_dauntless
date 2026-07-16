@@ -81,6 +81,7 @@ class TGSound:
         self._loaded = _audio is not None and _audio.get_sound(name) != 0
         self._active: list[_PlayingSound] = []
         self._region = None  # set by TGSoundRegion.AddSound; gates launch gain
+        self._group = ""     # group tag (GetGroup/SetGroup); "" == untagged
 
     def IsLoaded(self) -> int:
         return 1 if self._loaded else 0
@@ -151,6 +152,23 @@ class TGSound:
     def Unpause(self): pass
     def SetSingleShot(self, *_a): pass
     def IsSingleShot(self): return 0
+    def GetGroup(self) -> str:
+        """Group tag for batch stop/unload; "" when untagged (falsy, which is
+        what the SDK's `if not pSound.GetGroup():` reassignment gate needs)."""
+        return self._group
+
+    def SetGroup(self, group: str) -> None:
+        """Move this sound to `group` in the owning manager's group sets and
+        retag it. Setting "" just removes it from its current group. Mirrors
+        Appc TGSound.SetGroup, used by MissionLib.PreloadMissionLine to file an
+        untagged preloaded line under the mission's script group."""
+        mgr = TGSoundManager.instance()
+        old = self._group
+        if old in mgr._groups:            # "" is a real bucket LoadSoundInGroup fills
+            mgr._groups[old].discard(self._name)
+        self._group = group or ""
+        if self._group:
+            mgr._groups.setdefault(self._group, set()).add(self._name)
     def AttachToNode(self, *_a): pass
     def DetachFromNode(self, *_a): pass
     def SetPosition(self, *_a): pass
@@ -285,7 +303,32 @@ class TGSoundManager:
             snd = self._sounds.get(name) or TGSound(name, False)
             self._sounds[name] = snd
         self._groups.setdefault(group, set()).add(name)
+        snd._group = group
         return snd
+
+    def LoadDatabaseSoundInGroup(self, db, name, group, flags: int = 0):
+        """Resolve a TGL sound key to its wav filename via the database, then
+        load+register it in `group`. Mirrors Appc Game.LoadDatabaseSoundInGroup.
+
+        `db.GetFilename(name)` is the SDK-visible key->filename lookup (the same
+        op App.TGSound_Create(db.GetFilename(k), k, ...) does by hand). A blank
+        name, a db without GetFilename, or a missing key (GetFilename -> "")
+        registers NOTHING and returns None — faithful to BC's bail gate, where a
+        missing key means no voice AND no subtitle.
+
+        `flags` (e.g. TGSound.LS_STREAMED) is accepted for signature parity and
+        ignored: the backend decodes whole files up front, and these call sites
+        never pass LS_3D.
+        """
+        if not name:
+            return None
+        get_filename = getattr(db, "GetFilename", None)
+        if get_filename is None:
+            return None
+        filename = get_filename(name)
+        if not isinstance(filename, str) or not filename:
+            return None
+        return self.LoadSoundInGroup(filename, name, group)
 
     def DeleteAllSoundsInGroup(self, group: str) -> None:
         for name in self._groups.pop(group, set()):
