@@ -1,11 +1,13 @@
+import gc
 import os
 import struct
+import weakref
 import pytest
 
 os.environ.setdefault("OPEN_STBC_AUDIO", "0")
 _dauntless_host = pytest.importorskip("_dauntless_host")
 
-from engine.audio import hum_allocator
+from engine.audio import engine_rumble, hum_allocator
 from engine.audio.tg_sound import (
     TGSound, TGSoundManager, init_audio_for_tests, shutdown_audio_for_tests,
 )
@@ -44,9 +46,30 @@ class _NoEngine(_Ship):
     def GetImpulseEngineSubsystem(self): return None
 
 
+class _WeakNodeRef:
+    """Mirrors ObjectClass._ObjectNodeRef: a WEAK handle back to the owner,
+    same as every real ship's GetNode() returns. `_Ship.GetNode` above
+    returns `self` directly for simplicity in the other tests in this file,
+    which would give attached_sources._attached a spurious STRONG reference
+    and mask the exact leak test_ship_gc_without_teardown_stops_its_hum
+    exists to catch."""
+    def __init__(self, owner):
+        self._owner = weakref.ref(owner)
+
+    def GetWorldLocation(self):
+        owner = self._owner()
+        return None if owner is None else owner.GetWorldLocation()
+
+
+class _GhostShip(_Ship):
+    def GetNode(self):
+        return _WeakNodeRef(self)
+
+
 @pytest.fixture
 def boot(tmp_path, monkeypatch):
     hum_allocator.reset_for_tests()
+    engine_rumble.reset_for_tests()
     init_audio_for_tests()
     wav = tmp_path / "e.wav"
     wav.write_bytes(_wav())
@@ -54,6 +77,7 @@ def boot(tmp_path, monkeypatch):
     yield
     shutdown_audio_for_tests()
     hum_allocator.reset_for_tests()
+    engine_rumble.reset_for_tests()
 
 
 def _stub_roster(monkeypatch, ships):
@@ -105,3 +129,118 @@ def test_update_is_idempotent_for_a_stable_roster(boot, monkeypatch):
     plays = [c for c in _dauntless_host.audio.debug_command_log()
              if c["op"] == "play"]
     assert not plays, "a stable top-4 must not re-trigger play()"
+
+
+def test_start_hum_while_muted_starts_silent(boot, monkeypatch):
+    """Review finding #1 (mute leak): a ship entering the top-4 while the
+    player is on the bridge (engine_rumble.set_muted(True)) must start at
+    gain 0.0, not 1.0. Before this fix _start_hum never consulted
+    engine_rumble._muted at all, so every top-4 boundary crossing during
+    combat re-broke the bridge mute."""
+    engine_rumble.set_muted(True)
+    ship = _Ship("s0", x=10)
+    _stub_roster(monkeypatch, [ship])
+
+    _dauntless_host.audio.clear_command_log()
+    hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
+
+    gains = [c["f"][0] for c in _dauntless_host.audio.debug_command_log()
+             if c["op"] == "set_gain"]
+    assert gains, "MUTE LEAK: new hum started at gain 1.0 while muted"
+    assert gains[-1] == 0.0
+
+
+def test_boundary_pair_jitter_does_not_thrash_hum(boot, monkeypatch):
+    """Review finding #2 (boundary thrash): two ships hovering at near-equal
+    range around the #4 cutoff (an ordinary combat formation) must not
+    stop/restart their hum every frame just because their relative order
+    jitters by a tiny amount.
+
+    NOT claiming this is BC-faithful — the decompiled SetClass::UpdateSounds
+    shows no deadband (see hum_allocator's module docstring). This proves our
+    incumbent-wins hysteresis actually suppresses the churn a reviewer
+    demonstrated without it: per-frame ops of
+    [[], ['stop','play'], ['stop','play'], ...].
+    """
+    near = [_Ship(f"s{i}", x=i * 10) for i in range(3)]  # s0,s1,s2: solidly in
+    b1 = _Ship("boundary_a", x=40.001)
+    b2 = _Ship("boundary_b", x=39.999)
+    ships = near + [b1, b2]
+    _stub_roster(monkeypatch, ships)
+
+    churn = []
+    rosters_seen = []
+    for i in range(6):
+        # Jitter the boundary pair's relative order by ±0.001 each frame.
+        if i % 2:
+            b1._loc.x, b2._loc.x = 39.999, 40.001
+        else:
+            b1._loc.x, b2._loc.x = 40.001, 39.999
+        _dauntless_host.audio.clear_command_log()
+        hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
+        ops = [c["op"] for c in _dauntless_host.audio.debug_command_log()
+               if c["op"] in ("stop", "play")]
+        churn.append(ops)
+        rosters_seen.append(frozenset(hum_allocator.humming_ship_names()))
+
+    # Frame 0 legitimately establishes the initial top-4; every later frame
+    # must be silent despite the ±0.001 jitter, and the winning boundary ship
+    # never changes once picked.
+    assert all(not ops for ops in churn[1:]), churn
+    assert len(set(rosters_seen)) == 1, rosters_seen
+
+
+def test_ship_gc_without_teardown_stops_its_hum(boot, monkeypatch):
+    """Review finding #3 (weakref leak): a ship dropped without going
+    through ship_lifecycle.publish_destroyed (e.g. a mission-swap that tears
+    down a set directly rather than destroying ships one at a time — the dev
+    mission picker's swap path does this) must still have its looping AL
+    source stopped, not leak a source that hums forever outside the cap."""
+    ship = _GhostShip("ghost", x=5)
+    # Close over a mutable holder, not `ship` itself, so we can drop the
+    # roster's own reference to `ship` without touching the monkeypatch.
+    roster_holder = [ship]
+    monkeypatch.setattr(hum_allocator, "_roster", lambda: list(roster_holder))
+    hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
+    assert "ghost" in hum_allocator.humming_ship_names()
+
+    _dauntless_host.audio.clear_command_log()
+    roster_holder.clear()
+    del ship
+    gc.collect()
+
+    ops = [c["op"] for c in _dauntless_host.audio.debug_command_log()]
+    assert "stop" in ops, "ship GC'd without explicit teardown must still stop its hum"
+
+
+def test_real_roster_finds_ship_via_iter_active_ships(boot):
+    """Review finding #4: every other test in this file monkeypatches
+    hum_allocator._roster, so the real production seam —
+    _roster() -> iter_active_ships() -> set membership -> isinstance ShipClass
+    — has zero coverage otherwise. This is the project's signature failure
+    mode (green tests, silence in-game): if iter_active_ships silently
+    yielded nothing, every other test here would stay green while no ship
+    ever hums in the actual game."""
+    import App
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.properties import ImpulseEngineProperty
+
+    saved_sets = dict(App.g_kSetManager._sets)
+    App.g_kSetManager._sets.clear()
+    try:
+        pSet = App.SetClass_Create()
+        pSet.SetName("RealSet")
+        ship = ShipClass_Create("real-ship")
+        prop = ImpulseEngineProperty("Impulse Engines")
+        prop.SetEngineSound("Federation Engines")
+        ship.GetImpulseEngineSubsystem().SetProperty(prop)
+        ship.SetTranslateXYZ(0.0, 0.0, 0.0)
+        pSet.AddObjectToSet(ship, "real-ship")
+        App.g_kSetManager._sets["RealSet"] = pSet
+
+        hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
+
+        assert hum_allocator.humming_ship_names() == {"real-ship"}
+    finally:
+        App.g_kSetManager._sets.clear()
+        App.g_kSetManager._sets.update(saved_sets)

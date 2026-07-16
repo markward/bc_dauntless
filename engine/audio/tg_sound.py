@@ -34,9 +34,12 @@ class _PlayingSound:
     Note on lifetime: callers do NOT need to hold the handle alive. One-shot
     sounds (PlaySound) are fire-and-forget — the C++ AudioSystem reaps them
     after they finish. Looping sources are held alive by the subscriber that
-    owns them (e.g. engine_rumble._active[ship]). Do not add __del__ → Stop:
-    one-shots are typically returned to locals that go out of scope before
-    any audio plays, and a __del__ stop would silently mute every PlaySound.
+    owns them (e.g. engine.audio.hum_allocator._humming[ship], a
+    WeakKeyDictionary — see that module for the weakref.finalize that stops
+    the source if the ship is GC'd without an explicit teardown). Do not add
+    __del__ → Stop: one-shots are typically returned to locals that go out of
+    scope before any audio plays, and a __del__ stop would silently mute
+    every PlaySound.
     """
 
     __slots__ = ("_pid",)

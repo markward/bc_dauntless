@@ -11,12 +11,21 @@ makes our ambient density match BC's.
 
 The hum's sound NAME comes from the engine subsystem's property; the name carries
 no distances and no gain, so the caller supplies BC's 4.375/35.0 (see engine_rumble).
+
+Boundary hysteresis (`BOUNDARY_HYSTERESIS_FRACTION`, below) is OUR addition, not
+a reproduction of BC: the decompiled `SetClass::UpdateSounds` (see
+docs/architecture/sound-system-openal-guide.md) shows a plain distance-sorted
+top-4 reconcile with no deadband. Without it, two ships hovering at near-equal
+range at the #4/#5 cutoff (an ordinary combat formation) would stop/restart
+their looping hum from sample 0 every single frame — an audible artifact BC
+never has to worry about because its reconcile only runs when a ship's set
+membership changes, not every frame at 60 Hz like ours does.
 """
 from __future__ import annotations
 
 import weakref
 
-from engine.audio import attached_sources
+from engine.audio import attached_sources, engine_rumble
 from engine.audio.engine_rumble import (
     HUM_MAX_DISTANCE, HUM_MIN_DISTANCE, _engine_sound_name_for, _node_for,
 )
@@ -25,8 +34,22 @@ from engine.audio.tg_sound import TGSoundManager
 # Guide §10: BC's cap. Tunable, but default 4 so the mix density matches.
 MAX_HUMMING_SHIPS = 4
 
-# ship -> _PlayingSound. Weak so a ship GC'd without an explicit teardown
-# drops out rather than humming until shutdown.
+# Deliberate divergence from BC (see module docstring above) — an incumbent
+# already humming must be beaten by more than this fraction of squared
+# distance before a challenger displaces it. 5% is small enough that a
+# genuinely-closer ship still takes over promptly, but large enough to
+# absorb ordinary per-frame jitter between two ships at similar range.
+BOUNDARY_HYSTERESIS_FRACTION = 0.05
+
+# ship -> _PlayingSound. Weak so the dict ENTRY drops when a ship is GC'd
+# without an explicit teardown (e.g. a mission swap that tears down a set
+# directly rather than going through ship_lifecycle.publish_destroyed — the
+# dev mission picker's swap path does this). The entry dropping is NOT
+# enough on its own to stop the looping AL source: nothing else would call
+# Stop() on it, so it would hum forever, AND — because it no longer occupies
+# a `_humming` slot — the allocator would happily start a 5th concurrent hum
+# over it. `_start_hum` guards against that with `weakref.finalize`, which
+# actually stops the source when the ship dies.
 _humming: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
@@ -59,6 +82,19 @@ def _start_hum(ship) -> None:
     playing = snd.Play(attach_node=_node_for(ship))
     if playing is not None:
         _humming[ship] = playing
+        # Stop the source when the ship dies even if nobody calls _stop_hum
+        # (review finding #3 — see the `_humming` comment above). The
+        # finalizer callback holds only `playing`, never `ship`, so it
+        # cannot keep the ship alive or create a reference cycle.
+        weakref.finalize(ship, playing.Stop)
+        # Bridge mute (review finding #1): a ship entering the top-4 while
+        # the player is on the bridge must start silent, not at gain 1.0.
+        # This mirrors what set_muted() already does to EXISTING _humming
+        # entries — without it, every top-4 boundary crossing during combat
+        # re-breaks the bridge mute. See engine_rumble.set_muted's own
+        # docstring for the caveat that this whole mechanism is a stopgap.
+        if engine_rumble._muted:
+            playing.SetGain(0.0)
 
 
 def _stop_hum(ship) -> None:
@@ -68,16 +104,30 @@ def _stop_hum(ship) -> None:
 
 
 def update(listener_pos) -> None:
-    """Reconcile the humming set against the nearest MAX_HUMMING_SHIPS."""
-    candidates = [s for s in _roster() if _engine_sound_name_for(s)]
-    candidates.sort(key=lambda s: _distance_sq(s, listener_pos))
-    winners = candidates[:MAX_HUMMING_SHIPS]
+    """Reconcile the humming set against the nearest MAX_HUMMING_SHIPS.
+
+    Selection applies BOUNDARY_HYSTERESIS_FRACTION in favour of ships already
+    humming — see the module docstring's divergence note — so a stable-ish
+    formation at the #4/#5 cutoff doesn't stop/restart every frame.
+    """
+    candidates = [(s, _distance_sq(s, listener_pos))
+                  for s in _roster() if _engine_sound_name_for(s)]
+    humming_ids = {id(s) for s in _humming.keys()}
+
+    def _sort_key(pair):
+        ship, dist_sq = pair
+        if id(ship) in humming_ids:
+            dist_sq *= (1.0 - BOUNDARY_HYSTERESIS_FRACTION)
+        return dist_sq
+
+    candidates.sort(key=_sort_key)
+    winners = [s for s, _ in candidates[:MAX_HUMMING_SHIPS]]
     winner_ids = {id(s) for s in winners}
 
     for ship in [s for s in _humming.keys() if id(s) not in winner_ids]:
         _stop_hum(ship)
     for ship in winners:
-        if ship not in _humming:
+        if id(ship) not in humming_ids:
             _start_hum(ship)
 
 
