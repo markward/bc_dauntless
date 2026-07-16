@@ -56,6 +56,10 @@ class _PlayingSound:
         if _audio and self._pid:
             _audio.set_position(self._pid, x, y, z)
 
+    def SetVelocity(self, x: float, y: float, z: float) -> None:
+        if _audio and self._pid:
+            _audio.set_velocity(self._pid, x, y, z)
+
     def SetGain(self, gain: float) -> None:
         if _audio and self._pid:
             _audio.set_gain(self._pid, float(gain))

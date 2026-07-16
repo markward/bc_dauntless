@@ -73,6 +73,10 @@ static void set_position_impl(uint32_t pid, float x, float y, float z) {
     if (g_system) g_system->set_position(pid, x, y, z);
 }
 
+static void set_velocity_impl(uint32_t pid, float x, float y, float z) {
+    if (g_system) g_system->set_velocity(pid, x, y, z);
+}
+
 static void set_gain_impl(uint32_t pid, float g) {
     if (g_system) g_system->set_gain(pid, g);
 }
@@ -105,7 +109,8 @@ static py::list debug_command_log_impl() {
         d["op"] = c.op;
         d["u"] = py::make_tuple(c.u[0], c.u[1], c.u[2], c.u[3]);
         d["f"] = py::make_tuple(c.f[0], c.f[1], c.f[2], c.f[3],
-                                 c.f[4], c.f[5], c.f[6], c.f[7], c.f[8]);
+                                 c.f[4], c.f[5], c.f[6], c.f[7], c.f[8],
+                                 c.f[9], c.f[10], c.f[11]);
         d["b"] = py::make_tuple(c.b[0], c.b[1]);
         out.append(d);
     }
@@ -149,6 +154,7 @@ void register_python_bindings(py::module_& parent) {
           py::arg("force_non_positional") = false);
     m.def("stop", &stop_impl);
     m.def("set_position", &set_position_impl);
+    m.def("set_velocity", &set_velocity_impl);
     m.def("set_gain", &set_gain_impl);
     m.def("set_looping", &set_looping_impl);
     m.def("set_min_max_distance", &set_min_max_distance_impl);

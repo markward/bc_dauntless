@@ -23,6 +23,14 @@ except (ImportError, AttributeError):
     _audio = None  # tests can still import the module shape
 
 
+# Guide §3: BC's unitsPerMeter = 1.0 means the engine treats one game unit as
+# one metre for doppler, regardless of the visual scale of the models (our GU is
+# actually 175 m — see engine/units.py). Reproducing BC faithfully means adopting
+# its convention rather than "correcting" it: raw GU in, 343.3 GU/s for c.
+# alDopplerFactor stays the tuning knob if we ever want to.
+SPEED_OF_SOUND_GU = 343.3
+
+
 def node_world_position(node) -> Optional[tuple[float, float, float]]:
     """World (x, y, z) for a node ref, or None when it cannot be resolved.
 
@@ -85,10 +93,11 @@ def detach(handle) -> None:
 
 
 def pump(dt: float) -> None:
-    """Copy every attached node's world position into its source.
+    """Copy every attached node's world position and velocity into its source.
 
-    Called once per tick from host_loop.tick_audio, before the listener update
-    so the positional math sees current source positions.
+    Velocity is the per-frame position delta (guide §4/§6), in raw game units
+    per second. Called once per tick from host_loop.tick_audio, before the
+    listener update so the positional math sees current source positions.
 
     Also reaps entries whose source already finished. A one-shot's C++
     AudioSystem source is reaped (`sources_.erase`) as soon as the backend
@@ -108,6 +117,13 @@ def pump(dt: float) -> None:
             del _attached[pid]
             continue
         entry.handle.SetPosition(*pos)
+        if entry.prev_pos is not None and dt > 0.0:
+            vx = (pos[0] - entry.prev_pos[0]) / dt
+            vy = (pos[1] - entry.prev_pos[1]) / dt
+            vz = (pos[2] - entry.prev_pos[2]) / dt
+        else:
+            vx = vy = vz = 0.0
+        entry.handle.SetVelocity(vx, vy, vz)
         entry.prev_pos = pos
 
 

@@ -51,6 +51,7 @@ public:
     void set_looping(PlayingId, bool);
     void set_min_max_distance(PlayingId, float, float);
     void set_position(PlayingId, float, float, float);
+    void set_velocity(PlayingId, float, float, float);
 
     void set_category_gain(Category, float);
 
@@ -79,6 +80,11 @@ private:
     std::unordered_map<PlayingId, Source> sources_;
     SoundId next_sound_id_ = 1;
     PlayingId next_playing_id_ = 1;
+
+    // Guide §4/§6: listener velocity for doppler, derived from the position
+    // delta across successive update() calls (raw game units per second).
+    bool  have_prev_listener_ = false;
+    float prev_listener_[3] = {0.f, 0.f, 0.f};
 };
 
 }  // namespace dauntless::audio

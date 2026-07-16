@@ -9,7 +9,7 @@ struct LoggedCall {
     std::string op;
     // POD arg slots. Each op writes the fields relevant to it; the rest stay zero.
     // Looser than std::variant, but tests only inspect a handful per call.
-    float f[9] = {0,0,0,0,0,0,0,0,0};
+    float f[12] = {0,0,0,0,0,0,0,0,0,0,0,0};
     uint32_t u[4] = {0,0,0,0};
     bool b[2] = {false,false};
 };
@@ -25,10 +25,12 @@ public:
                       bool positional, float, float, float) override;
     void stop(SourceHandle) override;
     void set_position(SourceHandle, float, float, float) override;
+    void set_velocity(SourceHandle, float, float, float) override;
     void set_gain(SourceHandle, float) override;
     void set_looping(SourceHandle, bool) override;
     void set_min_max_distance(SourceHandle, float, float) override;
-    void set_listener(float,float,float, float,float,float, float,float,float) override;
+    void set_listener(float,float,float, float,float,float, float,float,float,
+                      float,float,float) override;
     void set_category_gain(Category, float) override;
     bool source_finished(SourceHandle) override;
 

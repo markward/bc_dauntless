@@ -196,4 +196,25 @@ TEST(AudioSystemDispatch, NonWavRoutedToMp3AndFailsCleanly) {
     EXPECT_EQ(sys.get_sound("bad"), 0u);
 }
 
+TEST(AudioSystem, ListenerVelocityFromPositionDelta) {
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    NullBackend* raw = backend.get();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+
+    sys.update(0,0,0,  0,1,0,  0,0,1, 0.5f);    // seeds prev
+    raw->clear_command_log();
+    sys.update(5,0,0,  0,1,0,  0,0,1, 0.5f);    // 5 GU in 0.5 s -> 10 GU/s
+
+    bool saw = false;
+    for (const auto& c : raw->command_log()) {
+        if (c.op == "set_listener") {
+            EXPECT_FLOAT_EQ(c.f[9], 10.0f);     // vx
+            saw = true;
+        }
+    }
+    EXPECT_TRUE(saw);
+}
+
 }  // namespace

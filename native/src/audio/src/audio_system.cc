@@ -112,6 +112,11 @@ void AudioSystem::set_position(PlayingId pid, float x, float y, float z) {
     if (it != sources_.end()) backend_->set_position(it->second.backend, x, y, z);
 }
 
+void AudioSystem::set_velocity(PlayingId pid, float x, float y, float z) {
+    auto it = sources_.find(pid);
+    if (it != sources_.end()) backend_->set_velocity(it->second.backend, x, y, z);
+}
+
 void AudioSystem::set_category_gain(Category c, float g) {
     backend_->set_category_gain(c, g);
 }
@@ -129,8 +134,19 @@ SourceHandle AudioSystem::debug_backend_handle(PlayingId pid) const {
 
 void AudioSystem::update(float lx, float ly, float lz,
                          float fx, float fy, float fz,
-                         float ux, float uy, float uz, float /*dt*/) {
-    backend_->set_listener(lx,ly,lz, fx,fy,fz, ux,uy,uz);
+                         float ux, float uy, float uz, float dt) {
+    // Guide §4/§6: listener velocity for doppler, derived from the camera's
+    // position delta. Raw game units per second — see the units note in init().
+    float vx = 0.f, vy = 0.f, vz = 0.f;
+    if (have_prev_listener_ && dt > 0.f) {
+        vx = (lx - prev_listener_[0]) / dt;
+        vy = (ly - prev_listener_[1]) / dt;
+        vz = (lz - prev_listener_[2]) / dt;
+    }
+    prev_listener_[0] = lx; prev_listener_[1] = ly; prev_listener_[2] = lz;
+    have_prev_listener_ = true;
+
+    backend_->set_listener(lx,ly,lz, fx,fy,fz, ux,uy,uz, vx,vy,vz);
 
     // Reap finished one-shots. Must call backend_->stop() so the underlying
     // ALuint is released — otherwise finished sources accumulate until OpenAL

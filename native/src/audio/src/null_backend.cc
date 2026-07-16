@@ -38,6 +38,12 @@ void NullBackend::set_position(SourceHandle h, float x, float y, float z) {
     log_.push_back(c);
 }
 
+void NullBackend::set_velocity(SourceHandle h, float x, float y, float z) {
+    LoggedCall c{"set_velocity"}; c.u[0] = h;
+    c.f[0] = x; c.f[1] = y; c.f[2] = z;
+    log_.push_back(c);
+}
+
 void NullBackend::set_gain(SourceHandle h, float g) {
     LoggedCall c{"set_gain"}; c.u[0] = h; c.f[0] = g; log_.push_back(c);
 }
@@ -53,11 +59,13 @@ void NullBackend::set_min_max_distance(SourceHandle h, float mn, float mx) {
 
 void NullBackend::set_listener(float px, float py, float pz,
                                float fx, float fy, float fz,
-                               float ux, float uy, float uz) {
+                               float ux, float uy, float uz,
+                               float vx, float vy, float vz) {
     LoggedCall c{"set_listener"};
     c.f[0]=px; c.f[1]=py; c.f[2]=pz;
     c.f[3]=fx; c.f[4]=fy; c.f[5]=fz;
     c.f[6]=ux; c.f[7]=uy; c.f[8]=uz;
+    c.f[9]=vx; c.f[10]=vy; c.f[11]=vz;
     log_.push_back(c);
 }
 

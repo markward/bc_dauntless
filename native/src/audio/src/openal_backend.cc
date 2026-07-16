@@ -37,6 +37,14 @@ public:
         // cuts off at max where BC/DS3D clamps, and that is the one change
         // that makes BC's audio sound wrong.
         alDistanceModel(AL_INVERSE_DISTANCE_CLAMPED);
+        // Guide §3/§6: BC overrides no DS3D global — doppler and rolloff both
+        // stay at 1.0 (the AIL_set_3D_*_factor symbols don't exist in the
+        // image). unitsPerMeter defaults to 1.0 and applies to velocity only,
+        // so BC treats one game unit as one metre for doppler regardless of
+        // visual scale. Feed raw game units; do NOT convert GU->m and do NOT
+        // port BC's velocity /1000 (a Miles m/ms API convention).
+        alDopplerFactor(1.0f);
+        alSpeedOfSound(343.3f);
         return true;
     }
 
@@ -114,6 +122,10 @@ public:
         if (auto it = sources_.find(h); it != sources_.end())
             alSource3f(it->second.al, AL_POSITION, x, y, z);
     }
+    void set_velocity(SourceHandle h, float x, float y, float z) override {
+        if (auto it = sources_.find(h); it != sources_.end())
+            alSource3f(it->second.al, AL_VELOCITY, x, y, z);
+    }
     void set_gain(SourceHandle h, float g) override {
         if (auto it = sources_.find(h); it != sources_.end()) {
             it->second.user_gain = g;
@@ -133,8 +145,10 @@ public:
     }
     void set_listener(float px, float py, float pz,
                       float fx, float fy, float fz,
-                      float ux, float uy, float uz) override {
+                      float ux, float uy, float uz,
+                      float vx, float vy, float vz) override {
         alListener3f(AL_POSITION, px, py, pz);
+        alListener3f(AL_VELOCITY, vx, vy, vz);
         float ori[6] = {fx, fy, fz, ux, uy, uz};
         alListenerfv(AL_ORIENTATION, ori);
     }

@@ -195,3 +195,46 @@ def test_stub_node_falls_back_to_non_positional_play(audio):
     assert plays, "Play() must have issued a play command"
     assert plays[-1]["b"][1] is False, \
         "a stub node must degrade to a non-positional source, not (0,0,0)"
+
+
+def test_pump_feeds_source_velocity_from_position_delta(audio):
+    """Guide §6: a moving emitter needs AL_VELOCITY or doppler is dead."""
+    snd = audio.GetSound("Torp")
+    loc = _Loc(0.0, 0.0, 0.0)
+    snd.AttachToNode(_FakeNode(loc))
+    snd.Play()
+
+    attached_sources.pump(dt=0.5)   # first pump seeds prev_pos
+    _dauntless_host.audio.clear_command_log()
+    loc.x = 10.0
+    attached_sources.pump(dt=0.5)   # 10 GU in 0.5 s -> 20 GU/s
+
+    vels = [c for c in _dauntless_host.audio.debug_command_log()
+            if c["op"] == "set_velocity"]
+    assert vels, "attached sources must report velocity for doppler"
+    assert vels[-1]["f"][0] == pytest.approx(20.0)
+
+
+def test_first_pump_reports_zero_velocity(audio):
+    """No prev_pos yet — must not invent a velocity from a null origin."""
+    snd = audio.GetSound("Torp")
+    snd.AttachToNode(_FakeNode(_Loc(500.0, 0.0, 0.0)))
+    snd.Play()
+
+    _dauntless_host.audio.clear_command_log()
+    attached_sources.pump(dt=0.5)
+
+    vels = [c for c in _dauntless_host.audio.debug_command_log()
+            if c["op"] == "set_velocity"]
+    assert vels, "first pump should still report a (zero) velocity"
+    assert vels[-1]["f"][0] == pytest.approx(0.0)
+
+
+def test_zero_dt_does_not_divide_by_zero(audio):
+    snd = audio.GetSound("Torp")
+    loc = _Loc(0.0, 0.0, 0.0)
+    snd.AttachToNode(_FakeNode(loc))
+    snd.Play()
+    attached_sources.pump(dt=0.016)
+    loc.x = 1.0
+    attached_sources.pump(dt=0.0)   # paused frame — must not raise

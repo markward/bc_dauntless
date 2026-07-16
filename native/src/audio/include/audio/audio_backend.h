@@ -34,13 +34,15 @@ public:
                               float x, float y, float z) = 0;
     virtual void stop(SourceHandle) = 0;
     virtual void set_position(SourceHandle, float x, float y, float z) = 0;
+    virtual void set_velocity(SourceHandle, float x, float y, float z) = 0;
     virtual void set_gain(SourceHandle, float) = 0;
     virtual void set_looping(SourceHandle, bool) = 0;
     virtual void set_min_max_distance(SourceHandle, float min, float max) = 0;
 
     virtual void set_listener(float px, float py, float pz,
                               float fx, float fy, float fz,
-                              float ux, float uy, float uz) = 0;
+                              float ux, float uy, float uz,
+                              float vx, float vy, float vz) = 0;
     virtual void set_category_gain(Category, float) = 0;
 
     // True if the source has stopped on its own (one-shot completed).
