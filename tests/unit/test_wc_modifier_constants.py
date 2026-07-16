@@ -58,13 +58,44 @@ def test_modifier_chords_export_shape():
     assert code == appc_input.MODIFIER_BANDS[mod] | getattr(appc_input, "WC_" + base)
 
 
+_CHORD_TARGET_ET_NAMES = (
+    "ET_MANAGE_POWER", "ET_MANEUVER", "ET_INPUT_SELF_DESTRUCT",
+    "ET_INPUT_CLEAR_TARGET", "ET_INPUT_INTERCEPT",
+    "ET_INPUT_DEBUG_KILL_TARGET", "ET_INPUT_DEBUG_QUICK_REPAIR",
+    "ET_INPUT_DEBUG_GOD_MODE", "ET_INPUT_DEBUG_LOAD_QUANTUMS",
+    "ET_OTHER_BEAM_TOGGLE_CLICKED", "ET_OTHER_CLOAK_TOGGLE_CLICKED",
+)
+
+
 def test_chord_target_event_constants_are_real_ints():
     import App
-    for name in (
-        "ET_MANAGE_POWER", "ET_MANEUVER", "ET_INPUT_SELF_DESTRUCT",
-        "ET_INPUT_CLEAR_TARGET", "ET_INPUT_INTERCEPT",
-        "ET_INPUT_DEBUG_KILL_TARGET", "ET_INPUT_DEBUG_QUICK_REPAIR",
-        "ET_INPUT_DEBUG_GOD_MODE", "ET_INPUT_DEBUG_LOAD_QUANTUMS",
-        "ET_OTHER_BEAM_TOGGLE_CLICKED", "ET_OTHER_CLOAK_TOGGLE_CLICKED",
-    ):
+    for name in _CHORD_TARGET_ET_NAMES:
         assert isinstance(getattr(App, name), int), name
+
+
+def test_chord_target_event_constants_do_not_collide_with_any_other_et_value():
+    """None of the 11 chord-target ET_* constants may share a value with
+    ANY other ET_* attribute on the App module — a collision there means
+    two unrelated events dispatch to the same handler chain (e.g. the
+    ET_INPUT_SELF_DESTRUCT / ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL clash at
+    1055, fixed by renumbering SELF_DESTRUCT to 1056).
+
+    Scoped to just the 11 chord targets, not a global uniqueness check:
+    App already carries at least one PRE-EXISTING duplicate unrelated to
+    this branch (ET_CLOAKED_COLLISION == ET_POWER_FRACTION_CHANGED == 1075),
+    which is out of scope here."""
+    import App
+    all_et = {}
+    for name in dir(App):
+        if not name.startswith("ET_"):
+            continue
+        val = getattr(App, name)
+        if isinstance(val, int):
+            all_et.setdefault(val, set()).add(name)
+
+    for name in _CHORD_TARGET_ET_NAMES:
+        val = getattr(App, name)
+        collisions = all_et.get(val, set()) - {name}
+        assert not collisions, (
+            "%s (%d) collides with %s" % (name, val, sorted(collisions))
+        )

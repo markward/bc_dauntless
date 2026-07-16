@@ -985,12 +985,14 @@ ET_SET_ALERT_LEVEL              = 1051
 ET_QUICK_SAVE                   = 1052
 ET_QUICK_LOAD                   = 1053
 ET_INPUT_PRINT_SCREEN             = 1054
-ET_INPUT_SELF_DESTRUCT          = 1055
+# 1055 is ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL (engine/appc/events.py) — do
+# not reuse it here.
+ET_INPUT_SELF_DESTRUCT          = 1056
 
 # ── Bridge-interaction event types ─────────────────────────────────────────────
 # Spec: docs/superpowers/specs/2026-06-12-tg-widget-tree-crew-menus-design.md.
-# Static ints in 1060-1099 — above the input block (1001-1055, plus slack
-# 1056-1059 left for input-block growth), below the Game_GetNextEventType
+# Static ints in 1060-1099 — above the input block (1001-1056, plus slack
+# 1057-1059 left for input-block growth), below the Game_GetNextEventType
 # allocator floor (1200).
 ET_ST_BUTTON_CLICKED        = 1060
 ET_COMMUNICATE              = 1061

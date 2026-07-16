@@ -174,3 +174,47 @@ def test_keyboard_event_prefers_default_destination_when_it_handles(monkeypatch)
 
     assert _resolver_hits == [tcw], \
         "default destination wins when it has a handler"
+
+
+_manage_power_hits = []
+
+
+def _manage_power_probe(pObject, pEvent):
+    _manage_power_hits.append(pEvent)
+
+
+def test_alt_1_chord_reaches_real_top_window_manage_power_handler():
+    """ALT+1..8 route to ET_MANAGE_POWER, handled by the SDK's
+    EngineerMenuHandlers registered on the REAL TopWindow singleton
+    (not a monkeypatched plain TGEventHandlerObject).  _resolve_destination
+    must find the handler through _TopWindow's composed `_events` object —
+    the real singleton has no `_handlers` attribute of its own and is
+    rejected by TGEventManager.AddEvent's isinstance(TGEventHandlerObject)
+    check, so appending `top` itself (rather than `top._events`) as a
+    destination candidate silently drops the event."""
+    import App
+
+    del _manage_power_hits[:]
+    top = App.TopWindow_GetTopWindow()
+    top.AddPythonFuncHandlerForInstance(
+        App.ET_MANAGE_POWER, __name__ + "._manage_power_probe")
+    try:
+        em = TGEventManager()
+        kb = KeyboardBinding(em)
+        kb.SetDefaultDestination(TGEventHandlerObject())  # TCW stand-in, no handler
+
+        from engine.appc.input import KS_NORMAL
+        kb.BindKey(App.WC_ALT_1, KS_NORMAL, App.ET_MANAGE_POWER,
+                   KeyboardBinding.GET_INT_EVENT, 0,
+                   KeyboardBinding.KBT_SINGLE_KEY_TO_EVENT)
+        evt = TGKeyboardEvent()
+        evt.SetUnicodeKey(App.WC_ALT_1)
+        evt.SetKeyState(KS_NORMAL)
+        kb.OnKeyboardEvent(None, evt)
+
+        assert len(_manage_power_hits) == 1, \
+            "ET_MANAGE_POWER must reach the real TopWindow's instance handler"
+        assert _manage_power_hits[0].GetInt() == 0
+    finally:
+        top.RemoveHandlerForInstance(
+            App.ET_MANAGE_POWER, __name__ + "._manage_power_probe")

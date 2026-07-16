@@ -132,9 +132,13 @@ class TGInputManager(TGObject):
                             modifier=None) -> None:
         """Register a unicode-key entry.  Accepts optional 5th arg `modifier`
         — KeyConfig.py uses it to register modifier-augmented variants
-        (App.KY_ALTGR/KY_CTRL/KY_ALT) alongside the base key.  PR 2b only
-        cares about the bare-key path; modifier variants register under
-        a (wc_code, modifier) key so they don't shadow the base.
+        (App.KY_ALTGR/KY_CTRL/KY_ALT) alongside the base key.  Bare keys
+        register under the plain int `wc_code`; modifier variants register
+        under a (wc_code, modifier) tuple key so they don't shadow the base.
+        Both paths feed `_registered_codes` (the set `_emit` gates on), so
+        chord keys are just as live as bare keys — this is load-bearing for
+        the ALT/CTRL/CAPS modifier-chord families (see MODIFIER_CHORDS
+        above), not a bare-key-only path.
         """
         self._registered_codes.add(int(wc_code))
         if modifier is None:
@@ -248,25 +252,43 @@ class KeyboardBinding(TGObject):
         import App  # deferred: input is imported during App bootstrap
         top = App.TopWindow_GetTopWindow()
         if top is not None:
-            candidates.append(top)
+            # The real _TopWindow (engine/appc/top_window.py) stores its
+            # instance-handler chain by COMPOSITION on `_events` (a real
+            # TGEventHandlerObject) rather than inheriting one directly, so
+            # `top` itself has no `_handlers` dict and isinstance-fails
+            # TGEventManager.AddEvent's destination check. Route through
+            # `_events` when present so both the handler-probe below and the
+            # eventual AddEvent dispatch land on an object that actually
+            # carries the registered handlers. Tests that monkeypatch
+            # TopWindow_GetTopWindow with a plain TGEventHandlerObject (no
+            # `_events` attribute) fall back to using it directly.
+            events_obj = getattr(top, "_events", None)
+            candidates.append(events_obj if events_obj is not None else top)
         for cand in candidates:
             handlers = getattr(cand, "_handlers", None)
             if isinstance(handlers, dict) and handlers.get(int(event_type)):
                 return cand
         return tcw
 
-    def _build_event(self, event_type: int, flags: int, value) -> TGEvent:
+    def _build_event(self, event_type: int, flags: int, value):
         if flags == self.GET_BOOL_EVENT:
             ev = TGBoolEvent()
             ev.SetBool(value)
         elif flags == self.GET_INT_EVENT:
             # ManagePower/Maneuver read GetInt() for the preset/order index.
+            # App._TGIntEvent does NOT subclass engine.appc.events.TGEvent —
+            # it's a duck-typed App-shim class (SetEventType/GetEventType
+            # only), which is why this method's return type can't be
+            # honestly annotated -> TGEvent.
             import App  # deferred — _TGIntEvent lives in the App shim
             ev = App.TGIntEvent_Create()
             ev.SetInt(int(value))
         else:
-            # GET_FLOAT_EVENT: no polled consumer yet (the impulse number
-            # row isn't polled); add with its first real consumer.
+            # GET_EVENT (the default flags value) and GET_FLOAT_EVENT both
+            # fall through here: GET_EVENT has no payload to carry, and
+            # GET_FLOAT_EVENT has no polled consumer yet (the impulse number
+            # row isn't polled) — add a float-carrying event with its first
+            # real consumer.
             ev = TGEvent()
         ev.SetEventType(event_type)
         return ev
