@@ -77,6 +77,19 @@ def set_muted(muted: bool) -> None:
 
     Used by the bridge-view mode: from inside the bridge, the player wouldn't
     hear their own engine humming directly.
+
+    Stopgap note: `SetClass::UpdateSounds` @0x00413CB0 gates on the global
+    rendered-set pointer and flushes a non-rendered set's handles outright —
+    that is the original's real mechanism, and `engine.audio.scene_scope`
+    (guide §11) now reproduces it faithfully for space-to-space set changes
+    (e.g. warp). BC has no per-source mute call; this function is OUR
+    stopgap, predating scene_scope. It is NOT yet made redundant by
+    scene_scope: host_loop drives scene_scope off `ship_iter.active_set()`,
+    which tracks the player ship's own containing (space) set and does not
+    change when the camera toggles to/from the bridge (the ship never leaves
+    its space set just because the player is looking at the bridge). So the
+    bridge-view case this function covers is still live. Kept because other
+    call sites still depend on it — do not delete as part of unrelated work.
     """
     global _muted
     if _muted == muted:

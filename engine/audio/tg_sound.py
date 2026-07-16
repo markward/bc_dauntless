@@ -178,6 +178,10 @@ class TGSound:
         if self._node is not None:
             from engine.audio import attached_sources
             attached_sources.attach(handle, self._node)
+        from engine.audio import scene_scope
+        if scene_scope.rendered_set() is not None and (
+                self._positional or self._node is not None or position is not None):
+            scene_scope.register(handle, scene_scope.rendered_set())
         return handle
 
     # No-ops kept for the wider SDK surface (callers exist; behaviour deferred).

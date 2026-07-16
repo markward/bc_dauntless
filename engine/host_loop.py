@@ -135,7 +135,12 @@ def shutdown_audio() -> None:
 def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> None:
     if _audio_mod is None:
         return
-    from engine.audio import attached_sources, hum_allocator
+    from engine.audio import attached_sources, hum_allocator, scene_scope
+    from engine.appc.ship_iter import active_set
+    # Guide §11: only the rendered set is audible — stop the outgoing set's
+    # sources before anything else touches this tick's audio state.
+    act = active_set()
+    scene_scope.set_rendered_set(act.GetName() if act is not None else None)
     # Guide §9, in order: (1) attached emitters from their nodes,
     # (2) the nearest-≤4 hum allocator, (3) the listener from the active camera.
     attached_sources.pump(dt)

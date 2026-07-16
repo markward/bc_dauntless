@@ -699,6 +699,17 @@ def _reset_leakable_engine_globals():
                 getattr(_m, _attr).clear()
         except Exception:
             pass
+    # scene_scope (guide §11 one-active-scene rule): _rendered is a scalar, not
+    # a container, so it needs its own reset_for_tests() rather than a plain
+    # .clear() -- same leak class as attached_sources/_attached and
+    # hum_allocator/_humming just above (a test that calls set_rendered_set
+    # would otherwise leak the active scene name into a later, unrelated test).
+    try:
+        _m = sys.modules.get("engine.audio.scene_scope")
+        if _m is not None:
+            _m.reset_for_tests()
+    except Exception:
+        pass
     # Global TGObject id -> object registry (engine.core.ids._registry). Every
     # TGObject.__init__ inserts itself and nothing removes it, so the table grows
     # for the whole session. Some SDK object lookups (ObjectClass_GetObject ->
