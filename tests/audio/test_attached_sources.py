@@ -242,10 +242,21 @@ def test_zero_dt_does_not_divide_by_zero(audio):
 
 def test_speed_of_sound_gu_is_derived_from_the_native_binding():
     """Review #2: SPEED_OF_SOUND_GU must not be a second, independently
-    editable literal -- it must come from the one C++ source of truth."""
-    assert _dauntless_host.audio.speed_of_sound() == pytest.approx(343.3)
-    assert attached_sources.SPEED_OF_SOUND_GU == pytest.approx(
-        _dauntless_host.audio.speed_of_sound())
+    editable literal -- it must come from the one C++ source of truth.
+
+    The float32→float64 promotion artifact (343.3f becomes
+    343.29998779296875) is the fingerprint proving derivation from C++. An
+    exact == fails on hardcoded 343.3, which approx silently accepts. Future
+    readers: do not "helpfully" relax this back to approx.
+    """
+    native_value = _dauntless_host.audio.speed_of_sound()
+    assert attached_sources.SPEED_OF_SOUND_GU == native_value, \
+        "SPEED_OF_SOUND_GU must be exactly equal to the C++ value, not hardcoded"
+    # Prove it's not a second independent literal: the float32 promotion
+    # artifact differs from Python's 343.3 literal.
+    assert attached_sources.SPEED_OF_SOUND_GU != 343.3, \
+        "SPEED_OF_SOUND_GU must not be Python's 343.3 literal; " \
+        "the float32→float64 artifact proves derivation from C++"
 
 
 def test_pump_zeroes_velocity_on_discontinuity(audio):

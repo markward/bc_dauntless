@@ -2,7 +2,6 @@
 #include <audio/audio_constants.h>
 #include <audio/wav.h>
 #include <audio/mp3.h>
-#include <cmath>
 #include <cstring>
 
 namespace dauntless::audio {
