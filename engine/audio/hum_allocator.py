@@ -121,7 +121,20 @@ def update(listener_pos) -> None:
     """
     candidates = [(s, _distance_sq(s, listener_pos))
                   for s in _roster() if _engine_sound_name_for(s)]
-    humming_ids = {id(s) for s in _humming.keys()}
+    # Liveness, not mere dict-key presence (review Critical #1): a scene
+    # switch (scene_scope.set_rendered_set) can Stop() a humming ship's
+    # source directly, out from under this registry, in the SAME tick
+    # BEFORE this call runs (host_loop.tick_audio's ordering). The player
+    # ship is always a roster member of the newly-active set (active_set()
+    # IS the player's own containing set), so on every warp the player's
+    # own hum handle is dead (`_pid == 0`) by the time we get here. A bare
+    # `id(s) for s in _humming.keys()` check would still see the dict key
+    # and treat it as "already humming", so it would never be restarted --
+    # the player's engine hum would go silent for the rest of the mission.
+    # Filtering on `_pid` here both restarts a dead-handle survivor below
+    # and correctly denies it the hysteresis bonus (a dead handle is not a
+    # real incumbent).
+    humming_ids = {id(s) for s in _humming.keys() if _humming[s] is not None and _humming[s]._pid}
 
     def _sort_key(pair):
         ship, dist_sq = pair

@@ -139,6 +139,10 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> Non
     from engine.appc.ship_iter import active_set
     # Guide §11: only the rendered set is audible — stop the outgoing set's
     # sources before anything else touches this tick's audio state.
+    # Caveat: active_set() is NOT App.g_kSetManager.GetRenderedSet() — it is
+    # the player's own containing (space) set, which does not change on a
+    # bridge<->space camera toggle. See scene_scope's module docstring
+    # ("Current wiring note") for what this gate does and does not cover.
     act = active_set()
     scene_scope.set_rendered_set(act.GetName() if act is not None else None)
     # Guide §9, in order: (1) attached emitters from their nodes,
