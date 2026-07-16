@@ -183,6 +183,38 @@ def test_held_rotation_key_cancels_ai():
     assert player.GetAI() is None
 
 
+def test_alt_digit_press_does_not_wake_manual_control():
+    """ALT+3 is the power-preset chord — it must not also register as a
+    manual throttle edge that yanks control away from the helm AI.
+    Finding 3."""
+    pc = _PlayerControl()
+    player = _player_with_ies()
+    player.SetAI(object())
+    pc.apply(player, _DT, _Host())
+
+    h = _Host()
+    h._held.add(h.keys.KEY_LEFT_ALT)
+    h._pressed.add(h.keys.KEY_3)
+    pc.apply(player, _DT, h)
+
+    assert player.GetAI() is not None, "ALT+digit must not wake manual control"
+
+
+def test_ctrl_digit_press_does_not_wake_manual_control():
+    """CTRL+2 is the maneuver-order chord — same suppression as ALT."""
+    pc = _PlayerControl()
+    player = _player_with_ies()
+    player.SetAI(object())
+    pc.apply(player, _DT, _Host())
+
+    h = _Host()
+    h._held.add(h.keys.KEY_LEFT_CONTROL)
+    h._pressed.add(h.keys.KEY_2)
+    pc.apply(player, _DT, h)
+
+    assert player.GetAI() is not None, "CTRL+digit must not wake manual control"
+
+
 def test_scroll_throttle_nudge_cancels_ai():
     pc = _PlayerControl()
     player = _player_with_ies()

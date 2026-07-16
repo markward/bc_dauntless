@@ -26,6 +26,11 @@ class _FakeKeys:
     KEY_7 = 55
     KEY_8 = 56
     KEY_9 = 57
+    KEY_LEFT_ALT = 342
+    KEY_RIGHT_ALT = 346
+    KEY_LEFT_CONTROL = 341
+    KEY_RIGHT_CONTROL = 345
+    KEY_I = 73
 
 
 class _FakeKeyReader:
@@ -127,6 +132,52 @@ def test_digit_after_R_returns_to_forward():
     reader.pressed_once.add(reader.keys.KEY_7)
     pc.apply(ship, dt=1.0/60, h=reader)
     assert pc.impulse_level == 7
+
+
+def test_alt_digit_does_not_set_impulse_level():
+    """ALT+3 is the power-preset chord (ET_MANAGE_POWER), not throttle —
+    the digit block must be suppressed while ALT is held, same as it
+    already is under Shift. Finding 3."""
+    pc = _PlayerControl()
+    ship = _FakeShip()
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_LEFT_ALT)
+    reader.pressed_once.add(reader.keys.KEY_3)
+    pc.apply(ship, dt=1.0/60, h=reader)
+    assert pc.impulse_level == 0
+
+
+def test_ctrl_digit_does_not_set_impulse_level():
+    """CTRL+2 is the maneuver-order chord (ET_MANEUVER), not throttle."""
+    pc = _PlayerControl()
+    ship = _FakeShip()
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_LEFT_CONTROL)
+    reader.pressed_once.add(reader.keys.KEY_2)
+    pc.apply(ship, dt=1.0/60, h=reader)
+    assert pc.impulse_level == 0
+
+
+def test_right_ctrl_digit_does_not_set_impulse_level():
+    """Right Ctrl must suppress the digit block too, not just left."""
+    pc = _PlayerControl()
+    ship = _FakeShip()
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_RIGHT_CONTROL)
+    reader.pressed_once.add(reader.keys.KEY_4)
+    pc.apply(ship, dt=1.0/60, h=reader)
+    assert pc.impulse_level == 0
+
+
+def test_right_alt_digit_does_not_set_impulse_level():
+    """Right Alt must suppress the digit block too, not just left."""
+    pc = _PlayerControl()
+    ship = _FakeShip()
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_RIGHT_ALT)
+    reader.pressed_once.add(reader.keys.KEY_5)
+    pc.apply(ship, dt=1.0/60, h=reader)
+    assert pc.impulse_level == 0
 
 
 def test_digit_press_overrides_simultaneous_R_press():
@@ -378,6 +429,31 @@ def test_nudge_multiple_notches_applies_each():
     pc.impulse_level = 0
     pc.nudge_throttle(3)
     assert pc.impulse_level == 3
+
+
+def test_ctrl_w_toggles_warp_boost():
+    """Finding 4: the in-system warp-boost toggle moved from Ctrl+I to
+    Ctrl+W (Ctrl+I now drives the SDK's ET_INPUT_INTERCEPT chord)."""
+    pc = _PlayerControl()
+    ship = _FakeShip()
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_LEFT_CONTROL)
+    reader.pressed_once.add(reader.keys.KEY_W)
+    assert pc._warp_boost is False
+    pc.apply(ship, dt=1.0/60, h=reader)
+    assert pc._warp_boost is True
+
+
+def test_ctrl_i_no_longer_toggles_warp_boost():
+    """Ctrl+I must be a no-op for the boost toggle now that it's freed up
+    for the SDK's Intercept chord."""
+    pc = _PlayerControl()
+    ship = _FakeShip()
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_LEFT_CONTROL)
+    reader.pressed_once.add(reader.keys.KEY_I)
+    pc.apply(ship, dt=1.0/60, h=reader)
+    assert pc._warp_boost is False
 
 
 def test_nudge_zero_is_noop():

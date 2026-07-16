@@ -1194,6 +1194,41 @@ def _shift_held(h) -> bool:
     return False
 
 
+def _alt_held(h) -> bool:
+    """True if either alt key is held. Same tolerance contract as
+    _shift_held. Deliberately reads `h.key_state` directly (the duck-typed
+    key reader passed into _PlayerControl.apply), NOT engine.host_io /
+    _modifier_state's module-level host_io.key_state — those two handles
+    are the same object only in production (both resolve to the live
+    _dauntless_host module); a unit test's fake key reader would be
+    silently bypassed if this went through host_io instead."""
+    ks = getattr(h, "keys", None)
+    if ks is None:
+        return False
+    l = getattr(ks, "KEY_LEFT_ALT", None)
+    r = getattr(ks, "KEY_RIGHT_ALT", None)
+    if l is not None and h.key_state(l):
+        return True
+    if r is not None and h.key_state(r):
+        return True
+    return False
+
+
+def _ctrl_held_either(h) -> bool:
+    """True if either ctrl key is held. See _alt_held's note on why this
+    reads `h.key_state` and not host_io/_modifier_state."""
+    ks = getattr(h, "keys", None)
+    if ks is None:
+        return False
+    l = getattr(ks, "KEY_LEFT_CONTROL", None)
+    r = getattr(ks, "KEY_RIGHT_CONTROL", None)
+    if l is not None and h.key_state(l):
+        return True
+    if r is not None and h.key_state(r):
+        return True
+    return False
+
+
 def _apply_alert_keys(h, player) -> None:
     """Shift+1/2/3 → SetAlertLevel(GREEN/YELLOW/RED) on the player ship.
 
@@ -1612,15 +1647,15 @@ class _PlayerControl:
             h.key_state(keys.KEY_LEFT_SUPER)
             if keys is not None and hasattr(keys, "KEY_LEFT_SUPER") else False
         )
-        _ctrl_held = (
-            h.key_state(keys.KEY_LEFT_CONTROL)
-            if keys is not None and hasattr(keys, "KEY_LEFT_CONTROL") else False
-        )
+        _ctrl_held = _ctrl_held_either(h)
         if h.key_pressed(im.code("reverse")) and not (_super_held or _ctrl_held):
             return True
         if h.key_pressed(im.code("full_stop")):
             return True
-        if keys is not None and not _shift_held(h):
+        # ALT/CTRL digit chords (power presets, maneuver orders) must not
+        # also be read as a manual throttle edge — same suppression as the
+        # normal throttle path below (Finding 3).
+        if keys is not None and not _shift_held(h) and not (_alt_held(h) or _ctrl_held):
             digit_codes = (
                 keys.KEY_1, keys.KEY_2, keys.KEY_3, keys.KEY_4, keys.KEY_5,
                 keys.KEY_6, keys.KEY_7, keys.KEY_8, keys.KEY_9,
@@ -1733,19 +1768,25 @@ class _PlayerControl:
             self._ai_owned = False
         # 1. Throttle (one-shot edges).  R is checked before digits.
         # Shift+digit is reserved for alert-level binding (Shift+1/2/3 →
-        # SetAlertLevel); suppress digit throttle while shift is held so
-        # the two bindings don't fire together.
+        # SetAlertLevel); ALT/CTRL+digit are the power-preset (ET_MANAGE_POWER)
+        # and maneuver-order (ET_MANEUVER) chords — suppress digit throttle
+        # while shift OR alt OR ctrl is held so none of these bindings fire
+        # together (Finding 3).
         # Cmd+R / Ctrl+R is the CEF reload hotkey and must not also
         # trigger reverse-thrust; suppress when either modifier is held.
         _super_held = h.key_state(h.keys.KEY_LEFT_SUPER) if hasattr(h.keys, "KEY_LEFT_SUPER") else False
-        _ctrl_held = h.key_state(h.keys.KEY_LEFT_CONTROL) if hasattr(h.keys, "KEY_LEFT_CONTROL") else False
-        # Ctrl+I → toggle in-system warp boost. Snap _current_speed to the
-        # new target so the boost engages instantly rather than ramping
-        # over many seconds at the IES's normal MaxAccel.
+        _ctrl_held = _ctrl_held_either(h)
+        _alt_is_held = _alt_held(h)
+        # Ctrl+W → toggle in-system warp boost (moved off Ctrl+I: this branch
+        # makes the SDK's Ctrl+I = ET_INPUT_INTERCEPT live, so Ctrl+I now
+        # means both at once; Mark's call, Finding 4 — Ctrl+W is unbound in
+        # the SDK). Snap _current_speed to the new target so the boost
+        # engages instantly rather than ramping over many seconds at the
+        # IES's normal MaxAccel.
         if (
             _ctrl_held
-            and hasattr(h.keys, "KEY_I")
-            and h.key_pressed(h.keys.KEY_I)
+            and hasattr(h.keys, "KEY_W")
+            and h.key_pressed(h.keys.KEY_W)
         ):
             self._warp_boost = not self._warp_boost
             # While drifting (all engines offline) _current_speed is frozen and
@@ -1762,7 +1803,7 @@ class _PlayerControl:
             self.impulse_level = self.REVERSE_LEVEL
         elif h.key_pressed(self._input_map.code("full_stop")):
             self.impulse_level = 0
-        elif not _shift_held(h):
+        elif not _shift_held(h) and not (_alt_is_held or _ctrl_held):
             digit_codes = [
                 h.keys.KEY_1, h.keys.KEY_2, h.keys.KEY_3, h.keys.KEY_4,
                 h.keys.KEY_5, h.keys.KEY_6, h.keys.KEY_7, h.keys.KEY_8,
