@@ -123,6 +123,10 @@ class TGInputManager(TGObject):
         self._event_manager = event_manager
         # {WC_code: (KY_code, database_ref, name)}
         self._registered: dict[int, tuple[int, object, str]] = {}
+        # Every registered WC code, bare or modifier-variant — the _emit
+        # gate.  The dict keys mix ints and (wc, modifier) tuples, so a
+        # bare `wc in self._registered` misses chord codes.
+        self._registered_codes: set[int] = set()
 
     def RegisterUnicodeKey(self, wc_code, ky_code, database, name,
                             modifier=None) -> None:
@@ -132,6 +136,7 @@ class TGInputManager(TGObject):
         cares about the bare-key path; modifier variants register under
         a (wc_code, modifier) key so they don't shadow the base.
         """
+        self._registered_codes.add(int(wc_code))
         if modifier is None:
             self._registered[int(wc_code)] = (int(ky_code), database, str(name))
         else:
@@ -146,8 +151,17 @@ class TGInputManager(TGObject):
     def OnKeyUp(self, wc_code: int) -> None:
         self._emit(int(wc_code), KS_KEYUP)
 
+    def OnChordDown(self, wc_code: int) -> None:
+        """Modifier-chord press.  BC's input manager produces a character
+        event (KS_NORMAL) alongside the keydown; the SDK binds each chord
+        under exactly one state (KS_KEYDOWN for CTRL_D/T/I and the CAPS
+        debug keys, KS_NORMAL for the ALT/CTRL number chords), so exactly
+        one binding fires per press."""
+        self._emit(int(wc_code), KS_KEYDOWN)
+        self._emit(int(wc_code), KS_NORMAL)
+
     def _emit(self, wc_code: int, key_state: int) -> None:
-        if wc_code not in self._registered:
+        if wc_code not in self._registered_codes:
             return
         evt = TGKeyboardEvent()
         evt.SetUnicodeKey(wc_code)
