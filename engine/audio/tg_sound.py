@@ -370,6 +370,14 @@ class TGSoundManager:
 g_kSoundManager = TGSoundManager.instance()
 
 
+def TGSound_Create(filename, name, flags: int = 0):
+    """Module-level Appc App.TGSound_Create: load `filename` and register it
+    under `name`. Its one SDK call site (MissionLib.PreloadMissionLine's
+    no-script branch) is bail-gated on GetSound, so None-on-failure with
+    nothing registered is correct. `flags` accepted for parity, ignored."""
+    return TGSoundManager.instance().LoadSound(filename, name, flags)
+
+
 # Test helpers (NOT for production code).
 def init_audio_for_tests() -> None:
     """Init the C++ audio subsystem with the null backend."""

@@ -89,6 +89,14 @@ class Mission(TGEventHandlerObject):
     def GetPrecreatedShip(self, script_name: str):
         return None
 
+    def LoadDatabaseSound(self, db, name, flags: int = 2):
+        # ScriptObject.LoadDatabaseSound on a Mission tags the sound with the
+        # mission's script group (MissionLib.PreloadMissionLine relies on
+        # GetGroup() being the mission script so a swap unloads it).
+        from engine.audio.tg_sound import TGSoundManager
+        return TGSoundManager.instance().LoadDatabaseSoundInGroup(
+            db, name, self.GetScript(), flags)
+
 
 class Episode(TGObject):
     def __init__(self):
@@ -128,6 +136,13 @@ class Episode(TGObject):
 
     def GetDatabase(self):
         return self._database
+
+    def LoadDatabaseSound(self, db, name, flags: int = 2):
+        # Episode has no script group of its own; "" is fine (PreloadMissionLine
+        # reassigns untagged preloaded sounds to the mission script group).
+        from engine.audio.tg_sound import TGSoundManager
+        return TGSoundManager.instance().LoadDatabaseSoundInGroup(
+            db, name, "", flags)
 
     # ── Mission goals / objectives ──────────────────────────────────────────
     # BC's Appc.Episode_RegisterGoal/RemoveGoal add/disable buttons in the XO
@@ -418,6 +433,23 @@ class Game(TGObject):
         # not be ready at game.py import time.
         from engine.audio.tg_sound import TGSoundManager
         return TGSoundManager.instance().LoadSoundInGroup(path, name, group)
+
+    def LoadDatabaseSoundInGroup(self, db, name, group, flags: int = 0):
+        # Resolve a TGL sound key to its wav filename and register it in
+        # `group`. The SDK's universal pattern gates on GetSound() before and
+        # after this call (MissionLib.py:681, EngineerCharacterHandlers.py),
+        # so a missing key registering nothing is exactly BC's bail behaviour.
+        from engine.audio.tg_sound import TGSoundManager
+        return TGSoundManager.instance().LoadDatabaseSoundInGroup(
+            db, name, group, flags)
+
+    def LoadDatabaseSound(self, db, name, flags: int = 2):
+        # ScriptObject.LoadDatabaseSound: same as the grouped form but the
+        # group defaults to the object's own group string. Game has no stored
+        # group, so "" (PreloadMissionLine reassigns "" sounds to the mission).
+        from engine.audio.tg_sound import TGSoundManager
+        return TGSoundManager.instance().LoadDatabaseSoundInGroup(
+            db, name, "", flags)
 
 
 def Game_GetCurrentPlayer():

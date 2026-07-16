@@ -172,7 +172,7 @@ from engine.appc.warp import (
     ChangeRenderedSetAction_CreateFromSet,
 )
 from engine.audio.tg_sound import (
-    TGSound, TGSoundManager, g_kSoundManager,
+    TGSound, TGSoundManager, g_kSoundManager, TGSound_Create,
     TGSoundRegion, TGSoundRegion_GetRegion, TGSoundRegion_Create,
 )
 from engine.core.game import (
