@@ -723,6 +723,7 @@ def _advance_combat(ships, dt: float, ship_instances=None) -> None:
     # _build_* helpers and the combat/carve advances now route through
     # host_io too, so nothing below consumes the raw `host` module.
     host_io.set_torpedoes(_build_torpedo_render_data())
+    host_io.set_dynamic_lights(_build_dynamic_light_render_data())
     from engine.appc import shockwaves as _shockwaves
     host_io.set_shockwaves(_shockwaves.render_data())
     host_io.set_hit_vfx(_build_hit_vfx_render_data())
@@ -766,8 +767,27 @@ def _dim_color(c, scale):
     return (c[0] * scale, c[1] * scale, c[2] * scale, c[3])
 
 
+def _torpedo_forward(t) -> tuple:
+    """Unit-length forward vector from a torpedo's velocity, falling back
+    to (0, 0, 1) when the velocity is ~stationary (the disruptor's default
+    __init__ velocity, and any torpedo not yet advanced by physics)."""
+    v = t._velocity
+    mag = (v.x * v.x + v.y * v.y + v.z * v.z) ** 0.5
+    if mag < 1e-6:
+        return (0.0, 0.0, 1.0)
+    return (v.x / mag, v.y / mag, v.z / mag)
+
+
 def _build_torpedo_render_data():
-    """Convert projectiles._active into the dict shape set_torpedoes expects."""
+    """Convert projectiles._active into the dict shape set_torpedoes expects.
+
+    Emits both the torpedo-quad fields (core/glow/flares textured billboards)
+    and the disruptor-bolt fields (authentic procedural tapered-tube bolt —
+    Task 1's CreateDisruptorModel) on EVERY descriptor, for both projectile
+    families: the C++ binding (Task 3) reads every key unconditionally, so a
+    photon torpedo emits neutral-default bolt fields and a disruptor emits
+    empty quad textures/colors (_resolve_game_texture("") already guards
+    falsy input back to "")."""
     out = []
     for t in projectiles._active:
         out.append({
@@ -790,6 +810,44 @@ def _build_torpedo_render_data():
             "flares_size_a": t._flares_size_a,
             "flares_size_b": t._flares_size_b,
             "age":           t._age,
+            "id":              int(t._id),
+            "is_disruptor":    bool(t._is_disruptor),
+            "forward":         _torpedo_forward(t),
+            # Disruptor bolt colors are audit-authentic already — no
+            # TORPEDO_BRIGHTNESS dimming (that knob is for the quad layers).
+            "shell_color":     _color_tuple(t._shell_color),
+            "bolt_core_color": _color_tuple(t._bolt_core_color),
+            "bolt_length":     float(t._bolt_length),
+            "bolt_width":      float(t._bolt_width),
+        })
+    return out
+
+
+def _build_dynamic_light_render_data():
+    """One point light per in-flight torpedo-style projectile (BC: the
+    torpedo lights the ships it flies past — weapon-firing-mechanics.md
+    §5.5). Disruptor bolts emit nothing (faithful: the bolt's light slot
+    stays NULL in BC). Radius/intensity are PROVISIONAL calibration knobs;
+    the audited radius source (light node +0x14C) is unpinned — RE Q2.
+
+    Mirror point: this is the SECOND interpreter of the torpedo glow floats
+    (radius base = max(glow_size_a, glow_size_b)) alongside native's
+    map_torpedo_params in torpedo_anim.h — a re-pin from RE Q1/Q2 must
+    update both sites.
+    """
+    out = []
+    for t in projectiles._active:
+        if t._is_disruptor:
+            continue
+        radius = _TORPEDO_LIGHT_RADIUS_SCALE * max(
+            t._glow_size_a, t._glow_size_b)
+        if radius <= 0:
+            continue
+        out.append({
+            "position":  (t._position.x, t._position.y, t._position.z),
+            "color":     _color_tuple(t._glow_color)[:3],
+            "radius":    radius,
+            "intensity": _TORPEDO_LIGHT_INTENSITY,
         })
     return out
 
@@ -867,9 +925,29 @@ PHASER_BEAM_WIDTH_MUTATOR = 3.0
 # without touching the hardpoint hue. Mirrors TRACTOR_BEAM_BRIGHTNESS below.
 PHASER_BEAM_BRIGHTNESS = 0.75
 
-# Brightness scale on torpedo/bolt layer colours (core, glow, flares) —
-# projectiles read too hot against the HDR pipeline (tune-by-eye).
-TORPEDO_BRIGHTNESS = 0.75
+# Brightness scale on torpedo quad layer colours (core, glow, flares) — a
+# visual-calibration knob, not an authenticity one. Colors themselves are now
+# audit-authentic (weapon-firing-mechanics.md); the glow layer draws at
+# additive alpha 1.2 (BC's two emissive passes, 0.8 + 0.4), so start at 1.0
+# and dial by eye in QuickBattle if the HDR pipeline reads too hot.
+TORPEDO_BRIGHTNESS = 1.0
+
+# BC's firing-ship attach gate is light.radius × 100 (weapon-firing-mechanics
+# audit §5.5); we fold it into the emitted radius because our light
+# attenuates with distance (BC's did not — its radius only gated
+# attachment). Tune live in QuickBattle.
+_TORPEDO_LIGHT_RADIUS_SCALE = 100.0
+
+# Scalar on the torpedo dynamic-light color; calibration knob (VFX
+# convention: start strong, dial back). Our windowed inverse-square
+# attenuation (denominator d^2+1 in GU) makes a bare 1.0 imperceptible — a
+# 2 GU flyby contributes only ~0.2, a 10 GU pass ~0.01 — whereas BC's
+# original torpedo light was un-attenuated full glow color anywhere inside
+# the gate radius. 20.0 is chosen so a several-GU flyby visibly tints the
+# hull (att ~= 1/(d^2+1) => ~0.8 at 5 GU with intensity 20); deliberately
+# strong for the first live pass — dial DOWN in QuickBattle. Since BC's
+# original was un-attenuated within the gate, err bright rather than dim.
+_TORPEDO_LIGHT_INTENSITY = 20.0
 
 
 def _beam_descriptor_pair(ship, bank, ship_instances):

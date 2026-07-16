@@ -37,6 +37,18 @@ uniform int  u_dir_light_count;
 uniform vec3 u_dir_light_dir_ws[MAX_DIR_LIGHTS];   // direction TOWARD the light
 uniform vec3 u_dir_light_color[MAX_DIR_LIGHTS];    // color × dimmer
 
+// ── Dynamic lights (torpedo glow; future hardpoint/beam lights) ────────
+// A point light is a degenerate segment (a.xyz == b.xyz). count == 0
+// disables the loop entirely (stock path, byte-identical output).
+// Attenuation MUST match renderer::dynamic_light_attenuation bit-for-bit:
+// use ratio*ratio*ratio*ratio, NOT pow(ratio, 4.0) (GPU pow is not
+// correctly rounded; the CPU side guarantees exactly 0 at d == radius).
+const int MAX_DYN_LIGHTS = 4;
+uniform int  u_dyn_light_count;
+uniform vec4 u_dyn_light_a[MAX_DYN_LIGHTS];      // pos_a.xyz, radius
+uniform vec4 u_dyn_light_b[MAX_DYN_LIGHTS];      // pos_b.xyz, (w unused)
+uniform vec3 u_dyn_light_color[MAX_DYN_LIGHTS];  // color * intensity
+
 // ── Sun shadow map (PCF) ─────────────────────────────────────────────────
 // Applied ONLY to directional light index 0 (the sun). u_shadows_enabled == 0
 // is the stock path: sun_shadow_factor() returns 1.0, so the lighting math is
@@ -447,8 +459,47 @@ void main() {
         }
     }
 
+    // ── Dynamic lights (torpedo glow, etc.) ─────────────────────────────
+    // No shadow interaction (dynamic lights never cast shadows) and never
+    // added to the rim/Fresnel term (a passing torpedo must not flash the
+    // rim) — both are enforced simply by NOT touching sun_sf/rim below.
+    // u_dyn_light_count == 0 (the production path until Task 10 wires a
+    // caller) skips the loop entirely: lit_dyn stays vec3(0.0) and its fold
+    // into `lit` below is `x + 0.0`, IEEE-identical to the pre-Task-9 shader.
+    vec3 lit_dyn = vec3(0.0);
+    for (int i = 0; i < u_dyn_light_count; ++i) {
+        vec3  a      = u_dyn_light_a[i].xyz;
+        float radius = u_dyn_light_a[i].w;
+        if (radius <= 0.0) continue;
+        vec3  b = u_dyn_light_b[i].xyz;
+
+        // Closest point on the segment ab to this fragment.
+        vec3  ab = b - a;
+        float h  = clamp(dot(v_position_ws - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+        vec3  lp = a + ab * h;
+
+        float d     = length(lp - v_position_ws);
+        float ratio = d / radius;
+        // ratio*ratio*ratio*ratio, NOT pow(ratio, 4.0): GPU pow is not
+        // correctly rounded; must bit-match renderer::dynamic_light_attenuation.
+        float w   = clamp(1.0 - ratio*ratio*ratio*ratio, 0.0, 1.0);
+        float att = (w * w) / (d * d + 1.0);
+
+        vec3  L  = (lp - v_position_ws) / max(d, 1e-6);
+        float nl = max(dot(n, L), 0.0);
+        lit_dyn += att * nl * u_dyn_light_color[i];
+
+        if (u_specular_enabled != 0) {
+            vec3 H = normalize(L + V);
+            float s = pow(max(dot(n, H), 0.0), u_specular_power) * step(0.0, nl);
+            spec_acc += att * s * u_dyn_light_color[i];
+        }
+    }
+
     vec4 base = texture(u_base_color, v_uv);
-    vec3 lit  = (u_ambient_light + lit_dir) * u_diffuse_color * base.rgb;
+    // lit_dyn folds in EXACTLY where ambient + directional combine, so
+    // material/diffuse color and base texture multiply it the same way.
+    vec3 lit  = (u_ambient_light + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
 
     // Body-frame normal for object-space decals.
     vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);

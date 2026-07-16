@@ -39,6 +39,8 @@ embed_shader(SHADER_LENS_FLARE_HDR_FS shaders/lens_flare_hdr.frag lens_flare_hdr
 embed_shader(SHADER_LENS_FLARE_BLUR_FS shaders/lens_flare_blur.frag lens_flare_blur_fs)
 embed_shader(SHADER_TORPEDO_VS shaders/torpedo.vert torpedo_vs)
 embed_shader(SHADER_TORPEDO_FS shaders/torpedo.frag torpedo_fs)
+embed_shader(SHADER_DISRUPTOR_VS shaders/disruptor.vert disruptor_vs)
+embed_shader(SHADER_DISRUPTOR_FS shaders/disruptor.frag disruptor_fs)
 embed_shader(SHADER_HIT_VFX_VS shaders/hit_vfx.vert hit_vfx_vs)
 embed_shader(SHADER_HIT_VFX_FS shaders/hit_vfx.frag hit_vfx_fs)
 embed_shader(SHADER_HULL_DISCHARGE_VS shaders/hull_discharge.vert hull_discharge_vs)
@@ -115,6 +117,7 @@ add_library(renderer STATIC
     shockwave_pass.cc
     aabb.cc
     glow_region.cc
+    dynamic_lights.cc
     ray_trace.cc
     shield_state.cc
     skin_shield.cc

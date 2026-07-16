@@ -709,9 +709,21 @@ class WeaponSystem(PoweredSubsystem):
         self._fire_held: bool = False
         self._held_target = None
         self._held_offset = None
-        # _HeldFireWeaponSystem and TorpedoSystem set this via SetSingleFire;
-        # guard so the base class always has it too.
-        self._single_fire = getattr(self, "_single_fire", False)
+        # Consulted by update_weapons (stop after first success when set).
+        # Copied from the authored WeaponSystemProperty by ships.py's
+        # property→system pass via SetSingleFire below.
+        self._single_fire: int = 0
+
+    def GetSingleFire(self) -> int:                 return self._single_fire
+
+    def SetSingleFire(self, v) -> None:
+        """Lives on the BASE class deliberately: ships.py's property→system
+        copy calls SetSingleFire on every system type behind a hasattr guard
+        that is ALWAYS true through the _Stub — while this lived only on
+        _HeldFireWeaponSystem, TorpedoSystem silently dropped its authored
+        value (stub heatmap rank 33, 212 hits). Stock torpedo systems author
+        SetSingleFire(0) so the miss was benign, but only by coincidence."""
+        self._single_fire = int(v)
 
     def ShouldBeAimed(self) -> int:
         """Does this weapon system have to bear on the target to fire?
@@ -743,6 +755,15 @@ class WeaponSystem(PoweredSubsystem):
     def IsDumbFire(self) -> int:
         """Weapon systems are not dumbfire-capable by default. Only TorpedoTube
         (which is a Weapon, not a system) overrides this to return 1."""
+        return 0
+
+    def IsSkewFire(self) -> int:
+        """Skew-salvo is a TorpedoTube concept; leaf emitters that are
+        WeaponSystem subclasses (PulseWeapon, PhaserBank, TractorBeam) never
+        skew. Hoisted here — same hierarchy trap as IsDumbFire/SetSingleFire —
+        so _spawn_projectile's skew probe reaches a real 0 instead of the
+        truthy _Stub (stub-heatmap row PulseWeapon.IsSkewFire; harmless today
+        only because the isinstance(GetRight(), TGPoint3) guard masks it)."""
         return 0
 
     def IsMemberOfGroup(self, g) -> int:
@@ -1411,23 +1432,17 @@ class _HeldFireWeaponSystem(WeaponSystem):
 
     Since the BC tick rewire the shared dispatch lives on WeaponSystem
     (StartFiring arms the tick, host_loop._pump_held_weapons runs
-    update_weapons per frame).  This class only keeps the SingleFire mode
-    and the _can_engage fire-range hook.
-
-    SingleFire(1): one eligible emitter fires per tick, round-robin via
-    _last_weapon_idx.  SingleFire(0): the tick walks the whole group.
+    update_weapons per frame).  This class only keeps the _can_engage
+    fire-range hook (SingleFire moved to the WeaponSystem base — the
+    property→system copy in ships.py hits every system type, and the
+    hasattr guard there is always true through the _Stub, so torpedo
+    systems were silently dropping their authored SetSingleFire).
 
     Subclasses override _can_engage(ship, target) to add a fire-range gate
     (phasers do; pulse weapons don't — a bolt's lifetime bounds its range).
     StartFiring consults it (no latch out of range) and the host_loop pump
     re-checks it per frame (held burst stops when the target drifts out).
     """
-    def __init__(self, name: str = ""):
-        super().__init__(name)
-        self._single_fire: int = 0
-
-    def GetSingleFire(self) -> int:                 return self._single_fire
-    def SetSingleFire(self, v) -> None:             self._single_fire = int(v)
 
     def _can_engage(self, ship, target) -> bool:
         """Fire-range gate hook. Default: no gate. PhaserSystem overrides."""

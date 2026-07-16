@@ -6,6 +6,12 @@ CreateTorpedoModel + SetDamage/SetDamageRadiusFactor/SetGuidance-
 Lifetime/SetMaxAngularAccel.  Engine never embeds projectile data —
 it always reads from the bound script per shot.
 
+Disruptor bolts (CreateDisruptorModel) are a different render family from
+torpedoes: BC builds them as a procedural two-color tapered-tube mesh, not a
+textured quad (audited weapon-firing-mechanics.md §5.5).  Torpedo stores the
+authentic shell/core colors + length/width in dedicated fields; the torpedo
+quad fields are left at their __init__ defaults for a disruptor bolt.
+
 Module-level _active registry holds in-flight torpedoes; update_all
 advances motion, runs collision, returns the list of (torpedo, hit_ship,
 hit_point, hit_normal) tuples for host_loop to route through combat.apply_hit.
@@ -17,8 +23,11 @@ from engine.core.ids import TGObject
 
 
 class Torpedo(TGObject):
-    """Runtime projectile.  Visual fields populated by CreateTorpedoModel;
-    behaviour fields by SetDamage/SetGuidanceLifetime/SetMaxAngularAccel.
+    """Runtime projectile.  Torpedo-style visual fields populated by
+    CreateTorpedoModel (textured core+glow+flares quads); disruptor-style
+    bolts populated by CreateDisruptorModel (authentic procedural
+    tapered-tube fields — a disruptor never touches the quad fields).
+    Behaviour fields set by SetDamage/SetGuidanceLifetime/SetMaxAngularAccel.
     """
     __slots__ = (
         "_position", "_velocity", "_age", "_ttl",
@@ -31,6 +40,8 @@ class Torpedo(TGObject):
         "_glow_texture", "_glow_color", "_glow_size_a", "_glow_size_b", "_glow_size_c",
         "_flares_texture", "_flares_color", "_num_flares",
         "_flares_size_a", "_flares_size_b",
+        "_is_disruptor", "_shell_color", "_bolt_core_color",
+        "_bolt_length", "_bolt_width",
     )
 
     def __init__(self):
@@ -63,6 +74,11 @@ class Torpedo(TGObject):
         self._num_flares     = 0
         self._flares_size_a  = 0.0
         self._flares_size_b  = 0.0
+        self._is_disruptor   = False
+        self._shell_color    = None
+        self._bolt_core_color = None
+        self._bolt_length    = 0.0
+        self._bolt_width     = 0.0
 
     def CreateTorpedoModel(self,
             core_tex, core_color, core_a, core_b,
@@ -82,31 +98,27 @@ class Torpedo(TGObject):
         self._num_flares     = int(num_flares)
         self._flares_size_a  = float(flares_a)
         self._flares_size_b  = float(flares_b)
+        self._is_disruptor   = False   # idempotent-safe if a script calls both
 
     def CreateDisruptorModel(self, outer_shell_color, outer_core_color,
-                             length, radius) -> None:
-        """Populate the bolt's render fields for a pulse-weapon shot.
+                             length, width) -> None:
+        """Populate the bolt's render fields for a disruptor/pulse-weapon shot.
 
-        BC builds a procedural capsule; we map the shell/core colors and
-        length/radius onto the existing core+glow textured-quad fields so a
-        disruptor bolt rides the same torpedo render pass
-        (_build_torpedo_render_data).  length -> size_a (along travel),
-        radius -> size_b (cross-section).  No flares on pulse bolts.
+        BC builds a procedural two-color tapered-tube bolt, NOT a textured
+        quad (audited weapon-firing-mechanics.md §5.5): a 12-segment
+        longitudinal ring swept around the travel axis, cross-section taper
+        profile {0.9927, 0.9727, 0.9273, 0.7273} x width, vertex-colored by
+        the outer shell + core colors, re-oriented to velocity each frame by
+        the renderer.  No texture, no light, no controller.  We store the
+        authentic construction args directly; the torpedo quad fields
+        (core/glow textures, sizes, flares) stay at their __init__ defaults
+        — a disruptor bolt never touches them.
         """
-        self._core_texture   = "data/Textures/Tactical/TorpedoCore.tga"
-        self._core_color     = outer_core_color
-        self._core_size_a    = float(length)
-        self._core_size_b    = float(radius)
-        self._glow_texture   = "data/Textures/Tactical/TorpedoGlow.tga"
-        self._glow_color     = outer_shell_color
-        self._glow_size_a    = float(length) * 1.5
-        self._glow_size_b    = float(radius) * 2.0
-        self._glow_size_c    = 0.0
-        self._flares_texture = ""
-        self._flares_color   = None
-        self._num_flares     = 0
-        self._flares_size_a  = 0.0
-        self._flares_size_b  = 0.0
+        self._is_disruptor    = True
+        self._shell_color     = outer_shell_color
+        self._bolt_core_color = outer_core_color
+        self._bolt_length     = float(length)
+        self._bolt_width      = float(width)
 
     def SetDamage(self, v) -> None:               self._damage = float(v)
     def SetDamageRadiusFactor(self, v) -> None:   self._damage_radius_factor = float(v)

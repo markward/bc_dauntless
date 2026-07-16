@@ -81,10 +81,20 @@ struct LensFlareDescriptor {
     std::vector<LensFlareElement>   elements;
 };
 
-/// Torpedo render descriptor.  Populated from the SDK projectile script's
-/// CreateTorpedoModel call (sdk/Build/scripts/Tactical/Projectiles/*.py).
-/// Renderer composites three additive billboards (glow + flares + core) at
-/// world_pos each frame.  Sizes are world-units half-sizes per layer.
+/// Projectile render descriptor, covering BOTH BC projectile families
+/// (weapon-firing-mechanics.md §5.5). Populated from the SDK projectile
+/// script's CreateTorpedoModel / CreateDisruptorModel call
+/// (sdk/Build/scripts/Tactical/Projectiles/*.py):
+///   - Torpedo-style: renderer composites three additive textured billboards
+///     (glow + flares + core) at world_pos each frame, animated per the
+///     audited layer sizes. Sizes are world-units half-sizes per layer.
+///   - Disruptor-style (`is_disruptor`): a two-color tapered tube bolt
+///     aligned to `forward` (the unit velocity direction), built from
+///     `shell_color`/`bolt_core_color`/`bolt_length`/`bolt_width` instead of
+///     the textured quad layers.
+/// Every descriptor carries both families' fields; the family not in use
+/// carries its inert defaults (empty texture paths / zero sizes for a
+/// disruptor bolt, forward=(0,0,1) and zero bolt length/width for a torpedo).
 struct TorpedoDescriptor {
     glm::vec3   world_pos;
     std::string core_texture;
@@ -102,7 +112,29 @@ struct TorpedoDescriptor {
     float       flares_size_a = 0.0f;
     float       flares_size_b = 0.0f;
     float       age           = 0.0f;
+    int         id            = 0;       // stable per-projectile id; seeds per-flare randomness
+    bool        is_disruptor  = false;
+    glm::vec3   forward{0.0f, 0.0f, 1.0f};       // unit velocity direction (disruptor bolt alignment)
+    glm::vec4   shell_color{1.0f};               // disruptor outer shell color
+    glm::vec4   bolt_core_color{1.0f};           // disruptor inner core color
+    float       bolt_length = 0.0f;              // GU
+    float       bolt_width  = 0.0f;              // GU
 };
+
+/// One world-space dynamic light (point or segment). A point light is a
+/// degenerate segment (pos_a == pos_b). Consumed by the opaque Space pass
+/// only; no shadow interaction. First consumer: torpedo glow
+/// (weapon-firing-mechanics.md §5.5 — BC torpedoes light the ships they
+/// fly past); future: hardpoint-attached point/line lights.
+struct DynamicLightDescriptor {
+    glm::vec3 pos_a{0.0f};       // world GU; point position or segment end A
+    glm::vec3 pos_b{0.0f};       // == pos_a for point lights
+    glm::vec3 color{1.0f};       // linear RGB (HDR-capable)
+    float     radius    = 0.0f;  // GU; attenuation reaches exactly 0 here
+    float     intensity = 1.0f;  // scalar multiplier on color
+};
+inline constexpr int kMaxDynamicLightsPerFrame = 64;
+inline constexpr int kMaxDynamicLightsPerDraw  = 4;
 
 // One warp-core breach shockwave: a camera-facing ring + core flash centered
 // at world_center, expanding to max_radius over lifetime. age/lifetime drive
@@ -216,7 +248,10 @@ void draw_model(const assets::Model& model,
                 float decal_time,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
-                const scenegraph::HullCarveField& carve);
+                const scenegraph::HullCarveField& carve,
+                const std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>&
+                    dyn_lights = {},
+                int dyn_light_count = 0);
 
 /// Release the process-lifetime damage-decal texture (game/data/Textures/
 /// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.
@@ -227,6 +262,16 @@ void draw_model(const assets::Model& model,
 /// context created as GL_TEXTURE_3D (carve/breach fill) — GL_INVALID_OPERATION
 /// (0x502), surfacing later at the next check_gl (e.g. in upload_mesh).
 void reset_damage_decal_texture();
+
+/// Clear the lazy per-ModelHandle bounding-radius cache used by dynamic-light
+/// selection. MUST be called wherever the host clears g_loaded_models (both
+/// init() and shutdown() in host_bindings.cc): handle values are recycled —
+/// they are derived from g_loaded_models.size(), reissued from 1 after every
+/// clear — so without this reset a different model assigned a previously-
+/// cached handle silently inherits the OLD model's bounding radius after a
+/// mission swap / GL-context recreate. Pure CPU state (no GL objects), so
+/// unlike reset_damage_decal_texture() it has no context-currency requirement.
+void reset_model_radius_cache();
 
 class FrameSubmitter {
 public:
@@ -246,7 +291,8 @@ public:
                        const ModelLookup& lookup,
                        const Lighting& lighting,
                        float decal_time = 0.0f,
-                       CarveFieldCache* carve_cache = nullptr);
+                       CarveFieldCache* carve_cache = nullptr,
+                       const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
 
     /// Like submit_opaque but only iterates instances tagged with `pass`.
     /// Used by the space pass to exclude bridge-tagged geometry, which
@@ -259,7 +305,8 @@ public:
                                scenegraph::Pass pass,
                                float decal_time = 0.0f,
                                CarveFieldCache* carve_cache = nullptr,
-                               float ambient_scale = 1.0f);
+                               float ambient_scale = 1.0f,
+                               const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
 
 private:
     /// Lazily-allocated 1x1 white texture used as a fallback when a material

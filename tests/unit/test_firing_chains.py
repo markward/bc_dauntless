@@ -119,3 +119,20 @@ def test_phaser_bank_is_member_of_group():
     prop.SetGroups(2)
     assert bank.IsMemberOfGroup(1) == 0
     assert bank.IsMemberOfGroup(2) == 1
+
+
+def test_torpedo_system_set_single_fire_is_real_base_surface():
+    """SetSingleFire must live on the WeaponSystem BASE, not only on
+    _HeldFireWeaponSystem: ships.py's property→system copy calls it on every
+    system type behind a hasattr guard that is always true through the _Stub,
+    so a TorpedoSystem-only miss silently dropped the authored value (stub
+    heatmap rank 33 — resolved 2026-07-15). Stock torpedo hardpoints author
+    SetSingleFire(0), masking the miss by coincidence."""
+    from engine.appc.weapon_subsystems import TorpedoSystem
+    sys_ = TorpedoSystem("Torpedoes")
+    assert sys_.GetSingleFire() == 0
+    sys_.SetSingleFire(1)
+    assert sys_._single_fire == 1
+    assert sys_.GetSingleFire() == 1
+    sys_.SetSingleFire(0)
+    assert sys_.GetSingleFire() == 0

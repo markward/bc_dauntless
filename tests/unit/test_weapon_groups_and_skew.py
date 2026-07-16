@@ -50,3 +50,15 @@ def test_tube_is_dumbfire_capable_banks_are_not():
     from engine.appc.weapon_subsystems import PhaserBank
     assert _tube_with_groups(0).IsDumbFire() == 1
     assert PhaserBank("bank").IsDumbFire() == 0
+
+
+def test_leaf_emitters_never_skew_fire():
+    # Leaf banks derive from WeaponSystem, not Weapon — without a base-class
+    # IsSkewFire they hit the truthy _Stub in _spawn_projectile's skew probe
+    # (stub-heatmap row PulseWeapon.IsSkewFire, 40 hits/run; masked today only
+    # by the isinstance(GetRight(), TGPoint3) guard).
+    from engine.appc.weapon_subsystems import PhaserBank, PulseWeapon
+    for w in (PulseWeapon("cannon"), PhaserBank("bank")):
+        got = w.IsSkewFire()
+        assert got == 0
+        assert isinstance(got, int)   # a real 0, not a truthy _Stub

@@ -5,11 +5,14 @@
 #include "renderer/bone_palette.h"
 #include "renderer/shader.h"
 #include "renderer/carve_field_cache.h"
+#include "renderer/dynamic_lights.h"
+#include "renderer/aabb.h"
 
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <unordered_map>
 #include <vector>
 
 #include <glad/glad.h>
@@ -207,12 +210,59 @@ unsigned int ensure_damage_decal_texture() {
     return g_decal_id;
 }
 
+// Lazy per-model bounding-radius cache for dynamic-light selection. Mirrors
+// the g_decal_id/g_decal_tried lazy-load precedent above: computed once per
+// ModelHandle (compute_model_aabb walks every mesh's CPU-data verts, not
+// cheap), reused by every instance of that model. Model-local units; the
+// caller multiplies by the instance's uniform world scale.
+//
+// Reset discipline: ModelHandle values are RECYCLED — host_bindings.cc
+// derives them from g_loaded_models.size() and .clear()s that table in both
+// init() and shutdown(), so after a mission swap / GL-context recreate a
+// DIFFERENT model can be reissued a previously-cached handle. The host must
+// call reset_model_radius_cache() wherever it clears g_loaded_models
+// (mirroring the reset_damage_decal_texture() discipline), or a swapped-in
+// model silently inherits the old model's bounding radius.
+std::unordered_map<scenegraph::ModelHandle, float> g_model_radius_cache;
+
+float model_bounding_radius(scenegraph::ModelHandle handle,
+                            const assets::Model& model) {
+    auto it = g_model_radius_cache.find(handle);
+    if (it != g_model_radius_cache.end()) return it->second;
+    const Aabb box = compute_model_aabb(model);
+    const float radius = glm::length(box.half_extents);
+    g_model_radius_cache.emplace(handle, radius);
+    return radius;
+}
+
+// Select up to kMaxDynamicLightsPerDraw lights affecting `inst` from
+// `lights` (nullptr or empty => none, count 0 — the production path until
+// Task 10 wires a real caller). Instance world center = the world matrix's
+// translation column; bounding radius = the per-model cache (model-local
+// units) × the instance's uniform world scale, recovered from the world
+// matrix's column-0 length (same recovery shield_pass.cc uses for
+// SHIP_SCALE — BC models are uniform-scale).
+int select_instance_dynamic_lights(
+    const scenegraph::Instance& inst, const assets::Model* model,
+    const std::vector<DynamicLightDescriptor>* lights,
+    std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>& out) {
+    if (!model || !lights || lights->empty()) return 0;
+    const float model_radius = model_bounding_radius(inst.model_handle, *model);
+    const float scale = glm::length(glm::vec3(inst.world[0]));
+    const glm::vec3 center_ws = glm::vec3(inst.world[3]);
+    return select_dynamic_lights(*lights, center_ws, model_radius * scale, out);
+}
+
 }  // namespace
 
 void reset_damage_decal_texture() {
     g_decal_owner = assets::Texture{};  // glDeleteTextures in the current context
     g_decal_id    = 0;
     g_decal_tried = false;
+}
+
+void reset_model_radius_cache() {
+    g_model_radius_cache.clear();
 }
 
 void draw_model(const assets::Model& model,
@@ -228,7 +278,10 @@ void draw_model(const assets::Model& model,
                 float decal_time,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
-                const scenegraph::HullCarveField& carve) {
+                const scenegraph::HullCarveField& carve,
+                const std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>&
+                    dyn_lights,
+                int dyn_light_count) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -302,6 +355,29 @@ void draw_model(const assets::Model& model,
             // case this instance has glow regions but no active decals.
             prog.set_mat4("u_ship_world_inv", glm::inverse(world));
             prog.set_float("u_decal_time", decal_time);
+        }
+    }
+
+    // ── Dynamic lights (torpedo glow; future hardpoint/beam lights) ────────
+    // Pack the caller-selected (already top-K'd by frame.cc's submit_opaque)
+    // lights into vec4 arrays. u_dyn_light_count == 0 (the default — no
+    // caller passes a real list until Task 10) makes the shader skip the
+    // loop entirely, mirroring how u_decal_count/u_glow_region_count handle
+    // the empty case: set ONLY the count uniform.
+    {
+        prog.set_int("u_dyn_light_count", dyn_light_count);
+        if (dyn_light_count > 0) {
+            glm::vec4 la[kMaxDynamicLightsPerDraw];
+            glm::vec4 lb[kMaxDynamicLightsPerDraw];
+            glm::vec3 lc[kMaxDynamicLightsPerDraw];
+            for (int i = 0; i < dyn_light_count; ++i) {
+                la[i] = glm::vec4(dyn_lights[i].pos_a, dyn_lights[i].radius);
+                lb[i] = glm::vec4(dyn_lights[i].pos_b, 0.0f);
+                lc[i] = dyn_lights[i].color * dyn_lights[i].intensity;
+            }
+            prog.set_vec4_array("u_dyn_light_a", la, dyn_light_count);
+            prog.set_vec4_array("u_dyn_light_b", lb, dyn_light_count);
+            prog.set_vec3_array("u_dyn_light_color", lc, dyn_light_count);
         }
     }
 
@@ -516,7 +592,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
                                    const ModelLookup& lookup,
                                    const Lighting& lighting,
                                    float decal_time,
-                                   CarveFieldCache* carve_cache) {
+                                   CarveFieldCache* carve_cache,
+                                   const std::vector<DynamicLightDescriptor>* dyn_lights) {
     // Per-frame uniforms common to the static AND skinned programs (view/proj,
     // camera, ambient, directional lights). The skinned vertex stage pairs with
     // opaque.frag, so the fragment-side uniforms are identical; applying the
@@ -558,10 +635,14 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
         std::vector<glm::mat4> palette;
         if (m && !m->skeleton.bones.empty())
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
+        std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> lights{};
+        const int light_count =
+            select_instance_dynamic_lights(inst, m, dyn_lights, lights);
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette, inst.carve);
+                          inst.emissive_scale, palette, inst.carve,
+                          lights, light_count);
     });
 }
 
@@ -573,7 +654,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                                            scenegraph::Pass pass,
                                            float decal_time,
                                            CarveFieldCache* carve_cache,
-                                           float ambient_scale) {
+                                           float ambient_scale,
+                                           const std::vector<DynamicLightDescriptor>* dyn_lights) {
     // See submit_opaque: configure the common per-frame uniforms on BOTH the
     // static and skinned programs. The static-program set is unchanged.
     auto configure_common = [&](Shader& s) {
@@ -615,10 +697,14 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         std::vector<glm::mat4> palette;
         if (m && !m->skeleton.bones.empty())
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
+        std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> lights{};
+        const int light_count =
+            select_instance_dynamic_lights(inst, m, dyn_lights, lights);
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
-                          inst.emissive_scale, palette, inst.carve);
+                          inst.emissive_scale, palette, inst.carve,
+                          lights, light_count);
     });
 }
 
