@@ -88,6 +88,27 @@ def test_debug_chords_gated_behind_dev_mode():
         assert calls == [App.WC_CAPS_G]
 
 
+def test_base_keys_suppressed_while_alt_held():
+    keys = _fake_keys()
+    ks = _KeyState()
+    downs, ups = [], []
+    keymap = ((keys.KEY_F, 0x46),)   # WC_F = 0x46
+    with patch.object(host_loop.host_io, "key_state", ks), \
+         patch.object(App.g_kInputManager, "OnKeyDown",
+                      side_effect=lambda wc: downs.append(wc)), \
+         patch.object(App.g_kInputManager, "OnKeyUp",
+                      side_effect=lambda wc: ups.append(wc)):
+        host_loop._fn_key_prev.clear()
+        ks.down = {keys.KEY_F}
+        host_loop._poll_key_table(keymap)                  # plain F: fires
+        assert downs == [0x46]
+        ks.down = {keys.KEY_F, keys.KEY_LEFT_ALT}
+        host_loop._poll_key_table(keymap, suppress=True)   # Alt held: released
+        assert ups == [0x46]
+        host_loop._poll_key_table(keymap, suppress=True)   # stays quiet
+        assert downs == [0x46]
+
+
 def test_alt_t_and_alt_c_drive_direct_toggles_not_events():
     keys = _fake_keys()
     host = SimpleNamespace(keys=keys)

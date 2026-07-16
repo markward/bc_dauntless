@@ -258,15 +258,20 @@ def _poll_mouse_buttons(host) -> None:
 _fn_key_prev: dict = {}
 
 
-def _poll_key_table(keymap) -> None:
+def _poll_key_table(keymap, suppress: bool = False) -> None:
     """Edge-detect each (glfw_key, WC_code) in `keymap` and forward rising/
     falling edges to g_kInputManager.OnKeyDown/OnKeyUp.  Shares the module
     _fn_key_prev level cache so every polled key derives both edges from
     host_io.key_state (the host exposes key_pressed for rising edges but no
-    key_released)."""
+    key_released).
+
+    While `suppress` is true (ALT/CTRL held) every key in the table reads as
+    UP: the chord poller owns modified keys, and a held base key (e.g. fire)
+    gets a clean falling edge.
+    """
     import App  # deferred: module-top import reorders sound-manager init
     for glfw_key, wc in keymap:
-        down = bool(host_io.key_state(glfw_key))
+        down = (not suppress) and bool(host_io.key_state(glfw_key))
         was_down = _fn_key_prev.get(glfw_key, False)
         if down and not was_down:
             App.g_kInputManager.OnKeyDown(wc)
@@ -370,19 +375,21 @@ def _poll_function_keys(host, input_map) -> None:
     WC_F1→ET_INPUT_TALK_TO_* mapping is unchanged — only which key drives each
     WC slot is remappable.  See docs/superpowers/specs/2026-06-12-bridge-menu-hotkeys-design.md.
 
-    `host` is unused (key reads route through host_io, which no-ops safely when
-    the native module is absent); kept in the signature for callsite symmetry
+    `host` supplies the modifier key levels via `_modifier_state`, used only
+    to suppress these bindings while ALT/CTRL is held (a chord poller owns
+    those combinations instead); kept in the signature for callsite symmetry
     with the other pollers.
     """
-    del host  # noqa: F841 — key reads go through host_io, not this handle.
     import App  # deferred: module-top import reorders sound-manager init
+    alt, ctrl, _shift = _modifier_state(host)
+    suppress = alt or ctrl
     _poll_key_table((
         (input_map.code("talk_helm"),        App.WC_F1),
         (input_map.code("talk_tactical"),    App.WC_F2),
         (input_map.code("talk_xo"),          App.WC_F3),
         (input_map.code("talk_science"),     App.WC_F4),
         (input_map.code("talk_engineering"), App.WC_F5),
-    ))
+    ), suppress=suppress)
 
 
 def _poll_fire_keys(host, input_map) -> None:
@@ -398,17 +405,19 @@ def _poll_fire_keys(host, input_map) -> None:
     Firing still requires a selected target — FireWeapons no-ops when
     pShip.GetTarget() is None.
 
-    `host` is unused (key reads route through host_io, which no-ops safely when
-    the native module is absent); kept in the signature for callsite symmetry
+    `host` supplies the modifier key levels via `_modifier_state`, used only
+    to suppress these bindings while ALT/CTRL is held (a chord poller owns
+    those combinations instead); kept in the signature for callsite symmetry
     with the other pollers.
     """
-    del host  # noqa: F841 — key reads go through host_io, not this handle.
     import App  # deferred: module-top import reorders sound-manager init
+    alt, ctrl, _shift = _modifier_state(host)
+    suppress = alt or ctrl
     _poll_key_table((
         (input_map.code("fire_primary"),   App.WC_F),
         (input_map.code("fire_secondary"), App.WC_X),
         (input_map.code("fire_tertiary"),  App.WC_G),
-    ))
+    ), suppress=suppress)
 
 
 _tractor_toggle_prev: bool = False
