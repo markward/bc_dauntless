@@ -26,10 +26,12 @@ from engine.appc.events import (
 # Distinctness holds by construction: letters 0x41-0x5A, digits 0x30-0x39, the
 # VK ranges below (all ≤ 0xFE), and the synth band (≥ 0x100) never overlap.
 #
-# Intentionally absent: the CTRL_/ALT_/CAPS_ modifier variants (WC_CTRL_Q,
-# WC_ALT_1, WC_CAPS_K, …).  They have no wired consumer yet, so they stay stubs
-# and get real codes when one lands.  App.py's module __getattr__ has a WC_/KY_
-# fallback that surfaces every name defined here as App.WC_*/App.KY_*.
+# The CTRL_/ALT_/CAPS_ modifier families are modifier BANDS OR'd onto the
+# base code (base codes stay below 0x200, so the bands never collide with
+# them or each other).  KeyConfig.MapScancodes registers WC_CAPS_<letter>
+# with modifier=KY_SHIFT — CAPS_X means the *capital character* (Shift+X),
+# NOT CapsLock state.  App.py's module __getattr__ WC_/KY_ fallback
+# surfaces every name defined here.
 
 def _def_key(name: str, code: int) -> None:
     globals()["WC_" + name] = code
@@ -89,6 +91,21 @@ _SYNTH_NAMED = (
 )
 for _idx, _nm in enumerate(_SYNTH_NAMED):
     _def_key(_nm, 0x100 + _idx)
+
+# Modifier-chord families — see comment above.  MODIFIER_CHORDS feeds the
+# host-loop chord poller: (modifier_name, base_name, chord_code).
+MODIFIER_BANDS = {"ALT": 0x200, "CTRL": 0x400, "CAPS": 0x800}
+MODIFIER_CHORDS: list = []
+_MOD_BASE_NAMES = (
+    [chr(_c) for _c in range(ord("A"), ord("Z") + 1)]
+    + [chr(_c) for _c in range(ord("0"), ord("9") + 1)]
+    + ["F%d" % _n for _n in range(1, 13)]
+)
+for _mod, _band in MODIFIER_BANDS.items():
+    for _base in _MOD_BASE_NAMES:
+        _code = _band | globals()["WC_" + _base]
+        _def_key("%s_%s" % (_mod, _base), _code)
+        MODIFIER_CHORDS.append((_mod, _base, _code))
 
 KS_KEYDOWN   = TGKeyboardEvent.KS_KEYDOWN
 KS_KEYUP     = TGKeyboardEvent.KS_KEYUP
