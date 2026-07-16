@@ -78,7 +78,8 @@ public:
     }
 
     SourceHandle play(BufferHandle buf, bool looping, float gain, Category cat,
-                      bool positional, float x, float y, float z) override {
+                      bool positional, float x, float y, float z,
+                      float priority) override {
         auto it = buffers_.find(buf);
         if (it == buffers_.end()) return 0;
         ALuint al;
@@ -107,7 +108,9 @@ public:
         }
         alSourcePlay(al);
         SourceHandle h = ++next_src_;
-        sources_[h] = {al, cat, gain};
+        // Guide §8: priority is a voice-stealing rank stored for eviction
+        // bookkeeping only — never mapped to AL_GAIN or any other AL param.
+        sources_[h] = {al, cat, gain, priority};
         return h;
     }
 
@@ -168,7 +171,7 @@ public:
     }
 
 private:
-    struct Source { ALuint al; Category cat; float user_gain; };
+    struct Source { ALuint al; Category cat; float user_gain; float priority; };
     ALCdevice*  device_  = nullptr;
     ALCcontext* context_ = nullptr;
     std::unordered_map<BufferHandle, ALuint> buffers_;

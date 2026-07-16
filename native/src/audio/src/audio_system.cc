@@ -6,6 +6,11 @@
 
 namespace dauntless::audio {
 
+// Guide §8: lowest-priority playing source loses. BC's consumer of this field
+// was never identified, so this is the natural reading, not a verified one --
+// and OpenAL Soft mixes 256 sources in software, so it rarely fires.
+static constexpr size_t kMaxSoundsAtOnce = 128;
+
 AudioSystem::AudioSystem(std::unique_ptr<IAudioBackend> b)
     : backend_(std::move(b)) {}
 
@@ -59,29 +64,45 @@ double AudioSystem::get_duration(const std::string& name) const {
 
 PlayingId AudioSystem::play(SoundId id, bool looping, float gain, Category cat,
                             bool pos_provided, float x, float y, float z,
-                            bool force_non_positional) {
+                            bool force_non_positional, float priority) {
     auto it = sounds_.find(id);
     if (it == sounds_.end()) return 0;
+
+    // Guide §8: pool is full -- evict the lowest-priority playing source if
+    // this new one outranks it, else drop the new one. See kMaxSoundsAtOnce.
+    if (sources_.size() >= kMaxSoundsAtOnce) {
+        auto victim = sources_.end();
+        for (auto sit = sources_.begin(); sit != sources_.end(); ++sit)
+            if (victim == sources_.end() || sit->second.priority < victim->second.priority)
+                victim = sit;
+        if (victim != sources_.end() && victim->second.priority < priority) {
+            backend_->stop(victim->second.backend);
+            sources_.erase(victim);
+        } else {
+            return 0;   // nothing lower-ranked to steal; drop this one
+        }
+    }
+
     bool positional = it->second.positional || pos_provided;
     // Overrides the sound's load-time LS_3D flag: a caller that tried to
     // anchor to a node but failed to resolve a real position must not fall
     // through to a positional source at the backend's (0,0,0) default.
     if (force_non_positional) positional = false;
     SourceHandle bh = backend_->play(it->second.buf, looping, gain, cat,
-                                     positional, x, y, z);
+                                     positional, x, y, z, priority);
     if (bh == 0) return 0;
     PlayingId pid = next_playing_id_++;
-    sources_[pid] = {bh, looping};
+    sources_[pid] = {bh, looping, priority};
     return pid;
 }
 
 PlayingId AudioSystem::play_sound(const std::string& name, bool looping, float gain,
                                   Category cat, bool pos_provided,
                                   float x, float y, float z,
-                                  bool force_non_positional) {
+                                  bool force_non_positional, float priority) {
     SoundId id = get_sound(name);
     return id == 0 ? 0 : play(id, looping, gain, cat,
-                              pos_provided, x, y, z, force_non_positional);
+                              pos_provided, x, y, z, force_non_positional, priority);
 }
 
 void AudioSystem::stop(PlayingId pid) {

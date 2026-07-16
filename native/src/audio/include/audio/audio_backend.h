@@ -29,9 +29,12 @@ public:
                                        const uint8_t* pcm, size_t bytes) = 0;
     virtual void destroy_buffer(BufferHandle) = 0;
 
+    // Guide §8: `priority` is a voice-stealing RANK (BC TGSound+0x68), never
+    // a gain. It is stored so AudioSystem can pick an eviction victim; the
+    // backend itself never maps it to AL_GAIN or any other volume control.
     virtual SourceHandle play(BufferHandle, bool looping, float gain,
                               Category, bool positional,
-                              float x, float y, float z) = 0;
+                              float x, float y, float z, float priority) = 0;
     virtual void stop(SourceHandle) = 0;
     virtual void set_position(SourceHandle, float x, float y, float z) = 0;
     virtual void set_velocity(SourceHandle, float x, float y, float z) = 0;

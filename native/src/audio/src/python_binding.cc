@@ -55,7 +55,8 @@ static double get_duration_impl(const std::string& name) {
 
 static uint32_t play_impl(const std::string& name, bool looping, float gain,
                           const std::string& category,
-                          py::object position, bool force_non_positional) {
+                          py::object position, bool force_non_positional,
+                          float priority) {
     if (!g_system) return 0;
     float x=0,y=0,z=0; bool provided=false;
     if (!position.is_none()) {
@@ -65,7 +66,7 @@ static uint32_t play_impl(const std::string& name, bool looping, float gain,
     }
     return g_system->play_sound(name, looping, gain, parse_category(category),
                                 provided, x, y, z,
-                                force_non_positional);
+                                force_non_positional, priority);
 }
 
 static void stop_impl(uint32_t pid) { if (g_system) g_system->stop(pid); }
@@ -159,7 +160,8 @@ void register_python_bindings(py::module_& parent) {
           py::arg("name"), py::arg("looping") = false,
           py::arg("gain") = 1.0f, py::arg("category") = "SFX",
           py::arg("position") = py::none(),
-          py::arg("force_non_positional") = false);
+          py::arg("force_non_positional") = false,
+          py::arg("priority") = 0.5f);
     m.def("stop", &stop_impl);
     m.def("set_position", &set_position_impl);
     m.def("set_velocity", &set_velocity_impl);

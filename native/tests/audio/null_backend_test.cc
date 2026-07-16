@@ -16,7 +16,8 @@ TEST(NullBackend, RecordsLifecycleAndPlayback) {
 
     auto s = b.play(buf, /*looping*/ true, /*gain*/ 1.0f,
                     dauntless::audio::Category::SFX,
-                    /*positional*/ true, 0.0f, 0.0f, 0.0f);
+                    /*positional*/ true, 0.0f, 0.0f, 0.0f,
+                    /*priority*/ 0.7f);
     ASSERT_NE(s, 0u);
     b.set_position(s, 10.0f, 0.0f, 0.0f);
     b.stop(s);
@@ -38,6 +39,7 @@ TEST(NullBackend, RecordsLifecycleAndPlayback) {
     EXPECT_TRUE(log[2].b[0]);                                     // looping
     EXPECT_TRUE(log[2].b[1]);                                     // positional
     EXPECT_FLOAT_EQ(log[2].f[0], 1.0f);                           // gain
+    EXPECT_FLOAT_EQ(log[2].f[4], 0.7f);                           // priority
 
     EXPECT_EQ(log[3].op, "set_position");
     EXPECT_EQ(log[3].u[0], s);

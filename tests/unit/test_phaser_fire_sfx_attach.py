@@ -13,8 +13,11 @@ class _FakeSnd:
         self.name = name
         self.play_calls = []
         self._looping = False
+        self.priority = None
     def SetLooping(self, v):
         self._looping = bool(v)
+    def SetPriority(self, v):
+        self.priority = float(v)
     def Play(self, attach_node=0, position=None):
         self.play_calls.append({"attach_node": attach_node, "position": position})
         class _H:

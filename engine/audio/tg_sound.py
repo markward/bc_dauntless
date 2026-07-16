@@ -167,6 +167,7 @@ class TGSound:
             name=self._name, looping=self._looping, gain=self._gain * factor,
             category=self._category_tag, position=position,
             force_non_positional=force_non_positional,
+            priority=self._priority,
         )
         if pid == 0:
             return None

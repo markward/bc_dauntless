@@ -22,7 +22,7 @@ public:
     BufferHandle create_buffer(const PcmDesc&, const uint8_t*, size_t) override;
     void destroy_buffer(BufferHandle) override;
     SourceHandle play(BufferHandle, bool looping, float gain, Category,
-                      bool positional, float, float, float) override;
+                      bool positional, float, float, float, float priority) override;
     void stop(SourceHandle) override;
     void set_position(SourceHandle, float, float, float) override;
     void set_velocity(SourceHandle, float, float, float) override;

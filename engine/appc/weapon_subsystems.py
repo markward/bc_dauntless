@@ -26,6 +26,19 @@ from engine.appc.subsystems import (
 )
 
 
+# ── Voice priority (guide §8) ──────────────────────────────────────────────
+# BC's shipped voice priorities (TGSound+0x68) -- a voice-stealing RANK, never
+# a gain. 0.9 when the firing ship is the local player's; remote is
+# per-weapon. Co-fired voices (phaser Start + Loop) take the second at
+# priority - 0.01; the purpose of that step is unknown, and BC's consumer of
+# the field was never identified, so treat all of this as best-reading, not
+# gospel.
+LOCAL_FIRE_PRIORITY = 0.9
+REMOTE_PHASER_PRIORITY = 0.6
+REMOTE_PULSE_PRIORITY = 0.5
+CO_FIRED_PRIORITY_STEP = 0.01
+
+
 # ── Torpedo reload slots ───────────────────────────────────────────────────
 # BC stores one float per MaxReady at TorpedoTube+0xAC
 # (docs/gameplay/combat-and-damage.md:748).  We store the
@@ -373,6 +386,31 @@ class _EnergyWeaponFireMixin:
     sdk/Build/scripts/LoadTacticalSounds.py invoked at audio init.
     """
 
+    # Remote-fire voice priority. Default covers pulse + tractor (0.5);
+    # PhaserBank overrides to 0.6. See the guide §8 constants above.
+    REMOTE_FIRE_PRIORITY = REMOTE_PULSE_PRIORITY
+
+    def _remote_fire_priority(self) -> float:
+        return self.REMOTE_FIRE_PRIORITY
+
+    def _is_local_player_ship(self) -> bool:
+        """True when the firing ship is the local player's (guide §8: 0.9).
+
+        Same reach-for-the-player pattern as engine/appc/hit_feedback.py:246 --
+        do not invent a second one.
+        """
+        parent_sys = self.GetParentSubsystem() if hasattr(self, "GetParentSubsystem") else None
+        ship = parent_sys.GetParentShip() if parent_sys is not None and hasattr(parent_sys, "GetParentShip") else None
+        if ship is None:
+            return False
+        try:
+            import App
+            game = App.Game_GetCurrentGame() if hasattr(App, "Game_GetCurrentGame") else None
+            player = game.GetPlayer() if game is not None and hasattr(game, "GetPlayer") else None
+        except Exception:
+            return False
+        return player is not None and ship is player
+
     def _aim_in_arc(self, target) -> bool:
         """Firing-arc gate in the weapon's OWN fire path (spec §2.4: the
         dispatch-level `_emitter_in_arc` checks moved here, logic unchanged,
@@ -505,16 +543,26 @@ class _EnergyWeaponFireMixin:
         mgr = TGSoundManager.instance()
         attach_node = self._firing_ship_node()
 
+        priority = (LOCAL_FIRE_PRIORITY if self._is_local_player_ship()
+                    else self._remote_fire_priority())
+
         start_snd = mgr.GetSound(name + " Start")
         if start_snd is None:
             # Tractor convention: bare name has no " Start"/" Loop" pair.
             start_snd = mgr.GetSound(name)
         if start_snd is not None:
+            # Set-then-play on the SHARED named TGSound: GetSound(name) hands
+            # back the same instance to every firer of this weapon type, but
+            # SetPriority + Play happen back-to-back in this one call, so the
+            # value latched into the backend at Play() time is always this
+            # firer's -- see the report for why that ordering matters.
+            start_snd.SetPriority(priority)
             start_snd.Play(attach_node=attach_node)
 
         loop_snd = mgr.GetSound(name + " Loop")
         if loop_snd is not None:
             loop_snd.SetLooping(True)
+            loop_snd.SetPriority(priority - CO_FIRED_PRIORITY_STEP)
             self._loop_handle = loop_snd.Play(attach_node=attach_node)
 
     def _firing_ship_node(self):
@@ -1730,6 +1778,8 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
     Inherits CanFire/StopFiring/UpdateCharge from the mixin; Fire wraps the
     mixin's implementation to post ET_WEAPON_FIRED (Task 10).
     """
+    REMOTE_FIRE_PRIORITY = REMOTE_PHASER_PRIORITY   # 0.6; pulse/tractor stay 0.5
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         _init_energy_weapon_state(self)

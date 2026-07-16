@@ -25,13 +25,16 @@ public:
     bool is_positional(SoundId) const;
     double get_duration(const std::string& name) const;
 
+    // Guide §8: `priority` is a voice-stealing RANK, never a gain — see
+    // audio_backend.h. Defaults to BC's shipped TGSound default (0.5,
+    // TGSound.BC_DEFAULT_PRIORITY on the Python side).
     PlayingId play_sound(const std::string& name, bool looping, float gain,
                          Category, bool position_provided, float x, float y, float z,
-                         bool force_non_positional = false);
+                         bool force_non_positional = false, float priority = 0.5f);
 
     PlayingId play(SoundId, bool looping, float gain, Category,
                    bool position_provided, float x, float y, float z,
-                   bool force_non_positional = false);
+                   bool force_non_positional = false, float priority = 0.5f);
 
     void stop(PlayingId);
 
@@ -72,6 +75,7 @@ private:
     struct Source {
         SourceHandle backend;
         bool looping;
+        float priority;
     };
 
     std::unique_ptr<IAudioBackend> backend_;

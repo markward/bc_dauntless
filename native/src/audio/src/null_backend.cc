@@ -19,11 +19,11 @@ void NullBackend::destroy_buffer(BufferHandle h) {
 
 SourceHandle NullBackend::play(BufferHandle buf, bool looping, float gain,
                                Category cat, bool positional,
-                               float x, float y, float z) {
+                               float x, float y, float z, float priority) {
     LoggedCall c{"play"};
     c.u[0] = buf; c.u[1] = static_cast<uint32_t>(cat);
     c.b[0] = looping; c.b[1] = positional;
-    c.f[0] = gain; c.f[1] = x; c.f[2] = y; c.f[3] = z;
+    c.f[0] = gain; c.f[1] = x; c.f[2] = y; c.f[3] = z; c.f[4] = priority;
     log_.push_back(c);
     return next_src_++;
 }
