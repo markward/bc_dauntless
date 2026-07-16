@@ -29,14 +29,21 @@ class _FakeSubsystem:
     def GetProperty(self): return self._prop
 
 
+class _FakeLoc:
+    def __init__(self, x, y, z): self.x, self.y, self.z = x, y, z
+
+
 class _FakeShip:
-    def __init__(self, sound_name, scene_node=42):
+    def __init__(self, sound_name, loc=(0.0, 0.0, 0.0)):
         self._impulse = _FakeSubsystem(_FakeProperty(sound_name))
-        self._scene_node = scene_node
+        self._loc = _FakeLoc(*loc)
     def GetImpulseEngineSubsystem(self):
         return self._impulse
-    def GetSceneNodeId(self):
-        return self._scene_node
+    def GetWorldLocation(self):
+        return self._loc
+    def GetNode(self):
+        # Mirrors ObjectClass.GetNode(): a handle resolving GetWorldLocation.
+        return self
 
 
 @pytest.fixture
@@ -88,25 +95,23 @@ def test_missing_engine_sound_does_not_crash(boot):
     ship_lifecycle.publish_destroyed(ship)
 
 
-def test_update_positions_pushes_ship_world_location(boot):
+def test_attached_sources_pumps_ship_world_location(boot):
+    """AttachToNode (via GetNode()) supersedes the old update_positions
+    poller: engine_rumble.Play(attach_node=ship.GetNode()) registers with
+    engine.audio.attached_sources, and attached_sources.pump() is what
+    copies the ship's world position into the source now."""
     from engine.appc import ship_lifecycle
-    from engine.audio.engine_rumble import update_positions, reset_for_tests
+    from engine.audio import attached_sources
+    attached_sources.reset_for_tests()
     reset_for_tests()
     ship_lifecycle.reset()
     install_engine_rumble_listener()
 
-    class _Loc:
-        x, y, z = 100.0, 200.0, 300.0
-
-    class _PositionedShip(_FakeShip):
-        def GetWorldLocation(self):
-            return _Loc()
-
-    ship = _PositionedShip("Federation Engines")
+    ship = _FakeShip("Federation Engines", loc=(100.0, 200.0, 300.0))
     ship_lifecycle.publish_added(ship)
 
     _dauntless_host.audio.clear_command_log()
-    update_positions()
+    attached_sources.pump(dt=0.016)
 
     pos_entries = [e for e in _dauntless_host.audio.debug_command_log()
                    if e["op"] == "set_position"]
@@ -119,6 +124,7 @@ def test_update_positions_pushes_ship_world_location(boot):
     # test object so later tests that iterate ships (e.g. target_list) don't
     # see a ship without GetName and crash.
     ship_lifecycle.reset()
+    attached_sources.reset_for_tests()
 
 
 def test_install_listener_replays_existing_live_ships(boot):

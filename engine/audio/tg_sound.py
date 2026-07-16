@@ -47,6 +47,9 @@ class _PlayingSound:
     def Stop(self) -> None:
         if _audio and self._pid:
             _audio.stop(self._pid)
+        if self._pid:
+            from engine.audio import attached_sources
+            attached_sources.detach(self)
         self._pid = 0
 
     def SetPosition(self, x: float, y: float, z: float) -> None:
@@ -90,6 +93,7 @@ class TGSound:
         self._loaded = _audio is not None and _audio.get_sound(name) != 0
         self._active: list[_PlayingSound] = []
         self._region = None  # set by TGSoundRegion.AddSound; gates launch gain
+        self._node = None    # AttachToNode anchor; see engine.audio.attached_sources
         self._group = ""     # group tag (GetGroup/SetGroup); "" == untagged
 
     def IsLoaded(self) -> int:
@@ -126,24 +130,36 @@ class TGSound:
     def SetInterface(self, *_args) -> None:  self._category_tag = "Interface"
     def IsInterface(self) -> int:            return 1 if self._category_tag == "Interface" else 0
 
-    def Play(self, attach_node: int = 0, position=None) -> Optional[_PlayingSound]:
+    def Play(self, attach_node=None, position=None) -> Optional[_PlayingSound]:
         if not _audio or not self._loaded:
             return None
         # Drop handles we explicitly stopped earlier so the list can't grow
         # without bound across repeated one-shot plays.
         self._active = [h for h in self._active if h._pid]
+        if attach_node is not None:
+            self.AttachToNode(attach_node)
+        if position is None and self._node is not None:
+            from engine.audio import attached_sources
+            # Launch at the anchor: a one-shot may finish before the first pump.
+            position = attached_sources.node_world_position(self._node)
         factor = self._region.filter_factor() if self._region is not None else 1.0
         pid = _audio.play(
             name=self._name, looping=self._looping, gain=self._gain * factor,
-            category=self._category_tag, attach_node=int(attach_node),
-            position=position,
+            category=self._category_tag, position=position,
+            # C++ node tracking is dead (node_pos_fn_ is never wired); Task 3
+            # removes this parameter. Pass 0 until then — play_impl declares
+            # attach_node with NO default, so omitting it raises TypeError.
+            attach_node=0,
         )
         if pid == 0:
             return None
         handle = _PlayingSound(pid)
         self._active.append(handle)
-        if self._positional or attach_node != 0 or position is not None:
+        if self._positional or self._node is not None or position is not None:
             _audio.set_min_max_distance(pid, self._min_dist, self._max_dist)
+        if self._node is not None:
+            from engine.audio import attached_sources
+            attached_sources.attach(handle, self._node)
         return handle
 
     # No-ops kept for the wider SDK surface (callers exist; behaviour deferred).
@@ -178,8 +194,16 @@ class TGSound:
         self._group = group or ""
         if self._group:
             mgr._groups.setdefault(self._group, set()).add(self._name)
-    def AttachToNode(self, *_a): pass
-    def DetachFromNode(self, *_a): pass
+    def AttachToNode(self, node=None) -> None:
+        """Anchor playback to `node` (an ObjectClass.GetNode() ref).
+
+        Guide §7 — BC's only positioning mechanism. Applies to sources this
+        sound starts from now on; already-playing handles keep their anchor.
+        """
+        self._node = node
+
+    def DetachFromNode(self, *_a) -> None:
+        self._node = None
     def SetPosition(self, *_a): pass
     def SetOrientation(self, *_a): pass
     def GetDuration(self) -> float:

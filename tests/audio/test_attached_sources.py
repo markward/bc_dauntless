@@ -1,0 +1,118 @@
+import os
+import struct
+import pytest
+
+os.environ.setdefault("OPEN_STBC_AUDIO", "0")
+_dauntless_host = pytest.importorskip("_dauntless_host")
+
+from engine.audio import attached_sources
+from engine.audio.tg_sound import (
+    TGSound, TGSoundManager, init_audio_for_tests, shutdown_audio_for_tests,
+)
+
+
+def _wav():
+    data = struct.pack("<h", 0) * 8
+    return (b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVE"
+            + b"fmt " + struct.pack("<I", 16)
+            + struct.pack("<HHIIHH", 1, 1, 22050, 44100, 2, 16)
+            + b"data" + struct.pack("<I", len(data)) + data)
+
+
+class _Loc:
+    def __init__(self, x, y, z): self.x, self.y, self.z = x, y, z
+
+
+class _FakeNode:
+    """Stands in for _ObjectNodeRef: the only contract is GetWorldLocation()."""
+    def __init__(self, loc): self._loc = loc
+    def GetWorldLocation(self): return self._loc
+
+
+class _ChainableStub:
+    """Mimics TGObject.__getattr__ -> _Stub: truthy, and coerces to 0.0.
+
+    This is the trap the whole task exists to close — a stub node must fall
+    back to non-positional, never silently pin the sound to the world origin.
+    """
+    def __call__(self, *a, **k): return self
+    def __getattr__(self, _n): return self
+    def __float__(self): return 0.0
+
+
+@pytest.fixture
+def audio(tmp_path):
+    attached_sources.reset_for_tests()
+    init_audio_for_tests()
+    wav = tmp_path / "x.wav"
+    wav.write_bytes(_wav())
+    TGSoundManager.instance().LoadSound(str(wav), "Torp", TGSound.LS_3D)
+    yield TGSoundManager.instance()
+    shutdown_audio_for_tests()
+    attached_sources.reset_for_tests()
+
+
+def test_node_world_position_reads_the_node():
+    assert attached_sources.node_world_position(_FakeNode(_Loc(1.0, 2.0, 3.0))) == (1.0, 2.0, 3.0)
+
+
+def test_node_world_position_rejects_stub_node():
+    """A chainable stub must yield None, not (0.0, 0.0, 0.0)."""
+    assert attached_sources.node_world_position(_ChainableStub()) is None
+    assert attached_sources.node_world_position(None) is None
+    assert attached_sources.node_world_position(_FakeNode(None)) is None
+
+
+def test_attach_to_node_tracks_the_object_each_pump(audio):
+    snd = audio.GetSound("Torp")
+    loc = _Loc(10.0, 0.0, 0.0)
+    snd.AttachToNode(_FakeNode(loc))
+    handle = snd.Play()
+    assert handle is not None
+
+    _dauntless_host.audio.clear_command_log()
+    loc.x = 25.0
+    attached_sources.pump(dt=0.016)
+
+    moves = [c for c in _dauntless_host.audio.debug_command_log()
+             if c["op"] == "set_position"]
+    assert moves, "AttachToNode must move the source when the object moves"
+    assert moves[-1]["f"][0] == 25.0
+
+
+def test_stopped_handle_is_dropped_from_the_pump(audio):
+    snd = audio.GetSound("Torp")
+    snd.AttachToNode(_FakeNode(_Loc(1.0, 1.0, 1.0)))
+    handle = snd.Play()
+    handle.Stop()
+
+    _dauntless_host.audio.clear_command_log()
+    attached_sources.pump(dt=0.016)
+    assert not [c for c in _dauntless_host.audio.debug_command_log()
+                if c["op"] == "set_position"]
+
+
+def test_dead_object_is_dropped_from_the_pump(audio):
+    """_ObjectNodeRef is weak — a GC'd ship must not keep the source pumping."""
+    import weakref
+
+    class _Owner:
+        def GetWorldLocation(self): return _Loc(5.0, 5.0, 5.0)
+
+    owner = _Owner()
+    ref = weakref.ref(owner)
+
+    class _WeakNode:
+        def GetWorldLocation(self):
+            o = ref()
+            return None if o is None else o.GetWorldLocation()
+
+    snd = audio.GetSound("Torp")
+    snd.AttachToNode(_WeakNode())
+    snd.Play()
+    del owner
+
+    _dauntless_host.audio.clear_command_log()
+    attached_sources.pump(dt=0.016)
+    assert not [c for c in _dauntless_host.audio.debug_command_log()
+                if c["op"] == "set_position"]

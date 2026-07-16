@@ -53,7 +53,7 @@ from engine.audio.tg_sound import TGSoundManager  # noqa: F401
 # shim at host_loop module-load time perturbs sound-manager init order so
 # AmbBridge loads early during LoadBridge.Load (breaks a bridge-load test).
 # Kept deferred inside _poll_mouse_buttons / _poll_function_keys.
-from engine.audio.engine_rumble import update_positions, set_muted as _rumble_set_muted
+from engine.audio.engine_rumble import set_muted as _rumble_set_muted
 from engine.audio.bridge_ambient import set_active as _bridge_ambient_set
 from engine.ui import crew_menu_hotkeys
 from engine.ui import bridge_officer_picking
@@ -135,9 +135,10 @@ def shutdown_audio() -> None:
 def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> None:
     if _audio_mod is None:
         return
-    # Push ship positions to looping rumble sources before set_listener,
-    # so positional math sees up-to-date source positions.
-    update_positions()
+    # Copy attached nodes' world transforms into their sources before
+    # set_listener, so the positional math sees up-to-date source positions.
+    from engine.audio import attached_sources
+    attached_sources.pump(dt)
     px, py, pz = camera_position
     fx, fy, fz = camera_forward
     ux, uy, uz = camera_up

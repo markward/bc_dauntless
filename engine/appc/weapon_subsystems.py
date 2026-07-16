@@ -503,7 +503,7 @@ class _EnergyWeaponFireMixin:
             return
         from engine.audio.tg_sound import TGSoundManager
         mgr = TGSoundManager.instance()
-        attach_node = self._firing_ship_node_id()
+        attach_node = self._firing_ship_node()
 
         start_snd = mgr.GetSound(name + " Start")
         if start_snd is None:
@@ -517,18 +517,23 @@ class _EnergyWeaponFireMixin:
             loop_snd.SetLooping(True)
             self._loop_handle = loop_snd.Play(attach_node=attach_node)
 
-    def _firing_ship_node_id(self) -> int:
-        """Walk parent_subsystem → parent_ship → GetSceneNodeId. Returns
-        0 (no attachment) when any link is missing — playback degrades
-        to world-origin rather than crashing on legacy fixtures."""
+    def _firing_ship_node(self):
+        """Walk parent_subsystem → parent_ship → GetNode() for the sound anchor.
+
+        Returns None (non-positional) when any link is missing. NOTE: this used
+        to probe a `GetSceneNodeId` that exists nowhere in the SDK or App.py —
+        our own invention. It resolved to a truthy `_Stub`, `int()` collapsed it
+        to 0, and every weapon sound played unattached. The tests only passed
+        because their fake ships defined the phantom.
+        """
         parent_sys = self.GetParentSubsystem() if hasattr(self, "GetParentSubsystem") else None
         if parent_sys is None:
-            return 0
+            return None
         parent_ship = parent_sys.GetParentShip() if hasattr(parent_sys, "GetParentShip") else None
         if parent_ship is None:
-            return 0
-        getter = getattr(parent_ship, "GetSceneNodeId", None)
-        return int(getter()) if getter else 0
+            return None
+        getter = getattr(parent_ship, "GetNode", None)
+        return getter() if getter is not None else None
 
 
 def _cloak_blocks_fire(weapon_system) -> bool:

@@ -41,8 +41,16 @@ class _FakeProperty:
     def GetFireSound(self): return "Galaxy Phaser"
 
 
+class _FakeLoc:
+    def __init__(self, x, y, z): self.x, self.y, self.z = x, y, z
+
+
 class _FakeShip:
-    def GetSceneNodeId(self): return 7
+    def GetWorldLocation(self):
+        return _FakeLoc(0.0, 0.0, 0.0)
+    def GetNode(self):
+        # Mirrors ObjectClass.GetNode(): a handle resolving GetWorldLocation.
+        return self
 
 
 class _FakeSystem:

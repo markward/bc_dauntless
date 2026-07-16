@@ -39,9 +39,9 @@ def _engine_sound_name_for(ship) -> str:
     return getter() if getter else ""
 
 
-def _scene_node_for(ship) -> int:
-    getter = getattr(ship, "GetSceneNodeId", None)
-    return int(getter()) if getter else 0
+def _node_for(ship):
+    getter = getattr(ship, "GetNode", None)
+    return getter() if getter is not None else None
 
 
 def _on_ship_event(event: str, ship) -> None:
@@ -54,7 +54,7 @@ def _on_ship_event(event: str, ship) -> None:
             return
         snd.SetLooping(1)
         snd.SetSFX()
-        playing = snd.Play(attach_node=_scene_node_for(ship))
+        playing = snd.Play(attach_node=_node_for(ship))
         if playing is not None:
             _active[ship] = playing
     elif event == "destroyed":
@@ -81,30 +81,6 @@ def install_engine_rumble_listener() -> None:
     # ships that are already on stage.
     for ship in ship_lifecycle.snapshot():
         _on_ship_event("added", ship)
-
-
-def update_positions() -> None:
-    """Push each tracked ship's world position to its rumble source.
-
-    Called per tick from host_loop.tick_audio. Real ships have
-    GetWorldLocation() returning a vec3 with .x/.y/.z attributes.
-    """
-    for ship, playing in list(_active.items()):
-        loc_getter = getattr(ship, "GetWorldLocation", None)
-        if loc_getter is None:
-            continue
-        try:
-            loc = loc_getter()
-        except Exception:
-            continue
-        if loc is None:
-            continue
-        x = getattr(loc, "x", None)
-        y = getattr(loc, "y", None)
-        z = getattr(loc, "z", None)
-        if x is None or y is None or z is None:
-            continue
-        playing.SetPosition(float(x), float(y), float(z))
 
 
 _muted = False
