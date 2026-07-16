@@ -28,7 +28,7 @@ def test_audio_load_and_play_via_null_backend():
     sid = audio.get_sound("TestSound")
     assert sid != 0
     pid = audio.play("TestSound", looping=False, gain=1.0, category="SFX",
-                     attach_node=0, position=None)
+                     position=None)
     assert pid != 0
     log = audio.debug_command_log()
     assert any(entry["op"] == "play" for entry in log)

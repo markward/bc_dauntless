@@ -159,13 +159,6 @@ class TGSound:
         pid = _audio.play(
             name=self._name, looping=self._looping, gain=self._gain * factor,
             category=self._category_tag, position=position,
-            # C++ node tracking is dead (node_pos_fn_ is never wired); Task 3
-            # removes this parameter. Pass 0 until then. Note play_impl's
-            # attach_node DOES have a pybind default (0u, python_binding.cc),
-            # so omitting it would not actually raise TypeError -- passed
-            # explicitly anyway to match the (corrected) original brief,
-            # pending Task 3's removal of this parameter entirely.
-            attach_node=0,
             force_non_positional=force_non_positional,
         )
         if pid == 0:

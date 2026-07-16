@@ -1,6 +1,5 @@
 #pragma once
 #include <audio/audio_backend.h>
-#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -9,10 +8,6 @@ namespace dauntless::audio {
 
 using SoundId = uint32_t;    // logical buffer id, returned to Python
 using PlayingId = uint32_t;  // logical source id, returned to Python
-using NodeId = uint32_t;     // scenegraph node id, 0 == none
-
-// Pulls a node's world position. Set by host_loop; tests provide a stub.
-using NodePositionFn = std::function<bool(NodeId, float& x, float& y, float& z)>;
 
 class AudioSystem {
 public:
@@ -21,8 +16,6 @@ public:
 
     bool init();
     void shutdown();
-
-    void set_node_position_fn(NodePositionFn fn) { node_pos_fn_ = std::move(fn); }
 
     bool load_sound(const std::string& path, const std::string& name,
                     const uint8_t* wav_bytes, size_t wav_len, bool positional);
@@ -33,11 +26,10 @@ public:
     double get_duration(const std::string& name) const;
 
     PlayingId play_sound(const std::string& name, bool looping, float gain,
-                         Category, NodeId attach_node,
-                         bool position_provided, float x, float y, float z,
+                         Category, bool position_provided, float x, float y, float z,
                          bool force_non_positional = false);
 
-    PlayingId play(SoundId, bool looping, float gain, Category, NodeId attach_node,
+    PlayingId play(SoundId, bool looping, float gain, Category,
                    bool position_provided, float x, float y, float z,
                    bool force_non_positional = false);
 
@@ -78,7 +70,6 @@ private:
     };
     struct Source {
         SourceHandle backend;
-        NodeId node;
         bool looping;
     };
 
@@ -88,7 +79,6 @@ private:
     std::unordered_map<PlayingId, Source> sources_;
     SoundId next_sound_id_ = 1;
     PlayingId next_playing_id_ = 1;
-    NodePositionFn node_pos_fn_;
 };
 
 }  // namespace dauntless::audio

@@ -57,12 +57,11 @@ double AudioSystem::get_duration(const std::string& name) const {
 }
 
 PlayingId AudioSystem::play(SoundId id, bool looping, float gain, Category cat,
-                            NodeId attach_node, bool pos_provided,
-                            float x, float y, float z,
+                            bool pos_provided, float x, float y, float z,
                             bool force_non_positional) {
     auto it = sounds_.find(id);
     if (it == sounds_.end()) return 0;
-    bool positional = it->second.positional || pos_provided || attach_node != 0;
+    bool positional = it->second.positional || pos_provided;
     // Overrides the sound's load-time LS_3D flag: a caller that tried to
     // anchor to a node but failed to resolve a real position must not fall
     // through to a positional source at the backend's (0,0,0) default.
@@ -71,16 +70,16 @@ PlayingId AudioSystem::play(SoundId id, bool looping, float gain, Category cat,
                                      positional, x, y, z);
     if (bh == 0) return 0;
     PlayingId pid = next_playing_id_++;
-    sources_[pid] = {bh, attach_node, looping};
+    sources_[pid] = {bh, looping};
     return pid;
 }
 
 PlayingId AudioSystem::play_sound(const std::string& name, bool looping, float gain,
-                                  Category cat, NodeId attach_node,
-                                  bool pos_provided, float x, float y, float z,
+                                  Category cat, bool pos_provided,
+                                  float x, float y, float z,
                                   bool force_non_positional) {
     SoundId id = get_sound(name);
-    return id == 0 ? 0 : play(id, looping, gain, cat, attach_node,
+    return id == 0 ? 0 : play(id, looping, gain, cat,
                               pos_provided, x, y, z, force_non_positional);
 }
 
@@ -133,18 +132,12 @@ void AudioSystem::update(float lx, float ly, float lz,
                          float ux, float uy, float uz, float /*dt*/) {
     backend_->set_listener(lx,ly,lz, fx,fy,fz, ux,uy,uz);
 
-    // Update attached source positions.
-    for (auto& [pid, src] : sources_) {
-        if (src.node == 0 || !node_pos_fn_) continue;
-        float x, y, z;
-        if (node_pos_fn_(src.node, x, y, z)) {
-            backend_->set_position(src.backend, x, y, z);
-        }
-    }
-
     // Reap finished one-shots. Must call backend_->stop() so the underlying
     // ALuint is released — otherwise finished sources accumulate until OpenAL
     // Soft trips its 256-source-per-context limit.
+    //
+    // Source POSITIONS are pumped from Python (engine/audio/attached_sources.py):
+    // the deferred renderer has no scene graph, so Python owns object transforms.
     for (auto it = sources_.begin(); it != sources_.end(); ) {
         if (!it->second.looping && backend_->source_finished(it->second.backend)) {
             backend_->stop(it->second.backend);
