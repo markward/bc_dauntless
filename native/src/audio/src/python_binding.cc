@@ -1,5 +1,6 @@
 #include <audio/python_binding.h>
 #include <audio/audio_system.h>
+#include <audio/audio_constants.h>
 #include <audio/null_backend.h>
 #include <audio/openal_backend.h>
 #include <memory>
@@ -117,6 +118,13 @@ static py::list debug_command_log_impl() {
     return out;
 }
 
+// Review #2: the single source of truth for c. Both openal_backend.cc's
+// alSpeedOfSound() call and AudioSystem::update()'s discontinuity guard read
+// kSpeedOfSoundGU directly; this exposes the same constant to Python so
+// engine/audio/attached_sources.py:SPEED_OF_SOUND_GU derives from it instead
+// of re-declaring the literal independently.
+static float speed_of_sound_impl() { return kSpeedOfSoundGU; }
+
 static void clear_command_log_impl() {
     if (!g_system) return;
     if (auto* nb = dynamic_cast<NullBackend*>(g_system->backend()))
@@ -160,6 +168,7 @@ void register_python_bindings(py::module_& parent) {
     m.def("set_min_max_distance", &set_min_max_distance_impl);
     m.def("set_category_gain", &set_category_gain_impl);
     m.def("update", &update_impl);
+    m.def("speed_of_sound", &speed_of_sound_impl);
     m.def("is_finished", &is_finished_impl);
     m.def("debug_mark_finished", &debug_mark_finished_impl);
     m.def("debug_command_log", &debug_command_log_impl);

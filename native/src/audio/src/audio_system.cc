@@ -1,6 +1,8 @@
 #include <audio/audio_system.h>
+#include <audio/audio_constants.h>
 #include <audio/wav.h>
 #include <audio/mp3.h>
+#include <cmath>
 #include <cstring>
 
 namespace dauntless::audio {
@@ -136,12 +138,25 @@ void AudioSystem::update(float lx, float ly, float lz,
                          float fx, float fy, float fz,
                          float ux, float uy, float uz, float dt) {
     // Guide §4/§6: listener velocity for doppler, derived from the camera's
-    // position delta. Raw game units per second — see the units note in init().
+    // position delta. Raw game units per second — see the units note in
+    // openal_backend.cc's init().
     float vx = 0.f, vy = 0.f, vz = 0.f;
     if (have_prev_listener_ && dt > 0.f) {
         vx = (lx - prev_listener_[0]) / dt;
         vy = (ly - prev_listener_[1]) / dt;
         vz = (lz - prev_listener_[2]) / dt;
+        // Discontinuity guard (review #1): a bridge<->tactical toggle,
+        // cutscene camera cut, or mission swap moves the listener a large
+        // distance in a single tick, which differentiates as an enormous
+        // velocity -- OpenAL then clamps it at c and the doppler numerator
+        // collapses toward zero, producing an audible one-frame pitch blip.
+        // Nothing in this game legitimately moves at or above
+        // kSpeedOfSoundGU, so treat a derived speed >= c as a cut and report
+        // zero velocity instead of a clamped spike.
+        const float speed_sq = vx * vx + vy * vy + vz * vz;
+        if (speed_sq >= kSpeedOfSoundGU * kSpeedOfSoundGU) {
+            vx = vy = vz = 0.f;
+        }
     }
     prev_listener_[0] = lx; prev_listener_[1] = ly; prev_listener_[2] = lz;
     have_prev_listener_ = true;

@@ -1,4 +1,5 @@
 #include <audio/openal_backend.h>
+#include <audio/audio_constants.h>
 #include <AL/al.h>
 #include <AL/alc.h>
 #include <cstdio>
@@ -44,7 +45,7 @@ public:
         // visual scale. Feed raw game units; do NOT convert GU->m and do NOT
         // port BC's velocity /1000 (a Miles m/ms API convention).
         alDopplerFactor(1.0f);
-        alSpeedOfSound(343.3f);
+        alSpeedOfSound(kSpeedOfSoundGU);
         return true;
     }
 

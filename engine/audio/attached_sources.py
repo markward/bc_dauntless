@@ -28,7 +28,15 @@ except (ImportError, AttributeError):
 # actually 175 m — see engine/units.py). Reproducing BC faithfully means adopting
 # its convention rather than "correcting" it: raw GU in, 343.3 GU/s for c.
 # alDopplerFactor stays the tuning knob if we ever want to.
-SPEED_OF_SOUND_GU = 343.3
+#
+# This MUST be derived from the C++ binding (native/src/audio/include/audio/
+# audio_constants.h:kSpeedOfSoundGU), not re-declared as an independent
+# literal — the C++ side already uses the same constant both for
+# alSpeedOfSound() and as its own discontinuity threshold, so a second literal
+# here would look like a live tuning knob while doing nothing (see the
+# stub-heatmap "looks live but isn't" trap). 343.3 is the fallback for the
+# no-backend/test case where `_audio` is None.
+SPEED_OF_SOUND_GU = _audio.speed_of_sound() if _audio is not None else 343.3
 
 
 def node_world_position(node) -> Optional[tuple[float, float, float]]:
@@ -121,6 +129,12 @@ def pump(dt: float) -> None:
             vx = (pos[0] - entry.prev_pos[0]) / dt
             vy = (pos[1] - entry.prev_pos[1]) / dt
             vz = (pos[2] - entry.prev_pos[2]) / dt
+            # Discontinuity guard (review #1): a ship teleport during a warp
+            # set-swap must not be differentiated as motion. Nothing in this
+            # game legitimately moves at or above SPEED_OF_SOUND_GU, so a
+            # derived speed >= c is definitionally a teleport/cut.
+            if (vx * vx + vy * vy + vz * vz) >= SPEED_OF_SOUND_GU ** 2:
+                vx = vy = vz = 0.0
         else:
             vx = vy = vz = 0.0
         entry.handle.SetVelocity(vx, vy, vz)

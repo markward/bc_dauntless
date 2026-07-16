@@ -238,3 +238,33 @@ def test_zero_dt_does_not_divide_by_zero(audio):
     attached_sources.pump(dt=0.016)
     loc.x = 1.0
     attached_sources.pump(dt=0.0)   # paused frame — must not raise
+
+
+def test_speed_of_sound_gu_is_derived_from_the_native_binding():
+    """Review #2: SPEED_OF_SOUND_GU must not be a second, independently
+    editable literal -- it must come from the one C++ source of truth."""
+    assert _dauntless_host.audio.speed_of_sound() == pytest.approx(343.3)
+    assert attached_sources.SPEED_OF_SOUND_GU == pytest.approx(
+        _dauntless_host.audio.speed_of_sound())
+
+
+def test_pump_zeroes_velocity_on_discontinuity(audio):
+    """Review #1: a teleport (e.g. a warp set-swap) must not be
+    differentiated as motion. A jump whose implied speed is >= c is
+    definitionally a cut, not real motion -- report zero, not a spike."""
+    snd = audio.GetSound("Torp")
+    loc = _Loc(0.0, 0.0, 0.0)
+    snd.AttachToNode(_FakeNode(loc))
+    snd.Play()
+
+    attached_sources.pump(dt=0.5)   # first pump seeds prev_pos
+    _dauntless_host.audio.clear_command_log()
+    loc.x = 1000.0                  # 1000 GU in 0.5 s -> 2000 GU/s >= c
+    attached_sources.pump(dt=0.5)
+
+    vels = [c for c in _dauntless_host.audio.debug_command_log()
+            if c["op"] == "set_velocity"]
+    assert vels, "a teleport must still report a (zeroed) velocity"
+    assert vels[-1]["f"][0] == pytest.approx(0.0)
+    assert vels[-1]["f"][1] == pytest.approx(0.0)
+    assert vels[-1]["f"][2] == pytest.approx(0.0)

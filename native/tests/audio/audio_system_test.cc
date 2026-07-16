@@ -217,4 +217,59 @@ TEST(AudioSystem, ListenerVelocityFromPositionDelta) {
     EXPECT_TRUE(saw);
 }
 
+TEST(AudioSystem, ListenerVelocityZeroOnFirstUpdate) {
+    // Guide review #4: the very first update() has no prev_listener_ yet.
+    // Deleting `have_prev_listener_ &&` from the update() guard would
+    // differentiate this call against a zero-initialized prev_listener_[3]
+    // (i.e. against the world origin) -- a huge invented velocity from a
+    // null origin, exactly the bug the brief warns about.
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    NullBackend* raw = backend.get();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+
+    raw->clear_command_log();
+    sys.update(500,0,0,  0,1,0,  0,0,1, 0.5f);  // far from origin, first call
+
+    bool saw = false;
+    for (const auto& c : raw->command_log()) {
+        if (c.op == "set_listener") {
+            EXPECT_FLOAT_EQ(c.f[9], 0.0f);
+            EXPECT_FLOAT_EQ(c.f[10], 0.0f);
+            EXPECT_FLOAT_EQ(c.f[11], 0.0f);
+            saw = true;
+        }
+    }
+    EXPECT_TRUE(saw);
+}
+
+TEST(AudioSystem, ListenerVelocityZeroedOnDiscontinuity) {
+    // Review #1: a discontinuous camera cut (bridge<->tactical toggle,
+    // cutscene cut, mission swap) must not be differentiated as motion.
+    // Nothing in this game moves at or above kSpeedOfSoundGU, so a derived
+    // speed >= c is definitionally a cut -> report zero, not a clamped blip.
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    NullBackend* raw = backend.get();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+
+    sys.update(0,0,0,  0,1,0,  0,0,1, 0.5f);    // seeds prev
+    raw->clear_command_log();
+    // 1000 GU in 0.5 s -> 2000 GU/s, well above kSpeedOfSoundGU (343.3).
+    sys.update(1000,0,0,  0,1,0,  0,0,1, 0.5f);
+
+    bool saw = false;
+    for (const auto& c : raw->command_log()) {
+        if (c.op == "set_listener") {
+            EXPECT_FLOAT_EQ(c.f[9], 0.0f);
+            EXPECT_FLOAT_EQ(c.f[10], 0.0f);
+            EXPECT_FLOAT_EQ(c.f[11], 0.0f);
+            saw = true;
+        }
+    }
+    EXPECT_TRUE(saw);
+}
+
 }  // namespace
