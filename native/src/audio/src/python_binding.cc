@@ -126,6 +126,11 @@ static py::list debug_command_log_impl() {
 // of re-declaring the literal independently.
 static float speed_of_sound_impl() { return kSpeedOfSoundGU; }
 
+// Review #3: same precedent -- expose kBcDefaultPriority so
+// engine/audio/tg_sound.py:TGSound.BC_DEFAULT_PRIORITY derives from the C++
+// constant instead of re-declaring an independent literal that could drift.
+static float bc_default_priority_impl() { return kBcDefaultPriority; }
+
 static void clear_command_log_impl() {
     if (!g_system) return;
     if (auto* nb = dynamic_cast<NullBackend*>(g_system->backend()))
@@ -171,6 +176,7 @@ void register_python_bindings(py::module_& parent) {
     m.def("set_category_gain", &set_category_gain_impl);
     m.def("update", &update_impl);
     m.def("speed_of_sound", &speed_of_sound_impl);
+    m.def("bc_default_priority", &bc_default_priority_impl);
     m.def("is_finished", &is_finished_impl);
     m.def("debug_mark_finished", &debug_mark_finished_impl);
     m.def("debug_command_log", &debug_command_log_impl);

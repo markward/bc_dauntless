@@ -116,3 +116,18 @@ def test_bc_default_priority_is_half(audio, tmp_path):
     wav.write_bytes(_wav(22050, [0, 0]))
     audio.LoadSound(str(wav), "Prio", TGSound.LS_3D)
     assert audio.GetSound("Prio").GetPriority() == 0.5
+
+
+def test_bc_default_priority_is_derived_from_the_native_binding():
+    """Review #3: BC_DEFAULT_PRIORITY must not be a second, independently
+    editable literal -- it must come from the same C++ source of truth as
+    audio_system.h's parameter defaults and python_binding.cc's
+    `py::arg("priority")`, exactly mirroring the SPEED_OF_SOUND_GU precedent
+    (see test_attached_sources.py's
+    test_speed_of_sound_gu_is_derived_from_the_native_binding). STRICT `==`,
+    not `approx` -- a loose comparison would silently accept a hardcoded
+    literal that happens to match today's value.
+    """
+    native_value = _dauntless_host.audio.bc_default_priority()
+    assert TGSound.BC_DEFAULT_PRIORITY == native_value, \
+        "BC_DEFAULT_PRIORITY must be exactly equal to the C++ value, not hardcoded"

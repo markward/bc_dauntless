@@ -323,8 +323,8 @@ the active space set:
    new ship that entered the top-4, at **reference 4.375 / max 35.0**.
 
 The hum's sound **name** comes from the engine subsystem's property (a name string only — it carries
-no distances and no gain; the caller supplies those). The cap of 4 is deliberate voice economy from
-the original; keep it (or expose it as a tunable defaulting to 4) so the mix density matches BC.
+no distances and no gain; the caller supplies those). The original caps this at 4; the reason is not
+established — keep it (or expose it as a tunable defaulting to 4) so the mix density matches BC.
 
 ## 11. The one-active-scene rule (and the region stub)
 

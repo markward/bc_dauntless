@@ -279,10 +279,7 @@ TEST(AudioSystem, EvictionFillStealTieDropAndBelowCap) {
     }
 
     // Steal: a higher-priority play against the full pool succeeds and stops
-    // a victim. sources_ is private, so prove the pool stayed at the cap by
-    // stealing again -- if eviction had failed to erase, a second steal would
-    // also succeed regardless, but combined with the "stop" log below this
-    // pins that the pool size did not grow unbounded.
+    // a victim.
     raw->clear_command_log();
     PlayingId stolen = sys.play_sound("S", true, 1.0f, Category::SFX,
                                       false, 0.f, 0.f, 0.f, false,

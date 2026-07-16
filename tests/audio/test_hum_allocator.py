@@ -85,7 +85,7 @@ def _stub_roster(monkeypatch, ships):
 
 
 def test_caps_at_four_nearest_ships(boot, monkeypatch):
-    """Guide §10: cap of 4 is deliberate voice economy — keep it."""
+    """Guide §10: the original caps this at 4; the reason is not established — keep it."""
     ships = [_Ship(f"s{i}", x=i * 10) for i in range(7)]
     _stub_roster(monkeypatch, ships)
 
@@ -211,6 +211,50 @@ def test_ship_gc_without_teardown_stops_its_hum(boot, monkeypatch):
 
     ops = [c["op"] for c in _dauntless_host.audio.debug_command_log()]
     assert "stop" in ops, "ship GC'd without explicit teardown must still stop its hum"
+
+
+def test_evicted_hum_is_restarted_on_next_update(boot, monkeypatch):
+    """Review Critical #1 (live bug): `AudioSystem::play`'s pool-saturation
+    eviction (native/src/audio/src/audio_system.cc) steals the lowest-
+    priority playing source -- including a looping hum -- by calling
+    `backend_->stop()` and erasing it from the C++ `sources_` map, WITHOUT
+    ever telling Python. The Python-side `_PlayingSound._pid` stays truthy.
+
+    Before this fix, `hum_allocator.update`'s `humming_ids` filtered on
+    `_pid` alone, so an evicted hum's ship stayed in `_humming` (its dict key
+    never dropped) and was therefore never restarted -- the ship would hum
+    silently until it next happened to cross the top-4 boundary and get
+    reconciled for an unrelated reason. That is the same failure shape as the
+    warp bug this branch already fixed (1a355f3c), with a different trigger.
+
+    `debug_mark_finished` simulates exactly what a dead-but-unreported
+    handle looks like from Python's side: `is_finished(pid)` starts
+    returning True (same observable effect as the C++ side erasing the
+    source out from under `sources_` during eviction) while `_pid` itself
+    is untouched -- there is no `Stop()` call, explicit or otherwise.
+    """
+    ship = _Ship("s0", x=10)
+    _stub_roster(monkeypatch, [ship])
+    hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
+    assert "s0" in hum_allocator.humming_ship_names()
+
+    playing = hum_allocator._humming[ship]
+    assert playing._pid, "sanity: the hum must actually be playing"
+    _dauntless_host.audio.debug_mark_finished(playing._pid)
+
+    _dauntless_host.audio.clear_command_log()
+    hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
+
+    plays = [c for c in _dauntless_host.audio.debug_command_log()
+             if c["op"] == "play"]
+    assert plays, (
+        "an evicted/dead-but-still-in-_humming hum must be restarted on the "
+        "next update() -- not left silently dead until an unrelated top-4 "
+        "boundary crossing"
+    )
+    assert "s0" in hum_allocator.humming_ship_names()
+    assert hum_allocator._humming[ship] is not playing, \
+        "the stale dead handle must have been replaced by a fresh one"
 
 
 def test_real_roster_finds_ship_via_iter_active_ships(boot):

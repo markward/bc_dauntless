@@ -96,11 +96,11 @@ public:
         if (positional) {
             alSourcei(al, AL_SOURCE_RELATIVE, AL_FALSE);
             alSource3f(al, AL_POSITION, x, y, z);
-            // BC TGSound::SetupFromFile defaults (guide §5). TGSound.Play
-            // overwrites these via set_min_max_distance; they are the floor
-            // for any caller that does not.
-            alSourcef(al, AL_REFERENCE_DISTANCE, 50.0f);
-            alSourcef(al, AL_MAX_DISTANCE,       700.0f);
+            // BC TGSound::SetupFromFile defaults (guide §5, audio_constants.h).
+            // TGSound.Play overwrites these via set_min_max_distance; they are
+            // the floor for any caller that does not.
+            alSourcef(al, AL_REFERENCE_DISTANCE, kBcDefaultMinDistance);
+            alSourcef(al, AL_MAX_DISTANCE,       kBcDefaultMaxDistance);
             alSourcef(al, AL_ROLLOFF_FACTOR,     1.0f);
         } else {
             // Non-positional source: place 1 unit in front of the listener

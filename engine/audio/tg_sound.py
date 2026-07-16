@@ -47,6 +47,24 @@ class _PlayingSound:
     def __init__(self, pid: int) -> None:
         self._pid = pid
 
+    def is_live(self) -> bool:
+        """True while this handle still refers to a playing source.
+
+        Liveness lives HERE, not in each registry: a handle can go dead two
+        ways the holder cannot see -- an explicit Stop() (zeroes `_pid`), or
+        the C++ AudioSystem reaping/evicting the source without telling
+        Python (a naturally-finished one-shot, or `AudioSystem::play`'s
+        pool-saturation eviction, which erases the victim from `sources_`
+        without zeroing `_pid` on the Python side). Testing dict-key
+        presence, or `_pid` alone, instead of calling this is what silently
+        killed the player's engine hum on warp -- and, before this fix, is
+        what let an EVICTED hum stay in `hum_allocator.humming_ids` forever
+        (the ship hums silently until it next crosses the top-4 boundary).
+        """
+        if not self._pid:
+            return False
+        return not (_audio is not None and _audio.is_finished(self._pid))
+
     def Stop(self) -> None:
         if _audio and self._pid:
             _audio.stop(self._pid)
@@ -86,7 +104,12 @@ class TGSound:
     # audio. The ship engine hum is the sole exception (see hum_allocator).
     BC_DEFAULT_MIN_DISTANCE = 50.0
     BC_DEFAULT_MAX_DISTANCE = 700.0
-    BC_DEFAULT_PRIORITY = 0.5
+    # Review #3: derived from the C++ constant (native/src/audio/include/
+    # audio/audio_constants.h:kBcDefaultPriority), not re-declared as an
+    # independent literal -- same precedent as
+    # attached_sources.SPEED_OF_SOUND_GU/_audio.speed_of_sound(). 0.5 is the
+    # fallback for the no-backend/test case where `_audio` is None.
+    BC_DEFAULT_PRIORITY = _audio.bc_default_priority() if _audio is not None else 0.5
 
     def __init__(self, name: str, positional: bool) -> None:
         self._name = name
@@ -140,9 +163,13 @@ class TGSound:
     def Play(self, attach_node=None, position=None) -> Optional[_PlayingSound]:
         if not _audio or not self._loaded:
             return None
-        # Drop handles we explicitly stopped earlier so the list can't grow
-        # without bound across repeated one-shot plays.
-        self._active = [h for h in self._active if h._pid]
+        # Drop dead handles (explicitly stopped OR naturally/evicted-finished
+        # -- see _PlayingSound.is_live) so the list can't grow without bound
+        # across repeated one-shot plays. `if h._pid` alone was WRONG: it
+        # only caught an explicit Stop() and let every naturally-finished
+        # one-shot accumulate forever, the opposite of what this comment
+        # claims.
+        self._active = [h for h in self._active if h.is_live()]
         if attach_node is not None:
             self.AttachToNode(attach_node)
         force_non_positional = False

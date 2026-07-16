@@ -68,8 +68,8 @@ def node_world_position(node) -> Optional[tuple[float, float, float]]:
     z = getattr(loc, "z", None)
     # isinstance (not `type(c) in (int, float)`) is deliberate: it already
     # rejects the chainable _Stub (not a numeric subclass) while still
-    # accepting bool, int/float subclasses, and numpy floats a real object
-    # could legitimately return.
+    # accepting bool and any real int/float subclass a legitimate object
+    # could return.
     if not all(isinstance(c, (int, float)) for c in (x, y, z)):
         return None
     return (float(x), float(y), float(z))
@@ -107,17 +107,15 @@ def pump(dt: float) -> None:
     per second. Called once per tick from host_loop.tick_audio, before the
     listener update so the positional math sees current source positions.
 
-    Also reaps entries whose source already finished. A one-shot's C++
-    AudioSystem source is reaped (`sources_.erase`) as soon as the backend
-    reports it stopped, but nothing tells this Python-side pump; without this
-    check every one-shot ever played (e.g. every phaser "Start" sound) would
-    leave a permanent entry issuing a dead-pid set_position forever.
+    Also reaps entries whose handle has gone dead (see
+    `_PlayingSound.is_live`): a one-shot's C++ AudioSystem source is reaped
+    (`sources_.erase`) as soon as the backend reports it stopped, but nothing
+    tells this Python-side pump; without this check every one-shot ever
+    played (e.g. every phaser "Start" sound) would leave a permanent entry
+    issuing a dead-pid set_position forever.
     """
     for pid, entry in list(_attached.items()):
-        if not entry.handle._pid:          # explicitly stopped
-            del _attached[pid]
-            continue
-        if _audio is not None and _audio.is_finished(pid):
+        if not entry.handle.is_live():
             del _attached[pid]
             continue
         pos = node_world_position(entry.node)

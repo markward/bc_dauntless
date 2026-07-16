@@ -7,6 +7,25 @@
 
 namespace dauntless::audio {
 
+namespace {
+
+// Review #10: begin_frame()/end_frame() are a PAIRED call (Guide §9/§14.12 --
+// the backend applies a whole frame's listener move + reap atomically instead
+// of tearing mid-frame). Today update() has no early return between them and
+// nothing in the body throws, so the pairing happens to hold by inspection --
+// but that is fragile: a future early return added to update() (e.g. a bail
+// on some new precondition) would silently leave the backend in a suspended
+// "mid-frame" state forever, freezing ALL audio with no test failure to catch
+// it. An RAII guard makes the pairing exit-path-proof instead of
+// inspection-proof.
+struct FrameBatch {
+    IAudioBackend* b;
+    explicit FrameBatch(IAudioBackend* b) : b(b) { b->begin_frame(); }
+    ~FrameBatch() { b->end_frame(); }
+};
+
+}  // namespace
+
 // Guide §8: lowest-priority playing source loses. BC's consumer of this field
 // was never identified, so this is the natural reading, not a verified one --
 // and OpenAL Soft mixes 256 sources in software, so it rarely fires.
@@ -190,8 +209,11 @@ void AudioSystem::update(float lx, float ly, float lz,
                          float ux, float uy, float uz, float dt) {
     // Guide §9/§14.12: batch the whole per-frame update -- listener move plus
     // the one-shot reap below -- so the backend applies it atomically instead
-    // of tearing mid-frame (the analog of DS3D's deferred commit).
-    backend_->begin_frame();
+    // of tearing mid-frame (the analog of DS3D's deferred commit). RAII
+    // (FrameBatch, above) rather than a bare begin_frame()/end_frame() pair
+    // so a future early return in this function can't leak a suspended
+    // frame and silently freeze all audio (review #10).
+    FrameBatch _frame_batch(backend_.get());
 
     // Guide §4/§6: listener velocity for doppler, derived from the camera's
     // position delta. Raw game units per second — see the units note in
@@ -233,8 +255,6 @@ void AudioSystem::update(float lx, float ly, float lz,
             ++it;
         }
     }
-
-    backend_->end_frame();
 }
 
 }  // namespace dauntless::audio

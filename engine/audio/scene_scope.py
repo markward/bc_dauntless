@@ -1,10 +1,12 @@
 """The one-active-scene rule (guide §11).
 
 Only the rendered set is audible. On a set/view change every source belonging
-to the now-inactive set stops (BC flushes handles in UpdateSounds). This is what
-makes the bridge↔space switch silence the other world, and why the viewscreen —
-space rendered *visually* on the bridge — carries no audio: the space set is not
-the active sound scene.
+to the now-inactive set stops (BC flushes handles in UpdateSounds). In BC,
+this is what makes the bridge↔space switch silence the other world, and why
+the viewscreen — space rendered *visually* on the bridge — carries no audio:
+the space set is not the active sound scene. See the "Current wiring note"
+below for what this module actually does in Dauntless today, which is
+narrower than that.
 
 Scope note: this covers the space side. 2D bridge/UI/music sources are not
 registered here and are unaffected.
@@ -23,12 +25,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-try:
-    import _dauntless_host
-    _audio = _dauntless_host.audio
-except (ImportError, AttributeError):
-    _audio = None  # tests can still import the module shape
-
 _rendered: Optional[str] = None
 # set name -> list of _PlayingSound
 _by_set: dict[str, list] = {}
@@ -37,20 +33,16 @@ _by_set: dict[str, list] = {}
 def _is_live(handle) -> bool:
     """True if `handle` still has a live backend source.
 
-    Mirrors `attached_sources.pump`'s reap check (see its docstring): a
-    naturally-finished one-shot's C++ `AudioSystem` source is reaped
-    (`sources_.erase`) as soon as the backend reports it stopped, but
-    nothing zeroes the Python-side `_pid`. Without this check every
-    positional one-shot ever played -- every phaser "Start", every
-    torpedo, every hit_feedback impact -- would be retained in `_by_set`
-    for the whole mission (unbounded growth), and `register()` rebuilding
-    that list on every `Play()` would be O(n^2) on the audio hot path.
+    Delegates to `_PlayingSound.is_live` -- the one shared liveness check
+    every registry (this one, `attached_sources.pump`, `hum_allocator.update`,
+    `TGSound.Play`'s `_active` prune) must call, not reimplement. Without
+    this check every positional one-shot ever played -- every phaser
+    "Start", every torpedo, every hit_feedback impact -- would be retained
+    in `_by_set` for the whole mission (unbounded growth), and `register()`
+    rebuilding that list on every `Play()` would be O(n^2) on the audio hot
+    path.
     """
-    if not handle._pid:
-        return False
-    if _audio is not None and _audio.is_finished(handle._pid):
-        return False
-    return True
+    return handle.is_live()
 
 
 def set_rendered_set(name: Optional[str]) -> None:
@@ -76,6 +68,15 @@ def register(handle, set_name: str) -> None:
     `_by_set` is pruned outside of a scene switch, so it must not skip
     finished one-shots or the list grows without bound for the whole
     mission.
+
+    Known proxy, not the real thing (guide §11 says "track each Sound's
+    owning set"): the sole caller (`TGSound.Play`) always passes
+    `scene_scope.rendered_set()` -- the CURRENTLY-rendered set -- not the
+    set the sound's emitting object actually belongs to. Those are the same
+    set for every real call site today (a ship only ever plays a sound for
+    itself, in its own set), but if that ever stops holding, a sound played
+    for an object in a non-rendered set would be mis-tagged as belonging to
+    the rendered set and would never be stopped by a later scene change.
     """
     if handle is None or not handle._pid or not set_name:
         return
