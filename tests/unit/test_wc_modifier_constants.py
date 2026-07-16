@@ -56,3 +56,15 @@ def test_modifier_chords_export_shape():
     assert len(appc_input.MODIFIER_CHORDS) == 3 * len(_BASES)
     mod, base, code = appc_input.MODIFIER_CHORDS[0]
     assert code == appc_input.MODIFIER_BANDS[mod] | getattr(appc_input, "WC_" + base)
+
+
+def test_chord_target_event_constants_are_real_ints():
+    import App
+    for name in (
+        "ET_MANAGE_POWER", "ET_MANEUVER", "ET_INPUT_SELF_DESTRUCT",
+        "ET_INPUT_CLEAR_TARGET", "ET_INPUT_INTERCEPT",
+        "ET_INPUT_DEBUG_KILL_TARGET", "ET_INPUT_DEBUG_QUICK_REPAIR",
+        "ET_INPUT_DEBUG_GOD_MODE", "ET_INPUT_DEBUG_LOAD_QUANTUMS",
+        "ET_OTHER_BEAM_TOGGLE_CLICKED", "ET_OTHER_CLOAK_TOGGLE_CLICKED",
+    ):
+        assert isinstance(getattr(App, name), int), name

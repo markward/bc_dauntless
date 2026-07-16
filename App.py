@@ -985,6 +985,7 @@ ET_SET_ALERT_LEVEL              = 1051
 ET_QUICK_SAVE                   = 1052
 ET_QUICK_LOAD                   = 1053
 ET_INPUT_PRINT_SCREEN             = 1054
+ET_INPUT_SELF_DESTRUCT          = 1055
 
 # ── Bridge-interaction event types ─────────────────────────────────────────────
 # Spec: docs/superpowers/specs/2026-06-12-tg-widget-tree-crew-menus-design.md.

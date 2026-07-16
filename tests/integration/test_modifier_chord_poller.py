@@ -110,17 +110,40 @@ def test_base_keys_suppressed_while_alt_held():
 
 
 def test_alt_t_and_alt_c_drive_direct_toggles_not_events():
+    """Alt+T and Alt+C bypass the WC event pipeline entirely: rising edge only
+    (no repeat while held), a release re-arms the edge for a second toggle on
+    the next press, and neither reaches g_kInputManager.OnChordDown.  Folds in
+    the poller-level coverage that used to live in
+    test_tractor_toggle_wiring.py::test_alt_t_chord_toggles_rising_edge_only
+    against the now-retired _poll_tractor_toggle."""
     keys = _fake_keys()
     host = SimpleNamespace(keys=keys)
     ks = _KeyState()
-    chord_calls, tractor_calls = [], []
+    chord_calls, tractor_calls, cloak_calls = [], [], []
     with patch.object(host_loop.host_io, "key_state", ks), \
          patch.object(App.g_kInputManager, "OnChordDown",
                       side_effect=lambda wc: chord_calls.append(wc)), \
          patch.object(App, "ToggleTractorFromInput",
-                      side_effect=lambda: tractor_calls.append(1)):
+                      side_effect=lambda: tractor_calls.append(1)), \
+         patch.object(App, "ToggleCloakFromInput",
+                      side_effect=lambda: cloak_calls.append(1)):
+        # Alt+T: rising edge only.
         ks.down = {keys.KEY_LEFT_ALT, keys.KEY_T}
         host_loop._poll_modifier_chords(host)
         host_loop._poll_modifier_chords(host)      # held: one toggle only
-    assert tractor_calls == [1]
+        assert tractor_calls == [1]
+
+        # Release, press again (opposite Alt key) → a second toggle.
+        ks.down = set()
+        host_loop._poll_modifier_chords(host)
+        ks.down = {keys.KEY_RIGHT_ALT, keys.KEY_T}
+        host_loop._poll_modifier_chords(host)
+        assert tractor_calls == [1, 1]
+
+        # Alt+C: same override path, independent chord/toggle.
+        ks.down = {keys.KEY_LEFT_ALT, keys.KEY_C}
+        host_loop._poll_modifier_chords(host)
+        host_loop._poll_modifier_chords(host)      # held: one toggle only
+        assert cloak_calls == [1]
     assert App.WC_ALT_T not in chord_calls
+    assert App.WC_ALT_C not in chord_calls

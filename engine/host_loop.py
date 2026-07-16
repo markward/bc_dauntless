@@ -420,68 +420,6 @@ def _poll_fire_keys(host, input_map) -> None:
     ), suppress=suppress)
 
 
-_tractor_toggle_prev: bool = False
-
-
-def _poll_tractor_toggle(host) -> None:
-    """Forward the Alt+T tractor-beam toggle chord into the toggle event.
-
-    BC binds WC_ALT_T (DefaultKeyboardBinding.py:42) → ET_OTHER_BEAM_TOGGLE_CLICKED,
-    but the Alt-modifier WC constants are unwired in our input pipeline (input.py
-    intentionally leaves the ALT_ variants as stubs).  So we detect the chord
-    directly off the host key state and post the toggle event to the tactical
-    control window, where TacticalInterfaceHandlers registered
-    BridgeHandlers.ToggleTractorBeam (which flips the beam toggle and re-fires to
-    App._TacWeaponsCtrl → StartFiring/StopFiring on the player's tractor).
-
-    Rising-edge only: one toggle per press.  No-ops on a stale binary whose
-    `keys` submodule predates KEY_T (graceful — tractor stays toggle-via-UI).
-    """
-    global _tractor_toggle_prev
-    if host is None:
-        return
-    keys = getattr(host, "keys", None)
-    if keys is None or not hasattr(keys, "KEY_T"):
-        return
-    alt = (bool(host_io.key_state(keys.KEY_LEFT_ALT))
-           or bool(host_io.key_state(keys.KEY_RIGHT_ALT)))
-    chord = alt and bool(host_io.key_state(keys.KEY_T))
-    if chord and not _tractor_toggle_prev:
-        import App  # deferred: module-top import reorders sound-manager init
-        App.ToggleTractorFromInput()
-    _tractor_toggle_prev = chord
-
-
-_cloak_toggle_prev: bool = False
-
-
-def _poll_cloak_toggle(host) -> None:
-    """Forward the Alt+C cloak toggle chord into the cloak toggle event.
-
-    BC binds WC_ALT_C (DefaultKeyboardBinding.py:43) → ET_OTHER_CLOAK_TOGGLE_CLICKED,
-    but the Alt-modifier WC constants are unwired in our input pipeline, so detect
-    the chord directly off the host key state and drive App.ToggleCloakFromInput()
-    (which no-ops for ships without a cloaking device).  Mirrors
-    _poll_tractor_toggle exactly.
-
-    Rising-edge only: one toggle per press.  No-ops on a stale binary whose
-    `keys` submodule predates KEY_C (graceful — cloak stays toggle-via-UI).
-    """
-    global _cloak_toggle_prev
-    if host is None:
-        return
-    keys = getattr(host, "keys", None)
-    if keys is None or not hasattr(keys, "KEY_C"):
-        return
-    alt = (bool(host_io.key_state(keys.KEY_LEFT_ALT))
-           or bool(host_io.key_state(keys.KEY_RIGHT_ALT)))
-    chord = alt and bool(host_io.key_state(keys.KEY_C))
-    if chord and not _cloak_toggle_prev:
-        import App  # deferred: module-top import reorders sound-manager init
-        App.ToggleCloakFromInput()
-    _cloak_toggle_prev = chord
-
-
 _skip_dialogue_prev: bool = False
 
 
@@ -6531,8 +6469,7 @@ def run(mission_name: Optional[str] = None,
                 _poll_mouse_buttons(_h)
                 _poll_function_keys(_h, input_map)
                 _poll_fire_keys(_h, input_map)
-                _poll_tractor_toggle(_h)
-                _poll_cloak_toggle(_h)
+                _poll_modifier_chords(_h)
                 _poll_skip_dialogue(_h, input_map)
 
                 # Advance weapon charge / reload for every ship in every

@@ -134,51 +134,12 @@ def test_refired_event_engages_then_disengages():
 
 
 # ── Alt+T input poller: chord posts ET_OTHER_BEAM_TOGGLE_CLICKED to the TCW ──
-
-class _Keys:
-    KEY_T = 1
-    KEY_LEFT_ALT = 2
-    KEY_RIGHT_ALT = 3
-
-
-class _Host:
-    """Fake host exposing key_state + a keys submodule for the poller."""
-    keys = _Keys()
-    def __init__(self, down):  self._down = set(down)
-    def key_state(self, code): return 1 if code in self._down else 0
-
-
-def test_alt_t_chord_toggles_rising_edge_only(monkeypatch):
-    import engine.host_loop as hl
-    from engine import host_io
-    hl._tractor_toggle_prev = False
-
-    def _poll(host):
-        # The poller reads host.keys.* for constants but routes key_state
-        # through host_io; point host_io._h at the same fake for each call.
-        monkeypatch.setattr(host_io, "_h", host)
-        hl._poll_tractor_toggle(host)
-
-    calls = []
-    real = App.ToggleTractorFromInput
-    try:
-        App.ToggleTractorFromInput = lambda: calls.append(1)
-        # T alone (no Alt) → nothing.
-        _poll(_Host({_Keys.KEY_T}))
-        assert calls == []
-        # Alt held + T pressed → one toggle on the rising edge.
-        _poll(_Host({_Keys.KEY_T, _Keys.KEY_LEFT_ALT}))
-        assert len(calls) == 1
-        # Chord still held → no repeat.
-        _poll(_Host({_Keys.KEY_T, _Keys.KEY_LEFT_ALT}))
-        assert len(calls) == 1
-        # Release, press again → a second toggle.
-        _poll(_Host(set()))
-        _poll(_Host({_Keys.KEY_T, _Keys.KEY_RIGHT_ALT}))
-        assert len(calls) == 2
-    finally:
-        App.ToggleTractorFromInput = real
-        hl._tractor_toggle_prev = False
+#
+# The rising-edge/no-repeat/release-and-repress poller behaviour for Alt+T is
+# now pinned by the unified chord poller's own tests — see
+# tests/integration/test_modifier_chord_poller.py::
+# test_alt_t_and_alt_c_drive_direct_toggles_not_events (folds in the coverage
+# that used to live here against the retired _poll_tractor_toggle).
 
 
 def test_toggle_from_input_engages_then_disengages():
