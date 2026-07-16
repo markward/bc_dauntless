@@ -150,3 +150,26 @@ def test_install_listener_replays_existing_live_ships(boot):
     assert play_entries[0]["b"][0] is True  # looping
 
     ship_lifecycle.reset()
+
+
+def test_hum_uses_bc_near_field_distances(boot):
+    """Guide §5: the hum is the sole exception to 50/700 — 4.375/35.0.
+
+    The max of 35.0 is the certain half and the one that matters: it makes the
+    hum a tight near-field sound instead of reaching 700 units like weapons do.
+    """
+    from engine.appc import ship_lifecycle
+    from engine.audio import engine_rumble
+    ship_lifecycle.reset()
+    install_engine_rumble_listener()
+
+    _dauntless_host.audio.clear_command_log()
+    ship_lifecycle.publish_added(_FakeShip("Federation Engines"))
+
+    mm = [c for c in _dauntless_host.audio.debug_command_log()
+          if c["op"] == "set_min_max_distance"]
+    assert mm, "hum must push its own min/max, not inherit the 50/700 default"
+    assert mm[-1]["f"][0] == 4.375
+    assert mm[-1]["f"][1] == 35.0
+    assert engine_rumble.HUM_MIN_DISTANCE == 4.375
+    assert engine_rumble.HUM_MAX_DISTANCE == 35.0

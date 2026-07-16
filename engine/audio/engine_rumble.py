@@ -12,6 +12,17 @@ from engine.appc import ship_lifecycle
 from engine.audio.tg_sound import TGSoundManager
 
 
+# Guide §5: the ship engine hum is the SOLE exception to BC's 50/700 default —
+# the one C++ tuning call site in the original binary. The max of 35.0 is what
+# makes the hum tight and near-field versus the 700-unit reach of weapons.
+#
+# Caveat: 4.375 is computed as 35.0 * 0.125 by a routine reachable only through
+# a function pointer, so it could not be statically proven to run; if it does
+# not, BC's real min is 0.0. The max is certain either way.
+HUM_MIN_DISTANCE = 4.375
+HUM_MAX_DISTANCE = 35.0
+
+
 _installed = False
 _unsubscribe = None
 # WeakKeyDictionary: if a ship is GC'd without publish_destroyed firing
@@ -54,6 +65,7 @@ def _on_ship_event(event: str, ship) -> None:
             return
         snd.SetLooping(1)
         snd.SetSFX()
+        snd.SetMinMaxDistance(HUM_MIN_DISTANCE, HUM_MAX_DISTANCE)
         playing = snd.Play(attach_node=_node_for(ship))
         if playing is not None:
             _active[ship] = playing
