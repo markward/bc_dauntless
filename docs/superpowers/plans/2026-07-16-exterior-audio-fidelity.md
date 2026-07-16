@@ -1844,7 +1844,11 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ### Task 8: The one-active-scene rule (space side)
 
-Guide §11: only the rendered set is audible. On a set/view change, stop every source belonging to the now-inactive set. This is what makes the bridge↔space switch silence the other world, and why the viewscreen (space rendered *visually* on the bridge) carries no audio — the space set isn't the active sound scene.
+Guide §11: only the rendered set is audible. On a set/view change, stop every source belonging to the now-inactive set. In BC this is what makes the bridge↔space switch silence the other world, and why the viewscreen (space rendered *visually* on the bridge) carries no audio — the space set isn't the active sound scene.
+
+> **SCOPE CORRECTION — this task does NOT deliver that headline claim.** It drives `scene_scope` from `engine.appc.ship_iter.active_set()`, which is the player ship's **containing** set. That never changes when the player merely looks at the bridge (`active_set`'s own docstring says it is deliberately *not* the rendered set), so the gate fires on **space→space transitions only** — i.e. warp. Bridge↔space silencing and the viewscreen consequence are **out**, and `engine_rumble.set_muted` remains load-bearing for the bridge case.
+>
+> The right source **already exists**: `engine/appc/sets.py:518 GetRenderedSet()` is bridge-aware *and* cutscene-aware (it defers to `MakeRenderedSet` during cutscenes) and maps 1:1 onto the decompiled `m_pRenderedSet` global that `SetClass::UpdateSounds` @`0x00413CB0` gates on. Re-sourcing to it would deliver §11 properly, but also forces a decision on whether 2D bridge/UI/music sources register — which would change what a bridge↔space switch tears down. **That is a pending scope decision, deliberately not taken here.**
 
 We have no set-ownership tracking at all. `engine_rumble.set_muted()` is a targeted hack covering only the hum.
 
@@ -2205,7 +2209,9 @@ Load a Quick Battle with several ships and confirm, by ear:
 3. **Hum near-field (Task 4).** The engine hum should be audible only close in (max 35 GU) and drop off far faster than weapons fire (700 GU).
 4. **Doppler (Task 5).** Have a ship pass close at speed. Expect a **subtle** pitch shift — BC's own numbers make this small (~2% at 6 GU/s), so do not expect a dramatic sweep. Absence of *any* shift is the failure signal.
 5. **Hum allocator (Task 6).** With 6+ ships nearby, at most 4 should hum. Fly between clusters and confirm hums hand off.
-6. **Scene rule (Task 8).** Switch to the bridge. Space audio should **cut**. The viewscreen shows space but must carry no audio.
+6. **Scene rule (Task 8) — read the scope note first.** Warp to another system. The old set's sounds should **cut** on arrival, and your own engine hum should come back cleanly (it died permanently here until a Critical was fixed — that is the thing to listen for).
+
+   **Do NOT expect bridge↔space to silence space audio.** This plan wired Task 8 to `ship_iter.active_set()`, which is the player's *containing* set — it does not change when you merely look at the bridge, so the gate fires on warp only. Guide §11's headline claim ("the bridge↔space switch silences the other world") and the viewscreen-carries-no-audio consequence are **NOT delivered by this branch**. On the bridge, `engine_rumble.set_muted` is still what quiets the hum. See the Deferred section.
 
 - [ ] **Step 3: Report findings to Mark before claiming completion**
 
@@ -2216,6 +2222,9 @@ Report what you actually heard, per item, including anything that did **not** be
 ## Deferred (explicitly out of scope)
 
 Recorded so they are not silently lost:
+
+- **Guide §11's headline claim is NOT delivered — the biggest known gap on this branch.** `scene_scope` is wired to `ship_iter.active_set()` (the player's containing set), so it gates warp but not bridge↔space. `engine/appc/sets.py:518 GetRenderedSet()` is the correct, already-bridge-and-cutscene-aware source. Re-sourcing also requires deciding whether 2D bridge/UI/music sources register. Until then `engine_rumble.set_muted` stays load-bearing. See Task 8's scope correction.
+- **Fold `engine_rumble.py` into `hum_allocator.py`.** The branch hollowed `engine_rumble` out (its `_active` dict deleted, hum ownership moved to the allocator). What remains is all hum-specific, and the two modules now import each other's privates (`hum_allocator` takes `_engine_sound_name_for`/`_node_for`; `engine_rumble` takes `_stop_hum` and reaches into `_humming`). A mutual private dependency means the boundary is in the wrong place. Only two external consumers (`host_loop`'s `install_engine_rumble_listener` and `set_muted`), so the merge is mechanical.
 
 - **Streaming (guide §12)** — `LS_STREAMED` is accepted and ignored; the backend decodes whole files up front. Bridge dialogue and music.
 - **Category buses → config sliders** — `set_category_gain` is plumbed from `python_binding.cc:138` all the way to the backend with **zero Python callers**. No volume sliders reach it.
