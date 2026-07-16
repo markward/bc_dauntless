@@ -84,6 +84,16 @@ def test_stopped_handle_is_dropped_from_the_pump(audio):
     snd = audio.GetSound("Torp")
     snd.AttachToNode(_FakeNode(_Loc(1.0, 1.0, 1.0)))
     handle = snd.Play()
+
+    # Positive precondition: prove the sound really was being pumped BEFORE
+    # Stop() -- otherwise the "no set_position after Stop()" assertion below
+    # is vacuously true even if attach() never tracked anything at all.
+    _dauntless_host.audio.clear_command_log()
+    attached_sources.pump(dt=0.016)
+    moves = [c for c in _dauntless_host.audio.debug_command_log()
+             if c["op"] == "set_position"]
+    assert moves, "sound must be attached and pumping before Stop() is called"
+
     handle.Stop()
 
     _dauntless_host.audio.clear_command_log()
@@ -110,9 +120,78 @@ def test_dead_object_is_dropped_from_the_pump(audio):
     snd = audio.GetSound("Torp")
     snd.AttachToNode(_WeakNode())
     snd.Play()
+
+    # Positive precondition: prove the sound really was being pumped WHILE
+    # the owner was still alive -- otherwise the "no set_position after
+    # del owner" assertion below is vacuously true even if attach() never
+    # tracked anything at all.
+    _dauntless_host.audio.clear_command_log()
+    attached_sources.pump(dt=0.016)
+    moves = [c for c in _dauntless_host.audio.debug_command_log()
+             if c["op"] == "set_position"]
+    assert moves, "sound must be attached and pumping while the owner is alive"
+
     del owner
 
     _dauntless_host.audio.clear_command_log()
     attached_sources.pump(dt=0.016)
     assert not [c for c in _dauntless_host.audio.debug_command_log()
                 if c["op"] == "set_position"]
+
+
+def test_finished_one_shot_is_dropped_from_the_pump(audio):
+    """A one-shot that finishes naturally must not pump a dead pid forever.
+
+    The C++ AudioSystem reaps a finished one-shot's source, but nothing tells
+    Python -- without this, every one-shot ever played (e.g. every phaser
+    "Start" sound) would leave a permanent _attached entry.
+    """
+    snd = audio.GetSound("Torp")
+    snd.AttachToNode(_FakeNode(_Loc(1.0, 1.0, 1.0)))
+    handle = snd.Play()
+    assert handle is not None
+
+    # Positive precondition: prove the sound really was being pumped before
+    # it finishes.
+    _dauntless_host.audio.clear_command_log()
+    attached_sources.pump(dt=0.016)
+    moves = [c for c in _dauntless_host.audio.debug_command_log()
+             if c["op"] == "set_position"]
+    assert moves, "sound must be attached and pumping before it finishes"
+
+    _dauntless_host.audio.debug_mark_finished(handle._pid)
+
+    _dauntless_host.audio.clear_command_log()
+    attached_sources.pump(dt=0.016)
+    assert not [c for c in _dauntless_host.audio.debug_command_log()
+                if c["op"] == "set_position"], \
+        "a finished one-shot must be reaped from the pump"
+    assert not attached_sources._attached, \
+        "the finished handle's entry must be dropped, not just skipped"
+
+
+def test_node_world_position_stub_still_rejected(audio):
+    """Reaffirms the isinstance guard: a chainable-stub-shaped node still
+    yields None even after relaxing `type(c) in (...)` back to isinstance."""
+    assert attached_sources.node_world_position(_ChainableStub()) is None
+
+
+def test_stub_node_falls_back_to_non_positional_play(audio):
+    """A node that fails to resolve must not silently pin to world-origin.
+
+    Play() must force a genuinely non-positional source (not merely omit the
+    position argument, which would still play POSITIONAL at (0,0,0) for any
+    sound loaded LS_3D).
+    """
+    snd = audio.GetSound("Torp")
+    snd.AttachToNode(_ChainableStub())
+
+    _dauntless_host.audio.clear_command_log()
+    handle = snd.Play()
+    assert handle is not None
+
+    plays = [c for c in _dauntless_host.audio.debug_command_log()
+             if c["op"] == "play"]
+    assert plays, "Play() must have issued a play command"
+    assert plays[-1]["b"][1] is False, \
+        "a stub node must degrade to a non-positional source, not (0,0,0)"

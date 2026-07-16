@@ -16,15 +16,25 @@ from __future__ import annotations
 
 from typing import Optional
 
+try:
+    import _dauntless_host
+    _audio = _dauntless_host.audio
+except (ImportError, AttributeError):
+    _audio = None  # tests can still import the module shape
+
 
 def node_world_position(node) -> Optional[tuple[float, float, float]]:
     """World (x, y, z) for a node ref, or None when it cannot be resolved.
 
     Coordinates MUST be real numbers. `TGObject.__getattr__` hands back a
-    chainable `_Stub` for any unimplemented attribute; a stub coerces to 0.0
-    and would silently pin the sound to the world origin, which is strictly
-    worse than falling back to non-positional playback. This guard is the same
-    one `TGSoundAction._node_position` documents — both call here now.
+    chainable `_Stub` for any unimplemented attribute; a stub coerces to 0.0,
+    which would be indistinguishable from a legitimate world-origin position
+    if we let it through. Returning None here is only half the guard: the
+    caller (`TGSound.Play`) is what actually turns a None position into a
+    genuinely non-positional source (`force_non_positional=True`) rather than
+    falling through to a positional source at the backend's (0, 0, 0)
+    default. This guard is the same one `TGSoundAction._node_position`
+    documents — both call here now.
     """
     if node is None:
         return None
@@ -40,7 +50,11 @@ def node_world_position(node) -> Optional[tuple[float, float, float]]:
     x = getattr(loc, "x", None)
     y = getattr(loc, "y", None)
     z = getattr(loc, "z", None)
-    if not all(type(c) in (int, float) for c in (x, y, z)):
+    # isinstance (not `type(c) in (int, float)`) is deliberate: it already
+    # rejects the chainable _Stub (not a numeric subclass) while still
+    # accepting bool, int/float subclasses, and numpy floats a real object
+    # could legitimately return.
+    if not all(isinstance(c, (int, float)) for c in (x, y, z)):
         return None
     return (float(x), float(y), float(z))
 
@@ -75,9 +89,18 @@ def pump(dt: float) -> None:
 
     Called once per tick from host_loop.tick_audio, before the listener update
     so the positional math sees current source positions.
+
+    Also reaps entries whose source already finished. A one-shot's C++
+    AudioSystem source is reaped (`sources_.erase`) as soon as the backend
+    reports it stopped, but nothing tells this Python-side pump; without this
+    check every one-shot ever played (e.g. every phaser "Start" sound) would
+    leave a permanent entry issuing a dead-pid set_position forever.
     """
     for pid, entry in list(_attached.items()):
         if not entry.handle._pid:          # explicitly stopped
+            del _attached[pid]
+            continue
+        if _audio is not None and _audio.is_finished(pid):
             del _attached[pid]
             continue
         pos = node_world_position(entry.node)

@@ -54,7 +54,7 @@ static double get_duration_impl(const std::string& name) {
 
 static uint32_t play_impl(const std::string& name, bool looping, float gain,
                           const std::string& category, uint32_t attach_node,
-                          py::object position) {
+                          py::object position, bool force_non_positional) {
     if (!g_system) return 0;
     float x=0,y=0,z=0; bool provided=false;
     if (!position.is_none()) {
@@ -63,7 +63,8 @@ static uint32_t play_impl(const std::string& name, bool looping, float gain,
         provided = true;
     }
     return g_system->play_sound(name, looping, gain, parse_category(category),
-                                attach_node, provided, x, y, z);
+                                attach_node, provided, x, y, z,
+                                force_non_positional);
 }
 
 static void stop_impl(uint32_t pid) { if (g_system) g_system->stop(pid); }
@@ -117,6 +118,21 @@ static void clear_command_log_impl() {
         nb->clear_command_log();
 }
 
+static bool is_finished_impl(uint32_t pid) {
+    // No system at all means nothing is playing -> treat as finished so a
+    // Python pump loop can't spin forever on a dead reference.
+    return !g_system || g_system->is_finished(pid);
+}
+
+// Test-only hook: force `pid`'s underlying NullBackend source to report
+// finished, so Python tests can simulate a one-shot completing naturally
+// without waiting on real playback duration.
+static void debug_mark_finished_impl(uint32_t pid) {
+    if (!g_system) return;
+    if (auto* nb = dynamic_cast<NullBackend*>(g_system->backend()))
+        nb->mark_finished(g_system->debug_backend_handle(pid));
+}
+
 void register_python_bindings(py::module_& parent) {
     auto m = parent.def_submodule("audio", "OpenAL audio subsystem.");
     m.def("init", &init_impl, py::arg("backend") = "openal");
@@ -129,7 +145,8 @@ void register_python_bindings(py::module_& parent) {
     m.def("play", &play_impl,
           py::arg("name"), py::arg("looping") = false,
           py::arg("gain") = 1.0f, py::arg("category") = "SFX",
-          py::arg("attach_node") = 0u, py::arg("position") = py::none());
+          py::arg("attach_node") = 0u, py::arg("position") = py::none(),
+          py::arg("force_non_positional") = false);
     m.def("stop", &stop_impl);
     m.def("set_position", &set_position_impl);
     m.def("set_gain", &set_gain_impl);
@@ -137,6 +154,8 @@ void register_python_bindings(py::module_& parent) {
     m.def("set_min_max_distance", &set_min_max_distance_impl);
     m.def("set_category_gain", &set_category_gain_impl);
     m.def("update", &update_impl);
+    m.def("is_finished", &is_finished_impl);
+    m.def("debug_mark_finished", &debug_mark_finished_impl);
     m.def("debug_command_log", &debug_command_log_impl);
     m.def("clear_command_log", &clear_command_log_impl);
 }

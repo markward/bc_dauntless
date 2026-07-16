@@ -138,18 +138,35 @@ class TGSound:
         self._active = [h for h in self._active if h._pid]
         if attach_node is not None:
             self.AttachToNode(attach_node)
+        force_non_positional = False
         if position is None and self._node is not None:
             from engine.audio import attached_sources
             # Launch at the anchor: a one-shot may finish before the first pump.
             position = attached_sources.node_world_position(self._node)
+            if position is None:
+                # The node was attached but failed to resolve a real position
+                # (chainable stub, or a weak ref whose owner is already gone).
+                # Falling through with position=None would still play a
+                # POSITIONAL source at the backend's (0, 0, 0) default for any
+                # sound loaded LS_3D (every weapon WAV) -- AudioSystem::play
+                # ORs in the sound's load-time positional flag regardless of
+                # whether a position was actually provided. That is exactly
+                # the world-origin pin attached_sources.node_world_position's
+                # guard exists to prevent, so force a genuinely non-positional
+                # source instead.
+                force_non_positional = True
         factor = self._region.filter_factor() if self._region is not None else 1.0
         pid = _audio.play(
             name=self._name, looping=self._looping, gain=self._gain * factor,
             category=self._category_tag, position=position,
             # C++ node tracking is dead (node_pos_fn_ is never wired); Task 3
-            # removes this parameter. Pass 0 until then — play_impl declares
-            # attach_node with NO default, so omitting it raises TypeError.
+            # removes this parameter. Pass 0 until then. Note play_impl's
+            # attach_node DOES have a pybind default (0u, python_binding.cc),
+            # so omitting it would not actually raise TypeError -- passed
+            # explicitly anyway to match the (corrected) original brief,
+            # pending Task 3's removal of this parameter entirely.
             attach_node=0,
+            force_non_positional=force_non_positional,
         )
         if pid == 0:
             return None

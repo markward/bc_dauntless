@@ -34,12 +34,27 @@ public:
 
     PlayingId play_sound(const std::string& name, bool looping, float gain,
                          Category, NodeId attach_node,
-                         bool position_provided, float x, float y, float z);
+                         bool position_provided, float x, float y, float z,
+                         bool force_non_positional = false);
 
     PlayingId play(SoundId, bool looping, float gain, Category, NodeId attach_node,
-                   bool position_provided, float x, float y, float z);
+                   bool position_provided, float x, float y, float z,
+                   bool force_non_positional = false);
 
     void stop(PlayingId);
+
+    // True when `pid` is unknown (already reaped by update()'s finished-source
+    // sweep) or the backend reports the underlying source has stopped on its
+    // own. Lets a per-frame Python pump (attached_sources.pump) drop a
+    // finished one-shot's tracking entry instead of issuing a dead-pid
+    // set_position forever.
+    bool is_finished(PlayingId) const;
+
+    // Test-only: the concrete backend SourceHandle for `pid`, or 0 if
+    // unknown. Lets Python tests reach into a specific backend (e.g.
+    // NullBackend::mark_finished) to simulate a source finishing, without
+    // AudioSystem itself depending on any concrete backend's type.
+    SourceHandle debug_backend_handle(PlayingId) const;
     void set_gain(PlayingId, float);
     void set_looping(PlayingId, bool);
     void set_min_max_distance(PlayingId, float, float);

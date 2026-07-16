@@ -122,6 +122,68 @@ TEST(AudioSystem, UpdateReapsFinishedOneShotsViaBackendStop) {
     EXPECT_TRUE(saw_stop_for_handle);
 }
 
+TEST(AudioSystem, IsFinishedTrueForUnknownAndBackendFinishedSources) {
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    NullBackend* raw = backend.get();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+
+    auto wav = tiny_wav();
+    ASSERT_TRUE(sys.load_sound("sfx/test.wav", "OneShot",
+                               wav.data(), wav.size(), /*positional*/ false));
+
+    PlayingId pid = sys.play_sound("OneShot", /*looping*/ false, /*gain*/ 1.0f,
+                                   Category::SFX, /*attach_node*/ 0,
+                                   /*pos_provided*/ false, 0.f, 0.f, 0.f);
+    ASSERT_NE(pid, 0u);
+
+    // Not finished yet: NullBackend never marks a source finished on its own.
+    EXPECT_FALSE(sys.is_finished(pid));
+
+    // An unknown/never-issued pid must read as finished (already reaped, or
+    // never existed) so a Python pump can't spin on a dead reference.
+    EXPECT_TRUE(sys.is_finished(pid + 1000));
+
+    const SourceHandle backend_handle = sys.debug_backend_handle(pid);
+    ASSERT_NE(backend_handle, 0u);
+    raw->mark_finished(backend_handle);
+    EXPECT_TRUE(sys.is_finished(pid));
+
+    // update() reaps it from sources_; is_finished must still read true for
+    // the now-unknown pid.
+    sys.update(0.f,0.f,0.f, 0.f,0.f,-1.f, 0.f,1.f,0.f, 0.016f);
+    EXPECT_TRUE(sys.is_finished(pid));
+}
+
+TEST(AudioSystem, ForceNonPositionalOverridesLoadTimePositionalFlag) {
+    using namespace dauntless::audio;
+    auto backend = std::make_unique<NullBackend>();
+    NullBackend* raw = backend.get();
+    AudioSystem sys(std::move(backend));
+    ASSERT_TRUE(sys.init());
+
+    auto wav = tiny_wav();
+    // Loaded as a positional (LS_3D) sound, same as every weapon WAV.
+    ASSERT_TRUE(sys.load_sound("sfx/test.wav", "Weapon",
+                               wav.data(), wav.size(), /*positional*/ true));
+
+    raw->clear_command_log();
+    PlayingId pid = sys.play_sound("Weapon", /*looping*/ false, /*gain*/ 1.0f,
+                                   Category::SFX, /*attach_node*/ 0,
+                                   /*pos_provided*/ false, 0.f, 0.f, 0.f,
+                                   /*force_non_positional*/ true);
+    ASSERT_NE(pid, 0u);
+
+    bool saw_non_positional_play = false;
+    for (const auto& c : raw->command_log()) {
+        if (c.op == "play" && c.b[1] == false) saw_non_positional_play = true;
+    }
+    EXPECT_TRUE(saw_non_positional_play)
+        << "force_non_positional must override the sound's load-time LS_3D "
+           "flag, not just the pos_provided/attach_node heuristic";
+}
+
 TEST(AudioSystemDispatch, LoadsWavViaSniff) {
     using namespace dauntless::audio;
     auto backend = std::make_unique<NullBackend>();

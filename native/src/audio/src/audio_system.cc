@@ -58,10 +58,15 @@ double AudioSystem::get_duration(const std::string& name) const {
 
 PlayingId AudioSystem::play(SoundId id, bool looping, float gain, Category cat,
                             NodeId attach_node, bool pos_provided,
-                            float x, float y, float z) {
+                            float x, float y, float z,
+                            bool force_non_positional) {
     auto it = sounds_.find(id);
     if (it == sounds_.end()) return 0;
     bool positional = it->second.positional || pos_provided || attach_node != 0;
+    // Overrides the sound's load-time LS_3D flag: a caller that tried to
+    // anchor to a node but failed to resolve a real position must not fall
+    // through to a positional source at the backend's (0,0,0) default.
+    if (force_non_positional) positional = false;
     SourceHandle bh = backend_->play(it->second.buf, looping, gain, cat,
                                      positional, x, y, z);
     if (bh == 0) return 0;
@@ -72,10 +77,11 @@ PlayingId AudioSystem::play(SoundId id, bool looping, float gain, Category cat,
 
 PlayingId AudioSystem::play_sound(const std::string& name, bool looping, float gain,
                                   Category cat, NodeId attach_node,
-                                  bool pos_provided, float x, float y, float z) {
+                                  bool pos_provided, float x, float y, float z,
+                                  bool force_non_positional) {
     SoundId id = get_sound(name);
     return id == 0 ? 0 : play(id, looping, gain, cat, attach_node,
-                              pos_provided, x, y, z);
+                              pos_provided, x, y, z, force_non_positional);
 }
 
 void AudioSystem::stop(PlayingId pid) {
@@ -109,6 +115,17 @@ void AudioSystem::set_position(PlayingId pid, float x, float y, float z) {
 
 void AudioSystem::set_category_gain(Category c, float g) {
     backend_->set_category_gain(c, g);
+}
+
+bool AudioSystem::is_finished(PlayingId pid) const {
+    auto it = sources_.find(pid);
+    if (it == sources_.end()) return true;  // already reaped by update()
+    return backend_->source_finished(it->second.backend);
+}
+
+SourceHandle AudioSystem::debug_backend_handle(PlayingId pid) const {
+    auto it = sources_.find(pid);
+    return it == sources_.end() ? 0 : it->second.backend;
 }
 
 void AudioSystem::update(float lx, float ly, float lz,
