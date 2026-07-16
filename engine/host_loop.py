@@ -275,6 +275,93 @@ def _poll_key_table(keymap) -> None:
         _fn_key_prev[glfw_key] = down
 
 
+# Previous-frame chord levels, keyed by WC chord code. Module-level so
+# tests can reset it (mirrors _fn_key_prev).
+_chord_prev: dict = {}
+
+
+def _modifier_state(host):
+    """(alt, ctrl, shift) held-state off the raw host key levels.  Safe on
+    a stale binary whose keys submodule predates the modifier exports."""
+    keys = getattr(host, "keys", None) if host is not None else None
+    if keys is None or not hasattr(keys, "KEY_LEFT_ALT"):
+        return (False, False, False)
+
+    def _held(*names):
+        return any(
+            bool(host_io.key_state(getattr(keys, n)))
+            for n in names if hasattr(keys, n)
+        )
+
+    return (
+        _held("KEY_LEFT_ALT", "KEY_RIGHT_ALT"),
+        _held("KEY_LEFT_CONTROL", "KEY_RIGHT_CONTROL"),
+        _held("KEY_LEFT_SHIFT", "KEY_RIGHT_SHIFT"),
+    )
+
+
+def _dev_gated_chords():
+    """SDK binds these debug cheats unconditionally (retail BC shipped them
+    live); dauntless keeps production cheat-free per the dev_combat_cheats
+    convention — Mark's call, 2026-07-16 spec."""
+    import App  # deferred: module-top import reorders sound-manager init
+    return {App.WC_CAPS_K, App.WC_CAPS_R, App.WC_CAPS_G, App.WC_CTRL_Q}
+
+
+def _chord_overrides():
+    """Chords that drive a live-verified direct action instead of the WC
+    event pipeline: the SDK ToggleTractorBeam chain (window handler
+    resolution + CallNextHandler + event re-fire) does not reliably reach
+    the TacWeaponsCtrl in our engine — see App.ToggleTractorFromInput."""
+    import App  # deferred: module-top import reorders sound-manager init
+    return {
+        App.WC_ALT_T: App.ToggleTractorFromInput,
+        App.WC_ALT_C: App.ToggleCloakFromInput,
+    }
+
+
+def _poll_modifier_chords(host) -> None:
+    """Edge-detect every modifier+key chord the SDK can bind (ALT/CTRL/
+    Shift × letters, digits, F-keys) and feed rising edges to
+    g_kInputManager.OnChordDown (KS_KEYDOWN + KS_NORMAL — the SDK binds
+    each chord under exactly one state) and falling edges to OnKeyUp.
+    CAPS_ chords are Shift+key: KeyConfig registers them with KY_SHIFT.
+    Replaces the bespoke _poll_tractor_toggle/_poll_cloak_toggle pair."""
+    keys = getattr(host, "keys", None) if host is not None else None
+    if keys is None or not hasattr(keys, "KEY_LEFT_ALT"):
+        return
+    alt, ctrl, shift = _modifier_state(host)
+    if not (alt or ctrl or shift) and not _chord_prev:
+        return
+    import App  # deferred: module-top import reorders sound-manager init
+    import engine.dev_mode as dev_mode
+    from engine.appc.input import MODIFIER_CHORDS
+    mod_held = {"ALT": alt, "CTRL": ctrl, "CAPS": shift}
+    gated = _dev_gated_chords()
+    overrides = _chord_overrides()
+    for mod, base_name, wc in MODIFIER_CHORDS:
+        glfw_key = getattr(keys, "KEY_" + base_name, None)
+        if glfw_key is None:
+            continue
+        down = mod_held[mod] and bool(host_io.key_state(glfw_key))
+        was_down = _chord_prev.get(wc, False)
+        if down and not was_down:
+            if wc in gated and not dev_mode.is_enabled():
+                pass
+            elif wc in overrides:
+                overrides[wc]()
+            else:
+                App.g_kInputManager.OnChordDown(wc)
+        elif was_down and not down:
+            if wc not in overrides and (
+                    wc not in gated or dev_mode.is_enabled()):
+                App.g_kInputManager.OnKeyUp(wc)
+        if down:
+            _chord_prev[wc] = True
+        else:
+            _chord_prev.pop(wc, None)
+
+
 def _poll_function_keys(host, input_map) -> None:
     """Forward the crew-talk keys (F1-F5 by default) into g_kInputManager.
 
