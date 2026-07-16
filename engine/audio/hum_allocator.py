@@ -12,14 +12,23 @@ makes our ambient density match BC's.
 The hum's sound NAME comes from the engine subsystem's property; the name carries
 no distances and no gain, so the caller supplies BC's 4.375/35.0 (see engine_rumble).
 
-Boundary hysteresis (`BOUNDARY_HYSTERESIS_FRACTION`, below) is OUR addition, not
-a reproduction of BC: the decompiled `SetClass::UpdateSounds` (see
-docs/architecture/sound-system-openal-guide.md) shows a plain distance-sorted
-top-4 reconcile with no deadband. Without it, two ships hovering at near-equal
-range at the #4/#5 cutoff (an ordinary combat formation) would stop/restart
-their looping hum from sample 0 every single frame — an audible artifact BC
-never has to worry about because its reconcile only runs when a ship's set
-membership changes, not every frame at 60 Hz like ours does.
+Boundary hysteresis (`BOUNDARY_HYSTERESIS_FRACTION`, below) is OUR addition and
+a deliberate divergence from BC. Without it, two ships hovering at near-equal
+range at the #4/#5 cutoff (an ordinary combat formation) stop and restart their
+looping hum from sample 0 every frame — an audible machine-gun artifact.
+
+What the evidence actually says, and what it doesn't:
+  - The decompiled `SetClass::UpdateSounds` (@0x00413CB0) shows a plain
+    distance-sorted top-4 reconcile with **no deadband and no hysteresis**.
+  - `SetClass::Update` (@0x0040ffb0, vtable slot 24) — which drives it — runs
+    **once per frame** from the `UtopiaApp` main loop, the same cadence we run at.
+
+So BC faced the identical thrash geometry and shipped without a guard. **We do not
+know why it wasn't a problem there** — whether its proximity query gated candidates
+by range first, whether restarting a voice was cheap enough to be inaudible under
+Miles, or whether it simply was an artifact nobody logged. Do not invent a reason.
+This constant is a Dauntless mitigation for an artifact we can hear; it is not
+reproducing anything.
 """
 from __future__ import annotations
 
@@ -34,7 +43,7 @@ from engine.audio.tg_sound import TGSoundManager
 # Guide §10: BC's cap. Tunable, but default 4 so the mix density matches.
 MAX_HUMMING_SHIPS = 4
 
-# Deliberate divergence from BC (see module docstring above) — an incumbent
+# Deliberate divergence from BC (see the module docstring's evidence note) — an incumbent
 # already humming must be beaten by more than this fraction of squared
 # distance before a challenger displaces it. 5% is small enough that a
 # genuinely-closer ship still takes over promptly, but large enough to
