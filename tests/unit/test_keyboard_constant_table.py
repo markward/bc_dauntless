@@ -84,11 +84,11 @@ def test_widgets_overlap_values_match():
     assert App.WC_SPACE == 32
 
 
-def test_omitted_modifier_variants_stay_stubs():
-    """Unwired CTRL_/ALT_/CAPS_ variants still fall through to _NamedStub."""
-    assert int(App.WC_CTRL_Q) == 0
-    assert int(App.WC_ALT_1) == 0
-    assert int(App.WC_CAPS_K) == 0
+def test_modifier_variants_are_real_codes():
+    """CTRL_/ALT_/CAPS_ variants are modifier bands OR'd onto the base code."""
+    assert int(App.WC_CTRL_Q) == 0x400 | int(App.WC_Q)
+    assert int(App.WC_ALT_1) == 0x200 | int(App.WC_1)
+    assert int(App.WC_CAPS_K) == 0x800 | int(App.WC_K)
 
 
 # ── Round-trip: a newly-defined letter key reaches the TCW as an ET_* event ──
