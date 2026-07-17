@@ -71,6 +71,7 @@ class TGPane(TGEventHandlerObject):
         self._children: list = []   # (child, x, y) tuples
         self._visible = True
         self._enabled = True
+        self._parent = None   # set by a parent's AddChild/InsertChild
 
     def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
         self._children.append((child, float(x), float(y)))
@@ -84,6 +85,7 @@ class TGPane(TGEventHandlerObject):
             child._ensure_layout_state()
             child._local_left = float(x)
             child._local_top = float(y)
+            child._parent = self
 
     def GetChildren(self) -> list:
         # Returns (child, x, y) 3-tuples — dauntless-internal convenience,
@@ -128,16 +130,36 @@ class TGPane(TGEventHandlerObject):
     def InsertChild(self, index, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
         """Insert a child at the given list position, shifting later children right."""
         self._children.insert(int(index), (child, float(x), float(y)))
+        if isinstance(child, TGPane):
+            child._parent = self
 
     def DeleteChild(self, child) -> None:
+        if isinstance(child, TGPane) and child._parent is self:
+            child._parent = None
         self._children = [(c, x, y) for (c, x, y) in self._children if c is not child]
 
     def KillChildren(self) -> None:
+        for c, _x, _y in self._children:
+            if isinstance(c, TGPane) and c._parent is self:
+                c._parent = None
         self._children.clear()
 
     def SetVisible(self, *args) -> None:      self._visible = True
     def SetNotVisible(self, *args) -> None:   self._visible = False
     def IsVisible(self) -> int:               return 1 if self._visible else 0
+    def IsCompletelyVisible(self) -> int:
+        """RE-faithful: this pane AND every ancestor visible (bit 10 in BC).
+
+        Degrades to own visibility when there is no tracked TGPane parent —
+        correct for our headless tree, where ancestors above SDK widgets are
+        either synthetic-always-visible or absent.
+        """
+        if not self._visible:
+            return 0
+        parent = self._parent
+        if isinstance(parent, TGPane):
+            return parent.IsCompletelyVisible()
+        return 1
     def SetEnabled(self, *args) -> None:      self._enabled = True
     def SetDisabled(self, *args) -> None:     self._enabled = False
     def IsEnabled(self) -> int:               return 1 if self._enabled else 0

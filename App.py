@@ -1996,9 +1996,11 @@ _emission_recorder = _EmissionRecorder()
 class _Stub:
     """Returned for any App attribute not yet implemented.
 
-    Falsy so that `if pShip:` guards behave correctly when the object
-    hasn't been set up — surfaces missing implementations rather than
-    silently proceeding with stub data.
+    TRUTHY (``__bool__`` returns True) and has no ``__eq__``, so ``x == 0``
+    is False and ``if x:`` passes — an undefined name sails through guards
+    rather than reading as absent. That is the truthiness trap the stub
+    telemetry records; it is NOT falsy. Numeric coercion (`int()`/`float()`)
+    collapses to 0. See docs/stub_heatmap.md.
     """
     def __getattr__(self, name):
         return _Stub()
