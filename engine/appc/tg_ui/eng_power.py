@@ -128,9 +128,12 @@ class EngPowerDisplay(TGPane):
 
         The engineering-open signal encodes this widget's ancestor context
         (the display lives inside the Engineering pane, visible only when that
-        menu is up), so it stands in for the base chain-walk.  Falls back to
-        TGPane's own-visibility walk when no host check is registered (bare
-        unit contexts).
+        menu is up), so it stands in for the base chain-walk.  When a check is
+        registered it deliberately supersedes this widget's own ``_visible``
+        flag: BC's PowerDisplay.py never calls SetNotVisible on the display
+        root (only on child icons), so the engineering-open signal is the
+        authoritative on-screen state.  Falls back to TGPane's own-visibility
+        walk when no host check is registered (bare unit contexts).
         """
         if _engineering_open_check is not None:
             return 1 if _engineering_open_check() else 0
