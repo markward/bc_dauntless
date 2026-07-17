@@ -135,7 +135,7 @@ def shutdown_audio() -> None:
 def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> None:
     if _audio_mod is None:
         return
-    from engine.audio import attached_sources, hum_allocator, scene_scope
+    from engine.audio import attached_sources, hum_allocator, hum_diagnostic, scene_scope
     from engine.appc.ship_iter import active_set
     # Guide §11: only the rendered set is audible — stop the outgoing set's
     # sources before anything else touches this tick's audio state.
@@ -149,6 +149,11 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> Non
     # (2) the nearest-≤4 hum allocator, (3) the listener from the active camera.
     attached_sources.pump(dt)
     hum_allocator.update(listener_pos=camera_position)
+    # Dev-only diagnostic (F8-toggled, --developer only): a single boolean
+    # short-circuit inside maybe_report keeps this out of the 60 Hz hot path
+    # both in production and, by default, under --developer too -- see
+    # engine.audio.hum_diagnostic's module docstring.
+    hum_diagnostic.maybe_report(listener_pos=camera_position, player=player, dt=dt)
     px, py, pz = camera_position
     fx, fy, fz = camera_forward
     ux, uy, uz = camera_up

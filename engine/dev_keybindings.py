@@ -147,3 +147,16 @@ def register_for_frame(_h, session, player) -> None:
     dev_mode.register_dev_keybinding(
         _h.keys.KEY_F9, _quick_repair, "Quick-repair player ship (dev) — F9"
     )
+
+    # F8: toggle the engine-hum audio-geometry console readout (Part 2 of the
+    # exterior-audio-fidelity live-verification pass — see
+    # engine.audio.hum_diagnostic's module docstring for what it prints and
+    # why). Prints ~once/second while ON; completely silent while OFF.
+    def _toggle_hum_diagnostic() -> None:
+        from engine.audio import hum_diagnostic
+        hum_diagnostic.toggle()
+
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_F8, _toggle_hum_diagnostic,
+        "Toggle engine-hum diagnostic readout (dev) — F8",
+    )

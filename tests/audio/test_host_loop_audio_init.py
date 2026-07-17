@@ -44,6 +44,37 @@ def test_tick_audio_pushes_listener_pose(monkeypatch):
     host_loop.shutdown_audio()
 
 
+def test_tick_audio_drives_the_hum_diagnostic(monkeypatch):
+    """Wiring check for the Part 2 diagnostic (engine.audio.hum_diagnostic):
+    every tick_audio call must feed it the same listener pose + player + dt
+    the rest of the audio pipeline uses. maybe_report is itself the thing
+    that stays silent/cheap unless a developer turned it on with F8 -- this
+    only proves the call site plumbs the right arguments through."""
+    monkeypatch.setenv("OPEN_STBC_AUDIO", "0")
+    pytest.importorskip("_dauntless_host")
+    from engine import host_loop
+    from engine.audio import hum_diagnostic
+
+    calls = []
+    monkeypatch.setattr(hum_diagnostic, "maybe_report",
+                         lambda **kw: calls.append(kw))
+
+    host_loop.init_audio()
+    host_loop.tick_audio(
+        camera_position=(1.0, 2.0, 3.0),
+        camera_forward=(0.0, 0.0, -1.0),
+        camera_up=(0.0, 1.0, 0.0),
+        dt=0.016,
+        player="the-player-object",
+    )
+    host_loop.shutdown_audio()
+
+    assert len(calls) == 1
+    assert calls[0]["listener_pos"] == (1.0, 2.0, 3.0)
+    assert calls[0]["player"] == "the-player-object"
+    assert calls[0]["dt"] == 0.016
+
+
 def test_register_default_sounds_is_gone():
     # The hardcoded stand-in is replaced by the real LoadBridge.LoadSounds()
     # + LoadTacticalSounds.LoadSounds() paths.

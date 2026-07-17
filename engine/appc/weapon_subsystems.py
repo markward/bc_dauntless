@@ -351,7 +351,44 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0):
     if hasattr(mod, "GetLaunchSound"):
         sound_name = mod.GetLaunchSound()
         if sound_name:
-            TGSoundManager.instance().PlaySound(sound_name)
+            # BC (sdk/Build/scripts/MissionLib.py:3284-3296, verbatim):
+            #   pSound = App.g_kSoundManager.GetSound(pcLaunchSound)
+            #   if pSound != None:
+            #       pSound.AttachToNode(pTorp.GetNode())
+            #       pSoundRegion = App.TGSoundRegion_GetRegion(pSet.GetName())
+            #       if pSoundRegion != None: pSoundRegion.AddSound(pSound)
+            #       pSound.Play()
+            #
+            # PlaySound(name) (the old call here) passes no node and no
+            # position; the sound is registered LS_3D (positional=True), and
+            # the backend ORs that load-time flag in regardless of whether a
+            # position was supplied -- so every launch played positional at
+            # the world origin, untracked (no falloff, no doppler). Mirror
+            # BC's GetSound -> AttachToNode -> Play sequence instead: torp is
+            # its own node source (Torpedo.GetNode/GetWorldLocation, added
+            # alongside this fix) so AttachToNode + attached_sources.pump
+            # rides it through the whole flight, same as a ship's engine hum.
+            #
+            # Region association: BC's TGSoundRegion.AddSound scopes the
+            # sound to the current set so a scene change can stop it in bulk.
+            # TGSound.Play() already does the Dauntless-native equivalent
+            # unconditionally once a node/position is present (see
+            # engine.audio.scene_scope.register, called from Play() itself)
+            # -- there is no separate set/region lookup cheaply reachable
+            # from this call site, and none is needed: Play() covers it.
+            snd = TGSoundManager.instance().GetSound(sound_name)
+            if snd is not None:
+                # Torpedo.GetNode() always returns a real (weak) node -- no
+                # hasattr guard needed here (that would be the vacuous-True
+                # TGObject.__getattr__ stub trap; GetNode is a real method on
+                # Torpedo, not a stub). Prefer no attachment over a wrong
+                # one: only Play() once a node is in hand, so a future
+                # projectile type that can't supply one never falls back to
+                # PlaySound's origin-pin bug.
+                node = torp.GetNode()
+                if node is not None:
+                    snd.AttachToNode(node)
+                    snd.Play()
 
     return torp
 

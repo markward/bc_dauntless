@@ -206,11 +206,23 @@ def test_fire_without_power_property_bypasses_gate():
 # ── Launch sound ────────────────────────────────────────────────────────────
 
 def test_fire_plays_launch_sound():
+    """PlaySound(name) is BC-unfaithful (see
+    tests/audio/test_torpedo_launch_positional.py) -- _spawn_projectile
+    (shared by torpedo tubes and pulse cannons) mirrors MissionLib.py's
+    GetSound -> AttachToNode(bolt.GetNode()) -> Play() sequence instead, so
+    a disruptor bolt dopplers past the listener the same way a torpedo does."""
     _active.clear()
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance") as mock_mgr:
+        mock_snd = mock_mgr.return_value.GetSound.return_value
         cannon.Fire(target="enemy", offset="hit")
-        mock_mgr.return_value.PlaySound.assert_called_with("Klingon Disruptor")
+        mock_mgr.return_value.GetSound.assert_called_with("Klingon Disruptor")
+        mock_mgr.return_value.PlaySound.assert_not_called()
+        bolt = _active[-1]
+        mock_snd.AttachToNode.assert_called_once()
+        (attached_node,), _kw = mock_snd.AttachToNode.call_args
+        assert attached_node.GetWorldLocation() == bolt.GetWorldLocation()
+        mock_snd.Play.assert_called_once_with()
     _active.clear()
 
 

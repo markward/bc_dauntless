@@ -25,6 +25,7 @@ def _isolate_registries():
 
 class _Keys:
     KEY_F7 = 296
+    KEY_F8 = 297
     KEY_F9 = 298
     KEY_F10 = 299
     KEY_LEFT_BRACKET = 91
@@ -127,3 +128,17 @@ def test_f9_quick_repairs_player_ship():
 def test_f9_quick_repair_noop_without_player():
     register_for_frame(_FakeHost(), session=None, player=None)
     _handler_for(_Keys.KEY_F9)()   # must not raise
+
+
+def test_f8_toggles_the_hum_diagnostic_readout():
+    from engine.audio import hum_diagnostic
+    hum_diagnostic.reset_for_tests()
+    try:
+        register_for_frame(_FakeHost(), session=None, player=None)
+        assert hum_diagnostic.is_enabled() is False
+        _handler_for(_Keys.KEY_F8)()
+        assert hum_diagnostic.is_enabled() is True
+        _handler_for(_Keys.KEY_F8)()
+        assert hum_diagnostic.is_enabled() is False
+    finally:
+        hum_diagnostic.reset_for_tests()
