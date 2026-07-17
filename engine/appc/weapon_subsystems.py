@@ -2414,9 +2414,11 @@ class TorpedoTube(Weapon):
         out the tube's authored direction + inherited ship velocity — see
         _spawn_projectile), and play the launch sound.
 
-        Silent no-op when no script is bound (matches BC for unconfigured
-        tubes).  Per-tube slot routing is a future polish item — PR 2b
-        always pulls from slot 0.
+        The fired projectile is the SELECTED ammo type's — BC reads the module
+        path from the current ammo descriptor (weapon-firing-mechanics.md
+        +0x104), not a fixed slot.  Falls back to the property's slot-0 script
+        for undeclared/legacy tubes that carry no ammo types.  Silent no-op
+        when no script is bound (matches BC for unconfigured tubes).
         """
         parent = self.GetParentSubsystem()
         if parent is None:
@@ -2429,10 +2431,18 @@ class TorpedoTube(Weapon):
                 if hasattr(parent, "GetCurrentAmmoType") else None)
         if ammo is not None and not getattr(ammo, "_unlimited", True):
             ammo.AddAvailable(-1)
-        parent_prop = parent.GetProperty() if hasattr(parent, "GetProperty") else None
-        if parent_prop is None or not hasattr(parent_prop, "GetTorpedoScript"):
-            return
-        script_name = parent_prop.GetTorpedoScript(0)
+        # Fire the SELECTED type's projectile.  The ammo descriptor carries its
+        # own module path (_resolve_torpedo_ammo seeds it from the hardpoint's
+        # SetTorpedoScript(slot, ...)); the property's slot-0 script is the
+        # fallback for tubes with no ammo types configured.
+        script_name = None
+        if ammo is not None and hasattr(ammo, "GetTorpedoScript"):
+            script_name = ammo.GetTorpedoScript()
+        if not script_name:
+            parent_prop = parent.GetProperty() if hasattr(parent, "GetProperty") else None
+            if parent_prop is None or not hasattr(parent_prop, "GetTorpedoScript"):
+                return
+            script_name = parent_prop.GetTorpedoScript(0)
         if not script_name:
             return
 

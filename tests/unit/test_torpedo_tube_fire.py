@@ -128,6 +128,76 @@ def _galaxy_tube_with_photon_script():
     return tube, parent, ship
 
 
+def _sovereign_tube_photon_and_quantum():
+    """A TorpedoTube parented to a system carrying TWO ammo types — Photon at
+    slot 0, Quantum at slot 1 — each with its real projectile script, mirroring
+    sovereign.py:627-630.  Returns (tube, parent_system, ship)."""
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.subsystems import TorpedoSystem, TorpedoTube as _TT
+    from engine.appc.math import TGPoint3
+    from engine.appc.weapon_subsystems import TorpedoAmmoType
+    ship = ShipClass_Create("Test")
+    parent = TorpedoSystem("Torpedoes")
+    parent.TurnOn()
+    parent_prop = WeaponSystemProperty("Torpedoes")
+    parent_prop.SetTorpedoScript(0, "Tactical.Projectiles.PhotonTorpedo2")
+    parent_prop.SetTorpedoScript(1, "Tactical.Projectiles.QuantumTorpedo")
+    parent.SetProperty(parent_prop)
+    parent.AddAmmoType(TorpedoAmmoType(
+        "Photon", launch_speed=19.0, power_cost=20.0, max_torpedoes=200,
+        script="Tactical.Projectiles.PhotonTorpedo2"))
+    parent.AddAmmoType(TorpedoAmmoType(
+        "Quantum", launch_speed=22.0, power_cost=30.0, max_torpedoes=60,
+        script="Tactical.Projectiles.QuantumTorpedo"))
+    ship._torpedo_system = parent
+    parent._parent_ship = ship
+    ship.SetWorldLocation(TGPoint3(0, 0, 0))
+    tube = _TT("Forward Torpedo 1")
+    tube._max_ready = 1
+    tube._num_ready = 1
+    tube._reload_delay = 40.0
+    parent.AddChildSubsystem(tube)
+    return tube, parent, ship
+
+
+def test_fire_spawns_the_selected_ammo_types_projectile_not_slot_zero():
+    """Switching to Quantum must fire a QUANTUM (damage 900), not the slot-0
+    Photon (damage 550).  BC reads the fired script from the SELECTED ammo
+    type's descriptor (weapon-firing-mechanics.md +0x104), not a fixed slot.
+    Regression: _spawn_torpedo hardcoded GetTorpedoScript(0), so the magazine
+    debit tracked the selection while the projectile stayed Photon."""
+    _active.clear()
+    tube, parent, _ = _sovereign_tube_photon_and_quantum()
+    parent.SetCurrentAmmoSlot(1)                 # select Quantum
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        tube.Fire(target=None, offset=None)
+    assert len(_active) == 1
+    assert _active[-1]._damage == 900.0          # Quantum, not Photon's 550
+    _active.clear()
+
+
+def test_fire_default_selection_still_spawns_slot_zero_photon():
+    """No explicit selection → lowest slot (Photon) — unchanged."""
+    _active.clear()
+    tube, _, _ = _sovereign_tube_photon_and_quantum()
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        tube.Fire(target=None, offset=None)
+    assert _active[-1]._damage == 550.0          # Photon
+    _active.clear()
+
+
+def test_fire_plays_the_selected_ammo_types_launch_sound():
+    """The launch SFX must track the selection too (Quantum Torpedo, not the
+    slot-0 Photon Torpedo sound)."""
+    _active.clear()
+    tube, parent, _ = _sovereign_tube_photon_and_quantum()
+    parent.SetCurrentAmmoSlot(1)
+    with patch("engine.audio.tg_sound.TGSoundManager.instance") as mock_mgr:
+        tube.Fire(target=None, offset=None)
+        mock_mgr.return_value.GetSound.assert_called_with("Quantum Torpedo")
+    _active.clear()
+
+
 def test_fire_spawns_torpedo_with_script_visuals():
     _active.clear()
     tube, _, _ = _galaxy_tube_with_photon_script()
