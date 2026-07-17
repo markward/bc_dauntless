@@ -71,7 +71,7 @@ class TGPane(TGEventHandlerObject):
         self._children: list = []   # (child, x, y) tuples
         self._visible = True
         self._enabled = True
-        self._parent = None   # set by a parent's AddChild/InsertChild
+        self._visibility_parent = None   # set by a parent's AddChild/InsertChild
 
     def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
         self._children.append((child, float(x), float(y)))
@@ -85,7 +85,7 @@ class TGPane(TGEventHandlerObject):
             child._ensure_layout_state()
             child._local_left = float(x)
             child._local_top = float(y)
-            child._parent = self
+            child._visibility_parent = self
 
     def GetChildren(self) -> list:
         # Returns (child, x, y) 3-tuples — dauntless-internal convenience,
@@ -131,17 +131,17 @@ class TGPane(TGEventHandlerObject):
         """Insert a child at the given list position, shifting later children right."""
         self._children.insert(int(index), (child, float(x), float(y)))
         if isinstance(child, TGPane):
-            child._parent = self
+            child._visibility_parent = self
 
     def DeleteChild(self, child) -> None:
-        if isinstance(child, TGPane) and child._parent is self:
-            child._parent = None
+        if isinstance(child, TGPane) and child._visibility_parent is self:
+            child._visibility_parent = None
         self._children = [(c, x, y) for (c, x, y) in self._children if c is not child]
 
     def KillChildren(self) -> None:
         for c, _x, _y in self._children:
-            if isinstance(c, TGPane) and c._parent is self:
-                c._parent = None
+            if isinstance(c, TGPane) and c._visibility_parent is self:
+                c._visibility_parent = None
         self._children.clear()
 
     def SetVisible(self, *args) -> None:      self._visible = True
@@ -156,7 +156,7 @@ class TGPane(TGEventHandlerObject):
         """
         if not self._visible:
             return 0
-        parent = self._parent
+        parent = self._visibility_parent
         if isinstance(parent, TGPane):
             return parent.IsCompletelyVisible()
         return 1

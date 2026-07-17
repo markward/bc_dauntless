@@ -47,3 +47,15 @@ def test_deletechild_clears_parent_backref():
 def test_returns_int_not_bool():
     p = TGPane()
     assert type(p.IsCompletelyVisible()) is int
+
+
+def test_hidden_middle_ancestor_hides_grandchild():
+    grand = TGPane()
+    parent = TGPane()
+    child = TGPane()
+    grand.AddChild(parent)
+    parent.AddChild(child)
+    assert child.IsCompletelyVisible() == 1
+    parent.SetNotVisible()          # hide the middle link only
+    assert child.IsCompletelyVisible() == 0
+    assert grand.IsCompletelyVisible() == 1
