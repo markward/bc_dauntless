@@ -53,7 +53,7 @@ from engine.audio.tg_sound import TGSoundManager  # noqa: F401
 # shim at host_loop module-load time perturbs sound-manager init order so
 # AmbBridge loads early during LoadBridge.Load (breaks a bridge-load test).
 # Kept deferred inside _poll_mouse_buttons / _poll_function_keys.
-from engine.audio.engine_rumble import update_positions, set_muted as _rumble_set_muted
+from engine.audio.engine_rumble import set_muted as _rumble_set_muted
 from engine.audio.bridge_ambient import set_active as _bridge_ambient_set
 from engine.ui import crew_menu_hotkeys
 from engine.ui import bridge_officer_picking
@@ -135,9 +135,25 @@ def shutdown_audio() -> None:
 def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> None:
     if _audio_mod is None:
         return
-    # Push ship positions to looping rumble sources before set_listener,
-    # so positional math sees up-to-date source positions.
-    update_positions()
+    from engine.audio import attached_sources, hum_allocator, hum_diagnostic, scene_scope
+    from engine.appc.ship_iter import active_set
+    # Guide §11: only the rendered set is audible — stop the outgoing set's
+    # sources before anything else touches this tick's audio state.
+    # Caveat: active_set() is NOT App.g_kSetManager.GetRenderedSet() — it is
+    # the player's own containing (space) set, which does not change on a
+    # bridge<->space camera toggle. See scene_scope's module docstring
+    # ("Current wiring note") for what this gate does and does not cover.
+    act = active_set()
+    scene_scope.set_rendered_set(act.GetName() if act is not None else None)
+    # Guide §9, in order: (1) attached emitters from their nodes,
+    # (2) the nearest-≤4 hum allocator, (3) the listener from the active camera.
+    attached_sources.pump(dt)
+    hum_allocator.update(listener_pos=camera_position)
+    # Dev-only diagnostic (F8-toggled, --developer only): a single boolean
+    # short-circuit inside maybe_report keeps this out of the 60 Hz hot path
+    # both in production and, by default, under --developer too -- see
+    # engine.audio.hum_diagnostic's module docstring.
+    hum_diagnostic.maybe_report(listener_pos=camera_position, player=player, dt=dt)
     px, py, pz = camera_position
     fx, fy, fz = camera_forward
     ux, uy, uz = camera_up

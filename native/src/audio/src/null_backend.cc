@@ -4,6 +4,8 @@ namespace dauntless::audio {
 
 bool NullBackend::init() { log_.push_back({"init"}); return true; }
 void NullBackend::shutdown() { log_.push_back({"shutdown"}); }
+void NullBackend::begin_frame() { log_.push_back({"begin_frame"}); }
+void NullBackend::end_frame() { log_.push_back({"end_frame"}); }
 
 BufferHandle NullBackend::create_buffer(const PcmDesc& d, const uint8_t*, size_t n) {
     LoggedCall c{"create_buffer"};
@@ -19,11 +21,11 @@ void NullBackend::destroy_buffer(BufferHandle h) {
 
 SourceHandle NullBackend::play(BufferHandle buf, bool looping, float gain,
                                Category cat, bool positional,
-                               float x, float y, float z) {
+                               float x, float y, float z, float priority) {
     LoggedCall c{"play"};
     c.u[0] = buf; c.u[1] = static_cast<uint32_t>(cat);
     c.b[0] = looping; c.b[1] = positional;
-    c.f[0] = gain; c.f[1] = x; c.f[2] = y; c.f[3] = z;
+    c.f[0] = gain; c.f[1] = x; c.f[2] = y; c.f[3] = z; c.f[4] = priority;
     log_.push_back(c);
     return next_src_++;
 }
@@ -34,6 +36,12 @@ void NullBackend::stop(SourceHandle h) {
 
 void NullBackend::set_position(SourceHandle h, float x, float y, float z) {
     LoggedCall c{"set_position"}; c.u[0] = h;
+    c.f[0] = x; c.f[1] = y; c.f[2] = z;
+    log_.push_back(c);
+}
+
+void NullBackend::set_velocity(SourceHandle h, float x, float y, float z) {
+    LoggedCall c{"set_velocity"}; c.u[0] = h;
     c.f[0] = x; c.f[1] = y; c.f[2] = z;
     log_.push_back(c);
 }
@@ -53,11 +61,13 @@ void NullBackend::set_min_max_distance(SourceHandle h, float mn, float mx) {
 
 void NullBackend::set_listener(float px, float py, float pz,
                                float fx, float fy, float fz,
-                               float ux, float uy, float uz) {
+                               float ux, float uy, float uz,
+                               float vx, float vy, float vz) {
     LoggedCall c{"set_listener"};
     c.f[0]=px; c.f[1]=py; c.f[2]=pz;
     c.f[3]=fx; c.f[4]=fy; c.f[5]=fz;
     c.f[6]=ux; c.f[7]=uy; c.f[8]=uz;
+    c.f[9]=vx; c.f[10]=vy; c.f[11]=vz;
     log_.push_back(c);
 }
 

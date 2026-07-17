@@ -690,6 +690,8 @@ def _reset_leakable_engine_globals():
         ("engine.appc.hit_vfx", "_active"),
         ("engine.appc.ship_death", "_active"),
         ("engine.appc.visible_damage", "_pending"),
+        ("engine.audio.attached_sources", "_attached"),
+        ("engine.audio.hum_allocator", "_humming"),
     ):
         try:
             _m = sys.modules.get(_mod)
@@ -697,6 +699,29 @@ def _reset_leakable_engine_globals():
                 getattr(_m, _attr).clear()
         except Exception:
             pass
+    # scene_scope (guide §11 one-active-scene rule): _rendered is a scalar, not
+    # a container, so it needs its own reset_for_tests() rather than a plain
+    # .clear() -- same leak class as attached_sources/_attached and
+    # hum_allocator/_humming just above (a test that calls set_rendered_set
+    # would otherwise leak the active scene name into a later, unrelated test).
+    try:
+        _m = sys.modules.get("engine.audio.scene_scope")
+        if _m is not None:
+            _m.reset_for_tests()
+    except Exception:
+        pass
+    # engine_rumble._muted: a scalar bool, same leak class as scene_scope's
+    # _rendered just above. hum_allocator._start_hum now reads it (review
+    # finding #1 -- a ship entering the top-4 while muted must start silent),
+    # so a test that calls engine_rumble.set_muted(True) and never unmutes
+    # would otherwise leak True into a later, unrelated test's hums, silently
+    # muting them with no assertion failure to explain why.
+    try:
+        _m = sys.modules.get("engine.audio.engine_rumble")
+        if _m is not None:
+            _m.reset_for_tests()
+    except Exception:
+        pass
     # Global TGObject id -> object registry (engine.core.ids._registry). Every
     # TGObject.__init__ inserts itself and nothing removes it, so the table grows
     # for the whole session. Some SDK object lookups (ObjectClass_GetObject ->

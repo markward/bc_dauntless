@@ -9,6 +9,7 @@ from engine.audio.tg_sound import (
     TGSound, TGSoundManager, init_audio_for_tests, shutdown_audio_for_tests,
 )
 from engine.audio.engine_rumble import install_engine_rumble_listener, reset_for_tests
+from engine.audio import hum_allocator
 
 
 def _wav():
@@ -29,35 +30,44 @@ class _FakeSubsystem:
     def GetProperty(self): return self._prop
 
 
+class _FakeLoc:
+    def __init__(self, x, y, z): self.x, self.y, self.z = x, y, z
+
+
 class _FakeShip:
-    def __init__(self, sound_name, scene_node=42):
+    def __init__(self, sound_name, loc=(0.0, 0.0, 0.0)):
         self._impulse = _FakeSubsystem(_FakeProperty(sound_name))
-        self._scene_node = scene_node
+        self._loc = _FakeLoc(*loc)
     def GetImpulseEngineSubsystem(self):
         return self._impulse
-    def GetSceneNodeId(self):
-        return self._scene_node
+    def GetWorldLocation(self):
+        return self._loc
+    def GetNode(self):
+        # Mirrors ObjectClass.GetNode(): a handle resolving GetWorldLocation.
+        return self
 
 
 @pytest.fixture
 def boot(tmp_path):
     reset_for_tests()  # ensure clean _installed state regardless of prior tests
+    hum_allocator.reset_for_tests()
     init_audio_for_tests()
     wav = tmp_path / "engine.wav"
     wav.write_bytes(_wav())
     TGSoundManager.instance().LoadSound(str(wav), "Federation Engines", TGSound.LS_3D)
     yield
     shutdown_audio_for_tests()
+    hum_allocator.reset_for_tests()
 
 
-def test_engine_rumble_plays_on_publish_added(boot):
-    from engine.appc import ship_lifecycle
-    ship_lifecycle.reset()
-    install_engine_rumble_listener()
+def test_hum_allocator_starts_hum_for_ship_with_engine(boot, monkeypatch):
+    """Hum START ownership moved to hum_allocator (guide §10) — the lifecycle
+    listener no longer starts anything on `added`."""
+    ship = _FakeShip("Federation Engines")
+    monkeypatch.setattr(hum_allocator, "_roster", lambda: [ship])
 
     _dauntless_host.audio.clear_command_log()
-    ship = _FakeShip("Federation Engines")
-    ship_lifecycle.publish_added(ship)
+    hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
 
     entries = _dauntless_host.audio.debug_command_log()
     play_entries = [e for e in entries if e["op"] == "play"]
@@ -66,17 +76,26 @@ def test_engine_rumble_plays_on_publish_added(boot):
     assert play_entries[0]["u"][1] == 0           # category SFX
 
 
-def test_engine_rumble_stops_on_destroy(boot):
+def test_engine_rumble_stops_on_destroy(boot, monkeypatch):
+    """Hum STOP stays on the lifecycle listener: a destroyed ship's hum stops
+    on the frame it dies rather than waiting for the allocator's next
+    reconcile (see engine_rumble._on_ship_event)."""
     from engine.appc import ship_lifecycle
     ship_lifecycle.reset()
     install_engine_rumble_listener()
+
     ship = _FakeShip("Federation Engines")
-    ship_lifecycle.publish_added(ship)
+    monkeypatch.setattr(hum_allocator, "_roster", lambda: [ship])
+    hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
+    assert ship in hum_allocator._humming  # sanity: hum is live before destroy
 
     _dauntless_host.audio.clear_command_log()
     ship_lifecycle.publish_destroyed(ship)
     ops = [e["op"] for e in _dauntless_host.audio.debug_command_log()]
     assert "stop" in ops
+    assert ship not in hum_allocator._humming
+
+    ship_lifecycle.reset()
 
 
 def test_missing_engine_sound_does_not_crash(boot):
@@ -88,25 +107,20 @@ def test_missing_engine_sound_does_not_crash(boot):
     ship_lifecycle.publish_destroyed(ship)
 
 
-def test_update_positions_pushes_ship_world_location(boot):
-    from engine.appc import ship_lifecycle
-    from engine.audio.engine_rumble import update_positions, reset_for_tests
-    reset_for_tests()
-    ship_lifecycle.reset()
-    install_engine_rumble_listener()
+def test_attached_sources_pumps_ship_world_location(boot, monkeypatch):
+    """AttachToNode (via GetNode()) supersedes the old update_positions
+    poller: hum_allocator.Play(attach_node=ship.GetNode()) registers with
+    engine.audio.attached_sources, and attached_sources.pump() is what
+    copies the ship's world position into the source now."""
+    from engine.audio import attached_sources
+    attached_sources.reset_for_tests()
 
-    class _Loc:
-        x, y, z = 100.0, 200.0, 300.0
-
-    class _PositionedShip(_FakeShip):
-        def GetWorldLocation(self):
-            return _Loc()
-
-    ship = _PositionedShip("Federation Engines")
-    ship_lifecycle.publish_added(ship)
+    ship = _FakeShip("Federation Engines", loc=(100.0, 200.0, 300.0))
+    monkeypatch.setattr(hum_allocator, "_roster", lambda: [ship])
+    hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
 
     _dauntless_host.audio.clear_command_log()
-    update_positions()
+    attached_sources.pump(dt=0.016)
 
     pos_entries = [e for e in _dauntless_host.audio.debug_command_log()
                    if e["op"] == "set_position"]
@@ -115,32 +129,26 @@ def test_update_positions_pushes_ship_world_location(boot):
     assert pos_entries[0]["f"][1] == 200.0
     assert pos_entries[0]["f"][2] == 300.0
 
-    # Tear down: ship_lifecycle.snapshot() is global; remove the partial
-    # test object so later tests that iterate ships (e.g. target_list) don't
-    # see a ship without GetName and crash.
-    ship_lifecycle.reset()
+    attached_sources.reset_for_tests()
 
 
-def test_install_listener_replays_existing_live_ships(boot):
-    """Mission load fires publish_added BEFORE init_audio in host_loop, so
-    install_engine_rumble_listener must replay the current live set so rumble
-    starts for ships that are already on stage by the time we subscribe.
+def test_hum_uses_bc_near_field_distances(boot, monkeypatch):
+    """Guide §5: the hum is the sole exception to 50/700 — 4.375/35.0.
+
+    The max of 35.0 is the certain half and the one that matters: it makes the
+    hum a tight near-field sound instead of reaching 700 units like weapons do.
     """
-    from engine.appc import ship_lifecycle
-    reset_for_tests()
-    ship_lifecycle.reset()
-
-    # Ship is added BEFORE the listener subscribes — typical of the host_loop
-    # boot ordering (mission load → init_audio → install_engine_rumble_listener).
+    from engine.audio import engine_rumble
     ship = _FakeShip("Federation Engines")
-    ship_lifecycle.publish_added(ship)
+    monkeypatch.setattr(hum_allocator, "_roster", lambda: [ship])
 
     _dauntless_host.audio.clear_command_log()
-    install_engine_rumble_listener()
+    hum_allocator.update(listener_pos=(0.0, 0.0, 0.0))
 
-    play_entries = [e for e in _dauntless_host.audio.debug_command_log()
-                    if e["op"] == "play"]
-    assert len(play_entries) == 1
-    assert play_entries[0]["b"][0] is True  # looping
-
-    ship_lifecycle.reset()
+    mm = [c for c in _dauntless_host.audio.debug_command_log()
+          if c["op"] == "set_min_max_distance"]
+    assert mm, "hum must push its own min/max, not inherit the 50/700 default"
+    assert mm[-1]["f"][0] == 4.375
+    assert mm[-1]["f"][1] == 35.0
+    assert engine_rumble.HUM_MIN_DISTANCE == 4.375
+    assert engine_rumble.HUM_MAX_DISTANCE == 35.0

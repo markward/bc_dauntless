@@ -198,9 +198,24 @@ def test_fire_no_script_bound_silent_no_op():
 
 
 def test_fire_plays_launch_sound():
+    """PlaySound(name) is BC-unfaithful and was the confirmed root cause of
+    torpedo launch sounds pinning to the world origin (no node, no position
+    -- see tests/audio/test_torpedo_launch_positional.py for the live-play
+    regression test). Fire must instead mirror MissionLib.py's
+    GetSound -> AttachToNode(torp.GetNode()) -> Play() sequence."""
     _active.clear()
     tube, _, _ = _galaxy_tube_with_photon_script()
     with patch("engine.audio.tg_sound.TGSoundManager.instance") as mock_mgr:
+        mock_snd = mock_mgr.return_value.GetSound.return_value
         tube.Fire(target=None, offset=None)
-        mock_mgr.return_value.PlaySound.assert_called_with("Photon Torpedo")
+        mock_mgr.return_value.GetSound.assert_called_with("Photon Torpedo")
+        mock_mgr.return_value.PlaySound.assert_not_called()
+        torp = _active[-1]
+        mock_snd.AttachToNode.assert_called_once()
+        (attached_node,), _kw = mock_snd.AttachToNode.call_args
+        # The node isn't the SAME object as a fresh torp.GetNode() call (each
+        # call mints a new weak _ObjectNodeRef) -- what matters is it
+        # resolves to the torpedo's actual position, not the world origin.
+        assert attached_node.GetWorldLocation() == torp.GetWorldLocation()
+        mock_snd.Play.assert_called_once_with()
     _active.clear()

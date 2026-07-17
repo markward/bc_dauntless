@@ -1,5 +1,6 @@
 #include <audio/python_binding.h>
 #include <audio/audio_system.h>
+#include <audio/audio_constants.h>
 #include <audio/null_backend.h>
 #include <audio/openal_backend.h>
 #include <memory>
@@ -53,8 +54,9 @@ static double get_duration_impl(const std::string& name) {
 }
 
 static uint32_t play_impl(const std::string& name, bool looping, float gain,
-                          const std::string& category, uint32_t attach_node,
-                          py::object position) {
+                          const std::string& category,
+                          py::object position, bool force_non_positional,
+                          float priority) {
     if (!g_system) return 0;
     float x=0,y=0,z=0; bool provided=false;
     if (!position.is_none()) {
@@ -63,13 +65,18 @@ static uint32_t play_impl(const std::string& name, bool looping, float gain,
         provided = true;
     }
     return g_system->play_sound(name, looping, gain, parse_category(category),
-                                attach_node, provided, x, y, z);
+                                provided, x, y, z,
+                                force_non_positional, priority);
 }
 
 static void stop_impl(uint32_t pid) { if (g_system) g_system->stop(pid); }
 
 static void set_position_impl(uint32_t pid, float x, float y, float z) {
     if (g_system) g_system->set_position(pid, x, y, z);
+}
+
+static void set_velocity_impl(uint32_t pid, float x, float y, float z) {
+    if (g_system) g_system->set_velocity(pid, x, y, z);
 }
 
 static void set_gain_impl(uint32_t pid, float g) {
@@ -104,17 +111,45 @@ static py::list debug_command_log_impl() {
         d["op"] = c.op;
         d["u"] = py::make_tuple(c.u[0], c.u[1], c.u[2], c.u[3]);
         d["f"] = py::make_tuple(c.f[0], c.f[1], c.f[2], c.f[3],
-                                 c.f[4], c.f[5], c.f[6], c.f[7], c.f[8]);
+                                 c.f[4], c.f[5], c.f[6], c.f[7], c.f[8],
+                                 c.f[9], c.f[10], c.f[11]);
         d["b"] = py::make_tuple(c.b[0], c.b[1]);
         out.append(d);
     }
     return out;
 }
 
+// Review #2: the single source of truth for c. Both openal_backend.cc's
+// alSpeedOfSound() call and AudioSystem::update()'s discontinuity guard read
+// kSpeedOfSoundGU directly; this exposes the same constant to Python so
+// engine/audio/attached_sources.py:SPEED_OF_SOUND_GU derives from it instead
+// of re-declaring the literal independently.
+static float speed_of_sound_impl() { return kSpeedOfSoundGU; }
+
+// Review #3: same precedent -- expose kBcDefaultPriority so
+// engine/audio/tg_sound.py:TGSound.BC_DEFAULT_PRIORITY derives from the C++
+// constant instead of re-declaring an independent literal that could drift.
+static float bc_default_priority_impl() { return kBcDefaultPriority; }
+
 static void clear_command_log_impl() {
     if (!g_system) return;
     if (auto* nb = dynamic_cast<NullBackend*>(g_system->backend()))
         nb->clear_command_log();
+}
+
+static bool is_finished_impl(uint32_t pid) {
+    // No system at all means nothing is playing -> treat as finished so a
+    // Python pump loop can't spin forever on a dead reference.
+    return !g_system || g_system->is_finished(pid);
+}
+
+// Test-only hook: force `pid`'s underlying NullBackend source to report
+// finished, so Python tests can simulate a one-shot completing naturally
+// without waiting on real playback duration.
+static void debug_mark_finished_impl(uint32_t pid) {
+    if (!g_system) return;
+    if (auto* nb = dynamic_cast<NullBackend*>(g_system->backend()))
+        nb->mark_finished(g_system->debug_backend_handle(pid));
 }
 
 void register_python_bindings(py::module_& parent) {
@@ -129,14 +164,21 @@ void register_python_bindings(py::module_& parent) {
     m.def("play", &play_impl,
           py::arg("name"), py::arg("looping") = false,
           py::arg("gain") = 1.0f, py::arg("category") = "SFX",
-          py::arg("attach_node") = 0u, py::arg("position") = py::none());
+          py::arg("position") = py::none(),
+          py::arg("force_non_positional") = false,
+          py::arg("priority") = kBcDefaultPriority);
     m.def("stop", &stop_impl);
     m.def("set_position", &set_position_impl);
+    m.def("set_velocity", &set_velocity_impl);
     m.def("set_gain", &set_gain_impl);
     m.def("set_looping", &set_looping_impl);
     m.def("set_min_max_distance", &set_min_max_distance_impl);
     m.def("set_category_gain", &set_category_gain_impl);
     m.def("update", &update_impl);
+    m.def("speed_of_sound", &speed_of_sound_impl);
+    m.def("bc_default_priority", &bc_default_priority_impl);
+    m.def("is_finished", &is_finished_impl);
+    m.def("debug_mark_finished", &debug_mark_finished_impl);
     m.def("debug_command_log", &debug_command_log_impl);
     m.def("clear_command_log", &clear_command_log_impl);
 }

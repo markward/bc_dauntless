@@ -34,9 +34,12 @@ class _PlayingSound:
     Note on lifetime: callers do NOT need to hold the handle alive. One-shot
     sounds (PlaySound) are fire-and-forget — the C++ AudioSystem reaps them
     after they finish. Looping sources are held alive by the subscriber that
-    owns them (e.g. engine_rumble._active[ship]). Do not add __del__ → Stop:
-    one-shots are typically returned to locals that go out of scope before
-    any audio plays, and a __del__ stop would silently mute every PlaySound.
+    owns them (e.g. engine.audio.hum_allocator._humming[ship], a
+    WeakKeyDictionary — see that module for the weakref.finalize that stops
+    the source if the ship is GC'd without an explicit teardown). Do not add
+    __del__ → Stop: one-shots are typically returned to locals that go out of
+    scope before any audio plays, and a __del__ stop would silently mute
+    every PlaySound.
     """
 
     __slots__ = ("_pid",)
@@ -44,14 +47,39 @@ class _PlayingSound:
     def __init__(self, pid: int) -> None:
         self._pid = pid
 
+    def is_live(self) -> bool:
+        """True while this handle still refers to a playing source.
+
+        Liveness lives HERE, not in each registry: a handle can go dead two
+        ways the holder cannot see -- an explicit Stop() (zeroes `_pid`), or
+        the C++ AudioSystem reaping/evicting the source without telling
+        Python (a naturally-finished one-shot, or `AudioSystem::play`'s
+        pool-saturation eviction, which erases the victim from `sources_`
+        without zeroing `_pid` on the Python side). Testing dict-key
+        presence, or `_pid` alone, instead of calling this is what silently
+        killed the player's engine hum on warp -- and, before this fix, is
+        what let an EVICTED hum stay in `hum_allocator.humming_ids` forever
+        (the ship hums silently until it next crosses the top-4 boundary).
+        """
+        if not self._pid:
+            return False
+        return not (_audio is not None and _audio.is_finished(self._pid))
+
     def Stop(self) -> None:
         if _audio and self._pid:
             _audio.stop(self._pid)
+        if self._pid:
+            from engine.audio import attached_sources
+            attached_sources.detach(self)
         self._pid = 0
 
     def SetPosition(self, x: float, y: float, z: float) -> None:
         if _audio and self._pid:
             _audio.set_position(self._pid, x, y, z)
+
+    def SetVelocity(self, x: float, y: float, z: float) -> None:
+        if _audio and self._pid:
+            _audio.set_velocity(self._pid, x, y, z)
 
     def SetGain(self, gain: float) -> None:
         if _audio and self._pid:
@@ -69,18 +97,33 @@ class TGSound:
     SS_UNLOADED = 2
     SS_UNKNOWN = 3
 
+    # BC's TGSound::SetupFromFile shipped defaults (0x0070B360), recovered in
+    # docs/architecture/sound-system-openal-guide.md §5. SetMinMaxDistance has
+    # exactly three xrefs in the original binary and no weapon code touches it,
+    # so this one pair sets the loudness balance of essentially all BC combat
+    # audio. The ship engine hum is the sole exception (see hum_allocator).
+    BC_DEFAULT_MIN_DISTANCE = 50.0
+    BC_DEFAULT_MAX_DISTANCE = 700.0
+    # Review #3: derived from the C++ constant (native/src/audio/include/
+    # audio/audio_constants.h:kBcDefaultPriority), not re-declared as an
+    # independent literal -- same precedent as
+    # attached_sources.SPEED_OF_SOUND_GU/_audio.speed_of_sound(). 0.5 is the
+    # fallback for the no-backend/test case where `_audio` is None.
+    BC_DEFAULT_PRIORITY = _audio.bc_default_priority() if _audio is not None else 0.5
+
     def __init__(self, name: str, positional: bool) -> None:
         self._name = name
         self._positional = positional
         self._looping = False
         self._gain = 1.0
         self._category_tag = "SFX"
-        self._priority = 0.0
-        self._min_dist = 100.0
-        self._max_dist = 100000.0
+        self._priority = TGSound.BC_DEFAULT_PRIORITY
+        self._min_dist = TGSound.BC_DEFAULT_MIN_DISTANCE
+        self._max_dist = TGSound.BC_DEFAULT_MAX_DISTANCE
         self._loaded = _audio is not None and _audio.get_sound(name) != 0
         self._active: list[_PlayingSound] = []
         self._region = None  # set by TGSoundRegion.AddSound; gates launch gain
+        self._node = None    # AttachToNode anchor; see engine.audio.attached_sources
         self._group = ""     # group tag (GetGroup/SetGroup); "" == untagged
 
     def IsLoaded(self) -> int:
@@ -117,24 +160,55 @@ class TGSound:
     def SetInterface(self, *_args) -> None:  self._category_tag = "Interface"
     def IsInterface(self) -> int:            return 1 if self._category_tag == "Interface" else 0
 
-    def Play(self, attach_node: int = 0, position=None) -> Optional[_PlayingSound]:
+    def Play(self, attach_node=None, position=None) -> Optional[_PlayingSound]:
         if not _audio or not self._loaded:
             return None
-        # Drop handles we explicitly stopped earlier so the list can't grow
-        # without bound across repeated one-shot plays.
-        self._active = [h for h in self._active if h._pid]
+        # Drop dead handles (explicitly stopped OR naturally/evicted-finished
+        # -- see _PlayingSound.is_live) so the list can't grow without bound
+        # across repeated one-shot plays. `if h._pid` alone was WRONG: it
+        # only caught an explicit Stop() and let every naturally-finished
+        # one-shot accumulate forever, the opposite of what this comment
+        # claims.
+        self._active = [h for h in self._active if h.is_live()]
+        if attach_node is not None:
+            self.AttachToNode(attach_node)
+        force_non_positional = False
+        if position is None and self._node is not None:
+            from engine.audio import attached_sources
+            # Launch at the anchor: a one-shot may finish before the first pump.
+            position = attached_sources.node_world_position(self._node)
+            if position is None:
+                # The node was attached but failed to resolve a real position
+                # (chainable stub, or a weak ref whose owner is already gone).
+                # Falling through with position=None would still play a
+                # POSITIONAL source at the backend's (0, 0, 0) default for any
+                # sound loaded LS_3D (every weapon WAV) -- AudioSystem::play
+                # ORs in the sound's load-time positional flag regardless of
+                # whether a position was actually provided. That is exactly
+                # the world-origin pin attached_sources.node_world_position's
+                # guard exists to prevent, so force a genuinely non-positional
+                # source instead.
+                force_non_positional = True
         factor = self._region.filter_factor() if self._region is not None else 1.0
         pid = _audio.play(
             name=self._name, looping=self._looping, gain=self._gain * factor,
-            category=self._category_tag, attach_node=int(attach_node),
-            position=position,
+            category=self._category_tag, position=position,
+            force_non_positional=force_non_positional,
+            priority=self._priority,
         )
         if pid == 0:
             return None
         handle = _PlayingSound(pid)
         self._active.append(handle)
-        if self._positional or attach_node != 0 or position is not None:
+        if self._positional or self._node is not None or position is not None:
             _audio.set_min_max_distance(pid, self._min_dist, self._max_dist)
+        if self._node is not None:
+            from engine.audio import attached_sources
+            attached_sources.attach(handle, self._node)
+        from engine.audio import scene_scope
+        if scene_scope.rendered_set() is not None and (
+                self._positional or self._node is not None or position is not None):
+            scene_scope.register(handle, scene_scope.rendered_set())
         return handle
 
     # No-ops kept for the wider SDK surface (callers exist; behaviour deferred).
@@ -169,8 +243,16 @@ class TGSound:
         self._group = group or ""
         if self._group:
             mgr._groups.setdefault(self._group, set()).add(self._name)
-    def AttachToNode(self, *_a): pass
-    def DetachFromNode(self, *_a): pass
+    def AttachToNode(self, node=None) -> None:
+        """Anchor playback to `node` (an ObjectClass.GetNode() ref).
+
+        Guide §7 — BC's only positioning mechanism. Applies to sources this
+        sound starts from now on; already-playing handles keep their anchor.
+        """
+        self._node = node
+
+    def DetachFromNode(self, *_a) -> None:
+        self._node = None
     def SetPosition(self, *_a): pass
     def SetOrientation(self, *_a): pass
     def GetDuration(self) -> float:

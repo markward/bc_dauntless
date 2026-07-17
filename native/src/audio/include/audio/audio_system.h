@@ -1,6 +1,6 @@
 #pragma once
 #include <audio/audio_backend.h>
-#include <functional>
+#include <audio/audio_constants.h>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -9,10 +9,6 @@ namespace dauntless::audio {
 
 using SoundId = uint32_t;    // logical buffer id, returned to Python
 using PlayingId = uint32_t;  // logical source id, returned to Python
-using NodeId = uint32_t;     // scenegraph node id, 0 == none
-
-// Pulls a node's world position. Set by host_loop; tests provide a stub.
-using NodePositionFn = std::function<bool(NodeId, float& x, float& y, float& z)>;
 
 class AudioSystem {
 public:
@@ -22,8 +18,6 @@ public:
     bool init();
     void shutdown();
 
-    void set_node_position_fn(NodePositionFn fn) { node_pos_fn_ = std::move(fn); }
-
     bool load_sound(const std::string& path, const std::string& name,
                     const uint8_t* wav_bytes, size_t wav_len, bool positional);
 
@@ -32,18 +26,38 @@ public:
     bool is_positional(SoundId) const;
     double get_duration(const std::string& name) const;
 
+    // Guide §8: `priority` is a voice-stealing RANK, never a gain — see
+    // audio_backend.h. Defaults to BC's shipped TGSound default (0.5,
+    // TGSound.BC_DEFAULT_PRIORITY on the Python side).
     PlayingId play_sound(const std::string& name, bool looping, float gain,
-                         Category, NodeId attach_node,
-                         bool position_provided, float x, float y, float z);
+                         Category, bool position_provided, float x, float y, float z,
+                         bool force_non_positional = false,
+                         float priority = kBcDefaultPriority);
 
-    PlayingId play(SoundId, bool looping, float gain, Category, NodeId attach_node,
-                   bool position_provided, float x, float y, float z);
+    PlayingId play(SoundId, bool looping, float gain, Category,
+                   bool position_provided, float x, float y, float z,
+                   bool force_non_positional = false,
+                   float priority = kBcDefaultPriority);
 
     void stop(PlayingId);
+
+    // True when `pid` is unknown (already reaped by update()'s finished-source
+    // sweep) or the backend reports the underlying source has stopped on its
+    // own. Lets a per-frame Python pump (attached_sources.pump) drop a
+    // finished one-shot's tracking entry instead of issuing a dead-pid
+    // set_position forever.
+    bool is_finished(PlayingId) const;
+
+    // Test-only: the concrete backend SourceHandle for `pid`, or 0 if
+    // unknown. Lets Python tests reach into a specific backend (e.g.
+    // NullBackend::mark_finished) to simulate a source finishing, without
+    // AudioSystem itself depending on any concrete backend's type.
+    SourceHandle debug_backend_handle(PlayingId) const;
     void set_gain(PlayingId, float);
     void set_looping(PlayingId, bool);
     void set_min_max_distance(PlayingId, float, float);
     void set_position(PlayingId, float, float, float);
+    void set_velocity(PlayingId, float, float, float);
 
     void set_category_gain(Category, float);
 
@@ -63,8 +77,8 @@ private:
     };
     struct Source {
         SourceHandle backend;
-        NodeId node;
         bool looping;
+        float priority;
     };
 
     std::unique_ptr<IAudioBackend> backend_;
@@ -73,7 +87,11 @@ private:
     std::unordered_map<PlayingId, Source> sources_;
     SoundId next_sound_id_ = 1;
     PlayingId next_playing_id_ = 1;
-    NodePositionFn node_pos_fn_;
+
+    // Guide §4/§6: listener velocity for doppler, derived from the position
+    // delta across successive update() calls (raw game units per second).
+    bool  have_prev_listener_ = false;
+    float prev_listener_[3] = {0.f, 0.f, 0.f};
 };
 
 }  // namespace dauntless::audio

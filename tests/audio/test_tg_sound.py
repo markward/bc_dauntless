@@ -81,3 +81,53 @@ def test_tgsound_stop_stops_active_loop(audio, tmp_path):
     snd.Stop()  # TGSound.Stop (not the per-handle _PlayingSound.Stop)
     ops = [e["op"] for e in _dauntless_host.audio.debug_command_log()]
     assert "stop" in ops
+
+
+def test_bc_default_min_max_distance(audio, tmp_path):
+    """Guide §5: BC's TGSound::SetupFromFile defaults are 50/700, not 100/100000.
+
+    The max matters most: AL_INVERSE_DISTANCE_CLAMPED floors gain at
+    ref/(ref+(max-ref)) past max and holds it there. At max=100000 the floor
+    never engages and distant ships fade to nothing, which is the one thing
+    guide §5 says makes BC sound like BC.
+    """
+    wav = tmp_path / "x.wav"
+    wav.write_bytes(_wav(22050, [0, 0]))
+    audio.LoadSound(str(wav), "Ranged", TGSound.LS_3D)
+    snd = audio.GetSound("Ranged")
+
+    assert snd._min_dist == 50.0
+    assert snd._max_dist == 700.0
+    assert TGSound.BC_DEFAULT_MIN_DISTANCE == 50.0
+    assert TGSound.BC_DEFAULT_MAX_DISTANCE == 700.0
+
+    _dauntless_host.audio.clear_command_log()
+    snd.Play()
+    log = _dauntless_host.audio.debug_command_log()
+    mm = [c for c in log if c["op"] == "set_min_max_distance"]
+    assert len(mm) == 1, f"expected one set_min_max_distance, got {log}"
+    assert mm[0]["f"][0] == 50.0
+    assert mm[0]["f"][1] == 700.0
+
+
+def test_bc_default_priority_is_half(audio, tmp_path):
+    """Guide §8: TGSound+0x68 default priority is 0.5, not 0.0."""
+    wav = tmp_path / "x.wav"
+    wav.write_bytes(_wav(22050, [0, 0]))
+    audio.LoadSound(str(wav), "Prio", TGSound.LS_3D)
+    assert audio.GetSound("Prio").GetPriority() == 0.5
+
+
+def test_bc_default_priority_is_derived_from_the_native_binding():
+    """Review #3: BC_DEFAULT_PRIORITY must not be a second, independently
+    editable literal -- it must come from the same C++ source of truth as
+    audio_system.h's parameter defaults and python_binding.cc's
+    `py::arg("priority")`, exactly mirroring the SPEED_OF_SOUND_GU precedent
+    (see test_attached_sources.py's
+    test_speed_of_sound_gu_is_derived_from_the_native_binding). STRICT `==`,
+    not `approx` -- a loose comparison would silently accept a hardcoded
+    literal that happens to match today's value.
+    """
+    native_value = _dauntless_host.audio.bc_default_priority()
+    assert TGSound.BC_DEFAULT_PRIORITY == native_value, \
+        "BC_DEFAULT_PRIORITY must be exactly equal to the C++ value, not hardcoded"

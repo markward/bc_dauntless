@@ -1,9 +1,35 @@
 #include <audio/audio_system.h>
+#include <audio/audio_constants.h>
 #include <audio/wav.h>
 #include <audio/mp3.h>
+#include <cstdio>
 #include <cstring>
 
 namespace dauntless::audio {
+
+namespace {
+
+// Review #10: begin_frame()/end_frame() are a PAIRED call (Guide §9/§14.12 --
+// the backend applies a whole frame's listener move + reap atomically instead
+// of tearing mid-frame). Today update() has no early return between them and
+// nothing in the body throws, so the pairing happens to hold by inspection --
+// but that is fragile: a future early return added to update() (e.g. a bail
+// on some new precondition) would silently leave the backend in a suspended
+// "mid-frame" state forever, freezing ALL audio with no test failure to catch
+// it. An RAII guard makes the pairing exit-path-proof instead of
+// inspection-proof.
+struct FrameBatch {
+    IAudioBackend* b;
+    explicit FrameBatch(IAudioBackend* b) : b(b) { b->begin_frame(); }
+    ~FrameBatch() { b->end_frame(); }
+};
+
+}  // namespace
+
+// Guide §8: lowest-priority playing source loses. BC's consumer of this field
+// was never identified, so this is the natural reading, not a verified one --
+// and OpenAL Soft mixes 256 sources in software, so it rarely fires.
+static constexpr size_t kMaxSoundsAtOnce = 128;
 
 AudioSystem::AudioSystem(std::unique_ptr<IAudioBackend> b)
     : backend_(std::move(b)) {}
@@ -23,6 +49,17 @@ bool AudioSystem::load_sound(const std::string&, const std::string& name,
     const bool decoded = is_wav ? decode_wav(wav_bytes, wav_len, wav)
                                 : decode_mp3(wav_bytes, wav_len, wav);
     if (!decoded) return false;
+    // Guide §14.5: OpenAL only spatialises mono buffers -- a stereo buffer
+    // plays 2D regardless of position, with no error. All of BC's 3D sfx are
+    // mono; a stereo one loaded LS_3D is an asset bug, so fail loudly here
+    // rather than silently de-spatialising it.
+    if (positional && wav.channels != 1) {
+        std::fprintf(stderr,
+                     "[audio] '%s' is %u-channel but was loaded LS_3D; "
+                     "OpenAL only spatialises mono. Refusing.\n",
+                     name.c_str(), static_cast<unsigned>(wav.channels));
+        return false;
+    }
     double duration_sec = 0.0;
     const uint32_t bytes_per_sample = wav.bits_per_sample / 8;
     const uint64_t denom =
@@ -57,25 +94,65 @@ double AudioSystem::get_duration(const std::string& name) const {
 }
 
 PlayingId AudioSystem::play(SoundId id, bool looping, float gain, Category cat,
-                            NodeId attach_node, bool pos_provided,
-                            float x, float y, float z) {
+                            bool pos_provided, float x, float y, float z,
+                            bool force_non_positional, float priority) {
     auto it = sounds_.find(id);
     if (it == sounds_.end()) return 0;
-    bool positional = it->second.positional || pos_provided || attach_node != 0;
+
+    // Guide §8: pool is full -- evict the lowest-priority playing source if
+    // this new one outranks it, else drop the new one. See kMaxSoundsAtOnce.
+    //
+    // Spec divergence (guide §8): the spec prescribes reclaim-then-evict --
+    // first reclaim any source whose backend state is already stopped, only
+    // evict if none are free. This goes straight to eviction; a finished
+    // one-shot is only reclaimed by update()'s reap pass, once per frame. So
+    // 128 one-shots that finished earlier in the SAME frame (not yet reaped)
+    // would wrongly drop a new voice despite 128 genuinely-free slots.
+    // Tolerated: 128 truly-concurrent sources in one frame is rare, and
+    // adding a reclaim pass here is out of scope for this task.
+    if (sources_.size() >= kMaxSoundsAtOnce) {
+        auto victim = sources_.end();
+        for (auto sit = sources_.begin(); sit != sources_.end(); ++sit)
+            if (victim == sources_.end() || sit->second.priority < victim->second.priority)
+                victim = sit;
+        // TIE RULE, PINNED BUT UNVERIFIED (guide §8): strict `<` means a tie
+        // (victim->priority == priority) falls to the else branch and DROPS
+        // the new voice rather than stealing. BC_DEFAULT_PRIORITY ==
+        // REMOTE_PULSE_PRIORITY == 0.5, so the realistic full pool is
+        // all-0.5, and every new pulse/tractor voice is dropped rather than
+        // round-robined once the pool is saturated. This tiebreak is
+        // arbitrary and was never verified against the original engine --
+        // see AudioSystemTest.EvictionFillStealTieDropAndBelowCap, which
+        // pins exactly this behaviour. Do not "fix" it later on the
+        // assumption that ties should steal.
+        if (victim != sources_.end() && victim->second.priority < priority) {
+            backend_->stop(victim->second.backend);
+            sources_.erase(victim);
+        } else {
+            return 0;   // nothing lower-ranked to steal; drop this one
+        }
+    }
+
+    bool positional = it->second.positional || pos_provided;
+    // Overrides the sound's load-time LS_3D flag: a caller that tried to
+    // anchor to a node but failed to resolve a real position must not fall
+    // through to a positional source at the backend's (0,0,0) default.
+    if (force_non_positional) positional = false;
     SourceHandle bh = backend_->play(it->second.buf, looping, gain, cat,
-                                     positional, x, y, z);
+                                     positional, x, y, z, priority);
     if (bh == 0) return 0;
     PlayingId pid = next_playing_id_++;
-    sources_[pid] = {bh, attach_node, looping};
+    sources_[pid] = {bh, looping, priority};
     return pid;
 }
 
 PlayingId AudioSystem::play_sound(const std::string& name, bool looping, float gain,
-                                  Category cat, NodeId attach_node,
-                                  bool pos_provided, float x, float y, float z) {
+                                  Category cat, bool pos_provided,
+                                  float x, float y, float z,
+                                  bool force_non_positional, float priority) {
     SoundId id = get_sound(name);
-    return id == 0 ? 0 : play(id, looping, gain, cat, attach_node,
-                              pos_provided, x, y, z);
+    return id == 0 ? 0 : play(id, looping, gain, cat,
+                              pos_provided, x, y, z, force_non_positional, priority);
 }
 
 void AudioSystem::stop(PlayingId pid) {
@@ -107,27 +184,69 @@ void AudioSystem::set_position(PlayingId pid, float x, float y, float z) {
     if (it != sources_.end()) backend_->set_position(it->second.backend, x, y, z);
 }
 
+void AudioSystem::set_velocity(PlayingId pid, float x, float y, float z) {
+    auto it = sources_.find(pid);
+    if (it != sources_.end()) backend_->set_velocity(it->second.backend, x, y, z);
+}
+
 void AudioSystem::set_category_gain(Category c, float g) {
     backend_->set_category_gain(c, g);
 }
 
+bool AudioSystem::is_finished(PlayingId pid) const {
+    auto it = sources_.find(pid);
+    if (it == sources_.end()) return true;  // already reaped by update()
+    return backend_->source_finished(it->second.backend);
+}
+
+SourceHandle AudioSystem::debug_backend_handle(PlayingId pid) const {
+    auto it = sources_.find(pid);
+    return it == sources_.end() ? 0 : it->second.backend;
+}
+
 void AudioSystem::update(float lx, float ly, float lz,
                          float fx, float fy, float fz,
-                         float ux, float uy, float uz, float /*dt*/) {
-    backend_->set_listener(lx,ly,lz, fx,fy,fz, ux,uy,uz);
+                         float ux, float uy, float uz, float dt) {
+    // Guide §9/§14.12: batch the whole per-frame update -- listener move plus
+    // the one-shot reap below -- so the backend applies it atomically instead
+    // of tearing mid-frame (the analog of DS3D's deferred commit). RAII
+    // (FrameBatch, above) rather than a bare begin_frame()/end_frame() pair
+    // so a future early return in this function can't leak a suspended
+    // frame and silently freeze all audio (review #10).
+    FrameBatch _frame_batch(backend_.get());
 
-    // Update attached source positions.
-    for (auto& [pid, src] : sources_) {
-        if (src.node == 0 || !node_pos_fn_) continue;
-        float x, y, z;
-        if (node_pos_fn_(src.node, x, y, z)) {
-            backend_->set_position(src.backend, x, y, z);
+    // Guide §4/§6: listener velocity for doppler, derived from the camera's
+    // position delta. Raw game units per second — see the units note in
+    // openal_backend.cc's init().
+    float vx = 0.f, vy = 0.f, vz = 0.f;
+    if (have_prev_listener_ && dt > 0.f) {
+        vx = (lx - prev_listener_[0]) / dt;
+        vy = (ly - prev_listener_[1]) / dt;
+        vz = (lz - prev_listener_[2]) / dt;
+        // Discontinuity guard (review #1): a bridge<->tactical toggle,
+        // cutscene camera cut, or mission swap moves the listener a large
+        // distance in a single tick, which differentiates as an enormous
+        // velocity -- OpenAL then clamps it at c and the doppler numerator
+        // collapses toward zero, producing an audible one-frame pitch blip.
+        // Nothing in this game legitimately moves at or above
+        // kSpeedOfSoundGU, so treat a derived speed >= c as a cut and report
+        // zero velocity instead of a clamped spike.
+        const float speed_sq = vx * vx + vy * vy + vz * vz;
+        if (speed_sq >= kSpeedOfSoundGU * kSpeedOfSoundGU) {
+            vx = vy = vz = 0.f;
         }
     }
+    prev_listener_[0] = lx; prev_listener_[1] = ly; prev_listener_[2] = lz;
+    have_prev_listener_ = true;
+
+    backend_->set_listener(lx,ly,lz, fx,fy,fz, ux,uy,uz, vx,vy,vz);
 
     // Reap finished one-shots. Must call backend_->stop() so the underlying
     // ALuint is released — otherwise finished sources accumulate until OpenAL
     // Soft trips its 256-source-per-context limit.
+    //
+    // Source POSITIONS are pumped from Python (engine/audio/attached_sources.py):
+    // the deferred renderer has no scene graph, so Python owns object transforms.
     for (auto it = sources_.begin(); it != sources_.end(); ) {
         if (!it->second.looping && backend_->source_finished(it->second.backend)) {
             backend_->stop(it->second.backend);

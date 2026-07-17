@@ -1,4 +1,5 @@
 #include <audio/openal_backend.h>
+#include <audio/audio_constants.h>
 #include <AL/al.h>
 #include <AL/alc.h>
 #include <cstdio>
@@ -32,8 +33,26 @@ public:
             device_ = nullptr;
             return false;
         }
+        // Guide §2/§14.1: THE faithful model — the same law DS3D uses. This is
+        // already OpenAL's default, but pin it explicitly: AL_LINEAR_DISTANCE
+        // cuts off at max where BC/DS3D clamps, and that is the one change
+        // that makes BC's audio sound wrong.
+        alDistanceModel(AL_INVERSE_DISTANCE_CLAMPED);
+        // Guide §3/§6: BC overrides no DS3D global — doppler and rolloff both
+        // stay at 1.0 (the AIL_set_3D_*_factor symbols don't exist in the
+        // image). unitsPerMeter defaults to 1.0 and applies to velocity only,
+        // so BC treats one game unit as one metre for doppler regardless of
+        // visual scale. Feed raw game units; do NOT convert GU->m and do NOT
+        // port BC's velocity /1000 (a Miles m/ms API convention).
+        alDopplerFactor(1.0f);
+        alSpeedOfSound(kSpeedOfSoundGU);
         return true;
     }
+
+    // Guide §9: the analog of DS3D's deferred commit -- a frame's listener
+    // and emitter moves apply atomically instead of tearing mid-frame.
+    void begin_frame() override { if (context_) alcSuspendContext(context_); }
+    void end_frame()   override { if (context_) alcProcessContext(context_); }
 
     void shutdown() override {
         for (auto& [_, src] : sources_) alDeleteSources(1, &src.al);
@@ -64,7 +83,8 @@ public:
     }
 
     SourceHandle play(BufferHandle buf, bool looping, float gain, Category cat,
-                      bool positional, float x, float y, float z) override {
+                      bool positional, float x, float y, float z,
+                      float priority) override {
         auto it = buffers_.find(buf);
         if (it == buffers_.end()) return 0;
         ALuint al;
@@ -76,8 +96,12 @@ public:
         if (positional) {
             alSourcei(al, AL_SOURCE_RELATIVE, AL_FALSE);
             alSource3f(al, AL_POSITION, x, y, z);
-            alSourcef(al, AL_REFERENCE_DISTANCE, 100.0f);
-            alSourcef(al, AL_ROLLOFF_FACTOR, 1.0f);
+            // BC TGSound::SetupFromFile defaults (guide §5, audio_constants.h).
+            // TGSound.Play overwrites these via set_min_max_distance; they are
+            // the floor for any caller that does not.
+            alSourcef(al, AL_REFERENCE_DISTANCE, kBcDefaultMinDistance);
+            alSourcef(al, AL_MAX_DISTANCE,       kBcDefaultMaxDistance);
+            alSourcef(al, AL_ROLLOFF_FACTOR,     1.0f);
         } else {
             // Non-positional source: place 1 unit in front of the listener
             // (RELATIVE -Z) rather than exactly at origin so HRTF/panning
@@ -89,7 +113,11 @@ public:
         }
         alSourcePlay(al);
         SourceHandle h = ++next_src_;
-        sources_[h] = {al, cat, gain};
+        // Guide §8: priority is never mapped to AL_GAIN or any other AL
+        // param. Stored here only for symmetry with AudioSystem::Source --
+        // nothing reads it back from this backend today; AudioSystem picks
+        // its eviction victim from its own sources_ map, not this one.
+        sources_[h] = {al, cat, gain, priority};
         return h;
     }
 
@@ -104,6 +132,10 @@ public:
     void set_position(SourceHandle h, float x, float y, float z) override {
         if (auto it = sources_.find(h); it != sources_.end())
             alSource3f(it->second.al, AL_POSITION, x, y, z);
+    }
+    void set_velocity(SourceHandle h, float x, float y, float z) override {
+        if (auto it = sources_.find(h); it != sources_.end())
+            alSource3f(it->second.al, AL_VELOCITY, x, y, z);
     }
     void set_gain(SourceHandle h, float g) override {
         if (auto it = sources_.find(h); it != sources_.end()) {
@@ -124,8 +156,10 @@ public:
     }
     void set_listener(float px, float py, float pz,
                       float fx, float fy, float fz,
-                      float ux, float uy, float uz) override {
+                      float ux, float uy, float uz,
+                      float vx, float vy, float vz) override {
         alListener3f(AL_POSITION, px, py, pz);
+        alListener3f(AL_VELOCITY, vx, vy, vz);
         float ori[6] = {fx, fy, fz, ux, uy, uz};
         alListenerfv(AL_ORIENTATION, ori);
     }
@@ -144,7 +178,7 @@ public:
     }
 
 private:
-    struct Source { ALuint al; Category cat; float user_gain; };
+    struct Source { ALuint al; Category cat; float user_gain; float priority; };
     ALCdevice*  device_  = nullptr;
     ALCcontext* context_ = nullptr;
     std::unordered_map<BufferHandle, ALuint> buffers_;

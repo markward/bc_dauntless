@@ -130,6 +130,24 @@ class Torpedo(TGObject):
     def SetMaxAngularAccel(self, v) -> None:      self._max_angular_accel = float(v)
     def SetNetType(self, v) -> None:              pass  # multiplayer; ignored in PR 2b
 
+    def GetWorldLocation(self) -> TGPoint3:
+        """Current in-flight position. Mirrors ObjectClass.GetWorldLocation()
+        so a Torpedo can serve as its own GetNode() anchor for
+        TGSoundManager launch sounds (see GetNode below) -- update_all
+        replaces `_position` wholesale each tick, so this always reads the
+        live value, never a stale snapshot."""
+        return self._position
+
+    def GetNode(self):
+        """Weak node handle mirroring ObjectClass.GetNode(), so
+        TGSound.AttachToNode(torp.GetNode()) can ride the torpedo the same
+        way it rides a ship. BC does exactly this for torpedo launch sounds
+        (sdk/Build/scripts/MissionLib.py:3284-3296:
+        `pSound.AttachToNode(pTorp.GetNode())`). Weak so a queued launch
+        sound never keeps an expired torpedo alive."""
+        from engine.appc.objects import _ObjectNodeRef
+        return _ObjectNodeRef(self)
+
 
 # ── Registry ────────────────────────────────────────────────────────────────
 _active: list[Torpedo] = []

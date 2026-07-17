@@ -561,21 +561,13 @@ class TGSoundAction(TGTimedAction):
         """World position (x, y, z) from the SetNode anchor, or None.
 
         Resolved at Play time — the object may move between SetNode and the
-        sequence firing this action. Coordinates must be real numbers: a
-        chainable stub node would coerce to 0.0 and silently pin the sound to
-        the origin, which is worse than the non-positional fallback."""
-        if self._node is None:
-            return None
-        try:
-            loc = self._node.GetWorldLocation()
-            if loc is None:
-                return None
-            x, y, z = loc.x, loc.y, loc.z
-            if not all(isinstance(c, (int, float)) for c in (x, y, z)):
-                return None
-            return (float(x), float(y), float(z))
-        except Exception:
-            return None
+        sequence firing this action. The numeric guard lives in
+        engine.audio.attached_sources.node_world_position: a chainable stub
+        node coerces to 0.0 and would silently pin the sound to the origin,
+        which is worse than the non-positional fallback.
+        """
+        from engine.audio.attached_sources import node_world_position
+        return node_world_position(self._node)
 
     def Play(self) -> None:
         # Override (not _do_play) so completion is gated on the sound's real

@@ -26,6 +26,19 @@ from engine.appc.subsystems import (
 )
 
 
+# ── Voice priority (guide §8) ──────────────────────────────────────────────
+# BC's shipped voice priorities (TGSound+0x68) -- a voice-stealing RANK, never
+# a gain. 0.9 when the firing ship is the local player's; remote is
+# per-weapon. Co-fired voices (phaser Start + Loop) take the second at
+# priority - 0.01; the purpose of that step is unknown, and BC's consumer of
+# the field was never identified, so treat all of this as best-reading, not
+# gospel.
+LOCAL_FIRE_PRIORITY = 0.9
+REMOTE_PHASER_PRIORITY = 0.6
+REMOTE_PULSE_PRIORITY = 0.5
+CO_FIRED_PRIORITY_STEP = 0.01
+
+
 # ── Torpedo reload slots ───────────────────────────────────────────────────
 # BC stores one float per MaxReady at TorpedoTube+0xAC
 # (docs/gameplay/combat-and-damage.md:748).  We store the
@@ -338,7 +351,44 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0):
     if hasattr(mod, "GetLaunchSound"):
         sound_name = mod.GetLaunchSound()
         if sound_name:
-            TGSoundManager.instance().PlaySound(sound_name)
+            # BC (sdk/Build/scripts/MissionLib.py:3284-3296, verbatim):
+            #   pSound = App.g_kSoundManager.GetSound(pcLaunchSound)
+            #   if pSound != None:
+            #       pSound.AttachToNode(pTorp.GetNode())
+            #       pSoundRegion = App.TGSoundRegion_GetRegion(pSet.GetName())
+            #       if pSoundRegion != None: pSoundRegion.AddSound(pSound)
+            #       pSound.Play()
+            #
+            # PlaySound(name) (the old call here) passes no node and no
+            # position; the sound is registered LS_3D (positional=True), and
+            # the backend ORs that load-time flag in regardless of whether a
+            # position was supplied -- so every launch played positional at
+            # the world origin, untracked (no falloff, no doppler). Mirror
+            # BC's GetSound -> AttachToNode -> Play sequence instead: torp is
+            # its own node source (Torpedo.GetNode/GetWorldLocation, added
+            # alongside this fix) so AttachToNode + attached_sources.pump
+            # rides it through the whole flight, same as a ship's engine hum.
+            #
+            # Region association: BC's TGSoundRegion.AddSound scopes the
+            # sound to the current set so a scene change can stop it in bulk.
+            # TGSound.Play() already does the Dauntless-native equivalent
+            # unconditionally once a node/position is present (see
+            # engine.audio.scene_scope.register, called from Play() itself)
+            # -- there is no separate set/region lookup cheaply reachable
+            # from this call site, and none is needed: Play() covers it.
+            snd = TGSoundManager.instance().GetSound(sound_name)
+            if snd is not None:
+                # Torpedo.GetNode() always returns a real (weak) node -- no
+                # hasattr guard needed here (that would be the vacuous-True
+                # TGObject.__getattr__ stub trap; GetNode is a real method on
+                # Torpedo, not a stub). Prefer no attachment over a wrong
+                # one: only Play() once a node is in hand, so a future
+                # projectile type that can't supply one never falls back to
+                # PlaySound's origin-pin bug.
+                node = torp.GetNode()
+                if node is not None:
+                    snd.AttachToNode(node)
+                    snd.Play()
 
     return torp
 
@@ -372,6 +422,31 @@ class _EnergyWeaponFireMixin:
     bare "<name>" (tractor convention).  Names map to WAV assets via
     sdk/Build/scripts/LoadTacticalSounds.py invoked at audio init.
     """
+
+    # Remote-fire voice priority. Default covers pulse + tractor (0.5);
+    # PhaserBank overrides to 0.6. See the guide §8 constants above.
+    REMOTE_FIRE_PRIORITY = REMOTE_PULSE_PRIORITY
+
+    def _remote_fire_priority(self) -> float:
+        return self.REMOTE_FIRE_PRIORITY
+
+    def _is_local_player_ship(self) -> bool:
+        """True when the firing ship is the local player's (guide §8: 0.9).
+
+        Same reach-for-the-player pattern as engine/appc/hit_feedback.py:246 --
+        do not invent a second one.
+        """
+        parent_sys = self.GetParentSubsystem() if hasattr(self, "GetParentSubsystem") else None
+        ship = parent_sys.GetParentShip() if parent_sys is not None and hasattr(parent_sys, "GetParentShip") else None
+        if ship is None:
+            return False
+        try:
+            import App
+            game = App.Game_GetCurrentGame() if hasattr(App, "Game_GetCurrentGame") else None
+            player = game.GetPlayer() if game is not None and hasattr(game, "GetPlayer") else None
+        except Exception:
+            return False
+        return player is not None and ship is player
 
     def _aim_in_arc(self, target) -> bool:
         """Firing-arc gate in the weapon's OWN fire path (spec §2.4: the
@@ -503,32 +578,47 @@ class _EnergyWeaponFireMixin:
             return
         from engine.audio.tg_sound import TGSoundManager
         mgr = TGSoundManager.instance()
-        attach_node = self._firing_ship_node_id()
+        attach_node = self._firing_ship_node()
+
+        priority = (LOCAL_FIRE_PRIORITY if self._is_local_player_ship()
+                    else self._remote_fire_priority())
 
         start_snd = mgr.GetSound(name + " Start")
         if start_snd is None:
             # Tractor convention: bare name has no " Start"/" Loop" pair.
             start_snd = mgr.GetSound(name)
         if start_snd is not None:
+            # Set-then-play on the SHARED named TGSound: GetSound(name) hands
+            # back the same instance to every firer of this weapon type, but
+            # SetPriority + Play happen back-to-back in this one call, so the
+            # value latched into the backend at Play() time is always this
+            # firer's -- see the report for why that ordering matters.
+            start_snd.SetPriority(priority)
             start_snd.Play(attach_node=attach_node)
 
         loop_snd = mgr.GetSound(name + " Loop")
         if loop_snd is not None:
             loop_snd.SetLooping(True)
+            loop_snd.SetPriority(priority - CO_FIRED_PRIORITY_STEP)
             self._loop_handle = loop_snd.Play(attach_node=attach_node)
 
-    def _firing_ship_node_id(self) -> int:
-        """Walk parent_subsystem → parent_ship → GetSceneNodeId. Returns
-        0 (no attachment) when any link is missing — playback degrades
-        to world-origin rather than crashing on legacy fixtures."""
+    def _firing_ship_node(self):
+        """Walk parent_subsystem → parent_ship → GetNode() for the sound anchor.
+
+        Returns None (non-positional) when any link is missing. NOTE: this used
+        to probe a `GetSceneNodeId` that exists nowhere in the SDK or App.py —
+        our own invention. It resolved to a truthy `_Stub`, `int()` collapsed it
+        to 0, and every weapon sound played unattached. The tests only passed
+        because their fake ships defined the phantom.
+        """
         parent_sys = self.GetParentSubsystem() if hasattr(self, "GetParentSubsystem") else None
         if parent_sys is None:
-            return 0
+            return None
         parent_ship = parent_sys.GetParentShip() if hasattr(parent_sys, "GetParentShip") else None
         if parent_ship is None:
-            return 0
-        getter = getattr(parent_ship, "GetSceneNodeId", None)
-        return int(getter()) if getter else 0
+            return None
+        getter = getattr(parent_ship, "GetNode", None)
+        return getter() if getter is not None else None
 
 
 def _cloak_blocks_fire(weapon_system) -> bool:
@@ -1725,6 +1815,8 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
     Inherits CanFire/StopFiring/UpdateCharge from the mixin; Fire wraps the
     mixin's implementation to post ET_WEAPON_FIRED (Task 10).
     """
+    REMOTE_FIRE_PRIORITY = REMOTE_PHASER_PRIORITY   # 0.6; pulse/tractor stay 0.5
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         _init_energy_weapon_state(self)

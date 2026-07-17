@@ -13,8 +13,11 @@ class _FakeSnd:
         self.name = name
         self.play_calls = []
         self._looping = False
+        self.priority = None
     def SetLooping(self, v):
         self._looping = bool(v)
+    def SetPriority(self, v):
+        self.priority = float(v)
     def Play(self, attach_node=0, position=None):
         self.play_calls.append({"attach_node": attach_node, "position": position})
         class _H:
@@ -38,11 +41,21 @@ class _FakeProperty:
     def GetFireSound(self): return "Galaxy Phaser"
 
 
+class _FakeLoc:
+    def __init__(self, x, y, z): self.x, self.y, self.z = x, y, z
+
+
 class _FakeShip:
     def __init__(self, node_id):
+        # node_id kept only so existing call sites read naturally; the real
+        # anchor is GetNode() -> a ref exposing GetWorldLocation().
         self._node_id = node_id
-    def GetSceneNodeId(self):
-        return self._node_id
+        self._loc = _FakeLoc(float(node_id), 0.0, 0.0)
+    def GetWorldLocation(self):
+        return self._loc
+    def GetNode(self):
+        # Mirrors ObjectClass.GetNode(): a handle resolving GetWorldLocation.
+        return self
 
 
 class _FakeSystem:
@@ -67,7 +80,14 @@ class _FakeBank(_EnergyWeaponFireMixin):
 # ── tests ──────────────────────────────────────────────────────────────────
 
 def test_play_fire_sfx_attaches_start_and_loop_to_firing_ship_node(monkeypatch):
-    """Both Start and Loop must Play(attach_node=ship_node_id)."""
+    """Both Start and Loop must Play(attach_node=ship.GetNode()).
+
+    attach_node is now the real node ref (identically the firing ship, since
+    _FakeShip.GetNode() mirrors ObjectClass.GetNode() by returning self) —
+    NOT an integer id. Asserting identity against `ship` fails exactly the
+    way the GetSceneNodeId phantom did: if _firing_ship_node ever falls back
+    to None/0/a stub, this stops matching.
+    """
     mgr = _FakeMgr()
     monkeypatch.setattr(
         "engine.audio.tg_sound.TGSoundManager.instance",
@@ -83,14 +103,14 @@ def test_play_fire_sfx_attaches_start_and_loop_to_firing_ship_node(monkeypatch):
     start = mgr.sounds["Galaxy Phaser Start"]
     loop = mgr.sounds["Galaxy Phaser Loop"]
     assert len(start.play_calls) == 1
-    assert start.play_calls[0]["attach_node"] == 12345
+    assert start.play_calls[0]["attach_node"] is ship
     assert len(loop.play_calls) == 1
-    assert loop.play_calls[0]["attach_node"] == 12345
+    assert loop.play_calls[0]["attach_node"] is ship
     assert loop._looping is True
 
 
 def test_play_fire_sfx_degrades_to_world_origin_when_ship_missing(monkeypatch):
-    """No parent ship → attach_node falls through to 0 instead of crashing."""
+    """No parent ship → attach_node falls through to None instead of crashing."""
     mgr = _FakeMgr()
     monkeypatch.setattr(
         "engine.audio.tg_sound.TGSoundManager.instance",
@@ -104,7 +124,7 @@ def test_play_fire_sfx_degrades_to_world_origin_when_ship_missing(monkeypatch):
     bank._play_fire_sfx()
 
     start = mgr.sounds["Galaxy Phaser Start"]
-    assert start.play_calls[0]["attach_node"] == 0
+    assert start.play_calls[0]["attach_node"] is None
 
 
 def test_play_fire_sfx_with_no_fire_sound_property_is_noop(monkeypatch):
@@ -147,6 +167,6 @@ def test_play_fire_sfx_tractor_convention_uses_bare_name(monkeypatch):
     # The current implementation calls GetSound(name+" Start") first;
     # since _FakeMgr always returns a sound (auto-vivifying), the
     # fallback branch isn't exercised. This test mainly asserts the
-    # call attempted at attach_node=77 succeeded structurally.
+    # call attempted at attach_node=ship.GetNode() succeeded structurally.
     assert "Tractor Beam Start" in mgr.sounds
-    assert mgr.sounds["Tractor Beam Start"].play_calls[0]["attach_node"] == 77
+    assert mgr.sounds["Tractor Beam Start"].play_calls[0]["attach_node"] is ship
