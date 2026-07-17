@@ -229,7 +229,8 @@ def test_torpedo_reload_no_parent_uses_normal_delay(clock):
 
     Fire() requires a parent (CanFire gates on GetParentSubsystem()), so an
     orphan tube can't fire itself into a cooling slot — seed the slot array
-    directly to simulate one round that started cooling at t=100.
+    directly to simulate one round that started cooling at t=100 (zero progress,
+    last advanced at t=100 under the accumulator model).
     """
     tube = TorpedoTube("Orphan")
     tube._max_ready = 1
@@ -238,9 +239,10 @@ def test_torpedo_reload_no_parent_uses_normal_delay(clock):
     tube._resize_slots()
 
     clock(100.0)
-    tube._reload_timers[0] = 100.0
+    tube._reload_timers[0] = 0.0            # freshly cooling: 0 progress banked
+    tube._reload_advanced_at[0] = 100.0     # started cooling at t=100
 
-    # 50 s elapsed > 40 s delay, factor 1.0 (no parent) ⇒ should reload
+    # 50 s elapsed x factor 1.0 (no parent) = 50 >= 40 delay ⇒ should reload
     clock(150.0)
     tube.UpdateReload(0.0)
     assert tube._num_ready == 1

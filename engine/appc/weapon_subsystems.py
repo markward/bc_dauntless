@@ -2152,15 +2152,27 @@ class TorpedoTube(Weapon):
         self._immediate_delay: float = 0.0
         self._reload_delay: float = 0.0
         self._max_ready: int = 0
-        # One slot per MaxReady. Value = game time cooling began; _SLOT_LOADED = ready.
+        # One slot per MaxReady. Value = ACCUMULATED reload progress in game-seconds
+        # (BC's per-slot timer at TorpedoTube+0xAC, counting UP toward ReloadDelay);
+        # _SLOT_LOADED (-1.0) = ready. This is an INTEGRATOR, not a start stamp:
+        # UpdateReload advances each cooling slot by factor x elapsed game time, so
+        # progress banked at one power level survives a later power change
+        # (weapon-firing-mechanics.md §2.6). _reload_advanced_at[i] holds the game
+        # time slot i was last advanced, so each call credits only the interval
+        # since the previous one — the game-clock delta, never the passed render dt.
         self._reload_timers: list[float] = []
+        self._reload_advanced_at: list[float] = []
         # Skew-fire flag — persistent across firing, set by TorpedoSystem or mission.
         self._skew_fire: bool = False
 
     def _resize_slots(self) -> None:
-        """(Re)build the per-slot reload array to MaxReady, all slots loaded.
-        Called by ships.py after the hardpoint property is copied in."""
-        self._reload_timers = [_SLOT_LOADED] * max(0, int(self._max_ready))
+        """(Re)build the per-slot reload arrays to MaxReady, all slots loaded.
+        Called by ships.py after the hardpoint property is copied in.
+        The progress array and its parallel last-advanced-at array are always
+        rebuilt together so they never desync in length."""
+        n = max(0, int(self._max_ready))
+        self._reload_timers = [_SLOT_LOADED] * n
+        self._reload_advanced_at = [0.0] * n
 
     def _ensure_slots(self) -> None:
         """Self-heal: rebuild _reload_timers if it has desynced from
@@ -2171,15 +2183,21 @@ class TorpedoTube(Weapon):
         UpdateReload would find nothing cooling, bricking the tube forever
         with no exception raised.  Called at the top of every method that
         reads or writes _reload_timers."""
-        if len(self._reload_timers) != self._max_ready:
+        if (len(self._reload_timers) != self._max_ready
+                or len(self._reload_advanced_at) != self._max_ready):
             self._resize_slots()
 
     def _start_slot_cooldown(self, now: float) -> None:
-        """Put one loaded slot into cooldown, stamped at `now`."""
+        """Put one loaded slot into cooldown: zero progress, advance-clock at `now`.
+
+        A cooling slot's timer counts UP from 0.0; seeding the last-advanced-at
+        stamp to `now` means its FIRST UpdateReload call credits only the interval
+        since firing, not the whole game clock."""
         self._ensure_slots()
         for i in range(len(self._reload_timers)):
             if self._reload_timers[i] == _SLOT_LOADED:
-                self._reload_timers[i] = now
+                self._reload_timers[i] = 0.0
+                self._reload_advanced_at[i] = now
                 return
 
     def _sync_slots_to_num_ready(self) -> None:
@@ -2193,9 +2211,9 @@ class TorpedoTube(Weapon):
 
         Demotes/promotes the minimum number of slots needed to make exactly
         `_num_ready` (clamped to the slot count) read LOADED: demoted slots
-        start cooling from now; promotion prefers the slot that has been
-        cooling longest (smallest stamp), matching ReloadTorpedo's own
-        "oldest cooling slot wins" rule."""
+        start cooling from now (zero progress); promotion prefers the slot that
+        has been cooling longest (LARGEST accumulated progress), matching
+        ReloadTorpedo's own "oldest cooling slot wins" rule."""
         self._ensure_slots()
         target = max(0, min(int(self._num_ready), len(self._reload_timers)))
         loaded_idx = [i for i, t in enumerate(self._reload_timers) if t == _SLOT_LOADED]
@@ -2203,9 +2221,11 @@ class TorpedoTube(Weapon):
         if len(loaded_idx) > target:
             now = _game_time()
             for i in loaded_idx[target:]:
-                self._reload_timers[i] = now
+                self._reload_timers[i] = 0.0
+                self._reload_advanced_at[i] = now
         elif len(loaded_idx) < target:
-            cooling_idx.sort(key=lambda i: self._reload_timers[i])
+            # Most-progressed (largest timer) = cooling longest = promote first.
+            cooling_idx.sort(key=lambda i: self._reload_timers[i], reverse=True)
             need = target - len(loaded_idx)
             for i in cooling_idx[:need]:
                 self._reload_timers[i] = _SLOT_LOADED
@@ -2464,17 +2484,34 @@ class TorpedoTube(Weapon):
     # and keeping the override would have skipped the base's new CanFire() gate.
 
     def UpdateReload(self, dt: float = 0.0) -> None:
-        """Poll each cooling slot; reload one when ReloadDelay of GAME time has passed.
+        """Integrate each cooling slot's reload progress; reload one when it
+        reaches ReloadDelay.
+
+        BC (weapon-firing-mechanics.md §2.6): TorpedoTube::Update advances every
+        charging slot by ``NormalPowerPercentage x dt`` per tick and reloads when
+        the timer exceeds ReloadDelay. It is an INTEGRATOR — progress banked at one
+        power level is never re-valued when power later changes. The prior
+        start-stamp + ``reload_delay / factor`` scheme retroactively rescaled the
+        WHOLE elapsed interval against the current factor on every call, so a
+        mid-reload power change snapped a nearly-loaded tube back toward empty
+        (drop) or finished it far too early (rise).
 
         `dt` is accepted for call-site compatibility (host_loop._advance_weapons)
         and DELIBERATELY IGNORED. _advance_weapons runs once per RENDER frame with
         a constant TICK_DT = 1/60 (host_loop.py:6054, :5525) — it is NOT inside the
-        fixed-timestep sim loop. Integrating dt there would make reload frame-rate
-        dependent: a Galaxy tube would reload in 20s on a 120Hz display. BC compares
-        against the game clock instead (combat-and-damage.md:812-815).
+        fixed-timestep sim loop, so the passed dt is a lie (a fixed 1/60, not the
+        real frame delta). Integrating it would make reload frame-rate dependent:
+        a Galaxy tube would reload in 20 s on a 120 Hz display. Instead each slot
+        advances by ``factor x (now - _reload_advanced_at[slot])`` — the GAME-CLOCK
+        delta since that slot was last advanced — which is frame-rate independent
+        (the game clock ticks at a fixed rate regardless of render cadence) AND
+        banks progress across a power change. This is BC's per-tick integral
+        re-expressed for our variable render-frame cadence.
 
         Power throttles the reload: a half-powered torpedo system reloads at half
-        rate (existing behaviour, preserved).
+        rate. An unpowered (factor <= 0) system makes no progress, but the
+        advance-clock still moves forward so the unpowered interval is never
+        retroactively banked once power returns.
         """
         self._ensure_slots()
         if self._num_ready >= self._max_ready:
@@ -2482,20 +2519,29 @@ class TorpedoTube(Weapon):
         parent = self.GetParentSubsystem()
         factor = (parent.GetNormalPowerPercentage()
                   if parent is not None else 1.0)
-        # isinstance FIRST: `factor <= 0.0` cannot see a _Stub. TGObject.
-        # __getattr__ hands back a truthy _Stub for a missing method, and
-        # _Stub.__le__ returns False — so the guard did not fire, execution
-        # reached the division, and `40.0 / _Stub` is 0.0 (__rtruediv__). A zero
-        # delay makes `now - slot >= delay` true for every slot, so the tube
-        # reloaded EVERY FRAME. The guard's intent ("no power => no reload")
-        # was inverted into infinite ammo, silently.
-        if not isinstance(factor, (int, float)) or factor <= 0.0:
-            return
-        delay = self._reload_delay / factor
+        # isinstance guard: a missing GetNormalPowerPercentage hands back a truthy
+        # _Stub (TGObject.__getattr__), and _Stub comparisons don't behave like
+        # numbers. Coerce anything non-numeric or negative to 0.0 — no power, no
+        # progress. NOTE we no longer early-return here: the advance-clock below
+        # must still move forward at factor 0 so a later power-up doesn't credit
+        # the unpowered gap (the old code's `40.0 / _Stub == 0.0` divisor made a
+        # zero delay reload EVERY frame — that class of bug is gone with the
+        # divisor).
+        if not isinstance(factor, (int, float)) or factor < 0.0:
+            factor = 0.0
         now = _game_time()
-        for slot in self._reload_timers:
-            if slot != _SLOT_LOADED and now - slot >= delay:
-                self.ReloadTorpedo()      # loads the OLDEST cooling slot
+        for i in range(len(self._reload_timers)):
+            prog = self._reload_timers[i]
+            if prog == _SLOT_LOADED:
+                continue
+            game_dt = now - self._reload_advanced_at[i]
+            if game_dt < 0.0:          # clock reset (e.g. mission swap) — don't credit
+                game_dt = 0.0
+            self._reload_timers[i] = prog + factor * game_dt
+            self._reload_advanced_at[i] = now
+        for prog in self._reload_timers:
+            if prog != _SLOT_LOADED and prog >= self._reload_delay:
+                self.ReloadTorpedo()      # loads the MOST-PROGRESSED cooling slot
                 return                    # one round per tick, as BC does
 
     def ReloadTorpedo(self) -> None:
@@ -2503,8 +2549,9 @@ class TorpedoTube(Weapon):
         (combat-and-damage.md:786-793).
 
         BC says "find slot with greatest timer". Its timers count UP while
-        cooling, so the greatest timer is the slot cooling LONGEST. We store
-        cooldown START stamps, so the equivalent is the SMALLEST stamp.
+        cooling, so the greatest timer is the slot cooling LONGEST. We store the
+        same accumulated-progress timer, so the equivalent is the LARGEST value —
+        FIFO reload (weapon-firing-mechanics.md §2.2/§2.6).
 
         Guarded on ammo availability (combat-and-damage.md:788 "if no ammo
         left: return") — a finite magazine at zero rounds must not keep
@@ -2527,7 +2574,7 @@ class TorpedoTube(Weapon):
             t = self._reload_timers[i]
             if t == _SLOT_LOADED:
                 continue
-            if oldest_t is None or t < oldest_t:
+            if oldest_t is None or t > oldest_t:   # largest progress = cooling longest
                 oldest_i, oldest_t = i, t
         if oldest_i < 0:
             return
