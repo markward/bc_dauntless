@@ -13,7 +13,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 1 | TGParagraph | SetString | 15010 | 31/47 | 2026-07-16 06:01 UTC |  |
 | 2 | TGIcon | GetRight | 12303 | 44/47 | 2026-07-16 06:01 UTC |  |
 | 3 | Game | LoadDatabaseSoundInGroup | 6440 | 34/47 | 2026-07-16 06:01 UTC | 2026-07-16 |
-| 4 | EngPowerDisplay | IsCompletelyVisible | 4997 | 24/47 | 2026-07-16 06:01 UTC |  |
+| 4 | EngPowerDisplay | IsCompletelyVisible | 4997 | 24/47 | 2026-07-16 06:01 UTC | 2026-07-17 |
 | 5 | TGFrame | GetRight | 4997 | 24/47 | 2026-07-16 06:01 UTC |  |
 | 6 | ShipClass | GetSceneNodeId | 1372 | 47/47 | 2026-07-16 06:01 UTC |  |
 | 7 | TGPane | GetBottom | 1148 | 34/47 | 2026-07-16 06:01 UTC |  |
