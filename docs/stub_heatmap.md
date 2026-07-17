@@ -44,7 +44,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 32 | Mission | AddPrecreatedShip | 212 | 24/47 | 2026-07-16 06:01 UTC |  |
 | 33 | STCharacterMenu | GetFirstChild | 204 | 30/47 | 2026-07-16 06:01 UTC |  |
 | 34 | App | ET_CANT_FIRE | 194 | 34/47 | 2026-07-16 06:01 UTC |  |
-| 35 | App | ET_PLAYER_TORPEDO_TYPE_CHANGED | 194 | 34/47 | 2026-07-16 06:01 UTC |  |
+| 35 | App | ET_PLAYER_TORPEDO_TYPE_CHANGED | 194 | 34/47 | 2026-07-16 06:01 UTC | LIVE GAP: BC fires this when the player changes torpedo type; TacticalCharacterHandlers.PlayerTorpChanged speaks the officer callout ("LoadingPhoton"/"LoadingQuantum", or "PhotonsOnlyDaunt" for a 1-type Galaxy). Undefined in events.py + never dispatched — our CEF switch drives weapon_config directly and bypasses it, so the switch WORKS but the officer stays silent. Wiring it = define event + dispatch on cycle_torpedo_type + register the two SDK PlayerTorpChanged handlers. Not the torpedo count/fire bug (fixed 2026-07-17). |
 | 36 | App | ET_TRACTOR_BEAM_STARTED_FIRING | 166 | 34/47 | 2026-07-16 06:01 UTC |  |
 | 37 | App | ET_SET_TARGET | 164 | 34/47 | 2026-07-16 06:01 UTC |  |
 | 38 | App | ET_TRACTOR_BEAM_STOPPED_FIRING | 164 | 34/47 | 2026-07-16 06:01 UTC |  |
