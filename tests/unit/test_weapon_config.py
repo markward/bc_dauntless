@@ -35,13 +35,21 @@ def _bare_ship():
 
 
 def _attach_torpedoes(ship, *, num_tubes=2, ammo_names=("Photon", "Quantum"),
-                      ready_per_tube=100):
+                      ready_per_tube=100, ammo_maxes=None):
+    """Attach a torpedo system.
+
+    ``ammo_maxes`` declares each type's magazine (the hardpoint's
+    SetMaxTorpedoes(slot, n)); ``None`` leaves every type on the undeclared →
+    unlimited fallback used by legacy/test hulls.
+    """
     parent = TorpedoSystem("Torpedoes")
     parent.TurnOn()
     parent.SetProperty(WeaponSystemProperty("Torpedoes"))
     parent._parent_ship = ship
     for i, name in enumerate(ammo_names):
-        parent.AddAmmoType(TorpedoAmmoType(name, power_cost=20.0 + i))
+        parent.AddAmmoType(TorpedoAmmoType(
+            name, power_cost=20.0 + i,
+            max_torpedoes=None if ammo_maxes is None else ammo_maxes[i]))
     for i in range(num_tubes):
         tube = TorpedoTube(f"Tube {i}")
         tube._max_ready = ready_per_tube
@@ -49,6 +57,17 @@ def _attach_torpedoes(ship, *, num_tubes=2, ammo_names=("Photon", "Quantum"),
         parent.AddChildSubsystem(tube)
     ship._torpedo_system = parent
     return parent
+
+
+def _sovereign_torpedoes(ship):
+    """The real sovereign.py torpedo shape: SIX tubes each SetMaxReady(1),
+    photon 200 / quantum 60 (sovereign.py:627-633, :655-657 et al).
+
+    The tube tier (6) and the stores tier (200/60) are far apart here, so a
+    readout wired to the wrong one is unmistakable.
+    """
+    return _attach_torpedoes(ship, num_tubes=6, ammo_names=("Photon", "Quantum"),
+                             ready_per_tube=1, ammo_maxes=(200, 60))
 
 
 def _attach_phasers(ship, *, banks=2):
@@ -107,16 +126,57 @@ def test_bare_ship_has_no_config():
 
 
 def test_torpedoes_present_and_fields():
+    """Legacy hull: no hardpoint-declared magazine, so every type is our
+    synthetic UNLIMITED fallback with no stores tier — torp_count falls back to
+    tube readiness.  Real hulls declare maxes and report the magazine instead
+    (see test_torp_count_reports_selected_types_magazine_not_tube_readiness)."""
     ship = _bare_ship()
     _attach_torpedoes(ship, num_tubes=2, ammo_names=("Photon", "Quantum"),
                       ready_per_tube=125)
     cfg = weapon_config.read_weapon_config(ship)
     assert cfg["has_torpedoes"] is True
     assert cfg["torp_type"] == "Photon"          # lowest slot by default
-    assert cfg["torp_count"] == 250              # 2 tubes × 125
+    assert cfg["torp_count"] == 250              # unlimited → 2 tubes × 125
     assert cfg["torp_types"] == ["Photon", "Quantum"]  # the live menu
     assert cfg["torp_types_cyclable"] is True    # two ammo types
     assert cfg["has_any_config"] is True
+
+
+def test_torp_count_reports_selected_types_magazine_not_tube_readiness():
+    """BC's readout is the STORES tier for the selected type, not the tubes.
+
+    The SDK keeps these strictly apart: TacticalCharacterHandlers.py:239-249
+    says "out of torps of that type" on
+    GetNumAvailableTorpsToType(GetAmmoTypeNumber()) <= 0, and only otherwise
+    falls through to "we haven't reloaded yet" (the tube tier).  A Sovereign
+    carries 200 photons behind 6 single-round tubes; summing tube readiness
+    reports 6.
+    """
+    ship = _bare_ship()
+    _sovereign_torpedoes(ship)
+    cfg = weapon_config.read_weapon_config(ship)
+    assert cfg["torp_type"] == "Photon"
+    assert cfg["torp_count"] == 200
+
+
+def test_torp_count_tracks_the_selected_ammo_type():
+    """Switching type must move the count — it is the only feedback the player
+    gets that the switch took effect (photon 200 -> quantum 60)."""
+    ship = _bare_ship()
+    _sovereign_torpedoes(ship)
+    weapon_config.cycle_torpedo_type(ship)
+    cfg = weapon_config.read_weapon_config(ship)
+    assert cfg["torp_type"] == "Quantum"
+    assert cfg["torp_count"] == 60
+
+
+def test_torp_count_falls_to_zero_when_the_selected_type_is_spent():
+    """Firing drains the magazine, not the tube count."""
+    ship = _bare_ship()
+    torps = _sovereign_torpedoes(ship)
+    torps.GetAmmoType(0).SetAvailable(0)
+    cfg = weapon_config.read_weapon_config(ship)
+    assert cfg["torp_count"] == 0
 
 
 def test_torpedo_system_with_zero_tubes_not_present():

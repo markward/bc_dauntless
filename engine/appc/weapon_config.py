@@ -189,7 +189,34 @@ def _distinct_torpedo_type_names(torps) -> list[str]:
 
 
 def _torpedo_count(torps) -> int:
-    """Total ready rounds across all tubes."""
+    """Rounds of the SELECTED ammo type left in the magazine.
+
+    BC keeps three tiers of torpedo state — stores (per type), tubes (loaded
+    and ready), in flight — and the player-facing count is the STORES tier for
+    the current type.  The SDK holds the two apart explicitly:
+    TacticalCharacterHandlers.py:239-249 reports "we're out of torps of that
+    type" on GetNumAvailableTorpsToType(GetAmmoTypeNumber()) <= 0, and only
+    otherwise falls through to "we haven't reloaded yet" — the tube tier.
+
+    Summing tube readiness instead conflates them: a Sovereign's 200 photons
+    sit behind 6 single-round tubes, so it read 6 and never moved when the
+    player switched type (both types share the same tubes).
+
+    Legacy/test hulls whose hardpoint declares no magazine get our synthetic
+    UNLIMITED type, which has no stores tier to report; those fall back to tube
+    readiness so their readout is unchanged.
+    """
+    ammo = torps.GetCurrentAmmoType() if hasattr(torps, "GetCurrentAmmoType") else None
+    if ammo is not None and not getattr(ammo, "_unlimited", False):
+        try:
+            return int(torps.GetNumAvailableTorpsToType(torps.GetCurrentAmmoSlot()))
+        except Exception:
+            return 0
+    return _tube_ready_count(torps)
+
+
+def _tube_ready_count(torps) -> int:
+    """Total ready rounds across all tubes — BC's tube tier."""
     total = 0
     n = _num_weapons(torps)
     for i in range(n):
