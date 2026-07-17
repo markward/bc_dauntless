@@ -5969,6 +5969,12 @@ def run(mission_name: Optional[str] = None,
             is_engineering_open=_engpower_is_engineering_open)
         registry.register(engineering_power_panel)
 
+        # Gate BC's per-tick power-display auto-rebalance on the SAME signal the
+        # CEF panel uses: AdjustPower runs only while Engineering is the open
+        # station menu (docs/superpowers/specs/2026-07-17-iscompletelyvisible-faithful-design.md).
+        from engine.appc.tg_ui import eng_power as _eng_power
+        _eng_power.set_engineering_open_check(_engpower_is_engineering_open)
+
         # Bindings older than the orbit-camera change won't expose
         # consume_scroll_y; fall back to a zero-delta lambda so host_loop
         # still runs against an old _dauntless_host.so without rebuilding.

@@ -798,6 +798,11 @@ def _reset_leakable_engine_globals():
         _reset_eng_power_singletons()
     except Exception:
         pass
+    try:
+        from engine.appc.tg_ui import eng_power as _eng_power
+        _eng_power.set_engineering_open_check(None)
+    except Exception:
+        pass
     # Warp module hooks: host_loop.run() installs realize/teardown/VFX closures
     # on the warp module globals and never clears them. A later warp test then
     # picks up the host loop's leaked _vfx_enabled() and takes the flythrough

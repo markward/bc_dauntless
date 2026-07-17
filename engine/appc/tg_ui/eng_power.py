@@ -36,11 +36,26 @@ class STFillGauge(TGPane):
 _power_ctrl_singleton = None
 _power_display_singleton = None
 
+# Host-registered signal: True while the Engineering crew menu is the open
+# top-level station menu.  EngPowerDisplay.IsCompletelyVisible() consults it so
+# BC's per-tick AdjustPower runs only while the display is on screen.  Module
+# level (not per-instance) because the SDK recreates the display singleton on
+# every bridge load, while the host registers this once at boot.
+_engineering_open_check = None
+
+
+def set_engineering_open_check(fn) -> None:
+    """Register (or clear with None) the engineering-menu-open predicate."""
+    global _engineering_open_check
+    _engineering_open_check = fn
+
 
 def _reset_eng_power_singletons() -> None:
     global _power_ctrl_singleton, _power_display_singleton
     _power_ctrl_singleton = None
     _power_display_singleton = None
+    # NOTE: _engineering_open_check is intentionally NOT reset here — it is a
+    # boot-time host registration that must survive bridge reloads.
 
 
 # ── EngPowerCtrl ──────────────────────────────────────────────────────────────
@@ -107,6 +122,19 @@ class EngPowerDisplay(TGPane):
 
     def GetConceptualParent(self):
         return None
+
+    def IsCompletelyVisible(self) -> int:
+        """On screen iff the Engineering crew menu is open.
+
+        The engineering-open signal encodes this widget's ancestor context
+        (the display lives inside the Engineering pane, visible only when that
+        menu is up), so it stands in for the base chain-walk.  Falls back to
+        TGPane's own-visibility walk when no host check is registered (bare
+        unit contexts).
+        """
+        if _engineering_open_check is not None:
+            return 1 if _engineering_open_check() else 0
+        return super().IsCompletelyVisible()
 
 
 def EngPowerDisplay_Create(width: float = 0.0, height: float = 0.0) -> "EngPowerDisplay":
