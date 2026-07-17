@@ -2274,14 +2274,55 @@ class TorpedoTube(Weapon):
 
     def _ammo_exhausted(self) -> bool:
         """True when the parent's selected ammo type is a FINITE magazine
-        with zero rounds left (combat-and-damage.md:788 ReloadTorpedo,
-        :823 CanFire — both require "Ammo available").  Unlimited/undeclared
-        ammo (or no ammo configured at all) NEVER gates — mirrors the
+        with zero rounds left.  This is the CanFire gate: BC's CanFire keys off
+        the tube's own NumReady (weapon-firing-mechanics.md §2.5), and with the
+        loaded-count-aware reload gate below the invariant NumReady <= inventory
+        holds, so an empty inventory means the tube is empty too.  Unlimited/
+        undeclared ammo (or no ammo configured) NEVER gates — mirrors the
         existing TorpedoSystem.StartFiring reserve-gate pattern so the
         legacy/undeclared firing path stays byte-identical."""
         ammo = self._parent_ammo()
         finite = ammo is not None and not getattr(ammo, "_unlimited", True)
         return finite and ammo.GetAvailable() <= 0
+
+    def _rounds_loaded_systemwide(self) -> int:
+        """System-wide count of rounds currently chambered across ALL of the
+        parent system's tubes — BC's TorpedoSystem+0x118 (NumReady), the value
+        the reload gate compares stores against (weapon-firing-mechanics.md §2.2).
+
+        Computed on demand from the live per-tube counts rather than kept as a
+        stored counter, so it can never desync (the per-tube _num_ready already
+        needs a self-heal/sync layer; a second incrementally-maintained counter
+        would invite the same class of bug).  BC's +0x118 is a single all-types
+        count; summing every tube's NumReady matches it, since our tubes fire the
+        parent's currently-selected type and carry no per-tube ammo-type of their
+        own.  Falls back to this tube's own count if it has no parent."""
+        parent = self.GetParentSubsystem()
+        if parent is None:
+            return self._num_ready
+        total = 0
+        for c in getattr(parent, "_children", ()):
+            if isinstance(c, TorpedoTube):
+                total += c.GetNumReady()
+        return total
+
+    def _reload_denied_by_ammo(self) -> bool:
+        """The ReloadTorpedo gate (BC weapon-firing-mechanics.md §2.2, gate 2):
+        reload iff ``AmmoCounts > NumReady`` — a round of the current type exists
+        in inventory that is NOT already sitting in a tube.  Deny when it does
+        not, i.e. ``GetAvailable() <= rounds-loaded-system-wide``.
+
+        Because we debit ammo at FIRE (not at reload), GetAvailable() is the
+        TOTAL inventory of the type — it still counts chambered-but-unfired
+        rounds, exactly like BC's AmmoCounts.  Checking only ``<= 0`` (as the old
+        _ammo_exhausted did here) let a second empty tube re-chamber a round
+        already loaded in another tube, so firing both over-issued.  Finite types
+        only; unlimited/undeclared ammo never gates."""
+        ammo = self._parent_ammo()
+        finite = ammo is not None and not getattr(ammo, "_unlimited", True)
+        if not finite:
+            return False
+        return ammo.GetAvailable() <= self._rounds_loaded_systemwide()
 
     def CanFire(self) -> int:
         """BC torpedo CanFire (combat-and-damage.md:822-826):
@@ -2545,29 +2586,31 @@ class TorpedoTube(Weapon):
                 return                    # one round per tick, as BC does
 
     def ReloadTorpedo(self) -> None:
-        """Load one round into the oldest cooling slot. BC FUN_0057D8A0
-        (combat-and-damage.md:786-793).
+        """Load one round into the longest-cooling slot. BC TorpedoTube::
+        ReloadTorpedo (0x0057D8A0, weapon-firing-mechanics.md §2.2).
 
         BC says "find slot with greatest timer". Its timers count UP while
         cooling, so the greatest timer is the slot cooling LONGEST. We store the
         same accumulated-progress timer, so the equivalent is the LARGEST value —
         FIFO reload (weapon-firing-mechanics.md §2.2/§2.6).
 
-        Guarded on ammo availability (combat-and-damage.md:788 "if no ammo
-        left: return") — a finite magazine at zero rounds must not keep
-        topping tubes up to full while the ammo panel reads empty.
-        Unlimited/undeclared ammo never gates (see _ammo_exhausted).
+        Ammo gate (BC §2.2 gate 2): reload iff AmmoCounts > NumReady — a round of
+        this type exists in inventory that is not ALREADY chambered in one of the
+        system's tubes. Checking only "inventory empty" let a second empty tube
+        re-chamber a round already loaded elsewhere, so firing both over-issued.
+        See _reload_denied_by_ammo. Unlimited/undeclared ammo never gates.
 
-        DIVERGENCE (deliberate, documented): BC decrements the magazine here
-        ("total_ammo_consumed++"). We already debit ammo at FIRE time, in
-        TorpedoSystem.StartFiring. Debiting again here would double-count —
-        this method only GATES on ammo, it never decrements it.
-        Aligning the debit point with BC is a follow-up; it touches TorpedoSystem.
+        Ammo is NOT decremented here. BC debits AmmoCounts at FIRE, not at reload:
+        the decrement (0x0057B4D0) has exactly two callers, both TorpedoTube::Fire
+        variants, and TorpedoSystem+0x118 is a loaded-in-tubes count, not a
+        total-consumed counter (weapon-firing-mechanics.md §2.1/§2.2). Our fire-
+        time debit (in TorpedoTube._spawn_torpedo) is therefore already aligned
+        with BC — do NOT move it here; a debit at reload would double-count.
         """
         self._ensure_slots()
         if self._num_ready >= self._max_ready:
             return
-        if self._ammo_exhausted():
+        if self._reload_denied_by_ammo():
             return
         oldest_i, oldest_t = -1, None
         for i in range(len(self._reload_timers)):
