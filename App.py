@@ -728,27 +728,60 @@ class FuzzyLogic:
 
 
 # ── AIScriptAssist helpers ───────────────────────────────────────────────────
-# C++-side helpers exposed to PlainAI scripts for torpedo-evasion logic.
-# SDK App.py binds these directly to Appc symbols (see sdk/.../App.py:10162,
-# 11200). The PlainAI EvadeTorps body calls
-# ``AIScriptAssist_GetIncomingTorpIDsInSet`` every 0.15s to poll for incoming
-# torpedo IDs in the current set.
+# C++-side helpers exposed to PlainAI / ConditionIncomingTorps scripts for
+# torpedo-evasion logic. SDK App.py binds these directly to Appc symbols (see
+# sdk/.../App.py:10162, 11200). The two AI paths that drive NPC torpedo
+# evasion both funnel through here:
+#   - PlainAI/EvadeTorps.py:82 polls AIScriptAssist_GetIncomingTorpIDsInSet
+#     every 0.15s and steers away from the returned torpedo ids;
+#   - ConditionIncomingTorps.py:174 gates the evasion AI on
+#     AIScriptAssist_TorpIsIncoming for a single torpedo.
 #
-# Phase 1 has no torpedo tracker, so this stub returns an empty tuple — the
-# caller's ``if not lIncomingTorpIDs: return US_ACTIVE`` short-circuit then
-# fires, which is the correct behaviour when nothing's incoming.
+# ARITY comes from the RE'd binary (../STBC-Reverse-Engineering-1 Ghidra
+# annotations), NOT from inference:
+#   0x006063d0  TorpIsIncoming(PyObject*, float, long, int)  argfmt 'OOfli'
+#   0x00473830  GetIncomingTorpIDsInSet(PyObject*, float, int, int)  'OOfii'
+# -> five args: (object, [object|set], float threshold, long source-id,
+#    int source-filter-armed). The prior 3-arg TorpIsIncoming raised
+#    TypeError on every ConditionIncomingTorps call (swallowed by the event
+#    dispatcher), so no NPC ever evaded.
 #
-# Returning a real tuple (rather than the fallback _Stub) is required: the
-# SDK script next does ``for idTorp in lIncomingTorpIDs`` — iterating a _Stub
-# loops forever via __getitem__.
+# Parameter MEANINGS and the closing-time metric are derived from the SDK
+# call sites; the derivation (and what is inference vs. grounded) lives with
+# the implementation in engine/appc/projectiles.py. `bMatchFiringObject` is
+# the SDK's `(self.sFiringObject is not None)` -- whether the source filter is
+# armed -- so it is truthiness-tested, not int-coerced.
 
 def AIScriptAssist_GetIncomingTorpIDsInSet(pShip, pSet, fDangerTimeThreshold,
-                                            idToIgnore, iFlags):
-    return ()
+                                           iFiringObjectID, bMatchFiringObject):
+    from engine.appc.projectiles import incoming_ids
+    return tuple(incoming_ids(pShip, float(fDangerTimeThreshold),
+                              int(iFiringObjectID), bool(bMatchFiringObject)))
 
 
-def AIScriptAssist_TorpIsIncoming(pShip, pTorp, fDangerTimeThreshold):
-    return 0
+def AIScriptAssist_TorpIsIncoming(pShip, pTorp, fDangerTimeThreshold,
+                                  iFiringObjectID, bMatchFiringObject):
+    from engine.appc.projectiles import is_incoming
+    return 1 if is_incoming(pShip, pTorp, float(fDangerTimeThreshold),
+                            int(iFiringObjectID), bool(bMatchFiringObject)) else 0
+
+
+def Torpedo_Cast(obj):
+    """Return `obj` if it is a real in-flight torpedo, else None. Mirrors the
+    SWIG downcast the SDK uses to test whether a set-event's object is a
+    torpedo (ConditionIncomingTorps.py:233,260). A correct None for non-torps
+    matters: the prior _NamedStub returned a truthy stub for EVERY object, so
+    ConditionIncomingTorps mistook every ship entering a set for a torpedo."""
+    from engine.appc.projectiles import Torpedo
+    return obj if isinstance(obj, Torpedo) else None
+
+
+def Torpedo_GetObjectByID(pSet, obj_id):
+    """The in-flight torpedo with this object id, or None. SDK
+    PlainAI/EvadeTorps.py:110 resolves each incoming id this way. `pSet` is
+    ignored: our torpedoes live in the module-level registry, not a set."""
+    from engine.appc.projectiles import get_by_id
+    return get_by_id(obj_id)
 
 
 # ── App.AT_* ammo-type constants ─────────────────────────────────────────────
