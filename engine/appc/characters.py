@@ -1196,15 +1196,17 @@ class CharacterClass(ObjectClass):
         dispatch_character_menu(self, is_open=False)
 
     def _notify_menu(self, turn) -> None:
+        # Menu open/close turns the officer to/from the captain, re-pointed (SP2)
+        # through the CharacterClass door: TurnTowards("Captain") / TurnBack()
+        # enqueue a CAT_TURN / CAT_TURN_BACK record that the host tick drains
+        # into the clip-player (request_turn_to). Fire-and-forget — a menu turn
+        # has no waiting mission sequence, so no on_complete. Best-effort: never
+        # raises out of MenuUp/MenuDown.
         try:
-            from engine.bridge_character_anim import get_controller
-            ctrl = get_controller()
-            if ctrl is None:
-                return
             if turn:
-                ctrl.request_turn(self)
+                self.TurnTowards("Captain")
             else:
-                ctrl.request_turn_back(self)
+                self.TurnBack()
         except Exception:
             pass
 

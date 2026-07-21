@@ -881,3 +881,31 @@ def test_ui_disabled_gesture_reenables_ui_on_release():
     assert c.IsStateSet(CharacterClass.CS_UI_DISABLED) == 1
     c.UpdateAnimationQueue()                        # ReleaseCurrentAnimation -> OnAnimRelease
     assert c.IsStateSet(CharacterClass.CS_UI_DISABLED) == 0   # done_flags re-enabled the UI
+
+
+def test_notify_menu_open_turns_to_captain_via_the_door():
+    # SP2: MenuUp's _notify_menu(turn=True) re-points through the CharacterClass
+    # door (TurnTowards("Captain")), enqueuing a CAT_TURN record rather than
+    # calling the controller directly. Fire-and-forget: no on_complete (a menu
+    # turn has no waiting mission sequence).
+    c = CharacterClass_Create()
+    c.SetActive(1)
+    c._notify_menu(turn=True)                       # menu opened -> turn to captain
+    assert len(c._anim_pending) == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_TURN
+    assert rec.name == "Captain"
+    assert rec.on_complete is None
+
+
+def test_notify_menu_close_turns_back_via_the_door():
+    # MenuDown's _notify_menu(turn=False) -> TurnBack() enqueues CAT_TURN_BACK.
+    # (Tested on a fresh officer: a real menu stays open long enough for the
+    # turn to PLAY and retire before it closes; an instant open-then-close while
+    # the turn is still queued is the referee's STOP_BOTH name-tiebreak -- both
+    # cancel, the officer never turns, which is correct.)
+    c = CharacterClass_Create()
+    c.SetActive(1)
+    c._notify_menu(turn=False)                      # menu closed -> turn back
+    assert len(c._anim_pending) == 1
+    assert c._anim_pending[0].category == CharacterClass.CAT_TURN_BACK
