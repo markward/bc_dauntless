@@ -2054,6 +2054,24 @@ def _pump_bridge_doors(cutscene, renderer, *, paused: bool) -> None:
     cutscene._update_doors(renderer, _App.g_kAnimationManager)
 
 
+def _pump_character_queues(characters) -> None:
+    """Drive each active bridge officer's CharacterClass animation queue one step.
+
+    UpdateAnimationQueue() plays the next queued record via the clip-player seam
+    (appending to the controller's pending lists) and fires on_complete for any
+    record that settles or drops -- which is a CharacterAction's Completed(),
+    advancing the mission TGSequence. MUST run before char_anim.update() drains
+    those pending lists. Never raises (a bad character must not stall the loop)."""
+    for ch in characters:
+        fn = getattr(ch, "UpdateAnimationQueue", None)
+        if fn is None:
+            continue
+        try:
+            fn()
+        except Exception:
+            pass
+
+
 def _pump_char_anim(char_anim, renderer, dt, *, paused: bool) -> None:
     """Advance the bridge character transient-animation controller every
     unpaused frame, regardless of view mode.
@@ -2079,10 +2097,18 @@ def _pump_char_anim(char_anim, renderer, dt, *, paused: bool) -> None:
     established pattern (the walk controller does exactly that): the instance
     keeps correct pose state, so the bridge is right the moment it is drawn
     again. Idle gestures stay in the bridge render block — those ARE purely
-    visual. Idle when nothing is queued/active, so the always-on pump is free."""
+    visual. Idle when nothing is queued/active, so the always-on pump is free.
+
+    Also drives _pump_character_queues() over the live bridge officers, BEFORE
+    draining char_anim's own pending lists: CharacterClass.UpdateAnimationQueue()
+    is what actually plays an AT_TURN record queued by CharacterAction and fires
+    its on_complete. Without this, e.g. E1M1's Picard AT_WATCH_ME -> AT_TURN
+    "Captain" -> AT_STOP_WATCHING_ME sequence stalls before AT_STOP_WATCHING_ME —
+    the turn never plays and the camera stays locked on Picard forever."""
     if paused:
         return
     import App as _App
+    _pump_character_queues(_live_bridge_characters())
     char_anim.update(dt, renderer=renderer, anim_mgr=_App.g_kAnimationManager)
 
 
