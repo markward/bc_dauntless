@@ -432,3 +432,147 @@ def test_set_current_animation_positional_backward_compat():
     assert rec.hold is False
     assert rec.now is False
     assert rec.done_flags == 0
+
+
+# ── Task 12: seam wiring (controller + builder resolution) + turn/glance ────
+
+from engine import bridge_character_anim
+
+
+class _FakeController:
+    def __init__(self):
+        self.played = []
+        self.stopped = []
+        self.active = False
+
+    def play_record(self, character, rec) -> None:
+        self.played.append((character, rec))
+
+    def stop(self, character) -> None:
+        self.stopped.append(character)
+
+    def is_active(self, character) -> bool:
+        return self.active
+
+
+@pytest.fixture
+def fake_controller():
+    ctrl = _FakeController()
+    bridge_character_anim.set_controller(ctrl)
+    try:
+        yield ctrl
+    finally:
+        bridge_character_anim.set_controller(None)
+
+
+def test_anim_is_active_false_with_no_controller_wired():
+    bridge_character_anim.set_controller(None)
+    c = CharacterClass_Create()
+    rec = AnimRec(category=CharacterClass.CAT_NON_INTERRUPTABLE, play=object())
+    assert c._anim_is_active(rec) is False
+
+
+def test_update_animation_queue_plays_through_wired_controller(fake_controller):
+    c = CharacterClass_Create()
+    rec = AnimRec(category=CharacterClass.CAT_NON_INTERRUPTABLE, play=object())
+    c._anim_pending.append(rec)
+    c.UpdateAnimationQueue()
+    assert fake_controller.played == [(c, rec)]
+    assert c._anim_current is rec
+
+
+def test_anim_stop_play_calls_controller_stop(fake_controller):
+    c = CharacterClass_Create()
+    rec = AnimRec(category=CharacterClass.CAT_BREATHE, play=object())
+    c._anim_stop_play(rec)
+    assert fake_controller.stopped == [c]
+
+
+def test_anim_is_active_reflects_wired_controller(fake_controller):
+    c = CharacterClass_Create()
+    rec = AnimRec(category=CharacterClass.CAT_NON_INTERRUPTABLE, play=object())
+    fake_controller.active = True
+    assert c._anim_is_active(rec) is True
+    fake_controller.active = False
+    assert c._anim_is_active(rec) is False
+
+
+def test_resolve_anim_returns_none_when_builder_raises(monkeypatch):
+    from engine.appc import bridge_placement
+
+    def boom(character, key):
+        raise RuntimeError("no builder")
+
+    monkeypatch.setattr(bridge_placement, "resolve_builder", boom)
+    c = CharacterClass_Create()
+    assert c._resolve_anim("anything") is None
+
+
+def test_turntowards_captain_enqueues_turn_record_and_returns_zero():
+    c = CharacterClass_Create()
+    c.SetActive(1)
+    cb = lambda: None
+    result = c.TurnTowards("Captain", on_complete=cb)
+    assert result == 0
+    assert len(c._anim_pending) == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_TURN
+    assert rec.name == "Captain"
+    assert rec.on_complete is cb
+    assert rec.hold is True
+
+
+def test_turntowards_non_captain_or_none_enqueues_nothing():
+    c = CharacterClass_Create()
+    c.SetActive(1)
+    assert c.TurnTowards("Data") == 0
+    assert c._anim_pending == []
+    assert c.TurnTowards(None) == 0
+    assert c._anim_pending == []
+
+
+def test_turnback_clears_interruptable_set_and_enqueues_turn_back():
+    c = CharacterClass_Create()
+    for cat in (CharacterClass.CAT_BREATHE, CharacterClass.CAT_INTERRUPTABLE,
+                CharacterClass.CAT_GLANCE, CharacterClass.CAT_GLANCE_BACK):
+        c._anim_pending.append(AnimRec(category=cat, play=object()))
+    cb = lambda: None
+    result = c.TurnBack(cb)
+    assert result == 1
+    cats = [r.category for r in c._anim_pending]
+    assert CharacterClass.CAT_BREATHE not in cats
+    assert CharacterClass.CAT_INTERRUPTABLE not in cats
+    assert CharacterClass.CAT_GLANCE not in cats
+    assert CharacterClass.CAT_GLANCE_BACK not in cats
+    assert CharacterClass.CAT_TURN_BACK in cats
+    rec = [r for r in c._anim_pending if r.category == CharacterClass.CAT_TURN_BACK][0]
+    assert rec.on_complete is cb
+
+
+def test_glanceat_enqueues_glance_record_with_name():
+    c = CharacterClass_Create()
+    cb = lambda: None
+    result = c.GlanceAt("Kirk", cb)
+    assert result == 1
+    assert len(c._anim_pending) == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_GLANCE
+    assert rec.name == "Kirk"
+    assert rec.on_complete is cb
+
+
+def test_glanceat_none_returns_zero_and_enqueues_nothing():
+    c = CharacterClass_Create()
+    assert c.GlanceAt(None) == 0
+    assert c._anim_pending == []
+
+
+def test_glanceaway_enqueues_glance_back_record():
+    c = CharacterClass_Create()
+    cb = lambda: None
+    result = c.GlanceAway(cb)
+    assert result == 1
+    assert len(c._anim_pending) == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_GLANCE_BACK
+    assert rec.on_complete is cb

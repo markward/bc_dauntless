@@ -619,9 +619,11 @@ class CharacterClass(ObjectClass):
         self._anim_pending.append(rec)
 
     def _anim_stop_play(self, rec) -> None:
-        # Interim no-op; Task 10 wires this to the clip-player seam (stop the
-        # record's live playback). Safe to call on records that never played.
-        pass
+        # Clip-player seam: stop the record's live playback. Safe to call on
+        # records that never played (the controller's stop() is idempotent).
+        c = self._anim_controller()
+        if c is not None:
+            c.stop(self)
 
     def ReleaseCurrentAnimation(self, param=0) -> None:
         cur = self._anim_current
@@ -662,19 +664,34 @@ class CharacterClass(ObjectClass):
         elif rec.category == self.CAT_GLANCE:          # 5 — glance target
             self._glance_name = rec.name
 
+    def _anim_controller(self):
+        # CharacterClass stays renderer-free: reach only the animation
+        # controller (never the renderer directly). Headless-guarded — no
+        # controller registered (or import failure) resolves to None.
+        try:
+            from engine.bridge_character_anim import get_controller
+            return get_controller()
+        except Exception:
+            return None
+
     def _anim_is_active(self, rec) -> bool:
-        # Interim: a handed-over record is considered finished. Task 10 wires
-        # this to the clip-player seam (is_active on the character's instance).
-        return False
+        c = self._anim_controller()
+        return bool(c.is_active(self)) if c is not None else False
 
     def _resolve_anim(self, key):
-        # Builder-resolution seam. Task 11 gives this a real body (resolves the
-        # SDK animation builder for `key` via bridge_placement). Interim: None.
-        return None
+        # Builder-resolution seam: resolves the SDK animation builder for
+        # `key` via bridge_placement. None on any failure (no builder
+        # registered, import error, or the builder itself raising).
+        try:
+            from engine.appc import bridge_placement
+            return bridge_placement.resolve_builder(self, key)
+        except Exception:
+            return None
 
     def _anim_play_now(self, rec) -> None:
-        # Clip-player seam. Task 10 wires this to actually play `rec`. Interim: no-op.
-        pass
+        c = self._anim_controller()
+        if c is not None:
+            c.play_record(self, rec)
 
     def UpdateAnimationQueue(self) -> None:
         # Per-frame driver (tier-0 §4.8). Advance the queue by one step.
@@ -890,10 +907,38 @@ class CharacterClass(ObjectClass):
     def Breathe(self, *args) -> None:             pass
     def Blink(self, *args) -> None:               pass
     def MoveTo(self, *args) -> None:              pass
-    def TurnTowards(self, *args) -> None:         pass
-    def TurnBack(self, *args) -> None:            pass
-    def GlanceAt(self, *args) -> None:            pass
-    def GlanceAway(self, *args) -> None:          pass
+    def TurnTowards(self, name, arg2=None, on_complete=None) -> int:
+        # tier-0: only acts for the Captain while active; ALWAYS returns 0/false.
+        if not name or not self.IsActive() or str(name) != "Captain":
+            return 0
+        self.SetCurrentAnimation(None, self.CAT_TURN, 0, "Captain",
+                                 on_complete=on_complete, hold=True)
+        return 0
+
+    def TurnBack(self, on_complete=None, *args) -> int:
+        # Clear the interruptable set first (tier-0), then enqueue the turn-back.
+        for c in (self.CAT_BREATHE, self.CAT_INTERRUPTABLE,
+                  self.CAT_GLANCE, self.CAT_GLANCE_BACK):
+            self.ClearAnimationsOfType(c)
+        self.SetCurrentAnimation(None, self.CAT_TURN_BACK, 0, "Captain",
+                                 on_complete=on_complete, hold=True)
+        return 1
+
+    def GlanceAt(self, name, on_complete=None, *args) -> int:
+        if not name:
+            return 0
+        self.ClearAnimationsOfType(self.CAT_BREATHE)
+        self.ClearAnimationsOfType(self.CAT_INTERRUPTABLE)
+        self.SetCurrentAnimation(None, self.CAT_GLANCE, 2, str(name),
+                                 on_complete=on_complete)
+        return 1
+
+    def GlanceAway(self, on_complete=None, *args) -> int:
+        self.ClearAnimationsOfType(self.CAT_BREATHE)
+        self.ClearAnimationsOfType(self.CAT_INTERRUPTABLE)
+        self.SetCurrentAnimation(None, self.CAT_GLANCE_BACK, 0, None,
+                                 on_complete=on_complete)
+        return 1
     def PlayAnimation(self, *args) -> None:       pass
     def PlayAnimationFile(self, *args) -> None:   pass
     def LookAtMe(self, *args) -> None:            pass
