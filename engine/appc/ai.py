@@ -1678,37 +1678,61 @@ class CharacterAction(TGAction):
             self.Completed()
 
     def _queue_default(self) -> None:
-        """AT_DEFAULT / AT_BREATHE / AT_FORCE_BREATHE — return the officer to rest.
+        """AT_DEFAULT / AT_BREATHE / AT_FORCE_BREATHE — return the officer to rest,
+        re-pointed (SP2 P4) through the CharacterClass door. The three verbs no
+        longer share one uniform path:
 
-        The rest pose IS the breathe idle (bridge_placement.capture_breathing feeds
-        BridgeCharacterAnimController.set_idle), which is why all three verbs land
-        here: BC's AT_DEFAULT restores the default pose, and an officer at rest is
-        an officer breathing. Completes INLINE — restoring a pose is instant, and
-        sequences supply their own delays.
+        - AT_BREATHE routes through the idle-gated `cc.Breathe(on_complete=
+          self.Completed)` door: BC appends AT_BREATHE at the END of gesture
+          sequences (LargeAnimations/SmallAnimations/MediumAnimations) to return
+          an ALREADY-IDLE officer to the breathing idle. Breathe() enqueues a
+          CAT_BREATHE record whose on_complete fires exactly once via the queue
+          drain when it returns 1; on its no-op path (officer still animating /
+          has a pending move or glance target) it returns 0 WITHOUT firing
+          on_complete, so we complete inline ourselves.
 
-        Ordering note (re-entrancy): request_default() fires the dropped transient
-        action's on_complete SYNCHRONOUSLY (see BridgeCharacterAnimController.
-        request_default). That callback can be another CharacterAction's _done(),
-        whose Completed() can advance the owning TGSequence and submit a brand-new
-        gesture on this SAME officer — including a fresh cc.set_current_animation()
-        call — before request_default() returns. We therefore clear_current_animation()
-        BEFORE calling request_default(), not after: clearing first means any
-        re-entrant set_current_animation() lands on a clean slate and is never wiped
-        out by a clear that runs afterward and would otherwise stomp the newly
-        started action's state instead of the cancelled one's.
+        - AT_DEFAULT / AT_FORCE_BREATHE are grouped as "force the officer back
+          to rest": drain the interruptable queue via `cc.ClearExtraAnimations()`,
+          then restore the rest pose via the clip-player seam
+          (`ctrl.request_default(cc)`), then complete INLINE — restoring a pose
+          is instant, and sequences supply their own delays. AT_FORCE_BREATHE is
+          grouped here rather than with the idle-gated Breathe() because "force"
+          must act even when the officer is mid-gesture (Breathe would no-op).
+
+        Ordering note (re-entrancy, AT_DEFAULT/AT_FORCE_BREATHE path only):
+        request_default() fires a dropped controller _Action's on_complete
+        SYNCHRONOUSLY (see BridgeCharacterAnimController.request_default), and
+        event dispatch is synchronous, so that callback can advance the owning
+        TGSequence and submit a brand-new gesture on this SAME officer —
+        including a fresh cc.SetCurrentAnimation() call — before
+        request_default() returns. We therefore call ClearExtraAnimations()
+        BEFORE request_default(), not after: clearing first means any
+        re-entrant enqueue lands on a clean queue and is never wiped by a clear
+        that runs afterward.
+
+        Best-effort throughout: Play() must never raise. `cc is None` completes
+        inline; any exception completes inline. self.Completed() fires exactly
+        once on every path.
         """
         from engine.appc.characters import CharacterClass_Cast
         from engine import bridge_character_anim
         try:
             cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            if cc is None:
+                self.Completed()
+                return
+            if self._action_type == self.AT_BREATHE:
+                if not cc.Breathe(on_complete=self.Completed):
+                    self.Completed()
+                return
+            # AT_DEFAULT / AT_FORCE_BREATHE: force-to-rest.
+            cc.ClearExtraAnimations()
             ctrl = bridge_character_anim.get_controller()
-            if cc is not None:
-                cc.clear_current_animation()
-                if ctrl is not None:
-                    ctrl.request_default(cc)
+            if ctrl is not None:
+                ctrl.request_default(cc)
+            self.Completed()
         except Exception:
-            pass
-        self.Completed()
+            self.Completed()
 
     def _menu_action(self, *, up: bool) -> None:
         # AT_MENU_UP/AT_MENU_DOWN are the sequenceable wrappers around BC's

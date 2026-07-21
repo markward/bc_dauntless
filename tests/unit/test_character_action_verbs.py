@@ -341,79 +341,136 @@ import pytest
 
 @pytest.mark.parametrize("verb", [
     CharacterAction.AT_DEFAULT,
-    CharacterAction.AT_BREATHE,
     CharacterAction.AT_FORCE_BREATHE,
 ])
-def test_default_and_breathe_restore_the_rest_pose(monkeypatch, verb):
+def test_default_and_force_breathe_restore_the_rest_pose(monkeypatch, verb):
+    # AT_DEFAULT / AT_FORCE_BREATHE (P4 mapping): "force the officer back to
+    # the rest pose" -- drain the interruptable queue via the door
+    # (cc.ClearExtraAnimations()), then restore the rest pose via the
+    # clip-player seam (ctrl.request_default(cc)). AT_BREATHE no longer shares
+    # this path -- see test_at_breathe_enqueues_via_the_breathe_door below; it
+    # is idle-gated and routes through cc.Breathe() instead.
     ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
-    ch.set_current_animation("PushingButtons", CharacterClass.CAT_NON_INTERRUPTABLE)
+    # Enqueue a CAT_INTERRUPTABLE record first (member of the ClearExtraAnimations
+    # set {0,1,5,6}) so we can prove the queue is genuinely drained, not just
+    # that request_default() was called.
+    ch.SetCurrentAnimation(object(), CharacterClass.CAT_INTERRUPTABLE)
+    assert ch._anim_pending != []
     ctrl = _FakeController()
     monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
 
     action = CharacterAction(ch, verb)
     action.Play()
 
-    assert ctrl.submitted == [(ch, "DEFAULT", None, None)]
+    assert ctrl.submitted == [(ch, "DEFAULT", None, None)]   # request_default called
+    assert ch._anim_pending == []           # interruptable queue drained
+    assert ch._anim_current is None
     assert action.IsPlaying() == 0          # completes inline
-    assert ch.IsAnimating() == 0            # gate reopens
+
+
+def test_at_breathe_enqueues_via_the_breathe_door(monkeypatch):
+    # AT_BREATHE (P4 mapping): routes through the idle-gated
+    # CharacterClass.Breathe() door -- NOT request_default -- because BC
+    # appends AT_BREATHE at the END of gesture sequences to return an
+    # ALREADY-IDLE officer to the breathing idle. Breathe() enqueues a
+    # CAT_BREATHE record carrying self.Completed as on_complete; the action
+    # stays deferred until the queue drain plays/settles that record.
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    monkeypatch.setattr(
+        "engine.appc.bridge_placement.capture_registered_clip",
+        lambda character, suffix: {"clip_nif": "Breathe.nif"})
+    ctrl = _RecordingController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
+
+    action = CharacterAction(ch, CharacterAction.AT_BREATHE)
+    action.Play()
+
+    assert action.IsPlaying() == 1               # deferred, unlike AT_DEFAULT
+    assert len(ch._anim_pending) == 1
+    rec = ch._anim_pending[0]
+    assert rec.category == ch.CAT_BREATHE
+    assert rec.on_complete == action.Completed
+    assert ctrl.submitted == []                  # NOT request_default -- see docstring above
+
+    ch.UpdateAnimationQueue()                    # drains -> ShouldPlayNow -> play_record
+    assert len(ctrl.submitted) == 1
+    _c, clips, priority, on_complete = ctrl.submitted[0]
+    assert clips == [("Breathe.nif", 0.0)]
+    assert priority == bridge_character_anim._SCRIPTED
+
+    on_complete()                                 # controller settles -> completion guarantee
+    assert action.IsPlaying() == 0
+
+
+def test_at_breathe_completes_inline_on_the_idle_gate_noop_path(monkeypatch):
+    # Breathe() returns 0 WITHOUT firing on_complete when the officer is not
+    # idle (already animating / has a pending move or glance target) -- so
+    # _queue_default must complete inline itself, or the sequence hangs.
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    ch.SetCurrentAnimation(object(), CharacterClass.CAT_NON_INTERRUPTABLE)
+    assert ch.IsAnimating() == 1                  # not idle
+
+    action = CharacterAction(ch, CharacterAction.AT_BREATHE)
+    action.Play()
+
+    assert action.IsPlaying() == 0                # completed inline, not lost
+    # The pre-existing gesture is untouched -- AT_BREATHE's no-op path must
+    # not clobber unrelated queue state.
+    assert len(ch._anim_pending) == 1
+    assert ch._anim_pending[0].category == ch.CAT_NON_INTERRUPTABLE
 
 
 def test_queue_default_survives_reentrant_gesture_submitted_by_dropped_on_complete(
         monkeypatch):
     # Regression for the ordering requirement documented on _queue_default:
-    # it must call cc.clear_current_animation() BEFORE ctrl.request_default(cc),
+    # it must call cc.ClearExtraAnimations() BEFORE ctrl.request_default(cc),
     # never after. request_default() fires the DROPPED transient action's
     # on_complete SYNCHRONOUSLY (BridgeCharacterAnimController.request_default),
     # and our event dispatch is synchronous, so that callback can re-enter:
-    # a cancelled gesture's _done() runs Completed(), which can advance the
-    # owning TGSequence and submit a BRAND-NEW gesture on the SAME officer —
-    # including a fresh set_current_animation() call — before request_default()
-    # returns. If _queue_default cleared AFTER request_default, that trailing
-    # clear would wipe the state belonging to the newly-started gesture instead
-    # of the cancelled one's, leaving the officer visibly gesturing while
-    # IsAnimating()/IsAnimatingNonInterruptable() report idle.
+    # a cancelled gesture's completion can enqueue a BRAND-NEW record on the
+    # SAME officer -- a fresh cc.SetCurrentAnimation() call -- before
+    # request_default() returns. Clearing first means any re-entrant enqueue
+    # lands on a clean queue.
     #
+    # MODEL CHANGE from the pre-door version of this test: the queue-side
+    # clear is now cc.ClearExtraAnimations() (drains categories {0,1,5,6}:
+    # BREATHE/INTERRUPTABLE/GLANCE/GLANCE_BACK from the AnimRec queue), not
+    # the old clear_current_animation() shim (an unconditional
+    # self._anim_current = None, with no category filter at all). The
+    # re-entrant record here uses CAT_NON_INTERRUPTABLE (2) -- the category
+    # PlayAnimation's default flag=0 actually enqueues in production -- which
+    # is deliberately NOT in the ClearExtraAnimations set, so it must survive.
     # This drives the REAL BridgeCharacterAnimController (not _FakeController,
     # whose request_default is a stub that never fires on_complete and so can
-    # never exercise re-entrancy). Gesture A's on_complete is a callback that
-    # performs exactly what a real _done() -> Completed() -> TGSequence-advance
-    # chain would do to submit gesture B: ctrl.submit(...) + set_current_animation
-    # (see CharacterAction._queue_play_animation's _done(), which does the same
-    # two calls). We inline that pair directly rather than building a full
-    # TGSequence/CharacterAction B, because the two calls ARE the entirety of
-    # what the real chain contributes at this boundary — building the sequence
-    # machinery around them would not change what request_default() observes.
+    # never exercise re-entrancy).
     from engine import bridge_character_anim as bca
 
-    ch = _character_with("GestureA", "Mod.A")
-    ch.AddAnimation("GestureB", "Mod.B")
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
     ch._render_instance = 123
     ch.SetHidden(0)
     ctrl = bca.BridgeCharacterAnimController()
 
     def _a_on_complete():
         # Simulates the re-entrant chain: a dropped gesture's completion
-        # submits and marks a NEW gesture (B) on the SAME officer, all from
-        # inside request_default()'s synchronous callback.
-        assert ctrl.submit(ch, [("clipB.nif", 5.0)],
-                           priority=bca._SCRIPTED) is True
-        ch.set_current_animation("GestureB", CharacterClass.CAT_NON_INTERRUPTABLE)
+        # enqueues a NEW record on the officer via the queue's own door (the
+        # same SetCurrentAnimation call PlayAnimation makes), all from inside
+        # request_default()'s synchronous callback.
+        ch.SetCurrentAnimation(object(), CharacterClass.CAT_NON_INTERRUPTABLE)
 
     assert ctrl.submit(ch, [("clipA.nif", 5.0)], priority=bca._SCRIPTED,
                        on_complete=_a_on_complete) is True
-    ch.set_current_animation("GestureA", CharacterClass.CAT_NON_INTERRUPTABLE)
     assert ctrl.is_busy(ch) is True
 
     monkeypatch.setattr(bca, "get_controller", lambda: ctrl)
     action = CharacterAction(ch, CharacterAction.AT_DEFAULT)
     action.Play()
 
-    # B is the gesture ACTUALLY playing on the controller — it must survive
-    # _queue_default's clear/request_default sequence intact, not read back
-    # as idle.
-    assert ch.GetCurrentAnimation() == "GestureB"
-    assert ch.IsAnimatingNonInterruptable() == 1
-    assert ctrl.is_busy(ch) is True
+    # The re-entrantly-enqueued record is STILL present -- not wiped by
+    # _queue_default's own clear -- and the AT_DEFAULT action itself completed
+    # (exactly once, inline).
+    assert len(ch._anim_pending) == 1
+    assert ch._anim_pending[0].category == CharacterClass.CAT_NON_INTERRUPTABLE
+    assert action.IsPlaying() == 0
 
 
 class _TurnRecordingController(_FakeController):
