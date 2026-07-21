@@ -69,7 +69,25 @@ def test_cat_constants_are_bc_ordinals():
     assert CharacterClass.CAT_GLANCE_BACK == 6
 
 
-def test_non_interruptable_animation_closes_the_sdk_gate():
+class _ActiveController:
+    """Fake clip-player controller reporting a current animation as live,
+    mirroring 'an animation is playing on this officer' for the queue model's
+    ReleaseCurrentAnimation gate (see CharacterClass._anim_is_active)."""
+
+    def is_active(self, character):
+        return True
+
+    def stop(self, character):
+        pass
+
+    def play_record(self, character, rec):
+        pass
+
+
+def test_non_interruptable_animation_closes_the_sdk_gate(monkeypatch):
+    import engine.bridge_character_anim as bridge_character_anim
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: _ActiveController())
+
     ch = CharacterClass("body.nif", "head.nif")
     assert ch.IsAnimating() == 0
     assert ch.IsAnimatingNonInterruptable() == 0
@@ -86,7 +104,10 @@ def test_non_interruptable_animation_closes_the_sdk_gate():
     assert ch.IsAnimatingNonInterruptable() == 0
 
 
-def test_interruptable_categories_match_the_binary():
+def test_interruptable_categories_match_the_binary(monkeypatch):
+    import engine.bridge_character_anim as bridge_character_anim
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: _ActiveController())
+
     ch = CharacterClass("body.nif", "head.nif")
     for cat in (CharacterClass.CAT_BREATHE, CharacterClass.CAT_INTERRUPTABLE,
                 CharacterClass.CAT_GLANCE, CharacterClass.CAT_GLANCE_BACK):
