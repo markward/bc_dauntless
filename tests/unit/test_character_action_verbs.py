@@ -886,3 +886,27 @@ def test_queue_turn_routes_through_turntowards_not_request_turn_to(monkeypatch):
     assert name == "Captain"
     assert now is False
     assert on_complete == act.Completed
+
+
+def test_at_become_inactive_deactivates_and_clears_interruptable(monkeypatch):
+    # AT_BECOME_INACTIVE -> SetActive(0): deactivates + clears the officer's
+    # interruptable animations; completes inline.
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    ch.SetActive(1)
+    ch.SetCurrentAnimation(object(), CharacterClass.CAT_INTERRUPTABLE)
+    action = CharacterAction(ch, CharacterAction.AT_BECOME_INACTIVE)
+    action.Play()
+    assert ch.IsActive() == 0
+    assert action.IsPlaying() == 0
+    cats = [r.category for r in
+            ([ch._anim_current] if ch._anim_current else []) + ch._anim_pending]
+    assert CharacterClass.CAT_INTERRUPTABLE not in cats
+
+
+def test_at_become_active_activates_and_completes_inline():
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    ch.SetActive(0)
+    action = CharacterAction(ch, CharacterAction.AT_BECOME_ACTIVE)
+    action.Play()
+    assert ch.IsActive() == 1
+    assert action.IsPlaying() == 0

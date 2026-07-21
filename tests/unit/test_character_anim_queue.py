@@ -909,3 +909,34 @@ def test_notify_menu_close_turns_back_via_the_door():
     c._notify_menu(turn=False)                      # menu closed -> turn back
     assert len(c._anim_pending) == 1
     assert c._anim_pending[0].category == CharacterClass.CAT_TURN_BACK
+
+
+def test_setactive_deactivate_clears_interruptable_but_keeps_committed():
+    # tier-0 §4.2: SetActive(0) clears the interruptable set (CAT_ 0,1,5,6) so a
+    # deactivated officer stops fidgeting/glancing, but leaves a committed move
+    # (CAT_NON_INTERRUPTABLE) to finish.
+    c = CharacterClass_Create()
+    c.SetActive(1)
+    # Enqueue the committed move FIRST, then the fidget: classify(NON_INT, INT)
+    # -> COEXIST so both sit in the queue. (The reverse order would let the move
+    # preempt the queued fidget -- rule 1, a real animation stops an idle.)
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_NON_INTERRUPTABLE)  # move
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_INTERRUPTABLE)      # fidget (coexists)
+    assert c._anim_count() == 2
+    c.SetActive(0)
+    assert c.IsActive() == 0
+    cats = [r.category for r in
+            ([c._anim_current] if c._anim_current else []) + c._anim_pending]
+    assert CharacterClass.CAT_INTERRUPTABLE not in cats     # fidget cleared
+    assert CharacterClass.CAT_NON_INTERRUPTABLE in cats     # move survives
+
+
+def test_setactive_honors_the_arg_and_defaults_active():
+    c = CharacterClass_Create()
+    assert c.IsActive() == 1            # ctor default active (deliberate deviation)
+    c.SetActive(0)
+    assert c.IsActive() == 0
+    c.SetActive(1)
+    assert c.IsActive() == 1
+    c.SetActive()                       # no-arg defaults to active (backward compat)
+    assert c.IsActive() == 1

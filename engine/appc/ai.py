@@ -1438,6 +1438,13 @@ class CharacterAction(TGAction):
         if at in (self.AT_DEFAULT, self.AT_BREATHE, self.AT_FORCE_BREATHE):
             self._queue_default()
             return
+        if at in (self.AT_BECOME_ACTIVE, self.AT_BECOME_INACTIVE):
+            # BC's activate/deactivate verbs (E7M6/E8M1 cutscenes) route to
+            # CharacterClass.SetActive, which on deactivate clears the officer's
+            # interruptable animations. Completes inline. Best-effort.
+            self._set_character_active(active=(at == self.AT_BECOME_ACTIVE))
+            self.Completed()
+            return
         if at in (self.AT_SAY_LINE, self.AT_SAY_LINE_AFTER_TURN):
             self._queue_say_line()
             return
@@ -1753,6 +1760,18 @@ class CharacterAction(TGAction):
         except Exception:
             pass
         self.Completed()
+
+    def _set_character_active(self, *, active: bool) -> None:
+        # AT_BECOME_ACTIVE/AT_BECOME_INACTIVE -> CharacterClass.SetActive(1/0).
+        # SetActive(0) clears the officer's interruptable animations (tier-0
+        # §4.2). Best-effort: never raises out of Play().
+        from engine.appc.characters import CharacterClass_Cast
+        try:
+            cc = CharacterClass_Cast(self._character) if self._character is not None else None
+            if cc is not None:
+                cc.SetActive(1 if active else 0)
+        except Exception:
+            pass
 
     def _set_camera_watch(self, *, snap: bool) -> None:
         # Frame this character with the captain's-eye camera (AT_WATCH_ME /

@@ -888,7 +888,27 @@ class CharacterClass(ObjectClass):
     def IsGlancing(self) -> int:                  return self.IsStateSet(self.CS_GLANCING)
     def IsUIDisabled(self) -> int:                return self.IsStateSet(self.CS_UI_DISABLED)
     def IsActive(self) -> int:                    return 1 if self._data.get("Active", True) else 0
-    def SetActive(self, *args) -> None:           self._data["Active"] = True
+
+    def SetActive(self, bActive=1, *args) -> None:
+        # tier-0 §4.2: store the flag; on DEACTIVATE, clear the interruptable
+        # animation set (CAT_ 0,1,5,6) so a deactivated officer stops fidgeting/
+        # glancing (but a committed move/turn is left to finish). Previously this
+        # ignored the arg and always activated -- a silent no-op that defeated
+        # AT_BECOME_INACTIVE and the SDK's SetActive(0) handler calls.
+        #
+        # DEVIATION (deliberate): the RE'd ctor default is INACTIVE, but our
+        # bridge-load path does not guarantee a SetActive(1) on every officer
+        # (the SDK's SetActive(1) calls are dynamic/conditional -- e.g.
+        # HelmCharacterHandlers), so flipping the ctor default to inactive would
+        # leave officers inactive and no-op TurnTowards (Captain-only + active-
+        # gated) -> menu turns and intro turns would silently break. We keep the
+        # ctor default ACTIVE until the bridge-load activation path is confirmed.
+        active = bool(bActive)
+        self._data["Active"] = active
+        if not active:
+            for c in (self.CAT_BREATHE, self.CAT_INTERRUPTABLE,
+                      self.CAT_GLANCE, self.CAT_GLANCE_BACK):
+                self.ClearAnimationsOfType(c)
 
     def ProcessEvent(self, event) -> None:
         # BC's native engine consumes ET_CHARACTER_ANIMATION_DONE (fired by every
