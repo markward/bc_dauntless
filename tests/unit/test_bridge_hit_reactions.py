@@ -15,10 +15,10 @@ def test_select_reaction_by_severity_and_direction():
 
 
 class _Controller:
-    def __init__(self):
-        self.submitted = []
+    """Retained only to satisfy the handler's constructor signature; the
+    handler no longer submits through it."""
     def submit(self, ch, clips, priority):
-        self.submitted.append((ch, clips, priority))
+        raise AssertionError("handler must not call controller.submit anymore")
 
 
 class _Vec:
@@ -40,11 +40,26 @@ class _Ship:
 
 
 class _Char:
+    CAT_NON_INTERRUPTABLE = 2
+
     def __init__(self):
         self._render_instance = 3
         self._animations = [("DBGuestReactRight",
                              "Bridge.Characters.CommonAnimations.ReactRight")]
+        self._going_to_animate = 0
+        self.cleared = 0
+        self.enqueued = []
+
     def IsHidden(self): return 0
+
+    def ClearExtraAnimations(self):
+        self.cleared += 1
+
+    def IsGoingToAnimate(self):
+        return self._going_to_animate
+
+    def SetCurrentAnimation(self, play, category, flags=0, name=None, **kw):
+        self.enqueued.append((play, category))
 
 
 class _Event:
@@ -66,27 +81,47 @@ def test_handler_submits_directional_reaction(monkeypatch):
                                  get_characters=lambda: [ch], anim_mgr=None)
     # Hit to starboard (+X): bearing_dot > 0 -> ReactRight, key DBGuestReactRight.
     handler.on_weapon_hit(_Event(ship, 5.0, _Vec(10.0, 0.0, 0.0)))
-    assert len(ctrl.submitted) == 1
-    assert ctrl.submitted[0][2] == 1               # reaction priority
+    assert ch.cleared == 1                          # ClearExtraAnimations ran first
+    assert len(ch.enqueued) == 1
+    play, category = ch.enqueued[0]
+    assert category == 2                            # CAT_NON_INTERRUPTABLE
+    assert play == [("react.nif", 0.4)]
 
 
 def test_handler_ignores_non_player_hits():
     ctrl = _Controller()
     ship, other = _Ship(), _Ship()
+    ch = _Char()
     handler = HitReactionHandler(ctrl, get_player=lambda: ship,
-                                 get_characters=lambda: [_Char()], anim_mgr=None)
+                                 get_characters=lambda: [ch], anim_mgr=None)
     handler.on_weapon_hit(_Event(other, 99.0, _Vec(1, 0, 0)))
-    assert ctrl.submitted == []
+    assert ch.enqueued == []
+    assert ch.cleared == 0
 
 
 class _CharBlast:
     """Officer whose Blast reaction is registered with a *Fly* key (as in the SDK)."""
+    CAT_NON_INTERRUPTABLE = 2
+
     def __init__(self):
         self._render_instance = 7
         self._animations = [
             ("EBG2MFly", "Bridge.Characters.CommonAnimations.Blast"),
         ]
+        self._going_to_animate = 0
+        self.cleared = 0
+        self.enqueued = []
+
     def IsHidden(self): return 0
+
+    def ClearExtraAnimations(self):
+        self.cleared += 1
+
+    def IsGoingToAnimate(self):
+        return self._going_to_animate
+
+    def SetCurrentAnimation(self, play, category, flags=0, name=None, **kw):
+        self.enqueued.append((play, category))
 
 
 def test_blast_resolves_via_fly_keyed_registration(monkeypatch):
@@ -106,7 +141,28 @@ def test_blast_resolves_via_fly_keyed_registration(monkeypatch):
                                  get_characters=lambda: [ch], anim_mgr=None)
     # damage >= 120 -> Blast severity
     handler.on_weapon_hit(_Event(ship, 150.0, _Vec(5.0, 0.0, 0.0)))
-    assert len(ctrl.submitted) == 1, (
+    assert ch.cleared == 1
+    assert len(ch.enqueued) == 1, (
         "Blast reaction never resolved — _resolve_key still using key suffix?"
     )
-    assert ctrl.submitted[0][2] == 1   # reaction priority
+    play, category = ch.enqueued[0]
+    assert category == 2   # CAT_NON_INTERRUPTABLE
+    assert play == [("blast.nif", 1.2)]
+
+
+def test_handler_skips_reaction_when_already_going_to_animate(monkeypatch):
+    """RE gate: ClearExtraAnimations() runs unconditionally, but the reaction
+    is only enqueued if the officer is not already committed to a queued
+    animation (a cat2/3/4 record already sitting in the queue)."""
+    import engine.bridge_hit_reactions as mod
+    monkeypatch.setattr(mod, "build_sequence_clips",
+                        lambda module_path, ch, anim_mgr: [("react.nif", 0.4)])
+    ctrl = _Controller()
+    ship = _Ship()
+    ch = _Char()
+    ch._going_to_animate = 1
+    handler = HitReactionHandler(ctrl, get_player=lambda: ship,
+                                 get_characters=lambda: [ch], anim_mgr=None)
+    handler.on_weapon_hit(_Event(ship, 5.0, _Vec(10.0, 0.0, 0.0)))
+    assert ch.cleared == 1          # ClearExtraAnimations still ran
+    assert ch.enqueued == []        # but the reaction was not enqueued

@@ -40,6 +40,10 @@ def _bearing_dot(ship, hit_point) -> float:
 
 class HitReactionHandler:
     def __init__(self, controller, *, get_player, get_characters, anim_mgr):
+        # `controller` is retained only to keep the host loop's constructor
+        # call unchanged; the handler now enqueues through the CharacterClass
+        # queue door directly (SetCurrentAnimation) rather than submitting to
+        # the controller.
         self._controller = controller
         self._get_player = get_player
         self._get_characters = get_characters
@@ -59,8 +63,17 @@ class HitReactionHandler:
             if not module_path:
                 continue
             clips = build_sequence_clips(module_path, ch, self._anim_mgr)
-            if clips:
-                self._controller.submit(ch, clips, priority=1)
+            if not clips:
+                continue
+            # RE order (DoCrewReactions): ClearExtraAnimations() runs BEFORE
+            # the IsGoingToAnimate() gate -- clear the interruptable set
+            # first, then enqueue the reaction only if no committed
+            # (cat2/3/4) animation is already queued. Replicates what
+            # PlayAnimation(key, -1, 0) does observably (mode -1 ->
+            # CAT_NON_INTERRUPTABLE). No on_complete.
+            ch.ClearExtraAnimations()
+            if not ch.IsGoingToAnimate():
+                ch.SetCurrentAnimation(clips, ch.CAT_NON_INTERRUPTABLE, 0, None)
 
     @staticmethod
     def _resolve_key(character, reaction) -> str:

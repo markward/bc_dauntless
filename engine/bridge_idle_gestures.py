@@ -98,6 +98,10 @@ class IdleGestureScheduler:
         self._timers = {}
 
     def update(self, dt, characters, *, renderer, anim_mgr, controller) -> None:
+        # `controller` is retained only to keep the host loop's call signature
+        # unchanged; the scheduler now enqueues through the CharacterClass
+        # queue door directly (SetCurrentAnimation) rather than submitting to
+        # the controller.
         for ch in characters:
             if getattr(ch, "_render_instance", None) is None:
                 continue
@@ -111,7 +115,9 @@ class IdleGestureScheduler:
                 # Initialise timer but still apply this tick's dt below.
                 t = self._next_delay()
                 self._timers[key] = t
-            if controller.is_busy(ch):
+            if ch.IsAnimating():
+                # RE self-gate: the picker produces nothing while the officer
+                # is already animating (binary-confirmed).
                 continue
             t -= dt
             if t > 0.0:
@@ -125,4 +131,8 @@ class IdleGestureScheduler:
             entry = entries[self._rng.randrange(len(entries))]
             clips = build_sequence_clips(entry[0], ch, anim_mgr)
             if clips:
-                controller.submit(ch, clips, priority=0)
+                # Enqueue as the idle bucket (CAT_BREATHE == Breathe's own
+                # category, per RE: SetCurrentAnimation(seq, 0, 0, 0)). Plays
+                # on the next frame's host tick (_pump_char_anim drains the
+                # queue); fire-and-forget, no on_complete.
+                ch.SetCurrentAnimation(clips, ch.CAT_BREATHE, 0, None)

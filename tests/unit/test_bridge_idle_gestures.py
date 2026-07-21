@@ -3,14 +3,12 @@ from engine.bridge_idle_gestures import IdleGestureScheduler
 
 
 class _Controller:
-    def __init__(self):
-        self.submitted = []
-        self._busy = set()
+    """Retained only to satisfy the scheduler's call signature; the
+    scheduler no longer submits through it."""
     def is_busy(self, ch):
-        return id(ch) in self._busy
+        return False
     def submit(self, ch, clips, priority):
-        self.submitted.append((ch, clips, priority))
-        self._busy.add(id(ch))
+        raise AssertionError("scheduler must not call controller.submit anymore")
 
 
 class _Char:
@@ -18,12 +16,19 @@ class _Char:
         self._random_animations = registrations
         self._render_instance = 1
         self._standing = standing
+        self._animating = 0
+        self.enqueued = []
+    CAT_BREATHE = 0
     def IsStanding(self):
         return self._standing
     def IsHidden(self):
         return 0
     def IsMenuUp(self):
         return 1 if getattr(self, "_menu_up", False) else 0
+    def IsAnimating(self):
+        return self._animating
+    def SetCurrentAnimation(self, play, category, flags=0, name=None, **kw):
+        self.enqueued.append((play, category))
 
 
 def _builder_returns_one_clip(monkeypatch):
@@ -42,10 +47,12 @@ def test_fires_after_interval_and_submits_idle(monkeypatch):
     ch = _Char([("Bridge.Characters.CommonAnimations.LookAroundConsole",)])
 
     sched.update(4.0, [ch], renderer=None, anim_mgr=None, controller=ctrl)
-    assert ctrl.submitted == []                    # not yet
+    assert ch.enqueued == []                        # not yet
     sched.update(2.0, [ch], renderer=None, anim_mgr=None, controller=ctrl)
-    assert len(ctrl.submitted) == 1
-    assert ctrl.submitted[0][2] == 0               # idle priority
+    assert len(ch.enqueued) == 1
+    play, category = ch.enqueued[0]
+    assert category == 0                            # CAT_BREATHE
+    assert play == [("clip.nif", 1.0)]
 
 
 def test_respects_sitting_only_mode(monkeypatch):
@@ -58,7 +65,7 @@ def test_respects_sitting_only_mode(monkeypatch):
         standing=1,
     )
     sched.update(0.0, [standing_char], renderer=None, anim_mgr=None, controller=ctrl)
-    assert ctrl.submitted == []                    # sitting-only skipped while standing
+    assert standing_char.enqueued == []             # sitting-only skipped while standing
 
 
 def test_skips_busy_character(monkeypatch):
@@ -66,9 +73,9 @@ def test_skips_busy_character(monkeypatch):
     sched = IdleGestureScheduler(random.Random(0), interval=(0.0, 0.0))
     ctrl = _Controller()
     ch = _Char([("Bridge.Characters.CommonAnimations.Foo",)])
-    ctrl._busy.add(id(ch))
+    ch._animating = 1                                # RE self-gate: IsAnimating() -> 1
     sched.update(1.0, [ch], renderer=None, anim_mgr=None, controller=ctrl)
-    assert ctrl.submitted == []
+    assert ch.enqueued == []
 
 
 def test_menu_up_officer_is_suppressed(monkeypatch):
@@ -78,7 +85,7 @@ def test_menu_up_officer_is_suppressed(monkeypatch):
     ch = _Char([("Bridge.Characters.CommonAnimations.Foo",)])
     ch._menu_up = True                       # IsMenuUp() -> 1 (see _Char below)
     sched.update(1.0, [ch], renderer=None, anim_mgr=None, controller=ctrl)
-    assert ctrl.submitted == []              # suppressed while menu is up
+    assert ch.enqueued == []                 # suppressed while menu is up
 
 
 # ── build_sequence_clips: the canonical MissionLib-style sequence walk ───────
