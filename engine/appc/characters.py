@@ -311,20 +311,23 @@ def STTopLevelMenu_Cast(obj):
 class CharacterClass(ObjectClass):
     # State constants from sdk/.../App.py:4617-4660.  These drive
     # IsStanding / IsTurned / IsHidden / etc. boolean queries.
-    CS_IDLE             = 0
-    CS_STANDING         = 1
-    CS_GLANCING         = 2
-    CS_TURNED           = 3
-    CS_UI_DISABLED      = 4
-    CS_HIDDEN           = 5
-    CS_INITIATIVE       = 6
-    CS_MIDDLE           = 7
-    CS_SEATED           = 8
-    CS_VISIBLE          = 9
-    CS_CLEAR_GLANCE     = 10
-    CS_CLEAR_TURNED     = 11
-    CS_UI_ENABLED       = 12
-    CS_STOP_INITIATIVE  = 13
+    # CS_* state flags — a BITFIELD (m_flags @ +0x80). Values from
+    # stbc_constants.csv; bit meanings from CharacterClass.md §3. 0x10/0x100
+    # are NOT stored — they toggle the model-cull (hidden) state.
+    CS_IDLE             = 0x0
+    CS_STANDING         = 0x1
+    CS_GLANCING         = 0x2
+    CS_TURNED           = 0x4
+    CS_UI_DISABLED      = 0x8      # busy / menu-suppressed (MoveTo sets this)
+    CS_HIDDEN           = 0x10     # not stored: hidden-state ON  (cull)
+    CS_INITIATIVE       = 0x20
+    CS_MIDDLE           = 0x40
+    CS_SEATED           = 0x80
+    CS_VISIBLE          = 0x100    # not stored: hidden-state OFF (show)
+    CS_CLEAR_GLANCE     = 0x200
+    CS_CLEAR_TURNED     = 0x400
+    CS_UI_ENABLED       = 0x800
+    CS_STOP_INITIATIVE  = 0xFD8    # composite clear-mask
 
     # EST_* — "execute ship task" subtype carried in bridge-menu TGIntEvents
     # (BridgeUtils.CreateBridgeMenuButton SetInt payload). Sequential ints in
@@ -388,11 +391,11 @@ class CharacterClass(ObjectClass):
     _INTERRUPTABLE_CATEGORIES = (CAT_BREATHE, CAT_INTERRUPTABLE,
                                  CAT_GLANCE, CAT_GLANCE_BACK)
 
-    # Phoneme-channel constants.
-    CPT_DEFAULT = 0
-    CPT_BLINK   = 1
-    CPT_SPEAK   = 2
-    CPT_EYEBROW = 3
+    # Phoneme-channel constants (values from stbc_constants.csv).
+    CPT_DEFAULT = -1
+    CPT_BLINK   = 0
+    CPT_SPEAK   = 1
+    CPT_EYEBROW = 2
 
     # Audio-mode constants (set by SetAudioMode).
     CAM_MUTE             = 0

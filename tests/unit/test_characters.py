@@ -539,7 +539,7 @@ def test_app_exposes_character_factories():
 def test_app_exposes_character_constants():
     assert App.CharacterClass.MALE == 0
     assert App.CharacterClass.FEMALE == 1
-    assert App.CharacterClass.CS_HIDDEN == 5
+    assert App.CharacterClass.CS_HIDDEN == 0x10
     assert App.CharacterClass.CAT_BREATHE == 0
 
 
