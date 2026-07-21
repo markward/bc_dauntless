@@ -715,10 +715,17 @@ class CharacterClass(ObjectClass):
             return None
 
     def _anim_play_now(self, rec) -> None:
-        rec.played = True
         c = self._anim_controller()
-        if c is not None:
-            c.play_record(self, rec)
+        if c is None:
+            # No clip-player registered (headless / mission_harness): leave the
+            # record UNplayed so ReleaseCurrentAnimation's completion guarantee
+            # fires its on_complete on the next drain. Marking it played here
+            # would strand on_complete -- there is no controller to fire it, and
+            # the `played` guard in ReleaseCurrentAnimation skips the
+            # unplayed-fire path -> the waiting mission TGSequence hangs.
+            return
+        rec.played = True
+        c.play_record(self, rec)
 
     def UpdateAnimationQueue(self) -> None:
         # Per-frame driver (tier-0 §4.8). Advance the queue by one step.

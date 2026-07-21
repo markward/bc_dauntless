@@ -837,3 +837,27 @@ def test_unplayed_deferred_current_stopped_by_classify1_fires_once():
     c.SetCurrentAnimation(object(), CharacterClass.CAT_NON_INTERRUPTABLE,
                           on_complete=cb2)
     assert fired1 == [1]          # BUG 1: was [] before the fix
+
+
+def test_played_category_record_fires_on_complete_headless_without_controller():
+    # Completion guarantee, no-controller path: a record whose category makes
+    # ShouldPlayNow True (e.g. a plain glance with no glance-target pending)
+    # reaches _anim_play_now. With NO clip-player controller registered
+    # (headless / mission_harness before a controller exists), _anim_play_now
+    # must leave the record UNplayed so ReleaseCurrentAnimation fires its
+    # on_complete on the next drain -- otherwise the waiting mission TGSequence
+    # hangs forever. Regression for the orphan where _anim_play_now marked the
+    # record played unconditionally.
+    import engine.bridge_character_anim as bca
+    bca.clear_controller()                       # ensure no controller
+    c = CharacterClass_Create()
+    c.SetActive(1)
+    fired = []
+    c.GlanceAt("Left", on_complete=lambda: fired.append(1))
+    c.UpdateAnimationQueue()                     # plays -> current, but no controller
+    assert c._anim_current is not None
+    assert getattr(c._anim_current, "played", False) is False   # left unplayed
+    assert fired == []                           # not yet -- fires on release
+    c.UpdateAnimationQueue()                     # ReleaseCurrentAnimation retires it
+    assert fired == [1]                          # completion guarantee held
+    assert c._anim_current is None
