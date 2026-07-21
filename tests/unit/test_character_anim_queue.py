@@ -326,3 +326,62 @@ def test_update_queue_deferred_record_is_stopped_but_becomes_current():
     assert stopped == [rec]
     assert c._anim_current is rec
     assert c._anim_pending == []
+
+
+# ── Task 9: ClearAnimationsOfType / ClearExtraAnimations / ClearAnimations ───
+
+def test_clear_animations_of_type_removes_matching_pending_only():
+    c = CharacterClass_Create()
+    glance = AnimRec(category=CharacterClass.CAT_GLANCE, play=object())
+    non_interruptable = AnimRec(category=CharacterClass.CAT_NON_INTERRUPTABLE, play=object())
+    c._anim_pending.append(glance)
+    c._anim_pending.append(non_interruptable)
+    c.ClearAnimationsOfType(CharacterClass.CAT_GLANCE)
+    assert c._anim_pending == [non_interruptable]
+
+
+def test_clear_animations_of_type_clears_matching_current():
+    c = CharacterClass_Create()
+    c._anim_current = AnimRec(category=CharacterClass.CAT_GLANCE, play=object())
+    c.ClearAnimationsOfType(CharacterClass.CAT_GLANCE)
+    assert c._anim_current is None
+
+
+def test_clear_animations_of_type_leaves_non_matching_current():
+    c = CharacterClass_Create()
+    rec = AnimRec(category=CharacterClass.CAT_NON_INTERRUPTABLE, play=object())
+    c._anim_current = rec
+    c.ClearAnimationsOfType(CharacterClass.CAT_GLANCE)
+    assert c._anim_current is rec
+
+
+def test_clear_extra_animations_removes_0_1_5_6_leaves_2_and_3():
+    c = CharacterClass_Create()
+    kept_cats = (CharacterClass.CAT_NON_INTERRUPTABLE, CharacterClass.CAT_TURN)
+    removed_cats = (CharacterClass.CAT_BREATHE, CharacterClass.CAT_INTERRUPTABLE,
+                    CharacterClass.CAT_GLANCE, CharacterClass.CAT_GLANCE_BACK)
+    for cat in kept_cats + removed_cats:
+        c._anim_pending.append(AnimRec(category=cat, play=object()))
+    c.ClearExtraAnimations()
+    cats = [r.category for r in c._anim_pending]
+    assert set(cats) == set(kept_cats)
+
+
+def test_clear_animations_empties_queue_and_nulls_name_buffers():
+    c = CharacterClass_Create()
+    c._anim_current = AnimRec(category=CharacterClass.CAT_NON_INTERRUPTABLE, play=object())
+    c._anim_pending.append(AnimRec(category=CharacterClass.CAT_GLANCE, play=object()))
+    c._target_name = "Captain"
+    c._glance_name = "Kirk"
+    c.ClearAnimations()
+    assert c._anim_current is None
+    assert c._anim_pending == []
+    assert c._target_name is None
+    assert c._glance_name is None
+
+
+def test_clear_animations_does_not_crash_on_empty_character():
+    c = CharacterClass_Create()
+    c.ClearAnimations()  # must not raise
+    assert c._anim_current is None
+    assert c._anim_pending == []

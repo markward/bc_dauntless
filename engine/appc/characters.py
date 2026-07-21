@@ -548,18 +548,41 @@ class CharacterClass(ObjectClass):
     def AddPhoneme(self, *args) -> None:
         self._phonemes.append(args)
 
-    def ClearAnimations(self) -> None:
-        self._animations.clear()
-
     def ClearAnimationsOfType(self, anim_type) -> None:
-        # BC keys this on the animation's CAT_ category, which our AddAnimation
-        # registry (name -> python path) does not carry. Zero SDK call sites, so
-        # rather than invent a category per registration we record it and no-op.
-        from engine.core import stub_telemetry
-        stub_telemetry.record_attr("CharacterClass", "ClearAnimationsOfType")
+        # Stop + remove every current/pending record of this category
+        # (tier-0's "skip" pass; we remove them, which is observably faithful).
+        cat = int(anim_type)
+        if self._anim_current is not None and self._anim_current.category == cat:
+            self._anim_stop_play(self._anim_current)
+            self._anim_current = None
+        kept = []
+        for r in self._anim_pending:
+            if r.category == cat:
+                self._anim_stop_play(r)
+            else:
+                kept.append(r)
+        self._anim_pending = kept
 
     def ClearExtraAnimations(self) -> None:
-        self._random_animations.clear()
+        # The interruptable set (tier-0 §4.8): categories 0, 1, 5, 6.
+        for c in (self.CAT_BREATHE, self.CAT_INTERRUPTABLE,
+                  self.CAT_GLANCE, self.CAT_GLANCE_BACK):
+            self.ClearAnimationsOfType(c)
+
+    def ClearAnimations(self) -> None:
+        # Full drain of the queue + the anim-target name buffers (SP2 half of
+        # tier-0 §4.8). NOTE: _location_name is deliberately PRESERVED here
+        # (tier-0 frees it, but many SDK callers ClearAnimations() without
+        # re-setting the station; nulling it would break key composition). SP3/
+        # SP4 add speak-queue / position-table draining.
+        if self._anim_current is not None:
+            self._anim_stop_play(self._anim_current)
+            self._anim_current = None
+        for r in self._anim_pending:
+            self._anim_stop_play(r)
+        self._anim_pending = []
+        self._target_name = None
+        self._glance_name = None
 
     def _anim_count(self) -> int:
         return (1 if self._anim_current is not None else 0) + len(self._anim_pending)

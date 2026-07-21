@@ -78,33 +78,34 @@ def test_add_animation_appends():
 
 
 def test_clear_animations():
+    # Task 9: ClearAnimations() is now queue-aware (drains _anim_current /
+    # _anim_pending + the target/glance name buffers — see
+    # tests/unit/test_character_anim_queue.py for full coverage of that
+    # contract). The legacy AddAnimation (name, path) registry is a separate
+    # bookkeeping list that ClearAnimations never touched even in tier-0, so
+    # it must survive untouched here; the load-bearing behaviour is that
+    # calling ClearAnimations() on a character with animations queued (or
+    # none at all) never raises.
     c = CharacterClass_Create()
     c.AddAnimation("walk", 1.0)
     c.ClearAnimations()
-    assert c._animations == []
+    assert c._animations == [("walk", 1.0)]
 
 
-def test_clear_animations_of_type_is_a_recorded_no_op():
-    # ClearAnimationsOfType keys on the animation's CAT_ category, which the
-    # AddAnimation registry (name -> python path) does not carry, and zero SDK
-    # call sites use it — so it must not mutate _animations, only record the
-    # gap in stub telemetry.
-    from engine.core import stub_telemetry
+def test_clear_animations_of_type_removes_matching_queue_records():
+    # Task 9: ClearAnimationsOfType now keys on the CAT_ category of queued
+    # AnimRec records (the SP2 queue), not the legacy AddAnimation registry
+    # (which carries no category and is left untouched).
+    from engine.appc.character_anim_queue import AnimRec
     c = CharacterClass_Create()
     c.AddAnimation("walk", 1.0)
     c.AddAnimation("idle", 1.0)
-    stub_telemetry.reset()
-    stub_telemetry.set_enabled(True)
-    try:
-        c.ClearAnimationsOfType(CharacterClass.CAT_BREATHE)
-        snap = stub_telemetry.snapshot()
-    finally:
-        stub_telemetry.set_enabled(False)
-        stub_telemetry.reset()
+    c._anim_pending.append(AnimRec(category=CharacterClass.CAT_BREATHE, play=object()))
+    c._anim_pending.append(AnimRec(category=CharacterClass.CAT_TURN, play=object()))
+    c.ClearAnimationsOfType(CharacterClass.CAT_BREATHE)
     assert len(c._animations) == 2
-    assert any(
-        "ClearAnimationsOfType" in str(k) for bucket in snap.values() for k in bucket
-    ), snap
+    cats = [r.category for r in c._anim_pending]
+    assert cats == [CharacterClass.CAT_TURN]
 
 
 # ── State flags ──────────────────────────────────────────────────────────────
