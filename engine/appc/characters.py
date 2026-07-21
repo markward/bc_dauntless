@@ -599,8 +599,26 @@ class CharacterClass(ObjectClass):
         pass
 
     def ReleaseCurrentAnimation(self, param=0) -> None:
-        # Task 5 replaces the body; minimal no-op until then so predicates can call it.
-        pass
+        cur = self._anim_current
+        if cur is None:
+            return
+        if not self._anim_is_active(cur):
+            self.OnAnimRelease(cur)
+            self._anim_current = None
+
+    def OnAnimRelease(self, rec) -> None:
+        cat = rec.category
+        if cat == self.CAT_GLANCE_BACK:          # 6 — glance-away
+            self._glance_name = None
+            self.ClearFlags(self.CS_GLANCING)    # 0x2
+        elif cat == self.CAT_TURN_BACK:          # 4 — turn-back
+            self._target_name = None
+            self.ClearFlags(self.CS_TURNED)      # 0x4
+
+    def _anim_is_active(self, rec) -> bool:
+        # Interim: a handed-over record is considered finished. Task 10 wires
+        # this to the clip-player seam (is_active on the character's instance).
+        return False
 
     def set_current_animation(self, name, category) -> None:
         """Mark this character as playing *name* in category *category* (a CAT_).

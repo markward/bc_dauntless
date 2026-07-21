@@ -122,3 +122,31 @@ def test_interruptable_predicate_true_only_for_0156():
     c.SetCurrentAnimation(object(), CharacterClass.CAT_GLANCE)  # 5 -> interruptable
     assert c.IsAnimatingInterruptable() == 1
     assert c.IsAnimatingNonInterruptable() == 0
+
+
+def test_onanimrelease_glance_away_clears_state():
+    c = CharacterClass_Create()
+    c._glance_name = "Kirk"
+    c.SetFlags(CharacterClass.CS_GLANCING)          # 0x2
+    from engine.appc.character_anim_queue import AnimRec
+    c.OnAnimRelease(AnimRec(category=CharacterClass.CAT_GLANCE_BACK))  # 6
+    assert c._glance_name is None
+    assert c.IsStateSet(CharacterClass.CS_GLANCING) == 0
+
+def test_onanimrelease_turn_back_clears_state():
+    c = CharacterClass_Create()
+    c._target_name = "Captain"
+    c.SetFlags(CharacterClass.CS_TURNED)            # 0x4
+    from engine.appc.character_anim_queue import AnimRec
+    c.OnAnimRelease(AnimRec(category=CharacterClass.CAT_TURN_BACK))    # 4
+    assert c._target_name is None
+    assert c.IsStateSet(CharacterClass.CS_TURNED) == 0
+
+def test_release_retires_finished_current():
+    c = CharacterClass_Create()
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_NON_INTERRUPTABLE)
+    # promote pending -> current so there is something to release (Task 8 does
+    # this in the driver; here set it directly for the unit)
+    c._anim_current = c._anim_pending.pop(0)
+    c.ReleaseCurrentAnimation(0)     # stub is_active False -> finished -> cleared
+    assert c._anim_current is None
