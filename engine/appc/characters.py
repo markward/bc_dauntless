@@ -563,6 +563,40 @@ class CharacterClass(ObjectClass):
     def _anim_count(self) -> int:
         return (1 if self._anim_current is not None else 0) + len(self._anim_pending)
 
+    def SetCurrentAnimation(self, anim, category, flags=0, name=None) -> None:
+        from engine.appc import character_anim_queue as q
+        rec = q.AnimRec(category=int(category), name=name, flags=int(flags), play=anim)
+        # 1) Classify against the CURRENT animation (Classify1 — lenient).
+        cur = self._anim_current
+        if cur is not None:
+            v = q.classify(cur, rec, existing_is_current=True)
+            if v in (q.STOP_OLD, q.STOP_BOTH):
+                self._anim_stop_play(cur)
+                self._anim_current = None
+            if v in (q.REJECT_NEW, q.STOP_BOTH):
+                self._anim_stop_play(rec)
+                return
+        # 2) Classify against each QUEUED record (Classify2 — strict).
+        survivors = []
+        for other in self._anim_pending:
+            v = q.classify(other, rec, existing_is_current=False)
+            if v in (q.STOP_OLD, q.STOP_BOTH):
+                self._anim_stop_play(other)          # drop the queued record
+                continue
+            survivors.append(other)
+            if v in (q.REJECT_NEW, q.STOP_BOTH):
+                self._anim_pending = survivors + self._anim_pending[len(survivors):]
+                self._anim_stop_play(rec)
+                return
+        self._anim_pending = survivors
+        # 3) Append the survivor at the tail.
+        self._anim_pending.append(rec)
+
+    def _anim_stop_play(self, rec) -> None:
+        # Interim no-op; Task 10 wires this to the clip-player seam (stop the
+        # record's live playback). Safe to call on records that never played.
+        pass
+
     def set_current_animation(self, name, category) -> None:
         """Mark this character as playing *name* in category *category* (a CAT_).
 

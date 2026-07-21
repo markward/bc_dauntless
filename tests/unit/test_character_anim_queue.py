@@ -57,3 +57,28 @@ def test_name_cell_coexists_when_names_differ_or_null():
     assert classify(R(3, "Captain"), R(4, "Data"), existing_is_current=False) == COEXIST
     assert classify(R(3, None), R(4, "Data"), existing_is_current=False) == COEXIST
     assert classify(R(3, "Captain"), R(4, None), existing_is_current=False) == COEXIST
+
+from engine.appc.characters import CharacterClass
+
+def _mk(cat, name=None):
+    return object()  # opaque 'play' handle
+
+def test_enqueue_into_empty_coexists():
+    c = CharacterClass_Create()
+    c.SetCurrentAnimation(_mk(2), CharacterClass.CAT_NON_INTERRUPTABLE, 0, None)
+    assert c._anim_count() == 1
+
+def test_new_breathe_rejected_against_breathe_incumbent():
+    c = CharacterClass_Create()
+    c.SetCurrentAnimation(_mk(0), CharacterClass.CAT_BREATHE)          # pending[0]
+    c.SetCurrentAnimation(_mk(0), CharacterClass.CAT_BREATHE)          # reject-new
+    assert c._anim_count() == 1
+
+def test_real_move_stops_queued_idle_then_enqueues():
+    c = CharacterClass_Create()
+    c.SetCurrentAnimation(_mk(0), CharacterClass.CAT_BREATHE)          # idle queued
+    c.SetCurrentAnimation(_mk(2), CharacterClass.CAT_NON_INTERRUPTABLE)  # stop-old + enqueue
+    # the idle was stopped/removed; the move is queued
+    cats = [r.category for r in c._anim_pending]
+    assert CharacterClass.CAT_BREATHE not in cats
+    assert CharacterClass.CAT_NON_INTERRUPTABLE in cats
