@@ -435,7 +435,9 @@ class CharacterClass(ObjectClass):
         self._animations: list = []       # (anim_type, anim_name)
         self._random_animations: list = []
         self._phonemes: list = []
-        self._states: set = set()         # CS_* flags currently set
+        self._flags: int = 0              # CS_* bitfield (m_flags @ +0x80)
+        self._hidden: bool = False        # CS_HIDDEN/CS_VISIBLE cull toggle
+        self._status: dict = {}           # tooltip display strings (SP4 -> StatusMap)
         self._location_name: str = ""
         self._current_anim: tuple | None = None   # (name, CAT_) while playing
         # Remaining SDK setter surface goes through the data-bag below.
@@ -551,55 +553,73 @@ class CharacterClass(ObjectClass):
     def GetCurrentAnimation(self) -> str:
         return self._current_anim[0] if self._current_anim else ""
 
-    # ── State flags ─────────────────────────────────────────────────────────
-    @staticmethod
-    def _coerce_state(state):
-        """Accept either an int (CS_*) or a string label.
+    # ── State flags: the faithful CS_* bitfield (CharacterClass.md §4.3) ─────
+    def SetFlags(self, mask) -> None:
+        mask = int(mask)
+        if mask == 0:
+            return
+        if mask == self.CS_HIDDEN:        # 0x10 — not stored; hide (pull model)
+            self._hidden = True
+            return
+        if mask == self.CS_VISIBLE:       # 0x100 — not stored; show
+            self._hidden = False
+            return
+        self._flags |= mask
+        # BC menu suppression: becoming busy (0x8) drops an open menu.
+        if (self._flags & self.CS_UI_DISABLED) and self.IsMenuUp():
+            self.MenuDown()
 
-        SDK Bridge handlers call ``SetStatus("Waiting")`` / ``SetStatus("Ready
-        to Advise")`` with the per-character status display string rather
-        than an enum.  We hash both representations into the same set and
-        look them up uniformly.
-        """
-        if isinstance(state, str):
-            return state
-        try:
-            return int(state)
-        except (TypeError, ValueError):
-            return state
+    def ClearFlags(self, mask) -> None:
+        mask = int(mask)
+        if mask == 0:
+            return
+        if mask == self.CS_HIDDEN:        # ClearFlags(0x10) -> show
+            self._hidden = False
+            return
+        if mask == self.CS_VISIBLE:       # ClearFlags(0x100) -> hide
+            self._hidden = True
+            return
+        self._flags &= ~mask
 
-    def SetStatus(self, state) -> None:
-        # SDK SetStatus (sometimes called SetState) toggles a flag on.
-        self._states.add(self._coerce_state(state))
+    def IsStateSet(self, mask) -> int:
+        mask = int(mask)
+        return 1 if (self._flags & mask) == mask else 0
 
-    def ClearStatus(self, state) -> None:
-        self._states.discard(self._coerce_state(state))
+    # ── Tooltip status strings — SEPARATE from the flag bitfield ────────────
+    # SDK calls SetStatus with a localized display string
+    # (pMiguel.SetStatus(db.GetString("Waiting"))). Stored under a single
+    # interim key; SP4 replaces this with the real keys-0..5 StatusMap widgets.
+    def SetStatus(self, state, *args) -> None:
+        self._status["text"] = state
 
-    def IsStateSet(self, state) -> int:
-        return 1 if self._coerce_state(state) in self._states else 0
+    def ClearStatus(self, state=None, *args) -> None:
+        self._status.pop("text", None)
 
+    def GetStatusText(self, key="text"):
+        return self._status.get(key)
+
+    # ── Visibility (pull model): mutate _hidden; host loop culls per-frame ──
     def SetHidden(self, hidden=1) -> None:
-        # BC-faithful: SetHidden(iHidden) sets OR clears the flag. The SDK relies
-        # on SetHidden(0) to REVEAL a character — MissionLib.ViewscreenOn hides an
-        # entire look-at set then SetHidden(0)s just the hailing one so it shows on
-        # the viewscreen (Soams / Admiral Liu). The old bare `add(CS_HIDDEN)`
-        # ignored the argument, so SetHidden(0) never un-hid and those characters
-        # stayed invisible forever.
-        if hidden:
-            self._states.add(self.CS_HIDDEN)
-        else:
-            self._states.discard(self.CS_HIDDEN)
-    def IsHidden(self) -> int:                    return 1 if self.CS_HIDDEN in self._states else 0
+        self._hidden = bool(hidden)
+    def IsHidden(self) -> int:                    return 1 if self._hidden else 0
+
     def SetStanding(self, value=None) -> None:
-        # SetStanding(SITTING_ONLY) etc. — also toggles CS_STANDING when called bare.
         if value is None:
-            self._states.add(self.CS_STANDING)
+            self.SetFlags(self.CS_STANDING)
         else:
             self._data["StandingMode"] = int(value)
-    def IsStanding(self) -> int:                  return 1 if self.CS_STANDING in self._states else 0
-    def IsTurned(self) -> int:                    return 1 if self.CS_TURNED in self._states else 0
-    def IsGlancing(self) -> int:                  return 1 if self.CS_GLANCING in self._states else 0
-    def IsUIDisabled(self) -> int:                return 1 if self.CS_UI_DISABLED in self._states else 0
+    def IsStanding(self) -> int:                  return self.IsStateSet(self.CS_STANDING)
+
+    def SetInitiative(self, on=1) -> None:
+        if on:
+            self.SetFlags(self.CS_INITIATIVE)
+        else:
+            self.ClearFlags(self.CS_INITIATIVE)
+    def IsInitiativeOn(self) -> int:              return self.IsStateSet(self.CS_INITIATIVE)
+
+    def IsTurned(self) -> int:                    return self.IsStateSet(self.CS_TURNED)
+    def IsGlancing(self) -> int:                  return self.IsStateSet(self.CS_GLANCING)
+    def IsUIDisabled(self) -> int:                return self.IsStateSet(self.CS_UI_DISABLED)
     def IsActive(self) -> int:                    return 1 if self._data.get("Active", True) else 0
     def SetActive(self, *args) -> None:           self._data["Active"] = True
 
@@ -627,7 +647,7 @@ class CharacterClass(ObjectClass):
                 self.SetStanding()
             elif state == self.CS_SEATED:
                 self.SetHidden(0)
-                self.ClearStatus(self.CS_STANDING)
+                self.ClearFlags(self.CS_STANDING)
             return
         super().ProcessEvent(event)
 
@@ -724,8 +744,6 @@ class CharacterClass(ObjectClass):
         return 1 if self._data.get("RandomAnimationEnabled", True) else 0
     def IsMenuEnabled(self) -> int:
         return 1 if self._data.get("MenuEnabled", True) else 0
-    def IsInitiativeOn(self) -> int:
-        return 1 if self._data.get("InitiativeOn", False) else 0
     def IsAnExtra(self) -> int:                   return 1 if self._data.get("AsExtra", False) else 0
     def IsMenuUp(self) -> int:                    return 1 if self._data.get("MenuUp", False) else 0
     def UsesAnimatedSpeaking(self) -> int:

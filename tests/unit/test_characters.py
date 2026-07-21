@@ -109,13 +109,13 @@ def test_clear_animations_of_type_is_a_recorded_no_op():
 
 # ── State flags ──────────────────────────────────────────────────────────────
 
-def test_set_status_and_is_state_set():
+def test_set_flags_and_is_state_set():
     c = CharacterClass_Create()
-    assert c.IsStateSet(CharacterClass.CS_HIDDEN) == 0
-    c.SetStatus(CharacterClass.CS_HIDDEN)
-    assert c.IsStateSet(CharacterClass.CS_HIDDEN) == 1
-    c.ClearStatus(CharacterClass.CS_HIDDEN)
-    assert c.IsStateSet(CharacterClass.CS_HIDDEN) == 0
+    assert c.IsStateSet(CharacterClass.CS_STANDING) == 0
+    c.SetFlags(CharacterClass.CS_STANDING)
+    assert c.IsStateSet(CharacterClass.CS_STANDING) == 1
+    c.ClearFlags(CharacterClass.CS_STANDING)
+    assert c.IsStateSet(CharacterClass.CS_STANDING) == 0
 
 
 def test_set_hidden_flips_is_hidden():
@@ -475,20 +475,20 @@ def test_get_object_with_none_set_returns_free_floating_character():
 
 
 def test_set_status_accepts_string_label():
-    """Bridge handlers call SetStatus("Waiting") / SetStatus("Ready to Advise")."""
+    """Bridge handlers call SetStatus(db.GetString("Waiting")) — a display string."""
     c = CharacterClass_Create()
     c.SetStatus("Waiting")
-    assert c.IsStateSet("Waiting") == 1
+    assert c.GetStatusText() == "Waiting"
     c.ClearStatus("Waiting")
-    assert c.IsStateSet("Waiting") == 0
+    assert c.GetStatusText() is None
 
 
-def test_set_status_int_and_string_independent():
+def test_status_string_does_not_touch_flags():
     c = CharacterClass_Create()
-    c.SetStatus(CharacterClass.CS_HIDDEN)
+    c.SetFlags(CharacterClass.CS_STANDING)
     c.SetStatus("Waiting")
-    assert c.IsStateSet(CharacterClass.CS_HIDDEN) == 1
-    assert c.IsStateSet("Waiting") == 1
+    assert c.IsStateSet(CharacterClass.CS_STANDING) == 1
+    assert c.GetStatusText() == "Waiting"
 
 
 def test_character_class_cast():
