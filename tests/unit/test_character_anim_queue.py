@@ -512,7 +512,7 @@ def test_turntowards_captain_enqueues_turn_record_and_returns_zero():
     c = CharacterClass_Create()
     c.SetActive(1)
     cb = lambda: None
-    result = c.TurnTowards("Captain", on_complete=cb)
+    result = c.TurnTowards("Captain", now=True, on_complete=cb)
     assert result == 0
     assert len(c._anim_pending) == 1
     rec = c._anim_pending[0]
@@ -520,15 +520,24 @@ def test_turntowards_captain_enqueues_turn_record_and_returns_zero():
     assert rec.name == "Captain"
     assert rec.on_complete is cb
     assert rec.hold is True
+    assert rec.now is True
 
 
-def test_turntowards_non_captain_or_none_enqueues_nothing():
+def test_turntowards_non_captain_or_none_fires_on_complete_inline_and_enqueues_nothing():
+    # tier-0 SS4.10: acts only for the Captain -- the no-op path MUST fire
+    # on_complete inline (else the re-pointed CharacterAction caller's
+    # self.Completed is lost and a waiting mission TGSequence hangs).
     c = CharacterClass_Create()
     c.SetActive(1)
-    assert c.TurnTowards("Data") == 0
+    fired = []
+    assert c.TurnTowards("Data", on_complete=lambda: fired.append(1)) == 0
     assert c._anim_pending == []
-    assert c.TurnTowards(None) == 0
+    assert fired == [1]
+
+    fired2 = []
+    assert c.TurnTowards(None, on_complete=lambda: fired2.append(1)) == 0
     assert c._anim_pending == []
+    assert fired2 == [1]
 
 
 def test_turnback_clears_interruptable_set_and_enqueues_turn_back():
@@ -537,7 +546,7 @@ def test_turnback_clears_interruptable_set_and_enqueues_turn_back():
                 CharacterClass.CAT_GLANCE, CharacterClass.CAT_GLANCE_BACK):
         c._anim_pending.append(AnimRec(category=cat, play=object()))
     cb = lambda: None
-    result = c.TurnBack(cb)
+    result = c.TurnBack(now=False, on_complete=cb)
     assert result == 1
     cats = [r.category for r in c._anim_pending]
     assert CharacterClass.CAT_BREATHE not in cats
@@ -547,6 +556,7 @@ def test_turnback_clears_interruptable_set_and_enqueues_turn_back():
     assert CharacterClass.CAT_TURN_BACK in cats
     rec = [r for r in c._anim_pending if r.category == CharacterClass.CAT_TURN_BACK][0]
     assert rec.on_complete is cb
+    assert rec.now is False
 
 
 def test_glanceat_enqueues_glance_record_with_name():

@@ -37,18 +37,27 @@ class _Char:
 
 
 def test_turn_dispatch_to_deferred_completion(monkeypatch):
+    # SP2 T14b: AT_TURN now routes through the real CharacterClass door
+    # (TurnTowards), so the character under test must be a real CharacterClass
+    # -- its AnimRec queue has to be drained (UpdateAnimationQueue) before the
+    # controller ever sees the turn request.
+    from engine.appc.characters import CharacterClass_Create
+
     monkeypatch.setattr(bca, "capture_registered_clip",
                         lambda ch, suffix: {"clip_nif": suffix + ".nif"})
     monkeypatch.setattr(bca, "capture_chair_clip", lambda ch, suffix: None)
-    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
-                        lambda c: c)
     ctrl = BridgeCharacterAnimController()
     monkeypatch.setattr(bca, "get_controller", lambda: ctrl)
     r = _AnimRenderer()
-    ch = _Char()
+    ch = CharacterClass_Create()
+    ch.SetCharacterName("Picard")
+    ch.SetLocation("DBGuest")
+    ch._render_instance = 88
 
     act = CharacterAction(ch, CharacterAction.AT_TURN, "Captain")
     act.Play()
+    assert act.IsPlaying() is True                 # deferred to the queue
+    ch.UpdateAnimationQueue()                       # drains the record -> play_record()
     assert act.IsPlaying() is True                 # deferred to the controller
     ctrl.update(0.0, renderer=r)                    # drain -> submit body clip
     assert act.IsPlaying() is True

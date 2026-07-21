@@ -695,7 +695,8 @@ def test_gesture_preempting_a_synchronously_completed_turn_does_not_jam_the_offi
     seq.AddAction(turn_action)
     seq.AppendAction(default_action)
 
-    seq.Play()                        # turn_action.Play() queues the turn request
+    seq.Play()                        # turn_action.Play() -> CharacterClass.TurnTowards enqueues
+    ch.UpdateAnimationQueue()         # CharacterClass queue drains the record -> play_record()
     ctrl.update(0.0, renderer=r)      # drains the pending turn -> installs the body _Action
     assert ctrl.is_busy(ch) is True
     assert turn_action.IsPlaying() is True   # genuinely mid-turn, not settled
@@ -707,3 +708,37 @@ def test_gesture_preempting_a_synchronously_completed_turn_does_not_jam_the_offi
     assert ch.IsAnimating() == 0              # NOT jammed
     assert ch.IsAnimatingNonInterruptable() == 0
     assert ch.GetCurrentAnimation() == ""
+
+
+def test_queue_turn_routes_through_turntowards_not_request_turn_to(monkeypatch):
+    # SP2 T14b: the one door is CharacterClass.TurnTowards/TurnBack --
+    # CharacterAction._queue_turn must not call the controller directly.
+    from engine.appc.characters import CharacterClass_Create
+
+    ch = CharacterClass_Create()
+    ch.SetActive(1)
+
+    calls = []
+    monkeypatch.setattr(ch, "TurnTowards",
+                        lambda name, now=False, on_complete=None:
+                            (calls.append((name, now, on_complete)), 0)[1])
+
+    def _boom(*a, **k):
+        raise AssertionError("must not call the controller directly")
+
+    class _NoDirectTurnController:
+        request_turn_to = staticmethod(_boom)
+
+    monkeypatch.setattr(bridge_character_anim, "get_controller",
+                        lambda: _NoDirectTurnController())
+    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
+                        lambda c: c)
+
+    act = CharacterAction(ch, CharacterAction.AT_TURN, "Captain")
+    act.Play()
+
+    assert len(calls) == 1
+    name, now, on_complete = calls[0]
+    assert name == "Captain"
+    assert now is False
+    assert on_complete == act.Completed

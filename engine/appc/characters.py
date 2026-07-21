@@ -950,21 +950,27 @@ class CharacterClass(ObjectClass):
 
     def Blink(self, *args) -> None:               pass
     def MoveTo(self, *args) -> None:              pass
-    def TurnTowards(self, name, arg2=None, on_complete=None) -> int:
-        # tier-0: only acts for the Captain while active; ALWAYS returns 0/false.
+    def TurnTowards(self, name, now=False, on_complete=None) -> int:
+        # tier-0 §4.10: acts only for the Captain while active; ALWAYS returns 0.
+        # No-op path fires on_complete inline so a waiting sequence never hangs.
         if not name or not self.IsActive() or str(name) != "Captain":
+            if on_complete is not None:
+                try:
+                    on_complete()
+                except Exception:
+                    pass
             return 0
+        self._last_turn_detail = "Captain"
         self.SetCurrentAnimation(None, self.CAT_TURN, 0, "Captain",
-                                 on_complete=on_complete, hold=True)
+                                 on_complete=on_complete, hold=True, now=bool(now))
         return 0
 
-    def TurnBack(self, on_complete=None, *args) -> int:
-        # Clear the interruptable set first (tier-0), then enqueue the turn-back.
+    def TurnBack(self, now=False, on_complete=None, *args) -> int:
         for c in (self.CAT_BREATHE, self.CAT_INTERRUPTABLE,
                   self.CAT_GLANCE, self.CAT_GLANCE_BACK):
             self.ClearAnimationsOfType(c)
         self.SetCurrentAnimation(None, self.CAT_TURN_BACK, 0, "Captain",
-                                 on_complete=on_complete, hold=True)
+                                 on_complete=on_complete, hold=True, now=bool(now))
         return 1
 
     def GlanceAt(self, name, on_complete=None, *args) -> int:
