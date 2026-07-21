@@ -3,6 +3,16 @@ import pytest
 from engine.appc.character_anim_queue import (
     AnimRec, classify, STOP_OLD, REJECT_NEW, STOP_BOTH, COEXIST,
 )
+from engine.appc.characters import CharacterClass_Create
+
+def test_fresh_character_queue_is_empty():
+    c = CharacterClass_Create()
+    assert c._anim_current is None
+    assert c._anim_pending == []
+    assert c._anim_count() == 0
+    # SP2 target-name buffers (BC +0xa0 / +0xa4)
+    assert c._target_name is None
+    assert c._glance_name is None
 
 def R(cat, name=None):
     return AnimRec(category=cat, name=name, flags=0, play=object())

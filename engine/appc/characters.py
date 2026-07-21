@@ -439,11 +439,16 @@ class CharacterClass(ObjectClass):
         self._hidden: bool = False        # CS_HIDDEN/CS_VISIBLE cull toggle
         self._status: dict = {}           # tooltip display strings (SP4 -> StatusMap)
         self._location_name: str = ""
-        self._current_anim: tuple | None = None   # (name, CAT_) while playing
+        # ── Animation queue (SP2 — the CAT_* record queue; brain) ──────────
+        self._anim_current = None        # AnimRec | None (BC +0x15C)
+        self._anim_pending = []          # list[AnimRec] FIFO (BC +0x164 head)
+        self._target_name = None         # move/back-to target (BC +0xa0)
+        self._glance_name = None         # glance target (BC +0xa4)
         # ── Owner sub-component slots (filled by later sub-projects) ────────
-        # SP1 leaves them None; the interim _current_anim/_phonemes above stay
-        # the working state until SP2/SP3 replace them.
-        self._anim_queue = None       # SP2: CAT_* AnimationQueue
+        # SP1's _anim_queue placeholder is superseded by the real queue state
+        # above (_anim_current/_anim_pending); kept as a deprecated alias so
+        # it stays None and does not dangle.
+        self._anim_queue = None       # deprecated: see _anim_current/_anim_pending
         self._speak_queue = None      # SP3: SpeakQueue (wraps crew_speech)
         self._position_zoom = None    # SP4: PositionZoomTable
         self._menu_state = None       # SP4: MenuState (formalizes _menu)
@@ -555,6 +560,9 @@ class CharacterClass(ObjectClass):
     def ClearExtraAnimations(self) -> None:
         self._random_animations.clear()
 
+    def _anim_count(self) -> int:
+        return (1 if self._anim_current is not None else 0) + len(self._anim_pending)
+
     def set_current_animation(self, name, category) -> None:
         """Mark this character as playing *name* in category *category* (a CAT_).
 
@@ -562,14 +570,18 @@ class CharacterClass(ObjectClass):
         reads it back through IsAnimatingNonInterruptable() to refuse a second
         gesture on a busy officer. The verb dispatch (CharacterAction) is the
         only thing that starts these, so it owns setting and clearing this.
+
+        Interim shim over the SP2 queue fields (_anim_current/_anim_pending):
+        Tasks 3-5 replace this with the real enqueue/Classify pipeline.
         """
-        self._current_anim = (str(name), int(category))
+        from engine.appc.character_anim_queue import AnimRec
+        self._anim_current = AnimRec(category=int(category), name=str(name))
 
     def clear_current_animation(self) -> None:
-        self._current_anim = None
+        self._anim_current = None
 
     def GetCurrentAnimation(self) -> str:
-        return self._current_anim[0] if self._current_anim else ""
+        return self._anim_current.name if self._anim_current else ""
 
     # ── State flags: the faithful CS_* bitfield (CharacterClass.md §4.3) ─────
     def SetFlags(self, mask) -> None:
@@ -748,16 +760,16 @@ class CharacterClass(ObjectClass):
         from engine.appc import crew_speech
         return 1 if crew_speech.is_speaking(self._character_name) else 0
     def IsReadyToSpeak(self) -> int:              return 1
-    def IsAnimating(self) -> int:                 return 1 if self._current_anim else 0
-    def IsGoingToAnimate(self) -> int:            return 1 if self._current_anim else 0
+    def IsAnimating(self) -> int:                 return 1 if self._anim_current is not None else 0
+    def IsGoingToAnimate(self) -> int:            return 1 if self._anim_current is not None else 0
     def IsAnimatingInterruptable(self) -> int:
-        if not self._current_anim:
+        if self._anim_current is None:
             return 0
-        return 1 if self._current_anim[1] in self._INTERRUPTABLE_CATEGORIES else 0
+        return 1 if self._anim_current.category in self._INTERRUPTABLE_CATEGORIES else 0
     def IsAnimatingNonInterruptable(self) -> int:
-        if not self._current_anim:
+        if self._anim_current is None:
             return 0
-        return 1 if self._current_anim[1] == self.CAT_NON_INTERRUPTABLE else 0
+        return 1 if self._anim_current.category == self.CAT_NON_INTERRUPTABLE else 0
     def IsRandomAnimationEnabled(self) -> int:
         return 1 if self._data.get("RandomAnimationEnabled", True) else 0
     def IsMenuEnabled(self) -> int:
