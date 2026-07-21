@@ -26,21 +26,29 @@ place.
 
 ## 2. Evidence sources (ranked)
 
-Per the project's evidence tiers (RE'd binary > SWIG surface > SDK inference):
+Per the project's evidence tiers (see the `project-evidence-tiers-sdk-swig-re` memory):
 
-1. **Sibling RE repo** `../STBC-Reverse-Engineering-1/` (DECOMPILED `stbc.exe`) — authoritative:
-   - `tools/merged/stbc_constants.csv` — exact extracted constant values.
-   - `.claude/agent-memory/game-reverse-engineer/character-class.md` — struct layout, ctor
-     defaults, event IDs, PlayAnimation mode→CAT/flags mapping.
-   - `docs/gameplay/bridge-character-system.md` — system-level behaviour.
-2. **Clean-room reference** (`CharacterClass.md`, supplied) — behavioural spec, ~60 methods.
-3. **SWIG surface** `sdk/Build/scripts/App.py:4617` — the 90-method Python-facing contract we must
+0. **The supplied clean-room `CharacterClass.md`** — **top tier, outranks everything below.**
+   Per Mark (2026-07-21): it describes a reimplementation that was **recompiled into a hybrid
+   executable and gameplay-tested**, so it is execution-validated, not merely static-interpreted.
+   Trust its findings over any other source where it speaks. Confidence tags BE/DE/LV/P.
+1. **Sibling RE repo** `../STBC-Reverse-Engineering-1/` (static Ghidra decompilation of `stbc.exe`)
+   — used only where the tier-0 doc is *silent*:
+   - `tools/merged/stbc_constants.csv` — exact extracted constant values (the tier-0 doc gives
+     internal m_flags bit *meanings* but not the public `CS_*`→value table).
+   - `.claude/agent-memory/.../character-class.md` — struct layout, ctor defaults, event IDs.
+2. **SWIG surface** `sdk/Build/scripts/App.py:4617` — the 90-method Python-facing contract we must
    satisfy.
-4. **Live SDK usage** `sdk/Build/scripts/` — `Bridge/Characters/<Name>.py`, `LoadBridge.py`,
+3. **Live SDK usage** `sdk/Build/scripts/` — `Bridge/Characters/<Name>.py`, `LoadBridge.py`,
    `BridgeHandlers.py`, `MissionLib.py`.
 
-Where the clean-room doc and RE agent-memory disagree, the extracted `stbc_constants.csv` wins
-(e.g. `CS_STOP_INITIATIVE` = `0xFD8` from the CSV, not the agent-memory's inferred `0x1000`).
+**Tie-break:** where tier 0 speaks, it wins. Where it is silent, tier 1 supplies the missing detail
+(supplementary, not contradictory). Tier 0 and tier 1 have **agreed everywhere they overlap** so far
+(the flag semantics of §5.2), which raised confidence rather than forcing a choice. Two SP1 values
+come *only* from tier 1 because tier 0 does not enumerate them: the exact `CS_*`/`CPT_*` numeric
+values (§5.1, from `stbc_constants.csv` — e.g. `CS_STOP_INITIATIVE = 0xFD8`, extracted, not the
+agent-memory's inferred `0x1000`) and the ctor field *names* for offsets tier 0 leaves unlabelled
+(§5.5, e.g. `+0x7C`→`Gender`) — both flagged inline as tier-1-sourced.
 
 ## 3. Architecture decision — "own + consolidate"
 
