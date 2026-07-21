@@ -82,3 +82,27 @@ def test_real_move_stops_queued_idle_then_enqueues():
     cats = [r.category for r in c._anim_pending]
     assert CharacterClass.CAT_BREATHE not in cats
     assert CharacterClass.CAT_NON_INTERRUPTABLE in cats
+
+
+def test_stop_both_in_queue_rejects_new_and_drops_existing():
+    # existing TURN(3) 'Kirk' queued (not current), new TURN_BACK(4) 'Kirk' -> name* -> STOP_BOTH:
+    # the queued TURN is dropped AND the new TURN_BACK is rejected -> queue ends empty.
+    c = CharacterClass_Create()
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_TURN, 0, "Kirk")        # pending[0]
+    assert c._anim_count() == 1
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_TURN_BACK, 0, "Kirk")   # STOP_BOTH
+    assert c._anim_count() == 0
+
+
+def test_drop_then_reject_does_not_duplicate_survivor():
+    # pending [BREATHE, INTERRUPTABLE, BREATHE], new INTERRUPTABLE:
+    #   BREATHE vs INTERRUPT -> stop-old (drop); INTERRUPT vs INTERRUPT -> reject-new (return).
+    # Expected surviving pending: [INTERRUPTABLE, BREATHE] (no duplicate).
+    c = CharacterClass_Create()
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_BREATHE)        # enqueues BREATHE
+    c._anim_pending.append(AnimRec(category=CharacterClass.CAT_INTERRUPTABLE, play=object()))
+    c._anim_pending.append(AnimRec(category=CharacterClass.CAT_BREATHE, play=object()))
+    assert c._anim_count() == 3
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_INTERRUPTABLE)  # drop-then-reject
+    cats = [r.category for r in c._anim_pending]
+    assert cats == [CharacterClass.CAT_INTERRUPTABLE, CharacterClass.CAT_BREATHE]

@@ -578,18 +578,18 @@ class CharacterClass(ObjectClass):
                 return
         # 2) Classify against each QUEUED record (Classify2 — strict).
         survivors = []
-        for other in self._anim_pending:
+        for i, other in enumerate(self._anim_pending):
             v = q.classify(other, rec, existing_is_current=False)
             if v in (q.STOP_OLD, q.STOP_BOTH):
-                self._anim_stop_play(other)          # drop the queued record
-                continue
-            survivors.append(other)
+                self._anim_stop_play(other)          # drop this queued record
+            else:
+                survivors.append(other)
             if v in (q.REJECT_NEW, q.STOP_BOTH):
-                self._anim_pending = survivors + self._anim_pending[len(survivors):]
+                # new record rejected: keep survivors + the not-yet-processed tail
+                self._anim_pending = survivors + self._anim_pending[i + 1:]
                 self._anim_stop_play(rec)
                 return
         self._anim_pending = survivors
-        # 3) Append the survivor at the tail.
         self._anim_pending.append(rec)
 
     def _anim_stop_play(self, rec) -> None:
