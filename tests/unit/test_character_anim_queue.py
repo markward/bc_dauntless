@@ -150,3 +150,24 @@ def test_release_retires_finished_current():
     c._anim_current = c._anim_pending.pop(0)
     c.ReleaseCurrentAnimation(0)     # stub is_active False -> finished -> cleared
     assert c._anim_current is None
+
+
+def test_shouldplaynow_cat2_always_plays():
+    c = CharacterClass_Create()
+    c._target_name = "P1"                       # a pending move-target set
+    assert c.ShouldPlayNow(AnimRec(category=CharacterClass.CAT_NON_INTERRUPTABLE)) is True
+
+
+def test_shouldplaynow_move_target_blocks_non_turnback():
+    c = CharacterClass_Create()
+    c._target_name = "P1"
+    assert c.ShouldPlayNow(AnimRec(category=CharacterClass.CAT_GLANCE)) is False   # blocked
+    assert c.ShouldPlayNow(AnimRec(category=CharacterClass.CAT_TURN_BACK)) is True # cat 4 exempt
+
+
+def test_prepareplay_applies_flags_and_sets_glance_target():
+    c = CharacterClass_Create()
+    c.PreparePlay(AnimRec(category=CharacterClass.CAT_GLANCE, name="Kirk",
+                          flags=CharacterClass.CS_UI_DISABLED))
+    assert c.IsStateSet(CharacterClass.CS_UI_DISABLED) == 1   # flags applied
+    assert c._glance_name == "Kirk"                            # cat 5 -> glance target

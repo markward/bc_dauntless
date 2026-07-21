@@ -615,6 +615,28 @@ class CharacterClass(ObjectClass):
             self._target_name = None
             self.ClearFlags(self.CS_TURNED)      # 0x4
 
+    def ShouldPlayNow(self, rec) -> bool:
+        cat = rec.category
+        if cat == self.CAT_NON_INTERRUPTABLE:          # 2 — always
+            return True
+        if self._target_name is not None:              # pending move-target
+            return cat == self.CAT_TURN_BACK           # only cat 4 gets through
+        if self._glance_name is None:                  # no glance pending
+            return True
+        if cat in (self.CAT_GLANCE_BACK, self.CAT_TURN):  # 6, 3
+            return True
+        return False
+
+    def PreparePlay(self, rec) -> None:
+        self.SetFlags(rec.flags)
+        if rec.category == self.CAT_TURN:              # 3 — move/turn target
+            self._target_name = rec.name
+            if self.IsStateSet(self.CS_GLANCING):      # 0x2
+                self._glance_name = None
+                self.ClearFlags(self.CS_GLANCING)
+        elif rec.category == self.CAT_GLANCE:          # 5 — glance target
+            self._glance_name = rec.name
+
     def _anim_is_active(self, rec) -> bool:
         # Interim: a handed-over record is considered finished. Task 10 wires
         # this to the clip-player seam (is_active on the character's instance).
