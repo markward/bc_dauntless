@@ -678,11 +678,16 @@ def test_play_animation_file_no_filename_returns_zero():
     assert c._anim_pending == []
 
 
-def test_breathe_returns_zero_when_already_animating():
+def test_breathe_returns_zero_when_already_animating(monkeypatch):
     c = CharacterClass_Create()
     c._anim_current = AnimRec(category=CharacterClass.CAT_NON_INTERRUPTABLE, play=object())
+    # Keep the current record "active" so IsAnimating() genuinely reports 1
+    # (otherwise ReleaseCurrentAnimation retires it and the gate isn't tested).
+    monkeypatch.setattr(c, "_anim_is_active", lambda rec: True)
+    assert c.IsAnimating() == 1
+    before = len(c._anim_pending)
     assert c.Breathe() == 0
-    assert c._anim_pending == []
+    assert len(c._anim_pending) == before   # nothing enqueued
 
 
 def test_breathe_returns_zero_when_pending_queued():
