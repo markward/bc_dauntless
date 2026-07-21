@@ -171,3 +171,91 @@ def test_prepareplay_applies_flags_and_sets_glance_target():
                           flags=CharacterClass.CS_UI_DISABLED))
     assert c.IsStateSet(CharacterClass.CS_UI_DISABLED) == 1   # flags applied
     assert c._glance_name == "Kirk"                            # cat 5 -> glance target
+
+
+# ── Task 7: Special4 (turn-back) / Special6 (glance-back) follow-up chaining ─
+
+def test_special4_declines_when_no_target_name():
+    c = CharacterClass_Create()
+    c._target_name = None
+    assert c.Special4(AnimRec(category=CharacterClass.CAT_TURN_BACK)) is False
+
+
+def test_special4_composes_key_plays_and_returns_true(monkeypatch):
+    c = CharacterClass_Create()
+    c._target_name = "Captain"
+    c._location_name = "DBTactical"
+    sentinel = object()
+    seen_keys = []
+
+    def fake_resolve(key):
+        seen_keys.append(key)
+        return sentinel
+
+    monkeypatch.setattr(c, "_resolve_anim", fake_resolve)
+
+    played = []
+    monkeypatch.setattr(c, "_anim_play_now", lambda rec: played.append(rec))
+
+    result = c.Special4(AnimRec(category=CharacterClass.CAT_TURN_BACK))
+
+    assert seen_keys == ["DBTacticalBackCaptain"]
+    assert len(played) == 1
+    assert played[0].category == CharacterClass.CAT_TURN_BACK
+    assert played[0].name == "Captain"
+    assert played[0].play is sentinel
+    assert result is True
+
+
+def test_special4_declines_when_builder_resolves_none(monkeypatch):
+    c = CharacterClass_Create()
+    c._target_name = "Captain"
+    c._location_name = "DBTactical"
+    monkeypatch.setattr(c, "_resolve_anim", lambda key: None)
+    played = []
+    monkeypatch.setattr(c, "_anim_play_now", lambda rec: played.append(rec))
+    assert c.Special4(AnimRec(category=CharacterClass.CAT_TURN_BACK)) is False
+    assert played == []
+
+
+def test_special6_declines_when_no_glance_name():
+    c = CharacterClass_Create()
+    c._glance_name = None
+    assert c.Special6(AnimRec(category=CharacterClass.CAT_GLANCE_BACK)) is False
+
+
+def test_special6_composes_key_plays_and_returns_true(monkeypatch):
+    c = CharacterClass_Create()
+    c._glance_name = "Kirk"
+    c._location_name = "DBTactical"
+    sentinel = object()
+    seen_keys = []
+
+    def fake_resolve(key):
+        seen_keys.append(key)
+        return sentinel
+
+    monkeypatch.setattr(c, "_resolve_anim", fake_resolve)
+
+    played = []
+    monkeypatch.setattr(c, "_anim_play_now", lambda rec: played.append(rec))
+
+    result = c.Special6(AnimRec(category=CharacterClass.CAT_GLANCE_BACK))
+
+    assert seen_keys == ["DBTacticalGlanceAwayKirk"]
+    assert len(played) == 1
+    assert played[0].category == CharacterClass.CAT_GLANCE_BACK
+    assert played[0].name == "Kirk"
+    assert played[0].play is sentinel
+    assert result is True
+
+
+def test_special6_declines_when_builder_resolves_none(monkeypatch):
+    c = CharacterClass_Create()
+    c._glance_name = "Kirk"
+    c._location_name = "DBTactical"
+    monkeypatch.setattr(c, "_resolve_anim", lambda key: None)
+    played = []
+    monkeypatch.setattr(c, "_anim_play_now", lambda rec: played.append(rec))
+    assert c.Special6(AnimRec(category=CharacterClass.CAT_GLANCE_BACK)) is False
+    assert played == []

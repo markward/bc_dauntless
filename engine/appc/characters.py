@@ -642,6 +642,43 @@ class CharacterClass(ObjectClass):
         # this to the clip-player seam (is_active on the character's instance).
         return False
 
+    def _resolve_anim(self, key):
+        # Builder-resolution seam. Task 11 gives this a real body (resolves the
+        # SDK animation builder for `key` via bridge_placement). Interim: None.
+        return None
+
+    def _anim_play_now(self, rec) -> None:
+        # Clip-player seam. Task 10 wires this to actually play `rec`. Interim: no-op.
+        pass
+
+    def Special4(self, rec) -> bool:
+        # Turn-back follow-up (tier-0 §4.8, adapted). Declines (False) if no
+        # move/back-to target or the builder doesn't resolve; else composes
+        # "<loc>Back<target>", plays it, returns True (handled).
+        if not self._target_name:
+            return False
+        key = "%sBack%s" % (self._location_name or "", self._target_name)
+        anim = self._resolve_anim(key)
+        if anim is None:
+            return False
+        from engine.appc.character_anim_queue import AnimRec
+        self._anim_play_now(AnimRec(category=self.CAT_TURN_BACK, name=self._target_name,
+                                    flags=0, play=anim))
+        return True
+
+    def Special6(self, rec) -> bool:
+        # Glance-away follow-up (tier-0 §4.8, adapted).
+        if not self._glance_name:
+            return False
+        key = "%sGlanceAway%s" % (self._location_name or "", self._glance_name)
+        anim = self._resolve_anim(key)
+        if anim is None:
+            return False
+        from engine.appc.character_anim_queue import AnimRec
+        self._anim_play_now(AnimRec(category=self.CAT_GLANCE_BACK, name=self._glance_name,
+                                    flags=0, play=anim))
+        return True
+
     def set_current_animation(self, name, category) -> None:
         """Mark this character as playing *name* in category *category* (a CAT_).
 
