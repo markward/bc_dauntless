@@ -3310,6 +3310,62 @@ def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
     return str(abs_path)
 
 
+# BC texture-detail tier subfolder. The original engine's texture-directory
+# composer (FUN_0044f4a0 @ 0x0044f4a0) suffixes every search dir with a tier
+# picked from the graphics texture-detail option (DAT_0098061c: 0->Low,
+# 1->Medium, 2->High). We have no such option plumbed yet, so we pin the best
+# tier; wire this to a real setting when texture-detail is exposed.
+_TEXTURE_TIER = "High"
+
+
+def _ship_texture_share_path(ship) -> str:
+    """The ship class's SetTextureSharePath value (relative), or BC's default
+    third-arg 'data/Models/SharedTextures' when the ship's script / LOD model
+    can't be resolved.
+
+    SetTextureSharePath is recorded on the class's LODModel (keyed by the ship
+    stats' "Name"); BC's FUN_0044f4a0 folds it into the texture search set.
+    """
+    default = "data/Models/SharedTextures"
+    try:
+        script_name = ship.GetScript()
+        if not script_name:
+            return default
+        mod = importlib.import_module(script_name)
+        name = mod.GetShipStats().get("Name")
+    except Exception:
+        return default
+    import App
+    lod = App.g_kLODModelManager.Get(name) if name else None
+    share = getattr(lod, "texture_share_path", None) if lod is not None else None
+    return share or default
+
+
+def _ship_texture_search(nif_path, ship) -> list[str]:
+    """Texture search dirs for a ship, faithful to BC's FUN_0044f4a0.
+
+    The original composes ``[ <NIFdir>/<tier> , <shareOverride>/<tier> ]``
+    where <shareOverride> is the class's SetTextureSharePath value (default
+    ``data/Models/SharedTextures``) and <tier> is the graphics texture-detail
+    level. Honouring the per-class share path is what makes non-Federation
+    hulls render: without it (Cardassian ``CardShips``, Klingon ``KlingShips``,
+    …) the native model builder's *primary*-texture ``resolve()`` throws
+    ``TextureNotFound`` and the whole ship is skipped — invisible, GetRadius()
+    == 0, targeting reticle collapsed to a point.
+
+    The legacy Federation shared dirs are appended as harmless trailing
+    fallbacks so anything that previously resolved through them still does.
+    """
+    tier = _TEXTURE_TIER
+    share = _ship_texture_share_path(ship)
+    return [
+        str(Path(nif_path).parent / tier),
+        str(PROJECT_ROOT / "game" / share / tier),
+        str(PROJECT_ROOT / "game" / DEFAULT_TEXTURE_SEARCH),
+        str(PROJECT_ROOT / "game" / "data" / "Models" / "SharedTextures" / "FedBases" / "High"),
+    ]
+
+
 def _ship_texture_replacements(ship):
     """BC ReplaceTexture swaps queued for `ship` (Federation registry / hull
     name), as `[(old_substring, new_abs_path), ...]`, or None when none are
@@ -3602,17 +3658,13 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
     """
     r_ = renderer
 
-    shared_search = [
-        str(PROJECT_ROOT / "game" / DEFAULT_TEXTURE_SEARCH),
-        str(PROJECT_ROOT / "game" / "data" / "Models" / "SharedTextures" / "FedBases" / "High"),
-    ]
     for ship in _iter_ships_in_set(pSet):
         if ship in session.ship_instances:
             continue
         nif_path = _ship_nif_path(ship, verbose=verbose)
         if nif_path is None:
             continue
-        tex_search = [str(Path(nif_path).parent / "High"), *shared_search]
+        tex_search = _ship_texture_search(nif_path, ship)
         reps = _ship_texture_replacements(ship)
         try:
             handle = r_.load_model(nif_path, tex_search, reps)
@@ -4142,18 +4194,14 @@ class _MissionLoader:
         import App
         r_ = self._c.renderer
 
-        shared_search = [
-            str(PROJECT_ROOT / "game" / DEFAULT_TEXTURE_SEARCH),
-            str(PROJECT_ROOT / "game" / "data" / "Models" / "SharedTextures" / "FedBases" / "High"),
-        ]
         for ship in _iter_active_ships(verbose=self._verbose):
             nif_path = _ship_nif_path(ship, verbose=self._verbose)
             if nif_path is None:
                 continue
-            # BC ships split textures: a per-ship High/ dir for hull-specific
-            # assets (Sovereign, FedStarbase) plus the shared FedShips/FedBases
-            # directories (Galaxy and many others ship nothing locally).
-            tex_search = [str(Path(nif_path).parent / "High"), *shared_search]
+            # BC ships split textures: a per-ship <NIFdir>/High for hull-specific
+            # assets (Sovereign, FedStarbase) plus the class's SetTextureSharePath
+            # shared dir (FedShips, CardShips, KlingShips, …). See FUN_0044f4a0.
+            tex_search = _ship_texture_search(nif_path, ship)
             # Federation registry / hull-name swaps make the same NIF a distinct
             # model, so the handle cache is keyed by (nif, registry). The extent
             # is pure geometry — identical across registries — so it stays keyed
