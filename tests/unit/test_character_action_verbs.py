@@ -85,28 +85,60 @@ class _FakeController:
         self.submitted.append((character, "DEFAULT", None, None))
 
 
+class _RecordingController:
+    """The NEW seam (play_record/is_active/stop) that CharacterClass's AnimRec
+    queue drives on drain — see docs/superpowers/plans/2026-07-21-
+    characterclass-sp2-animation-queue.md. Mirrors the gesture/breathe branch
+    of the real BridgeCharacterAnimController.play_record: records the
+    submitted clips/priority/on_complete rather than touching a renderer."""
+    def __init__(self):
+        self.submitted = []
+        self._playing = False
+
+    def play_record(self, character, rec):
+        clips = list(rec.play) if rec.play else []
+        self.submitted.append(
+            (character, clips, bridge_character_anim._SCRIPTED, rec.on_complete))
+        self._playing = True
+
+    def is_active(self, character):
+        return self._playing
+
+    def stop(self, character):
+        self._playing = False
+
+
 def test_play_animation_submits_the_registered_gesture(monkeypatch):
     ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
-    ctrl = _FakeController()
+    ch.SetActive(1)
+    ctrl = _RecordingController()
     monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
     monkeypatch.setattr("engine.bridge_idle_gestures.build_sequence_clips",
                         lambda path, character, anim_mgr: [("clip.nif", 1.0)])
 
     action = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION, "PushingButtons")
     action.Play()
+    assert action.IsPlaying() is True                       # deferred
+    # flag defaults to 0 => BC's non-interruptable mode => the SDK gate closes.
+    # Nothing has retired yet -- this reads the PENDING record.
+    assert ch.IsAnimatingNonInterruptable() == 1
 
+    ch.UpdateAnimationQueue()                # drains -> play_record -> submit
     assert len(ctrl.submitted) == 1
-    _c, clips, priority, _cb = ctrl.submitted[0]
+    _c, clips, priority, on_complete = ctrl.submitted[0]
     assert clips == [("clip.nif", 1.0)]
     assert priority == bridge_character_anim._SCRIPTED
-    # flag defaults to 0 => BC's non-interruptable mode => the SDK gate closes
-    assert ch.IsAnimatingNonInterruptable() == 1
+    assert on_complete == action.Completed
+
+    on_complete()                             # controller settles
+    assert action.IsPlaying() == 0            # completion guarantee
 
 
 def test_play_animation_flag_1_is_interruptable(monkeypatch):
     # MissionLib.py:3543 passes flag=1 explicitly.
     ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
-    ctrl = _FakeController()
+    ch.SetActive(1)
+    ctrl = _RecordingController()
     monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
     monkeypatch.setattr("engine.bridge_idle_gestures.build_sequence_clips",
                         lambda path, character, anim_mgr: [("clip.nif", 1.0)])
@@ -114,13 +146,14 @@ def test_play_animation_flag_1_is_interruptable(monkeypatch):
     action = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION,
                              "PushingButtons", None, 1)
     action.Play()
-    assert ch.IsAnimatingInterruptable() == 1
+    assert ch.IsAnimatingInterruptable() == 1       # off the pending record
     assert ch.IsAnimatingNonInterruptable() == 0
 
 
 def test_play_animation_unregistered_key_completes_immediately(monkeypatch):
     ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
-    ctrl = _FakeController()
+    ch.SetActive(1)
+    ctrl = _RecordingController()
     monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
     # Prove the unregistered-key branch itself is what runs: if it were
     # skipped and build_sequence_clips were reached instead, this would blow
@@ -146,33 +179,36 @@ def test_play_animation_unregistered_key_completes_immediately(monkeypatch):
 
 
 def test_play_animation_file_resolves_registered_clip_name(monkeypatch):
-    # FINDING 1 (RED first): AT_PLAY_ANIMATION_FILE passes a bare CLIP NAME
-    # (e.g. "db_P_Point_C_P", MaelstromE1M1.py:2025), registered earlier via
+    # FINDING 1: AT_PLAY_ANIMATION_FILE passes a bare CLIP NAME (e.g.
+    # "db_P_Point_C_P", MaelstromE1M1.py:2025), registered earlier via
     # g_kAnimationManager.LoadAnimation(path, name) — NOT a resolvable path
     # itself. It must be resolved via App.g_kAnimationManager.path_for().
     import App
     App.g_kAnimationManager.LoadAnimation(
         "data/animations/db_P_Point_C_P.nif", "db_P_Point_C_P__t6")
     ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
-    ctrl = _FakeController()
+    ch.SetActive(1)
+    ctrl = _RecordingController()
     monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
 
     action = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION_FILE,
                              "db_P_Point_C_P__t6")
     action.Play()
+    assert ch.IsAnimatingNonInterruptable() == 1    # off the pending record
 
+    ch.UpdateAnimationQueue()                # drains -> play_record -> submit
     assert len(ctrl.submitted) == 1
     _c, clips, priority, _cb = ctrl.submitted[0]
     assert clips == [("data/animations/db_P_Point_C_P.nif", 0.0)]
     assert priority == bridge_character_anim._SCRIPTED
-    assert ch.IsAnimatingNonInterruptable() == 1
 
 
 def test_play_animation_file_unregistered_name_completes_immediately(monkeypatch):
     # FINDING 1: a clip name that was never LoadAnimation()-registered must
     # never reach the renderer and must never stall the sequence.
     ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
-    ctrl = _FakeController()
+    ch.SetActive(1)
+    ctrl = _RecordingController()
     monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
 
     action = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION_FILE,
@@ -182,23 +218,25 @@ def test_play_animation_file_unregistered_name_completes_immediately(monkeypatch
     assert ctrl.submitted == []
     assert action.IsPlaying() == 0
     assert ch.IsAnimating() == 0
+    assert ch.IsAnimatingNonInterruptable() == 0
 
 
 def test_second_scripted_gesture_on_busy_officer_does_not_corrupt_first_action(
         monkeypatch):
-    # FINDING 2 (RED first): using the REAL controller so the priority guard
-    # genuinely fires. Officer is mid-gesture A (_SCRIPTED priority, still
-    # playing); a second scripted gesture B on the SAME officer must be
-    # rejected by submit()'s equal-priority guard WITHOUT corrupting A's
-    # still-in-flight animation state.
-    from engine import bridge_character_anim as bca
-    from engine.bridge_idle_gestures import build_sequence_clips as _real
+    # The model changed here (SP2 P3): the OLD controller-level priority guard
+    # (submit() rejecting an equal-or-lower-priority action on a busy officer)
+    # is gone from this path -- PlayAnimation now enqueues via
+    # SetCurrentAnimation, and the referee (character_anim_queue.classify)
+    # says NON_INTERRUPTABLE-vs-NON_INTERRUPTABLE is COEXIST, not
+    # reject-or-stop. So gesture B is no longer rejected: it is QUEUED behind
+    # still-current gesture A, faithfully serializing the two scripted beats
+    # instead of losing B. This is the SAME invariant the test used to check
+    # (A survives B's arrival uncorrupted) expressed the new way.
     ch = _character_with("GestureA", "Mod.A")
     ch.AddAnimation("GestureB", "Mod.B")
-    ch._render_instance = 99
-    ch.SetHidden(0)
-    ctrl = bca.BridgeCharacterAnimController()
-    monkeypatch.setattr(bca, "get_controller", lambda: ctrl)
+    ch.SetActive(1)
+    ctrl = _RecordingController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: ctrl)
 
     def _clips(module_path, character, anim_mgr):
         return [("clipA.nif", 5.0)] if module_path == "Mod.A" else [("clipB.nif", 5.0)]
@@ -206,20 +244,20 @@ def test_second_scripted_gesture_on_busy_officer_does_not_corrupt_first_action(
 
     action_a = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION, "GestureA")
     action_a.Play()
-    assert ctrl.is_busy(ch) is True
+    ch.UpdateAnimationQueue()             # drains A -> _anim_current, submitted
     assert action_a.IsPlaying() == 1
-    assert ch.GetCurrentAnimation() == "GestureA"
     assert ch.IsAnimatingNonInterruptable() == 1
+    assert len(ctrl.submitted) == 1
 
     action_b = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION, "GestureB")
     action_b.Play()
 
-    assert action_b.IsPlaying() == 0     # B rejected by the priority guard, completes
-    # A's state must survive B's rejected submission untouched.
-    assert ctrl.is_busy(ch) is True
-    assert ch.GetCurrentAnimation() == "GestureA"
-    assert ch.IsAnimatingNonInterruptable() == 1
-    assert action_a.IsPlaying() == 1     # A is still genuinely playing
+    # B is QUEUED, not lost or overwriting A. A's state is untouched.
+    assert action_b.IsPlaying() == 1
+    assert len(ch._anim_pending) == 1
+    assert ch._anim_pending[0].category == ch.CAT_NON_INTERRUPTABLE
+    assert len(ctrl.submitted) == 1        # B has not been submitted (still pending)
+    assert action_a.IsPlaying() == 1        # A is still genuinely playing, uncorrupted
 
 
 def test_request_default_fires_pending_on_complete(monkeypatch):
@@ -620,31 +658,25 @@ def test_skip_during_the_forward_turn_does_not_speak_afterwards(monkeypatch):
     assert len(completions) == 1                 # and never completes twice
 
 
-def test_gesture_preempting_a_synchronously_completed_turn_does_not_jam_the_officer(
+def test_gesture_landing_on_a_still_playing_turn_queues_behind_it_uncorrupted(
         monkeypatch):
-    # Reproduced (not theoretical): an officer is mid turn-to-captain when a
-    # scripted gesture lands on him.
-    #
-    #   gesture.Play() -> _queue_play_animation -> ctrl.submit()
-    #     preempts the in-flight turn action (priority _TURN < _SCRIPTED) and
-    #     rescues its on_complete SYNCHRONOUSLY -> turn_action.Completed()
-    #     -> (event dispatch is synchronous) the owning TGSequence advances
-    #     into default_action (AT_DEFAULT) on the SAME officer
-    #     -> default_action.Play() -> _queue_default() -> ctrl.request_default()
-    #     pops the brand-new gesture _Action (installed a moment ago by the
-    #     very submit() call still on the stack) and fires ITS on_complete
-    #     (_done(): clear_current_animation() + gesture.Completed()) --
-    #     all of this happens BEFORE ctrl.submit() returns True to
-    #     _queue_play_animation.
-    #
-    # This drives the REAL BridgeCharacterAnimController and a REAL TGSequence
-    # (not a fake that fires on_complete synchronously by construction) so the
-    # re-entrant chain is genuine. Without the self.IsPlaying() guard,
-    # _queue_play_animation then calls cc.set_current_animation(...) on an
-    # action that has ALREADY completed, leaving IsAnimating() /
-    # IsAnimatingNonInterruptable() permanently stuck at 1 with nothing
-    # actually playing -- the officer's re-entrancy gate jams shut for the
-    # rest of the mission.
+    # SP2 P3 model change: this test USED TO reproduce a synchronous
+    # re-entrant chain (gesture.Play() -> _queue_play_animation ->
+    # ctrl.submit() preempting the in-flight turn action and rescuing its
+    # on_complete SYNCHRONOUSLY, which could advance the owning TGSequence
+    # into AT_DEFAULT on the same officer before submit() even returned, and
+    # that AT_DEFAULT could pop the brand-new gesture and jam the officer's
+    # animation state). That chain is now IMPOSSIBLE: _queue_play_animation no
+    # longer calls the controller directly -- it calls
+    # CharacterClass.PlayAnimation, which only enqueues via
+    # SetCurrentAnimation. The referee (character_anim_queue.classify) says
+    # the TURN row is COEXIST against every category, so a gesture landing on
+    # a still-playing turn is QUEUED behind it, never preempting it
+    # synchronously -- there is no controller call, no rescued on_complete,
+    # no re-entrant TGSequence advance, and so no way to jam the officer via
+    # this path. The invariant this test protects (the still-playing turn
+    # survives a second scripted action landing on the same officer,
+    # uncorrupted) now holds by construction; we still verify it explicitly.
     import App
     from engine import bridge_character_anim as bca
     from engine.appc.actions import TGSequence_Create
@@ -704,10 +736,13 @@ def test_gesture_preempting_a_synchronously_completed_turn_does_not_jam_the_offi
     gesture = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION, "PushingButtons")
     gesture.Play()
 
-    assert gesture.IsPlaying() == 0           # completed via the re-entrant chain
-    assert ch.IsAnimating() == 0              # NOT jammed
-    assert ch.IsAnimatingNonInterruptable() == 0
-    assert ch.GetCurrentAnimation() == ""
+    # QUEUED behind the turn, not preempting it -- the turn is untouched and
+    # still genuinely playing; the gesture waits its turn.
+    assert gesture.IsPlaying() == 1
+    assert len(ch._anim_pending) == 1
+    assert ch._anim_pending[0].category == ch.CAT_NON_INTERRUPTABLE
+    assert turn_action.IsPlaying() is True    # NOT jammed / NOT corrupted
+    assert ctrl.is_busy(ch) is True
 
 
 def test_queue_turn_routes_through_turntowards_not_request_turn_to(monkeypatch):

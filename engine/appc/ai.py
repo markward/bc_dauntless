@@ -1644,103 +1644,37 @@ class CharacterAction(TGAction):
             self.Completed()
 
     def _queue_play_animation(self, *, from_file: bool) -> None:
-        """AT_PLAY_ANIMATION / AT_PLAY_ANIMATION_FILE — BC's scripted gesture.
-
-        The key is LITERAL (no location prefix): "PushingButtons", registered by
-        every officer. The registered value is a dotted PYTHON PATH; calling it
-        returns a TGSequence, which we flatten to clips and hand to the character
-        anim controller — a character-node TGAnimAction does not play by itself
-        (actions.py:655), gestures reach the renderer only via the controller.
-
-        Interruptability comes from the action's `flag` (BC's PlayAnimation mode
-        arg): flag > 0 => CAT_INTERRUPTABLE; flag == 0 => CAT_NON_INTERRUPTABLE.
-        Evidence: MissionLib.py:3543 passes flag=1; the bare handler call sites
-        (EngineerCharacterHandlers.py:531 et al) leave it 0. BC's mode 0 also
-        disables the UI for the duration — that interlock needs the CS_ flag
-        rework and is deliberately not implemented here.
-
-        Best-effort: any failure or unresolved key completes inline so a mission
-        TGSequence can never stall on a gesture.
+        """AT_PLAY_ANIMATION / AT_PLAY_ANIMATION_FILE — routes through the
+        CharacterClass door (PlayAnimation/PlayAnimationFile), which owns clip
+        resolution, the AnimRec queue, and the completion guarantee:
+        self.Completed fires exactly once, either via the record when it
+        plays/settles/is retired by the queue drain, or inline on the no-op
+        path (unresolved key/clip, no character). Best-effort: Play() must
+        never raise — any failure completes inline so the mission TGSequence
+        advances instead of stalling.
         """
-        from engine.appc.characters import CharacterClass, CharacterClass_Cast
-        from engine import bridge_character_anim
-        from engine.bridge_idle_gestures import build_sequence_clips
-        from engine.appc import bridge_placement
-        cc = None
+        from engine.appc.characters import CharacterClass_Cast
         try:
             cc = CharacterClass_Cast(self._character) if self._character is not None else None
-            ctrl = bridge_character_anim.get_controller()
-            if cc is None or ctrl is None or self._detail is None:
+            if cc is None:
                 self.Completed()
                 return
-
-            import App
+            if self._detail is None:
+                self.Completed()   # BC no-ops an unresolved gesture
+                return
+            name = str(self._detail)
             if from_file:
-                # BC's escape hatch (AT_PLAY_ANIMATION_FILE): despite the name,
-                # SDK call sites pass a bare CLIP NAME (e.g. "db_P_Point_C_P",
-                # MaelstromE1M1.py:2025), registered earlier via
-                # g_kAnimationManager.LoadAnimation(path, name) — the name is
-                # NOT itself a resolvable path. Resolve it the same way
-                # bridge_idle_gestures.build_sequence_clips resolves a clip
-                # action's name.
-                clip_path = App.g_kAnimationManager.path_for(self._detail)
-                if not clip_path:
-                    self.Completed()   # unregistered clip name — never stall
-                    return
-                clips = [(clip_path, 0.0)]
+                ok = cc.PlayAnimationFile(name, self._flag, on_complete=self.Completed)
             else:
-                module_path = bridge_placement.registered_module_path(cc, self._detail)
-                if not module_path:
-                    self.Completed()   # unregistered key (BC no-ops here too)
-                    return
-                clips = build_sequence_clips(module_path, cc, App.g_kAnimationManager)
-            if not clips:
+                ok = cc.PlayAnimation(name, self._flag, on_complete=self.Completed)
+            if not ok:
+                # No-op path (unresolved key/clip): PlayAnimation[File] returns
+                # 0 WITHOUT firing on_complete, so complete inline. When it
+                # returns 1 the record carries on_complete and fires exactly
+                # once via the queue drain — do not also complete inline here
+                # (that would double-fire).
                 self.Completed()
-                return
-
-            category = (CharacterClass.CAT_INTERRUPTABLE if self._flag > 0
-                        else CharacterClass.CAT_NON_INTERRUPTABLE)
-
-            def _done():
-                cc.clear_current_animation()
-                self.Completed()
-
-            # Submit BEFORE mutating animation state: submit() rejects an
-            # equal-or-higher-priority action already playing on this officer
-            # (e.g. a second AT_PLAY_ANIMATION arriving while the first is
-            # still in flight). If we set_current_animation first and THEN
-            # get rejected, _done() below clears state that still belongs to
-            # the genuinely-playing first action — corrupting
-            # IsAnimatingNonInterruptable()/GetCurrentAnimation() for the
-            # rest of its playback. Only mutate state once submit() confirms
-            # this action actually owns the officer's animation slot.
-            if ctrl.submit(cc, clips, priority=bridge_character_anim._SCRIPTED,
-                           on_complete=_done):
-                # submit() can rescue-and-fire a PREEMPTED action's on_complete
-                # SYNCHRONOUSLY (BridgeCharacterAnimController.submit). Event
-                # dispatch is synchronous, so that rescued callback can advance
-                # the owning TGSequence into a brand-new CharacterAction on this
-                # SAME officer (e.g. AT_DEFAULT) before submit() has even
-                # returned -- and that action's request_default() pops THIS
-                # gesture's freshly-installed _Action and fires our own _done()
-                # (clear_current_animation + Completed()) re-entrantly, all
-                # still inside this submit() call. TGAction.Completed() clears
-                # _playing, so IsPlaying() tells us whether that already
-                # happened. Skipping set_current_animation here is what keeps
-                # this action's already-cleared state from being stomped back
-                # to "animating" -- without this guard the officer's
-                # IsAnimatingNonInterruptable() gate jams shut for the rest of
-                # the mission (docs: this seam has bitten twice).
-                if self.IsPlaying():
-                    cc.set_current_animation(str(self._detail), category)
-            else:
-                self.Completed()       # dropped by the priority guard
         except Exception:
-            try:
-                if cc is not None:
-                    cc.clear_current_animation()
-            except Exception:
-                pass
             self.Completed()
 
     def _queue_default(self) -> None:
