@@ -1,0 +1,49 @@
+"""SP2 — the single Classify referee (spec §5, RE-confirmed 7x7 table)."""
+import pytest
+from engine.appc.character_anim_queue import (
+    AnimRec, classify, STOP_OLD, REJECT_NEW, STOP_BOTH, COEXIST,
+)
+
+def R(cat, name=None):
+    return AnimRec(category=cat, name=name, flags=0, play=object())
+
+# The authoritative table (spec §5). rows=existing, cols=new; 'N' = name* cell.
+TABLE = [
+    # new: 0    1    2    3    4    5    6
+    ["RN","SO","SO","SO","SO","SO","SO"],  # 0 BREATHE
+    ["CO","RN","SO","SO","CO","CO","CO"],  # 1 INTERRUPTABLE
+    ["CO","CO","CO","CO","CO","CO","CO"],  # 2 NON_INTERRUPTABLE
+    ["CO","CO","CO","CO","N ","CO","CO"],  # 3 TURN
+    ["CO","CO","CO","CO","CO","CO","CO"],  # 4 TURN_BACK
+    ["CO","CO","SO","SO","SO","CO","N "],  # 5 GLANCE
+    ["CO","CO","SO","SO","SO","CO","CO"],  # 6 GLANCE_BACK
+]
+_CODE = {"SO": STOP_OLD, "RN": REJECT_NEW, "CO": COEXIST}
+
+@pytest.mark.parametrize("ex", range(7))
+@pytest.mark.parametrize("nw", range(7))
+def test_table_cells_without_names(ex, nw):
+    cell = TABLE[ex][nw].strip()
+    verdict = classify(R(ex), R(nw), existing_is_current=False)
+    if cell == "N":
+        # name* with null names collapses to coexist
+        assert verdict == COEXIST
+    else:
+        assert verdict == _CODE[cell]
+
+def test_null_existing_is_coexist():
+    assert classify(None, R(2), existing_is_current=False) == COEXIST
+
+def test_name_cell_stop_both_when_names_equal_and_not_current():
+    # existing TURN(3) vs new TURN_BACK(4), same non-null name, existing queued
+    assert classify(R(3, "Captain"), R(4, "Captain"), existing_is_current=False) == STOP_BOTH
+    # existing GLANCE(5) vs new GLANCE_BACK(6)
+    assert classify(R(5, "Kirk"), R(6, "Kirk"), existing_is_current=False) == STOP_BOTH
+
+def test_name_cell_coexists_when_existing_is_current():
+    assert classify(R(3, "Captain"), R(4, "Captain"), existing_is_current=True) == COEXIST
+
+def test_name_cell_coexists_when_names_differ_or_null():
+    assert classify(R(3, "Captain"), R(4, "Data"), existing_is_current=False) == COEXIST
+    assert classify(R(3, None), R(4, "Data"), existing_is_current=False) == COEXIST
+    assert classify(R(3, "Captain"), R(4, None), existing_is_current=False) == COEXIST
