@@ -76,3 +76,23 @@ def test_setstatus_string_is_separate_from_flags():
     assert c._flags == 0
     c.ClearStatus("Waiting")
     assert c.GetStatusText() in (None, "")
+
+
+def test_setflags_busy_bit_drops_open_menu(monkeypatch):
+    # CharacterClass.md §4.3: SetFlags, after setting bits, if 0x8 is now set
+    # and the menu is up, calls MenuDown(). MoveTo relies on this.
+    c = CharacterClass_Create()
+    calls = {"down": 0}
+    monkeypatch.setattr(c, "IsMenuUp", lambda *a: 1)
+    monkeypatch.setattr(c, "MenuDown", lambda *a: calls.__setitem__("down", calls["down"] + 1))
+    c.SetFlags(CharacterClass.CS_UI_DISABLED)
+    assert calls["down"] == 1
+
+
+def test_setflags_busy_bit_no_menu_no_drop(monkeypatch):
+    c = CharacterClass_Create()
+    calls = {"down": 0}
+    monkeypatch.setattr(c, "IsMenuUp", lambda *a: 0)
+    monkeypatch.setattr(c, "MenuDown", lambda *a: calls.__setitem__("down", calls["down"] + 1))
+    c.SetFlags(CharacterClass.CS_UI_DISABLED)
+    assert calls["down"] == 0
