@@ -26,6 +26,11 @@ class AnimRec:
     hold     : whether to hold the animation on completion (Task 10; defaults False).
     now      : whether to play immediately (Task 10; defaults False).
     done_flags : flags to apply on completion (Task 10; defaults 0).
+    played   : whether this record was ever handed to the controller to play
+               (Task 14a). Used to decide who owns firing on_complete: a
+               played record's callback is fired by the controller (on
+               settle or via _anim_stop_play's rescue); a record dropped/
+               rejected/retired WITHOUT ever playing is fired by the queue.
     """
     category: int
     name: object = None
@@ -35,6 +40,7 @@ class AnimRec:
     hold: bool = False
     now: bool = False
     done_flags: int = 0
+    played: bool = False
 
 
 # Sentinel for the two name-tiebreaker cells.

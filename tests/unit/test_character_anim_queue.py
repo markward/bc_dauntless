@@ -749,3 +749,56 @@ def test_lookatme_does_not_raise_with_no_camera_controller(monkeypatch):
     monkeypatch.setattr(bridge_camera_watch, "get_controller", lambda: None)
     c = CharacterClass_Create()
     assert c.LookAtMe() == 1
+
+
+# ── Task 14a: fire-once completion-callback guarantee (drop/reject/retire) ──
+
+
+def test_animrec_defaults_played_false():
+    rec = AnimRec(category=CharacterClass.CAT_TURN)
+    assert rec.played is False
+
+
+def test_new_record_rejected_by_classify_fires_on_complete_once():
+    # existing queued BREATHE vs new BREATHE -> REJECT_NEW (table [0][0]).
+    c = CharacterClass_Create()
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_BREATHE)   # pending[0]
+    fired = []
+    cb = lambda: fired.append(1)
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_BREATHE, on_complete=cb)  # rejected
+    assert fired == [1]
+    assert c._anim_count() == 1
+
+
+def test_pending_record_dropped_by_clear_animations_fires_once():
+    c = CharacterClass_Create()
+    fired = []
+    cb = lambda: fired.append(1)
+    c._anim_pending.append(AnimRec(category=CharacterClass.CAT_GLANCE, play=object(),
+                                    on_complete=cb))
+    c.ClearAnimations()
+    assert fired == [1]
+
+
+def test_deferred_record_retired_by_release_fires_once():
+    c = CharacterClass_Create()
+    c._target_name = "P1"    # blocks ShouldPlayNow for a plain glance (cat 5)
+    fired = []
+    cb = lambda: fired.append(1)
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_GLANCE, on_complete=cb)
+    c.UpdateAnimationQueue()      # dequeues -> deferred/stopped -> becomes current
+    assert fired == []            # not fired yet: still current, not retired
+    c.UpdateAnimationQueue()      # ReleaseCurrentAnimation retires the deferred record
+    assert fired == [1]           # fired exactly once
+
+
+def test_played_record_not_fired_by_queue(fake_controller):
+    c = CharacterClass_Create()
+    fired = []
+    cb = lambda: fired.append(1)
+    rec = AnimRec(category=CharacterClass.CAT_BREATHE, play=[("g.nif", 0.0)],
+                  on_complete=cb)
+    c._anim_pending.append(rec)
+    c.UpdateAnimationQueue()
+    assert fired == []            # the queue must not fire a played record
+    assert rec.played is True

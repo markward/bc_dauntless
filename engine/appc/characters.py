@@ -548,17 +548,34 @@ class CharacterClass(ObjectClass):
     def AddPhoneme(self, *args) -> None:
         self._phonemes.append(args)
 
+    def _fire_once(self, rec) -> None:
+        """Fire a record's completion callback exactly once (guarded). Used when
+        a record is dropped/rejected/retired WITHOUT playing, so a waiting
+        mission TGSequence never hangs."""
+        cb = getattr(rec, "on_complete", None)
+        if cb is None:
+            return
+        rec.on_complete = None          # fire-once
+        try:
+            cb()
+        except Exception:
+            pass
+
     def ClearAnimationsOfType(self, anim_type) -> None:
         # Stop + remove every current/pending record of this category
         # (tier-0's "skip" pass; we remove them, which is observably faithful).
         cat = int(anim_type)
         if self._anim_current is not None and self._anim_current.category == cat:
-            self._anim_stop_play(self._anim_current)
+            cur = self._anim_current
+            if getattr(cur, "played", False):
+                self._anim_stop_play(cur)
+            else:
+                self._fire_once(cur)
             self._anim_current = None
         kept = []
         for r in self._anim_pending:
             if r.category == cat:
-                self._anim_stop_play(r)
+                self._fire_once(r)
             else:
                 kept.append(r)
         self._anim_pending = kept
@@ -576,10 +593,14 @@ class CharacterClass(ObjectClass):
         # re-setting the station; nulling it would break key composition). SP3/
         # SP4 add speak-queue / position-table draining.
         if self._anim_current is not None:
-            self._anim_stop_play(self._anim_current)
+            cur = self._anim_current
+            if getattr(cur, "played", False):
+                self._anim_stop_play(cur)
+            else:
+                self._fire_once(cur)
             self._anim_current = None
         for r in self._anim_pending:
-            self._anim_stop_play(r)
+            self._fire_once(r)
         self._anim_pending = []
         self._target_name = None
         self._glance_name = None
@@ -600,20 +621,20 @@ class CharacterClass(ObjectClass):
                 self._anim_stop_play(cur)
                 self._anim_current = None
             if v in (q.REJECT_NEW, q.STOP_BOTH):
-                self._anim_stop_play(rec)
+                self._fire_once(rec)      # new record never played -> fire once
                 return
         # 2) Classify against each QUEUED record (Classify2 — strict).
         survivors = []
         for i, other in enumerate(self._anim_pending):
             v = q.classify(other, rec, existing_is_current=False)
             if v in (q.STOP_OLD, q.STOP_BOTH):
-                self._anim_stop_play(other)          # drop this queued record
+                self._fire_once(other)    # queued record dropped, never played
             else:
                 survivors.append(other)
             if v in (q.REJECT_NEW, q.STOP_BOTH):
                 # new record rejected: keep survivors + the not-yet-processed tail
                 self._anim_pending = survivors + self._anim_pending[i + 1:]
-                self._anim_stop_play(rec)
+                self._fire_once(rec)      # new record never played -> fire once
                 return
         self._anim_pending = survivors
         self._anim_pending.append(rec)
@@ -631,6 +652,8 @@ class CharacterClass(ObjectClass):
             return
         if not self._anim_is_active(cur):
             self.OnAnimRelease(cur)
+            if not getattr(cur, "played", False):
+                self._fire_once(cur)
             self._anim_current = None
 
     def OnAnimRelease(self, rec) -> None:
@@ -689,6 +712,7 @@ class CharacterClass(ObjectClass):
             return None
 
     def _anim_play_now(self, rec) -> None:
+        rec.played = True
         c = self._anim_controller()
         if c is not None:
             c.play_record(self, rec)
