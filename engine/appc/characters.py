@@ -390,6 +390,7 @@ class CharacterClass(ObjectClass):
 
     _INTERRUPTABLE_CATEGORIES = (CAT_BREATHE, CAT_INTERRUPTABLE,
                                  CAT_GLANCE, CAT_GLANCE_BACK)
+    _ANIM_INTERRUPTABLE = (0, 1, 5, 6)
 
     # Phoneme-channel constants (values from stbc_constants.csv).
     CPT_DEFAULT = -1
@@ -597,6 +598,10 @@ class CharacterClass(ObjectClass):
         # record's live playback). Safe to call on records that never played.
         pass
 
+    def ReleaseCurrentAnimation(self, param=0) -> None:
+        # Task 5 replaces the body; minimal no-op until then so predicates can call it.
+        pass
+
     def set_current_animation(self, name, category) -> None:
         """Mark this character as playing *name* in category *category* (a CAT_).
 
@@ -794,16 +799,26 @@ class CharacterClass(ObjectClass):
         from engine.appc import crew_speech
         return 1 if crew_speech.is_speaking(self._character_name) else 0
     def IsReadyToSpeak(self) -> int:              return 1
-    def IsAnimating(self) -> int:                 return 1 if self._anim_current is not None else 0
-    def IsGoingToAnimate(self) -> int:            return 1 if self._anim_current is not None else 0
+    def IsAnimating(self) -> int:
+        if self._anim_pending:
+            return 1
+        self.ReleaseCurrentAnimation(0)
+        return 1 if self._anim_current is not None else 0
+
+    def IsGoingToAnimate(self) -> int:
+        return 1 if self._anim_count() != 0 else 0
+
     def IsAnimatingInterruptable(self) -> int:
-        if self._anim_current is None:
+        self.ReleaseCurrentAnimation(0)
+        recs = ([self._anim_current] if self._anim_current else []) + self._anim_pending
+        if not recs:
             return 0
-        return 1 if self._anim_current.category in self._INTERRUPTABLE_CATEGORIES else 0
+        return 1 if all(r.category in self._ANIM_INTERRUPTABLE for r in recs) else 0
+
     def IsAnimatingNonInterruptable(self) -> int:
-        if self._anim_current is None:
-            return 0
-        return 1 if self._anim_current.category == self.CAT_NON_INTERRUPTABLE else 0
+        self.ReleaseCurrentAnimation(0)
+        recs = ([self._anim_current] if self._anim_current else []) + self._anim_pending
+        return 1 if any(r.category == self.CAT_NON_INTERRUPTABLE for r in recs) else 0
     def IsRandomAnimationEnabled(self) -> int:
         return 1 if self._data.get("RandomAnimationEnabled", True) else 0
     def IsMenuEnabled(self) -> int:

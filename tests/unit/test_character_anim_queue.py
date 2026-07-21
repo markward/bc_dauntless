@@ -106,3 +106,19 @@ def test_drop_then_reject_does_not_duplicate_survivor():
     c.SetCurrentAnimation(object(), CharacterClass.CAT_INTERRUPTABLE)  # drop-then-reject
     cats = [r.category for r in c._anim_pending]
     assert cats == [CharacterClass.CAT_INTERRUPTABLE, CharacterClass.CAT_BREATHE]
+
+
+def test_predicates_track_the_queue():
+    c = CharacterClass_Create()
+    assert c.IsAnimating() == 0 and c.IsGoingToAnimate() == 0
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_NON_INTERRUPTABLE)  # cat 2
+    assert c.IsGoingToAnimate() == 1
+    assert c.IsAnimatingNonInterruptable() == 1
+    assert c.IsAnimatingInterruptable() == 0
+
+
+def test_interruptable_predicate_true_only_for_0156():
+    c = CharacterClass_Create()
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_GLANCE)  # 5 -> interruptable
+    assert c.IsAnimatingInterruptable() == 1
+    assert c.IsAnimatingNonInterruptable() == 0
