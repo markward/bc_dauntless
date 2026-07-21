@@ -141,12 +141,13 @@ take the returned sequence). Then build the record and enqueue via `SetCurrentAn
 **`PlayAnimation` mode table** (tier-0 §4.10 / sibling §4.3): `mode>0` → done 0, cat 1, flags 0;
 `mode==0` → done `0x800`, cat 2, flags 8; `mode<0` → no done event, cat 2, flags 0.
 
-> **Target-name/category ambiguity (verify at implementation time):** tier-0 §4.8 `PreparePlay`
-> writes the move-target name (`+0xa0`) on category **3** and the glance-target (`+0xa4`) on category
-> **5**, while `MoveTo` enqueues category **2** and `OnAnimRelease` cleans category **4** (turn-back)
-> off `+0xa0`. Transcribe each method's contract exactly as tier-0 gives it; where the category↔name
-> coupling reads inconsistently, follow the per-method text and add a test pinning the observable
-> result rather than guessing a unifying rule. If it stays unclear, fold it into the Appendix-A relay.
+> **Two distinct name concepts — do not conflate (clarified by the RE Appendix-B answer):**
+> (1) the **record name** (`+0x0C`, the 4th `SetCurrentAnimation` arg) — used **only** by the §5
+> referee, compared by content. (2) the character's **target buffers** `+0xa0` (move/back-to) and
+> `+0xa4` (glance) — written at *play* time by `PreparePlay` and read by `OnAnimRelease`/`Special4/6`
+> for follow-up chaining, **never** by the referee. Transcribe each method's contract exactly as
+> tier-0 gives it; the earlier apparent category↔name inconsistency dissolves once these two are kept
+> separate. Pin each with a test.
 
 ### 4.7 Clip-player seam — demote `BridgeCharacterAnimController`
 
@@ -186,56 +187,55 @@ Tier-0 §4.2: `SetActive(bActive)` stores the flag; if deactivating (`bActive==0
 sets active), wire the anim-clear (now possible with the queue), and apply BC's RE'd inactive
 constructor default (the piece SP1 deferred).
 
-## 5. Conflict-resolution model — the single referee (RE-CONFIRMED)
+## 5. Conflict-resolution model — the single referee (RE-CONFIRMED, EXACT)
 
-The RE project answered Appendix A (relayed by Mark, 2026-07-21). **`Classify1` is not separate logic
-— it is `Classify2` run with the character's currently-playing animation as the "existing" record.**
-So there is *one* referee comparing two animations: the existing one and the new one asking to play.
-`SetCurrentAnimation` (§4.2) calls it against the current animation, then against each queued record.
+`Classify1` = `Classify2` run with the currently-playing animation as the "existing" record. One
+referee, called `(existing, new)` at enqueue time (§4.2): first against the current animation, then
+against each queued record. **Inputs: only the two `CAT_` categories, plus the two records' name
+fields in exactly two cells. The flags word (`+0x04`) and object identity are ignored.**
 
-**Inputs.** Only the `CAT_` category of each record, plus — in exactly two match-ups — the record's
-target **name**. The flags word (`rec+0x04`) and the attached object identity are **ignored**.
+**Verdict table** (RE project, Appendix B; rows = existing category, cols = new category):
 
-**Verdicts** (the codes §4.2 acts on):
-- `STOP_OLD` (0) — stop the existing, let the new play.
-- `REJECT_NEW` (2) — keep the existing, drop the new.
-- `STOP_BOTH` (1) — stop the existing **and** drop the new.
-- `COEXIST` (else) — leave both; the new joins the queue.
+| existing ↓ / new → | 0 BREATHE | 1 INTERRUPT | 2 NON_INT | 3 TURN | 4 TURN_BACK | 5 GLANCE | 6 GLANCE_BACK |
+|---|---|---|---|---|---|---|---|
+| **0 BREATHE** | reject-new | stop-old | stop-old | stop-old | stop-old | stop-old | stop-old |
+| **1 INTERRUPT** | coexist | reject-new | stop-old | stop-old | coexist | coexist | coexist |
+| **2 NON_INT** | coexist | coexist | coexist | coexist | coexist | coexist | coexist |
+| **3 TURN** | coexist | coexist | coexist | coexist | **name\*** | coexist | coexist |
+| **4 TURN_BACK** | coexist | coexist | coexist | coexist | coexist | coexist | coexist |
+| **5 GLANCE** | coexist | coexist | stop-old | stop-old | stop-old | coexist | **name\*** |
+| **6 GLANCE_BACK** | coexist | coexist | stop-old | stop-old | stop-old | coexist | coexist |
 
-**Rules (RE-confirmed, applied in order):**
-1. **Named-target tiebreaker** — the only place names matter — two match-ups: *move-toward-X* vs
-   *turn-back-from-X*, and *glance-at-X* vs *glance-away-from-X*. If the two records name the **same
-   target**: `STOP_BOTH` — **unless** the existing is the animation *currently playing*, in which
-   case `COEXIST`. This is the **sole** difference between the current-referee (`Classify1`) and the
-   queued-referee (`Classify2`): a same-named conflict is tolerated against what's actually playing,
-   but rejected against something still waiting.
-2. **Idles yield to real movement.** Real (non-idle) new over idle existing → `STOP_OLD`. Idle new
-   over any real existing → `REJECT_NEW` (an idle cannot preempt a real animation). Idle over idle →
-   `REJECT_NEW` (keep whichever is already there).
-3. **Committing movement stops light interruptable.** Committing new (walk / turn) over a light
-   interruptable existing (glance and similar) → `STOP_OLD`.
-4. **Heavy movements don't fight.** Locomotion and turn-around almost always `COEXIST` with whatever
-   else is asked.
-5. **Default** → `COEXIST`.
+- **Null existing record ⇒ coexist.**
+- **`name*`** (two cells only: existing `TURN 3` × new `TURN_BACK 4`; existing `GLANCE 5` × new
+  `GLANCE_BACK 6`) = **coexist**, except **stop-both** when both records carry a non-null, **equal**
+  name **and** the existing record is **not** the currently-playing animation. This is the sole
+  current-vs-queued asymmetry (`Classify1` tolerates the same-named conflict against what's actually
+  playing; `Classify2` rejects it against a waiting record). `stop-both` = stop the existing **and**
+  drop the new.
 
-**The asymmetry is deliberate.** The referee is called `(existing, new)` and is **not** commutative —
-whoever is already there has priority (a real animation preempts an idle; an idle can't preempt a
-real animation).
+**Verdict → `SetCurrentAnimation` action (§4.2):** `stop-old` → stop the existing's playback + enqueue
+new; `reject-new` → drop the new (stop its just-built object); `stop-both` → stop existing + drop new;
+`coexist` → enqueue new.
 
-**Category → behaviour-bucket mapping** (the translation layer — the RE answer is in behavioural
-terms, so each mapping is pinned by a test):
-- idle = `{CAT_BREATHE 0}`
-- real = any non-idle
-- heavy / "don't fight" = `{CAT_NON_INTERRUPTABLE 2, CAT_TURN 3, CAT_TURN_BACK 4}`
-- light interruptable = `{CAT_INTERRUPTABLE 1, CAT_GLANCE 5, CAT_GLANCE_BACK 6}`
-- committing = `{CAT_NON_INTERRUPTABLE 2, CAT_TURN 3}`
-- named match-ups compare target names across `{MoveTo (cat 2) ↔ TurnBack (cat 4)}` and
-  `{GlanceAt (cat 5) ↔ GlanceAway (cat 6)}`.
+**Name source.** Each record's own name field (`+0x0C`), set from the **4th argument** to
+`SetCurrentAnimation` (null if that arg is null), compared by content. The character's `+0xa0`/`+0xa4`
+target buffers are **not** consulted by the referee — those are written later, at play time, by
+`PreparePlay`, and read by other logic (§4.4/§4.6).
 
-Implemented as a single centralized `classify(existing, new, existing_is_current) -> verdict`
-function; **each rule above gets a pinning test.** Where the category→bucket mapping is uncertain
-(whether `CAT_INTERRUPTABLE 1` is idle or light; how `MoveTo`/`TurnBack` populate the compared name —
-see §4.6), the tests encode the decision and this function is the one place to adjust.
+**Practical consequence (RE).** In every reconstructed enqueue path the newcomer side of both name
+pairs (a `TURN_BACK`/`GLANCE_BACK` record) is enqueued with a **null** name; the tiebreaker requires
+both names non-null, so both `name*` cells collapse to plain **coexist** and **`stop-both` is
+currently unreachable**. We implement it faithfully regardless (a caller could enqueue a named
+turn-back/glance-back).
+
+**Correction to the earlier draft:** the "move-toward" side of the name pairs is **`TURN` (3)**, not
+`NON_INTERRUPTABLE (2)`. `MoveTo` (enqueued as cat 2) never participates in a name compare — as an
+incumbent it always coexists; as a newcomer it is just a preempting category.
+
+**Implementation.** The table is literal data (a 7×7 lookup keyed by the two category integers) plus
+the null-existing and `name*` rules, wrapped in one `classify(existing, new, existing_is_current) ->
+verdict`. Tests assert the table cell-for-cell (no inference remains).
 
 ## 6. Verification
 
@@ -260,8 +260,8 @@ see §4.6), the tests encode the decision and this function is the one place to 
 ## 8. Resolved decisions
 
 - **Own + demote to clip-player** (one queue, one door).
-- **`Classify` gap RESOLVED** by the RE project — one referee, categories drive it, names tiebreak
-  two match-ups (§5). No longer faithful-in-spirit; this is the confirmed model.
+- **`Classify` gap RESOLVED** by the RE project — one referee with an exact 7×7 verdict table (§5,
+  Appendix A + B). No inference remains; `classify()` is byte-faithful and tested cell-for-cell.
 - **One SP2 plan** (not split into SP2a/SP2b); decomposed into tasks with the integration + live
   pass at the end.
 - `SetActive` faithfulness lands here (deferred from SP1).
@@ -305,7 +305,19 @@ see §4.6), the tests encode the decision and this function is the one place to 
 
 Encoded as the model in §5.
 
-## Appendix B — follow-up RE question (category→verdict mapping) — PENDING
+## Appendix B — follow-up RE question (category→verdict mapping) — ANSWERED
+
+**Answered (RE project, via Mark, 2026-07-21):** a complete 7×7 verdict table, encoded verbatim in
+§5. Key results: the exact per-cell verdicts; a **null existing record ⇒ coexist**; the name
+tiebreaker is only the two cells `(existing TURN 3 × new TURN_BACK 4)` and `(existing GLANCE 5 × new
+GLANCE_BACK 6)`, comparing each record's own `+0x0C` name (the 4th `SetCurrentAnimation` arg), and
+**stop-both is unreachable on all reconstructed paths** (the newcomer side is always enqueued
+null-named). The "move-toward" name side is `TURN (3)`, **not** `NON_INTERRUPTABLE (2)` — correcting
+the question's assumption. `NON_INTERRUPTABLE (2)` and `TURN_BACK (4)` incumbents never fight (always
+coexist); `TURN_BACK (4)` preempts a glance but not an `INTERRUPTABLE` incumbent (a genuine
+asymmetry); duplicate-reject happens only BREATHE-vs-BREATHE and INTERRUPT-vs-INTERRUPT.
+
+**Original question (relayed):**
 
 To eliminate the §5 category→bucket inference, a precise follow-up is relayed to the RE project:
 
@@ -327,5 +339,3 @@ To eliminate the §5 category→bucket inference, a precise follow-up is relayed
 >    character's `+0xa0`/`+0xa4` target-name buffer? For a move (enqueued with a **null** record
 >    name in tier-0), where does the compared "X" come from?
 
-**Interim (until answered):** §5's category→bucket mapping stands, pinned by tests. When the answer
-lands, reconcile the single `classify()` function and its tests against the exact table — one edit.
