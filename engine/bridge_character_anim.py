@@ -453,8 +453,20 @@ class BridgeCharacterAnimController:
             # MoveTo record) a resolved SDK builder TGSequence.
             clips = rec.play if isinstance(rec.play, (list, tuple)) and rec.play else None
             if clips:
-                self.submit(character, clips, priority=_SCRIPTED,
-                            hold=bool(rec.hold), on_complete=rec.on_complete)
+                # If submit() DROPS the action (character hidden / no render
+                # instance / a same-priority incumbent), it does NOT fire the
+                # new action's on_complete -- and the queue can't rescue it
+                # either (_anim_play_now already marked rec.played, so
+                # ReleaseCurrentAnimation skips the unplayed-fire path). Fire it
+                # inline here, mirroring _process_turn/_process_glance, so a
+                # waiting mission TGSequence never hangs. Never raise.
+                if not self.submit(character, clips, priority=_SCRIPTED,
+                                   hold=bool(rec.hold), on_complete=rec.on_complete) \
+                        and rec.on_complete is not None:
+                    try:
+                        rec.on_complete()
+                    except Exception:
+                        pass
             elif rec.play is not None and hasattr(rec.play, "Play"):
                 # A MoveTo's builder TGSequence (walk + door + AT_SET_LOCATION_
                 # NAME): play it directly. The walk action inside defers to the

@@ -498,3 +498,34 @@ def test_stop_fires_pending_glance_on_complete():
     ctrl.stop(ch)
     assert calls == ["glance"]
     assert ctrl._pending_glances == []
+
+
+def test_play_record_fires_on_complete_when_submit_drops_the_gesture():
+    # Review fix #1: play_record's gesture/clip branch must fire rec.on_complete
+    # inline when submit() DROPS the action (no render instance / hidden / a
+    # same-priority incumbent), mirroring _process_turn/_process_glance. By the
+    # time play_record runs, _anim_play_now has already marked rec.played, so the
+    # queue's ReleaseCurrentAnimation rescue is disabled -- a dropped callback
+    # here is lost and the owning mission TGSequence hangs forever.
+    from engine.appc.character_anim_queue import AnimRec
+    ctrl = BridgeCharacterAnimController()
+    ch = _Char(None)                       # no render instance -> submit refuses
+    fired = []
+    rec = AnimRec(category=1, name=None, flags=0, play=[("g.nif", 1.0)],
+                  on_complete=lambda: fired.append(1))
+    ctrl.play_record(ch, rec)
+    assert fired == [1]
+
+
+def test_play_record_does_not_double_fire_when_submit_accepts():
+    # The flip side: when submit() ACCEPTS, the controller owns firing
+    # on_complete when the clip settles -- play_record must NOT also fire it.
+    ctrl = BridgeCharacterAnimController()
+    ch = _Char(77)
+    fired = []
+    from engine.appc.character_anim_queue import AnimRec
+    rec = AnimRec(category=1, name=None, flags=0, play=[("g.nif", 1.0)],
+                  on_complete=lambda: fired.append(1))
+    ctrl.play_record(ch, rec)
+    assert fired == []                     # not yet -- clip is in flight
+    assert ctrl.is_active(ch) is True

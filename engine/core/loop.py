@@ -92,7 +92,15 @@ def _pump_bridge_character_queues() -> None:
     "bridge" set's CharacterClass members and calls UpdateAnimationQueue() on
     each -- no _render_instance filter (headless has no renderer), unlike the
     host's _live_bridge_characters. Best-effort: a missing bridge set, a member
-    without the method, or a raising queue must never stall the loop."""
+    without the method, or a raising queue must never stall the loop.
+
+    ASYMMETRY (intentional): the host's _live_bridge_characters filters out
+    hidden/render-instance-less officers, so a record carrying a live on_complete
+    that is enqueued and then the officer HIDES before the queue drains it would
+    stop being pumped under the host (a hang the headless path, which pumps all
+    members, would not have). No SDK path hits this today -- moves carry
+    on_complete=None and retire ~1 tick after start, before CS_HIDDEN is set --
+    but the queue must never be made to hold a live callback across a hide."""
     bridge = App.g_kSetManager.GetSet("bridge")
     if bridge is None:
         return

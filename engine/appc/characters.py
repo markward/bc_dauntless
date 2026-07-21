@@ -1060,7 +1060,6 @@ class CharacterClass(ObjectClass):
                 except Exception:
                     pass
             return 0
-        self._last_turn_detail = "Captain"
         self.SetCurrentAnimation(None, self.CAT_TURN, 0, "Captain",
                                  on_complete=on_complete, hold=True, now=bool(now))
         return 0
