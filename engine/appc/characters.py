@@ -587,9 +587,11 @@ class CharacterClass(ObjectClass):
     def _anim_count(self) -> int:
         return (1 if self._anim_current is not None else 0) + len(self._anim_pending)
 
-    def SetCurrentAnimation(self, anim, category, flags=0, name=None) -> None:
+    def SetCurrentAnimation(self, anim, category, flags=0, name=None, on_complete=None,
+                            hold=False, now=False, done_flags=0) -> None:
         from engine.appc import character_anim_queue as q
-        rec = q.AnimRec(category=int(category), name=name, flags=int(flags), play=anim)
+        rec = q.AnimRec(category=int(category), name=name, flags=int(flags), play=anim,
+                        on_complete=on_complete, hold=hold, now=now, done_flags=int(done_flags))
         # 1) Classify against the CURRENT animation (Classify1 — lenient).
         cur = self._anim_current
         if cur is not None:

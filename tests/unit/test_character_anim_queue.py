@@ -385,3 +385,50 @@ def test_clear_animations_does_not_crash_on_empty_character():
     c.ClearAnimations()  # must not raise
     assert c._anim_current is None
     assert c._anim_pending == []
+
+
+# ── Task 10: Completion-callback fields (on_complete, hold, now, done_flags) ──
+
+def test_animrec_defaults_have_none_and_falses():
+    """Verify AnimRec has default values for the new completion-callback fields."""
+    rec = AnimRec(category=CharacterClass.CAT_TURN)
+    assert rec.on_complete is None
+    assert rec.hold is False
+    assert rec.now is False
+    assert rec.done_flags == 0
+
+
+def test_set_current_animation_with_completion_fields():
+    """Verify SetCurrentAnimation accepts and threads completion-callback params."""
+    c = CharacterClass_Create()
+    cb = lambda: None
+    c.SetCurrentAnimation(
+        object(),
+        CharacterClass.CAT_TURN,
+        on_complete=cb,
+        hold=True,
+        now=True,
+        done_flags=42
+    )
+    assert len(c._anim_pending) == 1
+    rec = c._anim_pending[0]
+    assert rec.on_complete is cb
+    assert rec.hold is True
+    assert rec.now is True
+    assert rec.done_flags == 42
+
+
+def test_set_current_animation_positional_backward_compat():
+    """Verify existing positional calls still work (backward compat)."""
+    c = CharacterClass_Create()
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_NON_INTERRUPTABLE, 8, None)
+    assert len(c._anim_pending) == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_NON_INTERRUPTABLE
+    assert rec.flags == 8
+    assert rec.name is None
+    # New fields should have defaults
+    assert rec.on_complete is None
+    assert rec.hold is False
+    assert rec.now is False
+    assert rec.done_flags == 0

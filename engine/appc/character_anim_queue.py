@@ -22,11 +22,19 @@ class AnimRec:
                compared by the referee in the two name* cells. May be None.
     flags    : CS_* flags to apply while playing (BC +0x04).
     play     : the resolved thing the clip-player runs (SDK sequence / clips).
+    on_complete : completion callback (Task 10; defaults None).
+    hold     : whether to hold the animation on completion (Task 10; defaults False).
+    now      : whether to play immediately (Task 10; defaults False).
+    done_flags : flags to apply on completion (Task 10; defaults 0).
     """
     category: int
     name: object = None
     flags: int = 0
     play: object = None
+    on_complete: object = None
+    hold: bool = False
+    now: bool = False
+    done_flags: int = 0
 
 
 # Sentinel for the two name-tiebreaker cells.
