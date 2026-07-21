@@ -802,3 +802,28 @@ def test_played_record_not_fired_by_queue(fake_controller):
     c.UpdateAnimationQueue()
     assert fired == []            # the queue must not fire a played record
     assert rec.played is True
+
+
+def test_unplayed_deferred_current_stopped_by_classify1_fires_once():
+    # BUG 1: UpdateAnimationQueue can defer a record to current with
+    # played=False (blocked ShouldPlayNow, e.g. a pending move-target). A
+    # later SetCurrentAnimation whose Classify1 verdict is STOP_OLD/STOP_BOTH
+    # against that unplayed current must fire its on_complete itself (the
+    # controller never played it, so it has nothing to rescue) instead of
+    # silently dropping the callback.
+    c = CharacterClass_Create()
+    c._target_name = "P1"    # blocks ShouldPlayNow for a plain glance (cat 5)
+    fired1 = []
+    cb1 = lambda: fired1.append(1)
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_GLANCE, on_complete=cb1)
+    c.UpdateAnimationQueue()      # glance deferred -> becomes current, played=False
+    assert c._anim_current is not None
+    assert getattr(c._anim_current, "played", False) is False
+    assert fired1 == []           # not fired yet
+
+    fired2 = []
+    cb2 = lambda: fired2.append(1)
+    # classify(GLANCE(5), NON_INTERRUPTABLE(2), existing_is_current=True) == STOP_OLD
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_NON_INTERRUPTABLE,
+                          on_complete=cb2)
+    assert fired1 == [1]          # BUG 1: was [] before the fix

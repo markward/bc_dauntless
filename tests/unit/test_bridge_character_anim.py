@@ -469,3 +469,32 @@ def test_is_active_reflects_active_dict():
     ctrl.submit(ch, [("g.nif", 2.0)], priority=0)
     ctrl.update(0.0, renderer=r, anim_mgr=None)
     assert ctrl.is_active(ch) is True
+
+
+# ── Task 14a (BUG 2): stop() must fire pending turn/glance on_complete ──────
+
+
+def test_stop_fires_pending_turn_on_complete():
+    # BUG 2: a turn request sits in _pending_turns (not yet drained by
+    # update()) when stop() is called. stop() must fire its on_complete
+    # instead of silently discarding the entry.
+    ctrl = BridgeCharacterAnimController()
+    ch = _Char(40)
+    calls = []
+    ctrl.request_turn_to(ch, "Captain", on_complete=lambda: calls.append("turn"))
+    assert len(ctrl._pending_turns) == 1
+    ctrl.stop(ch)
+    assert calls == ["turn"]
+    assert ctrl._pending_turns == []
+
+
+def test_stop_fires_pending_glance_on_complete():
+    # Symmetric case for a pending glance.
+    ctrl = BridgeCharacterAnimController()
+    ch = _Char(41)
+    calls = []
+    ctrl.request_glance(ch, "Helm", on_complete=lambda: calls.append("glance"))
+    assert len(ctrl._pending_glances) == 1
+    ctrl.stop(ch)
+    assert calls == ["glance"]
+    assert ctrl._pending_glances == []

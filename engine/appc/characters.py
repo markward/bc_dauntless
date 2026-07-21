@@ -618,7 +618,10 @@ class CharacterClass(ObjectClass):
         if cur is not None:
             v = q.classify(cur, rec, existing_is_current=True)
             if v in (q.STOP_OLD, q.STOP_BOTH):
-                self._anim_stop_play(cur)
+                if getattr(cur, "played", False):
+                    self._anim_stop_play(cur)
+                else:
+                    self._fire_once(cur)
                 self._anim_current = None
             if v in (q.REJECT_NEW, q.STOP_BOTH):
                 self._fire_once(rec)      # new record never played -> fire once

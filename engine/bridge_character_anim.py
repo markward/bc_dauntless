@@ -389,21 +389,51 @@ class BridgeCharacterAnimController:
     def stop(self, character) -> None:
         """Evict the character's live clip + any pending turn/glance/default for
         it. Rescue an evicted _Action's on_complete so a waiting mission
-        TGSequence never hangs. Never raises."""
+        TGSequence never hangs. A pending turn/glance (queued but not yet
+        drained by update()) carries its own on_complete too — fire those as
+        well, or the callback silently vanishes and the waiting TGSequence
+        hangs (BUG 2). _pending_defaults entries are bare iids with no
+        callback, so nothing to fire there. Never raises."""
         iid = getattr(character, "_render_instance", None)
         if iid is None:
             return
         prev = self._active.pop(iid, None)
         self._pending_defaults = [i for i in self._pending_defaults if i != iid]
-        self._pending_turns = [e for e in self._pending_turns
-                               if getattr(e[0], "_render_instance", None) != iid]
-        self._pending_glances = [e for e in self._pending_glances
-                                 if getattr(e[0], "_render_instance", None) != iid]
+        kept_turns = []
+        removed_turns = []
+        for e in self._pending_turns:
+            if getattr(e[0], "_render_instance", None) == iid:
+                removed_turns.append(e)
+            else:
+                kept_turns.append(e)
+        self._pending_turns = kept_turns
+        kept_glances = []
+        removed_glances = []
+        for e in self._pending_glances:
+            if getattr(e[0], "_render_instance", None) == iid:
+                removed_glances.append(e)
+            else:
+                kept_glances.append(e)
+        self._pending_glances = kept_glances
         if prev is not None and prev.on_complete is not None:
             try:
                 prev.on_complete()
             except Exception:
                 pass
+        for e in removed_turns:
+            on_complete = e[5]
+            if on_complete is not None:
+                try:
+                    on_complete()
+                except Exception:
+                    pass
+        for e in removed_glances:
+            on_complete = e[2]
+            if on_complete is not None:
+                try:
+                    on_complete()
+                except Exception:
+                    pass
 
     def play_record(self, character, rec) -> None:
         """Play an animation record by mapping its CAT_ category to the existing
