@@ -440,6 +440,13 @@ class CharacterClass(ObjectClass):
         self._status: dict = {}           # tooltip display strings (SP4 -> StatusMap)
         self._location_name: str = ""
         self._current_anim: tuple | None = None   # (name, CAT_) while playing
+        # ── Owner sub-component slots (filled by later sub-projects) ────────
+        # SP1 leaves them None; the interim _current_anim/_phonemes above stay
+        # the working state until SP2/SP3 replace them.
+        self._anim_queue = None       # SP2: CAT_* AnimationQueue
+        self._speak_queue = None      # SP3: SpeakQueue (wraps crew_speech)
+        self._position_zoom = None    # SP4: PositionZoomTable
+        self._menu_state = None       # SP4: MenuState (formalizes _menu)
         # Remaining SDK setter surface goes through the data-bag below.
         self._data: dict = {}
         # RE'd constructor defaults (CharacterClass.md §4.1; field names from
