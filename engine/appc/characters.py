@@ -442,6 +442,17 @@ class CharacterClass(ObjectClass):
         self._current_anim: tuple | None = None   # (name, CAT_) while playing
         # Remaining SDK setter surface goes through the data-bag below.
         self._data: dict = {}
+        # RE'd constructor defaults (CharacterClass.md §4.1; field names from
+        # stbc_constants.csv). Seeded into the data-bag so the existing Get*
+        # accessors report BC's defaults on a fresh character. NOTE: Active is
+        # intentionally NOT seeded here — SetActive/IsActive faithfulness
+        # (arg-honoring + clear-interruptable-anims + inactive default) is
+        # coupled to SP2's animation queue and lands there.
+        self._data.setdefault("Gender", self.FEMALE)
+        self._data.setdefault("Size", self.SMALL)
+        self._data.setdefault("AudioMode", self.CAM_VOCAL)
+        self._data.setdefault("BlinkStages", -1)
+        self._data.setdefault("RandomAnimationEnabled", True)
 
     # ── Identity ────────────────────────────────────────────────────────────
     def GetBodyNIF(self) -> str:                  return self._body_nif

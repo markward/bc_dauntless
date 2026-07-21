@@ -96,3 +96,19 @@ def test_setflags_busy_bit_no_menu_no_drop(monkeypatch):
     monkeypatch.setattr(c, "MenuDown", lambda *a: calls.__setitem__("down", calls["down"] + 1))
     c.SetFlags(CharacterClass.CS_UI_DISABLED)
     assert calls["down"] == 0
+
+
+def test_constructor_defaults_match_re():
+    # CharacterClass.md §4.1 ctor + stbc_constants.csv field names (tier 1).
+    c = CharacterClass_Create()
+    assert c.GetGender() == CharacterClass.FEMALE          # +0x7C ctor = 1
+    assert c.GetSize() == CharacterClass.SMALL             # +0x78 ctor = 0
+    assert c.GetAudioMode() == CharacterClass.CAM_VOCAL    # +0x84 ctor = 2
+    assert c.GetBlinkChance() == 0.1                       # +0xB8 ctor = 0.1f
+    assert c.IsRandomAnimationEnabled() == 1               # +0x13C ctor = 1
+
+
+def test_flags_start_clear():
+    c = CharacterClass_Create()
+    assert c._flags == 0
+    assert c.IsHidden() == 0
