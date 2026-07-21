@@ -29,6 +29,10 @@ def test_cpt_phoneme_channels_are_corrected():
 
 
 from engine.appc.characters import CharacterClass_Create
+from engine.appc.characters import (
+    CharacterClass_CreateNull, CharacterClass_Cast, CharacterClass_GetObjectStrict,
+)
+from engine.appc.objects import ObjectClass
 
 
 def test_setflags_clearflags_isstateset_roundtrip_on_stored_bit():
@@ -121,3 +125,19 @@ def test_owner_has_named_subcomponent_slots():
     for slot in ("_anim_queue", "_speak_queue", "_position_zoom", "_menu_state"):
         assert slot in c.__dict__, slot
         assert c.__dict__[slot] is None
+
+
+def test_create_null_is_marked_null():
+    n = CharacterClass_CreateNull()
+    assert n._is_null is True
+
+
+def test_cast_rejects_non_character():
+    assert CharacterClass_Cast(ObjectClass()) is None
+    c = CharacterClass_Create()
+    assert CharacterClass_Cast(c) is c
+
+
+def test_get_object_strict_returns_none_without_a_character():
+    # Strict lookup does NOT auto-vivify (unlike CharacterClass_GetObject).
+    assert CharacterClass_GetObjectStrict(None, "Nobody") is None
