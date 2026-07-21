@@ -376,6 +376,61 @@ class BridgeCharacterAnimController:
         if clip_index is not None and clip_index >= 0:
             renderer.play_instance_gesture(act.iid, clip_index)
 
+    # CAT_* mirror (avoid importing characters at module load — circular).
+    # Matches engine.appc.characters.CharacterClass CAT_* exactly.
+    _CAT_BREATHE, _CAT_INTERRUPTABLE, _CAT_NON_INTERRUPTABLE = 0, 1, 2
+    _CAT_TURN, _CAT_TURN_BACK, _CAT_GLANCE, _CAT_GLANCE_BACK = 3, 4, 5, 6
+
+    def is_active(self, character) -> bool:
+        """Whether the character has a live transient clip (drives the queue's
+        ReleaseCurrentAnimation). Same check as is_busy."""
+        return self.is_busy(character)
+
+    def stop(self, character) -> None:
+        """Evict the character's live clip + any pending turn/glance/default for
+        it. Rescue an evicted _Action's on_complete so a waiting mission
+        TGSequence never hangs. Never raises."""
+        iid = getattr(character, "_render_instance", None)
+        if iid is None:
+            return
+        prev = self._active.pop(iid, None)
+        self._pending_defaults = [i for i in self._pending_defaults if i != iid]
+        self._pending_turns = [e for e in self._pending_turns
+                               if getattr(e[0], "_render_instance", None) != iid]
+        self._pending_glances = [e for e in self._pending_glances
+                                 if getattr(e[0], "_render_instance", None) != iid]
+        if prev is not None and prev.on_complete is not None:
+            try:
+                prev.on_complete()
+            except Exception:
+                pass
+
+    def play_record(self, character, rec) -> None:
+        """Play an animation record by mapping its CAT_ category to the existing
+        deferred playback, threading the record's on_complete/hold/now. Turn and
+        glance re-resolve the clip from character+name internally; gesture/move
+        categories carry resolved clips on rec.play ([(nif, dur), ...])."""
+        cat = rec.category
+        if cat in (self._CAT_TURN, self._CAT_TURN_BACK):
+            self.request_turn_to(character, rec.name or "Captain",
+                                 back=(cat == self._CAT_TURN_BACK),
+                                 hold=bool(rec.hold), now=bool(rec.now),
+                                 on_complete=rec.on_complete)
+        elif cat in (self._CAT_GLANCE, self._CAT_GLANCE_BACK):
+            self.request_glance(character, rec.name or "", on_complete=rec.on_complete)
+        else:
+            # Gesture / breathe / move: rec.play carries resolved clips.
+            clips = rec.play if isinstance(rec.play, (list, tuple)) and rec.play else None
+            if clips:
+                self.submit(character, clips, priority=_SCRIPTED,
+                            hold=bool(rec.hold), on_complete=rec.on_complete)
+            elif rec.on_complete is not None:
+                # Nothing to play — still fire completion so a sequence advances.
+                try:
+                    rec.on_complete()
+                except Exception:
+                    pass
+
     def _real_duration(self, renderer, path) -> float:
         """The clip's natural length (seconds), cached per path. 0.0 when the
         renderer can't report it (e.g. headless FakeRenderer). `path` arrives

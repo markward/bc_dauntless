@@ -375,3 +375,97 @@ def test_node_controller_not_called_when_absent(monkeypatch):
     ctrl.request_turn(ch)
     ctrl.update(0.0, renderer=r, anim_mgr=None)
     assert r.played  # body clip still plays
+
+
+# ── CharacterClass queue seam: is_active / stop / play_record ──────────────
+
+from engine.appc.character_anim_queue import AnimRec
+
+
+def test_play_record_turn_appends_pending_turn_with_callback():
+    ctrl = BridgeCharacterAnimController()
+    ch = _Char(30)
+    calls = []
+    rec = AnimRec(category=ctrl._CAT_TURN, name="Captain",
+                  on_complete=lambda: calls.append("done"))
+    ctrl.play_record(ch, rec)
+    assert len(ctrl._pending_turns) == 1
+    entry = ctrl._pending_turns[0]
+    assert entry[0] is ch
+    assert entry[1] == "Captain"
+    assert entry[2] is False               # back=False
+    assert entry[5] is rec.on_complete
+
+
+def test_play_record_turn_back_appends_pending_turn_back_true():
+    ctrl = BridgeCharacterAnimController()
+    ch = _Char(31)
+    rec = AnimRec(category=ctrl._CAT_TURN_BACK, name="Captain")
+    ctrl.play_record(ch, rec)
+    assert len(ctrl._pending_turns) == 1
+    assert ctrl._pending_turns[0][2] is True    # back=True
+
+
+def test_play_record_glance_appends_pending_glance_with_callback():
+    ctrl = BridgeCharacterAnimController()
+    ch = _Char(32)
+    calls = []
+    rec = AnimRec(category=ctrl._CAT_GLANCE, name="Helm",
+                  on_complete=lambda: calls.append("done"))
+    ctrl.play_record(ch, rec)
+    assert len(ctrl._pending_glances) == 1
+    entry = ctrl._pending_glances[0]
+    assert entry[0] is ch
+    assert entry[1] == "Helm"
+    assert entry[2] is rec.on_complete
+
+
+def test_play_record_breathe_with_clips_creates_active_action():
+    ctrl = BridgeCharacterAnimController()
+    r = _FakeRenderer()
+    ch = _Char(33)
+    calls = []
+    rec = AnimRec(category=ctrl._CAT_BREATHE, play=[("clip.nif", 0.0)],
+                  on_complete=lambda: calls.append("done"))
+    ctrl.play_record(ch, rec)
+    assert ctrl.is_active(ch) is True
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    assert (33, r.loaded[(33, "clip.nif")]) in r.played
+
+
+def test_play_record_breathe_no_clips_fires_completion_inline():
+    ctrl = BridgeCharacterAnimController()
+    ch = _Char(34)
+    calls = []
+    rec = AnimRec(category=ctrl._CAT_BREATHE, play=None,
+                  on_complete=lambda: calls.append("done"))
+    ctrl.play_record(ch, rec)
+    assert calls == ["done"]
+    assert ctrl.is_active(ch) is False
+
+
+def test_stop_evicts_active_action_and_rescues_on_complete_once():
+    ctrl = BridgeCharacterAnimController()
+    r = _FakeRenderer()
+    ch = _Char(35)
+    calls = []
+    ctrl.submit(ch, [("g.nif", 5.0)], priority=0,
+               on_complete=lambda: calls.append("done"))
+    ctrl.update(0.0, renderer=r, anim_mgr=None)      # start clip, becomes active
+    assert ctrl.is_active(ch) is True
+    ctrl.stop(ch)
+    assert calls == ["done"]
+    assert ctrl.is_active(ch) is False
+    # A second stop() must not re-fire the callback.
+    ctrl.stop(ch)
+    assert calls == ["done"]
+
+
+def test_is_active_reflects_active_dict():
+    ctrl = BridgeCharacterAnimController()
+    r = _FakeRenderer()
+    ch = _Char(36)
+    assert ctrl.is_active(ch) is False
+    ctrl.submit(ch, [("g.nif", 2.0)], priority=0)
+    ctrl.update(0.0, renderer=r, anim_mgr=None)
+    assert ctrl.is_active(ch) is True
