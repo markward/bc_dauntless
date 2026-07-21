@@ -5,6 +5,8 @@ import App
 from engine.appc.ai import CharacterAction
 from engine.appc import bridge_placement
 from engine.appc.anim_node import TGAnimNode
+from engine.appc.characters import CharacterClass
+from engine import bridge_character_anim
 import engine.bridge_character_walk as bcw
 from engine.bridge_character_walk import BridgeCharacterWalkController
 
@@ -32,19 +34,16 @@ class _FakeRenderer:
         return [rev.get(ci) for _iid, ci in self.idled]
 
 
-class _Char:
-    def __init__(self, location="DBL1M"):
-        self._character_name = "Picard"
-        self._render_instance = None
-        self._location = location
-        self._hidden = 1
-        self._node = TGAnimNode(owner=self, kind="character")
-    def GetCharacterName(self): return self._character_name
-    def GetAnimNode(self): return self._node
-    def SetHidden(self, h): self._hidden = 1 if h else 0
-    def IsHidden(self): return self._hidden
-    def SetLocation(self, loc): self._location = loc
-    def GetLocation(self): return self._location
+def _Char(location="DBL1M"):
+    """A REAL CharacterClass -- AT_MOVE now routes through CharacterClass.MoveTo
+    (the queue/referee/SetFlags/SetCurrentAnimation door), so these tests need
+    the genuine receiver, not a lightweight double."""
+    ch = CharacterClass()
+    ch.SetCharacterName("Picard")
+    ch._render_instance = None
+    ch.SetLocation(location)
+    ch.SetHidden(1)
+    return ch
 
 
 def _builder_seq(ch, clip, end_location):
@@ -70,13 +69,14 @@ def _run_move(monkeypatch, detail, clip, end_location, *,
                         lambda c, suffix: _builder_seq(c, clip, end_location)
                         if suffix == "To" + detail else None)
     monkeypatch.setattr(bridge_placement, "_nif_path_for_clip", lambda name: clip)
-    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
-                        lambda c: c)
+    anim_ctrl = bridge_character_anim.BridgeCharacterAnimController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: anim_ctrl)
     r = _FakeRenderer()
 
     act = CharacterAction(ch, CharacterAction.AT_MOVE, detail)
     act.Play()
     assert act.IsPlaying() is True
+    ch.UpdateAnimationQueue()             # drain the queue -> play_record -> seq.Play()
     walk.update(0.0, renderer=r)          # realize + reveal + walk
     assert ch.IsHidden() == 0
     assert r.walked and r.walked[0][0] == 777

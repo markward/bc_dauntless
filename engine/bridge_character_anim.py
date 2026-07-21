@@ -449,11 +449,26 @@ class BridgeCharacterAnimController:
         elif cat in (self._CAT_GLANCE, self._CAT_GLANCE_BACK):
             self.request_glance(character, rec.name or "", on_complete=rec.on_complete)
         else:
-            # Gesture / breathe / move: rec.play carries resolved clips.
+            # Gesture / breathe / move: rec.play carries resolved clips, OR (a
+            # MoveTo record) a resolved SDK builder TGSequence.
             clips = rec.play if isinstance(rec.play, (list, tuple)) and rec.play else None
             if clips:
                 self.submit(character, clips, priority=_SCRIPTED,
                             hold=bool(rec.hold), on_complete=rec.on_complete)
+            elif rec.play is not None and hasattr(rec.play, "Play"):
+                # A MoveTo's builder TGSequence (walk + door + AT_SET_LOCATION_
+                # NAME): play it directly. The walk action inside defers to the
+                # walk controller (actions.py TGAnimAction._do_play's
+                # _walk_move path); the sequence's OWN completed event --
+                # attached by CharacterClass.MoveTo -- fires the owning
+                # CharacterAction's Completed() once the whole sequence
+                # settles. Never fire rec.on_complete here: a MoveTo record's
+                # on_complete is always None -- completion is the sequence's
+                # event, not this record's. Never raise out of play_record.
+                try:
+                    rec.play.Play()
+                except Exception:
+                    pass
             elif rec.on_complete is not None:
                 # Nothing to play — still fire completion so a sequence advances.
                 try:

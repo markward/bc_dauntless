@@ -23,9 +23,11 @@ import App
 from engine.appc.ai import CharacterAction
 from engine.appc import bridge_placement
 from engine.appc.anim_node import TGAnimNode
+from engine.appc.characters import CharacterClass
+from engine import bridge_character_anim
 import engine.bridge_character_walk as bcw
 from engine.bridge_character_walk import BridgeCharacterWalkController
-from engine.host_loop import _pump_walk_controller
+from engine.host_loop import _pump_walk_controller, _pump_character_queues
 
 
 class _FakeRenderer:
@@ -48,30 +50,16 @@ class _FakeRenderer:
         return [{"duration": 1.0}]
 
 
-class _Char:
-    def __init__(self):
-        self._render_instance = 777        # already realised (like Picard post-intro)
-        self._location = "DBstand"
-        self._hidden = 0
-        self._node = TGAnimNode(owner=self, kind="character")
-
-    def GetCharacterName(self):
-        return "Picard"
-
-    def GetAnimNode(self):
-        return self._node
-
-    def SetHidden(self, h):
-        self._hidden = 1 if h else 0
-
-    def IsHidden(self):
-        return self._hidden
-
-    def SetLocation(self, loc):
-        self._location = loc
-
-    def GetLocation(self):
-        return self._location
+def _Char():
+    """A REAL CharacterClass -- AT_MOVE now routes through CharacterClass.MoveTo
+    (the queue/referee/SetFlags/SetCurrentAnimation door), so these tests need
+    the genuine receiver, not a lightweight double."""
+    ch = CharacterClass()
+    ch.SetCharacterName("Picard")
+    ch._render_instance = 777          # already realised (like Picard post-intro)
+    ch.SetLocation("DBstand")
+    ch.SetHidden(0)
+    return ch
 
 
 def _builder_seq(ch):
@@ -93,7 +81,8 @@ def _wire(monkeypatch):
                         lambda c, suffix: _builder_seq(c))
     monkeypatch.setattr(bridge_placement, "_nif_path_for_clip",
                         lambda name: "db_sit_P.nif")
-    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast", lambda c: c)
+    anim_ctrl = bridge_character_anim.BridgeCharacterAnimController()
+    monkeypatch.setattr(bridge_character_anim, "get_controller", lambda: anim_ctrl)
     return walk
 
 
@@ -107,6 +96,12 @@ def test_at_move_completes_through_view_independent_pump(monkeypatch):
     act = CharacterAction(ch, CharacterAction.AT_MOVE, "P")
     act.Play()
     assert act.IsPlaying() is True
+    # AT_MOVE now enqueues through the CharacterClass door; the CharacterClass
+    # queue drain (host_loop._pump_character_queues, wired into _pump_char_anim
+    # every unpaused frame in production) is what actually plays the builder
+    # sequence and reaches the walk controller. Drive it directly here since
+    # this test deliberately exercises _pump_walk_controller in isolation.
+    _pump_character_queues([ch])
     # Drive frames through the view-independent seam — NOT the bridge render
     # block. There is no view_mode anywhere in this test.
     _pump_walk_controller(walk, r, 0.0, paused=False)      # start (realise/reveal/walk)
@@ -124,6 +119,7 @@ def test_pump_skipped_while_paused(monkeypatch):
     ch = _Char()
     act = CharacterAction(ch, CharacterAction.AT_MOVE, "P")
     act.Play()
+    _pump_character_queues([ch])
     _pump_walk_controller(walk, r, 5.0, paused=True)
     assert not r.walked                                    # never started
     assert act.IsPlaying() is True                         # still pending

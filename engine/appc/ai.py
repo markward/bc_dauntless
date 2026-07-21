@@ -1453,44 +1453,60 @@ class CharacterAction(TGAction):
         self._complete_after(dur or 0.0)
 
     def _queue_move(self) -> None:
-        """Play the SDK's registered move builder, exactly as BC does.
+        """Route AT_MOVE through the CharacterClass door (P8: the door-collapse).
 
-        The builder's TGSequence carries everything: the walk clip, the
-        LiftDoorAction at its scheduled offset (with the door sound), the trailing
-        AT_SET_LOCATION_NAME, and the CS_STANDING / CS_SEATED / CS_HIDDEN completion
-        event. Mining a single clip out of it — the old capture_move path — dropped
-        the door, the sound and the events on the floor.
+        CharacterClass.MoveTo now owns resolving the SDK's registered move
+        builder, marking the walk action, and enqueueing the result as a
+        CAT_NON_INTERRUPTABLE animation record — the SAME proven mechanism
+        this method used to run directly (resolve -> mark walk -> attach
+        completion -> Play()), just moved behind the door so ordinary
+        AnimRec-queue semantics (the referee, CS_UI_DISABLED gating) apply to
+        a move exactly like every other verb. The builder's TGSequence still
+        carries everything it always has — the walk clip, the LiftDoorAction
+        at its scheduled offset (with the door sound), the trailing
+        AT_SET_LOCATION_NAME, and the CS_STANDING / CS_SEATED / CS_HIDDEN
+        completion event — MoveTo does not touch any of that, it only
+        resolves + enqueues.
 
-        Best-effort throughout: an unresolved builder, a missing controller (headless)
-        or any exception completes the action inline, so a mission TGSequence can
-        never stall on a move.
+        We still build the completion event here (the proven route:
+        TGActionManager.ProcessEvent calls owner.Completed() for an
+        ET_ACTION_COMPLETED whose ObjPtr is the owner (actions.py:730) — the
+        same mechanism ViewscreenOn and PlayDialog use) and hand it to MoveTo
+        to attach to the sequence. `ok` truthy means MoveTo queued the record:
+        the sequence's own completion is our ONLY completion signal from here
+        — we do NOT also complete inline (that would double-fire). `ok` falsy
+        (no character, no builder, or an exception) advances immediately so a
+        mission TGSequence never stalls on an unresolvable move.
+
+        Best-effort throughout: a missing character/cast, an unresolved
+        builder, or any exception completes the action inline.
+
+        NOTE (fidelity, not a regression): the record now plays one
+        UpdateAnimationQueue tick after Play() (the queue hop), not
+        synchronously — imperceptible for a cutscene walk-on. And the record
+        retires from the CharacterClass queue ~1 tick after it starts (the
+        walk itself runs on the SEPARATE bridge_character_walk controller,
+        which the anim controller's is_active does not track), so
+        IsAnimatingNonInterruptable() does not stay 1 for the walk's full
+        duration — matching today's behavior (the walk was never in the
+        queue at all), not a regression.
         """
-        from engine.appc import bridge_placement
         from engine.appc.characters import CharacterClass_Cast
         try:
             cc = CharacterClass_Cast(self._character) if self._character is not None else None
-            seq = (bridge_placement._resolve_builder_sequence(cc, "To" + str(self._detail))
-                   if cc is not None else None)
-            if seq is None:
-                self.Completed()          # nothing registered → advance immediately
+            if cc is None:
+                self.Completed()          # no character to move → advance immediately
                 return
 
-            walk = bridge_placement.walk_action_of(seq)
-            if walk is not None:
-                walk._walk_move = True    # the ONE action that plays as a body clip
-
-            # Defer our completion to the sequence's, via the SDK's own route:
-            # TGActionManager.ProcessEvent calls owner.Completed() for an
-            # ET_ACTION_COMPLETED whose ObjPtr is the owner (actions.py:730) —
-            # the same mechanism ViewscreenOn and PlayDialog use.
             import App
             ev = App.TGObjPtrEvent_Create()
             ev.SetEventType(App.ET_ACTION_COMPLETED)
             ev.SetDestination(App.g_kTGActionManager)
             ev.SetObjPtr(self)
-            seq.AddCompletedEvent(ev)
 
-            seq.Play()
+            ok = cc.MoveTo(str(self._detail), ev)
+            if not ok:
+                self.Completed()          # nothing registered → advance immediately
         except Exception:
             self.Completed()
 

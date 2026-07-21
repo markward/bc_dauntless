@@ -725,12 +725,28 @@ class CharacterClass(ObjectClass):
     def _anim_play_now(self, rec) -> None:
         c = self._anim_controller()
         if c is None:
-            # No clip-player registered (headless / mission_harness): leave the
-            # record UNplayed so ReleaseCurrentAnimation's completion guarantee
-            # fires its on_complete on the next drain. Marking it played here
-            # would strand on_complete -- there is no controller to fire it, and
-            # the `played` guard in ReleaseCurrentAnimation skips the
-            # unplayed-fire path -> the waiting mission TGSequence hangs.
+            # No clip-player registered (headless / mission_harness -- neither
+            # ever wires bridge_character_anim.set_controller(); that only
+            # happens for the lifetime of a real host_loop.run()). A resolved
+            # builder TGSequence (MoveTo) is SELF-CONTAINED: it drives its own
+            # completion via the completed event MoveTo attached before
+            # enqueue, so it can play with no controller at all -- degrading
+            # exactly like _do_play's walk_ctrl()-is-None branch already does
+            # for the walk clip inside it. Play it directly rather than
+            # leaving it stranded: a MoveTo record's on_complete is always
+            # None (completion is the sequence's own event, not this record's),
+            # so the ReleaseCurrentAnimation unplayed-fire rescue below has
+            # nothing to fire and the mission TGSequence would hang forever.
+            # Every other record kind (plain clip lists, with a real
+            # on_complete) still needs the controller and stays UNplayed here,
+            # so ReleaseCurrentAnimation's completion guarantee fires its
+            # on_complete on the next drain.
+            if rec.play is not None and hasattr(rec.play, "Play"):
+                rec.played = True
+                try:
+                    rec.play.Play()
+                except Exception:
+                    pass
             return
         rec.played = True
         c.play_record(self, rec)
@@ -984,7 +1000,56 @@ class CharacterClass(ObjectClass):
         return 1
 
     def Blink(self, *args) -> None:               pass
-    def MoveTo(self, *args) -> None:              pass
+
+    def MoveTo(self, dest, completed_event=None) -> int:
+        """CharacterClass.MoveTo (tier-0 §4.10, RE'd 0x0066B680): walk/sit an
+        officer to *dest*.
+
+        Resolves the SDK's registered "<location>To<dest>" builder (the same
+        move/sit-down builders PicardAnimations.py etc. register under
+        AddAnimation) and enqueues its TGSequence as a CAT_NON_INTERRUPTABLE
+        animation record. Row 2 of the referee table (character_anim_queue.md
+        §5) is all-COEXIST both as newcomer and incumbent, so a queued move is
+        NEVER rejected or dropped by classify.
+
+        The builder sequence carries EVERYTHING it always has: the walk clip
+        (marked via walk_action_of so only that ONE action -- the last
+        character-node action -- plays as a root-motion body clip; see
+        actions.py's TGAnimAction._walk_move), the LiftDoorAction (with its
+        door sound) at its scheduled offset, the trailing
+        AT_SET_LOCATION_NAME, and the CS_STANDING/CS_SEATED/CS_HIDDEN
+        completion event. MoveTo does not touch any of that -- it only
+        resolves the builder and enqueues it.
+
+        *completed_event*, when supplied, is attached to the sequence
+        (AddCompletedEvent) so its firing -- when the WHOLE builder settles --
+        is the caller's one completion signal. This is the same proven route
+        CharacterAction._queue_move used to wire directly onto the sequence;
+        only WHERE it attaches has moved, into this door.
+
+        Best-effort: a null dest, an unresolved builder (no registration, or
+        the builder itself raising) returns 0 so the caller completes inline
+        and a mission TGSequence never stalls.
+        """
+        if not dest:
+            return 0
+        from engine.appc import bridge_placement
+        try:
+            seq = bridge_placement._resolve_builder_sequence(self, "To" + str(dest))
+        except Exception:
+            seq = None
+        if seq is None:
+            return 0
+        walk = bridge_placement.walk_action_of(seq)
+        if walk is not None:
+            walk._walk_move = True    # the ONE action that plays as a body clip
+        if completed_event is not None:
+            seq.AddCompletedEvent(completed_event)
+        self.SetFlags(self.CS_UI_DISABLED)
+        self.SetCurrentAnimation(seq, self.CAT_NON_INTERRUPTABLE, self.CS_UI_DISABLED,
+                                 None, done_flags=self.CS_UI_ENABLED)
+        return 1
+
     def TurnTowards(self, name, now=False, on_complete=None) -> int:
         # tier-0 §4.10: acts only for the Captain while active; ALWAYS returns 0.
         # No-op path fires on_complete inline so a waiting sequence never hangs.

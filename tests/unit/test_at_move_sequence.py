@@ -88,9 +88,10 @@ def test_at_move_plays_the_builder_sequence_so_the_door_fires(monkeypatch):
     monkeypatch.setattr("engine.bridge_character_walk.get_controller", lambda: walk)
     monkeypatch.setattr("engine.bridge_cutscene.get_controller", lambda: cutscene)
 
-    act = App.CharacterAction_Create(
-        _picard_at_the_lift(), CharacterAction.AT_MOVE, "P1")
+    ch = _picard_at_the_lift()
+    act = App.CharacterAction_Create(ch, CharacterAction.AT_MOVE, "P1")
     act.Play()
+    ch.UpdateAnimationQueue()           # drain the queue -> play_record -> seq.Play()
     _tick()                             # the door is scheduled 0.125s in
 
     assert walk.moves, "the walk action must reach the walk controller"
@@ -105,9 +106,10 @@ def test_only_the_walk_action_routes_to_the_walk_controller(monkeypatch):
     monkeypatch.setattr("engine.bridge_character_walk.get_controller", lambda: walk)
     monkeypatch.setattr("engine.bridge_cutscene.get_controller", lambda: cutscene)
 
-    act = App.CharacterAction_Create(
-        _picard_at_the_lift(), CharacterAction.AT_MOVE, "P1")
+    ch = _picard_at_the_lift()
+    act = App.CharacterAction_Create(ch, CharacterAction.AT_MOVE, "P1")
     act.Play()
+    ch.UpdateAnimationQueue()
     _tick()
 
     assert len(walk.moves) == 1, "exactly one action is the walk: the marked one"
@@ -121,8 +123,8 @@ def test_at_move_completes_exactly_once_when_the_sequence_finishes(monkeypatch):
     monkeypatch.setattr("engine.bridge_character_walk.get_controller", lambda: walk)
     monkeypatch.setattr("engine.bridge_cutscene.get_controller", lambda: cutscene)
 
-    act = App.CharacterAction_Create(
-        _picard_at_the_lift(), CharacterAction.AT_MOVE, "P1")
+    ch = _picard_at_the_lift()
+    act = App.CharacterAction_Create(ch, CharacterAction.AT_MOVE, "P1")
     completions = []
     real_completed = act.Completed
 
@@ -132,6 +134,7 @@ def test_at_move_completes_exactly_once_when_the_sequence_finishes(monkeypatch):
 
     act.Completed = counting_completed
     act.Play()
+    ch.UpdateAnimationQueue()           # drain the queue -> play_record -> seq.Play()
     _tick()                            # the door fires and completes
     assert not completions, "the move must not complete before the walk settles"
     walk.finish()                      # the walk clip settles -> sequence completes
@@ -170,6 +173,7 @@ def test_walk_completion_sets_the_location_synchronously(monkeypatch):
     ch = _picard_standing_at_guest1()
     act = App.CharacterAction_Create(ch, CharacterAction.AT_MOVE, "P")
     act.Play()
+    ch.UpdateAnimationQueue()                   # drain the queue -> play_record -> seq.Play()
     assert walk.moves, "the real builder's walk action must reach the walk controller"
     assert ch.GetLocation() == "DBGuest1"       # not re-stationed until the walk ends
 
@@ -190,11 +194,19 @@ def test_unresolvable_builder_completes_inline(monkeypatch):
 
 
 def test_headless_no_walk_controller_still_completes(monkeypatch):
-    """No renderer/controller (the harness + most of the suite) -> never stall."""
+    """No renderer/controller anywhere (the harness + most of the suite) --
+    NOT bridge_character_walk/bridge_cutscene, and NOT bridge_character_anim
+    either (mission_harness.py never wires it; only a live host_loop.run()
+    does) -- must never stall. The queue's own no-controller fallback
+    (CharacterClass._anim_play_now) plays a resolved builder TGSequence
+    directly since it is self-contained (its own completed event, attached by
+    MoveTo, is what fires our Completed() -- there is no on_complete on the
+    record itself to rescue)."""
     monkeypatch.setattr("engine.bridge_character_walk.get_controller", lambda: None)
     monkeypatch.setattr("engine.bridge_cutscene.get_controller", lambda: None)
-    act = App.CharacterAction_Create(
-        _picard_at_the_lift(), CharacterAction.AT_MOVE, "P1")
+    ch = _picard_at_the_lift()
+    act = App.CharacterAction_Create(ch, CharacterAction.AT_MOVE, "P1")
     act.Play()
+    ch.UpdateAnimationQueue()           # drain the queue -> the fallback plays the seq directly
     _tick()                            # the door step's timer still has to fire
     assert act.IsPlaying() == 0
