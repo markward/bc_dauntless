@@ -304,3 +304,28 @@ see §4.6), the tests encode the decision and this function is the one place to 
 > still waiting in the queue.
 
 Encoded as the model in §5.
+
+## Appendix B — follow-up RE question (category→verdict mapping) — PENDING
+
+To eliminate the §5 category→bucket inference, a precise follow-up is relayed to the RE project:
+
+> **Follow-up: the exact category→verdict mapping for the Classify referee, in raw `CAT_` integers
+> (0–6).** We have the referee's behavioural rules; to implement it exactly rather than infer the
+> category buckets, could you give the mapping in terms of the `CAT_` category integers as the
+> decompiled code actually tests them?
+> Categories: `0=BREATHE, 1=INTERRUPTABLE, 2=NON_INTERRUPTABLE, 3=TURN, 4=TURN_BACK, 5=GLANCE,
+> 6=GLANCE_BACK`.
+> 1. For `Classify2(existing_cat, new_cat)` **ignoring** the name tiebreaker: what verdict (stop-old
+>    / reject-new / stop-both / coexist) results for each ordered pair of category integers 0–6? A
+>    7×7 table, or the reconstructed branch logic, whatever the function actually does.
+> 2. Which categories does the code treat as "idle," "heavy/don't-fight," "light/interruptable," and
+>    "committing" — the exact membership tests on the category integer?
+> 3. For the two name-tiebreaker match-ups: which exact category pair triggers each (move-toward =
+>    which category? we enqueue `MoveTo` as `CAT_NON_INTERRUPTABLE (2)`; turn-back = `CAT_TURN_BACK
+>    (4)`? glance-at = `CAT_GLANCE (5)`, glance-away = `CAT_GLANCE_BACK (6)`?), and what string does
+>    each record supply as the compared name — the record's own name field (`+0x0C`) or the
+>    character's `+0xa0`/`+0xa4` target-name buffer? For a move (enqueued with a **null** record
+>    name in tier-0), where does the compared "X" come from?
+
+**Interim (until answered):** §5's category→bucket mapping stands, pinned by tests. When the answer
+lands, reconcile the single `classify()` function and its tests against the exact table — one edit.
