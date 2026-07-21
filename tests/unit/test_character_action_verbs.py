@@ -436,10 +436,20 @@ def test_queue_default_survives_reentrant_gesture_submitted_by_dropped_on_comple
     # clear is now cc.ClearExtraAnimations() (drains categories {0,1,5,6}:
     # BREATHE/INTERRUPTABLE/GLANCE/GLANCE_BACK from the AnimRec queue), not
     # the old clear_current_animation() shim (an unconditional
-    # self._anim_current = None, with no category filter at all). The
-    # re-entrant record here uses CAT_NON_INTERRUPTABLE (2) -- the category
-    # PlayAnimation's default flag=0 actually enqueues in production -- which
-    # is deliberately NOT in the ClearExtraAnimations set, so it must survive.
+    # self._anim_current = None, with no category filter at all).
+    #
+    # The re-entrant record MUST use an INTERRUPTABLE category (1) -- a
+    # member of the ClearExtraAnimations set -- or this test cannot
+    # discriminate ordering at all: CAT_NON_INTERRUPTABLE (2) is immune to
+    # ClearExtraAnimations AND always COEXISTs in the referee table, so a
+    # record of that category survives regardless of whether the clear runs
+    # before or after request_default(), making an earlier draft of this test
+    # pass even with the clear/request_default order reversed. With
+    # CAT_INTERRUPTABLE, the clear DOES reach the re-entrant record if it runs
+    # AFTER request_default() -- so this test only stays green when
+    # _queue_default clears BEFORE calling request_default(), which is the
+    # actual invariant being guarded.
+    #
     # This drives the REAL BridgeCharacterAnimController (not _FakeController,
     # whose request_default is a stub that never fires on_complete and so can
     # never exercise re-entrancy).
@@ -453,9 +463,10 @@ def test_queue_default_survives_reentrant_gesture_submitted_by_dropped_on_comple
     def _a_on_complete():
         # Simulates the re-entrant chain: a dropped gesture's completion
         # enqueues a NEW record on the officer via the queue's own door (the
-        # same SetCurrentAnimation call PlayAnimation makes), all from inside
+        # same SetCurrentAnimation call PlayAnimation makes with flag=1 --
+        # MissionLib.py:3543's interruptable gesture), all from inside
         # request_default()'s synchronous callback.
-        ch.SetCurrentAnimation(object(), CharacterClass.CAT_NON_INTERRUPTABLE)
+        ch.SetCurrentAnimation(object(), CharacterClass.CAT_INTERRUPTABLE)
 
     assert ctrl.submit(ch, [("clipA.nif", 5.0)], priority=bca._SCRIPTED,
                        on_complete=_a_on_complete) is True
@@ -468,8 +479,10 @@ def test_queue_default_survives_reentrant_gesture_submitted_by_dropped_on_comple
     # The re-entrantly-enqueued record is STILL present -- not wiped by
     # _queue_default's own clear -- and the AT_DEFAULT action itself completed
     # (exactly once, inline).
-    assert len(ch._anim_pending) == 1
-    assert ch._anim_pending[0].category == CharacterClass.CAT_NON_INTERRUPTABLE
+    recs = ([ch._anim_current] if ch._anim_current else []) + ch._anim_pending
+    assert len(recs) == 1
+    assert recs[0].category == CharacterClass.CAT_INTERRUPTABLE
+    assert action.IsPlaying() == 0
     assert action.IsPlaying() == 0
 
 
