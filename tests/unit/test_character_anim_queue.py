@@ -576,3 +576,171 @@ def test_glanceaway_enqueues_glance_back_record():
     rec = c._anim_pending[0]
     assert rec.category == CharacterClass.CAT_GLANCE_BACK
     assert rec.on_complete is cb
+
+
+# ── Task 13: Breathe / PlayAnimation / PlayAnimationFile / LookAtMe ──────────
+
+from engine.appc import bridge_placement as _bridge_placement
+
+
+def test_play_animation_mode1_enqueues_interruptable_record(monkeypatch):
+    c = CharacterClass_Create()
+    monkeypatch.setattr(_bridge_placement, "registered_module_path",
+                        lambda ch, key: "Some.Module.Gesture")
+    monkeypatch.setattr("engine.bridge_idle_gestures.build_sequence_clips",
+                        lambda module_path, character, anim_mgr: [("g.nif", 0.0)])
+    result = c.PlayAnimation("Gesture", mode=1)
+    assert result == 1
+    assert len(c._anim_pending) == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_INTERRUPTABLE
+    assert rec.play == [("g.nif", 0.0)]
+    assert rec.flags == 0
+
+
+def test_play_animation_mode0_enqueues_non_interruptable_ui_disabled(monkeypatch):
+    c = CharacterClass_Create()
+    monkeypatch.setattr(_bridge_placement, "registered_module_path",
+                        lambda ch, key: "Some.Module.Gesture")
+    monkeypatch.setattr("engine.bridge_idle_gestures.build_sequence_clips",
+                        lambda module_path, character, anim_mgr: [("g.nif", 0.0)])
+    result = c.PlayAnimation("Gesture", mode=0)
+    assert result == 1
+    assert len(c._anim_pending) == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_NON_INTERRUPTABLE
+    assert rec.flags == CharacterClass.CS_UI_DISABLED
+    assert rec.done_flags == CharacterClass.CS_UI_ENABLED
+
+
+def test_play_animation_mode_negative_enqueues_non_interruptable_no_flags(monkeypatch):
+    c = CharacterClass_Create()
+    monkeypatch.setattr(_bridge_placement, "registered_module_path",
+                        lambda ch, key: "Some.Module.Gesture")
+    monkeypatch.setattr("engine.bridge_idle_gestures.build_sequence_clips",
+                        lambda module_path, character, anim_mgr: [("g.nif", 0.0)])
+    result = c.PlayAnimation("Gesture", mode=-1)
+    assert result == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_NON_INTERRUPTABLE
+    assert rec.flags == 0
+    assert rec.done_flags == 0
+
+
+def test_play_animation_unregistered_key_returns_zero_and_enqueues_nothing(monkeypatch):
+    c = CharacterClass_Create()
+    monkeypatch.setattr(_bridge_placement, "registered_module_path",
+                        lambda ch, key: None)
+    assert c.PlayAnimation("Nonexistent") == 0
+    assert c._anim_pending == []
+
+
+def test_play_animation_no_name_returns_zero():
+    c = CharacterClass_Create()
+    assert c.PlayAnimation(None) == 0
+    assert c.PlayAnimation("") == 0
+    assert c._anim_pending == []
+
+
+def test_play_animation_file_mode1_enqueues_interruptable_record():
+    import App
+    App.g_kAnimationManager.LoadAnimation("data/animations/clip.nif", "clip__t13")
+    c = CharacterClass_Create()
+    result = c.PlayAnimationFile("clip__t13", mode=1)
+    assert result == 1
+    assert len(c._anim_pending) == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_INTERRUPTABLE
+    assert rec.play == [("data/animations/clip.nif", 0.0)]
+
+
+def test_play_animation_file_mode0_enqueues_non_interruptable_ui_disabled():
+    import App
+    App.g_kAnimationManager.LoadAnimation("data/animations/clip2.nif", "clip2__t13")
+    c = CharacterClass_Create()
+    result = c.PlayAnimationFile("clip2__t13", mode=0)
+    assert result == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_NON_INTERRUPTABLE
+    assert rec.flags == CharacterClass.CS_UI_DISABLED
+    assert rec.done_flags == CharacterClass.CS_UI_ENABLED
+
+
+def test_play_animation_file_unregistered_name_returns_zero():
+    c = CharacterClass_Create()
+    assert c.PlayAnimationFile("totally_unregistered_name__t13") == 0
+    assert c._anim_pending == []
+
+
+def test_play_animation_file_no_filename_returns_zero():
+    c = CharacterClass_Create()
+    assert c.PlayAnimationFile(None) == 0
+    assert c._anim_pending == []
+
+
+def test_breathe_returns_zero_when_already_animating():
+    c = CharacterClass_Create()
+    c._anim_current = AnimRec(category=CharacterClass.CAT_NON_INTERRUPTABLE, play=object())
+    assert c.Breathe() == 0
+    assert c._anim_pending == []
+
+
+def test_breathe_returns_zero_when_pending_queued():
+    c = CharacterClass_Create()
+    c._anim_pending.append(AnimRec(category=CharacterClass.CAT_GLANCE, play=object()))
+    assert c.Breathe() == 0
+
+
+def test_breathe_returns_zero_when_target_name_set():
+    c = CharacterClass_Create()
+    c._target_name = "Captain"
+    assert c.Breathe() == 0
+    assert c._anim_pending == []
+
+
+def test_breathe_returns_zero_when_glancing():
+    c = CharacterClass_Create()
+    c.SetFlags(CharacterClass.CS_GLANCING)
+    assert c.Breathe() == 0
+    assert c._anim_pending == []
+
+
+def test_breathe_enqueues_breathe_record_when_idle(monkeypatch):
+    c = CharacterClass_Create()
+    monkeypatch.setattr(_bridge_placement, "capture_registered_clip",
+                        lambda ch, suffix: {"clip_nif": "breathe.nif"})
+    result = c.Breathe()
+    assert result == 1
+    assert len(c._anim_pending) == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_BREATHE
+    assert rec.play == [("breathe.nif", 0.0)]
+
+
+def test_breathe_returns_zero_when_clip_unresolved(monkeypatch):
+    c = CharacterClass_Create()
+    monkeypatch.setattr(_bridge_placement, "capture_registered_clip",
+                        lambda ch, suffix: None)
+    assert c.Breathe() == 0
+    assert c._anim_pending == []
+
+
+def test_lookatme_returns_one_and_watches_via_camera_controller(monkeypatch):
+    from engine import bridge_camera_watch
+    watched = []
+
+    class _Ctrl:
+        def watch(self, character):
+            watched.append(character)
+
+    monkeypatch.setattr(bridge_camera_watch, "get_controller", lambda: _Ctrl())
+    c = CharacterClass_Create()
+    assert c.LookAtMe() == 1
+    assert watched == [c]
+
+
+def test_lookatme_does_not_raise_with_no_camera_controller(monkeypatch):
+    from engine import bridge_camera_watch
+    monkeypatch.setattr(bridge_camera_watch, "get_controller", lambda: None)
+    c = CharacterClass_Create()
+    assert c.LookAtMe() == 1

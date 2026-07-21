@@ -904,7 +904,23 @@ class CharacterClass(ObjectClass):
         db = pDatabase if pDatabase is not None else self._database
         crew_speech.emit(self._character_name, db, lineID, priority)
 
-    def Breathe(self, *args) -> None:             pass
+    def Breathe(self, on_complete=None, *args) -> int:
+        # tier-0 §4.10: only when idle (not animating, none queued, no move/glance target).
+        if self.IsAnimating() or self.IsGoingToAnimate():
+            return 0
+        if self._target_name is not None or self.IsStateSet(self.CS_GLANCING):
+            return 0
+        try:
+            from engine.appc.bridge_placement import capture_registered_clip
+            clip = capture_registered_clip(self, "Breathe")
+        except Exception:
+            clip = None
+        if not clip or not clip.get("clip_nif"):
+            return 0
+        self.SetCurrentAnimation([(clip["clip_nif"], 0.0)], self.CAT_BREATHE, 0, None,
+                                 on_complete=on_complete)
+        return 1
+
     def Blink(self, *args) -> None:               pass
     def MoveTo(self, *args) -> None:              pass
     def TurnTowards(self, name, arg2=None, on_complete=None) -> int:
@@ -939,9 +955,63 @@ class CharacterClass(ObjectClass):
         self.SetCurrentAnimation(None, self.CAT_GLANCE_BACK, 0, None,
                                  on_complete=on_complete)
         return 1
-    def PlayAnimation(self, *args) -> None:       pass
-    def PlayAnimationFile(self, *args) -> None:   pass
-    def LookAtMe(self, *args) -> None:            pass
+    def PlayAnimation(self, name, mode=1, on_complete=None) -> int:
+        if not name:
+            return 0
+        try:
+            import App
+            from engine.appc import bridge_placement
+            from engine.bridge_idle_gestures import build_sequence_clips
+            module_path = bridge_placement.registered_module_path(self, str(name))
+            if not module_path:
+                return 0
+            clips = build_sequence_clips(module_path, self, App.g_kAnimationManager)
+        except Exception:
+            clips = None
+        if not clips:
+            return 0
+        if mode > 0:
+            self.SetCurrentAnimation(clips, self.CAT_INTERRUPTABLE, 0, None,
+                                     on_complete=on_complete)
+        elif mode == 0:
+            self.SetCurrentAnimation(clips, self.CAT_NON_INTERRUPTABLE,
+                                     self.CS_UI_DISABLED, None, on_complete=on_complete,
+                                     done_flags=self.CS_UI_ENABLED)
+        else:
+            self.SetCurrentAnimation(clips, self.CAT_NON_INTERRUPTABLE, 0, None,
+                                     on_complete=on_complete)
+        return 1
+
+    def PlayAnimationFile(self, filename, mode=1, on_complete=None) -> int:
+        if not filename:
+            return 0
+        try:
+            import App
+            path = App.g_kAnimationManager.path_for(str(filename))
+        except Exception:
+            path = None
+        if not path:
+            return 0
+        clips = [(path, 0.0)]
+        if mode == 0:
+            self.SetCurrentAnimation(clips, self.CAT_NON_INTERRUPTABLE,
+                                     self.CS_UI_DISABLED, None, on_complete=on_complete,
+                                     done_flags=self.CS_UI_ENABLED)
+        else:
+            self.SetCurrentAnimation(clips, self.CAT_INTERRUPTABLE, 0, None,
+                                     on_complete=on_complete)
+        return 1
+
+    def LookAtMe(self, *args, **kwargs) -> int:
+        # Camera framing — the SEPARATE camera-watch subsystem, NOT the anim queue.
+        try:
+            from engine import bridge_camera_watch
+            ctrl = bridge_camera_watch.get_controller()
+            if ctrl is not None and hasattr(ctrl, "watch"):
+                ctrl.watch(self)
+        except Exception:
+            pass
+        return 1
 
     def GetAnimNode(self):
         # A real anim node so the SDK builders' TGAnimActions are tagged as
