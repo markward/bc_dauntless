@@ -35,6 +35,16 @@ class GameLoop:
         g_kAIManager.tick(game_time=game_time, real_time=real_time)
         tick_defensive_cloak(TICK_DELTA)
         tick_all_ai(game_time=game_time)
+        # Drive each bridge officer's CharacterClass animation queue one step --
+        # the headless equivalent of host_loop._pump_character_queues. A
+        # re-pointed CharacterAction (turn / glance / gesture / breathe / menu)
+        # enqueues an AnimRec; without this drive the record never plays and its
+        # on_complete -- the mission TGSequence's Completed() -- never fires,
+        # stalling a bridge cutscene when a mission is run headless (e.g.
+        # gameloop_harness). No clip-player controller exists here, so
+        # _anim_play_now leaves the record unplayed and ReleaseCurrentAnimation
+        # fires on_complete on the next drain. AI/Python-first ordering.
+        _pump_bridge_character_queues()
         # Per-tick proximity evaluation.  SDK conditions like
         # ConditionInRange register ProximityChecks; the per-tick sweep
         # fires events when objects cross the radius boundary.
@@ -72,3 +82,30 @@ class GameLoop:
     @property
     def game_time(self) -> float:
         return App.g_kTimerManager.get_time()
+
+
+def _pump_bridge_character_queues() -> None:
+    """Drive every bridge officer's CharacterClass animation queue one step.
+
+    The headless equivalent of host_loop._pump_character_queues (the live game
+    wires it in _pump_char_anim, before the clip-player drains). Enumerates the
+    "bridge" set's CharacterClass members and calls UpdateAnimationQueue() on
+    each -- no _render_instance filter (headless has no renderer), unlike the
+    host's _live_bridge_characters. Best-effort: a missing bridge set, a member
+    without the method, or a raising queue must never stall the loop."""
+    bridge = App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        return
+    from engine.appc.characters import CharacterClass
+    try:
+        members = bridge.GetClassObjectList(CharacterClass)
+    except Exception:
+        return
+    for ch in members or []:
+        fn = getattr(ch, "UpdateAnimationQueue", None)
+        if fn is None:
+            continue
+        try:
+            fn()
+        except Exception:
+            pass

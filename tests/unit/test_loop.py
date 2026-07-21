@@ -158,3 +158,42 @@ def test_gameloop_runs_ai_before_motion_integrator():
         assert ship._current_speed == 50.0
     finally:
         App.g_kSetManager._sets.pop("orderoftest", None)
+
+
+def test_gameloop_drives_bridge_character_animation_queues():
+    """GameLoop.tick() drives each bridge officer's CharacterClass animation
+    queue (headless equivalent of the host-loop pump). A re-pointed
+    CharacterAction enqueues an AnimRec whose on_complete is the mission
+    TGSequence's Completed(); without this drive the record never plays and the
+    sequence stalls headless. No clip-player controller exists here, so the
+    record completes via ReleaseCurrentAnimation on the next drain (the
+    no-controller completion guarantee)."""
+    from engine.appc.characters import CharacterClass, CharacterClass_Create
+    import engine.bridge_character_anim as bca
+    bca.clear_controller()                       # headless: no clip-player
+
+    officer = CharacterClass_Create()
+    officer.SetActive(1)
+    fired = []
+    officer.GlanceAt("Left", on_complete=lambda: fired.append(1))
+    assert len(officer._anim_pending) == 1       # enqueued, not yet played
+
+    pSet = App.SetClass_Create()
+    pSet.SetName("bridge")
+    pSet.AddObjectToSet(officer, "helm")
+    App.g_kSetManager._sets["bridge"] = pSet
+    try:
+        loop = GameLoop()
+        loop.advance(3)                          # drive a few frames
+        assert fired == [1]                      # on_complete fired -> sequence advances
+        assert officer._anim_current is None     # record fully retired
+    finally:
+        App.g_kSetManager._sets.pop("bridge", None)
+
+
+def test_gameloop_pump_is_safe_with_no_bridge_set():
+    """No bridge set (typical space-combat headless run) -> the pump is a no-op,
+    never raising."""
+    App.g_kSetManager._sets.pop("bridge", None)
+    loop = GameLoop()
+    loop.tick()                                  # must not raise
