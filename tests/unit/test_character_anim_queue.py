@@ -861,3 +861,23 @@ def test_played_category_record_fires_on_complete_headless_without_controller():
     c.UpdateAnimationQueue()                     # ReleaseCurrentAnimation retires it
     assert fired == [1]                          # completion guarantee held
     assert c._anim_current is None
+
+
+def test_ui_disabled_gesture_reenables_ui_on_release():
+    # Completion-flags application: a mode-0 gesture disables the UI for its
+    # duration (flags=CS_UI_DISABLED) and carries done_flags=CS_UI_ENABLED to
+    # re-enable it on release. Without applying done_flags the officer's menu
+    # would stay suppressed forever. Drive the record through the queue headless
+    # (no controller -> completes via ReleaseCurrentAnimation) and assert the UI
+    # bit is set during play and cleared after release.
+    import engine.bridge_character_anim as bca
+    bca.clear_controller()
+    c = CharacterClass_Create()
+    c.SetActive(1)
+    c.SetCurrentAnimation(object(), CharacterClass.CAT_NON_INTERRUPTABLE,
+                          CharacterClass.CS_UI_DISABLED, None,
+                          done_flags=CharacterClass.CS_UI_ENABLED)
+    c.UpdateAnimationQueue()                        # plays -> PreparePlay sets CS_UI_DISABLED
+    assert c.IsStateSet(CharacterClass.CS_UI_DISABLED) == 1
+    c.UpdateAnimationQueue()                        # ReleaseCurrentAnimation -> OnAnimRelease
+    assert c.IsStateSet(CharacterClass.CS_UI_DISABLED) == 0   # done_flags re-enabled the UI

@@ -667,6 +667,14 @@ class CharacterClass(ObjectClass):
         elif cat == self.CAT_TURN_BACK:          # 4 — turn-back
             self._target_name = None
             self.ClearFlags(self.CS_TURNED)      # 0x4
+        # Apply the record's completion flags. Today only CS_UI_ENABLED is used:
+        # a mode-0 PlayAnimation/PlayAnimationFile (and MoveTo) disables the UI
+        # for the gesture's duration via CS_UI_DISABLED (PreparePlay applies
+        # rec.flags); on release the done event re-enables it. Without this the
+        # officer's context menu stays suppressed FOREVER after the gesture
+        # (SetFlags(CS_UI_DISABLED) dropped it and MenuUp refuses while set).
+        if getattr(rec, "done_flags", 0) & self.CS_UI_ENABLED:
+            self.ClearFlags(self.CS_UI_DISABLED)
 
     def ShouldPlayNow(self, rec) -> bool:
         cat = rec.category
