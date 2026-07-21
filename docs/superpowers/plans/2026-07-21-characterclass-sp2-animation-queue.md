@@ -793,3 +793,90 @@ The integration task that carves the controller into the "hands" API and wires t
 **Type consistency:** `AnimRec` (fields `category/name/flags/play`) and the verdict constants (`STOP_OLD/REJECT_NEW/STOP_BOTH/COEXIST`) are defined in T1 and used consistently (T3, T5, T6, T8). The clip-player seam names (`play`/`is_active`/`stop`/`return_to_default`) and the `CharacterClass` stubs (`_anim_play_now`/`_anim_stop_play`/`_anim_is_active`) are introduced as stubs in T3/T5/T8 and given bodies in T10 — consistent throughout. `_resolve_anim` is introduced in T11 and consumed by T7 (note: T7 precedes T11 in number but depends on `_resolve_anim` — reorder so T11's `_resolve_anim` seam lands before T7, OR have T7 introduce the `_resolve_anim` stub; the implementer should introduce `_resolve_anim` as a stub in T7 and give it its body in T11).
 
 **Known ordering fix:** T7 (`Special4/6`) depends on `_resolve_anim` from T11. Resolution: T7 introduces `_resolve_anim` as a mockable stub (raise/return None by default) and T11 gives it its real `bridge_placement` body — the same introduce-stub-then-implement pattern used for the clip-player seam.
+
+---
+
+# REVISED integration plan — T10–T15 (supersedes the T10–T15 above)
+
+> Re-planned 2026-07-21 (Mark) after reading `engine/bridge_character_anim.py` in full. The controller
+> is hard-won, live-verified code (body/chair coupling, `on_complete` rescue, re-entrancy, and a
+> completion guarantee that advances mission `TGSequence`s — wrong ⇒ **missions hang**). So SP2 does
+> **not** rewrite its playback; the queue **drives** the controller through one thin seam, threading
+> the completion callback on the record. See spec §4.7 (refined). Design also in the ledger.
+
+## Task 10 (revised): Completion fields on the record + `SetCurrentAnimation` threading
+
+**Files:** Modify `engine/appc/character_anim_queue.py` (extend `AnimRec`), `engine/appc/characters.py` (`SetCurrentAnimation` signature). Test: `tests/unit/test_character_anim_queue.py`.
+
+- Extend `AnimRec` with `on_complete=None`, `hold=False`, `now=False`, `done_flags=0` (all defaulted — backward compatible; existing constructions unaffected).
+- Extend `SetCurrentAnimation(self, anim, category, flags=0, name=None, on_complete=None, hold=False, now=False)` — stamp these onto the built record. All new params default so existing callers are unchanged.
+- Tests: `SetCurrentAnimation(..., on_complete=cb)` produces a queued record carrying `cb`; defaults are None/False/0.
+- Commit: `feat(character): SP2 t10 — completion fields on AnimRec + SetCurrentAnimation`.
+
+## Task 11 (revised): The controller clip-player seam (`play_record`/`is_active`/`stop`)
+
+**Files:** Modify `engine/bridge_character_anim.py`. Test: `tests/unit/test_bridge_character_anim.py` (+ new cases).
+
+**Read the controller first.** Keep EVERYTHING (`_process_turn`/`_process_glance`/`_start_clip`/`_return_to_default`/`_body_turns_officer`/`submit`/`request_*`/`update`/pending lists/node coupling) intact. ADD:
+- `is_active(self, character) -> bool` — alias of the existing `is_busy` (keep `is_busy` too, or make `is_busy` call `is_active`).
+- `stop(self, character) -> None` — evict the character's `_active` entry and any pending turn/glance/default for its iid (best-effort; never raise). Fire a rescued `on_complete` off an evicted `_Action` (mirror the existing rescue in `submit`/`request_default`) so a waiting sequence never hangs.
+- `play_record(self, character, rec) -> None` — map `rec.category` to the EXISTING deferred playback, threading `rec.on_complete`/`rec.hold`/`rec.now`:
+  - `CAT_TURN (3)` → `request_turn_to(character, rec.name or "Captain", back=False, hold=rec.hold, now=rec.now, on_complete=rec.on_complete)`.
+  - `CAT_TURN_BACK (4)` → `request_turn_to(character, rec.name or "Captain", back=True, hold=rec.hold, now=rec.now, on_complete=rec.on_complete)`.
+  - `CAT_GLANCE (5)` / `CAT_GLANCE_BACK (6)` → `request_glance(character, rec.name or "", on_complete=rec.on_complete)`.
+  - `CAT_NON_INTERRUPTABLE (2)` (move) → the move/walk path: submit the resolved move clip (or route to the walk controller if that is where AT_MOVE playback lives — read `bridge_character_walk.py`); thread `on_complete`.
+  - `CAT_BREATHE (0)` / `CAT_INTERRUPTABLE (1)` → `submit(character, clips, priority, hold=rec.hold, on_complete=rec.on_complete)` where `clips` come from `rec.play` (a resolved clip descriptor) — read how `submit` expects `clips` and adapt; if `rec.play` is already a clip list use it, else resolve via the existing `capture_registered_clip` path the controller already uses.
+  - Import the `CAT_*` values from `CharacterClass` or duplicate the small int constants locally with a comment (avoid a circular import — the controller must not import `characters` at module load; do a local import inside `play_record` if needed).
+- Tests: with a fake character (`_render_instance` set) + a FakeRenderer, `play_record` with a `CAT_TURN` rec appends a pending turn carrying the `on_complete`; a `CAT_GLANCE` rec appends a pending glance; `stop` evicts + fires a rescued callback; `is_active` reflects `_active`. Reuse the existing test harness in `test_bridge_character_anim.py`.
+- Commit: `feat(character): SP2 t11 — controller play_record/is_active/stop seam (playback intact)`.
+
+## Task 12 (revised): Wire the CharacterClass seam + `_resolve_anim` + real action methods
+
+**Files:** Modify `engine/appc/characters.py`. Test: `tests/unit/test_character_anim_queue.py`, `tests/unit/test_characters.py`.
+
+- Wire the three seam stubs (headless-guarded — `get_controller()` may be None in unit tests):
+  ```python
+  def _anim_play_now(self, rec):
+      c = _anim_controller()
+      if c is not None: c.play_record(self, rec)
+  def _anim_stop_play(self, rec):
+      c = _anim_controller()
+      if c is not None: c.stop(self)
+  def _anim_is_active(self, rec) -> bool:
+      c = _anim_controller()
+      return bool(c.is_active(self)) if c is not None else False
+  ```
+  where `_anim_controller()` lazily imports `engine.bridge_character_anim.get_controller` (guard ImportError → None). **Keep CharacterClass renderer-free** — never import the renderer.
+- Give `_resolve_anim(key)` its real body: `from engine.appc import bridge_placement; return bridge_placement.resolve_builder(self, key)` (guard exceptions → None). This is the single builder-resolution seam (used by the action methods and Special4/6).
+- Make the action methods real (tier-0 §4.10; reference `docs/engine/characterclass-reference.md`), threading the SDK completion callback onto the record via `SetCurrentAnimation(..., on_complete=...)`:
+  - `Breathe`, `MoveTo`, `PlayAnimation`, `PlayAnimationFile` (this task) — key composition + category/flags per the mode table, `on_complete` threaded.
+- Tests: each method composes the expected key (assert via a capturing `_resolve_anim`), enqueues a record with the right category/flags/`on_complete`; `Breathe`'s idle gate; headless `_anim_is_active` returns False (no controller). **This task heals the predicate transitional failures** for the queue-driven path — verify `test_character_animation_state.py` state (some may need updating to the new model in T14).
+- Commit: `feat(character): SP2 t12 — wire clip-player seam + resolve + Breathe/MoveTo/PlayAnimation*`.
+
+## Task 13 (revised): Remaining action methods — `TurnTowards`/`TurnBack`/`Glance{At,Away}`/`LookAtMe`
+
+**Files:** Modify `engine/appc/characters.py`. Test: `tests/unit/test_character_anim_queue.py`.
+
+- Implement per tier-0 §4.10 (as the original T12), threading `on_complete`, using `_resolve_anim`. `GlanceAt` carries the name (cat 5); `GlanceAway`/`TurnBack` clear the interruptable set first; `LookAtMe` routes to `bridge_camera_watch` (NOT the queue).
+- Commit: `feat(character): SP2 t13 — TurnTowards/TurnBack/Glance{At,Away}/LookAtMe`.
+
+## Task 14 (revised): Collapse the two doors + re-point callers + host tick + heal transitional tests
+
+**Files:** Modify `engine/appc/ai.py` (`CharacterAction.Play`), `engine/bridge_idle_gestures.py`, `engine/bridge_hit_reactions.py`, `engine/bridge_character_walk.py`, `engine/appc/characters.py` (`_notify_menu`), `engine/host_loop.py` (tick). Update the transitional tests. Tests: `test_character_action_verbs.py`, `test_character_animation_state.py`, `test_character_action_glance.py`, `test_crew_menu_turn.py`, `test_bridge_character_anim*`.
+
+- `CharacterAction.Play()` `AT_*` → the `CharacterClass` methods, passing `self.Completed` as the completion callback: `AT_MOVE`→`MoveTo(detail, self.Completed)`, `AT_TURN`/`AT_TURN_NOW`→`TurnTowards`, `AT_TURN_BACK*`→`TurnBack`, `AT_GLANCE_AT`→`GlanceAt`, `AT_GLANCE_AWAY`→`GlanceAway`, `AT_BREATHE`/`AT_FORCE_BREATHE`→`Breathe`, `AT_PLAY_ANIMATION[_FILE]`→`PlayAnimation[File]`, `AT_DEFAULT`→queue drain + controller `return_to_default`. Preserve the exact completion timing of every branch (speak/camera/menu branches unchanged; `AT_BECOME_ACTIVE/INACTIVE`→`SetActive` once T15 lands). **The `on_complete=self.Completed` thread is what keeps mission `TGSequence`s advancing — verify with the existing multi-action-sequence tests.**
+- `bridge_idle_gestures` → `character.Breathe()` / random-anim enqueue; `bridge_hit_reactions` → enqueue via `SetCurrentAnimation` (engine-driven, sibling §6.4); `bridge_character_walk` → drive `AT_MOVE` via the seam; `_notify_menu` → `self.TurnTowards("Captain")`.
+- `host_loop` tick: `character.UpdateAnimationQueue()` for each active bridge character, ordered **before** the existing controller `update()` (read `host_loop.py:~2058`).
+- **Heal the 7 tracked transitional failures.** Re-run them; the verb tests (`test_character_action_verbs.py`) heal once the door is collapsed + a controller is present. The `test_character_animation_state.py` tests encode the OLD single-slot model (`set_current_animation` legacy + expect "animating" with no clip) — update them to the new queue model (enqueue + a fake controller so `is_active` is True, or assert `IsGoingToAnimate`), NOT by weakening assertions. Any legacy `set_current_animation` still referenced should be reconciled.
+- Commit: `feat(character): SP2 t14 — collapse verb doors, re-point callers, host tick; heal transitional tests`.
+
+## Task 15 (revised): `SetActive` faithfulness + full gate + live checklist
+
+**Files:** Modify `engine/appc/characters.py` (`SetActive` + SP1-deferred ctor default). Verification only for the gate/live parts.
+
+- `SetActive(bActive)` (tier-0 §4.2): store the arg; if `not bActive` → `ClearAnimationsOfType(0); (1); (5); (6)`. Apply the SP1-deferred inactive ctor default ONLY after confirming live bridge-load callers still `SetActive(1)` their officers (grep first; do not regress bridge load). Tests: deactivate clears queued interruptable records, leaves a `CAT_NON_INTERRUPTABLE`.
+- **Full gate:** `grep -n "_current_anim\|\.request_turn\b\|\.is_busy(" engine/` for surviving external callers of the removed door (internal controller uses are fine). `scripts/check_tests.sh` — MUST be fully green (the 7 transitional failures resolved). Any other failure is an SP2 regression.
+- **Live-verification checklist for Mark** (SP2 is player-visible; do NOT claim done from tests):
+  1. Bridge idle gestures still play. 2. Turn-to-captain on crew-menu open turns officer + chair. 3. Hull hit → crew hit reactions. 4. E1M1 walk-on completes. 5. Scripted glance plays + returns to rest. 6. A direct `pChar.MoveTo(...)`/`TurnBack()` from a mission fires (new door). 7. **A multi-action mission cutscene (speak→turn→say) advances to completion — no hang** (this is the completion-plumbing acceptance check). 8. No officer freezes mid-animation.
+  Record the live-pass result in the ledger before finishing the branch.
+- Commit (if the gate needed a fix): `feat(character): SP2 t15 — SetActive faithfulness + gate green`.

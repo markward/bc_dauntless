@@ -149,19 +149,41 @@ take the returned sequence). Then build the record and enqueue via `SetCurrentAn
 > tier-0 gives it; the earlier apparent category↔name inconsistency dissolves once these two are kept
 > separate. Pin each with a test.
 
-### 4.7 Clip-player seam — demote `BridgeCharacterAnimController`
+### 4.7 Clip-player seam — the queue drives the controller (refined 2026-07-21)
 
-Carve the controller down to a "hands" API the `CharacterClass` queue calls:
+**Refined after reading the controller:** `BridgeCharacterAnimController` is hard-won, live-verified
+code — body-vs-chair turn coupling (per-station asymmetry), `on_complete` rescue, re-entrancy
+handling (snapshot iteration), and a completion guarantee that fires the `CharacterAction.Completed()`
+which **advances mission `TGSequence`s** (get it wrong → missions hang). So SP2 does **not** rewrite
+its playback. It keeps `_process_turn`/`_process_glance`/`_start_clip`/`_return_to_default`/
+`_body_turns_officer`/`submit`/`request_*`/`update()`/the chair coupling **all intact**, and adds a
+thin seam the `CharacterClass` queue calls:
 
-- `play(character, rec, on_complete)` — start the record's clips on the character's render instance.
-- `is_active(character)` — is the character's clip still playing (drives `ReleaseCurrentAnimation`).
-- `stop(character)` — stop/skip the current clip.
-- `return_to_default(character)` — the `AT_DEFAULT`/rest-pose restore.
+- **`play_record(character, rec)`** — map `rec.category` to the controller's **existing** deferred
+  playback: `CAT_TURN`/`CAT_TURN_BACK` → `request_turn_to`; `CAT_GLANCE`/`CAT_GLANCE_BACK` →
+  `request_glance`; `CAT_NON_INTERRUPTABLE` (move) → the move/walk path; `CAT_BREATHE`/
+  `CAT_INTERRUPTABLE` → `submit` a gesture. The record's `on_complete` is threaded through so the
+  mission callback fires on clip settle exactly as today. Renderer-free: it only appends to the
+  controller's pending lists; `update()` (which has the renderer) drains and plays them.
+- **`is_active(character)`** — was `is_busy`; drives `ReleaseCurrentAnimation` (`_anim_is_active`).
+- **`stop(character)`** — evict the character's clip (`_anim_stop_play`).
 
-**Kept** (the proven playback half): `_start_clip`, `_real_duration`, `_return_to_default`,
-`_process_turn`, `_body_turns_officer`, the `BridgeNodeAnimController` chair coupling, and the
-per-frame `update()` that advances active clips. **Removed** (superseded by the `CharacterClass`
-queue): the `_Action` priority records and `submit`/`request_*`/`is_busy` decision layer.
+`request_*`/`submit` become **internal** (called by `play_record`); only their *external* direct
+callers (§4.8) move to the `CharacterClass` door. The controller's `submit`-priority preemption goes
+vestigial-but-harmless: the queue serialises playback (one record at a time, gated on `is_active`),
+so its own conflict decision (§5) is authoritative and `submit` is never asked to preempt.
+
+**Completion plumbing (the critical wire).** `AnimRec` gains `on_complete` (and, where BC attaches
+done-flags, a `done_flags`/`hold`/`now` as needed). The action methods (§4.6) put the SDK-supplied
+completion callback (e.g. `CharacterAction.Completed`) on the record via `SetCurrentAnimation(...,
+on_complete=...)`; `UpdateAnimationQueue` → `_anim_play_now(rec)` → `play_record(character, rec)`
+hands it to the controller, which fires it on settle. Mission `TGSequence` advancement is preserved
+by construction. Done-flags (e.g. re-enable UI after a `MoveTo`, BC's `0x800`) are applied on release
+(`OnAnimRelease`/a completion wrapper).
+
+**Layering / host tick (§4.8):** per frame, `character.UpdateAnimationQueue()` runs for each active
+character **before** the controller's `update()`, so a record enqueued this frame is drained and
+played the same frame.
 
 ### 4.8 Collapse the two doors + re-point callers
 
