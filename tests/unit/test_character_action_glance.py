@@ -1,4 +1,14 @@
+"""CharacterAction's AT_GLANCE_AT/AT_GLANCE_AWAY verbs, re-pointed (SP2 P2)
+through the CharacterClass door (GlanceAt/GlanceAway) instead of calling the
+glance controller directly. The CharacterClass AnimRec queue now owns the
+actual controller call (via UpdateAnimationQueue -> play_record);
+CharacterAction only enqueues and waits for its on_complete to fire.
+
+Follows the same pattern as the already-migrated turn tests, see
+test_character_action_turn.py.
+"""
 from engine.appc.ai import CharacterAction
+from engine.appc.characters import CharacterClass_Create
 import engine.bridge_character_anim as bca
 
 
@@ -11,35 +21,91 @@ class _Char:
         return 0
 
 
-class _RecordingGlanceController:
-    def __init__(self):
-        self.calls = []
-    def request_glance(self, character, detail, on_complete=None):
-        self.calls.append((detail, on_complete))
+def _char(active=True):
+    ch = CharacterClass_Create()
+    if active:
+        ch.SetActive(1)
+    return ch
+
+
+def _real_controller_recording_glances(monkeypatch):
+    """A real BridgeCharacterAnimController with request_glance swapped for a
+    recording fake -- so play_record/is_active/stop stay the genuine
+    plumbing the CharacterClass queue calls, and only the glance call itself
+    is observed."""
+    ctrl = bca.BridgeCharacterAnimController()
+    calls = []
+
+    def _recording_request_glance(character, detail, on_complete=None):
+        calls.append(dict(character=character, detail=detail,
+                          on_complete=on_complete))
+
+    monkeypatch.setattr(ctrl, "request_glance", _recording_request_glance)
+    monkeypatch.setattr(bca, "get_controller", lambda: ctrl)
+    return ctrl, calls
 
 
 def test_at_glance_at_queues(monkeypatch):
-    ch = _Char()
-    ctrl = _RecordingGlanceController()
-    monkeypatch.setattr(bca, "get_controller", lambda: ctrl)
-    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
-                        lambda c: c)
+    ch = _char()
+    ctrl, calls = _real_controller_recording_glances(monkeypatch)
     act = CharacterAction(ch, CharacterAction.AT_GLANCE_AT, "Left")
     act.Play()
-    assert ctrl.calls[0][0] == "Left"
-    assert act.IsPlaying() is True
-    ctrl.calls[0][1]()                                 # controller settles
+    assert act.IsPlaying() is True                     # deferred
+    assert len(ch._anim_pending) == 1
+    rec = ch._anim_pending[0]
+    assert rec.category == ch.CAT_GLANCE
+    assert rec.name == "Left"
+    assert rec.on_complete == act.Completed
+
+    ch.UpdateAnimationQueue()                          # drains the queue -> plays
+    assert len(calls) == 1
+    c = calls[0]
+    assert c["detail"] == "Left"
+    assert c["on_complete"] == act.Completed
+    c["on_complete"]()                                 # controller settles
     assert act.IsPlaying() is False
 
 
-def test_at_glance_inline_when_no_controller(monkeypatch):
-    ch = _Char()
-    monkeypatch.setattr(bca, "get_controller", lambda: None)
+def test_at_glance_away_completes_via_queue_drain(monkeypatch):
+    ch = _char()
     monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
                         lambda c: c)
+    bca.clear_controller()
     act = CharacterAction(ch, CharacterAction.AT_GLANCE_AWAY)
     act.Play()
+    assert act.IsPlaying() is True                     # deferred, no longer inline
+
+    # GlanceAway is CAT_GLANCE_BACK, routed through Special6, which declines
+    # with no glance-target -- the record is retired and its on_complete
+    # fires via ReleaseCurrentAnimation on a later drain.
+    for _ in range(3):
+        if not act.IsPlaying():
+            break
+        ch.UpdateAnimationQueue()
     assert act.IsPlaying() is False
+
+
+def test_at_glance_away_completes_inline_when_character_cast_is_none(
+        monkeypatch):
+    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
+                        lambda c: None)
+    act = CharacterAction(_char(), CharacterAction.AT_GLANCE_AWAY)
+    act.Play()
+    assert act.IsPlaying() is False
+
+
+def test_queue_glance_exception_is_best_effort(monkeypatch):
+    # If CharacterClass_Cast (or GlanceAt/GlanceAway) blows up, Play() must
+    # not propagate and the action must complete inline so the mission
+    # TGSequence advances.
+    def boom(obj):
+        raise RuntimeError("cast blew up")
+
+    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast", boom)
+
+    act = CharacterAction(_char(), CharacterAction.AT_GLANCE_AT, "Left")
+    act.Play()                                          # must not raise
+    assert act.IsPlaying() is False                     # completed inline
 
 
 def test_request_glance_inline_when_unresolved(monkeypatch):
@@ -49,6 +115,7 @@ def test_request_glance_inline_when_unresolved(monkeypatch):
 
     class _R:  # renderer unused on the unresolved path
         pass
+
     ch = _Char()
     fired = []
     ctrl.request_glance(ch, "Left", on_complete=lambda: fired.append(True))

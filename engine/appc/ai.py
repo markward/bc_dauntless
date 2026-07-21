@@ -1620,18 +1620,26 @@ class CharacterAction(TGAction):
             _speak()
 
     def _queue_glance(self) -> None:
-        # Quick glance (AT_GLANCE_AT/AWAY). Best-effort: completes inline on any
-        # failure so the sequence never stalls. Detail "Away" when bare.
+        # Quick glance (AT_GLANCE_AT/AWAY) — routes through the CharacterClass
+        # door (GlanceAt/GlanceAway), which owns the AnimRec queue and the
+        # completion guarantee: self.Completed fires exactly once, either via
+        # the record when it plays/settles/is retired by the queue drain, or
+        # inline on the no-op path. Best-effort: Play() must never raise — any
+        # failure completes inline so the mission TGSequence advances instead
+        # of stalling.
         from engine.appc.characters import CharacterClass_Cast
-        from engine import bridge_character_anim
         try:
             cc = CharacterClass_Cast(self._character) if self._character is not None else None
-            ctrl = bridge_character_anim.get_controller()
-            if cc is None or ctrl is None:
+            if cc is None:
                 self.Completed()
                 return
-            detail = str(self._detail) if self._detail is not None else "Away"
-            ctrl.request_glance(cc, detail, on_complete=self.Completed)
+            if self._action_type == self.AT_GLANCE_AT:
+                detail = str(self._detail)
+                if not cc.GlanceAt(detail, on_complete=self.Completed):
+                    self.Completed()
+            else:
+                if not cc.GlanceAway(on_complete=self.Completed):
+                    self.Completed()
         except Exception:
             self.Completed()
 
