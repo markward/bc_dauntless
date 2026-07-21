@@ -221,6 +221,45 @@ def test_play_animation_file_unregistered_name_completes_immediately(monkeypatch
     assert ch.IsAnimatingNonInterruptable() == 0
 
 
+def test_queue_play_animation_completes_inline_when_character_cast_is_none(
+        monkeypatch):
+    # Mirrors test_at_turn_completes_inline_when_character_cast_is_none /
+    # test_at_glance_away_completes_inline_when_character_cast_is_none: no
+    # CharacterClass to enqueue against -> complete inline, never enqueue.
+    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast",
+                        lambda obj: None)
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    action = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION, "PushingButtons")
+    action.Play()
+    assert action.IsPlaying() == 0
+    assert ch._anim_pending == []
+
+
+def test_queue_play_animation_exception_is_best_effort(monkeypatch):
+    # Mirrors test_queue_turn_exception_is_best_effort /
+    # test_queue_glance_exception_is_best_effort: if CharacterClass_Cast (or
+    # PlayAnimation) blows up, Play() must not propagate and the action must
+    # complete inline so the mission TGSequence advances.
+    def boom(obj):
+        raise RuntimeError("cast blew up")
+    monkeypatch.setattr("engine.appc.characters.CharacterClass_Cast", boom)
+
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    action = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION, "PushingButtons")
+    action.Play()                                        # must not raise
+    assert action.IsPlaying() == 0                       # completed inline
+
+
+def test_queue_play_animation_detail_none_completes_inline():
+    # BC no-ops an unresolved gesture; the sequence must still advance
+    # instead of stalling on a None detail.
+    ch = _character_with("PushingButtons", "Some.Module.DBTConsoleInteraction")
+    action = CharacterAction(ch, CharacterAction.AT_PLAY_ANIMATION)
+    action.Play()
+    assert action.IsPlaying() == 0
+    assert ch._anim_pending == []
+
+
 def test_second_scripted_gesture_on_busy_officer_does_not_corrupt_first_action(
         monkeypatch):
     # The model changed here (SP2 P3): the OLD controller-level priority guard
