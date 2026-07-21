@@ -651,6 +651,43 @@ class CharacterClass(ObjectClass):
         # Clip-player seam. Task 10 wires this to actually play `rec`. Interim: no-op.
         pass
 
+    def UpdateAnimationQueue(self) -> None:
+        # Per-frame driver (tier-0 §4.8). Advance the queue by one step.
+        self.ReleaseCurrentAnimation(0)
+        if self._anim_current is not None or not self._anim_pending:
+            return
+        rec = self._anim_pending.pop(0)
+        cat = rec.category
+        if cat == self.CAT_TURN_BACK:            # 4
+            if not self.Special4(rec):
+                self._anim_stop_play(rec)
+        elif cat == self.CAT_GLANCE_BACK:        # 6
+            if not self.Special6(rec):
+                self._anim_stop_play(rec)
+        else:
+            if self.ShouldPlayNow(rec):
+                self.PreparePlay(rec)
+                self._anim_play_now(rec)
+            else:
+                self._anim_stop_play(rec)
+        # NOTE (tier-0): the record becomes current REGARDLESS of whether it
+        # played or was stopped/deferred. A stopped record is retired next tick
+        # by ReleaseCurrentAnimation (its clip is not active).
+        self._anim_current = rec
+        # Tooltip drop: best-effort. No tooltip-owner seam exists yet in this
+        # codebase, so guard it and no-op if absent (SP4 wires the real drop).
+        try:
+            if self.IsStateSet(self.CS_UI_DISABLED) and self._should_drop_tooltips():
+                self._drop_character_tooltips()
+        except Exception:
+            pass
+
+    def _should_drop_tooltips(self) -> bool:
+        return False        # SP4 wires the real current-tooltip-owner check
+
+    def _drop_character_tooltips(self) -> None:
+        pass
+
     def Special4(self, rec) -> bool:
         # Turn-back follow-up (tier-0 §4.8, adapted). Declines (False) if no
         # move/back-to target or the builder doesn't resolve; else composes

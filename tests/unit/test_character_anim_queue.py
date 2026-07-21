@@ -259,3 +259,70 @@ def test_special6_declines_when_builder_resolves_none(monkeypatch):
     monkeypatch.setattr(c, "_anim_play_now", lambda rec: played.append(rec))
     assert c.Special6(AnimRec(category=CharacterClass.CAT_GLANCE_BACK)) is False
     assert played == []
+
+
+# ── Task 8: UpdateAnimationQueue — the per-frame driver (tier-0 §4.8) ────────
+
+def test_update_queue_promotes_pending_to_current():
+    c = CharacterClass_Create()
+    rec = AnimRec(category=CharacterClass.CAT_NON_INTERRUPTABLE, play=object())
+    c._anim_pending.append(rec)
+    c.UpdateAnimationQueue()
+    assert c._anim_current is rec
+    assert c._anim_pending == []
+
+
+def test_update_queue_noop_when_empty_or_current_already_set():
+    c = CharacterClass_Create()
+    # empty queue, no current -> no-op
+    c.UpdateAnimationQueue()
+    assert c._anim_current is None
+    assert c._anim_pending == []
+
+    # current already set (and still active, so ReleaseCurrentAnimation does
+    # not retire it) -> pending left untouched (early return)
+    existing = AnimRec(category=CharacterClass.CAT_NON_INTERRUPTABLE, play=object())
+    c._anim_current = existing
+    c._anim_is_active = lambda rec: True
+    pending_rec = AnimRec(category=CharacterClass.CAT_GLANCE, play=object())
+    c._anim_pending.append(pending_rec)
+    c.UpdateAnimationQueue()
+    assert c._anim_current is existing
+    assert c._anim_pending == [pending_rec]
+
+
+def test_update_queue_turn_back_routes_to_special4(monkeypatch):
+    c = CharacterClass_Create()
+    rec = AnimRec(category=CharacterClass.CAT_TURN_BACK, play=object())
+    c._anim_pending.append(rec)
+
+    calls = []
+    monkeypatch.setattr(c, "Special4", lambda r: (calls.append(r), True)[1])
+    stop_calls = []
+    monkeypatch.setattr(c, "_anim_stop_play", lambda r: stop_calls.append(r))
+
+    c.UpdateAnimationQueue()
+
+    assert calls == [rec]
+    assert stop_calls == []
+    assert c._anim_current is rec
+    assert c._anim_pending == []
+
+
+def test_update_queue_deferred_record_is_stopped_but_becomes_current():
+    c = CharacterClass_Create()
+    c._target_name = "P1"    # blocks ShouldPlayNow for a plain glance (cat 5)
+    rec = AnimRec(category=CharacterClass.CAT_GLANCE, play=object())
+    c._anim_pending.append(rec)
+
+    played = []
+    c._anim_play_now = lambda r: played.append(r)
+    stopped = []
+    c._anim_stop_play = lambda r: stopped.append(r)
+
+    c.UpdateAnimationQueue()
+
+    assert played == []
+    assert stopped == [rec]
+    assert c._anim_current is rec
+    assert c._anim_pending == []
