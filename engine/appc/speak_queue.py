@@ -42,3 +42,26 @@ class SpeakQueue:
         # is add_sound_to_queue (no SDK caller), so this is 0 in practice --
         # which is exactly what unblocks the ScienceCharacterHandlers guard.
         return 1 if self._pending else 0
+
+    def add_sound_to_queue(self, pSound, sound_type=0, data=0) -> None:
+        # BC 0x0066CB90: no-op unless a sound is present. type==2 while the
+        # character is idle (nothing already queued, not mid-speech) plays
+        # immediately, skipping the queue; otherwise enqueue behind whatever
+        # is already pending/playing.
+        if pSound is None:
+            return
+        if int(sound_type) == 2 and not (self.is_ready_to_speak() or self.is_speaking()):
+            try:
+                pSound.Play()
+            except Exception:
+                pass
+            return
+        self._pending.append(pSound)
+
+
+def someone_speaking() -> int:
+    """BC CharacterClass_IsSomeoneSpeaking (0x00666F00): active-speaker count > 0.
+    The crew_speech bus serialises, so the count is 0 or 1."""
+    b = crew_speech.bus()
+    import time
+    return 1 if (b._active_speaker and time.monotonic() < b._active_expiry) else 0

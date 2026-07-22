@@ -1,5 +1,6 @@
 import engine.appc.crew_speech as crew_speech
 from engine.appc.speak_queue import SpeakQueue
+from engine.appc import speak_queue as sq
 
 
 class _Owner:
@@ -38,3 +39,42 @@ def test_is_ready_to_speak_is_zero_when_queue_empty(monkeypatch):
     q = SpeakQueue(_Owner())
     assert q.is_ready_to_speak() == 0              # fixes the always-1 Science-guard bug
     assert q.is_speaking() == 0
+
+
+def test_add_sound_to_queue_noop_without_sound():
+    q = sq.SpeakQueue(_Owner())
+    q.add_sound_to_queue(None, 2, 0)
+    assert q.is_ready_to_speak() == 0
+
+
+def test_add_sound_to_queue_enqueues_non_immediate(monkeypatch):
+    monkeypatch.setattr(crew_speech, "is_speaking", lambda name, now=None: False)
+    q = sq.SpeakQueue(_Owner())
+
+    class _Snd:
+        def __init__(self): self.played = 0
+        def Play(self): self.played += 1
+    s = _Snd()
+    q.add_sound_to_queue(s, 0, 0)          # type != 2 -> enqueue, don't play
+    assert s.played == 0
+    assert q.is_ready_to_speak() == 1      # now pending
+
+
+def test_add_sound_to_queue_type2_plays_immediately_when_ready(monkeypatch):
+    monkeypatch.setattr(crew_speech, "is_speaking", lambda name, now=None: False)
+    q = sq.SpeakQueue(_Owner())
+
+    class _Snd:
+        def __init__(self): self.played = 0
+        def Play(self): self.played += 1
+    s = _Snd()
+    q.add_sound_to_queue(s, 2, 0)          # type==2 & ready -> play now
+    assert s.played == 1
+    assert q.is_ready_to_speak() == 0
+
+
+def test_someone_speaking_reflects_bus(monkeypatch):
+    monkeypatch.setattr(crew_speech, "is_speaking", lambda name, now=None: False)
+    b = crew_speech.bus()
+    b._active_speaker = ""
+    assert sq.someone_speaking() == 0
