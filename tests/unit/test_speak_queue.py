@@ -60,7 +60,20 @@ def test_add_sound_to_queue_enqueues_non_immediate(monkeypatch):
     assert q.is_ready_to_speak() == 1      # now pending
 
 
-def test_add_sound_to_queue_type2_plays_immediately_when_ready(monkeypatch):
+def test_add_sound_to_queue_type2_plays_immediately_when_speaking(monkeypatch):
+    monkeypatch.setattr(crew_speech, "is_speaking", lambda name, now=None: True)
+    q = sq.SpeakQueue(_Owner())
+
+    class _Snd:
+        def __init__(self): self.played = 0
+        def Play(self): self.played += 1
+    s = _Snd()
+    q.add_sound_to_queue(s, 2, 0)          # type==2 & already speaking -> play now, over the top
+    assert s.played == 1
+    assert q.is_ready_to_speak() == 0      # nothing enqueued
+
+
+def test_add_sound_to_queue_type2_enqueues_when_fully_idle(monkeypatch):
     monkeypatch.setattr(crew_speech, "is_speaking", lambda name, now=None: False)
     q = sq.SpeakQueue(_Owner())
 
@@ -68,9 +81,9 @@ def test_add_sound_to_queue_type2_plays_immediately_when_ready(monkeypatch):
         def __init__(self): self.played = 0
         def Play(self): self.played += 1
     s = _Snd()
-    q.add_sound_to_queue(s, 2, 0)          # type==2 & ready -> play now
-    assert s.played == 1
-    assert q.is_ready_to_speak() == 0
+    q.add_sound_to_queue(s, 2, 0)          # type==2 but idle (nothing queued, not speaking) -> enqueue
+    assert s.played == 0
+    assert q.is_ready_to_speak() == 1      # now pending
 
 
 def test_someone_speaking_reflects_bus(monkeypatch):

@@ -44,13 +44,13 @@ class SpeakQueue:
         return 1 if self._pending else 0
 
     def add_sound_to_queue(self, pSound, sound_type=0, data=0) -> None:
-        # BC 0x0066CB90: no-op unless a sound is present. type==2 while the
-        # character is idle (nothing already queued, not mid-speech) plays
-        # immediately, skipping the queue; otherwise enqueue behind whatever
-        # is already pending/playing.
+        # BC 0x0066CB90 (tier-0 reference sec 4.11): no-op unless a sound is
+        # present. type==2 while the character is ready (a sound already queued)
+        # or already speaking plays immediately, over the top (vtable +0x50);
+        # a fully idle character's sound is enqueued for normal draining.
         if pSound is None:
             return
-        if int(sound_type) == 2 and not (self.is_ready_to_speak() or self.is_speaking()):
+        if int(sound_type) == 2 and (self.is_ready_to_speak() or self.is_speaking()):
             try:
                 pSound.Play()
             except Exception:
