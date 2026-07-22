@@ -68,6 +68,27 @@ def resolve_character(menu_label):
     return None
 
 
+def station_name_for(officer):
+    """The bridge set-object name for `officer` ("Helm"/"Tactical"/"XO"/
+    "Science"/"Engineer"), or None. That name is exactly the SDK's
+    <prefix>UpdateToolTip prefix (BridgeHandlers.HelmUpdateToolTip, ...), so the
+    tooltip dispatcher (host loop) maps officer -> handler through this. Resolves
+    by identity against the live "bridge" set."""
+    if officer is None:
+        return None
+    try:
+        import App
+        bridge = App.g_kSetManager.GetSet("bridge")
+        if bridge is None:
+            return None
+        for _key, char_name in _KEY_TO_CHARACTER.items():
+            if App.CharacterClass_GetObject(bridge, char_name) is officer:
+                return char_name
+    except Exception:
+        return None
+    return None
+
+
 def wire(tcw, panel) -> None:
     """Register TALK_TO handlers on `tcw`; remember `panel` for rewire()."""
     global _wired_panel
