@@ -439,17 +439,12 @@ class CharacterClass(ObjectClass):
         self._flags: int = 0              # CS_* bitfield (m_flags @ +0x80)
         self._hidden: bool = False        # CS_HIDDEN/CS_VISIBLE cull toggle
         self._status: dict = {}           # tooltip display strings (SP4 -> StatusMap)
-        self._location_name: str = ""
         # ── Animation queue (SP2 — the CAT_* record queue; brain) ──────────
         self._anim_current = None        # AnimRec | None (BC +0x15C)
         self._anim_pending = []          # list[AnimRec] FIFO (BC +0x164 head)
         self._target_name = None         # move/back-to target (BC +0xa0)
         self._glance_name = None         # glance target (BC +0xa4)
         # ── Owner sub-component slots (filled by later sub-projects) ────────
-        # SP1's _anim_queue placeholder is superseded by the real queue state
-        # above (_anim_current/_anim_pending); kept as a deprecated alias so
-        # it stays None and does not dangle.
-        self._anim_queue = None       # deprecated: see _anim_current/_anim_pending
         self._speak_queue = None      # SP3: SpeakQueue (wraps crew_speech)
         self._position_zoom = None    # SP4: PositionZoomTable
         self._menu_state = None       # SP4: MenuState (formalizes _menu)
@@ -588,10 +583,7 @@ class CharacterClass(ObjectClass):
 
     def ClearAnimations(self) -> None:
         # Full drain of the queue + the anim-target name buffers (SP2 half of
-        # tier-0 §4.8). NOTE: _location_name is deliberately PRESERVED here
-        # (tier-0 frees it, but many SDK callers ClearAnimations() without
-        # re-setting the station; nulling it would break key composition). SP3/
-        # SP4 add speak-queue / position-table draining.
+        # tier-0 §4.8). SP3/SP4 add speak-queue / position-table draining.
         if self._anim_current is not None:
             cur = self._anim_current
             if getattr(cur, "played", False):
@@ -795,11 +787,11 @@ class CharacterClass(ObjectClass):
         #
         # The location prefix is GetLocation() (e.g. "DBTactical"), resolved the
         # SAME way the forward turn / breathe / glance-at resolve (via
-        # bridge_placement._resolve_builder_sequence). It is NOT self._location_name:
-        # BC never calls SetLocationName, so that field is always "" and keying off
-        # it produced a prefix-less "BackCaptain" that no officer registers -- the
-        # menu turn-back silently declined and the officer stayed facing the captain
-        # (live bug, DBridge helm/tactical). _location_name is vestigial here.
+        # bridge_placement._resolve_builder_sequence). BC never calls
+        # SetLocationName, so keying the prefix off that field instead produced
+        # a prefix-less "BackCaptain" that no officer registers -- the menu
+        # turn-back silently declined and the officer stayed facing the
+        # captain (live bug, DBridge helm/tactical).
         if not self._target_name:
             return False
         from engine.appc import bridge_placement
@@ -814,7 +806,7 @@ class CharacterClass(ObjectClass):
     def Special6(self, rec) -> bool:
         # Glance-away follow-up (tier-0 §4.8, adapted). Same location-prefix fix as
         # Special4: compose "<GetLocation()>GlanceAway<glance>" via the canonical
-        # resolver, not the always-empty self._location_name.
+        # resolver.
         if not self._glance_name:
             return False
         from engine.appc import bridge_placement
@@ -825,23 +817,6 @@ class CharacterClass(ObjectClass):
         self._anim_play_now(AnimRec(category=self.CAT_GLANCE_BACK, name=self._glance_name,
                                     flags=0, play=anim))
         return True
-
-    def set_current_animation(self, name, category) -> None:
-        """Mark this character as playing *name* in category *category* (a CAT_).
-
-        BC keeps the playing animation in a record on the character; the SDK
-        reads it back through IsAnimatingNonInterruptable() to refuse a second
-        gesture on a busy officer. The verb dispatch (CharacterAction) is the
-        only thing that starts these, so it owns setting and clearing this.
-
-        Interim shim over the SP2 queue fields (_anim_current/_anim_pending):
-        Tasks 3-5 replace this with the real enqueue/Classify pipeline.
-        """
-        from engine.appc.character_anim_queue import AnimRec
-        self._anim_current = AnimRec(category=int(category), name=str(name))
-
-    def clear_current_animation(self) -> None:
-        self._anim_current = None
 
     def GetCurrentAnimation(self) -> str:
         return self._anim_current.name if self._anim_current else ""
@@ -970,8 +945,6 @@ class CharacterClass(ObjectClass):
         # Either way we capture the value; the location node lookup is a Phase 2
         # bridge-renderer concern.
         self._data["Location"] = location
-    def SetLocationName(self, name) -> None:
-        self._location_name = str(name)
     def GetLocation(self):
         return self._data.get("Location")
 

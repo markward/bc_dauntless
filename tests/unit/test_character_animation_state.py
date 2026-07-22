@@ -92,14 +92,15 @@ def test_non_interruptable_animation_closes_the_sdk_gate(monkeypatch):
     assert ch.IsAnimating() == 0
     assert ch.IsAnimatingNonInterruptable() == 0
 
-    ch.set_current_animation("PushingButtons", CharacterClass.CAT_NON_INTERRUPTABLE)
+    ch.SetCurrentAnimation([("PushingButtons", 0.0)], CharacterClass.CAT_NON_INTERRUPTABLE, 0, "PushingButtons")
+    ch.UpdateAnimationQueue()
     assert ch.IsAnimating() == 1
     assert ch.IsGoingToAnimate() == 1
     assert ch.IsAnimatingNonInterruptable() == 1
     assert ch.IsAnimatingInterruptable() == 0
     assert ch.GetCurrentAnimation() == "PushingButtons"
 
-    ch.clear_current_animation()
+    ch.ClearAnimationsOfType(CharacterClass.CAT_NON_INTERRUPTABLE)
     assert ch.IsAnimating() == 0
     assert ch.IsAnimatingNonInterruptable() == 0
 
@@ -111,8 +112,8 @@ def test_interruptable_categories_match_the_binary(monkeypatch):
     ch = CharacterClass("body.nif", "head.nif")
     for cat in (CharacterClass.CAT_BREATHE, CharacterClass.CAT_INTERRUPTABLE,
                 CharacterClass.CAT_GLANCE, CharacterClass.CAT_GLANCE_BACK):
-        ch.set_current_animation("x", cat)
+        ch.SetCurrentAnimation([("x", 0.0)], cat, 0, None)
         assert ch.IsAnimatingInterruptable() == 1, cat
         assert ch.IsAnimatingNonInterruptable() == 0, cat
-    ch.set_current_animation("x", CharacterClass.CAT_NON_INTERRUPTABLE)
+    ch.SetCurrentAnimation([("x", 0.0)], CharacterClass.CAT_NON_INTERRUPTABLE, 0, None)
     assert ch.IsAnimatingInterruptable() == 0

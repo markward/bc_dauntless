@@ -122,7 +122,7 @@ def test_owner_has_named_subcomponent_slots():
     # SP1 backbone: the owner exposes named slots the later SPs fill
     # (SP2 anim queue, SP3 speak queue/phonemes, SP4 zoom/menu-state).
     c = CharacterClass_Create()
-    for slot in ("_anim_queue", "_speak_queue", "_position_zoom", "_menu_state"):
+    for slot in ("_speak_queue", "_position_zoom", "_menu_state"):
         assert slot in c.__dict__, slot
         assert c.__dict__[slot] is None
 
