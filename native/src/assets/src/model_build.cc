@@ -40,6 +40,33 @@ std::vector<std::uint8_t> read_file(const fs::path& p) {
     return bytes;
 }
 
+/// A 64x64 magenta/black checkerboard — the universal "missing texture"
+/// marker. Substituted for any NiImage that can't be resolved or decoded so a
+/// single bad texture never aborts the whole model build (which would skip the
+/// ship entirely: invisible hull, GetRadius()==0, targeting reticle collapsed
+/// to a point).
+Image make_checkerboard() {
+    constexpr std::uint32_t kDim = 64;
+    constexpr std::uint32_t kCell = 8;
+    Image img;
+    img.width = kDim;
+    img.height = kDim;
+    img.format = Image::Format::RGBA8;
+    img.pixels.resize(static_cast<std::size_t>(kDim) * kDim * 4);
+    for (std::uint32_t y = 0; y < kDim; ++y) {
+        for (std::uint32_t x = 0; x < kDim; ++x) {
+            const bool on = (((x / kCell) + (y / kCell)) & 1u) != 0;
+            const std::size_t i =
+                (static_cast<std::size_t>(y) * kDim + x) * 4;
+            img.pixels[i + 0] = on ? 255 : 0;   // R
+            img.pixels[i + 1] = 0;               // G
+            img.pixels[i + 2] = on ? 255 : 0;    // B (magenta when on)
+            img.pixels[i + 3] = 255;             // A
+        }
+    }
+    return img;
+}
+
 /// True if `fname`'s extension-less basename ends in "_glow"
 /// (case-insensitive). Matches BC's AddLOD suffix convention.
 bool filename_is_glow(std::string_view fname) {
@@ -124,22 +151,37 @@ TextureLoadResult load_all_textures(
         const auto* img = std::get_if<nif::NiImage>(&f.blocks[i]);
         if (!img) continue;
         Image decoded;
-        if (img->use_external != 0) {
-            auto path = ctx.resolver->resolve(img->file_name, ctx.texture_search_paths);
-            auto bytes = read_file(path);
-            decoded = decode_tga(bytes);
-        } else {
-            auto raw_idx = resolver.resolve(img->image_data_link);
-            const nif::NiRawImageData* raw = nullptr;
-            if (raw_idx != LinkResolver::kInvalidIndex && raw_idx < f.blocks.size()) {
-                raw = std::get_if<nif::NiRawImageData>(&f.blocks[raw_idx]);
+        try {
+            if (img->use_external != 0) {
+                auto path = ctx.resolver->resolve(img->file_name, ctx.texture_search_paths);
+                auto bytes = read_file(path);
+                decoded = decode_tga(bytes);
+            } else {
+                auto raw_idx = resolver.resolve(img->image_data_link);
+                const nif::NiRawImageData* raw = nullptr;
+                if (raw_idx != LinkResolver::kInvalidIndex && raw_idx < f.blocks.size()) {
+                    raw = std::get_if<nif::NiRawImageData>(&f.blocks[raw_idx]);
+                }
+                if (!raw) {
+                    throw ModelBuildError(
+                        "NiImage at block " + std::to_string(i) +
+                        ": missing or unresolvable NiRawImageData link");
+                }
+                decoded = decode_raw_image(*raw);
             }
-            if (!raw) {
-                throw ModelBuildError(
-                    "NiImage at block " + std::to_string(i) +
-                    ": missing or unresolvable NiRawImageData link");
-            }
-            decoded = decode_raw_image(*raw);
+        } catch (const std::exception& e) {
+            // A missing / unreadable / undecodable texture must not abort the
+            // whole model — that skips the ship (invisible, zero radius).
+            // Substitute a visible checkerboard and carry on so geometry always
+            // renders and the offending texture is obvious both on-screen and
+            // in the log.
+            std::fprintf(stderr,
+                "[model_build] NiImage block %u ('%s'): %s; substituting "
+                "checkerboard\n",
+                i,
+                (img->use_external != 0 ? img->file_name.c_str() : "<embedded>"),
+                e.what());
+            decoded = make_checkerboard();
         }
         Texture tex = upload(decoded, /*generate_mipmaps=*/true);
         // Key by the NIF block's *link ID* (the value other blocks store

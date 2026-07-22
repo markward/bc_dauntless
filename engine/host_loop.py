@@ -3361,8 +3361,22 @@ def _ship_texture_share_path(ship) -> str:
         name = mod.GetShipStats().get("Name")
     except Exception:
         return default
+    if not name:
+        return default
     import App
-    lod = App.g_kLODModelManager.Get(name) if name else None
+    # BC ship scripts record SetTextureSharePath inside their LoadModel(); our
+    # engine loads NIFs itself and never calls LoadModel, so the LODModel (and
+    # its share path) is usually unregistered at realize time. Trigger the
+    # script's own LoadModel once to record it — guarded by Contains(), so it's
+    # idempotent, and our LODModel.Load is headless bookkeeping (no NIF I/O).
+    if not App.g_kLODModelManager.Contains(name):
+        loader = getattr(mod, "LoadModel", None)
+        if callable(loader):
+            try:
+                loader()
+            except Exception as e:
+                dev_mode.log_swallowed("LoadModel for texture share path", e)
+    lod = App.g_kLODModelManager.Get(name)
     share = getattr(lod, "texture_share_path", None) if lod is not None else None
     return share or default
 

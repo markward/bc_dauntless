@@ -430,6 +430,20 @@ TEST_F(ModelBuildTest, NoReplacementBindsOriginalTexture) {
     EXPECT_EQ(base_texture_index(model), 0);
 }
 
+// A shape's external NiImage that cannot be resolved on disk must NOT abort the
+// whole model build. Aborting skips the ship entirely (invisible hull,
+// GetRadius()==0, targeting reticle collapsed to a point). Instead a visible
+// magenta/black checkerboard is substituted so geometry always renders.
+TEST_F(ModelBuildTest, MissingExternalTextureFallsBackToCheckerboard) {
+    // Deliberately do NOT write hull_ID.tga to tmp_dir.
+    auto f = file_with_textured_shape();
+    ASSERT_NO_THROW(assets::detail::build_model(f, make_ctx()));
+    auto model = assets::detail::build_model(f, make_ctx());
+    // The checkerboard is a real registered texture, bound to the Base stage.
+    EXPECT_EQ(model.textures.size(), 1u);
+    EXPECT_EQ(base_texture_index(model), 0);
+}
+
 // A replacement whose old-substring matches the NIF texture's basename appends
 // the new texture and repoints the material stage to it.
 TEST_F(ModelBuildTest, MatchingReplacementRepointsStage) {

@@ -53,13 +53,14 @@ def _norm(paths):
 
 
 def test_cardassian_share_path_reaches_texture_search():
-    import Galor
-
-    # Ship construction calls LoadModel() in the real game; do it explicitly
-    # here so the LODModel (and its CardShips share path) is registered.
-    Galor.LoadModel()
-
     from engine import host_loop as hl
+
+    # Reproduce the LIVE cold path: our engine loads NIFs itself and never calls
+    # the SDK ship script's LoadModel(), so the LODModel (which records
+    # SetTextureSharePath) is NOT pre-registered. The loader must self-register
+    # it to recover the CardShips share path. Purge guards against another test
+    # having already registered it (which would mask the bug).
+    App.g_kLODModelManager.Purge()
 
     sess = hl.MissionSession(mission_name="t")
     r = _CaptureRenderer()
