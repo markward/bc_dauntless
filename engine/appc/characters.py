@@ -24,6 +24,7 @@ calling AddChild + GetSubmenuW/GetButtonW chains.
 """
 
 from engine.appc.character_status_map import StatusMap
+from engine.appc.character_position_zoom import PositionZoomTable
 from engine.appc.objects import ObjectClass
 from engine.appc.tg_ui.widgets import TGPane
 from engine.appc import crew_speech
@@ -446,7 +447,7 @@ class CharacterClass(ObjectClass):
         self._target_name = None         # move/back-to target (BC +0xa0)
         self._glance_name = None         # glance target (BC +0xa4)
         # ── Owner sub-component slots (filled by later sub-projects) ────────
-        self._position_zoom = None    # SP4: PositionZoomTable
+        self._position_zoom = PositionZoomTable()   # SP4: per-station zoom (tier-0 4.4)
         self._menu_state = None       # SP4: MenuState (formalizes _menu)
         # Remaining SDK setter surface goes through the data-bag below.
         self._data: dict = {}
@@ -951,6 +952,16 @@ class CharacterClass(ObjectClass):
     def GetLocation(self):
         return self._data.get("Location")
 
+    # ── Position-zoom table (tier-0 reference sec 4.4) ──────────────────────
+    def AddPositionZoom(self, name, value, zoom_name="") -> None:
+        self._position_zoom.add_position_zoom(name, value, zoom_name)
+
+    def GetPositionZoom(self, name):
+        return self._position_zoom.get_position_zoom(name)
+
+    def GetPositionLookAtName(self, name):
+        return self._position_zoom.get_position_look_at_name(name)
+
     # ── Speak/animate verbs (routed through the owned SpeakQueue) ───────────
     def SpeakLine(self, pDatabase=None, lineID="", priority=CSP_NORMAL, *_) -> None:
         # SDK call shape is uniformly SpeakLine(db, lineID, priority) (or the
@@ -1289,7 +1300,7 @@ class CharacterClass(ObjectClass):
     # Catches SetGender, SetSize, SetBlinkChance, SetRandomAnimationChance,
     # SetBlinkStages, SetAnimatedSpeaking, SetAudioMode, SetCurrentAnimation,
     # SetAnimationDoneEvent, SetCurrentAnimation, SetFlags, ClearFlags,
-    # MorphBody, AddSoundToQueue, AddPositionZoom, GetPositionZoom, etc.
+    # MorphBody, AddSoundToQueue, etc.
     # Returns hard zeros / empty for layout-style getters where Phase 1
     # has no real value.
     def __getattr__(self, name: str):
