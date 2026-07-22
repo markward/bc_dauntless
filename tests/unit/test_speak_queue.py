@@ -91,3 +91,25 @@ def test_someone_speaking_reflects_bus(monkeypatch):
     b = crew_speech.bus()
     b._active_speaker = ""
     assert sq.someone_speaking() == 0
+
+
+def test_characterclass_speakline_clears_interruptable_and_emits(monkeypatch):
+    from engine.appc.characters import CharacterClass
+    calls = []
+    monkeypatch.setattr(crew_speech, "emit",
+                        lambda name, db, line, prio: calls.append((name, line, prio)) or 2.0)
+    ch = CharacterClass()
+    ch.SetCharacterName("Kiska")
+    seen = {"cleared": 0}
+    monkeypatch.setattr(ch, "ClearExtraAnimations", lambda: seen.__setitem__("cleared", seen["cleared"] + 1))
+    ch.SpeakLine("DB", "gh075", 1)
+    assert seen["cleared"] == 1
+    assert calls == [("Kiska", "gh075", 1)]
+
+
+def test_characterclass_isreadytospeak_no_longer_hardcoded_one(monkeypatch):
+    from engine.appc.characters import CharacterClass
+    monkeypatch.setattr(crew_speech, "is_speaking", lambda name, now=None: False)
+    ch = CharacterClass()
+    ch.SetCharacterName("Science")
+    assert ch.IsReadyToSpeak() == 0        # was a hard 1 (always-return Science bug)

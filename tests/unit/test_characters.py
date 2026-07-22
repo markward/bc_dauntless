@@ -153,7 +153,9 @@ def test_default_speaking_queries():
     c = CharacterClass_Create()
     assert c.IsSpeaking() == 0
     assert c.IsAnimating() == 0
-    assert c.IsReadyToSpeak() == 1
+    # SP3 Task 4: routed through the owned SpeakQueue -- a fresh character has
+    # nothing enqueued, so this is 0 (was a hardcoded always-1 stub).
+    assert c.IsReadyToSpeak() == 0
     assert c.IsRandomAnimationEnabled() == 1
     assert c.IsMenuEnabled() == 1
 

@@ -445,7 +445,6 @@ class CharacterClass(ObjectClass):
         self._target_name = None         # move/back-to target (BC +0xa0)
         self._glance_name = None         # glance target (BC +0xa4)
         # ── Owner sub-component slots (filled by later sub-projects) ────────
-        self._speak_queue = None      # SP3: SpeakQueue (wraps crew_speech)
         self._position_zoom = None    # SP4: PositionZoomTable
         self._menu_state = None       # SP4: MenuState (formalizes _menu)
         # Remaining SDK setter surface goes through the data-bag below.
@@ -461,6 +460,9 @@ class CharacterClass(ObjectClass):
         self._data.setdefault("AudioMode", self.CAM_VOCAL)
         self._data.setdefault("BlinkStages", -1)
         self._data.setdefault("RandomAnimationEnabled", True)
+        # ── Speak queue (SP3 — CharacterClass's owned facade over crew_speech) ──
+        from engine.appc.speak_queue import SpeakQueue
+        self._speak_queue = SpeakQueue(self)
 
     # ── Identity ────────────────────────────────────────────────────────────
     def GetBodyNIF(self) -> str:                  return self._body_nif
@@ -948,12 +950,12 @@ class CharacterClass(ObjectClass):
     def GetLocation(self):
         return self._data.get("Location")
 
-    # ── Speak/animate verbs (no-op in headless) ─────────────────────────────
+    # ── Speak/animate verbs (routed through the owned SpeakQueue) ───────────
     def SpeakLine(self, pDatabase=None, lineID="", priority=CSP_NORMAL, *_) -> None:
         # SDK call shape is uniformly SpeakLine(db, lineID, priority) (or the
         # 2-arg form with the default priority); no addressee arg.
         db = pDatabase if pDatabase is not None else self._database
-        crew_speech.emit(self._character_name, db, lineID, priority)
+        self._speak_queue.speak_line(db, lineID, priority)
 
     def SayLine(self, pDatabase=None, lineID="", _addressee=None,
                 _flag=None, priority=CSP_NORMAL, *_) -> None:
@@ -963,7 +965,7 @@ class CharacterClass(ObjectClass):
         # arg3 is the addressee and arg4 a flag; both are meaningless headless.
         # The real priority is the OPTIONAL 5th arg.
         db = pDatabase if pDatabase is not None else self._database
-        crew_speech.emit(self._character_name, db, lineID, priority)
+        self._speak_queue.say_line(db, lineID, _addressee, _flag, priority)
 
     def Breathe(self, on_complete=None, *args) -> int:
         # tier-0 §4.10: only when idle (not animating, none queued, no move/glance target).
@@ -1165,9 +1167,14 @@ class CharacterClass(ObjectClass):
         return float(self._data.get("RandomAnimationChance", 0.0))
 
     def IsSpeaking(self) -> int:
-        from engine.appc import crew_speech
-        return 1 if crew_speech.is_speaking(self._character_name) else 0
-    def IsReadyToSpeak(self) -> int:              return 1
+        return self._speak_queue.is_speaking()
+    def IsReadyToSpeak(self) -> int:
+        return self._speak_queue.is_ready_to_speak()
+
+    @staticmethod
+    def IsSomeoneSpeaking() -> int:
+        from engine.appc.speak_queue import someone_speaking
+        return someone_speaking()
     def IsAnimating(self) -> int:
         if self._anim_pending:
             return 1
