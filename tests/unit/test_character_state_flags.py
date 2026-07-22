@@ -76,10 +76,10 @@ def test_setstatus_string_is_separate_from_flags():
     # pMiguel.SetStatus(db.GetString("Waiting"))). It must NOT touch the flags.
     c = CharacterClass_Create()
     c.SetStatus("Waiting")
-    assert c.GetStatusText() == "Waiting"
+    assert c.GetStatus() == "Waiting"
     assert c._flags == 0
-    c.ClearStatus("Waiting")
-    assert c.GetStatusText() in (None, "")
+    c.ClearStatus(0)
+    assert c.GetStatus() == 0
 
 
 def test_setflags_busy_bit_drops_open_menu(monkeypatch):

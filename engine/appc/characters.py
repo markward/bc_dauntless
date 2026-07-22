@@ -23,6 +23,7 @@ children — the bridge dialog tree is built up by hardpoint scripts
 calling AddChild + GetSubmenuW/GetButtonW chains.
 """
 
+from engine.appc.character_status_map import StatusMap
 from engine.appc.objects import ObjectClass
 from engine.appc.tg_ui.widgets import TGPane
 from engine.appc import crew_speech
@@ -438,7 +439,7 @@ class CharacterClass(ObjectClass):
         self._phonemes: list = []
         self._flags: int = 0              # CS_* bitfield (m_flags @ +0x80)
         self._hidden: bool = False        # CS_HIDDEN/CS_VISIBLE cull toggle
-        self._status: dict = {}           # tooltip display strings (SP4 -> StatusMap)
+        self._status_map = StatusMap(self)   # SP4: keyed 0..5 status (tier-0 4.6)
         # ── Animation queue (SP2 — the CAT_* record queue; brain) ──────────
         self._anim_current = None        # AnimRec | None (BC +0x15C)
         self._anim_pending = []          # list[AnimRec] FIFO (BC +0x164 head)
@@ -855,18 +856,18 @@ class CharacterClass(ObjectClass):
         mask = int(mask)
         return 1 if (self._flags & mask) == mask else 0
 
-    # ── Tooltip status strings — SEPARATE from the flag bitfield ────────────
-    # SDK calls SetStatus with a localized display string
-    # (pMiguel.SetStatus(db.GetString("Waiting"))). Stored under a single
-    # interim key; SP4 replaces this with the real keys-0..5 StatusMap widgets.
-    def SetStatus(self, state, *args) -> None:
-        self._status["text"] = state
+    # ── Status system: keyed 0..5 StatusMap (tier-0 reference sec 4.6) ───────
+    # SetStatus(displayString, key=0); key>5 is a no-op; GetStatus miss -> 0;
+    # ClearStatus(key) drops one row. The rows render in the CEF crew tooltip
+    # box (CharacterTooltipPanel) via the current-tooltip-owner (Task 4/5).
+    def SetStatus(self, value, key=0, *args) -> None:
+        self._status_map.set_status(value, key)
 
-    def ClearStatus(self, state=None, *args) -> None:
-        self._status.pop("text", None)
+    def GetStatus(self, key=0):
+        return self._status_map.get_status(key)
 
-    def GetStatusText(self, key="text"):
-        return self._status.get(key)
+    def ClearStatus(self, key=None, *args) -> None:
+        self._status_map.clear_status(key)
 
     # ── Visibility (pull model): mutate _hidden; host loop culls per-frame ──
     def SetHidden(self, hidden=1) -> None:

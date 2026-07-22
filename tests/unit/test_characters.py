@@ -481,9 +481,9 @@ def test_set_status_accepts_string_label():
     """Bridge handlers call SetStatus(db.GetString("Waiting")) — a display string."""
     c = CharacterClass_Create()
     c.SetStatus("Waiting")
-    assert c.GetStatusText() == "Waiting"
-    c.ClearStatus("Waiting")
-    assert c.GetStatusText() is None
+    assert c.GetStatus() == "Waiting"
+    c.ClearStatus(0)
+    assert c.GetStatus() == 0
 
 
 def test_status_string_does_not_touch_flags():
@@ -491,7 +491,7 @@ def test_status_string_does_not_touch_flags():
     c.SetFlags(CharacterClass.CS_STANDING)
     c.SetStatus("Waiting")
     assert c.IsStateSet(CharacterClass.CS_STANDING) == 1
-    assert c.GetStatusText() == "Waiting"
+    assert c.GetStatus() == "Waiting"
 
 
 def test_character_class_cast():
