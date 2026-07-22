@@ -25,6 +25,7 @@ calling AddChild + GetSubmenuW/GetButtonW chains.
 
 from engine.appc.character_status_map import StatusMap
 from engine.appc.character_position_zoom import PositionZoomTable
+from engine.appc.character_menu_state import MenuState
 from engine.appc.objects import ObjectClass
 from engine.appc.tg_ui.widgets import TGPane
 from engine.appc import crew_speech
@@ -448,7 +449,7 @@ class CharacterClass(ObjectClass):
         self._glance_name = None         # glance target (BC +0xa4)
         # ── Owner sub-component slots (filled by later sub-projects) ────────
         self._position_zoom = PositionZoomTable()   # SP4: per-station zoom (tier-0 4.4)
-        self._menu_state = None       # SP4: MenuState (formalizes _menu)
+        self._menu_state = MenuState()   # SP4: menu id + ready (tier-0 4.12)
         # Remaining SDK setter surface goes through the data-bag below.
         self._data: dict = {}
         # RE'd constructor defaults (CharacterClass.md §4.1; field names from
@@ -506,6 +507,7 @@ class CharacterClass(ObjectClass):
         # (DetachMenuFrom* assigns it) so many characters detaching don't
         # all stamp their identity onto one global singleton.
         self._menu = menu
+        self._menu_state.set_menu(menu)
         if isinstance(menu, STTopLevelMenu) and menu is not _NULL_MENU:
             menu.SetOwner(self)
 
@@ -1408,6 +1410,36 @@ def dispatch_character_menu(character, is_open) -> None:
     ev.SetDestination(character)
     ev.SetBool(1 if is_open else 0)
     character.ProcessEvent(ev)
+
+
+def CharacterClass_GetCharacterFromMenu(menu_id, candidates=None):
+    """Return the bridge character whose menu id matches menu_id, or None
+    (tier-0 reference sec 4.12: search the "bridge" set, first member whose
+    +0x14c == menuId). `candidates` overrides the search set (tests); default
+    is the live "bridge" set's CharacterClass members."""
+    if candidates is None:
+        try:
+            import App
+            bridge = App.g_kSetManager.GetSet("bridge")
+            candidates = [c for c in _iter_bridge_characters(bridge)]
+        except Exception:
+            candidates = []
+    for ch in candidates:
+        ms = getattr(ch, "_menu_state", None)
+        if ms is not None and ms.menu_id() == int(menu_id) and int(menu_id) != 0:
+            return ch
+    return None
+
+
+def _iter_bridge_characters(bridge):
+    if bridge is None:
+        return []
+    try:
+        import App
+        return [c for c in bridge.GetClassObjectList(App.CT_CHARACTER)
+                if isinstance(c, CharacterClass)]
+    except Exception:
+        return []
 
 
 def CharacterClass_GetObject(pSet, name) -> "CharacterClass | None":

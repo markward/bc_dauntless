@@ -121,14 +121,16 @@ def test_flags_start_clear():
 def test_owner_has_named_subcomponent_slots():
     # SP1 backbone: the owner exposes named slots the later SPs fill
     # (SP2 anim queue, SP3 speak queue/phonemes, SP4 zoom/menu-state).
-    # SP3 Task 4 wires _speak_queue up to a live SpeakQueue in __init__ --
-    # the remaining SP4 slots stay unfilled placeholders.
+    # SP3 Task 4 wires _speak_queue up to a live SpeakQueue in __init__, and
+    # SP4 Tasks 2-3 wire _position_zoom/_menu_state up to live
+    # PositionZoomTable/MenuState instances -- no unfilled slots remain.
     from engine.appc.speak_queue import SpeakQueue
+    from engine.appc.character_position_zoom import PositionZoomTable
+    from engine.appc.character_menu_state import MenuState
     c = CharacterClass_Create()
     assert isinstance(c.__dict__["_speak_queue"], SpeakQueue)
-    for slot in ("_position_zoom", "_menu_state"):
-        assert slot in c.__dict__, slot
-        assert c.__dict__[slot] is None
+    assert isinstance(c.__dict__["_position_zoom"], PositionZoomTable)
+    assert isinstance(c.__dict__["_menu_state"], MenuState)
 
 
 def test_create_null_is_marked_null():
