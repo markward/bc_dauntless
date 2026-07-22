@@ -1,47 +1,39 @@
 """Model-agnostic lip-sync controller.
 
-Drives officer mouth visemes from BC ``.LIP`` timing, **modernized**: cross-fade
-between visemes (no hard cuts), continuous blend over the ``{neutral,a,e,u}``
-texture basis, and amplitude modulation. It emits poses to a *sink* callback
-``sink(officer, slot_a, slot_b, mix)`` — it never touches GL. That seam keeps the
-whole system reusable if the BC heads are ever swapped for rigged models (only
-the sink changes). Owned/ticked by ``BridgeCharacterAnimController``.
+Drives officer mouth visemes from BC ``.LIP`` timing using the **discrete**
+viseme model: each ``.LIP`` phoneme code resolves through :class:`PhonemeMap`
+to one of BC's authored jaw levels (``closed``/``partly``/``open``/``rounded``),
+each with a fixed texture (``neutral``/``e``/``a``/``u``) and openness. Poses
+are crossfaded from the previous viseme's texture/openness over the first
+``xfade`` seconds of a segment. It emits poses to a *sink* callback
+``sink(officer, tex_a, tex_b, mix, openness)`` — it never touches GL. That seam
+keeps the whole system reusable if the BC heads are ever swapped for rigged
+models (only the sink changes). Owned/ticked by ``BridgeCharacterAnimController``.
 
 Pieces:
-  * :class:`LipTimeline`     — one spoken line as a viseme timeline.
+  * :class:`LipTimeline`     — one spoken line as a discrete-viseme timeline.
   * :class:`LipSyncController`— start/update/preempt across speaking officers.
   * :class:`BlinkScheduler`  — idle probabilistic eye blinks (independent of speech).
 """
 from __future__ import annotations
 
-from engine.appc.lip_visemes import load_viseme_table, viseme_weights, dominant_pair
+from engine.appc.phoneme_map import default_phoneme_map, Viseme
 
-_NEUTRAL = {"neutral": 1.0}
 _BLINK_STAGES = ("blink1", "blink2", "eyesclosed", "blink2", "blink1")
 
 
-def _lerp(w0: dict, w1: dict, f: float) -> dict:
-    keys = set(w0) | set(w1)
-    return {k: w0.get(k, 0.0) * (1.0 - f) + w1.get(k, 0.0) * f for k in keys}
-
-
-def _norm(w: dict) -> dict:
-    pos = {k: v for k, v in w.items() if v > 0.0}
-    total = sum(pos.values())
-    if total <= 0.0:
-        return dict(_NEUTRAL)
-    return {k: v / total for k, v in pos.items()}
-
-
 class LipTimeline:
-    """A single spoken line: its ``.LIP`` segments resolved to per-segment basis
-    weights, with cross-fade at boundaries and optional per-segment amplitude."""
+    """A spoken line resolved to a discrete-viseme timeline with crossfade.
 
-    def __init__(self, segments, table, t0, amplitude=None, xfade=0.06):
+    Each .LIP segment maps through PhonemeMap to a Viseme (texture + openness).
+    At time t the pose is the current viseme, crossfaded from the previous
+    viseme's texture/openness over the first `xfade` seconds of the segment.
+    """
+
+    def __init__(self, segments, phoneme_map, t0, xfade=0.06):
         self._segs = list(segments)
-        self._w = [viseme_weights(table, s.code) for s in self._segs]
+        self._vis = [phoneme_map.viseme_for(s.code) for s in self._segs]
         self._t0 = float(t0)
-        self._amp = list(amplitude) if amplitude is not None else None
         self._xfade = float(xfade)
         self._total = self._segs[-1].end if self._segs else 0.0
 
@@ -59,27 +51,20 @@ class LipTimeline:
                 return i
         return len(self._segs) - 1
 
-    def weights_at(self, now) -> dict:
+    def pose_at(self, now):
+        """(tex_a, tex_b, mix, openness) for the renderer sink at `now`."""
         elapsed = now - self._t0
         if not self._segs or elapsed < 0.0 or elapsed >= self._total:
-            return dict(_NEUTRAL)
+            return ("neutral", "neutral", 0.0, 0.0)
         i = self._index(elapsed)
-        cur = self._w[i]
-        # Cross-fade: blend the previous segment's pose into this one over the
-        # first `xfade` seconds (from neutral for the first segment).
+        cur = self._vis[i]
         into = elapsed - self._segs[i].start
-        if into < self._xfade and self._xfade > 0.0:
-            prev = self._w[i - 1] if i > 0 else _NEUTRAL
-            cur = _lerp(prev, cur, into / self._xfade)
-        # Amplitude: scale openness toward neutral for quiet syllables.
-        if self._amp is not None:
-            a = max(0.0, min(1.0, self._amp[i]))
-            cur = _lerp(_NEUTRAL, cur, a)
-        return _norm(cur)
-
-    def pose_at(self, now):
-        """``(slot_a, slot_b, mix)`` for the renderer sink at ``now``."""
-        return dominant_pair(self.weights_at(now))
+        if self._xfade > 0.0 and into < self._xfade:
+            prev = self._vis[i - 1] if i > 0 else Viseme("closed", 0.0, "neutral")
+            f = into / self._xfade
+            openness = prev.openness * (1.0 - f) + cur.openness * f
+            return (prev.texture, cur.texture, f, openness)   # blend prev->cur
+        return (cur.texture, cur.texture, 0.0, cur.openness)  # settled on cur
 
 
 class LipSyncController:
@@ -87,31 +72,28 @@ class LipSyncController:
     tick. Starting a line for an officer preempts that officer's prior line
     (mirroring crew-speech's single-channel preemption)."""
 
-    def __init__(self, sink=None, table=None, xfade=0.06):
+    def __init__(self, sink=None, phoneme_map=None, xfade=0.06):
         self._sink = sink or (lambda *a: None)
-        self._table = table if table is not None else load_viseme_table()
+        self._pm = phoneme_map if phoneme_map is not None else default_phoneme_map()
         self._xfade = xfade
         self._active: dict = {}
 
-    def start(self, officer, segments, t0, amplitude=None):
-        self._active[officer] = LipTimeline(
-            segments, self._table, t0, amplitude, self._xfade
-        )
+    def start(self, officer, segments, t0):
+        self._active[officer] = LipTimeline(segments, self._pm, t0, self._xfade)
 
     def update(self, now):
         for officer, tl in list(self._active.items()):
             if tl.done(now):
-                self._sink(officer, "neutral", "neutral", 0.0)
+                self._sink(officer, "neutral", "neutral", 0.0, 0.0)
                 del self._active[officer]
             else:
-                a, b, mix = tl.pose_at(now)
-                self._sink(officer, a, b, mix)
+                self._sink(officer, *tl.pose_at(now))
 
     def stop(self, officer):
         """Cancel an officer's line and revert to neutral (e.g. on mission swap)."""
         if officer in self._active:
             del self._active[officer]
-            self._sink(officer, "neutral", "neutral", 0.0)
+            self._sink(officer, "neutral", "neutral", 0.0, 0.0)
 
     def clear(self):
         for officer in list(self._active):
