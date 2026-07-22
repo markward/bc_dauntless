@@ -1,0 +1,17 @@
+{
+  "_comment": "BC .LIP phoneme code -> discrete viseme name. Buckets derived from the empirically recovered code->phoneme table (project_lipsync_re_findings). Structurally BC-faithful (3 jaw openness levels); per-code assignment is a tunable reconstruction, not BC's compiled group.",
+  "_visemes": {
+    "closed":  {"openness": 0.0,   "texture": "neutral"},
+    "partly":  {"openness": 0.286, "texture": "e"},
+    "open":    {"openness": 1.0,   "texture": "a"},
+    "rounded": {"openness": 0.286, "texture": "u"}
+  },
+  "0": "closed", "1": "closed", "29": "closed", "40": "closed", "43": "closed",
+  "56": "open", "59": "open", "64": "open", "115": "open", "139": "open",
+  "42": "rounded", "48": "rounded", "50": "rounded",
+  "31": "partly", "32": "partly", "33": "partly", "35": "partly", "36": "partly",
+  "37": "partly", "38": "partly", "39": "partly", "41": "partly", "46": "partly",
+  "47": "partly", "49": "partly", "53": "partly", "54": "partly", "65": "partly",
+  "66": "partly", "81": "partly", "96": "partly", "106": "partly", "113": "partly",
+  "121": "partly", "142": "partly"
+}
