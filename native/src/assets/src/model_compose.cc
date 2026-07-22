@@ -16,6 +16,7 @@
 #include <assets/material.h>
 #include <assets/path_resolver.h>
 #include <assets/skeleton.h>
+#include <assets/tessellate.h>
 #include <assets/texture.h>
 #include <nif/file.h>
 
@@ -446,6 +447,16 @@ Model compose_officer_model(
                          path.string().c_str(), e.what());
         }
     }
+
+    // Boundary-pinned Phong tessellation of every character shape (body +
+    // grafted head) to round the low-poly silhouettes. Officers only; ships were
+    // evaluated and rejected (their detail lives at the panel seams this pass
+    // deliberately pins). One level; strength 0.75 rather than full 1.0 — full
+    // tangent-plane projection amplifies BC's facety authored normals into
+    // visible bumps, so we ease back toward linear (recomputing smooth normals
+    // was tried and made no visible difference). The small on-screen officers
+    // see no benefit from deeper subdivision.
+    tessellate_model_in_place(body, /*levels=*/1, /*strength=*/0.75f);
 
     body.source = body_nif;
     return body;

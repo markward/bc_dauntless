@@ -14,6 +14,7 @@ add_library(assets STATIC
     src/pose_sample.cc
     src/skeleton_build.cc
     src/skin_weights.cc
+    src/tessellate.cc
     src/texture_decode.cc
     src/texture_lifetime.cc
     src/texture_upload.cc
