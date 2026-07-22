@@ -47,3 +47,34 @@ def test_render_payload_diff_gated():
 
 def test_name_is_routing_prefix():
     assert CharacterTooltipPanel().name == "character-tooltip"
+
+
+def test_title_uses_tgl_lookup_result(monkeypatch):
+    # Proves _title_for actually routes through App.g_kLocalizationManager
+    # and uses its result -- not just falling back to the raw character name.
+    # If _title_for were gutted to `return owner.GetCharacterName()`, this
+    # would fail because the asserted title is DISTINCT from the raw name.
+    import App
+
+    class _DB:
+        def GetString(self, key):
+            return "Ensign Kiska LoMar, Helm" if key == "Helm" else key
+
+    class _LM:
+        def Load(self, path):
+            return _DB()
+
+        def Unload(self, db):
+            pass
+
+    monkeypatch.setattr(App, "g_kLocalizationManager", _LM(), raising=False)
+
+    ch = CharacterClass()
+    ch.SetCharacterName("Helm")
+    ch.SetStatus("Waiting", 0)
+    CharacterClass_SetCurrentToolTipOwner(ch)
+    try:
+        snap = CharacterTooltipPanel().snapshot()
+        assert snap["title"] == "Ensign Kiska LoMar, Helm"
+    finally:
+        CharacterClass_SetCurrentToolTipOwner(None)
