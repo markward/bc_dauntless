@@ -2,6 +2,9 @@
 #include "renderer/bone_palette.h"
 #include <algorithm>
 #include <cstdio>
+#include <string>
+#include <assets/model.h>
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace renderer {
 
@@ -44,6 +47,27 @@ std::vector<glm::mat4> build_bone_palette(
     for (std::size_t i = 0; i < n; ++i)
         palette[i] = world_of(static_cast<int>(i)) * sk.bones[i].inverse_bind_pose;
     return palette;
+}
+
+void apply_jaw_rotation(const assets::Model& model,
+                        std::vector<glm::mat4>& locals, float openness) {
+    // Linear name search for the repurposed jaw bone (Task 8).
+    int bi = -1;
+    for (std::size_t i = 0; i < model.skeleton.bones.size(); ++i)
+        if (model.skeleton.bones[i].name == kJawBoneName) {
+            bi = static_cast<int>(i);
+            break;
+        }
+    if (bi < 0 || bi >= static_cast<int>(locals.size())) return;
+
+    const float ang = glm::clamp(openness, 0.0f, 1.0f) * kJawMaxDropRad;
+    // Compose an ADDITIONAL rotation about bone-local +Z onto the bone's
+    // existing local. The rest local already holds ~111.481° about +Z, so
+    // rotations about the same axis add: result = rest + openness*10°, which
+    // matches the MouthClosed/Partly/Open clips. At openness==0 the appended
+    // rotation is identity ⇒ REST (no-op), which lets the per-frame re-pose
+    // relax a settled mouth back closed instead of latching open.
+    locals[bi] = locals[bi] * glm::rotate(glm::mat4(1.0f), ang, kJawAxis);
 }
 
 }  // namespace renderer
