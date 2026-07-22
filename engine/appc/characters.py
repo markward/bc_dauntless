@@ -791,11 +791,19 @@ class CharacterClass(ObjectClass):
     def Special4(self, rec) -> bool:
         # Turn-back follow-up (tier-0 §4.8, adapted). Declines (False) if no
         # move/back-to target or the builder doesn't resolve; else composes
-        # "<loc>Back<target>", plays it, returns True (handled).
+        # "<location>Back<target>", plays it, returns True (handled).
+        #
+        # The location prefix is GetLocation() (e.g. "DBTactical"), resolved the
+        # SAME way the forward turn / breathe / glance-at resolve (via
+        # bridge_placement._resolve_builder_sequence). It is NOT self._location_name:
+        # BC never calls SetLocationName, so that field is always "" and keying off
+        # it produced a prefix-less "BackCaptain" that no officer registers -- the
+        # menu turn-back silently declined and the officer stayed facing the captain
+        # (live bug, DBridge helm/tactical). _location_name is vestigial here.
         if not self._target_name:
             return False
-        key = "%sBack%s" % (self._location_name or "", self._target_name)
-        anim = self._resolve_anim(key)
+        from engine.appc import bridge_placement
+        anim = bridge_placement._resolve_builder_sequence(self, "Back" + str(self._target_name))
         if anim is None:
             return False
         from engine.appc.character_anim_queue import AnimRec
@@ -804,11 +812,13 @@ class CharacterClass(ObjectClass):
         return True
 
     def Special6(self, rec) -> bool:
-        # Glance-away follow-up (tier-0 §4.8, adapted).
+        # Glance-away follow-up (tier-0 §4.8, adapted). Same location-prefix fix as
+        # Special4: compose "<GetLocation()>GlanceAway<glance>" via the canonical
+        # resolver, not the always-empty self._location_name.
         if not self._glance_name:
             return False
-        key = "%sGlanceAway%s" % (self._location_name or "", self._glance_name)
-        anim = self._resolve_anim(key)
+        from engine.appc import bridge_placement
+        anim = bridge_placement._resolve_builder_sequence(self, "GlanceAway" + str(self._glance_name))
         if anim is None:
             return False
         from engine.appc.character_anim_queue import AnimRec

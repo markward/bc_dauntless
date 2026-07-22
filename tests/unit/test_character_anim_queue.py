@@ -182,18 +182,21 @@ def test_special4_declines_when_no_target_name():
 
 
 def test_special4_composes_key_plays_and_returns_true(monkeypatch):
+    # The location prefix comes from GetLocation() (via _resolve_builder_sequence),
+    # NOT _location_name -- BC never sets the latter, so keying off it declined
+    # every menu turn-back (the DBridge live bug).
+    import engine.appc.bridge_placement as bp
     c = CharacterClass_Create()
     c._target_name = "Captain"
-    c._location_name = "DBTactical"
+    c.SetLocation("DBTactical")               # GetLocation() -> "DBTactical"
     sentinel = object()
     seen_keys = []
 
-    def fake_resolve(key):
-        seen_keys.append(key)
+    def fake_seq(character, suffix):
+        seen_keys.append(str(character.GetLocation()) + suffix)
         return sentinel
 
-    monkeypatch.setattr(c, "_resolve_anim", fake_resolve)
-
+    monkeypatch.setattr(bp, "_resolve_builder_sequence", fake_seq)
     played = []
     monkeypatch.setattr(c, "_anim_play_now", lambda rec: played.append(rec))
 
@@ -208,10 +211,11 @@ def test_special4_composes_key_plays_and_returns_true(monkeypatch):
 
 
 def test_special4_declines_when_builder_resolves_none(monkeypatch):
+    import engine.appc.bridge_placement as bp
     c = CharacterClass_Create()
     c._target_name = "Captain"
-    c._location_name = "DBTactical"
-    monkeypatch.setattr(c, "_resolve_anim", lambda key: None)
+    c.SetLocation("DBTactical")
+    monkeypatch.setattr(bp, "_resolve_builder_sequence", lambda character, suffix: None)
     played = []
     monkeypatch.setattr(c, "_anim_play_now", lambda rec: played.append(rec))
     assert c.Special4(AnimRec(category=CharacterClass.CAT_TURN_BACK)) is False
@@ -225,18 +229,18 @@ def test_special6_declines_when_no_glance_name():
 
 
 def test_special6_composes_key_plays_and_returns_true(monkeypatch):
+    import engine.appc.bridge_placement as bp
     c = CharacterClass_Create()
     c._glance_name = "Kirk"
-    c._location_name = "DBTactical"
+    c.SetLocation("DBTactical")               # GetLocation() -> "DBTactical"
     sentinel = object()
     seen_keys = []
 
-    def fake_resolve(key):
-        seen_keys.append(key)
+    def fake_seq(character, suffix):
+        seen_keys.append(str(character.GetLocation()) + suffix)
         return sentinel
 
-    monkeypatch.setattr(c, "_resolve_anim", fake_resolve)
-
+    monkeypatch.setattr(bp, "_resolve_builder_sequence", fake_seq)
     played = []
     monkeypatch.setattr(c, "_anim_play_now", lambda rec: played.append(rec))
 
@@ -251,10 +255,11 @@ def test_special6_composes_key_plays_and_returns_true(monkeypatch):
 
 
 def test_special6_declines_when_builder_resolves_none(monkeypatch):
+    import engine.appc.bridge_placement as bp
     c = CharacterClass_Create()
     c._glance_name = "Kirk"
-    c._location_name = "DBTactical"
-    monkeypatch.setattr(c, "_resolve_anim", lambda key: None)
+    c.SetLocation("DBTactical")
+    monkeypatch.setattr(bp, "_resolve_builder_sequence", lambda character, suffix: None)
     played = []
     monkeypatch.setattr(c, "_anim_play_now", lambda rec: played.append(rec))
     assert c.Special6(AnimRec(category=CharacterClass.CAT_GLANCE_BACK)) is False
@@ -940,3 +945,45 @@ def test_setactive_honors_the_arg_and_defaults_active():
     assert c.IsActive() == 1
     c.SetActive()                       # no-arg defaults to active (backward compat)
     assert c.IsActive() == 1
+
+
+def test_special4_resolves_turn_back_via_getlocation_not_locationname(monkeypatch):
+    # Regression (live bug, Mark E1M1/DBridge): the menu turn-back never played
+    # because Special4 composed its key from _location_name -- which is ALWAYS ""
+    # (BC never calls SetLocationName) -- instead of GetLocation(). For a tactical
+    # officer (GetLocation()=="DBTactical") that produced the prefix-less
+    # "BackCaptain", which no officer registers, so Special4 declined and the
+    # CAT_TURN_BACK record was stopped before reaching the controller: the officer
+    # stayed facing the captain. It must resolve "<GetLocation()>BackCaptain",
+    # the same field the forward turn resolves against.
+    import engine.appc.bridge_placement as bp
+    asked = []
+    def fake_resolve_builder(character, key):
+        asked.append(key)
+        return object() if key == "DBTacticalBackCaptain" else None
+    monkeypatch.setattr(bp, "resolve_builder", fake_resolve_builder)
+
+    c = CharacterClass_Create()
+    c.SetActive(1)
+    c.SetLocation("DBTactical")           # GetLocation() -> "DBTactical" (Felix at runtime)
+    c._target_name = "Captain"            # set by the earlier TurnTowards's PreparePlay
+    assert c.Special4(AnimRec(category=c.CAT_TURN_BACK, name="Captain")) is True
+    assert "DBTacticalBackCaptain" in asked, asked
+    assert "BackCaptain" not in asked     # never the prefix-less key
+
+
+def test_special6_resolves_glance_away_via_getlocation(monkeypatch):
+    # Same root cause as Special4: glance-away keyed off _location_name ("").
+    import engine.appc.bridge_placement as bp
+    asked = []
+    def fake_resolve_builder(character, key):
+        asked.append(key)
+        return object() if key == "DBTacticalGlanceAwayKirk" else None
+    monkeypatch.setattr(bp, "resolve_builder", fake_resolve_builder)
+
+    c = CharacterClass_Create()
+    c.SetActive(1)
+    c.SetLocation("DBTactical")
+    c._glance_name = "Kirk"
+    assert c.Special6(AnimRec(category=c.CAT_GLANCE_BACK, name="Kirk")) is True
+    assert "DBTacticalGlanceAwayKirk" in asked, asked
