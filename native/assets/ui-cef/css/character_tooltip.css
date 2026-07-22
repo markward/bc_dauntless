@@ -1,0 +1,18 @@
+/* native/assets/ui-cef/css/character_tooltip.css
+   Crew tooltip box -- the focused officer's status rows. Chrome (header/body
+   salmon .bc-panel) is inherited from global.css/crew_menus.css; this file
+   only positions the box (top-centre of the bridge view) and stacks rows. */
+#character-tooltip-host {
+  position: absolute;
+  top: 5%;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;   /* tooltip never eats clicks */
+}
+#character-tooltip-host .character-tooltip { min-width: 220px; max-width: 40%; }
+#character-tooltip-host .character-tooltip__row {
+  padding: 2px 10px;
+  white-space: nowrap;
+}

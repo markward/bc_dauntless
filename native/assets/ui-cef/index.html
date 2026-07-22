@@ -17,6 +17,7 @@
     <link rel="stylesheet" href="css/reticle_text.css">
     <link rel="stylesheet" href="css/info_box.css">
     <link rel="stylesheet" href="css/engineering_power.css">
+    <link rel="stylesheet" href="css/character_tooltip.css">
 </head>
 <body>
     <!-- Target reticle text labels (name above box, range/speed below),
@@ -390,6 +391,14 @@
       </div><!-- /.bc-body -->
     </div><!-- /#engpower-root -->
 
+    <!-- Character tooltip box (CharacterTooltipPanel) — the focused officer's
+         status rows, top-centre of the WHOLE bridge view (BC attaches at
+         (width - TOOL_TIP_WIDTH)/2, 0). Deliberately a body-level sibling
+         here, NOT nested inside #tactical-left-column below: that column is
+         a fixed 224px-wide box (see global.css), so absolute left:0/right:0
+         inside it would centre within the column instead of the viewport. -->
+    <div id="character-tooltip-host"></div>
+
     <!-- Tactical-view layout zones. All panels are flex children of one
          of these two containers; no panel uses absolute/fixed positioning
          of its own. Order in DOM is also visual order.
@@ -578,6 +587,7 @@
     <script src="panels/weapons_display/weapons_display.js"></script>
     <script src="js/sdk_mirror.js"></script>
     <script src="js/crew_menus.js"></script>
+    <script src="js/character_tooltip.js"></script>
     <script src="js/configuration_panel.js"></script>
     <script src="js/quick_battle_setup.js"></script>
     <script src="js/developer_options.js"></script>
