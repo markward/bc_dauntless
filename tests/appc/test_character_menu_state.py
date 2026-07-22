@@ -49,3 +49,18 @@ def test_menu_up_behaviour_unchanged_disabled_menu():
     menu.SetDisabled()
     ch.SetMenu(menu)
     assert ch.MenuUp() == 0               # disabled menu: not raised
+
+
+def test_detach_null_menu_reports_no_menu():
+    from engine.appc.characters import STTopLevelMenu_CreateNull
+    ch = CharacterClass()
+    ch.SetMenu(STTopLevelMenu_CreateNull())   # DetachMenuFrom* pattern
+    assert ch._menu_state.has_menu() is False
+    assert ch._menu_state.menu_id() == 0
+    assert ch._menu_state.is_ready() is False
+
+
+def test_set_menu_none_and_falsy_normalize():
+    ms = MenuState()
+    ms.set_menu(None)
+    assert ms.has_menu() is False and ms.menu_id() == 0

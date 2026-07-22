@@ -14,6 +14,12 @@ class MenuState:
         self._ready = False     # +0x28 bit 0x1
 
     def set_menu(self, menu) -> None:
+        # A falsy menu is the _NULL_MENU detach sentinel (its __bool__ is
+        # False) or None; both mean "no menu" -> menu_id 0, not-ready. Real
+        # menus (STMenu/STTopLevelMenu) are always truthy. This keeps
+        # menu_id()'s "0 when none" contract and stops every detached officer
+        # aliasing to id(_NULL_MENU).
+        menu = menu if menu else None
         self._menu = menu
         # Ready mirrors the existing MenuUp gate: a real, enabled menu.
         try:
