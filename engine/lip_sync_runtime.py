@@ -2,8 +2,8 @@
 
 Wires the model-agnostic `LipSyncController` (engine/lip_sync.py) to the live
 engine: subscribes to crew-speech, resolves the speaking officer's render
-instance by name, and drives `renderer.set_officer_face` each frame. Idle
-blinking is layered on top for non-speaking officers.
+instance by name, and drives `renderer.set_officer_face` + `set_officer_jaw`
+each frame. Idle blinking is layered on top for non-speaking officers.
 
 Kept separate from `engine/lip_sync.py` so that module stays pure/testable; this
 one is the BC-specific sink + cue wiring.
@@ -18,8 +18,13 @@ from pathlib import Path
 
 from engine.appc import crew_speech
 from engine.appc.lip_data import parse_lip, lip_path_for, LipSegment
-from engine.appc.lip_visemes import load_viseme_table
+from engine.appc.phoneme_map import default_phoneme_map
 from engine.lip_sync import LipSyncController, BlinkScheduler
+
+# The .LIP phoneme codes PhonemeMap knows about (recovered corpus set).
+_ALL_LIP_CODES = [0, 1, 29, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 46,
+                  47, 48, 49, 50, 53, 54, 56, 59, 64, 65, 66, 81, 96, 106, 113,
+                  115, 121, 139, 142]
 
 # Many BC voice lines ship no .LIP (e.g. ~half the XO bank). Per BC's own docs
 # (sdk/lipsync.html): "If there is no .LIP file, the game will use some random
@@ -62,12 +67,12 @@ class LipSyncRuntime:
     def __init__(self, renderer, get_characters, rng=None):
         self._r = renderer
         self._get_characters = get_characters  # () -> iterable of CharacterClass
-        self._table = load_viseme_table()
-        self._ctrl = LipSyncController(sink=self._sink, table=self._table)
-        # Codes that actually move the mouth (exclude pure-neutral codes 0/121),
-        # drawn from for the random-phoneme no-.LIP fallback.
-        self._speaking_codes = [c for c, w in self._table.items()
-                                if w != {"neutral": 1.0}]
+        self._pm = default_phoneme_map()
+        self._ctrl = LipSyncController(sink=self._sink, phoneme_map=self._pm)
+        # Codes that actually move the mouth (non-closed viseme), for the
+        # no-.LIP random-phoneme fallback.
+        self._speaking_codes = [c for c in _ALL_LIP_CODES
+                                if self._pm.viseme_for(c).name != "closed"]
         self._blink = BlinkScheduler(rng=(rng or random.Random(0xB11E)).random)
         self._flap_rng = random.Random(0xF1A9)  # random-phoneme fallback stream
         self._name_iid: dict = {}   # name -> iid cache (officers are stable per load)
@@ -88,10 +93,11 @@ class LipSyncRuntime:
         return None
 
     # -- controller sink ----------------------------------------------------
-    def _sink(self, name, slot_a, slot_b, mix):
+    def _sink(self, name, slot_a, slot_b, mix, openness=0.0):
         iid = self._resolve(name)
         if iid is not None:
             self._r.set_officer_face(iid, slot_a, slot_b, mix)
+            self._r.set_officer_jaw(iid, openness)
 
     # -- crew-speech cue ----------------------------------------------------
     def _on_speech(self, speaker, wav, duration, now):
@@ -143,9 +149,11 @@ class LipSyncRuntime:
             slot = self._blink.slot_at(name, now)
             if slot is not None:
                 self._r.set_officer_face(iid, slot, slot, 0.0)
+                self._r.set_officer_jaw(iid, 0.0)
                 self._blinking.add(name)
             elif name in self._blinking:
                 self._r.set_officer_face(iid, "neutral", "neutral", 0.0)
+                self._r.set_officer_jaw(iid, 0.0)
                 self._blinking.discard(name)
 
     def clear(self):

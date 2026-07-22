@@ -30,3 +30,22 @@ def test_controller_emits_jaw_channel_and_neutral_on_done():
     assert events[-1][0] == "Kiska" and len(events[-1]) == 5   # (name,a,b,mix,openness)
     ctrl.update(0.5)                                            # past end -> neutral+rest
     assert events[-1] == ("Kiska", "neutral", "neutral", 0.0, 0.0)
+
+
+def test_runtime_sink_drives_face_and_jaw():
+    from engine.lip_sync_runtime import LipSyncRuntime
+
+    class _FakeR:
+        def __init__(self): self.face = []; self.jaw = []
+        def set_officer_face(self, iid, a, b, mix): self.face.append((iid, a, b, mix))
+        def set_officer_jaw(self, iid, openness): self.jaw.append((iid, openness))
+
+    class _Ch:
+        _character_name = "Kiska"
+        _render_instance = 7
+
+    r = _FakeR()
+    rt = LipSyncRuntime(r, lambda: [_Ch()])
+    rt._sink("Kiska", "a", "a", 0.0, 1.0)
+    assert r.face == [(7, "a", "a", 0.0)]
+    assert r.jaw == [(7, 1.0)]

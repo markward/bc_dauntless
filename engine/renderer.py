@@ -78,7 +78,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "clear_target_reticle",
     "instance_node_world", "instance_surface_points", "play_instance_node_anim",
     "play_instance_node_clip", "set_cloak_dials", "set_cloak_ships",
-    "set_debug_cylinders", "set_officer_face", "set_spv_overlay_beams",
+    "set_debug_cylinders", "set_officer_face", "set_officer_jaw", "set_spv_overlay_beams",
     "set_target_reticle",
     "spawn_test_character", "stop_instance_node_anim",
 })
@@ -590,6 +590,14 @@ def set_officer_face(iid: InstanceId, slot_a: str, slot_b: str, mix: float) -> N
     an engine/renderer (hasattr-guarded), mirroring the other r.* wrappers."""
     if hasattr(_h, "set_officer_face"):
         _h.set_officer_face(iid, slot_a, slot_b, float(mix))
+
+
+def set_officer_jaw(iid: InstanceId, openness: float) -> None:
+    """Lip-sync: drive an officer's jaw-bone openness (0.0 closed..1.0 open).
+    No-op without an engine/renderer (hasattr-guarded), mirroring the other
+    r.* wrappers."""
+    if hasattr(_h, "set_officer_jaw"):
+        _h.set_officer_jaw(iid, float(openness))
 
 
 def load_instance_clip(iid: InstanceId, nif_path: str) -> int:

@@ -37,9 +37,13 @@ def test_abs_sfx_resolves_game_relative():
 class _FakeRenderer:
     def __init__(self):
         self.calls = []
+        self.jaw_calls = []
 
     def set_officer_face(self, iid, slot_a, slot_b, mix):
         self.calls.append((iid, slot_a, slot_b, mix))
+
+    def set_officer_jaw(self, iid, openness):
+        self.jaw_calls.append((iid, openness))
 
 
 class _Char:
@@ -57,9 +61,12 @@ def test_no_lip_line_drives_flap_through_sink():
                       duration=1.0, now=100.0)
         rt.update(100.10)   # ~first open phase
         assert any(c[0] == 7 for c in r.calls), "flap did not drive the face sink"
+        assert any(c[0] == 7 for c in r.jaw_calls), "flap did not drive the jaw sink"
         # The opening flap reaches a non-neutral (open) viseme at some point.
         rt.update(100.20)
         assert any(c[1] != "neutral" for c in r.calls)
+        # ...and a corresponding non-zero jaw openness (discrete PhonemeMap).
+        assert any(c[1] > 0.0 for c in r.jaw_calls)
     finally:
         rt.close()
 
@@ -71,5 +78,6 @@ def test_line_with_no_wav_is_ignored():
         rt._on_speech("Saffi", None, duration=1.0, now=0.0)
         rt.update(0.1)
         assert r.calls == []   # nothing to animate without a voice line
+        assert r.jaw_calls == []
     finally:
         rt.close()
