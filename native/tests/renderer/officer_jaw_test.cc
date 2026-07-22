@@ -27,13 +27,10 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <filesystem>
-#include <limits>
 #include <memory>
-#include <string>
 #include <vector>
 
 namespace {

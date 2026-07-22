@@ -9,7 +9,8 @@ Records are a contiguous partition of the voice line — ``start[n] + duration[n
 == start[n+1]`` — and the last segment is consistently ``code 0`` (trailing
 silence). ``code`` is a phoneme id; 35 distinct values appear across the corpus,
 with ``code 0`` meaning closed/silence. The ``code -> viseme`` mapping is *data*
-(``lip_visemes.json``), recovered separately; this module only decodes timing.
+(``lip_phonemes.json``, see :mod:`engine.appc.phoneme_map`); this module only
+decodes timing.
 
 Each ``.LIP`` sits beside its voice file with the same basename
 (``gl001.mp3`` <-> ``gl001.LIP``); :func:`lip_path_for` resolves that pairing.

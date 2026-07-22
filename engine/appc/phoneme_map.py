@@ -18,6 +18,15 @@ _CLOSED = Viseme("closed", 0.0, "neutral")
 
 
 class PhonemeMap:
+    """BC's shared/global phoneme group: `.LIP` code -> discrete `Viseme`.
+
+    Built from the code->viseme-name table in `lip_phonemes.json` (the `_visemes`
+    block defines each named viseme's openness + texture). One instance is shared
+    by all characters (`default_phoneme_map`), mirroring BC's compiled-in default
+    group -- `AddPhoneme`/`UsePhonemeGroup` are never called, so there is no
+    per-character override to model.
+    """
+
     def __init__(self, raw: dict):
         specs = raw.get("_visemes", {})
         self._visemes = {
@@ -31,6 +40,8 @@ class PhonemeMap:
             self._by_code[int(key)] = self._visemes.get(name, _CLOSED)
 
     def viseme_for(self, code: int) -> Viseme:
+        """The `Viseme` for a `.LIP` phoneme `code`; unknown codes -> `closed`
+        (mouth shut) so a stray code never opens the jaw or raises."""
         return self._by_code.get(int(code), _CLOSED)
 
 

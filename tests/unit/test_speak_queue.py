@@ -93,6 +93,22 @@ def test_someone_speaking_reflects_bus(monkeypatch):
     assert sq.someone_speaking() == 0
 
 
+def test_someone_speaking_true_while_a_line_holds_the_channel():
+    import time
+    b = crew_speech.bus()
+    b._active_speaker = "Kiska"
+    b._active_expiry = time.monotonic() + 5.0     # a live line
+    assert sq.someone_speaking() == 1
+
+
+def test_someone_speaking_false_once_the_line_expired():
+    import time
+    b = crew_speech.bus()
+    b._active_speaker = "Kiska"
+    b._active_expiry = time.monotonic() - 1.0     # expired
+    assert sq.someone_speaking() == 0
+
+
 def test_characterclass_speakline_clears_interruptable_and_emits(monkeypatch):
     from engine.appc.characters import CharacterClass
     calls = []

@@ -10,7 +10,7 @@ from engine.appc.phoneme_map import PhonemeMap
 from engine.lip_sync import LipTimeline, LipSyncController, BlinkScheduler
 
 # Synthetic map so these tests exercise controller LOGIC, independent of the
-# recovered viseme data (which is validated separately in test_lip_visemes).
+# recovered viseme data (which is validated separately in test_phoneme_map).
 PM = PhonemeMap({
     "_visemes": {
         "closed": {"openness": 0.0, "texture": "neutral"},

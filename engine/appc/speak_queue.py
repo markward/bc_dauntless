@@ -8,6 +8,8 @@ divergence is tracked separately and does not change this facade.
 """
 from __future__ import annotations
 
+import time
+
 from engine.appc import crew_speech
 
 
@@ -63,5 +65,4 @@ def someone_speaking() -> int:
     """BC CharacterClass_IsSomeoneSpeaking (0x00666F00): active-speaker count > 0.
     The crew_speech bus serialises, so the count is 0 or 1."""
     b = crew_speech.bus()
-    import time
     return 1 if (b._active_speaker and time.monotonic() < b._active_expiry) else 0
