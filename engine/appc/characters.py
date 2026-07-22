@@ -781,10 +781,10 @@ class CharacterClass(ObjectClass):
             pass
 
     def _should_drop_tooltips(self) -> bool:
-        return False        # SP4 wires the real current-tooltip-owner check
+        return CharacterClass_GetCurrentToolTipOwner() is self
 
     def _drop_character_tooltips(self) -> None:
-        pass
+        DropCharacterToolTips()     # owner-slot clear; CEF panel hides next frame
 
     def Special4(self, rec) -> bool:
         # Turn-back follow-up (tier-0 §4.8, adapted). Declines (False) if no
@@ -1526,6 +1526,29 @@ def CharacterClass_SetVolumeForLineType(line_type, volume) -> None:
 
 def CharacterClass_GetVolumeForLineType(line_type) -> float:
     return _volume_for_line_type.get(int(line_type), 1.0)
+
+
+# ── Current-tooltip-owner (BC statics CharacterClass_Get/SetCurrentToolTipOwner)
+# One character's status box is visible at a time; the host loop's owner-
+# selection tick (Task 8) sets this to the focused officer. DropMenusTurnBack /
+# DropCharacterToolTips clear it.
+_current_tooltip_owner = None
+
+
+def CharacterClass_GetCurrentToolTipOwner():
+    return _current_tooltip_owner
+
+
+def CharacterClass_SetCurrentToolTipOwner(character):
+    global _current_tooltip_owner
+    _current_tooltip_owner = character
+
+
+def DropCharacterToolTips():
+    """Hide the current tooltip owner's box and clear the owner slot (mirrors
+    BridgeHandlers.DropCharacterToolTips). The CEF panel reads the owner each
+    frame, so clearing the slot hides the box next render."""
+    CharacterClass_SetCurrentToolTipOwner(None)
 
 
 class _NullMenuClass(STTopLevelMenu):

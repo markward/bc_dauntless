@@ -699,6 +699,16 @@ def _reset_leakable_engine_globals():
                 getattr(_m, _attr).clear()
         except Exception:
             pass
+    # Current-tooltip-owner (engine.appc.characters._current_tooltip_owner): a
+    # scalar module global, same leak class as the accumulator lists just
+    # above. A test that calls CharacterClass_SetCurrentToolTipOwner would
+    # otherwise leak that character into a later, unrelated test's
+    # _should_drop_tooltips() check.
+    try:
+        import engine.appc.characters as _chars
+        _chars.CharacterClass_SetCurrentToolTipOwner(None)
+    except Exception:
+        pass
     # scene_scope (guide §11 one-active-scene rule): _rendered is a scalar, not
     # a container, so it needs its own reset_for_tests() rather than a plain
     # .clear() -- same leak class as attached_sources/_attached and
