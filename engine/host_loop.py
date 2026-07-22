@@ -2760,6 +2760,11 @@ def _resolve_bridge_focus_world(watch_ctrl, crew_menu_panel, r):
     return _active_zoom_officer_world(crew_menu_panel, r)
 
 
+# SP4: throttle state for the per-bridge-frame UpdateToolTip dispatch tick
+# (tooltip_dispatch.run_update_tooltip) — {"last": <game time of last call>}.
+_tooltip_dispatch_state = {"last": -1e9}
+
+
 def _setup_sdk() -> None:
     """Install SDK finder + AST transforms so SDK script imports work."""
     if str(PROJECT_ROOT) not in sys.path:
@@ -6033,6 +6038,15 @@ def run(mission_name: Optional[str] = None,
         weapons_display = WeaponsDisplayPanel(player_control=player_control)
         registry.register(weapons_display)
 
+        # Crew tooltip box — BC's native per-officer status box
+        # (Bridge.BridgeMenus.CreateCharacterTooltipBox). Display-only; it
+        # just reflects CharacterClass_GetCurrentToolTipOwner, which the
+        # SP4 owner-selection tick (below, in the bridge-view frame block)
+        # sets each frame.
+        from engine.ui.character_tooltip_panel import CharacterTooltipPanel
+        character_tooltip_panel = CharacterTooltipPanel()
+        registry.register(character_tooltip_panel)
+
         # Engineering power-grid panel — live power state: sliders, Power Used
         # bar, column gauges, and tractor/cloak siphon lines.  Always registered
         # (production panel, not dev-only); the panel emits {"visible":False}
@@ -6902,6 +6916,26 @@ def run(mission_name: Optional[str] = None,
                         bridge_camera.set_zoom_target(
                             _focus, _player_dt,
                             snap=watch_ctrl.consume_snap())
+                        # SP4: tooltip owner = focused officer (open menu wins
+                        # over hover), then run the real SDK UpdateToolTip
+                        # handler on a throttle so its status rows populate.
+                        from engine.appc.characters import (
+                            CharacterClass_SetCurrentToolTipOwner)
+                        from engine.ui import tooltip_dispatch
+                        _hover = None
+                        _aimed = bridge_officer_picking.pick(_h, r, bridge_camera)
+                        if _aimed is not None:
+                            _hover = crew_menu_hotkeys.resolve_character(_aimed["label"])
+                        _menu_off = None
+                        _mlabel = crew_menu_panel.open_menu_label()
+                        if _mlabel:
+                            _menu_off = crew_menu_hotkeys.resolve_character(_mlabel)
+                        _owner = tooltip_dispatch.select_owner(hover=_hover,
+                                                               open_menu=_menu_off)
+                        CharacterClass_SetCurrentToolTipOwner(_owner)
+                        tooltip_dispatch.run_update_tooltip(
+                            _owner, now=_App.g_kUtopiaModule.GetGameTime(),
+                            state=_tooltip_dispatch_state)
                         bridge_camera.apply(mouse_dx, mouse_dy)
                     b_eye, b_target, b_up, b_fov = bridge_camera.compute_camera()
                     # Bridge first-person camera uses separate (eye, target,
