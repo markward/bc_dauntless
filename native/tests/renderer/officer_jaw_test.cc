@@ -94,3 +94,13 @@ TEST_F(OfficerJawTest, Ponytail1BoneSurvivesCompositionCarryingMouthWeights) {
         << "no grafted head vertex weights to '" << kJawBoneName
         << "' -- driving the jaw bone would move nothing";
 }
+
+#include "scenegraph/world.h"
+TEST(OfficerJaw, SetOfficerJawStoresOpenness) {
+    scenegraph::World w;
+    auto id = w.create_instance(scenegraph::ModelHandle{});
+    w.set_officer_jaw(id, 0.7f);
+    const auto* in = w.get(id);
+    ASSERT_TRUE(in->jaw_active);
+    ASSERT_NEAR(in->jaw_openness, 0.7f, 1e-6f);
+}

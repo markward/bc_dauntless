@@ -73,6 +73,12 @@ struct Instance {
     std::uint32_t face_tex_b  = 0;  // GL texture id
     float         face_mix    = 0.0f;
 
+    /// Per-instance officer JAW override (lip-sync). When jaw_active, the
+    /// bridge sub-pass rotates the "Bip01 Ponytail1" bone by jaw_openness
+    /// (0 = closed/rest, 1 = fully open). Runtime state, never serialized.
+    bool  jaw_active = false;
+    float jaw_openness = 0.0f;   // 0 = closed (rest), 1 = fully open
+
     /// Per-instance node-local overrides for NON-SKINNED instances (the
     /// bridge): node_index -> animated local_transform. Empty = every node
     /// uses its model's static local (byte-identical to the un-animated

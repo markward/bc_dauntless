@@ -46,6 +46,13 @@ void World::set_officer_face(InstanceId id, std::uint32_t tex_a,
     }
 }
 
+void World::set_officer_jaw(InstanceId id, float openness) {
+    if (auto* inst = get(id)) {
+        inst->jaw_active = true;
+        inst->jaw_openness = openness;
+    }
+}
+
 void World::set_visible(InstanceId id, bool visible) {
     if (auto* inst = get(id)) inst->visible = visible;
 }

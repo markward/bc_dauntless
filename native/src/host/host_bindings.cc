@@ -1252,6 +1252,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "slots ('neutral','a','e','u','blink1','blink2','eyesclosed') by mix "
           "in [0,1]. 'neutral' = the head's own base texture. No-op for a bad "
           "id or a non-officer model.");
+    m.def("set_officer_jaw",
+          [](scenegraph::InstanceId id, float openness) {
+              g_world.set_officer_jaw(id, openness);
+          },
+          py::arg("id"), py::arg("openness"),
+          "Lip-sync: set an officer's jaw openness in [0,1]; drives the "
+          "Bip01 Ponytail1 bone. 0 = closed (rest). No-op for a bad id.");
     // Bind a clip onto an instance's channel table. Returns bones bound
     // (0 = dead clip on this skeleton — BC's silent no-op).
     auto bind_instance_clip = [](scenegraph::InstanceId id, int clip_index,

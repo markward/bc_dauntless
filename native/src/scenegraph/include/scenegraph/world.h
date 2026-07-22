@@ -21,6 +21,7 @@ public:
     void set_emissive_scale(InstanceId id, float scale);
     void set_officer_face(InstanceId id, std::uint32_t tex_a,
                           std::uint32_t tex_b, float mix);
+    void set_officer_jaw(InstanceId id, float openness);
 
     bool is_valid(InstanceId id) const noexcept;
     Instance* get(InstanceId id) noexcept;
