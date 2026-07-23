@@ -2615,12 +2615,16 @@ class _BridgeCamera:
         zoom_factor (SP4): the officer's authored GetPositionZoom(GetLocation())
         FOV factor; POSITION_ZOOM_SENTINEL (or None) keeps _BRIDGE_ZOOM_MIN."""
         self._zoom_active = world_xyz is not None
-        if world_xyz is not None and zoom_factor is not None:
+        if world_xyz is not None:
             from engine.appc.character_position_zoom import POSITION_ZOOM_SENTINEL
-            # sentinel == "no authored zoom" -> keep the default min factor.
-            self._zoom_factor = (_BRIDGE_ZOOM_MIN
-                                 if zoom_factor == POSITION_ZOOM_SENTINEL
-                                 else float(zoom_factor))
+            # A selection with no authored officer factor (watch-target focus,
+            # or a station with no AddPositionZoom) uses the default min
+            # factor -- never a leftover factor from a previous officer-menu
+            # zoom (self._zoom_factor persists for the whole bridge session).
+            if zoom_factor is None or zoom_factor == POSITION_ZOOM_SENTINEL:
+                self._zoom_factor = _BRIDGE_ZOOM_MIN
+            else:
+                self._zoom_factor = float(zoom_factor)
         if world_xyz is not None:
             self._zoom_target_world = world_xyz
             if snap:
