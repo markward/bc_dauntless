@@ -90,3 +90,39 @@ def test_reset_clears_pending():
     subsystem_cascade.reset()
     subsystem_cascade.advance(subsystem_cascade.CASCADE_DELAY)
     assert ship.destroyed == []
+
+
+# ── Real ShipClass gate (the fake-based tests above can't catch the in-game
+#    bug: a REAL ShipClass had no IsDestroyBrokenSystems method, so hasattr()
+#    saw the truthy _Stub and bool(_Stub) was always True — SetDestroyBroken-
+#    Systems(0) was silently ignored, e.g. E3M2's derelict Warbird). ──────────
+def test_real_shipclass_reports_destroy_broken_flag():
+    from engine.appc.ships import ShipClass_Create
+    ship = ShipClass_Create("Warbird")
+    # Default ON — SDK only ever calls SetDestroyBrokenSystems(0) to opt OUT.
+    # Must be a real int, not a truthy _Stub, so `== 1` holds.
+    assert ship.IsDestroyBrokenSystems() == 1
+    ship.SetDestroyBrokenSystems(0)
+    assert ship.IsDestroyBrokenSystems() == 0
+    ship.SetDestroyBrokenSystems(1)
+    assert ship.IsDestroyBrokenSystems() == 1
+
+
+def test_real_shipclass_opt_out_suppresses_cascade():
+    from engine.appc.ships import ShipClass_Create
+    ship = ShipClass_Create("Warbird")
+    ship.SetDestroyBrokenSystems(0)   # E3M2: "doesn't get blown up by being broken"
+    subsystem_cascade.schedule(ship)
+    subsystem_cascade.advance(subsystem_cascade.CASCADE_DELAY * 2)
+    # Opted-out ship never enters the pending registry, so nothing is zeroed.
+    power = ship.GetPowerSubsystem()
+    assert power.GetCondition() == power.GetMaxCondition()
+
+
+def test_real_shipclass_default_runs_cascade():
+    from engine.appc.ships import ShipClass_Create
+    ship = ShipClass_Create("Galaxy")
+    # No SetDestroyBrokenSystems call — default ON, cascade should zero systems.
+    subsystem_cascade.schedule(ship)
+    subsystem_cascade.advance(subsystem_cascade.CASCADE_DELAY)
+    assert ship.GetPowerSubsystem().GetCondition() == 0.0

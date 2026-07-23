@@ -19,8 +19,16 @@ _active: list[dict] = []
 
 
 def _destroy_broken_systems(ship) -> bool:
-    """Honour ship.IsDestroyBrokenSystems(); default ON when absent (fakes)."""
-    if not hasattr(ship, "IsDestroyBrokenSystems"):
+    """Honour ship.IsDestroyBrokenSystems(); default ON when absent (fakes).
+
+    Uses ids.implements(), NOT hasattr(): a real ShipClass that had no such
+    method still answered hasattr() truthily via the TGObject _Stub, so
+    bool(ship.IsDestroyBrokenSystems()) was ALWAYS True and every
+    SetDestroyBrokenSystems(0) opt-out (E3M2's derelict Warbird) was silently
+    ignored. See docs/stub_heatmap.md / project_ship_motion_drift_stub_bug.
+    """
+    from engine.core.ids import implements
+    if not implements(ship, "IsDestroyBrokenSystems"):
         return True
     return bool(ship.IsDestroyBrokenSystems())
 

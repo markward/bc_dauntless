@@ -63,6 +63,14 @@ class ShipClass(DamageableObject):
         # per-mission scripts. Freshly-spawned ships are undocked. (_dying /
         # _dead are initialised by DamageableObject, which owns IsDying/IsDead.)
         self._docked = False
+        # DestroyBrokenSystems: when a ship's hull dies, BC cascades and
+        # zeroes every subsystem ("destroy broken systems"). Default ON — the
+        # SDK only ever opts OUT (E3M2's derelict Warbird calls
+        # SetDestroyBrokenSystems(0) so breaking it doesn't blow it up). Must
+        # be a real bool, not left to the truthy _Stub fallback: subsystem_
+        # cascade._destroy_broken_systems() gates on this, and a stubbed query
+        # made every opt-out silently ignored.
+        self._destroy_broken_systems = True
         # Ship-level identity populated by SetupProperties from ShipProperty.
         self._genus: int = 0
         self._species: int = 0
@@ -1394,6 +1402,14 @@ class ShipClass(DamageableObject):
     def IsDocked(self) -> int:    return 1 if self._docked else 0
     def SetDocked(self, v) -> None:
         self._docked = bool(v)
+
+    # DestroyBrokenSystems (SDK App.py:5486-5487). Real int getter so
+    # subsystem_cascade's gate reads a genuine 0/1 instead of a truthy _Stub.
+    def IsDestroyBrokenSystems(self) -> int:
+        return 1 if self._destroy_broken_systems else 0
+
+    def SetDestroyBrokenSystems(self, v) -> None:
+        self._destroy_broken_systems = bool(v)
     # IsDying / SetDying / IsDead / SetDead live on DamageableObject, where BC
     # declares them (App.py:5363-5365).
 
