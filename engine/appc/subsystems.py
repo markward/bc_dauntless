@@ -297,6 +297,12 @@ class ShipSubsystem(TGEventHandlerObject):
         # make IsDestroyed() true when condition hits zero).
         self._damaged: bool = False
         self._destroyed: bool = False
+        # Per-subsystem invincibility (SDK ShipSubsystem.SetInvincible,
+        # App.py:5666-5667). MissionLib.MakeSubsystemsInvincible marks a
+        # subsystem (and, recursively, its children) immune so a capture-
+        # mission's warp core survives while the rest of the ship is fought
+        # down. Real bool — combat.apply_hit gates the per-subsystem hit on it.
+        self._invincible: bool = False
         # WeaponsDisplay icon descriptor mirrored from SubsystemProperty.
         # The ShipDisplay panel snapshot reads these without walking back
         # to the property template. Coordinates are pixel-space against
@@ -1025,6 +1031,14 @@ class ShipSubsystem(TGEventHandlerObject):
     def SetDestroyed(self, value) -> None:
         """Explicitly mark this subsystem as destroyed (or clear the flag)."""
         self._destroyed = bool(value)
+
+    # Invincibility (SDK ShipSubsystem.SetInvincible, App.py:5666-5667). Real
+    # 0/1 getter so combat.apply_hit reads a genuine flag, not a truthy _Stub.
+    def IsInvincible(self) -> int:
+        return 1 if self._invincible else 0
+
+    def SetInvincible(self, value) -> None:
+        self._invincible = bool(value)
 
     def IsHittableFromLocation(self, vWorldLoc) -> float:
         """SDK Preprocessors.py:980 — `fHittable = pSubsystem.IsHittableFromLocation(pOurShip.GetWorldLocation())`.

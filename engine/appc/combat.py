@@ -425,9 +425,21 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     if _cheats.double_player_weapons_active() and _source_is_player:
         damage = float(damage) * 2.0
 
-    # When god mode protects the player, mutation calls are skipped but the
-    # absorbed_* amounts are still computed so hit feedback fires unchanged.
-    _commit = not (_cheats.god_mode_active() and _target_is_player)
+    # Ship-level immunity (SDK SetInvincible / SetHurtable — E7M2 boss ships,
+    # E3M1 scripted player-invulnerability windows). Real gameplay, NOT a dev
+    # cheat, so it applies regardless of dev mode. Handled exactly like god
+    # mode: skip every state mutation but still compute absorbed_* so the shot
+    # visually/audibly connects. implements() (not hasattr) so a ship lacking
+    # the method reads "not immune", never a truthy _Stub.
+    from engine.core.ids import implements as _implements
+    _ship_immune = (_implements(ship, "IsImmuneToDamage")
+                    and bool(ship.IsImmuneToDamage()))
+
+    # When god mode protects the player OR the ship is immune, mutation calls
+    # are skipped but the absorbed_* amounts are still computed so hit feedback
+    # fires unchanged.
+    _commit = not ((_cheats.god_mode_active() and _target_is_player)
+                   or _ship_immune)
 
     # 1. Shields take the first bite. Identical to the pre-splash flow.
     remaining = float(damage)
@@ -505,9 +517,16 @@ def apply_hit(ship, damage: float, hit_point, source, *,
                 continue
             allocations.append((sub, w))
             amount = post_shield * w
+            # Per-subsystem invincibility (MissionLib.MakeSubsystemsInvincible
+            # — e.g. a capture-mission warp core that must survive while the
+            # rest of the ship is fought down). The hit still registers for
+            # feedback (allocations / absorbed total above), only the condition
+            # mutation is skipped. implements() guards the truthy-_Stub trap.
+            sub_immune = (_implements(sub, "IsInvincible")
+                          and bool(sub.IsInvincible()))
             if hasattr(ship, "DamageSystem"):
                 before_flags = _subsystem_state_flags(sub)
-                if _commit:
+                if _commit and not sub_immune:
                     ship.DamageSystem(sub, amount, source)
                 absorbed_subsystem_total += amount
                 after_flags = _subsystem_state_flags(sub)

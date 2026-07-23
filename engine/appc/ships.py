@@ -71,6 +71,13 @@ class ShipClass(DamageableObject):
         # cascade._destroy_broken_systems() gates on this, and a stubbed query
         # made every opt-out silently ignored.
         self._destroy_broken_systems = True
+        # Immunity flags (SDK App.py:5482-5485). Invincible is a permanent
+        # "never take damage" mark (E7M2 boss ships); Hurtable is the toggled
+        # form (E3M1 flips it around scripted player-invulnerability windows).
+        # A ship is immune to gameplay damage when invincible OR not hurtable.
+        # Real bools, not the truthy _Stub — combat.apply_hit gates on them.
+        self._invincible = False
+        self._hurtable = True
         # Ship-level identity populated by SetupProperties from ShipProperty.
         self._genus: int = 0
         self._species: int = 0
@@ -1410,6 +1417,26 @@ class ShipClass(DamageableObject):
 
     def SetDestroyBrokenSystems(self, v) -> None:
         self._destroy_broken_systems = bool(v)
+
+    # Immunity (SDK App.py:5482-5485). Real 0/1 getters so combat.apply_hit
+    # reads a genuine flag, never a truthy _Stub. IsImmuneToDamage() is the
+    # single predicate combat consults: invincible OR not hurtable.
+    def IsInvincible(self) -> int:
+        return 1 if self._invincible else 0
+
+    def SetInvincible(self, v) -> None:
+        self._invincible = bool(v)
+
+    def IsHurtable(self) -> int:
+        return 1 if self._hurtable else 0
+
+    def SetHurtable(self, v) -> None:
+        self._hurtable = bool(v)
+
+    def IsImmuneToDamage(self) -> bool:
+        """True when this ship must take no gameplay damage — the union of
+        both BC immunity flags. Not an SDK method; combat.apply_hit's gate."""
+        return self._invincible or not self._hurtable
     # IsDying / SetDying / IsDead / SetDead live on DamageableObject, where BC
     # declares them (App.py:5363-5365).
 
