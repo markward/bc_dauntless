@@ -44,6 +44,18 @@ def test_begin_marks_ship_dying():
     assert ship.IsDead() == 0
 
 
+def test_begin_applies_death_splash(monkeypatch):
+    """Every death explosion deals the ship's faithful splash damage to nearby
+    objects (BC m_splashDamage). ship_death.begin is the single fire point."""
+    from engine.appc import splash_damage
+    hit = []
+    monkeypatch.setattr(splash_damage, "apply",
+                        lambda ship, ship_instances=None: hit.append(ship))
+    ship = FakeShip()
+    ship_death.begin(ship)
+    assert hit == [ship]
+
+
 def test_begin_is_idempotent():
     ship = FakeShip()
     ship_death.begin(ship)

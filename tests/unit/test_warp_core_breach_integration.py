@@ -1,6 +1,8 @@
-"""End-to-end: hull death -> 1.5s cascade -> warp core crosses 0 -> breach
-damages a neighbour. Exercises objects.py routing + subsystem_cascade +
-warp_core_breach together (Case B), with combat.apply_hit captured."""
+"""End-to-end: a critical death applies the dying ship's faithful splash
+damage (BC m_splashDamage) to a neighbour, and the warp-core breach that a
+hull-death cascade arms is VFX-only. Exercises objects.py routing +
+subsystem_cascade + ship_death + splash_damage + warp_core_breach together,
+with combat.apply_hit captured."""
 import pytest
 
 from engine.appc.objects import DamageableObject
@@ -45,27 +47,32 @@ class _Ship(DamageableObject):
     def GetPowerSubsystem(self): return self._power
     def GetSubsystems(self):     return [self._hull, self._power, *self._others]
     def IsDestroyBrokenSystems(self): return 1
-    def IsDying(self):           return 0
-    def IsDead(self):            return 0
-    def SetDying(self, v):       pass
+    # IsDying / IsDead / SetDying / SetDead inherited from DamageableObject, so
+    # ship_death.begin's idempotency guard actually engages (SetDying(True) makes
+    # IsDying() read 1) — the cascade zeroing further criticals must NOT re-fire
+    # the death (and re-splash).
 
 
 @pytest.fixture(autouse=True)
 def _clean():
     warp_core_breach.reset()
     subsystem_cascade.reset()
+    ship_death.reset()
     yield
     warp_core_breach.reset()
     subsystem_cascade.reset()
+    ship_death.reset()
 
 
-def test_hull_death_cascade_breach_damages_neighbour(monkeypatch):
-    # Source ship at origin with a 5000-condition warp core; neighbour 0.5 away.
+def test_critical_death_splashes_neighbour_breach_is_vfx_only(monkeypatch):
+    # Source ship at origin with authored splash (as loadspacehelper sets on
+    # every real ship); neighbour 0.5 away inside the splash radius.
     src = _Ship("A", TGPoint3(0, 0, 0),
                 hull=_Sub("Hull", cond=20.0, critical=True),
                 power=_Sub("WarpCore", cond=100.0, critical=True,
                            max_condition=5000.0),
                 others=[_Sub("Sensors", cond=100.0)])
+    src.SetSplashDamage(3000.0, 10.0)
     nbr = _Ship("B", TGPoint3(0.5, 0, 0),
                 hull=_Sub("Hull", cond=9999.0, critical=True),
                 power=_Sub("WarpCore", cond=9999.0, critical=True,
@@ -80,18 +87,20 @@ def test_hull_death_cascade_breach_damages_neighbour(monkeypatch):
     monkeypatch.setattr(combat, "apply_hit",
                         lambda ship, damage, hp, source, **kw: hits.append((ship, damage)))
 
-    # Hull dies -> schedules the cascade (no breach yet).
+    # Hull (critical) dies -> ship_death.begin(src) fires at the blast moment,
+    # applying src's splash to the neighbour. The neighbour is damaged by the
+    # SPLASH, not by the warp-core breach.
     src.DamageSystem(src.GetHull(), 20.0)
-    subsystem_cascade.advance(subsystem_cascade.CASCADE_DELAY / 2.0)
-    warp_core_breach.advance(0.0)
-    assert hits == []   # cascade not yet fired
-
-    # Past the 1.5s delay: cascade zeroes the warp core -> arms breach.
-    subsystem_cascade.advance(subsystem_cascade.CASCADE_DELAY)
-    warp_core_breach.advance(0.0)
 
     targets = [h[0] for h in hits]
     assert nbr in targets and src not in targets
+
+    # The hull-death cascade arms the warp-core breach; draining it must add NO
+    # further damage (breach is VFX-only now).
+    n_before = len(hits)
+    subsystem_cascade.advance(subsystem_cascade.CASCADE_DELAY * 2.0)
+    warp_core_breach.advance(0.0)
+    assert len(hits) == n_before
 
 
 def test_neighbour_breach_does_not_rearm_lingering_wreck(monkeypatch):

@@ -689,6 +689,7 @@ def _reset_leakable_engine_globals():
         ("engine.appc.projectiles", "_active"),
         ("engine.appc.hit_vfx", "_active"),
         ("engine.appc.ship_death", "_active"),
+        ("engine.appc.object_lifetime", "_timed"),
         ("engine.appc.visible_damage", "_pending"),
         ("engine.audio.attached_sources", "_attached"),
         ("engine.audio.hum_allocator", "_humming"),

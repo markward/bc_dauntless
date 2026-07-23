@@ -71,6 +71,15 @@ def begin(ship, killer=None) -> None:
             dev_mode.log_swallowed("run death script from begin", _e)
     _broadcast_exploding(ship, killer)
     _spawn_explosion(ship)
+    # Faithful death-explosion collateral: BC's m_splashDamage to everything in
+    # m_splashDamageRadius (loadspacehelper sets it on every ship). Raise-safe;
+    # a no-op for objects with no authored splash. Fired here so EVERY death
+    # (combat, warp-core, scripted) splashes exactly once, at the blast moment.
+    try:
+        from engine.appc import splash_damage
+        splash_damage.apply(ship)
+    except Exception as _e:
+        dev_mode.log_swallowed("apply death splash damage", _e)
 
 
 def _clear_target_locks(dying) -> None:
@@ -136,6 +145,18 @@ def _remove(ship) -> None:
             pSet.RemoveObjectFromSet(ship.GetName())
     except Exception as _e:
         dev_mode.log_swallowed("remove dead ship from set", _e)
+
+
+def retire(ship) -> None:
+    """Immediate, single-step removal of `ship` from the world — no throes /
+    linger phases. Marks it dead (fires ET_OBJECT_DESTROYED + publish_destroyed),
+    clears target locks, and removes it from its set. Used by the lifetime
+    countdown (engine.appc.object_lifetime), where the object's death was
+    already scripted and only removal remains. Safe to call once per object."""
+    if ship is None:
+        return
+    _mark_dead(ship)   # SetDead + ET_OBJECT_DESTROYED
+    _remove(ship)      # clear locks + remove from set
 
 
 def is_targetable_wreck(ship) -> bool:

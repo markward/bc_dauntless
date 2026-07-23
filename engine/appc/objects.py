@@ -14,6 +14,14 @@ import weakref
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.math import TGPoint3, TGMatrix3
 
+# Lifetime constants (BC DamageableObject). LIFETIME_UNSET is the "not set"
+# sentinel: Effects.py:753 treats GetLifeTime() > 1e6 as unset, so the default
+# sits well above that. DYING_THRESHOLD is BC's g_dyingThreshold (0x8e5c18) —
+# its exact value is unrecovered, so we key it to the same 1e6 boundary: any
+# finite lifetime a script sets is a countdown to death, i.e. "dying".
+LIFETIME_UNSET = 1.0e30
+DYING_THRESHOLD = 1.0e6
+
 
 class _NodeStub:
     """Chainable stub for animation/render node — truthy, accepts any call."""
@@ -629,7 +637,7 @@ def _route_zero_crossing(ship, subsystem, crossed_zero: bool) -> None:
         # Only a real, targetable power plant / warp core breaches. Inert
         # objects (asteroids) carry a hidden, non-targetable Power Plant
         # (SetTargetable(0)); when the death cascade zeroes it, it must NOT
-        # throw a warp-core explosion with its unique VFX + splash damage.
+        # throw a warp-core explosion with its unique VFX (shockwave + carve).
         if _is_targetable(power):
             from engine.appc import warp_core_breach
             warp_core_breach.arm(ship)
@@ -658,6 +666,14 @@ class DamageableObject(PhysicsObjectClass):
         # carves now; strength mod is stored-only until Gap 2 plumbs strength.
         self._vis_dmg_radius_mod: float = 1.0
         self._vis_dmg_strength_mod: float = 1.0
+        # Death-explosion splash (BC m_splashDamage +0x154 / m_splashDamageRadius
+        # +0x158). Set on every ship by loadspacehelper.py:100
+        # (MaxCondition*0.1 at radius*2) and by mission scripts; applied as
+        # collateral damage to nearby objects when THIS object explodes (see
+        # engine.appc.splash_damage, fired from ship_death.begin). Default 0 ->
+        # a bare damageable prop does no splash.
+        self._splash_damage: float = 0.0
+        self._splash_damage_radius: float = 0.0
         # Lifecycle flags. BC declares IsDying/IsDead/SetDead on
         # DamageableObject (sdk/Build/scripts/App.py:5363-5365), not on
         # ShipClass — and the death guards below (`... and not self.IsDying()`)
@@ -666,13 +682,39 @@ class DamageableObject(PhysicsObjectClass):
         # DamageableObject, i.e. permanently False. Fresh objects are alive.
         self._dying = False
         self._dead = False
+        # Lifetime countdown (BC m_lifeTime +0x14c). Default is the "not set"
+        # sentinel (> Effects.py's 1e6 boundary) so a fresh object is not dying.
+        # A finite SetLifeTime(N) marks the object for timed removal in N
+        # seconds and makes IsDying() read true; engine.appc.object_lifetime
+        # ticks it down and retires it at zero.
+        self._life_time = LIFETIME_UNSET
 
     def GetPropertySet(self):
         return self._property_set
 
     # ── Lifecycle state (App.py:5363-5365) ───────────────────────────────────
     def IsDying(self) -> int:
-        return 1 if self._dying else 0
+        # Faithful: BC derives IsDying from m_lifeTime < g_dyingThreshold. The
+        # combat death path (ship_death) also sets _dying directly; OR them so
+        # one IsDying signal serves both drivers.
+        return 1 if (self._dying or self._life_time < DYING_THRESHOLD) else 0
+
+    def SetLifeTime(self, value) -> None:
+        """SDK ``DamageableObject_SetLifeTime`` (App.py). Sets the lifetime
+        countdown; a finite value registers the object for timed removal.
+        Missions use it for self-destruct timing (E7M1 doomed freighter = 4.0);
+        Effects.DeathExplosion reads it back to size the explosion sequence."""
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        self._life_time = v
+        if v < DYING_THRESHOLD:
+            from engine.appc import object_lifetime
+            object_lifetime.register(self)
+
+    def GetLifeTime(self) -> float:
+        return self._life_time
 
     def SetDying(self, v) -> None:
         self._dying = bool(v)
@@ -688,6 +730,25 @@ class DamageableObject(PhysicsObjectClass):
         if new_dead and not was_dead:
             from engine.appc import ship_lifecycle
             ship_lifecycle.publish_destroyed(self)
+
+    # ── Death-explosion splash (App.py:5359-5361) ────────────────────────────
+    def SetSplashDamage(self, amount, radius) -> None:
+        """SDK ``DamageableObject_SetSplashDamage(fAmount, fRadius)``: the
+        collateral damage this object deals to everything within `radius` game
+        units when it explodes. Set on every ship at load
+        (loadspacehelper.py:100) and overridden by missions (E7M1 freighters,
+        E3M2 probe). Applied by ``engine.appc.splash_damage`` at death."""
+        try:
+            self._splash_damage = float(amount)
+            self._splash_damage_radius = float(radius)
+        except (TypeError, ValueError):
+            pass
+
+    def GetSplashDamage(self) -> float:
+        return self._splash_damage
+
+    def GetSplashDamageRadius(self) -> float:
+        return self._splash_damage_radius
 
     def HasClonedModel(self) -> int:
         """Whether this object has a cloned model carrying a separate

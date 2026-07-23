@@ -4,6 +4,17 @@
 **Status:** Approved, pending implementation plan
 **Area:** Phase 2 combat / ship death
 
+> **AMENDMENT (2026-07-23) — breach damage removed; replaced by faithful splash.**
+> The AoE *damage* portion described below was an artistic invention with no BC
+> counterpart. It has been removed. The breach now spawns **only its VFX**
+> (shockwave ring + hull carve). Collateral damage on death is BC's faithful
+> `m_splashDamage` / `m_splashDamageRadius` (set on every ship by
+> `loadspacehelper.py:100`), applied by `engine/appc/splash_damage.py` from
+> `ship_death.begin` — which fires on this same warp-core death, and on **every**
+> ship death (combat, scripted, lifetime-expiry), not just warp-core breaches.
+> See `DamageableObject.md` §5.3. The rest of this document describes the
+> superseded damage model and is retained for history.
+
 ## Summary
 
 When a ship's **Warp Core** subsystem condition crosses from a positive value to

@@ -656,6 +656,8 @@ def _advance_combat(ships, dt: float, ship_instances=None) -> None:
     shockwaves.advance(dt)
     particles.advance(dt)
     ship_death.advance(dt)
+    from engine.appc import object_lifetime
+    object_lifetime.advance(dt)
     from engine.appc import subsystem_cascade, warp_core_breach
     subsystem_cascade.advance(dt)
     warp_core_breach.advance(dt, ship_instances=ship_instances)
@@ -4107,6 +4109,8 @@ class HostController:
         ship_lifecycle.reset()
         from engine.appc import ship_death
         ship_death.reset()
+        from engine.appc import object_lifetime
+        object_lifetime.reset()
         from engine.appc import subsystem_cascade
         subsystem_cascade.reset()
         from engine.appc import warp_core_breach
