@@ -26,6 +26,10 @@ class ShipClass(DamageableObject):
         self._hailable = True
         self._ai = None
         self._net_type: int = 0
+        # Multiplayer player id (SDK Get/SetNetPlayerID). -1 = not networked;
+        # MP menus assign it from pNetwork.GetLocalID(). Real int, not a truthy
+        # _Stub (Mission3 compares it against hitter ids with IsSameTeam).
+        self._net_player_id: int = -1
         # Subsystem slots — None until populated by hardpoint loader.
         # SDK callers commonly chain `pShip.GetTorpedoSystem().GetNumAmmoTypes()`
         # but typically guard with `if pSystem:` first.  See sdk/.../App.py:5394+.
@@ -280,6 +284,38 @@ class ShipClass(DamageableObject):
 
     def GetTargetAngularVelocitySetpoint(self):
         return getattr(self, "_target_angular_velocity_setpoint", None)
+
+    def GetImpulse(self):
+        """Current impulse as a FRACTION of authored max speed (0.0..1.0),
+        magnitude only — SDK callers negate via IsReverse() (FlyForward.py:9-10)
+        and compare against 1.0 for full impulse (E3M1.py:3076). Was a truthy
+        _Stub; BridgeHandlers.py:1390 (`GetImpulse() * 9 + 0.1`) and the helm/
+        tactical readouts silently degraded. 0.0 when there is no IES or its
+        max speed is 0 (no divide-by-zero)."""
+        ies = self.GetImpulseEngineSubsystem()
+        max_speed = ies.GetAuthoredMaxSpeed() if ies is not None else 0.0
+        if not max_speed or max_speed <= 0.0:
+            return 0.0
+        frac = abs(self._current_speed) / max_speed
+        return 1.0 if frac > 1.0 else frac
+
+    def IsReverse(self) -> int:
+        """1 iff the ship is moving in reverse (SDK ShipClass.IsReverse). Pairs
+        with GetImpulse (which is magnitude-only) to recover signed throttle."""
+        return 1 if self._current_speed < 0.0 else 0
+
+    def CompleteStop(self) -> None:
+        """Halt the ship immediately (SDK ShipClass.CompleteStop): zero the
+        current linear + angular velocity AND their setpoints so the integrator
+        holds at rest instead of ramping back toward a stale command. Also
+        cancels any in-flight in-system warp. Was a silent _Stub no-op — an
+        AI-ordered all-stop never actually stopped the ship."""
+        self._current_speed = 0.0
+        self._current_angular_velocity = TGPoint3(0.0, 0.0, 0.0)
+        # Zero-speed setpoint (model-forward dir) so the integrator holds at 0.
+        self._speed_setpoint = (0.0, TGPoint3(0.0, 1.0, 0.0), 0)
+        self._target_angular_velocity_setpoint = TGPoint3(0.0, 0.0, 0.0)
+        self._insystem_warp_transit = None
 
     # ── Pure-math kinematic helpers ──────────────────────────────────────────
     # No state read/written beyond the explicit arg list (GetPredictedPosition)
@@ -665,6 +701,28 @@ class ShipClass(DamageableObject):
     def GetNetType(self) -> int:
         return self._net_type
 
+    # Multiplayer player id (SDK App.py:5514-5515). Real int accessors.
+    def GetNetPlayerID(self) -> int:
+        return self._net_player_id
+
+    def SetNetPlayerID(self, v) -> None:
+        self._net_player_id = int(v)
+
+    def IsPlayerShip(self) -> int:
+        """1 iff this ship is the current game's player (SDK App.py). Was a
+        truthy _Stub — so DockWithStarbase.py's `if pShip.IsPlayerShip()` read
+        EVERY ship as the player. Resolves the player the same way combat.py
+        does, defaulting to 0 when there is no current game / player."""
+        import App
+        try:
+            game = (App.Game_GetCurrentGame()
+                    if hasattr(App, "Game_GetCurrentGame") else None)
+            player = (game.GetPlayer()
+                      if game is not None and hasattr(game, "GetPlayer") else None)
+        except Exception:
+            player = None
+        return 1 if player is self else 0
+
     # ── Ship-level identity ──────────────────────────────────────────────────
     def GetGenus(self) -> int:                          return self._genus
     def SetGenus(self, v) -> None:                      self._genus = int(v)
@@ -842,6 +900,22 @@ class ShipClass(DamageableObject):
         if eGroup == ShipClass.WG_TRACTOR:
             return self._tractor_beam_system
         return None
+
+    def StopFiringWeapons(self) -> None:
+        """Cease fire on every weapon system (SDK ShipClass.StopFiringWeapons —
+        cutscene / death / disengage). Was a silent _Stub no-op, so a scripted
+        cease-fire left weapons firing. Each system's StopFiring is a real
+        method; raise-safe so one system can't abort the rest."""
+        for sysm in (self._phaser_system, self._torpedo_system,
+                     self._pulse_weapon_system, self._tractor_beam_system):
+            if sysm is None:
+                continue
+            stop = getattr(sysm, "StopFiring", None)
+            if callable(stop):
+                try:
+                    stop()
+                except Exception as _e:
+                    dev_mode.log_swallowed("StopFiringWeapons", _e)
 
     def GetShieldSubsystem(self):                 return self._shield_subsystem
     def SetShieldSubsystem(self, s) -> None:      self._shield_subsystem = self._attach_subsystem(s)
