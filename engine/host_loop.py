@@ -6981,20 +6981,27 @@ def run(mission_name: Optional[str] = None,
                         from engine.appc.characters import (
                             CharacterClass_SetCurrentToolTipOwner)
                         from engine.ui import tooltip_dispatch
-                        _hover = None
-                        _aimed = bridge_officer_picking.pick(_h, r, bridge_camera)
-                        if _aimed is not None:
-                            _hover = crew_menu_hotkeys.resolve_character(_aimed["label"])
-                        _menu_off = None
-                        _mlabel = crew_menu_panel.open_menu_label()
-                        if _mlabel:
-                            _menu_off = crew_menu_hotkeys.resolve_character(_mlabel)
-                        _owner = tooltip_dispatch.select_owner(hover=_hover,
-                                                               open_menu=_menu_off)
-                        CharacterClass_SetCurrentToolTipOwner(_owner)
-                        tooltip_dispatch.run_update_tooltip(
-                            _owner, now=_App.g_kUtopiaModule.GetGameTime(),
-                            state=_tooltip_dispatch_state)
+                        if tooltip_dispatch.tooltip_suppressed(
+                                cutscene_active=_tw.IsCutsceneMode(),
+                                bridge_cutscene_pending=cutscene.has_pending_camera()):
+                            # No tooltip box during a cutscene -- it would float
+                            # over the letterbox bars. Drop any owner and skip.
+                            CharacterClass_SetCurrentToolTipOwner(None)
+                        else:
+                            _hover = None
+                            _aimed = bridge_officer_picking.pick(_h, r, bridge_camera)
+                            if _aimed is not None:
+                                _hover = crew_menu_hotkeys.resolve_character(_aimed["label"])
+                            _menu_off = None
+                            _mlabel = crew_menu_panel.open_menu_label()
+                            if _mlabel:
+                                _menu_off = crew_menu_hotkeys.resolve_character(_mlabel)
+                            _owner = tooltip_dispatch.select_owner(hover=_hover,
+                                                                   open_menu=_menu_off)
+                            CharacterClass_SetCurrentToolTipOwner(_owner)
+                            tooltip_dispatch.run_update_tooltip(
+                                _owner, now=_App.g_kUtopiaModule.GetGameTime(),
+                                state=_tooltip_dispatch_state)
                         bridge_camera.apply(mouse_dx, mouse_dy)
                     b_eye, b_target, b_up, b_fov = bridge_camera.compute_camera()
                     # Bridge first-person camera uses separate (eye, target,

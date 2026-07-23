@@ -1,7 +1,10 @@
 /* native/assets/ui-cef/css/character_tooltip.css
    Crew tooltip box -- the focused officer's status rows. Chrome (header/body
    salmon .bc-panel) is inherited from global.css/crew_menus.css; this file
-   only positions the box (top-centre of the bridge view) and stacks rows. */
+   only positions the box (top-centre of the bridge view) and stacks rows.
+   The Antonio font block mirrors #crew-menu-host so the tooltip reads in the
+   same LCARS typeface as the rest of the crew UI (the box is a separate host
+   from #crew-menu-host, so it does not inherit that rule). */
 #character-tooltip-host {
   position: absolute;
   top: 5%;
@@ -10,6 +13,10 @@
   display: flex;
   justify-content: center;
   pointer-events: none;   /* tooltip never eats clicks */
+  font-family: "Antonio", "Antonio-Regular", sans-serif;
+  font-weight: 600;
+  color: var(--bc-label-text);
+  -webkit-font-smoothing: antialiased;
 }
 #character-tooltip-host .character-tooltip { min-width: 220px; max-width: 40%; }
 #character-tooltip-host .character-tooltip__row {

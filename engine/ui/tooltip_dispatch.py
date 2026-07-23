@@ -19,6 +19,16 @@ def select_owner(hover, open_menu):
     return hover
 
 
+def tooltip_suppressed(cutscene_active, bridge_cutscene_pending) -> bool:
+    """The crew tooltip box must not show during a cutscene. BC hides the HUD
+    for StartCutscene..EndCutscene, and the box is a CEF panel that renders
+    ABOVE the letterbox pass -- so a leftover tooltip would float over the
+    cinematic bars. Also covers the bridge-cutscene camera hand-off gap (a path
+    queued/playing before StartCutscene sets cutscene mode). The host loop
+    clears the tooltip owner while this is True."""
+    return bool(cutscene_active or bridge_cutscene_pending)
+
+
 # Cached once: the REAL BridgeHandlers module (its *UpdateToolTip bodies).
 _real_bridge_handlers = None
 

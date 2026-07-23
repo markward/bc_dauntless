@@ -41,6 +41,15 @@ def test_select_owner_prefers_open_menu_then_hover():
     assert tooltip_dispatch.select_owner(hover=None, open_menu=None) is None
 
 
+def test_tooltip_suppressed_during_cutscene():
+    # No tooltip box during a cutscene (either the MissionLib cutscene mode or
+    # the bridge-cutscene camera hand-off gap); shown otherwise.
+    assert tooltip_dispatch.tooltip_suppressed(True, False) is True
+    assert tooltip_dispatch.tooltip_suppressed(False, True) is True
+    assert tooltip_dispatch.tooltip_suppressed(True, True) is True
+    assert tooltip_dispatch.tooltip_suppressed(False, False) is False
+
+
 def test_run_update_tooltip_calls_station_handler(monkeypatch):
     calls = []
 
