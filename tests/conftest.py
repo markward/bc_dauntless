@@ -709,6 +709,16 @@ def _reset_leakable_engine_globals():
         _chars.CharacterClass_SetCurrentToolTipOwner(None)
     except Exception:
         pass
+    # Cached real-BridgeHandlers module (engine.ui.tooltip_dispatch
+    # ._real_bridge_handlers): a test that calls _bridge_handlers() caches the
+    # real module on this global; leaving it set would let a later test's
+    # monkeypatch of tooltip_dispatch._bridge_handlers (or an assumption of a
+    # fresh cache) silently observe the previous test's cached module instead.
+    try:
+        import engine.ui.tooltip_dispatch as _td
+        _td._real_bridge_handlers = None
+    except Exception:
+        pass
     # scene_scope (guide §11 one-active-scene rule): _rendered is a scalar, not
     # a container, so it needs its own reset_for_tests() rather than a plain
     # .clear() -- same leak class as attached_sources/_attached and

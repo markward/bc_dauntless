@@ -2236,6 +2236,13 @@ def _apply_view_mode_side_effects(view_mode: "_ViewModeController", h) -> None:
     # the new view doesn't inherit a rumble from the old one.
     camera_shake.reset()
     hit_feedback.reset_audio_throttle()
+    if not target:
+        # SP4: leaving the bridge drops any tooltip owner, so the crew tooltip
+        # box (whose owner-selection tick only runs in bridge view) doesn't stay
+        # stuck over the tactical HUD showing stale status. Edge-triggered like
+        # the rest of this function.
+        from engine.appc.characters import DropCharacterToolTips
+        DropCharacterToolTips()
     view_mode._last_synced_is_bridge = target
 
 

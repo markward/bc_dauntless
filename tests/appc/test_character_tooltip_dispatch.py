@@ -76,6 +76,35 @@ def test_run_update_tooltip_noop_when_no_station_handler(monkeypatch):
     assert state["last"] == -999.0   # never advanced -- handler never reached
 
 
+def test_leaving_bridge_clears_tooltip_owner():
+    """Finding 1 (Task 7 review): _apply_view_mode_side_effects is
+    edge-triggered on the bridge<->tactical transition. Toggling AWAY from
+    the bridge must clear the current tooltip owner so the CEF tooltip box
+    (whose owner-selection tick only runs in bridge view, host_loop.py
+    ~line 6937) doesn't stay stuck over the tactical HUD showing stale
+    officer status."""
+    import engine.appc.top_window as top_window
+    from engine.host_loop import _ViewModeController, _apply_view_mode_side_effects
+
+    class _FakeHost:
+        def set_cursor_locked(self, locked):
+            pass
+
+    top_window.reset_for_tests()
+    vm = _ViewModeController()
+    assert vm.is_bridge is True
+
+    ch = CharacterClass()
+    CharacterClass_SetCurrentToolTipOwner(ch)
+
+    vm.toggle()  # bridge -> tactical: the edge this fix targets
+    assert vm.is_bridge is False
+
+    _apply_view_mode_side_effects(vm, _FakeHost())
+
+    assert CharacterClass_GetCurrentToolTipOwner() is None
+
+
 def test_bridge_handlers_loads_real_module_without_disturbing_shared_stub():
     """_bridge_handlers() must return the REAL BridgeHandlers module (its
     *UpdateToolTip bodies are actual code, not a chainable stub) while leaving
