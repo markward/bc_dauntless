@@ -65,6 +65,36 @@ def test_run_update_tooltip_calls_station_handler(monkeypatch):
     assert calls == [owner, owner]
 
 
+def test_run_update_tooltip_self_heals_when_game_time_resets_backward(monkeypatch):
+    """Final-review Finding 1: on a live mission swap, game time resets to
+    0.0 (App.g_kTimerManager._time = 0.0 in reset_sdk_globals) while
+    state["last"] can still hold the PRIOR mission's much larger game time
+    (e.g. ~180s). Before this fix, `now - state["last"] < period` read as a
+    large NEGATIVE elapsed, which is always < period, so the throttle stayed
+    "not yet due" and never called the handler again until real game time
+    climbed back past the stale value -- freezing the Helm/XO tooltip rows
+    for minutes after every episode transition. The fix treats a negative
+    elapsed as "not throttled" (only 0 <= elapsed < period skips), so the
+    call goes through immediately even without reset_sdk_globals clearing
+    state["last"] (layer (a)) -- this test proves layer (b) alone self-heals."""
+    calls = []
+
+    class _Handlers:
+        def HelmUpdateToolTip(self, ch):
+            calls.append(ch)
+
+    monkeypatch.setattr(tooltip_dispatch, "_bridge_handlers",
+                        lambda: _Handlers(), raising=False)
+    monkeypatch.setattr(tooltip_dispatch, "_station_name_for",
+                        lambda ch: "Helm", raising=False)
+
+    owner = object()
+    state = {"last": 180.0}   # stale: prior mission's game time
+    tooltip_dispatch.run_update_tooltip(owner, now=0.5, state=state, period=0.25)
+    assert calls == [owner]           # NOT throttle-skipped despite now < last
+    assert state["last"] == 0.5
+
+
 def test_run_update_tooltip_noop_when_no_station_handler(monkeypatch):
     """A non-station character (station_name_for -> None) is a silent no-op --
     matches BridgeHandlers coverage (only the 5 bridge officers have

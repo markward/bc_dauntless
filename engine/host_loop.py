@@ -2791,18 +2791,6 @@ def _officer_zoom_factor(officer):
         return POSITION_ZOOM_SENTINEL
 
 
-def _resolve_bridge_focus_world(watch_ctrl, crew_menu_panel, r):
-    """The world point the captain's-eye camera should frame this bridge frame,
-    or None (free-look). Precedence: an AT_WATCH_ME / AT_LOOK_AT_ME target (the
-    watched character's head-centre) over the crew-menu zoom-to-officer. A baked
-    cutscene camera path is handled separately (set_anim_pose) and outranks both."""
-    if watch_ctrl is not None:
-        w = watch_ctrl.resolve_target_world(r)
-        if w is not None:
-            return w
-    return _active_zoom_officer_world(crew_menu_panel, r)
-
-
 # SP4: throttle state for the per-bridge-frame UpdateToolTip dispatch tick
 # (tooltip_dispatch.run_update_tooltip) — {"last": <game time of last call>}.
 _tooltip_dispatch_state = {"last": -1e9}
@@ -2877,6 +2865,18 @@ def reset_sdk_globals() -> None:
         # of the reset. Matches the broader reset_sdk_globals discipline
         # (each step is independently best-effort).
         pass
+    # Reset the UpdateToolTip throttle and clear the tooltip owner. Without
+    # this, _tooltip_dispatch_state["last"] keeps the PRIOR mission's game
+    # time (which can be minutes) while the new mission's clock restarts at
+    # 0.0 above -- run_update_tooltip's `now - last < period` throttle then
+    # reads as deeply negative and stays "not yet due" for however long it
+    # takes real game time to climb back past the old value, silently
+    # freezing the Helm/XO tooltip rows for the whole stretch. Clearing the
+    # owner too so a stale reference from the old mission's crew menu can't
+    # be mistaken for the new mission's focused officer.
+    _tooltip_dispatch_state["last"] = -1e9
+    from engine.appc.characters import CharacterClass_SetCurrentToolTipOwner
+    CharacterClass_SetCurrentToolTipOwner(None)
     # Clear MissionLib's "viewscreen in use" flag. If a mission is swapped
     # away mid-briefing (while its bridge viewscreen shows a comm character),
     # g_bViewscreenOn is left at 1. On the next mission's load, the briefing's
@@ -6954,6 +6954,16 @@ def run(mission_name: Optional[str] = None,
                                 cutscene_active=_tw.IsCutsceneMode(),
                                 bridge_cutscene_pending=cutscene.has_pending_camera()):
                             mouse_dx, mouse_dy = 0.0, 0.0
+                        # The world point the captain's-eye camera should
+                        # frame this bridge frame, or None (free-look).
+                        # Precedence: an AT_WATCH_ME / AT_LOOK_AT_ME target
+                        # (the watched character's head-centre) over the
+                        # crew-menu zoom-to-officer. A baked cutscene camera
+                        # path is handled separately (set_anim_pose) and
+                        # outranks both. (Formerly _resolve_bridge_focus_world;
+                        # inlined here in Task 8 -- see
+                        # tests/unit/test_watch_ctrl_wiring.py for the
+                        # precedence-order regression test.)
                         _focus = None
                         _zoom_factor = None
                         if watch_ctrl is not None:

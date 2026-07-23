@@ -86,3 +86,15 @@ def test_zoom_t_clamps_to_unit_interval():
     assert bc._zoom_t == 1.0
     bc.set_zoom_target(None, dt=100.0)
     assert bc._zoom_t == 0.0
+
+
+def test_set_zoom_target_snap_jumps_to_one():
+    """Moved from the deleted tests/unit/test_bridge_focus_resolver.py (final
+    review Finding 3): unrelated to the removed _resolve_bridge_focus_world,
+    this exercises _BridgeCamera.set_zoom_target's snap=True path directly, so
+    it belongs alongside the rest of this class's coverage."""
+    bc = _BridgeCamera()
+    bc.set_zoom_target((1.0, 2.0, 3.0), 0.016, snap=True)
+    assert bc._zoom_t == 1.0
+    assert bc._zoom_active is True
+    assert bc._zoom_target_world == (1.0, 2.0, 3.0)

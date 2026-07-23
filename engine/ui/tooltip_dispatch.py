@@ -75,7 +75,14 @@ def run_update_tooltip(owner, now, state, period=0.25) -> None:
     characters show only their key-0 status)."""
     if owner is None:
         return
-    if now - state.get("last", -1e9) < period:
+    # `elapsed` can go negative across a mission swap that resets game time
+    # to 0.0 while `state["last"]` still holds the prior mission's (larger)
+    # value -- reset_sdk_globals clears state["last"] to heal that case, but
+    # guard here too so the throttle self-heals even if some future caller
+    # forgets to reset it: only skip on a genuine "too soon" (0 <= elapsed <
+    # period), never on time running backwards.
+    elapsed = now - state.get("last", -1e9)
+    if 0.0 <= elapsed < period:
         return
     station = _station_name_for(owner)
     if not station:

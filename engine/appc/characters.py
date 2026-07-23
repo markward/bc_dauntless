@@ -772,8 +772,11 @@ class CharacterClass(ObjectClass):
         # played or was stopped/deferred. A stopped record is retired next tick
         # by ReleaseCurrentAnimation (its clip is not active).
         self._anim_current = rec
-        # Tooltip drop: best-effort. No tooltip-owner seam exists yet in this
-        # codebase, so guard it and no-op if absent (SP4 wires the real drop).
+        # Tooltip drop: best-effort. SP4 wired the real tooltip-owner seam
+        # (CharacterClass_{Get,Set}CurrentToolTipOwner / DropCharacterToolTips
+        # below); _drop_character_tooltips clears the actual current owner, so
+        # this guard is just defence against a handler fault mid-tick, not a
+        # missing seam.
         try:
             if self.IsStateSet(self.CS_UI_DISABLED) and self._should_drop_tooltips():
                 self._drop_character_tooltips()
