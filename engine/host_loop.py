@@ -2559,6 +2559,7 @@ class _BridgeCamera:
         self._zoom_t = 0.0
         self._zoom_active = False
         self._zoom_target_world = None
+        self._zoom_factor = _BRIDGE_ZOOM_MIN   # SP4: per-officer FOV factor (GetPositionZoom)
         # Cutscene animation override: when set, compute_camera returns this
         # (eye, target, up) verbatim and mouse-look is frozen. Driven by
         # BridgeCutsceneController.update (engine/bridge_cutscene.py).
@@ -2605,12 +2606,21 @@ class _BridgeCamera:
     def _lerp(a: float, b: float, t: float) -> float:
         return a + (b - a) * t
 
-    def set_zoom_target(self, world_xyz, dt: float, snap: bool = False) -> None:
+    def set_zoom_target(self, world_xyz, dt: float, snap: bool = False,
+                        zoom_factor=None) -> None:
         """Select (world_xyz != None) or deselect (None) an officer to zoom
         onto; advance the ease by dt at rate 1/zoom_time, clamped to [0, 1].
         snap=True jumps straight to fully-framed (AT_LOOK_AT_ME_NOW).
-        Mouse-look is suspended whenever a zoom is in progress (see apply)."""
+        Mouse-look is suspended whenever a zoom is in progress (see apply).
+        zoom_factor (SP4): the officer's authored GetPositionZoom(GetLocation())
+        FOV factor; POSITION_ZOOM_SENTINEL (or None) keeps _BRIDGE_ZOOM_MIN."""
         self._zoom_active = world_xyz is not None
+        if world_xyz is not None and zoom_factor is not None:
+            from engine.appc.character_position_zoom import POSITION_ZOOM_SENTINEL
+            # sentinel == "no authored zoom" -> keep the default min factor.
+            self._zoom_factor = (_BRIDGE_ZOOM_MIN
+                                 if zoom_factor == POSITION_ZOOM_SENTINEL
+                                 else float(zoom_factor))
         if world_xyz is not None:
             self._zoom_target_world = world_xyz
             if snap:
@@ -2706,7 +2716,7 @@ class _BridgeCamera:
                             zr[2]*local_fwd[0] - zr[0]*local_fwd[2],
                             zr[0]*local_fwd[1] - zr[1]*local_fwd[0],
                         )
-            fov = self.FOV_Y_RAD * self._lerp(_BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_MIN, e)
+            fov = self.FOV_Y_RAD * self._lerp(_BRIDGE_ZOOM_MAX, self._zoom_factor, e)
 
         target = (eye[0] + local_fwd[0], eye[1] + local_fwd[1], eye[2] + local_fwd[2])
         return eye, target, local_up, fov
@@ -2727,11 +2737,12 @@ def _rot_around(v, axis_xyz, angle_rad):
     )
 
 
-def _active_zoom_officer_world(crew_menu_panel, r):
-    """World-space centre (x, y, z) of the officer whose crew menu is open, or
-    None. Resolves the open menu's label -> bridge CharacterClass (via
+def _active_zoom_officer(crew_menu_panel, r):
+    """(world-centre, officer) of the officer whose crew menu is open, or
+    (None, None). Resolves the open menu's label -> bridge CharacterClass (via
     crew_menu_hotkeys.resolve_character) -> its step-4 render instance ->
-    get_instance_head_center. Any missing hop -> None (captain view, no zoom).
+    get_instance_head_center. Any missing hop -> (None, None) (captain view,
+    no zoom).
 
     Uses the posed HEAD centre, NOT get_instance_bounds: officers sit at an
     identity instance transform with their station offset baked into the bone
@@ -2739,20 +2750,41 @@ def _active_zoom_officer_world(crew_menu_panel, r):
     origin (which made all crew zoom to the same low spot far off the captain's
     forward); the body centre reads too low, so the look-at targets the head."""
     if crew_menu_panel is None:
-        return None
+        return None, None
     label = crew_menu_panel.open_menu_label()
     if not label:
-        return None
+        return None, None
     off = crew_menu_hotkeys.resolve_character(label)
     if off is None:
-        return None
+        return None, None
     iid = getattr(off, "_render_instance", None)
     if iid is None:
-        return None
+        return None, None
     center = r.get_instance_head_center(iid)
     if not center:
-        return None
-    return (center[0], center[1], center[2])
+        return None, None
+    return (center[0], center[1], center[2]), off
+
+
+def _active_zoom_officer_world(crew_menu_panel, r):
+    """Thin wrapper over _active_zoom_officer for callers that only need the
+    world-space centre (not the officer itself)."""
+    world, _off = _active_zoom_officer(crew_menu_panel, r)
+    return world
+
+
+def _officer_zoom_factor(officer):
+    """officer.GetPositionZoom(officer.GetLocation()) -> per-station FOV
+    factor (SP4), or POSITION_ZOOM_SENTINEL when the station has no authored
+    zoom (or officer is None, or the lookup raises)."""
+    from engine.appc.character_position_zoom import POSITION_ZOOM_SENTINEL
+    if officer is None:
+        return POSITION_ZOOM_SENTINEL
+    try:
+        loc = officer.GetLocation()
+        return officer.GetPositionZoom(loc)
+    except Exception:
+        return POSITION_ZOOM_SENTINEL
 
 
 def _resolve_bridge_focus_world(watch_ctrl, crew_menu_panel, r):
@@ -6918,11 +6950,17 @@ def run(mission_name: Optional[str] = None,
                                 cutscene_active=_tw.IsCutsceneMode(),
                                 bridge_cutscene_pending=cutscene.has_pending_camera()):
                             mouse_dx, mouse_dy = 0.0, 0.0
-                        _focus = _resolve_bridge_focus_world(
-                            watch_ctrl, crew_menu_panel, r)
+                        _focus = None
+                        _zoom_factor = None
+                        if watch_ctrl is not None:
+                            _focus = watch_ctrl.resolve_target_world(r)
+                        if _focus is None:
+                            _focus, _zoom_off = _active_zoom_officer(crew_menu_panel, r)
+                            _zoom_factor = _officer_zoom_factor(_zoom_off)
                         bridge_camera.set_zoom_target(
                             _focus, _player_dt,
-                            snap=watch_ctrl.consume_snap())
+                            snap=watch_ctrl.consume_snap(),
+                            zoom_factor=_zoom_factor)
                         # SP4: tooltip owner = focused officer (open menu wins
                         # over hover), then run the real SDK UpdateToolTip
                         # handler on a throttle so its status rows populate.
