@@ -243,3 +243,24 @@ Discovered while mapping files; consistent with the approved architecture:
 - Camera shake magnitude — field exists, stays 0.
 - Turning the viewscreen character to face the captain.
 - Any change to `watch_ctrl` (AT_WATCH_ME / AT_LOOK_AT_ME).
+
+## 6. Implemented (2026-07-24)
+
+All 4 tasks committed; `scripts/check_tests.sh` gate GREEN (no new failures).
+
+Two live-tuning knobs, no rebuild required:
+
+- `VIEWSCREEN_ZOOM_FALLBACK` (default **0.5**, `engine/appc/character_position_zoom.py`)
+  — how much the viewscreen fills the window on a hail.
+- `_VIEWSCREEN_LOOK_PITCH` (default **0.0**, `engine/host_loop.py`) — extra downward
+  pitch to centre the screen when using the base-forward recentre.
+
+The **officer** sentinel fallback stays `_BRIDGE_ZOOM_MIN` (0.64) — a distinct
+constant from the viewscreen fallback, byte-identical to the pre-refactor behaviour
+(§3.5).
+
+**Live-verify (main tree, not this worktree):** E1M1's Liu briefing zooms ~2× to fill
+on the hail and returns on `ViewscreenOff`; crew-menu open still frames its officer
+identically. Note the viewscreen forward-zoom only engages for an unambiguous
+single-hailer (the `pcName` path); multi-character scene shots (`ViewscreenOn` without
+`pcName`) do not zoom.
