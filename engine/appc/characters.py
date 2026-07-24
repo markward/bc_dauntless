@@ -1286,6 +1286,31 @@ class CharacterClass(ObjectClass):
         self._notify_menu(turn=False)
         dispatch_character_menu(self, is_open=False)
 
+    def MenuEventHandler(self, engaged, look_at, zoom_factor, now=None) -> None:
+        """BC CharacterClass::MenuEventHandler (0x0066D450) — reconcile the bridge
+        maincamera zoom to this character's engagement. `engaged` ⇒ zoom in toward
+        `zoom_factor` aiming at `look_at` (world xyz, or None = viewscreen-forward);
+        else zoom out. The host resolves engagement + look_at/zoom_factor each frame
+        (it owns the renderer for head-centre look-ats) and calls this; the zoom
+        STATE lives on the ZoomCameraObjectClass. Best-effort: never raises."""
+        try:
+            import App
+            bridge = App.g_kSetManager.GetSet("bridge")
+            cam = bridge.GetCamera("maincamera") if bridge is not None else None
+            if cam is None or not hasattr(cam, "engage"):
+                return
+            if engaged:
+                cam.engage(zoom_factor, look_at)
+            else:
+                cam.disengage()
+                try:
+                    import BridgeHandlers
+                    BridgeHandlers.DropOutOfManualFireMode()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def _notify_menu(self, turn) -> None:
         # Menu open/close turns the officer to/from the captain, re-pointed (SP2)
         # through the CharacterClass door: TurnTowards("Captain") / TurnBack()
