@@ -209,6 +209,34 @@ outranking the zoom — it is a separate focus mechanism, not part of MenuEventH
   Liu briefing zooms in ~2× to fill on the hail and returns on ViewscreenOff; a
   crew-menu open still frames its officer identically to before.
 
+## 3.5 Planning refinements (concrete SDK values)
+
+Discovered while mapping files; consistent with the approved architecture:
+
+- **The zoom min/max/time are real, harvested at bridge load.** `GalaxyBridge.py`
+  (and `SovereignBridge.py`) call `SetMinZoom(0.64)`, `SetMaxZoom(1.0)`,
+  `SetZoomTime(0.375)` on the maincamera. `host_loop.py:5875-5877` harvests these into
+  `_BRIDGE_ZOOM_MIN/_BRIDGE_ZOOM_MAX/_BRIDGE_ZOOM_TIME`. So **post-load the officer
+  zoom already eases over 0.375 s** (not instant); the module defaults (1.0/1.0/0.0)
+  are pre-load fallbacks only. `effective_zoom_time = _zoom_time if _zoom_time > 0 else
+  _BRIDGE_ZOOM_TIME` (§3.1 A) is therefore pre-load safety; in practice the ease is
+  0.375 s.
+- **`ZoomCameraObjectClass` transient state does NOT clobber the harvested min.**
+  `_min_zoom` keeps the `SetMinZoom(0.64)` default; the per-engagement target factor is
+  a separate `_active_zoom_factor` (BC stores its per-engagement value into MinZoom, but
+  we keep the 0.64 default distinct so the fallback survives). Transient state added:
+  `_is_zoomed`, `_transition_start`, `_look_at`, `_active_zoom_factor`.
+- **`_BridgeCamera` reads the maincamera via a new `_BRIDGE_ZOOM_CAM` module global**,
+  harvested next to the others at `host_loop.py:5875` (the `_cam` handle is already in
+  scope there). Established pattern; no per-frame set lookup.
+- **Fallback split, regression-safe.** The **officer** sentinel fallback stays
+  `_BRIDGE_ZOOM_MIN` (0.64) — byte-identical to today, and in practice never hit (all
+  campaign stations author a zoom). The **viewscreen** sentinel fallback is a distinct
+  `_VIEWSCREEN_ZOOM_FALLBACK` (default **0.5** ≈ 2×, the user-observed fill; stronger
+  than a station's 0.64). BC uses one hardcoded fallback for both; we keep the officer
+  default at its live-verified 0.64 and give the viewscreen the stronger value. Same
+  sentinel-substitution shape; documented divergence.
+
 ## 5. Out of scope
 
 - Exact viewscreen-node world-centre aiming (native binding) — forward-recentre for v1.
