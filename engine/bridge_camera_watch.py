@@ -30,6 +30,12 @@ class BridgeCameraWatchController:
     def is_watching(self) -> bool:
         return self._watched is not None
 
+    def watched_character(self):
+        """The CharacterClass currently being watched (or None). Lets the host
+        drive MenuEventHandler on a watch-first engagement, where no crew-menu
+        or hail engagement has yet populated _last_engaged_char."""
+        return self._watched
+
     def resolve_target_world(self, renderer):
         """World-space head-centre of the watched character, or None (nothing
         watched / not yet realized / no renderer)."""

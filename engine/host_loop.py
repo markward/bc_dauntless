@@ -2781,13 +2781,6 @@ def _active_zoom_officer(crew_menu_panel, r):
     return (center[0], center[1], center[2]), off
 
 
-def _active_zoom_officer_world(crew_menu_panel, r):
-    """Thin wrapper over _active_zoom_officer for callers that only need the
-    world-space centre (not the officer itself)."""
-    world, _off = _active_zoom_officer(crew_menu_panel, r)
-    return world
-
-
 def _officer_zoom_factor(officer):
     """officer.GetPositionZoom(officer.GetLocation()) -> per-station FOV
     factor (SP4), or POSITION_ZOOM_SENTINEL when the station has no authored
@@ -7140,6 +7133,7 @@ def run(mission_name: Optional[str] = None,
                             _w = watch_ctrl.resolve_target_world(r)
                             if _w is not None:
                                 _engaged, _look_at = True, _w
+                                _engaged_char = watch_ctrl.watched_character()
                         if not _engaged:
                             _wc, _zoom_off = _active_zoom_officer(crew_menu_panel, r)
                             if _wc is not None:

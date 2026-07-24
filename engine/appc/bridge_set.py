@@ -246,8 +246,9 @@ class ZoomCameraObjectClass(_LoudStub):
     # PushCameraMode(GetNamedCameraMode("GalaxyBridgeCaptain")) (GalaxyBridge.py:66)
     # actually runs the SDK CameraModes.GalaxyBridgeCaptain(self) builder. The host
     # harvests the active mode's PlaceByDirection attrs after LoadBridge.Load to
-    # drive _BridgeCamera. AddModeHierarchy and the zoom-transform surface stay
-    # _LoudStub no-ops.
+    # drive _BridgeCamera. Only AddModeHierarchy remains a _LoudStub no-op; the
+    # zoom-transform surface (ToggleZoom/LookForward/IsZoomed/UpdateViewFrustum/
+    # engage/disengage/advance) is real (see above).
 
     def GetNamedCameraMode(self, name, *args):
         """Resolve a named camera mode by running CameraModes.<name>(self), the

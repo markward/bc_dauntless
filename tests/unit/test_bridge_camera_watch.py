@@ -15,6 +15,21 @@ class _Char:
         self._render_instance = iid
 
 
+def test_watched_character_getter_returns_watched():
+    ctrl = BridgeCameraWatchController()
+    ch = _Char()
+    ctrl.watch(ch)
+    assert ctrl.watched_character() is ch
+
+
+def test_watched_character_getter_none_when_not_watching():
+    ctrl = BridgeCameraWatchController()
+    assert ctrl.watched_character() is None
+    ctrl.watch(_Char())
+    ctrl.clear()
+    assert ctrl.watched_character() is None
+
+
 def test_watch_resolves_head_center():
     ctrl = BridgeCameraWatchController()
     r = _R((5.0, 6.0, 7.0))
