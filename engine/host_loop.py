@@ -27,6 +27,7 @@ import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
 from engine.ui.reticle_text import build_reticle_text, _ReticleCam
 from engine.ui.letterbox import LetterboxAnimator
+from engine.appc.character_position_zoom import POSITION_ZOOM_SENTINEL
 
 import math as _math
 
@@ -7065,6 +7066,8 @@ def run(mission_name: Optional[str] = None,
                             if _wc is not None:
                                 _engaged, _look_at = True, _wc
                                 _zoom_factor = _officer_zoom_factor(_zoom_off)
+                                if _zoom_factor == POSITION_ZOOM_SENTINEL:
+                                    _zoom_factor = _BRIDGE_ZOOM_MIN
                                 _engaged_char = _zoom_off
                         _drv = _engaged_char or _last_engaged_char[0]
                         if _drv is not None:

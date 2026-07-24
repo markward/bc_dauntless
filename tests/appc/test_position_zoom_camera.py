@@ -58,3 +58,33 @@ def test_zoom_factor_resets_for_focus_without_officer_factor(monkeypatch):
     zoom_cam.advance(999.0)
     _e2, _t2, _u2, fov2 = bc.compute_camera()
     assert abs(fov2 - bc.FOV_Y_RAD * _BRIDGE_ZOOM_MIN) < 1e-6   # default, not 0.45
+
+
+def test_officer_sentinel_falls_back_to_bridge_zoom_min(monkeypatch):
+    """Regression: the per-frame resolver's officer-menu branch
+    (engine/host_loop.py, ~line 7067) must map POSITION_ZOOM_SENTINEL to
+    _BRIDGE_ZOOM_MIN before engaging the camera -- the deleted
+    set_zoom_target used to do this mapping. Without it, an officer on a
+    station with no authored AddPositionZoom would engage() at factor 1.0
+    (no zoom) instead of the SDK's zoomed-in default (0.64), which is the
+    fallback every officer without an authored zoom relied on."""
+    import engine.host_loop as hl
+    from engine.host_loop import _officer_zoom_factor
+    from engine.appc.character_position_zoom import POSITION_ZOOM_SENTINEL
+
+    ch = CharacterClass()
+    ch.SetLocation("DBHelm")   # no AddPositionZoom authored
+    factor = _officer_zoom_factor(ch)
+    assert factor == POSITION_ZOOM_SENTINEL
+
+    bc, zoom_cam = _rigged_cam(monkeypatch)
+    monkeypatch.setattr(hl, "_BRIDGE_ZOOM_MIN", 0.64)
+
+    # Mirror the resolver's fallback (host_loop.py's officer-menu branch).
+    resolved_factor = factor
+    if resolved_factor == POSITION_ZOOM_SENTINEL:
+        resolved_factor = hl._BRIDGE_ZOOM_MIN
+    zoom_cam.engage(resolved_factor, (0.0, 5.0, 0.0))
+    zoom_cam.advance(999.0)   # ease to completion
+    _eye, _t, _up, fov = bc.compute_camera()
+    assert abs(fov - bc.FOV_Y_RAD * 0.64) < 1e-6
