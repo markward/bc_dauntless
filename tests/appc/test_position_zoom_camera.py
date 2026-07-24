@@ -17,24 +17,44 @@ def test_officer_zoom_factor_miss_is_sentinel():
     assert _officer_zoom_factor(ch) == POSITION_ZOOM_SENTINEL
 
 
-def test_set_zoom_target_uses_zoom_factor_for_fov():
+def _rigged_cam(monkeypatch):
+    """A _BridgeCamera reading a fresh ZoomCameraObjectClass wired into
+    hl._BRIDGE_ZOOM_CAM -- the MenuEventHandler port set_zoom_target used to
+    own directly (see tests/unit/test_bridge_camera_zoom.py for the geometry
+    coverage; this file only exercises the officer zoom_factor plumbing)."""
+    import engine.host_loop as hl
     from engine.host_loop import _BridgeCamera
-    cam = _BridgeCamera()
-    cam.set_zoom_target((0.0, 5.0, 0.0), dt=999.0, snap=True, zoom_factor=0.45)
-    _eye, _t, _up, fov = cam.compute_camera()
-    # Fully zoomed (snap) FOV is base * zoom_factor, not base * _BRIDGE_ZOOM_MIN.
-    from engine.host_loop import _BRIDGE_ZOOM_MAX
-    assert abs(fov - cam.FOV_Y_RAD * 0.45) < 1e-6
+    from engine.appc.bridge_set import ZoomCameraObjectClass
+    monkeypatch.setattr(hl, "_BRIDGE_CAMERA_EYE", (0.0, 0.0, 0.0))
+    monkeypatch.setattr(hl, "_BRIDGE_CAMERA_MOVE", None)
+    zoom_cam = ZoomCameraObjectClass(0, 0, 0, 1, 0, 0, 0, "maincamera")
+    zoom_cam.SetMinZoom(0.64); zoom_cam.SetMaxZoom(1.0); zoom_cam.SetZoomTime(0.375)
+    monkeypatch.setattr(hl, "_BRIDGE_ZOOM_CAM", zoom_cam)
+    return _BridgeCamera(), zoom_cam
 
 
-def test_zoom_factor_resets_for_focus_without_officer_factor():
-    from engine.host_loop import _BridgeCamera, _BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_MIN
-    cam = _BridgeCamera()
+def test_set_zoom_target_uses_zoom_factor_for_fov(monkeypatch):
+    bc, zoom_cam = _rigged_cam(monkeypatch)
+    zoom_cam.engage(0.45, (0.0, 5.0, 0.0))
+    zoom_cam.advance(999.0)   # ease to completion
+    _eye, _t, _up, fov = bc.compute_camera()
+    # Fully zoomed FOV is base * zoom_factor, not base * _BRIDGE_ZOOM_MIN.
+    assert abs(fov - bc.FOV_Y_RAD * 0.45) < 1e-6
+
+
+def test_zoom_factor_resets_for_focus_without_officer_factor(monkeypatch):
+    from engine.host_loop import _BRIDGE_ZOOM_MIN
+    bc, zoom_cam = _rigged_cam(monkeypatch)
     # 1) officer-menu zoom with an authored factor
-    cam.set_zoom_target((0.0, 5.0, 0.0), dt=999.0, snap=True, zoom_factor=0.45)
-    _e, _t, _u, fov1 = cam.compute_camera()
-    assert abs(fov1 - cam.FOV_Y_RAD * 0.45) < 1e-6
-    # 2) a later watch-target focus passes NO officer factor -> must NOT reuse 0.45
-    cam.set_zoom_target((0.0, 9.0, 0.0), dt=999.0, snap=True)   # zoom_factor defaults None
-    _e2, _t2, _u2, fov2 = cam.compute_camera()
-    assert abs(fov2 - cam.FOV_Y_RAD * _BRIDGE_ZOOM_MIN) < 1e-6   # default, not 0.45
+    zoom_cam.engage(0.45, (0.0, 5.0, 0.0))
+    zoom_cam.advance(999.0)
+    _e, _t, _u, fov1 = bc.compute_camera()
+    assert abs(fov1 - bc.FOV_Y_RAD * 0.45) < 1e-6
+    # 2) a later watch-target focus engages with the default min factor --
+    # engage() always takes the caller's factor verbatim, so it must NOT
+    # reuse the stale 0.45 from the prior officer-menu engagement (that
+    # persistence bug lived in the old set_zoom_target).
+    zoom_cam.engage(_BRIDGE_ZOOM_MIN, (0.0, 9.0, 0.0))
+    zoom_cam.advance(999.0)
+    _e2, _t2, _u2, fov2 = bc.compute_camera()
+    assert abs(fov2 - bc.FOV_Y_RAD * _BRIDGE_ZOOM_MIN) < 1e-6   # default, not 0.45

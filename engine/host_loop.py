@@ -1414,6 +1414,7 @@ _BRIDGE_CAMERA_MOVE_SCALE: float = 1.0
 _BRIDGE_ZOOM_MIN: float = 1.0     # SDK GetMinZoom — zoomed-in FOV factor
 _BRIDGE_ZOOM_MAX: float = 1.0     # SDK GetMaxZoom — captain FOV factor
 _BRIDGE_ZOOM_TIME: float = 0.0    # SDK GetZoomTime — ease duration (seconds)
+_BRIDGE_ZOOM_CAM = None            # bridge "maincamera" ZoomCameraObjectClass (harvested at load)
 
 # Lighting defaults — used by both the per-tick fallback (when no active set
 # has lights) and as the conceptual source of truth that the C++
@@ -2554,14 +2555,9 @@ class _BridgeCamera:
     def __init__(self):
         self.yaw_rad   = self.INITIAL_YAW_RAD
         self.pitch_rad = 0.0
-        # Zoom-into-officer state (step 5a). _zoom_t eases 0 (captain view) ->
-        # 1 (framed on officer). _zoom_target_world is the look-at point (kept
-        # during ease-out until _zoom_t returns to 0). _zoom_active = a target
-        # is currently selected.
-        self._zoom_t = 0.0
-        self._zoom_active = False
-        self._zoom_target_world = None
-        self._zoom_factor = _BRIDGE_ZOOM_MIN   # SP4: per-officer FOV factor (GetPositionZoom)
+        # Zoom state now lives on the bridge "maincamera" ZoomCameraObjectClass
+        # (hl._BRIDGE_ZOOM_CAM), driven by CharacterClass.MenuEventHandler. This
+        # camera reads it each frame; it holds no zoom state of its own.
         # Cutscene animation override: when set, compute_camera returns this
         # (eye, target, up) verbatim and mouse-look is frozen. Driven by
         # BridgeCutsceneController.update (engine/bridge_cutscene.py).
@@ -2608,37 +2604,17 @@ class _BridgeCamera:
     def _lerp(a: float, b: float, t: float) -> float:
         return a + (b - a) * t
 
-    def set_zoom_target(self, world_xyz, dt: float, snap: bool = False,
-                        zoom_factor=None) -> None:
-        """Select (world_xyz != None) or deselect (None) an officer to zoom
-        onto; advance the ease by dt at rate 1/zoom_time, clamped to [0, 1].
-        snap=True jumps straight to fully-framed (AT_LOOK_AT_ME_NOW).
-        Mouse-look is suspended whenever a zoom is in progress (see apply).
-        zoom_factor (SP4): the officer's authored GetPositionZoom(GetLocation())
-        FOV factor; POSITION_ZOOM_SENTINEL (or None) keeps _BRIDGE_ZOOM_MIN."""
-        self._zoom_active = world_xyz is not None
-        if world_xyz is not None:
-            from engine.appc.character_position_zoom import POSITION_ZOOM_SENTINEL
-            # A selection with no authored officer factor (watch-target focus,
-            # or a station with no AddPositionZoom) uses the default min
-            # factor -- never a leftover factor from a previous officer-menu
-            # zoom (self._zoom_factor persists for the whole bridge session).
-            if zoom_factor is None or zoom_factor == POSITION_ZOOM_SENTINEL:
-                self._zoom_factor = _BRIDGE_ZOOM_MIN
-            else:
-                self._zoom_factor = float(zoom_factor)
-        if world_xyz is not None:
-            self._zoom_target_world = world_xyz
-            if snap:
-                self._zoom_t = 1.0        # AT_LOOK_AT_ME_NOW: jump, don't ease
-                return
-        step = dt / max(_BRIDGE_ZOOM_TIME, 1e-6)
-        if self._zoom_active:
-            self._zoom_t = min(1.0, self._zoom_t + step)
-        else:
-            self._zoom_t = max(0.0, self._zoom_t - step)
-            if self._zoom_t == 0.0:
-                self._zoom_target_world = None
+    @staticmethod
+    def _zoom_cam():
+        return _BRIDGE_ZOOM_CAM
+
+    def _zoom_state(self):
+        """(_zoom_t, active_factor, look_at) from the maincamera, or the neutral
+        captain view when there is no camera / no zoom."""
+        cam = self._zoom_cam()
+        if cam is None:
+            return 0.0, _BRIDGE_ZOOM_MAX, None
+        return cam.zoom_progress(), cam.active_factor, cam.look_at
 
     def set_anim_pose(self, eye, target, up) -> None:
         """Override the camera with a cutscene-sampled pose (bridge-local)."""
@@ -2653,9 +2629,10 @@ class _BridgeCamera:
         coords) → look-up (+pitch). Pitch clamps; yaw wraps freely."""
         if self._anim_pose is not None:
             return
-        # Mouse-look is frozen while a zoom is in progress or held — the camera
-        # is framing the officer; it resumes only at the full captain view.
-        if self._zoom_t > 0.0 or self._zoom_active:
+        # Mouse-look is frozen while a zoom is in progress — the camera is framing
+        # the officer/viewscreen; it resumes only at the full captain view.
+        cam = self._zoom_cam()
+        if cam is not None and (cam.zoom_progress() > 0.0 or cam.IsZoomed()):
             return
         self.yaw_rad   -= mouse_dx * self.MOUSE_SENSITIVITY
         self.pitch_rad -= mouse_dy * self.MOUSE_SENSITIVITY
@@ -2689,11 +2666,12 @@ class _BridgeCamera:
         eye = self._eye_offset()
         fov = self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
 
-        if self._zoom_t > 0.0 and self._zoom_target_world is not None:
-            e = self._smoothstep(self._zoom_t)
-            dx = self._zoom_target_world[0] - eye[0]
-            dy = self._zoom_target_world[1] - eye[1]
-            dz = self._zoom_target_world[2] - eye[2]
+        zoom_t, factor, target_world = self._zoom_state()
+        if zoom_t > 0.0 and target_world is not None:
+            e = self._smoothstep(zoom_t)
+            dx = target_world[0] - eye[0]
+            dy = target_world[1] - eye[1]
+            dz = target_world[2] - eye[2]
             dl = _math.sqrt(dx*dx + dy*dy + dz*dz)
             if dl > 1e-6:
                 ofwd = (dx/dl, dy/dl, dz/dl)
@@ -2722,7 +2700,12 @@ class _BridgeCamera:
                             zr[2]*local_fwd[0] - zr[0]*local_fwd[2],
                             zr[0]*local_fwd[1] - zr[1]*local_fwd[0],
                         )
-            fov = self.FOV_Y_RAD * self._lerp(_BRIDGE_ZOOM_MAX, self._zoom_factor, e)
+            fov = self.FOV_Y_RAD * self._lerp(_BRIDGE_ZOOM_MAX, factor, e)
+        elif zoom_t > 0.0:
+            # look_at is None: viewscreen-forward zoom — narrow FOV only, aim
+            # unchanged (Task 4 refines the forward re-centre + pitch).
+            e = self._smoothstep(zoom_t)
+            fov = self.FOV_Y_RAD * self._lerp(_BRIDGE_ZOOM_MAX, factor, e)
 
         target = (eye[0] + local_fwd[0], eye[1] + local_fwd[1], eye[2] + local_fwd[2])
         return eye, target, local_up, fov
@@ -5840,7 +5823,7 @@ def run(mission_name: Optional[str] = None,
             # Step 5a: take the captain's-chair eye + zoom params from the SDK
             # maincamera (config-driven; replaces the hardcoded offsets table).
             global _BRIDGE_CAMERA_EYE, _BRIDGE_CAMERA_MOVE
-            global _BRIDGE_ZOOM_MIN, _BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_TIME
+            global _BRIDGE_ZOOM_MIN, _BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_TIME, _BRIDGE_ZOOM_CAM
             import App as _App
             _bridge = _App.g_kSetManager.GetSet("bridge")
             # Documented SDK deviation: LoadBridge.Load (run by the mission's
@@ -5875,6 +5858,7 @@ def run(mission_name: Optional[str] = None,
                 _BRIDGE_ZOOM_MIN = _cam.GetMinZoom()
                 _BRIDGE_ZOOM_MAX = _cam.GetMaxZoom()
                 _BRIDGE_ZOOM_TIME = _cam.GetZoomTime()
+                _BRIDGE_ZOOM_CAM = _cam
             # Realize every SDK-created set (the player bridge + any comm/
             # remote sets) into render instances. The bridge is realized as
             # is_bridge=True; comm sets with geometry/characters as False.
@@ -5905,6 +5889,7 @@ def run(mission_name: Optional[str] = None,
         controller.post_load_hook = _after_mission_loaded
 
         bridge_camera  = _BridgeCamera()
+        _last_engaged_char = [None]   # last officer we zoomed to (for disengage)
 
         _after_mission_loaded()
         try:
@@ -7049,9 +7034,9 @@ def run(mission_name: Optional[str] = None,
                         # (that's what frames the station). But the cursor is
                         # freed to click the menu, so zero the mouse-look delta
                         # — otherwise moving toward a menu row swings the view.
-                        # (set_zoom_target's zoom already suspends mouse-look
-                        # once an officer resolves; this also covers the case
-                        # where no officer resolves and the zoom stays at 0.)
+                        # (The maincamera zoom already suspends mouse-look once
+                        # an officer resolves; this also covers the case where
+                        # no officer resolves and the zoom stays at 0.)
                         # Free-look is also suppressed during a cutscene: the
                         # letterbox pins the view where the mission wants it.
                         from engine.appc.top_window import TopWindow_GetTopWindow
@@ -7061,27 +7046,37 @@ def run(mission_name: Optional[str] = None,
                                 cutscene_active=_tw.IsCutsceneMode(),
                                 bridge_cutscene_pending=cutscene.has_pending_camera()):
                             mouse_dx, mouse_dy = 0.0, 0.0
-                        # The world point the captain's-eye camera should
-                        # frame this bridge frame, or None (free-look).
-                        # Precedence: an AT_WATCH_ME / AT_LOOK_AT_ME target
-                        # (the watched character's head-centre) over the
-                        # crew-menu zoom-to-officer. A baked cutscene camera
-                        # path is handled separately (set_anim_pose) and
-                        # outranks both. (Formerly _resolve_bridge_focus_world;
-                        # inlined here in Task 8 -- see
-                        # tests/unit/test_watch_ctrl_wiring.py for the
-                        # precedence-order regression test.)
-                        _focus = None
-                        _zoom_factor = None
+                        # Resolve the single active engagement this frame, in
+                        # precedence order: AT_WATCH_ME/LOOK_AT target > open crew
+                        # menu > (Task 4: viewscreen hail). The winner supplies a
+                        # world look-at + FOV factor; MenuEventHandler reconciles
+                        # the maincamera zoom; advance() eases it on _player_dt so
+                        # it freezes under pause.
+                        _engaged = False
+                        _look_at = None
+                        _zoom_factor = _BRIDGE_ZOOM_MIN
+                        _engaged_char = None
                         if watch_ctrl is not None:
-                            _focus = watch_ctrl.resolve_target_world(r)
-                        if _focus is None:
-                            _focus, _zoom_off = _active_zoom_officer(crew_menu_panel, r)
-                            _zoom_factor = _officer_zoom_factor(_zoom_off)
-                        bridge_camera.set_zoom_target(
-                            _focus, _player_dt,
-                            snap=watch_ctrl.consume_snap(),
-                            zoom_factor=_zoom_factor)
+                            _w = watch_ctrl.resolve_target_world(r)
+                            if _w is not None:
+                                _engaged, _look_at = True, _w
+                        if not _engaged:
+                            _wc, _zoom_off = _active_zoom_officer(crew_menu_panel, r)
+                            if _wc is not None:
+                                _engaged, _look_at = True, _wc
+                                _zoom_factor = _officer_zoom_factor(_zoom_off)
+                                _engaged_char = _zoom_off
+                        _drv = _engaged_char or _last_engaged_char[0]
+                        if _drv is not None:
+                            _drv.MenuEventHandler(_engaged, _look_at, _zoom_factor,
+                                                  now=_App.g_kUtopiaModule.GetGameTime())
+                        if _engaged_char is not None:
+                            _last_engaged_char[0] = _engaged_char
+                        if _BRIDGE_ZOOM_CAM is not None:
+                            _BRIDGE_ZOOM_CAM.advance(_player_dt)
+                        if _BRIDGE_ZOOM_CAM is not None and watch_ctrl is not None \
+                                and watch_ctrl.consume_snap():
+                            _BRIDGE_ZOOM_CAM.advance(1e9)   # AT_LOOK_AT_ME_NOW
                         # SP4: tooltip owner = focused officer (open menu wins
                         # over hover), then run the real SDK UpdateToolTip
                         # handler on a throttle so its status rows populate.
