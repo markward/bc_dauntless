@@ -133,7 +133,7 @@ class _TrackingCamera:
         # (i.e. snap() called before set_ship_radius).
         self.zoom_target_active = False
 
-    def compute(self, player, target, dt, aim_point=None):
+    def compute(self, player, target, dt, aim_point=None, pose_of=None):
         """Return (eye, look_at, up) in world space.
 
         Builds a 2D solver plane spanned by (T−S) and ship-body-up,
@@ -149,12 +149,21 @@ class _TrackingCamera:
         When dt is a float, applies position + rotation springs.
 
         When `aim_point` is given, it replaces the target hull centre as the framed point T.
+
+        `pose_of(obj) -> (loc, rot)` optionally supplies the render-interpolated
+        pose for the player and target so the camera anchors on exactly the poses
+        the renderer draws (see the smooth-motion fix). When None, the live
+        `GetWorldLocation()` / `GetWorldRotation()` are read directly.
         """
         from engine.appc.math import TGPoint3, TGMatrix3
 
-        S = player.GetWorldLocation()
-        T = aim_point if aim_point is not None else target.GetWorldLocation()
-        R = player.GetWorldRotation()
+        if pose_of is not None:
+            S, R = pose_of(player)
+            T = aim_point if aim_point is not None else pose_of(target)[0]
+        else:
+            S = player.GetWorldLocation()
+            T = aim_point if aim_point is not None else target.GetWorldLocation()
+            R = player.GetWorldRotation()
         B = R.GetCol(2)  # ship body-up in world space
 
         # Plane basis (e1, e3): e1 along ship→target, e3 = body-up

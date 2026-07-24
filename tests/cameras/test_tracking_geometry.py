@@ -420,3 +420,55 @@ def test_zoom_target_clamp_when_target_inside_d_chase_zoom():
     assert eye[1] == pytest.approx(0.3, abs=1e-6)
     # Stored d_chase_zoom unchanged.
     assert tc.d_chase_zoom == pytest.approx(10.0, abs=1e-9)
+
+
+# ── pose_of provider: camera reads interpolated poses (smooth-motion fix) ─────
+
+
+class _PoseShip:
+    """Minimal ship exposing live world pose + a target link."""
+    def __init__(self, loc_xyz, target=None):
+        from engine.appc.math import TGPoint3, TGMatrix3
+        self._loc = TGPoint3(*loc_xyz)
+        self._rot = TGMatrix3()
+        self._target = target
+    def GetWorldLocation(self): return self._loc
+    def GetWorldRotation(self): return self._rot
+    def GetTarget(self):        return self._target
+
+
+def test_tracking_compute_reads_player_and_target_through_pose_of():
+    """When a pose_of provider is supplied, the solver must anchor on the
+    poses it returns (interpolated render poses), not the live object poses.
+
+    Verified via translation covariance: offsetting BOTH the player and the
+    target by the same vector V translates the whole camera rig by V, so
+    eye and look_at shift by exactly V while up is unchanged.
+    """
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera()
+    tc.set_ship_radius(1.0)
+
+    player = _PoseShip((0.0, 0.0, 0.0))
+    target = _PoseShip((0.0, 20.0, 0.0))
+
+    eye0, look0, up0 = tc.compute(player=player, target=target, dt=None)
+
+    V = (100.0, -30.0, 7.0)
+
+    def pose_of(obj):
+        loc = obj.GetWorldLocation()
+        return (TGPoint3(loc.x + V[0], loc.y + V[1], loc.z + V[2]),
+                TGMatrix3())
+
+    eye1, look1, up1 = tc.compute(player=player, target=target, dt=None,
+                                  pose_of=pose_of)
+
+    for a, b, v in zip(eye1, eye0, V):
+        assert a == pytest.approx(b + v, abs=1e-6)
+    for a, b, v in zip(look1, look0, V):
+        assert a == pytest.approx(b + v, abs=1e-6)
+    for a, b in zip(up1, up0):
+        assert a == pytest.approx(b, abs=1e-6)

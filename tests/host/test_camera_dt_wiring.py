@@ -26,7 +26,9 @@ def test_compute_camera_fed_wall_clock_dt():
     # The exterior-view branch calls _compute_camera(...) spanning
     # multiple lines; collapse whitespace to match the dt argument.
     collapsed = re.sub(r"\s+", " ", src)
-    assert "_compute_camera( view_mode, director, player=player, dt=_player_dt)" in collapsed, (
+    # Match without the closing paren so appending later kwargs (e.g. the
+    # render-pose provider `pose_of=`) does not break this dt-wiring guard.
+    assert "_compute_camera( view_mode, director, player=player, dt=_player_dt" in collapsed, (
         "exterior-view _compute_camera must be fed dt=_player_dt "
         "(wall-clock frame delta), not a fixed TICK_DT"
     )

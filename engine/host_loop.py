@@ -4483,16 +4483,24 @@ def _apply_input(view_mode, player_control, director,
         player_control.apply(player, dt, _NO_INPUT)
 
 
-def _compute_camera(view_mode, director, *, player, dt) -> tuple:
+def _compute_camera(view_mode, director, *, player, dt, pose_of=None) -> tuple:
     """Per-tick camera dispatch.
 
     Bridge mode anchors at the ship origin looking along ship-Y
     forward. Exterior mode delegates to the director, which chooses
     between Chase Mode (free orbit) and Tracking Mode (two-angle
     solver). Returns (eye, look_at, up) as 3-tuples in world space.
+
+    `pose_of(obj) -> (loc, rot)` optionally supplies the render-interpolated
+    player pose (smooth-motion fix) so the camera anchors on exactly what the
+    renderer draws when the player ship is integrated on the 60 Hz sim tick
+    (helm-AI / waypoint control). When None, the live pose is read directly.
     """
-    loc = player.GetWorldLocation()
-    rot = player.GetWorldRotation()
+    if pose_of is not None:
+        loc, rot = pose_of(player)
+    else:
+        loc = player.GetWorldLocation()
+        rot = player.GetWorldRotation()
     if view_mode.is_bridge:
         fwd = rot.GetCol(1)
         up  = rot.GetCol(2)
@@ -4500,7 +4508,7 @@ def _compute_camera(view_mode, director, *, player, dt) -> tuple:
         target = (loc.x + fwd.x, loc.y + fwd.y, loc.z + fwd.z)
         up_vec = (up.x, up.y, up.z)
         return eye, target, up_vec
-    return director.compute(player=player, dt=dt)
+    return director.compute(player=player, dt=dt, pose_of=pose_of)
 
 
 # ── ViewscreenZoomTarget (VZT) framing ─────────────────────────────────────────
@@ -4614,13 +4622,18 @@ def _active_cutscene_camera():
     return (cam, mode)
 
 
-def _cutscene_pose(mode, dt):
+def _cutscene_pose(mode, dt, pose_of=None):
     """Convert a cutscene CameraMode's Update() result — (eye, forward_dir, up)
     in world game units — into the (eye, look_at_point, up) triple the main
     scene camera consumes. Update returns a forward DIRECTION; r.set_camera
     expects a look-at POINT, so add eye. (Fixes the direction-as-point seam the
-    merged in-space controller (365207f7) shipped with.)"""
-    eye, fwd, up = mode.Update(dt)
+    merged in-space controller (365207f7) shipped with.)
+
+    `pose_of` is threaded into the mode so a camera locked/chasing a ship
+    anchors on the render-interpolated pose (smooth-motion fix) — otherwise the
+    camera tracks the ship's 60 Hz-stepped live pose and the whole view judders
+    on a high-refresh display."""
+    eye, fwd, up = mode.Update(dt, pose_of)
     look_at = (eye[0] + fwd[0], eye[1] + fwd[1], eye[2] + fwd[2])
     return (eye, look_at, up)
 
@@ -5304,13 +5317,41 @@ def resolve_officer_menu_layout() -> None:
         )
 
 
+def _make_render_pose_provider(session, xform_buf, interp_alpha, *,
+                               interpolate_player, player_iid):
+    """Build `pose_of(obj) -> (loc, rot)` returning the render-interpolated
+    pose for a ship so the camera and the renderer anchor on identical poses
+    (smooth-motion fix).
+
+    Non-player ships integrate on the fixed 60 Hz sim tick, so they are always
+    interpolated. The player renders LIVE while manually flown (it is
+    integrated per render frame in `_PlayerControl`, already smooth), so
+    `interpolate_player` is False then and `pose_of(player)` returns its live
+    pose. When a helm-AI / waypoint order drives the player it moves on the
+    60 Hz tick like any AI ship, so `interpolate_player` is True and the player
+    is interpolated too. Any object not in the buffer falls back to live."""
+    def pose_of(obj):
+        iid = session.ship_instances.get(obj)
+        if iid is not None and (interpolate_player or iid != player_iid):
+            sampled = xform_buf.sample(iid, interp_alpha)
+            if sampled is not None:
+                return sampled
+        return obj.GetWorldLocation(), obj.GetWorldRotation()
+    return pose_of
+
+
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
-                              game_time, model_scale, player_control=None) -> None:
+                              game_time, model_scale, player_control=None,
+                              player_interp_pose=None) -> None:
     """Push ship + planet world transforms to the renderer for one frame.
 
     Player ship: pushed live (it is integrated per render frame on
     wall-clock dt in _PlayerControl, so it is already smooth in world
-    space).
+    space) — UNLESS a helm-AI / waypoint order drives it, in which case it
+    moves on the 60 Hz tick and `player_interp_pose` carries its
+    render-interpolated (loc, rot); pushing that (and keeping its iid in the
+    buffer across frames) makes it smooth on high-refresh displays. Kept in
+    lock-step with the camera, which anchors on the same interpolated pose.
 
     Non-player ships: integrated on the fixed 60 Hz tick, so they are
     rendered at lerp(prev, cur, interp_alpha) to hide the discrete
@@ -5370,8 +5411,23 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
         else:
             r.set_emissive_scale(iid, 1.0)
         if iid == _player_iid:
-            r.set_world_transform(
-                iid, _ship_world_matrix(ship, model_scale))
+            if player_interp_pose is not None:
+                # Helm-AI / waypoint-driven player: integrated on the 60 Hz
+                # tick, so render the interpolated pose (same one the camera
+                # anchors on) and keep the iid in the buffer across frames so
+                # the prune below does not drop its prev/cur (which would reset
+                # prev=cur next frame and re-snap the motion).
+                _iloc, _irot = player_interp_pose
+                try:
+                    _ps = float(ship.GetScale())
+                except Exception:
+                    _ps = 1.0
+                r.set_world_transform(
+                    iid, _world_matrix_from(_iloc, _irot, model_scale * _ps))
+                _live_ship_iids.append(iid)
+            else:
+                r.set_world_transform(
+                    iid, _ship_world_matrix(ship, model_scale))
             continue
         _live_ship_iids.append(iid)
         if _warp_apply_vis:
@@ -6554,6 +6610,14 @@ def run(mission_name: Optional[str] = None,
                 director.chase.set_ship_radius(_r)
                 director.tracking.set_ship_radius(_r)
 
+            # Render-pose interpolation (smooth motion on high-refresh displays).
+            # Populated below when the sim is live; left None while paused (and
+            # for the manually-flown player), in which case the camera and
+            # renderer read live poses exactly as before. See
+            # _make_render_pose_provider / _sync_instance_transforms.
+            _pose_of = None
+            _player_interp_pose = None
+
             # Mouse-wheel routing (runs every frame, paused or not). Scroll
             # delta is consumed once per tick — the single consumer of the
             # accumulator. Over a CEF surface (a pause/config modal is open,
@@ -6850,12 +6914,50 @@ def run(mission_name: Optional[str] = None,
                 # ship objects keep live transforms, so physics/AI/combat
                 # (which ran earlier this frame) are unaffected.
                 if session is not None:
+                    # Render-pose provider: the camera (below) and the renderer
+                    # must anchor on IDENTICAL per-ship poses. Non-player ships
+                    # are captured into _xform_buf by _sync_instance_transforms
+                    # (which runs before the camera this frame). The player is
+                    # captured here, but ONLY when a helm-AI / waypoint order
+                    # drives it (then it moves on the 60 Hz tick and needs
+                    # interpolation) — a manually-flown player keeps its live,
+                    # already-smooth per-frame pose.
+                    _player_iid_i = (session.ship_instances.get(player)
+                                     if player is not None else None)
+                    # Interpolate the player render when it is NOT being flown
+                    # per render frame by _PlayerControl: a helm-AI / waypoint
+                    # order (GetAI) OR an active in-space cutscene (the player
+                    # is scripted, never manually flown then, and a cutscene
+                    # camera is commonly locked onto it — so its 60 Hz-stepped
+                    # motion must be interpolated or the whole shot judders).
+                    _player_ai_owned = (
+                        player is not None
+                        and hasattr(player, "GetAI")
+                        and player.GetAI() is not None)
+                    _player_scripted = (
+                        player is not None
+                        and not pause.sim_frozen
+                        and _active_cutscene_camera() is not None)
+                    _interp_player = _player_ai_owned or _player_scripted
+                    if _interp_player and _player_iid_i is not None:
+                        _xform_buf.set_current(
+                            _player_iid_i,
+                            player.GetWorldLocation(),
+                            player.GetWorldRotation())
+                    _pose_of = _make_render_pose_provider(
+                        session, _xform_buf, _interp_alpha,
+                        interpolate_player=_interp_player,
+                        player_iid=_player_iid_i)
+                    _player_interp_pose = (
+                        _pose_of(player)
+                        if (_interp_player and player is not None) else None)
                     # Same game clock the decal system ages on
                     # (engine.appc.damage_decals). Read once per frame.
                     _sync_instance_transforms(
                         r, session, player, _xform_buf, _interp_alpha,
                         App.g_kUtopiaModule.GetGameTime(), BC_MODEL_SCALE,
-                        player_control=player_control)
+                        player_control=player_control,
+                        player_interp_pose=_player_interp_pose)
 
             # --- Render (always runs, including while paused) ---
             # Camera: orbit + zoom around the player ship (or origin fallback).
@@ -6893,11 +6995,12 @@ def run(mission_name: Optional[str] = None,
             elif player is not None:
                 eye, target, up_vec = _compute_camera(
                     view_mode, director,
-                    player=player, dt=_player_dt)
+                    player=player, dt=_player_dt, pose_of=_pose_of)
                 # Cutscene camera (computed above) drives the main-scene pose,
                 # converting the mode's forward DIRECTION to a look-at POINT.
                 if _cc is not None:
-                    eye, target, up_vec = _cutscene_pose(_cc[1], _player_dt)
+                    eye, target, up_vec = _cutscene_pose(
+                        _cc[1], _player_dt, _pose_of)
                 # Camera shake — apply to the exterior view. The bridge
                 # first-person camera below gets its own perturb call
                 # against the shared shake state.

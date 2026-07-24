@@ -56,6 +56,17 @@ def _apply_rot(R, p):
     return (v.x, v.y, v.z)
 
 
+def _obj_pose(obj, pose_of):
+    """(loc, rot) for a tracked object — the render-interpolated pose when a
+    `pose_of` provider is supplied (smooth-motion fix, so a camera locked/
+    chasing a 60 Hz-stepped ship tracks exactly what the renderer draws), else
+    the live pose. pose_of falls back to live internally for non-ship targets
+    (waypoints / placements are static, so it is a no-op for them)."""
+    if pose_of is not None:
+        return pose_of(obj)
+    return obj.GetWorldLocation(), obj.GetWorldRotation()
+
+
 class CameraMode:
     """Base mode: attribute bag + sweep-smoothed Update over a subclass ideal."""
 
@@ -94,8 +105,8 @@ class CameraMode:
     def SnapToIdealPosition(self):
         self._snap = True
 
-    def Update(self, dt=None):
-        ideal = self._ideal()
+    def Update(self, dt=None, pose_of=None):
+        ideal = self._ideal(pose_of)
         if ideal is None:
             return self._cur if self._cur is not None else (
                 (0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
@@ -119,7 +130,7 @@ class CameraMode:
         )
         return self._cur
 
-    def _ideal(self):
+    def _ideal(self, pose_of=None):
         raise NotImplementedError
 
 
@@ -157,7 +168,7 @@ class PlaceByDirectionMode(CameraMode):
         super().__init__()
         self.kind = kind
 
-    def _ideal(self):
+    def _ideal(self, pose_of=None):
         return None
 
 
@@ -189,15 +200,14 @@ class LockedMode(CameraMode):
     LockedViewAnyAngle). Position/Forward/Up are target-local; the spherical
     math is done SDK-side in Camera.py before the attrs are set here."""
 
-    def _ideal(self):
+    def _ideal(self, pose_of=None):
         t = self.GetAttrIDObject("Target")
         P = self.GetAttrPoint("Position")
         F = self.GetAttrPoint("Forward")
         U = self.GetAttrPoint("Up")
         if not _target_alive(t) or P is None or F is None or U is None:
             return None
-        R = t.GetWorldRotation()
-        loc = t.GetWorldLocation()
+        loc, R = _obj_pose(t, pose_of)
         op = _apply_rot(R, P)
         eye = (loc.x + op[0], loc.y + op[1], loc.z + op[2])
         fwd = _unit(*_apply_rot(R, F))
@@ -218,12 +228,11 @@ class ChaseMode(CameraMode):
         super().__init__()
         self._reverse = reverse
 
-    def _ideal(self):
+    def _ideal(self, pose_of=None):
         t = self.GetAttrIDObject("Target")
         if not _target_alive(t):
             return None
-        R = t.GetWorldRotation()
-        loc = t.GetWorldLocation()
+        loc, R = _obj_pose(t, pose_of)
         sign = 1.0 if self._reverse else -1.0           # behind = -forward
         off = _apply_rot(R, TGPoint3(0.0, sign * CHASE_DIST_GU, CHASE_UP_GU))
         eye = (loc.x + off[0], loc.y + off[1], loc.z + off[2])
@@ -235,16 +244,16 @@ class ChaseMode(CameraMode):
 class TargetMode(CameraMode):
     """Look from a source object to a target object (TargetWatch)."""
 
-    def _ideal(self):
+    def _ideal(self, pose_of=None):
         src = self.GetAttrIDObject("Source")
         dst = self.GetAttrIDObject("Target")
         if not _target_alive(src) or not _target_alive(dst):
             return None
-        s = src.GetWorldLocation()
-        d = dst.GetWorldLocation()
+        s, sR = _obj_pose(src, pose_of)
+        d, _dR = _obj_pose(dst, pose_of)
         eye = (s.x, s.y, s.z)
         fwd = _unit(d.x - s.x, d.y - s.y, d.z - s.z)
-        up = _unit(*_apply_rot(src.GetWorldRotation(), TGPoint3(0.0, 0.0, 1.0)))
+        up = _unit(*_apply_rot(sR, TGPoint3(0.0, 0.0, 1.0)))
         return (eye, fwd, up)
 
 
@@ -258,12 +267,11 @@ class PlacementMode(CameraMode):
     SetAttrIDObject("Target", None)) → look along the Source's own forward
     (col1). A dead Target (or missing Source) makes the mode invalid."""
 
-    def _ideal(self):
+    def _ideal(self, pose_of=None):
         src = self.GetAttrIDObject("Source")
         if not _target_alive(src):
             return None
-        s = src.GetWorldLocation()
-        R = src.GetWorldRotation()
+        s, R = _obj_pose(src, pose_of)
         eye = (s.x, s.y, s.z)
         u = R.GetCol(2)
         up = _unit(u.x, u.y, u.z)
@@ -274,7 +282,7 @@ class PlacementMode(CameraMode):
         else:
             if not _target_alive(dst):
                 return None
-            d = dst.GetWorldLocation()
+            d, _dR = _obj_pose(dst, pose_of)
             off = self.GetAttrPoint("TargetOffsetWorld")
             if off is not None:
                 dx, dy, dz = d.x + off.x, d.y + off.y, d.z + off.z
@@ -296,7 +304,7 @@ class ZoomTargetMode(CameraMode):
     A Source that was set but died invalidates the mode; only unset/None falls
     back to the camera."""
 
-    def _ideal(self):
+    def _ideal(self, pose_of=None):
         dst = self.GetAttrIDObject("Target")
         if not _target_alive(dst):
             return None
@@ -304,8 +312,7 @@ class ZoomTargetMode(CameraMode):
         if src is not None:
             if not _target_alive(src):
                 return None
-            s = src.GetWorldLocation()
-            R = src.GetWorldRotation()
+            s, R = _obj_pose(src, pose_of)
         else:
             cam = self._owner_camera
             get_loc = getattr(cam, "GetWorldLocation", None)
@@ -316,7 +323,7 @@ class ZoomTargetMode(CameraMode):
             R = get_rot()
             if s is None or R is None:            # camera pose not resolvable
                 return None
-        d = dst.GetWorldLocation()
+        d, _dR = _obj_pose(dst, pose_of)
         eye = (s.x, s.y, s.z)
         fwd = _unit(d.x - s.x, d.y - s.y, d.z - s.z)
         u = R.GetCol(2)

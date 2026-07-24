@@ -106,9 +106,12 @@ class _CameraDirector:
 
     # ── per-frame dispatch ───────────────────────────────────────────
 
-    def compute(self, *, player, dt):
-        loc = player.GetWorldLocation()
-        rot = player.GetWorldRotation()
+    def compute(self, *, player, dt, pose_of=None):
+        if pose_of is not None:
+            loc, rot = pose_of(player)
+        else:
+            loc = player.GetWorldLocation()
+            rot = player.GetWorldRotation()
         if self.mode is CameraMode.TRACKING:
             tgt = self._valid_target(player)
             if tgt is None:
@@ -121,7 +124,8 @@ class _CameraDirector:
                 self.tracking.exit_zoom_target()
             else:
                 return self.tracking.compute(player=player, target=tgt, dt=dt,
-                                             aim_point=target_aim_point(player))
+                                             aim_point=target_aim_point(player, pose_of=pose_of),
+                                             pose_of=pose_of)
         else:
             # CHASE: auto-engage Tracking if a target is present and the user
             # hasn't manually opted out of Tracking for this specific target.
@@ -136,7 +140,8 @@ class _CameraDirector:
                 self._opted_out_target = None
                 self.chase.exit_reverse()
                 return self.tracking.compute(player=player, target=tgt, dt=dt,
-                                             aim_point=target_aim_point(player))
+                                             aim_point=target_aim_point(player, pose_of=pose_of),
+                                             pose_of=pose_of)
         return self.chase.compute_camera(loc, rot, dt=dt)
 
     # ── helpers ──────────────────────────────────────────────────────

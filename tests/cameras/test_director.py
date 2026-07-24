@@ -498,3 +498,57 @@ def test_director_set_fov_changes_tracking_projection():
     # _screen_y_to_angle(y) = atan(y × tan(v_fov/2))
     expected = math.atan(0.5 * math.tan(math.radians(45.0)))
     assert d.tracking._screen_y_to_angle(0.5) == pytest.approx(expected, abs=1e-12)
+
+
+# ── pose_of provider threads interpolated poses to chase + tracking ──────────
+
+
+def test_director_compute_reads_player_pose_through_pose_of_in_chase():
+    """In Chase mode, director.compute must anchor on pose_of(player), not
+    the live pose — offsetting the player pose by V shifts the chase eye by V."""
+    from engine.cameras.director import _CameraDirector
+    from engine.appc.math import TGPoint3, TGMatrix3
+
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0)
+
+    player = _FakePlayer()  # no target → Chase
+    eye0, look0, up0 = d.compute(player=player, dt=1.0/60)
+
+    V = (100.0, -30.0, 7.0)
+
+    def pose_of(obj):
+        loc = obj.GetWorldLocation()
+        return (TGPoint3(loc.x + V[0], loc.y + V[1], loc.z + V[2]), TGMatrix3())
+
+    # Fresh director so chase spring state matches the first-frame call above.
+    d2 = _CameraDirector()
+    d2.chase.set_ship_radius(1.0)
+    eye1, look1, up1 = d2.compute(player=player, dt=1.0/60, pose_of=pose_of)
+
+    for a, b, v in zip(eye1, eye0, V):
+        assert a == pytest.approx(b + v, abs=1e-6)
+
+
+def test_director_compute_passes_pose_of_to_tracking():
+    """In Tracking mode the director must forward pose_of to the tracking
+    solver so both player and target anchor on interpolated poses."""
+    from engine.cameras.director import _CameraDirector, CameraMode
+    from engine.appc.math import TGPoint3, TGMatrix3
+
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+    p = _FakeShipWithTarget(target=_make_target_at())
+    d.toggle_mode(player=p)
+    assert d.mode is CameraMode.TRACKING
+    eye0, look0, up0 = d.compute(player=p, dt=None)
+
+    V = (50.0, 12.0, -8.0)
+
+    def pose_of(obj):
+        loc = obj.GetWorldLocation()
+        return (TGPoint3(loc.x + V[0], loc.y + V[1], loc.z + V[2]), TGMatrix3())
+
+    eye1, look1, up1 = d.compute(player=p, dt=None, pose_of=pose_of)
+    for a, b, v in zip(eye1, eye0, V):
+        assert a == pytest.approx(b + v, abs=1e-6)
