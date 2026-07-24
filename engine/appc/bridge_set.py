@@ -20,6 +20,9 @@ from engine.appc.math import TGMatrix3, TGPoint3
 # bridge_set.py lives at engine/appc/ -> project root is two parents up.
 _GAME_ROOT = _Path(__file__).resolve().parent.parent.parent / "game"
 
+_ZOOM_DEFAULT_TIME = 0.375   # BC SetZoomTime on Galaxy/Sovereign maincamera;
+                             # pre-SetZoomTime fallback so advance() never snaps.
+
 
 class _LoudStub:
     """A truthy placeholder for a deferred engine object (bridge object,
@@ -141,9 +144,9 @@ class ZoomCameraObjectClass(_LoudStub):
     The real camera-mode surface (GetNamedCameraMode/PushCameraMode/PopCameraMode/
     GetCurrentCameraMode) runs the SDK's CameraModes.<name>(self) builder and keeps
     a mode stack; the host harvests the active mode after LoadBridge.Load to drive
-    _BridgeCamera. The remaining zoom/transform surface (ToggleZoom, Zoom,
-    IsZoomed, LookForward, Update, ...) stays a silent _LoudStub no-op — that
-    geometry lived in Appc and is not reconstructed here."""
+    _BridgeCamera. The zoom-state machine (engage/disengage/advance/IsZoomed/
+    ToggleZoom/LookForward/UpdateViewFrustum) is real too, driven by the host's
+    _BridgeCamera each frame via `active_factor`/`look_at`/`zoom_progress()`."""
     def __init__(self, x, y, z, qw, qx, qy, qz, name):
         self.position = (x, y, z)
         self.base_position = (x, y, z)   # create-time captain base; never mutated
@@ -154,6 +157,16 @@ class ZoomCameraObjectClass(_LoudStub):
         self._zoom_time = 0.0
         self._anim_node = None   # lazily created TGAnimNode (kind="camera")
         self._mode_stack = []    # captain camera-mode stack (PushCameraMode)
+
+        # Zoom-state machine (MenuEventHandler port). _is_zoomed is the direction
+        # (in/out); _zoom_t eases 0->1 while in, 1->0 while out; _active_factor is
+        # the target FOV multiplier for the current engagement (does NOT clobber
+        # _min_zoom, which stays the SetMinZoom default = the officer sentinel
+        # fallback); _look_at is the world aim point, or None = base-forward.
+        self._is_zoomed = False
+        self._zoom_t = 0.0
+        self._active_factor = self._min_zoom
+        self._look_at = None
 
     def GetAnimNode(self):
         # Real recording node (kind="camera"): the cutscene controller reads
@@ -171,6 +184,62 @@ class ZoomCameraObjectClass(_LoudStub):
     def GetMaxZoom(self):  return self._max_zoom
     def GetZoomTime(self): return self._zoom_time
     def SetTranslateXYZ(self, x, y, z): self.position = (x, y, z)
+
+    # ── Zoom-state machine (read by host _BridgeCamera) ─────────────────────────
+    @property
+    def active_factor(self) -> float:
+        return self._active_factor
+
+    @property
+    def look_at(self):
+        return self._look_at
+
+    def engage(self, factor, look_at) -> None:
+        """Zoom in toward `factor` (FOV multiplier) aiming at `look_at`
+        (world xyz, or None = base-forward). Idempotent: re-engaging just
+        updates the target; the ease continues from the current progress."""
+        self._active_factor = float(factor)
+        self._look_at = tuple(look_at) if look_at is not None else None
+        self._is_zoomed = True
+
+    def disengage(self) -> None:
+        """Zoom back out to the captain view; _look_at is kept until the ease
+        reaches 0 (so the eye eases back along the same line)."""
+        self._is_zoomed = False
+
+    def advance(self, dt) -> None:
+        eff = self._zoom_time if self._zoom_time > 0.0 else _ZOOM_DEFAULT_TIME
+        step = dt / max(eff, 1e-6)
+        if self._is_zoomed:
+            self._zoom_t = min(1.0, self._zoom_t + step)
+        else:
+            self._zoom_t = max(0.0, self._zoom_t - step)
+            if self._zoom_t == 0.0:
+                self._look_at = None
+
+    def zoom_progress(self) -> float:
+        return self._zoom_t
+
+    def IsZoomed(self) -> int:
+        return 1 if self._is_zoomed else 0
+
+    def ToggleZoom(self, t=None) -> None:
+        # SDK surface: flip the zoom direction. Our host drives engage/disengage
+        # directly; this keeps MissionLib/SDK ToggleZoom callers from no-op'ing.
+        if self._is_zoomed:
+            self.disengage()
+        else:
+            self._is_zoomed = True
+
+    def LookForward(self) -> None:
+        # SDK surface (MissionLib.ViewscreenOn / LookForward): aim at the
+        # viewscreen (base-forward). Was a silent _LoudStub no-op.
+        self._look_at = None
+
+    def UpdateViewFrustum(self) -> None:
+        # SDK surface: the frustum is realized by _BridgeCamera.compute_camera
+        # each frame; this exists so SDK callers stop hitting the _LoudStub.
+        return None
 
     # ── Captain camera-mode stack ──────────────────────────────────────────────
     # Real replacement for the _LoudStub no-ops so the bridge config's
