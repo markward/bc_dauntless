@@ -29,7 +29,6 @@ from engine.ui.reticle_text import build_reticle_text, _ReticleCam
 from engine.ui.letterbox import LetterboxAnimator
 from engine.appc.character_position_zoom import (
     POSITION_ZOOM_SENTINEL,
-    POSITION_ZOOM_SENTINEL as _POSITION_ZOOM_SENTINEL,
     VIEWSCREEN_ZOOM_FALLBACK as _VIEWSCREEN_ZOOM_FALLBACK,
 )
 
@@ -5134,7 +5133,15 @@ def _hailed_character(controller):
     first, so exactly the hailed one is left visible; this mirrors the same
     IsHidden()-driven pattern _sync_comm_character_visibility already uses to
     turn that flag into renderer visibility, scanning instead for the one
-    realized, un-hidden character in the comm set _active_comm_feed resolved."""
+    realized, un-hidden character in the comm set _active_comm_feed resolved.
+
+    HideCharacters + the SetHidden(0) un-hide are both inside MissionLib's
+    ``if (pcName):`` guard, so a ViewscreenOn(None, ...) scene shot (real SDK
+    usage, e.g. E4M5/E4M6/E3M1) leaves the set's un-hidden count at whatever it
+    already was — zero, or more than one. That is not a single-character hail,
+    so this only returns a character when EXACTLY ONE realized character in the
+    matched comm set is un-hidden; any other count (ambiguous or none) returns
+    None, and _viewscreen_hail_engagement then skips the forward zoom."""
     feed = _active_comm_feed(controller)
     if feed is None:
         return None
@@ -5146,10 +5153,10 @@ def _hailed_character(controller):
         s = _App.g_kSetManager.GetSet(set_name)
         if s is None:
             return None
-        for c in _iter_set_characters(s):
-            if getattr(c, "_render_instance", None) is not None and not c.IsHidden():
-                return c
-        return None
+        visible = [c for c in _iter_set_characters(s)
+                   if getattr(c, "_render_instance", None) is not None
+                   and not c.IsHidden()]
+        return visible[0] if len(visible) == 1 else None
     return None
 
 
@@ -5164,7 +5171,7 @@ def _viewscreen_hail_engagement(controller):
     if char is None:
         return None
     factor = char.GetPositionZoom(char.GetLocation())
-    if factor is None or factor == _POSITION_ZOOM_SENTINEL:
+    if factor is None or factor == POSITION_ZOOM_SENTINEL:
         factor = _VIEWSCREEN_ZOOM_FALLBACK
     return char, factor
 
