@@ -43,13 +43,12 @@ LEFT_COL_X1_PT = 268      # #spv-left right edge (left 12 + width 248 + pad 8)
 LEFT_COL_Y0_PT = 44       # #spv-left top
 
 # Bottom-right tool-button cluster (#spv-tools). Anchored right:12/bottom:12
-# with two 40px buttons and a 6px gap → an 86×40 pt box in the corner. Mouse
-# input here belongs to the CEF buttons, so it never starts an orbit drag or
-# pin pick.
+# with N 40px buttons and 6px gaps in a flex row. Mouse input here belongs to
+# the CEF buttons, so it never starts an orbit drag or pin pick.
 TOOLS_MARGIN_PT = 12      # #spv-tools right / bottom offset
 TOOLS_BTN_PT = 40         # .spv-tool size
 TOOLS_GAP_PT = 6          # #spv-tools gap
-TOOLS_COUNT = 2           # buttons in the row
+TOOLS_COUNT = 3           # buttons in the row (glow / arcs / hull-texture)
 TOOLS_W_PT = TOOLS_COUNT * TOOLS_BTN_PT + (TOOLS_COUNT - 1) * TOOLS_GAP_PT
 TOOLS_H_PT = TOOLS_BTN_PT
 
@@ -65,6 +64,9 @@ class ShipPropertyViewerPanel(Panel):
         # Titlebar overlay toggles — both off by default, reset every open.
         self.show_glow_regions = False
         self.show_weapon_arcs = False
+        # Render mode toggle: False = blue Fresnel hologram (default),
+        # True = the ship's real hull textures. Reset every open.
+        self.show_hull_texture = False
         # Names of aggregator subsystems whose child rows are expanded in the
         # left-column list (accordion, like the target list). Collapsed by
         # default; reset every open.
@@ -92,6 +94,7 @@ class ShipPropertyViewerPanel(Panel):
         self.selected_index = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
+        self.show_hull_texture = False
         self._expanded_groups = set()
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
@@ -103,6 +106,7 @@ class ShipPropertyViewerPanel(Panel):
         self.selected_index = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
+        self.show_hull_texture = False
         self._expanded_groups = set()
         self.camera = None
         self._lmb_down = False
@@ -170,6 +174,7 @@ class ShipPropertyViewerPanel(Panel):
     def render_payload(self) -> Optional[str]:
         snapshot = (self._visible, len(self._descriptors), self.selected_index,
                     self.show_glow_regions, self.show_weapon_arcs,
+                    self.show_hull_texture,
                     tuple(sorted(self._expanded_groups)))
         if snapshot == self._last_pushed:
             return None
@@ -187,6 +192,7 @@ class ShipPropertyViewerPanel(Panel):
             "selected_index": self.selected_index,
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
+            "show_hull": self.show_hull_texture,
             "subsystems": self._subsystem_rows(),
         }
         return "setShipPropertyViewer(" + json.dumps(payload) + ");"
@@ -403,6 +409,10 @@ class ShipPropertyViewerPanel(Panel):
         if action == "toggle_weapon_arcs":
             self.show_weapon_arcs = not self.show_weapon_arcs
             self._last_pushed = None
+            return True
+        if action == "toggle_hull_texture":
+            self.show_hull_texture = not self.show_hull_texture
+            self._last_pushed = None  # re-push so the button state updates
             return True
         if action.startswith("select_pin:"):
             try:

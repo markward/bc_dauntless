@@ -237,6 +237,11 @@ std::unique_ptr<renderer::TargetReticlePass> g_target_reticle_pass;
 // bridge pass, drawing only the hologram + subsystem pins.
 bool      g_hologram_only_mode = false;
 glm::vec3 g_hologram_bg{0.0f, 0.0f, 0.0f};
+// Ship Property Viewer render mode: when true, the inspected ship is drawn with
+// its real hull textures (full opaque lighting) instead of the Fresnel
+// hologram. Default false = hologram. Only consulted while g_hologram_ship is
+// active (i.e. the viewer is open).
+bool      g_spv_hull_mode = false;
 std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
 std::unique_ptr<renderer::HdrTarget>       g_viewscreen_hdr;
@@ -531,6 +536,7 @@ void shutdown() {
     g_subsystem_pins.clear();
     g_hologram_ship = renderer::HologramShip{};
     g_hologram_only_mode = false;
+    g_spv_hull_mode = false;
     g_hologram_pass.reset();
     g_cloak_ships.clear();
     g_cloak_pass.reset();
@@ -878,8 +884,21 @@ void frame() {
         render_space(g_camera, /*for_viewscreen=*/false, *g_hdr_target, fw, fh);
     }
 
-    if (g_hologram_pass && g_hologram_ship.active)
-        g_hologram_pass->render(g_hologram_ship, g_world, g_camera, *g_pipeline, lookup);
+    if (g_hologram_ship.active) {
+        if (g_spv_hull_mode && g_submitter) {
+            // Hull-texture mode: draw just the inspected ship through the full
+            // opaque path (real textures + system lighting) on the isolated
+            // solid background. The space scene is skipped in viewer_mode, so
+            // this single-instance draw is the only hull render.
+            g_submitter->submit_opaque_instance(
+                g_world, g_hologram_ship.instance, g_camera, *g_pipeline, lookup,
+                g_lighting, g_decal_game_time, g_carve_cache.get(),
+                &g_dynamic_lights);
+        } else if (g_hologram_pass) {
+            g_hologram_pass->render(g_hologram_ship, g_world, g_camera,
+                                    *g_pipeline, lookup);
+        }
+    }
     if (viewer_mode && g_phaser_pass && !g_spv_overlay_beams.empty())
         g_phaser_pass->render(g_spv_overlay_beams, g_camera, *g_pipeline,
                               /*depth_test=*/false);
@@ -2491,6 +2510,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("enabled"), py::arg("bg") = std::array<float, 3>{0.0f, 0.0f, 0.0f},
           "When enabled, frame() clears to bg (r,g,b) and skips the space scene "
           "and bridge pass, drawing only the hologram + subsystem pins.");
+    m.def("set_spv_hull_mode",
+          [](bool enabled) { g_spv_hull_mode = enabled; },
+          py::arg("enabled"),
+          "Ship Property Viewer render mode. When enabled, the active hologram "
+          "ship is drawn with its real hull textures (full opaque lighting) "
+          "instead of the Fresnel hologram. Default false = hologram.");
     m.def("get_instance_bounds",
           [](scenegraph::InstanceId iid) -> py::object {
               const scenegraph::Instance* inst = g_world.get(iid);

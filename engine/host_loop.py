@@ -7155,6 +7155,8 @@ def run(mission_name: Optional[str] = None,
                         ship_property_viewer.frame_to_bounds((_bx, _by, _bz), _br)
                 # Take over the frame: solid background, no space scene / bridge.
                 r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
+                # Render mode: hologram (default) vs real hull textures.
+                r.set_spv_hull_mode(ship_property_viewer.show_hull_texture)
                 _cam = ship_property_viewer.camera
                 r.set_camera(eye=_cam.eye(), target=_cam.target,
                              up=_cam.up(), fov_y_rad=_cam.fov_y_rad,
@@ -7202,6 +7204,7 @@ def run(mission_name: Optional[str] = None,
                     r.clear_spv_overlay_beams()
                     r.clear_debug_cylinders()
                     r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
+                    r.set_spv_hull_mode(False)
                     _spv_hidden_iid = None
                 r.set_camera(eye=eye, target=target, up=up_vec,
                              fov_y_rad=director.fov_y_rad,

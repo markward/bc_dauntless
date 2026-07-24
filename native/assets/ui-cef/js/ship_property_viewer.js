@@ -39,6 +39,12 @@ window.setShipPropertyViewer = function (data) {
     if (arcsBtn) {
         arcsBtn.classList.toggle('active', data.show_arcs === true);
     }
+    // Hull-texture toggle: active = real hull textures, inactive = hologram
+    // (the default).
+    var hullBtn = document.getElementById('spv-toggle-hull');
+    if (hullBtn) {
+        hullBtn.classList.toggle('active', data.show_hull === true);
+    }
 
     renderSPVSubsystemList(data.subsystems || [],
                            (typeof data.selected_index === 'number')

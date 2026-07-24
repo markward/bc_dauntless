@@ -308,9 +308,11 @@ def test_toggles_start_off_and_payload_carries_them():
     p.open()
     assert p.show_glow_regions is False
     assert p.show_weapon_arcs is False
+    assert p.show_hull_texture is False                 # hologram is default
     data = _payload_data(p.render_payload())
     assert data["show_glow"] is False
     assert data["show_arcs"] is False
+    assert data["show_hull"] is False
 
 
 def test_toggle_events_flip_flags_and_repush():
@@ -324,9 +326,14 @@ def test_toggle_events_flip_flags_and_repush():
     assert p.dispatch_event("toggle_weapon_arcs") is True
     data = _payload_data(p.render_payload())
     assert data["show_arcs"] is True
+    # Hull-texture toggle flips the render mode + re-pushes.
+    assert p.dispatch_event("toggle_hull_texture") is True
+    assert _payload_data(p.render_payload())["show_hull"] is True
     # Toggling back off flips + re-pushes again.
     assert p.dispatch_event("toggle_glow_regions") is True
     assert _payload_data(p.render_payload())["show_glow"] is False
+    assert p.dispatch_event("toggle_hull_texture") is True
+    assert _payload_data(p.render_payload())["show_hull"] is False
 
 
 def test_toggles_reset_on_reopen_and_close():
@@ -334,12 +341,15 @@ def test_toggles_reset_on_reopen_and_close():
     p.open()
     p.dispatch_event("toggle_glow_regions")
     p.dispatch_event("toggle_weapon_arcs")
+    p.dispatch_event("toggle_hull_texture")
     p.close()
     assert p.show_glow_regions is False
     assert p.show_weapon_arcs is False
+    assert p.show_hull_texture is False
     p.open()
     assert p.show_glow_regions is False
     assert p.show_weapon_arcs is False
+    assert p.show_hull_texture is False
 
 
 # ── left-column subsystem list payload ─────────────────────────────────────
@@ -428,11 +438,13 @@ def test_press_over_bottom_right_tools_never_orbits_or_picks(monkeypatch):
     picked = []
     monkeypatch.setattr(p, "pick_at", lambda *a, **k: picked.append(a))
     yaw0 = p.camera.yaw
-    # Centre of the 86×40 cluster: right 12 + 86/2 = 55 in from the right edge,
-    # bottom 12 + 40/2 = 32 up from the bottom edge.
-    host._cursor = (800.0 - 55.0, 600.0 - 32.0); host._down = True
+    # Centre of the cluster, derived from the panel's own geometry constants so
+    # this survives adding/removing tool buttons.
+    cx = 800.0 - (_mod.TOOLS_MARGIN_PT + _mod.TOOLS_W_PT / 2.0)
+    cy = 600.0 - (_mod.TOOLS_MARGIN_PT + _mod.TOOLS_H_PT / 2.0)
+    host._cursor = (cx, cy); host._down = True
     p.handle_input(host)
-    host._cursor = (800.0 - 50.0, 600.0 - 30.0)  # small drag
+    host._cursor = (cx + 5.0, cy + 2.0)          # small drag
     p.handle_input(host)
     assert p.camera.yaw == yaw0                 # no orbit
     host._down = False
