@@ -27,7 +27,11 @@ import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
 from engine.ui.reticle_text import build_reticle_text, _ReticleCam
 from engine.ui.letterbox import LetterboxAnimator
-from engine.appc.character_position_zoom import POSITION_ZOOM_SENTINEL
+from engine.appc.character_position_zoom import (
+    POSITION_ZOOM_SENTINEL,
+    POSITION_ZOOM_SENTINEL as _POSITION_ZOOM_SENTINEL,
+    VIEWSCREEN_ZOOM_FALLBACK as _VIEWSCREEN_ZOOM_FALLBACK,
+)
 
 import math as _math
 
@@ -1416,6 +1420,7 @@ _BRIDGE_ZOOM_MIN: float = 1.0     # SDK GetMinZoom — zoomed-in FOV factor
 _BRIDGE_ZOOM_MAX: float = 1.0     # SDK GetMaxZoom — captain FOV factor
 _BRIDGE_ZOOM_TIME: float = 0.0    # SDK GetZoomTime — ease duration (seconds)
 _BRIDGE_ZOOM_CAM = None            # bridge "maincamera" ZoomCameraObjectClass (harvested at load)
+_VIEWSCREEN_LOOK_PITCH = 0.0       # extra downward pitch to centre the screen (tunable)
 
 # Lighting defaults — used by both the per-tick fallback (when no active set
 # has lights) and as the conceptual source of truth that the C++
@@ -2703,9 +2708,30 @@ class _BridgeCamera:
                         )
             fov = self.FOV_Y_RAD * self._lerp(_BRIDGE_ZOOM_MAX, factor, e)
         elif zoom_t > 0.0:
-            # look_at is None: viewscreen-forward zoom — narrow FOV only, aim
-            # unchanged (Task 4 refines the forward re-centre + pitch).
+            # Viewscreen-forward zoom (look_at is None): ease the aim toward the
+            # captain's BASE forward (recentre on the screen, BC LookForward) and
+            # narrow FOV. Base forward = local +Y rotated by INITIAL_YAW, pitched
+            # down by _VIEWSCREEN_LOOK_PITCH.
             e = self._smoothstep(zoom_t)
+            bf = _rot_around((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), self.INITIAL_YAW_RAD)
+            if _VIEWSCREEN_LOOK_PITCH:
+                _bright = _rot_around(bf, (0.0, 0.0, 1.0), -_math.pi / 2)
+                bf = _rot_around(bf, _bright, _VIEWSCREEN_LOOK_PITCH)
+            bx = self._lerp(local_fwd[0], bf[0], e)
+            by = self._lerp(local_fwd[1], bf[1], e)
+            bz = self._lerp(local_fwd[2], bf[2], e)
+            bl = _math.sqrt(bx*bx + by*by + bz*bz)
+            if bl > 1e-6:
+                local_fwd = (bx/bl, by/bl, bz/bl)
+                zr = (local_fwd[1], -local_fwd[0], 0.0)
+                zrl = _math.sqrt(zr[0]**2 + zr[1]**2 + zr[2]**2)
+                if zrl > 1e-6:
+                    zr = (zr[0]/zrl, zr[1]/zrl, zr[2]/zrl)
+                    local_up = (
+                        zr[1]*local_fwd[2] - zr[2]*local_fwd[1],
+                        zr[2]*local_fwd[0] - zr[0]*local_fwd[2],
+                        zr[0]*local_fwd[1] - zr[1]*local_fwd[0],
+                    )
             fov = self.FOV_Y_RAD * self._lerp(_BRIDGE_ZOOM_MAX, factor, e)
 
         target = (eye[0] + local_fwd[0], eye[1] + local_fwd[1], eye[2] + local_fwd[2])
@@ -5097,6 +5123,52 @@ def _active_comm_feed(controller):
     return None
 
 
+def _hailed_character(controller):
+    """The character currently un-hidden on the viewscreen hail, or None.
+
+    ViewScreenObject does not record the hailed character's name: BC's real
+    MissionLib.ViewscreenOn un-hides it with a bare
+    ``App.CharacterClass_GetObject(pLookAtSet, pcName).SetHidden(0)`` — no name
+    is stored anywhere we can read (and MissionLib.py is vendor SDK script we
+    don't modify). HideCharacters(pLookAtSet) hid every character on that set
+    first, so exactly the hailed one is left visible; this mirrors the same
+    IsHidden()-driven pattern _sync_comm_character_visibility already uses to
+    turn that flag into renderer visibility, scanning instead for the one
+    realized, un-hidden character in the comm set _active_comm_feed resolved."""
+    feed = _active_comm_feed(controller)
+    if feed is None:
+        return None
+    set_id, _cam = feed
+    import App as _App
+    for set_name, sid in getattr(controller, "comm_set_ids", {}).items():
+        if sid != set_id:
+            continue
+        s = _App.g_kSetManager.GetSet(set_name)
+        if s is None:
+            return None
+        for c in _iter_set_characters(s):
+            if getattr(c, "_render_instance", None) is not None and not c.IsHidden():
+                return c
+        return None
+    return None
+
+
+def _viewscreen_hail_engagement(controller):
+    """(char, zoom_factor) while a hail is on the viewscreen, else None. Factor =
+    the hailed char's GetPositionZoom(GetLocation()); a sentinel miss (remote
+    location, no AddPositionZoom) -> _VIEWSCREEN_ZOOM_FALLBACK. look_at is always
+    None (viewscreen-forward)."""
+    if _active_comm_feed(controller) is None:
+        return None
+    char = _hailed_character(controller)
+    if char is None:
+        return None
+    factor = char.GetPositionZoom(char.GetLocation())
+    if factor is None or factor == _POSITION_ZOOM_SENTINEL:
+        factor = _VIEWSCREEN_ZOOM_FALLBACK
+    return char, factor
+
+
 def _comm_camera_params(cam):
     """Convert a CameraObjectClass into the viewscreen-RTT camera tuple
     (eye, target, up, fov_y_rad, near, far), all in game units.
@@ -7049,10 +7121,10 @@ def run(mission_name: Optional[str] = None,
                             mouse_dx, mouse_dy = 0.0, 0.0
                         # Resolve the single active engagement this frame, in
                         # precedence order: AT_WATCH_ME/LOOK_AT target > open crew
-                        # menu > (Task 4: viewscreen hail). The winner supplies a
-                        # world look-at + FOV factor; MenuEventHandler reconciles
-                        # the maincamera zoom; advance() eases it on _player_dt so
-                        # it freezes under pause.
+                        # menu > viewscreen hail. The winner supplies a world
+                        # look-at + FOV factor; MenuEventHandler reconciles the
+                        # maincamera zoom; advance() eases it on _player_dt so it
+                        # freezes under pause.
                         _engaged = False
                         _look_at = None
                         _zoom_factor = _BRIDGE_ZOOM_MIN
@@ -7069,6 +7141,11 @@ def run(mission_name: Optional[str] = None,
                                 if _zoom_factor == POSITION_ZOOM_SENTINEL:
                                     _zoom_factor = _BRIDGE_ZOOM_MIN
                                 _engaged_char = _zoom_off
+                        if not _engaged:
+                            _hail = _viewscreen_hail_engagement(controller)
+                            if _hail is not None:
+                                _engaged_char, _zoom_factor = _hail
+                                _engaged, _look_at = True, None   # viewscreen-forward
                         _drv = _engaged_char or _last_engaged_char[0]
                         if _drv is not None:
                             _drv.MenuEventHandler(_engaged, _look_at, _zoom_factor,
