@@ -421,6 +421,25 @@ def test_press_over_chrome_never_orbits_or_picks(monkeypatch):
     assert len(picked) == 1
 
 
+def test_press_over_bottom_right_tools_never_orbits_or_picks(monkeypatch):
+    """The relocated tool-button cluster (bottom-right) owns its clicks."""
+    p = _open_panel_for_input()
+    host = _FakeHost()                          # fb 800×600, dsf 1.0
+    picked = []
+    monkeypatch.setattr(p, "pick_at", lambda *a, **k: picked.append(a))
+    yaw0 = p.camera.yaw
+    # Centre of the 86×40 cluster: right 12 + 86/2 = 55 in from the right edge,
+    # bottom 12 + 40/2 = 32 up from the bottom edge.
+    host._cursor = (800.0 - 55.0, 600.0 - 32.0); host._down = True
+    p.handle_input(host)
+    host._cursor = (800.0 - 50.0, 600.0 - 30.0)  # small drag
+    p.handle_input(host)
+    assert p.camera.yaw == yaw0                 # no orbit
+    host._down = False
+    p.handle_input(host)
+    assert picked == []                         # no pick
+
+
 def _open_panel_for_input():
     from engine.ui.ship_property_viewer import OrbitCamera as _Cam
     p = ShipPropertyViewerPanel(ship_getter=lambda: None)

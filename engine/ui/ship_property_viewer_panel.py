@@ -42,6 +42,17 @@ TITLEBAR_H_PT = 34        # .spv-titlebar height
 LEFT_COL_X1_PT = 268      # #spv-left right edge (left 12 + width 248 + pad 8)
 LEFT_COL_Y0_PT = 44       # #spv-left top
 
+# Bottom-right tool-button cluster (#spv-tools). Anchored right:12/bottom:12
+# with two 40px buttons and a 6px gap → an 86×40 pt box in the corner. Mouse
+# input here belongs to the CEF buttons, so it never starts an orbit drag or
+# pin pick.
+TOOLS_MARGIN_PT = 12      # #spv-tools right / bottom offset
+TOOLS_BTN_PT = 40         # .spv-tool size
+TOOLS_GAP_PT = 6          # #spv-tools gap
+TOOLS_COUNT = 2           # buttons in the row
+TOOLS_W_PT = TOOLS_COUNT * TOOLS_BTN_PT + (TOOLS_COUNT - 1) * TOOLS_GAP_PT
+TOOLS_H_PT = TOOLS_BTN_PT
+
 
 class ShipPropertyViewerPanel(Panel):
     def __init__(self, ship_getter: Callable[[], object]) -> None:
@@ -283,10 +294,14 @@ class ShipPropertyViewerPanel(Panel):
         # pin click radius (logical points) matches the GL-rendered disc on
         # HiDPI displays. Degrades to 1.0 if window_size is unavailable.
         dsf = 1.0
+        fb_w = fb_h = 0.0
+        try:
+            fb_w, fb_h = fb_size()
+        except (TypeError, ValueError):
+            fb_w = fb_h = 0.0
         win_size = getattr(h, "window_size", None)
-        if win_size is not None:
+        if win_size is not None and fb_h > 0:
             try:
-                _fb_w, fb_h = fb_size()
                 _win_w, win_h = win_size()
                 if win_h > 0:
                     dsf = float(fb_h) / float(win_h)
@@ -294,7 +309,8 @@ class ShipPropertyViewerPanel(Panel):
                 dsf = 1.0
 
         x, y = cursor_pos()
-        over_chrome = self._cursor_over_chrome(x, y, dsf)
+        over_tools = self._cursor_over_tools(x, y, dsf, fb_w, fb_h)
+        over_chrome = self._cursor_over_chrome(x, y, dsf) or over_tools
         over_left_col = self._cursor_over_left_column(x, y, dsf)
 
         # Zoom: drain the wheel accumulator even when no other input so a
@@ -350,6 +366,24 @@ class ShipPropertyViewerPanel(Panel):
         """Cursor (framebuffer px) inside the left tool/subsystem column."""
         s = dsf or 1.0
         return (x / s) <= LEFT_COL_X1_PT and (y / s) >= LEFT_COL_Y0_PT
+
+    @staticmethod
+    def _cursor_over_tools(x: float, y: float, dsf: float,
+                          fb_w: float, fb_h: float) -> bool:
+        """Cursor (framebuffer px) inside the bottom-right tool-button cluster.
+
+        Needs the viewport size (framebuffer px) because the cluster is anchored
+        to the right/bottom edges. Returns False when the size is unknown."""
+        if fb_w <= 0 or fb_h <= 0:
+            return False
+        s = dsf or 1.0
+        px, py = x / s, y / s
+        w_pt, h_pt = fb_w / s, fb_h / s
+        x0 = w_pt - TOOLS_MARGIN_PT - TOOLS_W_PT
+        x1 = w_pt - TOOLS_MARGIN_PT
+        y0 = h_pt - TOOLS_MARGIN_PT - TOOLS_H_PT
+        y1 = h_pt - TOOLS_MARGIN_PT
+        return x0 <= px <= x1 and y0 <= py <= y1
 
     @classmethod
     def _cursor_over_chrome(cls, x: float, y: float, dsf: float) -> bool:

@@ -49,27 +49,34 @@
     flex: 1;
 }
 
-/* ── Left column: tool grid + subsystem list ───────────────────────────
+/* ── Left column: subsystem list ───────────────────────────────────────
    Geometry (top/left/width) is mirrored by TITLEBAR_H_PT / LEFT_COL_X1_PT /
    LEFT_COL_Y0_PT in engine/ui/ship_property_viewer_panel.py so the host
-   knows which mouse input belongs to this chrome — keep them in sync. */
+   knows which mouse input belongs to this chrome — keep them in sync.
+
+   The column is sized to its contents and grows only as tall as the list
+   needs, capped at the window height (top margin + a 12px bottom gap); past
+   that the body scrolls. */
 #spv-left {
     position: absolute;
     top: 44px;                 /* LEFT_COL_Y0_PT */
     left: 12px;
-    bottom: 12px;
     width: 248px;              /* right edge 260px < LEFT_COL_X1_PT (268) */
+    max-height: calc(100vh - 56px);   /* 44px top + 12px bottom margin */
     display: flex;
     flex-direction: column;
-    gap: 8px;
     pointer-events: none;      /* children restore auto */
 }
 
-/* Square icon tool buttons. A single row today; grid-auto-flow keeps it a
-   grid as more tools land. .active marks the overlay as on. */
+/* Square icon tool buttons, anchored bottom-right of the viewport. A single
+   row today; the flex row grows leftward from the fixed right edge as more
+   tools land. .active marks the overlay as on. Geometry is mirrored by
+   TOOLS_* in ship_property_viewer_panel.py — keep them in sync. */
 #spv-tools {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, 40px);
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    display: flex;
     gap: 6px;
     pointer-events: auto;
 }
