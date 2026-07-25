@@ -6,6 +6,17 @@ function against a recording `find` (the functions are pure straight-line setter
 calls), edit the model, and re-emit the whole file deterministically.
 
 Design: docs/superpowers/specs/2026-07-25-spv-hardpoint-value-override-editing-design.md
+
+Notes (reverse-engineering provenance):
+- Data-bag read-back quirk: `TGModelProperty` stores `Set<F>(*args)` under key
+  `(F, args[:-1])` with value `args[-1]`, so multi-arg setters are NOT
+  readable via a plain `Get<F>(i)` — read them via `prop._data` or by passing
+  the same leading args (e.g. `GetGlowRegionExtent(0, -2.0) -> 2.0`).
+  Single-arg setters like `SetRadius` read back normally.
+- Root-shadow hardpoint gap: a project-root shadow hardpoint (none exist
+  today) would load through normal import machinery, NOT `_SDKLoader`, so the
+  SDK-loader override hook would not fire for it. Prefer an override entry
+  here over a shadow.
 """
 from __future__ import annotations
 

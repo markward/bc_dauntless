@@ -162,7 +162,7 @@ window.shipPropertyViewerCtxRadius = function () {
 };
 window.shipPropertyViewerRadiusApply = function () {
     var v = parseFloat(document.getElementById('spv-radius-input').value);
-    if (!isNaN(v)) {
+    if (!isNaN(v) && v > 0) {
         dauntlessEvent('ship-property-viewer/set_radius:'
                        + JSON.stringify({i: spvCtxIndex, value: v}));
     }
@@ -275,13 +275,25 @@ function renderSPVSubsystemList(rows, selectedIndex) {
     var html = '';
     for (var i = 0; i < rows.length; i++) {
         var row = rows[i] || {};
+        spvSeedRowRadius(row);
         html += spvRowHtml(row, selectedIndex, false);
         if (row.expanded) {
             var kids = row.children || [];
             for (var j = 0; j < kids.length; j++) {
-                html += spvRowHtml(kids[j] || {}, selectedIndex, true);
+                var kid = kids[j] || {};
+                spvSeedRowRadius(kid);
+                html += spvRowHtml(kid, selectedIndex, true);
             }
         }
     }
     body.innerHTML = html;
+}
+
+// Seed spvRowRadii from every row as it renders (not just the selected pin's
+// popover), so a right-click context menu on a never-selected row pre-fills
+// its real current radius instead of falling back to 0.
+function spvSeedRowRadius(row) {
+    if (row.radius != null) {
+        spvRowRadii[row.index] = row.radius;
+    }
 }

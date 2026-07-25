@@ -673,3 +673,57 @@ def test_payload_lists_pending_edits(monkeypatch):
     p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
     data = _payload_data(p.render_payload())
     assert data["pending"] == [{"name": "Center Impulse", "value": 0.5}]
+
+
+def test_subsystem_rows_carry_radius(monkeypatch):
+    # FIX 1: every row must carry its effective radius (pending value if
+    # staged, else the descriptor's current radius) so a right-click on a
+    # never-selected row still pre-fills the real value, not 0.
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    data = _payload_data(p.render_payload())
+    assert data["subsystems"][0]["radius"] == 0.25
+
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    data2 = _payload_data(p.render_payload())
+    assert data2["subsystems"][0]["radius"] == 0.5
+
+
+def test_set_radius_rejects_non_positive(monkeypatch):
+    # FIX 2: 0 or negative radii must not be staged.
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    assert p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0})) is False
+    assert p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": -1})) is False
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 0
+
+
+def test_save_keeps_pending_when_leaf_unresolved(monkeypatch):
+    # FIX 5 regression: if the hardpoint leaf can't be resolved, save() must
+    # not call write() at all, and must keep the staged edit.
+    import engine.ui.ship_property_viewer_panel as mod
+    calls = []
+
+    class _Target:
+        def write(self, leaf, edits):
+            calls.append((leaf, edits))
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: None)
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    ok = p.dispatch_event("save")
+    assert ok is True
+    assert calls == []
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 1

@@ -1,3 +1,5 @@
+import pytest
+
 import engine.appc.override_routing as r
 from engine.appc import hardpoint_override_writer as w
 
@@ -42,3 +44,21 @@ def test_resolve_returns_file_target(monkeypatch):
     monkeypatch.setattr(r.importlib, "import_module", lambda name: _StatsMod)
     assert isinstance(r.resolve_override_target(_Ship("ships.Galaxy")),
                       r.HardpointOverridesFileTarget)
+
+
+def test_write_aborts_without_touching_file_on_bad_emit(tmp_path, monkeypatch):
+    f = tmp_path / "hardpoint_overrides.py"
+    original = w.emit({"galaxy": {"Center Impulse": [("SetRadius", (0.25,))]}})
+    f.write_text(original)
+    target = r.HardpointOverridesFileTarget(str(f))
+
+    def _bad_emit(models):
+        raise ValueError("bad emit")
+
+    monkeypatch.setattr(r._writer, "emit", _bad_emit)
+
+    with pytest.raises(ValueError):
+        target.write("galaxy", [("Center Impulse", "SetRadius", (0.5,))])
+
+    assert f.read_text() == original
+    assert not (tmp_path / "hardpoint_overrides.py.tmp").exists()

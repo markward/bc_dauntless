@@ -257,6 +257,8 @@ class ShipPropertyViewerPanel(Panel):
         for i, d in enumerate(self._descriptors):
             row = _row(i, d)
             row["dirty"] = (i in self._pending_radius)
+            row["radius"] = (self._pending_radius[i] if i in self._pending_radius
+                             else d.get("properties", {}).get("radius"))
             by_index[i] = row
             parent = by_index.get(d.get("parent_index"))
             if parent is not None:
@@ -514,6 +516,8 @@ class ShipPropertyViewerPanel(Panel):
             except (ValueError, KeyError, TypeError):
                 return False
             if not (0 <= idx < len(self._descriptors)):
+                return False
+            if value <= 0:
                 return False
             self._pending_radius[idx] = value
             self._last_pushed = None
