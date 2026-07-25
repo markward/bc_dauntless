@@ -129,8 +129,10 @@ in-space cutscene cameras run through the separate `engine/appc/camera_modes.py`
   harvest, right where `_BRIDGE_ZOOM_CAM = _cam` is set
   (`engine/host_loop.py:5934`). This keeps it testable — a fake cam exposing
   `GetCurrentCameraMode()` drives the mode-stack gate in unit tests.
-- Mission swap already recreates `_BridgeCamera` and the controller resets its
-  cutscene state, so `_held_pose` cannot leak across missions.
+- `_BridgeCamera` is a boot singleton (`bridge_camera = _BridgeCamera()` in
+  `run()`), not recreated on mission swap. Its pose is cleared explicitly at
+  the swap site: `bridge_camera.reset_cutscene_pose()` is called immediately
+  beside `cutscene.reset()`, so `_held_pose` cannot leak across missions.
 - Sovereign / no-mode bridges: mode-stack-agnostic by construction. They never
   latch a held pose during normal play (they fall to the baked seated eye);
   E-bridge's `WalkCameraToCaptOnE` and its stand get the same persistence for

@@ -2634,6 +2634,13 @@ class _BridgeCamera:
     def clear_anim_pose(self) -> None:
         self._anim_pose = None
 
+    def reset_cutscene_pose(self) -> None:
+        """Drop any active/held cutscene pose. Called on mission swap so a stand
+        (or other held camera pose) from the prior mission cannot leak into the
+        next bridge (which may push no seated mode of its own)."""
+        self._anim_pose = None
+        self._held_pose = None
+
     def hold_anim_pose(self) -> None:
         """Latch the current (final) cutscene pose as the persistent held pose
         and end the active override. Called by BridgeCutsceneController when a
@@ -2659,6 +2666,11 @@ class _BridgeCamera:
         right-mouse (+dx) → look-right (-yaw); up-mouse (-dy in screen
         coords) → look-up (+pitch). Pitch clamps; yaw wraps freely."""
         if self._anim_pose is not None:
+            return
+        # A held cutscene pose (seated mode popped) is a static transform: freeze
+        # mouse-look so accumulated yaw/pitch cannot snap the view when the held
+        # pose is later dropped and the seated eye returns.
+        if self._held_pose is not None and not self._seated_mode_active():
             return
         # Mouse-look is frozen while a zoom is in progress — the camera is framing
         # the officer/viewscreen; it resumes only at the full captain view.
@@ -6649,6 +6661,7 @@ def run(mission_name: Optional[str] = None,
                 # queued walk-on (the camera then never moves).
                 if had_pending_swap:
                     cutscene.reset()
+                    bridge_camera.reset_cutscene_pose()
                     char_anim.reset()
                     walk_ctrl.reset()
                     watch_ctrl.reset()

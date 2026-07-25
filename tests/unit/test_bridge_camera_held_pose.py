@@ -77,3 +77,45 @@ def test_no_held_pose_uses_seated_eye():
     eye, _target, _up, fov = bc.compute_camera()
     assert eye == (0.0, 0.0, 0.0)
     assert fov == pytest.approx(_BridgeCamera.FOV_Y_RAD)
+
+
+def test_reset_cutscene_pose_clears_both():
+    bc = _BridgeCamera()
+    bc.set_anim_pose(*_STAND)
+    bc.hold_anim_pose()          # _held_pose now set, _anim_pose None
+    bc.set_anim_pose(*_STAND)    # _anim_pose set again
+    bc.reset_cutscene_pose()
+    assert bc._anim_pose is None
+    assert bc._held_pose is None
+    # after reset, with no held pose, compute_camera returns the baked seated eye
+    eye, _t, _u, _f = bc.compute_camera()
+    assert eye == (0.0, 0.0, 0.0)
+
+
+def test_apply_frozen_while_held_and_seated_mode_absent():
+    bc = _BridgeCamera()
+    bc.set_anim_pose(*_STAND)
+    bc.hold_anim_pose()                 # held; empty stack => seated mode absent
+    before = (bc.yaw_rad, bc.pitch_rad)
+    bc.apply(100.0, 100.0)
+    assert (bc.yaw_rad, bc.pitch_rad) == before
+
+
+def test_apply_resumes_once_seated_mode_present():
+    from engine.appc.camera_modes import PlaceByDirectionMode
+    bc = _BridgeCamera()
+    bc.set_anim_pose(*_STAND)
+    bc.hold_anim_pose()
+    hl._BRIDGE_ZOOM_CAM.PushCameraMode(PlaceByDirectionMode("PlaceByDirection"))
+    before_yaw = bc.yaw_rad
+    bc.apply(100.0, 0.0)
+    assert bc.yaw_rad != before_yaw     # seated mode present => mouse-look active
+
+
+def test_anim_pose_takes_precedence_over_held():
+    bc = _BridgeCamera()
+    bc._held_pose = ((9.0, 9.0, 9.0), (9.0, 9.0, 10.0), (0.0, 0.0, 1.0))
+    bc.set_anim_pose(*_STAND)           # active override present
+    eye, target, _up, _fov = bc.compute_camera()
+    assert eye == (1.0, 2.0, 3.0)       # _STAND eye, not the held (9,9,9)
+    assert target == (1.0, 2.0, 4.0)
