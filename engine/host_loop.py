@@ -2567,6 +2567,12 @@ class _BridgeCamera:
         # (eye, target, up) verbatim and mouse-look is frozen. Driven by
         # BridgeCutsceneController.update (engine/bridge_cutscene.py).
         self._anim_pose = None
+        # Persistent post-animation pose. A completed bridge camera clip latches
+        # its final pose here (hold_anim_pose); compute_camera returns it while
+        # the seated captain mode is popped off the maincamera stack, and drops
+        # it when ResetBridgeCamera re-pushes that mode. See
+        # docs/superpowers/specs/2026-07-25-bridge-camera-stand-persistence-design.md.
+        self._held_pose = None
 
     def _eye_offset(self) -> tuple:
         """Captain's-chair eye for the current horizontal facing. Base is the
@@ -2628,6 +2634,26 @@ class _BridgeCamera:
     def clear_anim_pose(self) -> None:
         self._anim_pose = None
 
+    def hold_anim_pose(self) -> None:
+        """Latch the current (final) cutscene pose as the persistent held pose
+        and end the active override. Called by BridgeCutsceneController when a
+        bridge camera clip completes: the pose survives (via compute_camera)
+        until the SDK re-pushes the seated captain mode (ResetBridgeCamera)."""
+        self._held_pose = self._anim_pose
+        self._anim_pose = None
+
+    def _seated_mode_active(self) -> bool:
+        """True when the live maincamera's top-of-stack mode is the seated
+        captain mode (a PlaceByDirectionMode). BC pops it (PopCameraMode) before
+        a stand and re-pushes it (ResetBridgeCamera) to re-seat; while it is
+        absent, a completed camera animation's held pose governs the view."""
+        cam = self._zoom_cam()
+        get = getattr(cam, "GetCurrentCameraMode", None)
+        if not callable(get):
+            return False
+        from engine.appc.camera_modes import PlaceByDirectionMode
+        return isinstance(get(), PlaceByDirectionMode)
+
     def apply(self, mouse_dx: float, mouse_dy: float) -> None:
         """Accumulate mouse delta into yaw/pitch with sign conventions:
         right-mouse (+dx) → look-right (-yaw); up-mouse (-dy in screen
@@ -2653,6 +2679,12 @@ class _BridgeCamera:
         if self._anim_pose is not None:
             eye, target, up = self._anim_pose
             return eye, target, up, self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
+        if self._held_pose is not None:
+            if self._seated_mode_active():
+                self._held_pose = None          # seated mode restored: drop the latch
+            else:
+                eye, target, up = self._held_pose
+                return eye, target, up, self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
         local_fwd = (0.0, 1.0, 0.0)   # bridge-local +Y
         local_up  = (0.0, 0.0, 1.0)   # bridge-local +Z
 
