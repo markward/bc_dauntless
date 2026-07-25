@@ -708,6 +708,66 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     });
 }
 
+void FrameSubmitter::submit_opaque_instance(const scenegraph::World& world,
+                                            scenegraph::InstanceId instance_id,
+                                            const scenegraph::Camera& camera,
+                                            Pipeline& pipeline,
+                                            const ModelLookup& lookup,
+                                            const Lighting& lighting,
+                                            float decal_time,
+                                            CarveFieldCache* carve_cache,
+                                            const std::vector<DynamicLightDescriptor>* dyn_lights) {
+    const scenegraph::Instance* inst = world.get(instance_id);
+    if (!inst) return;
+    const assets::Model* m = lookup(inst->model_handle);
+    if (!m) return;
+
+    // Same per-frame common uniforms as submit_opaque_in_pass, on both the
+    // static and skinned programs. ambient_scale is fixed at 1.0 here: the
+    // viewer's isolated presentation is not the exterior filmic pass.
+    auto configure_common = [&](Shader& s) {
+        s.use();
+        s.set_mat4("u_view", camera.view_matrix());
+        s.set_mat4("u_proj", camera.proj_matrix());
+        const glm::vec3 cam_pos_ws =
+            glm::vec3(glm::inverse(camera.view_matrix())[3]);
+        s.set_vec3("u_camera_pos_ws", cam_pos_ws);
+        s.set_vec3("u_ambient_light", lighting.ambient);
+        s.set_int("u_dir_light_count", lighting.directional_count);
+        if (lighting.directional_count > 0) {
+            s.set_vec3_array("u_dir_light_dir_ws",
+                             lighting.directional_dir_ws,
+                             lighting.directional_count);
+            s.set_vec3_array("u_dir_light_color",
+                             lighting.directional_color,
+                             lighting.directional_count);
+        }
+    };
+
+    auto& shader = pipeline.opaque_shader();
+    configure_common(shader);
+    configure_common(pipeline.skinned_shader());
+
+    const GLuint white = ensure_white_texture();
+    const GLuint black = ensure_black_texture();
+
+    const float rim_strength =
+        (dauntless_rim::enabled() && inst->rim_eligible)
+            ? inst->rim_strength * dauntless_rim::kStrengthScale : 0.0f;
+    std::vector<glm::mat4> palette;
+    if (!m->skeleton.bones.empty())
+        palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
+    std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> lights{};
+    const int light_count =
+        select_instance_dynamic_lights(*inst, m, dyn_lights, lights);
+    draw_model(*m, inst->world, shader, pipeline.skinned_shader(),
+               white, black, rim_strength,
+               inst->decals, inst->glow_regions, decal_time,
+               inst->emissive_scale, palette, inst->carve,
+               lights, light_count);
+    (void)carve_cache;  // reserved: parity with submit_opaque_in_pass signature
+}
+
 // ── Shadow depth pre-pass ──────────────────────────────────────────────────
 
 namespace {

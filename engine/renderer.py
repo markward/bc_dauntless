@@ -56,7 +56,8 @@ _REQUIRED_BINDINGS = frozenset({
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
     "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
     "set_lighting", "set_nebula_godrays", "set_nebula_wake", "set_nebulae",
-    "set_rim_eligible", "set_rim_strength", "set_subsystem_pins", "set_suns",
+    "set_rim_eligible", "set_rim_strength", "set_spv_hull_mode",
+    "set_subsystem_pins", "set_suns",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_scene_source", "set_viewscreen_static",
@@ -985,6 +986,13 @@ def set_hologram_only_mode(enabled: bool, bg=(0.0, 0.0, 0.0)) -> None:
     """When enabled, frame() clears to bg (r, g, b) and skips the space scene
     and bridge pass, drawing only the hologram + subsystem pins."""
     _h.set_hologram_only_mode(bool(enabled), tuple(bg))
+
+
+def set_spv_hull_mode(enabled: bool) -> None:
+    """Ship Property Viewer render mode. When enabled, the active hologram ship
+    is drawn with its real hull textures instead of the Fresnel hologram.
+    Default False = hologram."""
+    _h.set_spv_hull_mode(bool(enabled))
 
 
 def get_instance_bounds(instance_id: InstanceId):

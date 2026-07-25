@@ -308,9 +308,11 @@ def test_toggles_start_off_and_payload_carries_them():
     p.open()
     assert p.show_glow_regions is False
     assert p.show_weapon_arcs is False
+    assert p.show_hull_texture is False                 # hologram is default
     data = _payload_data(p.render_payload())
     assert data["show_glow"] is False
     assert data["show_arcs"] is False
+    assert data["show_hull"] is False
 
 
 def test_toggle_events_flip_flags_and_repush():
@@ -324,9 +326,14 @@ def test_toggle_events_flip_flags_and_repush():
     assert p.dispatch_event("toggle_weapon_arcs") is True
     data = _payload_data(p.render_payload())
     assert data["show_arcs"] is True
+    # Hull-texture toggle flips the render mode + re-pushes.
+    assert p.dispatch_event("toggle_hull_texture") is True
+    assert _payload_data(p.render_payload())["show_hull"] is True
     # Toggling back off flips + re-pushes again.
     assert p.dispatch_event("toggle_glow_regions") is True
     assert _payload_data(p.render_payload())["show_glow"] is False
+    assert p.dispatch_event("toggle_hull_texture") is True
+    assert _payload_data(p.render_payload())["show_hull"] is False
 
 
 def test_toggles_reset_on_reopen_and_close():
@@ -334,12 +341,15 @@ def test_toggles_reset_on_reopen_and_close():
     p.open()
     p.dispatch_event("toggle_glow_regions")
     p.dispatch_event("toggle_weapon_arcs")
+    p.dispatch_event("toggle_hull_texture")
     p.close()
     assert p.show_glow_regions is False
     assert p.show_weapon_arcs is False
+    assert p.show_hull_texture is False
     p.open()
     assert p.show_glow_regions is False
     assert p.show_weapon_arcs is False
+    assert p.show_hull_texture is False
 
 
 # ── left-column subsystem list payload ─────────────────────────────────────
@@ -421,6 +431,27 @@ def test_press_over_chrome_never_orbits_or_picks(monkeypatch):
     assert len(picked) == 1
 
 
+def test_press_over_bottom_right_tools_never_orbits_or_picks(monkeypatch):
+    """The relocated tool-button cluster (bottom-right) owns its clicks."""
+    p = _open_panel_for_input()
+    host = _FakeHost()                          # fb 800×600, dsf 1.0
+    picked = []
+    monkeypatch.setattr(p, "pick_at", lambda *a, **k: picked.append(a))
+    yaw0 = p.camera.yaw
+    # Centre of the cluster, derived from the panel's own geometry constants so
+    # this survives adding/removing tool buttons.
+    cx = 800.0 - (_mod.TOOLS_MARGIN_PT + _mod.TOOLS_W_PT / 2.0)
+    cy = 600.0 - (_mod.TOOLS_MARGIN_PT + _mod.TOOLS_H_PT / 2.0)
+    host._cursor = (cx, cy); host._down = True
+    p.handle_input(host)
+    host._cursor = (cx + 5.0, cy + 2.0)          # small drag
+    p.handle_input(host)
+    assert p.camera.yaw == yaw0                 # no orbit
+    host._down = False
+    p.handle_input(host)
+    assert picked == []                         # no pick
+
+
 def _open_panel_for_input():
     from engine.ui.ship_property_viewer import OrbitCamera as _Cam
     p = ShipPropertyViewerPanel(ship_getter=lambda: None)
@@ -490,3 +521,216 @@ def test_expansion_resets_on_reopen(monkeypatch):
     p.close()
     p.open()
     assert _payload_data(p.render_payload())["subsystems"][0]["expanded"] is False
+
+
+# ── staged radius edits (Task 4) ────────────────────────────────────────────
+
+import json as _json
+
+
+class _RadiusShip:
+    def GetScript(self):
+        return "ships.Galaxy"
+
+
+def _rad_descriptor(name):
+    return {"name": name, "icon_id": 0, "world_pos": (0, 0, 0),
+            "state": "healthy", "targetable": True, "condition_pct": 100,
+            "parent_index": None,
+            "properties": {"name": name, "radius": 0.25}}
+
+
+def test_set_radius_stages_pending_and_marks_dirty(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    ok = p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    assert ok is True
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 1
+    assert data["subsystems"][0]["dirty"] is True
+    # Readout reflects the staged value (no live mutation needed).
+    p.selected_index = 0
+    p._last_pushed = None
+    assert _payload_data(p.render_payload())["selected"]["properties"]["radius"] == 0.5
+
+
+def test_save_routes_edits_and_clears(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    calls = []
+
+    class _Target:
+        def write(self, leaf, edits): calls.append((leaf, edits))
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    p.dispatch_event("save")
+    assert calls == [("galaxy", [("Center Impulse", "SetRadius", (0.5,))])]
+    assert _payload_data(p.render_payload())["pending_count"] == 0
+
+
+def test_save_keeps_pending_when_write_fails(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+
+    class _FailingTarget:
+        def write(self, leaf, edits):
+            raise RuntimeError("disk full")
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _FailingTarget())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    ok = p.dispatch_event("save")
+    assert ok is True
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 1
+    assert data["subsystems"][0]["dirty"] is True
+
+
+def test_overlay_open_suppresses_orbit():
+    p = _open_panel_for_input()
+    p.dispatch_event("overlay:1")
+    host = _FakeHost()
+    yaw0 = p.camera.yaw
+    host._cursor = (600.0, 300.0); host._down = True
+    p.handle_input(host)
+    host._cursor = (650.0, 350.0)
+    p.handle_input(host)
+    assert p.camera.yaw == yaw0
+
+
+def test_close_without_save_discards_pending(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    p.close()
+    p.open()
+    assert _payload_data(p.render_payload())["pending_count"] == 0
+
+
+def test_esc_with_overlay_open_closes_overlay_not_panel(monkeypatch):
+    # ESC is read raw (GLFW), independent of CEF focus, by host_loop's
+    # modal-ESC router, which calls handle_key_esc() directly — while a CEF
+    # overlay (context menu / radius modal / confirm) is open, ESC must
+    # close ONLY the overlay and preserve staged edits, never tear down the
+    # whole panel (which would discard _pending_radius).
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    p.dispatch_event("overlay:1")
+    assert p._overlay_open is True
+
+    p.handle_key_esc()
+
+    assert p.is_open() is True
+    assert p._overlay_open is False
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 1          # edit preserved, not discarded
+    assert data["close_overlays"] is True       # one-shot signal to the JS
+
+    # One-shot: the flag clears itself after being surfaced once.
+    p._last_pushed = None
+    data2 = _payload_data(p.render_payload())
+    assert data2["close_overlays"] is False
+
+
+def test_esc_without_overlay_closes_panel(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    assert p._overlay_open is False
+
+    p.handle_key_esc()
+
+    assert p.is_open() is False
+
+
+def test_payload_lists_modified_subsystems_with_tally(monkeypatch):
+    # The Save-confirm modal lists modified subsystems + a change tally, e.g.
+    # "Center Impulse (1)" — grouped by subsystem, not one row per value.
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse"),
+                                      _rad_descriptor("Port Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    data = _payload_data(p.render_payload())
+    assert data["pending"] == [{"name": "Center Impulse", "count": 1}]
+    # A second subsystem's edit adds its own grouped row.
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 1, "value": 0.3}))
+    data = _payload_data(p.render_payload())
+    assert data["pending"] == [{"name": "Center Impulse", "count": 1},
+                               {"name": "Port Impulse", "count": 1}]
+
+
+def test_subsystem_rows_carry_radius(monkeypatch):
+    # FIX 1: every row must carry its effective radius (pending value if
+    # staged, else the descriptor's current radius) so a right-click on a
+    # never-selected row still pre-fills the real value, not 0.
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    data = _payload_data(p.render_payload())
+    assert data["subsystems"][0]["radius"] == 0.25
+
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    data2 = _payload_data(p.render_payload())
+    assert data2["subsystems"][0]["radius"] == 0.5
+
+
+def test_set_radius_rejects_non_positive(monkeypatch):
+    # FIX 2: 0 or negative radii must not be staged.
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    assert p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0})) is False
+    assert p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": -1})) is False
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 0
+
+
+def test_save_keeps_pending_when_leaf_unresolved(monkeypatch):
+    # FIX 5 regression: if the hardpoint leaf can't be resolved, save() must
+    # not call write() at all, and must keep the staged edit.
+    import engine.ui.ship_property_viewer_panel as mod
+    calls = []
+
+    class _Target:
+        def write(self, leaf, edits):
+            calls.append((leaf, edits))
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: None)
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    ok = p.dispatch_event("save")
+    assert ok is True
+    assert calls == []
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 1

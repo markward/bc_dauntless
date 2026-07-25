@@ -192,30 +192,84 @@
            width) is mirrored by TITLEBAR_H_PT / LEFT_COL_* in
            ship_property_viewer_panel.py — keep them in sync. -->
       <div id="spv-left">
-        <div id="spv-tools">
-          <button id="spv-toggle-glow" class="spv-tool" title="Show glow regions"
-                  onclick="shipPropertyViewerToggle('toggle_glow_regions')">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
-                 stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <circle cx="12" cy="12" r="4"/>
-              <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2.1 2.1M16.9 16.9L19 19M19 5l-2.1 2.1M7.1 16.9L5 19"/>
-            </svg>
-          </button>
-          <button id="spv-toggle-arcs" class="spv-tool" title="Show weapon arcs"
-                  onclick="shipPropertyViewerToggle('toggle_weapon_arcs')">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
-                 stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-              <path d="M12 21 L5 7 A9.5 9.5 0 0 1 19 7 Z"/>
-              <path d="M12 21 L12 11" stroke-dasharray="2 2"/>
-            </svg>
-          </button>
-        </div>
         <div id="spv-syslist">
           <div class="spv-syslist__header">Subsystems</div>
           <div id="spv-syslist-body" class="spv-syslist__body"></div>
         </div>
       </div>
+      <!-- Tool buttons anchored bottom-right of the viewport (see #spv-tools
+           in ship_property_viewer.css and TOOLS_* in the panel). -->
+      <div id="spv-tools">
+        <button id="spv-toggle-glow" class="spv-tool" title="Show glow regions"
+                onclick="shipPropertyViewerToggle('toggle_glow_regions')">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2.1 2.1M16.9 16.9L19 19M19 5l-2.1 2.1M7.1 16.9L5 19"/>
+          </svg>
+        </button>
+        <button id="spv-toggle-arcs" class="spv-tool" title="Show weapon arcs"
+                onclick="shipPropertyViewerToggle('toggle_weapon_arcs')">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+            <path d="M12 21 L5 7 A9.5 9.5 0 0 1 19 7 Z"/>
+            <path d="M12 21 L12 11" stroke-dasharray="2 2"/>
+          </svg>
+        </button>
+        <button id="spv-toggle-hull" class="spv-tool"
+                title="Toggle hull textures / hologram"
+                onclick="shipPropertyViewerToggle('toggle_hull_texture')">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+            <path d="M12 2 L21 7 L21 17 L12 22 L3 17 L3 7 Z"/>
+            <path d="M12 2 L12 22 M3 7 L12 12 L21 7"/>
+          </svg>
+        </button>
+      </div>
       <div id="spv-popover" class="spv-popover"></div>
+      <!-- Right-click context menu on a subsystem row → "Set Radius…" opens
+           the radius modal below. The Save bar surfaces staged edits
+           (pending_count > 0); confirming Save opens the amend-confirm
+           modal, which fires the actual 'save' event. All four overlays
+           fire 'ship-property-viewer/overlay:1'/'overlay:0' so the host
+           can suppress orbit-drag while they're open.
+           Spec: docs/superpowers/sdd/2026-07-25-spv-hardpoint-value-override-editing/task-5-brief.md -->
+      <div id="spv-ctxmenu" class="spv-ctxmenu" style="display:none;">
+        <div class="spv-ctxmenu__item" onclick="shipPropertyViewerCtxRadius()">Set Radius…</div>
+      </div>
+      <div id="spv-radius" class="spv-modal-backdrop" style="display:none;">
+        <div class="spv-modal">
+          <div class="spv-modal__title">Set Radius</div>
+          <!-- Mouse-only stepper (the engine has no keyboard->CEF forwarding yet,
+               so a typed field can't receive input). Buttons nudge the value. -->
+          <div class="spv-radius-stepper">
+            <button class="spv-step" onclick="shipPropertyViewerRadiusStep(-0.1)">&minus;0.1</button>
+            <button class="spv-step" onclick="shipPropertyViewerRadiusStep(-0.01)">&minus;0.01</button>
+            <span id="spv-radius-value" class="spv-radius-value">0.00</span>
+            <button class="spv-step" onclick="shipPropertyViewerRadiusStep(0.01)">+0.01</button>
+            <button class="spv-step" onclick="shipPropertyViewerRadiusStep(0.1)">+0.1</button>
+          </div>
+          <div class="spv-modal__row">
+            <button class="spv-modal__btn" onclick="shipPropertyViewerRadiusCancel()">Cancel</button>
+            <button class="spv-modal__btn spv-modal__btn--primary" onclick="shipPropertyViewerRadiusApply()">Apply</button>
+          </div>
+        </div>
+      </div>
+      <div id="spv-savebar" class="spv-savebar" style="display:none;">
+        <button class="spv-savebar__btn" onclick="shipPropertyViewerSave()">
+          Save changes (<span id="spv-savecount">0</span>)
+        </button>
+      </div>
+      <div id="spv-confirm" class="spv-modal-backdrop" style="display:none;">
+        <div class="spv-modal">
+          <div class="spv-modal__title">Amend hardpoint_overrides.py?</div>
+          <div id="spv-confirm-body" class="spv-modal__body"></div>
+          <div class="spv-modal__row">
+            <button class="spv-modal__btn" onclick="shipPropertyViewerConfirmCancel()">Cancel</button>
+            <button class="spv-modal__btn spv-modal__btn--primary" onclick="shipPropertyViewerConfirmSave()">Save</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Engineering power-grid panel — fixed top-right HUD overlay (v28 design).

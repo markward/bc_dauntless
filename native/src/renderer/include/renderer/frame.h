@@ -308,6 +308,21 @@ public:
                                float ambient_scale = 1.0f,
                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
 
+    /// Draw a SINGLE instance (by id) through the full opaque lighting/texture
+    /// path, ignoring its visibility flag. Used by the Ship Property Viewer's
+    /// hull-texture mode to render just the inspected ship on the isolated
+    /// solid background (the space scene is skipped in viewer mode). No-op if
+    /// the instance or its model is missing.
+    void submit_opaque_instance(const scenegraph::World& world,
+                                scenegraph::InstanceId instance_id,
+                                const scenegraph::Camera& camera,
+                                Pipeline& pipeline,
+                                const ModelLookup& lookup,
+                                const Lighting& lighting,
+                                float decal_time = 0.0f,
+                                CarveFieldCache* carve_cache = nullptr,
+                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
+
 private:
     /// Lazily-allocated 1x1 white texture used as a fallback when a material
     /// has no Base-stage texture. Keeps the sampler bound to a valid object

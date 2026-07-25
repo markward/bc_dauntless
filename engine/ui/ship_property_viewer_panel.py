@@ -10,6 +10,9 @@ import json
 import math
 from typing import Callable, List, Optional
 
+from engine.appc.override_routing import (
+    resolve_override_target, hardpoint_leaf_for_ship,
+)
 from engine.ui.panel import Panel
 from engine.ui.ship_property_viewer import (
     build_descriptors, OrbitCamera, pick_pin,
@@ -42,6 +45,16 @@ TITLEBAR_H_PT = 34        # .spv-titlebar height
 LEFT_COL_X1_PT = 268      # #spv-left right edge (left 12 + width 248 + pad 8)
 LEFT_COL_Y0_PT = 44       # #spv-left top
 
+# Bottom-right tool-button cluster (#spv-tools). Anchored right:12/bottom:12
+# with N 40px buttons and 6px gaps in a flex row. Mouse input here belongs to
+# the CEF buttons, so it never starts an orbit drag or pin pick.
+TOOLS_MARGIN_PT = 12      # #spv-tools right / bottom offset
+TOOLS_BTN_PT = 40         # .spv-tool size
+TOOLS_GAP_PT = 6          # #spv-tools gap
+TOOLS_COUNT = 3           # buttons in the row (glow / arcs / hull-texture)
+TOOLS_W_PT = TOOLS_COUNT * TOOLS_BTN_PT + (TOOLS_COUNT - 1) * TOOLS_GAP_PT
+TOOLS_H_PT = TOOLS_BTN_PT
+
 
 class ShipPropertyViewerPanel(Panel):
     def __init__(self, ship_getter: Callable[[], object]) -> None:
@@ -54,10 +67,26 @@ class ShipPropertyViewerPanel(Panel):
         # Titlebar overlay toggles — both off by default, reset every open.
         self.show_glow_regions = False
         self.show_weapon_arcs = False
+        # Render mode toggle: False = blue Fresnel hologram (default),
+        # True = the ship's real hull textures. Reset every open.
+        self.show_hull_texture = False
         # Names of aggregator subsystems whose child rows are expanded in the
         # left-column list (accordion, like the target list). Collapsed by
         # default; reset every open.
         self._expanded_groups: set = set()
+        # Staged radius edits: descriptor index -> new radius. Reset every
+        # open/close. Not applied to the live sim (radius has no in-session
+        # visual); persisted on Save, applied on the next ship build.
+        self._pending_radius: dict = {}
+        # True while a CEF context menu / modal is open: handle_input suppresses
+        # orbit + pick so clicks on that chrome don't reach the 3D view.
+        self._overlay_open = False
+        # One-shot flag: set by handle_key_esc() when ESC closes an overlay
+        # (not the panel); render_payload() surfaces it once as
+        # payload["close_overlays"] then clears it. Deliberately excluded
+        # from the snapshot tuple so a payload carrying it always gets
+        # pushed even if nothing else changed.
+        self._close_overlays = False
         self._last_pushed: Optional[tuple] = None
         # Left-drag tracking (panel-local edge detection so we don't steal
         # the CEF mouse-release edge — see handle_input).
@@ -81,7 +110,11 @@ class ShipPropertyViewerPanel(Panel):
         self.selected_index = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
+        self.show_hull_texture = False
         self._expanded_groups = set()
+        self._pending_radius = {}
+        self._overlay_open = False
+        self._close_overlays = False
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -92,7 +125,11 @@ class ShipPropertyViewerPanel(Panel):
         self.selected_index = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
+        self.show_hull_texture = False
         self._expanded_groups = set()
+        self._pending_radius = {}
+        self._overlay_open = False
+        self._close_overlays = False
         self.camera = None
         self._lmb_down = False
         self._drag_last = None
@@ -159,6 +196,8 @@ class ShipPropertyViewerPanel(Panel):
     def render_payload(self) -> Optional[str]:
         snapshot = (self._visible, len(self._descriptors), self.selected_index,
                     self.show_glow_regions, self.show_weapon_arcs,
+                    self.show_hull_texture,
+                    tuple(sorted(self._pending_radius.items())),
                     tuple(sorted(self._expanded_groups)))
         if snapshot == self._last_pushed:
             return None
@@ -168,7 +207,11 @@ class ShipPropertyViewerPanel(Panel):
         selected = None
         if self.selected_index is not None and \
                 0 <= self.selected_index < len(self._descriptors):
-            selected = self._descriptors[self.selected_index]
+            selected = dict(self._descriptors[self.selected_index])
+            if self.selected_index in self._pending_radius:
+                props = dict(selected.get("properties", {}))
+                props["radius"] = self._pending_radius[self.selected_index]
+                selected["properties"] = props
         payload = {
             "visible": True,
             "pin_count": len(self._descriptors),
@@ -176,9 +219,30 @@ class ShipPropertyViewerPanel(Panel):
             "selected_index": self.selected_index,
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
+            "show_hull": self.show_hull_texture,
+            "pending_count": len(self._pending_radius),
+            "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
+            "close_overlays": self._close_overlays,
         }
+        self._close_overlays = False
         return "setShipPropertyViewer(" + json.dumps(payload) + ");"
+
+    def _pending_edits(self) -> List[dict]:
+        """Modified subsystems with a tally of staged changes each, for the
+        Save-confirm modal, e.g. [{"name": "Center Impulse", "count": 1}].
+        Grouped by subsystem name so future multi-value edits show a real
+        tally; today each subsystem has at most one staged change (its radius).
+        Deterministic order: first-seen by ascending descriptor index."""
+        counts: dict = {}
+        order: List[str] = []
+        for i in sorted(self._pending_radius):
+            name = self._descriptors[i]["name"]
+            if name not in counts:
+                counts[name] = 0
+                order.append(name)
+            counts[name] += 1
+        return [{"name": n, "count": counts[n]} for n in order]
 
     def _subsystem_rows(self) -> List[dict]:
         """Left-column subsystem list as a two-level accordion: top-level
@@ -199,6 +263,9 @@ class ShipPropertyViewerPanel(Panel):
         by_index: dict = {}
         for i, d in enumerate(self._descriptors):
             row = _row(i, d)
+            row["dirty"] = (i in self._pending_radius)
+            row["radius"] = (self._pending_radius[i] if i in self._pending_radius
+                             else d.get("properties", {}).get("radius"))
             by_index[i] = row
             parent = by_index.get(d.get("parent_index"))
             if parent is not None:
@@ -214,8 +281,22 @@ class ShipPropertyViewerPanel(Panel):
         self._last_pushed = None
 
     def handle_key_esc(self) -> None:
-        if self._visible:
-            self.close()
+        """ESC is dispatched raw by host_loop's modal-ESC router, independent
+        of CEF focus (see `_dispatch_modal_esc`) — so it must be the single
+        source of truth for "does ESC close the overlay or the panel", to
+        avoid a JS-vs-native race. While a CEF overlay (context menu / radius
+        modal / confirm) is open, ESC closes ONLY the overlay and preserves
+        any staged edits; only when no overlay is open does ESC close the
+        panel (discarding staged edits, matching the existing Cancel/close
+        behaviour)."""
+        if not self._visible:
+            return
+        if self._overlay_open:
+            self._overlay_open = False
+            self._close_overlays = True
+            self._last_pushed = None
+            return
+        self.close()
 
     # ------------------------------------------------------------------
     # Pure camera math (host-free → unit-testable in isolation)
@@ -271,6 +352,8 @@ class ShipPropertyViewerPanel(Panel):
         Degrades to a no-op if any required binding is missing (headless)."""
         if self.camera is None:
             return
+        if self._overlay_open:
+            return
         try:
             btn_state = h.mouse_button_state
             cursor_pos = h.cursor_pos
@@ -283,10 +366,14 @@ class ShipPropertyViewerPanel(Panel):
         # pin click radius (logical points) matches the GL-rendered disc on
         # HiDPI displays. Degrades to 1.0 if window_size is unavailable.
         dsf = 1.0
+        fb_w = fb_h = 0.0
+        try:
+            fb_w, fb_h = fb_size()
+        except (TypeError, ValueError):
+            fb_w = fb_h = 0.0
         win_size = getattr(h, "window_size", None)
-        if win_size is not None:
+        if win_size is not None and fb_h > 0:
             try:
-                _fb_w, fb_h = fb_size()
                 _win_w, win_h = win_size()
                 if win_h > 0:
                     dsf = float(fb_h) / float(win_h)
@@ -294,7 +381,8 @@ class ShipPropertyViewerPanel(Panel):
                 dsf = 1.0
 
         x, y = cursor_pos()
-        over_chrome = self._cursor_over_chrome(x, y, dsf)
+        over_tools = self._cursor_over_tools(x, y, dsf, fb_w, fb_h)
+        over_chrome = self._cursor_over_chrome(x, y, dsf) or over_tools
         over_left_col = self._cursor_over_left_column(x, y, dsf)
 
         # Zoom: drain the wheel accumulator even when no other input so a
@@ -351,6 +439,24 @@ class ShipPropertyViewerPanel(Panel):
         s = dsf or 1.0
         return (x / s) <= LEFT_COL_X1_PT and (y / s) >= LEFT_COL_Y0_PT
 
+    @staticmethod
+    def _cursor_over_tools(x: float, y: float, dsf: float,
+                          fb_w: float, fb_h: float) -> bool:
+        """Cursor (framebuffer px) inside the bottom-right tool-button cluster.
+
+        Needs the viewport size (framebuffer px) because the cluster is anchored
+        to the right/bottom edges. Returns False when the size is unknown."""
+        if fb_w <= 0 or fb_h <= 0:
+            return False
+        s = dsf or 1.0
+        px, py = x / s, y / s
+        w_pt, h_pt = fb_w / s, fb_h / s
+        x0 = w_pt - TOOLS_MARGIN_PT - TOOLS_W_PT
+        x1 = w_pt - TOOLS_MARGIN_PT
+        y0 = h_pt - TOOLS_MARGIN_PT - TOOLS_H_PT
+        y1 = h_pt - TOOLS_MARGIN_PT
+        return x0 <= px <= x1 and y0 <= py <= y1
+
     @classmethod
     def _cursor_over_chrome(cls, x: float, y: float, dsf: float) -> bool:
         """Cursor (framebuffer px) over any CEF chrome region (titlebar or
@@ -369,6 +475,10 @@ class ShipPropertyViewerPanel(Panel):
         if action == "toggle_weapon_arcs":
             self.show_weapon_arcs = not self.show_weapon_arcs
             self._last_pushed = None
+            return True
+        if action == "toggle_hull_texture":
+            self.show_hull_texture = not self.show_hull_texture
+            self._last_pushed = None  # re-push so the button state updates
             return True
         if action.startswith("select_pin:"):
             try:
@@ -401,6 +511,46 @@ class ShipPropertyViewerPanel(Panel):
             if self.selected_index is None:
                 return False
             self.selected_index = None
+            self._last_pushed = None
+            return True
+        if action.startswith("overlay:"):
+            self._overlay_open = action.endswith("1")
+            return True
+        if action.startswith("set_radius:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                idx = int(arg["i"]); value = float(arg["value"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if not (0 <= idx < len(self._descriptors)):
+                return False
+            if value <= 0:
+                return False
+            self._pending_radius[idx] = value
+            self._last_pushed = None
+            return True
+        if action == "save":
+            if not self._pending_radius:
+                return True
+            ship = self._ship_getter()
+            leaf = hardpoint_leaf_for_ship(ship)
+            if not leaf:
+                # Target can't be resolved — nothing written. Keep the staged
+                # edits so the user can retry (e.g. after fixing the ship).
+                self._last_pushed = None
+                return True
+            edits = [(self._descriptors[i]["name"], "SetRadius", (v,))
+                     for i, v in sorted(self._pending_radius.items())]
+            try:
+                resolve_override_target(ship).write(leaf, edits)
+            except Exception as e:
+                from engine import dev_mode
+                dev_mode.log_swallowed("spv radius save", e)
+                # Write failed — keep the staged edits (dirty markers + Save
+                # bar stay) rather than silently discarding them.
+                self._last_pushed = None
+                return True
+            self._pending_radius = {}
             self._last_pushed = None
             return True
         return False
