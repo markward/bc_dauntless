@@ -1,152 +1,131 @@
-"""Pure text tooling to maintain a delimited 'managed-overrides' block inside
-each _<leaf>(find) function in engine/appc/hardpoint_overrides.py.
+"""Pure tooling to read, edit, and emit engine/appc/hardpoint_overrides.py.
 
-The block is regenerated wholesale from an original-stock-name -> current-name
-mapping, so edits are idempotent and re-nameable. Only names are supported
-today; the block's shape (find(original) then guarded setter calls) is chosen so
-future glow/light setters can join each subsystem's group.
+The override file is machine-owned: one function per ship, one block per
+subsystem, plain Appc setter calls. We recover a ship's model by EXECUTING its
+function against a recording `find` (the functions are pure straight-line setter
+calls), edit the model, and re-emit the whole file deterministically.
+
+Design: docs/superpowers/specs/2026-07-25-spv-hardpoint-value-override-editing-design.md
 """
 from __future__ import annotations
 
+import ast
 import json
-import re
-from collections import OrderedDict
 
-BLOCK_START = "    # >>> dauntless-overrides (managed) >>>"
-BLOCK_END = "    # <<< dauntless-overrides <<<"
+# Setters whose first argument is a region index (so an edit targets one index).
+_INDEXED_PREFIX = "SetGlowRegion"
 
 
-def render_managed_block(mapping: "OrderedDict[str, str]") -> str:
-    lines = [BLOCK_START]
-    for original, current in mapping.items():
-        lines.append("    p = find(%s)" % json.dumps(original))
-        lines.append("    if p is not None:")
-        lines.append("        p.SetName(%s)" % json.dumps(current))
-    lines.append(BLOCK_END)
-    return "\n".join(lines)
+class _Recorder:
+    """Proxy returned by the recording find; records every method call as
+    (name, args) into the shared list. Truthy + not-None so `if p is not None`
+    guards always pass."""
 
+    def __init__(self, calls):
+        self._calls = calls
 
-_FIND_RE = re.compile(r'p = find\((".*")\)\s*$')
-_SETNAME_RE = re.compile(r'p\.SetName\((".*")\)\s*$')
-
-
-def parse_managed_block(text: str) -> "OrderedDict[str, str]":
-    mapping: "OrderedDict[str, str]" = OrderedDict()
-    in_block = False
-    pending = None
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped == BLOCK_START.strip():
-            in_block = True
-            continue
-        if stripped == BLOCK_END.strip():
-            in_block = False
-            continue
-        if not in_block:
-            continue
-        mf = _FIND_RE.match(stripped)
-        if mf:
-            pending = json.loads(mf.group(1))
-            continue
-        ms = _SETNAME_RE.match(stripped)
-        if ms and pending is not None:
-            mapping[pending] = json.loads(ms.group(1))
-            pending = None
-    return mapping
-
-
-import ast as _ast
-
-
-def _function_span(text: str, leaf: str):
-    """Return (start_idx, end_idx) of the `def _<leaf>(find):` block in text,
-    or None. end_idx is the index just past the function body (at the next
-    top-level `def ` / `OVERRIDES` / EOF)."""
-    header = "def _%s(find):" % leaf
-    start = text.find("\n" + header)
-    if start < 0:
-        if text.startswith(header):
-            start = 0
-        else:
+    def __getattr__(self, name):
+        def rec(*args):
+            self._calls.append((name, args))
             return None
+        return rec
+
+
+def _make_find(per_sub):
+    def find(name):
+        return _Recorder(per_sub.setdefault(name, []))
+    return find
+
+
+def read_models(module) -> dict:
+    """{leaf: {subsystem: [(setter, args), ...]}} by executing each override fn."""
+    models: dict = {}
+    for leaf, fn in module.OVERRIDES.items():
+        per_sub: dict = {}
+        fn(_make_find(per_sub))
+        models[leaf] = per_sub
+    return models
+
+
+def _replace_key(setter, args):
+    if setter.startswith(_INDEXED_PREFIX) and args:
+        return (setter, args[0])      # same setter AND same region index
+    return (setter,)
+
+
+def set_setter(models, leaf, subsystem, setter, args) -> None:
+    per_sub = models.setdefault(leaf, {})
+    calls = per_sub.setdefault(subsystem, [])
+    key = _replace_key(setter, args)
+    for i, (s, a) in enumerate(calls):
+        if _replace_key(s, a) == key:
+            calls[i] = (setter, tuple(args))
+            return
+    calls.append((setter, tuple(args)))
+
+
+# ── Emission ────────────────────────────────────────────────────────────────
+
+_HEADER = '''"""Machine-owned hardpoint overrides — edited by the Ship Property Viewer.
+
+Do NOT hand-edit: the SPV regenerates this file on save. One function per ship,
+one block per subsystem, plain Appc setter calls.
+Design: docs/superpowers/specs/2026-07-25-spv-hardpoint-value-override-editing-design.md
+"""
+
+
+def apply(leaf):
+    """Run a ship's override function from the SDK-loader hook, if any."""
+    fn = OVERRIDES.get(leaf)
+    if fn is None:
+        return
+    import App
+
+    mgr = App.g_kModelPropertyManager
+
+    def find(name):
+        return mgr.FindByName(name, App.TGModelPropertyManager.LOCAL_TEMPLATES)
+
+    fn(find)'''
+
+
+def _lit(v) -> str:
+    if isinstance(v, str):
+        return json.dumps(v)          # valid double-quoted Python string literal
+    if isinstance(v, bool):
+        return "True" if v else "False"
+    if isinstance(v, float):
+        return repr(v)
+    return str(v)
+
+
+def _emit_function(leaf, per_sub) -> str:
+    out = ["def _%s(find):" % leaf, '    """%s."""' % leaf]
+    if not per_sub:
+        out.append("    return")
     else:
-        start += 1  # skip the leading newline
-    # Body ends at the next top-level statement (column-0 def/OVERRIDES) or EOF.
-    rest = text[start + len(header):]
-    m = re.search(r'\n(?=def |OVERRIDES\b)', rest)
-    end = len(text) if m is None else start + len(header) + m.start() + 1
-    return (start, end)
+        for subsystem, calls in per_sub.items():
+            out.append("    p = find(%s)" % _lit(subsystem))
+            out.append("    if p is not None:")
+            for setter, args in calls:
+                out.append("        p.%s(%s)"
+                           % (setter, ", ".join(_lit(a) for a in args)))
+    return "\n".join(out)
 
 
-def _resolve_original(existing: "OrderedDict[str, str]", loaded_name: str) -> str:
-    """The row shows the loaded name (a current override target or a stock
-    name). Map it back to the original stock key."""
-    for original, current in existing.items():
-        if current == loaded_name:
-            return original
-    return loaded_name
+def _emit_overrides(leaves) -> str:
+    out = ["OVERRIDES = {"]
+    for leaf in leaves:
+        out.append('    "%s": _%s,' % (leaf, leaf))
+    out.append("}")
+    return "\n".join(out)
 
 
-def apply_renames(module_text: str, leaf: str,
-                  renames: "list[tuple[str, str]]") -> str:
-    span = _function_span(module_text, leaf)
-    if span is None:
-        module_text = _create_function(module_text, leaf)
-        span = _function_span(module_text, leaf)
-    start, end = span
-    body = module_text[start:end]
-
-    mapping = parse_managed_block(body)
-    for loaded_name, new_name in renames:
-        original = _resolve_original(mapping, loaded_name)
-        if new_name == original:
-            mapping.pop(original, None)
-        else:
-            mapping[original] = new_name
-
-    # Strip any existing managed block from the body, then append the fresh one
-    # at the end of the function (after hand-authored glow lookups).
-    body_wo = _strip_managed_block(body)
-    body_wo = body_wo.rstrip("\n")
-    if mapping:
-        new_body = body_wo + "\n" + render_managed_block(mapping) + "\n"
-    else:
-        new_body = body_wo + "\n"
-
-    out = module_text[:start] + new_body + module_text[end:]
-    try:
-        _ast.parse(out)
-    except SyntaxError as e:
-        raise ValueError("hardpoint_overrides rewrite would not parse: %s" % e)
-    return out
-
-
-def _strip_managed_block(body: str) -> str:
-    lines = body.splitlines(keepends=True)
-    out, skipping = [], False
-    for line in lines:
-        s = line.strip()
-        if s == BLOCK_START.strip():
-            skipping = True
-            continue
-        if s == BLOCK_END.strip():
-            skipping = False
-            continue
-        if not skipping:
-            out.append(line)
-    return "".join(out)
-
-
-def _create_function(text: str, leaf: str) -> str:
-    """Insert an empty `def _<leaf>(find):` before `OVERRIDES = {` and register
-    it in the dict."""
-    fn = "\ndef _%s(find):\n    pass\n\n" % leaf
-    anchor = text.find("\nOVERRIDES = {")
-    if anchor < 0:
-        # No dict yet: append both.
-        return text.rstrip("\n") + "\n" + fn + 'OVERRIDES = {\n    "%s": _%s,\n}\n' % (leaf, leaf)
-    text = text[:anchor] + "\n" + fn + text[anchor + 1:]
-    # Register in the dict literal (insert before its closing brace).
-    entry = '    "%s": _%s,\n' % (leaf, leaf)
-    close = text.find("\n}", text.find("OVERRIDES = {"))
-    return text[:close + 1] + entry + text[close + 1:]
+def emit(models) -> str:
+    chunks = [_HEADER]
+    for leaf, per_sub in models.items():
+        chunks.append(_emit_function(leaf, per_sub))
+    chunks.append(_emit_overrides(models.keys()))
+    text = "\n\n\n".join(chunks) + "\n"
+    ast.parse(text)                    # raises SyntaxError on a bad emit
+    return text
