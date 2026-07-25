@@ -1,3 +1,9 @@
+> **SUPERSEDED (2026-07-25)** by `2026-07-25-spv-hardpoint-value-override-editing.md`.
+> The rename MVP + managed-block writer were abandoned: the override files are
+> engine-generated (not hand-authored), so the file is restructured into a
+> machine-owned expanded form and the MVP value is `SetRadius`, not rename.
+> Committed Tasks 1–2 (`18a6a820`, `c1d3cf19`) are replaced by the new plan.
+
 # SPV Subsystem Rename + Staged Hardpoint-Override Editing — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
