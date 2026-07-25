@@ -576,6 +576,27 @@ def test_save_routes_edits_and_clears(monkeypatch):
     assert _payload_data(p.render_payload())["pending_count"] == 0
 
 
+def test_save_keeps_pending_when_write_fails(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+
+    class _FailingTarget:
+        def write(self, leaf, edits):
+            raise RuntimeError("disk full")
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _FailingTarget())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    ok = p.dispatch_event("save")
+    assert ok is True
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 1
+    assert data["subsystems"][0]["dirty"] is True
+
+
 def test_overlay_open_suppresses_orbit():
     p = _open_panel_for_input()
     p.dispatch_event("overlay:1")

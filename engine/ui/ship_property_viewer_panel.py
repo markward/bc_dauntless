@@ -489,14 +489,22 @@ class ShipPropertyViewerPanel(Panel):
                 return True
             ship = self._ship_getter()
             leaf = hardpoint_leaf_for_ship(ship)
-            if leaf:
-                edits = [(self._descriptors[i]["name"], "SetRadius", (v,))
-                         for i, v in sorted(self._pending_radius.items())]
-                try:
-                    resolve_override_target(ship).write(leaf, edits)
-                except Exception as e:
-                    from engine import dev_mode
-                    dev_mode.log_swallowed("spv radius save", e)
+            if not leaf:
+                # Target can't be resolved — nothing written. Keep the staged
+                # edits so the user can retry (e.g. after fixing the ship).
+                self._last_pushed = None
+                return True
+            edits = [(self._descriptors[i]["name"], "SetRadius", (v,))
+                     for i, v in sorted(self._pending_radius.items())]
+            try:
+                resolve_override_target(ship).write(leaf, edits)
+            except Exception as e:
+                from engine import dev_mode
+                dev_mode.log_swallowed("spv radius save", e)
+                # Write failed — keep the staged edits (dirty markers + Save
+                # bar stay) rather than silently discarding them.
+                self._last_pushed = None
+                return True
             self._pending_radius = {}
             self._last_pushed = None
             return True
