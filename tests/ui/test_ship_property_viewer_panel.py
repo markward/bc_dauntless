@@ -521,3 +521,80 @@ def test_expansion_resets_on_reopen(monkeypatch):
     p.close()
     p.open()
     assert _payload_data(p.render_payload())["subsystems"][0]["expanded"] is False
+
+
+# ── staged radius edits (Task 4) ────────────────────────────────────────────
+
+import json as _json
+
+
+class _RadiusShip:
+    def GetScript(self):
+        return "ships.Galaxy"
+
+
+def _rad_descriptor(name):
+    return {"name": name, "icon_id": 0, "world_pos": (0, 0, 0),
+            "state": "healthy", "targetable": True, "condition_pct": 100,
+            "parent_index": None,
+            "properties": {"name": name, "radius": 0.25}}
+
+
+def test_set_radius_stages_pending_and_marks_dirty(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    ok = p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    assert ok is True
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 1
+    assert data["subsystems"][0]["dirty"] is True
+    # Readout reflects the staged value (no live mutation needed).
+    p.selected_index = 0
+    p._last_pushed = None
+    assert _payload_data(p.render_payload())["selected"]["properties"]["radius"] == 0.5
+
+
+def test_save_routes_edits_and_clears(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    calls = []
+
+    class _Target:
+        def write(self, leaf, edits): calls.append((leaf, edits))
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    p.dispatch_event("save")
+    assert calls == [("galaxy", [("Center Impulse", "SetRadius", (0.5,))])]
+    assert _payload_data(p.render_payload())["pending_count"] == 0
+
+
+def test_overlay_open_suppresses_orbit():
+    p = _open_panel_for_input()
+    p.dispatch_event("overlay:1")
+    host = _FakeHost()
+    yaw0 = p.camera.yaw
+    host._cursor = (600.0, 300.0); host._down = True
+    p.handle_input(host)
+    host._cursor = (650.0, 350.0)
+    p.handle_input(host)
+    assert p.camera.yaw == yaw0
+
+
+def test_close_without_save_discards_pending(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    p.close()
+    p.open()
+    assert _payload_data(p.render_payload())["pending_count"] == 0

@@ -235,6 +235,7 @@ def _properties_for(sub, pos) -> dict:
         "name":      _safe(getattr(sub, "GetName", lambda: None)) or "<unnamed>",
         "type":      type(sub).__name__,
         "condition": _safe(getattr(sub, "GetCondition", lambda: None)),
+        "radius":    _safe(getattr(sub, "GetRadius", lambda: None)),
         "disabled":  bool(_safe(getattr(sub, "IsDisabled", lambda: False))),
         "position":  None if pos is None else (pos.x, pos.y, pos.z),
     }

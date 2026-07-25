@@ -10,6 +10,9 @@ import json
 import math
 from typing import Callable, List, Optional
 
+from engine.appc.override_routing import (
+    resolve_override_target, hardpoint_leaf_for_ship,
+)
 from engine.ui.panel import Panel
 from engine.ui.ship_property_viewer import (
     build_descriptors, OrbitCamera, pick_pin,
@@ -71,6 +74,13 @@ class ShipPropertyViewerPanel(Panel):
         # left-column list (accordion, like the target list). Collapsed by
         # default; reset every open.
         self._expanded_groups: set = set()
+        # Staged radius edits: descriptor index -> new radius. Reset every
+        # open/close. Not applied to the live sim (radius has no in-session
+        # visual); persisted on Save, applied on the next ship build.
+        self._pending_radius: dict = {}
+        # True while a CEF context menu / modal is open: handle_input suppresses
+        # orbit + pick so clicks on that chrome don't reach the 3D view.
+        self._overlay_open = False
         self._last_pushed: Optional[tuple] = None
         # Left-drag tracking (panel-local edge detection so we don't steal
         # the CEF mouse-release edge — see handle_input).
@@ -96,6 +106,8 @@ class ShipPropertyViewerPanel(Panel):
         self.show_weapon_arcs = False
         self.show_hull_texture = False
         self._expanded_groups = set()
+        self._pending_radius = {}
+        self._overlay_open = False
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -108,6 +120,8 @@ class ShipPropertyViewerPanel(Panel):
         self.show_weapon_arcs = False
         self.show_hull_texture = False
         self._expanded_groups = set()
+        self._pending_radius = {}
+        self._overlay_open = False
         self.camera = None
         self._lmb_down = False
         self._drag_last = None
@@ -175,6 +189,7 @@ class ShipPropertyViewerPanel(Panel):
         snapshot = (self._visible, len(self._descriptors), self.selected_index,
                     self.show_glow_regions, self.show_weapon_arcs,
                     self.show_hull_texture,
+                    tuple(sorted(self._pending_radius.items())),
                     tuple(sorted(self._expanded_groups)))
         if snapshot == self._last_pushed:
             return None
@@ -184,7 +199,11 @@ class ShipPropertyViewerPanel(Panel):
         selected = None
         if self.selected_index is not None and \
                 0 <= self.selected_index < len(self._descriptors):
-            selected = self._descriptors[self.selected_index]
+            selected = dict(self._descriptors[self.selected_index])
+            if self.selected_index in self._pending_radius:
+                props = dict(selected.get("properties", {}))
+                props["radius"] = self._pending_radius[self.selected_index]
+                selected["properties"] = props
         payload = {
             "visible": True,
             "pin_count": len(self._descriptors),
@@ -193,6 +212,7 @@ class ShipPropertyViewerPanel(Panel):
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
+            "pending_count": len(self._pending_radius),
             "subsystems": self._subsystem_rows(),
         }
         return "setShipPropertyViewer(" + json.dumps(payload) + ");"
@@ -216,6 +236,7 @@ class ShipPropertyViewerPanel(Panel):
         by_index: dict = {}
         for i, d in enumerate(self._descriptors):
             row = _row(i, d)
+            row["dirty"] = (i in self._pending_radius)
             by_index[i] = row
             parent = by_index.get(d.get("parent_index"))
             if parent is not None:
@@ -287,6 +308,8 @@ class ShipPropertyViewerPanel(Panel):
 
         Degrades to a no-op if any required binding is missing (headless)."""
         if self.camera is None:
+            return
+        if self._overlay_open:
             return
         try:
             btn_state = h.mouse_button_state
@@ -445,6 +468,36 @@ class ShipPropertyViewerPanel(Panel):
             if self.selected_index is None:
                 return False
             self.selected_index = None
+            self._last_pushed = None
+            return True
+        if action.startswith("overlay:"):
+            self._overlay_open = action.endswith("1")
+            return True
+        if action.startswith("set_radius:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                idx = int(arg["i"]); value = float(arg["value"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if not (0 <= idx < len(self._descriptors)):
+                return False
+            self._pending_radius[idx] = value
+            self._last_pushed = None
+            return True
+        if action == "save":
+            if not self._pending_radius:
+                return True
+            ship = self._ship_getter()
+            leaf = hardpoint_leaf_for_ship(ship)
+            if leaf:
+                edits = [(self._descriptors[i]["name"], "SetRadius", (v,))
+                         for i, v in sorted(self._pending_radius.items())]
+                try:
+                    resolve_override_target(ship).write(leaf, edits)
+                except Exception as e:
+                    from engine import dev_mode
+                    dev_mode.log_swallowed("spv radius save", e)
+            self._pending_radius = {}
             self._last_pushed = None
             return True
         return False
