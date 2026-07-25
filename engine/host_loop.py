@@ -6337,6 +6337,14 @@ def run(mission_name: Optional[str] = None,
                             _cef_send_mouse_click(_mx, _my, 0, True)
                         if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
+                        # Right button (code 2 -> MBT_RIGHT): forwarded so CEF
+                        # overlays under the pause layer can fire `oncontextmenu`
+                        # (e.g. the Ship Property Viewer's subsystem right-click
+                        # menu). Without this the DOM never sees the right-click.
+                        if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_RIGHT):
+                            _cef_send_mouse_click(_mx, _my, 2, True)
+                        if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_RIGHT):
+                            _cef_send_mouse_click(_mx, _my, 2, False)
                     if pause.quit_requested:
                         break
                 else:
