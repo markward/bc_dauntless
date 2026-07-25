@@ -361,6 +361,7 @@
 }
 
 .spv-modal__input {
+    box-sizing: border-box;
     width: calc(100% - 28px);
     margin: 12px 14px;
     padding: 6px 8px;
@@ -369,6 +370,37 @@
     color: #ffd;
     font-family: inherit;
     font-size: 14px;
+}
+
+/* Mouse-only radius stepper (no keyboard->CEF forwarding yet). */
+.spv-radius-stepper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 14px;
+}
+
+.spv-step {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 230, 160, 0.4);
+    color: #ffd;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.spv-step:hover {
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.spv-radius-value {
+    color: #ffd;
+    font-size: 18px;
+    min-width: 68px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
 }
 
 .spv-modal__body {

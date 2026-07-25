@@ -240,7 +240,15 @@
       <div id="spv-radius" class="spv-modal-backdrop" style="display:none;">
         <div class="spv-modal">
           <div class="spv-modal__title">Set Radius</div>
-          <input id="spv-radius-input" class="spv-modal__input" type="number" step="0.01" />
+          <!-- Mouse-only stepper (the engine has no keyboard->CEF forwarding yet,
+               so a typed field can't receive input). Buttons nudge the value. -->
+          <div class="spv-radius-stepper">
+            <button class="spv-step" onclick="shipPropertyViewerRadiusStep(-0.1)">&minus;0.1</button>
+            <button class="spv-step" onclick="shipPropertyViewerRadiusStep(-0.01)">&minus;0.01</button>
+            <span id="spv-radius-value" class="spv-radius-value">0.00</span>
+            <button class="spv-step" onclick="shipPropertyViewerRadiusStep(0.01)">+0.01</button>
+            <button class="spv-step" onclick="shipPropertyViewerRadiusStep(0.1)">+0.1</button>
+          </div>
           <div class="spv-modal__row">
             <button class="spv-modal__btn" onclick="shipPropertyViewerRadiusCancel()">Cancel</button>
             <button class="spv-modal__btn spv-modal__btn--primary" onclick="shipPropertyViewerRadiusApply()">Apply</button>

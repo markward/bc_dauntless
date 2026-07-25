@@ -153,18 +153,30 @@ window.shipPropertyViewerRowMenu = function (event, index) {
     dauntlessEvent('ship-property-viewer/overlay:1');
     return false;
 };
+// Radius is edited with a mouse-only stepper: the engine has no keyboard->CEF
+// forwarding, so a typed <input> can't receive characters. spvRadiusValue holds
+// the working value (2 decimal places, clamped > 0); the buttons nudge it.
+var spvRadiusValue = 0;
+
+function spvRenderRadiusValue() {
+    var el = document.getElementById('spv-radius-value');
+    if (el) el.textContent = spvRadiusValue.toFixed(2);
+}
 window.shipPropertyViewerCtxRadius = function () {
     document.getElementById('spv-ctxmenu').style.display = 'none';
-    var inp = document.getElementById('spv-radius-input');
-    inp.value = spvCtxRadius;
+    var start = (spvCtxRadius > 0) ? spvCtxRadius : 0.25;   // fallback if unseeded
+    spvRadiusValue = Math.round(start * 100) / 100;
+    spvRenderRadiusValue();
     document.getElementById('spv-radius').style.display = 'flex';
-    inp.focus(); inp.select();
+};
+window.shipPropertyViewerRadiusStep = function (delta) {
+    spvRadiusValue = Math.max(0.01, Math.round((spvRadiusValue + delta) * 100) / 100);
+    spvRenderRadiusValue();
 };
 window.shipPropertyViewerRadiusApply = function () {
-    var v = parseFloat(document.getElementById('spv-radius-input').value);
-    if (!isNaN(v) && v > 0) {
+    if (spvRadiusValue > 0) {
         dauntlessEvent('ship-property-viewer/set_radius:'
-                       + JSON.stringify({i: spvCtxIndex, value: v}));
+                       + JSON.stringify({i: spvCtxIndex, value: spvRadiusValue}));
     }
     spvHideOverlays();
 };
