@@ -16,13 +16,16 @@ from __future__ import annotations
 # zoom. See spec sec 4.1.
 POSITION_ZOOM_SENTINEL = 1.0
 
-# Viewscreen-hail sentinel fallback. A hailed/remote character SetLocations a
-# remote-set location with no AddPositionZoom, so GetPositionZoom misses and
-# returns POSITION_ZOOM_SENTINEL. BC substitutes a hardcoded fallback stronger
-# than a bridge station's 0.64 (the user-observed ~2x fill = 1/0.5). Officers
-# keep their own _BRIDGE_ZOOM_MIN sentinel fallback (regression-safe); only the
-# viewscreen reaches this. Tunable (calibrate up then down); no rebuild.
-VIEWSCREEN_ZOOM_FALLBACK = 0.5
+# Viewscreen-hail sentinel fallback (FOV multiplier; magnification = 1/value). A
+# hailed/remote character SetLocations a remote-set location with no
+# AddPositionZoom, so GetPositionZoom misses and returns POSITION_ZOOM_SENTINEL.
+# BC's MenuEventHandler substitutes a hardcoded fallback on a miss; the RE did NOT
+# recover its numeric value, so this is TUNED, not SDK-sourced. Reference points:
+# the maincamera's authored SetMinZoom is 0.64 (~1.56x) and officer stations run
+# 0.45-0.8. Live-tuned to 1.7x (0.588) 2026-07-25 — 2x (0.5) read too strong.
+# Officers keep their own _BRIDGE_ZOOM_MIN sentinel fallback (regression-safe);
+# only the viewscreen reaches this. Python-only knob, no rebuild.
+VIEWSCREEN_ZOOM_FALLBACK = 1.0 / 1.7   # ~1.7x magnification (~0.588)
 
 
 class PositionZoomTable:
