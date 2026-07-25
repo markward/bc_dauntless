@@ -127,7 +127,12 @@ class BridgeCutsceneController:
         bridge_camera.set_anim_pose(eye, target, up)
 
         if ac["t"] >= ac["duration"]:
-            bridge_camera.clear_anim_pose()
+            # Hold the clip's final pose rather than clearing it: for the walk-on
+            # and the sit the final keyframe IS the seated eye and _BridgeCamera
+            # gates the held pose off (seated mode present), so nothing changes;
+            # for the stand (seated mode popped at E1M1 PicardWalkOn) the standing
+            # pose persists until ResetBridgeCamera re-pushes the seated mode.
+            bridge_camera.hold_anim_pose()
             ac["action"].Completed()
             self._active_camera = None
 

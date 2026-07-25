@@ -16,12 +16,17 @@ class _FakeCamera:
     def __init__(self):
         self.pose = None
         self.cleared = False
+        self.held = None
 
     def set_anim_pose(self, eye, target, up):
         self.pose = (eye, target, up)
 
     def clear_anim_pose(self):
         self.cleared = True
+        self.pose = None
+
+    def hold_anim_pose(self):
+        self.held = self.pose
         self.pose = None
 
 
@@ -105,10 +110,30 @@ def test_camera_path_drives_pose_and_completes_at_duration():
     assert abs(cam.pose[0][0] - 5.0) < 1e-6
     assert action.completed is False
 
-    # Reaching duration completes the action and clears the pose.
+    # Reaching duration completes the action and HOLDS the final pose (it
+    # persists until the SDK re-pushes the seated captain mode); not cleared.
     ctrl.update(0.5, **_ctx(cam, vm, rend, mgr))
     assert action.completed is True
-    assert cam.cleared is True
+    assert cam.cleared is False
+    assert cam.held is not None
+    assert cam.held[0][0] == 10.0        # final eye X (end of the +X slide)
+
+
+def test_camera_completion_holds_not_clears():
+    """On clip completion the controller latches the final pose via
+    hold_anim_pose (persistence) and never falls back to clear_anim_pose."""
+    ctrl = BridgeCutsceneController()
+    action = _FakeAction()
+    ctrl.request_camera_path(action, _FakeNode("camera"), "WalkCameraToCaptD")
+
+    cam, vm, rend, mgr = _FakeCamera(), _FakeViewMode(), _FakeRenderer(), _FakeAnimMgr()
+    ctrl.update(0.0, **_ctx(cam, vm, rend, mgr))     # load + t=0
+    ctrl.update(1.0, **_ctx(cam, vm, rend, mgr))     # reach duration
+
+    assert action.completed is True
+    assert cam.held is not None       # final pose latched
+    assert cam.pose is None           # transient override ended
+    assert cam.cleared is False       # NOT the old clear path
 
 
 def test_object_anim_plays_the_named_door_clip():
