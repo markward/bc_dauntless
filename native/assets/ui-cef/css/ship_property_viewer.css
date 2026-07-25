@@ -306,3 +306,117 @@
     word-break: break-all;
     font-variant-numeric: tabular-nums;
 }
+
+/* ── Context menu / radius modal / Save bar / dirty rows ──────────────────
+   Task 5: right-click a subsystem row → "Set Radius…" → numeric modal →
+   Apply stages the edit (spv-sys-row--dirty accent); the Save bar surfaces
+   the staged count and opens the amend-confirm modal.
+   Spec: docs/superpowers/sdd/2026-07-25-spv-hardpoint-value-override-editing/task-5-brief.md */
+
+.spv-ctxmenu {
+    position: fixed;
+    background: rgba(10, 10, 16, 0.98);
+    border: 1px solid rgba(255, 230, 160, 0.5);
+    pointer-events: auto;
+    z-index: 70;
+    min-width: 130px;
+}
+
+.spv-ctxmenu__item {
+    padding: 6px 14px;
+    color: #ffd;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.spv-ctxmenu__item:hover {
+    background: rgba(255, 214, 90, 0.25);
+}
+
+.spv-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+    pointer-events: auto;
+    z-index: 75;
+}
+
+.spv-modal {
+    background: rgb(20, 22, 28);
+    border: 1px solid rgb(80, 88, 100);
+    min-width: 280px;
+    padding: 0 0 12px;
+}
+
+.spv-modal__title {
+    background: linear-gradient(90deg, rgb(216, 94, 86), rgb(216, 132, 80));
+    color: #ffd;
+    padding: 6px 14px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 13px;
+}
+
+.spv-modal__input {
+    width: calc(100% - 28px);
+    margin: 12px 14px;
+    padding: 6px 8px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 230, 160, 0.4);
+    color: #ffd;
+    font-family: inherit;
+    font-size: 14px;
+}
+
+.spv-modal__body {
+    color: #cdd3dc;
+    padding: 10px 14px;
+    font-size: 13px;
+}
+
+.spv-modal__row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 0 14px;
+}
+
+.spv-modal__btn {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 230, 160, 0.4);
+    color: #ffd;
+    padding: 5px 14px;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.spv-modal__btn--primary {
+    background: rgba(255, 214, 90, 0.85);
+    color: rgb(40, 24, 8);
+}
+
+.spv-savebar {
+    position: fixed;
+    left: 50%;
+    bottom: 12px;
+    transform: translateX(-50%);
+    pointer-events: auto;
+    z-index: 65;
+}
+
+.spv-savebar__btn {
+    background: rgba(255, 214, 90, 0.9);
+    border: 1px solid rgba(255, 240, 180, 0.9);
+    color: rgb(40, 24, 8);
+    padding: 6px 16px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+}
+
+.spv-sys-row--dirty {
+    box-shadow: inset 3px 0 0 rgb(255, 200, 60);
+}

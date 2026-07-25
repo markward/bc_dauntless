@@ -50,6 +50,14 @@ window.setShipPropertyViewer = function (data) {
                            (typeof data.selected_index === 'number')
                                ? data.selected_index : null);
 
+    // Save bar: surfaces the staged-edit count (data.pending_count); hidden
+    // while nothing is pending.
+    var bar = document.getElementById('spv-savebar');
+    var n = data.pending_count || 0;
+    var saveCount = document.getElementById('spv-savecount');
+    if (saveCount) saveCount.textContent = n;
+    if (bar) bar.style.display = n > 0 ? 'block' : 'none';
+
     var pop = document.getElementById('spv-popover');
     if (!pop) return;
     if (data.selected) {
@@ -64,11 +72,80 @@ window.setShipPropertyViewer = function (data) {
         pop.innerHTML = '<div class="spv-pop-title">' + escapeHtmlSPV(sel.name || '') + '</div>'
                       + rows;
         pop.style.display = 'block';
+        // Capture the selected subsystem's radius so the context-menu modal
+        // can pre-fill from it (the row payload itself carries no radius).
+        if (p.radius !== undefined && typeof data.selected_index === 'number') {
+            spvRowRadii[data.selected_index] = parseFloat(p.radius);
+        }
     } else {
         pop.style.display = 'none';
         pop.innerHTML = '';
     }
 };
+
+// ── Context menu / radius modal / Save bar wiring (Task 5) ─────────────────
+// Right-click a subsystem row -> context menu -> "Set Radius..." -> numeric
+// modal -> Apply stages the edit via 'set_radius:<json>'. The Save bar opens
+// an amend-confirm modal; confirming fires 'save'. All overlays notify the
+// host via 'overlay:1'/'overlay:0' so 3D orbit-drag is suppressed while an
+// overlay has mouse focus.
+var spvCtxIndex = null, spvCtxRadius = 0, spvRowRadii = {};
+
+function spvHideOverlays() {
+    ['spv-ctxmenu', 'spv-radius', 'spv-confirm'].forEach(function (id) {
+        var el = document.getElementById(id); if (el) el.style.display = 'none';
+    });
+    dauntlessEvent('ship-property-viewer/overlay:0');
+}
+window.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') spvHideOverlays();
+});
+document.addEventListener('click', function (e) {
+    var menu = document.getElementById('spv-ctxmenu');
+    if (menu && menu.style.display !== 'none' && !menu.contains(e.target)) {
+        menu.style.display = 'none';
+        if (document.getElementById('spv-radius').style.display === 'none'
+            && document.getElementById('spv-confirm').style.display === 'none') {
+            dauntlessEvent('ship-property-viewer/overlay:0');
+        }
+    }
+});
+
+window.shipPropertyViewerRowMenu = function (event, index) {
+    event.preventDefault(); event.stopPropagation();
+    spvCtxIndex = index;
+    spvCtxRadius = (spvRowRadii[index] !== undefined) ? spvRowRadii[index] : 0;
+    var menu = document.getElementById('spv-ctxmenu');
+    menu.style.left = event.clientX + 'px';
+    menu.style.top = event.clientY + 'px';
+    menu.style.display = 'block';
+    dauntlessEvent('ship-property-viewer/overlay:1');
+    return false;
+};
+window.shipPropertyViewerCtxRadius = function () {
+    document.getElementById('spv-ctxmenu').style.display = 'none';
+    var inp = document.getElementById('spv-radius-input');
+    inp.value = spvCtxRadius;
+    document.getElementById('spv-radius').style.display = 'flex';
+    inp.focus(); inp.select();
+};
+window.shipPropertyViewerRadiusApply = function () {
+    var v = parseFloat(document.getElementById('spv-radius-input').value);
+    if (!isNaN(v)) {
+        dauntlessEvent('ship-property-viewer/set_radius:'
+                       + JSON.stringify({i: spvCtxIndex, value: v}));
+    }
+    spvHideOverlays();
+};
+window.shipPropertyViewerRadiusCancel = function () { spvHideOverlays(); };
+window.shipPropertyViewerSave = function () {
+    document.getElementById('spv-confirm').style.display = 'flex';
+    dauntlessEvent('ship-property-viewer/overlay:1');
+};
+window.shipPropertyViewerConfirmSave = function () {
+    dauntlessEvent('ship-property-viewer/save'); spvHideOverlays();
+};
+window.shipPropertyViewerConfirmCancel = function () { spvHideOverlays(); };
 
 // Close button → send 'cancel' to Python via the same console-log bridge
 // that every other panel uses (defined in pause_menu.js):
@@ -135,8 +212,10 @@ function spvRowHtml(row, selectedIndex, isChild) {
         lead = '<span class="spv-sys-caret spv-sys-caret--none"></span>';
     }
     return '<div class="spv-sys-row' + (isChild ? ' spv-sys-row--child' : '')
-         +   (chosen ? ' spv-sys-row--chosen' : '') + '"'
-         +   ' onclick="shipPropertyViewerRow(' + row.index + ', ' + chosen + ')">'
+         +   (chosen ? ' spv-sys-row--chosen' : '')
+         +   (row.dirty === true ? ' spv-sys-row--dirty' : '') + '"'
+         +   ' onclick="shipPropertyViewerRow(' + row.index + ', ' + chosen + ')"'
+         +   ' oncontextmenu="return shipPropertyViewerRowMenu(event, ' + row.index + ')">'
          +   lead
          +   '<span class="spv-sys-row__name">' + escapeHtmlSPV(row.name || '') + '</span>'
          +   bar
