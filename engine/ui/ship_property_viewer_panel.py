@@ -229,13 +229,20 @@ class ShipPropertyViewerPanel(Panel):
         return "setShipPropertyViewer(" + json.dumps(payload) + ");"
 
     def _pending_edits(self) -> List[dict]:
-        """Staged radius edits as [{"name": ..., "value": ...}, ...], for the
-        Save-confirm modal's "listing the pending edits" (spec requirement).
-        Sorted by descriptor index for a stable, deterministic order."""
-        return [
-            {"name": self._descriptors[i]["name"], "value": v}
-            for i, v in sorted(self._pending_radius.items())
-        ]
+        """Modified subsystems with a tally of staged changes each, for the
+        Save-confirm modal, e.g. [{"name": "Center Impulse", "count": 1}].
+        Grouped by subsystem name so future multi-value edits show a real
+        tally; today each subsystem has at most one staged change (its radius).
+        Deterministic order: first-seen by ascending descriptor index."""
+        counts: dict = {}
+        order: List[str] = []
+        for i in sorted(self._pending_radius):
+            name = self._descriptors[i]["name"]
+            if name not in counts:
+                counts[name] = 0
+                order.append(name)
+            counts[name] += 1
+        return [{"name": n, "count": counts[n]} for n in order]
 
     def _subsystem_rows(self) -> List[dict]:
         """Left-column subsystem list as a two-level accordion: top-level

@@ -663,16 +663,23 @@ def test_esc_without_overlay_closes_panel(monkeypatch):
     assert p.is_open() is False
 
 
-def test_payload_lists_pending_edits(monkeypatch):
-    # Spec requirement: the Save-confirm modal must list the pending edits.
+def test_payload_lists_modified_subsystems_with_tally(monkeypatch):
+    # The Save-confirm modal lists modified subsystems + a change tally, e.g.
+    # "Center Impulse (1)" — grouped by subsystem, not one row per value.
     import engine.ui.ship_property_viewer_panel as mod
     monkeypatch.setattr(mod, "build_descriptors",
-                        lambda ship: [_rad_descriptor("Center Impulse")])
+                        lambda ship: [_rad_descriptor("Center Impulse"),
+                                      _rad_descriptor("Port Impulse")])
     p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
     p.open()
     p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
     data = _payload_data(p.render_payload())
-    assert data["pending"] == [{"name": "Center Impulse", "value": 0.5}]
+    assert data["pending"] == [{"name": "Center Impulse", "count": 1}]
+    # A second subsystem's edit adds its own grouped row.
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 1, "value": 0.3}))
+    data = _payload_data(p.render_payload())
+    assert data["pending"] == [{"name": "Center Impulse", "count": 1},
+                               {"name": "Port Impulse", "count": 1}]
 
 
 def test_subsystem_rows_carry_radius(monkeypatch):

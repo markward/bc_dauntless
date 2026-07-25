@@ -182,14 +182,14 @@ window.shipPropertyViewerRadiusApply = function () {
 };
 window.shipPropertyViewerRadiusCancel = function () { spvHideOverlays(); };
 window.shipPropertyViewerSave = function () {
-    // List the pending edits in the confirm modal (spec: "a confirmation
-    // listing the pending edits"), e.g. "Center Impulse: -> 0.5".
+    // List the modified subsystems in the confirm modal, each with a tally of
+    // its staged changes in brackets, e.g. "Center Impulse (1)".
     var body = document.getElementById('spv-confirm-body');
     if (body) {
         body.innerHTML = (spvPendingEdits || []).map(function (e) {
             return '<div class="spv-row">'
                  +   '<span class="spv-k">' + escapeHtmlSPV(e.name || '') + '</span>'
-                 +   '<span class="spv-v">&#8594; ' + escapeHtmlSPV(String(e.value)) + '</span>'
+                 +   '<span class="spv-v">(' + (e.count || 0) + ')</span>'
                  + '</div>';
         }).join('');
     }
