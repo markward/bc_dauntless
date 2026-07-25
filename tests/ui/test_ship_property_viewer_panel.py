@@ -619,3 +619,57 @@ def test_close_without_save_discards_pending(monkeypatch):
     p.close()
     p.open()
     assert _payload_data(p.render_payload())["pending_count"] == 0
+
+
+def test_esc_with_overlay_open_closes_overlay_not_panel(monkeypatch):
+    # ESC is read raw (GLFW), independent of CEF focus, by host_loop's
+    # modal-ESC router, which calls handle_key_esc() directly — while a CEF
+    # overlay (context menu / radius modal / confirm) is open, ESC must
+    # close ONLY the overlay and preserve staged edits, never tear down the
+    # whole panel (which would discard _pending_radius).
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    p.dispatch_event("overlay:1")
+    assert p._overlay_open is True
+
+    p.handle_key_esc()
+
+    assert p.is_open() is True
+    assert p._overlay_open is False
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 1          # edit preserved, not discarded
+    assert data["close_overlays"] is True       # one-shot signal to the JS
+
+    # One-shot: the flag clears itself after being surfaced once.
+    p._last_pushed = None
+    data2 = _payload_data(p.render_payload())
+    assert data2["close_overlays"] is False
+
+
+def test_esc_without_overlay_closes_panel(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    assert p._overlay_open is False
+
+    p.handle_key_esc()
+
+    assert p.is_open() is False
+
+
+def test_payload_lists_pending_edits(monkeypatch):
+    # Spec requirement: the Save-confirm modal must list the pending edits.
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.5}))
+    data = _payload_data(p.render_payload())
+    assert data["pending"] == [{"name": "Center Impulse", "value": 0.5}]

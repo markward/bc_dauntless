@@ -81,6 +81,12 @@ class ShipPropertyViewerPanel(Panel):
         # True while a CEF context menu / modal is open: handle_input suppresses
         # orbit + pick so clicks on that chrome don't reach the 3D view.
         self._overlay_open = False
+        # One-shot flag: set by handle_key_esc() when ESC closes an overlay
+        # (not the panel); render_payload() surfaces it once as
+        # payload["close_overlays"] then clears it. Deliberately excluded
+        # from the snapshot tuple so a payload carrying it always gets
+        # pushed even if nothing else changed.
+        self._close_overlays = False
         self._last_pushed: Optional[tuple] = None
         # Left-drag tracking (panel-local edge detection so we don't steal
         # the CEF mouse-release edge — see handle_input).
@@ -108,6 +114,7 @@ class ShipPropertyViewerPanel(Panel):
         self._expanded_groups = set()
         self._pending_radius = {}
         self._overlay_open = False
+        self._close_overlays = False
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -122,6 +129,7 @@ class ShipPropertyViewerPanel(Panel):
         self._expanded_groups = set()
         self._pending_radius = {}
         self._overlay_open = False
+        self._close_overlays = False
         self.camera = None
         self._lmb_down = False
         self._drag_last = None
@@ -213,9 +221,21 @@ class ShipPropertyViewerPanel(Panel):
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
             "pending_count": len(self._pending_radius),
+            "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
+            "close_overlays": self._close_overlays,
         }
+        self._close_overlays = False
         return "setShipPropertyViewer(" + json.dumps(payload) + ");"
+
+    def _pending_edits(self) -> List[dict]:
+        """Staged radius edits as [{"name": ..., "value": ...}, ...], for the
+        Save-confirm modal's "listing the pending edits" (spec requirement).
+        Sorted by descriptor index for a stable, deterministic order."""
+        return [
+            {"name": self._descriptors[i]["name"], "value": v}
+            for i, v in sorted(self._pending_radius.items())
+        ]
 
     def _subsystem_rows(self) -> List[dict]:
         """Left-column subsystem list as a two-level accordion: top-level
@@ -252,8 +272,22 @@ class ShipPropertyViewerPanel(Panel):
         self._last_pushed = None
 
     def handle_key_esc(self) -> None:
-        if self._visible:
-            self.close()
+        """ESC is dispatched raw by host_loop's modal-ESC router, independent
+        of CEF focus (see `_dispatch_modal_esc`) — so it must be the single
+        source of truth for "does ESC close the overlay or the panel", to
+        avoid a JS-vs-native race. While a CEF overlay (context menu / radius
+        modal / confirm) is open, ESC closes ONLY the overlay and preserves
+        any staged edits; only when no overlay is open does ESC close the
+        panel (discarding staged edits, matching the existing Cancel/close
+        behaviour)."""
+        if not self._visible:
+            return
+        if self._overlay_open:
+            self._overlay_open = False
+            self._close_overlays = True
+            self._last_pushed = None
+            return
+        self.close()
 
     # ------------------------------------------------------------------
     # Pure camera math (host-free → unit-testable in isolation)

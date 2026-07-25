@@ -22,6 +22,13 @@ window.setShipPropertyViewer = function (data) {
     if (!root) return;
     if (!data || data.visible !== true) {
         root.style.display = 'none';
+        // The panel can close (Cancel / mission swap / Task 5 Fix 2) while a
+        // context menu / modal is still up; leaving that chrome's inline
+        // display untouched means it reappears, already open, next time the
+        // viewer opens. Force every overlay closed alongside the root.
+        spvHideOverlaysNoEvent();
+        var bar0 = document.getElementById('spv-savebar');
+        if (bar0) bar0.style.display = 'none';
         return;
     }
     root.style.display = 'block';
@@ -58,6 +65,20 @@ window.setShipPropertyViewer = function (data) {
     if (saveCount) saveCount.textContent = n;
     if (bar) bar.style.display = n > 0 ? 'block' : 'none';
 
+    // Keep the confirm modal's pending-edits list in sync with the panel
+    // (populated into #spv-confirm-body when the Save bar opens it).
+    spvPendingEdits = data.pending || [];
+
+    // Server-driven ESC: the raw-GLFW modal-ESC router calls the panel's
+    // handle_key_esc() independent of CEF focus, so the panel (not this JS)
+    // owns "did ESC close an overlay or the whole panel" to avoid a race.
+    // One-shot data.close_overlays === true means ESC just closed an
+    // overlay — hide the overlay chrome WITHOUT re-firing overlay:0 (the
+    // panel already cleared _overlay_open itself).
+    if (data.close_overlays === true) {
+        spvHideOverlaysNoEvent();
+    }
+
     var pop = document.getElementById('spv-popover');
     if (!pop) return;
     if (data.selected) {
@@ -89,17 +110,27 @@ window.setShipPropertyViewer = function (data) {
 // an amend-confirm modal; confirming fires 'save'. All overlays notify the
 // host via 'overlay:1'/'overlay:0' so 3D orbit-drag is suppressed while an
 // overlay has mouse focus.
-var spvCtxIndex = null, spvCtxRadius = 0, spvRowRadii = {};
+//
+// ESC is deliberately NOT handled here. It's read raw (GLFW), independent of
+// CEF focus, by host_loop's modal-ESC router, which calls the panel's
+// handle_key_esc() — the single owner of "does ESC close the overlay or the
+// panel" (a JS keydown listener racing that would double-handle the same
+// key-press). The panel signals "ESC just closed an overlay" back to this
+// JS one-shot via payload.close_overlays (see setShipPropertyViewer above).
+var spvCtxIndex = null, spvCtxRadius = 0, spvRowRadii = {}, spvPendingEdits = [];
 
-function spvHideOverlays() {
+// Hide the overlay chrome without telling the host — used when the panel
+// itself already knows the overlay closed (ESC via close_overlays, or the
+// whole panel closing per Fix 2) so we don't double-fire overlay:0.
+function spvHideOverlaysNoEvent() {
     ['spv-ctxmenu', 'spv-radius', 'spv-confirm'].forEach(function (id) {
         var el = document.getElementById(id); if (el) el.style.display = 'none';
     });
+}
+function spvHideOverlays() {
+    spvHideOverlaysNoEvent();
     dauntlessEvent('ship-property-viewer/overlay:0');
 }
-window.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') spvHideOverlays();
-});
 document.addEventListener('click', function (e) {
     var menu = document.getElementById('spv-ctxmenu');
     if (menu && menu.style.display !== 'none' && !menu.contains(e.target)) {
@@ -139,6 +170,17 @@ window.shipPropertyViewerRadiusApply = function () {
 };
 window.shipPropertyViewerRadiusCancel = function () { spvHideOverlays(); };
 window.shipPropertyViewerSave = function () {
+    // List the pending edits in the confirm modal (spec: "a confirmation
+    // listing the pending edits"), e.g. "Center Impulse: -> 0.5".
+    var body = document.getElementById('spv-confirm-body');
+    if (body) {
+        body.innerHTML = (spvPendingEdits || []).map(function (e) {
+            return '<div class="spv-row">'
+                 +   '<span class="spv-k">' + escapeHtmlSPV(e.name || '') + '</span>'
+                 +   '<span class="spv-v">&#8594; ' + escapeHtmlSPV(String(e.value)) + '</span>'
+                 + '</div>';
+        }).join('');
+    }
     document.getElementById('spv-confirm').style.display = 'flex';
     dauntlessEvent('ship-property-viewer/overlay:1');
 };
