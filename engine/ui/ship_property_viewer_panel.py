@@ -55,6 +55,12 @@ TOOLS_COUNT = 3           # buttons in the row (glow / arcs / hull-texture)
 TOOLS_W_PT = TOOLS_COUNT * TOOLS_BTN_PT + (TOOLS_COUNT - 1) * TOOLS_GAP_PT
 TOOLS_H_PT = TOOLS_BTN_PT
 
+# Transform-tools row (#spv-transform-tools: Transform/Rotate/Scale), stacked
+# directly above #spv-tools with the same TOOLS_GAP_PT between the two rows.
+# Same width/button-size as the render row, so it shares TOOLS_W_PT.
+TRANSFORM_H_PT = TOOLS_BTN_PT
+TOOLS_CLUSTER_H_PT = TOOLS_H_PT + TOOLS_GAP_PT + TRANSFORM_H_PT
+
 # Wireframe colour for the selected subsystem's radius sphere — a soft green,
 # distinct from the orange glow-region and cyan weapon-arc overlays.
 SUBSYS_SPHERE_COLOR = (0.5, 1.0, 0.6)
@@ -827,7 +833,9 @@ class ShipPropertyViewerPanel(Panel):
     @staticmethod
     def _cursor_over_tools(x: float, y: float, dsf: float,
                           fb_w: float, fb_h: float) -> bool:
-        """Cursor (framebuffer px) inside the bottom-right tool-button cluster.
+        """Cursor (framebuffer px) inside the bottom-right tool-button
+        cluster — BOTH rows: the render-tools row (#spv-tools) and the
+        transform-tools row (#spv-transform-tools) stacked directly above it.
 
         Needs the viewport size (framebuffer px) because the cluster is anchored
         to the right/bottom edges. Returns False when the size is unknown."""
@@ -838,7 +846,7 @@ class ShipPropertyViewerPanel(Panel):
         w_pt, h_pt = fb_w / s, fb_h / s
         x0 = w_pt - TOOLS_MARGIN_PT - TOOLS_W_PT
         x1 = w_pt - TOOLS_MARGIN_PT
-        y0 = h_pt - TOOLS_MARGIN_PT - TOOLS_H_PT
+        y0 = h_pt - TOOLS_MARGIN_PT - TOOLS_CLUSTER_H_PT
         y1 = h_pt - TOOLS_MARGIN_PT
         return x0 <= px <= x1 and y0 <= py <= y1
 
