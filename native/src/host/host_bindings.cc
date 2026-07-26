@@ -230,6 +230,7 @@ std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
 // zero GL work; only rendered in viewer_mode.
 std::vector<renderer::DebugCylinder>         g_debug_cylinders;
 std::vector<renderer::DebugBox>              g_debug_boxes;
+std::vector<renderer::DebugSphere>           g_debug_spheres;
 std::unique_ptr<renderer::DebugVolumePass>   g_debug_volume_pass;
 renderer::TargetReticle                      g_target_reticle;
 std::unique_ptr<renderer::TargetReticlePass> g_target_reticle_pass;
@@ -546,6 +547,7 @@ void shutdown() {
     g_subsystem_pin_pass.reset();
     g_debug_cylinders.clear();
     g_debug_boxes.clear();
+    g_debug_spheres.clear();
     g_debug_volume_pass.reset();
     g_target_reticle = renderer::TargetReticle{};
     g_target_reticle_pass.reset();
@@ -908,6 +910,8 @@ void frame() {
         g_debug_volume_pass->render(g_debug_cylinders, g_camera);
     if (viewer_mode && g_debug_volume_pass && !g_debug_boxes.empty())
         g_debug_volume_pass->render(g_debug_boxes, g_camera);
+    if (viewer_mode && g_debug_volume_pass && !g_debug_spheres.empty())
+        g_debug_volume_pass->render(g_debug_spheres, g_camera);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty()) {
         // Device-pixel ratio = framebuffer / logical window height, so pins
         // keep a constant apparent size on HiDPI/Retina displays.
@@ -2471,6 +2475,32 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("clear_debug_boxes",
           []() { g_debug_boxes.clear(); },
           "Clear the debug wireframe boxes. Takes effect next frame().");
+
+    m.def("set_debug_spheres",
+          [](const std::vector<py::dict>& descs) {
+              g_debug_spheres.clear();
+              g_debug_spheres.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::DebugSphere s;
+                  if (d.contains("center")) {
+                      auto v = d["center"].cast<std::array<float, 3>>();
+                      s.center = {v[0], v[1], v[2]};
+                  }
+                  if (d.contains("radius")) s.radius = d["radius"].cast<float>();
+                  if (d.contains("color")) {
+                      auto v = d["color"].cast<std::array<float, 3>>();
+                      s.color = {v[0], v[1], v[2]};
+                  }
+                  g_debug_spheres.push_back(s);
+              }
+          },
+          py::arg("spheres"),
+          "Set the world-space debug wireframe spheres (SPV selected-subsystem "
+          "volume; viewer_mode only). Each dict: center, radius, color.");
+
+    m.def("clear_debug_spheres",
+          []() { g_debug_spheres.clear(); },
+          "Clear the debug wireframe spheres. Takes effect next frame().");
 
     m.def("set_hologram_ship",
           [](scenegraph::InstanceId iid,

@@ -287,6 +287,19 @@ def test_toggle_off_no_selection_no_pending_still_yields_nothing(monkeypatch):
     assert boxes == []
 
 
+def test_pending_none_hides_baked_region(monkeypatch):
+    monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
+    monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))
+    # A baked cylinder that WOULD draw if not hidden.
+    monkeypatch.setattr(gro, "baked_region_ops",
+                        lambda prop, pos, name: [("cylinder", (0.0, 0.0, 0.0),
+                                                  (0.0, 0.0, 1.0), 0.25, 2.0)])
+    ship = _BoxShip([_BoxSub("Center Impulse", object())])
+    pending = {"Center Impulse": None}          # staged removal
+    cyls, boxes = gro.build_glow_region_overlay(ship, show_all=True, pending=pending)
+    assert cyls == [] and boxes == []           # hidden, not the baked region
+
+
 def test_overlay_returns_cylinders_and_boxes_tuple(monkeypatch):
     monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
     monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))

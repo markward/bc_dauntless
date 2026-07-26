@@ -235,9 +235,10 @@
            can suppress orbit-drag while they're open.
            Spec: docs/superpowers/sdd/2026-07-25-spv-hardpoint-value-override-editing/task-5-brief.md -->
       <div id="spv-ctxmenu" class="spv-ctxmenu" style="display:none;">
-        <div class="spv-ctxmenu__item" onclick="shipPropertyViewerCtxRadius()">Set Radius…</div>
-        <div id="spv-ctx-light" class="spv-ctxmenu__item" style="display:none;"
-             onclick="shipPropertyViewerCtxLight()">Edit Light…</div>
+        <div id="spv-ctx-radius" class="spv-ctxmenu__item" onclick="shipPropertyViewerCtxRadius()">Set Radius…</div>
+        <div id="spv-ctx-addlight" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxAddLight()">Add Light Volume</div>
+        <div id="spv-ctx-light" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxLight()">Edit Light…</div>
+        <div id="spv-ctx-removelight" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxRemoveLight()">Remove Light Volume</div>
       </div>
       <div id="spv-radius" class="spv-modal-backdrop" style="display:none;">
         <div class="spv-modal">

@@ -823,29 +823,87 @@ def test_save_routes_light_region_edit(monkeypatch):
     assert _payload_data(p.render_payload())["pending_count"] == 0
 
 
-def test_subsystem_row_carries_light_flag_and_region(monkeypatch):
-    # The CEF context menu gates "Edit Light…" on row.light; without the row
-    # carrying light/light_region the menu item can never appear.
+def test_subsystem_pins_shows_all_when_nothing_selected(monkeypatch):
     import engine.ui.ship_property_viewer_panel as mod
     monkeypatch.setattr(mod, "build_descriptors",
-                        lambda ship: [_light_descriptor("Center Impulse")])
-    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
-    p.open()
-    row = _payload_data(p.render_payload())["subsystems"][0]
-    assert row["light"] is True
-    assert row["light_region"]["shape"] == "Cylinder"
-    # baked-shaped tuples survive JSON as arrays (the JS reads radius[0] etc.)
-    assert row["light_region"]["radius"] == [0.25]
-
-
-def test_non_light_subsystem_row_has_no_light(monkeypatch):
-    import engine.ui.ship_property_viewer_panel as mod
-    monkeypatch.setattr(mod, "build_descriptors",
-                        lambda ship: [_rad_descriptor("Phaser Bank")])
+                        lambda ship: [_rad_descriptor("A"), _rad_descriptor("B")])
     p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
     p.open()
-    row = _payload_data(p.render_payload())["subsystems"][0]
-    assert row.get("light", False) is False
+    pins = p.subsystem_pins()
+    assert len(pins) == 2
+    assert all(sel is False for _pos, _icon, sel in pins)
+
+
+def test_subsystem_pins_hides_others_when_selected(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("A"), _rad_descriptor("B")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.selected_index = 1
+    pins = p.subsystem_pins()
+    assert len(pins) == 1                 # only the selected pin renders
+    assert pins[0][2] is True             # flagged selected
+    # Deselecting restores every pin.
+    p.selected_index = None
+    assert len(p.subsystem_pins()) == 2
+
+
+def test_selected_subsystem_sphere_from_radius(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("A")])   # radius 0.25
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    assert p.selected_subsystem_sphere() is None       # nothing selected
+    p.selected_index = 0
+    sph = p.selected_subsystem_sphere()
+    assert sph["center"] == (0, 0, 0)                  # world_pos passthrough
+    assert sph["radius"] == 0.25
+    assert sph["color"] == mod.SUBSYS_SPHERE_COLOR
+
+
+def test_selected_sphere_reflects_pending_radius(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Shield Generator")])  # 0.25
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.selected_index = 0
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.7}))
+    # The volume sphere reflects the STAGED radius immediately on Apply.
+    assert p.selected_subsystem_sphere()["radius"] == 0.7
+
+
+def test_selected_sphere_reflects_saved_radius_after_save(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+
+    class _Target:
+        def write(self, leaf, edits): pass
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Shield Generator")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.selected_index = 0
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.7}))
+    p.dispatch_event("save")
+    # Save persisted to file (not the live template); the sphere keeps showing
+    # the saved radius for the rest of the session rather than snapping back.
+    assert p.selected_subsystem_sphere()["radius"] == 0.7
+
+
+def test_selected_subsystem_sphere_none_without_radius(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    d = _rad_descriptor("A")
+    d["properties"]["radius"] = None                   # no usable radius
+    monkeypatch.setattr(mod, "build_descriptors", lambda ship: [d])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.selected_index = 0
+    assert p.selected_subsystem_sphere() is None
 
 
 def test_saved_light_keeps_driving_preview_after_save(monkeypatch):
@@ -870,10 +928,11 @@ def test_saved_light_keeps_driving_preview_after_save(monkeypatch):
     data = _payload_data(p.render_payload())
     assert data["pending_count"] == 0
     assert data["subsystems"][0]["dirty"] is False
-    # ...but the saved Box still drives the live overlay + the row pre-fill.
+    # ...but the saved Box still drives the live overlay + the light-child pre-fill.
     assert p.pending_light_specs()["Center Impulse"]["shape"] == "Box"
-    assert data["subsystems"][0]["light_region"]["shape"] == "Box"
-    assert data["subsystems"][0]["light_region"]["scale"] == [0.5, 0.6, 0.7]
+    child = data["subsystems"][0]["children"][0]
+    assert child["light_region"]["shape"] == "Box"
+    assert child["light_region"]["scale"] == [0.5, 0.6, 0.7]
 
 
 def test_saved_light_resets_on_close(monkeypatch):
@@ -907,5 +966,160 @@ def test_row_light_region_reflects_pending_after_edit(monkeypatch):
     p.dispatch_event("set_light:" + _json.dumps(
         {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
     row = _payload_data(p.render_payload())["subsystems"][0]
-    assert row["light_region"]["shape"] == "Box"
-    assert row["light_region"]["scale"] == [0.5, 0.6, 0.7]
+    child = row["children"][0]
+    assert child["light_region"]["shape"] == "Box"
+    assert child["light_region"]["scale"] == [0.5, 0.6, 0.7]
+
+
+def _dark_descriptor(name):
+    d = _rad_descriptor(name)
+    d["light"] = False
+    d["light_region"] = {"shape": "Sphere", "position": (1.0, 0.0, 0.0),
+                         "axis": (0.0, -1.0, 0.0), "radius": (0.25,),
+                         "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25)}
+    return d
+
+
+def test_add_light_stages_default_and_selects_it(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_dark_descriptor("Phaser Bank")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    assert p._has_light(0) is False
+    assert p.dispatch_event("add_light:0") is True
+    assert p._has_light(0) is True
+    assert p._selected_light_index == 0
+    assert p.selected_index is None                 # mutual exclusion
+    assert p.pending_light_specs()["Phaser Bank"]["shape"] == "Sphere"
+
+
+def test_add_light_rejected_when_already_lit(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])  # baked light
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    assert p._has_light(0) is True
+    assert p.dispatch_event("add_light:0") is False
+
+
+def test_remove_light_hides_node_and_clears_selection(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("select_light:0")
+    assert p._selected_light_index == 0
+    assert p.dispatch_event("remove_light:0") is True
+    assert p._has_light(0) is False
+    assert p._selected_light_index is None
+    # Overlay must HIDE the baked region: name maps to None.
+    assert "Center Impulse" in p.pending_light_specs()
+    assert p.pending_light_specs()["Center Impulse"] is None
+
+
+def test_select_pin_and_light_are_mutually_exclusive(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("select_pin:0")
+    assert p.selected_index == 0 and p._selected_light_index is None
+    assert p.selected_subsystem_sphere() is not None    # sphere while subsystem selected
+    p.dispatch_event("select_light:0")
+    assert p._selected_light_index == 0 and p.selected_index is None
+    assert p.selected_subsystem_sphere() is None         # no sphere while light selected
+
+
+def test_tree_has_light_child_and_add_flag(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    rows = p._subsystem_rows()
+    row = rows[0]
+    assert row["has_light"] is True
+    kids = [c for c in row.get("children", []) if c.get("kind") == "light"]
+    assert len(kids) == 1
+    assert kids[0]["light_of"] == 0 and kids[0]["name"] == "Light Volume"
+
+
+def test_pins_show_only_parent_when_light_selected(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("A"), _light_descriptor("B")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("select_light:1")
+    pins = p.subsystem_pins()
+    assert len(pins) == 1                    # only the parent of the selected light
+
+
+def test_save_routes_removal_as_empty_region(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    calls = []
+
+    class _Target:
+        def write(self, leaf, edits): calls.append((leaf, edits))
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("remove_light:0")
+    p.dispatch_event("save")
+    assert calls == [("galaxy", [("Center Impulse", "__region__", 0, [])])]
+
+
+def test_light_child_carries_region(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    child = _payload_data(p.render_payload())["subsystems"][0]["children"][0]
+    assert child["kind"] == "light"
+    assert child["light_region"]["shape"] == "Cylinder"
+
+
+def test_light_child_reflects_pending_after_edit(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    child = _payload_data(p.render_payload())["subsystems"][0]["children"][0]
+    assert child["light_region"]["shape"] == "Box"
+
+
+def test_dark_subsystem_row_has_no_light_child(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_dark_descriptor("Phaser Bank")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    row = _payload_data(p.render_payload())["subsystems"][0]
+    assert row["has_light"] is False
+    assert [c for c in row.get("children", []) if c.get("kind") == "light"] == []
+
+
+def test_add_light_rejected_on_descriptor_without_light_region(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    mount = {"name": "Shuttle Bay", "icon_id": 0, "world_pos": (0, 0, 0),
+             "state": "mount", "kind": "mount", "targetable": False,
+             "condition_pct": None, "parent_index": None,
+             "properties": {"name": "Shuttle Bay"}}   # NO light_region key
+    monkeypatch.setattr(mod, "build_descriptors", lambda ship: [mount])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: object())
+    p.open()
+    assert p.dispatch_event("add_light:0") is False
+    assert p._has_light(0) is False
+    assert 0 not in p._pending_light

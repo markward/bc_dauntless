@@ -1406,6 +1406,14 @@ class ShipClass(DamageableObject):
         if dp is not None: subsystem.SetDisabledPercentage(dp)
         rc = prop.GetRepairComplexity()
         if rc is not None: subsystem.SetRepairComplexity(rc)
+        # Radius (the subsystem's damage sphere) is set on the hardpoint for
+        # sensors/shields/etc. too, not just impulse pods — copy it so
+        # GetRadius() isn't left at the 0.0 default (the SPV volume sphere and
+        # any radius-based logic need the real value). 0.0 = "not set": don't
+        # clobber a subsystem that has no authored radius.
+        rad = prop.GetRadius()
+        if rad:
+            subsystem.SetRadius(rad)
 
     # ── Targeting ────────────────────────────────────────────────────────────
     def GetTarget(self):                          return self._target

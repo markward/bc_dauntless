@@ -469,3 +469,6 @@
 .spv-sys-row--dirty {
     box-shadow: inset 3px 0 0 rgb(255, 200, 60);
 }
+
+.spv-sys-row--light .spv-sys-row__name { color: #ffd9a0; font-style: italic; }
+.spv-sys-row--light.spv-sys-row--chosen { background: rgba(255, 180, 90, 0.22); }

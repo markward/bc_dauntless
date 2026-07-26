@@ -124,10 +124,11 @@ def _lit(v) -> str:
 
 def _emit_function(leaf, per_sub) -> str:
     out = ["def _%s(find):" % leaf, '    """%s."""' % leaf]
-    if not per_sub:
+    non_empty = [(s, c) for s, c in per_sub.items() if c]
+    if not non_empty:
         out.append("    return")
     else:
-        for subsystem, calls in per_sub.items():
+        for subsystem, calls in non_empty:
             out.append("    p = find(%s)" % _lit(subsystem))
             out.append("    if p is not None:")
             for setter, args in calls:

@@ -7308,13 +7308,12 @@ def run(mission_name: Optional[str] = None,
                 if _player_iid_spv is not None:
                     r.set_visible(_player_iid_spv, False)
                     r.set_hologram_ship(_player_iid_spv)
-                r.set_subsystem_pins([
-                    (d["world_pos"], d["icon_id"],
-                     i == ship_property_viewer.selected_index)
-                    for i, d in enumerate(ship_property_viewer.descriptors())
-                ])
-                # Phaser strip (always) + firing-arc (selected) overlay; the
-                # Weapon Arcs toggle adds envelopes for EVERY arc weapon.
+                # Selection-scoped pins: only the selected subsystem's pin
+                # renders while one is selected; all render when deselected.
+                r.set_subsystem_pins(ship_property_viewer.subsystem_pins())
+                # Selection-scoped phaser overlay: the SELECTED bank's emitter
+                # strip, plus its firing arc only when the Weapon Arcs toggle is
+                # on (arc scoped to the selected weapon). Nothing when unselected.
                 from engine.ui.phaser_overlay import build_phaser_overlay
                 r.set_spv_overlay_beams(
                     build_phaser_overlay(
@@ -7323,19 +7322,23 @@ def run(mission_name: Optional[str] = None,
                         show_all_arcs=ship_property_viewer.show_weapon_arcs)
                 )
                 # Glow regions as orange wireframe cylinders (debug volume
-                # pass): the toggle shows every subsystem's; with it off, a
-                # selected subsystem still reveals its own (mirroring the
-                # selected-pin firing arc).
+                # pass): the toggle shows every subsystem's; with it off, the
+                # selected LIGHT node reveals its own (the subsystem pin's
+                # selection drives the damage-radius sphere instead).
                 from engine.ui.glow_region_overlay import (
                     build_glow_region_overlay,
                 )
                 _cyls, _boxes = build_glow_region_overlay(
                     player,
-                    selected_name=ship_property_viewer.selected_name(),
+                    selected_name=ship_property_viewer.selected_light_name(),
                     show_all=ship_property_viewer.show_glow_regions,
                     pending=ship_property_viewer.pending_light_specs())
                 r.set_debug_cylinders(_cyls)
                 r.set_debug_boxes(_boxes)
+                # Selected subsystem's damage-radius volume as a wireframe
+                # sphere at its icon (only while a subsystem is selected).
+                _sphere = ship_property_viewer.selected_subsystem_sphere()
+                r.set_debug_spheres([_sphere] if _sphere else [])
                 # The gameplay target reticle is hidden while the viewer owns
                 # the frame; it returns on close via the else branch below.
                 r.clear_target_reticle()
@@ -7351,6 +7354,7 @@ def run(mission_name: Optional[str] = None,
                     r.clear_spv_overlay_beams()
                     r.clear_debug_cylinders()
                     r.clear_debug_boxes()
+                    r.clear_debug_spheres()
                     r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
                     r.set_spv_hull_mode(False)
                     _spv_hidden_iid = None

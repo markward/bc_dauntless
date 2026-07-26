@@ -149,3 +149,42 @@ def test_set_region_result_round_trips():
     m2 = _module(text)
     assert w.read_models(m2) == models
     assert w.emit(w.read_models(m2)) == text
+
+
+def test_set_region_empty_calls_clears_and_emit_drops_block():
+    m = _module('''
+def _x(find):
+    p = find("A")
+    if p is not None:
+        p.SetGlowRegionShape(0, "Sphere")
+        p.SetGlowRegionRadius(0, 0.25)
+    p = find("B")
+    if p is not None:
+        p.SetRadius(0.5)
+OVERRIDES = {"x": _x}
+''')
+    models = w.read_models(m)
+    w.set_region(models, "x", "A", 0, [])          # remove A's only region
+    text = w.emit(models)
+    ast.parse(text)                                # valid python (no empty `if:` body)
+    assert 'find("A")' not in text                 # A's block dropped entirely
+    assert 'find("B")' in text                     # B preserved
+    m2 = _module(text)
+    assert w.read_models(m2) == {"x": {"B": [("SetRadius", (0.5,))]}}
+    assert w.emit(w.read_models(m2)) == text        # canonical fixed point
+
+
+def test_emit_all_empty_subsystems_emits_return():
+    m = _module('''
+def _x(find):
+    p = find("A")
+    if p is not None:
+        p.SetGlowRegionShape(0, "Sphere")
+OVERRIDES = {"x": _x}
+''')
+    models = w.read_models(m)
+    w.set_region(models, "x", "A", 0, [])
+    text = w.emit(models)
+    ast.parse(text)
+    m2 = _module(text)
+    assert w.read_models(m2) == {"x": {}}           # empty function, still callable

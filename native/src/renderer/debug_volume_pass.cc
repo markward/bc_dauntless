@@ -27,7 +27,8 @@ void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); }
 const std::string kFs = R"(#version 330 core
 out vec4 frag_color;
 uniform vec3 u_color;
-void main() { frag_color = vec4(u_color, 1.0); }
+uniform float u_alpha;   // 1.0 opaque (cylinders/boxes); < 1 for the sphere cage
+void main() { frag_color = vec4(u_color, u_alpha); }
 )";
 
 }  // namespace
@@ -39,6 +40,8 @@ DebugVolumePass::~DebugVolumePass() {
     if (vao_) glDeleteVertexArrays(1, &vao_);
     if (box_vbo_) glDeleteBuffers(1, &box_vbo_);
     if (box_vao_) glDeleteVertexArrays(1, &box_vao_);
+    if (sphere_vbo_) glDeleteBuffers(1, &sphere_vbo_);
+    if (sphere_vao_) glDeleteVertexArrays(1, &sphere_vao_);
 }
 
 void DebugVolumePass::ensure_resources() {
@@ -87,6 +90,7 @@ void DebugVolumePass::render(const std::vector<DebugCylinder>& cylinders,
     glDisable(GL_CULL_FACE);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glLineWidth(1.5f);
+    shader_->set_float("u_alpha", 1.0f);   // cylinders opaque
     glBindVertexArray(vao_);
 
     for (const auto& c : cylinders) {
@@ -161,6 +165,7 @@ void DebugVolumePass::render(const std::vector<DebugBox>& boxes,
     glDisable(GL_CULL_FACE);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glLineWidth(1.5f);
+    shader_->set_float("u_alpha", 1.0f);   // boxes opaque
     glBindVertexArray(box_vao_);
 
     for (const auto& b : boxes) {
@@ -175,6 +180,85 @@ void DebugVolumePass::render(const std::vector<DebugBox>& boxes,
     }
 
     glBindVertexArray(0);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+}
+
+void DebugVolumePass::ensure_sphere_resources() {
+    if (sphere_vao_) return;
+    if (!shader_) shader_ = std::make_unique<Shader>(kVs, kFs);
+
+    // Unit-radius UV sphere (lat x lon quads split into triangles); rendered as
+    // GL_LINE it reads as a lat/long wire cage.
+    const int kLat = 12, kLon = 16;
+    auto on_sphere = [](float theta, float phi, float out[3]) {
+        const float st = std::sin(theta);
+        out[0] = st * std::cos(phi);
+        out[1] = std::cos(theta);
+        out[2] = st * std::sin(phi);
+    };
+    std::vector<float> verts;
+    for (int i = 0; i < kLat; ++i) {
+        const float t0 = glm::pi<float>() * (static_cast<float>(i) / kLat);
+        const float t1 = glm::pi<float>() * (static_cast<float>(i + 1) / kLat);
+        for (int j = 0; j < kLon; ++j) {
+            const float p0 = glm::two_pi<float>() * (static_cast<float>(j) / kLon);
+            const float p1 = glm::two_pi<float>() * (static_cast<float>(j + 1) / kLon);
+            float a[3], b[3], c[3], d[3];
+            on_sphere(t0, p0, a); on_sphere(t0, p1, b);
+            on_sphere(t1, p1, c); on_sphere(t1, p0, d);
+            const float tri[6][3] = {
+                {a[0],a[1],a[2]}, {b[0],b[1],b[2]}, {c[0],c[1],c[2]},
+                {a[0],a[1],a[2]}, {c[0],c[1],c[2]}, {d[0],d[1],d[2]},
+            };
+            for (auto& v : tri) { verts.push_back(v[0]); verts.push_back(v[1]); verts.push_back(v[2]); }
+        }
+    }
+    sphere_vertex_count_ = static_cast<int>(verts.size() / 3);
+
+    glGenVertexArrays(1, &sphere_vao_);
+    glGenBuffers(1, &sphere_vbo_);
+    glBindVertexArray(sphere_vao_);
+    glBindBuffer(GL_ARRAY_BUFFER, sphere_vbo_);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(verts.size() * sizeof(float)),
+                 verts.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+    glBindVertexArray(0);
+}
+
+void DebugVolumePass::render(const std::vector<DebugSphere>& spheres,
+                             const scenegraph::Camera& camera) {
+    if (spheres.empty()) return;
+    ensure_sphere_resources();
+
+    const glm::mat4 vp = camera.proj_matrix() * camera.view_matrix();
+    shader_->use();
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    glLineWidth(1.5f);
+    shader_->set_float("u_alpha", 0.5f);   // sphere cage at 50% opacity
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBindVertexArray(sphere_vao_);
+
+    for (const auto& s : spheres) {
+        glm::mat4 M(1.0f);
+        M[0] = glm::vec4(s.radius, 0.0f, 0.0f, 0.0f);   // uniform scale
+        M[1] = glm::vec4(0.0f, s.radius, 0.0f, 0.0f);
+        M[2] = glm::vec4(0.0f, 0.0f, s.radius, 0.0f);
+        M[3] = glm::vec4(s.center, 1.0f);
+        shader_->set_vec3("u_color", s.color);
+        shader_->set_mat4("u_mvp", vp * M);
+        glDrawArrays(GL_TRIANGLES, 0, sphere_vertex_count_);
+    }
+
+    glBindVertexArray(0);
+    glDisable(GL_BLEND);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
