@@ -848,6 +848,54 @@ def test_non_light_subsystem_row_has_no_light(monkeypatch):
     assert row.get("light", False) is False
 
 
+def test_saved_light_keeps_driving_preview_after_save(monkeypatch):
+    # After Save, the wireframe preview + modal pre-fill must keep showing the
+    # SAVED shape (the file change only reaches the live template on the next
+    # ship build), not snap back to the pre-save baked shape.
+    import engine.ui.ship_property_viewer_panel as mod
+
+    class _Target:
+        def write(self, leaf, edits): pass
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    p.dispatch_event("save")
+    # Dirty/Save-bar state clears (the edit is no longer unsaved)...
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 0
+    assert data["subsystems"][0]["dirty"] is False
+    # ...but the saved Box still drives the live overlay + the row pre-fill.
+    assert p.pending_light_specs()["Center Impulse"]["shape"] == "Box"
+    assert data["subsystems"][0]["light_region"]["shape"] == "Box"
+    assert data["subsystems"][0]["light_region"]["scale"] == [0.5, 0.6, 0.7]
+
+
+def test_saved_light_resets_on_close(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+
+    class _Target:
+        def write(self, leaf, edits): pass
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    p.dispatch_event("save")
+    p.close()
+    p.open()
+    assert p.pending_light_specs() == {}
+
+
 def test_row_light_region_reflects_pending_after_edit(monkeypatch):
     # After staging an Edit Light change, the row's light_region pre-fill
     # should reflect the pending spec (so re-opening the modal shows it).

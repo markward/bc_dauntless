@@ -80,6 +80,12 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_radius: dict = {}
         # Staged glow/light edits: descriptor index -> baked-shaped region spec.
         self._pending_light: dict = {}
+        # Glow/light edits saved THIS session (descriptor index -> spec). Save
+        # persists to the file, which only reaches the live template on the next
+        # ship build — so we keep the saved spec here to keep driving the SPV's
+        # live wireframe + modal pre-fill (not dirty, no Save bar). Reset on
+        # open/close. See pending_light_specs / the save handler.
+        self._saved_light: dict = {}
         # True while a CEF context menu / modal is open: handle_input suppresses
         # orbit + pick so clicks on that chrome don't reach the 3D view.
         self._overlay_open = False
@@ -116,6 +122,7 @@ class ShipPropertyViewerPanel(Panel):
         self._expanded_groups = set()
         self._pending_radius = {}
         self._pending_light = {}
+        self._saved_light = {}
         self._overlay_open = False
         self._close_overlays = False
         target = self._fit_target()
@@ -132,6 +139,7 @@ class ShipPropertyViewerPanel(Panel):
         self._expanded_groups = set()
         self._pending_radius = {}
         self._pending_light = {}
+        self._saved_light = {}
         self._overlay_open = False
         self._close_overlays = False
         self.camera = None
@@ -279,9 +287,12 @@ class ShipPropertyViewerPanel(Panel):
             # else the baked region.
             row["light"] = bool(d.get("light", False))
             if d.get("light"):
-                row["light_region"] = (self._pending_light[i]
-                                       if i in self._pending_light
-                                       else d.get("light_region"))
+                if i in self._pending_light:
+                    row["light_region"] = self._pending_light[i]
+                elif i in self._saved_light:
+                    row["light_region"] = self._saved_light[i]
+                else:
+                    row["light_region"] = d.get("light_region")
             by_index[i] = row
             parent = by_index.get(d.get("parent_index"))
             if parent is not None:
@@ -294,10 +305,18 @@ class ShipPropertyViewerPanel(Panel):
         return rows
 
     def pending_light_specs(self) -> dict:
-        """{subsystem_name: baked-shaped region spec} for the live overlay."""
-        return {self._descriptors[i]["name"]: spec
-                for i, spec in self._pending_light.items()
-                if 0 <= i < len(self._descriptors)}
+        """{subsystem_name: baked-shaped region spec} for the live overlay.
+
+        Includes both staged (unsaved) edits and edits saved this session, so
+        the wireframe keeps showing a saved shape until the next ship build
+        refreshes the baked template. A staged edit on the same subsystem wins
+        over its saved spec."""
+        out: dict = {}
+        for source in (self._saved_light, self._pending_light):
+            for i, spec in source.items():
+                if 0 <= i < len(self._descriptors):
+                    out[self._descriptors[i]["name"]] = spec
+        return out
 
     def invalidate(self) -> None:
         self._last_pushed = None
@@ -614,6 +633,11 @@ class ShipPropertyViewerPanel(Panel):
                 self._last_pushed = None
                 return True
             self._pending_radius = {}
+            # Keep the just-saved glow specs driving the in-session preview: the
+            # file write only reaches the live template on the next ship build,
+            # so without this the wireframe would snap back to the old baked
+            # shape right after Save (they are no longer "dirty", though).
+            self._saved_light.update(self._pending_light)
             self._pending_light = {}
             self._last_pushed = None
             return True
