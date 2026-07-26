@@ -54,8 +54,8 @@ window.setShipPropertyViewer = function (data) {
     }
 
     renderSPVSubsystemList(data.subsystems || [],
-                           (typeof data.selected_index === 'number')
-                               ? data.selected_index : null);
+        (typeof data.selected_index === 'number') ? data.selected_index : null,
+        (typeof data.selected_light_index === 'number') ? data.selected_light_index : null);
 
     // Save bar: surfaces the staged-edit count (data.pending_count); hidden
     // while nothing is pending.
@@ -121,6 +121,12 @@ var spvCtxIndex = null, spvCtxRadius = 0, spvRowRadii = {}, spvPendingEdits = []
 var spvRowLight = {};   // index -> light_region spec (or true) for light rows
 var spvLight = null;    // working spec while the modal is open
 
+// A light-volume node's working seed lives on the row (row.light_region), keyed
+// by its parent subsystem index (row.light_of). Track the right-clicked node so
+// the context menu knows which items to show.
+var spvCtxKind = 'subsystem';       // 'subsystem' | 'light'
+var spvCtxLightOf = null;           // parent subsystem index for a light node
+
 // Hide the overlay chrome without telling the host — used when the panel
 // itself already knows the overlay closed (ESC via close_overlays, or the
 // whole panel closing per Fix 2) so we don't double-fire overlay:0.
@@ -144,18 +150,57 @@ document.addEventListener('click', function (e) {
     }
 });
 
-window.shipPropertyViewerRowMenu = function (event, index) {
+// Light node row click: select this light (or deselect if already selected).
+window.shipPropertyViewerLightRow = function (lightOf, chosen) {
+    dauntlessEvent('ship-property-viewer/' +
+                   (chosen ? 'deselect' : ('select_light:' + lightOf)));
+};
+
+// Right-click a subsystem row: Set Radius always; Add Light Volume only when the
+// subsystem has no light yet.
+window.shipPropertyViewerRowMenu = function (event, index, hasLight) {
     event.preventDefault(); event.stopPropagation();
-    spvCtxIndex = index;
+    spvCtxKind = 'subsystem'; spvCtxIndex = index; spvCtxLightOf = null;
     spvCtxRadius = (spvRowRadii[index] !== undefined) ? spvRowRadii[index] : 0;
-    var lightItem = document.getElementById('spv-ctx-light');
-    if (lightItem) lightItem.style.display = spvRowLight[index] ? 'block' : 'none';
+    spvShowMenuItems({radius: true, addlight: !hasLight, light: false, removelight: false});
+    spvOpenMenuAt(event);
+    return false;
+};
+
+// Right-click a light node: Edit + Remove.
+window.shipPropertyViewerLightMenu = function (event, lightOf) {
+    event.preventDefault(); event.stopPropagation();
+    spvCtxKind = 'light'; spvCtxLightOf = lightOf; spvCtxIndex = lightOf;
+    spvShowMenuItems({radius: false, addlight: false, light: true, removelight: true});
+    spvOpenMenuAt(event);
+    return false;
+};
+
+function spvShowMenuItems(show) {
+    var map = {radius: 'spv-ctx-radius', addlight: 'spv-ctx-addlight',
+               light: 'spv-ctx-light', removelight: 'spv-ctx-removelight'};
+    Object.keys(map).forEach(function (k) {
+        var el = document.getElementById(map[k]);
+        if (el) el.style.display = show[k] ? 'block' : 'none';
+    });
+}
+function spvOpenMenuAt(event) {
     var menu = document.getElementById('spv-ctxmenu');
     menu.style.left = event.clientX + 'px';
     menu.style.top = event.clientY + 'px';
     menu.style.display = 'block';
     dauntlessEvent('ship-property-viewer/overlay:1');
-    return false;
+}
+
+// Add Light Volume (subsystem context) → stage a default, then Python selects it.
+window.shipPropertyViewerCtxAddLight = function () {
+    dauntlessEvent('ship-property-viewer/add_light:' + spvCtxIndex);
+    spvHideOverlays();
+};
+// Remove Light Volume (light-node context).
+window.shipPropertyViewerCtxRemoveLight = function () {
+    dauntlessEvent('ship-property-viewer/remove_light:' + spvCtxLightOf);
+    spvHideOverlays();
 };
 // Radius is edited with a mouse-only stepper: the engine has no keyboard->CEF
 // forwarding, so a typed <input> can't receive characters. spvRadiusValue holds
@@ -332,70 +377,76 @@ window.shipPropertyViewerGroupToggle = function (index) {
     dauntlessEvent('ship-property-viewer/toggle_group:' + index);
 };
 
-// One list row (category or child). row.index is the pin-descriptor index.
-function spvRowHtml(row, selectedIndex, isChild) {
-    var chosen = (selectedIndex === row.index);
-    var eye = row.targetable ? SPV_EYE_OPEN : SPV_EYE_SHUT;
-    var eyeCls = row.targetable ? '' : ' spv-sys-row__eye--shut';
-    var bar = (typeof row.condition_pct === 'number')
-        ? '<span class="spv-sys-row__bar" style="--bar-pct:'
-          + Math.max(0, Math.min(100, row.condition_pct)) + '%"></span>'
-        : '';
+function spvSeedRow(row) {
+    if (row.kind === 'light') {
+        if (row.light_region) spvRowLight[row.light_of] = row.light_region;
+        return;
+    }
+    if (row.radius != null) spvRowRadii[row.index] = row.radius;
+    // subsystem row no longer carries light_region; Add uses light_of default
+    // captured from its own light child if present (seeded above).
+}
+
+// Recursive render: a row, then (if expanded) its children at any depth.
+function spvRenderRows(rows, out, selectedIndex, selectedLight, depth) {
+    for (var i = 0; i < rows.length; i++) {
+        var row = rows[i] || {};
+        spvSeedRow(row);
+        out.push(spvRowHtml(row, selectedIndex, selectedLight, depth));
+        if (row.expanded && (row.children || []).length) {
+            spvRenderRows(row.children, out, selectedIndex, selectedLight, depth + 1);
+        }
+    }
+}
+
+// Render the left-column subsystem list: category rows with their child
+// pods/banks/tubes/light-volume nodes nested under them (collapsible, like
+// the target list), recursing to any depth.
+function renderSPVSubsystemList(rows, selectedIndex, selectedLight) {
+    var body = document.getElementById('spv-syslist-body');
+    if (!body) return;
+    var out = [];
+    spvRenderRows(rows, out, selectedIndex, selectedLight, 0);
+    body.innerHTML = out.join('');
+}
+
+function spvRowHtml(row, selectedIndex, selectedLight, depth) {
+    var isLight = (row.kind === 'light');
+    var chosen = isLight ? (selectedLight === row.light_of)
+                         : (selectedIndex === row.index);
     var hasChildren = (row.children || []).length > 0;
     var lead;
     if (hasChildren) {
         // Glyph swap (▾/▸), not CSS rotation — see target_list.js on CEF
         // layer promotion hurting text crispness.
-        lead = '<span class="spv-sys-caret"'
-             +   ' onclick="event.stopPropagation();'
-             +   'shipPropertyViewerGroupToggle(' + row.index + ')">'
-             +   (row.expanded ? '&#9662;' : '&#9656;') + '</span>';
+        lead = '<span class="spv-sys-caret" onclick="event.stopPropagation();'
+             + 'shipPropertyViewerGroupToggle(' + row.index + ')">'
+             + (row.expanded ? '&#9662;' : '&#9656;') + '</span>';
     } else {
         lead = '<span class="spv-sys-caret spv-sys-caret--none"></span>';
     }
-    return '<div class="spv-sys-row' + (isChild ? ' spv-sys-row--child' : '')
-         +   (chosen ? ' spv-sys-row--chosen' : '')
-         +   (row.dirty === true ? ' spv-sys-row--dirty' : '') + '"'
-         +   ' onclick="shipPropertyViewerRow(' + row.index + ', ' + chosen + ')"'
-         +   ' oncontextmenu="return shipPropertyViewerRowMenu(event, ' + row.index + ')">'
-         +   lead
-         +   '<span class="spv-sys-row__name">' + escapeHtmlSPV(row.name || '') + '</span>'
-         +   bar
-         +   '<span class="spv-sys-row__eye' + eyeCls + '"'
-         +   ' title="' + (row.targetable ? 'Targetable' : 'Not targetable') + '">'
-         +   eye + '</span>'
-         + '</div>';
-}
-
-// Render the left-column subsystem list: category rows with their child
-// pods/banks/tubes nested under them (collapsible, like the target list).
-function renderSPVSubsystemList(rows, selectedIndex) {
-    var body = document.getElementById('spv-syslist-body');
-    if (!body) return;
-    var html = '';
-    for (var i = 0; i < rows.length; i++) {
-        var row = rows[i] || {};
-        spvSeedRowRadius(row);
-        html += spvRowHtml(row, selectedIndex, false);
-        if (row.expanded) {
-            var kids = row.children || [];
-            for (var j = 0; j < kids.length; j++) {
-                var kid = kids[j] || {};
-                spvSeedRowRadius(kid);
-                html += spvRowHtml(kid, selectedIndex, true);
-            }
-        }
+    var clickJs = isLight
+        ? ('shipPropertyViewerLightRow(' + row.light_of + ', ' + chosen + ')')
+        : ('shipPropertyViewerRow(' + row.index + ', ' + chosen + ')');
+    var menuJs = isLight
+        ? ('return shipPropertyViewerLightMenu(event, ' + row.light_of + ')')
+        : ('return shipPropertyViewerRowMenu(event, ' + row.index + ', '
+           + (row.has_light === true) + ')');
+    var extra = isLight ? ' spv-sys-row--light' : '';
+    var indent = ' style="padding-left:' + (10 + depth * 14) + 'px"';
+    var body = '<span class="spv-sys-row__name">' + escapeHtmlSPV(row.name || '') + '</span>';
+    if (!isLight) {
+        var eye = row.targetable ? SPV_EYE_OPEN : SPV_EYE_SHUT;
+        var eyeCls = row.targetable ? '' : ' spv-sys-row__eye--shut';
+        var bar = (typeof row.condition_pct === 'number')
+            ? '<span class="spv-sys-row__bar" style="--bar-pct:'
+              + Math.max(0, Math.min(100, row.condition_pct)) + '%"></span>' : '';
+        body += bar + '<span class="spv-sys-row__eye' + eyeCls + '">' + eye + '</span>';
     }
-    body.innerHTML = html;
-}
-
-// Seed spvRowRadii from every row as it renders (not just the selected pin's
-// popover), so a right-click context menu on a never-selected row pre-fills
-// its real current radius instead of falling back to 0.
-function spvSeedRowRadius(row) {
-    if (row.radius != null) {
-        spvRowRadii[row.index] = row.radius;
-    }
-    if (row.light === true) spvRowLight[row.index] = row.light_region || true;
-    else delete spvRowLight[row.index];
+    return '<div class="spv-sys-row' + (depth > 0 ? ' spv-sys-row--child' : '')
+         + (chosen ? ' spv-sys-row--chosen' : '')
+         + (row.dirty === true ? ' spv-sys-row--dirty' : '') + extra + '"' + indent
+         + ' onclick="' + clickJs + '"'
+         + ' oncontextmenu="' + menuJs + '">'
+         + lead + body + '</div>';
 }
