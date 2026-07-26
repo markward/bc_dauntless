@@ -97,7 +97,7 @@ def build_glow_region_overlay(ship, selected_name: str = None,
     """
     if ship is None or not hasattr(ship, "GetWorldLocation"):
         return [], []
-    if not show_all and not selected_name:
+    if not show_all and not selected_name and not pending:
         return [], []
 
     pending = pending or {}
