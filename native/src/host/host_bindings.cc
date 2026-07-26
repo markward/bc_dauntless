@@ -3148,6 +3148,38 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "length, radius wide (all game units / body frame; aft=0, fore=length). "
           "Returns the region index, or -1 on failure.");
 
+    m.def("add_box_region",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> center,
+             std::tuple<float, float, float> half) -> int {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return -1;
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float inv = (s > 0.0f) ? 1.0f / s : 1.0f;
+              const glm::vec3 c(std::get<0>(center) * inv,
+                                std::get<1>(center) * inv,
+                                std::get<2>(center) * inv);
+              const glm::vec3 he(std::get<0>(half) * inv,
+                                 std::get<1>(half) * inv,
+                                 std::get<2>(half) * inv);
+              for (std::size_t i = 0; i < inst->glow_regions.size(); ++i) {
+                  if (inst->glow_regions[i].active) continue;
+                  auto& n = inst->glow_regions[i];
+                  n = scenegraph::Instance::GlowRegion{};   // reset to defaults
+                  n.center = c;
+                  n.shape = 1.0f;
+                  n.half_extents = he;
+                  n.dim_target = 1.0f;
+                  n.disable_time = -1.0f;
+                  n.active = true;
+                  return static_cast<int>(i);
+              }
+              return -1;  // no free slot
+          },
+          py::arg("instance_id"), py::arg("center"), py::arg("half_extents"),
+          "Store a body-axis-aligned box glow region (game units / body frame). "
+          "Returns the region index, or -1 on failure (stale id, no slot).");
+
     m.def("set_glow_region_dim",
           [](scenegraph::InstanceId id, int region_index,
              float dim_target, float disable_time, float flicker) {

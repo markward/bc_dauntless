@@ -143,6 +143,7 @@ uniform vec4 u_glow_region_a[MAX_GLOW_REGIONS];  // center.xyz, radius (model un
 uniform vec4 u_glow_region_b[MAX_GLOW_REGIONS];  // axis.xyz, aft
 uniform vec4 u_glow_region_c[MAX_GLOW_REGIONS];  // fore, dim_target, disable_time, flicker_flag
 uniform vec4 u_glow_region_d[MAX_GLOW_REGIONS];  // gain (>1 brightens), unused.yzw
+uniform vec4 u_glow_region_e[MAX_GLOW_REGIONS];  // shape_flag, half_extent.xyz
 const float GLOW_FLICKER_SECS = 0.4;   // blow-out window when a region is destroyed
 const float DISABLED_FLOOR    = 0.0;   // flicker troughs reach dark while disabled
 
@@ -219,12 +220,17 @@ float glow_region_mult(vec3 p_body, vec3 n_body, float now, out float gain) {
         float target = u_glow_region_c[i].y;
         float dtime  = u_glow_region_c[i].z;
 
-        vec3  d = p_body - center;
-        float t = dot(d, axis);
-        vec3  perp = d - t * axis;
-        // Inside the capsule? lateral within radius AND axial within [aft,fore].
-        if (dot(perp, perp) > radius * radius) continue;
-        if (t < aft || t > fore) continue;
+        vec3 d = p_body - center;
+        if (u_glow_region_e[i].x > 0.5) {          // body-axis-aligned box
+            vec3 h = u_glow_region_e[i].yzw;
+            vec3 a = abs(d);
+            if (a.x > h.x || a.y > h.y || a.z > h.z) continue;
+        } else {                                   // capsule / sphere (unchanged)
+            float t = dot(d, axis);
+            vec3  perp = d - t * axis;
+            if (dot(perp, perp) > radius * radius) continue;
+            if (t < aft || t > fore) continue;
+        }
         // Gain applies regardless of health — a moving healthy engine is exactly
         // the case we brighten — so read it before the healthy short-circuit.
         // gate_axis (u_glow_region_d.yzw) restricts the boost to aft-facing
