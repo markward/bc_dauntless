@@ -7313,8 +7313,9 @@ def run(mission_name: Optional[str] = None,
                      i == ship_property_viewer.selected_index)
                     for i, d in enumerate(ship_property_viewer.descriptors())
                 ])
-                # Phaser strip (always) + firing-arc (selected) overlay; the
-                # Weapon Arcs toggle adds envelopes for EVERY arc weapon.
+                # Selection-scoped phaser overlay: the SELECTED bank's emitter
+                # strip, plus its firing arc only when the Weapon Arcs toggle is
+                # on (arc scoped to the selected weapon). Nothing when unselected.
                 from engine.ui.phaser_overlay import build_phaser_overlay
                 r.set_spv_overlay_beams(
                     build_phaser_overlay(

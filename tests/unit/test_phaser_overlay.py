@@ -159,23 +159,26 @@ def _colors(beams):
     return {b["color"] for b in beams}
 
 
-def test_overlay_arc_only_for_selected_bank():
+def test_overlay_selected_bank_only():
     a = _galaxy_dorsal1_bank("DorsalPhaser1")
     b = _galaxy_dorsal1_bank("DorsalPhaser2")
     ship = _StubShip([a, b])
     a._parent_ship = ship
     b._parent_ship = ship
     banks = [a, b]
-    # No selection → strips only (yellow), no cyan arc.
-    strips_only = po.build_phaser_overlay(ship, selected_name=None, banks=banks)
-    assert po.STRIP_COLOR in _colors(strips_only)
-    assert po.ARC_COLOR not in _colors(strips_only)
-    # Select bank b → strips + b's arc (cyan present).
-    with_arc = po.build_phaser_overlay(ship, selected_name="DorsalPhaser2",
-                                       banks=banks)
-    assert po.ARC_COLOR in _colors(with_arc)
-    # Exactly one bank's worth of arc beams (4 × ARC_SAMPLES).
-    assert sum(1 for x in with_arc if x["color"] == po.ARC_COLOR) \
+    # No selection → nothing at all (no strips for unselected banks).
+    assert po.build_phaser_overlay(ship, selected_name=None, banks=banks) == []
+    # Select bank b, Weapon Arcs toggle OFF → only b's strip (yellow), no arc.
+    sel = po.build_phaser_overlay(ship, selected_name="DorsalPhaser2", banks=banks)
+    assert po.STRIP_COLOR in _colors(sel)
+    assert po.ARC_COLOR not in _colors(sel)
+    # Exactly ONE bank's strip (STRIP_SAMPLES beams), not both banks'.
+    assert sum(1 for x in sel if x["color"] == po.STRIP_COLOR) == po.STRIP_SAMPLES
+    # Select bank b, Weapon Arcs toggle ON → b's strip + b's arc.
+    sel_arc = po.build_phaser_overlay(ship, selected_name="DorsalPhaser2",
+                                      banks=banks, show_all_arcs=True)
+    assert po.STRIP_COLOR in _colors(sel_arc)
+    assert sum(1 for x in sel_arc if x["color"] == po.ARC_COLOR) \
         == 4 * po.ARC_SAMPLES
 
 
@@ -183,7 +186,7 @@ def test_overlay_empty_for_none_ship():
     assert po.build_phaser_overlay(None, selected_name="DorsalPhaser1") == []
 
 
-# ── show_all_arcs (Ship Property Viewer "Weapon Arcs" toggle) ──────────────
+# ── Weapon Arcs toggle: shows the SELECTED weapon's arc only ───────────────
 
 def _pulse_cannon(name="PulseCannon", length=0.0):
     from engine.appc.properties import PulseWeaponProperty
@@ -215,23 +218,28 @@ class _ShipWithWeapons(_StubShip):
     def GetPulseWeaponSystem(self): return self._pulse_sys
 
 
-def test_show_all_arcs_covers_every_arc_weapon():
+def test_arc_toggle_shows_only_selected_weapon():
     bank = _galaxy_dorsal1_bank("DorsalPhaser1")
     pulse = _pulse_cannon("PulseCannon", length=0.0)
     ship = _ShipWithWeapons(banks=[bank], pulses=[pulse])
     bank._parent_ship = ship
     pulse._parent_ship = ship
-    beams = po.build_phaser_overlay(ship, show_all_arcs=True)
-    # One arc per weapon: phaser (Length=1.69) + pulse (Length=0 → fallback).
+    # Toggle ON but nothing selected → no arcs (and no strips).
+    assert po.build_phaser_overlay(ship, show_all_arcs=True) == []
+    # Toggle ON + select the pulse → only the pulse's arc (Length 0 → fallback),
+    # NOT the phaser bank's — one weapon's worth of arc beams.
+    beams = po.build_phaser_overlay(ship, selected_name="PulseCannon",
+                                    show_all_arcs=True)
     assert sum(1 for x in beams if x["color"] == po.ARC_COLOR) \
-        == 2 * 4 * po.ARC_SAMPLES
+        == 4 * po.ARC_SAMPLES
 
 
-def test_show_all_arcs_length_zero_uses_ship_radius_fallback():
+def test_selected_length_zero_weapon_uses_ship_radius_fallback():
     pulse = _pulse_cannon("PulseCannon", length=0.0)
     ship = _ShipWithWeapons(pulses=[pulse], radius=10.0)
     pulse._parent_ship = ship
-    beams = po.build_phaser_overlay(ship, show_all_arcs=True)
+    beams = po.build_phaser_overlay(ship, selected_name="PulseCannon",
+                                    show_all_arcs=True)
     arcs = [x for x in beams if x["color"] == po.ARC_COLOR]
     assert arcs, "Length=0 weapon must still draw via the fallback radius"
     pos = (0.0, 2.0, 0.0)
@@ -244,11 +252,12 @@ def test_show_all_arcs_fallback_floors_at_minimum():
     assert po._arc_fallback_radius(_StubShip([])) == po.ARC_FALLBACK_MIN
 
 
-def test_show_all_arcs_off_is_byte_identical_to_today():
+def test_selected_toggle_off_is_strip_only():
+    # Weapon Arcs toggle OFF + a bank selected → exactly that bank's strip,
+    # with NO firing arc (the arc now requires the toggle).
     bank = _galaxy_dorsal1_bank("DorsalPhaser1")
     ship = _ShipWithWeapons(banks=[bank])
     bank._parent_ship = ship
     off = po.build_phaser_overlay(ship, selected_name="DorsalPhaser1",
                                   banks=[bank])
-    legacy = po.build_strip_beams([bank], ship) + po.build_arc_beams(bank, ship)
-    assert off == legacy
+    assert off == po.build_strip_beams([bank], ship)

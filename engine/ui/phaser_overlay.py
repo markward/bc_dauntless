@@ -192,26 +192,37 @@ def _arc_fallback_radius(ship) -> float:
 def build_phaser_overlay(ship, selected_name: Optional[str] = None,
                          banks: Optional[List] = None,
                          show_all_arcs: bool = False) -> List[dict]:
-    """Yellow strips for every phaser bank, plus a cyan firing arc for the
-    bank whose GetName() matches `selected_name` (if it is a phaser bank).
-    With `show_all_arcs`, also a cyan arc for EVERY arc-bearing weapon
-    (phaser/pulse/tractor; Length-0 mounts use a ship-radius fallback).
-    Pass `banks` to bypass enumeration (tests / pre-fetched lists).
-    selected_name=None or "" both suppress the arc."""
-    if ship is None:
+    """Selection-scoped phaser overlay for the Ship Property Viewer.
+
+    Nothing is drawn unless a subsystem is selected:
+    - the selected phaser bank's yellow emitter STRIP (always, when selected);
+    - its cyan firing ARC only when the "Weapon Arcs" toggle (`show_all_arcs`)
+      is on. The arc is scoped to the selected weapon — phaser bank, pulse
+      weapon, or tractor beam (Length-0 mounts use a ship-radius fallback).
+
+    `selected_name=None`/`""` → []. Pass `banks` to bypass phaser enumeration
+    (tests / pre-fetched lists)."""
+    if ship is None or not selected_name:
         return []
     if banks is None:
         banks = phaser_banks(ship)
-    beams = build_strip_beams(banks, ship)
+    beams: List[dict] = []
+    # Strip: the selected phaser bank's emitter strip (no toggle needed).
+    sel_bank = next((b for b in banks if b.GetName() == selected_name), None)
+    if sel_bank is not None:
+        beams += build_strip_beams([sel_bank], ship)
+    # Arc: only when the Weapon Arcs toggle is on, for the selected weapon. A
+    # selected phaser bank is already in `banks` (so the `banks` bypass keeps
+    # working without enumerating); other arc weapons (pulse/tractor) need the
+    # full enumeration.
     if show_all_arcs:
-        fallback = _arc_fallback_radius(ship)
-        for weapon in arc_weapons(ship):
-            beams += build_arc_beams(weapon, ship, fallback_radius=fallback)
-        return beams
-    if selected_name:
-        sel = next((b for b in banks if b.GetName() == selected_name), None)
-        if sel is not None:
-            beams += build_arc_beams(sel, ship)
+        sel_weapon = sel_bank
+        if sel_weapon is None:
+            sel_weapon = next((w for w in arc_weapons(ship)
+                               if w.GetName() == selected_name), None)
+        if sel_weapon is not None:
+            beams += build_arc_beams(sel_weapon, ship,
+                                     fallback_radius=_arc_fallback_radius(ship))
     return beams
 
 
