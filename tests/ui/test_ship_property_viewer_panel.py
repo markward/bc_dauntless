@@ -849,6 +849,31 @@ def test_subsystem_pins_hides_others_when_selected(monkeypatch):
     assert len(p.subsystem_pins()) == 2
 
 
+def test_selected_subsystem_sphere_from_radius(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("A")])   # radius 0.25
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    assert p.selected_subsystem_sphere() is None       # nothing selected
+    p.selected_index = 0
+    sph = p.selected_subsystem_sphere()
+    assert sph["center"] == (0, 0, 0)                  # world_pos passthrough
+    assert sph["radius"] == 0.25
+    assert sph["color"] == mod.SUBSYS_SPHERE_COLOR
+
+
+def test_selected_subsystem_sphere_none_without_radius(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    d = _rad_descriptor("A")
+    d["properties"]["radius"] = None                   # no usable radius
+    monkeypatch.setattr(mod, "build_descriptors", lambda ship: [d])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.selected_index = 0
+    assert p.selected_subsystem_sphere() is None
+
+
 def test_subsystem_row_carries_light_flag_and_region(monkeypatch):
     # The CEF context menu gates "Edit Light…" on row.light; without the row
     # carrying light/light_region the menu item can never appear.

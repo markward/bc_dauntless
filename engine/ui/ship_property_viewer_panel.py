@@ -55,6 +55,10 @@ TOOLS_COUNT = 3           # buttons in the row (glow / arcs / hull-texture)
 TOOLS_W_PT = TOOLS_COUNT * TOOLS_BTN_PT + (TOOLS_COUNT - 1) * TOOLS_GAP_PT
 TOOLS_H_PT = TOOLS_BTN_PT
 
+# Wireframe colour for the selected subsystem's radius sphere — a soft green,
+# distinct from the orange glow-region and cyan weapon-arc overlays.
+SUBSYS_SPHERE_COLOR = (0.5, 1.0, 0.6)
+
 
 class ShipPropertyViewerPanel(Panel):
     def __init__(self, ship_getter: Callable[[], object]) -> None:
@@ -190,6 +194,27 @@ class ShipPropertyViewerPanel(Panel):
 
     def descriptors(self) -> List[dict]:
         return self._descriptors
+
+    def selected_subsystem_sphere(self) -> Optional[dict]:
+        """Wireframe sphere for the selected subsystem's damage volume, or None.
+
+        `center` is the subsystem world position (where its icon sits) and
+        `radius` its GetRadius() — the only geometric size a subsystem exposes,
+        so every subsystem is a sphere. None when nothing is selected or the
+        radius is missing/non-positive. Consumed by host_loop via
+        engine.renderer.set_debug_spheres (viewer-mode only)."""
+        d = self.selected_descriptor()
+        if d is None:
+            return None
+        r = d.get("properties", {}).get("radius")
+        try:
+            r = float(r)
+        except (TypeError, ValueError):
+            return None
+        if r <= 0.0:
+            return None
+        return {"center": d["world_pos"], "radius": r,
+                "color": SUBSYS_SPHERE_COLOR}
 
     def subsystem_pins(self) -> List[tuple]:
         """Billboard pins to render, as (world_pos, icon_id, is_selected).

@@ -7335,6 +7335,10 @@ def run(mission_name: Optional[str] = None,
                     pending=ship_property_viewer.pending_light_specs())
                 r.set_debug_cylinders(_cyls)
                 r.set_debug_boxes(_boxes)
+                # Selected subsystem's damage-radius volume as a wireframe
+                # sphere at its icon (only while a subsystem is selected).
+                _sphere = ship_property_viewer.selected_subsystem_sphere()
+                r.set_debug_spheres([_sphere] if _sphere else [])
                 # The gameplay target reticle is hidden while the viewer owns
                 # the frame; it returns on close via the else branch below.
                 r.clear_target_reticle()
@@ -7350,6 +7354,7 @@ def run(mission_name: Optional[str] = None,
                     r.clear_spv_overlay_beams()
                     r.clear_debug_cylinders()
                     r.clear_debug_boxes()
+                    r.clear_debug_spheres()
                     r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
                     r.set_spv_hull_mode(False)
                     _spv_hidden_iid = None
