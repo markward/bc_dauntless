@@ -88,9 +88,10 @@ precedence in `compute_camera` (`engine/host_loop.py:2665`):
 
 1. `_anim_pose` set (a clip is **actively playing**) → use it verbatim.
    *(unchanged)*
-2. `_held_pose` set **and the seated captain mode is NOT on the stack** → use the
-   held pose, with the same FOV as the anim-pose path (seamless continuation from
-   the clip that just finished). **← new**
+2. `_held_pose` set **and the seated captain mode is NOT on the stack** → anchor
+   the **eye** at the held position, seed the base look direction from the held
+   forward, then **fall through into the watch/zoom look-at block** (same FOV
+   baseline as the anim-pose path). **← new**
 3. otherwise → the existing baked seated eye with turn-lift + mouse-look.
    *(unchanged — covers both "seated mode active" and Sovereign "no-mode"
    bridges)*
@@ -100,9 +101,20 @@ mode — `GetCurrentCameraMode()._named == "GalaxyBridgeCaptain"` (equivalently 
 `PlaceByDirectionMode`). When the seated mode *is* active, `_held_pose` is
 discarded, so each cutscene starts from a fresh latch rather than a stale one.
 
-The held pose freezes mouse-look and zoom (the camera is mid-cutscene and player
-control is removed via `RemoveControl` anyway), matching BC — a popped-mode
-camera is a static held transform.
+**The held pose anchors the EYE only — the look direction stays live.** A held
+pose freezes *mouse-look* (`apply()` early-returns while held; the player is
+mid-cutscene with control removed), but it must NOT freeze the watch/zoom
+look-at: BC's `AT_WATCH_ME` (E1M1 `PicardWalkOn`) aims the captain's-eye camera
+at a character, and in Dauntless that runs through the maincamera zoom look-at
+(`BridgeCameraWatchController` → `_BRIDGE_ZOOM_CAM` → the easing block in
+`compute_camera`). So the held branch does **not** return early; it sets the eye
+(and the resting forward the look eases back to when nothing is watched) and then
+runs the shared look-at easing, so the standing camera turns to follow
+Picard/Saffi down the ramp. Matching BC — a popped-mode camera holds its
+translation while its look-at keeps tracking. *(An earlier revision returned the
+held pose verbatim and froze the whole transform; that shipped a regression —
+the stand height held but the camera stopped tracking the walk-on. Fixed by
+falling through to the watch/zoom block.)*
 
 ### Part 2 — the controller holds instead of clearing
 

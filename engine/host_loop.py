@@ -2691,28 +2691,43 @@ class _BridgeCamera:
         if self._anim_pose is not None:
             eye, target, up = self._anim_pose
             return eye, target, up, self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
+        held = None
         if self._held_pose is not None:
             if self._seated_mode_active():
                 self._held_pose = None          # seated mode restored: drop the latch
             else:
-                eye, target, up = self._held_pose
-                return eye, target, up, self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
-        local_fwd = (0.0, 1.0, 0.0)   # bridge-local +Y
-        local_up  = (0.0, 0.0, 1.0)   # bridge-local +Z
+                held = self._held_pose
 
-        local_fwd = _rot_around(local_fwd, (0.0, 0.0, 1.0), self.yaw_rad)
-        right = (
-            local_fwd[1]*local_up[2] - local_fwd[2]*local_up[1],
-            local_fwd[2]*local_up[0] - local_fwd[0]*local_up[2],
-            local_fwd[0]*local_up[1] - local_fwd[1]*local_up[0],
-        )
-        rlen = _math.sqrt(right[0]**2 + right[1]**2 + right[2]**2)
-        if rlen > 1e-6:
-            right = (right[0]/rlen, right[1]/rlen, right[2]/rlen)
-            local_fwd = _rot_around(local_fwd, right, self.pitch_rad)
-            local_up  = _rot_around(local_up,  right, self.pitch_rad)
+        if held is not None:
+            # Held (e.g. captain "stand up") pose: the EYE is anchored at the
+            # clip's final position, but the look direction stays live through
+            # the watch/zoom block below so AT_WATCH_ME can still turn the camera
+            # to follow a character (Picard/Saffi walking on). The held target/up
+            # are the RESTING look the zoom eases back to when nothing is watched
+            # (mouse-look is frozen while held — see apply()).
+            eye = held[0]
+            ht, hu = held[1], held[2]
+            fx, fy, fz = ht[0] - eye[0], ht[1] - eye[1], ht[2] - eye[2]
+            fl = _math.sqrt(fx*fx + fy*fy + fz*fz)
+            local_fwd = (fx/fl, fy/fl, fz/fl) if fl > 1e-6 else (0.0, 1.0, 0.0)
+            local_up = hu
+        else:
+            local_fwd = (0.0, 1.0, 0.0)   # bridge-local +Y
+            local_up  = (0.0, 0.0, 1.0)   # bridge-local +Z
 
-        eye = self._eye_offset()
+            local_fwd = _rot_around(local_fwd, (0.0, 0.0, 1.0), self.yaw_rad)
+            right = (
+                local_fwd[1]*local_up[2] - local_fwd[2]*local_up[1],
+                local_fwd[2]*local_up[0] - local_fwd[0]*local_up[2],
+                local_fwd[0]*local_up[1] - local_fwd[1]*local_up[0],
+            )
+            rlen = _math.sqrt(right[0]**2 + right[1]**2 + right[2]**2)
+            if rlen > 1e-6:
+                right = (right[0]/rlen, right[1]/rlen, right[2]/rlen)
+                local_fwd = _rot_around(local_fwd, right, self.pitch_rad)
+                local_up  = _rot_around(local_up,  right, self.pitch_rad)
+
+            eye = self._eye_offset()
         fov = self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
 
         zoom_t, factor, target_world = self._zoom_state()

@@ -59,6 +59,35 @@ def test_held_pose_used_when_seated_mode_absent():
     assert fov == pytest.approx(_BridgeCamera.FOV_Y_RAD * hl._BRIDGE_ZOOM_MAX)
 
 
+def test_held_pose_eye_anchored_but_look_tracks_watch_target():
+    # AT_WATCH_ME during a held (standing) pose must still TURN the camera: the
+    # eye stays anchored at the held position while the look direction eases
+    # toward the watched target via the maincamera zoom look-at. Regression: the
+    # held pose used to short-circuit compute_camera and freeze the whole
+    # transform, so the standing camera could not follow Picard/Saffi.
+    bc = _BridgeCamera()
+    bc.set_anim_pose((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))  # stand: eye at origin, look +Y
+    bc.hold_anim_pose()
+    # Watch a character off to +X (engages the maincamera zoom look-at).
+    hl._BRIDGE_ZOOM_CAM.engage(1.0, (10.0, 0.0, 0.0))
+    hl._BRIDGE_ZOOM_CAM.advance(10.0)                       # ease to completion
+    eye, target, _up, _fov = bc.compute_camera()
+    assert eye == (0.0, 0.0, 0.0)                           # eye still anchored at the standing position
+    fwd = (target[0] - eye[0], target[1] - eye[1], target[2] - eye[2])
+    assert fwd[0] > 0.9                                     # look now aimed toward the watched +X target
+
+
+def test_held_pose_holds_forward_when_nothing_watched():
+    # With no zoom engaged the held pose keeps its resting forward (unchanged).
+    bc = _BridgeCamera()
+    bc.set_anim_pose((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    bc.hold_anim_pose()
+    eye, target, _up, _fov = bc.compute_camera()
+    assert eye == (0.0, 0.0, 0.0)
+    fwd = (target[0] - eye[0], target[1] - eye[1], target[2] - eye[2])
+    assert fwd == pytest.approx((0.0, 1.0, 0.0))            # still looking +Y
+
+
 def test_held_pose_discarded_when_seated_mode_present():
     # ResetBridgeCamera re-pushes GalaxyBridgeCaptain: revert to the seated eye.
     bc = _BridgeCamera()
