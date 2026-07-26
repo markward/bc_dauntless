@@ -193,6 +193,35 @@ class _BoxShip:
     def __iter__(self): return iter(self._subs)
 
 
+def test_pending_cylinder_overrides_baked(monkeypatch):
+    monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
+    monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))
+    monkeypatch.setattr(gro, "baked_region_ops",
+                        lambda prop, pos, name: [("sphere", (0.0, 0.0, 0.0), 0.9)])
+    ship = _BoxShip([_BoxSub("Center Impulse", object())])
+    pending = {"Center Impulse": {"shape": "Cylinder", "position": (0.0, 0.0, 0.0),
+                                  "axis": (0.0, 0.0, 1.0), "radius": (0.2,),
+                                  "extent": (0.0, 2.0), "scale": (0.1, 0.1, 0.1)}}
+    cyls, boxes = gro.build_glow_region_overlay(ship, show_all=True, pending=pending)
+    assert boxes == []
+    assert len(cyls) == 1
+    assert abs(cyls[0]["radius"] - 0.2) < 1e-9   # pending radius, not the baked 0.9 sphere
+    assert abs(cyls[0]["length"] - 2.0) < 1e-9   # pending extent fore-aft
+
+
+def test_pending_box_yields_a_box(monkeypatch):
+    monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
+    monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))
+    monkeypatch.setattr(gro, "baked_region_ops", lambda prop, pos, name: [])
+    ship = _BoxShip([_BoxSub("Center Impulse", object())])
+    pending = {"Center Impulse": {"shape": "Box", "position": (0.0, 0.0, 0.0),
+                                  "axis": (0.0, -1.0, 0.0), "radius": (0.2,),
+                                  "extent": (0.0, 2.0), "scale": (0.5, 0.6, 0.7)}}
+    cyls, boxes = gro.build_glow_region_overlay(ship, show_all=True, pending=pending)
+    assert cyls == []
+    assert len(boxes) == 1
+
+
 def test_overlay_returns_cylinders_and_boxes_tuple(monkeypatch):
     monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
     monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))

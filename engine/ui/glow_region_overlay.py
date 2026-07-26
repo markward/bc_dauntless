@@ -15,7 +15,9 @@ from __future__ import annotations
 import math
 from typing import List, Tuple
 
-from engine.appc.subsystem_glow import baked_region_ops, _position_tuple
+from engine.appc.subsystem_glow import (
+    baked_region_ops, resolve_baked_region, _position_tuple,
+)
 from engine.ui.ship_property_viewer import _iter_subsystems
 
 Vec3 = Tuple[float, float, float]
@@ -68,7 +70,8 @@ def _box(center: Vec3, ex: Vec3, ey: Vec3, ez: Vec3) -> dict:
 
 
 def build_glow_region_overlay(ship, selected_name: str = None,
-                              show_all: bool = True) -> Tuple[List[dict], List[dict]]:
+                              show_all: bool = True,
+                              pending: dict = None) -> Tuple[List[dict], List[dict]]:
     """World-space debug-volume dicts for baked glow regions on `ship`.
 
     Returns `(cylinders, boxes)` — cylinder/sphere regions become
@@ -79,6 +82,11 @@ def build_glow_region_overlay(ship, selected_name: str = None,
     otherwise only the subsystem whose GetName() matches `selected_name`
     contributes — so selecting a subsystem always reveals its own glow
     volume, mirroring the selected-pin firing arc. Both off → ([], []).
+
+    `pending` maps subsystem NAME → a baked-shaped region spec (a staged but
+    unsaved Edit Light edit). When a subsystem's name is a key in `pending`,
+    that spec is resolved via `resolve_baked_region` INSTEAD of the
+    subsystem's baked ops, so the wireframe tracks the live edit before Save.
 
     Cylinder regions map directly (baked_region_ops pre-shifts the centre by
     the aft extent). Sphere regions are drawn as their circumscribing cylinder
@@ -92,6 +100,7 @@ def build_glow_region_overlay(ship, selected_name: str = None,
     if not show_all and not selected_name:
         return [], []
 
+    pending = pending or {}
     ship_pos = ship.GetWorldLocation()
     rot = ship.GetWorldRotation() if hasattr(ship, "GetWorldRotation") else None
 
@@ -102,8 +111,13 @@ def build_glow_region_overlay(ship, selected_name: str = None,
         if not show_all and name != selected_name:
             continue
         pos = _position_tuple(sub)
-        prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
-        for op in baked_region_ops(prop, pos, name):
+        if name in pending:
+            op = resolve_baked_region(pending[name], pos)
+            ops = [op] if op is not None else []
+        else:
+            prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
+            ops = baked_region_ops(prop, pos, name)
+        for op in ops:
             if op[0] == "cylinder":
                 _kind, center, axis, radius, length = op
                 out.append(_cylinder(

@@ -7332,7 +7332,8 @@ def run(mission_name: Optional[str] = None,
                 _cyls, _boxes = build_glow_region_overlay(
                     player,
                     selected_name=ship_property_viewer.selected_name(),
-                    show_all=ship_property_viewer.show_glow_regions)
+                    show_all=ship_property_viewer.show_glow_regions,
+                    pending=ship_property_viewer.pending_light_specs())
                 r.set_debug_cylinders(_cyls)
                 r.set_debug_boxes(_boxes)
                 # The gameplay target reticle is hidden while the viewer owns
