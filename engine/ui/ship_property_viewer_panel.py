@@ -298,30 +298,61 @@ class ShipPropertyViewerPanel(Panel):
                                          float(body_pos[2]))
             self._last_pushed = None
 
+    def set_light_position(self, index: int, body_pos) -> None:
+        """Stage a body-frame position edit for light `index`'s region-0
+        spec. Mirrors `set_subsystem_position`; the existing light save path
+        (`_pending_light` → `region_spec_to_calls`) already persists it."""
+        spec = dict(self._effective_light(index) or {})
+        spec["position"] = tuple(float(c) for c in body_pos)
+        self._pending_light[index] = spec
+        self._last_pushed = None
+
     # ------------------------------------------------------------------
-    # Transform gizmo (subsystem target)
+    # Transform gizmo (subsystem or light-volume target)
     # ------------------------------------------------------------------
+    def _active_transform_target(self):
+        """Which node the transform gizmo/drag currently targets: ("light",
+        i), ("subsystem", i), or None. Light selection and subsystem
+        selection are mutually exclusive by construction (dispatch_event's
+        selection handlers clear the other), so light wins when set."""
+        if self._selected_light_index is not None:
+            return ("light", self._selected_light_index)
+        if self.selected_index is not None:
+            return ("subsystem", self.selected_index)
+        return None
+
     def transform_gizmo(self) -> Optional[dict]:
-        """The move-gizmo for the selected subsystem, or None.
+        """The move-gizmo for the selected subsystem or light node, or None.
 
         `{"origin", "axes", "length", "highlight"}` when the transform tool is
-        active and a subsystem is selected; None otherwise (no tool, no
-        selection, no camera, or the ship can't be resolved). `origin` follows
-        any staged/dragged position (`_effective_world_pos`); `axes` are the
-        three world-space body axes; `highlight` is the hovered axis (-1 none).
-        Light-node targets are Task 7's job — this handles `selected_index`."""
+        active and a subsystem or light node is selected; None otherwise (no
+        tool, no selection, no camera, or the ship can't be resolved).
+        `origin` follows any staged/dragged position (`_effective_world_pos`
+        for a subsystem, `world_from_body` of the effective light position
+        for a light); `axes` are the three world-space body axes; `highlight`
+        is the hovered axis (-1 none)."""
         if self.active_tool != "transform" or self.camera is None:
             return None
-        if self.selected_index is None:
+        target = self._active_transform_target()
+        if target is None:
             return None
-        if not (0 <= self.selected_index < len(self._descriptors)):
+        kind, i = target
+        if kind == "subsystem" and not (0 <= i < len(self._descriptors)):
             return None
         ship = self._ship_getter()
         if ship is None or not hasattr(ship, "GetWorldRotation"):
             return None
-        from engine.ui.ship_property_viewer import gizmo_axes, gizmo_length
+        from engine.ui.ship_property_viewer import (
+            gizmo_axes, gizmo_length, world_from_body)
+        if kind == "light":
+            light = self._effective_light(i)
+            if light is None:
+                return None
+            origin = world_from_body(ship, light["position"])
+        else:
+            origin = self._effective_world_pos(i)
         return {
-            "origin": self._effective_world_pos(self.selected_index),
+            "origin": origin,
             "axes": gizmo_axes(ship.GetWorldRotation()),
             "length": gizmo_length(self.camera),
             "highlight": self._gizmo_hover,
@@ -330,24 +361,41 @@ class ShipPropertyViewerPanel(Panel):
     def _begin_axis_drag(self, axis: int, grab_param: float) -> None:
         """Start an axis drag on `axis` (0/1/2), capturing the fixed drag-start
         body position and world origin so the drag mapping stays stable."""
+        target = self._active_transform_target()
+        if target is None:
+            return
+        kind, i = target
         self._axis_drag = axis
         self._axis_grab_param = grab_param
-        self._axis_grab_pos = self._effective_pos(self.selected_index)
-        self._axis_grab_origin = self._effective_world_pos(self.selected_index)
+        if kind == "light":
+            self._axis_grab_pos = tuple(self._effective_light(i)["position"])
+            ship = self._ship_getter()
+            if ship is not None and hasattr(ship, "GetWorldRotation"):
+                from engine.ui.ship_property_viewer import world_from_body
+                self._axis_grab_origin = world_from_body(
+                    ship, self._axis_grab_pos)
+        else:
+            self._axis_grab_pos = self._effective_pos(i)
+            self._axis_grab_origin = self._effective_world_pos(i)
 
     def _begin_axis_drag_for_test(self, axis: int, grab_param: float) -> None:
         """Test seam: identical to a press-edge grab, without a host/gizmo."""
         self._begin_axis_drag(axis, grab_param)
 
     def _apply_axis_drag(self, param_now: float) -> None:
-        """Move the subsystem to grab_pos with the grabbed axis component
+        """Move the selected node to grab_pos with the grabbed axis component
         advanced by (param_now - grab_param)."""
-        if self._axis_drag is None or self.selected_index is None:
+        target = self._active_transform_target()
+        if self._axis_drag is None or target is None:
             return
+        kind, i = target
         k = self._axis_drag
         base = list(self._axis_grab_pos)
         base[k] += (param_now - self._axis_grab_param)
-        self.set_subsystem_position(self.selected_index, tuple(base))
+        if kind == "light":
+            self.set_light_position(i, tuple(base))
+        else:
+            self.set_subsystem_position(i, tuple(base))
 
     def _end_axis_drag(self) -> None:
         self._axis_drag = None

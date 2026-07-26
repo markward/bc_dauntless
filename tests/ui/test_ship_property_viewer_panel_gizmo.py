@@ -89,6 +89,51 @@ class _FakeHost:
         return s
 
 
+def _panel_with_light():
+    # Builds on _panel(): give the descriptor a baked light region.
+    p = _panel()
+    p._descriptors[0]["light"] = True
+    p._descriptors[0]["light_region"] = {
+        "shape": "Sphere", "position": (0.0, 1.0, 0.0), "axis": (0.0, -1.0, 0.0),
+        "radius": (0.25,), "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25)}
+    return p
+
+
+def test_gizmo_targets_selected_light_node():
+    p = _panel_with_light()
+    p.dispatch_event("set_tool:transform")
+    p._selected_light_index = 0     # light node selected (subsystem not)
+    g = p.transform_gizmo()
+    assert g is not None
+    assert g["origin"] == pytest.approx((0.0, 1.0, 0.0))
+
+
+def test_axis_drag_moves_light_position():
+    p = _panel_with_light()
+    p.dispatch_event("set_tool:transform")
+    p._selected_light_index = 0
+    p._begin_axis_drag_for_test(axis=0, grab_param=0.0)  # +X (starboard)
+    p._apply_axis_drag(1.5)
+    spec = p._effective_light(0)
+    assert spec["position"] == pytest.approx((1.5, 1.0, 0.0))
+
+
+def test_light_and_subsystem_selection_mutually_exclusive_for_gizmo():
+    p = _panel_with_light()
+    p.dispatch_event("set_tool:transform")
+    p.selected_index = 0
+    p._selected_light_index = None
+    g = p.transform_gizmo()
+    assert g is not None
+    assert g["origin"] == pytest.approx((0.0, 1.0, 0.0))
+    p._begin_axis_drag_for_test(axis=0, grab_param=0.0)
+    p._apply_axis_drag(1.5)
+    # Subsystem moved; light spec untouched (still baked default).
+    x, y, z = p._effective_pos(0)
+    assert x == pytest.approx(1.5)
+    assert p._effective_light(0)["position"] == pytest.approx((0.0, 1.0, 0.0))
+
+
 def test_handle_input_axis_drag_moves_subsystem_and_does_not_orbit():
     p = ShipPropertyViewerPanel(ship_getter=lambda: _Ship())
     p.open()
