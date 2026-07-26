@@ -269,6 +269,23 @@ def baked_region_ops(prop, default_pos, pod_name="") -> list:
     return ops
 
 
+def glow_bearing_subsystem_ids(ship) -> set:
+    """id() of every subsystem that can carry a glow region: warp pods, impulse
+    engine pods, and the sensor array. None-safe; never raises."""
+    ids: set = set()
+    try:
+        for pod in warp_pods(ship.GetWarpEngineSubsystem()):
+            ids.add(id(pod))
+        for pod in impulse_engines(ship.GetImpulseEngineSubsystem()):
+            ids.add(id(pod))
+        sensor = ship.GetSensorSubsystem()
+        if sensor is not None:
+            ids.add(id(sensor))
+    except Exception:   # noqa: BLE001 - stub ships may miss getters
+        pass
+    return ids
+
+
 class ShipGlowController:
     """Per-ship: register glow regions once, push state each frame.
 

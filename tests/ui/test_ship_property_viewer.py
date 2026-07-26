@@ -274,3 +274,39 @@ def test_build_descriptors_links_children_to_parent(monkeypatch):
     assert descs[1]["parent_index"] == 0             # port -> Warp Engines
     assert descs[2]["parent_index"] == 0             # star -> Warp Engines
     assert descs[3]["parent_index"] is None          # unrelated top-level
+
+
+from engine.ui.ship_property_viewer import region_spec_to_calls
+
+
+def test_region_spec_to_calls_cylinder():
+    spec = {"shape": "Cylinder", "position": (1.0, 0.0, 0.0),
+            "axis": (0.0, -1.0, 0.0), "radius": (0.25,), "extent": (0.0, 2.0),
+            "scale": (0.25, 0.25, 0.25)}
+    assert region_spec_to_calls(0, spec) == [
+        ("SetGlowRegionShape", (0, "Cylinder")),
+        ("SetGlowRegionPosition", (0, 1.0, 0.0, 0.0)),
+        ("SetGlowRegionAxis", (0, 0.0, -1.0, 0.0)),
+        ("SetGlowRegionRadius", (0, 0.25)),
+        ("SetGlowRegionExtent", (0, 0.0, 2.0)),
+    ]
+
+
+def test_region_spec_to_calls_box():
+    spec = {"shape": "Box", "position": (0.0, 0.0, 0.0), "axis": (0.0, -1.0, 0.0),
+            "radius": (0.25,), "extent": (0.0, 2.0), "scale": (0.5, 0.6, 0.7)}
+    assert region_spec_to_calls(0, spec) == [
+        ("SetGlowRegionShape", (0, "Box")),
+        ("SetGlowRegionPosition", (0, 0.0, 0.0, 0.0)),
+        ("SetGlowRegionScale", (0, 0.5, 0.6, 0.7)),
+    ]
+
+
+def test_region_spec_to_calls_sphere():
+    spec = {"shape": "Sphere", "position": (0.0, 0.0, 0.0), "axis": (0.0, -1.0, 0.0),
+            "radius": (0.3,), "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25)}
+    assert region_spec_to_calls(0, spec) == [
+        ("SetGlowRegionShape", (0, "Sphere")),
+        ("SetGlowRegionPosition", (0, 0.0, 0.0, 0.0)),
+        ("SetGlowRegionRadius", (0, 0.3)),
+    ]

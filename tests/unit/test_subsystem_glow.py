@@ -611,3 +611,20 @@ def test_register_baked_dispatches_box(monkeypatch):
     ctrl._r = rr; ctrl._iid = 7; ctrl._regions = []
     ctrl._register_baked(_Pod(), boost=False)
     assert rr.calls == [(7, (0.0, 0.0, 0.0), (1.0, 2.0, 3.0))]
+
+
+def test_glow_bearing_ids_covers_warp_impulse_sensor(monkeypatch):
+    warp = [object(), object()]; imp = [object()]; sensor = object()
+
+    class _Ship:
+        def GetWarpEngineSubsystem(self): return "w"
+        def GetImpulseEngineSubsystem(self): return "i"
+        def GetSensorSubsystem(self): return sensor
+    monkeypatch.setattr(sg, "warp_pods", lambda s: warp if s == "w" else [])
+    monkeypatch.setattr(sg, "impulse_engines", lambda s: imp if s == "i" else [])
+    ids = sg.glow_bearing_subsystem_ids(_Ship())
+    assert ids == {id(warp[0]), id(warp[1]), id(imp[0]), id(sensor)}
+
+
+def test_glow_bearing_ids_none_safe():
+    assert sg.glow_bearing_subsystem_ids(object()) == set()
