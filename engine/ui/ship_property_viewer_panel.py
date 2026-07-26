@@ -125,6 +125,14 @@ class ShipPropertyViewerPanel(Panel):
         self._press_pos: Optional[tuple] = None   # (x, y) where press began
         self._drag_dist = 0.0                     # accumulated |motion| px
         self._chrome_press = False                # press began over CEF chrome
+        # Transform-gizmo axis drag state (subsystem target). _axis_drag is the
+        # grabbed axis index (0/1/2) while dragging, else None. _gizmo_hover is
+        # the hovered axis for the highlight, -1 when none.
+        self._axis_drag: Optional[int] = None
+        self._axis_grab_param = 0.0
+        self._axis_grab_pos = (0.0, 0.0, 0.0)
+        self._axis_grab_origin = (0.0, 0.0, 0.0)
+        self._gizmo_hover = -1
 
     @property
     def name(self) -> str:
@@ -152,6 +160,11 @@ class ShipPropertyViewerPanel(Panel):
         self._saved_pos = {}
         self._overlay_open = False
         self._close_overlays = False
+        self._axis_drag = None
+        self._axis_grab_param = 0.0
+        self._axis_grab_pos = (0.0, 0.0, 0.0)
+        self._axis_grab_origin = (0.0, 0.0, 0.0)
+        self._gizmo_hover = -1
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -180,6 +193,11 @@ class ShipPropertyViewerPanel(Panel):
         self._press_pos = None
         self._drag_dist = 0.0
         self._chrome_press = False
+        self._axis_drag = None
+        self._axis_grab_param = 0.0
+        self._axis_grab_pos = (0.0, 0.0, 0.0)
+        self._axis_grab_origin = (0.0, 0.0, 0.0)
+        self._gizmo_hover = -1
 
     def frame_to_bounds(self, center, radius: float) -> None:
         """Point the orbit camera at `center` and pull back so the model's
@@ -279,6 +297,60 @@ class ShipPropertyViewerPanel(Panel):
             self._pending_pos[index] = (float(body_pos[0]), float(body_pos[1]),
                                          float(body_pos[2]))
             self._last_pushed = None
+
+    # ------------------------------------------------------------------
+    # Transform gizmo (subsystem target)
+    # ------------------------------------------------------------------
+    def transform_gizmo(self) -> Optional[dict]:
+        """The move-gizmo for the selected subsystem, or None.
+
+        `{"origin", "axes", "length", "highlight"}` when the transform tool is
+        active and a subsystem is selected; None otherwise (no tool, no
+        selection, no camera, or the ship can't be resolved). `origin` follows
+        any staged/dragged position (`_effective_world_pos`); `axes` are the
+        three world-space body axes; `highlight` is the hovered axis (-1 none).
+        Light-node targets are Task 7's job — this handles `selected_index`."""
+        if self.active_tool != "transform" or self.camera is None:
+            return None
+        if self.selected_index is None:
+            return None
+        if not (0 <= self.selected_index < len(self._descriptors)):
+            return None
+        ship = self._ship_getter()
+        if ship is None or not hasattr(ship, "GetWorldRotation"):
+            return None
+        from engine.ui.ship_property_viewer import gizmo_axes, gizmo_length
+        return {
+            "origin": self._effective_world_pos(self.selected_index),
+            "axes": gizmo_axes(ship.GetWorldRotation()),
+            "length": gizmo_length(self.camera),
+            "highlight": self._gizmo_hover,
+        }
+
+    def _begin_axis_drag(self, axis: int, grab_param: float) -> None:
+        """Start an axis drag on `axis` (0/1/2), capturing the fixed drag-start
+        body position and world origin so the drag mapping stays stable."""
+        self._axis_drag = axis
+        self._axis_grab_param = grab_param
+        self._axis_grab_pos = self._effective_pos(self.selected_index)
+        self._axis_grab_origin = self._effective_world_pos(self.selected_index)
+
+    def _begin_axis_drag_for_test(self, axis: int, grab_param: float) -> None:
+        """Test seam: identical to a press-edge grab, without a host/gizmo."""
+        self._begin_axis_drag(axis, grab_param)
+
+    def _apply_axis_drag(self, param_now: float) -> None:
+        """Move the subsystem to grab_pos with the grabbed axis component
+        advanced by (param_now - grab_param)."""
+        if self._axis_drag is None or self.selected_index is None:
+            return
+        k = self._axis_drag
+        base = list(self._axis_grab_pos)
+        base[k] += (param_now - self._axis_grab_param)
+        self.set_subsystem_position(self.selected_index, tuple(base))
+
+    def _end_axis_drag(self) -> None:
+        self._axis_drag = None
 
     def selected_subsystem_sphere(self) -> Optional[dict]:
         """Wireframe sphere for the selected subsystem's damage volume, or None.
@@ -597,6 +669,14 @@ class ShipPropertyViewerPanel(Panel):
 
         down = btn_state(left)
 
+        # Transform-gizmo axis drag takes priority over orbit/pin: a press on a
+        # gizmo shaft grabs that axis and drags the subsystem along it (orbit
+        # suppressed, no pin pick on release). When no axis is grabbed this only
+        # updates the hover highlight and returns False, so every existing path
+        # (orbit / pick / chrome / zoom) runs untouched below.
+        if self._handle_gizmo_input(x, y, down, over_chrome, dsf, fb_size):
+            return
+
         if down and not self._lmb_down:
             # Press edge. A press over the CEF chrome (titlebar / left
             # column) belongs to the overlay — never starts an orbit drag
@@ -623,6 +703,72 @@ class ShipPropertyViewerPanel(Panel):
             self._press_pos = None
             self._drag_dist = 0.0
             self._chrome_press = False
+
+    def _handle_gizmo_input(self, x, y, down, over_chrome, dsf, fb_size) -> bool:
+        """Gizmo hover / axis grab / drag / release. Returns True when it
+        consumed the event (an axis drag was active or started/ended this
+        frame), so the caller skips the orbit/pin block. Returns False (and
+        leaves all edge bookkeeping to the caller) otherwise. Degrades to a
+        no-op returning False if the gizmo helpers/camera aren't available."""
+        try:
+            from engine.ui.ship_property_viewer import (
+                pick_gizmo_axis, axis_drag_param, gizmo_length,
+            )
+        except ImportError:
+            return False
+
+        # An axis drag is in progress — own the whole press/drag/release cycle.
+        if self._axis_drag is not None:
+            if not down:
+                # Release edge: end the drag; no pin pick.
+                self._end_axis_drag()
+                self._lmb_down = False
+                self._drag_last = None
+                self._press_pos = None
+                self._drag_dist = 0.0
+                self._chrome_press = False
+                self._gizmo_hover = -1
+                return True
+            # Drag: map the cursor onto the FIXED drag-start shaft so the
+            # mapping stays stable as the origin moves with the subsystem.
+            g = self.transform_gizmo()
+            if g is not None:
+                t = axis_drag_param(x, y, self._axis_grab_origin,
+                                    g["axes"][self._axis_drag],
+                                    gizmo_length(self.camera), self.camera,
+                                    fb_size())
+                self._apply_axis_drag(t)
+            self._drag_last = (x, y)
+            return True
+
+        g = self.transform_gizmo()
+        if g is None or over_chrome:
+            self._gizmo_hover = -1
+            return False
+
+        # Press edge: try to grab an axis. If none, fall through to orbit-press.
+        if down and not self._lmb_down:
+            axis = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
+                                   self.camera, fb_size(), dsf)
+            if axis is None:
+                return False
+            t_grab = axis_drag_param(x, y, g["origin"], g["axes"][axis],
+                                     g["length"], self.camera, fb_size())
+            self._begin_axis_drag(axis, t_grab)
+            self._chrome_press = False
+            self._lmb_down = True
+            self._drag_last = (x, y)
+            self._press_pos = (x, y)
+            self._drag_dist = 0.0
+            self._gizmo_hover = axis
+            return True
+
+        # Not a press edge and no active drag: hover highlight only (idle).
+        if not down:
+            hov = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
+                                  self.camera, fb_size(), dsf)
+            self._gizmo_hover = hov if hov is not None else -1
+        return False
 
     @staticmethod
     def _cursor_over_left_column(x: float, y: float, dsf: float) -> bool:
