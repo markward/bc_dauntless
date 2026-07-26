@@ -75,6 +75,18 @@ def set_setter(models, leaf, subsystem, setter, args) -> None:
     calls.append((setter, tuple(args)))
 
 
+def set_region(models, leaf, subsystem, index, calls) -> None:
+    """Replace all SetGlowRegion*(index, ...) calls for a subsystem with `calls`
+    (ordered [(setter, args), ...], each args starting with `index`). Non-glow
+    setters (e.g. SetRadius) and other region indices are left intact."""
+    per_sub = models.setdefault(leaf, {})
+    existing = per_sub.setdefault(subsystem, [])
+    kept = [(s, a) for (s, a) in existing
+            if not (s.startswith(_INDEXED_PREFIX) and a and a[0] == index)]
+    kept.extend((s, tuple(a)) for (s, a) in calls)
+    per_sub[subsystem] = kept
+
+
 # ── Emission ────────────────────────────────────────────────────────────────
 
 _HEADER = '''"""Machine-owned hardpoint overrides — edited by the Ship Property Viewer.
