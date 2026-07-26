@@ -471,6 +471,7 @@ void init(int width, int height, const std::string& title) {
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
     g_debug_volume_pass   = std::make_unique<renderer::DebugVolumePass>();
     g_gizmo_pass          = std::make_unique<renderer::GizmoPass>();
+    g_transform_gizmo.length = 0.0f;   // hidden until Python calls set_transform_gizmo
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
