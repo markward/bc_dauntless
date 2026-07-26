@@ -191,6 +191,20 @@ class ShipPropertyViewerPanel(Panel):
     def descriptors(self) -> List[dict]:
         return self._descriptors
 
+    def subsystem_pins(self) -> List[tuple]:
+        """Billboard pins to render, as (world_pos, icon_id, is_selected).
+
+        When a subsystem is selected, ONLY that pin is shown (all others
+        hidden) so the hologram isn't cluttered around the focused subsystem;
+        with nothing selected, every pin renders. Deselecting restores them
+        all. (Pin PICKING still uses the full descriptor set — see pick_at — so
+        clicking empty space deselects and reveals every pin again.)"""
+        sel = self.selected_index
+        if sel is not None and 0 <= sel < len(self._descriptors):
+            d = self._descriptors[sel]
+            return [(d["world_pos"], d["icon_id"], True)]
+        return [(d["world_pos"], d["icon_id"], False) for d in self._descriptors]
+
     def selected_descriptor(self) -> Optional[dict]:
         """The currently-selected pin's descriptor, or None."""
         if self.selected_index is None:

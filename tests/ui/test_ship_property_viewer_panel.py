@@ -823,6 +823,32 @@ def test_save_routes_light_region_edit(monkeypatch):
     assert _payload_data(p.render_payload())["pending_count"] == 0
 
 
+def test_subsystem_pins_shows_all_when_nothing_selected(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("A"), _rad_descriptor("B")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    pins = p.subsystem_pins()
+    assert len(pins) == 2
+    assert all(sel is False for _pos, _icon, sel in pins)
+
+
+def test_subsystem_pins_hides_others_when_selected(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("A"), _rad_descriptor("B")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.selected_index = 1
+    pins = p.subsystem_pins()
+    assert len(pins) == 1                 # only the selected pin renders
+    assert pins[0][2] is True             # flagged selected
+    # Deselecting restores every pin.
+    p.selected_index = None
+    assert len(p.subsystem_pins()) == 2
+
+
 def test_subsystem_row_carries_light_flag_and_region(monkeypatch):
     # The CEF context menu gates "Edit Light…" on row.light; without the row
     # carrying light/light_region the menu item can never appear.

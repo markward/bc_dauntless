@@ -7308,11 +7308,9 @@ def run(mission_name: Optional[str] = None,
                 if _player_iid_spv is not None:
                     r.set_visible(_player_iid_spv, False)
                     r.set_hologram_ship(_player_iid_spv)
-                r.set_subsystem_pins([
-                    (d["world_pos"], d["icon_id"],
-                     i == ship_property_viewer.selected_index)
-                    for i, d in enumerate(ship_property_viewer.descriptors())
-                ])
+                # Selection-scoped pins: only the selected subsystem's pin
+                # renders while one is selected; all render when deselected.
+                r.set_subsystem_pins(ship_property_viewer.subsystem_pins())
                 # Selection-scoped phaser overlay: the SELECTED bank's emitter
                 # strip, plus its firing arc only when the Weapon Arcs toggle is
                 # on (arc scoped to the selected weapon). Nothing when unselected.
