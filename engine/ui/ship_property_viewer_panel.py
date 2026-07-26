@@ -67,6 +67,10 @@ class ShipPropertyViewerPanel(Panel):
         self._visible = False
         self._descriptors: List[dict] = []
         self.selected_index: Optional[int] = None
+        # Selected LIGHT volume (descriptor index of the subsystem whose light
+        # is selected), mutually exclusive with selected_index. Shows only that
+        # light's glow wireframe; the parent radius sphere is hidden.
+        self._selected_light_index: Optional[int] = None
         self.camera: Optional[OrbitCamera] = None
         # Titlebar overlay toggles — both off by default, reset every open.
         self.show_glow_regions = False
@@ -124,6 +128,7 @@ class ShipPropertyViewerPanel(Panel):
         ship = self._ship_getter()
         self._descriptors = build_descriptors(ship) if ship is not None else []
         self.selected_index = None
+        self._selected_light_index = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
         self.show_hull_texture = False
@@ -142,6 +147,7 @@ class ShipPropertyViewerPanel(Panel):
         self._visible = False
         self._descriptors = []
         self.selected_index = None
+        self._selected_light_index = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
         self.show_hull_texture = False
@@ -212,6 +218,21 @@ class ShipPropertyViewerPanel(Panel):
             return self._saved_radius[index]
         return baked
 
+    def _effective_light(self, index):
+        """Effective index-0 light spec for a descriptor: a staged (unsaved)
+        edit wins, then a saved-this-session edit, else the baked region — with
+        `None` meaning 'no light' (absent, or a staged/saved removal)."""
+        if index in self._pending_light:
+            return self._pending_light[index]      # spec dict, or None (removed)
+        if index in self._saved_light:
+            return self._saved_light[index]
+        d = self._descriptors[index]
+        return d.get("light_region") if d.get("light") else None
+
+    def _has_light(self, index) -> bool:
+        return (0 <= index < len(self._descriptors)
+                and self._effective_light(index) is not None)
+
     def selected_subsystem_sphere(self) -> Optional[dict]:
         """Wireframe sphere for the selected subsystem's damage volume, or None.
 
@@ -220,7 +241,11 @@ class ShipPropertyViewerPanel(Panel):
         so Apply/Save preview live) — the only geometric size a subsystem
         exposes, so every subsystem is a sphere. None when nothing is selected
         or the radius is missing/non-positive. Consumed by host_loop via
-        engine.renderer.set_debug_spheres (viewer-mode only)."""
+        engine.renderer.set_debug_spheres (viewer-mode only).
+
+        No logic change needed for light selection: `selected_index` is always
+        cleared whenever a light is selected (mutual-exclusion invariant), so
+        this already returns None while a light node is selected."""
         sel = self.selected_index
         if sel is None or not (0 <= sel < len(self._descriptors)):
             return None
@@ -238,11 +263,19 @@ class ShipPropertyViewerPanel(Panel):
     def subsystem_pins(self) -> List[tuple]:
         """Billboard pins to render, as (world_pos, icon_id, is_selected).
 
-        When a subsystem is selected, ONLY that pin is shown (all others
-        hidden) so the hologram isn't cluttered around the focused subsystem;
-        with nothing selected, every pin renders. Deselecting restores them
-        all. (Pin PICKING still uses the full descriptor set — see pick_at — so
-        clicking empty space deselects and reveals every pin again.)"""
+        Light selected -> show only its parent subsystem's pin (anchor icon);
+        the glow wireframe is the focus. Subsystem selected -> only that pin
+        (all others hidden) so the hologram isn't cluttered around the focused
+        subsystem. Nothing selected -> every pin renders. Deselecting restores
+        them all. (Pin PICKING still uses the full descriptor set — see
+        pick_at — so clicking empty space deselects and reveals every pin
+        again.)"""
+        if self._selected_light_index is not None:
+            i = self._selected_light_index
+            if 0 <= i < len(self._descriptors):
+                d = self._descriptors[i]
+                return [(d["world_pos"], d["icon_id"], False)]
+            return []
         sel = self.selected_index
         if sel is not None and 0 <= sel < len(self._descriptors):
             d = self._descriptors[sel]
@@ -265,6 +298,7 @@ class ShipPropertyViewerPanel(Panel):
 
     def render_payload(self) -> Optional[str]:
         snapshot = (self._visible, len(self._descriptors), self.selected_index,
+                    self._selected_light_index,
                     self.show_glow_regions, self.show_weapon_arcs,
                     self.show_hull_texture,
                     tuple(sorted(self._pending_radius.items())),
@@ -290,6 +324,7 @@ class ShipPropertyViewerPanel(Panel):
             "pin_count": len(self._descriptors),
             "selected": selected,
             "selected_index": self.selected_index,
+            "selected_light_index": self._selected_light_index,
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
@@ -340,37 +375,32 @@ class ShipPropertyViewerPanel(Panel):
             row["dirty"] = (i in self._pending_radius) or (i in self._pending_light)
             row["radius"] = self._effective_radius(
                 i, d.get("properties", {}).get("radius"))
-            # Bridge the descriptor's light flag + region onto the row so the
-            # CEF context menu can gate "Edit Light…" on row.light and pre-fill
-            # the modal from row.light_region. Uses the pending spec when a light
-            # edit is staged (so re-opening the modal shows the staged values),
-            # else the baked region.
-            row["light"] = bool(d.get("light", False))
-            if d.get("light"):
-                if i in self._pending_light:
-                    row["light_region"] = self._pending_light[i]
-                elif i in self._saved_light:
-                    row["light_region"] = self._saved_light[i]
-                else:
-                    row["light_region"] = d.get("light_region")
+            row["has_light"] = self._has_light(i)
             by_index[i] = row
             parent = by_index.get(d.get("parent_index"))
             if parent is not None:
                 parent["children"].append(row)
             else:
                 rows.append(row)
-        for row in rows:
+        # Light-volume child node under any subsystem that has one.
+        for i in range(len(self._descriptors)):
+            if self._has_light(i):
+                by_index[i]["children"].append({
+                    "kind": "light",
+                    "name": "Light Volume",
+                    "light_of": i,
+                    "light_region": self._effective_light(i),
+                    "dirty": (i in self._pending_light),
+                })
+        for row in by_index.values():
             if row["children"]:
                 row["expanded"] = row["name"] in self._expanded_groups
         return rows
 
     def pending_light_specs(self) -> dict:
-        """{subsystem_name: baked-shaped region spec} for the live overlay.
-
-        Includes both staged (unsaved) edits and edits saved this session, so
-        the wireframe keeps showing a saved shape until the next ship build
-        refreshes the baked template. A staged edit on the same subsystem wins
-        over its saved spec."""
+        """{subsystem_name: spec|None} overriding the baked overlay. A spec draws
+        the staged/saved light; None hides a removed one. Saved then pending so a
+        fresh stage wins."""
         out: dict = {}
         for source in (self._saved_light, self._pending_light):
             for i, spec in source.items():
@@ -588,6 +618,7 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             if 0 <= idx < len(self._descriptors):
                 self.selected_index = idx
+                self._selected_light_index = None
                 # Reveal the selection in the list: expand its group so a
                 # 3D pin click never lands on a hidden row.
                 pi = self._descriptors[idx].get("parent_index")
@@ -597,6 +628,44 @@ class ShipPropertyViewerPanel(Panel):
                 self._last_pushed = None  # force re-push of popover
                 return True
             return False
+        if action.startswith("select_light:"):
+            try:
+                idx = int(action.split(":", 1)[1])
+            except ValueError:
+                return False
+            if not (0 <= idx < len(self._descriptors)) or not self._has_light(idx):
+                return False
+            self._selected_light_index = idx
+            self.selected_index = None
+            self._expanded_groups.add(self._descriptors[idx].get("name", ""))
+            self._last_pushed = None
+            return True
+        if action.startswith("add_light:"):
+            try:
+                idx = int(action.split(":", 1)[1])
+            except ValueError:
+                return False
+            if not (0 <= idx < len(self._descriptors)) or self._has_light(idx):
+                return False
+            base = self._descriptors[idx].get("light_region") or {}
+            self._pending_light[idx] = dict(base)     # from-scratch default spec
+            self._selected_light_index = idx
+            self.selected_index = None
+            self._expanded_groups.add(self._descriptors[idx].get("name", ""))
+            self._last_pushed = None
+            return True
+        if action.startswith("remove_light:"):
+            try:
+                idx = int(action.split(":", 1)[1])
+            except ValueError:
+                return False
+            if not (0 <= idx < len(self._descriptors)):
+                return False
+            self._pending_light[idx] = None           # removed sentinel
+            if self._selected_light_index == idx:
+                self._selected_light_index = None
+            self._last_pushed = None
+            return True
         if action.startswith("toggle_group:"):
             try:
                 idx = int(action.split(":", 1)[1])
@@ -609,9 +678,10 @@ class ShipPropertyViewerPanel(Panel):
             self._last_pushed = None
             return True
         if action == "deselect":
-            if self.selected_index is None:
+            if self.selected_index is None and self._selected_light_index is None:
                 return False
             self.selected_index = None
+            self._selected_light_index = None
             self._last_pushed = None
             return True
         if action.startswith("overlay:"):
@@ -681,7 +751,7 @@ class ShipPropertyViewerPanel(Panel):
             edits = [(self._descriptors[i]["name"], "SetRadius", (v,))
                      for i, v in sorted(self._pending_radius.items())]
             edits += [(self._descriptors[i]["name"], "__region__", 0,
-                       region_spec_to_calls(0, spec))
+                       region_spec_to_calls(0, spec) if spec is not None else [])
                       for i, spec in sorted(self._pending_light.items())]
             try:
                 resolve_override_target(ship).write(leaf, edits)
