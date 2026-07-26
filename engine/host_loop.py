@@ -7339,6 +7339,17 @@ def run(mission_name: Optional[str] = None,
                 # sphere at its icon (only while a subsystem is selected).
                 _sphere = ship_property_viewer.selected_subsystem_sphere()
                 r.set_debug_spheres([_sphere] if _sphere else [])
+                # Transform gizmo: three body-frame drag axes at the
+                # selected subsystem/light, only while the Transform tool
+                # is active and something is selected.
+                _gizmo = ship_property_viewer.transform_gizmo()
+                if _gizmo is not None:
+                    ox, oy, oz = _gizmo["origin"]
+                    ax, ay, az = _gizmo["axes"]
+                    r.set_transform_gizmo((ox, oy, oz), ax, ay, az,
+                                          _gizmo["length"], _gizmo["highlight"])
+                else:
+                    r.clear_transform_gizmo()
                 # The gameplay target reticle is hidden while the viewer owns
                 # the frame; it returns on close via the else branch below.
                 r.clear_target_reticle()
@@ -7355,6 +7366,7 @@ def run(mission_name: Optional[str] = None,
                     r.clear_debug_cylinders()
                     r.clear_debug_boxes()
                     r.clear_debug_spheres()
+                    r.clear_transform_gizmo()
                     r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
                     r.set_spv_hull_mode(False)
                     _spv_hidden_iid = None
