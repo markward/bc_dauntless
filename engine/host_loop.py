@@ -7322,15 +7322,15 @@ def run(mission_name: Optional[str] = None,
                         show_all_arcs=ship_property_viewer.show_weapon_arcs)
                 )
                 # Glow regions as orange wireframe cylinders (debug volume
-                # pass): the toggle shows every subsystem's; with it off, a
-                # selected subsystem still reveals its own (mirroring the
-                # selected-pin firing arc).
+                # pass): the toggle shows every subsystem's; with it off, the
+                # selected LIGHT node reveals its own (the subsystem pin's
+                # selection drives the damage-radius sphere instead).
                 from engine.ui.glow_region_overlay import (
                     build_glow_region_overlay,
                 )
                 _cyls, _boxes = build_glow_region_overlay(
                     player,
-                    selected_name=ship_property_viewer.selected_name(),
+                    selected_name=ship_property_viewer.selected_light_name(),
                     show_all=ship_property_viewer.show_glow_regions,
                     pending=ship_property_viewer.pending_light_specs())
                 r.set_debug_cylinders(_cyls)

@@ -87,6 +87,8 @@ def build_glow_region_overlay(ship, selected_name: str = None,
     unsaved Edit Light edit). When a subsystem's name is a key in `pending`,
     that spec is resolved via `resolve_baked_region` INSTEAD of the
     subsystem's baked ops, so the wireframe tracks the live edit before Save.
+    A `None` value (a staged light removal) draws nothing for that
+    subsystem — it hides the baked region rather than falling back to it.
 
     Cylinder regions map directly (baked_region_ops pre-shifts the centre by
     the aft extent). Sphere regions are drawn as their circumscribing cylinder
@@ -112,7 +114,8 @@ def build_glow_region_overlay(ship, selected_name: str = None,
             continue
         pos = _position_tuple(sub)
         if name in pending:
-            op = resolve_baked_region(pending[name], pos)
+            spec = pending[name]
+            op = resolve_baked_region(spec, pos) if spec is not None else None
             ops = [op] if op is not None else []
         else:
             prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None

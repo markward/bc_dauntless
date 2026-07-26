@@ -296,6 +296,13 @@ class ShipPropertyViewerPanel(Panel):
         d = self.selected_descriptor()
         return d["name"] if d else None
 
+    def selected_light_name(self) -> Optional[str]:
+        """GetName() of the subsystem whose light is selected, or None."""
+        i = self._selected_light_index
+        if i is not None and 0 <= i < len(self._descriptors):
+            return self._descriptors[i].get("name")
+        return None
+
     def render_payload(self) -> Optional[str]:
         snapshot = (self._visible, len(self._descriptors), self.selected_index,
                     self._selected_light_index,
