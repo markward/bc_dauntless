@@ -77,8 +77,9 @@ with three buttons — Transform (move glyph), Rotate, Scale. Mutually
 exclusive: the active one carries `.active`; clicking it again clears it.
 Each click fires an event the panel handles (e.g.
 `ship-property-viewer/tool` with payload `transform|rotate|scale|none`).
-Rotate/Scale buttons have a `title` "coming soon" and their handler stages
-nothing. Dev-only (`.dev-only`, inside `#spv-root`).
+Rotate/Scale buttons are inert this pass — clickable (they can become the
+active tool) but their tool does nothing: no gizmo, no staged edit.
+Dev-only (`.dev-only`, inside `#spv-root`).
 
 **Panel (`ship_property_viewer_panel.py`):** an `active_tool` field
 (`None | "transform" | "rotate" | "scale"`; default `None`). A dispatch
