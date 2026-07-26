@@ -734,3 +734,90 @@ def test_save_keeps_pending_when_leaf_unresolved(monkeypatch):
     assert calls == []
     data = _payload_data(p.render_payload())
     assert data["pending_count"] == 1
+
+
+# ── staged light/glow-region edits (Task 8) ─────────────────────────────────
+
+import json as _json
+
+
+def _light_descriptor(name):
+    return {"name": name, "icon_id": 0, "world_pos": (0, 0, 0),
+            "state": "healthy", "targetable": True, "condition_pct": 100,
+            "parent_index": None, "light": True,
+            "light_region": {"shape": "Cylinder", "position": (1.0, 0.0, 0.0),
+                             "axis": (0.0, -1.0, 0.0), "radius": (0.25,),
+                             "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25)},
+            "properties": {"name": name, "radius": 0.25}}
+
+
+class _LightShip:
+    def GetScript(self): return "ships.Galaxy"
+
+
+def test_set_light_stages_and_marks_dirty(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    ok = p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Cylinder", "radius": 0.4, "aft": 0.0, "fore": 3.0}))
+    assert ok is True
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 1
+    assert data["subsystems"][0]["dirty"] is True
+    spec = p.pending_light_specs()["Center Impulse"]
+    assert spec["shape"] == "Cylinder"
+    assert spec["radius"] == (0.4,)
+    assert spec["extent"] == (0.0, 3.0)
+    assert spec["position"] == (1.0, 0.0, 0.0)   # carried from light_region
+
+
+def test_set_light_rejects_fore_le_aft(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    ok = p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Cylinder", "radius": 0.4, "aft": 2.0, "fore": 2.0}))
+    assert ok is False
+    assert _payload_data(p.render_payload())["pending_count"] == 0
+
+
+def test_set_light_box_rejects_nonpositive_scale(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    ok = p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.0, "sz": 0.5}))
+    assert ok is False
+
+
+def test_save_routes_light_region_edit(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    calls = []
+
+    class _Target:
+        def write(self, leaf, edits): calls.append((leaf, edits))
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    p.dispatch_event("save")
+    assert len(calls) == 1
+    leaf, edits = calls[0]
+    assert leaf == "galaxy"
+    assert edits[0][0] == "Center Impulse"
+    assert edits[0][1] == "__region__"
+    assert edits[0][2] == 0
+    assert ("SetGlowRegionShape", (0, "Box")) in edits[0][3]
+    assert ("SetGlowRegionScale", (0, 0.5, 0.6, 0.7)) in edits[0][3]
+    assert _payload_data(p.render_payload())["pending_count"] == 0
