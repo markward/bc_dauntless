@@ -101,6 +101,13 @@ class ShipPropertyViewerPanel(Panel):
         # persist->reload story as _saved_light: keeps the volume sphere + the
         # radius readout on the saved value until the next ship build.
         self._saved_radius: dict = {}
+        # Staged position edits: descriptor index -> body-frame (x, y, z).
+        # Same story as _pending_radius: not applied to the live sim, persisted
+        # on Save, applied on the next ship build.
+        self._pending_pos: dict = {}
+        # Position edits saved THIS session (descriptor index -> body pos).
+        # Same persist->reload story as _saved_radius/_saved_light.
+        self._saved_pos: dict = {}
         # True while a CEF context menu / modal is open: handle_input suppresses
         # orbit + pick so clicks on that chrome don't reach the 3D view.
         self._overlay_open = False
@@ -141,6 +148,8 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_light = {}
         self._saved_light = {}
         self._saved_radius = {}
+        self._pending_pos = {}
+        self._saved_pos = {}
         self._overlay_open = False
         self._close_overlays = False
         target = self._fit_target()
@@ -161,6 +170,8 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_light = {}
         self._saved_light = {}
         self._saved_radius = {}
+        self._pending_pos = {}
+        self._saved_pos = {}
         self._overlay_open = False
         self._close_overlays = False
         self.camera = None
@@ -238,6 +249,37 @@ class ShipPropertyViewerPanel(Panel):
         return (0 <= index < len(self._descriptors)
                 and self._effective_light(index) is not None)
 
+    def _effective_pos(self, index: int):
+        """Body-frame position to use for a descriptor: a staged (unsaved)
+        edit wins, then an edit saved this session, else the baked body-frame
+        mount (`properties.position`). Mirrors `_effective_radius`."""
+        if index in self._pending_pos:
+            return self._pending_pos[index]
+        if index in self._saved_pos:
+            return self._saved_pos[index]
+        props = self._descriptors[index].get("properties", {})
+        return tuple(props.get("position") or (0.0, 0.0, 0.0))
+
+    def _effective_world_pos(self, index: int):
+        """World-space point for `_effective_pos(index)`, so a staged/dragged
+        position moves the sphere + pin live even though it has no in-session
+        effect on the sim. Falls back to the baked world_pos if the ship is
+        unavailable (headless / not yet resolved)."""
+        from engine.ui.ship_property_viewer import world_from_body
+        ship = self._ship_getter()
+        if ship is None or not hasattr(ship, "GetWorldLocation"):
+            return self._descriptors[index].get("world_pos", (0.0, 0.0, 0.0))
+        return world_from_body(ship, self._effective_pos(index))
+
+    def set_subsystem_position(self, index: int, body_pos) -> None:
+        """Stage a body-frame position edit for `index`. Not applied to the
+        live sim (position has no in-session physics effect); persisted on
+        Save, applied on the next ship build. Mirrors set_radius staging."""
+        if 0 <= index < len(self._descriptors):
+            self._pending_pos[index] = (float(body_pos[0]), float(body_pos[1]),
+                                         float(body_pos[2]))
+            self._last_pushed = None
+
     def selected_subsystem_sphere(self) -> Optional[dict]:
         """Wireframe sphere for the selected subsystem's damage volume, or None.
 
@@ -262,7 +304,7 @@ class ShipPropertyViewerPanel(Panel):
             return None
         if r <= 0.0:
             return None
-        return {"center": d["world_pos"], "radius": r,
+        return {"center": self._effective_world_pos(sel), "radius": r,
                 "color": SUBSYS_SPHERE_COLOR}
 
     def subsystem_pins(self) -> List[tuple]:
@@ -284,7 +326,7 @@ class ShipPropertyViewerPanel(Panel):
         sel = self.selected_index
         if sel is not None and 0 <= sel < len(self._descriptors):
             d = self._descriptors[sel]
-            return [(d["world_pos"], d["icon_id"], True)]
+            return [(self._effective_world_pos(sel), d["icon_id"], True)]
         return [(d["world_pos"], d["icon_id"], False) for d in self._descriptors]
 
     def selected_descriptor(self) -> Optional[dict]:
@@ -315,6 +357,7 @@ class ShipPropertyViewerPanel(Panel):
                     self.show_hull_texture,
                     tuple(sorted(self._pending_radius.items())),
                     tuple(sorted(self._pending_light)),   # indices with a staged light
+                    tuple(sorted(self._pending_pos.items())),
                     tuple(sorted(self._expanded_groups)))
         if snapshot == self._last_pushed:
             return None
@@ -341,7 +384,8 @@ class ShipPropertyViewerPanel(Panel):
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
-            "pending_count": len(set(self._pending_radius) | set(self._pending_light)),
+            "pending_count": len(set(self._pending_radius) | set(self._pending_light)
+                                 | set(self._pending_pos)),
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
             "close_overlays": self._close_overlays,
@@ -357,13 +401,15 @@ class ShipPropertyViewerPanel(Panel):
         first-seen by ascending descriptor index."""
         counts: dict = {}
         order: List[str] = []
-        for i in sorted(set(self._pending_radius) | set(self._pending_light)):
+        for i in sorted(set(self._pending_radius) | set(self._pending_light)
+                         | set(self._pending_pos)):
             name = self._descriptors[i]["name"]
             if name not in counts:
                 counts[name] = 0
                 order.append(name)
             counts[name] += (1 if i in self._pending_radius else 0)
             counts[name] += (1 if i in self._pending_light else 0)
+            counts[name] += (1 if i in self._pending_pos else 0)
         return [{"name": n, "count": counts[n]} for n in order]
 
     def _subsystem_rows(self) -> List[dict]:
@@ -385,7 +431,8 @@ class ShipPropertyViewerPanel(Panel):
         by_index: dict = {}
         for i, d in enumerate(self._descriptors):
             row = _row(i, d)
-            row["dirty"] = (i in self._pending_radius) or (i in self._pending_light)
+            row["dirty"] = ((i in self._pending_radius) or (i in self._pending_light)
+                             or (i in self._pending_pos))
             row["radius"] = self._effective_radius(
                 i, d.get("properties", {}).get("radius"))
             row["has_light"] = self._has_light(i)
@@ -761,7 +808,8 @@ class ShipPropertyViewerPanel(Panel):
             self._last_pushed = None
             return True
         if action == "save":
-            if not self._pending_radius and not self._pending_light:
+            if (not self._pending_radius and not self._pending_light
+                    and not self._pending_pos):
                 return True
             ship = self._ship_getter()
             leaf = hardpoint_leaf_for_ship(ship)
@@ -775,6 +823,8 @@ class ShipPropertyViewerPanel(Panel):
             edits += [(self._descriptors[i]["name"], "__region__", 0,
                        region_spec_to_calls(0, spec) if spec is not None else [])
                       for i, spec in sorted(self._pending_light.items())]
+            edits += [(self._descriptors[i]["name"], "SetPosition", tuple(v))
+                      for i, v in sorted(self._pending_pos.items())]
             try:
                 resolve_override_target(ship).write(leaf, edits)
             except Exception as e:
@@ -793,6 +843,8 @@ class ShipPropertyViewerPanel(Panel):
             self._pending_radius = {}
             self._saved_light.update(self._pending_light)
             self._pending_light = {}
+            self._saved_pos.update(self._pending_pos)
+            self._pending_pos = {}
             self._last_pushed = None
             return True
         return False
