@@ -30,7 +30,7 @@ InstanceId = _h.InstanceId
 #   resolved at the import above) is deliberately excluded: its absence already
 #   hard-fails `import`, so it needs no manifest entry.
 _REQUIRED_BINDINGS = frozenset({
-    "add_cylinder_region", "add_sphere_region",
+    "add_box_region", "add_cylinder_region", "add_sphere_region",
     "assemble_officer", "bridge_pass_set_enabled",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
     "cef_reload", "cef_shutdown",
@@ -486,6 +486,12 @@ def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:
     -1 on failure. Used for sensor arrays and baked hardpoint spheres; warp and
     impulse volumes are baked cylinders (see engine/appc/subsystem_glow.py)."""
     return _h.add_sphere_region(instance_id, tuple(center), float(radius))
+
+
+def add_box_region(instance_id: InstanceId, center, half_extents) -> int:
+    """Store a body-axis-aligned box glow region at a hardpoint. center and
+    half_extents are 3-tuples in game units. Returns the region index, or -1."""
+    return _h.add_box_region(instance_id, tuple(center), tuple(half_extents))
 
 
 def add_cylinder_region(instance_id: InstanceId, center, axis, radius: float,
