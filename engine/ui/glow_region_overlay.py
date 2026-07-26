@@ -108,7 +108,7 @@ def build_glow_region_overlay(ship, selected_name: str = None,
     boxes: List[dict] = []
     for sub in _iter_subsystems(ship):
         name = sub.GetName() if hasattr(sub, "GetName") else ""
-        if not show_all and name != selected_name:
+        if name not in pending and not show_all and name != selected_name:
             continue
         pos = _position_tuple(sub)
         if name in pending:

@@ -222,6 +222,38 @@ def test_pending_box_yields_a_box(monkeypatch):
     assert len(boxes) == 1
 
 
+def test_pending_previews_even_when_filtered_out(monkeypatch):
+    # Edit Light operates on the RIGHT-CLICKED row, which right-click does
+    # NOT select. With the Glow Regions toggle off and a DIFFERENT pin
+    # selected, the pending subsystem must still contribute its wireframe —
+    # otherwise the staged edit never previews live.
+    monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
+    monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))
+    monkeypatch.setattr(gro, "baked_region_ops", lambda prop, pos, name: [])
+    ship = _BoxShip([_BoxSub("Center Impulse", object())])
+    pending = {"Center Impulse": {"shape": "Cylinder", "position": (0.0, 0.0, 0.0),
+                                  "axis": (0.0, 0.0, 1.0), "radius": (0.2,),
+                                  "extent": (0.0, 2.0), "scale": (0.1, 0.1, 0.1)}}
+    cyls, boxes = gro.build_glow_region_overlay(
+        ship, selected_name="Some Other Subsystem", show_all=False, pending=pending)
+    assert boxes == []
+    assert len(cyls) == 1   # pending subsystem previewed despite the filter
+
+
+def test_non_pending_subsystem_still_filtered_when_not_selected(monkeypatch):
+    # Existing behavior preserved: with no pending spec, show_all=False and a
+    # different selection, the subsystem still contributes nothing.
+    monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
+    monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))
+    monkeypatch.setattr(gro, "baked_region_ops",
+                        lambda prop, pos, name: [("sphere", (0.0, 0.0, 0.0), 0.9)])
+    ship = _BoxShip([_BoxSub("Center Impulse", object())])
+    cyls, boxes = gro.build_glow_region_overlay(
+        ship, selected_name="Some Other Subsystem", show_all=False, pending={})
+    assert cyls == []
+    assert boxes == []
+
+
 def test_overlay_returns_cylinders_and_boxes_tuple(monkeypatch):
     monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
     monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))
