@@ -104,6 +104,15 @@ bool initialize(int view_width, int view_height,
     settings.multi_threaded_message_loop = false;
     settings.command_line_args_disabled  = true;
 
+    // Stable on-disk cache dir. Without this CEF falls back to a default and
+    // warns about unintended process-singleton behavior; a fixed path also
+    // lets the GPU/shader cache persist across runs.
+    const std::filesystem::path cef_cache_dir =
+        std::filesystem::temp_directory_path() / "dauntless-cef-cache";
+    std::error_code cef_cache_ec;
+    std::filesystem::create_directories(cef_cache_dir, cef_cache_ec);
+    CefString(&settings.root_cache_path) = cef_cache_dir.string();
+
 #ifdef __APPLE__
     // No .app bundle: tell CEF where everything lives.
     const std::filesystem::path exec_path = g_saved_argc > 0
