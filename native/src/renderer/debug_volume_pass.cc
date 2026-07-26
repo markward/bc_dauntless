@@ -27,7 +27,8 @@ void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); }
 const std::string kFs = R"(#version 330 core
 out vec4 frag_color;
 uniform vec3 u_color;
-void main() { frag_color = vec4(u_color, 1.0); }
+uniform float u_alpha;   // 1.0 opaque (cylinders/boxes); < 1 for the sphere cage
+void main() { frag_color = vec4(u_color, u_alpha); }
 )";
 
 }  // namespace
@@ -89,6 +90,7 @@ void DebugVolumePass::render(const std::vector<DebugCylinder>& cylinders,
     glDisable(GL_CULL_FACE);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glLineWidth(1.5f);
+    shader_->set_float("u_alpha", 1.0f);   // cylinders opaque
     glBindVertexArray(vao_);
 
     for (const auto& c : cylinders) {
@@ -163,6 +165,7 @@ void DebugVolumePass::render(const std::vector<DebugBox>& boxes,
     glDisable(GL_CULL_FACE);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glLineWidth(1.5f);
+    shader_->set_float("u_alpha", 1.0f);   // boxes opaque
     glBindVertexArray(box_vao_);
 
     for (const auto& b : boxes) {
@@ -238,6 +241,9 @@ void DebugVolumePass::render(const std::vector<DebugSphere>& spheres,
     glDisable(GL_CULL_FACE);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glLineWidth(1.5f);
+    shader_->set_float("u_alpha", 0.75f);   // sphere cage at 75% opacity
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glBindVertexArray(sphere_vao_);
 
     for (const auto& s : spheres) {
@@ -252,6 +258,7 @@ void DebugVolumePass::render(const std::vector<DebugSphere>& spheres,
     }
 
     glBindVertexArray(0);
+    glDisable(GL_BLEND);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
