@@ -500,6 +500,12 @@ class ShipPropertyViewerPanel(Panel):
                 props = dict(_props0)
                 props["radius"] = _eff
                 selected["properties"] = props
+            _cur_props = selected.get("properties", {})
+            _effpos = self._effective_pos(self.selected_index)
+            if _effpos != _cur_props.get("position"):
+                props = dict(_cur_props)
+                props["position"] = _effpos
+                selected["properties"] = props
         payload = {
             "visible": True,
             "pin_count": len(self._descriptors),
@@ -972,7 +978,7 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             if not (0 <= idx < len(self._descriptors)):
                 return False
-            base = dict(self._descriptors[idx].get("light_region") or {})
+            base = dict(self._effective_light(idx) or self._descriptors[idx].get("light_region") or {})
             pos = base.get("position") or (0.0, 0.0, 0.0)
             axis = base.get("axis") or (0.0, -1.0, 0.0)
             spec = {"shape": shape, "position": tuple(pos), "axis": tuple(axis),

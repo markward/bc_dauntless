@@ -1,8 +1,13 @@
 """SPV transform gizmo accessor + drag application (subsystem target)."""
+import json
 import pytest
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.ui.ship_property_viewer_panel import ShipPropertyViewerPanel
 from engine.ui.ship_property_viewer import OrbitCamera, project
+
+
+def _payload_data(payload):
+    return json.loads(payload[payload.index("(") + 1: payload.rindex(")")])
 
 
 class _Ship:
@@ -188,3 +193,32 @@ def test_handle_input_axis_drag_moves_subsystem_and_does_not_orbit():
     assert y == pytest.approx(1.0)
     assert z == pytest.approx(0.0)
     assert p.camera.yaw == yaw0   # orbit suppressed during the axis drag
+
+
+# ---------------------------------------------------------------------------
+# Final-review fixes: edit-loss on Edit-Light after a gizmo drag, and the
+# popover position readout following a staged/dragged subsystem position.
+# ---------------------------------------------------------------------------
+def test_edit_light_shape_preserves_dragged_position():
+    p = _panel_with_light()
+    p.dispatch_event("set_tool:transform")
+    p._selected_light_index = 0
+    p._begin_axis_drag_for_test(axis=0, grab_param=0.0)  # +X (starboard)
+    p._apply_axis_drag(1.5)
+    # Sanity: drag staged before the Edit-Light dispatch.
+    assert p._effective_light(0)["position"] == pytest.approx((1.5, 1.0, 0.0))
+
+    p.dispatch_event("set_light:" + json.dumps({"i": 0, "shape": "Sphere", "radius": 0.4}))
+
+    spec = p._effective_light(0)
+    assert spec["position"] == pytest.approx((1.5, 1.0, 0.0))  # dragged X survived
+    assert spec["radius"] == pytest.approx((0.4,))
+
+
+def test_popover_position_follows_pending_drag():
+    p = _panel()
+    p.selected_index = 0
+    p.set_subsystem_position(0, (2.0, 1.0, 0.0))
+
+    data = _payload_data(p.render_payload())
+    assert data["selected"]["properties"]["position"] == [2.0, 1.0, 0.0]
