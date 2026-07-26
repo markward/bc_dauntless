@@ -67,6 +67,9 @@ class ShipPropertyViewerPanel(Panel):
         self._visible = False
         self._descriptors: List[dict] = []
         self.selected_index: Optional[int] = None
+        # Active transform-gizmo tool: None|"transform"|"rotate"|"scale".
+        # Mutually exclusive radio, reset every open/close.
+        self.active_tool: Optional[str] = None
         # Selected LIGHT volume (descriptor index of the subsystem whose light
         # is selected), mutually exclusive with selected_index. Shows only that
         # light's glow wireframe; the parent radius sphere is hidden.
@@ -129,6 +132,7 @@ class ShipPropertyViewerPanel(Panel):
         self._descriptors = build_descriptors(ship) if ship is not None else []
         self.selected_index = None
         self._selected_light_index = None
+        self.active_tool = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
         self.show_hull_texture = False
@@ -148,6 +152,7 @@ class ShipPropertyViewerPanel(Panel):
         self._descriptors = []
         self.selected_index = None
         self._selected_light_index = None
+        self.active_tool = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
         self.show_hull_texture = False
@@ -305,7 +310,7 @@ class ShipPropertyViewerPanel(Panel):
 
     def render_payload(self) -> Optional[str]:
         snapshot = (self._visible, len(self._descriptors), self.selected_index,
-                    self._selected_light_index,
+                    self._selected_light_index, self.active_tool,
                     self.show_glow_regions, self.show_weapon_arcs,
                     self.show_hull_texture,
                     tuple(sorted(self._pending_radius.items())),
@@ -332,6 +337,7 @@ class ShipPropertyViewerPanel(Panel):
             "selected": selected,
             "selected_index": self.selected_index,
             "selected_light_index": self._selected_light_index,
+            "active_tool": self.active_tool,
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
@@ -745,6 +751,13 @@ class ShipPropertyViewerPanel(Panel):
             except (KeyError, TypeError, ValueError):
                 return False
             self._pending_light[idx] = spec
+            self._last_pushed = None
+            return True
+        if action.startswith("set_tool:"):
+            name = action.split(":", 1)[1]
+            if name not in ("transform", "rotate", "scale"):
+                return False
+            self.active_tool = None if self.active_tool == name else name
             self._last_pushed = None
             return True
         if action == "save":
