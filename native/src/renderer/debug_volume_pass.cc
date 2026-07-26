@@ -241,7 +241,7 @@ void DebugVolumePass::render(const std::vector<DebugSphere>& spheres,
     glDisable(GL_CULL_FACE);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glLineWidth(1.5f);
-    shader_->set_float("u_alpha", 0.75f);   // sphere cage at 75% opacity
+    shader_->set_float("u_alpha", 0.5f);   // sphere cage at 50% opacity
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glBindVertexArray(sphere_vao_);
