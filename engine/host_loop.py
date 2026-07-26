@@ -7329,10 +7329,12 @@ def run(mission_name: Optional[str] = None,
                 from engine.ui.glow_region_overlay import (
                     build_glow_region_overlay,
                 )
-                r.set_debug_cylinders(build_glow_region_overlay(
+                _cyls, _boxes = build_glow_region_overlay(
                     player,
                     selected_name=ship_property_viewer.selected_name(),
-                    show_all=ship_property_viewer.show_glow_regions))
+                    show_all=ship_property_viewer.show_glow_regions)
+                r.set_debug_cylinders(_cyls)
+                r.set_debug_boxes(_boxes)
                 # The gameplay target reticle is hidden while the viewer owns
                 # the frame; it returns on close via the else branch below.
                 r.clear_target_reticle()
@@ -7347,6 +7349,7 @@ def run(mission_name: Optional[str] = None,
                     r.clear_subsystem_pins()
                     r.clear_spv_overlay_beams()
                     r.clear_debug_cylinders()
+                    r.clear_debug_boxes()
                     r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
                     r.set_spv_hull_mode(False)
                     _spv_hidden_iid = None
