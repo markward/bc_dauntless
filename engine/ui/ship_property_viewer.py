@@ -34,6 +34,14 @@ def _sub(a: Vec3, b: Vec3) -> Vec3:
     return (a[0]-b[0], a[1]-b[1], a[2]-b[2])
 
 
+def _add(a: Vec3, b: Vec3) -> Vec3:
+    return (a[0]+b[0], a[1]+b[1], a[2]+b[2])
+
+
+def _scale(a: Vec3, s: float) -> Vec3:
+    return (a[0]*s, a[1]*s, a[2]*s)
+
+
 def _cross(a: Vec3, b: Vec3) -> Vec3:
     return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
 
@@ -364,3 +372,88 @@ def pick_pin(cursor_x: float, cursor_y: float, descriptors: List[dict],
             best_d2 = d2
             best_idx = i
     return best_idx
+
+
+# ---------------------------------------------------------------------------
+# Transform gizmo
+# ---------------------------------------------------------------------------
+GIZMO_LENGTH_FRAC = 0.22   # arrow length as a fraction of orbit distance
+GIZMO_MIN_LENGTH  = 0.30   # floor so it never collapses when zoomed in close
+GIZMO_PICK_PT     = 8.0    # click threshold to a projected shaft, logical pts
+
+
+def gizmo_length(cam: "OrbitCamera") -> float:
+    """World length of each arrow — proportional to orbit distance so the
+    gizmo keeps a near-constant apparent size at any zoom (fixed FOV)."""
+    return max(GIZMO_MIN_LENGTH, cam.distance * GIZMO_LENGTH_FRAC)
+
+
+def gizmo_axes(R):
+    """The three unit body axes in world space (column-vector convention):
+    X=starboard GetCol(0), Y=forward GetCol(1), Z=up GetCol(2)."""
+    def col(k):
+        c = R.GetCol(k)
+        return _norm((c.x, c.y, c.z))
+    return (col(0), col(1), col(2))
+
+
+def world_from_body(ship, body_pos):
+    """ship_loc + R * body_pos (column-vector R, no scale) — the world point
+    of a body-frame position. Mirrors subsystem_world_position but takes an
+    explicit body position (so a pending/dragged position can be placed)."""
+    loc = ship.GetWorldLocation()
+    off = TGPoint3(body_pos[0], body_pos[1], body_pos[2])
+    rot = ship.GetWorldRotation() if hasattr(ship, "GetWorldRotation") else None
+    if isinstance(rot, TGMatrix3):
+        off.MultMatrixLeft(rot)
+    return (loc.x + off.x, loc.y + off.y, loc.z + off.z)
+
+
+def _seg_dist2(px, py, ax, ay, bx, by):
+    """Squared distance from point p to segment a-b, in screen pixels."""
+    dx, dy = bx - ax, by - ay
+    l2 = dx * dx + dy * dy
+    if l2 <= 1e-9:
+        return (px - ax) ** 2 + (py - ay) ** 2
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / l2))
+    cx, cy = ax + t * dx, ay + t * dy
+    return (px - cx) ** 2 + (py - cy) ** 2
+
+
+def pick_gizmo_axis(cursor_x, cursor_y, origin, axes, length, cam, viewport,
+                    device_scale_factor: float = 1.0):
+    """Axis index (0/1/2) whose projected shaft is within the click threshold
+    of the cursor, nearest wins; None if none. Cursor/viewport are framebuffer
+    pixels (as in pick_pin), so the logical threshold is scaled by DSF."""
+    thresh = GIZMO_PICK_PT * (device_scale_factor if device_scale_factor > 0 else 1.0)
+    best_d2, best = thresh * thresh, None
+    s0x, s0y, _z0, v0 = project(origin, cam, viewport)
+    if not v0:
+        return None
+    for k, axis in enumerate(axes):
+        tip = _add(origin, _scale(axis, length))
+        s1x, s1y, _z1, v1 = project(tip, cam, viewport)
+        if not v1:
+            continue
+        d2 = _seg_dist2(cursor_x, cursor_y, s0x, s0y, s1x, s1y)
+        if d2 < best_d2:
+            best_d2, best = d2, k
+    return best
+
+
+def axis_drag_param(cursor_x, cursor_y, origin, axis, length, cam, viewport):
+    """World distance along `axis` (from origin) of the cursor's projection
+    onto the screen-projected shaft. Reuses project() only (no unprojection):
+    robust for the near-frontal views the SPV orbit produces. The caller keeps
+    the drag-start origin fixed and applies (param_now - param_grab)."""
+    s0x, s0y, _z0, v0 = project(origin, cam, viewport)
+    tip = _add(origin, _scale(axis, length))
+    s1x, s1y, _z1, v1 = project(tip, cam, viewport)
+    if not (v0 and v1):
+        return 0.0
+    ax, ay = s1x - s0x, s1y - s0y
+    l2 = ax * ax + ay * ay
+    if l2 <= 1e-9:
+        return 0.0
+    f = ((cursor_x - s0x) * ax + (cursor_y - s0y) * ay) / l2  # fraction of length
+    return f * length
