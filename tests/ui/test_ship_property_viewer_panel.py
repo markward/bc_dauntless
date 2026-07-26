@@ -821,3 +821,43 @@ def test_save_routes_light_region_edit(monkeypatch):
     assert ("SetGlowRegionShape", (0, "Box")) in edits[0][3]
     assert ("SetGlowRegionScale", (0, 0.5, 0.6, 0.7)) in edits[0][3]
     assert _payload_data(p.render_payload())["pending_count"] == 0
+
+
+def test_subsystem_row_carries_light_flag_and_region(monkeypatch):
+    # The CEF context menu gates "Edit Light…" on row.light; without the row
+    # carrying light/light_region the menu item can never appear.
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    row = _payload_data(p.render_payload())["subsystems"][0]
+    assert row["light"] is True
+    assert row["light_region"]["shape"] == "Cylinder"
+    # baked-shaped tuples survive JSON as arrays (the JS reads radius[0] etc.)
+    assert row["light_region"]["radius"] == [0.25]
+
+
+def test_non_light_subsystem_row_has_no_light(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Phaser Bank")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    row = _payload_data(p.render_payload())["subsystems"][0]
+    assert row.get("light", False) is False
+
+
+def test_row_light_region_reflects_pending_after_edit(monkeypatch):
+    # After staging an Edit Light change, the row's light_region pre-fill
+    # should reflect the pending spec (so re-opening the modal shows it).
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    row = _payload_data(p.render_payload())["subsystems"][0]
+    assert row["light_region"]["shape"] == "Box"
+    assert row["light_region"]["scale"] == [0.5, 0.6, 0.7]

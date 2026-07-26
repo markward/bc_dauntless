@@ -272,6 +272,16 @@ class ShipPropertyViewerPanel(Panel):
             row["dirty"] = (i in self._pending_radius) or (i in self._pending_light)
             row["radius"] = (self._pending_radius[i] if i in self._pending_radius
                              else d.get("properties", {}).get("radius"))
+            # Bridge the descriptor's light flag + region onto the row so the
+            # CEF context menu can gate "Edit Light…" on row.light and pre-fill
+            # the modal from row.light_region. Uses the pending spec when a light
+            # edit is staged (so re-opening the modal shows the staged values),
+            # else the baked region.
+            row["light"] = bool(d.get("light", False))
+            if d.get("light"):
+                row["light_region"] = (self._pending_light[i]
+                                       if i in self._pending_light
+                                       else d.get("light_region"))
             by_index[i] = row
             parent = by_index.get(d.get("parent_index"))
             if parent is not None:
