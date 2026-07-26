@@ -734,3 +734,178 @@ def test_save_keeps_pending_when_leaf_unresolved(monkeypatch):
     assert calls == []
     data = _payload_data(p.render_payload())
     assert data["pending_count"] == 1
+
+
+# ── staged light/glow-region edits (Task 8) ─────────────────────────────────
+
+import json as _json
+
+
+def _light_descriptor(name):
+    return {"name": name, "icon_id": 0, "world_pos": (0, 0, 0),
+            "state": "healthy", "targetable": True, "condition_pct": 100,
+            "parent_index": None, "light": True,
+            "light_region": {"shape": "Cylinder", "position": (1.0, 0.0, 0.0),
+                             "axis": (0.0, -1.0, 0.0), "radius": (0.25,),
+                             "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25)},
+            "properties": {"name": name, "radius": 0.25}}
+
+
+class _LightShip:
+    def GetScript(self): return "ships.Galaxy"
+
+
+def test_set_light_stages_and_marks_dirty(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    ok = p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Cylinder", "radius": 0.4, "aft": 0.0, "fore": 3.0}))
+    assert ok is True
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 1
+    assert data["subsystems"][0]["dirty"] is True
+    spec = p.pending_light_specs()["Center Impulse"]
+    assert spec["shape"] == "Cylinder"
+    assert spec["radius"] == (0.4,)
+    assert spec["extent"] == (0.0, 3.0)
+    assert spec["position"] == (1.0, 0.0, 0.0)   # carried from light_region
+
+
+def test_set_light_rejects_fore_le_aft(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    ok = p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Cylinder", "radius": 0.4, "aft": 2.0, "fore": 2.0}))
+    assert ok is False
+    assert _payload_data(p.render_payload())["pending_count"] == 0
+
+
+def test_set_light_box_rejects_nonpositive_scale(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    ok = p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.0, "sz": 0.5}))
+    assert ok is False
+
+
+def test_save_routes_light_region_edit(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    calls = []
+
+    class _Target:
+        def write(self, leaf, edits): calls.append((leaf, edits))
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    p.dispatch_event("save")
+    assert len(calls) == 1
+    leaf, edits = calls[0]
+    assert leaf == "galaxy"
+    assert edits[0][0] == "Center Impulse"
+    assert edits[0][1] == "__region__"
+    assert edits[0][2] == 0
+    assert ("SetGlowRegionShape", (0, "Box")) in edits[0][3]
+    assert ("SetGlowRegionScale", (0, 0.5, 0.6, 0.7)) in edits[0][3]
+    assert _payload_data(p.render_payload())["pending_count"] == 0
+
+
+def test_subsystem_row_carries_light_flag_and_region(monkeypatch):
+    # The CEF context menu gates "Edit Light…" on row.light; without the row
+    # carrying light/light_region the menu item can never appear.
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    row = _payload_data(p.render_payload())["subsystems"][0]
+    assert row["light"] is True
+    assert row["light_region"]["shape"] == "Cylinder"
+    # baked-shaped tuples survive JSON as arrays (the JS reads radius[0] etc.)
+    assert row["light_region"]["radius"] == [0.25]
+
+
+def test_non_light_subsystem_row_has_no_light(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Phaser Bank")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    row = _payload_data(p.render_payload())["subsystems"][0]
+    assert row.get("light", False) is False
+
+
+def test_saved_light_keeps_driving_preview_after_save(monkeypatch):
+    # After Save, the wireframe preview + modal pre-fill must keep showing the
+    # SAVED shape (the file change only reaches the live template on the next
+    # ship build), not snap back to the pre-save baked shape.
+    import engine.ui.ship_property_viewer_panel as mod
+
+    class _Target:
+        def write(self, leaf, edits): pass
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    p.dispatch_event("save")
+    # Dirty/Save-bar state clears (the edit is no longer unsaved)...
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 0
+    assert data["subsystems"][0]["dirty"] is False
+    # ...but the saved Box still drives the live overlay + the row pre-fill.
+    assert p.pending_light_specs()["Center Impulse"]["shape"] == "Box"
+    assert data["subsystems"][0]["light_region"]["shape"] == "Box"
+    assert data["subsystems"][0]["light_region"]["scale"] == [0.5, 0.6, 0.7]
+
+
+def test_saved_light_resets_on_close(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+
+    class _Target:
+        def write(self, leaf, edits): pass
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    p.dispatch_event("save")
+    p.close()
+    p.open()
+    assert p.pending_light_specs() == {}
+
+
+def test_row_light_region_reflects_pending_after_edit(monkeypatch):
+    # After staging an Edit Light change, the row's light_region pre-fill
+    # should reflect the pending spec (so re-opening the modal shows it).
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_light_descriptor("Center Impulse")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
+    p.open()
+    p.dispatch_event("set_light:" + _json.dumps(
+        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    row = _payload_data(p.render_payload())["subsystems"][0]
+    assert row["light_region"]["shape"] == "Box"
+    assert row["light_region"]["scale"] == [0.5, 0.6, 0.7]

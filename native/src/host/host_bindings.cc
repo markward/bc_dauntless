@@ -229,6 +229,7 @@ std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
 // world-space wireframe cylinders set each frame from Python. Empty list →
 // zero GL work; only rendered in viewer_mode.
 std::vector<renderer::DebugCylinder>         g_debug_cylinders;
+std::vector<renderer::DebugBox>              g_debug_boxes;
 std::unique_ptr<renderer::DebugVolumePass>   g_debug_volume_pass;
 renderer::TargetReticle                      g_target_reticle;
 std::unique_ptr<renderer::TargetReticlePass> g_target_reticle_pass;
@@ -544,6 +545,7 @@ void shutdown() {
     g_carve_cache.reset();   // releases the carved-fill 3D textures (GL alive)
     g_subsystem_pin_pass.reset();
     g_debug_cylinders.clear();
+    g_debug_boxes.clear();
     g_debug_volume_pass.reset();
     g_target_reticle = renderer::TargetReticle{};
     g_target_reticle_pass.reset();
@@ -904,6 +906,8 @@ void frame() {
                               /*depth_test=*/false);
     if (viewer_mode && g_debug_volume_pass && !g_debug_cylinders.empty())
         g_debug_volume_pass->render(g_debug_cylinders, g_camera);
+    if (viewer_mode && g_debug_volume_pass && !g_debug_boxes.empty())
+        g_debug_volume_pass->render(g_debug_boxes, g_camera);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty()) {
         // Device-pixel ratio = framebuffer / logical window height, so pins
         // keep a constant apparent size on HiDPI/Retina displays.
@@ -2443,6 +2447,31 @@ PYBIND11_MODULE(_dauntless_host, m) {
           []() { g_debug_cylinders.clear(); },
           "Clear the debug wireframe cylinders. Takes effect next frame().");
 
+    m.def("set_debug_boxes",
+          [](const std::vector<py::dict>& descs) {
+              g_debug_boxes.clear();
+              g_debug_boxes.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::DebugBox b;
+                  auto v3 = [&](const char* k, glm::vec3& out) {
+                      if (d.contains(k)) {
+                          auto v = d[k].cast<std::array<float, 3>>();
+                          out = {v[0], v[1], v[2]};
+                      }
+                  };
+                  v3("center", b.center); v3("ex", b.ex); v3("ey", b.ey);
+                  v3("ez", b.ez); v3("color", b.color);
+                  g_debug_boxes.push_back(b);
+              }
+          },
+          py::arg("boxes"),
+          "Set the world-space debug wireframe boxes (SPV glow-region overlay; "
+          "viewer_mode only). Each dict: center, ex, ey, ez, color.");
+
+    m.def("clear_debug_boxes",
+          []() { g_debug_boxes.clear(); },
+          "Clear the debug wireframe boxes. Takes effect next frame().");
+
     m.def("set_hologram_ship",
           [](scenegraph::InstanceId iid,
              std::array<float, 3> color,
@@ -3147,6 +3176,38 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Store a cylinder glow region: from center along axis (unit dir) for "
           "length, radius wide (all game units / body frame; aft=0, fore=length). "
           "Returns the region index, or -1 on failure.");
+
+    m.def("add_box_region",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> center,
+             std::tuple<float, float, float> half) -> int {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return -1;
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float inv = (s > 0.0f) ? 1.0f / s : 1.0f;
+              const glm::vec3 c(std::get<0>(center) * inv,
+                                std::get<1>(center) * inv,
+                                std::get<2>(center) * inv);
+              const glm::vec3 he(std::get<0>(half) * inv,
+                                 std::get<1>(half) * inv,
+                                 std::get<2>(half) * inv);
+              for (std::size_t i = 0; i < inst->glow_regions.size(); ++i) {
+                  if (inst->glow_regions[i].active) continue;
+                  auto& n = inst->glow_regions[i];
+                  n = scenegraph::Instance::GlowRegion{};   // reset to defaults
+                  n.center = c;
+                  n.shape = 1.0f;
+                  n.half_extents = he;
+                  n.dim_target = 1.0f;
+                  n.disable_time = -1.0f;
+                  n.active = true;
+                  return static_cast<int>(i);
+              }
+              return -1;  // no free slot
+          },
+          py::arg("instance_id"), py::arg("center"), py::arg("half_extents"),
+          "Store a body-axis-aligned box glow region (game units / body frame). "
+          "Returns the region index, or -1 on failure (stale id, no slot).");
 
     m.def("set_glow_region_dim",
           [](scenegraph::InstanceId id, int region_index,

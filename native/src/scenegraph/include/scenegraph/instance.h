@@ -152,6 +152,8 @@ struct Instance {
         float     flicker = 0.0f;   // 1 = disabled (continuous flicker), 0 = solid settle
         float     gain = 1.0f;      // >1 brightens glow inside the region (impulse power/speed)
         glm::vec3 gain_axis{0.0f};  // aft dir (model space); non-zero gates gain to faces facing it
+        float     shape = 0.0f;          // 0 = capsule/sphere, 1 = body-axis box
+        glm::vec3 half_extents{0.0f};    // box half-extents (model units); box only
         bool      active = false;
     };
     std::array<GlowRegion, kMaxGlowRegions> glow_regions{};

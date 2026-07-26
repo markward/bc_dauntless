@@ -121,6 +121,7 @@ class _FakeRenderer:
         self._results = list(results)
         self.sphere_calls = []
         self.cylinder_calls = []
+        self.box_calls = []
         self.dim_calls = []
         self.gain_calls = []
     def add_sphere_region(self, iid, center, radius):
@@ -128,6 +129,9 @@ class _FakeRenderer:
         return self._results.pop(0)
     def add_cylinder_region(self, iid, center, axis, radius, length):
         self.cylinder_calls.append((iid, center, axis, radius, length))
+        return self._results.pop(0)
+    def add_box_region(self, iid, center, half_extents):
+        self.box_calls.append((iid, center, half_extents))
         return self._results.pop(0)
     def set_glow_region_dim(self, iid, idx, dim_target, edge_time, flicker):
         self.dim_calls.append((iid, idx, dim_target, edge_time, flicker))
@@ -414,9 +418,8 @@ def test_resolve_baked_rejects_malformed_and_unsupported():
     assert sg.resolve_baked_region({**base, "shape": "Cylinder", "axis": (0.0, 0.0, 0.0)}, None) is None
     assert sg.resolve_baked_region({**base, "shape": "Sphere", "radius": (0.0,)}, None) is None
     assert sg.resolve_baked_region({**base, "shape": "Warble"}, None) is None
-    # Box is schema-valid but has no renderer shape yet -> unusable for now.
-    assert sg.resolve_baked_region(
-        {**base, "shape": "Box", "scale": (0.3, 1.0, 0.12)}, None) is None
+    # Box with no scale authored has nothing to size the region with.
+    assert sg.resolve_baked_region({**base, "shape": "Box", "scale": None}, None) is None
 
 
 def test_controller_uses_baked_cylinder_over_legacy_derivation():
@@ -469,9 +472,9 @@ def test_controller_multiple_baked_regions_all_boost():
     assert [c[1] for c in rend.gain_calls] == [0, 1]
 
 
-def test_controller_box_only_pod_warns_and_registers_nothing(caplog):
-    """Box has no renderer shape yet: warn, and the pod gets NO glow region
-    (no in-engine derivation exists anymore)."""
+def test_controller_box_pod_registers_box_region():
+    """Box now resolves to a real renderer op: an impulse pod baking a Box
+    region registers via add_box_region, same as any other baked shape."""
     prop = _baked_prop(
         ("SetGlowRegionShape", 0, "Box"),
         ("SetGlowRegionScale", 0, 0.3, 1.0, 0.12),
@@ -479,12 +482,12 @@ def test_controller_box_only_pod_warns_and_registers_nothing(caplog):
     impulse = _BakedPod(_Point(0.0, -0.98, -0.45), radius=0.25, prop=prop,
                         name="Center Impulse")
     ship = _Ship(None, impulse, None)
-    rend = _FakeRenderer(results=[])
-    with caplog.at_level("WARNING", logger="engine.appc.subsystem_glow"):
-        ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
-    assert "Center Impulse" in caplog.text and "skipped" in caplog.text
+    rend = _FakeRenderer(results=[0])
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    assert rend.box_calls == [(7, (0.0, -0.98, -0.45), (0.3, 1.0, 0.12))]
     assert rend.cylinder_calls == [] and rend.sphere_calls == []
-    assert ctrl._regions == []
+    assert len(ctrl._regions) == 1
+    assert ctrl._regions[0]["boost"] is True
 
 
 def test_controller_unbaked_pod_gets_no_glow_vfx():
@@ -565,3 +568,63 @@ def test_controller_baked_sensor_sphere_dims_but_never_boosts():
     ctrl.update(now=0.0)
     assert rend.dim_calls == [(7, 3, 1.0, -1.0, 0.0)]
     assert rend.gain_calls == []   # sensors never get the throttle boost
+
+
+def test_resolve_box_region_returns_box_op():
+    raw = {"shape": "Box", "position": (1.0, 2.0, 3.0),
+           "scale": (0.5, 0.6, 0.7), "axis": None, "radius": None, "extent": None}
+    op = sg.resolve_baked_region(raw, default_pos=(0.0, 0.0, 0.0))
+    assert op == ("box", (1.0, 2.0, 3.0), (0.5, 0.6, 0.7))
+
+
+def test_resolve_box_defaults_position_to_hardpoint():
+    raw = {"shape": "Box", "position": None, "scale": (0.5, 0.5, 0.5)}
+    op = sg.resolve_baked_region(raw, default_pos=(4.0, 0.0, 0.0))
+    assert op == ("box", (4.0, 0.0, 0.0), (0.5, 0.5, 0.5))
+
+
+def test_resolve_box_rejects_nonpositive_scale():
+    raw = {"shape": "Box", "position": (0.0, 0.0, 0.0), "scale": (0.5, 0.0, 0.5)}
+    assert sg.resolve_baked_region(raw, default_pos=(0.0, 0.0, 0.0)) is None
+
+
+class _RecRenderer:
+    def __init__(self): self.calls = []
+    def add_box_region(self, iid, center, half):
+        self.calls.append((iid, center, half)); return 0
+    def add_sphere_region(self, *a): return -1
+    def add_cylinder_region(self, *a): return -1
+    def set_glow_region_dim(self, *a, **k): pass
+    def set_glow_region_gain(self, *a, **k): pass
+
+
+def test_register_baked_dispatches_box(monkeypatch):
+    rr = _RecRenderer()
+    monkeypatch.setattr(sg, "baked_region_ops",
+                        lambda prop, pos, name="": [("box", (0.0, 0.0, 0.0), (1.0, 2.0, 3.0))])
+    monkeypatch.setattr(sg, "_position_tuple", lambda pod: (0.0, 0.0, 0.0))
+
+    class _Pod:
+        def GetProperty(self): return object()
+        def GetName(self): return "Box Pod"
+    ctrl = sg.ShipGlowController.__new__(sg.ShipGlowController)
+    ctrl._r = rr; ctrl._iid = 7; ctrl._regions = []
+    ctrl._register_baked(_Pod(), boost=False)
+    assert rr.calls == [(7, (0.0, 0.0, 0.0), (1.0, 2.0, 3.0))]
+
+
+def test_glow_bearing_ids_covers_warp_impulse_sensor(monkeypatch):
+    warp = [object(), object()]; imp = [object()]; sensor = object()
+
+    class _Ship:
+        def GetWarpEngineSubsystem(self): return "w"
+        def GetImpulseEngineSubsystem(self): return "i"
+        def GetSensorSubsystem(self): return sensor
+    monkeypatch.setattr(sg, "warp_pods", lambda s: warp if s == "w" else [])
+    monkeypatch.setattr(sg, "impulse_engines", lambda s: imp if s == "i" else [])
+    ids = sg.glow_bearing_subsystem_ids(_Ship())
+    assert ids == {id(warp[0]), id(warp[1]), id(imp[0]), id(sensor)}
+
+
+def test_glow_bearing_ids_none_safe():
+    assert sg.glow_bearing_subsystem_ids(object()) == set()

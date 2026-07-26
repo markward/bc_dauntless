@@ -30,7 +30,7 @@ InstanceId = _h.InstanceId
 #   resolved at the import above) is deliberately excluded: its absence already
 #   hard-fails `import`, so it needs no manifest entry.
 _REQUIRED_BINDINGS = frozenset({
-    "add_cylinder_region", "add_sphere_region",
+    "add_box_region", "add_cylinder_region", "add_sphere_region",
     "assemble_officer", "bridge_pass_set_enabled",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
     "cef_reload", "cef_shutdown",
@@ -75,11 +75,13 @@ _REQUIRED_BINDINGS = frozenset({
 # never fatal. `set_officer_face` also appears as a hard `_h.set_officer_face`
 # call *inside* its own hasattr guard, so it is optional despite that inner ref.
 _OPTIONAL_BINDINGS = frozenset({
-    "cef_execute_javascript", "clear_debug_cylinders", "clear_spv_overlay_beams",
+    "cef_execute_javascript", "clear_debug_boxes", "clear_debug_cylinders",
+    "clear_spv_overlay_beams",
     "clear_target_reticle",
     "instance_node_world", "instance_surface_points", "play_instance_node_anim",
     "play_instance_node_clip", "set_cloak_dials", "set_cloak_ships",
-    "set_debug_cylinders", "set_officer_face", "set_officer_jaw", "set_spv_overlay_beams",
+    "set_debug_boxes", "set_debug_cylinders", "set_officer_face",
+    "set_officer_jaw", "set_spv_overlay_beams",
     "set_target_reticle",
     "spawn_test_character", "stop_instance_node_anim",
 })
@@ -486,6 +488,12 @@ def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:
     -1 on failure. Used for sensor arrays and baked hardpoint spheres; warp and
     impulse volumes are baked cylinders (see engine/appc/subsystem_glow.py)."""
     return _h.add_sphere_region(instance_id, tuple(center), float(radius))
+
+
+def add_box_region(instance_id: InstanceId, center, half_extents) -> int:
+    """Store a body-axis-aligned box glow region at a hardpoint. center and
+    half_extents are 3-tuples in game units. Returns the region index, or -1."""
+    return _h.add_box_region(instance_id, tuple(center), tuple(half_extents))
 
 
 def add_cylinder_region(instance_id: InstanceId, center, axis, radius: float,
@@ -939,6 +947,26 @@ def set_debug_cylinders(cylinders: list) -> None:
 def clear_debug_cylinders() -> None:
     """Clear the debug wireframe cylinders. Takes effect next frame()."""
     fn = getattr(_h, "clear_debug_cylinders", None)
+    if fn is not None:
+        fn()
+
+
+def set_debug_boxes(boxes: list) -> None:
+    """Set the world-space debug wireframe boxes (SPV glow-region overlay).
+
+    `boxes` is a list of dicts — center, ex, ey, ez, color — built by
+    engine.ui.glow_region_overlay for Box glow regions. Rendered
+    depth-test-off in viewer_mode only. No-ops silently if the host binding
+    is unavailable (headless / pre-rebuild).
+    """
+    fn = getattr(_h, "set_debug_boxes", None)
+    if fn is not None:
+        fn(boxes)
+
+
+def clear_debug_boxes() -> None:
+    """Clear the debug wireframe boxes. Takes effect next frame()."""
+    fn = getattr(_h, "clear_debug_boxes", None)
     if fn is not None:
         fn()
 

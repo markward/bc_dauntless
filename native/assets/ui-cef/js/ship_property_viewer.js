@@ -118,12 +118,14 @@ window.setShipPropertyViewer = function (data) {
 // key-press). The panel signals "ESC just closed an overlay" back to this
 // JS one-shot via payload.close_overlays (see setShipPropertyViewer above).
 var spvCtxIndex = null, spvCtxRadius = 0, spvRowRadii = {}, spvPendingEdits = [];
+var spvRowLight = {};   // index -> light_region spec (or true) for light rows
+var spvLight = null;    // working spec while the modal is open
 
 // Hide the overlay chrome without telling the host — used when the panel
 // itself already knows the overlay closed (ESC via close_overlays, or the
 // whole panel closing per Fix 2) so we don't double-fire overlay:0.
 function spvHideOverlaysNoEvent() {
-    ['spv-ctxmenu', 'spv-radius', 'spv-confirm'].forEach(function (id) {
+    ['spv-ctxmenu', 'spv-radius', 'spv-light', 'spv-confirm'].forEach(function (id) {
         var el = document.getElementById(id); if (el) el.style.display = 'none';
     });
 }
@@ -146,6 +148,8 @@ window.shipPropertyViewerRowMenu = function (event, index) {
     event.preventDefault(); event.stopPropagation();
     spvCtxIndex = index;
     spvCtxRadius = (spvRowRadii[index] !== undefined) ? spvRowRadii[index] : 0;
+    var lightItem = document.getElementById('spv-ctx-light');
+    if (lightItem) lightItem.style.display = spvRowLight[index] ? 'block' : 'none';
     var menu = document.getElementById('spv-ctxmenu');
     menu.style.left = event.clientX + 'px';
     menu.style.top = event.clientY + 'px';
@@ -181,6 +185,90 @@ window.shipPropertyViewerRadiusApply = function () {
     spvHideOverlays();
 };
 window.shipPropertyViewerRadiusCancel = function () { spvHideOverlays(); };
+
+// Light is edited with a mouse-only shape picker + steppers: same reasoning as
+// the radius stepper above (no keyboard->CEF forwarding). light_region is
+// baked-shaped (radius=[r], extent=[aft,fore], scale=[sx,sy,sz]); spvLight
+// holds the flattened working copy while the modal is open.
+
+// Default sizes when a field isn't pre-seeded from light_region.
+function spvLightDefaults() {
+    return {shape: 'Sphere', radius: 0.25, aft: 0.0, fore: 2.0,
+            sx: 0.25, sy: 0.25, sz: 0.25};
+}
+
+window.shipPropertyViewerCtxLight = function () {
+    document.getElementById('spv-ctxmenu').style.display = 'none';
+    spvLight = spvLightDefaults();
+    var seed = spvRowLight[spvCtxIndex];
+    if (seed && typeof seed === 'object') {
+        // light_region is baked-shaped: radius=[r], extent=[aft,fore], scale=[sx,sy,sz]
+        spvLight.shape = seed.shape || 'Sphere';
+        if (seed.radius && seed.radius.length) spvLight.radius = seed.radius[0];
+        if (seed.extent && seed.extent.length === 2) {
+            spvLight.aft = seed.extent[0]; spvLight.fore = seed.extent[1];
+        }
+        if (seed.scale && seed.scale.length === 3) {
+            spvLight.sx = seed.scale[0]; spvLight.sy = seed.scale[1]; spvLight.sz = seed.scale[2];
+        }
+    }
+    shipPropertyViewerLightShape(spvLight.shape);
+    document.getElementById('spv-light').style.display = 'flex';
+};
+
+function spvStepperHtml(label, field, step) {
+    return '<div class="spv-stepper">'
+         +   '<span class="spv-stepper__label">' + label + '</span>'
+         +   '<button class="spv-step-btn" onclick="shipPropertyViewerLightStep(\'' + field + '\',' + (-step) + ')">&minus;</button>'
+         +   '<span class="spv-stepper__val" id="spv-lv-' + field + '">' + spvLight[field].toFixed(2) + '</span>'
+         +   '<button class="spv-step-btn" onclick="shipPropertyViewerLightStep(\'' + field + '\',' + step + ')">+</button>'
+         + '</div>';
+}
+
+window.shipPropertyViewerLightShape = function (shape) {
+    spvLight.shape = shape;
+    ['Sphere', 'Cylinder', 'Box'].forEach(function (s) {
+        var b = document.getElementById('spv-shape-' + s);
+        if (b) b.classList.toggle('active', s === shape);
+    });
+    var html = '';
+    if (shape === 'Sphere') {
+        html = spvStepperHtml('Radius', 'radius', 0.05);
+    } else if (shape === 'Cylinder') {
+        html = spvStepperHtml('Radius', 'radius', 0.05)
+             + spvStepperHtml('Aft', 'aft', 0.25)
+             + spvStepperHtml('Fore', 'fore', 0.25);
+    } else {   // Box
+        html = spvStepperHtml('Size X', 'sx', 0.05)
+             + spvStepperHtml('Size Y', 'sy', 0.05)
+             + spvStepperHtml('Size Z', 'sz', 0.05);
+    }
+    document.getElementById('spv-light-fields').innerHTML = html;
+};
+
+window.shipPropertyViewerLightStep = function (field, delta) {
+    var floor = (field === 'aft') ? -100.0 : 0.01;   // aft may be <=0; others > 0
+    spvLight[field] = Math.round((spvLight[field] + delta) * 100) / 100;
+    if (spvLight[field] < floor) spvLight[field] = floor;
+    var el = document.getElementById('spv-lv-' + field);
+    if (el) el.textContent = spvLight[field].toFixed(2);
+};
+
+window.shipPropertyViewerLightApply = function () {
+    var msg = {i: spvCtxIndex, shape: spvLight.shape};
+    if (spvLight.shape === 'Sphere') {
+        msg.radius = spvLight.radius;
+    } else if (spvLight.shape === 'Cylinder') {
+        msg.radius = spvLight.radius; msg.aft = spvLight.aft; msg.fore = spvLight.fore;
+    } else {
+        msg.sx = spvLight.sx; msg.sy = spvLight.sy; msg.sz = spvLight.sz;
+    }
+    dauntlessEvent('ship-property-viewer/set_light:' + JSON.stringify(msg));
+    spvHideOverlays();
+};
+
+window.shipPropertyViewerLightCancel = function () { spvHideOverlays(); };
+
 window.shipPropertyViewerSave = function () {
     // List the modified subsystems in the confirm modal, each with a tally of
     // its staged changes in brackets, e.g. "Center Impulse (1)".
@@ -308,4 +396,6 @@ function spvSeedRowRadius(row) {
     if (row.radius != null) {
         spvRowRadii[row.index] = row.radius;
     }
+    if (row.light === true) spvRowLight[row.index] = row.light_region || true;
+    else delete spvRowLight[row.index];
 }

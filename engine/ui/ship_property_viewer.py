@@ -107,6 +107,46 @@ def _mat_vec4(m, v):
     return [sum(m[r][c] * v[c] for c in range(4)) for r in range(4)]
 
 
+def region_spec_to_calls(index, spec):
+    """Full ordered SetGlowRegion* call list for a region spec (baked-shaped:
+    radius=(r,), extent=(aft,fore), scale=(sx,sy,sz), position/axis 3-tuples)."""
+    shape = spec["shape"]
+    px, py, pz = spec["position"]
+    calls = [("SetGlowRegionShape", (index, shape)),
+             ("SetGlowRegionPosition", (index, px, py, pz))]
+    if shape == "Cylinder":
+        ax, ay, az = spec["axis"]
+        calls.append(("SetGlowRegionAxis", (index, ax, ay, az)))
+        calls.append(("SetGlowRegionRadius", (index, spec["radius"][0])))
+        aft, fore = spec["extent"]
+        calls.append(("SetGlowRegionExtent", (index, aft, fore)))
+    elif shape == "Box":
+        sx, sy, sz = spec["scale"]
+        calls.append(("SetGlowRegionScale", (index, sx, sy, sz)))
+    else:  # Sphere
+        calls.append(("SetGlowRegionRadius", (index, spec["radius"][0])))
+    return calls
+
+
+def _light_region_spec(sub):
+    """Region-0 spec (baked-shaped) for the modal pre-fill; from-scratch default
+    when the subsystem has no baked region."""
+    from engine.appc.subsystem_glow import baked_glow_regions, _position_tuple
+    prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
+    pos = _position_tuple(sub) or (0.0, 0.0, 0.0)
+    regions = baked_glow_regions(prop)
+    if regions:
+        r = regions[0]
+        return {"shape": r["shape"],
+                "position": r["position"] or pos,
+                "axis": r["axis"] or (0.0, -1.0, 0.0),
+                "radius": r["radius"] or (0.25,),
+                "extent": r["extent"] or (0.0, 2.0),
+                "scale": r["scale"] or (0.25, 0.25, 0.25)}
+    return {"shape": "Sphere", "position": pos, "axis": (0.0, -1.0, 0.0),
+            "radius": (0.25,), "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25)}
+
+
 def build_descriptors(ship) -> List[dict]:
     """One descriptor per subsystem that has a 3D mount. Subsystems with no
     GetPosition() are skipped (cannot be placed in space).
@@ -138,6 +178,21 @@ def build_descriptors(ship) -> List[dict]:
             "parent_index": index_of.get(id(parent)) if parent is not None else None,
             "properties": props,
         })
+    # Post-pass: annotate light-bearing descriptors (warp pods, impulse pods,
+    # sensor) with `light`/`light_region` for the SPV "Edit Light" modal.
+    # Re-walk in the SAME order + SAME skip rule as the loop above so the
+    # descriptor index `di` lines up with `out`.
+    from engine.appc.subsystem_glow import glow_bearing_subsystem_ids
+    light_ids = glow_bearing_subsystem_ids(ship)
+    di = 0
+    for sub in _iter_subsystems(ship):
+        local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+        if local is None:
+            continue                      # skipped in the build loop too
+        if id(sub) in light_ids:
+            out[di]["light"] = True
+            out[di]["light_region"] = _light_region_spec(sub)
+        di += 1
     # Object emitters — non-damageable mount markers (shuttle bay, probe
     # launcher). Distinct "mount" kind/state so the pin renderer can style
     # them apart from damageable subsystems; never targetable.

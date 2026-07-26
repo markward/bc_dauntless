@@ -403,6 +403,23 @@
     font-variant-numeric: tabular-nums;
 }
 
+.spv-shape-row { display: flex; gap: 6px; padding: 12px 14px 4px; }
+.spv-shape-btn {
+    flex: 1; background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 230, 160, 0.4); color: #ffd;
+    padding: 5px 0; cursor: pointer; font-family: inherit; font-size: 12px;
+}
+.spv-shape-btn.active { background: rgba(255, 214, 90, 0.85); color: rgb(40, 24, 8); }
+.spv-stepper { display: flex; align-items: center; gap: 8px; padding: 6px 14px; }
+.spv-stepper__label { color: #cdd3dc; font-size: 12px; min-width: 56px; }
+.spv-stepper__val { color: #ffd; font-size: 14px; min-width: 52px; text-align: center; }
+.spv-step-btn {
+    width: 26px; height: 26px; background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 230, 160, 0.4); color: #ffd; cursor: pointer;
+    font-family: inherit; font-size: 15px; line-height: 1;
+}
+.spv-step-btn:hover { background: rgba(255, 214, 90, 0.25); }
+
 .spv-modal__body {
     color: #cdd3dc;
     padding: 10px 14px;

@@ -37,15 +37,22 @@ class HardpointOverridesFileTarget:
         self.path = path
 
     def write(self, leaf, edits) -> None:
-        """edits: list of (subsystem, setter, args). Reload → apply → emit → atomic."""
+        """edits: list of (subsystem, setter, args) 3-tuples and/or
+        (subsystem, "__region__", index, calls) 4-tuples.
+        Reload → apply → emit → atomic."""
         import types
         with open(self.path, "r", encoding="utf-8") as fh:
             src = fh.read()
         module = types.ModuleType("_ho_load")
         exec(compile(src, self.path, "exec"), module.__dict__)  # noqa: S102
         models = _writer.read_models(module)
-        for subsystem, setter, args in edits:
-            _writer.set_setter(models, leaf, subsystem, setter, args)
+        for edit in edits:
+            if len(edit) == 4:
+                subsystem, tag, index, calls = edit
+                _writer.set_region(models, leaf, subsystem, index, calls)
+            else:
+                subsystem, setter, args = edit
+                _writer.set_setter(models, leaf, subsystem, setter, args)
         text = _writer.emit(models)          # raises on a bad emit
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:

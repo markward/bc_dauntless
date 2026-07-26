@@ -205,11 +205,11 @@ def resolve_baked_region(raw: dict, default_pos):
     """Normalize one raw baked entry to a renderer op, or None if unusable.
 
     Ops: ('sphere', center, radius)
+         ('box', center, half_extents)
          ('cylinder', center, unit_axis, radius, length)  # centre pre-shifted
                                                           # by the aft extent
     Position defaults to the pod's hardpoint position. Shape names are
-    case-insensitive. 'Box' is authored-valid but has no renderer shape yet —
-    treated as unusable (caller warns + falls back) until Box rendering lands.
+    case-insensitive.
     """
     shape = str(raw.get("shape", "")).lower()
     pos = raw.get("position") or default_pos
@@ -232,6 +232,17 @@ def resolve_baked_region(raw: dict, default_pos):
         u = tuple(float(a) / norm for a in axis)
         center = tuple(float(p) + u[k] * aft for k, p in enumerate(pos))
         return ("cylinder", center, u, float(r[0]), fore - aft)
+    if shape == "box":
+        scale = raw.get("scale")
+        if scale is None or len(scale) != 3:
+            return None
+        try:
+            hx, hy, hz = (float(scale[0]), float(scale[1]), float(scale[2]))
+        except (TypeError, ValueError):
+            return None
+        if hx <= 0.0 or hy <= 0.0 or hz <= 0.0:
+            return None
+        return ("box", tuple(pos), (hx, hy, hz))
     return None
 
 
@@ -256,6 +267,23 @@ def baked_region_ops(prop, default_pos, pod_name="") -> list:
             continue
         ops.append(op)
     return ops
+
+
+def glow_bearing_subsystem_ids(ship) -> set:
+    """id() of every subsystem that can carry a glow region: warp pods, impulse
+    engine pods, and the sensor array. None-safe; never raises."""
+    ids: set = set()
+    try:
+        for pod in warp_pods(ship.GetWarpEngineSubsystem()):
+            ids.add(id(pod))
+        for pod in impulse_engines(ship.GetImpulseEngineSubsystem()):
+            ids.add(id(pod))
+        sensor = ship.GetSensorSubsystem()
+        if sensor is not None:
+            ids.add(id(sensor))
+    except Exception:   # noqa: BLE001 - stub ships may miss getters
+        pass
+    return ids
 
 
 class ShipGlowController:
@@ -303,6 +331,8 @@ class ShipGlowController:
         for op in baked_region_ops(prop, pos, getattr(pod, "GetName", str)()):
             if op[0] == "sphere":
                 idx = self._r.add_sphere_region(self._iid, op[1], op[2])
+            elif op[0] == "box":
+                idx = self._r.add_box_region(self._iid, op[1], op[2])
             else:  # cylinder
                 idx = self._r.add_cylinder_region(
                     self._iid, op[1], op[2], op[3], op[4])

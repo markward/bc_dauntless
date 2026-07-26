@@ -15,7 +15,7 @@ from engine.appc.override_routing import (
 )
 from engine.ui.panel import Panel
 from engine.ui.ship_property_viewer import (
-    build_descriptors, OrbitCamera, pick_pin,
+    build_descriptors, OrbitCamera, pick_pin, region_spec_to_calls,
 )
 
 # Fraction of the view height the ship's bounding sphere should fill when the
@@ -78,6 +78,14 @@ class ShipPropertyViewerPanel(Panel):
         # open/close. Not applied to the live sim (radius has no in-session
         # visual); persisted on Save, applied on the next ship build.
         self._pending_radius: dict = {}
+        # Staged glow/light edits: descriptor index -> baked-shaped region spec.
+        self._pending_light: dict = {}
+        # Glow/light edits saved THIS session (descriptor index -> spec). Save
+        # persists to the file, which only reaches the live template on the next
+        # ship build — so we keep the saved spec here to keep driving the SPV's
+        # live wireframe + modal pre-fill (not dirty, no Save bar). Reset on
+        # open/close. See pending_light_specs / the save handler.
+        self._saved_light: dict = {}
         # True while a CEF context menu / modal is open: handle_input suppresses
         # orbit + pick so clicks on that chrome don't reach the 3D view.
         self._overlay_open = False
@@ -113,6 +121,8 @@ class ShipPropertyViewerPanel(Panel):
         self.show_hull_texture = False
         self._expanded_groups = set()
         self._pending_radius = {}
+        self._pending_light = {}
+        self._saved_light = {}
         self._overlay_open = False
         self._close_overlays = False
         target = self._fit_target()
@@ -128,6 +138,8 @@ class ShipPropertyViewerPanel(Panel):
         self.show_hull_texture = False
         self._expanded_groups = set()
         self._pending_radius = {}
+        self._pending_light = {}
+        self._saved_light = {}
         self._overlay_open = False
         self._close_overlays = False
         self.camera = None
@@ -198,6 +210,7 @@ class ShipPropertyViewerPanel(Panel):
                     self.show_glow_regions, self.show_weapon_arcs,
                     self.show_hull_texture,
                     tuple(sorted(self._pending_radius.items())),
+                    tuple(sorted(self._pending_light)),   # indices with a staged light
                     tuple(sorted(self._expanded_groups)))
         if snapshot == self._last_pushed:
             return None
@@ -220,7 +233,7 @@ class ShipPropertyViewerPanel(Panel):
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
-            "pending_count": len(self._pending_radius),
+            "pending_count": len(set(self._pending_radius) | set(self._pending_light)),
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
             "close_overlays": self._close_overlays,
@@ -231,17 +244,18 @@ class ShipPropertyViewerPanel(Panel):
     def _pending_edits(self) -> List[dict]:
         """Modified subsystems with a tally of staged changes each, for the
         Save-confirm modal, e.g. [{"name": "Center Impulse", "count": 1}].
-        Grouped by subsystem name so future multi-value edits show a real
-        tally; today each subsystem has at most one staged change (its radius).
-        Deterministic order: first-seen by ascending descriptor index."""
+        Grouped by subsystem name; a subsystem with both a staged radius and
+        a staged light/glow-region edit shows count 2. Deterministic order:
+        first-seen by ascending descriptor index."""
         counts: dict = {}
         order: List[str] = []
-        for i in sorted(self._pending_radius):
+        for i in sorted(set(self._pending_radius) | set(self._pending_light)):
             name = self._descriptors[i]["name"]
             if name not in counts:
                 counts[name] = 0
                 order.append(name)
-            counts[name] += 1
+            counts[name] += (1 if i in self._pending_radius else 0)
+            counts[name] += (1 if i in self._pending_light else 0)
         return [{"name": n, "count": counts[n]} for n in order]
 
     def _subsystem_rows(self) -> List[dict]:
@@ -263,9 +277,22 @@ class ShipPropertyViewerPanel(Panel):
         by_index: dict = {}
         for i, d in enumerate(self._descriptors):
             row = _row(i, d)
-            row["dirty"] = (i in self._pending_radius)
+            row["dirty"] = (i in self._pending_radius) or (i in self._pending_light)
             row["radius"] = (self._pending_radius[i] if i in self._pending_radius
                              else d.get("properties", {}).get("radius"))
+            # Bridge the descriptor's light flag + region onto the row so the
+            # CEF context menu can gate "Edit Light…" on row.light and pre-fill
+            # the modal from row.light_region. Uses the pending spec when a light
+            # edit is staged (so re-opening the modal shows the staged values),
+            # else the baked region.
+            row["light"] = bool(d.get("light", False))
+            if d.get("light"):
+                if i in self._pending_light:
+                    row["light_region"] = self._pending_light[i]
+                elif i in self._saved_light:
+                    row["light_region"] = self._saved_light[i]
+                else:
+                    row["light_region"] = d.get("light_region")
             by_index[i] = row
             parent = by_index.get(d.get("parent_index"))
             if parent is not None:
@@ -276,6 +303,20 @@ class ShipPropertyViewerPanel(Panel):
             if row["children"]:
                 row["expanded"] = row["name"] in self._expanded_groups
         return rows
+
+    def pending_light_specs(self) -> dict:
+        """{subsystem_name: baked-shaped region spec} for the live overlay.
+
+        Includes both staged (unsaved) edits and edits saved this session, so
+        the wireframe keeps showing a saved shape until the next ship build
+        refreshes the baked template. A staged edit on the same subsystem wins
+        over its saved spec."""
+        out: dict = {}
+        for source in (self._saved_light, self._pending_light):
+            for i, spec in source.items():
+                if 0 <= i < len(self._descriptors):
+                    out[self._descriptors[i]["name"]] = spec
+        return out
 
     def invalidate(self) -> None:
         self._last_pushed = None
@@ -529,8 +570,46 @@ class ShipPropertyViewerPanel(Panel):
             self._pending_radius[idx] = value
             self._last_pushed = None
             return True
+        if action.startswith("set_light:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                idx = int(arg["i"]); shape = str(arg["shape"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if not (0 <= idx < len(self._descriptors)):
+                return False
+            base = dict(self._descriptors[idx].get("light_region") or {})
+            pos = base.get("position") or (0.0, 0.0, 0.0)
+            axis = base.get("axis") or (0.0, -1.0, 0.0)
+            spec = {"shape": shape, "position": tuple(pos), "axis": tuple(axis),
+                    "radius": base.get("radius") or (0.25,),
+                    "extent": base.get("extent") or (0.0, 2.0),
+                    "scale": base.get("scale") or (0.25, 0.25, 0.25)}
+            try:
+                if shape == "Sphere":
+                    r = float(arg["radius"])
+                    if r <= 0.0:
+                        return False
+                    spec["radius"] = (r,)
+                elif shape == "Cylinder":
+                    r = float(arg["radius"]); aft = float(arg["aft"]); fore = float(arg["fore"])
+                    if r <= 0.0 or fore <= aft:
+                        return False
+                    spec["radius"] = (r,); spec["extent"] = (aft, fore)
+                elif shape == "Box":
+                    sx = float(arg["sx"]); sy = float(arg["sy"]); sz = float(arg["sz"])
+                    if sx <= 0.0 or sy <= 0.0 or sz <= 0.0:
+                        return False
+                    spec["scale"] = (sx, sy, sz)
+                else:
+                    return False
+            except (KeyError, TypeError, ValueError):
+                return False
+            self._pending_light[idx] = spec
+            self._last_pushed = None
+            return True
         if action == "save":
-            if not self._pending_radius:
+            if not self._pending_radius and not self._pending_light:
                 return True
             ship = self._ship_getter()
             leaf = hardpoint_leaf_for_ship(ship)
@@ -541,16 +620,25 @@ class ShipPropertyViewerPanel(Panel):
                 return True
             edits = [(self._descriptors[i]["name"], "SetRadius", (v,))
                      for i, v in sorted(self._pending_radius.items())]
+            edits += [(self._descriptors[i]["name"], "__region__", 0,
+                       region_spec_to_calls(0, spec))
+                      for i, spec in sorted(self._pending_light.items())]
             try:
                 resolve_override_target(ship).write(leaf, edits)
             except Exception as e:
                 from engine import dev_mode
-                dev_mode.log_swallowed("spv radius save", e)
+                dev_mode.log_swallowed("spv light/radius save", e)
                 # Write failed — keep the staged edits (dirty markers + Save
                 # bar stay) rather than silently discarding them.
                 self._last_pushed = None
                 return True
             self._pending_radius = {}
+            # Keep the just-saved glow specs driving the in-session preview: the
+            # file write only reaches the live template on the next ship build,
+            # so without this the wireframe would snap back to the old baked
+            # shape right after Save (they are no longer "dirty", though).
+            self._saved_light.update(self._pending_light)
+            self._pending_light = {}
             self._last_pushed = None
             return True
         return False

@@ -21,6 +21,17 @@ struct DebugCylinder {
     glm::vec3 color{0.0f, 1.0f, 0.0f};  // wireframe colour (default bright green)
 };
 
+/// One wireframe box to draw, expressed in WORLD space. ex/ey/ez are the box's
+/// three half-extent edge vectors (already rotated), so the drawn box is
+/// center +/- ex +/- ey +/- ez.
+struct DebugBox {
+    glm::vec3 center{0.0f};
+    glm::vec3 ex{1.0f, 0.0f, 0.0f};
+    glm::vec3 ey{0.0f, 1.0f, 0.0f};
+    glm::vec3 ez{0.0f, 0.0f, 1.0f};
+    glm::vec3 color{0.0f, 1.0f, 0.0f};
+};
+
 /// Developer debug overlay: draws bright wireframe cylinders in world space.
 /// Self-contained (owns its shader + a unit-cylinder mesh) and generic — the
 /// caller supplies the cylinders, so it is not tied to any subsystem. Depth
@@ -41,13 +52,21 @@ public:
     void render(const std::vector<DebugCylinder>& cylinders,
                 const scenegraph::Camera& camera);
 
+    void render(const std::vector<DebugBox>& boxes,
+                const scenegraph::Camera& camera);
+
 private:
     void ensure_resources();
+    void ensure_box_resources();
 
     unsigned int vao_ = 0;
     unsigned int vbo_ = 0;
     int vertex_count_ = 0;
     std::unique_ptr<Shader> shader_;
+
+    unsigned int box_vao_ = 0;
+    unsigned int box_vbo_ = 0;
+    int box_vertex_count_ = 0;
 };
 
 }  // namespace renderer
