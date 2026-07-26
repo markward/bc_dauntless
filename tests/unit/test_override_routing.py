@@ -62,3 +62,35 @@ def test_write_aborts_without_touching_file_on_bad_emit(tmp_path, monkeypatch):
 
     assert f.read_text() == original
     assert not (tmp_path / "hardpoint_overrides.py.tmp").exists()
+
+
+def test_write_applies_region_edit(tmp_path):
+    f = tmp_path / "hardpoint_overrides.py"
+    f.write_text(w.emit({"galaxy": {"Center Impulse": [("SetRadius", (0.25,))]}}))
+    target = r.HardpointOverridesFileTarget(str(f))
+    target.write("galaxy", [("Center Impulse", "__region__", 0, [
+        ("SetGlowRegionShape", (0, "Box")),
+        ("SetGlowRegionScale", (0, 0.5, 0.6, 0.7)),
+    ])])
+    import types
+    m = types.ModuleType("x"); exec(f.read_text(), m.__dict__)  # noqa: S102
+    calls = w.read_models(m)["galaxy"]["Center Impulse"]
+    assert ("SetRadius", (0.25,)) in calls              # untouched
+    assert ("SetGlowRegionShape", (0, "Box")) in calls
+    assert ("SetGlowRegionScale", (0, 0.5, 0.6, 0.7)) in calls
+
+
+def test_write_applies_mixed_setter_and_region(tmp_path):
+    f = tmp_path / "hardpoint_overrides.py"
+    f.write_text(w.emit({"galaxy": {"Center Impulse": [("SetRadius", (0.25,))]}}))
+    target = r.HardpointOverridesFileTarget(str(f))
+    target.write("galaxy", [
+        ("Center Impulse", "SetRadius", (0.9,)),
+        ("Center Impulse", "__region__", 0, [("SetGlowRegionShape", (0, "Sphere")),
+                                             ("SetGlowRegionRadius", (0, 0.3))]),
+    ])
+    import types
+    m = types.ModuleType("x"); exec(f.read_text(), m.__dict__)  # noqa: S102
+    calls = w.read_models(m)["galaxy"]["Center Impulse"]
+    assert ("SetRadius", (0.9,)) in calls
+    assert ("SetGlowRegionShape", (0, "Sphere")) in calls
