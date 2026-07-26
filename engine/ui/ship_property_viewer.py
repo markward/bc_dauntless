@@ -15,6 +15,11 @@ from engine.appc.math import TGPoint3, TGMatrix3
 # camera, and Ship Property Viewer all share one source of truth.
 from engine.appc.subsystems import subsystem_world_position  # noqa: F401
 
+# Module-level (not function-local) so tests can monkeypatch
+# `spv.baked_glow_regions` and have both `_light_region_spec` and
+# `_light_annotation` observe the patch.
+from engine.appc.subsystem_glow import baked_glow_regions, _position_tuple
+
 
 # ---------------------------------------------------------------------------
 # Orbit camera and world→screen projection
@@ -131,7 +136,6 @@ def region_spec_to_calls(index, spec):
 def _light_region_spec(sub):
     """Region-0 spec (baked-shaped) for the modal pre-fill; from-scratch default
     when the subsystem has no baked region."""
-    from engine.appc.subsystem_glow import baked_glow_regions, _position_tuple
     prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
     pos = _position_tuple(sub) or (0.0, 0.0, 0.0)
     regions = baked_glow_regions(prop)
@@ -145,6 +149,16 @@ def _light_region_spec(sub):
                 "scale": r["scale"] or (0.25, 0.25, 0.25)}
     return {"shape": "Sphere", "position": pos, "axis": (0.0, -1.0, 0.0),
             "radius": (0.25,), "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25)}
+
+
+def _light_annotation(sub):
+    """(has_baked_light, light_region) for a subsystem. `light_region` is the
+    baked region-0 spec if the subsystem has one, else a from-scratch Sphere
+    default (used to pre-fill Add Light Volume). Any subsystem is light-capable
+    now — no impulse/warp/sensor gate."""
+    prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
+    has = bool(baked_glow_regions(prop))
+    return has, _light_region_spec(sub)
 
 
 def build_descriptors(ship) -> List[dict]:
@@ -178,20 +192,18 @@ def build_descriptors(ship) -> List[dict]:
             "parent_index": index_of.get(id(parent)) if parent is not None else None,
             "properties": props,
         })
-    # Post-pass: annotate light-bearing descriptors (warp pods, impulse pods,
-    # sensor) with `light`/`light_region` for the SPV "Edit Light" modal.
-    # Re-walk in the SAME order + SAME skip rule as the loop above so the
-    # descriptor index `di` lines up with `out`.
-    from engine.appc.subsystem_glow import glow_bearing_subsystem_ids
-    light_ids = glow_bearing_subsystem_ids(ship)
+    # Post-pass: annotate every subsystem descriptor with its light volume.
+    # `light` = a baked region 0 exists; `light_region` = that baked spec or a
+    # from-scratch default (any subsystem is light-capable — see the light-node
+    # design). Re-walk in the SAME order + skip rule as the build loop.
     di = 0
     for sub in _iter_subsystems(ship):
         local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
         if local is None:
-            continue                      # skipped in the build loop too
-        if id(sub) in light_ids:
-            out[di]["light"] = True
-            out[di]["light_region"] = _light_region_spec(sub)
+            continue
+        has, region = _light_annotation(sub)
+        out[di]["light"] = has
+        out[di]["light_region"] = region
         di += 1
     # Object emitters — non-damageable mount markers (shuttle bay, probe
     # launcher). Distinct "mount" kind/state so the pin renderer can style

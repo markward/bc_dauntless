@@ -310,3 +310,37 @@ def test_region_spec_to_calls_sphere():
         ("SetGlowRegionPosition", (0, 0.0, 0.0, 0.0)),
         ("SetGlowRegionRadius", (0, 0.3)),
     ]
+
+
+from engine.ui.ship_property_viewer import _light_annotation
+
+
+def test_light_annotation_baked_region_present(monkeypatch):
+    import engine.ui.ship_property_viewer as spv
+    monkeypatch.setattr(spv, "baked_glow_regions",
+                        lambda prop: [{"shape": "Cylinder", "position": (1.0, 0.0, 0.0),
+                                       "axis": (0.0, -1.0, 0.0), "radius": (0.25,),
+                                       "extent": (0.0, 2.0), "scale": None}])
+
+    class _Sub:
+        def GetProperty(self): return object()
+        def GetName(self): return "Lit"
+    has, region = _light_annotation(_Sub())
+    assert has is True
+    assert region["shape"] == "Cylinder"
+    assert region["radius"] == (0.25,)
+
+
+def test_light_annotation_no_baked_region_default(monkeypatch):
+    import engine.ui.ship_property_viewer as spv
+    monkeypatch.setattr(spv, "baked_glow_regions", lambda prop: [])
+
+    class _Sub:
+        def GetProperty(self): return object()
+        def GetName(self): return "Dark"
+        def GetPosition(self):
+            from engine.appc.math import TGPoint3
+            return TGPoint3(0.0, 0.0, 0.0)
+    has, region = _light_annotation(_Sub())
+    assert has is False
+    assert region["shape"] == "Sphere"          # from-scratch default for Add
