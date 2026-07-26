@@ -229,6 +229,7 @@ std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
 // world-space wireframe cylinders set each frame from Python. Empty list →
 // zero GL work; only rendered in viewer_mode.
 std::vector<renderer::DebugCylinder>         g_debug_cylinders;
+std::vector<renderer::DebugBox>              g_debug_boxes;
 std::unique_ptr<renderer::DebugVolumePass>   g_debug_volume_pass;
 renderer::TargetReticle                      g_target_reticle;
 std::unique_ptr<renderer::TargetReticlePass> g_target_reticle_pass;
@@ -544,6 +545,7 @@ void shutdown() {
     g_carve_cache.reset();   // releases the carved-fill 3D textures (GL alive)
     g_subsystem_pin_pass.reset();
     g_debug_cylinders.clear();
+    g_debug_boxes.clear();
     g_debug_volume_pass.reset();
     g_target_reticle = renderer::TargetReticle{};
     g_target_reticle_pass.reset();
@@ -904,6 +906,8 @@ void frame() {
                               /*depth_test=*/false);
     if (viewer_mode && g_debug_volume_pass && !g_debug_cylinders.empty())
         g_debug_volume_pass->render(g_debug_cylinders, g_camera);
+    if (viewer_mode && g_debug_volume_pass && !g_debug_boxes.empty())
+        g_debug_volume_pass->render(g_debug_boxes, g_camera);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty()) {
         // Device-pixel ratio = framebuffer / logical window height, so pins
         // keep a constant apparent size on HiDPI/Retina displays.
@@ -2442,6 +2446,31 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("clear_debug_cylinders",
           []() { g_debug_cylinders.clear(); },
           "Clear the debug wireframe cylinders. Takes effect next frame().");
+
+    m.def("set_debug_boxes",
+          [](const std::vector<py::dict>& descs) {
+              g_debug_boxes.clear();
+              g_debug_boxes.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::DebugBox b;
+                  auto v3 = [&](const char* k, glm::vec3& out) {
+                      if (d.contains(k)) {
+                          auto v = d[k].cast<std::array<float, 3>>();
+                          out = {v[0], v[1], v[2]};
+                      }
+                  };
+                  v3("center", b.center); v3("ex", b.ex); v3("ey", b.ey);
+                  v3("ez", b.ez); v3("color", b.color);
+                  g_debug_boxes.push_back(b);
+              }
+          },
+          py::arg("boxes"),
+          "Set the world-space debug wireframe boxes (SPV glow-region overlay; "
+          "viewer_mode only). Each dict: center, ex, ey, ez, color.");
+
+    m.def("clear_debug_boxes",
+          []() { g_debug_boxes.clear(); },
+          "Clear the debug wireframe boxes. Takes effect next frame().");
 
     m.def("set_hologram_ship",
           [](scenegraph::InstanceId iid,

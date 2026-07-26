@@ -37,6 +37,8 @@ DebugVolumePass::DebugVolumePass() = default;
 DebugVolumePass::~DebugVolumePass() {
     if (vbo_) glDeleteBuffers(1, &vbo_);
     if (vao_) glDeleteVertexArrays(1, &vao_);
+    if (box_vbo_) glDeleteBuffers(1, &box_vbo_);
+    if (box_vao_) glDeleteVertexArrays(1, &box_vao_);
 }
 
 void DebugVolumePass::ensure_resources() {
@@ -106,6 +108,70 @@ void DebugVolumePass::render(const std::vector<DebugCylinder>& cylinders,
         shader_->set_vec3("u_color", c.color);
         shader_->set_mat4("u_mvp", vp * M);
         glDrawArrays(GL_TRIANGLES, 0, vertex_count_);
+    }
+
+    glBindVertexArray(0);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+}
+
+void DebugVolumePass::ensure_box_resources() {
+    if (box_vao_) return;
+    if (!shader_) shader_ = std::make_unique<Shader>(kVs, kFs);
+
+    // 12 triangles (2 per face) of the [-1,1]^3 cube.
+    const float c[8][3] = {
+        {-1,-1,-1}, { 1,-1,-1}, { 1, 1,-1}, {-1, 1,-1},
+        {-1,-1, 1}, { 1,-1, 1}, { 1, 1, 1}, {-1, 1, 1},
+    };
+    const int faces[6][4] = {
+        {0,1,2,3}, {4,5,6,7}, {0,1,5,4}, {2,3,7,6}, {1,2,6,5}, {0,3,7,4},
+    };
+    std::vector<float> verts;
+    for (auto& f : faces) {
+        const int tri[6] = {f[0], f[1], f[2], f[0], f[2], f[3]};
+        for (int idx : tri) {
+            verts.push_back(c[idx][0]); verts.push_back(c[idx][1]); verts.push_back(c[idx][2]);
+        }
+    }
+    box_vertex_count_ = static_cast<int>(verts.size() / 3);
+
+    glGenVertexArrays(1, &box_vao_);
+    glGenBuffers(1, &box_vbo_);
+    glBindVertexArray(box_vao_);
+    glBindBuffer(GL_ARRAY_BUFFER, box_vbo_);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(verts.size() * sizeof(float)),
+                 verts.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+    glBindVertexArray(0);
+}
+
+void DebugVolumePass::render(const std::vector<DebugBox>& boxes,
+                             const scenegraph::Camera& camera) {
+    if (boxes.empty()) return;
+    ensure_box_resources();
+
+    const glm::mat4 vp = camera.proj_matrix() * camera.view_matrix();
+    shader_->use();
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    glLineWidth(1.5f);
+    glBindVertexArray(box_vao_);
+
+    for (const auto& b : boxes) {
+        glm::mat4 M(1.0f);
+        M[0] = glm::vec4(b.ex, 0.0f);      // unit-cube X (+/-1) -> +/- ex
+        M[1] = glm::vec4(b.ey, 0.0f);
+        M[2] = glm::vec4(b.ez, 0.0f);
+        M[3] = glm::vec4(b.center, 1.0f);
+        shader_->set_vec3("u_color", b.color);
+        shader_->set_mat4("u_mvp", vp * M);
+        glDrawArrays(GL_TRIANGLES, 0, box_vertex_count_);
     }
 
     glBindVertexArray(0);
