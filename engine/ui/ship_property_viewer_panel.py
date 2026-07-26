@@ -654,7 +654,9 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             if not (0 <= idx < len(self._descriptors)) or self._has_light(idx):
                 return False
-            base = self._descriptors[idx].get("light_region") or {}
+            base = self._descriptors[idx].get("light_region")
+            if not base:
+                return False
             self._pending_light[idx] = dict(base)     # from-scratch default spec
             self._selected_light_index = idx
             self.selected_index = None

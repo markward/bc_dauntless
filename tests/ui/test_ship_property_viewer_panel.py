@@ -1109,3 +1109,17 @@ def test_dark_subsystem_row_has_no_light_child(monkeypatch):
     row = _payload_data(p.render_payload())["subsystems"][0]
     assert row["has_light"] is False
     assert [c for c in row.get("children", []) if c.get("kind") == "light"] == []
+
+
+def test_add_light_rejected_on_descriptor_without_light_region(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    mount = {"name": "Shuttle Bay", "icon_id": 0, "world_pos": (0, 0, 0),
+             "state": "mount", "kind": "mount", "targetable": False,
+             "condition_pct": None, "parent_index": None,
+             "properties": {"name": "Shuttle Bay"}}   # NO light_region key
+    monkeypatch.setattr(mod, "build_descriptors", lambda ship: [mount])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: object())
+    p.open()
+    assert p.dispatch_event("add_light:0") is False
+    assert p._has_light(0) is False
+    assert 0 not in p._pending_light

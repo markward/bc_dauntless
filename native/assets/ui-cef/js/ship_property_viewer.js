@@ -124,7 +124,6 @@ var spvLight = null;    // working spec while the modal is open
 // A light-volume node's working seed lives on the row (row.light_region), keyed
 // by its parent subsystem index (row.light_of). Track the right-clicked node so
 // the context menu knows which items to show.
-var spvCtxKind = 'subsystem';       // 'subsystem' | 'light'
 var spvCtxLightOf = null;           // parent subsystem index for a light node
 
 // Hide the overlay chrome without telling the host — used when the panel
@@ -160,7 +159,7 @@ window.shipPropertyViewerLightRow = function (lightOf, chosen) {
 // subsystem has no light yet.
 window.shipPropertyViewerRowMenu = function (event, index, hasLight) {
     event.preventDefault(); event.stopPropagation();
-    spvCtxKind = 'subsystem'; spvCtxIndex = index; spvCtxLightOf = null;
+    spvCtxIndex = index; spvCtxLightOf = null;
     spvCtxRadius = (spvRowRadii[index] !== undefined) ? spvRowRadii[index] : 0;
     spvShowMenuItems({radius: true, addlight: !hasLight, light: false, removelight: false});
     spvOpenMenuAt(event);
@@ -170,7 +169,7 @@ window.shipPropertyViewerRowMenu = function (event, index, hasLight) {
 // Right-click a light node: Edit + Remove.
 window.shipPropertyViewerLightMenu = function (event, lightOf) {
     event.preventDefault(); event.stopPropagation();
-    spvCtxKind = 'light'; spvCtxLightOf = lightOf; spvCtxIndex = lightOf;
+    spvCtxLightOf = lightOf; spvCtxIndex = lightOf;
     spvShowMenuItems({radius: false, addlight: false, light: true, removelight: true});
     spvOpenMenuAt(event);
     return false;
@@ -441,7 +440,9 @@ function spvRowHtml(row, selectedIndex, selectedLight, depth) {
         var bar = (typeof row.condition_pct === 'number')
             ? '<span class="spv-sys-row__bar" style="--bar-pct:'
               + Math.max(0, Math.min(100, row.condition_pct)) + '%"></span>' : '';
-        body += bar + '<span class="spv-sys-row__eye' + eyeCls + '">' + eye + '</span>';
+        body += bar + '<span class="spv-sys-row__eye' + eyeCls + '"'
+              +   ' title="' + (row.targetable ? 'Targetable' : 'Not targetable') + '">'
+              +   eye + '</span>';
     }
     return '<div class="spv-sys-row' + (depth > 0 ? ' spv-sys-row--child' : '')
          + (chosen ? ' spv-sys-row--chosen' : '')
