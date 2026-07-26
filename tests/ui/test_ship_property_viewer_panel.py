@@ -863,6 +863,38 @@ def test_selected_subsystem_sphere_from_radius(monkeypatch):
     assert sph["color"] == mod.SUBSYS_SPHERE_COLOR
 
 
+def test_selected_sphere_reflects_pending_radius(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Shield Generator")])  # 0.25
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.selected_index = 0
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.7}))
+    # The volume sphere reflects the STAGED radius immediately on Apply.
+    assert p.selected_subsystem_sphere()["radius"] == 0.7
+
+
+def test_selected_sphere_reflects_saved_radius_after_save(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+
+    class _Target:
+        def write(self, leaf, edits): pass
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+    monkeypatch.setattr(mod, "build_descriptors",
+                        lambda ship: [_rad_descriptor("Shield Generator")])
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _RadiusShip())
+    p.open()
+    p.selected_index = 0
+    p.dispatch_event("set_radius:" + _json.dumps({"i": 0, "value": 0.7}))
+    p.dispatch_event("save")
+    # Save persisted to file (not the live template); the sphere keeps showing
+    # the saved radius for the rest of the session rather than snapping back.
+    assert p.selected_subsystem_sphere()["radius"] == 0.7
+
+
 def test_selected_subsystem_sphere_none_without_radius(monkeypatch):
     import engine.ui.ship_property_viewer_panel as mod
     d = _rad_descriptor("A")

@@ -90,6 +90,10 @@ class ShipPropertyViewerPanel(Panel):
         # live wireframe + modal pre-fill (not dirty, no Save bar). Reset on
         # open/close. See pending_light_specs / the save handler.
         self._saved_light: dict = {}
+        # Radius edits saved THIS session (descriptor index -> radius). Same
+        # persist->reload story as _saved_light: keeps the volume sphere + the
+        # radius readout on the saved value until the next ship build.
+        self._saved_radius: dict = {}
         # True while a CEF context menu / modal is open: handle_input suppresses
         # orbit + pick so clicks on that chrome don't reach the 3D view.
         self._overlay_open = False
@@ -127,6 +131,7 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_radius = {}
         self._pending_light = {}
         self._saved_light = {}
+        self._saved_radius = {}
         self._overlay_open = False
         self._close_overlays = False
         target = self._fit_target()
@@ -144,6 +149,7 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_radius = {}
         self._pending_light = {}
         self._saved_light = {}
+        self._saved_radius = {}
         self._overlay_open = False
         self._close_overlays = False
         self.camera = None
@@ -195,18 +201,31 @@ class ShipPropertyViewerPanel(Panel):
     def descriptors(self) -> List[dict]:
         return self._descriptors
 
+    def _effective_radius(self, index: int, baked):
+        """Radius to display for a descriptor: a staged (unsaved) edit wins,
+        then an edit saved this session, else the baked GetRadius(). Keeps the
+        volume sphere + readout in step with the Set Radius editor (which only
+        reaches the live template on the next ship build)."""
+        if index in self._pending_radius:
+            return self._pending_radius[index]
+        if index in self._saved_radius:
+            return self._saved_radius[index]
+        return baked
+
     def selected_subsystem_sphere(self) -> Optional[dict]:
         """Wireframe sphere for the selected subsystem's damage volume, or None.
 
         `center` is the subsystem world position (where its icon sits) and
-        `radius` its GetRadius() — the only geometric size a subsystem exposes,
-        so every subsystem is a sphere. None when nothing is selected or the
-        radius is missing/non-positive. Consumed by host_loop via
+        `radius` its GetRadius() (with any staged/saved Set Radius edit applied,
+        so Apply/Save preview live) — the only geometric size a subsystem
+        exposes, so every subsystem is a sphere. None when nothing is selected
+        or the radius is missing/non-positive. Consumed by host_loop via
         engine.renderer.set_debug_spheres (viewer-mode only)."""
-        d = self.selected_descriptor()
-        if d is None:
+        sel = self.selected_index
+        if sel is None or not (0 <= sel < len(self._descriptors)):
             return None
-        r = d.get("properties", {}).get("radius")
+        d = self._descriptors[sel]
+        r = self._effective_radius(sel, d.get("properties", {}).get("radius"))
         try:
             r = float(r)
         except (TypeError, ValueError):
@@ -260,9 +279,11 @@ class ShipPropertyViewerPanel(Panel):
         if self.selected_index is not None and \
                 0 <= self.selected_index < len(self._descriptors):
             selected = dict(self._descriptors[self.selected_index])
-            if self.selected_index in self._pending_radius:
-                props = dict(selected.get("properties", {}))
-                props["radius"] = self._pending_radius[self.selected_index]
+            _props0 = selected.get("properties", {})
+            _eff = self._effective_radius(self.selected_index, _props0.get("radius"))
+            if _eff != _props0.get("radius"):
+                props = dict(_props0)
+                props["radius"] = _eff
                 selected["properties"] = props
         payload = {
             "visible": True,
@@ -317,8 +338,8 @@ class ShipPropertyViewerPanel(Panel):
         for i, d in enumerate(self._descriptors):
             row = _row(i, d)
             row["dirty"] = (i in self._pending_radius) or (i in self._pending_light)
-            row["radius"] = (self._pending_radius[i] if i in self._pending_radius
-                             else d.get("properties", {}).get("radius"))
+            row["radius"] = self._effective_radius(
+                i, d.get("properties", {}).get("radius"))
             # Bridge the descriptor's light flag + region onto the row so the
             # CEF context menu can gate "Edit Light…" on row.light and pre-fill
             # the modal from row.light_region. Uses the pending spec when a light
@@ -671,11 +692,13 @@ class ShipPropertyViewerPanel(Panel):
                 # bar stay) rather than silently discarding them.
                 self._last_pushed = None
                 return True
+            # Keep the just-saved edits driving the in-session preview (volume
+            # sphere for radius, wireframe for glow): the file write only reaches
+            # the live template on the next ship build, so without this the
+            # preview would snap back to the old baked value right after Save
+            # (they are no longer "dirty", though).
+            self._saved_radius.update(self._pending_radius)
             self._pending_radius = {}
-            # Keep the just-saved glow specs driving the in-session preview: the
-            # file write only reaches the live template on the next ship build,
-            # so without this the wireframe would snap back to the old baked
-            # shape right after Save (they are no longer "dirty", though).
             self._saved_light.update(self._pending_light)
             self._pending_light = {}
             self._last_pushed = None
