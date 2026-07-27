@@ -409,6 +409,26 @@ def world_from_body(ship, body_pos):
     return (loc.x + off.x, loc.y + off.y, loc.z + off.z)
 
 
+def rotate_about_axis(vec, k, angle_rad):
+    """Rodrigues rotation of body-frame `vec` about basis axis e_k (k in 0/1/2),
+    returned normalized. Falls back to the normalized input on a degenerate
+    result."""
+    kx = (1.0 if k == 0 else 0.0, 1.0 if k == 1 else 0.0, 1.0 if k == 2 else 0.0)
+    c, s = math.cos(angle_rad), math.sin(angle_rad)
+    dot = kx[0]*vec[0] + kx[1]*vec[1] + kx[2]*vec[2]
+    cross = (kx[1]*vec[2] - kx[2]*vec[1],
+             kx[2]*vec[0] - kx[0]*vec[2],
+             kx[0]*vec[1] - kx[1]*vec[0])
+    out = (vec[0]*c + cross[0]*s + kx[0]*dot*(1.0 - c),
+           vec[1]*c + cross[1]*s + kx[1]*dot*(1.0 - c),
+           vec[2]*c + cross[2]*s + kx[2]*dot*(1.0 - c))
+    n = math.sqrt(out[0]**2 + out[1]**2 + out[2]**2)
+    if n < 1e-9:
+        vn = math.sqrt(vec[0]**2 + vec[1]**2 + vec[2]**2) or 1.0
+        return (vec[0]/vn, vec[1]/vn, vec[2]/vn)
+    return (out[0]/n, out[1]/n, out[2]/n)
+
+
 def _seg_dist2(px, py, ax, ay, bx, by):
     """Squared distance from point p to segment a-b, in screen pixels."""
     dx, dy = bx - ax, by - ay

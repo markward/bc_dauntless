@@ -160,6 +160,13 @@ class ShipPropertyViewerPanel(Panel):
         # Clipboard for the scale tool's Copy/Paste — (kind, values-tuple),
         # or None. Reset every open/close.
         self._scale_clipboard = None
+        # Clipboard for the rotate tool's Copy/Paste — ("cylinder_axis",
+        # (x, y, z)), or None. Reset every open/close.
+        self._rotate_clipboard = None
+        # Rotate-tool per-light degree accumulators (readout only, not
+        # persisted): descriptor index -> [x, y, z] cumulative degrees
+        # since the light was last selected/reset. Reset every open/close.
+        self._rotate_accum: dict = {}
 
     @property
     def name(self) -> str:
@@ -195,6 +202,8 @@ class ShipPropertyViewerPanel(Panel):
         self._gizmo_hover = -1
         self._coord_clipboard = None
         self._scale_clipboard = None
+        self._rotate_clipboard = None
+        self._rotate_accum = {}
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -231,6 +240,8 @@ class ShipPropertyViewerPanel(Panel):
         self._gizmo_hover = -1
         self._coord_clipboard = None
         self._scale_clipboard = None
+        self._rotate_clipboard = None
+        self._rotate_accum = {}
 
     def frame_to_bounds(self, center, radius: float) -> None:
         """Point the orbit camera at `center` and pull back so the model's
@@ -484,6 +495,72 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_light[i] = spec
         self._last_pushed = None
 
+    # ------------------------------------------------------------------
+    # Rotate tool (Cylinder light-volume axis only)
+    # ------------------------------------------------------------------
+    def _rotate_target(self):
+        """("light", i) when the current transform target is a light whose
+        effective spec is a Cylinder (rotate only has meaning for a
+        cylinder's axis); None otherwise (box/sphere/subsystem are inert)."""
+        t = self._active_transform_target()
+        if t is None:
+            return None
+        kt, i = t
+        if kt != "light":
+            return None
+        spec = self._effective_light(i)
+        if not spec or spec.get("shape") != "Cylinder":
+            return None
+        return ("light", i)
+
+    def rotate_values(self) -> Optional[dict]:
+        """Data for the rotate-tool panel: `{"fields", "has_clipboard",
+        "can_paste"}` for the current rotate target, or None when the rotate
+        tool isn't active or the target isn't a cylinder light."""
+        if self.active_tool != "rotate":
+            return None
+        t = self._rotate_target()
+        if t is None:
+            return None
+        _, i = t
+        acc = self._rotate_accum.get(i, [0.0, 0.0, 0.0])
+        clip = self._rotate_clipboard
+        return {"fields": [{"label": "X", "value": acc[0]},
+                           {"label": "Y", "value": acc[1]},
+                           {"label": "Z", "value": acc[2]}],
+                "has_clipboard": clip is not None,
+                "can_paste": clip is not None}
+
+    def _rotate_axis(self, index, delta_deg) -> None:
+        """Rotate the current rotate target's axis by `delta_deg` about basis
+        axis `index` (Rodrigues, via rotate_about_axis) and bump that axis's
+        degree accumulator."""
+        t = self._rotate_target()
+        if t is None:
+            return
+        _, i = t
+        from engine.ui.ship_property_viewer import rotate_about_axis
+        spec = dict(self._effective_light(i) or {})
+        if not spec:
+            return
+        axis = spec.get("axis") or (0.0, -1.0, 0.0)
+        spec["axis"] = rotate_about_axis(axis, index, math.radians(delta_deg))
+        self._pending_light[i] = spec
+        self._rotate_accum.setdefault(i, [0.0, 0.0, 0.0])[index] += delta_deg
+        self._last_pushed = None
+
+    def _set_axis_absolute(self, i, axis) -> None:
+        """Stage a normalized `axis` for light `i` directly (Mirror/Paste,
+        not an incremental rotation) and zero its degree accumulator."""
+        spec = dict(self._effective_light(i) or {})
+        if not spec:
+            return
+        n = math.sqrt(sum(a*a for a in axis)) or 1.0
+        spec["axis"] = (axis[0]/n, axis[1]/n, axis[2]/n)
+        self._pending_light[i] = spec
+        self._rotate_accum[i] = [0.0, 0.0, 0.0]
+        self._last_pushed = None
+
     def transform_gizmo(self) -> Optional[dict]:
         """The move-gizmo for the selected subsystem or light node, or None.
 
@@ -734,7 +811,9 @@ class ShipPropertyViewerPanel(Panel):
                     tuple(sorted(self._pending_pos.items())),
                     tuple(sorted(self._expanded_groups)),
                     self._coord_clipboard,
-                    self._scale_clipboard)
+                    self._scale_clipboard,
+                    self._rotate_clipboard,
+                    tuple(sorted((k, tuple(v)) for k, v in self._rotate_accum.items())))
         if snapshot == self._last_pushed:
             return None
         self._last_pushed = snapshot
@@ -765,6 +844,7 @@ class ShipPropertyViewerPanel(Panel):
             "active_tool": self.active_tool,
             "transform_coords": self.transform_coords(),
             "scale_values": self.scale_values(),
+            "rotate_values": self.rotate_values(),
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
@@ -1367,6 +1447,38 @@ class ShipPropertyViewerPanel(Panel):
                     m = max(f["value"] for f in fields)
                     for idx in range(3):
                         self._set_scale_field(idx, m)
+            return True
+        if action.startswith("rotate_nudge:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                axis = int(arg["axis"]); delta = float(arg["delta"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if axis not in (0, 1, 2) or self._rotate_target() is None:
+                return False
+            self._rotate_axis(axis, delta)
+            return True
+        if action == "rotate_copy":
+            t = self._rotate_target()
+            if t is not None:
+                _, i = t
+                axis = (self._effective_light(i) or {}).get("axis") or (0.0, -1.0, 0.0)
+                self._rotate_clipboard = ("cylinder_axis", tuple(axis))
+                self._last_pushed = None
+            return True
+        if action == "rotate_paste":
+            t = self._rotate_target()
+            if t is not None and self._rotate_clipboard is not None:
+                _, i = t
+                self._set_axis_absolute(i, self._rotate_clipboard[1])
+            return True
+        if action == "rotate_mirror":
+            t = self._rotate_target()
+            if t is not None:
+                _, i = t
+                axis = list((self._effective_light(i) or {}).get("axis") or (0.0, -1.0, 0.0))
+                axis[0] = -axis[0]
+                self._set_axis_absolute(i, axis)
             return True
         if action == "save":
             if (not self._pending_radius and not self._pending_light
