@@ -23,3 +23,10 @@ def test_set_transform_gizmo_accepts_handle_kind():
                            (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0),
                            1.5, 1, 1)   # trailing handle_kind = cube
     _h.clear_transform_gizmo()
+
+
+def test_set_transform_gizmo_accepts_ring_handle_kind():
+    _h.set_transform_gizmo((0.0, 0.0, 0.0),
+                           (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0),
+                           1.5, 1, 2)   # handle_kind 2 = rings
+    _h.clear_transform_gizmo()

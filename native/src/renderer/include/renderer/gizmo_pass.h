@@ -22,7 +22,8 @@ public:
         glm::vec3 axis[3]{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
         float length{1.0f};
         int highlight{-1};   // 0/1/2 = brightened axis, -1 = none
-        int handle_kind{0};  // 0 = cone/arrow tip (move), 1 = cube tip (scale)
+        int handle_kind{0};  // 0 = cone/arrow tip (move), 1 = cube tip (scale),
+                             // 2 = ring (rotate)
     };
 
     GizmoPass();
@@ -45,6 +46,11 @@ private:
     // Second unit mesh: shaft + cube tip (Scale gizmo, handle_kind == 1).
     unsigned int cube_vao_{0}, cube_vbo_{0};
     int cube_vertex_count_{0};
+
+    // Third unit mesh: a segmented unit circle (radius 1) in the local XY
+    // plane, normal +Z (Rotate gizmo, handle_kind == 2). No shaft/tip.
+    unsigned int ring_vao_{0}, ring_vbo_{0};
+    int ring_vertex_count_{0};
 };
 
 }  // namespace renderer

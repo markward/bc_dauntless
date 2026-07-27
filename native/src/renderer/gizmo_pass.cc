@@ -21,6 +21,7 @@ constexpr int kHeadSegments = 8;   // spokes around the arrow-head cone
 constexpr float kShaftEnd = 0.85f;   // unit arrow: shaft 0 -> kShaftEnd
 constexpr float kHeadRadius = 0.05f;
 constexpr float kCubeHalfSide = 0.06f;   // scale-handle cube: side 0.12 * length
+constexpr int kRingSegments = 48;   // rotate-handle ring: segments around the circle
 
 const std::string kVs = R"(#version 330 core
 layout(location = 0) in vec3 a_pos;
@@ -43,6 +44,8 @@ GizmoPass::~GizmoPass() {
     if (vao_) glDeleteVertexArrays(1, &vao_);
     if (cube_vbo_) glDeleteBuffers(1, &cube_vbo_);
     if (cube_vao_) glDeleteVertexArrays(1, &cube_vao_);
+    if (ring_vbo_) glDeleteBuffers(1, &ring_vbo_);
+    if (ring_vao_) glDeleteVertexArrays(1, &ring_vao_);
 }
 
 void GizmoPass::ensure_resources() {
@@ -135,6 +138,33 @@ void GizmoPass::ensure_resources() {
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
     glBindVertexArray(0);
+
+    // Third unit mesh: a segmented unit circle (radius 1) in the local XY
+    // plane, normal +Z (Rotate gizmo). No shaft, no tip -- just the ring,
+    // drawn as GL_LINES segment pairs closing the loop.
+    std::vector<float> ring_verts;
+    auto push_ring = [&ring_verts](float x, float y, float z) {
+        ring_verts.push_back(x); ring_verts.push_back(y); ring_verts.push_back(z);
+    };
+    for (int i = 0; i < kRingSegments; ++i) {
+        const float a0 = glm::two_pi<float>() * (static_cast<float>(i) / kRingSegments);
+        const float a1 = glm::two_pi<float>() * (static_cast<float>(i + 1) / kRingSegments);
+        push_ring(std::cos(a0), std::sin(a0), 0.0f);
+        push_ring(std::cos(a1), std::sin(a1), 0.0f);
+    }
+
+    ring_vertex_count_ = static_cast<int>(ring_verts.size() / 3);
+
+    glGenVertexArrays(1, &ring_vao_);
+    glGenBuffers(1, &ring_vbo_);
+    glBindVertexArray(ring_vao_);
+    glBindBuffer(GL_ARRAY_BUFFER, ring_vbo_);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(ring_verts.size() * sizeof(float)),
+                 ring_verts.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+    glBindVertexArray(0);
 }
 
 namespace {
@@ -176,6 +206,37 @@ void GizmoPass::render(const Gizmo& g, const scenegraph::Camera& camera) {
         {0.75f, 1.0f, 0.65f},   // Y: pale lime
         {0.65f, 0.85f, 1.0f},   // Z: pale sky
     };
+
+    // Rotate-handle colours: same hue family as the move/scale gizmos so the
+    // three tools stay recognisable as one family, but distinct enough to
+    // tell apart at a glance.
+    static const glm::vec3 kRingAxisColor[3] = {
+        {1.0f, 0.45f, 0.35f},   // X: warm coral
+        {0.5f, 1.0f, 0.5f},     // Y: bright lime
+        {0.45f, 0.7f, 1.0f},    // Z: bright sky
+    };
+
+    if (g.handle_kind == 2) {
+        glBindVertexArray(ring_vao_);
+        for (int k = 0; k < 3; ++k) {
+            const glm::vec3 axis = glm::normalize(g.axis[k]);
+            const glm::mat4 rot = rotation_onto(axis);
+            const glm::mat4 model =
+                glm::translate(glm::mat4(1.0f), g.origin) * rot *
+                glm::scale(glm::mat4(1.0f), glm::vec3(g.length));
+
+            glm::vec3 color = kRingAxisColor[k];
+            if (k == g.highlight) color = glm::mix(color, glm::vec3(1.0f), 0.4f);
+
+            shader_->set_vec3("u_color", color);
+            shader_->set_mat4("u_mvp", vp * model);
+            glDrawArrays(GL_LINES, 0, ring_vertex_count_);
+        }
+        glBindVertexArray(0);
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
+        return;
+    }
 
     const bool cube = (g.handle_kind == 1);
     glBindVertexArray(cube ? cube_vao_ : vao_);
