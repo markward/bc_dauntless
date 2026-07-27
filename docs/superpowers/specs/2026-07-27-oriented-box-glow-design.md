@@ -62,7 +62,7 @@ Developer-facing for editing; the render path is production (any ship with an or
 - `GlowRegion` struct gains `glm::vec3 forward{0,1,0}; glm::vec3 up{0,0,1};` (identity default).
 - `add_box_region(center, half_extents, forward, up)` sets them; the existing 2-arg call sites default to identity.
 - `frame.cc` uploads `forward`/`up` into `u_glow_region_f`/`_g` for every region (cylinder/sphere just carry the identity default, unused by their branches).
-- The Python→native bridge that pushes glow regions (the SPV live glow + the ship glow controller path) carries the orientation for box regions.
+- The ship-glow-controller path (baked template → `GlowRegion` list → shader, on ship load) carries the orientation for box regions — this is what makes a reloaded oriented-box override render tilted. **v1 scope: no live-glow push during SPV editing** (the SPV shows the wireframe live; the in-scene glow updates on reload, matching how radius/shape edits already behave). A future "live glow tilts while dragging" would push orientation through the SPV's live glow-region path.
 
 ### F. SPV wireframe: oriented box (Python)
 
@@ -103,7 +103,7 @@ Reload / any ship with an oriented box -> baked_glow_regions reads orientation
 
 Continue on `feat/spv-gizmo-tools` (or a fresh branch off it), task-by-task via subagent-driven-development, gated by `scripts/check_tests.sh`. Merge is Mark's call after an in-game pass. Never pushed without Mark's say-so.
 
-## Open questions for review
+## Decisions (confirmed with Mark)
 
-1. **Orientation storage** — forward+up basis (this design) vs a single quaternion (`SetGlowRegionOrientation(index, qx,qy,qz,qw)`, 1 uniform). Basis is more readable + matches BC's `SetOrientation`; quaternion is 1 uniform vs 2 and never needs re-orthonormalization. Preference?
-2. **Scope of the render path** — do you want oriented box glow to drive the **live in-scene glow** immediately (push orientation through the ship glow controller), or is the SPV wireframe + persisted-then-reloaded render enough for v1 (matching how radius/shape edits already only reach the live template on reload)?
+1. **Orientation storage: forward+up unit-vector basis** (not quaternion). Matches BC's `SetOrientation(forward, up)`, readable in the override, reuses `rotate_about_axis`; costs 2 shader uniforms/region and re-orthonormalizes after rotations.
+2. **Render scope: wireframe-now, glow-on-reload (v1).** The SPV box wireframe tilts live while editing; the in-scene glow tilts after Save + reload (the ship-glow-controller path carries orientation from the baked template). No live-glow push during editing — matches the existing radius/shape edit model.
