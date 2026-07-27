@@ -61,6 +61,14 @@ TOOLS_H_PT = TOOLS_BTN_PT
 TRANSFORM_H_PT = TOOLS_BTN_PT
 TOOLS_CLUSTER_H_PT = TOOLS_H_PT + TOOLS_GAP_PT + TRANSFORM_H_PT
 
+# Top-right transform coordinate panel (#spv-coords). Anchored right:12/top:46
+# with width 220 / height ~172 (three coord rows + Copy/Paste/Mirror). Clicks
+# here belong to the CEF panel, so they never start an orbit or gizmo drag.
+COORDS_MARGIN_PT = 12
+COORDS_TOP_PT = 46
+COORDS_W_PT = 220
+COORDS_H_PT = 172
+
 # Wireframe colour for the selected subsystem's radius sphere — a soft green,
 # distinct from the orange glow-region and cyan weapon-arc overlays.
 SUBSYS_SPHERE_COLOR = (0.5, 1.0, 0.6)
@@ -751,7 +759,9 @@ class ShipPropertyViewerPanel(Panel):
 
         x, y = cursor_pos()
         over_tools = self._cursor_over_tools(x, y, dsf, fb_w, fb_h)
-        over_chrome = self._cursor_over_chrome(x, y, dsf) or over_tools
+        over_coords = self._cursor_over_coords(x, y, dsf, fb_w, fb_h)
+        over_chrome = (self._cursor_over_chrome(x, y, dsf) or over_tools
+                       or over_coords)
         over_left_col = self._cursor_over_left_column(x, y, dsf)
 
         # Zoom: drain the wheel accumulator even when no other input so a
@@ -900,6 +910,22 @@ class ShipPropertyViewerPanel(Panel):
         x1 = w_pt - TOOLS_MARGIN_PT
         y0 = h_pt - TOOLS_MARGIN_PT - TOOLS_CLUSTER_H_PT
         y1 = h_pt - TOOLS_MARGIN_PT
+        return x0 <= px <= x1 and y0 <= py <= y1
+
+    @staticmethod
+    def _cursor_over_coords(x: float, y: float, dsf: float,
+                            fb_w: float, fb_h: float) -> bool:
+        """Cursor (framebuffer px) inside the top-right coord panel box.
+        Returns False when the viewport width is unknown."""
+        if fb_w <= 0:
+            return False
+        s = dsf or 1.0
+        px, py = x / s, y / s
+        w_pt = fb_w / s
+        x1 = w_pt - COORDS_MARGIN_PT
+        x0 = x1 - COORDS_W_PT
+        y0 = COORDS_TOP_PT
+        y1 = y0 + COORDS_H_PT
         return x0 <= px <= x1 and y0 <= py <= y1
 
     @classmethod

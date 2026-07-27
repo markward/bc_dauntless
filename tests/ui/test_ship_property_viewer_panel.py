@@ -476,6 +476,21 @@ def test_cursor_over_tools_covers_both_transform_and_render_rows():
         x_above, y_above, dsf, fb_w, fb_h) is False
 
 
+def test_cursor_over_coords_guards_top_right_box():
+    fb_w, fb_h, dsf = 800.0, 600.0, 1.0
+    # A point inside the top-right coords box.
+    x_in = fb_w - _mod.COORDS_MARGIN_PT - 20
+    y_in = _mod.COORDS_TOP_PT + 20
+    assert _mod.ShipPropertyViewerPanel._cursor_over_coords(
+        x_in, y_in, dsf, fb_w, fb_h) is True
+    # A point in the centre (not the box).
+    assert _mod.ShipPropertyViewerPanel._cursor_over_coords(
+        fb_w / 2, fb_h / 2, dsf, fb_w, fb_h) is False
+    # Unknown viewport → False.
+    assert _mod.ShipPropertyViewerPanel._cursor_over_coords(
+        x_in, y_in, dsf, 0.0, 0.0) is False
+
+
 def _open_panel_for_input():
     from engine.ui.ship_property_viewer import OrbitCamera as _Cam
     p = ShipPropertyViewerPanel(ship_getter=lambda: None)
