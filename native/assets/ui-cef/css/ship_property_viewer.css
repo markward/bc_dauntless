@@ -81,6 +81,19 @@
     pointer-events: auto;
 }
 
+/* Transform-tools row (Transform/Rotate/Scale), stacked directly above
+   #spv-tools: 12px margin + 40px button + 6px gap = 58px from the bottom.
+   Reuses .spv-tool / .spv-tool.active for button styling; TOOLS_CLUSTER_H_PT
+   in ship_property_viewer_panel.py mirrors this geometry for the click-guard. */
+#spv-transform-tools {
+    position: absolute;
+    right: 12px;
+    bottom: 58px;
+    display: flex;
+    gap: 6px;
+    pointer-events: auto;
+}
+
 .spv-tool {
     width: 40px;
     height: 40px;

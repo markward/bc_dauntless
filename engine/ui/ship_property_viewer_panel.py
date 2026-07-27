@@ -55,6 +55,12 @@ TOOLS_COUNT = 3           # buttons in the row (glow / arcs / hull-texture)
 TOOLS_W_PT = TOOLS_COUNT * TOOLS_BTN_PT + (TOOLS_COUNT - 1) * TOOLS_GAP_PT
 TOOLS_H_PT = TOOLS_BTN_PT
 
+# Transform-tools row (#spv-transform-tools: Transform/Rotate/Scale), stacked
+# directly above #spv-tools with the same TOOLS_GAP_PT between the two rows.
+# Same width/button-size as the render row, so it shares TOOLS_W_PT.
+TRANSFORM_H_PT = TOOLS_BTN_PT
+TOOLS_CLUSTER_H_PT = TOOLS_H_PT + TOOLS_GAP_PT + TRANSFORM_H_PT
+
 # Wireframe colour for the selected subsystem's radius sphere — a soft green,
 # distinct from the orange glow-region and cyan weapon-arc overlays.
 SUBSYS_SPHERE_COLOR = (0.5, 1.0, 0.6)
@@ -67,6 +73,9 @@ class ShipPropertyViewerPanel(Panel):
         self._visible = False
         self._descriptors: List[dict] = []
         self.selected_index: Optional[int] = None
+        # Active transform-gizmo tool: None|"transform"|"rotate"|"scale".
+        # Mutually exclusive radio, reset every open/close.
+        self.active_tool: Optional[str] = None
         # Selected LIGHT volume (descriptor index of the subsystem whose light
         # is selected), mutually exclusive with selected_index. Shows only that
         # light's glow wireframe; the parent radius sphere is hidden.
@@ -98,6 +107,13 @@ class ShipPropertyViewerPanel(Panel):
         # persist->reload story as _saved_light: keeps the volume sphere + the
         # radius readout on the saved value until the next ship build.
         self._saved_radius: dict = {}
+        # Staged position edits: descriptor index -> body-frame (x, y, z).
+        # Same story as _pending_radius: not applied to the live sim, persisted
+        # on Save, applied on the next ship build.
+        self._pending_pos: dict = {}
+        # Position edits saved THIS session (descriptor index -> body pos).
+        # Same persist->reload story as _saved_radius/_saved_light.
+        self._saved_pos: dict = {}
         # True while a CEF context menu / modal is open: handle_input suppresses
         # orbit + pick so clicks on that chrome don't reach the 3D view.
         self._overlay_open = False
@@ -115,6 +131,14 @@ class ShipPropertyViewerPanel(Panel):
         self._press_pos: Optional[tuple] = None   # (x, y) where press began
         self._drag_dist = 0.0                     # accumulated |motion| px
         self._chrome_press = False                # press began over CEF chrome
+        # Transform-gizmo axis drag state (subsystem target). _axis_drag is the
+        # grabbed axis index (0/1/2) while dragging, else None. _gizmo_hover is
+        # the hovered axis for the highlight, -1 when none.
+        self._axis_drag: Optional[int] = None
+        self._axis_grab_param = 0.0
+        self._axis_grab_pos = (0.0, 0.0, 0.0)
+        self._axis_grab_origin = (0.0, 0.0, 0.0)
+        self._gizmo_hover = -1
 
     @property
     def name(self) -> str:
@@ -129,6 +153,7 @@ class ShipPropertyViewerPanel(Panel):
         self._descriptors = build_descriptors(ship) if ship is not None else []
         self.selected_index = None
         self._selected_light_index = None
+        self.active_tool = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
         self.show_hull_texture = False
@@ -137,8 +162,15 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_light = {}
         self._saved_light = {}
         self._saved_radius = {}
+        self._pending_pos = {}
+        self._saved_pos = {}
         self._overlay_open = False
         self._close_overlays = False
+        self._axis_drag = None
+        self._axis_grab_param = 0.0
+        self._axis_grab_pos = (0.0, 0.0, 0.0)
+        self._axis_grab_origin = (0.0, 0.0, 0.0)
+        self._gizmo_hover = -1
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -148,6 +180,7 @@ class ShipPropertyViewerPanel(Panel):
         self._descriptors = []
         self.selected_index = None
         self._selected_light_index = None
+        self.active_tool = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
         self.show_hull_texture = False
@@ -156,6 +189,8 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_light = {}
         self._saved_light = {}
         self._saved_radius = {}
+        self._pending_pos = {}
+        self._saved_pos = {}
         self._overlay_open = False
         self._close_overlays = False
         self.camera = None
@@ -164,6 +199,11 @@ class ShipPropertyViewerPanel(Panel):
         self._press_pos = None
         self._drag_dist = 0.0
         self._chrome_press = False
+        self._axis_drag = None
+        self._axis_grab_param = 0.0
+        self._axis_grab_pos = (0.0, 0.0, 0.0)
+        self._axis_grab_origin = (0.0, 0.0, 0.0)
+        self._gizmo_hover = -1
 
     def frame_to_bounds(self, center, radius: float) -> None:
         """Point the orbit camera at `center` and pull back so the model's
@@ -233,6 +273,139 @@ class ShipPropertyViewerPanel(Panel):
         return (0 <= index < len(self._descriptors)
                 and self._effective_light(index) is not None)
 
+    def _effective_pos(self, index: int):
+        """Body-frame position to use for a descriptor: a staged (unsaved)
+        edit wins, then an edit saved this session, else the baked body-frame
+        mount (`properties.position`). Mirrors `_effective_radius`."""
+        if index in self._pending_pos:
+            return self._pending_pos[index]
+        if index in self._saved_pos:
+            return self._saved_pos[index]
+        props = self._descriptors[index].get("properties", {})
+        return tuple(props.get("position") or (0.0, 0.0, 0.0))
+
+    def _effective_world_pos(self, index: int):
+        """World-space point for `_effective_pos(index)`, so a staged/dragged
+        position moves the sphere + pin live even though it has no in-session
+        effect on the sim. Falls back to the baked world_pos if the ship is
+        unavailable (headless / not yet resolved)."""
+        from engine.ui.ship_property_viewer import world_from_body
+        ship = self._ship_getter()
+        if ship is None or not hasattr(ship, "GetWorldLocation"):
+            return self._descriptors[index].get("world_pos", (0.0, 0.0, 0.0))
+        return world_from_body(ship, self._effective_pos(index))
+
+    def set_subsystem_position(self, index: int, body_pos) -> None:
+        """Stage a body-frame position edit for `index`. Not applied to the
+        live sim (position has no in-session physics effect); persisted on
+        Save, applied on the next ship build. Mirrors set_radius staging."""
+        if 0 <= index < len(self._descriptors):
+            self._pending_pos[index] = (float(body_pos[0]), float(body_pos[1]),
+                                         float(body_pos[2]))
+            self._last_pushed = None
+
+    def set_light_position(self, index: int, body_pos) -> None:
+        """Stage a body-frame position edit for light `index`'s region-0
+        spec. Mirrors `set_subsystem_position`; the existing light save path
+        (`_pending_light` → `region_spec_to_calls`) already persists it."""
+        spec = dict(self._effective_light(index) or {})
+        spec["position"] = tuple(float(c) for c in body_pos)
+        self._pending_light[index] = spec
+        self._last_pushed = None
+
+    # ------------------------------------------------------------------
+    # Transform gizmo (subsystem or light-volume target)
+    # ------------------------------------------------------------------
+    def _active_transform_target(self):
+        """Which node the transform gizmo/drag currently targets: ("light",
+        i), ("subsystem", i), or None. Light selection and subsystem
+        selection are mutually exclusive by construction (dispatch_event's
+        selection handlers clear the other), so light wins when set."""
+        if self._selected_light_index is not None:
+            return ("light", self._selected_light_index)
+        if self.selected_index is not None:
+            return ("subsystem", self.selected_index)
+        return None
+
+    def transform_gizmo(self) -> Optional[dict]:
+        """The move-gizmo for the selected subsystem or light node, or None.
+
+        `{"origin", "axes", "length", "highlight"}` when the transform tool is
+        active and a subsystem or light node is selected; None otherwise (no
+        tool, no selection, no camera, or the ship can't be resolved).
+        `origin` follows any staged/dragged position (`_effective_world_pos`
+        for a subsystem, `world_from_body` of the effective light position
+        for a light); `axes` are the three world-space body axes; `highlight`
+        is the hovered axis (-1 none)."""
+        if self.active_tool != "transform" or self.camera is None:
+            return None
+        target = self._active_transform_target()
+        if target is None:
+            return None
+        kind, i = target
+        if kind == "subsystem" and not (0 <= i < len(self._descriptors)):
+            return None
+        ship = self._ship_getter()
+        if ship is None or not hasattr(ship, "GetWorldRotation"):
+            return None
+        from engine.ui.ship_property_viewer import (
+            gizmo_axes, gizmo_length, world_from_body)
+        if kind == "light":
+            light = self._effective_light(i)
+            if light is None:
+                return None
+            origin = world_from_body(ship, light["position"])
+        else:
+            origin = self._effective_world_pos(i)
+        return {
+            "origin": origin,
+            "axes": gizmo_axes(ship.GetWorldRotation()),
+            "length": gizmo_length(self.camera),
+            "highlight": self._gizmo_hover,
+        }
+
+    def _begin_axis_drag(self, axis: int, grab_param: float) -> None:
+        """Start an axis drag on `axis` (0/1/2), capturing the fixed drag-start
+        body position and world origin so the drag mapping stays stable."""
+        target = self._active_transform_target()
+        if target is None:
+            return
+        kind, i = target
+        self._axis_drag = axis
+        self._axis_grab_param = grab_param
+        if kind == "light":
+            self._axis_grab_pos = tuple(self._effective_light(i)["position"])
+            ship = self._ship_getter()
+            if ship is not None and hasattr(ship, "GetWorldRotation"):
+                from engine.ui.ship_property_viewer import world_from_body
+                self._axis_grab_origin = world_from_body(
+                    ship, self._axis_grab_pos)
+        else:
+            self._axis_grab_pos = self._effective_pos(i)
+            self._axis_grab_origin = self._effective_world_pos(i)
+
+    def _begin_axis_drag_for_test(self, axis: int, grab_param: float) -> None:
+        """Test seam: identical to a press-edge grab, without a host/gizmo."""
+        self._begin_axis_drag(axis, grab_param)
+
+    def _apply_axis_drag(self, param_now: float) -> None:
+        """Move the selected node to grab_pos with the grabbed axis component
+        advanced by (param_now - grab_param)."""
+        target = self._active_transform_target()
+        if self._axis_drag is None or target is None:
+            return
+        kind, i = target
+        k = self._axis_drag
+        base = list(self._axis_grab_pos)
+        base[k] += (param_now - self._axis_grab_param)
+        if kind == "light":
+            self.set_light_position(i, tuple(base))
+        else:
+            self.set_subsystem_position(i, tuple(base))
+
+    def _end_axis_drag(self) -> None:
+        self._axis_drag = None
+
     def selected_subsystem_sphere(self) -> Optional[dict]:
         """Wireframe sphere for the selected subsystem's damage volume, or None.
 
@@ -257,7 +430,7 @@ class ShipPropertyViewerPanel(Panel):
             return None
         if r <= 0.0:
             return None
-        return {"center": d["world_pos"], "radius": r,
+        return {"center": self._effective_world_pos(sel), "radius": r,
                 "color": SUBSYS_SPHERE_COLOR}
 
     def subsystem_pins(self) -> List[tuple]:
@@ -279,7 +452,7 @@ class ShipPropertyViewerPanel(Panel):
         sel = self.selected_index
         if sel is not None and 0 <= sel < len(self._descriptors):
             d = self._descriptors[sel]
-            return [(d["world_pos"], d["icon_id"], True)]
+            return [(self._effective_world_pos(sel), d["icon_id"], True)]
         return [(d["world_pos"], d["icon_id"], False) for d in self._descriptors]
 
     def selected_descriptor(self) -> Optional[dict]:
@@ -305,11 +478,12 @@ class ShipPropertyViewerPanel(Panel):
 
     def render_payload(self) -> Optional[str]:
         snapshot = (self._visible, len(self._descriptors), self.selected_index,
-                    self._selected_light_index,
+                    self._selected_light_index, self.active_tool,
                     self.show_glow_regions, self.show_weapon_arcs,
                     self.show_hull_texture,
                     tuple(sorted(self._pending_radius.items())),
                     tuple(sorted(self._pending_light)),   # indices with a staged light
+                    tuple(sorted(self._pending_pos.items())),
                     tuple(sorted(self._expanded_groups)))
         if snapshot == self._last_pushed:
             return None
@@ -326,16 +500,24 @@ class ShipPropertyViewerPanel(Panel):
                 props = dict(_props0)
                 props["radius"] = _eff
                 selected["properties"] = props
+            _cur_props = selected.get("properties", {})
+            _effpos = self._effective_pos(self.selected_index)
+            if _effpos != _cur_props.get("position"):
+                props = dict(_cur_props)
+                props["position"] = _effpos
+                selected["properties"] = props
         payload = {
             "visible": True,
             "pin_count": len(self._descriptors),
             "selected": selected,
             "selected_index": self.selected_index,
             "selected_light_index": self._selected_light_index,
+            "active_tool": self.active_tool,
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
-            "pending_count": len(set(self._pending_radius) | set(self._pending_light)),
+            "pending_count": len(set(self._pending_radius) | set(self._pending_light)
+                                 | set(self._pending_pos)),
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
             "close_overlays": self._close_overlays,
@@ -351,13 +533,15 @@ class ShipPropertyViewerPanel(Panel):
         first-seen by ascending descriptor index."""
         counts: dict = {}
         order: List[str] = []
-        for i in sorted(set(self._pending_radius) | set(self._pending_light)):
+        for i in sorted(set(self._pending_radius) | set(self._pending_light)
+                         | set(self._pending_pos)):
             name = self._descriptors[i]["name"]
             if name not in counts:
                 counts[name] = 0
                 order.append(name)
             counts[name] += (1 if i in self._pending_radius else 0)
             counts[name] += (1 if i in self._pending_light else 0)
+            counts[name] += (1 if i in self._pending_pos else 0)
         return [{"name": n, "count": counts[n]} for n in order]
 
     def _subsystem_rows(self) -> List[dict]:
@@ -379,7 +563,8 @@ class ShipPropertyViewerPanel(Panel):
         by_index: dict = {}
         for i, d in enumerate(self._descriptors):
             row = _row(i, d)
-            row["dirty"] = (i in self._pending_radius) or (i in self._pending_light)
+            row["dirty"] = ((i in self._pending_radius) or (i in self._pending_light)
+                             or (i in self._pending_pos))
             row["radius"] = self._effective_radius(
                 i, d.get("properties", {}).get("radius"))
             row["has_light"] = self._has_light(i)
@@ -544,6 +729,14 @@ class ShipPropertyViewerPanel(Panel):
 
         down = btn_state(left)
 
+        # Transform-gizmo axis drag takes priority over orbit/pin: a press on a
+        # gizmo shaft grabs that axis and drags the subsystem along it (orbit
+        # suppressed, no pin pick on release). When no axis is grabbed this only
+        # updates the hover highlight and returns False, so every existing path
+        # (orbit / pick / chrome / zoom) runs untouched below.
+        if self._handle_gizmo_input(x, y, down, over_chrome, dsf, fb_size):
+            return
+
         if down and not self._lmb_down:
             # Press edge. A press over the CEF chrome (titlebar / left
             # column) belongs to the overlay — never starts an orbit drag
@@ -571,6 +764,72 @@ class ShipPropertyViewerPanel(Panel):
             self._drag_dist = 0.0
             self._chrome_press = False
 
+    def _handle_gizmo_input(self, x, y, down, over_chrome, dsf, fb_size) -> bool:
+        """Gizmo hover / axis grab / drag / release. Returns True when it
+        consumed the event (an axis drag was active or started/ended this
+        frame), so the caller skips the orbit/pin block. Returns False (and
+        leaves all edge bookkeeping to the caller) otherwise. Degrades to a
+        no-op returning False if the gizmo helpers/camera aren't available."""
+        try:
+            from engine.ui.ship_property_viewer import (
+                pick_gizmo_axis, axis_drag_param, gizmo_length,
+            )
+        except ImportError:
+            return False
+
+        # An axis drag is in progress — own the whole press/drag/release cycle.
+        if self._axis_drag is not None:
+            if not down:
+                # Release edge: end the drag; no pin pick.
+                self._end_axis_drag()
+                self._lmb_down = False
+                self._drag_last = None
+                self._press_pos = None
+                self._drag_dist = 0.0
+                self._chrome_press = False
+                self._gizmo_hover = -1
+                return True
+            # Drag: map the cursor onto the FIXED drag-start shaft so the
+            # mapping stays stable as the origin moves with the subsystem.
+            g = self.transform_gizmo()
+            if g is not None:
+                t = axis_drag_param(x, y, self._axis_grab_origin,
+                                    g["axes"][self._axis_drag],
+                                    gizmo_length(self.camera), self.camera,
+                                    fb_size())
+                self._apply_axis_drag(t)
+            self._drag_last = (x, y)
+            return True
+
+        g = self.transform_gizmo()
+        if g is None or over_chrome:
+            self._gizmo_hover = -1
+            return False
+
+        # Press edge: try to grab an axis. If none, fall through to orbit-press.
+        if down and not self._lmb_down:
+            axis = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
+                                   self.camera, fb_size(), dsf)
+            if axis is None:
+                return False
+            t_grab = axis_drag_param(x, y, g["origin"], g["axes"][axis],
+                                     g["length"], self.camera, fb_size())
+            self._begin_axis_drag(axis, t_grab)
+            self._chrome_press = False
+            self._lmb_down = True
+            self._drag_last = (x, y)
+            self._press_pos = (x, y)
+            self._drag_dist = 0.0
+            self._gizmo_hover = axis
+            return True
+
+        # Not a press edge and no active drag: hover highlight only (idle).
+        if not down:
+            hov = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
+                                  self.camera, fb_size(), dsf)
+            self._gizmo_hover = hov if hov is not None else -1
+        return False
+
     @staticmethod
     def _cursor_over_left_column(x: float, y: float, dsf: float) -> bool:
         """Cursor (framebuffer px) inside the left tool/subsystem column."""
@@ -580,7 +839,9 @@ class ShipPropertyViewerPanel(Panel):
     @staticmethod
     def _cursor_over_tools(x: float, y: float, dsf: float,
                           fb_w: float, fb_h: float) -> bool:
-        """Cursor (framebuffer px) inside the bottom-right tool-button cluster.
+        """Cursor (framebuffer px) inside the bottom-right tool-button
+        cluster — BOTH rows: the render-tools row (#spv-tools) and the
+        transform-tools row (#spv-transform-tools) stacked directly above it.
 
         Needs the viewport size (framebuffer px) because the cluster is anchored
         to the right/bottom edges. Returns False when the size is unknown."""
@@ -591,7 +852,7 @@ class ShipPropertyViewerPanel(Panel):
         w_pt, h_pt = fb_w / s, fb_h / s
         x0 = w_pt - TOOLS_MARGIN_PT - TOOLS_W_PT
         x1 = w_pt - TOOLS_MARGIN_PT
-        y0 = h_pt - TOOLS_MARGIN_PT - TOOLS_H_PT
+        y0 = h_pt - TOOLS_MARGIN_PT - TOOLS_CLUSTER_H_PT
         y1 = h_pt - TOOLS_MARGIN_PT
         return x0 <= px <= x1 and y0 <= py <= y1
 
@@ -717,7 +978,7 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             if not (0 <= idx < len(self._descriptors)):
                 return False
-            base = dict(self._descriptors[idx].get("light_region") or {})
+            base = dict(self._effective_light(idx) or self._descriptors[idx].get("light_region") or {})
             pos = base.get("position") or (0.0, 0.0, 0.0)
             axis = base.get("axis") or (0.0, -1.0, 0.0)
             spec = {"shape": shape, "position": tuple(pos), "axis": tuple(axis),
@@ -747,8 +1008,16 @@ class ShipPropertyViewerPanel(Panel):
             self._pending_light[idx] = spec
             self._last_pushed = None
             return True
+        if action.startswith("set_tool:"):
+            name = action.split(":", 1)[1]
+            if name not in ("transform", "rotate", "scale"):
+                return False
+            self.active_tool = None if self.active_tool == name else name
+            self._last_pushed = None
+            return True
         if action == "save":
-            if not self._pending_radius and not self._pending_light:
+            if (not self._pending_radius and not self._pending_light
+                    and not self._pending_pos):
                 return True
             ship = self._ship_getter()
             leaf = hardpoint_leaf_for_ship(ship)
@@ -762,6 +1031,8 @@ class ShipPropertyViewerPanel(Panel):
             edits += [(self._descriptors[i]["name"], "__region__", 0,
                        region_spec_to_calls(0, spec) if spec is not None else [])
                       for i, spec in sorted(self._pending_light.items())]
+            edits += [(self._descriptors[i]["name"], "SetPosition", tuple(v))
+                      for i, v in sorted(self._pending_pos.items())]
             try:
                 resolve_override_target(ship).write(leaf, edits)
             except Exception as e:
@@ -780,6 +1051,8 @@ class ShipPropertyViewerPanel(Panel):
             self._pending_radius = {}
             self._saved_light.update(self._pending_light)
             self._pending_light = {}
+            self._saved_pos.update(self._pending_pos)
+            self._pending_pos = {}
             self._last_pushed = None
             return True
         return False

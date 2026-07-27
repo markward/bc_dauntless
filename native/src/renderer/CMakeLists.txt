@@ -138,6 +138,7 @@ add_library(renderer STATIC
     carve_field_cache.cc
     subsystem_pin_pass.cc
     debug_volume_pass.cc
+    gizmo_pass.cc
     target_reticle_pass.cc
     letterbox_pass.cc
     bridge_pass.cc

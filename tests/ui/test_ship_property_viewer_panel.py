@@ -452,6 +452,30 @@ def test_press_over_bottom_right_tools_never_orbits_or_picks(monkeypatch):
     assert picked == []                         # no pick
 
 
+def test_cursor_over_tools_covers_both_transform_and_render_rows():
+    """_cursor_over_tools must guard the transform row (above) AND the
+    render-tool row (below) as one contiguous chrome cluster, so a click on
+    a Transform/Rotate/Scale button is never mistaken for a viewport click."""
+    fb_w, fb_h, dsf = 800.0, 600.0, 1.0
+    # Point inside the (new, upper) transform-tools row.
+    x_transform = fb_w - _mod.TOOLS_MARGIN_PT - 20.0
+    y_transform = (fb_h - _mod.TOOLS_MARGIN_PT - _mod.TOOLS_H_PT
+                   - _mod.TOOLS_GAP_PT - 20.0)
+    assert _mod.ShipPropertyViewerPanel._cursor_over_tools(
+        x_transform, y_transform, dsf, fb_w, fb_h) is True
+    # Point inside the original (lower) render-tools row still guarded.
+    x_render = fb_w - _mod.TOOLS_MARGIN_PT - 20.0
+    y_render = fb_h - _mod.TOOLS_MARGIN_PT - 20.0
+    assert _mod.ShipPropertyViewerPanel._cursor_over_tools(
+        x_render, y_render, dsf, fb_w, fb_h) is True
+    # Point above the whole cluster is not chrome.
+    x_above = fb_w - _mod.TOOLS_MARGIN_PT - 20.0
+    y_above = (fb_h - _mod.TOOLS_MARGIN_PT - _mod.TOOLS_CLUSTER_H_PT
+               - 20.0)
+    assert _mod.ShipPropertyViewerPanel._cursor_over_tools(
+        x_above, y_above, dsf, fb_w, fb_h) is False
+
+
 def _open_panel_for_input():
     from engine.ui.ship_property_viewer import OrbitCamera as _Cam
     p = ShipPropertyViewerPanel(ship_getter=lambda: None)

@@ -81,10 +81,11 @@ _OPTIONAL_BINDINGS = frozenset({
     "clear_target_reticle",
     "instance_node_world", "instance_surface_points", "play_instance_node_anim",
     "play_instance_node_clip", "set_cloak_dials", "set_cloak_ships",
+    "clear_transform_gizmo",
     "set_debug_boxes", "set_debug_cylinders", "set_debug_spheres",
     "set_officer_face",
     "set_officer_jaw", "set_spv_overlay_beams",
-    "set_target_reticle",
+    "set_target_reticle", "set_transform_gizmo",
     "spawn_test_character", "stop_instance_node_anim",
 })
 
@@ -985,6 +986,26 @@ def set_debug_spheres(spheres: list) -> None:
 def clear_debug_spheres() -> None:
     """Clear the debug wireframe spheres. Takes effect next frame()."""
     fn = getattr(_h, "clear_debug_spheres", None)
+    if fn is not None:
+        fn()
+
+
+def set_transform_gizmo(origin, ax, ay, az, length, highlight) -> None:
+    """Set the Ship Property Viewer transform gizmo (three coloured arrows).
+
+    `origin` and each axis (`ax`/`ay`/`az`) are 3-float tuples; `highlight`
+    is 0/1/2 to brighten that axis or -1 for none. Rendered depth-test-off
+    in viewer_mode only. No-ops silently if the host binding is unavailable
+    (headless / pre-rebuild).
+    """
+    fn = getattr(_h, "set_transform_gizmo", None)
+    if fn is not None:
+        fn(origin, ax, ay, az, float(length), int(highlight))
+
+
+def clear_transform_gizmo() -> None:
+    """Hide the transform gizmo. Takes effect next frame()."""
+    fn = getattr(_h, "clear_transform_gizmo", None)
     if fn is not None:
         fn()
 

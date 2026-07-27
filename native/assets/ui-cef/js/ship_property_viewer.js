@@ -53,6 +53,21 @@ window.setShipPropertyViewer = function (data) {
         hullBtn.classList.toggle('active', data.show_hull === true);
     }
 
+    // Transform-tools row: mutually-exclusive radio, active tool carries
+    // .active per data.active_tool ('transform'|'rotate'|'scale'|null).
+    var transformBtn = document.getElementById('spv-tool-transform');
+    if (transformBtn) {
+        transformBtn.classList.toggle('active', data.active_tool === 'transform');
+    }
+    var rotateBtn = document.getElementById('spv-tool-rotate');
+    if (rotateBtn) {
+        rotateBtn.classList.toggle('active', data.active_tool === 'rotate');
+    }
+    var scaleBtn = document.getElementById('spv-tool-scale');
+    if (scaleBtn) {
+        scaleBtn.classList.toggle('active', data.active_tool === 'scale');
+    }
+
     renderSPVSubsystemList(data.subsystems || [],
         (typeof data.selected_index === 'number') ? data.selected_index : null,
         (typeof data.selected_light_index === 'number') ? data.selected_light_index : null);
@@ -348,6 +363,15 @@ window.shipPropertyViewerClose = function () {
 // the panel's real state.
 window.shipPropertyViewerToggle = function (action) {
     dauntlessEvent('ship-property-viewer/' + action);
+};
+
+// Transform-tools row (Transform/Rotate/Scale) — mutually exclusive radio;
+// mirrors shipPropertyViewerToggle's event channel. Python flips
+// active_tool and re-pushes the payload, which round-trips back here as
+// data.active_tool so the .active button state always mirrors the panel's
+// real state.
+window.shipPropertyViewerSetTool = function (name) {
+    dauntlessEvent('ship-property-viewer/set_tool:' + name);
 };
 
 // Subsystem-list row click: select that pin; clicking the already-selected

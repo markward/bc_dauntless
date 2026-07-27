@@ -49,6 +49,7 @@
 #include <renderer/carve_field_cache.h>
 #include <renderer/subsystem_pin_pass.h>
 #include <renderer/debug_volume_pass.h>
+#include <renderer/gizmo_pass.h>
 #include <renderer/target_reticle_pass.h>
 #include <renderer/letterbox_pass.h>
 #include <renderer/bridge_pass.h>
@@ -232,6 +233,11 @@ std::vector<renderer::DebugCylinder>         g_debug_cylinders;
 std::vector<renderer::DebugBox>              g_debug_boxes;
 std::vector<renderer::DebugSphere>           g_debug_spheres;
 std::unique_ptr<renderer::DebugVolumePass>   g_debug_volume_pass;
+// Ship Property Viewer transform gizmo: three coloured arrows set each frame
+// from Python. length == 0 -> hidden (production frames never touch it, so
+// the render path stays byte-identical when unset).
+renderer::GizmoPass::Gizmo                   g_transform_gizmo;
+std::unique_ptr<renderer::GizmoPass>         g_gizmo_pass;
 renderer::TargetReticle                      g_target_reticle;
 std::unique_ptr<renderer::TargetReticlePass> g_target_reticle_pass;
 // "Hologram-only" frame mode: when on (set by the Ship Property Viewer while
@@ -464,6 +470,8 @@ void init(int width, int height, const std::string& title) {
     // (game/data/Damage1..4.tga) on first draw — no host wiring needed.
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
     g_debug_volume_pass   = std::make_unique<renderer::DebugVolumePass>();
+    g_gizmo_pass          = std::make_unique<renderer::GizmoPass>();
+    g_transform_gizmo.length = 0.0f;   // hidden until Python calls set_transform_gizmo
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
@@ -549,6 +557,8 @@ void shutdown() {
     g_debug_boxes.clear();
     g_debug_spheres.clear();
     g_debug_volume_pass.reset();
+    g_transform_gizmo.length = 0.0f;
+    g_gizmo_pass.reset();
     g_target_reticle = renderer::TargetReticle{};
     g_target_reticle_pass.reset();
     g_bridge_pass.reset();
@@ -912,6 +922,8 @@ void frame() {
         g_debug_volume_pass->render(g_debug_boxes, g_camera);
     if (viewer_mode && g_debug_volume_pass && !g_debug_spheres.empty())
         g_debug_volume_pass->render(g_debug_spheres, g_camera);
+    if (viewer_mode && g_gizmo_pass && g_transform_gizmo.length > 0.0f)
+        g_gizmo_pass->render(g_transform_gizmo, g_camera);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty()) {
         // Device-pixel ratio = framebuffer / logical window height, so pins
         // keep a constant apparent size on HiDPI/Retina displays.
@@ -2501,6 +2513,28 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("clear_debug_spheres",
           []() { g_debug_spheres.clear(); },
           "Clear the debug wireframe spheres. Takes effect next frame().");
+
+    m.def("set_transform_gizmo",
+          [](std::array<float, 3> o,
+             std::array<float, 3> ax, std::array<float, 3> ay, std::array<float, 3> az,
+             float length, int highlight) {
+              g_transform_gizmo.origin = {o[0], o[1], o[2]};
+              g_transform_gizmo.axis[0] = {ax[0], ax[1], ax[2]};
+              g_transform_gizmo.axis[1] = {ay[0], ay[1], ay[2]};
+              g_transform_gizmo.axis[2] = {az[0], az[1], az[2]};
+              g_transform_gizmo.length = length;
+              g_transform_gizmo.highlight = highlight;
+          },
+          py::arg("origin"), py::arg("axis_x"), py::arg("axis_y"), py::arg("axis_z"),
+          py::arg("length"), py::arg("highlight"),
+          "Set the Ship Property Viewer transform gizmo (three coloured "
+          "arrows; rendered depth-test-off in viewer_mode only). "
+          "highlight: 0/1/2 brightens that axis, -1 for none. "
+          "Applied each frame().");
+
+    m.def("clear_transform_gizmo",
+          []() { g_transform_gizmo.length = 0.0f; },
+          "Hide the transform gizmo. Takes effect next frame().");
 
     m.def("set_hologram_ship",
           [](scenegraph::InstanceId iid,
