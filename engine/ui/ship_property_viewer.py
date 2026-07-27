@@ -136,9 +136,19 @@ def region_spec_to_calls(index, spec):
     elif shape == "Box":
         sx, sy, sz = spec["scale"]
         calls.append(("SetGlowRegionScale", (index, sx, sy, sz)))
+        ori = spec.get("orientation")
+        if ori is not None and not _is_identity_orientation(ori):
+            (fx, fy, fz), (ux, uy, uz) = ori
+            calls.append(("SetGlowRegionOrientation", (index, fx, fy, fz, ux, uy, uz)))
     else:  # Sphere
         calls.append(("SetGlowRegionRadius", (index, spec["radius"][0])))
     return calls
+
+
+def _is_identity_orientation(ori, eps=1e-6):
+    (fx, fy, fz), (ux, uy, uz) = ori
+    return (abs(fx) < eps and abs(fy - 1.0) < eps and abs(fz) < eps and
+            abs(ux) < eps and abs(uy) < eps and abs(uz - 1.0) < eps)
 
 
 def _light_region_spec(sub):
