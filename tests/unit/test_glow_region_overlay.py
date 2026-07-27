@@ -222,11 +222,12 @@ def test_pending_box_yields_a_box(monkeypatch):
     assert len(boxes) == 1
 
 
-def test_pending_previews_even_when_filtered_out(monkeypatch):
-    # Edit Light operates on the RIGHT-CLICKED row, which right-click does
-    # NOT select. With the Glow Regions toggle off and a DIFFERENT pin
-    # selected, the pending subsystem must still contribute its wireframe —
-    # otherwise the staged edit never previews live.
+def test_pending_not_drawn_when_a_different_element_is_selected(monkeypatch):
+    # Selection-scoped overlay: a staged/saved light edit is NOT drawn just
+    # because it is pending. With the Glow Regions toggle off and a DIFFERENT
+    # element selected, the pending subsystem contributes nothing — its
+    # wireframe only shows when ITS OWN light node is the selected element
+    # (Edit Light selects that node, so the live edit still previews).
     monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
     monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))
     monkeypatch.setattr(gro, "baked_region_ops", lambda prop, pos, name: [])
@@ -236,8 +237,26 @@ def test_pending_previews_even_when_filtered_out(monkeypatch):
                                   "extent": (0.0, 2.0), "scale": (0.1, 0.1, 0.1)}}
     cyls, boxes = gro.build_glow_region_overlay(
         ship, selected_name="Some Other Subsystem", show_all=False, pending=pending)
+    assert cyls == [] and boxes == []   # not the selected element -> hidden
+
+
+def test_pending_previews_when_its_own_light_is_selected(monkeypatch):
+    # The staged Edit Light spec DOES preview live when that light node is the
+    # selected element: the pending spec (radius 0.2 cylinder) is drawn INSTEAD
+    # of the baked sphere.
+    monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
+    monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))
+    monkeypatch.setattr(gro, "baked_region_ops",
+                        lambda prop, pos, name: [("sphere", (0.0, 0.0, 0.0), 0.9)])
+    ship = _BoxShip([_BoxSub("Center Impulse", object())])
+    pending = {"Center Impulse": {"shape": "Cylinder", "position": (0.0, 0.0, 0.0),
+                                  "axis": (0.0, 0.0, 1.0), "radius": (0.2,),
+                                  "extent": (0.0, 2.0), "scale": (0.1, 0.1, 0.1)}}
+    cyls, boxes = gro.build_glow_region_overlay(
+        ship, selected_name="Center Impulse", show_all=False, pending=pending)
     assert boxes == []
-    assert len(cyls) == 1   # pending subsystem previewed despite the filter
+    assert len(cyls) == 1
+    assert abs(cyls[0]["radius"] - 0.2) < 1e-9   # pending spec, not the baked 0.9 sphere
 
 
 def test_non_pending_subsystem_still_filtered_when_not_selected(monkeypatch):
@@ -254,9 +273,10 @@ def test_non_pending_subsystem_still_filtered_when_not_selected(monkeypatch):
     assert boxes == []
 
 
-def test_pending_previews_with_no_selection_and_toggle_off(monkeypatch):
-    # Edit Light -> Apply with the Glow Regions toggle OFF and no pin
-    # selected must still preview the staged edit live.
+def test_pending_not_drawn_with_no_selection_and_toggle_off(monkeypatch):
+    # Selection-scoped: with the Glow Regions toggle OFF and NOTHING selected,
+    # a staged/saved light edit contributes nothing — a previously-edited
+    # light no longer persists on screen once you select away or deselect.
     monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
     monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))
     monkeypatch.setattr(gro, "baked_region_ops", lambda prop, pos, name: [])
@@ -266,8 +286,7 @@ def test_pending_previews_with_no_selection_and_toggle_off(monkeypatch):
                                   "extent": (0.0, 2.0), "scale": (0.1, 0.1, 0.1)}}
     cyls, boxes = gro.build_glow_region_overlay(
         ship, selected_name=None, show_all=False, pending=pending)
-    assert boxes == []
-    assert len(cyls) == 1
+    assert cyls == [] and boxes == []
 
 
 def test_toggle_off_no_selection_no_pending_still_yields_nothing(monkeypatch):

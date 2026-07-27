@@ -78,17 +78,21 @@ def build_glow_region_overlay(ship, selected_name: str = None,
     DebugCylinder dicts (`engine.renderer.set_debug_cylinders`); box regions
     become DebugBox dicts (`engine.renderer.set_debug_boxes`).
 
-    `show_all` (the Glow Regions toggle) draws every subsystem's regions;
-    otherwise only the subsystem whose GetName() matches `selected_name`
-    contributes — so selecting a subsystem always reveals its own glow
-    volume, mirroring the selected-pin firing arc. Both off → ([], []).
+    Selection-scoped: `show_all` (the Glow Regions toggle) draws every
+    subsystem's regions; otherwise only the subsystem whose GetName() matches
+    `selected_name` (the SELECTED light node) contributes — so a light's
+    wireframe shows ONLY while that light node is the selected element, never
+    for its parent subsystem or a different selection. No selection + toggle
+    off → ([], []).
 
     `pending` maps subsystem NAME → a baked-shaped region spec (a staged but
-    unsaved Edit Light edit). When a subsystem's name is a key in `pending`,
-    that spec is resolved via `resolve_baked_region` INSTEAD of the
-    subsystem's baked ops, so the wireframe tracks the live edit before Save.
-    A `None` value (a staged light removal) draws nothing for that
-    subsystem — it hides the baked region rather than falling back to it.
+    unsaved Edit Light edit). It is CONSULTED for the spec of a drawn region
+    (so a selected light's live edit previews before Save), but presence in
+    `pending` does NOT itself force drawing — a previously-edited light no
+    longer persists on screen once you select away. Edit Light selects the
+    light node it opens on, so the staged edit still previews live. A `None`
+    value (a staged light removal) draws nothing for that subsystem — it
+    hides the baked region rather than falling back to it.
 
     Cylinder regions map directly (baked_region_ops pre-shifts the centre by
     the aft extent). Sphere regions are drawn as their circumscribing cylinder
@@ -99,7 +103,7 @@ def build_glow_region_overlay(ship, selected_name: str = None,
     """
     if ship is None or not hasattr(ship, "GetWorldLocation"):
         return [], []
-    if not show_all and not selected_name and not pending:
+    if not show_all and not selected_name:
         return [], []
 
     pending = pending or {}
@@ -110,7 +114,7 @@ def build_glow_region_overlay(ship, selected_name: str = None,
     boxes: List[dict] = []
     for sub in _iter_subsystems(ship):
         name = sub.GetName() if hasattr(sub, "GetName") else ""
-        if name not in pending and not show_all and name != selected_name:
+        if not show_all and name != selected_name:
             continue
         pos = _position_tuple(sub)
         if name in pending:

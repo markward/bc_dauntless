@@ -258,6 +258,10 @@ function spvLightDefaults() {
 
 window.shipPropertyViewerCtxLight = function () {
     document.getElementById('spv-ctxmenu').style.display = 'none';
+    // Select the light node we're about to edit so its wireframe is the
+    // selected element — the glow overlay is selection-scoped, so this is
+    // what makes the staged edit preview live while the modal is open.
+    dauntlessEvent('ship-property-viewer/select_light:' + spvCtxIndex);
     spvLight = spvLightDefaults();
     var seed = spvRowLight[spvCtxIndex];
     if (seed && typeof seed === 'object') {
