@@ -2531,7 +2531,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Set the Ship Property Viewer transform gizmo (three coloured "
           "arrows; rendered depth-test-off in viewer_mode only). "
           "highlight: 0/1/2 brightens that axis, -1 for none. "
-          "handle_kind: 0 = cone tip (Move), 1 = cube tip (Scale). "
+          "handle_kind: 0 = cone tip (Move), 1 = cube tip (Scale), "
+          "2 = rings (Rotate). "
           "Applied each frame().");
 
     m.def("clear_transform_gizmo",

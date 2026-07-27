@@ -12,9 +12,11 @@ namespace renderer {
 class Shader;
 
 /// Developer 3-axis transform gizmo for the Ship Property Viewer: three
-/// coloured arrows (shaft + small cone head) drawn in world space, depth
-/// test off, always opaque. Self-contained (owns its shader + a unit-arrow
-/// mesh along local +Z), not wired into the frame by default.
+/// coloured handles drawn in world space, depth test off, always opaque.
+/// `handle_kind` selects the handle shape — 0 = arrows (shaft + cone head,
+/// Move), 1 = cubes (Scale), 2 = rings (Rotate). Self-contained (owns its
+/// shader + unit arrow/cube/ring meshes along local +Z), not wired into the
+/// frame by default.
 class GizmoPass {
 public:
     struct Gizmo {

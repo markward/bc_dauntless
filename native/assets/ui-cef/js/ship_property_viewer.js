@@ -118,7 +118,7 @@ window.setShipPropertyViewer = function (data) {
     }
 
     // Rotate panel (top-right): visible only while data.rotate_values is
-    // non-null (Rotate tool active + a cylinder-shaped subsystem selected).
+    // non-null (Rotate tool active + a cylinder light volume selected).
     // Fixed X/Y/Z degree rows (no innerHTML rebuild needed), and the same
     // top-right slot is shared with #spv-coords/#spv-scale (radio: never
     // more than one shown at once).
