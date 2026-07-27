@@ -2517,19 +2517,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("set_transform_gizmo",
           [](std::array<float, 3> o,
              std::array<float, 3> ax, std::array<float, 3> ay, std::array<float, 3> az,
-             float length, int highlight) {
+             float length, int highlight, int handle_kind) {
               g_transform_gizmo.origin = {o[0], o[1], o[2]};
               g_transform_gizmo.axis[0] = {ax[0], ax[1], ax[2]};
               g_transform_gizmo.axis[1] = {ay[0], ay[1], ay[2]};
               g_transform_gizmo.axis[2] = {az[0], az[1], az[2]};
               g_transform_gizmo.length = length;
               g_transform_gizmo.highlight = highlight;
+              g_transform_gizmo.handle_kind = handle_kind;
           },
           py::arg("origin"), py::arg("axis_x"), py::arg("axis_y"), py::arg("axis_z"),
-          py::arg("length"), py::arg("highlight"),
+          py::arg("length"), py::arg("highlight"), py::arg("handle_kind"),
           "Set the Ship Property Viewer transform gizmo (three coloured "
           "arrows; rendered depth-test-off in viewer_mode only). "
           "highlight: 0/1/2 brightens that axis, -1 for none. "
+          "handle_kind: 0 = cone tip (Move), 1 = cube tip (Scale). "
           "Applied each frame().");
 
     m.def("clear_transform_gizmo",

@@ -11,8 +11,15 @@ def test_transform_gizmo_bindings_present():
 
 
 def test_set_transform_gizmo_accepts_payload():
-    # origin, three axes, length, highlight — must not raise.
+    # origin, three axes, length, highlight, handle_kind — must not raise.
     _h.set_transform_gizmo((0.0, 0.0, 0.0),
                            (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0),
-                           1.5, 1)
+                           1.5, 1, 0)
+    _h.clear_transform_gizmo()
+
+
+def test_set_transform_gizmo_accepts_handle_kind():
+    _h.set_transform_gizmo((0.0, 0.0, 0.0),
+                           (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0),
+                           1.5, 1, 1)   # trailing handle_kind = cube
     _h.clear_transform_gizmo()

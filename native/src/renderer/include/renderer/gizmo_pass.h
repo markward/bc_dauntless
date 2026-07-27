@@ -22,6 +22,7 @@ public:
         glm::vec3 axis[3]{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
         float length{1.0f};
         int highlight{-1};   // 0/1/2 = brightened axis, -1 = none
+        int handle_kind{0};  // 0 = cone/arrow tip (move), 1 = cube tip (scale)
     };
 
     GizmoPass();
@@ -40,6 +41,10 @@ private:
     std::unique_ptr<Shader> shader_;
     unsigned int vao_{0}, vbo_{0};
     int vertex_count_{0};
+
+    // Second unit mesh: shaft + cube tip (Scale gizmo, handle_kind == 1).
+    unsigned int cube_vao_{0}, cube_vbo_{0};
+    int cube_vertex_count_{0};
 };
 
 }  // namespace renderer

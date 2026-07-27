@@ -990,17 +990,18 @@ def clear_debug_spheres() -> None:
         fn()
 
 
-def set_transform_gizmo(origin, ax, ay, az, length, highlight) -> None:
+def set_transform_gizmo(origin, ax, ay, az, length, highlight, handle_kind=0) -> None:
     """Set the Ship Property Viewer transform gizmo (three coloured arrows).
 
     `origin` and each axis (`ax`/`ay`/`az`) are 3-float tuples; `highlight`
-    is 0/1/2 to brighten that axis or -1 for none. Rendered depth-test-off
+    is 0/1/2 to brighten that axis or -1 for none. `handle_kind` is 0 for
+    cone tips (Move) or 1 for cube tips (Scale). Rendered depth-test-off
     in viewer_mode only. No-ops silently if the host binding is unavailable
     (headless / pre-rebuild).
     """
     fn = getattr(_h, "set_transform_gizmo", None)
     if fn is not None:
-        fn(origin, ax, ay, az, float(length), int(highlight))
+        fn(origin, ax, ay, az, float(length), int(highlight), int(handle_kind))
 
 
 def clear_transform_gizmo() -> None:
