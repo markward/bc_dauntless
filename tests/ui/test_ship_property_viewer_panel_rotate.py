@@ -1,4 +1,5 @@
-"""SPV rotate tool: rotate_values() + rotate_* dispatch (cylinder axis only)."""
+"""SPV rotate tool: rotate_values() + rotate_* dispatch (cylinder axis, box
+orientation)."""
 import json
 import math
 
@@ -40,9 +41,11 @@ def test_rotate_values_none_off_tool():
     assert p.rotate_values() is None
 
 
-def test_rotate_values_none_for_box_light():
+def test_rotate_values_present_for_box_light():
+    # Rotate now edits a Box's forward+up orientation basis too (Sphere is
+    # still the only inert shape) — see the box-orientation tests below.
     p = _panel_light(shape="Box")
-    assert p.rotate_values() is None       # rotate is cylinder-only
+    assert p.rotate_values() is not None
 
 
 def test_rotate_values_present_for_cylinder():
@@ -81,6 +84,49 @@ def test_rotate_copy_paste_roundtrips_axis():
 def test_render_payload_carries_rotate_values():
     p = _panel_light()
     assert _payload_data(p.render_payload())["rotate_values"]["fields"][0]["label"] == "X"
+
+
+# ── Box light orientation (forward+up basis) ────────────────────────────────
+
+def _panel_box_light():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: object())
+    p.open()
+    p._descriptors = [{
+        "name": "Port Impulse", "kind": "subsystem",
+        "properties": {"position": (0.0, 0.0, 0.0), "radius": 0.3},
+        "world_pos": (0.0, 0.0, 0.0), "parent_index": None, "light": True,
+        "light_region": {"shape": "Box", "position": (0.0, 0.0, 0.0),
+                         "axis": (0.0, -1.0, 0.0), "radius": (0.25,),
+                         "extent": (0.0, 2.0), "scale": (0.2, 0.2, 0.05),
+                         "orientation": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))},
+    }]
+    p.dispatch_event("set_tool:rotate")
+    p._selected_light_index = 0
+    return p
+
+
+def test_rotate_target_accepts_box_light():
+    p = _panel_box_light()
+    assert p._rotate_target() == ("light", 0)
+    assert p.rotate_values() is not None
+
+
+def test_box_rotate_nudge_rotates_orientation():
+    p = _panel_box_light()
+    # Rotate 90 deg about +Z: forward +Y -> -X, up +Z unchanged.
+    p.dispatch_event('rotate_nudge:' + json.dumps({"axis": 2, "delta": 90.0}))
+    fwd, up = p._effective_light(0)["orientation"]
+    assert fwd == pytest.approx((-1.0, 0.0, 0.0), abs=1e-6)
+    assert up == pytest.approx((0.0, 0.0, 1.0), abs=1e-6)
+
+
+def test_box_rotate_mirror_reflects_forward_x():
+    p = _panel_box_light()
+    p.dispatch_event('rotate_nudge:' + json.dumps({"axis": 2, "delta": 30.0}))
+    p.dispatch_event("rotate_mirror")
+    fwd, up = p._effective_light(0)["orientation"]
+    # forward X flipped; basis stays unit + right-handed (up still ~unit).
+    assert abs((fwd[0]**2 + fwd[1]**2 + fwd[2]**2) - 1.0) < 1e-6
 
 
 # ── Ring gizmo + angular drag + handle_input branch ─────────────────────────

@@ -154,10 +154,12 @@ class ShipPropertyViewerPanel(Panel):
         # press so the multiplicative drag stays anchored to the start size.
         self._scale_grab = (0, 0.0)
         # Ring-drag (rotate tool) grab state, captured at press: the grabbed
-        # screen angle, the grab-start body axis + degree accumulators, and the
-        # screen-vs-body rotation sign. Reset every open/close.
+        # screen angle, the grab-start body axis/orientation basis + degree
+        # accumulators, and the screen-vs-body rotation sign. Reset every
+        # open/close.
         self._ring_grab_angle = 0.0
         self._ring_grab_axis = (0.0, -1.0, 0.0)
+        self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
         self._ring_grab_accum = [0.0, 0.0, 0.0]
         self._ring_sign = 1.0
         self._gizmo_hover = -1
@@ -208,6 +210,7 @@ class ShipPropertyViewerPanel(Panel):
         self._scale_grab = (0, 0.0)
         self._ring_grab_angle = 0.0
         self._ring_grab_axis = (0.0, -1.0, 0.0)
+        self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
         self._ring_grab_accum = [0.0, 0.0, 0.0]
         self._ring_sign = 1.0
         self._gizmo_hover = -1
@@ -250,6 +253,7 @@ class ShipPropertyViewerPanel(Panel):
         self._scale_grab = (0, 0.0)
         self._ring_grab_angle = 0.0
         self._ring_grab_axis = (0.0, -1.0, 0.0)
+        self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
         self._ring_grab_accum = [0.0, 0.0, 0.0]
         self._ring_sign = 1.0
         self._gizmo_hover = -1
@@ -515,8 +519,9 @@ class ShipPropertyViewerPanel(Panel):
     # ------------------------------------------------------------------
     def _rotate_target(self):
         """("light", i) when the current transform target is a light whose
-        effective spec is a Cylinder (rotate only has meaning for a
-        cylinder's axis); None otherwise (box/sphere/subsystem are inert)."""
+        effective spec is a Cylinder (rotate its axis) or a Box (rotate its
+        forward+up orientation basis); None otherwise (sphere/subsystem are
+        inert)."""
         t = self._active_transform_target()
         if t is None:
             return None
@@ -524,14 +529,17 @@ class ShipPropertyViewerPanel(Panel):
         if kt != "light":
             return None
         spec = self._effective_light(i)
-        if not spec or spec.get("shape") != "Cylinder":
+        if not spec or spec.get("shape") not in ("Cylinder", "Box"):
             return None
         return ("light", i)
 
     def rotate_values(self) -> Optional[dict]:
         """Data for the rotate-tool panel: `{"fields", "has_clipboard",
         "can_paste"}` for the current rotate target, or None when the rotate
-        tool isn't active or the target isn't a cylinder light."""
+        tool isn't active or the target isn't a cylinder/box light.
+        `can_paste` is kind-aware: true only when the clipboard's kind
+        (`cylinder_axis`/`box_orientation`) matches the selected target's
+        shape."""
         if self.active_tool != "rotate":
             return None
         t = self._rotate_target()
@@ -540,26 +548,43 @@ class ShipPropertyViewerPanel(Panel):
         _, i = t
         acc = self._rotate_accum.get(i, [0.0, 0.0, 0.0])
         clip = self._rotate_clipboard
+        kind = self._rotate_clipboard_kind(i)
         return {"fields": [{"label": "X", "value": acc[0]},
                            {"label": "Y", "value": acc[1]},
                            {"label": "Z", "value": acc[2]}],
                 "has_clipboard": clip is not None,
-                "can_paste": clip is not None}
+                "can_paste": clip is not None and clip[0] == kind}
+
+    def _rotate_clipboard_kind(self, i) -> str:
+        """Clipboard kind for light `i`'s current shape: `box_orientation`
+        for a Box, `cylinder_axis` otherwise."""
+        spec = self._effective_light(i) or {}
+        return "box_orientation" if spec.get("shape") == "Box" else "cylinder_axis"
 
     def _rotate_axis(self, index, delta_deg) -> None:
-        """Rotate the current rotate target's axis by `delta_deg` about basis
-        axis `index` (Rodrigues, via rotate_about_axis) and bump that axis's
-        degree accumulator."""
+        """Rotate the current rotate target by `delta_deg` about basis axis
+        `index` (Rodrigues, via rotate_about_axis) and bump that axis's
+        degree accumulator. Shape-aware: a Cylinder rotates its `axis`; a Box
+        rotates BOTH `forward` and `up` of its orientation basis, then
+        re-orthonormalizes."""
         t = self._rotate_target()
         if t is None:
             return
         _, i = t
-        from engine.ui.ship_property_viewer import rotate_about_axis
+        from engine.ui.ship_property_viewer import (
+            rotate_about_axis, orthonormalize_basis)
         spec = dict(self._effective_light(i) or {})
         if not spec:
             return
-        axis = spec.get("axis") or (0.0, -1.0, 0.0)
-        spec["axis"] = rotate_about_axis(axis, index, math.radians(delta_deg))
+        ang = math.radians(delta_deg)
+        if spec.get("shape") == "Box":
+            fwd, up = spec.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+            fwd = rotate_about_axis(fwd, index, ang)
+            up = rotate_about_axis(up, index, ang)
+            spec["orientation"] = orthonormalize_basis(fwd, up)
+        else:
+            axis = spec.get("axis") or (0.0, -1.0, 0.0)
+            spec["axis"] = rotate_about_axis(axis, index, ang)
         self._pending_light[i] = spec
         self._rotate_accum.setdefault(i, [0.0, 0.0, 0.0])[index] += delta_deg
         self._last_pushed = None
@@ -572,6 +597,19 @@ class ShipPropertyViewerPanel(Panel):
             return
         n = math.sqrt(sum(a*a for a in axis)) or 1.0
         spec["axis"] = (axis[0]/n, axis[1]/n, axis[2]/n)
+        self._pending_light[i] = spec
+        self._rotate_accum[i] = [0.0, 0.0, 0.0]
+        self._last_pushed = None
+
+    def _set_orientation_absolute(self, i, forward, up) -> None:
+        """Stage a re-orthonormalized `(forward, up)` orientation for box
+        light `i` directly (Mirror/Paste, not an incremental rotation) and
+        zero its degree accumulator. Mirrors `_set_axis_absolute`."""
+        spec = dict(self._effective_light(i) or {})
+        if not spec:
+            return
+        from engine.ui.ship_property_viewer import orthonormalize_basis
+        spec["orientation"] = orthonormalize_basis(forward, up)
         self._pending_light[i] = spec
         self._rotate_accum[i] = [0.0, 0.0, 0.0]
         self._last_pushed = None
@@ -740,8 +778,9 @@ class ShipPropertyViewerPanel(Panel):
 
     def _begin_ring_drag(self, ring, grab_angle):
         """Start a ring drag on `ring` (0/1/2), capturing the grabbed screen
-        angle, the grab-start axis + degree accumulators, and the screen-vs-body
-        sign (so a screen-CCW sweep rotates about the axis toward the camera)."""
+        angle, the grab-start axis/orientation + degree accumulators, and the
+        screen-vs-body sign (so a screen-CCW sweep rotates about the axis
+        toward the camera)."""
         g = self._active_gizmo()
         self._axis_drag = ring
         self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
@@ -749,12 +788,15 @@ class ShipPropertyViewerPanel(Panel):
         t = self._rotate_target()
         if t is None:
             self._ring_grab_axis = (0.0, -1.0, 0.0)
+            self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
             self._ring_grab_accum = [0.0, 0.0, 0.0]
             self._ring_sign = 1.0
             return
         _, i = t
-        self._ring_grab_axis = tuple((self._effective_light(i) or {}).get("axis")
-                                     or (0.0, -1.0, 0.0))
+        spec = self._effective_light(i) or {}
+        self._ring_grab_axis = tuple(spec.get("axis") or (0.0, -1.0, 0.0))
+        self._ring_grab_orientation = spec.get("orientation") \
+            or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
         self._ring_grab_accum = list(self._rotate_accum.get(i, [0.0, 0.0, 0.0]))
         eye, tgt = self.camera.eye(), self.camera.target
         fwd = (tgt[0]-eye[0], tgt[1]-eye[1], tgt[2]-eye[2])
@@ -766,17 +808,27 @@ class ShipPropertyViewerPanel(Panel):
 
     def _apply_ring_drag_angle(self, d_body):
         """Apply a body-frame delta angle (radians) about the grabbed ring axis
-        to the grab-start axis. Shared core for the cursor-driven drag + tests."""
+        to the grab-start axis/orientation. Shared core for the cursor-driven
+        drag + tests. Shape-aware: a Cylinder rotates its `axis`; a Box
+        rotates BOTH `forward` and `up` of the grab-start orientation, then
+        re-orthonormalizes."""
         t = self._rotate_target()
         if t is None or self._axis_drag is None:
             return
         _, i = t
-        from engine.ui.ship_property_viewer import rotate_about_axis
+        from engine.ui.ship_property_viewer import (
+            rotate_about_axis, orthonormalize_basis)
         k = self._axis_drag
         spec = dict(self._effective_light(i) or {})
         if not spec:
             return
-        spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
+        if spec.get("shape") == "Box":
+            fwd, up = self._ring_grab_orientation
+            fwd = rotate_about_axis(fwd, k, d_body)
+            up = rotate_about_axis(up, k, d_body)
+            spec["orientation"] = orthonormalize_basis(fwd, up)
+        else:
+            spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
         self._pending_light[i] = spec
         self._rotate_accum.setdefault(i, [0.0, 0.0, 0.0])
         self._rotate_accum[i][k] = self._ring_grab_accum[k] + math.degrees(d_body)
@@ -1586,23 +1638,44 @@ class ShipPropertyViewerPanel(Panel):
             t = self._rotate_target()
             if t is not None:
                 _, i = t
-                axis = (self._effective_light(i) or {}).get("axis") or (0.0, -1.0, 0.0)
-                self._rotate_clipboard = ("cylinder_axis", tuple(axis))
+                spec = self._effective_light(i) or {}
+                if spec.get("shape") == "Box":
+                    fwd, up = spec.get("orientation") \
+                        or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+                    self._rotate_clipboard = (
+                        "box_orientation", (tuple(fwd), tuple(up)))
+                else:
+                    axis = spec.get("axis") or (0.0, -1.0, 0.0)
+                    self._rotate_clipboard = ("cylinder_axis", tuple(axis))
                 self._last_pushed = None
             return True
         if action == "rotate_paste":
             t = self._rotate_target()
-            if t is not None and self._rotate_clipboard is not None:
+            if (t is not None and self._rotate_clipboard is not None
+                    and self._rotate_clipboard[0] == self._rotate_clipboard_kind(t[1])):
                 _, i = t
-                self._set_axis_absolute(i, self._rotate_clipboard[1])
+                if self._rotate_clipboard[0] == "box_orientation":
+                    fwd, up = self._rotate_clipboard[1]
+                    self._set_orientation_absolute(i, fwd, up)
+                else:
+                    self._set_axis_absolute(i, self._rotate_clipboard[1])
             return True
         if action == "rotate_mirror":
             t = self._rotate_target()
             if t is not None:
                 _, i = t
-                axis = list((self._effective_light(i) or {}).get("axis") or (0.0, -1.0, 0.0))
-                axis[0] = -axis[0]
-                self._set_axis_absolute(i, axis)
+                spec = self._effective_light(i) or {}
+                if spec.get("shape") == "Box":
+                    fwd, up = spec.get("orientation") \
+                        or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+                    fwd = (-fwd[0], fwd[1], fwd[2])
+                    up = (-up[0], up[1], up[2])
+                    self._set_orientation_absolute(i, fwd, up)
+                else:
+                    axis = list((self._effective_light(i) or {}).get("axis")
+                                or (0.0, -1.0, 0.0))
+                    axis[0] = -axis[0]
+                    self._set_axis_absolute(i, axis)
             return True
         if action == "save":
             if (not self._pending_radius and not self._pending_light

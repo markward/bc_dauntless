@@ -164,9 +164,11 @@ def _light_region_spec(sub):
                 "axis": r["axis"] or (0.0, -1.0, 0.0),
                 "radius": r["radius"] or (0.25,),
                 "extent": r["extent"] or (0.0, 2.0),
-                "scale": r["scale"] or (0.25, 0.25, 0.25)}
+                "scale": r["scale"] or (0.25, 0.25, 0.25),
+                "orientation": r.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))}
     return {"shape": "Sphere", "position": pos, "axis": (0.0, -1.0, 0.0),
-            "radius": (0.25,), "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25)}
+            "radius": (0.25,), "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25),
+            "orientation": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))}
 
 
 def _light_annotation(sub):
@@ -437,6 +439,17 @@ def rotate_about_axis(vec, k, angle_rad):
         vn = math.sqrt(vec[0]**2 + vec[1]**2 + vec[2]**2) or 1.0
         return (vec[0]/vn, vec[1]/vn, vec[2]/vn)
     return (out[0]/n, out[1]/n, out[2]/n)
+
+
+def orthonormalize_basis(forward, up):
+    """Re-orthonormalize a (forward, up) box-orientation basis after either
+    vector has been rotated independently: normalize `forward`, then
+    Gram-Schmidt `up` against it (`up - (up·f)*f`, normalized) so the pair
+    stays unit-length and mutually perpendicular. Right is derived by
+    consumers as `forward x up`, so it isn't stored here."""
+    f = _norm(forward)
+    u = _sub(up, _scale(f, _dot(up, f)))
+    return f, _norm(u)
 
 
 def _seg_dist2(px, py, ax, ay, bx, by):
