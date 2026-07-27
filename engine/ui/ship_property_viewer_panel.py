@@ -139,6 +139,9 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_pos = (0.0, 0.0, 0.0)
         self._axis_grab_origin = (0.0, 0.0, 0.0)
         self._gizmo_hover = -1
+        # Clipboard for the transform-coord panel's Copy/Paste — a body-frame
+        # (x, y, z) tuple, or None. Reset every open/close.
+        self._coord_clipboard = None
 
     @property
     def name(self) -> str:
@@ -171,6 +174,7 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_pos = (0.0, 0.0, 0.0)
         self._axis_grab_origin = (0.0, 0.0, 0.0)
         self._gizmo_hover = -1
+        self._coord_clipboard = None
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -204,6 +208,7 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_pos = (0.0, 0.0, 0.0)
         self._axis_grab_origin = (0.0, 0.0, 0.0)
         self._gizmo_hover = -1
+        self._coord_clipboard = None
 
     def frame_to_bounds(self, center, radius: float) -> None:
         """Point the orbit camera at `center` and pull back so the model's
@@ -326,6 +331,45 @@ class ShipPropertyViewerPanel(Panel):
         if self.selected_index is not None:
             return ("subsystem", self.selected_index)
         return None
+
+    def _transform_target_pos(self):
+        """Body-frame (x, y, z) of the current transform target, or None (no
+        tool target). Mirrors `transform_gizmo`'s target resolution but
+        returns the raw position tuple instead of the gizmo geometry."""
+        t = self._active_transform_target()
+        if t is None:
+            return None
+        kind, i = t
+        if kind == "light":
+            spec = self._effective_light(i)
+            if not spec:
+                return None
+            return tuple(float(c) for c in spec["position"])
+        return tuple(float(c) for c in self._effective_pos(i))
+
+    def _set_transform_target_pos(self, xyz) -> None:
+        """Stage `xyz` as the current transform target's body-frame position,
+        routing to the light or subsystem staging path as appropriate."""
+        t = self._active_transform_target()
+        if t is None:
+            return
+        kind, i = t
+        if kind == "light":
+            self.set_light_position(i, xyz)
+        else:
+            self.set_subsystem_position(i, xyz)
+
+    def transform_coords(self) -> Optional[dict]:
+        """Data for the transform-coordinate panel: `{"x","y","z",
+        "has_clipboard"}` for the current transform target, or None when the
+        transform tool isn't active or nothing is selected."""
+        if self.active_tool != "transform":
+            return None
+        pos = self._transform_target_pos()
+        if pos is None:
+            return None
+        return {"x": pos[0], "y": pos[1], "z": pos[2],
+                "has_clipboard": self._coord_clipboard is not None}
 
     def transform_gizmo(self) -> Optional[dict]:
         """The move-gizmo for the selected subsystem or light node, or None.
@@ -484,7 +528,8 @@ class ShipPropertyViewerPanel(Panel):
                     tuple(sorted(self._pending_radius.items())),
                     tuple(sorted(self._pending_light)),   # indices with a staged light
                     tuple(sorted(self._pending_pos.items())),
-                    tuple(sorted(self._expanded_groups)))
+                    tuple(sorted(self._expanded_groups)),
+                    self._coord_clipboard)
         if snapshot == self._last_pushed:
             return None
         self._last_pushed = snapshot
@@ -513,6 +558,7 @@ class ShipPropertyViewerPanel(Panel):
             "selected_index": self.selected_index,
             "selected_light_index": self._selected_light_index,
             "active_tool": self.active_tool,
+            "transform_coords": self.transform_coords(),
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
@@ -1014,6 +1060,39 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             self.active_tool = None if self.active_tool == name else name
             self._last_pushed = None
+            return True
+        if action.startswith("coord_nudge:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                axis = int(arg["axis"]); delta = float(arg["delta"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if axis not in (0, 1, 2):
+                return False
+            pos = self._transform_target_pos()
+            if pos is None:
+                return False
+            p = list(pos); p[axis] += delta
+            self._set_transform_target_pos(tuple(p))
+            self._last_pushed = None
+            return True
+        if action == "coord_copy":
+            pos = self._transform_target_pos()
+            if pos is not None:
+                self._coord_clipboard = pos
+                self._last_pushed = None
+            return True
+        if action == "coord_paste":
+            if self._coord_clipboard is not None and self._transform_target_pos() is not None:
+                self._set_transform_target_pos(self._coord_clipboard)
+                self._last_pushed = None
+            return True
+        if action == "coord_mirror":
+            pos = self._transform_target_pos()
+            if pos is not None:
+                p = list(pos); p[0] = -p[0]
+                self._set_transform_target_pos(tuple(p))
+                self._last_pushed = None
             return True
         if action == "save":
             if (not self._pending_radius and not self._pending_light
