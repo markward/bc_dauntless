@@ -302,6 +302,42 @@
           <button class="spv-coords__btn" onclick="shipPropertyViewerScaleUniform()">Uniform</button>
         </div>
       </div>
+      <!-- Rotate panel (top-right). Shown only while the Rotate tool is
+           active and a cylinder-shaped subsystem is selected; fixed X/Y/Z
+           degree rows driven by payload.rotate_values. Shares the top-right
+           slot with #spv-coords/#spv-scale (radio: never more than one). -->
+      <div id="spv-rotate" class="spv-coords dev-only" style="display:none;">
+        <div class="spv-coords__title">Rotate</div>
+        <div class="spv-coords__row">
+          <span class="spv-coords__axis">X</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,-5)">&minus;5&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,-1)">&minus;1&deg;</button>
+          <span id="spv-rotate-x" class="spv-coords__val">0.0&deg;</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,1)">+1&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,5)">+5&deg;</button>
+        </div>
+        <div class="spv-coords__row">
+          <span class="spv-coords__axis">Y</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,-5)">&minus;5&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,-1)">&minus;1&deg;</button>
+          <span id="spv-rotate-y" class="spv-coords__val">0.0&deg;</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,1)">+1&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,5)">+5&deg;</button>
+        </div>
+        <div class="spv-coords__row">
+          <span class="spv-coords__axis">Z</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,-5)">&minus;5&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,-1)">&minus;1&deg;</button>
+          <span id="spv-rotate-z" class="spv-coords__val">0.0&deg;</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,1)">+1&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,5)">+5&deg;</button>
+        </div>
+        <div class="spv-coords__actions">
+          <button class="spv-coords__btn" onclick="shipPropertyViewerRotateCopy()">Copy</button>
+          <button id="spv-rotate-paste" class="spv-coords__btn" onclick="shipPropertyViewerRotatePaste()">Paste</button>
+          <button class="spv-coords__btn" onclick="shipPropertyViewerRotateMirror()">Mirror</button>
+        </div>
+      </div>
       <div id="spv-popover" class="spv-popover"></div>
       <!-- Right-click context menu on a subsystem row → "Set Radius…" opens
            the radius modal below. The Save bar surfaces staged edits

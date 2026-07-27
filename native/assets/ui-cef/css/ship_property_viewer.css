@@ -361,7 +361,7 @@
 
 /* .spv-step nudge buttons are wider than this 220px panel comfortably fits
    four-per-row at the radius-modal's size — shrink them here only. Applies
-   to both the coord panel and the scale panel (they share .spv-coords). */
+   to the coord, scale, and rotate panels (they share .spv-coords). */
 .spv-coords .spv-step {
     padding: 3px 4px;
     font-size: 10px;

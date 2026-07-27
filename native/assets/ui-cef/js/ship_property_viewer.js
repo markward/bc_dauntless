@@ -117,6 +117,27 @@ window.setShipPropertyViewer = function (data) {
         }
     }
 
+    // Rotate panel (top-right): visible only while data.rotate_values is
+    // non-null (Rotate tool active + a cylinder-shaped subsystem selected).
+    // Fixed X/Y/Z degree rows (no innerHTML rebuild needed), and the same
+    // top-right slot is shared with #spv-coords/#spv-scale (radio: never
+    // more than one shown at once).
+    var rotate = data.rotate_values;
+    var rotateEl = document.getElementById('spv-rotate');
+    if (rotateEl) {
+        if (rotate) {
+            document.getElementById('spv-rotate-x').textContent = rotate.fields[0].value.toFixed(1) + '°';
+            document.getElementById('spv-rotate-y').textContent = rotate.fields[1].value.toFixed(1) + '°';
+            document.getElementById('spv-rotate-z').textContent = rotate.fields[2].value.toFixed(1) + '°';
+            var rp = document.getElementById('spv-rotate-paste');
+            rp.disabled = !rotate.can_paste;
+            rp.classList.toggle('spv-coords__btn--disabled', !rotate.can_paste);
+            rotateEl.style.display = 'block';
+        } else {
+            rotateEl.style.display = 'none';
+        }
+    }
+
     renderSPVSubsystemList(data.subsystems || [],
         (typeof data.selected_index === 'number') ? data.selected_index : null,
         (typeof data.selected_light_index === 'number') ? data.selected_light_index : null);
@@ -145,11 +166,12 @@ window.setShipPropertyViewer = function (data) {
 
     var pop = document.getElementById('spv-popover');
     if (!pop) return;
-    // The property popover and the transform coord / scale panels share the
-    // top-right corner; while either panel is up (data.transform_coords or
-    // data.scale_values non-null) the opaque popover would paint over it and
-    // swallow its clicks, so suppress the popover during transform/scale.
-    if (data.selected && !data.transform_coords && !data.scale_values) {
+    // The property popover and the transform coord / scale / rotate panels
+    // share the top-right corner; while any of them is up (data.transform_coords,
+    // data.scale_values, or data.rotate_values non-null) the opaque popover
+    // would paint over it and swallow its clicks, so suppress the popover
+    // during transform/scale/rotate.
+    if (data.selected && !data.transform_coords && !data.scale_values && !data.rotate_values) {
         var sel = data.selected;
         var p = sel.properties || {};
         var rows = Object.keys(p).map(function (k) {
@@ -461,6 +483,22 @@ window.shipPropertyViewerScalePaste = function () {
 };
 window.shipPropertyViewerScaleUniform = function () {
     dauntlessEvent('ship-property-viewer/scale_uniform');
+};
+
+// Rotate panel: mouse-only degree steppers + Copy/Paste/Mirror. Same event
+// channel as the coord/scale handlers above; Python re-pushes rotate_values
+// on every apply so the panel always mirrors live state.
+window.shipPropertyViewerRotateNudge = function (axis, delta) {
+    dauntlessEvent('ship-property-viewer/rotate_nudge:' + JSON.stringify({axis: axis, delta: delta}));
+};
+window.shipPropertyViewerRotateCopy = function () {
+    dauntlessEvent('ship-property-viewer/rotate_copy');
+};
+window.shipPropertyViewerRotatePaste = function () {
+    dauntlessEvent('ship-property-viewer/rotate_paste');
+};
+window.shipPropertyViewerRotateMirror = function () {
+    dauntlessEvent('ship-property-viewer/rotate_mirror');
 };
 
 // Subsystem-list row click: select that pin; clicking the already-selected
