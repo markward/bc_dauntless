@@ -468,8 +468,17 @@ class ShipPropertyViewerPanel(Panel):
             if index == 0:
                 spec["radius"] = (value,)
             else:
-                aft = spec.get("extent", (0.0, 2.0))[0]
-                spec["extent"] = (aft, aft + value)
+                # Length scales the extent about the anchor (pos = offset 0,
+                # where the gizmo sits), NOT by holding the aft end fixed —
+                # so a pos-centred cylinder grows symmetrically instead of
+                # sliding off one end. Proportional scale keeps offset 0 fixed.
+                aft, fore = spec.get("extent", (0.0, 2.0))
+                length = fore - aft
+                if abs(length) > 1e-9:
+                    r = value / length
+                    spec["extent"] = (aft * r, fore * r)
+                else:
+                    spec["extent"] = (-value / 2.0, value / 2.0)
         else:
             spec["radius"] = (value,)
         self._pending_light[i] = spec

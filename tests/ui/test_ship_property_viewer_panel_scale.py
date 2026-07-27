@@ -1,5 +1,8 @@
 """SPV scale tool: scale_values() + scale_* dispatch (shape-aware)."""
 import json
+
+import pytest
+
 from engine.ui.ship_property_viewer_panel import ShipPropertyViewerPanel
 
 
@@ -270,3 +273,26 @@ def test_cylinder_axis_along_z_maps_z_handle_to_length():
     p._begin_scale_drag(2, L)                # Z handle now the axial one
     p._apply_scale_drag(1.5 * L)
     assert round(p.scale_values()["fields"][1]["value"], 6) == 3.0
+
+
+def test_cylinder_length_scales_about_anchor_not_end():
+    # Cylinder extent (-2, 2): pos (offset 0) is the anchor the widget sits on.
+    # Scaling Length must keep pos fixed and grow both ends about it, NOT hold
+    # the aft end fixed and grow only the fore end.
+    p = _panel_cylinder_gizmo(axis=(0.0, -1.0, 0.0))
+    p._descriptors[0]["light_region"]["extent"] = (-2.0, 2.0)   # pos-centered, len 4
+    p.dispatch_event('scale_nudge:' + json.dumps({"index": 1, "delta": 2.0}))  # len 4 -> 6
+    ext = p._effective_light(0)["extent"]
+    assert ext == pytest.approx((-3.0, 3.0))    # scaled about pos, not (-2.0, 4.0)
+
+
+def test_cylinder_length_drag_stays_anchored():
+    # A multiplicative drag likewise scales the extent about pos.
+    p = _panel_cylinder_gizmo(axis=(0.0, -1.0, 0.0))
+    p._descriptors[0]["light_region"]["extent"] = (-2.0, 2.0)   # len 4
+    from engine.ui.ship_property_viewer import gizmo_length
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(1, L)          # axial handle -> Length
+    p._apply_scale_drag(1.5 * L)        # ratio 1.5 -> len 6
+    ext = p._effective_light(0)["extent"]
+    assert ext == pytest.approx((-3.0, 3.0))
