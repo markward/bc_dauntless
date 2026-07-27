@@ -577,6 +577,17 @@ class ShipPropertyViewerPanel(Panel):
         kind, fields = self._scale_kind_and_fields(t)
         if kind == "xyz":
             self._scale_grab = (axis, fields[axis]["value"])   # per-axis
+        elif kind == "radius_length":
+            # Cylinder: the handle aligned with the cylinder's axis scales
+            # Length (field 1); the two perpendicular handles scale Radius
+            # (field 0). The gizmo axes are body X/Y/Z, so the aligned handle
+            # is the dominant component of the region's body-frame axis vector.
+            kt, i = t
+            spec = self._effective_light(i) or {}
+            av = spec.get("axis", (0.0, -1.0, 0.0))
+            aligned = max(range(3), key=lambda k: abs(av[k]))
+            field_idx = 1 if axis == aligned else 0
+            self._scale_grab = (field_idx, fields[field_idx]["value"])
         else:
             self._scale_grab = (0, fields[0]["value"])          # uniform -> radius
 

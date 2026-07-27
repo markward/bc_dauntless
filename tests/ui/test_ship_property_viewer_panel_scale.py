@@ -215,3 +215,58 @@ def test_scale_region_guarded_when_panel_visible():
     h._cursor = (730.0, 100.0)
     p.handle_input(h)              # drag right
     assert p.camera.yaw == yaw0    # guarded -> no orbit while the scale panel is up
+
+
+# ── Cylinder: axial handle scales Length, radial handles scale Radius ────────
+
+def _panel_cylinder_gizmo(axis=(0.0, -1.0, 0.0)):
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _Ship())
+    p.open()
+    p.camera = OrbitCamera((0.0, 0.0, 0.0), 10.0, 0.0, 0.0)
+    p._descriptors = [{
+        "name": "Port Warp", "kind": "subsystem",
+        "properties": {"position": (0.0, 0.0, 0.0), "radius": 0.3},
+        "world_pos": (0.0, 0.0, 0.0), "parent_index": None,
+        "light": True,
+        "light_region": {"shape": "Cylinder", "position": (0.0, 0.0, 0.0),
+                         "axis": axis, "radius": (0.3,),
+                         "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25)},
+    }]
+    p.dispatch_event("set_tool:scale")
+    p._selected_light_index = 0
+    return p
+
+
+def test_cylinder_axial_handle_scales_length():
+    # Cylinder axis = body -Y -> aligns with gizmo axis 1 (Y). Grabbing that
+    # handle must scale Length (field 1), not Radius.
+    p = _panel_cylinder_gizmo(axis=(0.0, -1.0, 0.0))
+    from engine.ui.ship_property_viewer import gizmo_length
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(1, L)
+    p._apply_scale_drag(1.5 * L)
+    v = p.scale_values()["fields"]
+    assert round(v[1]["value"], 6) == 3.0    # Length 2.0 * 1.5
+    assert round(v[0]["value"], 6) == 0.3    # Radius unchanged
+
+
+def test_cylinder_radial_handle_scales_radius():
+    # A handle perpendicular to the cylinder axis (X here) scales Radius.
+    p = _panel_cylinder_gizmo(axis=(0.0, -1.0, 0.0))
+    from engine.ui.ship_property_viewer import gizmo_length
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(0, L)
+    p._apply_scale_drag(2.0 * L)
+    v = p.scale_values()["fields"]
+    assert round(v[0]["value"], 6) == 0.6    # Radius 0.3 * 2
+    assert round(v[1]["value"], 6) == 2.0    # Length unchanged
+
+
+def test_cylinder_axis_along_z_maps_z_handle_to_length():
+    # Axis orientation drives the mapping: axis = +Z -> gizmo axis 2 = Length.
+    p = _panel_cylinder_gizmo(axis=(0.0, 0.0, 1.0))
+    from engine.ui.ship_property_viewer import gizmo_length
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(2, L)                # Z handle now the axial one
+    p._apply_scale_drag(1.5 * L)
+    assert round(p.scale_values()["fields"][1]["value"], 6) == 3.0
