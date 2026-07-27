@@ -80,15 +80,17 @@ def _akira(find):
     p = find("Port Warp")
     if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")
+        p.SetGlowRegionPosition(0, -1.4, -0.8, -0.25)
         p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.375)
-        p.SetGlowRegionExtent(0, -3.125, 3.125)
+        p.SetGlowRegionRadius(0, 0.2604417052340165)
+        p.SetGlowRegionExtent(0, -1.2589026527761655, 1.2589026527761655)
     p = find("Star Warp")
     if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")
+        p.SetGlowRegionPosition(0, 1.4, -0.8, -0.25)
         p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.375)
-        p.SetGlowRegionExtent(0, -3.125, 3.125)
+        p.SetGlowRegionRadius(0, 0.2604417052340165)
+        p.SetGlowRegionExtent(0, -1.2589026527761655, 1.2589026527761655)
     p = find("Port Impulse")
     if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")
