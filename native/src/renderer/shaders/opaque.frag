@@ -226,8 +226,13 @@ float glow_region_mult(vec3 p_body, vec3 n_body, float now, out float gain) {
         if (u_glow_region_e[i].x > 0.5) {          // box (axis-aligned or tilted)
             vec3 fwd = u_glow_region_f[i].xyz;
             vec3 upv = u_glow_region_g[i].xyz;
-            if (dot(fwd, fwd) > 0.25) {            // oriented box (identity ok too)
-                vec3 rgt = normalize(cross(fwd, upv));
+            // Guard on the CROSS magnitude, not just forward: a degenerate basis
+            // (zero/parallel forward|up from a hand-authored override) would
+            // NaN through normalize(cross) and wrongly light the fragment.
+            // Identity basis -> cross = (1,0,0), R = I, d unchanged (byte-identical).
+            vec3 rgt = cross(fwd, upv);
+            if (dot(rgt, rgt) > 1e-6) {            // valid, non-degenerate orientation
+                rgt = normalize(rgt);
                 // columns = box-local axes in body space; identity basis -> R = I
                 mat3 R = mat3(rgt, normalize(fwd), normalize(upv));
                 d = transpose(R) * d;             // body -> box-local

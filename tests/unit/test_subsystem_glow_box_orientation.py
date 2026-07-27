@@ -47,3 +47,15 @@ def test_resolve_box_op_carries_orientation():
          "orientation": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0))},
         (0.0, 0.0, 0.0))
     assert op[3] == (1.0, 0.0, 0.0) and op[4] == (0.0, 0.0, 1.0)
+
+
+def test_box_with_malformed_orientation_falls_back_to_none():
+    # A hand-authored SetGlowRegionOrientation with wrong arity (5 args) must
+    # not raise out of baked_glow_regions — it degrades to no orientation.
+    prop = _Prop({
+        ("GlowRegionShape", (0,)): "Box",
+        ("GlowRegionScale", (0, 0.2, 0.2)): 0.05,
+        ("GlowRegionOrientation", (0, 1.0, 0.0, 0.0)): 0.0,   # 5 trailing args
+    })
+    regions = sg.baked_glow_regions(prop)   # must not raise
+    assert regions[0].get("orientation") is None

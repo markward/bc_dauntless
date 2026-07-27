@@ -176,8 +176,12 @@ def _radius(sub) -> float:
 
 
 def _pair_or_none(raw):
-    """Flat 6-tuple (fx,fy,fz,ux,uy,uz) -> ((fx,fy,fz),(ux,uy,uz)), or None."""
-    if raw is None:
+    """Flat 6-tuple (fx,fy,fz,ux,uy,uz) -> ((fx,fy,fz),(ux,uy,uz)), or None.
+
+    Tolerant of a malformed (wrong-arity) hand-authored orientation -> None, so
+    a bad override can't raise out of baked_glow_regions (which is called
+    OUTSIDE baked_region_ops' never-raises try/except)."""
+    if raw is None or len(raw) != 6:
         return None
     fx, fy, fz, ux, uy, uz = raw
     return ((fx, fy, fz), (ux, uy, uz))
