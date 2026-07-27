@@ -3247,7 +3247,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("add_box_region",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> center,
-             std::tuple<float, float, float> half) -> int {
+             std::tuple<float, float, float> half,
+             std::tuple<float, float, float> forward,
+             std::tuple<float, float, float> up) -> int {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return -1;
               const float s = glm::length(glm::vec3(inst->world[0]));
@@ -3258,6 +3260,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const glm::vec3 he(std::get<0>(half) * inv,
                                  std::get<1>(half) * inv,
                                  std::get<2>(half) * inv);
+              // Orientation is a pure direction basis (no scale). Identity
+              // (forward=+Y, up=+Z) => shader R = I => byte-identical.
+              const glm::vec3 fwd(std::get<0>(forward), std::get<1>(forward),
+                                  std::get<2>(forward));
+              const glm::vec3 upv(std::get<0>(up), std::get<1>(up),
+                                  std::get<2>(up));
               for (std::size_t i = 0; i < inst->glow_regions.size(); ++i) {
                   if (inst->glow_regions[i].active) continue;
                   auto& n = inst->glow_regions[i];
@@ -3265,6 +3273,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   n.center = c;
                   n.shape = 1.0f;
                   n.half_extents = he;
+                  n.forward = fwd;
+                  n.up = upv;
                   n.dim_target = 1.0f;
                   n.disable_time = -1.0f;
                   n.active = true;
@@ -3273,7 +3283,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return -1;  // no free slot
           },
           py::arg("instance_id"), py::arg("center"), py::arg("half_extents"),
-          "Store a body-axis-aligned box glow region (game units / body frame). "
+          py::arg("forward") = std::make_tuple(0.0f, 1.0f, 0.0f),
+          py::arg("up") = std::make_tuple(0.0f, 0.0f, 1.0f),
+          "Store a box glow region (game units / body frame), optionally tilted "
+          "by a (forward, up) body-space basis (default identity = axis-aligned). "
           "Returns the region index, or -1 on failure (stale id, no slot).");
 
     m.def("set_glow_region_dim",

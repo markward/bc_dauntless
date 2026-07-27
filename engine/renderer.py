@@ -493,10 +493,14 @@ def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:
     return _h.add_sphere_region(instance_id, tuple(center), float(radius))
 
 
-def add_box_region(instance_id: InstanceId, center, half_extents) -> int:
-    """Store a body-axis-aligned box glow region at a hardpoint. center and
-    half_extents are 3-tuples in game units. Returns the region index, or -1."""
-    return _h.add_box_region(instance_id, tuple(center), tuple(half_extents))
+def add_box_region(instance_id: InstanceId, center, half_extents,
+                   forward=(0.0, 1.0, 0.0), up=(0.0, 0.0, 1.0)) -> int:
+    """Store a box glow region at a hardpoint. center and half_extents are
+    3-tuples in game units. `forward`/`up` are a body-space direction basis that
+    tilts the box (default identity = body-axis-aligned, byte-identical to the
+    legacy 2-arg call). Returns the region index, or -1."""
+    return _h.add_box_region(instance_id, tuple(center), tuple(half_extents),
+                             tuple(forward), tuple(up))
 
 
 def add_cylinder_region(instance_id: InstanceId, center, axis, radius: float,

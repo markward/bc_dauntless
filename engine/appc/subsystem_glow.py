@@ -351,7 +351,13 @@ class ShipGlowController:
             if op[0] == "sphere":
                 idx = self._r.add_sphere_region(self._iid, op[1], op[2])
             elif op[0] == "box":
-                idx = self._r.add_box_region(self._iid, op[1], op[2])
+                # op = ("box", center, half, forward, up); older ops without
+                # orientation default to the identity (axis-aligned) box.
+                if len(op) >= 5:
+                    idx = self._r.add_box_region(
+                        self._iid, op[1], op[2], op[3], op[4])
+                else:
+                    idx = self._r.add_box_region(self._iid, op[1], op[2])
             else:  # cylinder
                 idx = self._r.add_cylinder_region(
                     self._iid, op[1], op[2], op[3], op[4])

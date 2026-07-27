@@ -154,6 +154,11 @@ struct Instance {
         glm::vec3 gain_axis{0.0f};  // aft dir (model space); non-zero gates gain to faces facing it
         float     shape = 0.0f;          // 0 = capsule/sphere, 1 = body-axis box
         glm::vec3 half_extents{0.0f};    // box half-extents (model units); box only
+        // Box orientation in body space (columns of the box-local basis). The
+        // identity (forward=+Y, up=+Z) yields R = I so the shader's body->box
+        // rotation is a no-op — an unrotated box renders byte-identically.
+        glm::vec3 forward{0.0f, 1.0f, 0.0f};
+        glm::vec3 up{0.0f, 0.0f, 1.0f};
         bool      active = false;
     };
     std::array<GlowRegion, kMaxGlowRegions> glow_regions{};
