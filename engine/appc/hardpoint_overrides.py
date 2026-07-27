@@ -38,12 +38,12 @@ def _galaxy(find):
     p = find("Port Impulse")
     if p is not None:
         p.SetGlowRegionShape(0, "Box")
-        p.SetGlowRegionPosition(0, -1.22, -0.2, 0.32)
+        p.SetGlowRegionPosition(0, -1.22, -0.31166273838979724, 0.32)
         p.SetGlowRegionScale(0, 0.15, 0.2, 0.05)
     p = find("Star Impulse")
     if p is not None:
         p.SetGlowRegionShape(0, "Box")
-        p.SetGlowRegionPosition(0, 1.22, -0.2, 0.32)
+        p.SetGlowRegionPosition(0, 1.22, -0.31166273838979724, 0.32)
         p.SetGlowRegionScale(0, 0.15, 0.2, 0.05)
     p = find("Center Impulse")
     if p is not None:
