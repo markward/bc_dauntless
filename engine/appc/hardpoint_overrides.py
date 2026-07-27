@@ -25,16 +25,14 @@ def _galaxy(find):
     """galaxy."""
     p = find("Port Warp")
     if p is not None:
-        p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.45)
-        p.SetGlowRegionExtent(0, -2.0, 2.0)
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, -1.3, -1.9119627023044568, -0.06)
+        p.SetGlowRegionScale(0, 0.30931014657993366, 1.307457336253744, 0.21014627531109478)
     p = find("Star Warp")
     if p is not None:
-        p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.45)
-        p.SetGlowRegionExtent(0, -2.0, 2.0)
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, 1.3, -1.9119627023044568, -0.06)
+        p.SetGlowRegionScale(0, 0.30931014657993366, 1.307457336253744, 0.21014627531109478)
     p = find("Port Impulse")
     if p is not None:
         p.SetGlowRegionShape(0, "Box")
