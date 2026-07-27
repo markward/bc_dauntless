@@ -531,8 +531,16 @@ class ShipPropertyViewerPanel(Panel):
             gizmo_axes, gizmo_length, world_from_body)
         t = self._active_transform_target()
         kt, i = t
+        # Defensive guards mirroring transform_gizmo (this runs every input
+        # frame via _active_gizmo): a stale/removed light or out-of-range index
+        # must degrade to None, never crash on a missing spec.
+        if not (0 <= i < len(self._descriptors)):
+            return None
         if kt == "light":
-            origin = world_from_body(ship, self._effective_light(i)["position"])
+            light = self._effective_light(i)
+            if light is None:
+                return None
+            origin = world_from_body(ship, light["position"])
         else:
             origin = self._effective_world_pos(i)
         return {
