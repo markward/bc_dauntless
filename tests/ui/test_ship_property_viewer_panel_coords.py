@@ -104,3 +104,49 @@ def test_render_payload_carries_coords_and_clipboard():
     data2 = _payload_data(p.render_payload())   # snapshot changed -> re-push
     assert data2 is not None
     assert data2["transform_coords"]["has_clipboard"] is True
+
+
+# ── Click-guard only applies while the coord panel is visible ───────────────
+
+class _Host:
+    class keys:
+        MOUSE_BUTTON_LEFT = 0
+
+    def __init__(self):
+        self._cursor = (0.0, 0.0)
+        self._down = False
+        self._fb = (800, 600)
+
+    def cursor_pos(self): return self._cursor
+    def framebuffer_size(self): return self._fb
+    def mouse_button_state(self, b): return self._down
+    def consume_scroll_y(self): return 0.0
+
+
+def _drag_in_coords_box(p):
+    # (700, 100) is inside the top-right coord box for an 800x600 dsf=1 viewport
+    # (x in [568,788], y in [46,218]).
+    from engine.ui.ship_property_viewer import OrbitCamera
+    p.camera = OrbitCamera((0.0, 0.0, 0.0), 20.0, 0.0, 0.0)
+    yaw0 = p.camera.yaw
+    h = _Host()
+    h._cursor = (700.0, 100.0); h._down = True
+    p.handle_input(h)              # press
+    h._cursor = (730.0, 100.0)
+    p.handle_input(h)              # drag right
+    return yaw0, p.camera.yaw
+
+
+def test_coord_region_not_guarded_when_panel_hidden():
+    p = _panel_subsystem((0.0, 1.0, 0.0))
+    p.dispatch_event("set_tool:transform")     # toggle OFF -> panel hidden
+    assert p.transform_coords() is None
+    yaw0, yaw1 = _drag_in_coords_box(p)
+    assert yaw1 != yaw0            # drag orbited -> region is NOT a dead zone
+
+
+def test_coord_region_guarded_when_panel_visible():
+    p = _panel_subsystem((0.0, 1.0, 0.0))       # Transform on + selected
+    assert p.transform_coords() is not None
+    yaw0, yaw1 = _drag_in_coords_box(p)
+    assert yaw1 == yaw0            # guarded -> no orbit while the panel is up

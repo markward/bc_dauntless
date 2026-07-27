@@ -116,7 +116,11 @@ window.setShipPropertyViewer = function (data) {
 
     var pop = document.getElementById('spv-popover');
     if (!pop) return;
-    if (data.selected) {
+    // The property popover and the transform coord panel share the top-right
+    // corner; while the coord panel is up (data.transform_coords non-null) the
+    // opaque popover would paint over it and swallow its clicks, so suppress
+    // the popover during transform.
+    if (data.selected && !data.transform_coords) {
         var sel = data.selected;
         var p = sel.properties || {};
         var rows = Object.keys(p).map(function (k) {

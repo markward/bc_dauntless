@@ -759,7 +759,12 @@ class ShipPropertyViewerPanel(Panel):
 
         x, y = cursor_pos()
         over_tools = self._cursor_over_tools(x, y, dsf, fb_w, fb_h)
-        over_coords = self._cursor_over_coords(x, y, dsf, fb_w, fb_h)
+        # Only guard the coord-panel region while the panel is actually
+        # visible (Transform tool active + a target selected) — otherwise the
+        # top-right rectangle would be a dead zone that swallows orbit-drag
+        # starts and pin picks whenever the panel is hidden.
+        over_coords = (self.transform_coords() is not None
+                       and self._cursor_over_coords(x, y, dsf, fb_w, fb_h))
         over_chrome = (self._cursor_over_chrome(x, y, dsf) or over_tools
                        or over_coords)
         over_left_col = self._cursor_over_left_column(x, y, dsf)
