@@ -175,6 +175,21 @@ def _radius(sub) -> float:
     return 1.0
 
 
+def _pair_or_none(raw):
+    """Flat 6-tuple (fx,fy,fz,ux,uy,uz) -> ((fx,fy,fz),(ux,uy,uz)), or None."""
+    if raw is None:
+        return None
+    fx, fy, fz, ux, uy, uz = raw
+    return ((fx, fy, fz), (ux, uy, uz))
+
+
+def _orientation_or_identity(raw):
+    """Already-paired ((fx,fy,fz),(ux,uy,uz)) or None -> pair, identity default."""
+    if raw is None:
+        return ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    return raw
+
+
 def baked_glow_regions(prop) -> list:
     """Raw baked GlowRegion entries from a property template's data-bag.
 
@@ -197,6 +212,8 @@ def baked_glow_regions(prop) -> list:
             "radius": read_indexed_setter_args(prop, "GlowRegionRadius", i),
             "extent": read_indexed_setter_args(prop, "GlowRegionExtent", i),
             "scale": read_indexed_setter_args(prop, "GlowRegionScale", i),
+            "orientation": _pair_or_none(
+                read_indexed_setter_args(prop, "GlowRegionOrientation", i)),
         })
         i += 1
 
@@ -205,11 +222,12 @@ def resolve_baked_region(raw: dict, default_pos):
     """Normalize one raw baked entry to a renderer op, or None if unusable.
 
     Ops: ('sphere', center, radius)
-         ('box', center, half_extents)
+         ('box', center, half_extents, forward, up)
          ('cylinder', center, unit_axis, radius, length)  # centre pre-shifted
                                                           # by the aft extent
     Position defaults to the pod's hardpoint position. Shape names are
-    case-insensitive.
+    case-insensitive. Box orientation (forward, up) defaults to identity
+    ((0,1,0), (0,0,1)) when the hardpoint never authored one.
     """
     shape = str(raw.get("shape", "")).lower()
     pos = raw.get("position") or default_pos
@@ -242,7 +260,8 @@ def resolve_baked_region(raw: dict, default_pos):
             return None
         if hx <= 0.0 or hy <= 0.0 or hz <= 0.0:
             return None
-        return ("box", tuple(pos), (hx, hy, hz))
+        forward, up = _orientation_or_identity(raw.get("orientation"))
+        return ("box", tuple(pos), (hx, hy, hz), forward, up)
     return None
 
 

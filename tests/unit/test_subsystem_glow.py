@@ -574,13 +574,15 @@ def test_resolve_box_region_returns_box_op():
     raw = {"shape": "Box", "position": (1.0, 2.0, 3.0),
            "scale": (0.5, 0.6, 0.7), "axis": None, "radius": None, "extent": None}
     op = sg.resolve_baked_region(raw, default_pos=(0.0, 0.0, 0.0))
-    assert op == ("box", (1.0, 2.0, 3.0), (0.5, 0.6, 0.7))
+    assert op == ("box", (1.0, 2.0, 3.0), (0.5, 0.6, 0.7),
+                  (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
 
 def test_resolve_box_defaults_position_to_hardpoint():
     raw = {"shape": "Box", "position": None, "scale": (0.5, 0.5, 0.5)}
     op = sg.resolve_baked_region(raw, default_pos=(4.0, 0.0, 0.0))
-    assert op == ("box", (4.0, 0.0, 0.0), (0.5, 0.5, 0.5))
+    assert op == ("box", (4.0, 0.0, 0.0), (0.5, 0.5, 0.5),
+                  (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
 
 def test_resolve_box_rejects_nonpositive_scale():
