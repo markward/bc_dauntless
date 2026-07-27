@@ -461,6 +461,46 @@ def pick_gizmo_axis(cursor_x, cursor_y, origin, axes, length, cam, viewport,
     return best
 
 
+def _plane_basis(n):
+    """Two orthonormal vectors spanning the plane perpendicular to unit `n`."""
+    n = _norm(n)
+    seed = (1.0, 0.0, 0.0) if abs(n[0]) < 0.9 else (0.0, 1.0, 0.0)
+    u = _norm(_sub(seed, _scale(n, _dot(seed, n))))
+    v = (n[1]*u[2] - n[2]*u[1], n[2]*u[0] - n[0]*u[2], n[0]*u[1] - n[1]*u[0])
+    return u, v
+
+
+def pick_gizmo_ring(cursor_x, cursor_y, origin, axes, length, cam, viewport,
+                    device_scale_factor=1.0, samples=48):
+    """Ring index (0/1/2) whose projected circle (in the plane perpendicular to
+    axes[k]) is nearest the cursor, or None. Nearest within the click threshold."""
+    thresh = GIZMO_PICK_PT * (device_scale_factor if device_scale_factor > 0 else 1.0)
+    best_d2, best = thresh * thresh, None
+    for k in range(3):
+        u, v = _plane_basis(axes[k])
+        pts = []
+        for sidx in range(samples):
+            a = 2.0 * math.pi * sidx / samples
+            p = _add(origin, _add(_scale(u, length*math.cos(a)),
+                                  _scale(v, length*math.sin(a))))
+            sx, sy, _z, vis = project(p, cam, viewport)
+            pts.append((sx, sy) if vis else None)
+        for sidx in range(samples):
+            a0, a1 = pts[sidx], pts[(sidx + 1) % samples]
+            if a0 is None or a1 is None:
+                continue
+            d2 = _seg_dist2(cursor_x, cursor_y, a0[0], a0[1], a1[0], a1[1])
+            if d2 < best_d2:
+                best_d2, best = d2, k
+    return best
+
+
+def ring_drag_angle(cursor_x, cursor_y, origin, cam, viewport):
+    """Cursor's screen angle around the projected gizmo centre (radians)."""
+    ox, oy, _z, _vis = project(origin, cam, viewport)
+    return math.atan2(cursor_y - oy, cursor_x - ox)
+
+
 def axis_drag_param(cursor_x, cursor_y, origin, axis, length, cam, viewport):
     """World distance along `axis` (from origin) of the cursor's projection
     onto the screen-projected shaft. Reuses project() only (no unprojection):

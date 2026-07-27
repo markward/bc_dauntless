@@ -153,6 +153,13 @@ class ShipPropertyViewerPanel(Panel):
         # Scale-drag grab state: (field-index, grabbed-value) captured at
         # press so the multiplicative drag stays anchored to the start size.
         self._scale_grab = (0, 0.0)
+        # Ring-drag (rotate tool) grab state, captured at press: the grabbed
+        # screen angle, the grab-start body axis + degree accumulators, and the
+        # screen-vs-body rotation sign. Reset every open/close.
+        self._ring_grab_angle = 0.0
+        self._ring_grab_axis = (0.0, -1.0, 0.0)
+        self._ring_grab_accum = [0.0, 0.0, 0.0]
+        self._ring_sign = 1.0
         self._gizmo_hover = -1
         # Clipboard for the transform-coord panel's Copy/Paste — a body-frame
         # (x, y, z) tuple, or None. Reset every open/close.
@@ -199,6 +206,10 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_pos = (0.0, 0.0, 0.0)
         self._axis_grab_origin = (0.0, 0.0, 0.0)
         self._scale_grab = (0, 0.0)
+        self._ring_grab_angle = 0.0
+        self._ring_grab_axis = (0.0, -1.0, 0.0)
+        self._ring_grab_accum = [0.0, 0.0, 0.0]
+        self._ring_sign = 1.0
         self._gizmo_hover = -1
         self._coord_clipboard = None
         self._scale_clipboard = None
@@ -237,6 +248,10 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_pos = (0.0, 0.0, 0.0)
         self._axis_grab_origin = (0.0, 0.0, 0.0)
         self._scale_grab = (0, 0.0)
+        self._ring_grab_angle = 0.0
+        self._ring_grab_axis = (0.0, -1.0, 0.0)
+        self._ring_grab_accum = [0.0, 0.0, 0.0]
+        self._ring_sign = 1.0
         self._gizmo_hover = -1
         self._coord_clipboard = None
         self._scale_clipboard = None
@@ -637,14 +652,48 @@ class ShipPropertyViewerPanel(Panel):
             "handle_kind": 1,
         }
 
+    def rotate_gizmo(self) -> Optional[dict]:
+        """The rotate-gizmo (orientation rings) for the selected cylinder light,
+        or None. Same shape as `scale_gizmo` but with `"handle_kind": 2` so the
+        renderer draws rings. Gated on the rotate tool being active, a rotate
+        target (cylinder light) selected, and the ship resolvable with a world
+        rotation."""
+        if self.active_tool != "rotate" or self.camera is None:
+            return None
+        t = self._rotate_target()
+        if t is None:
+            return None
+        ship = self._ship_getter()
+        if ship is None or not hasattr(ship, "GetWorldRotation"):
+            return None
+        _, i = t
+        if not (0 <= i < len(self._descriptors)):
+            return None
+        light = self._effective_light(i)
+        if light is None:
+            return None
+        from engine.ui.ship_property_viewer import (
+            gizmo_axes, gizmo_length, world_from_body)
+        origin = world_from_body(ship, light["position"])
+        return {
+            "origin": origin,
+            "axes": gizmo_axes(ship.GetWorldRotation()),
+            "length": gizmo_length(self.camera),
+            "highlight": self._gizmo_hover,
+            "handle_kind": 2,
+        }
+
     def _active_gizmo(self) -> Optional[dict]:
         """The gizmo for the active tool: `transform_gizmo` under Transform,
-        `scale_gizmo` under Scale, else None. Shared by `_handle_gizmo_input`
-        so hover/grab/drag geometry follows the current tool."""
+        `scale_gizmo` under Scale, `rotate_gizmo` under Rotate, else None.
+        Shared by `_handle_gizmo_input` so hover/grab/drag geometry follows the
+        current tool."""
         if self.active_tool == "transform":
             return self.transform_gizmo()
         if self.active_tool == "scale":
             return self.scale_gizmo()
+        if self.active_tool == "rotate":
+            return self.rotate_gizmo()
         return None
 
     def _begin_scale_drag(self, axis: int, grab_param: float) -> None:
@@ -688,6 +737,62 @@ class ShipPropertyViewerPanel(Panel):
         ratio = t_now / max(self._axis_grab_param, 0.25 * L)
         idx, grab_val = self._scale_grab
         self._set_scale_field(idx, grab_val * ratio)
+
+    def _begin_ring_drag(self, ring, grab_angle):
+        """Start a ring drag on `ring` (0/1/2), capturing the grabbed screen
+        angle, the grab-start axis + degree accumulators, and the screen-vs-body
+        sign (so a screen-CCW sweep rotates about the axis toward the camera)."""
+        g = self._active_gizmo()
+        self._axis_drag = ring
+        self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
+        self._ring_grab_angle = grab_angle
+        t = self._rotate_target()
+        if t is None:
+            self._ring_grab_axis = (0.0, -1.0, 0.0)
+            self._ring_grab_accum = [0.0, 0.0, 0.0]
+            self._ring_sign = 1.0
+            return
+        _, i = t
+        self._ring_grab_axis = tuple((self._effective_light(i) or {}).get("axis")
+                                     or (0.0, -1.0, 0.0))
+        self._ring_grab_accum = list(self._rotate_accum.get(i, [0.0, 0.0, 0.0]))
+        eye, tgt = self.camera.eye(), self.camera.target
+        fwd = (tgt[0]-eye[0], tgt[1]-eye[1], tgt[2]-eye[2])
+        wa = g["axes"][ring] if g else (0.0, 0.0, 1.0)
+        d = wa[0]*fwd[0] + wa[1]*fwd[1] + wa[2]*fwd[2]
+        # Screen-CCW should rotate about the axis toward the camera. If it feels
+        # inverted in-game, flip this comparison.
+        self._ring_sign = -1.0 if d > 0.0 else 1.0
+
+    def _apply_ring_drag_angle(self, d_body):
+        """Apply a body-frame delta angle (radians) about the grabbed ring axis
+        to the grab-start axis. Shared core for the cursor-driven drag + tests."""
+        t = self._rotate_target()
+        if t is None or self._axis_drag is None:
+            return
+        _, i = t
+        from engine.ui.ship_property_viewer import rotate_about_axis
+        k = self._axis_drag
+        spec = dict(self._effective_light(i) or {})
+        if not spec:
+            return
+        spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
+        self._pending_light[i] = spec
+        self._rotate_accum.setdefault(i, [0.0, 0.0, 0.0])
+        self._rotate_accum[i][k] = self._ring_grab_accum[k] + math.degrees(d_body)
+        self._last_pushed = None
+
+    def _apply_ring_drag(self, x, y, fb_size):
+        """Map the cursor's screen angle to a body-frame delta about the grabbed
+        ring axis (unwrapped to (-pi, pi], signed by `_ring_sign`)."""
+        from engine.ui.ship_property_viewer import ring_drag_angle
+        ang = ring_drag_angle(x, y, self._axis_grab_origin, self.camera, fb_size())
+        d = ang - self._ring_grab_angle
+        while d > math.pi:
+            d -= 2.0 * math.pi
+        while d < -math.pi:
+            d += 2.0 * math.pi
+        self._apply_ring_drag_angle(d * self._ring_sign)
 
     def _begin_axis_drag(self, axis: int, grab_param: float) -> None:
         """Start an axis drag on `axis` (0/1/2), capturing the fixed drag-start
@@ -1042,7 +1147,8 @@ class ShipPropertyViewerPanel(Panel):
         # top-right rectangle would be a dead zone that swallows orbit-drag
         # starts and pin picks whenever the panel is hidden.
         over_coords = ((self.transform_coords() is not None
-                        or self.scale_values() is not None)
+                        or self.scale_values() is not None
+                        or self.rotate_values() is not None)
                        and self._cursor_over_coords(x, y, dsf, fb_w, fb_h))
         over_chrome = (self._cursor_over_chrome(x, y, dsf) or over_tools
                        or over_coords)
@@ -1113,6 +1219,7 @@ class ShipPropertyViewerPanel(Panel):
         try:
             from engine.ui.ship_property_viewer import (
                 pick_gizmo_axis, axis_drag_param, gizmo_length,
+                pick_gizmo_ring, ring_drag_angle,
             )
         except ImportError:
             return False
@@ -1133,14 +1240,17 @@ class ShipPropertyViewerPanel(Panel):
             # mapping stays stable as the origin moves with the subsystem.
             g = self._active_gizmo()
             if g is not None:
-                t = axis_drag_param(x, y, self._axis_grab_origin,
-                                    g["axes"][self._axis_drag],
-                                    gizmo_length(self.camera), self.camera,
-                                    fb_size())
-                if self.active_tool == "scale":
-                    self._apply_scale_drag(t)
+                if self.active_tool == "rotate":
+                    self._apply_ring_drag(x, y, fb_size)
                 else:
-                    self._apply_axis_drag(t)
+                    t = axis_drag_param(x, y, self._axis_grab_origin,
+                                        g["axes"][self._axis_drag],
+                                        gizmo_length(self.camera), self.camera,
+                                        fb_size())
+                    if self.active_tool == "scale":
+                        self._apply_scale_drag(t)
+                    else:
+                        self._apply_axis_drag(t)
             self._drag_last = (x, y)
             return True
 
@@ -1151,28 +1261,42 @@ class ShipPropertyViewerPanel(Panel):
 
         # Press edge: try to grab an axis. If none, fall through to orbit-press.
         if down and not self._lmb_down:
-            axis = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
-                                   self.camera, fb_size(), dsf)
-            if axis is None:
-                return False
-            t_grab = axis_drag_param(x, y, g["origin"], g["axes"][axis],
-                                     g["length"], self.camera, fb_size())
-            if self.active_tool == "scale":
-                self._begin_scale_drag(axis, t_grab)
+            if self.active_tool == "rotate":
+                ring = pick_gizmo_ring(x, y, g["origin"], g["axes"], g["length"],
+                                       self.camera, fb_size(), dsf)
+                if ring is None:
+                    return False
+                self._begin_ring_drag(
+                    ring, ring_drag_angle(x, y, g["origin"], self.camera,
+                                          fb_size()))
+                self._gizmo_hover = ring
             else:
-                self._begin_axis_drag(axis, t_grab)
+                axis = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
+                                       self.camera, fb_size(), dsf)
+                if axis is None:
+                    return False
+                t_grab = axis_drag_param(x, y, g["origin"], g["axes"][axis],
+                                         g["length"], self.camera, fb_size())
+                if self.active_tool == "scale":
+                    self._begin_scale_drag(axis, t_grab)
+                else:
+                    self._begin_axis_drag(axis, t_grab)
+                self._gizmo_hover = axis
             self._chrome_press = False
             self._lmb_down = True
             self._drag_last = (x, y)
             self._press_pos = (x, y)
             self._drag_dist = 0.0
-            self._gizmo_hover = axis
             return True
 
         # Not a press edge and no active drag: hover highlight only (idle).
         if not down:
-            hov = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
-                                  self.camera, fb_size(), dsf)
+            if self.active_tool == "rotate":
+                hov = pick_gizmo_ring(x, y, g["origin"], g["axes"], g["length"],
+                                      self.camera, fb_size(), dsf)
+            else:
+                hov = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
+                                      self.camera, fb_size(), dsf)
             self._gizmo_hover = hov if hov is not None else -1
         return False
 
