@@ -320,6 +320,51 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* ── Transform coordinate panel (top-right) ────────────────────────────────
+   Shown only while the Transform tool is active and something is selected;
+   driven by payload.transform_coords ({x,y,z,has_clipboard}|null). Geometry
+   (right/top/width/height) is mirrored by COORDS_* in
+   ship_property_viewer_panel.py for the mouse click-guard — keep them in
+   sync. Mouse-only steppers, same reasoning as .spv-radius-stepper: the
+   engine has no keyboard->CEF forwarding yet. */
+#spv-coords {
+    position: absolute;
+    right: 12px;
+    top: 46px;
+    width: 220px;
+    padding: 8px 10px;
+    box-sizing: border-box;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 230, 160, 0.4);
+    color: #ffd;
+    pointer-events: auto;
+    font-size: 12px;
+}
+
+.spv-coords__title { font-weight: bold; margin-bottom: 6px; }
+.spv-coords__row { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+.spv-coords__axis { width: 12px; color: #ffd; }
+.spv-coords__val { flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
+.spv-coords__actions { display: flex; gap: 6px; margin-top: 8px; }
+.spv-coords__btn {
+    flex: 1;
+    cursor: pointer;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 230, 160, 0.4);
+    color: #ffd;
+    padding: 4px 0;
+    font-family: inherit;
+}
+.spv-coords__btn--disabled { opacity: 0.4; pointer-events: none; }
+
+/* .spv-step nudge buttons are wider than this 220px panel comfortably fits
+   four-per-row at the radius-modal's size — shrink them here only. */
+#spv-coords .spv-step {
+    padding: 3px 4px;
+    font-size: 10px;
+    flex: 0 0 auto;
+}
+
 /* ── Context menu / radius modal / Save bar / dirty rows ──────────────────
    Task 5: right-click a subsystem row → "Set Radius…" → numeric modal →
    Apply stages the edit (spv-sys-row--dirty accent); the Save bar surfaces

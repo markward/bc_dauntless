@@ -68,6 +68,26 @@ window.setShipPropertyViewer = function (data) {
         scaleBtn.classList.toggle('active', data.active_tool === 'scale');
     }
 
+    // Transform coordinate panel (top-right): visible only while
+    // data.transform_coords is non-null (Transform tool active + a
+    // subsystem/light selected). Mirrors the XYZ position and the
+    // clipboard-gated Paste button.
+    var coords = data.transform_coords;
+    var coordsEl = document.getElementById('spv-coords');
+    if (coordsEl) {
+        if (coords) {
+            document.getElementById('spv-coord-x').textContent = coords.x.toFixed(3);
+            document.getElementById('spv-coord-y').textContent = coords.y.toFixed(3);
+            document.getElementById('spv-coord-z').textContent = coords.z.toFixed(3);
+            var pasteBtn = document.getElementById('spv-coord-paste');
+            pasteBtn.disabled = !coords.has_clipboard;
+            pasteBtn.classList.toggle('spv-coords__btn--disabled', !coords.has_clipboard);
+            coordsEl.style.display = 'block';
+        } else {
+            coordsEl.style.display = 'none';
+        }
+    }
+
     renderSPVSubsystemList(data.subsystems || [],
         (typeof data.selected_index === 'number') ? data.selected_index : null,
         (typeof data.selected_light_index === 'number') ? data.selected_light_index : null);
@@ -376,6 +396,22 @@ window.shipPropertyViewerToggle = function (action) {
 // real state.
 window.shipPropertyViewerSetTool = function (name) {
     dauntlessEvent('ship-property-viewer/set_tool:' + name);
+};
+
+// Transform coordinate panel: mouse-only XYZ steppers + Copy/Paste/Mirror.
+// Same event channel as the toggles/tools above; Python re-pushes
+// transform_coords on every apply so the panel always mirrors live state.
+window.shipPropertyViewerCoordNudge = function (axis, delta) {
+    dauntlessEvent('ship-property-viewer/coord_nudge:' + JSON.stringify({axis: axis, delta: delta}));
+};
+window.shipPropertyViewerCoordCopy = function () {
+    dauntlessEvent('ship-property-viewer/coord_copy');
+};
+window.shipPropertyViewerCoordPaste = function () {
+    dauntlessEvent('ship-property-viewer/coord_paste');
+};
+window.shipPropertyViewerCoordMirror = function () {
+    dauntlessEvent('ship-property-viewer/coord_mirror');
 };
 
 // Subsystem-list row click: select that pin; clicking the already-selected
