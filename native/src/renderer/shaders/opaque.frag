@@ -144,6 +144,8 @@ uniform vec4 u_glow_region_b[MAX_GLOW_REGIONS];  // axis.xyz, aft
 uniform vec4 u_glow_region_c[MAX_GLOW_REGIONS];  // fore, dim_target, disable_time, flicker_flag
 uniform vec4 u_glow_region_d[MAX_GLOW_REGIONS];  // gain (>1 brightens), unused.yzw
 uniform vec4 u_glow_region_e[MAX_GLOW_REGIONS];  // shape_flag, half_extent.xyz
+uniform vec4 u_glow_region_f[MAX_GLOW_REGIONS];  // box forward.xyz (body space); .w unused
+uniform vec4 u_glow_region_g[MAX_GLOW_REGIONS];  // box up.xyz (body space); .w unused
 const float GLOW_FLICKER_SECS = 0.4;   // blow-out window when a region is destroyed
 const float DISABLED_FLOOR    = 0.0;   // flicker troughs reach dark while disabled
 
@@ -221,7 +223,20 @@ float glow_region_mult(vec3 p_body, vec3 n_body, float now, out float gain) {
         float dtime  = u_glow_region_c[i].z;
 
         vec3 d = p_body - center;
-        if (u_glow_region_e[i].x > 0.5) {          // body-axis-aligned box
+        if (u_glow_region_e[i].x > 0.5) {          // box (axis-aligned or tilted)
+            vec3 fwd = u_glow_region_f[i].xyz;
+            vec3 upv = u_glow_region_g[i].xyz;
+            // Guard on the CROSS magnitude, not just forward: a degenerate basis
+            // (zero/parallel forward|up from a hand-authored override) would
+            // NaN through normalize(cross) and wrongly light the fragment.
+            // Identity basis -> cross = (1,0,0), R = I, d unchanged (byte-identical).
+            vec3 rgt = cross(fwd, upv);
+            if (dot(rgt, rgt) > 1e-6) {            // valid, non-degenerate orientation
+                rgt = normalize(rgt);
+                // columns = box-local axes in body space; identity basis -> R = I
+                mat3 R = mat3(rgt, normalize(fwd), normalize(upv));
+                d = transpose(R) * d;             // body -> box-local
+            }
             vec3 h = u_glow_region_e[i].yzw;
             vec3 a = abs(d);
             if (a.x > h.x || a.y > h.y || a.z > h.z) continue;

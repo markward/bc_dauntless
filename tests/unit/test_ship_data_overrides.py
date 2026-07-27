@@ -71,11 +71,15 @@ def test_hardpoint_apply_writes_glow_data_to_registered_template():
     App.g_kModelPropertyManager.RegisterLocalTemplate(pw)
     hardpoint_overrides.apply("galaxy")
 
-    assert pw.GetGlowRegionShape(0) == "Cylinder"
-    assert pw.GetGlowRegionRadius(0) == 0.45
-    # Multi-arg setters key on all-but-last arg (data-bag convention).
-    assert pw._data[("GlowRegionAxis", (0, 0.0, 1.0))] == 0.0
-    assert pw._data[("GlowRegionExtent", (0, -2.0))] == 2.0
+    # Galaxy Port Warp glow was live-tuned Cylinder -> Box via the SPV scale
+    # tool (commit c635c06e). This test exercises the apply MECHANISM, so it
+    # asserts the Box setters landed (a positive 3-axis scale + a position)
+    # without pinning the drag-tuned magnitudes, which stay free to retune.
+    from engine.appc.properties import read_indexed_setter_args as _args
+    assert pw.GetGlowRegionShape(0) == "Box"
+    scale = _args(pw, "GlowRegionScale", 0)
+    assert len(scale) == 3 and all(s > 0 for s in scale)
+    assert len(_args(pw, "GlowRegionPosition", 0)) == 3
     App.g_kModelPropertyManager.ClearLocalTemplates()
 
 
@@ -157,10 +161,10 @@ def test_real_galaxy_load_applies_glow_overrides():
     _load_real_galaxy_hardpoint()
     pw = _port_warp()
     assert pw is not None
-    assert pw.GetGlowRegionShape(0) == "Cylinder"
+    assert pw.GetGlowRegionShape(0) == "Box"   # live-tuned Cylinder -> Box (c635c06e)
     sa = App.g_kModelPropertyManager.FindByName(
         "Sensor Array", App.TGModelPropertyManager.LOCAL_TEMPLATES)
-    assert sa is not None and sa.GetGlowRegionShape(0) == "Sphere"
+    assert sa is not None and sa.GetGlowRegionShape(0) == "Box"  # live-tuned Sphere -> Box
 
 
 def test_real_galaxy_reload_reapplies_overrides():
@@ -172,8 +176,10 @@ def test_real_galaxy_reload_reapplies_overrides():
     importlib.reload(mod)
     fresh = _port_warp()
     assert fresh is not None and fresh is not first
-    assert fresh.GetGlowRegionShape(0) == "Cylinder"
-    assert fresh.GetGlowRegionRadius(0) == 0.45
+    assert fresh.GetGlowRegionShape(0) == "Box"   # live-tuned Cylinder -> Box (c635c06e)
+    from engine.appc.properties import read_indexed_setter_args as _args
+    _scale = _args(fresh, "GlowRegionScale", 0)
+    assert len(_scale) == 3 and all(s > 0 for s in _scale)
 
 
 # ------------------------------------------------- baked impulse sections
@@ -218,11 +224,14 @@ def test_baked_galaxy_impulse_is_box():
     # "Edit Light" tool (2026-07-26, live-verified); the baked override now
     # emits body-axis-aligned Box regions (position + half-extent scale). See
     # docs/superpowers/specs/2026-07-26-spv-edit-light-glow-region-design.md.
+    # Port/Star Impulse Y was later repositioned -0.2 -> -0.3117 via the SPV
+    # transform coord panel (2026-07-27, live-verified, commit 50b6b826).
     from engine.appc.properties import read_indexed_setter_args as _args
     _load_real_galaxy_hardpoint()
+    _impulse_y = -0.31166273838979724
     expected = {
-        "Port Impulse":   ((-1.22, -0.2, 0.32), (0.15, 0.2, 0.05)),
-        "Star Impulse":   ((1.22, -0.2, 0.32),  (0.15, 0.2, 0.05)),
+        "Port Impulse":   ((-1.22, _impulse_y, 0.32), (0.15, 0.2, 0.05)),
+        "Star Impulse":   ((1.22, _impulse_y, 0.32),  (0.15, 0.2, 0.05)),
         "Center Impulse": ((0.0, -1.1, -0.08),  (0.2, 0.15, 0.1)),
     }
     for name, (pos, scale) in expected.items():

@@ -69,6 +69,25 @@ def _box(center: Vec3, ex: Vec3, ey: Vec3, ez: Vec3) -> dict:
     return {"center": center, "ex": ex, "ey": ey, "ez": ez, "color": GLOW_COLOR}
 
 
+def _basis_from(forward: Vec3, up: Vec3) -> Tuple[Vec3, Vec3, Vec3]:
+    """Normalized box-local (right, forward, up), right = normalize(forward x up).
+
+    Defensive: forward/up are normalized even though the rotate tool already
+    hands back orthonormal vectors, so a malformed authored orientation still
+    yields a usable (if degenerate-safe) basis rather than a garbage box.
+    """
+    def _norm(v: Vec3) -> Vec3:
+        m = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) or 1.0
+        return (v[0] / m, v[1] / m, v[2] / m)
+
+    f = _norm(forward)
+    u = _norm(up)
+    r = (f[1] * u[2] - f[2] * u[1],
+         f[2] * u[0] - f[0] * u[2],
+         f[0] * u[1] - f[1] * u[0])
+    return _norm(r), f, u
+
+
 def build_glow_region_overlay(ship, selected_name: str = None,
                               show_all: bool = True,
                               pending: dict = None) -> Tuple[List[dict], List[dict]]:
@@ -78,17 +97,21 @@ def build_glow_region_overlay(ship, selected_name: str = None,
     DebugCylinder dicts (`engine.renderer.set_debug_cylinders`); box regions
     become DebugBox dicts (`engine.renderer.set_debug_boxes`).
 
-    `show_all` (the Glow Regions toggle) draws every subsystem's regions;
-    otherwise only the subsystem whose GetName() matches `selected_name`
-    contributes — so selecting a subsystem always reveals its own glow
-    volume, mirroring the selected-pin firing arc. Both off → ([], []).
+    Selection-scoped: `show_all` (the Glow Regions toggle) draws every
+    subsystem's regions; otherwise only the subsystem whose GetName() matches
+    `selected_name` (the SELECTED light node) contributes — so a light's
+    wireframe shows ONLY while that light node is the selected element, never
+    for its parent subsystem or a different selection. No selection + toggle
+    off → ([], []).
 
     `pending` maps subsystem NAME → a baked-shaped region spec (a staged but
-    unsaved Edit Light edit). When a subsystem's name is a key in `pending`,
-    that spec is resolved via `resolve_baked_region` INSTEAD of the
-    subsystem's baked ops, so the wireframe tracks the live edit before Save.
-    A `None` value (a staged light removal) draws nothing for that
-    subsystem — it hides the baked region rather than falling back to it.
+    unsaved Edit Light edit). It is CONSULTED for the spec of a drawn region
+    (so a selected light's live edit previews before Save), but presence in
+    `pending` does NOT itself force drawing — a previously-edited light no
+    longer persists on screen once you select away. Edit Light selects the
+    light node it opens on, so the staged edit still previews live. A `None`
+    value (a staged light removal) draws nothing for that subsystem — it
+    hides the baked region rather than falling back to it.
 
     Cylinder regions map directly (baked_region_ops pre-shifts the centre by
     the aft extent). Sphere regions are drawn as their circumscribing cylinder
@@ -99,7 +122,7 @@ def build_glow_region_overlay(ship, selected_name: str = None,
     """
     if ship is None or not hasattr(ship, "GetWorldLocation"):
         return [], []
-    if not show_all and not selected_name and not pending:
+    if not show_all and not selected_name:
         return [], []
 
     pending = pending or {}
@@ -110,7 +133,7 @@ def build_glow_region_overlay(ship, selected_name: str = None,
     boxes: List[dict] = []
     for sub in _iter_subsystems(ship):
         name = sub.GetName() if hasattr(sub, "GetName") else ""
-        if name not in pending and not show_all and name != selected_name:
+        if not show_all and name != selected_name:
             continue
         pos = _position_tuple(sub)
         if name in pending:
@@ -127,12 +150,16 @@ def build_glow_region_overlay(ship, selected_name: str = None,
                     _body_to_world(center, ship_pos, rot),
                     _rotate_dir(axis, rot), radius, length))
             elif op[0] == "box":
-                _kind, center, half = op
+                _kind, center, half, forward, up = op
+                right, fwd, upv = _basis_from(forward, up)
                 boxes.append(_box(
                     _body_to_world(center, ship_pos, rot),
-                    _rotate_vec((half[0], 0.0, 0.0), rot),
-                    _rotate_vec((0.0, half[1], 0.0), rot),
-                    _rotate_vec((0.0, 0.0, half[2]), rot)))
+                    _rotate_vec((right[0] * half[0], right[1] * half[0],
+                                 right[2] * half[0]), rot),
+                    _rotate_vec((fwd[0] * half[1], fwd[1] * half[1],
+                                 fwd[2] * half[1]), rot),
+                    _rotate_vec((upv[0] * half[2], upv[1] * half[2],
+                                 upv[2] * half[2]), rot)))
             else:  # sphere
                 _kind, center, radius = op
                 up = _rotate_dir((0.0, 0.0, 1.0), rot)   # ship body-up

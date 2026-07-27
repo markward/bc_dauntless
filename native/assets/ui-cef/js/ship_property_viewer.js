@@ -68,6 +68,76 @@ window.setShipPropertyViewer = function (data) {
         scaleBtn.classList.toggle('active', data.active_tool === 'scale');
     }
 
+    // Transform coordinate panel (top-right): visible only while
+    // data.transform_coords is non-null (Transform tool active + a
+    // subsystem/light selected). Mirrors the XYZ position and the
+    // clipboard-gated Paste button.
+    var coords = data.transform_coords;
+    var coordsEl = document.getElementById('spv-coords');
+    if (coordsEl) {
+        if (coords) {
+            document.getElementById('spv-coord-x').textContent = coords.x.toFixed(3);
+            document.getElementById('spv-coord-y').textContent = coords.y.toFixed(3);
+            document.getElementById('spv-coord-z').textContent = coords.z.toFixed(3);
+            var pasteBtn = document.getElementById('spv-coord-paste');
+            pasteBtn.disabled = !coords.has_clipboard;
+            pasteBtn.classList.toggle('spv-coords__btn--disabled', !coords.has_clipboard);
+            coordsEl.style.display = 'block';
+        } else {
+            coordsEl.style.display = 'none';
+        }
+    }
+
+    // Scale panel (top-right): visible only while data.scale_values is
+    // non-null (Scale tool active + a subsystem/light selected). Rows are
+    // shape-aware (built from scale_values.fields — X/Y/Z, Radius, Length),
+    // and the same top-right slot is shared with #spv-coords (radio: never
+    // both are shown at once).
+    var scale = data.scale_values;
+    var scaleEl = document.getElementById('spv-scale');
+    if (scaleEl) {
+        if (scale) {
+            var rows = scale.fields.map(function (f, i) {
+                return '<div class="spv-coords__row">'
+                     + '<span class="spv-coords__axis">' + escapeHtmlSPV(f.label) + '</span>'
+                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',-0.1)">&minus;0.1</button>'
+                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',-0.01)">&minus;0.01</button>'
+                     + '<span class="spv-coords__val">' + f.value.toFixed(3) + '</span>'
+                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',0.01)">+0.01</button>'
+                     + '<button class="spv-step" onclick="shipPropertyViewerScaleNudge(' + i + ',0.1)">+0.1</button>'
+                     + '</div>';
+            }).join('');
+            document.getElementById('spv-scale-rows').innerHTML = rows;
+            var sp = document.getElementById('spv-scale-paste');
+            sp.disabled = !scale.can_paste;
+            sp.classList.toggle('spv-coords__btn--disabled', !scale.can_paste);
+            scaleEl.style.display = 'block';
+        } else {
+            scaleEl.style.display = 'none';
+        }
+    }
+
+    // Rotate panel (top-right): visible only while data.rotate_values is
+    // non-null (Rotate tool active + a cylinder light volume selected).
+    // Fixed X/Y/Z degree rows (no innerHTML rebuild needed), and the same
+    // top-right slot is shared with #spv-coords/#spv-scale (radio: never
+    // more than one shown at once).
+    var rotate = data.rotate_values;
+    var rotateEl = document.getElementById('spv-rotate');
+    if (rotateEl) {
+        if (rotate) {
+            document.getElementById('spv-rotate-x').textContent = rotate.fields[0].value.toFixed(1) + '°';
+            document.getElementById('spv-rotate-y').textContent = rotate.fields[1].value.toFixed(1) + '°';
+            document.getElementById('spv-rotate-z').textContent = rotate.fields[2].value.toFixed(1) + '°';
+            var rp = document.getElementById('spv-rotate-paste');
+            rp.disabled = !rotate.can_paste;
+            rp.classList.toggle('spv-coords__btn--disabled', !rotate.can_paste);
+            rotateEl.style.display = 'block';
+        } else {
+            rotateEl.style.display = 'none';
+        }
+    }
+
     renderSPVSubsystemList(data.subsystems || [],
         (typeof data.selected_index === 'number') ? data.selected_index : null,
         (typeof data.selected_light_index === 'number') ? data.selected_light_index : null);
@@ -96,7 +166,12 @@ window.setShipPropertyViewer = function (data) {
 
     var pop = document.getElementById('spv-popover');
     if (!pop) return;
-    if (data.selected) {
+    // The property popover and the transform coord / scale / rotate panels
+    // share the top-right corner; while any of them is up (data.transform_coords,
+    // data.scale_values, or data.rotate_values non-null) the opaque popover
+    // would paint over it and swallow its clicks, so suppress the popover
+    // during transform/scale/rotate.
+    if (data.selected && !data.transform_coords && !data.scale_values && !data.rotate_values) {
         var sel = data.selected;
         var p = sel.properties || {};
         var rows = Object.keys(p).map(function (k) {
@@ -258,6 +333,10 @@ function spvLightDefaults() {
 
 window.shipPropertyViewerCtxLight = function () {
     document.getElementById('spv-ctxmenu').style.display = 'none';
+    // Select the light node we're about to edit so its wireframe is the
+    // selected element — the glow overlay is selection-scoped, so this is
+    // what makes the staged edit preview live while the modal is open.
+    dauntlessEvent('ship-property-viewer/select_light:' + spvCtxIndex);
     spvLight = spvLightDefaults();
     var seed = spvRowLight[spvCtxIndex];
     if (seed && typeof seed === 'object') {
@@ -372,6 +451,54 @@ window.shipPropertyViewerToggle = function (action) {
 // real state.
 window.shipPropertyViewerSetTool = function (name) {
     dauntlessEvent('ship-property-viewer/set_tool:' + name);
+};
+
+// Transform coordinate panel: mouse-only XYZ steppers + Copy/Paste/Mirror.
+// Same event channel as the toggles/tools above; Python re-pushes
+// transform_coords on every apply so the panel always mirrors live state.
+window.shipPropertyViewerCoordNudge = function (axis, delta) {
+    dauntlessEvent('ship-property-viewer/coord_nudge:' + JSON.stringify({axis: axis, delta: delta}));
+};
+window.shipPropertyViewerCoordCopy = function () {
+    dauntlessEvent('ship-property-viewer/coord_copy');
+};
+window.shipPropertyViewerCoordPaste = function () {
+    dauntlessEvent('ship-property-viewer/coord_paste');
+};
+window.shipPropertyViewerCoordMirror = function () {
+    dauntlessEvent('ship-property-viewer/coord_mirror');
+};
+
+// Scale panel: mouse-only shape-aware steppers + Copy/Paste/Uniform. Same
+// event channel as the coord handlers above; Python re-pushes scale_values
+// on every apply so the panel always mirrors live state.
+window.shipPropertyViewerScaleNudge = function (index, delta) {
+    dauntlessEvent('ship-property-viewer/scale_nudge:' + JSON.stringify({index: index, delta: delta}));
+};
+window.shipPropertyViewerScaleCopy = function () {
+    dauntlessEvent('ship-property-viewer/scale_copy');
+};
+window.shipPropertyViewerScalePaste = function () {
+    dauntlessEvent('ship-property-viewer/scale_paste');
+};
+window.shipPropertyViewerScaleUniform = function () {
+    dauntlessEvent('ship-property-viewer/scale_uniform');
+};
+
+// Rotate panel: mouse-only degree steppers + Copy/Paste/Mirror. Same event
+// channel as the coord/scale handlers above; Python re-pushes rotate_values
+// on every apply so the panel always mirrors live state.
+window.shipPropertyViewerRotateNudge = function (axis, delta) {
+    dauntlessEvent('ship-property-viewer/rotate_nudge:' + JSON.stringify({axis: axis, delta: delta}));
+};
+window.shipPropertyViewerRotateCopy = function () {
+    dauntlessEvent('ship-property-viewer/rotate_copy');
+};
+window.shipPropertyViewerRotatePaste = function () {
+    dauntlessEvent('ship-property-viewer/rotate_paste');
+};
+window.shipPropertyViewerRotateMirror = function () {
+    dauntlessEvent('ship-property-viewer/rotate_mirror');
 };
 
 // Subsystem-list row click: select that pin; clicking the already-selected

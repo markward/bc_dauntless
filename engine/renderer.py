@@ -493,10 +493,14 @@ def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:
     return _h.add_sphere_region(instance_id, tuple(center), float(radius))
 
 
-def add_box_region(instance_id: InstanceId, center, half_extents) -> int:
-    """Store a body-axis-aligned box glow region at a hardpoint. center and
-    half_extents are 3-tuples in game units. Returns the region index, or -1."""
-    return _h.add_box_region(instance_id, tuple(center), tuple(half_extents))
+def add_box_region(instance_id: InstanceId, center, half_extents,
+                   forward=(0.0, 1.0, 0.0), up=(0.0, 0.0, 1.0)) -> int:
+    """Store a box glow region at a hardpoint. center and half_extents are
+    3-tuples in game units. `forward`/`up` are a body-space direction basis that
+    tilts the box (default identity = body-axis-aligned, byte-identical to the
+    legacy 2-arg call). Returns the region index, or -1."""
+    return _h.add_box_region(instance_id, tuple(center), tuple(half_extents),
+                             tuple(forward), tuple(up))
 
 
 def add_cylinder_region(instance_id: InstanceId, center, axis, radius: float,
@@ -990,17 +994,18 @@ def clear_debug_spheres() -> None:
         fn()
 
 
-def set_transform_gizmo(origin, ax, ay, az, length, highlight) -> None:
+def set_transform_gizmo(origin, ax, ay, az, length, highlight, handle_kind=0) -> None:
     """Set the Ship Property Viewer transform gizmo (three coloured arrows).
 
     `origin` and each axis (`ax`/`ay`/`az`) are 3-float tuples; `highlight`
-    is 0/1/2 to brighten that axis or -1 for none. Rendered depth-test-off
+    is 0/1/2 to brighten that axis or -1 for none. `handle_kind` is 0 for
+    cone tips (Move) or 1 for cube tips (Scale). Rendered depth-test-off
     in viewer_mode only. No-ops silently if the host binding is unavailable
     (headless / pre-rebuild).
     """
     fn = getattr(_h, "set_transform_gizmo", None)
     if fn is not None:
-        fn(origin, ax, ay, az, float(length), int(highlight))
+        fn(origin, ax, ay, az, float(length), int(highlight), int(handle_kind))
 
 
 def clear_transform_gizmo() -> None:

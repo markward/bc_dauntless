@@ -61,9 +61,21 @@ TOOLS_H_PT = TOOLS_BTN_PT
 TRANSFORM_H_PT = TOOLS_BTN_PT
 TOOLS_CLUSTER_H_PT = TOOLS_H_PT + TOOLS_GAP_PT + TRANSFORM_H_PT
 
+# Top-right transform coordinate panel (#spv-coords). Anchored right:12/top:46
+# with width 220 / height ~172 (three coord rows + Copy/Paste/Mirror). Clicks
+# here belong to the CEF panel, so they never start an orbit or gizmo drag.
+COORDS_MARGIN_PT = 12
+COORDS_TOP_PT = 46
+COORDS_W_PT = 220
+COORDS_H_PT = 172
+
 # Wireframe colour for the selected subsystem's radius sphere — a soft green,
 # distinct from the orange glow-region and cyan weapon-arc overlays.
 SUBSYS_SPHERE_COLOR = (0.5, 1.0, 0.6)
+
+# Floor for any scale-tool field (radius / box axis / cylinder length) — a
+# nudge or paste can never drive a dimension to zero or negative.
+SCALE_MIN = 0.01
 
 
 class ShipPropertyViewerPanel(Panel):
@@ -138,7 +150,32 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_param = 0.0
         self._axis_grab_pos = (0.0, 0.0, 0.0)
         self._axis_grab_origin = (0.0, 0.0, 0.0)
+        # Scale-drag grab state: (field-index, grabbed-value) captured at
+        # press so the multiplicative drag stays anchored to the start size.
+        self._scale_grab = (0, 0.0)
+        # Ring-drag (rotate tool) grab state, captured at press: the grabbed
+        # screen angle, the grab-start body axis/orientation basis + degree
+        # accumulators, and the screen-vs-body rotation sign. Reset every
+        # open/close.
+        self._ring_grab_angle = 0.0
+        self._ring_grab_axis = (0.0, -1.0, 0.0)
+        self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        self._ring_grab_accum = [0.0, 0.0, 0.0]
+        self._ring_sign = 1.0
         self._gizmo_hover = -1
+        # Clipboard for the transform-coord panel's Copy/Paste — a body-frame
+        # (x, y, z) tuple, or None. Reset every open/close.
+        self._coord_clipboard = None
+        # Clipboard for the scale tool's Copy/Paste — (kind, values-tuple),
+        # or None. Reset every open/close.
+        self._scale_clipboard = None
+        # Clipboard for the rotate tool's Copy/Paste — ("cylinder_axis",
+        # (x, y, z)), or None. Reset every open/close.
+        self._rotate_clipboard = None
+        # Rotate-tool per-light degree accumulators (readout only, not
+        # persisted): descriptor index -> [x, y, z] cumulative degrees
+        # since the light was last selected/reset. Reset every open/close.
+        self._rotate_accum: dict = {}
 
     @property
     def name(self) -> str:
@@ -170,7 +207,17 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_param = 0.0
         self._axis_grab_pos = (0.0, 0.0, 0.0)
         self._axis_grab_origin = (0.0, 0.0, 0.0)
+        self._scale_grab = (0, 0.0)
+        self._ring_grab_angle = 0.0
+        self._ring_grab_axis = (0.0, -1.0, 0.0)
+        self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        self._ring_grab_accum = [0.0, 0.0, 0.0]
+        self._ring_sign = 1.0
         self._gizmo_hover = -1
+        self._coord_clipboard = None
+        self._scale_clipboard = None
+        self._rotate_clipboard = None
+        self._rotate_accum = {}
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -203,7 +250,17 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_param = 0.0
         self._axis_grab_pos = (0.0, 0.0, 0.0)
         self._axis_grab_origin = (0.0, 0.0, 0.0)
+        self._scale_grab = (0, 0.0)
+        self._ring_grab_angle = 0.0
+        self._ring_grab_axis = (0.0, -1.0, 0.0)
+        self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        self._ring_grab_accum = [0.0, 0.0, 0.0]
+        self._ring_sign = 1.0
         self._gizmo_hover = -1
+        self._coord_clipboard = None
+        self._scale_clipboard = None
+        self._rotate_clipboard = None
+        self._rotate_accum = {}
 
     def frame_to_bounds(self, center, radius: float) -> None:
         """Point the orbit camera at `center` and pull back so the model's
@@ -327,6 +384,236 @@ class ShipPropertyViewerPanel(Panel):
             return ("subsystem", self.selected_index)
         return None
 
+    def _transform_target_pos(self):
+        """Body-frame (x, y, z) of the current transform target, or None (no
+        tool target). Mirrors `transform_gizmo`'s target resolution but
+        returns the raw position tuple instead of the gizmo geometry."""
+        t = self._active_transform_target()
+        if t is None:
+            return None
+        kind, i = t
+        if kind == "light":
+            spec = self._effective_light(i)
+            if not spec:
+                return None
+            return tuple(float(c) for c in spec["position"])
+        return tuple(float(c) for c in self._effective_pos(i))
+
+    def _set_transform_target_pos(self, xyz) -> None:
+        """Stage `xyz` as the current transform target's body-frame position,
+        routing to the light or subsystem staging path as appropriate."""
+        t = self._active_transform_target()
+        if t is None:
+            return
+        kind, i = t
+        if kind == "light":
+            self.set_light_position(i, xyz)
+        else:
+            self.set_subsystem_position(i, xyz)
+
+    def transform_coords(self) -> Optional[dict]:
+        """Data for the transform-coordinate panel: `{"x","y","z",
+        "has_clipboard"}` for the current transform target, or None when the
+        transform tool isn't active or nothing is selected."""
+        if self.active_tool != "transform":
+            return None
+        pos = self._transform_target_pos()
+        if pos is None:
+            return None
+        return {"x": pos[0], "y": pos[1], "z": pos[2],
+                "has_clipboard": self._coord_clipboard is not None}
+
+    # ------------------------------------------------------------------
+    # Scale tool (shape-aware size fields for the current transform target)
+    # ------------------------------------------------------------------
+    def _scale_kind_and_fields(self, target):
+        """Shape-aware size fields for `target` (see `_active_transform_target`).
+        A subsystem is always a sphere (`radius`); a light volume's fields
+        depend on its shape (`Box` -> xyz axes, `Cylinder` -> radius+length,
+        else -> radius)."""
+        kt, i = target
+        if kt == "subsystem":
+            r = self._effective_radius(i, self._descriptors[i].get("properties", {}).get("radius"))
+            try:
+                r = float(r)
+            except (TypeError, ValueError):
+                r = 0.0
+            return "radius", [{"label": "Radius", "value": r}]
+        spec = self._effective_light(i)
+        if not spec:
+            return "radius", [{"label": "Radius", "value": 0.0}]
+        shape = spec.get("shape", "Sphere")
+        if shape == "Box":
+            sx, sy, sz = spec.get("scale", (0.25, 0.25, 0.25))
+            return "xyz", [{"label": "X", "value": float(sx)},
+                           {"label": "Y", "value": float(sy)},
+                           {"label": "Z", "value": float(sz)}]
+        if shape == "Cylinder":
+            r = spec.get("radius", (0.25,))[0]
+            aft, fore = spec.get("extent", (0.0, 2.0))
+            return "radius_length", [{"label": "Radius", "value": float(r)},
+                                     {"label": "Length", "value": float(fore) - float(aft)}]
+        return "radius", [{"label": "Radius", "value": float(spec.get("radius", (0.25,))[0])}]
+
+    def scale_values(self) -> Optional[dict]:
+        """Data for the scale-tool panel: `{"kind", "fields", "has_clipboard",
+        "can_paste"}` for the current transform target, or None when the
+        scale tool isn't active or nothing is selected."""
+        if self.active_tool != "scale":
+            return None
+        t = self._active_transform_target()
+        if t is None:
+            return None
+        kind, fields = self._scale_kind_and_fields(t)
+        clip = self._scale_clipboard
+        return {"kind": kind, "fields": fields,
+                "has_clipboard": clip is not None,
+                "can_paste": clip is not None and clip[0] == kind}
+
+    def _set_scale_field(self, index, value) -> None:
+        """Stage `value` (floored at SCALE_MIN) for size field `index` of the
+        current transform target, routing to the radius or light-spec staging
+        path as appropriate."""
+        t = self._active_transform_target()
+        if t is None:
+            return
+        value = max(SCALE_MIN, float(value))
+        kt, i = t
+        kind, fields = self._scale_kind_and_fields(t)
+        if not (0 <= index < len(fields)):
+            return
+        if kt == "subsystem":
+            self._pending_radius[i] = value
+            self._last_pushed = None
+            return
+        spec = dict(self._effective_light(i) or {})
+        if not spec:
+            return
+        shape = spec.get("shape", "Sphere")
+        if shape == "Box":
+            sc = list(spec.get("scale", (0.25, 0.25, 0.25)))
+            sc[index] = value
+            spec["scale"] = tuple(sc)
+        elif shape == "Cylinder":
+            if index == 0:
+                spec["radius"] = (value,)
+            else:
+                # Length scales the extent about the anchor (pos = offset 0,
+                # where the gizmo sits), NOT by holding the aft end fixed —
+                # so a pos-centred cylinder grows symmetrically instead of
+                # sliding off one end. Proportional scale keeps offset 0 fixed.
+                aft, fore = spec.get("extent", (0.0, 2.0))
+                length = fore - aft
+                if abs(length) > 1e-9:
+                    r = value / length
+                    spec["extent"] = (aft * r, fore * r)
+                else:
+                    spec["extent"] = (-value / 2.0, value / 2.0)
+        else:
+            spec["radius"] = (value,)
+        self._pending_light[i] = spec
+        self._last_pushed = None
+
+    # ------------------------------------------------------------------
+    # Rotate tool (Cylinder light-volume axis only)
+    # ------------------------------------------------------------------
+    def _rotate_target(self):
+        """("light", i) when the current transform target is a light whose
+        effective spec is a Cylinder (rotate its axis) or a Box (rotate its
+        forward+up orientation basis); None otherwise (sphere/subsystem are
+        inert)."""
+        t = self._active_transform_target()
+        if t is None:
+            return None
+        kt, i = t
+        if kt != "light":
+            return None
+        spec = self._effective_light(i)
+        if not spec or spec.get("shape") not in ("Cylinder", "Box"):
+            return None
+        return ("light", i)
+
+    def rotate_values(self) -> Optional[dict]:
+        """Data for the rotate-tool panel: `{"fields", "has_clipboard",
+        "can_paste"}` for the current rotate target, or None when the rotate
+        tool isn't active or the target isn't a cylinder/box light.
+        `can_paste` is kind-aware: true only when the clipboard's kind
+        (`cylinder_axis`/`box_orientation`) matches the selected target's
+        shape."""
+        if self.active_tool != "rotate":
+            return None
+        t = self._rotate_target()
+        if t is None:
+            return None
+        _, i = t
+        acc = self._rotate_accum.get(i, [0.0, 0.0, 0.0])
+        clip = self._rotate_clipboard
+        kind = self._rotate_clipboard_kind(i)
+        return {"fields": [{"label": "X", "value": acc[0]},
+                           {"label": "Y", "value": acc[1]},
+                           {"label": "Z", "value": acc[2]}],
+                "has_clipboard": clip is not None,
+                "can_paste": clip is not None and clip[0] == kind}
+
+    def _rotate_clipboard_kind(self, i) -> str:
+        """Clipboard kind for light `i`'s current shape: `box_orientation`
+        for a Box, `cylinder_axis` otherwise."""
+        spec = self._effective_light(i) or {}
+        return "box_orientation" if spec.get("shape") == "Box" else "cylinder_axis"
+
+    def _rotate_axis(self, index, delta_deg) -> None:
+        """Rotate the current rotate target by `delta_deg` about basis axis
+        `index` (Rodrigues, via rotate_about_axis) and bump that axis's
+        degree accumulator. Shape-aware: a Cylinder rotates its `axis`; a Box
+        rotates BOTH `forward` and `up` of its orientation basis, then
+        re-orthonormalizes."""
+        t = self._rotate_target()
+        if t is None:
+            return
+        _, i = t
+        from engine.ui.ship_property_viewer import (
+            rotate_about_axis, orthonormalize_basis)
+        spec = dict(self._effective_light(i) or {})
+        if not spec:
+            return
+        ang = math.radians(delta_deg)
+        if spec.get("shape") == "Box":
+            fwd, up = spec.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+            fwd = rotate_about_axis(fwd, index, ang)
+            up = rotate_about_axis(up, index, ang)
+            spec["orientation"] = orthonormalize_basis(fwd, up)
+        else:
+            axis = spec.get("axis") or (0.0, -1.0, 0.0)
+            spec["axis"] = rotate_about_axis(axis, index, ang)
+        self._pending_light[i] = spec
+        self._rotate_accum.setdefault(i, [0.0, 0.0, 0.0])[index] += delta_deg
+        self._last_pushed = None
+
+    def _set_axis_absolute(self, i, axis) -> None:
+        """Stage a normalized `axis` for light `i` directly (Mirror/Paste,
+        not an incremental rotation) and zero its degree accumulator."""
+        spec = dict(self._effective_light(i) or {})
+        if not spec:
+            return
+        n = math.sqrt(sum(a*a for a in axis)) or 1.0
+        spec["axis"] = (axis[0]/n, axis[1]/n, axis[2]/n)
+        self._pending_light[i] = spec
+        self._rotate_accum[i] = [0.0, 0.0, 0.0]
+        self._last_pushed = None
+
+    def _set_orientation_absolute(self, i, forward, up) -> None:
+        """Stage a re-orthonormalized `(forward, up)` orientation for box
+        light `i` directly (Mirror/Paste, not an incremental rotation) and
+        zero its degree accumulator. Mirrors `_set_axis_absolute`."""
+        spec = dict(self._effective_light(i) or {})
+        if not spec:
+            return
+        from engine.ui.ship_property_viewer import orthonormalize_basis
+        spec["orientation"] = orthonormalize_basis(forward, up)
+        self._pending_light[i] = spec
+        self._rotate_accum[i] = [0.0, 0.0, 0.0]
+        self._last_pushed = None
+
     def transform_gizmo(self) -> Optional[dict]:
         """The move-gizmo for the selected subsystem or light node, or None.
 
@@ -362,7 +649,202 @@ class ShipPropertyViewerPanel(Panel):
             "axes": gizmo_axes(ship.GetWorldRotation()),
             "length": gizmo_length(self.camera),
             "highlight": self._gizmo_hover,
+            "handle_kind": 0,
         }
+
+    def scale_gizmo(self) -> Optional[dict]:
+        """The scale-gizmo for the selected subsystem or light node, or None.
+
+        Same shape as `transform_gizmo` (`{"origin","axes","length",
+        "highlight"}`) but with `"handle_kind": 1` so the renderer draws box
+        handles instead of arrows. Gated on the scale tool being active, a
+        target selected, and the ship resolvable with a world rotation."""
+        if self.active_tool != "scale" or self.camera is None:
+            return None
+        if self._active_transform_target() is None:
+            return None
+        ship = self._ship_getter()
+        if ship is None or not hasattr(ship, "GetWorldRotation"):
+            return None
+        from engine.ui.ship_property_viewer import (
+            gizmo_axes, gizmo_length, world_from_body)
+        t = self._active_transform_target()
+        kt, i = t
+        # Defensive guards mirroring transform_gizmo (this runs every input
+        # frame via _active_gizmo): a stale/removed light or out-of-range index
+        # must degrade to None, never crash on a missing spec.
+        if not (0 <= i < len(self._descriptors)):
+            return None
+        if kt == "light":
+            light = self._effective_light(i)
+            if light is None:
+                return None
+            origin = world_from_body(ship, light["position"])
+        else:
+            origin = self._effective_world_pos(i)
+        return {
+            "origin": origin,
+            "axes": gizmo_axes(ship.GetWorldRotation()),
+            "length": gizmo_length(self.camera),
+            "highlight": self._gizmo_hover,
+            "handle_kind": 1,
+        }
+
+    def rotate_gizmo(self) -> Optional[dict]:
+        """The rotate-gizmo (orientation rings) for the selected cylinder light,
+        or None. Same shape as `scale_gizmo` but with `"handle_kind": 2` so the
+        renderer draws rings. Gated on the rotate tool being active, a rotate
+        target (cylinder light) selected, and the ship resolvable with a world
+        rotation."""
+        if self.active_tool != "rotate" or self.camera is None:
+            return None
+        t = self._rotate_target()
+        if t is None:
+            return None
+        ship = self._ship_getter()
+        if ship is None or not hasattr(ship, "GetWorldRotation"):
+            return None
+        _, i = t
+        if not (0 <= i < len(self._descriptors)):
+            return None
+        light = self._effective_light(i)
+        if light is None:
+            return None
+        from engine.ui.ship_property_viewer import (
+            gizmo_axes, gizmo_length, world_from_body)
+        origin = world_from_body(ship, light["position"])
+        return {
+            "origin": origin,
+            "axes": gizmo_axes(ship.GetWorldRotation()),
+            "length": gizmo_length(self.camera),
+            "highlight": self._gizmo_hover,
+            "handle_kind": 2,
+        }
+
+    def _active_gizmo(self) -> Optional[dict]:
+        """The gizmo for the active tool: `transform_gizmo` under Transform,
+        `scale_gizmo` under Scale, `rotate_gizmo` under Rotate, else None.
+        Shared by `_handle_gizmo_input` so hover/grab/drag geometry follows the
+        current tool."""
+        if self.active_tool == "transform":
+            return self.transform_gizmo()
+        if self.active_tool == "scale":
+            return self.scale_gizmo()
+        if self.active_tool == "rotate":
+            return self.rotate_gizmo()
+        return None
+
+    def _begin_scale_drag(self, axis: int, grab_param: float) -> None:
+        """Start a scale drag on `axis`, capturing the fixed drag-start world
+        origin and the grabbed size value so `_apply_scale_drag` multiplies
+        from a stable anchor. For xyz (Box) targets the axis picks the field;
+        every other shape is uniform and scales field 0 (the radius)."""
+        self._axis_drag = axis
+        self._axis_grab_param = grab_param
+        g = self._active_gizmo()
+        self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
+        t = self._active_transform_target()
+        if t is None:
+            self._scale_grab = (0, 0.0)
+            return
+        kind, fields = self._scale_kind_and_fields(t)
+        if kind == "xyz":
+            self._scale_grab = (axis, fields[axis]["value"])   # per-axis
+        elif kind == "radius_length":
+            # Cylinder: the handle aligned with the cylinder's axis scales
+            # Length (field 1); the two perpendicular handles scale Radius
+            # (field 0). The gizmo axes are body X/Y/Z, so the aligned handle
+            # is the dominant component of the region's body-frame axis vector.
+            kt, i = t
+            spec = self._effective_light(i) or {}
+            av = spec.get("axis", (0.0, -1.0, 0.0))
+            aligned = max(range(3), key=lambda k: abs(av[k]))
+            field_idx = 1 if axis == aligned else 0
+            self._scale_grab = (field_idx, fields[field_idx]["value"])
+        else:
+            self._scale_grab = (0, fields[0]["value"])          # uniform -> radius
+
+    def _apply_scale_drag(self, t_now: float) -> None:
+        """Scale the grabbed field to `grab_value * (t_now / grab_param)`,
+        with the grab param floored at a quarter of the gizmo length so a
+        drag past the origin can't invert or divide-by-zero."""
+        if self._axis_drag is None:
+            return
+        from engine.ui.ship_property_viewer import gizmo_length
+        L = gizmo_length(self.camera)
+        ratio = t_now / max(self._axis_grab_param, 0.25 * L)
+        idx, grab_val = self._scale_grab
+        self._set_scale_field(idx, grab_val * ratio)
+
+    def _begin_ring_drag(self, ring, grab_angle):
+        """Start a ring drag on `ring` (0/1/2), capturing the grabbed screen
+        angle, the grab-start axis/orientation + degree accumulators, and the
+        screen-vs-body sign (so a screen-CCW sweep rotates about the axis
+        toward the camera)."""
+        g = self._active_gizmo()
+        self._axis_drag = ring
+        self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
+        self._ring_grab_angle = grab_angle
+        t = self._rotate_target()
+        if t is None:
+            self._ring_grab_axis = (0.0, -1.0, 0.0)
+            self._ring_grab_orientation = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+            self._ring_grab_accum = [0.0, 0.0, 0.0]
+            self._ring_sign = 1.0
+            return
+        _, i = t
+        spec = self._effective_light(i) or {}
+        self._ring_grab_axis = tuple(spec.get("axis") or (0.0, -1.0, 0.0))
+        self._ring_grab_orientation = spec.get("orientation") \
+            or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        self._ring_grab_accum = list(self._rotate_accum.get(i, [0.0, 0.0, 0.0]))
+        eye, tgt = self.camera.eye(), self.camera.target
+        fwd = (tgt[0]-eye[0], tgt[1]-eye[1], tgt[2]-eye[2])
+        wa = g["axes"][ring] if g else (0.0, 0.0, 1.0)
+        d = wa[0]*fwd[0] + wa[1]*fwd[1] + wa[2]*fwd[2]
+        # Screen-CCW should rotate about the axis toward the camera. If it feels
+        # inverted in-game, flip this comparison.
+        self._ring_sign = -1.0 if d > 0.0 else 1.0
+
+    def _apply_ring_drag_angle(self, d_body):
+        """Apply a body-frame delta angle (radians) about the grabbed ring axis
+        to the grab-start axis/orientation. Shared core for the cursor-driven
+        drag + tests. Shape-aware: a Cylinder rotates its `axis`; a Box
+        rotates BOTH `forward` and `up` of the grab-start orientation, then
+        re-orthonormalizes."""
+        t = self._rotate_target()
+        if t is None or self._axis_drag is None:
+            return
+        _, i = t
+        from engine.ui.ship_property_viewer import (
+            rotate_about_axis, orthonormalize_basis)
+        k = self._axis_drag
+        spec = dict(self._effective_light(i) or {})
+        if not spec:
+            return
+        if spec.get("shape") == "Box":
+            fwd, up = self._ring_grab_orientation
+            fwd = rotate_about_axis(fwd, k, d_body)
+            up = rotate_about_axis(up, k, d_body)
+            spec["orientation"] = orthonormalize_basis(fwd, up)
+        else:
+            spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
+        self._pending_light[i] = spec
+        self._rotate_accum.setdefault(i, [0.0, 0.0, 0.0])
+        self._rotate_accum[i][k] = self._ring_grab_accum[k] + math.degrees(d_body)
+        self._last_pushed = None
+
+    def _apply_ring_drag(self, x, y, fb_size):
+        """Map the cursor's screen angle to a body-frame delta about the grabbed
+        ring axis (unwrapped to (-pi, pi], signed by `_ring_sign`)."""
+        from engine.ui.ship_property_viewer import ring_drag_angle
+        ang = ring_drag_angle(x, y, self._axis_grab_origin, self.camera, fb_size())
+        d = ang - self._ring_grab_angle
+        while d > math.pi:
+            d -= 2.0 * math.pi
+        while d < -math.pi:
+            d += 2.0 * math.pi
+        self._apply_ring_drag_angle(d * self._ring_sign)
 
     def _begin_axis_drag(self, axis: int, grab_param: float) -> None:
         """Start an axis drag on `axis` (0/1/2), capturing the fixed drag-start
@@ -484,7 +966,11 @@ class ShipPropertyViewerPanel(Panel):
                     tuple(sorted(self._pending_radius.items())),
                     tuple(sorted(self._pending_light)),   # indices with a staged light
                     tuple(sorted(self._pending_pos.items())),
-                    tuple(sorted(self._expanded_groups)))
+                    tuple(sorted(self._expanded_groups)),
+                    self._coord_clipboard,
+                    self._scale_clipboard,
+                    self._rotate_clipboard,
+                    tuple(sorted((k, tuple(v)) for k, v in self._rotate_accum.items())))
         if snapshot == self._last_pushed:
             return None
         self._last_pushed = snapshot
@@ -513,6 +999,9 @@ class ShipPropertyViewerPanel(Panel):
             "selected_index": self.selected_index,
             "selected_light_index": self._selected_light_index,
             "active_tool": self.active_tool,
+            "transform_coords": self.transform_coords(),
+            "scale_values": self.scale_values(),
+            "rotate_values": self.rotate_values(),
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
@@ -705,7 +1194,16 @@ class ShipPropertyViewerPanel(Panel):
 
         x, y = cursor_pos()
         over_tools = self._cursor_over_tools(x, y, dsf, fb_w, fb_h)
-        over_chrome = self._cursor_over_chrome(x, y, dsf) or over_tools
+        # Only guard the coord-panel region while the panel is actually
+        # visible (Transform tool active + a target selected) — otherwise the
+        # top-right rectangle would be a dead zone that swallows orbit-drag
+        # starts and pin picks whenever the panel is hidden.
+        over_coords = ((self.transform_coords() is not None
+                        or self.scale_values() is not None
+                        or self.rotate_values() is not None)
+                       and self._cursor_over_coords(x, y, dsf, fb_w, fb_h))
+        over_chrome = (self._cursor_over_chrome(x, y, dsf) or over_tools
+                       or over_coords)
         over_left_col = self._cursor_over_left_column(x, y, dsf)
 
         # Zoom: drain the wheel accumulator even when no other input so a
@@ -773,6 +1271,7 @@ class ShipPropertyViewerPanel(Panel):
         try:
             from engine.ui.ship_property_viewer import (
                 pick_gizmo_axis, axis_drag_param, gizmo_length,
+                pick_gizmo_ring, ring_drag_angle,
             )
         except ImportError:
             return False
@@ -791,42 +1290,65 @@ class ShipPropertyViewerPanel(Panel):
                 return True
             # Drag: map the cursor onto the FIXED drag-start shaft so the
             # mapping stays stable as the origin moves with the subsystem.
-            g = self.transform_gizmo()
+            g = self._active_gizmo()
             if g is not None:
-                t = axis_drag_param(x, y, self._axis_grab_origin,
-                                    g["axes"][self._axis_drag],
-                                    gizmo_length(self.camera), self.camera,
-                                    fb_size())
-                self._apply_axis_drag(t)
+                if self.active_tool == "rotate":
+                    self._apply_ring_drag(x, y, fb_size)
+                else:
+                    t = axis_drag_param(x, y, self._axis_grab_origin,
+                                        g["axes"][self._axis_drag],
+                                        gizmo_length(self.camera), self.camera,
+                                        fb_size())
+                    if self.active_tool == "scale":
+                        self._apply_scale_drag(t)
+                    else:
+                        self._apply_axis_drag(t)
             self._drag_last = (x, y)
             return True
 
-        g = self.transform_gizmo()
+        g = self._active_gizmo()
         if g is None or over_chrome:
             self._gizmo_hover = -1
             return False
 
         # Press edge: try to grab an axis. If none, fall through to orbit-press.
         if down and not self._lmb_down:
-            axis = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
-                                   self.camera, fb_size(), dsf)
-            if axis is None:
-                return False
-            t_grab = axis_drag_param(x, y, g["origin"], g["axes"][axis],
-                                     g["length"], self.camera, fb_size())
-            self._begin_axis_drag(axis, t_grab)
+            if self.active_tool == "rotate":
+                ring = pick_gizmo_ring(x, y, g["origin"], g["axes"], g["length"],
+                                       self.camera, fb_size(), dsf)
+                if ring is None:
+                    return False
+                self._begin_ring_drag(
+                    ring, ring_drag_angle(x, y, g["origin"], self.camera,
+                                          fb_size()))
+                self._gizmo_hover = ring
+            else:
+                axis = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
+                                       self.camera, fb_size(), dsf)
+                if axis is None:
+                    return False
+                t_grab = axis_drag_param(x, y, g["origin"], g["axes"][axis],
+                                         g["length"], self.camera, fb_size())
+                if self.active_tool == "scale":
+                    self._begin_scale_drag(axis, t_grab)
+                else:
+                    self._begin_axis_drag(axis, t_grab)
+                self._gizmo_hover = axis
             self._chrome_press = False
             self._lmb_down = True
             self._drag_last = (x, y)
             self._press_pos = (x, y)
             self._drag_dist = 0.0
-            self._gizmo_hover = axis
             return True
 
         # Not a press edge and no active drag: hover highlight only (idle).
         if not down:
-            hov = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
-                                  self.camera, fb_size(), dsf)
+            if self.active_tool == "rotate":
+                hov = pick_gizmo_ring(x, y, g["origin"], g["axes"], g["length"],
+                                      self.camera, fb_size(), dsf)
+            else:
+                hov = pick_gizmo_axis(x, y, g["origin"], g["axes"], g["length"],
+                                      self.camera, fb_size(), dsf)
             self._gizmo_hover = hov if hov is not None else -1
         return False
 
@@ -854,6 +1376,22 @@ class ShipPropertyViewerPanel(Panel):
         x1 = w_pt - TOOLS_MARGIN_PT
         y0 = h_pt - TOOLS_MARGIN_PT - TOOLS_CLUSTER_H_PT
         y1 = h_pt - TOOLS_MARGIN_PT
+        return x0 <= px <= x1 and y0 <= py <= y1
+
+    @staticmethod
+    def _cursor_over_coords(x: float, y: float, dsf: float,
+                            fb_w: float, fb_h: float) -> bool:
+        """Cursor (framebuffer px) inside the top-right coord panel box.
+        Returns False when the viewport width is unknown."""
+        if fb_w <= 0:
+            return False
+        s = dsf or 1.0
+        px, py = x / s, y / s
+        w_pt = fb_w / s
+        x1 = w_pt - COORDS_MARGIN_PT
+        x0 = x1 - COORDS_W_PT
+        y0 = COORDS_TOP_PT
+        y1 = y0 + COORDS_H_PT
         return x0 <= px <= x1 and y0 <= py <= y1
 
     @classmethod
@@ -1014,6 +1552,130 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             self.active_tool = None if self.active_tool == name else name
             self._last_pushed = None
+            return True
+        if action.startswith("coord_nudge:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                axis = int(arg["axis"]); delta = float(arg["delta"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if axis not in (0, 1, 2):
+                return False
+            pos = self._transform_target_pos()
+            if pos is None:
+                return False
+            p = list(pos); p[axis] += delta
+            self._set_transform_target_pos(tuple(p))
+            self._last_pushed = None
+            return True
+        if action == "coord_copy":
+            pos = self._transform_target_pos()
+            if pos is not None:
+                self._coord_clipboard = pos
+                self._last_pushed = None
+            return True
+        if action == "coord_paste":
+            if self._coord_clipboard is not None and self._transform_target_pos() is not None:
+                self._set_transform_target_pos(self._coord_clipboard)
+                self._last_pushed = None
+            return True
+        if action == "coord_mirror":
+            pos = self._transform_target_pos()
+            if pos is not None:
+                p = list(pos); p[0] = -p[0]
+                self._set_transform_target_pos(tuple(p))
+                self._last_pushed = None
+            return True
+        if action.startswith("scale_nudge:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                index = int(arg["index"]); delta = float(arg["delta"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            t = self._active_transform_target()
+            if t is None:
+                return False
+            kind, fields = self._scale_kind_and_fields(t)
+            if not (0 <= index < len(fields)):
+                return False
+            self._set_scale_field(index, fields[index]["value"] + delta)
+            return True
+        if action == "scale_copy":
+            t = self._active_transform_target()
+            if t is not None:
+                kind, fields = self._scale_kind_and_fields(t)
+                self._scale_clipboard = (kind, tuple(f["value"] for f in fields))
+                self._last_pushed = None
+            return True
+        if action == "scale_paste":
+            t = self._active_transform_target()
+            if t is not None and self._scale_clipboard is not None:
+                kind, fields = self._scale_kind_and_fields(t)
+                if self._scale_clipboard[0] == kind:
+                    for idx, v in enumerate(self._scale_clipboard[1]):
+                        self._set_scale_field(idx, v)
+            return True
+        if action == "scale_uniform":
+            t = self._active_transform_target()
+            if t is not None:
+                kind, fields = self._scale_kind_and_fields(t)
+                if kind == "xyz":
+                    m = max(f["value"] for f in fields)
+                    for idx in range(3):
+                        self._set_scale_field(idx, m)
+            return True
+        if action.startswith("rotate_nudge:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                axis = int(arg["axis"]); delta = float(arg["delta"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if axis not in (0, 1, 2) or self._rotate_target() is None:
+                return False
+            self._rotate_axis(axis, delta)
+            return True
+        if action == "rotate_copy":
+            t = self._rotate_target()
+            if t is not None:
+                _, i = t
+                spec = self._effective_light(i) or {}
+                if spec.get("shape") == "Box":
+                    fwd, up = spec.get("orientation") \
+                        or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+                    self._rotate_clipboard = (
+                        "box_orientation", (tuple(fwd), tuple(up)))
+                else:
+                    axis = spec.get("axis") or (0.0, -1.0, 0.0)
+                    self._rotate_clipboard = ("cylinder_axis", tuple(axis))
+                self._last_pushed = None
+            return True
+        if action == "rotate_paste":
+            t = self._rotate_target()
+            if (t is not None and self._rotate_clipboard is not None
+                    and self._rotate_clipboard[0] == self._rotate_clipboard_kind(t[1])):
+                _, i = t
+                if self._rotate_clipboard[0] == "box_orientation":
+                    fwd, up = self._rotate_clipboard[1]
+                    self._set_orientation_absolute(i, fwd, up)
+                else:
+                    self._set_axis_absolute(i, self._rotate_clipboard[1])
+            return True
+        if action == "rotate_mirror":
+            t = self._rotate_target()
+            if t is not None:
+                _, i = t
+                spec = self._effective_light(i) or {}
+                if spec.get("shape") == "Box":
+                    fwd, up = spec.get("orientation") \
+                        or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+                    fwd = (-fwd[0], fwd[1], fwd[2])
+                    up = (-up[0], up[1], up[2])
+                    self._set_orientation_absolute(i, fwd, up)
+                else:
+                    axis = list((self._effective_light(i) or {}).get("axis")
+                                or (0.0, -1.0, 0.0))
+                    axis[0] = -axis[0]
+                    self._set_axis_absolute(i, axis)
             return True
         if action == "save":
             if (not self._pending_radius and not self._pending_light

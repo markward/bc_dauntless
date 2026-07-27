@@ -25,25 +25,23 @@ def _galaxy(find):
     """galaxy."""
     p = find("Port Warp")
     if p is not None:
-        p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.45)
-        p.SetGlowRegionExtent(0, -2.0, 2.0)
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, -1.3, -1.9119627023044568, -0.06)
+        p.SetGlowRegionScale(0, 0.30931014657993366, 1.307457336253744, 0.21014627531109478)
     p = find("Star Warp")
     if p is not None:
-        p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.45)
-        p.SetGlowRegionExtent(0, -2.0, 2.0)
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, 1.3, -1.9119627023044568, -0.06)
+        p.SetGlowRegionScale(0, 0.30931014657993366, 1.307457336253744, 0.21014627531109478)
     p = find("Port Impulse")
     if p is not None:
         p.SetGlowRegionShape(0, "Box")
-        p.SetGlowRegionPosition(0, -1.22, -0.2, 0.32)
+        p.SetGlowRegionPosition(0, -1.22, -0.31166273838979724, 0.32)
         p.SetGlowRegionScale(0, 0.15, 0.2, 0.05)
     p = find("Star Impulse")
     if p is not None:
         p.SetGlowRegionShape(0, "Box")
-        p.SetGlowRegionPosition(0, 1.22, -0.2, 0.32)
+        p.SetGlowRegionPosition(0, 1.22, -0.31166273838979724, 0.32)
         p.SetGlowRegionScale(0, 0.15, 0.2, 0.05)
     p = find("Center Impulse")
     if p is not None:
@@ -52,9 +50,9 @@ def _galaxy(find):
         p.SetGlowRegionScale(0, 0.2, 0.15, 0.1)
     p = find("Sensor Array")
     if p is not None:
-        p.SetGlowRegionShape(0, "Sphere")
-        p.SetGlowRegionPosition(0, 0.0, -0.45, -0.5)
-        p.SetGlowRegionRadius(0, 0.28)
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, 0.0, -0.29861956500569303, -0.5)
+        p.SetGlowRegionScale(0, 0.5335676748872048, 0.19850541821587558, 0.15858130015119873)
 
 
 def _GenericTemplate(find):
@@ -82,15 +80,17 @@ def _akira(find):
     p = find("Port Warp")
     if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")
+        p.SetGlowRegionPosition(0, -1.4, -0.8, -0.25)
         p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.375)
-        p.SetGlowRegionExtent(0, -3.125, 3.125)
+        p.SetGlowRegionRadius(0, 0.2604417052340165)
+        p.SetGlowRegionExtent(0, -1.2589026527761655, 1.2589026527761655)
     p = find("Star Warp")
     if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")
+        p.SetGlowRegionPosition(0, 1.4, -0.8, -0.25)
         p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.375)
-        p.SetGlowRegionExtent(0, -3.125, 3.125)
+        p.SetGlowRegionRadius(0, 0.2604417052340165)
+        p.SetGlowRegionExtent(0, -1.2589026527761655, 1.2589026527761655)
     p = find("Port Impulse")
     if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")

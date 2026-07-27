@@ -130,8 +130,9 @@ class _FakeRenderer:
     def add_cylinder_region(self, iid, center, axis, radius, length):
         self.cylinder_calls.append((iid, center, axis, radius, length))
         return self._results.pop(0)
-    def add_box_region(self, iid, center, half_extents):
-        self.box_calls.append((iid, center, half_extents))
+    def add_box_region(self, iid, center, half_extents,
+                       forward=(0.0, 1.0, 0.0), up=(0.0, 0.0, 1.0)):
+        self.box_calls.append((iid, center, half_extents, forward, up))
         return self._results.pop(0)
     def set_glow_region_dim(self, iid, idx, dim_target, edge_time, flicker):
         self.dim_calls.append((iid, idx, dim_target, edge_time, flicker))
@@ -484,7 +485,8 @@ def test_controller_box_pod_registers_box_region():
     ship = _Ship(None, impulse, None)
     rend = _FakeRenderer(results=[0])
     ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
-    assert rend.box_calls == [(7, (0.0, -0.98, -0.45), (0.3, 1.0, 0.12))]
+    assert rend.box_calls == [(7, (0.0, -0.98, -0.45), (0.3, 1.0, 0.12),
+                               (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))]
     assert rend.cylinder_calls == [] and rend.sphere_calls == []
     assert len(ctrl._regions) == 1
     assert ctrl._regions[0]["boost"] is True
@@ -574,13 +576,15 @@ def test_resolve_box_region_returns_box_op():
     raw = {"shape": "Box", "position": (1.0, 2.0, 3.0),
            "scale": (0.5, 0.6, 0.7), "axis": None, "radius": None, "extent": None}
     op = sg.resolve_baked_region(raw, default_pos=(0.0, 0.0, 0.0))
-    assert op == ("box", (1.0, 2.0, 3.0), (0.5, 0.6, 0.7))
+    assert op == ("box", (1.0, 2.0, 3.0), (0.5, 0.6, 0.7),
+                  (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
 
 def test_resolve_box_defaults_position_to_hardpoint():
     raw = {"shape": "Box", "position": None, "scale": (0.5, 0.5, 0.5)}
     op = sg.resolve_baked_region(raw, default_pos=(4.0, 0.0, 0.0))
-    assert op == ("box", (4.0, 0.0, 0.0), (0.5, 0.5, 0.5))
+    assert op == ("box", (4.0, 0.0, 0.0), (0.5, 0.5, 0.5),
+                  (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
 
 def test_resolve_box_rejects_nonpositive_scale():

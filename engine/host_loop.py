@@ -7342,12 +7342,13 @@ def run(mission_name: Optional[str] = None,
                 # Transform gizmo: three body-frame drag axes at the
                 # selected subsystem/light, only while the Transform tool
                 # is active and something is selected.
-                _gizmo = ship_property_viewer.transform_gizmo()
+                _gizmo = ship_property_viewer._active_gizmo()
                 if _gizmo is not None:
                     ox, oy, oz = _gizmo["origin"]
                     ax, ay, az = _gizmo["axes"]
                     r.set_transform_gizmo((ox, oy, oz), ax, ay, az,
-                                          _gizmo["length"], _gizmo["highlight"])
+                                          _gizmo["length"], _gizmo["highlight"],
+                                          _gizmo.get("handle_kind", 0))
                 else:
                     r.clear_transform_gizmo()
                 # The gameplay target reticle is hidden while the viewer owns

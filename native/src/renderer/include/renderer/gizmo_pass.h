@@ -12,9 +12,11 @@ namespace renderer {
 class Shader;
 
 /// Developer 3-axis transform gizmo for the Ship Property Viewer: three
-/// coloured arrows (shaft + small cone head) drawn in world space, depth
-/// test off, always opaque. Self-contained (owns its shader + a unit-arrow
-/// mesh along local +Z), not wired into the frame by default.
+/// coloured handles drawn in world space, depth test off, always opaque.
+/// `handle_kind` selects the handle shape — 0 = arrows (shaft + cone head,
+/// Move), 1 = cubes (Scale), 2 = rings (Rotate). Self-contained (owns its
+/// shader + unit arrow/cube/ring meshes along local +Z), not wired into the
+/// frame by default.
 class GizmoPass {
 public:
     struct Gizmo {
@@ -22,6 +24,8 @@ public:
         glm::vec3 axis[3]{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
         float length{1.0f};
         int highlight{-1};   // 0/1/2 = brightened axis, -1 = none
+        int handle_kind{0};  // 0 = cone/arrow tip (move), 1 = cube tip (scale),
+                             // 2 = ring (rotate)
     };
 
     GizmoPass();
@@ -40,6 +44,15 @@ private:
     std::unique_ptr<Shader> shader_;
     unsigned int vao_{0}, vbo_{0};
     int vertex_count_{0};
+
+    // Second unit mesh: shaft + cube tip (Scale gizmo, handle_kind == 1).
+    unsigned int cube_vao_{0}, cube_vbo_{0};
+    int cube_vertex_count_{0};
+
+    // Third unit mesh: a segmented unit circle (radius 1) in the local XY
+    // plane, normal +Z (Rotate gizmo, handle_kind == 2). No shaft/tip.
+    unsigned int ring_vao_{0}, ring_vbo_{0};
+    int ring_vertex_count_{0};
 };
 
 }  // namespace renderer

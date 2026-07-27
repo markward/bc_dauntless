@@ -136,9 +136,19 @@ def region_spec_to_calls(index, spec):
     elif shape == "Box":
         sx, sy, sz = spec["scale"]
         calls.append(("SetGlowRegionScale", (index, sx, sy, sz)))
+        ori = spec.get("orientation")
+        if ori is not None and not _is_identity_orientation(ori):
+            (fx, fy, fz), (ux, uy, uz) = ori
+            calls.append(("SetGlowRegionOrientation", (index, fx, fy, fz, ux, uy, uz)))
     else:  # Sphere
         calls.append(("SetGlowRegionRadius", (index, spec["radius"][0])))
     return calls
+
+
+def _is_identity_orientation(ori, eps=1e-6):
+    (fx, fy, fz), (ux, uy, uz) = ori
+    return (abs(fx) < eps and abs(fy - 1.0) < eps and abs(fz) < eps and
+            abs(ux) < eps and abs(uy) < eps and abs(uz - 1.0) < eps)
 
 
 def _light_region_spec(sub):
@@ -154,9 +164,11 @@ def _light_region_spec(sub):
                 "axis": r["axis"] or (0.0, -1.0, 0.0),
                 "radius": r["radius"] or (0.25,),
                 "extent": r["extent"] or (0.0, 2.0),
-                "scale": r["scale"] or (0.25, 0.25, 0.25)}
+                "scale": r["scale"] or (0.25, 0.25, 0.25),
+                "orientation": r.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))}
     return {"shape": "Sphere", "position": pos, "axis": (0.0, -1.0, 0.0),
-            "radius": (0.25,), "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25)}
+            "radius": (0.25,), "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25),
+            "orientation": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))}
 
 
 def _light_annotation(sub):
@@ -409,6 +421,37 @@ def world_from_body(ship, body_pos):
     return (loc.x + off.x, loc.y + off.y, loc.z + off.z)
 
 
+def rotate_about_axis(vec, k, angle_rad):
+    """Rodrigues rotation of body-frame `vec` about basis axis e_k (k in 0/1/2),
+    returned normalized. Falls back to the normalized input on a degenerate
+    result."""
+    kx = (1.0 if k == 0 else 0.0, 1.0 if k == 1 else 0.0, 1.0 if k == 2 else 0.0)
+    c, s = math.cos(angle_rad), math.sin(angle_rad)
+    dot = kx[0]*vec[0] + kx[1]*vec[1] + kx[2]*vec[2]
+    cross = (kx[1]*vec[2] - kx[2]*vec[1],
+             kx[2]*vec[0] - kx[0]*vec[2],
+             kx[0]*vec[1] - kx[1]*vec[0])
+    out = (vec[0]*c + cross[0]*s + kx[0]*dot*(1.0 - c),
+           vec[1]*c + cross[1]*s + kx[1]*dot*(1.0 - c),
+           vec[2]*c + cross[2]*s + kx[2]*dot*(1.0 - c))
+    n = math.sqrt(out[0]**2 + out[1]**2 + out[2]**2)
+    if n < 1e-9:
+        vn = math.sqrt(vec[0]**2 + vec[1]**2 + vec[2]**2) or 1.0
+        return (vec[0]/vn, vec[1]/vn, vec[2]/vn)
+    return (out[0]/n, out[1]/n, out[2]/n)
+
+
+def orthonormalize_basis(forward, up):
+    """Re-orthonormalize a (forward, up) box-orientation basis after either
+    vector has been rotated independently: normalize `forward`, then
+    Gram-Schmidt `up` against it (`up - (up·f)*f`, normalized) so the pair
+    stays unit-length and mutually perpendicular. Right is derived by
+    consumers as `forward x up`, so it isn't stored here."""
+    f = _norm(forward)
+    u = _sub(up, _scale(f, _dot(up, f)))
+    return f, _norm(u)
+
+
 def _seg_dist2(px, py, ax, ay, bx, by):
     """Squared distance from point p to segment a-b, in screen pixels."""
     dx, dy = bx - ax, by - ay
@@ -439,6 +482,46 @@ def pick_gizmo_axis(cursor_x, cursor_y, origin, axes, length, cam, viewport,
         if d2 < best_d2:
             best_d2, best = d2, k
     return best
+
+
+def _plane_basis(n):
+    """Two orthonormal vectors spanning the plane perpendicular to unit `n`."""
+    n = _norm(n)
+    seed = (1.0, 0.0, 0.0) if abs(n[0]) < 0.9 else (0.0, 1.0, 0.0)
+    u = _norm(_sub(seed, _scale(n, _dot(seed, n))))
+    v = (n[1]*u[2] - n[2]*u[1], n[2]*u[0] - n[0]*u[2], n[0]*u[1] - n[1]*u[0])
+    return u, v
+
+
+def pick_gizmo_ring(cursor_x, cursor_y, origin, axes, length, cam, viewport,
+                    device_scale_factor=1.0, samples=48):
+    """Ring index (0/1/2) whose projected circle (in the plane perpendicular to
+    axes[k]) is nearest the cursor, or None. Nearest within the click threshold."""
+    thresh = GIZMO_PICK_PT * (device_scale_factor if device_scale_factor > 0 else 1.0)
+    best_d2, best = thresh * thresh, None
+    for k in range(3):
+        u, v = _plane_basis(axes[k])
+        pts = []
+        for sidx in range(samples):
+            a = 2.0 * math.pi * sidx / samples
+            p = _add(origin, _add(_scale(u, length*math.cos(a)),
+                                  _scale(v, length*math.sin(a))))
+            sx, sy, _z, vis = project(p, cam, viewport)
+            pts.append((sx, sy) if vis else None)
+        for sidx in range(samples):
+            a0, a1 = pts[sidx], pts[(sidx + 1) % samples]
+            if a0 is None or a1 is None:
+                continue
+            d2 = _seg_dist2(cursor_x, cursor_y, a0[0], a0[1], a1[0], a1[1])
+            if d2 < best_d2:
+                best_d2, best = d2, k
+    return best
+
+
+def ring_drag_angle(cursor_x, cursor_y, origin, cam, viewport):
+    """Cursor's screen angle around the projected gizmo centre (radians)."""
+    ox, oy, _z, _vis = project(origin, cam, viewport)
+    return math.atan2(cursor_y - oy, cursor_x - ox)
 
 
 def axis_drag_param(cursor_x, cursor_y, origin, axis, length, cam, viewport):

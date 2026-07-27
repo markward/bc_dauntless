@@ -337,6 +337,8 @@ void draw_model(const assets::Model& model,
         glm::vec4 nc[scenegraph::Instance::kMaxGlowRegions];
         glm::vec4 nd[scenegraph::Instance::kMaxGlowRegions];
         glm::vec4 ne[scenegraph::Instance::kMaxGlowRegions];   // shape, half_extents.xyz
+        glm::vec4 nf[scenegraph::Instance::kMaxGlowRegions];   // box forward.xyz (body space)
+        glm::vec4 ng[scenegraph::Instance::kMaxGlowRegions];   // box up.xyz (body space)
         int nn = 0;
         for (const auto& n : glow_regions) {
             if (!n.active) continue;
@@ -345,6 +347,8 @@ void draw_model(const assets::Model& model,
             nc[nn] = glm::vec4(n.fore, n.dim_target, n.disable_time, n.flicker);
             nd[nn] = glm::vec4(n.gain, n.gain_axis.x, n.gain_axis.y, n.gain_axis.z);
             ne[nn] = glm::vec4(n.shape, n.half_extents.x, n.half_extents.y, n.half_extents.z);
+            nf[nn] = glm::vec4(n.forward, 0.0f);
+            ng[nn] = glm::vec4(n.up, 0.0f);
             ++nn;
         }
         prog.set_int("u_glow_region_count", nn);
@@ -354,6 +358,8 @@ void draw_model(const assets::Model& model,
             prog.set_vec4_array("u_glow_region_c", nc, nn);
             prog.set_vec4_array("u_glow_region_d", nd, nn);
             prog.set_vec4_array("u_glow_region_e", ne, nn);
+            prog.set_vec4_array("u_glow_region_f", nf, nn);
+            prog.set_vec4_array("u_glow_region_g", ng, nn);
             // Reuse the decal world->body inverse + clock; set them here too in
             // case this instance has glow regions but no active decals.
             prog.set_mat4("u_ship_world_inv", glm::inverse(world));

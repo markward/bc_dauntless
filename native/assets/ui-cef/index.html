@@ -255,6 +255,89 @@
           </svg>
         </button>
       </div>
+      <!-- Transform coordinate panel (top-right). Shown only while the Transform
+           tool is active and something is selected; driven by payload.transform_coords.
+           Mouse-only steppers (no keyboard->CEF forwarding). -->
+      <div id="spv-coords" class="spv-coords dev-only" style="display:none;">
+        <div class="spv-coords__title">Position</div>
+        <div class="spv-coords__row">
+          <span class="spv-coords__axis">X</span>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(0,-0.1)">&minus;0.1</button>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(0,-0.01)">&minus;0.01</button>
+          <span id="spv-coord-x" class="spv-coords__val">0.00</span>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(0,0.01)">+0.01</button>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(0,0.1)">+0.1</button>
+        </div>
+        <div class="spv-coords__row">
+          <span class="spv-coords__axis">Y</span>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(1,-0.1)">&minus;0.1</button>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(1,-0.01)">&minus;0.01</button>
+          <span id="spv-coord-y" class="spv-coords__val">0.00</span>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(1,0.01)">+0.01</button>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(1,0.1)">+0.1</button>
+        </div>
+        <div class="spv-coords__row">
+          <span class="spv-coords__axis">Z</span>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(2,-0.1)">&minus;0.1</button>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(2,-0.01)">&minus;0.01</button>
+          <span id="spv-coord-z" class="spv-coords__val">0.00</span>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(2,0.01)">+0.01</button>
+          <button class="spv-step" onclick="shipPropertyViewerCoordNudge(2,0.1)">+0.1</button>
+        </div>
+        <div class="spv-coords__actions">
+          <button class="spv-coords__btn" onclick="shipPropertyViewerCoordCopy()">Copy</button>
+          <button id="spv-coord-paste" class="spv-coords__btn" onclick="shipPropertyViewerCoordPaste()">Paste</button>
+          <button class="spv-coords__btn" onclick="shipPropertyViewerCoordMirror()">Mirror</button>
+        </div>
+      </div>
+      <!-- Scale panel (top-right). Shown only while the Scale tool is active and
+           something is selected; rows are shape-aware (built from scale_values.fields).
+           Shares the top-right slot with #spv-coords (radio: never both). -->
+      <div id="spv-scale" class="spv-coords dev-only" style="display:none;">
+        <div class="spv-coords__title">Scale</div>
+        <div id="spv-scale-rows"></div>
+        <div class="spv-coords__actions">
+          <button class="spv-coords__btn" onclick="shipPropertyViewerScaleCopy()">Copy</button>
+          <button id="spv-scale-paste" class="spv-coords__btn" onclick="shipPropertyViewerScalePaste()">Paste</button>
+          <button class="spv-coords__btn" onclick="shipPropertyViewerScaleUniform()">Uniform</button>
+        </div>
+      </div>
+      <!-- Rotate panel (top-right). Shown only while the Rotate tool is
+           active and a cylinder light volume is selected; fixed X/Y/Z
+           degree rows driven by payload.rotate_values. Shares the top-right
+           slot with #spv-coords/#spv-scale (radio: never more than one). -->
+      <div id="spv-rotate" class="spv-coords dev-only" style="display:none;">
+        <div class="spv-coords__title">Rotate</div>
+        <div class="spv-coords__row">
+          <span class="spv-coords__axis">X</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,-5)">&minus;5&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,-1)">&minus;1&deg;</button>
+          <span id="spv-rotate-x" class="spv-coords__val">0.0&deg;</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,1)">+1&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(0,5)">+5&deg;</button>
+        </div>
+        <div class="spv-coords__row">
+          <span class="spv-coords__axis">Y</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,-5)">&minus;5&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,-1)">&minus;1&deg;</button>
+          <span id="spv-rotate-y" class="spv-coords__val">0.0&deg;</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,1)">+1&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(1,5)">+5&deg;</button>
+        </div>
+        <div class="spv-coords__row">
+          <span class="spv-coords__axis">Z</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,-5)">&minus;5&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,-1)">&minus;1&deg;</button>
+          <span id="spv-rotate-z" class="spv-coords__val">0.0&deg;</span>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,1)">+1&deg;</button>
+          <button class="spv-step" onclick="shipPropertyViewerRotateNudge(2,5)">+5&deg;</button>
+        </div>
+        <div class="spv-coords__actions">
+          <button class="spv-coords__btn" onclick="shipPropertyViewerRotateCopy()">Copy</button>
+          <button id="spv-rotate-paste" class="spv-coords__btn" onclick="shipPropertyViewerRotatePaste()">Paste</button>
+          <button class="spv-coords__btn" onclick="shipPropertyViewerRotateMirror()">Mirror</button>
+        </div>
+      </div>
       <div id="spv-popover" class="spv-popover"></div>
       <!-- Right-click context menu on a subsystem row → "Set Radius…" opens
            the radius modal below. The Save bar surfaces staged edits
