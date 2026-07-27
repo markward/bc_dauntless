@@ -73,6 +73,10 @@ COORDS_H_PT = 172
 # distinct from the orange glow-region and cyan weapon-arc overlays.
 SUBSYS_SPHERE_COLOR = (0.5, 1.0, 0.6)
 
+# Floor for any scale-tool field (radius / box axis / cylinder length) — a
+# nudge or paste can never drive a dimension to zero or negative.
+SCALE_MIN = 0.01
+
 
 class ShipPropertyViewerPanel(Panel):
     def __init__(self, ship_getter: Callable[[], object]) -> None:
@@ -150,6 +154,9 @@ class ShipPropertyViewerPanel(Panel):
         # Clipboard for the transform-coord panel's Copy/Paste — a body-frame
         # (x, y, z) tuple, or None. Reset every open/close.
         self._coord_clipboard = None
+        # Clipboard for the scale tool's Copy/Paste — (kind, values-tuple),
+        # or None. Reset every open/close.
+        self._scale_clipboard = None
 
     @property
     def name(self) -> str:
@@ -183,6 +190,7 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_origin = (0.0, 0.0, 0.0)
         self._gizmo_hover = -1
         self._coord_clipboard = None
+        self._scale_clipboard = None
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -217,6 +225,7 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_origin = (0.0, 0.0, 0.0)
         self._gizmo_hover = -1
         self._coord_clipboard = None
+        self._scale_clipboard = None
 
     def frame_to_bounds(self, center, radius: float) -> None:
         """Point the orbit camera at `center` and pull back so the model's
@@ -379,6 +388,88 @@ class ShipPropertyViewerPanel(Panel):
         return {"x": pos[0], "y": pos[1], "z": pos[2],
                 "has_clipboard": self._coord_clipboard is not None}
 
+    # ------------------------------------------------------------------
+    # Scale tool (shape-aware size fields for the current transform target)
+    # ------------------------------------------------------------------
+    def _scale_kind_and_fields(self, target):
+        """Shape-aware size fields for `target` (see `_active_transform_target`).
+        A subsystem is always a sphere (`radius`); a light volume's fields
+        depend on its shape (`Box` -> xyz axes, `Cylinder` -> radius+length,
+        else -> radius)."""
+        kt, i = target
+        if kt == "subsystem":
+            r = self._effective_radius(i, self._descriptors[i].get("properties", {}).get("radius"))
+            try:
+                r = float(r)
+            except (TypeError, ValueError):
+                r = 0.0
+            return "radius", [{"label": "Radius", "value": r}]
+        spec = self._effective_light(i)
+        if not spec:
+            return "radius", [{"label": "Radius", "value": 0.0}]
+        shape = spec.get("shape", "Sphere")
+        if shape == "Box":
+            sx, sy, sz = spec.get("scale", (0.25, 0.25, 0.25))
+            return "xyz", [{"label": "X", "value": float(sx)},
+                           {"label": "Y", "value": float(sy)},
+                           {"label": "Z", "value": float(sz)}]
+        if shape == "Cylinder":
+            r = spec.get("radius", (0.25,))[0]
+            aft, fore = spec.get("extent", (0.0, 2.0))
+            return "radius_length", [{"label": "Radius", "value": float(r)},
+                                     {"label": "Length", "value": float(fore) - float(aft)}]
+        return "radius", [{"label": "Radius", "value": float(spec.get("radius", (0.25,))[0])}]
+
+    def scale_values(self) -> Optional[dict]:
+        """Data for the scale-tool panel: `{"kind", "fields", "has_clipboard",
+        "can_paste"}` for the current transform target, or None when the
+        scale tool isn't active or nothing is selected."""
+        if self.active_tool != "scale":
+            return None
+        t = self._active_transform_target()
+        if t is None:
+            return None
+        kind, fields = self._scale_kind_and_fields(t)
+        clip = self._scale_clipboard
+        return {"kind": kind, "fields": fields,
+                "has_clipboard": clip is not None,
+                "can_paste": clip is not None and clip[0] == kind}
+
+    def _set_scale_field(self, index, value) -> None:
+        """Stage `value` (floored at SCALE_MIN) for size field `index` of the
+        current transform target, routing to the radius or light-spec staging
+        path as appropriate."""
+        t = self._active_transform_target()
+        if t is None:
+            return
+        value = max(SCALE_MIN, float(value))
+        kt, i = t
+        kind, fields = self._scale_kind_and_fields(t)
+        if not (0 <= index < len(fields)):
+            return
+        if kt == "subsystem":
+            self._pending_radius[i] = value
+            self._last_pushed = None
+            return
+        spec = dict(self._effective_light(i) or {})
+        if not spec:
+            return
+        shape = spec.get("shape", "Sphere")
+        if shape == "Box":
+            sc = list(spec.get("scale", (0.25, 0.25, 0.25)))
+            sc[index] = value
+            spec["scale"] = tuple(sc)
+        elif shape == "Cylinder":
+            if index == 0:
+                spec["radius"] = (value,)
+            else:
+                aft = spec.get("extent", (0.0, 2.0))[0]
+                spec["extent"] = (aft, aft + value)
+        else:
+            spec["radius"] = (value,)
+        self._pending_light[i] = spec
+        self._last_pushed = None
+
     def transform_gizmo(self) -> Optional[dict]:
         """The move-gizmo for the selected subsystem or light node, or None.
 
@@ -537,7 +628,8 @@ class ShipPropertyViewerPanel(Panel):
                     tuple(sorted(self._pending_light)),   # indices with a staged light
                     tuple(sorted(self._pending_pos.items())),
                     tuple(sorted(self._expanded_groups)),
-                    self._coord_clipboard)
+                    self._coord_clipboard,
+                    self._scale_clipboard)
         if snapshot == self._last_pushed:
             return None
         self._last_pushed = snapshot
@@ -567,6 +659,7 @@ class ShipPropertyViewerPanel(Panel):
             "selected_light_index": self._selected_light_index,
             "active_tool": self.active_tool,
             "transform_coords": self.transform_coords(),
+            "scale_values": self.scale_values(),
             "show_glow": self.show_glow_regions,
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
@@ -1124,6 +1217,44 @@ class ShipPropertyViewerPanel(Panel):
                 p = list(pos); p[0] = -p[0]
                 self._set_transform_target_pos(tuple(p))
                 self._last_pushed = None
+            return True
+        if action.startswith("scale_nudge:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                index = int(arg["index"]); delta = float(arg["delta"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            t = self._active_transform_target()
+            if t is None:
+                return False
+            kind, fields = self._scale_kind_and_fields(t)
+            if not (0 <= index < len(fields)):
+                return False
+            self._set_scale_field(index, fields[index]["value"] + delta)
+            return True
+        if action == "scale_copy":
+            t = self._active_transform_target()
+            if t is not None:
+                kind, fields = self._scale_kind_and_fields(t)
+                self._scale_clipboard = (kind, tuple(f["value"] for f in fields))
+                self._last_pushed = None
+            return True
+        if action == "scale_paste":
+            t = self._active_transform_target()
+            if t is not None and self._scale_clipboard is not None:
+                kind, fields = self._scale_kind_and_fields(t)
+                if self._scale_clipboard[0] == kind:
+                    for idx, v in enumerate(self._scale_clipboard[1]):
+                        self._set_scale_field(idx, v)
+            return True
+        if action == "scale_uniform":
+            t = self._active_transform_target()
+            if t is not None:
+                kind, fields = self._scale_kind_and_fields(t)
+                if kind == "xyz":
+                    m = max(f["value"] for f in fields)
+                    for idx in range(3):
+                        self._set_scale_field(idx, m)
             return True
         if action == "save":
             if (not self._pending_radius and not self._pending_light
