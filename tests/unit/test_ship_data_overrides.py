@@ -164,7 +164,7 @@ def test_real_galaxy_load_applies_glow_overrides():
     assert pw.GetGlowRegionShape(0) == "Box"   # live-tuned Cylinder -> Box (c635c06e)
     sa = App.g_kModelPropertyManager.FindByName(
         "Sensor Array", App.TGModelPropertyManager.LOCAL_TEMPLATES)
-    assert sa is not None and sa.GetGlowRegionShape(0) == "Sphere"
+    assert sa is not None and sa.GetGlowRegionShape(0) == "Box"  # live-tuned Sphere -> Box
 
 
 def test_real_galaxy_reload_reapplies_overrides():

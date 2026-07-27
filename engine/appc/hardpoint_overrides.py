@@ -50,9 +50,9 @@ def _galaxy(find):
         p.SetGlowRegionScale(0, 0.2, 0.15, 0.1)
     p = find("Sensor Array")
     if p is not None:
-        p.SetGlowRegionShape(0, "Sphere")
-        p.SetGlowRegionPosition(0, 0.0, -0.45, -0.5)
-        p.SetGlowRegionRadius(0, 0.28)
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, 0.0, -0.29861956500569303, -0.5)
+        p.SetGlowRegionScale(0, 0.5335676748872048, 0.19850541821587558, 0.15858130015119873)
 
 
 def _GenericTemplate(find):
