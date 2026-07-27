@@ -106,3 +106,112 @@ def test_render_payload_carries_scale_values():
     p = _panel_light("Box", scale=(0.15, 0.2, 0.05))
     data = _payload_data(p.render_payload())
     assert data["scale_values"]["kind"] == "xyz"
+
+
+# ── Scale gizmo + multiplicative drag + click-guard ─────────────────────────
+
+from engine.appc.math import TGMatrix3, TGPoint3
+from engine.ui.ship_property_viewer import OrbitCamera
+
+
+class _Ship:
+    def GetWorldLocation(self): return TGPoint3(0.0, 0.0, 0.0)
+    def GetWorldRotation(self): return TGMatrix3()
+
+
+def _panel_box_gizmo():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _Ship())
+    p.open()
+    p.camera = OrbitCamera((0.0, 0.0, 0.0), 10.0, 0.0, 0.0)
+    p._descriptors = [{
+        "name": "Center Impulse", "kind": "subsystem",
+        "properties": {"position": (0.0, 0.0, 0.0), "radius": 0.3},
+        "world_pos": (0.0, 0.0, 0.0), "parent_index": None,
+        "light": True,
+        "light_region": {"shape": "Box", "position": (0.0, 0.0, 0.0),
+                         "axis": (0.0, -1.0, 0.0), "radius": (0.25,),
+                         "extent": (0.0, 2.0), "scale": (0.2, 0.2, 0.2)},
+    }]
+    p.dispatch_event("set_tool:scale")
+    p._selected_light_index = 0
+    return p
+
+
+def test_scale_gizmo_gate_and_handle_kind():
+    p = _panel_box_gizmo()
+    g = p.scale_gizmo()
+    assert g is not None and g["handle_kind"] == 1
+    assert p.transform_gizmo() is None          # wrong tool
+    assert p._active_gizmo() is g or p._active_gizmo()["handle_kind"] == 1
+
+
+def test_transform_gizmo_handle_kind_zero():
+    p = _panel_box_gizmo()
+    p.dispatch_event("set_tool:transform")
+    assert p.transform_gizmo()["handle_kind"] == 0
+
+
+def test_scale_drag_multiplies_box_axis():
+    p = _panel_box_gizmo()
+    # Grab X (axis 0) with grab param = length, then drag to 1.5x that param.
+    from engine.ui.ship_property_viewer import gizmo_length
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(0, L)
+    p._apply_scale_drag(1.5 * L)
+    assert round(p.scale_values()["fields"][0]["value"], 6) == 0.3   # 0.2 * 1.5
+    assert round(p.scale_values()["fields"][1]["value"], 6) == 0.2   # Y unchanged
+
+
+def test_scale_drag_uniform_radius_on_sphere():
+    p = _panel_box_gizmo()
+    p._descriptors[0]["light_region"] = {"shape": "Sphere", "position": (0, 0, 0),
+        "axis": (0, -1, 0), "radius": (0.4,), "extent": (0, 2), "scale": (0.25, 0.25, 0.25)}
+    from engine.ui.ship_property_viewer import gizmo_length
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(2, L)          # any axis -> radius
+    p._apply_scale_drag(2.0 * L)
+    assert round(p.scale_values()["fields"][0]["value"], 6) == 0.8   # 0.4 * 2
+
+
+# ── Click-guard fires for the scale panel too ───────────────────────────────
+
+class _Host:
+    class keys:
+        MOUSE_BUTTON_LEFT = 0
+
+    def __init__(self):
+        self._cursor = (0.0, 0.0)
+        self._down = False
+        self._fb = (800, 600)
+
+    def cursor_pos(self): return self._cursor
+    def framebuffer_size(self): return self._fb
+    def mouse_button_state(self, b): return self._down
+    def consume_scroll_y(self): return 0.0
+
+
+def _scale_panel_selected():
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _Ship())
+    p.open()
+    p._descriptors = [{
+        "name": "Center Impulse", "kind": "subsystem",
+        "properties": {"position": (0.0, 1.0, 0.0), "radius": 0.3},
+        "world_pos": (0.0, 1.0, 0.0), "parent_index": None,
+    }]
+    p.dispatch_event("set_tool:scale")
+    p.selected_index = 0
+    return p
+
+
+def test_scale_region_guarded_when_panel_visible():
+    p = _scale_panel_selected()
+    assert p.scale_values() is not None
+    p.camera = OrbitCamera((0.0, 0.0, 0.0), 20.0, 0.0, 0.0)
+    yaw0 = p.camera.yaw
+    h = _Host()
+    # (700, 100) is inside the top-right box for an 800x600 dsf=1 viewport.
+    h._cursor = (700.0, 100.0); h._down = True
+    p.handle_input(h)              # press
+    h._cursor = (730.0, 100.0)
+    p.handle_input(h)              # drag right
+    assert p.camera.yaw == yaw0    # guarded -> no orbit while the scale panel is up

@@ -150,6 +150,9 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_param = 0.0
         self._axis_grab_pos = (0.0, 0.0, 0.0)
         self._axis_grab_origin = (0.0, 0.0, 0.0)
+        # Scale-drag grab state: (field-index, grabbed-value) captured at
+        # press so the multiplicative drag stays anchored to the start size.
+        self._scale_grab = (0, 0.0)
         self._gizmo_hover = -1
         # Clipboard for the transform-coord panel's Copy/Paste — a body-frame
         # (x, y, z) tuple, or None. Reset every open/close.
@@ -188,6 +191,7 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_param = 0.0
         self._axis_grab_pos = (0.0, 0.0, 0.0)
         self._axis_grab_origin = (0.0, 0.0, 0.0)
+        self._scale_grab = (0, 0.0)
         self._gizmo_hover = -1
         self._coord_clipboard = None
         self._scale_clipboard = None
@@ -223,6 +227,7 @@ class ShipPropertyViewerPanel(Panel):
         self._axis_grab_param = 0.0
         self._axis_grab_pos = (0.0, 0.0, 0.0)
         self._axis_grab_origin = (0.0, 0.0, 0.0)
+        self._scale_grab = (0, 0.0)
         self._gizmo_hover = -1
         self._coord_clipboard = None
         self._scale_clipboard = None
@@ -505,7 +510,79 @@ class ShipPropertyViewerPanel(Panel):
             "axes": gizmo_axes(ship.GetWorldRotation()),
             "length": gizmo_length(self.camera),
             "highlight": self._gizmo_hover,
+            "handle_kind": 0,
         }
+
+    def scale_gizmo(self) -> Optional[dict]:
+        """The scale-gizmo for the selected subsystem or light node, or None.
+
+        Same shape as `transform_gizmo` (`{"origin","axes","length",
+        "highlight"}`) but with `"handle_kind": 1` so the renderer draws box
+        handles instead of arrows. Gated on the scale tool being active, a
+        target selected, and the ship resolvable with a world rotation."""
+        if self.active_tool != "scale" or self.camera is None:
+            return None
+        if self._active_transform_target() is None:
+            return None
+        ship = self._ship_getter()
+        if ship is None or not hasattr(ship, "GetWorldRotation"):
+            return None
+        from engine.ui.ship_property_viewer import (
+            gizmo_axes, gizmo_length, world_from_body)
+        t = self._active_transform_target()
+        kt, i = t
+        if kt == "light":
+            origin = world_from_body(ship, self._effective_light(i)["position"])
+        else:
+            origin = self._effective_world_pos(i)
+        return {
+            "origin": origin,
+            "axes": gizmo_axes(ship.GetWorldRotation()),
+            "length": gizmo_length(self.camera),
+            "highlight": self._gizmo_hover,
+            "handle_kind": 1,
+        }
+
+    def _active_gizmo(self) -> Optional[dict]:
+        """The gizmo for the active tool: `transform_gizmo` under Transform,
+        `scale_gizmo` under Scale, else None. Shared by `_handle_gizmo_input`
+        so hover/grab/drag geometry follows the current tool."""
+        if self.active_tool == "transform":
+            return self.transform_gizmo()
+        if self.active_tool == "scale":
+            return self.scale_gizmo()
+        return None
+
+    def _begin_scale_drag(self, axis: int, grab_param: float) -> None:
+        """Start a scale drag on `axis`, capturing the fixed drag-start world
+        origin and the grabbed size value so `_apply_scale_drag` multiplies
+        from a stable anchor. For xyz (Box) targets the axis picks the field;
+        every other shape is uniform and scales field 0 (the radius)."""
+        self._axis_drag = axis
+        self._axis_grab_param = grab_param
+        g = self._active_gizmo()
+        self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
+        t = self._active_transform_target()
+        if t is None:
+            self._scale_grab = (0, 0.0)
+            return
+        kind, fields = self._scale_kind_and_fields(t)
+        if kind == "xyz":
+            self._scale_grab = (axis, fields[axis]["value"])   # per-axis
+        else:
+            self._scale_grab = (0, fields[0]["value"])          # uniform -> radius
+
+    def _apply_scale_drag(self, t_now: float) -> None:
+        """Scale the grabbed field to `grab_value * (t_now / grab_param)`,
+        with the grab param floored at a quarter of the gizmo length so a
+        drag past the origin can't invert or divide-by-zero."""
+        if self._axis_drag is None:
+            return
+        from engine.ui.ship_property_viewer import gizmo_length
+        L = gizmo_length(self.camera)
+        ratio = t_now / max(self._axis_grab_param, 0.25 * L)
+        idx, grab_val = self._scale_grab
+        self._set_scale_field(idx, grab_val * ratio)
 
     def _begin_axis_drag(self, axis: int, grab_param: float) -> None:
         """Start an axis drag on `axis` (0/1/2), capturing the fixed drag-start
@@ -856,7 +933,8 @@ class ShipPropertyViewerPanel(Panel):
         # visible (Transform tool active + a target selected) — otherwise the
         # top-right rectangle would be a dead zone that swallows orbit-drag
         # starts and pin picks whenever the panel is hidden.
-        over_coords = (self.transform_coords() is not None
+        over_coords = ((self.transform_coords() is not None
+                        or self.scale_values() is not None)
                        and self._cursor_over_coords(x, y, dsf, fb_w, fb_h))
         over_chrome = (self._cursor_over_chrome(x, y, dsf) or over_tools
                        or over_coords)
@@ -945,17 +1023,20 @@ class ShipPropertyViewerPanel(Panel):
                 return True
             # Drag: map the cursor onto the FIXED drag-start shaft so the
             # mapping stays stable as the origin moves with the subsystem.
-            g = self.transform_gizmo()
+            g = self._active_gizmo()
             if g is not None:
                 t = axis_drag_param(x, y, self._axis_grab_origin,
                                     g["axes"][self._axis_drag],
                                     gizmo_length(self.camera), self.camera,
                                     fb_size())
-                self._apply_axis_drag(t)
+                if self.active_tool == "scale":
+                    self._apply_scale_drag(t)
+                else:
+                    self._apply_axis_drag(t)
             self._drag_last = (x, y)
             return True
 
-        g = self.transform_gizmo()
+        g = self._active_gizmo()
         if g is None or over_chrome:
             self._gizmo_hover = -1
             return False
@@ -968,7 +1049,10 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             t_grab = axis_drag_param(x, y, g["origin"], g["axes"][axis],
                                      g["length"], self.camera, fb_size())
-            self._begin_axis_drag(axis, t_grab)
+            if self.active_tool == "scale":
+                self._begin_scale_drag(axis, t_grab)
+            else:
+                self._begin_axis_drag(axis, t_grab)
             self._chrome_press = False
             self._lmb_down = True
             self._drag_last = (x, y)
