@@ -69,6 +69,25 @@ def _box(center: Vec3, ex: Vec3, ey: Vec3, ez: Vec3) -> dict:
     return {"center": center, "ex": ex, "ey": ey, "ez": ez, "color": GLOW_COLOR}
 
 
+def _basis_from(forward: Vec3, up: Vec3) -> Tuple[Vec3, Vec3, Vec3]:
+    """Normalized box-local (right, forward, up), right = normalize(forward x up).
+
+    Defensive: forward/up are normalized even though the rotate tool already
+    hands back orthonormal vectors, so a malformed authored orientation still
+    yields a usable (if degenerate-safe) basis rather than a garbage box.
+    """
+    def _norm(v: Vec3) -> Vec3:
+        m = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) or 1.0
+        return (v[0] / m, v[1] / m, v[2] / m)
+
+    f = _norm(forward)
+    u = _norm(up)
+    r = (f[1] * u[2] - f[2] * u[1],
+         f[2] * u[0] - f[0] * u[2],
+         f[0] * u[1] - f[1] * u[0])
+    return _norm(r), f, u
+
+
 def build_glow_region_overlay(ship, selected_name: str = None,
                               show_all: bool = True,
                               pending: dict = None) -> Tuple[List[dict], List[dict]]:
@@ -131,12 +150,16 @@ def build_glow_region_overlay(ship, selected_name: str = None,
                     _body_to_world(center, ship_pos, rot),
                     _rotate_dir(axis, rot), radius, length))
             elif op[0] == "box":
-                _kind, center, half = op
+                _kind, center, half, forward, up = op
+                right, fwd, upv = _basis_from(forward, up)
                 boxes.append(_box(
                     _body_to_world(center, ship_pos, rot),
-                    _rotate_vec((half[0], 0.0, 0.0), rot),
-                    _rotate_vec((0.0, half[1], 0.0), rot),
-                    _rotate_vec((0.0, 0.0, half[2]), rot)))
+                    _rotate_vec((right[0] * half[0], right[1] * half[0],
+                                 right[2] * half[0]), rot),
+                    _rotate_vec((fwd[0] * half[1], fwd[1] * half[1],
+                                 fwd[2] * half[1]), rot),
+                    _rotate_vec((upv[0] * half[2], upv[1] * half[2],
+                                 upv[2] * half[2]), rot)))
             else:  # sphere
                 _kind, center, radius = op
                 up = _rotate_dir((0.0, 0.0, 1.0), rot)   # ship body-up

@@ -323,7 +323,8 @@ def test_overlay_returns_cylinders_and_boxes_tuple(monkeypatch):
     monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
     monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))
     monkeypatch.setattr(gro, "baked_region_ops",
-                        lambda prop, pos, name: [("box", (0.0, 0.0, 0.0), (1.0, 2.0, 3.0))])
+                        lambda prop, pos, name: [("box", (0.0, 0.0, 0.0), (1.0, 2.0, 3.0),
+                                                   (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))])
     ship = _BoxShip([_BoxSub("Box Pod", object())])
     cyls, boxes = gro.build_glow_region_overlay(ship, show_all=True)
     assert cyls == []
@@ -331,8 +332,22 @@ def test_overlay_returns_cylinders_and_boxes_tuple(monkeypatch):
     b = boxes[0]
     # center = ship_pos + region center (None rot => identity): (10,0,0)
     assert b["center"] == (10.0, 0.0, 0.0)
-    # edge vectors carry the half-extents along body axes (identity rot).
+    # edge vectors carry the half-extents along body axes (identity orientation).
     assert b["ex"] == (1.0, 0.0, 0.0)
     assert b["ey"] == (0.0, 2.0, 0.0)
     assert b["ez"] == (0.0, 0.0, 3.0)
     assert b["color"] == gro.GLOW_COLOR
+
+
+def test_box_wireframe_tilts_with_orientation(monkeypatch):
+    monkeypatch.setattr(gro, "_iter_subsystems", lambda ship: ship._subs)
+    monkeypatch.setattr(gro, "_position_tuple", lambda sub: (0.0, 0.0, 0.0))
+    # forward=+X, up=+Z -> box local Y axis points along world +X.
+    monkeypatch.setattr(gro, "baked_region_ops",
+        lambda prop, pos, name: [("box", (0.0, 0.0, 0.0), (1.0, 2.0, 3.0),
+                                   (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))])
+    ship = _BoxShip([_BoxSub("Box Pod", object())])
+    _c, boxes = gro.build_glow_region_overlay(ship, show_all=True)
+    b = boxes[0]
+    # ey carries the hy=2 extent along the forward axis (+X here), not body +Y.
+    assert b["ey"] == pytest.approx((2.0, 0.0, 0.0), abs=1e-6)
