@@ -320,14 +320,16 @@
     font-variant-numeric: tabular-nums;
 }
 
-/* ── Transform coordinate panel (top-right) ────────────────────────────────
-   Shown only while the Transform tool is active and something is selected;
-   driven by payload.transform_coords ({x,y,z,has_clipboard}|null). Geometry
-   (right/top/width/height) is mirrored by COORDS_* in
-   ship_property_viewer_panel.py for the mouse click-guard — keep them in
-   sync. Mouse-only steppers, same reasoning as .spv-radius-stepper: the
-   engine has no keyboard->CEF forwarding yet. */
-#spv-coords {
+/* ── Transform coordinate / scale panels (top-right) ───────────────────────
+   Shown only while the Transform or Scale tool is active and something is
+   selected; driven by payload.transform_coords ({x,y,z,has_clipboard}|null)
+   or payload.scale_values ({kind,fields,has_clipboard,can_paste}|null) — the
+   two panels are a radio (never both up at once) and share this class so
+   they share geometry. Geometry (right/top/width/height) is mirrored by
+   COORDS_* in ship_property_viewer_panel.py for the mouse click-guard —
+   keep them in sync. Mouse-only steppers, same reasoning as
+   .spv-radius-stepper: the engine has no keyboard->CEF forwarding yet. */
+.spv-coords {
     position: absolute;
     right: 12px;
     top: 46px;
@@ -358,8 +360,9 @@
 .spv-coords__btn--disabled { opacity: 0.4; pointer-events: none; }
 
 /* .spv-step nudge buttons are wider than this 220px panel comfortably fits
-   four-per-row at the radius-modal's size — shrink them here only. */
-#spv-coords .spv-step {
+   four-per-row at the radius-modal's size — shrink them here only. Applies
+   to both the coord panel and the scale panel (they share .spv-coords). */
+.spv-coords .spv-step {
     padding: 3px 4px;
     font-size: 10px;
     flex: 0 0 auto;

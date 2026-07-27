@@ -290,6 +290,18 @@
           <button class="spv-coords__btn" onclick="shipPropertyViewerCoordMirror()">Mirror</button>
         </div>
       </div>
+      <!-- Scale panel (top-right). Shown only while the Scale tool is active and
+           something is selected; rows are shape-aware (built from scale_values.fields).
+           Shares the top-right slot with #spv-coords (radio: never both). -->
+      <div id="spv-scale" class="spv-coords dev-only" style="display:none;">
+        <div class="spv-coords__title">Scale</div>
+        <div id="spv-scale-rows"></div>
+        <div class="spv-coords__actions">
+          <button class="spv-coords__btn" onclick="shipPropertyViewerScaleCopy()">Copy</button>
+          <button id="spv-scale-paste" class="spv-coords__btn" onclick="shipPropertyViewerScalePaste()">Paste</button>
+          <button class="spv-coords__btn" onclick="shipPropertyViewerScaleUniform()">Uniform</button>
+        </div>
+      </div>
       <div id="spv-popover" class="spv-popover"></div>
       <!-- Right-click context menu on a subsystem row → "Set Radius…" opens
            the radius modal below. The Save bar surfaces staged edits
