@@ -218,11 +218,14 @@ def test_baked_galaxy_impulse_is_box():
     # "Edit Light" tool (2026-07-26, live-verified); the baked override now
     # emits body-axis-aligned Box regions (position + half-extent scale). See
     # docs/superpowers/specs/2026-07-26-spv-edit-light-glow-region-design.md.
+    # Port/Star Impulse Y was later repositioned -0.2 -> -0.3117 via the SPV
+    # transform coord panel (2026-07-27, live-verified, commit 50b6b826).
     from engine.appc.properties import read_indexed_setter_args as _args
     _load_real_galaxy_hardpoint()
+    _impulse_y = -0.31166273838979724
     expected = {
-        "Port Impulse":   ((-1.22, -0.2, 0.32), (0.15, 0.2, 0.05)),
-        "Star Impulse":   ((1.22, -0.2, 0.32),  (0.15, 0.2, 0.05)),
+        "Port Impulse":   ((-1.22, _impulse_y, 0.32), (0.15, 0.2, 0.05)),
+        "Star Impulse":   ((1.22, _impulse_y, 0.32),  (0.15, 0.2, 0.05)),
         "Center Impulse": ((0.0, -1.1, -0.08),  (0.2, 0.15, 0.1)),
     }
     for name, (pos, scale) in expected.items():
