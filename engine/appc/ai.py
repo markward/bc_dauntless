@@ -239,6 +239,30 @@ class _AIScriptInstance:
         return lambda *args, **kwargs: None
 
 
+class OptimizedFireScript:
+    """Type identity for BC's C++ fire-control preprocessor script.
+
+    BC's Appc exposes an ``OptimizedFireScript`` class; StartAI
+    (sdk/.../Bridge/TacticalMenuHandlers.py:1861) does
+    ``isinstance(pPreAI.GetPreprocessingInstance(), App.OptimizedFireScript)``
+    to decide whether an AI node is a weapons-fire preprocessor and, if so,
+    enable firing via CheckFiring. Without a real class here that isinstance
+    call raised TypeError (App.OptimizedFireScript resolved to a _NamedStub
+    *instance*), aborting StartAI before SetPlayerAI for every order whose AI
+    tree contains a PreprocessingAI — i.e. everything except Stop.
+
+    Headless Phase 1 returns the generic _AIScriptInstance data-bag from
+    GetPreprocessingInstance, so no node is currently an instance of this
+    class: the isinstance check is False, the fire branch is skipped, and the
+    AI still installs (the ship maneuvers per the order).
+
+    TODO(combat-fidelity): to make player 'Attack' actually engage weapons,
+    have the fire preprocessor's GetPreprocessingInstance return an
+    OptimizedFireScript instance so the CheckFiring branch runs. Deferred.
+    """
+    pass
+
+
 # ── ArtificialIntelligence ────────────────────────────────────────────────────
 
 class ArtificialIntelligence:

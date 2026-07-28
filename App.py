@@ -235,6 +235,7 @@ from engine.appc.ai import (
     SequenceAI, SequenceAI_Create,
     RandomAI, RandomAI_Create,
     PreprocessingAI, PreprocessingAI_Create, PreprocessingAI_Cast,
+    OptimizedFireScript,
     ConditionalAI, ConditionalAI_Create,
     ConditionEventCreator,
     BuilderAI, BuilderAI_Create,
