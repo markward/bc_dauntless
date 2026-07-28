@@ -71,3 +71,38 @@
   cursor: default;
 }
 .tactical-orders__row.is-disabled:hover { background: transparent; }
+
+/* Maneuvers/Tactics are BC's STCharacterMenu popups: collapsed by default,
+   showing only the header + the current selection until clicked open.
+   Orders never gets this class (data-group="orders" stays a plain always-
+   expanded 2-col grid, unaffected by any of the rules below). */
+.tactical-orders__header--clickable {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.tactical-orders__header--clickable:hover .bc-panel__title { color: white; }
+
+/* ▶ / ▼ collapse-state affordance, right-aligned in the header next to the
+   group title (Maneuvers/Tactics only — Orders' header has no marker). */
+.tactical-orders__marker {
+  margin-left: 10px;
+  font-size: 9px;
+  opacity: 0.65;
+}
+
+/* Collapsed: body holds exactly one row (the current selection, computed
+   panel-side with BC's chosen -> first-enabled -> first-row fallback). No
+   extra chrome needed beyond the single .tactical-orders__row already
+   rendered into .bc-panel__body — this rule just keeps the collapsed
+   popup from stretching to the expanded list's width/height. */
+.tactical-orders.is-collapsed .bc-panel__body {
+  display: block;
+}
+
+/* Expanded: full option list, single column (Maneuvers/Tactics never use
+   the Orders 2-col grid). */
+.tactical-orders.is-expanded .bc-panel__body {
+  display: block;
+}

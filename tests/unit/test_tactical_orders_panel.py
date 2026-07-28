@@ -38,11 +38,11 @@ def test_snapshot_projects_all_three_groups():
     assert js is not None and js.startswith("setTacticalOrders(")
     payload = json.loads(js[len("setTacticalOrders("):-2])
     assert payload["visible"] is True
-    labels = [r["label"] for r in payload["orders"]]
+    labels = [r["label"] for r in payload["orders"]["rows"]]
     assert labels == ["OrderDestroy", "OrderStop"]
-    assert payload["orders"][1]["chosen"] is True          # Stop chosen
-    assert payload["tactics"][1]["enabled"] is False        # TacticLeft disabled
-    assert [r["label"] for r in payload["maneuvers"]] == ["ManeuverAtWill"]
+    assert payload["orders"]["rows"][1]["chosen"] is True          # Stop chosen
+    assert payload["tactics"]["rows"][1]["enabled"] is False        # TacticLeft disabled
+    assert [r["label"] for r in payload["maneuvers"]["rows"]] == ["ManeuverAtWill"]
 
 
 def test_render_is_idempotent():
@@ -111,12 +111,12 @@ def test_resolve_panes_reads_orders_status_ui_pane():
     # Orders must be non-empty (Destroy/Disable/Stop/Evade); Tactics and
     # Maneuvers were already correctly wired (STCharacterMenu, fixed in
     # Sub-step 3a) so they should be non-empty too.
-    assert len(payload["orders"]) > 0
-    assert len(payload["tactics"]) > 0
-    assert len(payload["maneuvers"]) > 0
+    assert len(payload["orders"]["rows"]) > 0
+    assert len(payload["tactics"]["rows"]) > 0
+    assert len(payload["maneuvers"]["rows"]) > 0
     # Labels are localized display strings (data/TGL/Bridge Menus.tgl), not
     # the internal SDK keys -- "OrderStop" localizes to "Stop".
-    assert "Stop" in [r["label"] for r in payload["orders"]]
+    assert "Stop" in [r["label"] for r in payload["orders"]["rows"]]
 
 
 def test_maneuver_atwill_activates_maneuvers_not_tactics():
@@ -130,8 +130,8 @@ def test_maneuver_atwill_activates_maneuvers_not_tactics():
 
     js = p.render_payload()
     payload = json.loads(js[len("setTacticalOrders("):-2])
-    maneuver_row_id = payload["maneuvers"][0]["id"]
-    tactic_row_id = payload["tactics"][0]["id"]
+    maneuver_row_id = payload["maneuvers"]["rows"][0]["id"]
+    tactic_row_id = payload["tactics"]["rows"][0]["id"]
     assert maneuver_row_id != tactic_row_id  # ids must not collide
 
     assert p.dispatch_event("click:" + maneuver_row_id) is True
@@ -141,3 +141,158 @@ def test_maneuver_atwill_activates_maneuvers_not_tactics():
     assert p.dispatch_event("click:" + tactic_row_id) is True
     assert tactic_atwill.activated == 1
     assert maneuver_atwill.activated == 1  # unchanged by the Tactics click
+
+
+# ── Collapsible Maneuvers/Tactics popups (BC's STCharacterMenu) ──────────
+#
+# BC's Maneuvers and Tactics panes are STCharacterMenu popups whose
+# collapsed label is set to the CURRENT selection by
+# UpdateOrderStatusButtons; clicking expands the list, picking an option
+# collapses it again. Orders is a plain always-expanded 2-col grid and is
+# NOT collapsible -- these tests pin that asymmetry down.
+
+def test_maneuvers_and_tactics_collapsed_by_default_showing_chosen():
+    atwill = _FakeButton("TacticAtWill", chosen=False)
+    aggressive = _FakeButton("TacticAggressive", chosen=True)
+    m_atwill = _FakeButton("ManeuverAtWill", chosen=True)
+    m_evasive = _FakeButton("ManeuverEvasive", chosen=False)
+    p = _panel_with([], [atwill, aggressive], [m_atwill, m_evasive])
+    p.visible = True
+
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+
+    assert payload["tactics"]["collapsible"] is True
+    assert payload["tactics"]["expanded"] is False
+    assert payload["tactics"]["current"]["label"] == "TacticAggressive"
+
+    assert payload["maneuvers"]["collapsible"] is True
+    assert payload["maneuvers"]["expanded"] is False
+    assert payload["maneuvers"]["current"]["label"] == "ManeuverAtWill"
+
+    # Full rows list is still present in the payload even while collapsed
+    # (the JS decides what to display; the panel always projects everything).
+    assert len(payload["tactics"]["rows"]) == 2
+    assert len(payload["maneuvers"]["rows"]) == 2
+
+
+def test_current_selection_fallback_first_enabled_then_first_row():
+    # No chosen row -> falls back to the first enabled row.
+    left = _FakeButton("TacticLeft", disabled=True)
+    aggressive = _FakeButton("TacticAggressive", disabled=False)
+    p = _panel_with([], [left, aggressive], [])
+    p.visible = True
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["tactics"]["current"]["label"] == "TacticAggressive"
+
+    # No chosen AND none enabled -> falls back to the first row outright.
+    left2 = _FakeButton("TacticLeft", disabled=True)
+    right2 = _FakeButton("TacticRight", disabled=True)
+    p2 = _panel_with([], [left2, right2], [])
+    p2.visible = True
+    payload2 = json.loads(p2.render_payload()[len("setTacticalOrders("):-2])
+    assert payload2["tactics"]["current"]["label"] == "TacticLeft"
+
+
+def test_orders_is_never_collapsible_and_always_shows_all_rows():
+    destroy = _FakeButton("OrderDestroy", chosen=True)
+    stop = _FakeButton("OrderStop")
+    p = _panel_with([destroy, stop], [], [])
+    p.visible = True
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["orders"]["collapsible"] is False
+    assert payload["orders"]["expanded"] is True
+    assert len(payload["orders"]["rows"]) == 2
+
+    # Toggling maneuvers/tactics never affects Orders.
+    p.dispatch_event("toggle:maneuvers")
+    p.dispatch_event("toggle:tactics")
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["orders"]["collapsible"] is False
+    assert payload["orders"]["expanded"] is True
+    assert len(payload["orders"]["rows"]) == 2
+
+
+def test_toggle_expands_and_collapses_maneuvers():
+    m1 = _FakeButton("ManeuverAtWill", chosen=True)
+    m2 = _FakeButton("ManeuverEvasive")
+    p = _panel_with([], [], [m1, m2])
+    p.visible = True
+    p.render_payload()  # establish baseline snapshot
+
+    assert p.dispatch_event("toggle:maneuvers") is True
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["maneuvers"]["expanded"] is True
+    assert len(payload["maneuvers"]["rows"]) == 2
+
+    assert p.dispatch_event("toggle:maneuvers") is True
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["maneuvers"]["expanded"] is False
+
+
+def test_toggle_unknown_group_is_not_handled():
+    p = _panel_with([], [], [])
+    assert p.dispatch_event("toggle:orders") is False
+    assert p.dispatch_event("toggle:bogus") is False
+
+
+def test_click_in_expanded_group_activates_and_collapses():
+    m1 = _FakeButton("ManeuverAtWill", chosen=True)
+    m2 = _FakeButton("ManeuverEvasive")
+    p = _panel_with([], [], [m1, m2])
+    p.visible = True
+    p.render_payload()
+
+    p.dispatch_event("toggle:maneuvers")
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["maneuvers"]["expanded"] is True
+
+    assert p.dispatch_event("click:maneuvers:ManeuverEvasive") is True
+    assert m2.activated == 1
+
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["maneuvers"]["expanded"] is False
+
+
+def test_orders_click_does_not_touch_expand_state():
+    destroy = _FakeButton("OrderDestroy")
+    m1 = _FakeButton("ManeuverAtWill", chosen=True)
+    p = _panel_with([destroy], [], [m1])
+    p.visible = True
+    p.render_payload()
+    p.dispatch_event("toggle:maneuvers")
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["maneuvers"]["expanded"] is True
+
+    assert p.dispatch_event("click:orders:OrderDestroy") is True
+    # An Orders click touches no render-relevant state, so render_payload()
+    # correctly stays idempotent (returns None) -- assert directly on
+    # internal state rather than forcing a re-render (invalidate() would
+    # itself reset _expanded_groups, see test_invalidate_resets_expanded_groups).
+    assert p.render_payload() is None
+    assert "maneuvers" in p._expanded_groups
+
+
+def test_render_idempotent_across_toggle():
+    m1 = _FakeButton("ManeuverAtWill", chosen=True)
+    p = _panel_with([], [], [m1])
+    p.visible = True
+    assert p.render_payload() is not None
+    assert p.render_payload() is None  # unchanged -> no re-emit
+
+    p.dispatch_event("toggle:maneuvers")
+    assert p.render_payload() is not None  # toggle changed state -> re-emit
+    assert p.render_payload() is None  # settled again -> no re-emit
+
+
+def test_invalidate_resets_expanded_groups():
+    m1 = _FakeButton("ManeuverAtWill", chosen=True)
+    p = _panel_with([], [], [m1])
+    p.visible = True
+    p.render_payload()
+    p.dispatch_event("toggle:maneuvers")
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["maneuvers"]["expanded"] is True
+
+    p.invalidate()
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["maneuvers"]["expanded"] is False

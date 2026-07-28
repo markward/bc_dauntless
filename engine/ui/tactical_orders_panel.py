@@ -36,6 +36,11 @@ from engine.ui.panel import Panel
 
 
 class TacticalOrdersPanel(Panel):
+    # BC's Maneuvers and Tactics panes are STCharacterMenu popups whose
+    # collapsed label reflects the current selection (UpdateOrderStatusButtons);
+    # Orders is a plain always-expanded 2-column grid and stays that way.
+    _COLLAPSIBLE_GROUPS = frozenset(("maneuvers", "tactics"))
+
     @property
     def name(self) -> str:
         return "tactical-orders"
@@ -43,6 +48,10 @@ class TacticalOrdersPanel(Panel):
     def __init__(self):
         super().__init__()
         self._last_snapshot: Optional[tuple] = None
+        # UI-only: names of collapsible groups ("maneuvers"/"tactics")
+        # currently expanded. Default empty (both collapsed), mirroring
+        # target_list_view._expanded_ships. Reset on invalidate().
+        self._expanded_groups: set = set()
 
     def _resolve_panes(self):
         """Return (orders_pane, tactics_pane, maneuvers_pane), any of which
@@ -116,14 +125,53 @@ class TacticalOrdersPanel(Panel):
         }
 
     @staticmethod
-    def _key(visible, groups):
-        """Hashable snapshot key derived from the built model."""
+    def _current_row(rows):
+        """BC's GetOrderString fallback: the chosen row wins; absent that,
+        the first enabled row; absent that, the first row outright (mirrors
+        g_lTactics[0]/g_lManeuvers[0] both defaulting to "At Will"). None
+        when the group has no rows at all."""
+        if not rows:
+            return None
+        for r in rows:
+            if r["chosen"]:
+                return r
+        for r in rows:
+            if r["enabled"]:
+                return r
+        return rows[0]
+
+    def _group_payload(self, name: str, rows: list) -> dict:
+        """Wrap a group's row list with its collapse state. Orders is never
+        collapsible and is always reported expanded; Maneuvers/Tactics report
+        their membership in ``_expanded_groups`` and always carry a computed
+        ``current`` selection (used by collapsed rendering, harmless
+        otherwise). ``rows`` is always the FULL list regardless of expand
+        state — the JS side decides what to display from it."""
+        collapsible = name in self._COLLAPSIBLE_GROUPS
+        expanded = (not collapsible) or (name in self._expanded_groups)
+        current = self._current_row(rows) if collapsible else None
+        return {"collapsible": collapsible, "expanded": expanded,
+                "rows": rows, "current": current}
+
+    @staticmethod
+    def _entry_key(entry: dict):
+        rows_key = tuple(tuple(sorted(r.items())) for r in entry["rows"])
+        current = entry["current"]
+        current_key = tuple(sorted(current.items())) if current is not None else None
+        return (entry["collapsible"], entry["expanded"], rows_key, current_key)
+
+    @classmethod
+    def _key(cls, visible, groups):
+        """Hashable snapshot key derived from the built + wrapped model."""
         return (visible, tuple(
-            (g, tuple(tuple(sorted(r.items())) for r in groups[g]))
-            for g in ("orders", "tactics", "maneuvers")))
+            (g, cls._entry_key(groups[g])) for g in ("orders", "tactics", "maneuvers")))
 
     def render_payload(self) -> Optional[str]:
-        groups = self._build()
+        raw = self._build()
+        groups = {
+            name: self._group_payload(name, raw[name])
+            for name in ("orders", "tactics", "maneuvers")
+        }
         key = self._key(self._visible, groups)
         if key == self._last_snapshot:
             return None
@@ -132,6 +180,15 @@ class TacticalOrdersPanel(Panel):
         return "setTacticalOrders(" + json.dumps(payload) + ");"
 
     def dispatch_event(self, action: str) -> bool:
+        if action.startswith("toggle:"):
+            group = action[len("toggle:"):]
+            if group not in self._COLLAPSIBLE_GROUPS:
+                return False
+            if group in self._expanded_groups:
+                self._expanded_groups.discard(group)
+            else:
+                self._expanded_groups.add(group)
+            return True
         if not action.startswith("click:"):
             return False
         row_id = action[len("click:"):]
@@ -150,8 +207,13 @@ class TacticalOrdersPanel(Panel):
             if hasattr(button, "GetLabel") and button.GetLabel() == label:
                 if hasattr(button, "SendActivationEvent"):
                     button.SendActivationEvent()
+                # Picking an option collapses a collapsible popup (BC's
+                # STCharacterMenu behaviour); Orders is never in this set.
+                if group in self._COLLAPSIBLE_GROUPS:
+                    self._expanded_groups.discard(group)
                 return True
         return False
 
     def invalidate(self) -> None:
         self._last_snapshot = None
+        self._expanded_groups = set()
