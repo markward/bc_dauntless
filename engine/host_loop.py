@@ -6262,6 +6262,16 @@ def run(mission_name: Optional[str] = None,
         weapons_display = WeaponsDisplayPanel(player_control=player_control)
         registry.register(weapons_display)
 
+        # Tactical Orders/Tactics/Maneuvers command panes — projects Felix's
+        # bridge menu (Bridge.TacticalMenuHandlers.CreateOrdersStatusDisplay:
+        # g_pOrdersStatusUI/g_pTacticsStatusUIMenu/g_pManeuversStatusUIMenu)
+        # to CEF. Visibility is a DIFFERENT gate than _tac_visible above —
+        # shown whenever the Tactical crew menu is open, in EITHER view (see
+        # the per-tick block below), not just bridge-tactical.
+        from engine.ui.tactical_orders_panel import TacticalOrdersPanel
+        tactical_orders_panel = TacticalOrdersPanel()
+        registry.register(tactical_orders_panel)
+
         # Crew tooltip box — BC's native per-officer status box
         # (Bridge.BridgeMenus.CreateCharacterTooltipBox). Display-only; it
         # just reflects CharacterClass_GetCurrentToolTipOwner, which the
@@ -6509,6 +6519,17 @@ def run(mission_name: Optional[str] = None,
                 ship_display_player.visible = _tac_visible
                 ship_display_target.visible = _tac_visible
                 weapons_display.visible     = _tac_visible
+
+                # Orders/Tactics/Maneuvers command panes: shown whenever the
+                # Tactical crew menu is open, in EITHER view (matches
+                # SetupBridgeTactical + SetupTacticalTactical) — a broader
+                # gate than _tac_visible/_bridge_tactical_active above, which
+                # is bridge-view-only. Still hidden under SPV/cutscene.
+                _tactical_menu_open = crew_menu_panel.open_menu_label() == "Tactical"
+                tactical_orders_panel.visible = (
+                    _tactical_menu_open
+                    and not ship_property_viewer.is_open()
+                    and not TopWindow_GetTopWindow().IsCutsceneMode())
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView

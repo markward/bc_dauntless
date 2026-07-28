@@ -34,6 +34,36 @@ class STCharacterMenu(STMenu):
             size_out.x = 0.0
             size_out.y = 0.0
 
+    # ── Sibling traversal ──
+    # TacticalMenuHandlers.UpdateOrderMenus/CallFuncOnMenuAndChildren walk
+    # g_pTacticsStatusUIMenu/g_pManeuversStatusUIMenu (STCharacterMenu
+    # instances built by CreateOrderMenu) with
+    # `pChild = pMenu.GetFirstChild(); while pChild: ... pChild =
+    # pMenu.GetNextChild(pChild)`. STMenu (the base class) has no
+    # GetFirstChild/GetNextChild, so those calls resolved to a truthy
+    # TGObject.__getattr__ _Stub and the `while pChild:` loop never
+    # terminated (confirmed live: Sub-step 3a probe hung). Mirrors
+    # STTargetMenu's identical override in engine/appc/target_menu.py.
+    def GetFirstChild(self):
+        return self._children[0] if self._children else None
+
+    def GetLastChild(self):
+        return self._children[-1] if self._children else None
+
+    def GetNextChild(self, child):
+        try:
+            i = self._children.index(child)
+        except ValueError:
+            return None
+        return self._children[i + 1] if i + 1 < len(self._children) else None
+
+    def GetPrevChild(self, child):
+        try:
+            i = self._children.index(child)
+        except ValueError:
+            return None
+        return self._children[i - 1] if i > 0 else None
+
 
 class STToggle(STButton):
     """Two-state button (on/off). State sink in Phase 2 headless tier."""

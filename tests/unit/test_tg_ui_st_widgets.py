@@ -27,6 +27,36 @@ def test_character_menu_is_an_stmenu():
     assert m.GetLabel() == "Hail"
 
 
+def test_character_menu_sibling_traversal_terminates():
+    # Bug found by Sub-step 3a's widget-construction probe (Task 3 brief):
+    # TacticalMenuHandlers.UpdateOrderMenus/CallFuncOnMenuAndChildren walk
+    # g_pTacticsStatusUIMenu/g_pManeuversStatusUIMenu with a `while pChild:`
+    # loop over GetFirstChild()/GetNextChild(). Before STCharacterMenu had
+    # real overrides, those names fell through TGObject.__getattr__'s
+    # truthy _Stub and the walk never reached None -> infinite loop live.
+    m = STCharacterMenu_CreateW("Tactics")
+    assert m.GetFirstChild() is None  # empty menu: no infinite loop trigger
+    b1, b2, b3 = STButton("A"), STButton("B"), STButton("C")
+    m.AddChild(b1)
+    m.AddChild(b2)
+    m.AddChild(b3)
+    assert m.GetFirstChild() is b1
+    assert m.GetLastChild() is b3
+    assert m.GetNextChild(b1) is b2
+    assert m.GetNextChild(b2) is b3
+    assert m.GetNextChild(b3) is None  # walk terminates
+    assert m.GetPrevChild(b2) is b1
+    assert m.GetPrevChild(b1) is None
+    # Full CallFuncOnMenuAndChildren-shaped walk must terminate.
+    seen = []
+    child = m.GetFirstChild()
+    for _ in range(len(m._children)):
+        seen.append(child)
+        child = m.GetNextChild(child)
+    assert seen == [b1, b2, b3]
+    assert child is None
+
+
 def test_warp_button_holds_warp_time_and_course_menu():
     b = STWarpButton_CreateW("Warp")
     course = SortedRegionMenu_CreateW("Set Course")

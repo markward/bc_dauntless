@@ -1,0 +1,53 @@
+/* Tactical Orders / Tactics / Maneuvers command panes — Felix's bridge
+   menu (Bridge.TacticalMenuHandlers.CreateOrdersStatusDisplay) projected
+   to CEF by TacticalOrdersPanel into #tactical-orders-host (a sibling of
+   #tactical-target-stack inside #tactical-left-column). Rendered as three
+   stacked .bc-panel groups, DOM order Orders -> Maneuvers -> Tactics
+   (BC's left-to-right reading order in the narrow tactical column).
+   Row chrome mirrors .crew-menu__row (css/crew_menus.css); "chosen" adds
+   the same lit/selected treatment as .crew-menu__row--highlighted.
+   Spec: docs/superpowers/specs/2026-07-28-bridge-tactical-mode-f2-hud-design.md */
+
+#tactical-orders-host {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+  font-family: "Antonio", "Antonio-Regular", sans-serif;
+  font-weight: 600;
+  color: var(--bc-label-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+#tactical-orders-host:empty { display: none; }
+
+/* .tactical-orders is a .bc-panel — header/body chrome inherited from the
+   shared bc-panel classes (panels/ship_display/ship_display.css). */
+.tactical-orders { width: 100%; }
+
+.tactical-orders__row {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+.tactical-orders__row:hover { background: rgba(216, 94, 86, 0.18); }
+
+/* Chosen — BC's STButton.IsChosen(), the currently-active order/tactic/
+   maneuver. Steady lit state, matches .crew-menu__row--highlighted. */
+.tactical-orders__row.is-chosen {
+  background: rgba(216, 94, 86, 0.34);
+  color: white;
+}
+.tactical-orders__row.is-chosen:hover { background: rgba(216, 94, 86, 0.42); }
+
+/* Disabled — BC's STButton.IsDisabled() (UpdateOrderMenus availability,
+   e.g. no target selected). Inert, not clickable. */
+.tactical-orders__row.is-disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.tactical-orders__row.is-disabled:hover { background: transparent; }

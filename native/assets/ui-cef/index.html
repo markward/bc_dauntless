@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="css/sensors.css">
     <link rel="stylesheet" href="css/sdk_mirror.css">
     <link rel="stylesheet" href="css/crew_menus.css">
+    <link rel="stylesheet" href="css/tactical_orders.css">
     <link rel="stylesheet" href="panels/ship_display/ship_display.css">
     <link rel="stylesheet" href="panels/weapons_display/weapons_display.css">
     <link rel="stylesheet" href="css/configuration_panel.css">
@@ -645,6 +646,17 @@
             </div>
         </div>
 
+        <!-- Tactical Orders/Tactics/Maneuvers command panes — Felix's bridge
+             menu (TacticalMenuHandlers.CreateOrdersStatusDisplay) projected
+             to CEF. Visible only while the Tactical crew menu is open (either
+             bridge or tactical view). State pushed via
+             setTacticalOrders({visible, orders[], tactics[], maneuvers[]});
+             row clicks fire dauntlessEvent('tactical-orders/click:<id>'),
+             which resolves the matching SDK STButton and calls
+             SendActivationEvent() (BC's own ET_MANEUVER path).
+             Spec: docs/superpowers/specs/2026-07-28-bridge-tactical-mode-f2-hud-design.md -->
+        <div id="tactical-orders-host"></div>
+
         <!-- Sensors / radar panel — pinned to the bottom of the left
              column via the parent's flex split (target-stack grows,
              radar is flex: 0 0 auto).
@@ -773,6 +785,7 @@
     <script src="panels/weapons_display/weapons_display.js"></script>
     <script src="js/sdk_mirror.js"></script>
     <script src="js/crew_menus.js"></script>
+    <script src="js/tactical_orders.js"></script>
     <script src="js/character_tooltip.js"></script>
     <script src="js/configuration_panel.js"></script>
     <script src="js/quick_battle_setup.js"></script>
