@@ -1073,6 +1073,32 @@ ET_TRACTOR_TARGET_DOCKED       = 1079
 # value in this block.
 ET_SCANNABLE_CHANGE            = 1080
 
+# ── Input events the SDK binds but the shim never defined ──────────────────────
+# DefaultUKKeyboardBinding binds all 11 of these (BridgeHandlers registers
+# handlers for the 7 viewscreen ones); ET_MOUSE is a mouse-event type panes
+# register on. Undefined here, each resolved to App._NamedStub, and BindKey's
+# int(event_type) (engine/appc/input.py:214) collapsed the 10 keyboard bindings
+# to a shared dead slot 0 — see docs/stub_heatmap.md.
+#
+# HYGIENE ONLY: real distinct ints stop the collapse and clear the telemetry
+# rows, but make NO key functional — no poller forwards these physical keys
+# (host_loop routes camera/nav keys through bespoke input_map pollers, not the
+# SDK binding chain), and pick-fire's _mouse_pick_fire flag has no consumer.
+# Wiring the keys (viewscreen look, first-person, toggle-pick-fire) is deferred;
+# pick-fire in particular lands with a future cursor-aim implementation. Values
+# continue the 1060-1099 static band, below the 1200 allocator floor.
+ET_INPUT_VIEWSCREEN_TARGET    = 1081
+ET_INPUT_VIEWSCREEN_FORWARD   = 1082
+ET_INPUT_VIEWSCREEN_LEFT      = 1083
+ET_INPUT_VIEWSCREEN_RIGHT     = 1084
+ET_INPUT_VIEWSCREEN_BACKWARD  = 1085
+ET_INPUT_VIEWSCREEN_UP        = 1086
+ET_INPUT_VIEWSCREEN_DOWN      = 1087
+ET_INPUT_FIRSTPERSON          = 1088
+ET_INPUT_TAB_FOCUS_CHANGE     = 1089
+ET_INPUT_TOGGLE_PICK_FIRE     = 1090
+ET_MOUSE                      = 1091
+
 # ── FloatRangeWatcher condition event ─────────────────────────────────────────
 # Crossing event broadcast by a power subsystem's battery watcher when the
 # main/backup battery fraction crosses a registered threshold. The SDK
