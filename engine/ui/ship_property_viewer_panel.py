@@ -1447,16 +1447,25 @@ class ShipPropertyViewerPanel(Panel):
             self._last_pushed = None
             return True
         if action.startswith("add_light:"):
+            payload = action.split(":", 1)[1]
+            shape = None
             try:
-                idx = int(action.split(":", 1)[1])
-            except ValueError:
-                return False
+                arg = json.loads(payload)
+                idx = int(arg["i"]); shape = str(arg["shape"])
+            except (ValueError, KeyError, TypeError):
+                try:
+                    idx = int(payload)          # legacy bare-int payload
+                except ValueError:
+                    return False
             if not (0 <= idx < len(self._descriptors)) or self._has_light(idx):
                 return False
             base = self._descriptors[idx].get("light_region")
             if not base:
                 return False
-            self._pending_light[idx] = dict(base)     # from-scratch default spec
+            spec = dict(base)
+            if shape in ("Sphere", "Cylinder", "Box"):
+                spec["shape"] = shape
+            self._pending_light[idx] = spec
             self._selected_light_index = idx
             self.selected_index = None
             self._expanded_groups.add(self._descriptors[idx].get("name", ""))
@@ -1514,35 +1523,17 @@ class ShipPropertyViewerPanel(Panel):
                 idx = int(arg["i"]); shape = str(arg["shape"])
             except (ValueError, KeyError, TypeError):
                 return False
-            if not (0 <= idx < len(self._descriptors)):
+            if not (0 <= idx < len(self._descriptors)) or shape not in ("Sphere", "Cylinder", "Box"):
                 return False
-            base = dict(self._effective_light(idx) or self._descriptors[idx].get("light_region") or {})
-            pos = base.get("position") or (0.0, 0.0, 0.0)
-            axis = base.get("axis") or (0.0, -1.0, 0.0)
-            spec = {"shape": shape, "position": tuple(pos), "axis": tuple(axis),
+            base = dict(self._effective_light(idx)
+                        or self._descriptors[idx].get("light_region") or {})
+            spec = {"shape": shape,
+                    "position": tuple(base.get("position") or (0.0, 0.0, 0.0)),
+                    "axis": tuple(base.get("axis") or (0.0, -1.0, 0.0)),
                     "radius": base.get("radius") or (0.25,),
                     "extent": base.get("extent") or (0.0, 2.0),
-                    "scale": base.get("scale") or (0.25, 0.25, 0.25)}
-            try:
-                if shape == "Sphere":
-                    r = float(arg["radius"])
-                    if r <= 0.0:
-                        return False
-                    spec["radius"] = (r,)
-                elif shape == "Cylinder":
-                    r = float(arg["radius"]); aft = float(arg["aft"]); fore = float(arg["fore"])
-                    if r <= 0.0 or fore <= aft:
-                        return False
-                    spec["radius"] = (r,); spec["extent"] = (aft, fore)
-                elif shape == "Box":
-                    sx = float(arg["sx"]); sy = float(arg["sy"]); sz = float(arg["sz"])
-                    if sx <= 0.0 or sy <= 0.0 or sz <= 0.0:
-                        return False
-                    spec["scale"] = (sx, sy, sz)
-                else:
-                    return False
-            except (KeyError, TypeError, ValueError):
-                return False
+                    "scale": base.get("scale") or (0.25, 0.25, 0.25),
+                    "orientation": base.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))}
             self._pending_light[idx] = spec
             self._last_pushed = None
             return True
