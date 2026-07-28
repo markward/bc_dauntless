@@ -362,24 +362,7 @@ def _freighter(find):
 
 def _galor(find):
     """galor."""
-    p = find("Warp Engine 1")
-    if p is not None:
-        p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.1875)
-        p.SetGlowRegionExtent(0, -1.5625, 1.5625)
-    p = find("Port Impulse")
-    if p is not None:
-        p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.2)
-        p.SetGlowRegionExtent(0, 0.0, 2.0)
-    p = find("Star Impulse")
-    if p is not None:
-        p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.2)
-        p.SetGlowRegionExtent(0, 0.0, 2.0)
+    return
 
 
 def _geronimo(find):
