@@ -210,6 +210,8 @@ window.setShipPropertyViewer = function (data) {
 var spvCtxIndex = null, spvCtxRadius = 0, spvRowRadii = {}, spvPendingEdits = [];
 var spvRowLight = {};   // index -> light_region spec (or true) for light rows
 var spvLight = null;    // working spec while the modal is open
+var spvLightMode = 'edit';   // 'edit' (set_light) or 'add' (add_light) — which
+                              // action the shared shape-picker modal's Apply fires
 
 // A light-volume node's working seed lives on the row (row.light_region), keyed
 // by its parent subsystem index (row.light_of). Track the right-clicked node so
@@ -281,10 +283,18 @@ function spvOpenMenuAt(event) {
     dauntlessEvent('ship-property-viewer/overlay:1');
 }
 
-// Add Light Volume (subsystem context) → stage a default, then Python selects it.
+// Add Light Volume (subsystem context) → open the same shape-picker modal as
+// Edit Light, defaulted from the subsystem's own light child if it has one
+// (mirrors shipPropertyViewerCtxLight's open path exactly).
 window.shipPropertyViewerCtxAddLight = function () {
-    dauntlessEvent('ship-property-viewer/add_light:' + spvCtxIndex);
-    spvHideOverlays();
+    document.getElementById('spv-ctxmenu').style.display = 'none';
+    spvLightMode = 'add';
+    document.getElementById('spv-light-title').textContent = 'Add Light';
+    spvLight = spvLightDefaults();
+    var seed = spvRowLight[spvCtxIndex];
+    spvLight.shape = (seed && seed.shape) || 'Sphere';
+    shipPropertyViewerLightShape(spvLight.shape);
+    document.getElementById('spv-light').style.display = 'flex';
 };
 // Remove Light Volume (light-node context).
 window.shipPropertyViewerCtxRemoveLight = function () {
@@ -333,6 +343,8 @@ function spvLightDefaults() {
 
 window.shipPropertyViewerCtxLight = function () {
     document.getElementById('spv-ctxmenu').style.display = 'none';
+    spvLightMode = 'edit';
+    document.getElementById('spv-light-title').textContent = 'Edit Light';
     // Select the light node we're about to edit so its wireframe is the
     // selected element — the glow overlay is selection-scoped, so this is
     // what makes the staged edit preview live while the modal is open.
@@ -369,19 +381,6 @@ window.shipPropertyViewerLightShape = function (shape) {
         var b = document.getElementById('spv-shape-' + s);
         if (b) b.classList.toggle('active', s === shape);
     });
-    var html = '';
-    if (shape === 'Sphere') {
-        html = spvStepperHtml('Radius', 'radius', 0.05);
-    } else if (shape === 'Cylinder') {
-        html = spvStepperHtml('Radius', 'radius', 0.05)
-             + spvStepperHtml('Aft', 'aft', 0.25)
-             + spvStepperHtml('Fore', 'fore', 0.25);
-    } else {   // Box
-        html = spvStepperHtml('Size X', 'sx', 0.05)
-             + spvStepperHtml('Size Y', 'sy', 0.05)
-             + spvStepperHtml('Size Z', 'sz', 0.05);
-    }
-    document.getElementById('spv-light-fields').innerHTML = html;
 };
 
 window.shipPropertyViewerLightStep = function (field, delta) {
@@ -393,15 +392,9 @@ window.shipPropertyViewerLightStep = function (field, delta) {
 };
 
 window.shipPropertyViewerLightApply = function () {
-    var msg = {i: spvCtxIndex, shape: spvLight.shape};
-    if (spvLight.shape === 'Sphere') {
-        msg.radius = spvLight.radius;
-    } else if (spvLight.shape === 'Cylinder') {
-        msg.radius = spvLight.radius; msg.aft = spvLight.aft; msg.fore = spvLight.fore;
-    } else {
-        msg.sx = spvLight.sx; msg.sy = spvLight.sy; msg.sz = spvLight.sz;
-    }
-    dauntlessEvent('ship-property-viewer/set_light:' + JSON.stringify(msg));
+    var action = (spvLightMode === 'add') ? 'add_light:' : 'set_light:';
+    dauntlessEvent('ship-property-viewer/' + action
+                   + JSON.stringify({i: spvCtxIndex, shape: spvLight.shape}));
     spvHideOverlays();
 };
 
