@@ -586,6 +586,22 @@
          inside it would centre within the column instead of the viewport. -->
     <div id="character-tooltip-host"></div>
 
+    <!-- Tactical Orders/Tactics/Maneuvers command panes — Felix's bridge
+         menu (TacticalMenuHandlers.CreateOrdersStatusDisplay) projected
+         to CEF. Top-anchored horizontal row matching BC (Orders ->
+         Maneuvers -> Tactics, left-to-right, pinned to the top edge just
+         right of the tactical officer's own crew menu). Deliberately a
+         body-level sibling here, NOT nested inside #tactical-left-column
+         below: BC anchors this row across the TOP of the screen, not down
+         the left column. Visible only while the Tactical crew menu is
+         open (either bridge or tactical view). State pushed via
+         setTacticalOrders({visible, orders[], tactics[], maneuvers[]});
+         row clicks fire dauntlessEvent('tactical-orders/click:<id>'),
+         which resolves the matching SDK STButton and calls
+         SendActivationEvent() (BC's own ET_MANEUVER path).
+         Spec: docs/superpowers/specs/2026-07-28-bridge-tactical-mode-f2-hud-design.md -->
+    <div id="tactical-orders-host"></div>
+
     <!-- Tactical-view layout zones. All panels are flex children of one
          of these two containers; no panel uses absolute/fixed positioning
          of its own. Order in DOM is also visual order.
@@ -645,17 +661,6 @@
                 <div class="target-list__body" id="target-list-body"></div>
             </div>
         </div>
-
-        <!-- Tactical Orders/Tactics/Maneuvers command panes — Felix's bridge
-             menu (TacticalMenuHandlers.CreateOrdersStatusDisplay) projected
-             to CEF. Visible only while the Tactical crew menu is open (either
-             bridge or tactical view). State pushed via
-             setTacticalOrders({visible, orders[], tactics[], maneuvers[]});
-             row clicks fire dauntlessEvent('tactical-orders/click:<id>'),
-             which resolves the matching SDK STButton and calls
-             SendActivationEvent() (BC's own ET_MANEUVER path).
-             Spec: docs/superpowers/specs/2026-07-28-bridge-tactical-mode-f2-hud-design.md -->
-        <div id="tactical-orders-host"></div>
 
         <!-- Sensors / radar panel — pinned to the bottom of the left
              column via the parent's flex split (target-stack grows,

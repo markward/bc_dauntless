@@ -6,14 +6,15 @@ function setTacticalOrders(payload) {
   if (!host) return;
   if (!payload || !payload.visible) { host.innerHTML = ""; return; }
   host.innerHTML = "";
-  var groups = [["Orders", payload.orders],
-                ["Maneuvers", payload.maneuvers],
-                ["Tactics", payload.tactics]];
+  var groups = [["Orders", "orders", payload.orders],
+                ["Maneuvers", "maneuvers", payload.maneuvers],
+                ["Tactics", "tactics", payload.tactics]];
   groups.forEach(function (g) {
-    var title = g[0], rows = g[1] || [];
+    var title = g[0], group = g[1], rows = g[2] || [];
     if (!rows.length) return;
     var section = document.createElement("section");
     section.className = "bc-panel tactical-orders";
+    section.setAttribute("data-group", group);
     var head = document.createElement("div");
     head.className = "bc-panel__header";
     head.innerHTML = '<span class="bc-panel__title">' + title + "</span>";

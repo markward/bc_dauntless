@@ -1,18 +1,26 @@
 /* Tactical Orders / Tactics / Maneuvers command panes — Felix's bridge
    menu (Bridge.TacticalMenuHandlers.CreateOrdersStatusDisplay) projected
-   to CEF by TacticalOrdersPanel into #tactical-orders-host (a sibling of
-   #tactical-target-stack inside #tactical-left-column). Rendered as three
-   stacked .bc-panel groups, DOM order Orders -> Maneuvers -> Tactics
-   (BC's left-to-right reading order in the narrow tactical column).
-   Row chrome mirrors .crew-menu__row (css/crew_menus.css); "chosen" adds
-   the same lit/selected treatment as .crew-menu__row--highlighted.
+   to CEF by TacticalOrdersPanel into #tactical-orders-host (a body-level
+   fixed zone, top-anchored, NOT inside #tactical-left-column). Rendered
+   as three .bc-panel groups side by side in a horizontal row, DOM order
+   Orders -> Maneuvers -> Tactics (BC's left-to-right reading order across
+   the top of the screen, just right of the Tactical officer's own crew
+   menu). Row chrome mirrors .crew-menu__row (css/crew_menus.css); "chosen"
+   adds the same lit/selected treatment as .crew-menu__row--highlighted.
    Spec: docs/superpowers/specs/2026-07-28-bridge-tactical-mode-f2-hud-design.md */
 
 #tactical-orders-host {
+  position: fixed;
+  top: 24px;
+  /* Clear the left column (24px gutter + 224px column) plus a small
+     breathing margin, matching #tactical-bottom-row's idiom. */
+  left: 264px;
+  right: 24px;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  pointer-events: auto;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  pointer-events: none;
   font-family: "Antonio", "Antonio-Regular", sans-serif;
   font-weight: 600;
   color: var(--bc-label-text);
@@ -22,8 +30,20 @@
 #tactical-orders-host:empty { display: none; }
 
 /* .tactical-orders is a .bc-panel — header/body chrome inherited from the
-   shared bc-panel classes (panels/ship_display/ship_display.css). */
-.tactical-orders { width: 100%; }
+   shared bc-panel classes (panels/ship_display/ship_display.css). Sizes
+   to content (not a full-width stack) so the three groups sit compactly
+   side by side across the top row. */
+.tactical-orders {
+  min-width: 160px;
+  pointer-events: auto;
+}
+
+/* Orders is authored as a 2-column grid in BC (Destroy | Disable /
+   Stop | Evade); Maneuvers and Tactics stay single-column lists. */
+.tactical-orders[data-group="orders"] .bc-panel__body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
 
 .tactical-orders__row {
   display: flex;
