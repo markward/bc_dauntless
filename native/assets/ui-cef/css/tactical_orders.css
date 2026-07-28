@@ -92,17 +92,10 @@
   opacity: 0.65;
 }
 
-/* Collapsed: body holds exactly one row (the current selection, computed
-   panel-side with BC's chosen -> first-enabled -> first-row fallback). No
-   extra chrome needed beyond the single .tactical-orders__row already
-   rendered into .bc-panel__body — this rule just keeps the collapsed
-   popup from stretching to the expanded list's width/height. */
-.tactical-orders.is-collapsed .bc-panel__body {
-  display: block;
-}
-
-/* Expanded: full option list, single column (Maneuvers/Tactics never use
-   the Orders 2-col grid). */
-.tactical-orders.is-expanded .bc-panel__body {
-  display: block;
-}
+/* .is-collapsed / .is-expanded (set on .tactical-orders per-group, see
+   tactical_orders.js) currently carry no styling of their own — the
+   collapsed popup is just a single .tactical-orders__row and the expanded
+   list is the default single-column .bc-panel__body, identical block
+   layout either way. Kept as class hooks (not dead markup — JS still
+   needs a DOM-visible expand/collapse signal for the header marker and
+   any future width/animation tuning), just not styled here. */

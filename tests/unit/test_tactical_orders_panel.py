@@ -296,3 +296,58 @@ def test_invalidate_resets_expanded_groups():
     p.invalidate()
     payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
     assert payload["maneuvers"]["expanded"] is False
+
+
+# ── Follow-up review fixes ────────────────────────────────────────────────
+#
+# FIX 1 (BC fidelity): a collapsed popup's single visible row is the JS
+# side's "current selection" row, routed to `toggle:<group>` (expand), NOT
+# `click:<group>:<label>` (activate) -- BC's collapsed STCharacterMenu
+# EXPANDS on click, it does not re-fire the already-chosen option. The panel
+# itself doesn't need new dispatch logic for this (the `toggle:` branch
+# already existed and never touches a button); this test pins the contract
+# the JS relies on: dispatching the toggle action for a collapsed group
+# expands it and calls no SDK activation on any button in that group.
+
+def test_collapsed_group_click_only_expands_and_does_not_activate():
+    chosen = _FakeButton("ManeuverAtWill", chosen=True)
+    other = _FakeButton("ManeuverEvasive")
+    p = _panel_with([], [], [chosen, other])
+    p.visible = True
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["maneuvers"]["expanded"] is False  # collapsed by default
+
+    # This is what the JS now emits when the collapsed current-selection row
+    # (or the header) is clicked -- toggle, never click:.
+    assert p.dispatch_event("toggle:maneuvers") is True
+    assert "maneuvers" in p._expanded_groups
+
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["maneuvers"]["expanded"] is True
+    # No button was activated by the collapsed-row click -- only genuine
+    # option clicks (click:<group>:<label>) ever call SendActivationEvent.
+    assert chosen.activated == 0
+    assert other.activated == 0
+
+
+# FIX 3: a collapsible group with zero rows must render safely -- no rows to
+# show, no crash resolving `current` (None with no rows, per `_current_row`).
+
+def test_collapsible_group_with_zero_rows_renders_safely():
+    p = _panel_with([_FakeButton("OrderDestroy")], [], [])  # maneuvers empty
+    p.visible = True
+    js = p.render_payload()
+    assert js is not None
+    payload = json.loads(js[len("setTacticalOrders("):-2])
+    assert payload["maneuvers"]["collapsible"] is True
+    assert payload["maneuvers"]["rows"] == []
+    assert payload["maneuvers"]["current"] is None
+    # expanded is whatever the group's default state is -- False by default,
+    # since it was never toggled -- and toggling an empty group is still a
+    # valid (harmless) UI action.
+    assert payload["maneuvers"]["expanded"] is False
+    assert p.dispatch_event("toggle:maneuvers") is True
+    payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
+    assert payload["maneuvers"]["expanded"] is True
+    assert payload["maneuvers"]["rows"] == []
+    assert payload["maneuvers"]["current"] is None

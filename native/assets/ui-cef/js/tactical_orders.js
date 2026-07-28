@@ -10,11 +10,16 @@
 // (expanded: false, the default) they show only the header + a single row
 // for `current` (the chosen selection, or the SDK's own fallback already
 // resolved server-side) plus a "▶" affordance; expanded (expanded: true)
-// they show the header + every row from `rows` plus a "▼" marker. Clicking
-// the header toggles expand state (`tactical-orders/toggle:<group>`, pure
-// UI, no SDK call); clicking an option row activates it AND collapses the
-// group (unchanged `tactical-orders/click:<id>` path, collapse happens
-// server-side).
+// they show the header + every row from `rows` plus a "▼" marker.
+//
+// Collapsed state: clicking EITHER the header OR the single current-
+// selection row only expands the popup (`tactical-orders/toggle:<group>`,
+// pure UI, no SDK call) — BC's collapsed popup expands on click, it does
+// not re-fire the already-chosen option.
+//
+// Expanded state: the header still toggles (collapses); clicking an
+// OPTION row activates it AND collapses the group
+// (`tactical-orders/click:<id>` path, collapse happens server-side).
 //
 // Mounts into #tactical-orders-host.
 function setTacticalOrders(payload) {
@@ -54,17 +59,25 @@ function setTacticalOrders(payload) {
 
     var body = document.createElement("div");
     body.className = "bc-panel__body";
-    var displayRows = entry.rows;
-    if (entry.collapsible && !entry.expanded) {
-      displayRows = entry.current ? [entry.current] : [];
-    }
+    var collapsedNow = entry.collapsible && !entry.expanded;
+    var displayRows = collapsedNow
+      ? (entry.current ? [entry.current] : [])
+      : entry.rows;
     displayRows.forEach(function (r) {
       var el = document.createElement("div");
       el.className = "tactical-orders__row"
         + (r.chosen ? " is-chosen" : "")
         + (r.enabled ? "" : " is-disabled");
       el.textContent = r.label;
-      if (r.enabled) {
+      if (collapsedNow) {
+        // The collapsed popup's single visible row only expands it — it
+        // must NOT re-fire the already-chosen option's SDK activation.
+        // Always clickable regardless of `enabled` (expanding isn't
+        // selecting).
+        el.addEventListener("click", function () {
+          dauntlessEvent("tactical-orders/toggle:" + group);
+        });
+      } else if (r.enabled) {
         el.addEventListener("click", function () {
           dauntlessEvent("tactical-orders/click:" + r.id);
         });
