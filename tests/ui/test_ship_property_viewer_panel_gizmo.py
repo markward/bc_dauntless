@@ -208,11 +208,13 @@ def test_edit_light_shape_preserves_dragged_position():
     # Sanity: drag staged before the Edit-Light dispatch.
     assert p._effective_light(0)["position"] == pytest.approx((1.5, 1.0, 0.0))
 
-    p.dispatch_event("set_light:" + json.dumps({"i": 0, "shape": "Sphere", "radius": 0.4}))
+    # set_light is now shape-ONLY (sizing moved to the Scale tool); a shape
+    # change must still preserve the dragged position.
+    p.dispatch_event("set_light:" + json.dumps({"i": 0, "shape": "Sphere"}))
 
     spec = p._effective_light(0)
+    assert spec["shape"] == "Sphere"
     assert spec["position"] == pytest.approx((1.5, 1.0, 0.0))  # dragged X survived
-    assert spec["radius"] == pytest.approx((0.4,))
 
 
 def test_popover_position_follows_pending_drag():

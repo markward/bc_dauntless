@@ -795,45 +795,35 @@ class _LightShip:
 
 
 def test_set_light_stages_and_marks_dirty(monkeypatch):
+    # set_light is shape-only: it changes the shape and preserves the
+    # existing spec's size/position fields (no size args accepted).
     import engine.ui.ship_property_viewer_panel as mod
     monkeypatch.setattr(mod, "build_descriptors",
                         lambda ship: [_light_descriptor("Center Impulse")])
     p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
     p.open()
-    ok = p.dispatch_event("set_light:" + _json.dumps(
-        {"i": 0, "shape": "Cylinder", "radius": 0.4, "aft": 0.0, "fore": 3.0}))
+    ok = p.dispatch_event("set_light:" + _json.dumps({"i": 0, "shape": "Box"}))
     assert ok is True
     data = _payload_data(p.render_payload())
     assert data["pending_count"] == 1
     assert data["subsystems"][0]["dirty"] is True
     spec = p.pending_light_specs()["Center Impulse"]
-    assert spec["shape"] == "Cylinder"
-    assert spec["radius"] == (0.4,)
-    assert spec["extent"] == (0.0, 3.0)
+    assert spec["shape"] == "Box"
+    assert spec["radius"] == (0.25,)             # preserved from light_region
+    assert spec["extent"] == (0.0, 2.0)          # preserved from light_region
+    assert spec["scale"] == (0.25, 0.25, 0.25)   # preserved from light_region
     assert spec["position"] == (1.0, 0.0, 0.0)   # carried from light_region
 
 
-def test_set_light_rejects_fore_le_aft(monkeypatch):
+def test_set_light_rejects_unknown_shape(monkeypatch):
     import engine.ui.ship_property_viewer_panel as mod
     monkeypatch.setattr(mod, "build_descriptors",
                         lambda ship: [_light_descriptor("Center Impulse")])
     p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
     p.open()
-    ok = p.dispatch_event("set_light:" + _json.dumps(
-        {"i": 0, "shape": "Cylinder", "radius": 0.4, "aft": 2.0, "fore": 2.0}))
+    ok = p.dispatch_event("set_light:" + _json.dumps({"i": 0, "shape": "Blob"}))
     assert ok is False
     assert _payload_data(p.render_payload())["pending_count"] == 0
-
-
-def test_set_light_box_rejects_nonpositive_scale(monkeypatch):
-    import engine.ui.ship_property_viewer_panel as mod
-    monkeypatch.setattr(mod, "build_descriptors",
-                        lambda ship: [_light_descriptor("Center Impulse")])
-    p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
-    p.open()
-    ok = p.dispatch_event("set_light:" + _json.dumps(
-        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.0, "sz": 0.5}))
-    assert ok is False
 
 
 def test_save_routes_light_region_edit(monkeypatch):
@@ -848,8 +838,7 @@ def test_save_routes_light_region_edit(monkeypatch):
                         lambda ship: [_light_descriptor("Center Impulse")])
     p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
     p.open()
-    p.dispatch_event("set_light:" + _json.dumps(
-        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    p.dispatch_event("set_light:" + _json.dumps({"i": 0, "shape": "Box"}))
     p.dispatch_event("save")
     assert len(calls) == 1
     leaf, edits = calls[0]
@@ -858,7 +847,8 @@ def test_save_routes_light_region_edit(monkeypatch):
     assert edits[0][1] == "__region__"
     assert edits[0][2] == 0
     assert ("SetGlowRegionShape", (0, "Box")) in edits[0][3]
-    assert ("SetGlowRegionScale", (0, 0.5, 0.6, 0.7)) in edits[0][3]
+    # scale/radius/extent carry through unchanged (shape-only edit).
+    assert ("SetGlowRegionScale", (0, 0.25, 0.25, 0.25)) in edits[0][3]
     assert _payload_data(p.render_payload())["pending_count"] == 0
 
 
@@ -960,8 +950,7 @@ def test_saved_light_keeps_driving_preview_after_save(monkeypatch):
                         lambda ship: [_light_descriptor("Center Impulse")])
     p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
     p.open()
-    p.dispatch_event("set_light:" + _json.dumps(
-        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    p.dispatch_event("set_light:" + _json.dumps({"i": 0, "shape": "Box"}))
     p.dispatch_event("save")
     # Dirty/Save-bar state clears (the edit is no longer unsaved)...
     data = _payload_data(p.render_payload())
@@ -971,7 +960,7 @@ def test_saved_light_keeps_driving_preview_after_save(monkeypatch):
     assert p.pending_light_specs()["Center Impulse"]["shape"] == "Box"
     child = data["subsystems"][0]["children"][0]
     assert child["light_region"]["shape"] == "Box"
-    assert child["light_region"]["scale"] == [0.5, 0.6, 0.7]
+    assert child["light_region"]["scale"] == [0.25, 0.25, 0.25]   # preserved
 
 
 def test_saved_light_resets_on_close(monkeypatch):
@@ -1002,12 +991,11 @@ def test_row_light_region_reflects_pending_after_edit(monkeypatch):
                         lambda ship: [_light_descriptor("Center Impulse")])
     p = ShipPropertyViewerPanel(ship_getter=lambda: _LightShip())
     p.open()
-    p.dispatch_event("set_light:" + _json.dumps(
-        {"i": 0, "shape": "Box", "sx": 0.5, "sy": 0.6, "sz": 0.7}))
+    p.dispatch_event("set_light:" + _json.dumps({"i": 0, "shape": "Box"}))
     row = _payload_data(p.render_payload())["subsystems"][0]
     child = row["children"][0]
     assert child["light_region"]["shape"] == "Box"
-    assert child["light_region"]["scale"] == [0.5, 0.6, 0.7]
+    assert child["light_region"]["scale"] == [0.25, 0.25, 0.25]   # preserved
 
 
 def _dark_descriptor(name):
