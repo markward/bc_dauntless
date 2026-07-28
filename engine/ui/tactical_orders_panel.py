@@ -1,10 +1,16 @@
 """CEF view for the tactical Orders/Tactics/Maneuvers command panes.
 
 Projects the three SDK widgets built by Bridge.TacticalMenuHandlers
-(CreateOrdersStatusDisplay): g_pOrdersStatusUI, g_pTacticsStatusUIMenu,
+(CreateOrdersStatusDisplay): g_pOrdersStatusUIPane (the TGPane the order
+buttons are actually AddChild'd onto — NOT the g_pOrdersStatusUI
+STStylizedWindow container around it, which stays permanently childless
+under our STStylizedWindow_CreateW shim), g_pTacticsStatusUIMenu,
 g_pManeuversStatusUIMenu. Reads label/chosen/enabled per button each tick and
-emits setTacticalOrders({...}); a click resolves the matching SDK button and
-calls SendActivationEvent(), which fires the SDK's own ET_MANEUVER event.
+emits setTacticalOrders({...}); a click resolves the matching SDK button
+WITHIN its own group (row ids are group-qualified — BC's localized labels
+collide across groups, e.g. "At Will" for both TacticAtWill and
+ManeuverAtWill) and calls SendActivationEvent(), which fires the SDK's own
+ET_MANEUVER event.
 
 Availability (which tactics/maneuvers are enabled) is computed by the SDK's
 UpdateOrderMenus from the g_dAIs table and reflected in each button's
@@ -40,12 +46,25 @@ class TacticalOrdersPanel(Panel):
 
     def _resolve_panes(self):
         """Return (orders_pane, tactics_pane, maneuvers_pane), any of which
-        may be None before a bridge load. Overridden in tests."""
+        may be None before a bridge load. Overridden in tests.
+
+        Orders reads g_pOrdersStatusUIPane (the TGPane the order buttons are
+        actually AddChild'd onto — SDK Bridge/TacticalMenuHandlers.py:591,
+        609/611), NOT g_pOrdersStatusUI (the STStylizedWindow *container*
+        around that pane). The SDK's own UpdateOrderMenus walks
+        g_pOrdersStatusUIPane.GetFirstChild()/GetNextChild() (lines
+        1507-1510, 1581-1600) for exactly this reason — our
+        STStylizedWindow_CreateW (engine/appc/windows.py) discards the pane
+        arg, so g_pOrdersStatusUI._children is permanently empty. Reading
+        the wrong global here shipped the Orders group empty (fixed after
+        code review — tests/unit/test_tactical_orders_panel.py's
+        test_resolve_panes_reads_orders_status_ui_pane covers it).
+        """
         try:
             import Bridge.TacticalMenuHandlers as T
         except Exception:
             return (None, None, None)
-        return (getattr(T, "g_pOrdersStatusUI", None),
+        return (getattr(T, "g_pOrdersStatusUIPane", None),
                 getattr(T, "g_pTacticsStatusUIMenu", None),
                 getattr(T, "g_pManeuversStatusUIMenu", None))
 
@@ -67,7 +86,14 @@ class TacticalOrdersPanel(Panel):
         return out
 
     @staticmethod
-    def _row(button) -> dict:
+    def _row(button, group: str) -> dict:
+        # id is group-qualified ("orders:<label>") because BC's own
+        # localized labels collide across groups — e.g. TacticAtWill and
+        # ManeuverAtWill both localize to "At Will" (data/TGL/Bridge
+        # Menus.tgl). An unqualified id made dispatch_event's first-match
+        # search (orders -> tactics -> maneuvers) activate the wrong
+        # button's SDK action for every such collision (fixed after code
+        # review; see test_maneuver_atwill_activates_maneuvers_not_tactics).
         label = button.GetLabel() if hasattr(button, "GetLabel") else ""
         chosen = bool(button.IsChosen()) if hasattr(button, "IsChosen") else False
         if hasattr(button, "IsDisabled"):
@@ -76,16 +102,17 @@ class TacticalOrdersPanel(Panel):
             enabled = bool(button.IsEnabled())
         else:
             enabled = True
-        return {"label": label, "id": label, "chosen": chosen, "enabled": enabled}
+        return {"label": label, "id": group + ":" + label,
+                "chosen": chosen, "enabled": enabled}
 
     def _build(self):
         """Read the three panes and return {orders, tactics, maneuvers} row
         lists (each row a dict). Single source of the projected model."""
         orders_pane, tactics_pane, maneuvers_pane = self._resolve_panes()
         return {
-            "orders": [self._row(b) for b in self._iter_buttons(orders_pane)],
-            "tactics": [self._row(b) for b in self._iter_buttons(tactics_pane)],
-            "maneuvers": [self._row(b) for b in self._iter_buttons(maneuvers_pane)],
+            "orders": [self._row(b, "orders") for b in self._iter_buttons(orders_pane)],
+            "tactics": [self._row(b, "tactics") for b in self._iter_buttons(tactics_pane)],
+            "maneuvers": [self._row(b, "maneuvers") for b in self._iter_buttons(maneuvers_pane)],
         }
 
     @staticmethod
@@ -107,13 +134,23 @@ class TacticalOrdersPanel(Panel):
     def dispatch_event(self, action: str) -> bool:
         if not action.startswith("click:"):
             return False
-        label = action[len("click:"):]
-        for pane in self._resolve_panes():
-            for button in self._iter_buttons(pane):
-                if hasattr(button, "GetLabel") and button.GetLabel() == label:
-                    if hasattr(button, "SendActivationEvent"):
-                        button.SendActivationEvent()
-                    return True
+        row_id = action[len("click:"):]
+        group, sep, label = row_id.partition(":")
+        if not sep:
+            return False
+        orders_pane, tactics_pane, maneuvers_pane = self._resolve_panes()
+        pane = {"orders": orders_pane, "tactics": tactics_pane,
+                "maneuvers": maneuvers_pane}.get(group)
+        if pane is None:
+            return False
+        # Resolve WITHIN the matching group only — labels can collide across
+        # groups (e.g. "At Will" for both TacticAtWill and ManeuverAtWill),
+        # and each group's SDK button fires a different ET_MANEUVER subtype.
+        for button in self._iter_buttons(pane):
+            if hasattr(button, "GetLabel") and button.GetLabel() == label:
+                if hasattr(button, "SendActivationEvent"):
+                    button.SendActivationEvent()
+                return True
         return False
 
     def invalidate(self) -> None:
