@@ -1991,13 +1991,17 @@ class _ViewModeController:
 
 
 def _tactical_hud_visible(*, is_exterior: bool, spv_open: bool,
-                          cutscene_active: bool) -> bool:
+                          cutscene_active: bool,
+                          bridge_tactical_active: bool = False) -> bool:
     """Whether the tactical HUD (ship displays, sensors, target list,
-    weapons) should show this frame. It is an exterior-view element, hidden
-    while the Ship Property Viewer owns the frame, and hidden during a
-    cutscene so the letterbox frame stays cinematic (BC hides the tactical
-    UI during StartCutscene..EndCutscene)."""
-    return is_exterior and not spv_open and not cutscene_active
+    weapons) should show this frame. It is an exterior-view element, but is
+    ALSO shown on the bridge while the player is in bridge-tactical mode
+    (the Tactical officer's menu is open, BC's g_bIsInBridgeTactical). Hidden
+    while the Ship Property Viewer owns the frame, and during a cutscene so the
+    letterbox frame stays cinematic (BC hides the tactical UI during
+    StartCutscene..EndCutscene)."""
+    return (is_exterior or bridge_tactical_active) and not spv_open \
+        and not cutscene_active
 
 
 def _bridge_freelook_suppressed(*, crew_menu_open: bool,
@@ -6492,10 +6496,14 @@ def run(mission_name: Optional[str] = None,
                 # _NULL_PICKER.is_open() is False, so this is a no-op in
                 # production / non-dev.
                 from engine.appc.top_window import TopWindow_GetTopWindow
+                _bridge_tactical_active = (
+                    view_mode.is_bridge
+                    and crew_menu_panel.open_menu_label() == "Tactical")
                 _tac_visible = _tactical_hud_visible(
                     is_exterior=view_mode.is_exterior,
                     spv_open=ship_property_viewer.is_open(),
-                    cutscene_active=TopWindow_GetTopWindow().IsCutsceneMode())
+                    cutscene_active=TopWindow_GetTopWindow().IsCutsceneMode(),
+                    bridge_tactical_active=_bridge_tactical_active)
                 target_list_view.visible    = _tac_visible
                 sensors_panel.visible       = _tac_visible
                 ship_display_player.visible = _tac_visible
