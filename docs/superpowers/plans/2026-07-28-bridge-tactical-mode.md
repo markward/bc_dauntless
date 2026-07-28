@@ -446,30 +446,30 @@ class TacticalOrdersPanel(Panel):
             enabled = True
         return {"label": label, "id": label, "chosen": chosen, "enabled": enabled}
 
-    def _snapshot(self):
+    def _build(self):
+        """Read the three panes and return {orders, tactics, maneuvers} row
+        lists (each row a dict). Single source of the projected model."""
         orders_pane, tactics_pane, maneuvers_pane = self._resolve_panes()
-        orders = tuple(self._row(b) for b in self._iter_buttons(orders_pane))
-        tactics = tuple(self._row(b) for b in self._iter_buttons(tactics_pane))
-        maneuvers = tuple(self._row(b) for b in self._iter_buttons(maneuvers_pane))
-        return (self._visible,
-                tuple(tuple(sorted(r.items())) for r in orders),
-                tuple(tuple(sorted(r.items())) for r in tactics),
-                tuple(tuple(sorted(r.items())) for r in maneuvers))
+        return {
+            "orders": [self._row(b) for b in self._iter_buttons(orders_pane)],
+            "tactics": [self._row(b) for b in self._iter_buttons(tactics_pane)],
+            "maneuvers": [self._row(b) for b in self._iter_buttons(maneuvers_pane)],
+        }
+
+    @staticmethod
+    def _key(visible, groups):
+        """Hashable snapshot key derived from the built model."""
+        return (visible, tuple(
+            (g, tuple(tuple(sorted(r.items())) for r in groups[g]))
+            for g in ("orders", "tactics", "maneuvers")))
 
     def render_payload(self) -> Optional[str]:
-        orders_pane, tactics_pane, maneuvers_pane = self._resolve_panes()
-        orders = [self._row(b) for b in self._iter_buttons(orders_pane)]
-        tactics = [self._row(b) for b in self._iter_buttons(tactics_pane)]
-        maneuvers = [self._row(b) for b in self._iter_buttons(maneuvers_pane)]
-        snap = (self._visible,
-                tuple(tuple(sorted(r.items())) for r in orders),
-                tuple(tuple(sorted(r.items())) for r in tactics),
-                tuple(tuple(sorted(r.items())) for r in maneuvers))
-        if snap == self._last_snapshot:
+        groups = self._build()
+        key = self._key(self._visible, groups)
+        if key == self._last_snapshot:
             return None
-        self._last_snapshot = snap
-        payload = {"visible": self._visible, "orders": orders,
-                   "tactics": tactics, "maneuvers": maneuvers}
+        self._last_snapshot = key
+        payload = {"visible": self._visible, **groups}
         return "setTacticalOrders(" + json.dumps(payload) + ");"
 
     def dispatch_event(self, action: str) -> bool:
