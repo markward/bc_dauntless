@@ -1,8 +1,10 @@
 import math
 import pytest
 from engine.appc.light_emitters import (
-    default_emitter_spec, baked_emitters, emitter_spec_to_struct)
+    default_emitter_spec, baked_emitters, emitter_spec_to_struct,
+    resolve_emitter_intensity)
 from engine.appc.properties import SubsystemProperty
+from engine.appc.subsystem_glow import HEALTHY, DISABLED, DESTROYED
 
 
 def _prop_with_emitters(specs):
@@ -57,3 +59,38 @@ def test_cone_struct_derives_half_angle():
     d = emitter_spec_to_struct(s)
     assert d["direction"] == pytest.approx((0.0, -1.0, 0.0))
     assert d["cos_half_angle"] == pytest.approx(math.cos(math.atan2(1.0, 1.0)))
+
+
+class _Sub:
+    def __init__(self, destroyed=False, disabled=False):
+        self._d, self._x = destroyed, disabled
+    def IsDestroyed(self): return self._d
+    def IsDisabled(self): return self._x
+
+
+def test_healthy_emitter_is_full_intensity():
+    s = default_emitter_spec("point"); s["intensity"] = 3.0
+    assert resolve_emitter_intensity(s, _Sub(), now=0.0) == pytest.approx(3.0)
+
+
+def test_destroyed_emitter_is_off():
+    s = default_emitter_spec("point")
+    assert resolve_emitter_intensity(s, _Sub(destroyed=True), now=0.0) is None
+
+
+def test_disabled_emitter_flickers_over_time():
+    s = default_emitter_spec("point"); s["intensity"] = 4.0
+    vals = [resolve_emitter_intensity(s, _Sub(disabled=True), now=t * 0.05)
+            for t in range(40)]
+    assert all(v is None or v <= 4.0 + 1e-6 for v in vals)
+    present = [v for v in vals if v is not None]
+    assert len(set(round(v, 3) for v in present)) > 1   # not a single steady value
+
+
+def test_impulse_emitter_scales_with_throttle():
+    s = default_emitter_spec("point"); s["intensity"] = 1.0
+    lo = resolve_emitter_intensity(s, _Sub(), now=0.0, throttle_frac=0.0,
+                                   is_impulse=True, powered=True)
+    hi = resolve_emitter_intensity(s, _Sub(), now=0.0, throttle_frac=1.0,
+                                   is_impulse=True, powered=True)
+    assert hi > lo

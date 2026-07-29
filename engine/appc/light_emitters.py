@@ -11,9 +11,15 @@ See docs/superpowers/specs/2026-07-29-subsystem-light-emitters-design.md.
 """
 import math
 
+from engine.appc import subsystem_glow
 from engine.appc.properties import read_indexed_setter_args
 
 _KINDS = ("point", "strip", "cone")
+
+# Disabled-state flicker: a sputtering waveform in [0, 1], deterministic in
+# game time (no Math.random) with a per-emitter phase so neighbours desync.
+# Tunable like subsystem_glow.PULSE_AMP — not an authored field.
+_FLICKER_FLOOR = 0.05
 
 
 def default_emitter_spec(kind: str) -> dict:
@@ -98,3 +104,39 @@ def emitter_spec_to_struct(spec: dict) -> dict:
     d["direction"] = (ax, ay, az)
     d["cos_half_angle"] = math.cos(math.atan2(float(spec["radius"]), max(length, 1e-6)))
     return d
+
+
+def emitter_flicker(now: float, phase: float) -> float:
+    """Sputtering waveform in [0, 1], deterministic in game time.
+
+    Two desynced sine waves multiplied together and clamped to positive,
+    biased into [0.35, 1.0] then floored, so a disabled emitter dims and
+    stutters rather than snapping fully dark. `phase` is per-emitter so
+    neighbouring disabled emitters don't flicker in lockstep.
+    """
+    a = math.sin(now * 37.0 + phase)
+    b = math.sin(now * 11.3 + phase * 2.0)
+    v = 0.35 + 0.65 * max(0.0, a * b)
+    return _FLICKER_FLOOR + (1.0 - _FLICKER_FLOOR) * max(0.0, min(1.0, v))
+
+
+def resolve_emitter_intensity(spec, sub, now, throttle_frac=0.0,
+                              is_impulse=False, powered=True, phase=0.0):
+    """Per-frame emitter intensity scalar, or None when fully off.
+
+    HEALTHY -> base intensity; DISABLED -> base * flicker(now); DESTROYED -> off.
+    Impulse-parented emitters additionally scale by subsystem_glow.impulse_gain
+    so they brighten with commanded throttle exactly like the impulse glow.
+    """
+    base = float(spec["intensity"])
+    state = subsystem_glow.glow_state(sub)
+    if state == subsystem_glow.DESTROYED:
+        return None
+    out = base
+    if state == subsystem_glow.DISABLED:
+        out = base * emitter_flicker(now, phase)
+    if is_impulse:
+        out *= subsystem_glow.impulse_gain(throttle_frac, now, powered)
+    if out <= 0.0:
+        return None
+    return out
