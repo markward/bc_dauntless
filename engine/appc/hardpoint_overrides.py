@@ -28,6 +28,13 @@ def _galaxy(find):
         p.SetGlowRegionShape(0, "Box")
         p.SetGlowRegionPosition(0, -1.3, -1.9119627023044568, -0.06)
         p.SetGlowRegionScale(0, 0.30931014657993366, 1.307457336253744, 0.21014627531109478)
+        p.SetLightEmitterKind(0, "strip")
+        p.SetLightEmitterPosition(0, -1.1353107451275817, -1.3056679002659455, -0.04718053337339101)
+        p.SetLightEmitterRadius(0, 1.1305138134376325)
+        p.SetLightEmitterColor(0, 0.14866794126015248, 0.4818838797813879, 1.0)
+        p.SetLightEmitterIntensity(0, 0.5)
+        p.SetLightEmitterAxis(0, 0.0, -1.0, 0.0)
+        p.SetLightEmitterLength(0, 1.7980431371941217)
     p = find("Star Warp")
     if p is not None:
         p.SetGlowRegionShape(0, "Box")
@@ -869,6 +876,19 @@ def _warbird(find):
         p.SetGlowRegionExtent(0, 0.0, 2.0)
 
 
+def _drydock(find):
+    """drydock."""
+    p = find("Hull")
+    if p is not None:
+        p.SetLightEmitterKind(0, "cone")
+        p.SetLightEmitterPosition(0, -1.8829933930065075, -6.096608935851515, 2.1880006045545435)
+        p.SetLightEmitterRadius(0, 1.0)
+        p.SetLightEmitterColor(0, 0.9967105263157895, 1.0, 0.993421052631579)
+        p.SetLightEmitterIntensity(0, 1.0)
+        p.SetLightEmitterAxis(0, -0.01303253787383479, -0.0020951957967578205, -0.9999128777604278)
+        p.SetLightEmitterLength(0, 2.0)
+
+
 OVERRIDES = {
     "galaxy": _galaxy,
     "GenericTemplate": _GenericTemplate,
@@ -903,4 +923,5 @@ OVERRIDES = {
     "transport": _transport,
     "vorcha": _vorcha,
     "warbird": _warbird,
+    "drydock": _drydock,
 }
