@@ -479,13 +479,14 @@ class ShipPropertyViewerPanel(Panel):
         tool target). Mirrors `transform_gizmo`'s target resolution but
         returns the raw position tuple instead of the gizmo geometry."""
         t = self._active_transform_target()
-        if t is None or t[0] == "emitter":
-            # The 3D transform gizmo drives emitter position directly (see
-            # _begin/_apply_axis_drag). The CEF coord readout + Copy/Paste/
-            # Mirror/Nudge buttons for emitters are Task 10 — degrade to "no
-            # target" so the coord panel stays hidden while an emitter is
-            # selected (consistent with scale_values/rotate_values).
+        if t is None:
             return None
+        if t[0] == "emitter":
+            _, i, j = t
+            spec = self._effective_emitter(i, j)
+            if not spec:
+                return None
+            return tuple(float(c) for c in spec["position"])
         kind, i = t
         if kind == "light":
             spec = self._effective_light(i)
@@ -496,10 +497,14 @@ class ShipPropertyViewerPanel(Panel):
 
     def _set_transform_target_pos(self, xyz) -> None:
         """Stage `xyz` as the current transform target's body-frame position,
-        routing to the light or subsystem staging path (emitter coord-panel
-        writes are Task 10; the gizmo drag uses set_emitter_position)."""
+        routing to the emitter (whole-list restage), light, or subsystem
+        staging path as appropriate."""
         t = self._active_transform_target()
-        if t is None or t[0] == "emitter":
+        if t is None:
+            return
+        if t[0] == "emitter":
+            _, i, j = t
+            self.set_emitter_position(i, j, xyz)
             return
         kind, i = t
         if kind == "light":
@@ -567,15 +572,14 @@ class ShipPropertyViewerPanel(Panel):
 
     def scale_values(self) -> Optional[dict]:
         """Data for the scale-tool panel: `{"kind", "fields", "has_clipboard",
-        "can_paste"}` for the current transform target, or None when the
-        scale tool isn't active, nothing is selected, or the target is an
-        emitter. Emitter SCALE acts through the 3D gizmo drag (implemented);
-        its CEF numeric panel + Copy/Paste/Nudge are Task 10, so no panel is
-        shown here yet."""
+        "can_paste"}` for the current transform target, or None when the scale
+        tool isn't active or nothing is selected. `_scale_kind_and_fields` is
+        shape-aware for subsystems, light volumes, AND emitters (point ->
+        "radius", strip/cone -> "radius_length")."""
         if self.active_tool != "scale":
             return None
         t = self._active_transform_target()
-        if t is None or t[0] == "emitter":
+        if t is None:
             return None
         kind, fields = self._scale_kind_and_fields(t)
         clip = self._scale_clipboard
@@ -681,27 +685,32 @@ class ShipPropertyViewerPanel(Panel):
         if self.active_tool != "rotate":
             return None
         t = self._rotate_target()
-        if t is None or t[0] == "emitter":
-            # Emitter rotate acts through the 3D ring gizmo only; the CEF
-            # degree-readout panel + nudge/copy/paste buttons are Task 10.
+        if t is None:
+            # _rotate_target() already returns None for a point emitter and for
+            # non-cylinder/box lights/subsystems, so no panel there — correct.
             return None
-        _, i = t
-        # Keyed by the full target tuple (("light", i)) so a subsystem's light
-        # readout stays independent of that same subsystem's emitter readouts
-        # (("emitter", i, j)) — the bare index i would collide.
+        # Keyed by the full target tuple (("light", i) / ("emitter", i, j)) so a
+        # subsystem's light readout stays independent of that same subsystem's
+        # emitter readouts — a bare index i would collide.
         acc = self._rotate_accum.get(t, [0.0, 0.0, 0.0])
         clip = self._rotate_clipboard
-        kind = self._rotate_clipboard_kind(i)
+        kind = self._rotate_clipboard_kind(t)
         return {"fields": [{"label": "X", "value": acc[0]},
                            {"label": "Y", "value": acc[1]},
                            {"label": "Z", "value": acc[2]}],
                 "has_clipboard": clip is not None,
                 "can_paste": clip is not None and clip[0] == kind}
 
-    def _rotate_clipboard_kind(self, i) -> str:
-        """Clipboard kind for light `i`'s current shape: `box_orientation`
-        for a Box, `cylinder_axis` otherwise."""
-        spec = self._effective_light(i) or {}
+    def _rotate_clipboard_kind(self, target) -> str:
+        """Clipboard kind for `target`'s current shape: `box_orientation` for a
+        Box light; `cylinder_axis` for a Cylinder light OR a strip/cone emitter.
+        Emitters and cylinder lights share `cylinder_axis` INTENTIONALLY — both
+        rotate a single axis, so a cylinder-light rotation can be copied and
+        pasted/mirrored onto a cone emitter and vice versa (the mirror-a-light
+        workflow)."""
+        if target[0] == "emitter":
+            return "cylinder_axis"
+        spec = self._effective_light(target[1]) or {}
         return "box_orientation" if spec.get("shape") == "Box" else "cylinder_axis"
 
     def _rotate_axis(self, index, delta_deg) -> None:
@@ -711,16 +720,31 @@ class ShipPropertyViewerPanel(Panel):
         rotates BOTH `forward` and `up` of its orientation basis, then
         re-orthonormalizes."""
         t = self._rotate_target()
-        if t is None or t[0] == "emitter":
-            # Emitter rotate is 3D-ring-only in Task 7 (CEF nudge is Task 10).
+        if t is None:
             return
-        _, i = t
         from engine.ui.ship_property_viewer import (
             rotate_about_axis, orthonormalize_basis)
+        ang = math.radians(delta_deg)
+        if t[0] == "emitter":
+            # Strip/cone emitter: rotate its single `axis` (same math as the
+            # cylinder-light branch). Restage the whole compacted list to keep
+            # emitter indices dense.
+            _, i, j = t
+            lst = list(self._effective_emitters(i))
+            if not (0 <= j < len(lst)):
+                return
+            spec = dict(lst[j])
+            axis = spec.get("axis") or (0.0, -1.0, 0.0)
+            spec["axis"] = rotate_about_axis(axis, index, ang)
+            lst[j] = spec
+            self._pending_emitter[i] = lst
+            self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])[index] += delta_deg
+            self._last_pushed = None
+            return
+        _, i = t
         spec = dict(self._effective_light(i) or {})
         if not spec:
             return
-        ang = math.radians(delta_deg)
         if spec.get("shape") == "Box":
             fwd, up = spec.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
             fwd = rotate_about_axis(fwd, index, ang)
@@ -733,14 +757,31 @@ class ShipPropertyViewerPanel(Panel):
         self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])[index] += delta_deg
         self._last_pushed = None
 
-    def _set_axis_absolute(self, i, axis) -> None:
-        """Stage a normalized `axis` for light `i` directly (Mirror/Paste,
-        not an incremental rotation) and zero its degree accumulator."""
+    def _set_axis_absolute(self, target, axis) -> None:
+        """Stage a normalized `axis` directly (Mirror/Paste, not an incremental
+        rotation) and zero its degree accumulator. Target-aware: `target` may be
+        a light tuple `("light", i)` (or a bare int i, for legacy callers) which
+        writes `_pending_light[i]`, or an emitter tuple `("emitter", i, j)` which
+        restages the whole compacted emitter list (dense-index invariant)."""
+        n = math.sqrt(sum(a*a for a in axis)) or 1.0
+        naxis = (axis[0]/n, axis[1]/n, axis[2]/n)
+        if isinstance(target, tuple) and target[0] == "emitter":
+            _, i, j = target
+            lst = list(self._effective_emitters(i))
+            if not (0 <= j < len(lst)):
+                return
+            spec = dict(lst[j])
+            spec["axis"] = naxis
+            lst[j] = spec
+            self._pending_emitter[i] = lst
+            self._rotate_accum[("emitter", i, j)] = [0.0, 0.0, 0.0]
+            self._last_pushed = None
+            return
+        i = target[1] if isinstance(target, tuple) else target
         spec = dict(self._effective_light(i) or {})
         if not spec:
             return
-        n = math.sqrt(sum(a*a for a in axis)) or 1.0
-        spec["axis"] = (axis[0]/n, axis[1]/n, axis[2]/n)
+        spec["axis"] = naxis
         self._pending_light[i] = spec
         self._rotate_accum[("light", i)] = [0.0, 0.0, 0.0]
         self._last_pushed = None
@@ -1907,7 +1948,7 @@ class ShipPropertyViewerPanel(Panel):
             except (ValueError, KeyError, TypeError):
                 return False
             t = self._active_transform_target()
-            if t is None or t[0] == "emitter":
+            if t is None:
                 return False
             kind, fields = self._scale_kind_and_fields(t)
             if not (0 <= index < len(fields)):
@@ -1916,19 +1957,19 @@ class ShipPropertyViewerPanel(Panel):
             return True
         if action == "scale_copy":
             t = self._active_transform_target()
-            # Guard BEFORE reading _scale_kind_and_fields: for an emitter
-            # target it returns an inert placeholder ("radius", [0.0]), not
-            # real data — copying it would silently clobber a real staged
-            # clipboard value (scale-tool routing for emitters is Task 7).
-            if t is not None and t[0] != "emitter":
+            # _scale_kind_and_fields is emitter-aware (Task 7): a point emitter
+            # copies real ("radius", (r,)), a strip/cone copies real
+            # ("radius_length", (r, l)) — no inert placeholder to clobber the
+            # clipboard with. The kind-match on scale_paste keeps a "radius"
+            # clipboard from writing onto an "xyz"/"radius_length" target.
+            if t is not None:
                 kind, fields = self._scale_kind_and_fields(t)
                 self._scale_clipboard = (kind, tuple(f["value"] for f in fields))
                 self._last_pushed = None
             return True
         if action == "scale_paste":
             t = self._active_transform_target()
-            if (t is not None and t[0] != "emitter"
-                    and self._scale_clipboard is not None):
+            if t is not None and self._scale_clipboard is not None:
                 kind, fields = self._scale_kind_and_fields(t)
                 if self._scale_clipboard[0] == kind:
                     for idx, v in enumerate(self._scale_clipboard[1]):
@@ -1936,8 +1977,10 @@ class ShipPropertyViewerPanel(Panel):
             return True
         if action == "scale_uniform":
             t = self._active_transform_target()
-            if t is not None and t[0] != "emitter":
+            if t is not None:
                 kind, fields = self._scale_kind_and_fields(t)
+                # Only Box lights have kind "xyz"; emitters/subsystems/other
+                # lights are naturally a no-op here.
                 if kind == "xyz":
                     m = max(f["value"] for f in fields)
                     for idx in range(3):
@@ -1955,47 +1998,61 @@ class ShipPropertyViewerPanel(Panel):
             return True
         if action == "rotate_copy":
             t = self._rotate_target()
-            if t is not None and t[0] != "emitter":
-                _, i = t
-                spec = self._effective_light(i) or {}
-                if spec.get("shape") == "Box":
-                    fwd, up = spec.get("orientation") \
-                        or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-                    self._rotate_clipboard = (
-                        "box_orientation", (tuple(fwd), tuple(up)))
-                else:
-                    axis = spec.get("axis") or (0.0, -1.0, 0.0)
+            if t is not None:
+                if t[0] == "emitter":
+                    _, i, j = t
+                    axis = (self._effective_emitter(i, j) or {}).get("axis") \
+                        or (0.0, -1.0, 0.0)
                     self._rotate_clipboard = ("cylinder_axis", tuple(axis))
+                else:
+                    _, i = t
+                    spec = self._effective_light(i) or {}
+                    if spec.get("shape") == "Box":
+                        fwd, up = spec.get("orientation") \
+                            or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+                        self._rotate_clipboard = (
+                            "box_orientation", (tuple(fwd), tuple(up)))
+                    else:
+                        axis = spec.get("axis") or (0.0, -1.0, 0.0)
+                        self._rotate_clipboard = ("cylinder_axis", tuple(axis))
                 self._last_pushed = None
             return True
         if action == "rotate_paste":
             t = self._rotate_target()
-            if (t is not None and t[0] != "emitter"
+            if (t is not None
                     and self._rotate_clipboard is not None
-                    and self._rotate_clipboard[0] == self._rotate_clipboard_kind(t[1])):
-                _, i = t
+                    and self._rotate_clipboard[0] == self._rotate_clipboard_kind(t)):
                 if self._rotate_clipboard[0] == "box_orientation":
+                    # box_orientation only matches a Box LIGHT target (an emitter
+                    # kind is always cylinder_axis), so t is ("light", i) here.
                     fwd, up = self._rotate_clipboard[1]
-                    self._set_orientation_absolute(i, fwd, up)
+                    self._set_orientation_absolute(t[1], fwd, up)
                 else:
-                    self._set_axis_absolute(i, self._rotate_clipboard[1])
+                    self._set_axis_absolute(t, self._rotate_clipboard[1])
             return True
         if action == "rotate_mirror":
             t = self._rotate_target()
-            if t is not None and t[0] != "emitter":
-                _, i = t
-                spec = self._effective_light(i) or {}
-                if spec.get("shape") == "Box":
-                    fwd, up = spec.get("orientation") \
-                        or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-                    fwd = (-fwd[0], fwd[1], fwd[2])
-                    up = (-up[0], up[1], up[2])
-                    self._set_orientation_absolute(i, fwd, up)
-                else:
-                    axis = list((self._effective_light(i) or {}).get("axis")
+            if t is not None:
+                if t[0] == "emitter":
+                    _, i, j = t
+                    axis = list((self._effective_emitter(i, j) or {}).get("axis")
                                 or (0.0, -1.0, 0.0))
                     axis[0] = -axis[0]
-                    self._set_axis_absolute(i, axis)
+                    self._set_axis_absolute(t, axis)
+                else:
+                    _, i = t
+                    spec = self._effective_light(i) or {}
+                    if spec.get("shape") == "Box":
+                        fwd, up = spec.get("orientation") \
+                            or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+                        fwd = (-fwd[0], fwd[1], fwd[2])
+                        up = (-up[0], up[1], up[2])
+                        self._set_orientation_absolute(i, fwd, up)
+                    else:
+                        axis = list((self._effective_light(i) or {}).get("axis")
+                                    or (0.0, -1.0, 0.0))
+                        axis[0] = -axis[0]
+                        self._set_axis_absolute(t, axis)
             return True
         if action == "save":
             if (not self._pending_radius and not self._pending_light

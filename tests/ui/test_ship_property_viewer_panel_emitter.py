@@ -155,27 +155,33 @@ def test_remove_then_add_does_not_clobber_a_surviving_emitter():
 
 def test_select_emitter_with_each_gizmo_tool_does_not_crash():
     """Regression: _active_transform_target() returns a 3-tuple for an
-    emitter target; every pre-existing consumer that unpacks it as
-    `kind, i = t` must guard the emitter case instead of crashing (gizmo
-    ROUTING for emitters is Task 7 — this only asserts "no crash, no
-    gizmo")."""
+    emitter target; every consumer that unpacks it as `kind, i = t` must
+    guard the emitter case instead of crashing. The 3D gizmos stay None
+    (no camera in this fixture); the value readouts return a dict or None
+    without crashing (Task 10 makes them render for emitters)."""
     p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
     assert p.dispatch_event(
         'select_emitter:' + json.dumps({"i": 0, "j": 0})) is True
     for tool in ("transform", "scale", "rotate"):
         assert p.dispatch_event('set_tool:' + tool) is True
         assert p.active_tool == tool
-        # Reported crash sites: transform_gizmo/scale_gizmo/_rotate_target
-        # (via rotate_gizmo), plus the coord/scale/rotate value readouts
-        # that render_payload() exercises every frame.
+        # No camera in this fixture, so the 3D gizmos stay None regardless.
         assert p.transform_gizmo() is None
         assert p.scale_gizmo() is None
         assert p.rotate_gizmo() is None
-        assert p.transform_coords() is None
-        assert p.scale_values() is None
-        assert p.rotate_values() is None
+        # Value readouts must not crash on the emitter 3-tuple.
+        assert p.transform_coords() is None or isinstance(p.transform_coords(), dict)
+        assert p.scale_values() is None or isinstance(p.scale_values(), dict)
+        assert p.rotate_values() is None or isinstance(p.rotate_values(), dict)
         js = p.render_payload()
         assert js is None or isinstance(js, str)
+    # A point emitter has no rotate panel, but coords/scale readouts render.
+    assert p.dispatch_event('set_tool:transform') is True
+    assert p.transform_coords() is not None
+    assert p.dispatch_event('set_tool:scale') is True
+    assert p.scale_values() is not None
+    assert p.dispatch_event('set_tool:rotate') is True
+    assert p.rotate_values() is None
     # Reported crash sites in the drag-begin/apply helpers (host input path,
     # but plain-Python callable without a host).
     p.active_tool = "transform"
@@ -186,27 +192,55 @@ def test_select_emitter_with_each_gizmo_tool_does_not_crash():
     p._apply_scale_drag(1.0)
 
 
-def test_scale_copy_with_emitter_selected_does_not_clobber_clipboard():
-    """Regression: scale_copy read _scale_kind_and_fields's inert emitter
-    placeholder ("radius", [0.0]) as real data and silently overwrote
-    _scale_clipboard. A real subsystem scale value copied to the clipboard
-    must survive selecting an emitter and pressing scale_copy again, and a
-    subsequent scale_paste onto the original target must restore the real
-    value — not SCALE_MIN from a clobbered placeholder."""
+def test_scale_copy_on_emitter_records_real_radius_not_placeholder():
+    """Task 10: with _scale_kind_and_fields now emitter-aware, scale_copy on a
+    point emitter records its REAL radius (1.0), NOT the old inert placeholder
+    ("radius", (0.0,)). A subsequent scale_paste applies the real value, never
+    SCALE_MIN from a clobbered placeholder — the old corruption path stays
+    closed because the copied data is now genuine."""
     p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    # First copy a real subsystem radius so we can prove the clipboard holds a
+    # valid value throughout, not a 0.0 placeholder.
     assert p.dispatch_event("select_pin:0") is True
     assert p.dispatch_event("set_tool:scale") is True
     assert p.dispatch_event("scale_copy") is True
     assert p._scale_clipboard == ("radius", (0.3,))
 
+    # Copy on the emitter now records the emitter's REAL radius (1.0), a valid
+    # clipboard — not (0.0,).
     assert p.dispatch_event(
         'select_emitter:' + json.dumps({"i": 0, "j": 0})) is True
     assert p.dispatch_event("scale_copy") is True
-    assert p._scale_clipboard == ("radius", (0.3,))   # NOT clobbered to 0.0
+    assert p._scale_clipboard == ("radius", (1.0,))   # real, never 0.0
 
+    # Paste that real radius back onto the subsystem: applies 1.0, not
+    # SCALE_MIN.
     assert p.dispatch_event("select_pin:0") is True
     assert p.dispatch_event("scale_paste") is True
-    assert p._pending_radius[0] == 0.3                # NOT SCALE_MIN (0.01)
+    assert p._pending_radius[0] == 1.0                # real value, not 0.01
+
+
+def test_scale_copy_emitter_then_paste_onto_box_light_is_kind_blocked():
+    """Different-kind corruption guard stays closed: copy an emitter radius,
+    then a Box light (kind 'xyz') must REJECT the paste via the kind-match —
+    its scale is untouched (never overwritten with SCALE_MIN)."""
+    p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    p._descriptors[0]["light"] = True
+    p._descriptors[0]["light_region"] = {
+        "shape": "Box", "position": (0.0, 0.0, 0.0),
+        "axis": (0.0, -1.0, 0.0), "radius": (0.25,), "extent": (0.0, 2.0),
+        "scale": (0.4, 0.5, 0.6),
+        "orientation": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+    }
+    _select_emitter(p)
+    p.active_tool = "scale"
+    assert p.dispatch_event("scale_copy") is True      # ("radius", (1.0,))
+    assert p.dispatch_event("select_light:0") is True
+    sv = p.scale_values()
+    assert sv["kind"] == "xyz"
+    assert sv["can_paste"] is False
+    assert p.dispatch_event("scale_paste") is True
+    assert p._effective_light(0)["scale"] == (0.4, 0.5, 0.6)   # untouched
 
 
 def test_select_emitter_clears_subsystem_and_light_selection():
@@ -577,3 +611,192 @@ def test_save_early_out_guard_does_not_skip_emitter_only_edit(monkeypatch):
         'add_emitter:' + json.dumps({"i": 0, "kind": "point"})) is True
     assert p.dispatch_event("save") is True
     assert len(calls) == 1        # write happened, not skipped
+
+
+# ----------------------------------------------------------------------
+# Task 10: emitter value panels (transform / scale / rotate) + Copy /
+# Paste / Mirror / Nudge — parity with light volumes.
+# ----------------------------------------------------------------------
+
+def test_transform_coords_shows_point_emitter_position():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    _select_emitter(p)
+    p.active_tool = "transform"
+    tc = p.transform_coords()
+    assert tc is not None
+    assert (tc["x"], tc["y"], tc["z"]) == (0.0, 0.0, 0.0)
+
+
+def test_scale_values_point_emitter_is_radius():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    _select_emitter(p)
+    p.active_tool = "scale"
+    sv = p.scale_values()
+    assert sv is not None
+    assert sv["kind"] == "radius"
+    assert [f["label"] for f in sv["fields"]] == ["Radius"]
+    assert sv["fields"][0]["value"] == 1.0
+
+
+def test_scale_values_strip_emitter_is_radius_length():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("strip")])
+    _select_emitter(p)
+    p.active_tool = "scale"
+    sv = p.scale_values()
+    assert sv is not None
+    assert sv["kind"] == "radius_length"
+    assert [f["label"] for f in sv["fields"]] == ["Radius", "Length"]
+    assert sv["fields"][0]["value"] == 1.0
+    assert sv["fields"][1]["value"] == 2.0
+
+
+def test_rotate_values_present_for_cone_absent_for_point():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    _select_emitter(p)
+    p.active_tool = "rotate"
+    rv = p.rotate_values()
+    assert rv is not None
+    assert [f["label"] for f in rv["fields"]] == ["X", "Y", "Z"]
+    assert [f["value"] for f in rv["fields"]] == [0.0, 0.0, 0.0]
+
+    p2 = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    _select_emitter(p2)
+    p2.active_tool = "rotate"
+    assert p2.rotate_values() is None      # point emitter: no rotate panel
+
+
+def test_coord_nudge_moves_emitter_position():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    _select_emitter(p)
+    p.active_tool = "transform"
+    assert p.dispatch_event(
+        'coord_nudge:' + json.dumps({"axis": 0, "delta": 0.5})) is True
+    assert abs(p._effective_emitter(0, 0)["position"][0] - 0.5) < 1e-9
+
+
+def test_coord_copy_paste_between_two_emitters_keeps_list_dense():
+    p = _panel_with_subsystem(
+        emitters=[_emitter_spec("point"), _emitter_spec("point")])
+    _select_emitter(p, j=0)
+    p.active_tool = "transform"
+    p.set_emitter_position(0, 0, (1.0, 2.0, 3.0))
+    assert p.dispatch_event("coord_copy") is True
+    _select_emitter(p, j=1)
+    assert p.dispatch_event("coord_paste") is True
+    specs = p._effective_emitters(0)
+    assert len(specs) == 2                       # dense, sibling survives
+    assert specs[1]["position"] == (1.0, 2.0, 3.0)
+    assert specs[0]["position"] == (1.0, 2.0, 3.0)
+
+
+def test_coord_mirror_negates_emitter_x():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    _select_emitter(p)
+    p.active_tool = "transform"
+    p.set_emitter_position(0, 0, (1.5, 2.0, 3.0))
+    assert p.dispatch_event("coord_mirror") is True
+    assert p._effective_emitter(0, 0)["position"] == (-1.5, 2.0, 3.0)
+
+
+def test_scale_paste_radius_clipboard_rejected_on_radius_length_emitter():
+    p = _panel_with_subsystem(
+        emitters=[_emitter_spec("point"), _emitter_spec("strip")])
+    _select_emitter(p, j=0)              # point -> radius
+    p.active_tool = "scale"
+    assert p.dispatch_event("scale_copy") is True
+    assert p._scale_clipboard == ("radius", (1.0,))
+    _select_emitter(p, j=1)              # strip -> radius_length
+    sv = p.scale_values()
+    assert sv["kind"] == "radius_length"
+    assert sv["can_paste"] is False      # radius clipboard can't paste here
+    assert p.dispatch_event("scale_paste") is True
+    assert p._effective_emitter(0, 1)["radius"] == 1.0   # untouched
+    assert p._effective_emitter(0, 1)["length"] == 2.0
+
+
+def test_scale_nudge_and_copy_paste_roundtrip_on_strip_emitter():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("strip")])
+    _select_emitter(p)
+    p.active_tool = "scale"
+    # nudge Radius (field 0) +0.5
+    assert p.dispatch_event(
+        'scale_nudge:' + json.dumps({"index": 0, "delta": 0.5})) is True
+    assert round(p._effective_emitter(0, 0)["radius"], 6) == 1.5
+    assert p.dispatch_event("scale_copy") is True
+    assert p._scale_clipboard == ("radius_length", (1.5, 2.0))
+    # mutate then paste restores
+    p._set_scale_field(0, 3.0)
+    assert round(p._effective_emitter(0, 0)["radius"], 6) == 3.0
+    assert p.dispatch_event("scale_paste") is True
+    assert round(p._effective_emitter(0, 0)["radius"], 6) == 1.5
+    assert round(p._effective_emitter(0, 0)["length"], 6) == 2.0
+
+
+def test_rotate_copy_cone_emitter_records_cylinder_axis():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    _select_emitter(p)
+    p.active_tool = "rotate"
+    assert p.dispatch_event("rotate_copy") is True
+    assert p._rotate_clipboard == ("cylinder_axis", (0.0, -1.0, 0.0))
+
+
+def test_rotate_paste_between_two_cone_emitters_keeps_list_dense():
+    p = _panel_with_subsystem(
+        emitters=[_emitter_spec("cone"), _emitter_spec("cone")])
+    _select_emitter(p, j=0)
+    p.active_tool = "rotate"
+    p._rotate_axis(0, 90.0)              # (0,-1,0) about +X -> (0,0,-1)
+    assert p.dispatch_event("rotate_copy") is True
+    _select_emitter(p, j=1)
+    assert p.dispatch_event("rotate_paste") is True
+    ax = p._effective_emitter(0, 1)["axis"]
+    assert abs(ax[0]) < 1e-6 and abs(ax[1]) < 1e-6 and abs(ax[2] - (-1.0)) < 1e-6
+    specs = p._effective_emitters(0)
+    assert len(specs) == 2               # dense; sibling intact
+
+
+def test_rotate_mirror_negates_cone_emitter_axis_x():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    _select_emitter(p)
+    p.active_tool = "rotate"
+    p._set_axis_absolute(("emitter", 0, 0), (0.6, -0.8, 0.0))
+    assert p.dispatch_event("rotate_mirror") is True
+    ax = p._effective_emitter(0, 0)["axis"]
+    assert abs(ax[0] - (-0.6)) < 1e-6
+    assert abs(ax[1] - (-0.8)) < 1e-6
+    assert abs(ax[2]) < 1e-6
+
+
+def test_rotate_nudge_on_cone_emitter_restages_whole_list():
+    p = _panel_with_subsystem(
+        emitters=[_emitter_spec("point"), _emitter_spec("cone")])
+    _select_emitter(p, j=1)
+    p.active_tool = "rotate"
+    assert p.dispatch_event(
+        'rotate_nudge:' + json.dumps({"axis": 0, "delta": 90.0})) is True
+    specs = p._effective_emitters(0)
+    assert [s["kind"] for s in specs] == ["point", "cone"]
+    assert specs[0]["axis"] == (0.0, -1.0, 0.0)          # sibling untouched
+    assert abs(specs[1]["axis"][2] - (-1.0)) < 1e-6      # cone rotated
+    # the degree accumulator drives the rotate readout
+    assert round(p.rotate_values()["fields"][0]["value"], 3) == 90.0
+
+
+def test_cylinder_light_axis_pastes_onto_cone_emitter_cross_kind():
+    """The mirror-a-light workflow: a cylinder LIGHT's copied axis (kind
+    'cylinder_axis') pastes onto a cone emitter (same kind) and vice versa."""
+    p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    p._descriptors[0]["light"] = True
+    p._descriptors[0]["light_region"] = _cylinder_light_region()
+    p.active_tool = "rotate"
+    assert p.dispatch_event("select_light:0") is True
+    p._rotate_axis(0, 90.0)               # cylinder axis (0,-1,0) -> (0,0,-1)
+    assert p.dispatch_event("rotate_copy") is True
+    assert p._rotate_clipboard[0] == "cylinder_axis"
+    _select_emitter(p)
+    rv = p.rotate_values()
+    assert rv is not None
+    assert rv["can_paste"] is True        # kinds match across light<->emitter
+    assert p.dispatch_event("rotate_paste") is True
+    ax = p._effective_emitter(0, 0)["axis"]
+    assert abs(ax[2] - (-1.0)) < 1e-6
