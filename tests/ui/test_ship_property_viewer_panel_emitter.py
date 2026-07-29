@@ -429,3 +429,127 @@ def test_emitter_and_light_rotate_readouts_are_independent():
     _select_emitter(p)
     ax = p._effective_emitter(0, 0)["axis"]
     assert abs(ax[2] - (-1.0)) < 1e-6
+
+
+# ----------------------------------------------------------------------
+# Task 9: save routing (_pending_emitter -> __emitter__ edits) + tally
+# ----------------------------------------------------------------------
+
+def _payload_data(payload):
+    return json.loads(payload[payload.index("(") + 1: payload.rindex(")")])
+
+
+def test_emitter_save_edits_dense_with_clear_for_removed_trailing():
+    """Stage two emitters, edit one, remove the other: _emitter_save_edits()
+    must emit one __emitter__ edit per DENSE index up to the widest of the
+    new/baked/saved lists, with [] clearing the now-unused trailing index
+    (drives the writer's drop-empty path) rather than leaving a gap."""
+    from engine.ui.ship_property_viewer import emitter_spec_to_calls
+    p = _panel_with_subsystem(
+        emitters=[_emitter_spec("point"), _emitter_spec("cone")])
+    assert p.dispatch_event('set_emitter:' + json.dumps({
+        "i": 0, "j": 0, "kind": "point",
+        "color": [1.0, 0.0, 0.0], "intensity": 5.0,
+    })) is True
+    assert p.dispatch_event(
+        'remove_emitter:' + json.dumps({"i": 0, "j": 1})) is True
+
+    edits = p._emitter_save_edits()
+
+    assert len(edits) == 2
+    name0, tag0, j0, calls0 = edits[0]
+    assert (name0, tag0, j0) == ("Center Impulse", "__emitter__", 0)
+    kept_spec = p._effective_emitter(0, 0)
+    assert calls0 == emitter_spec_to_calls(0, kept_spec)
+    name1, tag1, j1, calls1 = edits[1]
+    assert (name1, tag1, j1) == ("Center Impulse", "__emitter__", 1)
+    assert calls1 == []          # removed trailing emitter -> clear, not gap
+
+
+def test_save_dispatch_writes_dense_emitter_edits_and_clears_pending(monkeypatch):
+    import engine.ui.ship_property_viewer_panel as mod
+    calls = []
+
+    class _Target:
+        def write(self, leaf, edits):
+            calls.append((leaf, edits))
+
+    class _Ship:
+        def GetScript(self):
+            return "ships.Galaxy"
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _Ship())
+    p.open()
+    p._descriptors = [{
+        "name": "Center Impulse", "kind": "subsystem",
+        "properties": {"position": (0.0, 1.0, 0.0), "radius": 0.3},
+        "world_pos": (0.0, 1.0, 0.0), "parent_index": None,
+        "light": False, "light_region": dict(_DEFAULT_LIGHT_REGION),
+        "emitters": [_emitter_spec("point")],
+    }]
+    assert p.dispatch_event(
+        'remove_emitter:' + json.dumps({"i": 0, "j": 0})) is True
+
+    assert p.dispatch_event("save") is True
+
+    assert len(calls) == 1
+    leaf, edits = calls[0]
+    assert leaf == "galaxy"
+    assert edits == [("Center Impulse", "__emitter__", 0, [])]
+    # Staged edits are gone; the saved-this-session cache keeps driving the
+    # live preview (empty list = no emitters left) without re-dirtying.
+    assert p._pending_emitter == {}
+    assert p._saved_emitter == {0: []}
+    assert _payload_data(p.render_payload())["pending_count"] == 0
+
+
+def test_save_confirm_tally_counts_staged_emitter_edit():
+    # The Save-confirm modal's per-subsystem tally must count a subsystem
+    # that ONLY has a staged emitter edit (no radius/light/pos edit) — this
+    # closes a Task-6 deferred gap (emitter edits were invisible to the
+    # tally/dirty/early-out unions).
+    p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    assert p.dispatch_event('set_emitter:' + json.dumps({
+        "i": 0, "j": 0, "kind": "cone",
+        "color": [1.0, 0.0, 0.0], "intensity": 3.0,
+    })) is True
+    data = _payload_data(p.render_payload())
+    assert data["pending_count"] == 1
+    assert data["pending"] == [{"name": "Center Impulse", "count": 1}]
+    assert data["subsystems"][0]["dirty"] is True
+
+
+def test_save_early_out_guard_does_not_skip_emitter_only_edit(monkeypatch):
+    # Regression for the early-out at the top of the "save" handler: before
+    # the fix it checked only radius/light/pos, so an emitter-only edit hit
+    # the "nothing staged" fast path and the write was skipped entirely.
+    import engine.ui.ship_property_viewer_panel as mod
+    calls = []
+
+    class _Target:
+        def write(self, leaf, edits):
+            calls.append((leaf, edits))
+
+    class _Ship:
+        def GetScript(self):
+            return "ships.Galaxy"
+
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: "galaxy")
+
+    p = ShipPropertyViewerPanel(ship_getter=lambda: _Ship())
+    p.open()
+    p._descriptors = [{
+        "name": "Center Impulse", "kind": "subsystem",
+        "properties": {"position": (0.0, 1.0, 0.0), "radius": 0.3},
+        "world_pos": (0.0, 1.0, 0.0), "parent_index": None,
+        "light": False, "light_region": dict(_DEFAULT_LIGHT_REGION),
+        "emitters": [],
+    }]
+    assert p.dispatch_event(
+        'add_emitter:' + json.dumps({"i": 0, "kind": "point"})) is True
+    assert p.dispatch_event("save") is True
+    assert len(calls) == 1        # write happened, not skipped

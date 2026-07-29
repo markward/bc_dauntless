@@ -16,6 +16,7 @@ from engine.appc.override_routing import (
 from engine.ui.panel import Panel
 from engine.ui.ship_property_viewer import (
     build_descriptors, OrbitCamera, pick_pin, region_spec_to_calls,
+    emitter_spec_to_calls,
 )
 
 # Fraction of the view height the ship's bounding sphere should fill when the
@@ -374,6 +375,28 @@ class ShipPropertyViewerPanel(Panel):
         add/remove within the same session."""
         lst = self._effective_emitters(i)
         return lst[j] if 0 <= j < len(lst) else None
+
+    def _emitter_save_edits(self):
+        """DENSE `__emitter__` edits for every subsystem with a staged
+        emitter-list edit. `_pending_emitter[i]` is the FULL new (compacted)
+        list, not a per-(i,j) sentinel — so unlike the light save (a single
+        index 0) this must emit one edit per index across the widest of the
+        new list, the baked list, and any list already saved this session:
+        a same-session shrink or a shrink relative to the baked count must
+        CLEAR the now-unused trailing indices (`[]` — drives the writer's
+        drop-empty path) or they'd survive as stale emitters on disk, and
+        persisted indices must stay dense because baked_emitters() stops at
+        the first unset index on reload."""
+        edits = []
+        for i, lst in sorted(self._pending_emitter.items()):
+            name = self._descriptors[i]["name"]
+            baked = self._descriptors[i].get("emitters") or []
+            saved = self._saved_emitter.get(i) or []
+            clear_to = max(len(lst), len(baked), len(saved))
+            for j in range(clear_to):
+                calls = emitter_spec_to_calls(j, lst[j]) if j < len(lst) else []
+                edits.append((name, "__emitter__", j, calls))
+        return edits
 
     def _effective_pos(self, index: int):
         """Body-frame position to use for a descriptor: a staged (unsaved)
@@ -1193,7 +1216,7 @@ class ShipPropertyViewerPanel(Panel):
             "show_arcs": self.show_weapon_arcs,
             "show_hull": self.show_hull_texture,
             "pending_count": len(set(self._pending_radius) | set(self._pending_light)
-                                 | set(self._pending_pos)),
+                                 | set(self._pending_pos) | set(self._pending_emitter)),
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
             "close_overlays": self._close_overlays,
@@ -1210,7 +1233,7 @@ class ShipPropertyViewerPanel(Panel):
         counts: dict = {}
         order: List[str] = []
         for i in sorted(set(self._pending_radius) | set(self._pending_light)
-                         | set(self._pending_pos)):
+                         | set(self._pending_pos) | set(self._pending_emitter)):
             name = self._descriptors[i]["name"]
             if name not in counts:
                 counts[name] = 0
@@ -1218,6 +1241,7 @@ class ShipPropertyViewerPanel(Panel):
             counts[name] += (1 if i in self._pending_radius else 0)
             counts[name] += (1 if i in self._pending_light else 0)
             counts[name] += (1 if i in self._pending_pos else 0)
+            counts[name] += (1 if i in self._pending_emitter else 0)
         return [{"name": n, "count": counts[n]} for n in order]
 
     def _subsystem_rows(self) -> List[dict]:
@@ -1240,7 +1264,7 @@ class ShipPropertyViewerPanel(Panel):
         for i, d in enumerate(self._descriptors):
             row = _row(i, d)
             row["dirty"] = ((i in self._pending_radius) or (i in self._pending_light)
-                             or (i in self._pending_pos))
+                             or (i in self._pending_pos) or (i in self._pending_emitter))
             row["radius"] = self._effective_radius(
                 i, d.get("properties", {}).get("radius"))
             row["has_light"] = self._has_light(i)
@@ -1964,7 +1988,7 @@ class ShipPropertyViewerPanel(Panel):
             return True
         if action == "save":
             if (not self._pending_radius and not self._pending_light
-                    and not self._pending_pos):
+                    and not self._pending_pos and not self._pending_emitter):
                 return True
             ship = self._ship_getter()
             leaf = hardpoint_leaf_for_ship(ship)
@@ -1980,6 +2004,7 @@ class ShipPropertyViewerPanel(Panel):
                       for i, spec in sorted(self._pending_light.items())]
             edits += [(self._descriptors[i]["name"], "SetPosition", tuple(v))
                       for i, v in sorted(self._pending_pos.items())]
+            edits += self._emitter_save_edits()
             try:
                 resolve_override_target(ship).write(leaf, edits)
             except Exception as e:
@@ -2000,6 +2025,8 @@ class ShipPropertyViewerPanel(Panel):
             self._pending_light = {}
             self._saved_pos.update(self._pending_pos)
             self._pending_pos = {}
+            self._saved_emitter.update(self._pending_emitter)
+            self._pending_emitter = {}
             self._last_pushed = None
             return True
         return False

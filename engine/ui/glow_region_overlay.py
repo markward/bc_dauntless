@@ -88,6 +88,65 @@ def _basis_from(forward: Vec3, up: Vec3) -> Tuple[Vec3, Vec3, Vec3]:
     return _norm(r), f, u
 
 
+def _world_dir(ship, body_axis: Vec3) -> Vec3:
+    """R · body_axis (rotation-only, no translation), normalized. Guards a
+    zero/degenerate authored axis: DebugCone/DebugCylinder normalize the
+    axis in GLM and a zero vector there produces NaN, so a zero-length
+    (or unrotatable) input falls back to world R·(0,-1,0) — the same
+    default light_emitters gives an emitter spec that never set an axis."""
+    from engine.appc.math import TGPoint3
+    rot = ship.GetWorldRotation() if hasattr(ship, "GetWorldRotation") else None
+    m = math.sqrt(body_axis[0] ** 2 + body_axis[1] ** 2 + body_axis[2] ** 2)
+    if m < 1e-9:
+        body_axis = (0.0, -1.0, 0.0)
+        m = 1.0
+    p = TGPoint3(body_axis[0], body_axis[1], body_axis[2])
+    if rot is not None:
+        p.MultMatrixLeft(rot)
+    wm = math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z) or 1.0
+    return (p.x / wm, p.y / wm, p.z / wm)
+
+
+def build_emitter_overlay(ship, panel) -> Tuple[List[dict], List[dict], List[dict]]:
+    """World-space debug-volume dicts for the currently-SELECTED light
+    emitter only (selection-scoped, mirroring build_glow_region_overlay).
+
+    Returns `(spheres, cylinders, cones)` — a point emitter becomes a
+    DebugSphere dict (`engine.renderer.set_debug_spheres`); a strip becomes
+    a DebugCylinder dict (`set_debug_cylinders`); a cone becomes a DebugCone
+    dict (`set_debug_cones`, Task 8). Empty lists when nothing is selected
+    (no `panel._selected_emitter`) or the selection no longer resolves to a
+    live spec (removed since selection)."""
+    spheres: List[dict] = []
+    cylinders: List[dict] = []
+    cones: List[dict] = []
+    if ship is None or not hasattr(ship, "GetWorldLocation"):
+        return spheres, cylinders, cones
+    sel = getattr(panel, "_selected_emitter", None)
+    if sel is None:
+        return spheres, cylinders, cones
+    i, j = sel
+    spec = panel._effective_emitter(i, j)
+    if not spec:
+        return spheres, cylinders, cones
+    from engine.ui.ship_property_viewer import world_from_body
+    center = world_from_body(ship, spec["position"])
+    color = tuple(spec["color"])
+    kind = spec["kind"]
+    if kind == "point":
+        spheres.append({"center": center, "radius": float(spec["radius"]),
+                         "color": color})
+    elif kind == "strip":
+        cylinders.append({"center": center, "axis": _world_dir(ship, spec["axis"]),
+                          "radius": float(spec["radius"]),
+                          "length": float(spec["length"]), "color": color})
+    else:  # cone
+        cones.append({"apex": center, "axis": _world_dir(ship, spec["axis"]),
+                      "radius": float(spec["radius"]),
+                      "length": float(spec["length"]), "color": color})
+    return spheres, cylinders, cones
+
+
 def build_glow_region_overlay(ship, selected_name: str = None,
                               show_all: bool = True,
                               pending: dict = None) -> Tuple[List[dict], List[dict]]:

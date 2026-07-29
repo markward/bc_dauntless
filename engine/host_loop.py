@@ -7519,19 +7519,26 @@ def run(mission_name: Optional[str] = None,
                 # selected LIGHT node reveals its own (the subsystem pin's
                 # selection drives the damage-radius sphere instead).
                 from engine.ui.glow_region_overlay import (
-                    build_glow_region_overlay,
+                    build_glow_region_overlay, build_emitter_overlay,
                 )
                 _cyls, _boxes = build_glow_region_overlay(
                     player,
                     selected_name=ship_property_viewer.selected_light_name(),
                     show_all=ship_property_viewer.show_glow_regions,
                     pending=ship_property_viewer.pending_light_specs())
-                r.set_debug_cylinders(_cyls)
+                # Selected light EMITTER's wireframe (point/strip/cone),
+                # selection-scoped like the glow overlay above — merged
+                # additively into the same sphere/cylinder payloads so
+                # neither overlay drops the other's wireframes.
+                _em_spheres, _em_cyls, _em_cones = build_emitter_overlay(
+                    player, ship_property_viewer)
+                r.set_debug_cylinders(_cyls + _em_cyls)
                 r.set_debug_boxes(_boxes)
+                r.set_debug_cones(_em_cones)
                 # Selected subsystem's damage-radius volume as a wireframe
                 # sphere at its icon (only while a subsystem is selected).
                 _sphere = ship_property_viewer.selected_subsystem_sphere()
-                r.set_debug_spheres([_sphere] if _sphere else [])
+                r.set_debug_spheres(([_sphere] if _sphere else []) + _em_spheres)
                 # Transform gizmo: three body-frame drag axes at the
                 # selected subsystem/light, only while the Transform tool
                 # is active and something is selected.
