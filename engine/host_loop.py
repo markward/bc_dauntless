@@ -622,7 +622,8 @@ def _pump_held_weapons(ships_list, dt: float) -> None:
             sys_.update_weapons(dt)
 
 
-def _advance_combat(ships, dt: float, ship_instances=None) -> None:
+def _advance_combat(ships, dt: float, ship_instances=None,
+                     ship_emitters=None) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
 
     Walks the active torpedo registry, advances motion, routes hits
@@ -635,7 +636,10 @@ def _advance_combat(ships, dt: float, ship_instances=None) -> None:
 
     `ship_instances` maps ship → renderer instance id; passed through to
     apply_hit so hit_feedback.dispatch can fire the shield flash (via
-    host_io.shield_hit) on the SHIELD severity path.
+    host_io.shield_hit) on the SHIELD severity path. `ship_emitters` is
+    `session.ship_emitters` (render instance id -> cached body-frame
+    subsystem light-emitter list); combined with `ship_instances` to feed
+    `_build_emitter_light_render_data` alongside the torpedo lights.
     """
     ships_list = list(ships)
 
@@ -779,7 +783,9 @@ def _advance_combat(ships, dt: float, ship_instances=None) -> None:
     # _build_* helpers and the combat/carve advances now route through
     # host_io too, so nothing below consumes the raw `host` module.
     host_io.set_torpedoes(_build_torpedo_render_data())
-    host_io.set_dynamic_lights(_build_dynamic_light_render_data())
+    host_io.set_dynamic_lights(
+        _build_dynamic_light_render_data() +
+        _build_emitter_light_render_data(ship_instances, ship_emitters))
     from engine.appc import shockwaves as _shockwaves
     host_io.set_shockwaves(_shockwaves.render_data())
     host_io.set_hit_vfx(_build_hit_vfx_render_data())
@@ -905,6 +911,120 @@ def _build_dynamic_light_render_data():
             "radius":    radius,
             "intensity": _TORPEDO_LIGHT_INTENSITY,
         })
+    return out
+
+
+def _world_from_body(loc, R, p):
+    """World point = ship_loc + R·p (column-vector, no scale) — CLAUDE.md
+    'Rotation matrix convention'. Mirrors ship_property_viewer.world_from_body
+    but takes an already-fetched (loc, R) pair so the per-frame producer
+    below only reads a ship's world transform once, not once per emitter."""
+    off = TGPoint3(p[0], p[1], p[2])
+    off.MultMatrixLeft(R)
+    return (loc.x + off.x, loc.y + off.y, loc.z + off.z)
+
+
+def _rotate_body(R, v):
+    """World direction = R·v (column-vector, no translation)."""
+    off = TGPoint3(v[0], v[1], v[2])
+    off.MultMatrixLeft(R)
+    return (off.x, off.y, off.z)
+
+
+def _build_ship_emitter_cache(ship):
+    """Body-frame light-emitter cache for one ship, built once at spawn.
+
+    Returns a list of `(sub, is_impulse, phase, spec)` tuples — one per baked
+    LightEmitter* entry found on any SPV-visible subsystem
+    (`ship_property_viewer._iter_subsystems`, the canonical walker: emitters
+    can only be authored on subsystems the Ship Property Viewer can show).
+    `is_impulse` marks membership in the ship's impulse-engine pod set
+    (`subsystem_glow.impulse_engines`) so the per-frame producer can apply
+    the commanded-throttle brightening; `phase` (`j * 1.7 + subsystem_index`)
+    desyncs the disabled-state flicker between emitters. Best-effort by
+    construction (callers wrap in try/except); a subsystem with no
+    `GetProperty` or no baked emitters is simply skipped.
+    """
+    from engine.appc import light_emitters
+    from engine.appc.subsystem_glow import impulse_engines
+    from engine.ui.ship_property_viewer import _iter_subsystems
+
+    impulse_ids = set()
+    try:
+        ies = (ship.GetImpulseEngineSubsystem()
+               if hasattr(ship, "GetImpulseEngineSubsystem") else None)
+        for pod in impulse_engines(ies):
+            impulse_ids.add(id(pod))
+    except Exception:
+        pass   # impulse membership is a brightening nicety, not a hard need
+
+    entries = []
+    for si, sub in enumerate(_iter_subsystems(ship)):
+        prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
+        if prop is None:
+            continue
+        specs = light_emitters.baked_emitters(prop)
+        if not specs:
+            continue
+        is_impulse = id(sub) in impulse_ids
+        for j, spec in enumerate(specs):
+            entries.append((sub, is_impulse, j * 1.7 + si, spec))
+    return entries
+
+
+def _build_emitter_light_render_data(ship_instances, ship_emitters):
+    """World-space dynamic lights from subsystem-attached light emitters.
+
+    `ship_instances` is the ship->render-instance-id dict (same one passed to
+    `_build_particle_render_data`); `ship_emitters` is `session.ship_emitters`
+    (instance id -> the `_build_ship_emitter_cache` list, cached at spawn).
+    Body-frame specs are transformed to world via the ship's world loc +
+    rotation (column-vector R·v), health-gated through
+    `light_emitters.resolve_emitter_intensity` (flicker while disabled, off
+    while destroyed), and impulse emitters brighten with commanded throttle.
+    Concatenated with the torpedo list at the `set_dynamic_lights` call site;
+    native clamps to 64 lights total, so no cap is needed here.
+
+    Best-effort VFX: any failure producing one ship's or one emitter's light
+    is swallowed (logged under --developer) rather than dropping the whole
+    frame's lighting or, worse, raising out of the render tick."""
+    out = []
+    if not ship_instances or not ship_emitters:
+        return out
+    import App
+    from engine.appc import light_emitters
+    from engine.appc.subsystem_glow import commanded_impulse_frac
+
+    now = App.g_kUtopiaModule.GetGameTime()
+    for ship, iid in ship_instances.items():
+        entries = ship_emitters.get(iid)
+        if not entries:
+            continue
+        try:
+            loc = ship.GetWorldLocation()
+            R = ship.GetWorldRotation()
+            frac = commanded_impulse_frac(ship)
+        except Exception as _e:
+            dev_mode.log_swallowed("emitter light ship transform", _e)
+            continue
+        for (sub, is_impulse, phase, spec) in entries:
+            try:
+                inten = light_emitters.resolve_emitter_intensity(
+                    spec, sub, now, throttle_frac=frac, is_impulse=is_impulse,
+                    powered=True, phase=phase)
+                if inten is None:
+                    continue
+                d = light_emitters.emitter_spec_to_struct(spec)
+                d["intensity"] = inten
+                d["position"] = _world_from_body(loc, R, d["position"])
+                if "position_b" in d:
+                    d["position_b"] = _world_from_body(loc, R, d["position_b"])
+                if "direction" in d:
+                    d["direction"] = _rotate_body(R, d["direction"])
+                out.append(d)
+            except Exception as _e:
+                dev_mode.log_swallowed("emitter light produce", _e)
+                continue
     return out
 
 
@@ -3759,6 +3879,11 @@ class MissionSession:
     # Subsystem glow-dimming controllers, keyed by render instance id.
     # Best-effort VFX; ships without the relevant subsystems get fewer regions.
     ship_glow_controllers: dict[int, Any] = field(default_factory=dict)
+    # Body-frame light-emitter cache, keyed by render instance id — the
+    # `_build_ship_emitter_cache(ship)` list consumed each frame by
+    # `_build_emitter_light_render_data`. Best-effort VFX; ships with no
+    # baked LightEmitter* fields simply get an empty/absent entry.
+    ship_emitters: dict[int, list] = field(default_factory=dict)
     planet_instances: dict[Any, int] = field(default_factory=dict)
     # Per-planet natural_scale = GetRadius() / NIF_extent, cached at load.
     # Ships share a single flat NIF→world scale (BC_MODEL_SCALE) so they
@@ -3774,6 +3899,7 @@ class MissionSession:
             renderer.destroy_instance(iid)
         self.ship_instances.clear()
         self.ship_glow_controllers.clear()
+        self.ship_emitters.clear()
         self.planet_instances.clear()
         self.planet_natural_scale.clear()
         self.player = None
@@ -3850,6 +3976,14 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
             session.ship_glow_controllers[iid] = ShipGlowController(r_, iid, ship)
         except Exception as _e:
             dev_mode.log_swallowed("realize ShipGlowController register", _e)
+
+        # Subsystem-attached light emitters (best-effort VFX); never block
+        # spawn. Body-frame cache consumed each frame by
+        # _build_emitter_light_render_data.
+        try:
+            session.ship_emitters[iid] = _build_ship_emitter_cache(ship)
+        except Exception as _e:
+            dev_mode.log_swallowed("realize ship_emitters cache", _e)
 
         # Shield render state. No-op for ships without a ShieldProperty.
         try:
@@ -4407,6 +4541,14 @@ class _MissionLoader:
             except Exception as _e:
                 # glow dimming is best-effort VFX; never block spawn
                 dev_mode.log_swallowed("ShipGlowController register", _e)
+
+            # Subsystem-attached light emitters (best-effort VFX); never
+            # block spawn. Body-frame cache consumed each frame by
+            # _build_emitter_light_render_data.
+            try:
+                sess.ship_emitters[iid] = _build_ship_emitter_cache(ship)
+            except Exception as _e:
+                dev_mode.log_swallowed("ship_emitters cache", _e)
 
             # Register shield render state. Reads ShieldProperty data-bag
             # for glow color, decay, and skin-mode flag. No-op for ships
@@ -6941,6 +7083,7 @@ def run(mission_name: Optional[str] = None,
                 _advance_combat(
                     _ships_this_tick, TICK_DT,
                     ship_instances=(session.ship_instances if session is not None else None),
+                    ship_emitters=(session.ship_emitters if session is not None else None),
                 )
 
                 # Sensor contact identification → drives the SDK bridge Hail /
