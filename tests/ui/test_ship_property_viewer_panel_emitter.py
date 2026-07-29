@@ -106,6 +106,61 @@ def test_remove_emitter_drops_it_and_clears_selection():
     assert p._selected_emitter is None
 
 
+def test_remove_then_add_does_not_clobber_a_surviving_emitter():
+    """Regression for the whole-list staging model: add point, add cone,
+    remove the point (index 0) so the cone compacts down to index 0, then
+    add a strip. All three emitters must survive with dense indices — a
+    stale (i,j)-keyed staging dict would clobber the compacted cone because
+    the next add computed its new index from the pre-removal length."""
+    p = _panel_with_subsystem()
+    assert p.dispatch_event(
+        'add_emitter:' + json.dumps({"i": 0, "kind": "point"})) is True
+    assert p.dispatch_event(
+        'add_emitter:' + json.dumps({"i": 0, "kind": "cone"})) is True
+    assert p.dispatch_event(
+        'remove_emitter:' + json.dumps({"i": 0, "j": 0})) is True
+    specs = p._effective_emitters(0)
+    assert [s["kind"] for s in specs] == ["cone"]
+    assert p.dispatch_event(
+        'add_emitter:' + json.dumps({"i": 0, "kind": "strip"})) is True
+    specs = p._effective_emitters(0)
+    assert [s["kind"] for s in specs] == ["cone", "strip"]
+    assert p._selected_emitter == (0, 1)
+
+
+def test_select_emitter_with_each_gizmo_tool_does_not_crash():
+    """Regression: _active_transform_target() returns a 3-tuple for an
+    emitter target; every pre-existing consumer that unpacks it as
+    `kind, i = t` must guard the emitter case instead of crashing (gizmo
+    ROUTING for emitters is Task 7 — this only asserts "no crash, no
+    gizmo")."""
+    p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    assert p.dispatch_event(
+        'select_emitter:' + json.dumps({"i": 0, "j": 0})) is True
+    for tool in ("transform", "scale", "rotate"):
+        assert p.dispatch_event('set_tool:' + tool) is True
+        assert p.active_tool == tool
+        # Reported crash sites: transform_gizmo/scale_gizmo/_rotate_target
+        # (via rotate_gizmo), plus the coord/scale/rotate value readouts
+        # that render_payload() exercises every frame.
+        assert p.transform_gizmo() is None
+        assert p.scale_gizmo() is None
+        assert p.rotate_gizmo() is None
+        assert p.transform_coords() is None
+        assert p.scale_values() is None
+        assert p.rotate_values() is None
+        js = p.render_payload()
+        assert js is None or isinstance(js, str)
+    # Reported crash sites in the drag-begin/apply helpers (host input path,
+    # but plain-Python callable without a host).
+    p.active_tool = "transform"
+    p._begin_axis_drag(0, 0.0)
+    p._apply_axis_drag(1.0)
+    p.active_tool = "scale"
+    p._begin_scale_drag(0, 0.0)
+    p._apply_scale_drag(1.0)
+
+
 def test_select_emitter_clears_subsystem_and_light_selection():
     p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
     p.selected_index = 0
