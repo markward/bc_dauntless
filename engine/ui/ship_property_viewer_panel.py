@@ -1741,8 +1741,19 @@ class ShipPropertyViewerPanel(Panel):
             # appended — never a sparse (i,j) override — so indices stay
             # dense (see _pending_emitter docstring: baked_emitters() stops
             # at the first gap on reload).
+            spec = default_emitter_spec(kind)
+            # Seed-on-add: the CEF modal picks colour/intensity before the
+            # emitter exists, so it sends them in the SAME add_emitter
+            # dispatch rather than a fragile echo-then-set round-trip (see
+            # task-10-brief.md). Both are optional — the {i, kind}-only path
+            # (existing callers, e.g. a bare "Add Light Volume" menu action)
+            # still works and keeps the spec's stock default color/intensity.
+            if "color" in arg:
+                spec["color"] = tuple(float(c) for c in arg["color"])
+            if "intensity" in arg:
+                spec["intensity"] = float(arg["intensity"])
             lst = list(self._effective_emitters(i))
-            lst.append(default_emitter_spec(kind))
+            lst.append(spec)
             self._pending_emitter[i] = lst
             self._selected_emitter = (i, len(lst) - 1)
             self.selected_index = None

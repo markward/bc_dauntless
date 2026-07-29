@@ -140,7 +140,8 @@ window.setShipPropertyViewer = function (data) {
 
     renderSPVSubsystemList(data.subsystems || [],
         (typeof data.selected_index === 'number') ? data.selected_index : null,
-        (typeof data.selected_light_index === 'number') ? data.selected_light_index : null);
+        (typeof data.selected_light_index === 'number') ? data.selected_light_index : null,
+        data.selected_emitter || null);
 
     // Save bar: surfaces the staged-edit count (data.pending_count); hidden
     // while nothing is pending.
@@ -218,11 +219,22 @@ var spvLightMode = 'edit';   // 'edit' (set_light) or 'add' (add_light) — whic
 // the context menu knows which items to show.
 var spvCtxLightOf = null;           // parent subsystem index for a light node
 
+// ── Light Emitter modal state (Task 10) ─────────────────────────────────────
+// Independent subsystem-child emitters, addressed positionally by (i, j) —
+// see engine/ui/ship_property_viewer_panel.py's _effective_emitters. A row's
+// working spec is cached by 'i/j' key (spvRowEmitter), mirroring spvRowLight.
+var spvEmitterMode = 'add';         // 'add' | 'edit'
+var spvEmitterTarget = null;        // {i} for add, {i, j} for edit
+var spvEmitter = null;              // {kind, hue, sat, intensity} while the modal is open
+var spvRowEmitter = {};             // 'i/j' -> emitter_spec, cached from the tree payload
+var spvCtxEmitterOf = null;         // parent subsystem index for a right-clicked emitter node
+var spvCtxEmitterIndex = null;      // emitter index within that subsystem
+
 // Hide the overlay chrome without telling the host — used when the panel
 // itself already knows the overlay closed (ESC via close_overlays, or the
 // whole panel closing per Fix 2) so we don't double-fire overlay:0.
 function spvHideOverlaysNoEvent() {
-    ['spv-ctxmenu', 'spv-radius', 'spv-light', 'spv-confirm'].forEach(function (id) {
+    ['spv-ctxmenu', 'spv-radius', 'spv-light', 'spv-emitter', 'spv-confirm'].forEach(function (id) {
         var el = document.getElementById(id); if (el) el.style.display = 'none';
     });
 }
@@ -248,12 +260,15 @@ window.shipPropertyViewerLightRow = function (lightOf, chosen) {
 };
 
 // Right-click a subsystem row: Set Radius always; Add Light Volume only when the
-// subsystem has no light yet.
+// subsystem has no light yet; Add Light Emitter always (a subsystem may hold
+// any number of independent emitters).
 window.shipPropertyViewerRowMenu = function (event, index, hasLight) {
     event.preventDefault(); event.stopPropagation();
     spvCtxIndex = index; spvCtxLightOf = null;
+    spvCtxEmitterOf = null; spvCtxEmitterIndex = null;
     spvCtxRadius = (spvRowRadii[index] !== undefined) ? spvRowRadii[index] : 0;
-    spvShowMenuItems({radius: true, addlight: !hasLight, light: false, removelight: false});
+    spvShowMenuItems({radius: true, addlight: !hasLight, light: false, removelight: false,
+                       addemitter: true, editemitter: false, removeemitter: false});
     spvOpenMenuAt(event);
     return false;
 };
@@ -262,14 +277,29 @@ window.shipPropertyViewerRowMenu = function (event, index, hasLight) {
 window.shipPropertyViewerLightMenu = function (event, lightOf) {
     event.preventDefault(); event.stopPropagation();
     spvCtxLightOf = lightOf; spvCtxIndex = lightOf;
-    spvShowMenuItems({radius: false, addlight: false, light: true, removelight: true});
+    spvCtxEmitterOf = null; spvCtxEmitterIndex = null;
+    spvShowMenuItems({radius: false, addlight: false, light: true, removelight: true,
+                       addemitter: false, editemitter: false, removeemitter: false});
+    spvOpenMenuAt(event);
+    return false;
+};
+
+// Right-click an emitter node: Edit + Remove (mirrors shipPropertyViewerLightMenu).
+window.shipPropertyViewerEmitterMenu = function (event, emitterOf, emitterIndex) {
+    event.preventDefault(); event.stopPropagation();
+    spvCtxEmitterOf = emitterOf; spvCtxEmitterIndex = emitterIndex;
+    spvCtxIndex = emitterOf; spvCtxLightOf = null;
+    spvShowMenuItems({radius: false, addlight: false, light: false, removelight: false,
+                       addemitter: false, editemitter: true, removeemitter: true});
     spvOpenMenuAt(event);
     return false;
 };
 
 function spvShowMenuItems(show) {
     var map = {radius: 'spv-ctx-radius', addlight: 'spv-ctx-addlight',
-               light: 'spv-ctx-light', removelight: 'spv-ctx-removelight'};
+               light: 'spv-ctx-light', removelight: 'spv-ctx-removelight',
+               addemitter: 'spv-ctx-addemitter', editemitter: 'spv-ctx-editemitter',
+               removeemitter: 'spv-ctx-removeemitter'};
     Object.keys(map).forEach(function (k) {
         var el = document.getElementById(map[k]);
         if (el) el.style.display = show[k] ? 'block' : 'none';
@@ -400,6 +430,235 @@ window.shipPropertyViewerLightApply = function () {
 
 window.shipPropertyViewerLightCancel = function () { spvHideOverlays(); };
 
+// ── Light Emitter modal (Task 10) ───────────────────────────────────────────
+// Type picker (Point/Strip/Cone) + a canvas hue/sat colour wheel + an HDR
+// intensity slider, all mouse-only pointer-drag (no keyboard->CEF forwarding
+// exists — see #spv-radius / #spv-light above for the same constraint).
+// Colour/intensity are seeded on ADD directly into the add_emitter dispatch
+// (engine/ui/ship_property_viewer_panel.py's add_emitter handler accepts
+// optional color/intensity) rather than an echo-then-set round-trip.
+
+function spvEmitterDefaults() {
+    return {kind: 'point', hue: 40, sat: 0.3, intensity: 2.0};
+}
+
+window.shipPropertyViewerEmitterKind = function (kind) {
+    spvEmitter.kind = kind;
+    ['point', 'strip', 'cone'].forEach(function (k) {
+        var b = document.getElementById('spv-emkind-' + k);
+        if (b) b.classList.toggle('active', k === kind);
+    });
+};
+
+// HSV->RGB with V=1 always: the wheel only picks hue (angle) and saturation
+// (radius); brightness is the separate, HDR-range (0..8) intensity slider.
+function spvHsToRgb(hue, sat) {
+    var h = ((hue % 360) + 360) % 360;
+    var s = Math.max(0, Math.min(1, sat));
+    var c = s;                       // v(=1) * s
+    var x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    var m = 1 - c;                   // v - c
+    var r, g, b;
+    if (h < 60)       { r = c; g = x; b = 0; }
+    else if (h < 120) { r = x; g = c; b = 0; }
+    else if (h < 180) { r = 0; g = c; b = x; }
+    else if (h < 240) { r = 0; g = x; b = c; }
+    else if (h < 300) { r = x; g = 0; b = c; }
+    else              { r = c; g = 0; b = x; }
+    return [r + m, g + m, b + m];
+}
+
+// Inverse of spvHsToRgb (V forced to 1), used only to seed the wheel's
+// hue/sat marker from a saved emitter's color when Edit opens.
+function spvRgbToHs(rgb) {
+    var r = rgb[0] || 0, g = rgb[1] || 0, b = rgb[2] || 0;
+    var max = Math.max(r, g, b), min = Math.min(r, g, b);
+    var d = max - min;
+    var h = 0;
+    if (d > 1e-6) {
+        if (max === r) h = 60 * (((g - b) / d) % 6);
+        else if (max === g) h = 60 * ((b - r) / d + 2);
+        else h = 60 * ((r - g) / d + 4);
+    }
+    if (h < 0) h += 360;
+    var sat = (max > 1e-6) ? d / max : 0;
+    return {hue: h, sat: Math.max(0, Math.min(1, sat))};
+}
+
+// Cached base disc (hue = angle, sat = radius, V = 1) painted once per page
+// load; only the selection marker is redrawn on every wheel interaction.
+var _spvWheelBase = null;
+
+function spvDrawWheel() {
+    var canvas = document.getElementById('spv-emitter-wheel');
+    if (!canvas || !spvEmitter) return;
+    var ctx = canvas.getContext('2d');
+    var w = canvas.width, h = canvas.height;
+    var cx = w / 2, cy = h / 2, R = Math.min(cx, cy) - 4;
+    if (!_spvWheelBase) {
+        var img = ctx.createImageData(w, h);
+        for (var y = 0; y < h; y++) {
+            for (var x = 0; x < w; x++) {
+                var dx = x - cx, dy = y - cy;
+                var dist = Math.sqrt(dx * dx + dy * dy);
+                var idx = (y * w + x) * 4;
+                if (dist > R) { img.data[idx + 3] = 0; continue; }
+                var angle = Math.atan2(dy, dx) * 180 / Math.PI;
+                if (angle < 0) angle += 360;
+                var rgb = spvHsToRgb(angle, Math.min(1, dist / R));
+                img.data[idx]     = Math.round(rgb[0] * 255);
+                img.data[idx + 1] = Math.round(rgb[1] * 255);
+                img.data[idx + 2] = Math.round(rgb[2] * 255);
+                img.data[idx + 3] = 255;
+            }
+        }
+        _spvWheelBase = img;
+    }
+    ctx.putImageData(_spvWheelBase, 0, 0);
+    var rad = spvEmitter.hue * Math.PI / 180;
+    var r = spvEmitter.sat * R;
+    var mx = cx + Math.cos(rad) * r, my = cy + Math.sin(rad) * r;
+    ctx.beginPath(); ctx.arc(mx, my, 5, 0, Math.PI * 2);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(mx, my, 3, 0, Math.PI * 2);
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
+}
+
+function _spvSetHueSatFromEvent(canvas, clientX, clientY) {
+    var rect = canvas.getBoundingClientRect();
+    var cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    var R = Math.min(rect.width, rect.height) / 2 - 4;
+    var dx = clientX - cx, dy = clientY - cy;
+    var angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    if (angle < 0) angle += 360;
+    spvEmitter.hue = angle;
+    spvEmitter.sat = Math.max(0, Math.min(1, Math.sqrt(dx * dx + dy * dy) / R));
+    spvDrawWheel();
+}
+var _spvWheelDragging = false;
+function _spvWheelPointerDown(e) {
+    var canvas = e.currentTarget;
+    canvas.setPointerCapture(e.pointerId);
+    _spvWheelDragging = true;
+    _spvSetHueSatFromEvent(canvas, e.clientX, e.clientY);
+}
+function _spvWheelPointerMove(e) {
+    if (!_spvWheelDragging) return;
+    _spvSetHueSatFromEvent(e.currentTarget, e.clientX, e.clientY);
+}
+function _spvWheelPointerUp() { _spvWheelDragging = false; }
+(function _spvWireEmitterWheel() {
+    var canvas = document.getElementById('spv-emitter-wheel');
+    if (!canvas) return;
+    canvas.addEventListener('pointerdown', _spvWheelPointerDown);
+    canvas.addEventListener('pointermove', _spvWheelPointerMove);
+    canvas.addEventListener('pointerup', _spvWheelPointerUp);
+})();
+
+function spvRenderEmitterIntensity() {
+    var el = document.getElementById('spv-em-intensity');
+    if (el) el.textContent = spvEmitter.intensity.toFixed(2);
+    var fill = document.getElementById('spv-em-intensity-fill');
+    if (fill) fill.style.width = Math.max(0, Math.min(100, spvEmitter.intensity / 8 * 100)) + '%';
+}
+window.shipPropertyViewerEmitterIntensityStep = function (delta) {
+    spvEmitter.intensity = Math.max(0, Math.round((spvEmitter.intensity + delta) * 100) / 100);
+    spvRenderEmitterIntensity();
+};
+function _spvApplyIntensityDrag(track, clientX) {
+    var rect = track.getBoundingClientRect();
+    if (!rect.width) return;
+    var raw = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    spvEmitter.intensity = Math.round(raw * 8 * 100) / 100;   // track spans 0..8
+    spvRenderEmitterIntensity();
+}
+var _spvIntensityDragging = false;
+function _spvIntensityPointerDown(e) {
+    var track = e.currentTarget;
+    track.setPointerCapture(e.pointerId);
+    _spvIntensityDragging = true;
+    _spvApplyIntensityDrag(track, e.clientX);
+}
+function _spvIntensityPointerMove(e) {
+    if (!_spvIntensityDragging) return;
+    _spvApplyIntensityDrag(e.currentTarget, e.clientX);
+}
+function _spvIntensityPointerUp() { _spvIntensityDragging = false; }
+(function _spvWireEmitterIntensity() {
+    var track = document.getElementById('spv-em-intensity-track');
+    if (!track) return;
+    track.addEventListener('pointerdown', _spvIntensityPointerDown);
+    track.addEventListener('pointermove', _spvIntensityPointerMove);
+    track.addEventListener('pointerup', _spvIntensityPointerUp);
+})();
+
+// Add Light Emitter (subsystem context) → fresh defaults.
+window.shipPropertyViewerCtxAddEmitter = function () {
+    document.getElementById('spv-ctxmenu').style.display = 'none';
+    spvEmitterMode = 'add';
+    spvEmitterTarget = {i: spvCtxIndex};
+    spvEmitter = spvEmitterDefaults();
+    document.getElementById('spv-emitter-title').textContent = 'Add Light Emitter';
+    shipPropertyViewerEmitterKind(spvEmitter.kind);
+    spvRenderEmitterIntensity();
+    spvDrawWheel();
+    document.getElementById('spv-emitter').style.display = 'flex';
+};
+
+// Edit Emitter (emitter-node context) → seed from the row's cached spec.
+window.shipPropertyViewerCtxEditEmitter = function () {
+    document.getElementById('spv-ctxmenu').style.display = 'none';
+    spvEmitterMode = 'edit';
+    var i = spvCtxEmitterOf, j = spvCtxEmitterIndex;
+    spvEmitterTarget = {i: i, j: j};
+    // Select this emitter so its wireframe is the previewed element while
+    // the modal is open (mirrors shipPropertyViewerCtxLight's select_light).
+    dauntlessEvent('ship-property-viewer/select_emitter:' + JSON.stringify({i: i, j: j}));
+    spvEmitter = spvEmitterDefaults();
+    var seed = spvRowEmitter[i + '/' + j];
+    if (seed && typeof seed === 'object') {
+        spvEmitter.kind = seed.kind || 'point';
+        var hs = spvRgbToHs(seed.color || [1.0, 0.9, 0.7]);
+        spvEmitter.hue = hs.hue; spvEmitter.sat = hs.sat;
+        spvEmitter.intensity = (typeof seed.intensity === 'number') ? seed.intensity : 2.0;
+    }
+    document.getElementById('spv-emitter-title').textContent = 'Edit Emitter';
+    shipPropertyViewerEmitterKind(spvEmitter.kind);
+    spvRenderEmitterIntensity();
+    spvDrawWheel();
+    document.getElementById('spv-emitter').style.display = 'flex';
+};
+
+// Remove Light Emitter (emitter-node context).
+window.shipPropertyViewerCtxRemoveEmitter = function () {
+    dauntlessEvent('ship-property-viewer/remove_emitter:'
+                   + JSON.stringify({i: spvCtxEmitterOf, j: spvCtxEmitterIndex}));
+    spvHideOverlays();
+};
+
+window.shipPropertyViewerEmitterApply = function () {
+    var rgb = spvHsToRgb(spvEmitter.hue, spvEmitter.sat);
+    var payload;
+    if (spvEmitterMode === 'add') {
+        payload = {i: spvEmitterTarget.i, kind: spvEmitter.kind, color: rgb, intensity: spvEmitter.intensity};
+        dauntlessEvent('ship-property-viewer/add_emitter:' + JSON.stringify(payload));
+    } else {
+        payload = {i: spvEmitterTarget.i, j: spvEmitterTarget.j, kind: spvEmitter.kind,
+                   color: rgb, intensity: spvEmitter.intensity};
+        dauntlessEvent('ship-property-viewer/set_emitter:' + JSON.stringify(payload));
+    }
+    spvHideOverlays();
+};
+
+window.shipPropertyViewerEmitterCancel = function () { spvHideOverlays(); };
+
+// Emitter node row click: select this emitter (or deselect if already selected).
+window.shipPropertyViewerEmitterRow = function (emitterOf, emitterIndex, chosen) {
+    dauntlessEvent('ship-property-viewer/' +
+                   (chosen ? 'deselect'
+                           : ('select_emitter:' + JSON.stringify({i: emitterOf, j: emitterIndex}))));
+};
+
 window.shipPropertyViewerSave = function () {
     // List the modified subsystems in the confirm modal, each with a tally of
     // its staged changes in brackets, e.g. "Center Impulse (1)".
@@ -525,38 +784,47 @@ function spvSeedRow(row) {
         if (row.light_region) spvRowLight[row.light_of] = row.light_region;
         return;
     }
+    if (row.kind === 'emitter') {
+        if (row.emitter_spec) spvRowEmitter[row.emitter_of + '/' + row.emitter_index] = row.emitter_spec;
+        return;
+    }
     if (row.radius != null) spvRowRadii[row.index] = row.radius;
     // subsystem row no longer carries light_region; Add uses light_of default
     // captured from its own light child if present (seeded above).
 }
 
 // Recursive render: a row, then (if expanded) its children at any depth.
-function spvRenderRows(rows, out, selectedIndex, selectedLight, depth) {
+function spvRenderRows(rows, out, selectedIndex, selectedLight, selectedEmitterKey, depth) {
     for (var i = 0; i < rows.length; i++) {
         var row = rows[i] || {};
         spvSeedRow(row);
-        out.push(spvRowHtml(row, selectedIndex, selectedLight, depth));
+        out.push(spvRowHtml(row, selectedIndex, selectedLight, selectedEmitterKey, depth));
         if (row.expanded && (row.children || []).length) {
-            spvRenderRows(row.children, out, selectedIndex, selectedLight, depth + 1);
+            spvRenderRows(row.children, out, selectedIndex, selectedLight, selectedEmitterKey, depth + 1);
         }
     }
 }
 
 // Render the left-column subsystem list: category rows with their child
-// pods/banks/tubes/light-volume nodes nested under them (collapsible, like
-// the target list), recursing to any depth.
-function renderSPVSubsystemList(rows, selectedIndex, selectedLight) {
+// pods/banks/tubes/light-volume/emitter nodes nested under them (collapsible,
+// like the target list), recursing to any depth.
+function renderSPVSubsystemList(rows, selectedIndex, selectedLight, selectedEmitter) {
     var body = document.getElementById('spv-syslist-body');
     if (!body) return;
+    var selectedEmitterKey = (Array.isArray(selectedEmitter) && selectedEmitter.length === 2)
+        ? (selectedEmitter[0] + '/' + selectedEmitter[1]) : null;
     var out = [];
-    spvRenderRows(rows, out, selectedIndex, selectedLight, 0);
+    spvRenderRows(rows, out, selectedIndex, selectedLight, selectedEmitterKey, 0);
     body.innerHTML = out.join('');
 }
 
-function spvRowHtml(row, selectedIndex, selectedLight, depth) {
+function spvRowHtml(row, selectedIndex, selectedLight, selectedEmitterKey, depth) {
     var isLight = (row.kind === 'light');
+    var isEmitter = (row.kind === 'emitter');
+    var emitterKey = isEmitter ? (row.emitter_of + '/' + row.emitter_index) : null;
     var chosen = isLight ? (selectedLight === row.light_of)
-                         : (selectedIndex === row.index);
+               : isEmitter ? (selectedEmitterKey === emitterKey)
+                           : (selectedIndex === row.index);
     var hasChildren = (row.children || []).length > 0;
     var lead;
     if (hasChildren) {
@@ -570,15 +838,19 @@ function spvRowHtml(row, selectedIndex, selectedLight, depth) {
     }
     var clickJs = isLight
         ? ('shipPropertyViewerLightRow(' + row.light_of + ', ' + chosen + ')')
+        : isEmitter
+        ? ('shipPropertyViewerEmitterRow(' + row.emitter_of + ', ' + row.emitter_index + ', ' + chosen + ')')
         : ('shipPropertyViewerRow(' + row.index + ', ' + chosen + ')');
     var menuJs = isLight
         ? ('return shipPropertyViewerLightMenu(event, ' + row.light_of + ')')
+        : isEmitter
+        ? ('return shipPropertyViewerEmitterMenu(event, ' + row.emitter_of + ', ' + row.emitter_index + ')')
         : ('return shipPropertyViewerRowMenu(event, ' + row.index + ', '
            + (row.has_light === true) + ')');
-    var extra = isLight ? ' spv-sys-row--light' : '';
+    var extra = isLight ? ' spv-sys-row--light' : isEmitter ? ' spv-sys-row--light' : '';
     var indent = ' style="padding-left:' + (10 + depth * 14) + 'px"';
     var body = '<span class="spv-sys-row__name">' + escapeHtmlSPV(row.name || '') + '</span>';
-    if (!isLight) {
+    if (!isLight && !isEmitter) {
         var eye = row.targetable ? SPV_EYE_OPEN : SPV_EYE_SHUT;
         var eyeCls = row.targetable ? '' : ' spv-sys-row__eye--shut';
         var bar = (typeof row.condition_pct === 'number')

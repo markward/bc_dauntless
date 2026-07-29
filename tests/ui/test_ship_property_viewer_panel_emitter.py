@@ -52,6 +52,30 @@ def test_add_emitter_stages_point_and_selects():
     assert p._selected_light_index is None
 
 
+def test_add_emitter_seeds_color_and_intensity_when_provided():
+    p = _panel_with_subsystem()
+    assert p.dispatch_event(
+        'add_emitter:' + json.dumps({
+            "i": 0, "kind": "cone",
+            "color": [0.2, 0.4, 0.9], "intensity": 5.5,
+        })) is True
+    spec = p._effective_emitter(0, 0)
+    assert spec["kind"] == "cone"
+    assert spec["color"] == (0.2, 0.4, 0.9)
+    assert spec["intensity"] == 5.5
+
+
+def test_add_emitter_without_color_or_intensity_keeps_defaults():
+    p = _panel_with_subsystem()
+    assert p.dispatch_event(
+        'add_emitter:' + json.dumps({"i": 0, "kind": "point"})) is True
+    from engine.appc.light_emitters import default_emitter_spec
+    default = default_emitter_spec("point")
+    spec = p._effective_emitter(0, 0)
+    assert spec["color"] == default["color"]
+    assert spec["intensity"] == default["intensity"]
+
+
 def test_second_add_emitter_appends_and_selects_next_index():
     p = _panel_with_subsystem()
     assert p.dispatch_event(
