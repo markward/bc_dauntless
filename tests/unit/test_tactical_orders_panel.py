@@ -1,15 +1,27 @@
 import json
+from engine.core import ids
 from engine.ui.tactical_orders_panel import TacticalOrdersPanel
 
 
 class _FakeButton:
-    def __init__(self, label, chosen=False, disabled=False):
-        self._label, self._chosen, self._disabled = label, chosen, disabled
+    """Mirrors the REAL STButton surface (engine/appc/characters.py):
+    IsEnabled()/SetEnabled()/SetDisabled() round-trip an `_enabled` flag,
+    defaulting to enabled like the real widget's `__init__`. Deliberately
+    has NO IsDisabled() method — the real STButton doesn't define one
+    either, and a fake that did previously masked a production bug where
+    `hasattr(button, "IsDisabled")` was vacuously True via TGObject.
+    __getattr__'s stub fallback, collapsing every row to enabled=False
+    (see engine/ui/tactical_orders_panel.py's `_row` for the ids.implements
+    fix and the postmortem comment there)."""
+    def __init__(self, label, chosen=False, enabled=True):
+        self._label, self._chosen, self._enabled = label, chosen, enabled
         self.activated = 0
 
-    def GetLabel(self):     return self._label
-    def IsChosen(self):     return self._chosen
-    def IsDisabled(self):   return self._disabled
+    def GetLabel(self):      return self._label
+    def IsChosen(self):      return self._chosen
+    def IsEnabled(self):     return self._enabled
+    def SetEnabled(self, *args):   self._enabled = True
+    def SetDisabled(self, *args):  self._enabled = False
     def SendActivationEvent(self): self.activated += 1
 
 
@@ -30,7 +42,7 @@ def test_snapshot_projects_all_three_groups():
     stop = _FakeButton("OrderStop", chosen=True)
     destroy = _FakeButton("OrderDestroy")
     atwill = _FakeButton("TacticAtWill", chosen=True)
-    left = _FakeButton("TacticLeft", disabled=True)
+    left = _FakeButton("TacticLeft", enabled=False)
     m_atwill = _FakeButton("ManeuverAtWill", chosen=True)
     p = _panel_with([destroy, stop], [atwill, left], [m_atwill])
     p.visible = True
@@ -177,16 +189,16 @@ def test_maneuvers_and_tactics_collapsed_by_default_showing_chosen():
 
 def test_current_selection_fallback_first_enabled_then_first_row():
     # No chosen row -> falls back to the first enabled row.
-    left = _FakeButton("TacticLeft", disabled=True)
-    aggressive = _FakeButton("TacticAggressive", disabled=False)
+    left = _FakeButton("TacticLeft", enabled=False)
+    aggressive = _FakeButton("TacticAggressive", enabled=True)
     p = _panel_with([], [left, aggressive], [])
     p.visible = True
     payload = json.loads(p.render_payload()[len("setTacticalOrders("):-2])
     assert payload["tactics"]["current"]["label"] == "TacticAggressive"
 
     # No chosen AND none enabled -> falls back to the first row outright.
-    left2 = _FakeButton("TacticLeft", disabled=True)
-    right2 = _FakeButton("TacticRight", disabled=True)
+    left2 = _FakeButton("TacticLeft", enabled=False)
+    right2 = _FakeButton("TacticRight", enabled=False)
     p2 = _panel_with([], [left2, right2], [])
     p2.visible = True
     payload2 = json.loads(p2.render_payload()[len("setTacticalOrders("):-2])
@@ -351,3 +363,46 @@ def test_collapsible_group_with_zero_rows_renders_safely():
     assert payload["maneuvers"]["expanded"] is True
     assert payload["maneuvers"]["rows"] == []
     assert payload["maneuvers"]["current"] is None
+
+
+# ── Live-pass regression: every row rendered disabled ────────────────────
+#
+# CRITICAL: `_row()` read enabled state via `hasattr(button, "IsDisabled")`.
+# The real STButton (engine/appc/characters.py) has NO IsDisabled() method
+# -- only IsEnabled(), which SetEnabled()/SetDisabled() round-trip. But
+# TGObject.__getattr__ hands back a truthy `_Stub` for ANY unknown
+# non-underscore name (engine/core/ids.py), so `hasattr(real_button,
+# "IsDisabled")` was VACUOUSLY True, `button.IsDisabled()` returned that
+# truthy stub, and `enabled = not bool(stub) = False` for every single row
+# regardless of the SDK's real enabled/disabled state -- the whole Orders/
+# Tactics/Maneuvers panel rendered unclickable. `_FakeButton` used to
+# implement IsDisabled() directly, which is exactly why 3 prior review
+# passes and a full green test suite missed it: the fake didn't match the
+# real widget's surface. `_FakeButton` no longer has IsDisabled() (see its
+# docstring above) so tests exercise the same ids.implements() branch
+# production does; this test additionally builds a REAL App.STButton_CreateW
+# widget to close the loop entirely.
+
+def test_row_reads_enabled_from_real_stbutton_not_a_vacuous_stub():
+    import App
+
+    button = App.STButton_CreateW("TacticAggressive", None, 0)
+
+    # Sanity-check the exact footgun: hasattr() is vacuously True for a
+    # method the real widget does NOT implement, which is why the
+    # production fix uses ids.implements() instead.
+    assert hasattr(button, "IsDisabled") is True   # the trap
+    assert ids.implements(button, "IsDisabled") is False   # the real answer
+    assert ids.implements(button, "IsEnabled") is True
+
+    # Real STButton defaults to enabled (characters.py __init__).
+    row = TacticalOrdersPanel._row(button, "tactics")
+    assert row["enabled"] is True
+
+    button.SetDisabled(1)
+    row = TacticalOrdersPanel._row(button, "tactics")
+    assert row["enabled"] is False
+
+    button.SetEnabled(1)
+    row = TacticalOrdersPanel._row(button, "tactics")
+    assert row["enabled"] is True

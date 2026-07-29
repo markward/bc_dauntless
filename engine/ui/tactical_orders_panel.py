@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 from typing import Optional
 
+from engine.core import ids
 from engine.ui.panel import Panel
 
 
@@ -103,12 +104,25 @@ class TacticalOrdersPanel(Panel):
         # search (orders -> tactics -> maneuvers) activate the wrong
         # button's SDK action for every such collision (fixed after code
         # review; see test_maneuver_atwill_activates_maneuvers_not_tactics).
-        label = button.GetLabel() if hasattr(button, "GetLabel") else ""
-        chosen = bool(button.IsChosen()) if hasattr(button, "IsChosen") else False
-        if hasattr(button, "IsDisabled"):
-            enabled = not bool(button.IsDisabled())
-        elif hasattr(button, "IsEnabled"):
+        #
+        # Every check below uses ids.implements(), NOT hasattr() — STButton
+        # has no IsDisabled() method (grep engine/appc/characters.py), so
+        # hasattr(button, "IsDisabled") was VACUOUSLY True via TGObject.
+        # __getattr__'s truthy _Stub fallback (engine/core/ids.py), making
+        # button.IsDisabled() always return a truthy stub and every row
+        # collapse to enabled=False regardless of the SDK's real
+        # SetEnabled/SetDisabled state (round-tripped through the REAL
+        # IsEnabled(), characters.py:67-69). ids.implements() checks the
+        # MRO directly so it returns False for stub-only names instead of
+        # vacuously True (see docs/stub_heatmap.md). GetLabel/IsChosen are
+        # real methods on STButton too — switched for the same reason even
+        # though today's hasattr already happened to hit the right method.
+        label = button.GetLabel() if ids.implements(button, "GetLabel") else ""
+        chosen = bool(button.IsChosen()) if ids.implements(button, "IsChosen") else False
+        if ids.implements(button, "IsEnabled"):
             enabled = bool(button.IsEnabled())
+        elif ids.implements(button, "IsDisabled"):
+            enabled = not bool(button.IsDisabled())
         else:
             enabled = True
         return {"label": label, "id": group + ":" + label,
