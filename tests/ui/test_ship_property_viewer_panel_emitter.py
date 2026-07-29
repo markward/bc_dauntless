@@ -161,6 +161,29 @@ def test_select_emitter_with_each_gizmo_tool_does_not_crash():
     p._apply_scale_drag(1.0)
 
 
+def test_scale_copy_with_emitter_selected_does_not_clobber_clipboard():
+    """Regression: scale_copy read _scale_kind_and_fields's inert emitter
+    placeholder ("radius", [0.0]) as real data and silently overwrote
+    _scale_clipboard. A real subsystem scale value copied to the clipboard
+    must survive selecting an emitter and pressing scale_copy again, and a
+    subsequent scale_paste onto the original target must restore the real
+    value — not SCALE_MIN from a clobbered placeholder."""
+    p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    assert p.dispatch_event("select_pin:0") is True
+    assert p.dispatch_event("set_tool:scale") is True
+    assert p.dispatch_event("scale_copy") is True
+    assert p._scale_clipboard == ("radius", (0.3,))
+
+    assert p.dispatch_event(
+        'select_emitter:' + json.dumps({"i": 0, "j": 0})) is True
+    assert p.dispatch_event("scale_copy") is True
+    assert p._scale_clipboard == ("radius", (0.3,))   # NOT clobbered to 0.0
+
+    assert p.dispatch_event("select_pin:0") is True
+    assert p.dispatch_event("scale_paste") is True
+    assert p._pending_radius[0] == 0.3                # NOT SCALE_MIN (0.01)
+
+
 def test_select_emitter_clears_subsystem_and_light_selection():
     p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
     p.selected_index = 0

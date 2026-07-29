@@ -806,7 +806,10 @@ class ShipPropertyViewerPanel(Panel):
         g = self._active_gizmo()
         self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
         t = self._active_transform_target()
-        if t is None:
+        if t is None or t[0] == "emitter":
+            # Emitter scale-tool routing is Task 7 — enforced explicitly
+            # here rather than relying on _scale_kind_and_fields's
+            # placeholder kind never matching "xyz"/"radius_length" below.
             self._scale_grab = (0, 0.0)
             return
         kind, fields = self._scale_kind_and_fields(t)
@@ -1757,7 +1760,7 @@ class ShipPropertyViewerPanel(Panel):
             except (ValueError, KeyError, TypeError):
                 return False
             t = self._active_transform_target()
-            if t is None:
+            if t is None or t[0] == "emitter":
                 return False
             kind, fields = self._scale_kind_and_fields(t)
             if not (0 <= index < len(fields)):
@@ -1766,14 +1769,19 @@ class ShipPropertyViewerPanel(Panel):
             return True
         if action == "scale_copy":
             t = self._active_transform_target()
-            if t is not None:
+            # Guard BEFORE reading _scale_kind_and_fields: for an emitter
+            # target it returns an inert placeholder ("radius", [0.0]), not
+            # real data — copying it would silently clobber a real staged
+            # clipboard value (scale-tool routing for emitters is Task 7).
+            if t is not None and t[0] != "emitter":
                 kind, fields = self._scale_kind_and_fields(t)
                 self._scale_clipboard = (kind, tuple(f["value"] for f in fields))
                 self._last_pushed = None
             return True
         if action == "scale_paste":
             t = self._active_transform_target()
-            if t is not None and self._scale_clipboard is not None:
+            if (t is not None and t[0] != "emitter"
+                    and self._scale_clipboard is not None):
                 kind, fields = self._scale_kind_and_fields(t)
                 if self._scale_clipboard[0] == kind:
                     for idx, v in enumerate(self._scale_clipboard[1]):
@@ -1781,7 +1789,7 @@ class ShipPropertyViewerPanel(Panel):
             return True
         if action == "scale_uniform":
             t = self._active_transform_target()
-            if t is not None:
+            if t is not None and t[0] != "emitter":
                 kind, fields = self._scale_kind_and_fields(t)
                 if kind == "xyz":
                     m = max(f["value"] for f in fields)
