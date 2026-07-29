@@ -245,6 +245,23 @@ def build_descriptors(ship) -> List[dict]:
         out[di]["light"] = has
         out[di]["light_region"] = region
         di += 1
+    # Post-pass: annotate every subsystem descriptor with its baked light
+    # EMITTERS (0..N per subsystem — distinct from the single light-volume
+    # region above). Same re-walk pattern; same property accessor as
+    # _light_annotation. Never lets a bad/absent property crash descriptor
+    # build — falls back to no emitters.
+    di = 0
+    for sub in _iter_subsystems(ship):
+        local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+        if local is None:
+            continue
+        try:
+            from engine.appc.light_emitters import baked_emitters
+            prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
+            out[di]["emitters"] = baked_emitters(prop)
+        except Exception:
+            out[di]["emitters"] = []
+        di += 1
     # Object emitters — non-damageable mount markers (shuttle bay, probe
     # launcher). Distinct "mount" kind/state so the pin renderer can style
     # them apart from damageable subsystems; never targetable.

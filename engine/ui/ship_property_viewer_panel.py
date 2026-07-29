@@ -92,6 +92,11 @@ class ShipPropertyViewerPanel(Panel):
         # is selected), mutually exclusive with selected_index. Shows only that
         # light's glow wireframe; the parent radius sphere is hidden.
         self._selected_light_index: Optional[int] = None
+        # Selected LIGHT EMITTER (subsystem_idx, emitter_idx), mutually
+        # exclusive with selected_index and _selected_light_index (highest
+        # priority — see _active_transform_target). One subsystem can have
+        # 0..N emitters, so this is keyed by (i, j) not a single index.
+        self._selected_emitter: Optional[tuple] = None
         self.camera: Optional[OrbitCamera] = None
         # Titlebar overlay toggles — both off by default, reset every open.
         self.show_glow_regions = False
@@ -115,6 +120,12 @@ class ShipPropertyViewerPanel(Panel):
         # live wireframe + modal pre-fill (not dirty, no Save bar). Reset on
         # open/close. See pending_light_specs / the save handler.
         self._saved_light: dict = {}
+        # Staged/saved light-EMITTER edits, keyed by (subsystem_idx,
+        # emitter_idx) — a spec dict, or None meaning "removed". Same
+        # persist->reload story as _pending_light/_saved_light. See
+        # _effective_emitter(s).
+        self._pending_emitter: dict = {}
+        self._saved_emitter: dict = {}
         # Radius edits saved THIS session (descriptor index -> radius). Same
         # persist->reload story as _saved_light: keeps the volume sphere + the
         # radius readout on the saved value until the next ship build.
@@ -190,6 +201,7 @@ class ShipPropertyViewerPanel(Panel):
         self._descriptors = build_descriptors(ship) if ship is not None else []
         self.selected_index = None
         self._selected_light_index = None
+        self._selected_emitter = None
         self.active_tool = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
@@ -198,6 +210,8 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_radius = {}
         self._pending_light = {}
         self._saved_light = {}
+        self._pending_emitter = {}
+        self._saved_emitter = {}
         self._saved_radius = {}
         self._pending_pos = {}
         self._saved_pos = {}
@@ -227,6 +241,7 @@ class ShipPropertyViewerPanel(Panel):
         self._descriptors = []
         self.selected_index = None
         self._selected_light_index = None
+        self._selected_emitter = None
         self.active_tool = None
         self.show_glow_regions = False
         self.show_weapon_arcs = False
@@ -235,6 +250,8 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_radius = {}
         self._pending_light = {}
         self._saved_light = {}
+        self._pending_emitter = {}
+        self._saved_emitter = {}
         self._saved_radius = {}
         self._pending_pos = {}
         self._saved_pos = {}
@@ -330,6 +347,35 @@ class ShipPropertyViewerPanel(Panel):
         return (0 <= index < len(self._descriptors)
                 and self._effective_light(index) is not None)
 
+    def _baked_emitters(self, i):
+        d = self._descriptors[i]
+        return list(d.get("emitters") or [])
+
+    def _effective_emitters(self, i):
+        """Baked emitters for subsystem i with pending/saved (i,j) overrides
+        applied; a None override drops that emitter."""
+        out = list(self._baked_emitters(i))
+        for source in (self._saved_emitter, self._pending_emitter):
+            for (si, j), spec in source.items():
+                if si != i:
+                    continue
+                if spec is None:
+                    if 0 <= j < len(out):
+                        out[j] = None
+                elif j < len(out):
+                    out[j] = spec
+                else:
+                    out.append(spec)
+        return [s for s in out if s is not None]
+
+    def _effective_emitter(self, i, j):
+        if (i, j) in self._pending_emitter:
+            return self._pending_emitter[(i, j)]
+        if (i, j) in self._saved_emitter:
+            return self._saved_emitter[(i, j)]
+        baked = self._baked_emitters(i)
+        return baked[j] if 0 <= j < len(baked) else None
+
     def _effective_pos(self, index: int):
         """Body-frame position to use for a descriptor: a staged (unsaved)
         edit wins, then an edit saved this session, else the baked body-frame
@@ -374,10 +420,15 @@ class ShipPropertyViewerPanel(Panel):
     # Transform gizmo (subsystem or light-volume target)
     # ------------------------------------------------------------------
     def _active_transform_target(self):
-        """Which node the transform gizmo/drag currently targets: ("light",
-        i), ("subsystem", i), or None. Light selection and subsystem
-        selection are mutually exclusive by construction (dispatch_event's
-        selection handlers clear the other), so light wins when set."""
+        """Which node the transform gizmo/drag currently targets:
+        ("emitter", i, j), ("light", i), ("subsystem", i), or None. Emitter,
+        light, and subsystem selection are mutually exclusive by construction
+        (dispatch_event's selection handlers clear the others), so emitter
+        wins when set, then light. NOTE: gizmo routing (transform/scale/
+        rotate) for the emitter arm is Task 7 — callers that unpack this as
+        `kind, i = t` do not yet handle the 3-tuple emitter case."""
+        if self._selected_emitter is not None:
+            return ("emitter",) + self._selected_emitter   # ("emitter", i, j)
         if self._selected_light_index is not None:
             return ("light", self._selected_light_index)
         if self.selected_index is not None:
@@ -925,6 +976,12 @@ class ShipPropertyViewerPanel(Panel):
         them all. (Pin PICKING still uses the full descriptor set — see
         pick_at — so clicking empty space deselects and reveals every pin
         again.)"""
+        if self._selected_emitter is not None:
+            i = self._selected_emitter[0]
+            if 0 <= i < len(self._descriptors):
+                d = self._descriptors[i]
+                return [(d["world_pos"], d["icon_id"], False)]
+            return []
         if self._selected_light_index is not None:
             i = self._selected_light_index
             if 0 <= i < len(self._descriptors):
@@ -960,11 +1017,13 @@ class ShipPropertyViewerPanel(Panel):
 
     def render_payload(self) -> Optional[str]:
         snapshot = (self._visible, len(self._descriptors), self.selected_index,
-                    self._selected_light_index, self.active_tool,
+                    self._selected_light_index, self._selected_emitter,
+                    self.active_tool,
                     self.show_glow_regions, self.show_weapon_arcs,
                     self.show_hull_texture,
                     tuple(sorted(self._pending_radius.items())),
                     tuple(sorted(self._pending_light)),   # indices with a staged light
+                    tuple(sorted(self._pending_emitter)),  # (i,j) with a staged emitter
                     tuple(sorted(self._pending_pos.items())),
                     tuple(sorted(self._expanded_groups)),
                     self._coord_clipboard,
@@ -998,6 +1057,7 @@ class ShipPropertyViewerPanel(Panel):
             "selected": selected,
             "selected_index": self.selected_index,
             "selected_light_index": self._selected_light_index,
+            "selected_emitter": list(self._selected_emitter) if self._selected_emitter else None,
             "active_tool": self.active_tool,
             "transform_coords": self.transform_coords(),
             "scale_values": self.scale_values(),
@@ -1072,6 +1132,19 @@ class ShipPropertyViewerPanel(Panel):
                     "light_of": i,
                     "light_region": self._effective_light(i),
                     "dirty": (i in self._pending_light),
+                })
+        # Light Emitter child node(s) — 0..N per subsystem, keyed by (i, j)
+        # not a single index (see _effective_emitters).
+        for i in range(len(self._descriptors)):
+            for j, spec in enumerate(self._effective_emitters(i)):
+                by_index[i]["children"].append({
+                    "kind": "emitter",
+                    "name": "Light Emitter",
+                    "emitter_of": i,
+                    "emitter_index": j,
+                    "emitter_kind": spec["kind"],
+                    "emitter_spec": spec,
+                    "dirty": ((i, j) in self._pending_emitter),
                 })
         for row in by_index.values():
             if row["children"]:
@@ -1425,6 +1498,7 @@ class ShipPropertyViewerPanel(Panel):
             if 0 <= idx < len(self._descriptors):
                 self.selected_index = idx
                 self._selected_light_index = None
+                self._selected_emitter = None
                 # Reveal the selection in the list: expand its group so a
                 # 3D pin click never lands on a hidden row.
                 pi = self._descriptors[idx].get("parent_index")
@@ -1443,6 +1517,7 @@ class ShipPropertyViewerPanel(Panel):
                 return False
             self._selected_light_index = idx
             self.selected_index = None
+            self._selected_emitter = None
             self._expanded_groups.add(self._descriptors[idx].get("name", ""))
             self._last_pushed = None
             return True
@@ -1468,6 +1543,7 @@ class ShipPropertyViewerPanel(Panel):
             self._pending_light[idx] = spec
             self._selected_light_index = idx
             self.selected_index = None
+            self._selected_emitter = None
             self._expanded_groups.add(self._descriptors[idx].get("name", ""))
             self._last_pushed = None
             return True
@@ -1483,6 +1559,48 @@ class ShipPropertyViewerPanel(Panel):
                 self._selected_light_index = None
             self._last_pushed = None
             return True
+        if action.startswith("select_emitter:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                i = int(arg["i"]); j = int(arg["j"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if self._effective_emitter(i, j) is None:
+                return False
+            self._selected_emitter = (i, j)
+            self.selected_index = None
+            self._selected_light_index = None
+            self._expanded_groups.add(self._descriptors[i].get("name", ""))
+            self._last_pushed = None
+            return True
+        if action.startswith("add_emitter:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                i = int(arg["i"]); kind = str(arg["kind"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if not (0 <= i < len(self._descriptors)) or kind not in ("point", "strip", "cone"):
+                return False
+            from engine.appc.light_emitters import default_emitter_spec
+            j = len(self._effective_emitters(i))
+            self._pending_emitter[(i, j)] = default_emitter_spec(kind)
+            self._selected_emitter = (i, j)
+            self.selected_index = None
+            self._selected_light_index = None
+            self._expanded_groups.add(self._descriptors[i].get("name", ""))
+            self._last_pushed = None
+            return True
+        if action.startswith("remove_emitter:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                i = int(arg["i"]); j = int(arg["j"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            self._pending_emitter[(i, j)] = None
+            if self._selected_emitter == (i, j):
+                self._selected_emitter = None
+            self._last_pushed = None
+            return True
         if action.startswith("toggle_group:"):
             try:
                 idx = int(action.split(":", 1)[1])
@@ -1495,10 +1613,12 @@ class ShipPropertyViewerPanel(Panel):
             self._last_pushed = None
             return True
         if action == "deselect":
-            if self.selected_index is None and self._selected_light_index is None:
+            if (self.selected_index is None and self._selected_light_index is None
+                    and self._selected_emitter is None):
                 return False
             self.selected_index = None
             self._selected_light_index = None
+            self._selected_emitter = None
             self._last_pushed = None
             return True
         if action.startswith("overlay:"):
@@ -1535,6 +1655,25 @@ class ShipPropertyViewerPanel(Panel):
                     "scale": base.get("scale") or (0.25, 0.25, 0.25),
                     "orientation": base.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))}
             self._pending_light[idx] = spec
+            self._last_pushed = None
+            return True
+        if action.startswith("set_emitter:"):
+            try:
+                arg = json.loads(action.split(":", 1)[1])
+                i = int(arg["i"]); j = int(arg["j"]); kind = str(arg["kind"])
+            except (ValueError, KeyError, TypeError):
+                return False
+            if kind not in ("point", "strip", "cone"):
+                return False
+            base = dict(self._effective_emitter(i, j) or {})
+            if not base:
+                return False
+            base["kind"] = kind
+            if "color" in arg:
+                base["color"] = tuple(float(c) for c in arg["color"])
+            if "intensity" in arg:
+                base["intensity"] = float(arg["intensity"])
+            self._pending_emitter[(i, j)] = base
             self._last_pushed = None
             return True
         if action.startswith("set_tool:"):
