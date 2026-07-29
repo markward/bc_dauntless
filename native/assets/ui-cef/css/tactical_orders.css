@@ -2,10 +2,11 @@
    menu (Bridge.TacticalMenuHandlers.CreateOrdersStatusDisplay) projected
    to CEF by TacticalOrdersPanel into #tactical-orders-host (a body-level
    fixed zone, top-anchored, NOT inside #tactical-left-column). Rendered
-   as three .bc-panel groups side by side in a horizontal row, DOM order
-   Orders -> Maneuvers -> Tactics (BC's left-to-right reading order across
-   the top of the screen, just right of the Tactical officer's own crew
-   menu). Row chrome mirrors .crew-menu__row (css/crew_menus.css); "chosen"
+   as three .bc-panel groups in a horizontal row, DOM order Orders ->
+   Maneuvers -> Tactics. Per BC's layout, Orders sits on the left (just
+   right of the Tactical officer's own crew menu) while Maneuvers and
+   Tactics anchor to the top-right corner (see the margin-left:auto rule
+   below). Row chrome mirrors .crew-menu__row (css/crew_menus.css); "chosen"
    adds the same lit/selected treatment as .crew-menu__row--highlighted.
    Spec: docs/superpowers/specs/2026-07-28-bridge-tactical-mode-f2-hud-design.md */
 
@@ -43,6 +44,16 @@
 .tactical-orders[data-group="orders"] .bc-panel__body {
   display: grid;
   grid-template-columns: 1fr 1fr;
+}
+
+/* Anchor Maneuvers + Tactics to the top-right (BC's layout): Orders stays on
+   the left next to the Tactical crew menu, and margin-left:auto on the first
+   of the right-hand group (Maneuvers) consumes the row's free space, pushing
+   Maneuvers and the Tactics group after it to the right edge. The click-
+   forwarding bbox already spans the full top band (left:264 -> right:24), so
+   the right-anchored popups stay inside it. */
+.tactical-orders[data-group="maneuvers"] {
+  margin-left: auto;
 }
 
 .tactical-orders__row {
