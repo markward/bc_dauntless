@@ -437,12 +437,12 @@ class ShipPropertyViewerPanel(Panel):
         ("emitter", i, j), ("light", i), ("subsystem", i), or None. Emitter,
         light, and subsystem selection are mutually exclusive by construction
         (dispatch_event's selection handlers clear the others), so emitter
-        wins when set, then light. NOTE: actual gizmo ROUTING (transform/
-        scale/rotate) for the emitter arm is Task 7 — every consumer here
-        that unpacks a 2-tuple (`kind, i = t`) guards `t[0] == "emitter"`
-        first and degrades to its own "no target" value, so selecting an
-        emitter with a gizmo tool active is safe (shows no gizmo) rather
-        than crashing on the unpack."""
+        wins when set, then light. The emitter arm's 3D gizmo DRAG routing
+        (transform move, strip/cone scale, strip/cone rotate) is implemented;
+        every consumer that unpacks a 2-tuple (`kind, i = t`) branches on
+        `t[0] == "emitter"` first (routing it or degrading to a safe "no
+        target"). Only the emitter CEF value panels + Copy/Paste/Mirror/Nudge
+        remain Task 10."""
         if self._selected_emitter is not None:
             return ("emitter",) + self._selected_emitter   # ("emitter", i, j)
         if self._selected_light_index is not None:
@@ -546,8 +546,9 @@ class ShipPropertyViewerPanel(Panel):
         """Data for the scale-tool panel: `{"kind", "fields", "has_clipboard",
         "can_paste"}` for the current transform target, or None when the
         scale tool isn't active, nothing is selected, or the target is an
-        emitter (scale-tool routing for emitters is Task 7 — show no panel
-        rather than `_scale_kind_and_fields`'s inert placeholder fields)."""
+        emitter. Emitter SCALE acts through the 3D gizmo drag (implemented);
+        its CEF numeric panel + Copy/Paste/Nudge are Task 10, so no panel is
+        shown here yet."""
         if self.active_tool != "scale":
             return None
         t = self._active_transform_target()
@@ -662,7 +663,10 @@ class ShipPropertyViewerPanel(Panel):
             # degree-readout panel + nudge/copy/paste buttons are Task 10.
             return None
         _, i = t
-        acc = self._rotate_accum.get(i, [0.0, 0.0, 0.0])
+        # Keyed by the full target tuple (("light", i)) so a subsystem's light
+        # readout stays independent of that same subsystem's emitter readouts
+        # (("emitter", i, j)) — the bare index i would collide.
+        acc = self._rotate_accum.get(t, [0.0, 0.0, 0.0])
         clip = self._rotate_clipboard
         kind = self._rotate_clipboard_kind(i)
         return {"fields": [{"label": "X", "value": acc[0]},
@@ -703,7 +707,7 @@ class ShipPropertyViewerPanel(Panel):
             axis = spec.get("axis") or (0.0, -1.0, 0.0)
             spec["axis"] = rotate_about_axis(axis, index, ang)
         self._pending_light[i] = spec
-        self._rotate_accum.setdefault(i, [0.0, 0.0, 0.0])[index] += delta_deg
+        self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])[index] += delta_deg
         self._last_pushed = None
 
     def _set_axis_absolute(self, i, axis) -> None:
@@ -715,7 +719,7 @@ class ShipPropertyViewerPanel(Panel):
         n = math.sqrt(sum(a*a for a in axis)) or 1.0
         spec["axis"] = (axis[0]/n, axis[1]/n, axis[2]/n)
         self._pending_light[i] = spec
-        self._rotate_accum[i] = [0.0, 0.0, 0.0]
+        self._rotate_accum[("light", i)] = [0.0, 0.0, 0.0]
         self._last_pushed = None
 
     def _set_orientation_absolute(self, i, forward, up) -> None:
@@ -728,7 +732,7 @@ class ShipPropertyViewerPanel(Panel):
         from engine.ui.ship_property_viewer import orthonormalize_basis
         spec["orientation"] = orthonormalize_basis(forward, up)
         self._pending_light[i] = spec
-        self._rotate_accum[i] = [0.0, 0.0, 0.0]
+        self._rotate_accum[("light", i)] = [0.0, 0.0, 0.0]
         self._last_pushed = None
 
     def transform_gizmo(self) -> Optional[dict]:
@@ -937,7 +941,9 @@ class ShipPropertyViewerPanel(Panel):
         self._ring_grab_axis = tuple(spec.get("axis") or (0.0, -1.0, 0.0))
         self._ring_grab_orientation = spec.get("orientation") \
             or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-        self._ring_grab_accum = list(self._rotate_accum.get(i, [0.0, 0.0, 0.0]))
+        # Keyed by the full target tuple so light and emitter accumulators on
+        # the same subsystem stay independent (see rotate_values).
+        self._ring_grab_accum = list(self._rotate_accum.get(t, [0.0, 0.0, 0.0]))
         eye, tgt = self.camera.eye(), self.camera.target
         fwd = (tgt[0]-eye[0], tgt[1]-eye[1], tgt[2]-eye[2])
         wa = g["axes"][ring] if g else (0.0, 0.0, 1.0)
@@ -969,8 +975,8 @@ class ShipPropertyViewerPanel(Panel):
             spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
             lst[j] = spec
             self._pending_emitter[i] = lst
-            self._rotate_accum.setdefault(i, [0.0, 0.0, 0.0])
-            self._rotate_accum[i][k] = self._ring_grab_accum[k] + math.degrees(d_body)
+            self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])
+            self._rotate_accum[t][k] = self._ring_grab_accum[k] + math.degrees(d_body)
             self._last_pushed = None
             return
         _, i = t
@@ -985,8 +991,8 @@ class ShipPropertyViewerPanel(Panel):
         else:
             spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
         self._pending_light[i] = spec
-        self._rotate_accum.setdefault(i, [0.0, 0.0, 0.0])
-        self._rotate_accum[i][k] = self._ring_grab_accum[k] + math.degrees(d_body)
+        self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])
+        self._rotate_accum[t][k] = self._ring_grab_accum[k] + math.degrees(d_body)
         self._last_pushed = None
 
     def _apply_ring_drag(self, x, y, fb_size):

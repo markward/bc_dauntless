@@ -368,3 +368,64 @@ def test_point_emitter_rotate_is_inert_no_crash():
     p._begin_ring_drag(0, 0.0)
     p._apply_ring_drag_angle(math.radians(45.0))
     assert p._effective_emitter(0, 0)["axis"] == (0.0, -1.0, 0.0)
+
+
+def test_scale_drag_restages_whole_list_keeps_other_emitter():
+    """Scaling emitter j=1 restages the WHOLE compacted list, leaving the
+    sibling emitter j=0 untouched (mirrors the transform/rotate invariant)."""
+    from engine.ui.ship_property_viewer import gizmo_length
+    p = _panel_with_subsystem(
+        emitters=[_emitter_spec("strip"), _emitter_spec("cone")])
+    _select_emitter(p, j=1)          # scale the cone
+    p.active_tool = "scale"
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(0, L)        # perpendicular handle -> Radius
+    p._apply_scale_drag(2.0 * L)     # ratio 2.0
+    specs = p._effective_emitters(0)
+    assert [s["kind"] for s in specs] == ["strip", "cone"]
+    assert round(specs[1]["radius"], 6) == 2.0   # cone radius scaled
+    assert specs[0]["radius"] == 1.0             # strip sibling untouched
+    assert specs[0]["length"] == 2.0
+
+
+def _cylinder_light_region():
+    return {
+        "shape": "Cylinder", "position": (0.0, 0.0, 0.0),
+        "axis": (0.0, -1.0, 0.0), "radius": (0.25,),
+        "extent": (0.0, 2.0), "scale": (0.25, 0.25, 0.25),
+        "orientation": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+    }
+
+
+def test_emitter_and_light_rotate_readouts_are_independent():
+    """Regression: _rotate_accum must be keyed by the target identity, not the
+    bare subsystem index — otherwise a subsystem's Cylinder-light rotate
+    readout and its cone-emitter rotate share a key and cross-contaminate."""
+    p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    p._descriptors[0]["light"] = True
+    p._descriptors[0]["light_region"] = _cylinder_light_region()
+    p.active_tool = "rotate"
+
+    # Rotate the cone emitter's axis 90deg about +X.
+    _select_emitter(p)
+    assert p._rotate_target() == ("emitter", 0, 0)
+    p._begin_ring_drag(0, 0.0)
+    p._apply_ring_drag_angle(math.radians(90.0))
+
+    # The sibling light's degree readout must be untouched (still all zero) —
+    # before the fix it showed the emitter's 90deg in X.
+    assert p.dispatch_event('select_light:0') is True
+    assert p._rotate_target() == ("light", 0)
+    rv = p.rotate_values()
+    assert rv is not None
+    assert [f["value"] for f in rv["fields"]] == [0.0, 0.0, 0.0]
+
+    # Rotate the light 45deg about +Y; its readout updates independently.
+    p._begin_ring_drag(1, 0.0)
+    p._apply_ring_drag_angle(math.radians(45.0))
+    assert round(p.rotate_values()["fields"][1]["value"], 3) == 45.0
+
+    # And the light rotate must not have disturbed the emitter's staged axis.
+    _select_emitter(p)
+    ax = p._effective_emitter(0, 0)["axis"]
+    assert abs(ax[2] - (-1.0)) < 1e-6
