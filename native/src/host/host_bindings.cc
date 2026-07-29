@@ -2262,14 +2262,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   l.color = {std::get<0>(c), std::get<1>(c), std::get<2>(c)};
                   l.radius    = d["radius"].cast<float>();
                   l.intensity = d["intensity"].cast<float>();
+                  // Optional cone keys (default: not a cone). Point/strip omit both.
+                  if (d.contains("direction") && !d["direction"].is_none()) {
+                      auto dir = d["direction"].cast<std::tuple<float, float, float>>();
+                      l.direction = {std::get<0>(dir), std::get<1>(dir), std::get<2>(dir)};
+                  }
+                  if (d.contains("cos_half_angle") && !d["cos_half_angle"].is_none()) {
+                      l.cos_half_angle = d["cos_half_angle"].cast<float>();
+                  }
                   g_dynamic_lights.push_back(l);
               }
           },
           py::arg("lights"),
           "Replace the active dynamic-light list, applied each frame(). Each "
           "dict has position (pos_a), color, radius, intensity, plus optional "
-          "position_b (pos_b defaults to position for a point light). Clamped "
-          "to kMaxDynamicLightsPerFrame entries.");
+          "position_b (pos_b defaults to position for a point light), and "
+          "optional cone keys direction (3-tuple, world-space axis) and "
+          "cos_half_angle (float; absent/None => not a cone, point/strip "
+          "behaviour unchanged). Clamped to kMaxDynamicLightsPerFrame entries.");
 
     m.def("set_shockwaves",
           [](const std::vector<py::dict>& descs) {
