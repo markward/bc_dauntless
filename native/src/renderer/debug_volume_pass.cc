@@ -42,6 +42,8 @@ DebugVolumePass::~DebugVolumePass() {
     if (box_vao_) glDeleteVertexArrays(1, &box_vao_);
     if (sphere_vbo_) glDeleteBuffers(1, &sphere_vbo_);
     if (sphere_vao_) glDeleteVertexArrays(1, &sphere_vao_);
+    if (cone_vbo_) glDeleteBuffers(1, &cone_vbo_);
+    if (cone_vao_) glDeleteVertexArrays(1, &cone_vao_);
 }
 
 void DebugVolumePass::ensure_resources() {
@@ -255,6 +257,101 @@ void DebugVolumePass::render(const std::vector<DebugSphere>& spheres,
         shader_->set_vec3("u_color", s.color);
         shader_->set_mat4("u_mvp", vp * M);
         glDrawArrays(GL_TRIANGLES, 0, sphere_vertex_count_);
+    }
+
+    glBindVertexArray(0);
+    glDisable(GL_BLEND);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+}
+
+void DebugVolumePass::ensure_cone_resources() {
+    if (cone_vao_) return;
+    if (!shader_) shader_ = std::make_unique<Shader>(kVs, kFs);
+
+    // Unit cone: apex at the origin, base ring of kSegments verts at +Z,
+    // radius 1, length 1. Side triangles (apex -> ring[i] -> ring[i+1]) plus
+    // a base fan (center -> ring[i+1] -> ring[i]), rendered as GL_LINE so the
+    // triangle edges outline the cone (apex spokes + base ring + fan spokes).
+    std::vector<float> verts;
+    verts.reserve(kSegments * 6 * 3);
+    const float apex[3] = {0.0f, 0.0f, 0.0f};
+    const float base_center[3] = {0.0f, 0.0f, 1.0f};
+    for (int i = 0; i < kSegments; ++i) {
+        const float a0 = glm::two_pi<float>() * (static_cast<float>(i) / kSegments);
+        const float a1 = glm::two_pi<float>() * (static_cast<float>(i + 1) / kSegments);
+        const float x0 = std::cos(a0), y0 = std::sin(a0);
+        const float x1 = std::cos(a1), y1 = std::sin(a1);
+        const float side[3][3] = {
+            {apex[0], apex[1], apex[2]}, {x0, y0, 1.0f}, {x1, y1, 1.0f},
+        };
+        for (auto& v : side) { verts.push_back(v[0]); verts.push_back(v[1]); verts.push_back(v[2]); }
+        const float fan[3][3] = {
+            {base_center[0], base_center[1], base_center[2]}, {x1, y1, 1.0f}, {x0, y0, 1.0f},
+        };
+        for (auto& v : fan) { verts.push_back(v[0]); verts.push_back(v[1]); verts.push_back(v[2]); }
+    }
+    cone_vertex_count_ = static_cast<int>(verts.size() / 3);
+
+    glGenVertexArrays(1, &cone_vao_);
+    glGenBuffers(1, &cone_vbo_);
+    glBindVertexArray(cone_vao_);
+    glBindBuffer(GL_ARRAY_BUFFER, cone_vbo_);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(verts.size() * sizeof(float)),
+                 verts.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+    glBindVertexArray(0);
+}
+
+void DebugVolumePass::render(const std::vector<DebugCone>& cones,
+                             const scenegraph::Camera& camera) {
+    if (cones.empty()) return;
+    ensure_cone_resources();
+
+    const glm::mat4 vp = camera.proj_matrix() * camera.view_matrix();
+    shader_->use();
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    glLineWidth(1.5f);
+    // Window (window.cc) requests a core-profile + forward-compat context,
+    // under which wide (non-1.0) line widths are unsupported --
+    // GL_ALIASED_LINE_WIDTH_RANGE clamps to (1,1) and glLineWidth(1.5) raises
+    // GL_INVALID_VALUE while leaving the width at its previous value (lines
+    // still draw, just pinned to 1px). Same latent condition already exists
+    // for the cylinder/box/sphere siblings above and gizmo_pass.cc's
+    // glLineWidth(2.0f) -- out of scope here, flagged separately -- but the
+    // NEW cone path drains this specific, anticipated, harmless error so it
+    // doesn't leak into a caller's glGetError() check.
+    glGetError();
+    shader_->set_float("u_alpha", 0.5f);   // cone cage at 50% opacity, matches the sphere cage
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBindVertexArray(cone_vao_);
+
+    for (const auto& cn : cones) {
+        // Map the unit cone (local +Z apex->base) onto this cone: local +Z ->
+        // axis (scaled by length), local X/Y -> a perpendicular basis scaled
+        // by radius, origin at apex. All in world space.
+        const glm::vec3 w = glm::normalize(cn.axis);
+        const glm::vec3 up = (std::abs(w.y) < 0.99f) ? glm::vec3(0, 1, 0)
+                                                      : glm::vec3(1, 0, 0);
+        const glm::vec3 u = glm::normalize(glm::cross(up, w));
+        const glm::vec3 v = glm::cross(w, u);
+
+        glm::mat4 M(1.0f);
+        M[0] = glm::vec4(u * cn.radius, 0.0f);
+        M[1] = glm::vec4(v * cn.radius, 0.0f);
+        M[2] = glm::vec4(w * cn.length, 0.0f);
+        M[3] = glm::vec4(cn.apex, 1.0f);
+
+        shader_->set_vec3("u_color", cn.color);
+        shader_->set_mat4("u_mvp", vp * M);
+        glDrawArrays(GL_TRIANGLES, 0, cone_vertex_count_);
     }
 
     glBindVertexArray(0);

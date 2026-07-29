@@ -52,6 +52,7 @@ add_executable(renderer_tests
     torpedo_anim_test.cc
     torpedo_pass_test.cc
     dynamic_lights_test.cc
+    debug_volume_pass_test.cc
 )
 
 target_link_libraries(renderer_tests
