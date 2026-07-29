@@ -4,6 +4,7 @@ Mirrors test_ship_property_viewer_panel_light_modal.py's fixture/dispatch
 pattern but for the (subsystem_index, emitter_index)-keyed emitter API.
 """
 import json
+import math
 from engine.ui.ship_property_viewer_panel import ShipPropertyViewerPanel
 
 _DEFAULT_LIGHT_REGION = {
@@ -236,3 +237,134 @@ def test_active_transform_target_prefers_emitter_over_subsystem_and_light():
     p._selected_light_index = 0
     p._selected_emitter = (0, 0)
     assert p._active_transform_target() == ("emitter", 0, 0)
+
+
+# ----------------------------------------------------------------------
+# Task 7: transform / scale / rotate gizmo routing for emitters
+# ----------------------------------------------------------------------
+def _select_emitter(p, i=0, j=0):
+    assert p.dispatch_event(
+        'select_emitter:' + json.dumps({"i": i, "j": j})) is True
+
+
+def test_transform_drag_moves_emitter_position():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    _select_emitter(p)
+    p.active_tool = "transform"
+    p._begin_axis_drag_for_test(axis=0, grab_param=0.0)
+    p._apply_axis_drag(1.5)
+    spec = p._effective_emitter(0, 0)
+    assert abs(spec["position"][0] - 1.5) < 1e-9   # X advanced by 1.5
+    assert spec["position"][1] == 0.0
+    assert spec["position"][2] == 0.0
+
+
+def test_transform_drag_restages_whole_list_keeps_other_emitter():
+    """Moving emitter j=1 must restage the WHOLE compacted list, leaving the
+    sibling emitter j=0 untouched and indices dense."""
+    p = _panel_with_subsystem(
+        emitters=[_emitter_spec("point"), _emitter_spec("cone")])
+    _select_emitter(p, j=1)
+    p.active_tool = "transform"
+    p._begin_axis_drag_for_test(axis=2, grab_param=0.0)
+    p._apply_axis_drag(3.0)
+    specs = p._effective_emitters(0)
+    assert [s["kind"] for s in specs] == ["point", "cone"]
+    assert specs[0]["position"] == (0.0, 0.0, 0.0)            # untouched
+    assert abs(specs[1]["position"][2] - 3.0) < 1e-9          # moved
+
+
+def test_scale_drag_strip_axial_scales_length_perp_scales_radius():
+    from engine.ui.ship_property_viewer import gizmo_length
+    # Strip axis default (0,-1,0) -> dominant body component index 1 (Y). The
+    # Y handle is axial (Length); the X handle is perpendicular (Radius).
+    p = _panel_with_subsystem(emitters=[_emitter_spec("strip")])
+    _select_emitter(p)
+    p.active_tool = "scale"
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(1, L)          # axial handle -> Length (field 1)
+    p._apply_scale_drag(1.5 * L)       # ratio 1.5
+    spec = p._effective_emitter(0, 0)
+    assert round(spec["length"], 6) == 3.0    # 2.0 * 1.5
+    assert round(spec["radius"], 6) == 1.0    # unchanged
+
+    p2 = _panel_with_subsystem(emitters=[_emitter_spec("strip")])
+    _select_emitter(p2)
+    p2.active_tool = "scale"
+    L2 = gizmo_length(p2.camera)
+    p2._begin_scale_drag(0, L2)        # perpendicular handle -> Radius (field 0)
+    p2._apply_scale_drag(2.0 * L2)     # ratio 2.0
+    spec2 = p2._effective_emitter(0, 0)
+    assert round(spec2["radius"], 6) == 2.0   # 1.0 * 2
+    assert round(spec2["length"], 6) == 2.0   # unchanged
+
+
+def test_scale_drag_cone_perp_grows_radius_axial_grows_length():
+    from engine.ui.ship_property_viewer import gizmo_length
+    # Cone: perpendicular handle grows Radius (-> wider derived half-angle);
+    # axial handle grows Length. Same radius_length mapping as the strip.
+    p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    _select_emitter(p)
+    p.active_tool = "scale"
+    L = gizmo_length(p.camera)
+    p._begin_scale_drag(0, L)          # perpendicular (X) -> Radius
+    p._apply_scale_drag(2.0 * L)
+    spec = p._effective_emitter(0, 0)
+    assert round(spec["radius"], 6) == 2.0    # 1.0 * 2 (wider angle)
+    assert round(spec["length"], 6) == 2.0    # unchanged
+
+    p2 = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    _select_emitter(p2)
+    p2.active_tool = "scale"
+    L2 = gizmo_length(p2.camera)
+    p2._begin_scale_drag(1, L2)        # axial (Y) -> Length
+    p2._apply_scale_drag(1.5 * L2)
+    spec2 = p2._effective_emitter(0, 0)
+    assert round(spec2["length"], 6) == 3.0   # 2.0 * 1.5
+    assert round(spec2["radius"], 6) == 1.0   # unchanged
+
+
+def test_rotate_target_is_emitter_for_strip_and_cone():
+    for kind in ("strip", "cone"):
+        p = _panel_with_subsystem(emitters=[_emitter_spec(kind)])
+        _select_emitter(p)
+        p.active_tool = "rotate"
+        assert p._rotate_target() == ("emitter", 0, 0)
+
+
+def test_rotate_ring_drag_rotates_cone_axis():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    _select_emitter(p)
+    p.active_tool = "rotate"
+    p._begin_ring_drag(0, 0.0)                       # ring 0 -> rotate about +X
+    p._apply_ring_drag_angle(math.radians(90.0))
+    ax = p._effective_emitter(0, 0)["axis"]
+    # axis (0,-1,0) rotated +90deg about +X -> (0, 0, -1)
+    assert abs(ax[0]) < 1e-6
+    assert abs(ax[1]) < 1e-6
+    assert abs(ax[2] - (-1.0)) < 1e-6
+
+
+def test_rotate_ring_drag_restages_whole_list_keeps_other_emitter():
+    p = _panel_with_subsystem(
+        emitters=[_emitter_spec("point"), _emitter_spec("cone")])
+    _select_emitter(p, j=1)
+    p.active_tool = "rotate"
+    p._begin_ring_drag(0, 0.0)
+    p._apply_ring_drag_angle(math.radians(90.0))
+    specs = p._effective_emitters(0)
+    assert [s["kind"] for s in specs] == ["point", "cone"]
+    assert specs[0]["axis"] == (0.0, -1.0, 0.0)      # sibling untouched
+    assert abs(specs[1]["axis"][2] - (-1.0)) < 1e-6  # cone rotated
+
+
+def test_point_emitter_rotate_is_inert_no_crash():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("point")])
+    _select_emitter(p)
+    p.active_tool = "rotate"
+    assert p._rotate_target() is None            # point rotate inert
+    assert p.rotate_gizmo() is None
+    # A ring drag on a point emitter is a clean no-op (no crash, no mutation).
+    p._begin_ring_drag(0, 0.0)
+    p._apply_ring_drag_angle(math.radians(45.0))
+    assert p._effective_emitter(0, 0)["axis"] == (0.0, -1.0, 0.0)

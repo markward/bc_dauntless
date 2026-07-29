@@ -415,6 +415,20 @@ class ShipPropertyViewerPanel(Panel):
         self._pending_light[index] = spec
         self._last_pushed = None
 
+    def set_emitter_position(self, i: int, j: int, body_pos) -> None:
+        """Stage a body-frame position edit for emitter (i, j). Restages the
+        WHOLE compacted emitter list (dense-index invariant — see
+        `_pending_emitter`), mirroring `set_light_position` but through the
+        whole-list-per-subsystem staging model rather than a per-(i,j) key."""
+        lst = list(self._effective_emitters(i))
+        if not (0 <= j < len(lst)):
+            return
+        spec = dict(lst[j])
+        spec["position"] = tuple(float(c) for c in body_pos)
+        lst[j] = spec
+        self._pending_emitter[i] = lst
+        self._last_pushed = None
+
     # ------------------------------------------------------------------
     # Transform gizmo (subsystem or light-volume target)
     # ------------------------------------------------------------------
@@ -443,8 +457,11 @@ class ShipPropertyViewerPanel(Panel):
         returns the raw position tuple instead of the gizmo geometry."""
         t = self._active_transform_target()
         if t is None or t[0] == "emitter":
-            # Emitter gizmo routing is Task 7 — degrade to "no target" so
-            # this runs safely every frame while an emitter is selected.
+            # The 3D transform gizmo drives emitter position directly (see
+            # _begin/_apply_axis_drag). The CEF coord readout + Copy/Paste/
+            # Mirror/Nudge buttons for emitters are Task 10 — degrade to "no
+            # target" so the coord panel stays hidden while an emitter is
+            # selected (consistent with scale_values/rotate_values).
             return None
         kind, i = t
         if kind == "light":
@@ -456,7 +473,8 @@ class ShipPropertyViewerPanel(Panel):
 
     def _set_transform_target_pos(self, xyz) -> None:
         """Stage `xyz` as the current transform target's body-frame position,
-        routing to the light or subsystem staging path as appropriate."""
+        routing to the light or subsystem staging path (emitter coord-panel
+        writes are Task 10; the gizmo drag uses set_emitter_position)."""
         t = self._active_transform_target()
         if t is None or t[0] == "emitter":
             return
@@ -485,10 +503,21 @@ class ShipPropertyViewerPanel(Panel):
         """Shape-aware size fields for `target` (see `_active_transform_target`).
         A subsystem is always a sphere (`radius`); a light volume's fields
         depend on its shape (`Box` -> xyz axes, `Cylinder` -> radius+length,
-        else -> radius). Emitter scale-tool routing is Task 7 — degrades to
-        an inert zero-radius field so callers never crash on the 3-tuple."""
+        else -> radius). An emitter is scalar-`radius`/`length`: a point emitter
+        exposes only Radius; a strip or cone exposes Radius + Length (the cone's
+        half-angle is DERIVED from radius/length, so no separate field)."""
         if target[0] == "emitter":
-            return "radius", [{"label": "Radius", "value": 0.0}]
+            _, i, j = target
+            spec = self._effective_emitter(i, j)
+            if not spec:
+                return "radius", [{"label": "Radius", "value": 0.0}]
+            kind = spec.get("kind", "point")
+            if kind == "point":
+                return "radius", [{"label": "Radius", "value": float(spec["radius"])}]
+            # strip and cone both expose Radius + Length; cone angle is derived.
+            return "radius_length", [
+                {"label": "Radius", "value": float(spec["radius"])},
+                {"label": "Length", "value": float(spec["length"])}]
         kt, i = target
         if kt == "subsystem":
             r = self._effective_radius(i, self._descriptors[i].get("properties", {}).get("radius"))
@@ -535,13 +564,30 @@ class ShipPropertyViewerPanel(Panel):
         current transform target, routing to the radius or light-spec staging
         path as appropriate."""
         t = self._active_transform_target()
-        if t is None or t[0] == "emitter":
+        if t is None:
             return
         value = max(SCALE_MIN, float(value))
-        kt, i = t
         kind, fields = self._scale_kind_and_fields(t)
         if not (0 <= index < len(fields)):
             return
+        if t[0] == "emitter":
+            # Emitter spec uses SCALAR radius/length floats (NOT the light's
+            # tuple/extent form). Field 0 -> radius, field 1 -> length; restage
+            # the whole compacted list to keep indices dense.
+            _, i, j = t
+            lst = list(self._effective_emitters(i))
+            if not (0 <= j < len(lst)):
+                return
+            spec = dict(lst[j])
+            if index == 0:
+                spec["radius"] = value
+            else:
+                spec["length"] = value
+            lst[j] = spec
+            self._pending_emitter[i] = lst
+            self._last_pushed = None
+            return
+        kt, i = t
         if kt == "subsystem":
             self._pending_radius[i] = value
             self._last_pushed = None
@@ -578,16 +624,24 @@ class ShipPropertyViewerPanel(Panel):
     # Rotate tool (Cylinder light-volume axis only)
     # ------------------------------------------------------------------
     def _rotate_target(self):
-        """("light", i) when the current transform target is a light whose
-        effective spec is a Cylinder (rotate its axis) or a Box (rotate its
-        forward+up orientation basis); None otherwise (sphere/subsystem/
-        emitter are inert — emitter rotate-tool routing is Task 7)."""
+        """The rotate tool's target: ("light", i) for a Cylinder (rotate its
+        axis) or Box (rotate its forward+up orientation basis) light;
+        ("emitter", i, j) for a strip or cone emitter (rotate its single
+        `axis`); None otherwise (sphere/subsystem, and a point emitter, are
+        inert)."""
         t = self._active_transform_target()
-        if t is None or t[0] == "emitter":
+        if t is None:
             return None
-        kt, i = t
+        kt = t[0]
+        if kt == "emitter":
+            _, i, j = t
+            spec = self._effective_emitter(i, j)
+            if not spec or spec.get("kind") not in ("strip", "cone"):
+                return None
+            return ("emitter", i, j)
         if kt != "light":
             return None
+        i = t[1]
         spec = self._effective_light(i)
         if not spec or spec.get("shape") not in ("Cylinder", "Box"):
             return None
@@ -603,7 +657,9 @@ class ShipPropertyViewerPanel(Panel):
         if self.active_tool != "rotate":
             return None
         t = self._rotate_target()
-        if t is None:
+        if t is None or t[0] == "emitter":
+            # Emitter rotate acts through the 3D ring gizmo only; the CEF
+            # degree-readout panel + nudge/copy/paste buttons are Task 10.
             return None
         _, i = t
         acc = self._rotate_accum.get(i, [0.0, 0.0, 0.0])
@@ -628,7 +684,8 @@ class ShipPropertyViewerPanel(Panel):
         rotates BOTH `forward` and `up` of its orientation basis, then
         re-orthonormalizes."""
         t = self._rotate_target()
-        if t is None:
+        if t is None or t[0] == "emitter":
+            # Emitter rotate is 3D-ring-only in Task 7 (CEF nudge is Task 10).
             return
         _, i = t
         from engine.ui.ship_property_viewer import (
@@ -687,24 +744,28 @@ class ShipPropertyViewerPanel(Panel):
         if self.active_tool != "transform" or self.camera is None:
             return None
         target = self._active_transform_target()
-        if target is None or target[0] == "emitter":
-            # Emitter gizmo routing is Task 7 — no gizmo drawn yet.
+        if target is None:
             return None
-        kind, i = target
-        if kind == "subsystem" and not (0 <= i < len(self._descriptors)):
+        kt = target[0]
+        if kt == "subsystem" and not (0 <= target[1] < len(self._descriptors)):
             return None
         ship = self._ship_getter()
         if ship is None or not hasattr(ship, "GetWorldRotation"):
             return None
         from engine.ui.ship_property_viewer import (
             gizmo_axes, gizmo_length, world_from_body)
-        if kind == "light":
-            light = self._effective_light(i)
+        if kt == "emitter":
+            spec = self._effective_emitter(target[1], target[2])
+            if spec is None:
+                return None
+            origin = world_from_body(ship, spec["position"])
+        elif kt == "light":
+            light = self._effective_light(target[1])
             if light is None:
                 return None
             origin = world_from_body(ship, light["position"])
         else:
-            origin = self._effective_world_pos(i)
+            origin = self._effective_world_pos(target[1])
         return {
             "origin": origin,
             "axes": gizmo_axes(ship.GetWorldRotation()),
@@ -723,21 +784,26 @@ class ShipPropertyViewerPanel(Panel):
         if self.active_tool != "scale" or self.camera is None:
             return None
         t = self._active_transform_target()
-        if t is None or t[0] == "emitter":
-            # Emitter gizmo routing is Task 7 — no gizmo drawn yet.
+        if t is None:
             return None
         ship = self._ship_getter()
         if ship is None or not hasattr(ship, "GetWorldRotation"):
             return None
         from engine.ui.ship_property_viewer import (
             gizmo_axes, gizmo_length, world_from_body)
-        kt, i = t
+        kt = t[0]
+        i = t[1]
         # Defensive guards mirroring transform_gizmo (this runs every input
-        # frame via _active_gizmo): a stale/removed light or out-of-range index
+        # frame via _active_gizmo): a stale/removed node or out-of-range index
         # must degrade to None, never crash on a missing spec.
         if not (0 <= i < len(self._descriptors)):
             return None
-        if kt == "light":
+        if kt == "emitter":
+            spec = self._effective_emitter(i, t[2])
+            if spec is None:
+                return None
+            origin = world_from_body(ship, spec["position"])
+        elif kt == "light":
             light = self._effective_light(i)
             if light is None:
                 return None
@@ -766,15 +832,21 @@ class ShipPropertyViewerPanel(Panel):
         ship = self._ship_getter()
         if ship is None or not hasattr(ship, "GetWorldRotation"):
             return None
-        _, i = t
+        i = t[1]
         if not (0 <= i < len(self._descriptors)):
-            return None
-        light = self._effective_light(i)
-        if light is None:
             return None
         from engine.ui.ship_property_viewer import (
             gizmo_axes, gizmo_length, world_from_body)
-        origin = world_from_body(ship, light["position"])
+        if t[0] == "emitter":
+            spec = self._effective_emitter(i, t[2])
+            if spec is None:
+                return None
+            origin = world_from_body(ship, spec["position"])
+        else:
+            light = self._effective_light(i)
+            if light is None:
+                return None
+            origin = world_from_body(ship, light["position"])
         return {
             "origin": origin,
             "axes": gizmo_axes(ship.GetWorldRotation()),
@@ -806,22 +878,22 @@ class ShipPropertyViewerPanel(Panel):
         g = self._active_gizmo()
         self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
         t = self._active_transform_target()
-        if t is None or t[0] == "emitter":
-            # Emitter scale-tool routing is Task 7 — enforced explicitly
-            # here rather than relying on _scale_kind_and_fields's
-            # placeholder kind never matching "xyz"/"radius_length" below.
+        if t is None:
             self._scale_grab = (0, 0.0)
             return
         kind, fields = self._scale_kind_and_fields(t)
         if kind == "xyz":
             self._scale_grab = (axis, fields[axis]["value"])   # per-axis
         elif kind == "radius_length":
-            # Cylinder: the handle aligned with the cylinder's axis scales
-            # Length (field 1); the two perpendicular handles scale Radius
-            # (field 0). The gizmo axes are body X/Y/Z, so the aligned handle
-            # is the dominant component of the region's body-frame axis vector.
-            kt, i = t
-            spec = self._effective_light(i) or {}
+            # Cylinder light OR strip/cone emitter: the handle aligned with the
+            # node's body-frame axis scales Length (field 1); the two
+            # perpendicular handles scale Radius (field 0). The gizmo axes are
+            # body X/Y/Z, so the aligned handle is the dominant component of the
+            # region's/emitter's body-frame axis vector.
+            if t[0] == "emitter":
+                spec = self._effective_emitter(t[1], t[2]) or {}
+            else:
+                spec = self._effective_light(t[1]) or {}
             av = spec.get("axis", (0.0, -1.0, 0.0))
             aligned = max(range(3), key=lambda k: abs(av[k]))
             field_idx = 1 if axis == aligned else 0
@@ -857,8 +929,11 @@ class ShipPropertyViewerPanel(Panel):
             self._ring_grab_accum = [0.0, 0.0, 0.0]
             self._ring_sign = 1.0
             return
-        _, i = t
-        spec = self._effective_light(i) or {}
+        i = t[1]
+        if t[0] == "emitter":
+            spec = self._effective_emitter(i, t[2]) or {}
+        else:
+            spec = self._effective_light(i) or {}
         self._ring_grab_axis = tuple(spec.get("axis") or (0.0, -1.0, 0.0))
         self._ring_grab_orientation = spec.get("orientation") \
             or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
@@ -880,10 +955,25 @@ class ShipPropertyViewerPanel(Panel):
         t = self._rotate_target()
         if t is None or self._axis_drag is None:
             return
-        _, i = t
         from engine.ui.ship_property_viewer import (
             rotate_about_axis, orthonormalize_basis)
         k = self._axis_drag
+        if t[0] == "emitter":
+            # Strip and cone both rotate their single `axis` (no orientation
+            # basis, unlike a Box). Restage the whole compacted list.
+            _, i, j = t
+            lst = list(self._effective_emitters(i))
+            if not (0 <= j < len(lst)):
+                return
+            spec = dict(lst[j])
+            spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
+            lst[j] = spec
+            self._pending_emitter[i] = lst
+            self._rotate_accum.setdefault(i, [0.0, 0.0, 0.0])
+            self._rotate_accum[i][k] = self._ring_grab_accum[k] + math.degrees(d_body)
+            self._last_pushed = None
+            return
+        _, i = t
         spec = dict(self._effective_light(i) or {})
         if not spec:
             return
@@ -915,8 +1005,20 @@ class ShipPropertyViewerPanel(Panel):
         """Start an axis drag on `axis` (0/1/2), capturing the fixed drag-start
         body position and world origin so the drag mapping stays stable."""
         target = self._active_transform_target()
-        if target is None or target[0] == "emitter":
-            # Emitter gizmo routing is Task 7 — no drag to begin yet.
+        if target is None:
+            return
+        if target[0] == "emitter":
+            _, i, j = target
+            spec = self._effective_emitter(i, j)
+            if spec is None:
+                return
+            self._axis_drag = axis
+            self._axis_grab_param = grab_param
+            self._axis_grab_pos = tuple(float(c) for c in spec["position"])
+            ship = self._ship_getter()
+            if ship is not None and hasattr(ship, "GetWorldRotation"):
+                from engine.ui.ship_property_viewer import world_from_body
+                self._axis_grab_origin = world_from_body(ship, self._axis_grab_pos)
             return
         kind, i = target
         self._axis_drag = axis
@@ -940,12 +1042,16 @@ class ShipPropertyViewerPanel(Panel):
         """Move the selected node to grab_pos with the grabbed axis component
         advanced by (param_now - grab_param)."""
         target = self._active_transform_target()
-        if self._axis_drag is None or target is None or target[0] == "emitter":
+        if self._axis_drag is None or target is None:
             return
-        kind, i = target
         k = self._axis_drag
         base = list(self._axis_grab_pos)
         base[k] += (param_now - self._axis_grab_param)
+        if target[0] == "emitter":
+            _, i, j = target
+            self.set_emitter_position(i, j, tuple(base))
+            return
+        kind, i = target
         if kind == "light":
             self.set_light_position(i, tuple(base))
         else:
@@ -1808,7 +1914,7 @@ class ShipPropertyViewerPanel(Panel):
             return True
         if action == "rotate_copy":
             t = self._rotate_target()
-            if t is not None:
+            if t is not None and t[0] != "emitter":
                 _, i = t
                 spec = self._effective_light(i) or {}
                 if spec.get("shape") == "Box":
@@ -1823,7 +1929,8 @@ class ShipPropertyViewerPanel(Panel):
             return True
         if action == "rotate_paste":
             t = self._rotate_target()
-            if (t is not None and self._rotate_clipboard is not None
+            if (t is not None and t[0] != "emitter"
+                    and self._rotate_clipboard is not None
                     and self._rotate_clipboard[0] == self._rotate_clipboard_kind(t[1])):
                 _, i = t
                 if self._rotate_clipboard[0] == "box_orientation":
@@ -1834,7 +1941,7 @@ class ShipPropertyViewerPanel(Panel):
             return True
         if action == "rotate_mirror":
             t = self._rotate_target()
-            if t is not None:
+            if t is not None and t[0] != "emitter":
                 _, i = t
                 spec = self._effective_light(i) or {}
                 if spec.get("shape") == "Box":
