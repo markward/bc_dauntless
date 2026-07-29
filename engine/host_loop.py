@@ -6652,10 +6652,31 @@ def run(mission_name: Optional[str] = None,
                         setting_course_panel.is_open()
                         or controller.quick_battle_setup_panel.is_open()
                     )
+                    # Orders/Maneuvers/Tactics row (#tactical-orders-host):
+                    # position:fixed; top:24px; left:264px; right:24px (see
+                    # tactical_orders.css). A top band just right of the
+                    # left column, spanning to the right edge. Height is a
+                    # fixed, generous box covering all three panels
+                    # including an expanded Tactics popup (header + ~7
+                    # rows). Gated on the panel actually being visible
+                    # (only up while the Tactical crew menu is open) —
+                    # tradeoff: while that menu is open, clicks anywhere in
+                    # this top band route to CEF rather than the 3D view,
+                    # same tradeoff the left column already makes with its
+                    # full-height strip.
+                    _OR_X, _OR_Y = 264, 24
+                    _OR_W = _CEF_VIEW_W - 24 - _OR_X   # to right:24
+                    _OR_H = 340
+                    _cursor_in_orders = (
+                        tactical_orders_panel.visible
+                        and _OR_X <= _mx < _OR_X + _OR_W
+                        and _OR_Y <= _my < _OR_Y + _OR_H
+                    )
                     _cursor_in_panel = (
                         _cursor_in_left_column or _cursor_in_bottom_row
                         or _cursor_in_top_right
                         or _cursor_in_modal
+                        or _cursor_in_orders
                     )
                     if _cef_send_mouse_click is not None and _cursor_in_panel:
                         if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
