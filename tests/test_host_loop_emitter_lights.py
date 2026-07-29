@@ -33,6 +33,23 @@ def _point_prop(position, color=(1.0, 0.5, 0.25), radius=3.0, intensity=2.5):
     return p
 
 
+def _emitter_prop(kind, position, axis=(0.0, -1.0, 0.0), length=2.0, radius=1.0,
+                   color=(1.0, 0.5, 0.25), intensity=2.5):
+    """A SubsystemProperty carrying one baked emitter of arbitrary `kind`."""
+    p = SubsystemProperty("sub")
+    p.SetLightEmitterKind(0, kind)
+    px, py, pz = position
+    p.SetLightEmitterPosition(0, px, py, pz)
+    ax, ay, az = axis
+    p.SetLightEmitterAxis(0, ax, ay, az)
+    p.SetLightEmitterLength(0, length)
+    p.SetLightEmitterRadius(0, radius)
+    r, g, b = color
+    p.SetLightEmitterColor(0, r, g, b)
+    p.SetLightEmitterIntensity(0, intensity)
+    return p
+
+
 class _Sub:
     """Fake subsystem: carries a baked-emitter property and a health state."""
 
@@ -121,6 +138,71 @@ def test_rotated_translated_ship_transforms_body_position_to_world():
     got = out[0]["position"]
     for g, e in zip(got, expected):
         assert g == pytest.approx(e)
+
+
+def test_strip_and_cone_transform_correctly_on_rotated_translated_ship():
+    """The point-only tests above never exercise `direction`/`position_b`.
+
+    A strip's two endpoints and a cone's direction must transform the same
+    way the producer documents: positions get loc + R*body (translation
+    included), direction gets R*body only (rotation-only, no translation).
+    """
+    loc = (10.0, -5.0, 2.0)
+    rot = TGMatrix3()
+    rot.MakeZRotation(math.pi / 2.0)  # 90 degrees about Z
+    ship = _Ship(loc=loc, rot=rot)
+
+    strip_body_pos = (1.0, 0.0, 0.0)
+    strip_axis = (0.0, 1.0, 0.0)
+    strip_length = 2.0
+    strip_prop = _emitter_prop("strip", strip_body_pos, axis=strip_axis,
+                                length=strip_length)
+    strip_sub = _Sub(strip_prop)
+    strip_spec = light_emitters.baked_emitters(strip_prop)[0]
+
+    cone_body_pos = (0.0, 2.0, 0.0)
+    cone_axis = (0.0, -1.0, 0.0)
+    cone_prop = _emitter_prop("cone", cone_body_pos, axis=cone_axis,
+                               length=1.0, radius=1.0)
+    cone_sub = _Sub(cone_prop)
+    cone_spec = light_emitters.baked_emitters(cone_prop)[0]
+
+    ship_instances = {ship: 9}
+    ship_emitters = {9: [(strip_sub, False, 0.0, strip_spec),
+                          (cone_sub, False, 1.0, cone_spec)]}
+
+    out = _build_emitter_light_render_data(ship_instances, ship_emitters)
+    assert len(out) == 2
+    strip_out, cone_out = out[0], out[1]
+
+    # Strip endpoints: body-frame half-offsets from emitter_spec_to_struct,
+    # THEN loc + R*body (translation included) by the producer.
+    half = strip_length / 2.0
+    body_a = TGPoint3(strip_body_pos[0] - strip_axis[0] * half,
+                       strip_body_pos[1] - strip_axis[1] * half,
+                       strip_body_pos[2] - strip_axis[2] * half)
+    body_b = TGPoint3(strip_body_pos[0] + strip_axis[0] * half,
+                       strip_body_pos[1] + strip_axis[1] * half,
+                       strip_body_pos[2] + strip_axis[2] * half)
+    body_a.MultMatrixLeft(rot)
+    body_b.MultMatrixLeft(rot)
+    expected_a = (loc[0] + body_a.x, loc[1] + body_a.y, loc[2] + body_a.z)
+    expected_b = (loc[0] + body_b.x, loc[1] + body_b.y, loc[2] + body_b.z)
+    for g, e in zip(strip_out["position"], expected_a):
+        assert g == pytest.approx(e)
+    for g, e in zip(strip_out["position_b"], expected_b):
+        assert g == pytest.approx(e)
+
+    # Cone direction: rotation-only (R*body), NO translation added.
+    body_dir = TGPoint3(*cone_axis)
+    body_dir.MultMatrixLeft(rot)
+    expected_dir = (body_dir.x, body_dir.y, body_dir.z)
+    for g, e in zip(cone_out["direction"], expected_dir):
+        assert g == pytest.approx(e)
+    # Sanity: a unit direction, not a translated point -- proves `loc`
+    # (magnitude ~10) was never added in.
+    for g in cone_out["direction"]:
+        assert abs(g) <= 1.0 + 1e-6
 
 
 # ---------------------------------------------------------------------------

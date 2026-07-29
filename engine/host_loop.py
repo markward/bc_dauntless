@@ -7567,6 +7567,7 @@ def run(mission_name: Optional[str] = None,
                     r.clear_debug_cylinders()
                     r.clear_debug_boxes()
                     r.clear_debug_spheres()
+                    r.clear_debug_cones()
                     r.clear_transform_gizmo()
                     r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
                     r.set_spv_hull_mode(False)

@@ -334,6 +334,11 @@ void DebugVolumePass::render(const std::vector<DebugCone>& cones,
     glBindVertexArray(cone_vao_);
 
     for (const auto& cn : cones) {
+        // A degenerate (zero-length) authored axis would NaN out of
+        // glm::normalize below and produce NaN geometry; skip the cone
+        // instead of drawing garbage.
+        if (glm::dot(cn.axis, cn.axis) < 1e-12f) continue;
+
         // Map the unit cone (local +Z apex->base) onto this cone: local +Z ->
         // axis (scaled by length), local X/Y -> a perpendicular basis scaled
         // by radius, origin at apex. All in world space.

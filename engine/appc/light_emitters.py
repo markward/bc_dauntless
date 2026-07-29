@@ -107,12 +107,18 @@ def emitter_spec_to_struct(spec: dict) -> dict:
 
 
 def emitter_flicker(now: float, phase: float) -> float:
-    """Sputtering waveform in [0, 1], deterministic in game time.
+    """Sputtering waveform, deterministic in game time.
 
-    Two desynced sine waves multiplied together and clamped to positive,
-    biased into [0.35, 1.0] then floored, so a disabled emitter dims and
-    stutters rather than snapping fully dark. `phase` is per-emitter so
-    neighbouring disabled emitters don't flicker in lockstep.
+    Two desynced sine waves are multiplied together and clamped to positive,
+    which biases the intermediate `v` into [0.35, 1.0] (it never reaches 0),
+    then `_FLICKER_FLOOR` is applied as an ADDITIVE floor on top of that
+    normalized-to-[0,1] value: `_FLICKER_FLOOR + (1 - _FLICKER_FLOOR) * v`.
+    Because `v` bottoms out at 0.35 rather than 0, the actual output range is
+    approximately [0.38, 1.0] — `_FLICKER_FLOOR` is never the effective
+    minimum, it just nudges the whole curve up slightly. Net effect: a
+    disabled emitter dims and stutters rather than snapping fully dark.
+    `phase` is per-emitter so neighbouring disabled emitters don't flicker in
+    lockstep.
     """
     a = math.sin(now * 37.0 + phase)
     b = math.sin(now * 11.3 + phase * 2.0)
@@ -126,7 +132,9 @@ def resolve_emitter_intensity(spec, sub, now, throttle_frac=0.0,
 
     HEALTHY -> base intensity; DISABLED -> base * flicker(now); DESTROYED -> off.
     Impulse-parented emitters additionally scale by subsystem_glow.impulse_gain
-    so they brighten with commanded throttle exactly like the impulse glow.
+    so they brighten with commanded throttle exactly like the impulse glow —
+    but only while the subsystem is HEALTHY, mirroring ShipGlowController
+    (a disabled impulse pod gets flicker only, no throttle brightening).
     """
     base = float(spec["intensity"])
     state = subsystem_glow.glow_state(sub)
@@ -136,7 +144,8 @@ def resolve_emitter_intensity(spec, sub, now, throttle_frac=0.0,
     if state == subsystem_glow.DISABLED:
         out = base * emitter_flicker(now, phase)
     if is_impulse:
-        out *= subsystem_glow.impulse_gain(throttle_frac, now, powered)
+        out *= subsystem_glow.impulse_gain(
+            throttle_frac, now, powered and (state == subsystem_glow.HEALTHY))
     if out <= 0.0:
         return None
     return out

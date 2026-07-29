@@ -94,3 +94,21 @@ def test_impulse_emitter_scales_with_throttle():
     hi = resolve_emitter_intensity(s, _Sub(), now=0.0, throttle_frac=1.0,
                                    is_impulse=True, powered=True)
     assert hi > lo
+
+
+def test_disabled_impulse_emitter_gets_no_throttle_brightening():
+    # Faithfulness fix: ShipGlowController only throttle-brightens a HEALTHY
+    # impulse region. A DISABLED impulse-pod emitter must NOT scale with
+    # throttle_frac -- it gets flicker only (impulse_gain is neutralized to
+    # 1.0 because `powered and (state == HEALTHY)` is False while disabled).
+    # Use the same `now` for both throttle levels so both pass through the
+    # identical flicker(now, phase) factor -- if throttle brightening leaked
+    # through, hi would exceed lo.
+    s = default_emitter_spec("point"); s["intensity"] = 1.0
+    lo = resolve_emitter_intensity(s, _Sub(disabled=True), now=0.0,
+                                   throttle_frac=0.0, is_impulse=True,
+                                   powered=True)
+    hi = resolve_emitter_intensity(s, _Sub(disabled=True), now=0.0,
+                                   throttle_frac=1.0, is_impulse=True,
+                                   powered=True)
+    assert hi == pytest.approx(lo)
