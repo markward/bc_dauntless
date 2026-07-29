@@ -145,6 +145,26 @@ def region_spec_to_calls(index, spec):
     return calls
 
 
+def emitter_spec_to_calls(index, spec):
+    """Full ordered SetLightEmitter* call list for one emitter spec (Task 3).
+    Point omits axis/length; strip/cone include them; all carry colour+intensity."""
+    kind = spec["kind"]
+    px, py, pz = spec["position"]
+    r, g, b = spec["color"]
+    calls = [
+        ("SetLightEmitterKind", (index, kind)),
+        ("SetLightEmitterPosition", (index, px, py, pz)),
+        ("SetLightEmitterRadius", (index, float(spec["radius"]))),
+        ("SetLightEmitterColor", (index, float(r), float(g), float(b))),
+        ("SetLightEmitterIntensity", (index, float(spec["intensity"]))),
+    ]
+    if kind in ("strip", "cone"):
+        ax, ay, az = spec["axis"]
+        calls.append(("SetLightEmitterAxis", (index, ax, ay, az)))
+        calls.append(("SetLightEmitterLength", (index, float(spec["length"]))))
+    return calls
+
+
 def _is_identity_orientation(ori, eps=1e-6):
     (fx, fy, fz), (ux, uy, uz) = ori
     return (abs(fx) < eps and abs(fy - 1.0) < eps and abs(fz) < eps and
