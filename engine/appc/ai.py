@@ -730,9 +730,19 @@ class PreprocessingAI(ArtificialIntelligence):
         We accept both; the script instance (if given) becomes the
         preprocessing instance so subsequent GetPreprocessingInstance
         calls hand back the caller's object.
+
+        Trailing parentheses (e.g. "Update()" from BC's AI editor export
+        typos) are normalized at bind time to allow getattr() dispatch
+        at tick time.
         """
+        def _normalize_method_name(name):
+            """Strip trailing "()" from method name if present."""
+            if isinstance(name, str) and name.endswith("()"):
+                return name[:-2]
+            return name
+
         if len(args) == 1:
-            self._preprocessing_method = args[0]
+            self._preprocessing_method = _normalize_method_name(args[0])
             self._preprocessing_instance = _AIScriptInstance(self)
         elif len(args) >= 2:
             # (script_instance, method_name) — keep the caller's object so
@@ -749,7 +759,7 @@ class PreprocessingAI(ArtificialIntelligence):
             from engine.appc.ai_optimized import optimized_version_of
             instance = optimized_version_of(args[0])
             self._preprocessing_instance = instance
-            self._preprocessing_method = args[1]
+            self._preprocessing_method = _normalize_method_name(args[1])
             # SDK preprocessor classes (SelectTarget, FireScript) call
             # self.pCodeAI.GetShip()/GetAllAIsInTree() throughout their
             # Update bodies. The C++ optimized engine wires pCodeAI when
