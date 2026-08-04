@@ -357,15 +357,19 @@ def test_scale_drag_strip_axial_scales_length_perp_scales_radius():
     assert round(spec2["length"], 6) == 2.0   # unchanged
 
 
-def test_scale_drag_cone_perp_grows_radius_axial_grows_length():
+def test_scale_drag_cone_axial_grows_length_perp_grows_a_radius():
     from engine.ui.ship_property_viewer import gizmo_length
-    # Cone: perpendicular handle grows Radius (-> wider derived half-angle);
-    # axial handle grows Length. Same radius_length mapping as the strip.
+    # Cone is now a 3-field (radius_xy_length) shape. Default axis (0,-1,0):
+    # forward=Y -> Length; the Z (right) handle -> Radius X; the X (up) handle ->
+    # Radius Y. Per-handle field mapping is exhaustively covered by
+    # test_begin_scale_drag_cone_default_handles_map_distinct_fields; here we
+    # just confirm the axial handle still drives Length and a perpendicular
+    # handle drives a radius.
     p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
     _select_emitter(p)
     p.active_tool = "scale"
     L = gizmo_length(p.camera)
-    p._begin_scale_drag(0, L)          # perpendicular (X) -> Radius
+    p._begin_scale_drag(2, L)          # right (Z) -> Radius X
     p._apply_scale_drag(2.0 * L)
     spec = p._effective_emitter(0, 0)
     assert round(spec["radius"], 6) == 2.0    # 1.0 * 2 (wider angle)
@@ -375,7 +379,7 @@ def test_scale_drag_cone_perp_grows_radius_axial_grows_length():
     _select_emitter(p2)
     p2.active_tool = "scale"
     L2 = gizmo_length(p2.camera)
-    p2._begin_scale_drag(1, L2)        # axial (Y) -> Length
+    p2._begin_scale_drag(1, L2)        # axial (Y, forward) -> Length
     p2._apply_scale_drag(1.5 * L2)
     spec2 = p2._effective_emitter(0, 0)
     assert round(spec2["length"], 6) == 3.0   # 2.0 * 1.5
@@ -437,7 +441,7 @@ def test_scale_drag_restages_whole_list_keeps_other_emitter():
     _select_emitter(p, j=1)          # scale the cone
     p.active_tool = "scale"
     L = gizmo_length(p.camera)
-    p._begin_scale_drag(0, L)        # perpendicular handle -> Radius
+    p._begin_scale_drag(2, L)        # right handle (Z) -> Radius X for default cone
     p._apply_scale_drag(2.0 * L)     # ratio 2.0
     specs = p._effective_emitters(0)
     assert [s["kind"] for s in specs] == ["strip", "cone"]
@@ -732,8 +736,20 @@ def test_scale_nudge_and_copy_paste_roundtrip_on_strip_emitter():
     assert round(p._effective_emitter(0, 0)["length"], 6) == 2.0
 
 
-def test_rotate_copy_cone_emitter_records_cylinder_axis():
+def test_rotate_copy_cone_emitter_records_cone_orientation():
+    # A cone now carries a forward+up basis, so its clipboard kind is
+    # "cone_orientation" (default axis (0,-1,0), derived up (1,0,0)); strip
+    # stays "cylinder_axis" (see test_rotate_copy below is exercised elsewhere).
     p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    _select_emitter(p)
+    p.active_tool = "rotate"
+    assert p.dispatch_event("rotate_copy") is True
+    assert p._rotate_clipboard == (
+        "cone_orientation", ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0)))
+
+
+def test_rotate_copy_strip_emitter_still_records_cylinder_axis():
+    p = _panel_with_subsystem(emitters=[_emitter_spec("strip")])
     _select_emitter(p)
     p.active_tool = "rotate"
     assert p.dispatch_event("rotate_copy") is True
@@ -782,10 +798,12 @@ def test_rotate_nudge_on_cone_emitter_restages_whole_list():
     assert round(p.rotate_values()["fields"][0]["value"], 3) == 90.0
 
 
-def test_cylinder_light_axis_pastes_onto_cone_emitter_cross_kind():
+def test_cylinder_light_axis_pastes_onto_strip_emitter_cross_kind():
     """The mirror-a-light workflow: a cylinder LIGHT's copied axis (kind
-    'cylinder_axis') pastes onto a cone emitter (same kind) and vice versa."""
-    p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    'cylinder_axis') pastes onto a STRIP emitter (same kind) and vice versa. A
+    cone now uses 'cone_orientation' and no longer interchanges with a cylinder
+    light (see test_rotate_paste_cone_orientation_rejected_on_strip_emitter)."""
+    p = _panel_with_subsystem(emitters=[_emitter_spec("strip")])
     p._descriptors[0]["light"] = True
     p._descriptors[0]["light_region"] = _cylinder_light_region()
     p.active_tool = "rotate"
@@ -800,3 +818,218 @@ def test_cylinder_light_axis_pastes_onto_cone_emitter_cross_kind():
     assert p.dispatch_event("rotate_paste") is True
     ax = p._effective_emitter(0, 0)["axis"]
     assert abs(ax[2] - (-1.0)) < 1e-6
+
+
+# ----------------------------------------------------------------------
+# Task 3: cone 3-field scale (Radius X / Radius Y / Length) + ORIENTED
+# cone rotate (forward+up, like a Box light). Cone rotate clipboard kind
+# is "cone_orientation"; strip stays single-axis "cylinder_axis".
+# ----------------------------------------------------------------------
+
+def _cone_with_orientation(axis, up, radius=1.0, radius_y=0.5, length=2.0):
+    s = _emitter_spec("cone")
+    s["axis"] = axis
+    s["up"] = up
+    s["radius"] = radius
+    s["radius_y"] = radius_y
+    s["length"] = length
+    return s
+
+
+def test_scale_values_cone_emitter_is_radius_xy_length():
+    p = _panel_with_subsystem(
+        emitters=[_cone_with_orientation((0.0, -1.0, 0.0), (1.0, 0.0, 0.0),
+                                         radius=1.0, radius_y=0.5, length=2.0)])
+    _select_emitter(p)
+    p.active_tool = "scale"
+    sv = p.scale_values()
+    assert sv is not None
+    assert sv["kind"] == "radius_xy_length"
+    assert [f["label"] for f in sv["fields"]] == ["Radius X", "Radius Y", "Length"]
+    assert [f["value"] for f in sv["fields"]] == [1.0, 0.5, 2.0]
+
+
+def test_scale_values_cone_without_radius_y_defaults_to_radius():
+    # A circular/legacy cone (no radius_y) reports Radius Y == Radius X.
+    p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    _select_emitter(p)
+    p.active_tool = "scale"
+    sv = p.scale_values()
+    assert sv["kind"] == "radius_xy_length"
+    assert [f["value"] for f in sv["fields"]] == [1.0, 1.0, 2.0]
+
+
+def test_set_scale_field_cone_writes_the_three_fields_whole_list():
+    # Each of the 3 fields routes to radius / radius_y / length; the sibling
+    # emitter is restaged untouched and the list stays dense.
+    p = _panel_with_subsystem(
+        emitters=[_emitter_spec("point"),
+                  _cone_with_orientation((0.0, -1.0, 0.0), (1.0, 0.0, 0.0))])
+    _select_emitter(p, j=1)
+    p.active_tool = "scale"
+    p._set_scale_field(0, 3.0)   # Radius X -> radius
+    p._set_scale_field(1, 4.0)   # Radius Y -> radius_y
+    p._set_scale_field(2, 5.0)   # Length   -> length
+    specs = p._effective_emitters(0)
+    assert [s["kind"] for s in specs] == ["point", "cone"]
+    assert specs[1]["radius"] == 3.0
+    assert specs[1]["radius_y"] == 4.0
+    assert specs[1]["length"] == 5.0
+    assert specs[0]["kind"] == "point"           # sibling untouched
+    assert specs[0]["radius"] == 1.0
+
+
+def test_begin_scale_drag_cone_default_handles_map_distinct_fields():
+    # Default cone axis (0,-1,0): forward=Y, up=(1,0,0)=X, right=(0,0,1)=Z.
+    # handle Y -> Length; handle X (up) -> Radius Y; handle Z (right) -> Radius X.
+    from engine.ui.ship_property_viewer import gizmo_length
+
+    def _drag(handle):
+        p = _panel_with_subsystem(
+            emitters=[_cone_with_orientation((0.0, -1.0, 0.0), (1.0, 0.0, 0.0))])
+        _select_emitter(p)
+        p.active_tool = "scale"
+        L = gizmo_length(p.camera)
+        p._begin_scale_drag(handle, L)
+        p._apply_scale_drag(2.0 * L)          # ratio 2
+        return p._effective_emitter(0, 0)
+
+    z = _drag(2)                              # right -> Radius X
+    assert round(z["radius"], 6) == 2.0 and round(z["radius_y"], 6) == 0.5
+    assert round(z["length"], 6) == 2.0
+    x = _drag(0)                              # up -> Radius Y
+    assert round(x["radius_y"], 6) == 1.0 and round(x["radius"], 6) == 1.0
+    assert round(x["length"], 6) == 2.0
+    y = _drag(1)                              # forward -> Length
+    assert round(y["length"], 6) == 4.0 and round(y["radius"], 6) == 1.0
+    assert round(y["radius_y"], 6) == 0.5
+
+
+def test_begin_scale_drag_oriented_cone_right_vs_up_split():
+    # Cone forward=+X, up=+Z -> right=cross(+X,+Z)=(0,-1,0)=Y. So handle X ->
+    # Length, handle Y (right) -> Radius X, handle Z (up) -> Radius Y. This
+    # proves the two perpendicular handles resolve to DISTINCT radius fields by
+    # oriented-frame alignment, not by fixed body axis.
+    from engine.ui.ship_property_viewer import gizmo_length
+
+    def _drag(handle):
+        p = _panel_with_subsystem(
+            emitters=[_cone_with_orientation((1.0, 0.0, 0.0), (0.0, 0.0, 1.0))])
+        _select_emitter(p)
+        p.active_tool = "scale"
+        L = gizmo_length(p.camera)
+        p._begin_scale_drag(handle, L)
+        p._apply_scale_drag(2.0 * L)
+        return p._effective_emitter(0, 0)
+
+    x = _drag(0)                              # forward -> Length
+    assert round(x["length"], 6) == 4.0
+    y = _drag(1)                              # right -> Radius X
+    assert round(y["radius"], 6) == 2.0 and round(y["radius_y"], 6) == 0.5
+    z = _drag(2)                              # up -> Radius Y
+    assert round(z["radius_y"], 6) == 1.0 and round(z["radius"], 6) == 1.0
+
+
+def test_rotate_ring_drag_cone_rotates_axis_and_up_orthonormal():
+    # Ring 2 (+Z) by 90deg: axis (0,-1,0)->(1,0,0); up (1,0,0)->(0,1,0).
+    p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    _select_emitter(p)
+    p.active_tool = "rotate"
+    p._begin_ring_drag(2, 0.0)
+    p._apply_ring_drag_angle(math.radians(90.0))
+    spec = p._effective_emitter(0, 0)
+    ax, up = spec["axis"], spec["up"]
+    assert abs(ax[0] - 1.0) < 1e-6 and abs(ax[1]) < 1e-6 and abs(ax[2]) < 1e-6
+    assert abs(up[0]) < 1e-6 and abs(up[1] - 1.0) < 1e-6 and abs(up[2]) < 1e-6
+    # orthonormal: unit + perpendicular
+    assert abs(ax[0]*up[0] + ax[1]*up[1] + ax[2]*up[2]) < 1e-6
+    assert abs(sum(c*c for c in up) - 1.0) < 1e-6
+
+
+def test_rotate_axis_nudge_cone_rotates_axis_and_up():
+    # The nudge sibling (_rotate_axis) also rotates both forward and up.
+    p = _panel_with_subsystem(emitters=[_emitter_spec("cone")])
+    _select_emitter(p)
+    p.active_tool = "rotate"
+    p._rotate_axis(2, 90.0)                   # about +Z
+    spec = p._effective_emitter(0, 0)
+    ax, up = spec["axis"], spec["up"]
+    assert abs(ax[0] - 1.0) < 1e-6
+    assert abs(up[1] - 1.0) < 1e-6
+    assert abs(ax[0]*up[0] + ax[1]*up[1] + ax[2]*up[2]) < 1e-6
+
+
+def test_rotate_copy_paste_roundtrips_cone_orientation():
+    p = _panel_with_subsystem(
+        emitters=[_emitter_spec("cone"), _emitter_spec("cone")])
+    _select_emitter(p, j=0)
+    p.active_tool = "rotate"
+    p._rotate_axis(2, 90.0)                   # j=0 -> axis (1,0,0), up (0,1,0)
+    src = p._effective_emitter(0, 0)
+    assert p.dispatch_event("rotate_copy") is True
+    assert p._rotate_clipboard[0] == "cone_orientation"
+    _select_emitter(p, j=1)
+    assert p.dispatch_event("rotate_paste") is True
+    dst = p._effective_emitter(0, 1)
+    for a, b in zip(dst["axis"], src["axis"]):
+        assert abs(a - b) < 1e-6
+    for a, b in zip(dst["up"], src["up"]):
+        assert abs(a - b) < 1e-6
+    assert len(p._effective_emitters(0)) == 2   # dense; sibling intact
+
+
+def test_rotate_mirror_negates_cone_axis_and_up_x():
+    p = _panel_with_subsystem(
+        emitters=[_cone_with_orientation((0.6, -0.8, 0.0), (0.8, 0.6, 0.0))])
+    _select_emitter(p)
+    p.active_tool = "rotate"
+    assert p.dispatch_event("rotate_mirror") is True
+    spec = p._effective_emitter(0, 0)
+    ax, up = spec["axis"], spec["up"]
+    assert abs(ax[0] - (-0.6)) < 1e-6 and abs(ax[1] - (-0.8)) < 1e-6
+    assert abs(up[0] - (-0.8)) < 1e-6 and abs(up[1] - 0.6) < 1e-6
+
+
+def test_rotate_paste_cone_orientation_rejected_on_strip_emitter():
+    # A cone_orientation clipboard must NOT paste onto a strip (kind mismatch);
+    # strip stays cylinder_axis.
+    p = _panel_with_subsystem(
+        emitters=[_emitter_spec("cone"), _emitter_spec("strip")])
+    _select_emitter(p, j=0)
+    p.active_tool = "rotate"
+    assert p.dispatch_event("rotate_copy") is True
+    assert p._rotate_clipboard[0] == "cone_orientation"
+    _select_emitter(p, j=1)                   # strip
+    rv = p.rotate_values()
+    assert rv["can_paste"] is False
+    assert p.dispatch_event("rotate_paste") is True
+    assert p._effective_emitter(0, 1)["axis"] == (0.0, -1.0, 0.0)   # untouched
+
+
+def test_scale_uniform_is_noop_on_cone_three_field():
+    p = _panel_with_subsystem(
+        emitters=[_cone_with_orientation((0.0, -1.0, 0.0), (1.0, 0.0, 0.0),
+                                         radius=1.0, radius_y=0.5, length=4.0)])
+    _select_emitter(p)
+    p.active_tool = "scale"
+    assert p.dispatch_event("scale_uniform") is True
+    spec = p._effective_emitter(0, 0)
+    assert spec["radius"] == 1.0 and spec["radius_y"] == 0.5 and spec["length"] == 4.0
+
+
+def test_scale_copy_paste_roundtrip_cone_three_fields():
+    p = _panel_with_subsystem(
+        emitters=[_cone_with_orientation((0.0, -1.0, 0.0), (1.0, 0.0, 0.0),
+                                         radius=1.5, radius_y=0.75, length=3.0)])
+    _select_emitter(p)
+    p.active_tool = "scale"
+    assert p.dispatch_event("scale_copy") is True
+    assert p._scale_clipboard == ("radius_xy_length", (1.5, 0.75, 3.0))
+    p._set_scale_field(0, 9.0)
+    p._set_scale_field(1, 9.0)
+    p._set_scale_field(2, 9.0)
+    assert p.dispatch_event("scale_paste") is True
+    spec = p._effective_emitter(0, 0)
+    assert round(spec["radius"], 6) == 1.5
+    assert round(spec["radius_y"], 6) == 0.75
+    assert round(spec["length"], 6) == 3.0

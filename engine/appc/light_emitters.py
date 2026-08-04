@@ -23,7 +23,14 @@ _FLICKER_FLOOR = 0.05
 
 
 def default_emitter_spec(kind: str) -> dict:
-    """A from-scratch emitter of `kind` with sensible default geometry."""
+    """A from-scratch emitter of `kind` with sensible default geometry.
+
+    `radius_y`/`up` are cone-only fields (elliptical cross-section + roll)
+    but are populated unconditionally — harmless for point/strip, and it
+    keeps every spec dict the same shape. `radius_y == radius` (circular)
+    and `up = (0,0,1)` (a canonical perpendicular to the default axis
+    `(0,-1,0)`) so a from-scratch cone starts circular.
+    """
     if kind not in _KINDS:
         kind = "point"
     return {
@@ -32,6 +39,8 @@ def default_emitter_spec(kind: str) -> dict:
         "axis": (0.0, -1.0, 0.0),
         "length": 2.0,
         "radius": 1.0,
+        "radius_y": 1.0,
+        "up": (0.0, 0.0, 1.0),
         "color": (1.0, 0.9, 0.7),
         "intensity": 2.0,
     }
@@ -45,10 +54,55 @@ def _normalize(v):
     return (x / n, y / n, z / n)
 
 
+def _derive_up(axis):
+    """Canonical perpendicular-to-axis up, Gram-Schmidt off a world reference.
+
+    Shared rule with the renderer's fallback basis (`debug_volume_pass.cc`'s
+    `fallback_up`) and DebugCone: pick world-Y unless the axis is nearly
+    parallel to it (then world-X), then project out the axis component and
+    normalize. Used both to synthesize `up` for a legacy cone (no baked
+    LightEmitterUp) and as the fallback when a spec's `up` is absent/zero.
+    """
+    fx, fy, fz = _normalize(axis)
+    if abs(fy) < 0.99:
+        ux, uy, uz = 0.0, 1.0, 0.0
+    else:
+        ux, uy, uz = 1.0, 0.0, 0.0
+    dot = ux * fx + uy * fy + uz * fz
+    ox, oy, oz = ux - dot * fx, uy - dot * fy, uz - dot * fz
+    n = math.sqrt(ox * ox + oy * oy + oz * oz)
+    if n < 1e-9:
+        return (1.0, 0.0, 0.0)   # degenerate; shouldn't happen given the up_ref choice
+    return (ox / n, oy / n, oz / n)
+
+
+def _orthonormalized_up(forward, up):
+    """Gram-Schmidt `up` against unit `forward`, normalized (unit, perpendicular).
+
+    Falls back to `_derive_up(forward)` when `up` is (near-)parallel to
+    `forward` (zero residual after projecting out the forward component)."""
+    fx, fy, fz = forward
+    ux, uy, uz = up
+    dot = ux * fx + uy * fy + uz * fz
+    ox, oy, oz = ux - dot * fx, uy - dot * fy, uz - dot * fz
+    n = math.sqrt(ox * ox + oy * oy + oz * oz)
+    if n < 1e-9:
+        return _derive_up(forward)
+    return (ox / n, oy / n, oz / n)
+
+
 def baked_emitters(prop) -> list:
     """Read the recorded SetLightEmitter* setters back into specs, index 0..N.
 
     Stops at the first index whose Kind is unset (mirrors baked_glow_regions).
+
+    `radius_y`/`up` are read the same way, but their setters
+    (`SetLightEmitterRadiusY`/`SetLightEmitterUp`) are only ever emitted for
+    an ELLIPTICAL cone (see `emitter_spec_to_calls`) -- a legacy or circular
+    cone has neither recorded, so a missing `radius_y` defaults to the read
+    `radius` (circular) and a missing `up` is derived from `axis`. This is
+    what makes a save written before this feature (or a circular cone saved
+    after it) load byte-identical to before.
     """
     if prop is None:
         return []
@@ -60,16 +114,22 @@ def baked_emitters(prop) -> list:
             return out
         pos = read_indexed_setter_args(prop, "LightEmitterPosition", i) or (0.0, 0.0, 0.0)
         axis = read_indexed_setter_args(prop, "LightEmitterAxis", i) or (0.0, -1.0, 0.0)
+        axis_t = tuple(float(c) for c in axis[:3])
         length = read_indexed_setter_args(prop, "LightEmitterLength", i)
         radius = read_indexed_setter_args(prop, "LightEmitterRadius", i)
+        radius_f = float(radius[0]) if radius else 1.0
+        radius_y = read_indexed_setter_args(prop, "LightEmitterRadiusY", i)
+        up = read_indexed_setter_args(prop, "LightEmitterUp", i)
         color = read_indexed_setter_args(prop, "LightEmitterColor", i) or (1.0, 0.9, 0.7)
         intensity = read_indexed_setter_args(prop, "LightEmitterIntensity", i)
         out.append({
             "kind": str(kind[0]),
             "position": tuple(float(c) for c in pos[:3]),
-            "axis": tuple(float(c) for c in axis[:3]),
+            "axis": axis_t,
             "length": float(length[0]) if length else 0.0,
-            "radius": float(radius[0]) if radius else 1.0,
+            "radius": radius_f,
+            "radius_y": float(radius_y[0]) if radius_y else radius_f,
+            "up": tuple(float(c) for c in up[:3]) if up else _derive_up(axis_t),
             "color": tuple(float(c) for c in color[:3]),
             "intensity": float(intensity[0]) if intensity else 1.0,
         })
@@ -79,9 +139,12 @@ def baked_emitters(prop) -> list:
 def emitter_spec_to_struct(spec: dict) -> dict:
     """Convert a BODY-frame emitter spec to set_dynamic_lights dict keys.
 
-    Positions/axis stay body-frame here; the host-loop producer transforms them
-    to world. Point => degenerate segment (no position_b, no cone). Strip =>
-    two endpoints. Cone => apex + direction + derived cos(half-angle).
+    Positions/axis/up stay body-frame here; the host-loop producer transforms
+    them to world (up is a direction: rotation-only, like direction). Point
+    => degenerate segment (no position_b, no cone). Strip => two endpoints.
+    Cone => apex + direction + up + two spot tangents (`spot_tan_x` =
+    radius/length, `spot_tan_y` = radius_y/length -- NOT cosines; Task 1's
+    renderer consumes tangents directly for the elliptical cone).
     """
     kind = spec.get("kind", "point")
     px, py, pz = spec["position"]
@@ -101,8 +164,14 @@ def emitter_spec_to_struct(spec: dict) -> dict:
         d["position_b"] = (px + ax * half, py + ay * half, pz + az * half)
         return d
     # cone
+    length_safe = max(length, 1e-6)
+    up = spec.get("up") or _derive_up((ax, ay, az))
     d["direction"] = (ax, ay, az)
-    d["cos_half_angle"] = math.cos(math.atan2(float(spec["radius"]), max(length, 1e-6)))
+    d["up"] = _orthonormalized_up((ax, ay, az), up)
+    d["spot_tan_x"] = float(spec["radius"]) / length_safe
+    d["spot_tan_y"] = float(spec.get("radius_y", spec["radius"])) / length_safe
+    d["radius"] = length_safe   # cone REACH = axial length (frustum extent), NOT the base
+                                 # radius. Base radius only drives angular spread above.
     return d
 
 

@@ -1021,6 +1021,8 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters):
                     d["position_b"] = _world_from_body(loc, R, d["position_b"])
                 if "direction" in d:
                     d["direction"] = _rotate_body(R, d["direction"])
+                if "up" in d:
+                    d["up"] = _rotate_body(R, d["up"])
                 out.append(d)
             except Exception as _e:
                 dev_mode.log_swallowed("emitter light produce", _e)

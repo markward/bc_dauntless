@@ -40,14 +40,19 @@ struct DebugSphere {
 };
 
 /// One wireframe cone to draw, expressed in WORLD space. apex is the tip,
-/// axis points from apex toward the base (unit), radius is the base radius,
-/// length is the apex->base distance.
+/// axis points from apex toward the base (unit), radius is the base radius
+/// (along `right = axis x up`), radius_y is the base radius along `up`
+/// (defaults to radius for a circular cone), length is the apex->base
+/// distance. `up` orients the ellipse; degenerate/parallel-to-axis falls
+/// back to the Gram-Schmidt world-up construction.
 struct DebugCone {
     glm::vec3 apex{0.0f};
     glm::vec3 axis{0.0f, -1.0f, 0.0f};   // unit, apex -> base
-    float     radius = 1.0f;             // base radius
+    float     radius = 1.0f;             // base radius (along `right`)
     float     length = 1.0f;             // apex -> base distance
     glm::vec3 color{1.0f, 0.55f, 0.1f};
+    float     radius_y = 1.0f;           // base radius along `up`
+    glm::vec3 up{0.0f, 1.0f, 0.0f};      // authored up axis, orients the ellipse
 };
 
 /// Developer debug overlay: draws bright wireframe cylinders in world space.

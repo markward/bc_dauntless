@@ -379,17 +379,20 @@ void draw_model(const assets::Model& model,
             glm::vec4 la[kMaxDynamicLightsPerDraw];
             glm::vec4 lb[kMaxDynamicLightsPerDraw];
             glm::vec3 lc[kMaxDynamicLightsPerDraw];
-            glm::vec4 ld[kMaxDynamicLightsPerDraw];   // dir.xyz, cos_half_angle
+            glm::vec4 ld[kMaxDynamicLightsPerDraw];   // dir.xyz, spot_tan_x
+            glm::vec4 le[kMaxDynamicLightsPerDraw];   // up.xyz,  spot_tan_y
             for (int i = 0; i < dyn_light_count; ++i) {
                 la[i] = glm::vec4(dyn_lights[i].pos_a, dyn_lights[i].radius);
                 lb[i] = glm::vec4(dyn_lights[i].pos_b, 0.0f);
                 lc[i] = dyn_lights[i].color * dyn_lights[i].intensity;
-                ld[i] = glm::vec4(dyn_lights[i].direction, dyn_lights[i].cos_half_angle);
+                ld[i] = glm::vec4(dyn_lights[i].direction, dyn_lights[i].spot_tan_x);
+                le[i] = glm::vec4(dyn_lights[i].up,        dyn_lights[i].spot_tan_y);
             }
             prog.set_vec4_array("u_dyn_light_a", la, dyn_light_count);
             prog.set_vec4_array("u_dyn_light_b", lb, dyn_light_count);
             prog.set_vec3_array("u_dyn_light_color", lc, dyn_light_count);
             prog.set_vec4_array("u_dyn_light_dir", ld, dyn_light_count);
+            prog.set_vec4_array("u_dyn_light_up",  le, dyn_light_count);
         }
     }
 

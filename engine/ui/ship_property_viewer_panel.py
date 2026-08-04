@@ -542,7 +542,16 @@ class ShipPropertyViewerPanel(Panel):
             kind = spec.get("kind", "point")
             if kind == "point":
                 return "radius", [{"label": "Radius", "value": float(spec["radius"])}]
-            # strip and cone both expose Radius + Length; cone angle is derived.
+            if kind == "cone":
+                # A cone now has TWO base radii (X = radius, Y = radius_y) plus a
+                # Length, so it exposes a 3-field kind (mirrors the Box light's
+                # xyz). A circular/legacy cone reports Radius Y == Radius X.
+                return "radius_xy_length", [
+                    {"label": "Radius X", "value": float(spec["radius"])},
+                    {"label": "Radius Y",
+                     "value": float(spec.get("radius_y", spec["radius"]))},
+                    {"label": "Length", "value": float(spec["length"])}]
+            # strip exposes Radius + Length.
             return "radius_length", [
                 {"label": "Radius", "value": float(spec["radius"])},
                 {"label": "Length", "value": float(spec["length"])}]
@@ -607,10 +616,12 @@ class ShipPropertyViewerPanel(Panel):
             if not (0 <= j < len(lst)):
                 return
             spec = dict(lst[j])
-            if index == 0:
-                spec["radius"] = value
-            else:
-                spec["length"] = value
+            if spec.get("kind") == "cone":
+                # 3 fields: 0 -> Radius X (radius), 1 -> Radius Y (radius_y),
+                # 2 -> Length. index is bounds-checked against the 3-field kind.
+                spec[("radius", "radius_y", "length")[index]] = value
+            else:  # strip / point: field 0 -> radius, field 1 -> length
+                spec["radius" if index == 0 else "length"] = value
             lst[j] = spec
             self._pending_emitter[i] = lst
             self._last_pushed = None
@@ -654,9 +665,9 @@ class ShipPropertyViewerPanel(Panel):
     def _rotate_target(self):
         """The rotate tool's target: ("light", i) for a Cylinder (rotate its
         axis) or Box (rotate its forward+up orientation basis) light;
-        ("emitter", i, j) for a strip or cone emitter (rotate its single
-        `axis`); None otherwise (sphere/subsystem, and a point emitter, are
-        inert)."""
+        ("emitter", i, j) for a strip emitter (rotate its single `axis`) or a
+        cone emitter (rotate its forward+up basis, like a Box); None otherwise
+        (sphere/subsystem, and a point emitter, are inert)."""
         t = self._active_transform_target()
         if t is None:
             return None
@@ -703,13 +714,17 @@ class ShipPropertyViewerPanel(Panel):
 
     def _rotate_clipboard_kind(self, target) -> str:
         """Clipboard kind for `target`'s current shape: `box_orientation` for a
-        Box light; `cylinder_axis` for a Cylinder light OR a strip/cone emitter.
-        Emitters and cylinder lights share `cylinder_axis` INTENTIONALLY — both
-        rotate a single axis, so a cylinder-light rotation can be copied and
-        pasted/mirrored onto a cone emitter and vice versa (the mirror-a-light
-        workflow)."""
+        Box light; `cone_orientation` for a CONE emitter (an oriented
+        forward+up basis, like a Box); `cylinder_axis` for a Cylinder light OR a
+        strip emitter. Strip emitters and cylinder lights share `cylinder_axis`
+        INTENTIONALLY — both rotate a single axis, so a cylinder-light rotation
+        can be copied and pasted/mirrored onto a strip emitter and vice versa
+        (the mirror-a-light workflow). A cone carries a full orientation basis,
+        so it uses `cone_orientation` and only interchanges with other cones."""
         if target[0] == "emitter":
-            return "cylinder_axis"
+            spec = self._effective_emitter(target[1], target[2]) or {}
+            return "cone_orientation" if spec.get("kind") == "cone" \
+                else "cylinder_axis"
         spec = self._effective_light(target[1]) or {}
         return "box_orientation" if spec.get("shape") == "Box" else "cylinder_axis"
 
@@ -726,16 +741,25 @@ class ShipPropertyViewerPanel(Panel):
             rotate_about_axis, orthonormalize_basis)
         ang = math.radians(delta_deg)
         if t[0] == "emitter":
-            # Strip/cone emitter: rotate its single `axis` (same math as the
-            # cylinder-light branch). Restage the whole compacted list to keep
-            # emitter indices dense.
+            # A CONE carries an oriented (forward=axis, up) basis like a Box, so
+            # it rotates BOTH and re-orthonormalizes; a strip rotates its single
+            # `axis` (same math as the cylinder-light branch). Restage the whole
+            # compacted list to keep emitter indices dense.
             _, i, j = t
             lst = list(self._effective_emitters(i))
             if not (0 <= j < len(lst)):
                 return
             spec = dict(lst[j])
-            axis = spec.get("axis") or (0.0, -1.0, 0.0)
-            spec["axis"] = rotate_about_axis(axis, index, ang)
+            if spec.get("kind") == "cone":
+                from engine.appc.light_emitters import _derive_up
+                fwd = spec.get("axis") or (0.0, -1.0, 0.0)
+                up = spec.get("up") or _derive_up(fwd)
+                fwd = rotate_about_axis(fwd, index, ang)
+                up = rotate_about_axis(up, index, ang)
+                spec["axis"], spec["up"] = orthonormalize_basis(fwd, up)
+            else:
+                axis = spec.get("axis") or (0.0, -1.0, 0.0)
+                spec["axis"] = rotate_about_axis(axis, index, ang)
             lst[j] = spec
             self._pending_emitter[i] = lst
             self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])[index] += delta_deg
@@ -786,15 +810,34 @@ class ShipPropertyViewerPanel(Panel):
         self._rotate_accum[("light", i)] = [0.0, 0.0, 0.0]
         self._last_pushed = None
 
-    def _set_orientation_absolute(self, i, forward, up) -> None:
-        """Stage a re-orthonormalized `(forward, up)` orientation for box
-        light `i` directly (Mirror/Paste, not an incremental rotation) and
-        zero its degree accumulator. Mirrors `_set_axis_absolute`."""
+    def _set_orientation_absolute(self, target, forward, up) -> None:
+        """Stage a re-orthonormalized `(forward, up)` orientation directly
+        (Mirror/Paste, not an incremental rotation) and zero its degree
+        accumulator. Target-aware like `_set_axis_absolute`: `target` may be a
+        Box-light tuple `("light", i)` (or a bare int i, for legacy callers)
+        which writes `orientation` into `_pending_light[i]`, or a CONE-emitter
+        tuple `("emitter", i, j)` which restages the whole compacted emitter
+        list, writing `axis` (=forward) + `up` (dense-index invariant)."""
+        from engine.ui.ship_property_viewer import orthonormalize_basis
+        fwd, u = orthonormalize_basis(forward, up)
+        if isinstance(target, tuple) and target[0] == "emitter":
+            _, i, j = target
+            lst = list(self._effective_emitters(i))
+            if not (0 <= j < len(lst)):
+                return
+            spec = dict(lst[j])
+            spec["axis"] = fwd
+            spec["up"] = u
+            lst[j] = spec
+            self._pending_emitter[i] = lst
+            self._rotate_accum[("emitter", i, j)] = [0.0, 0.0, 0.0]
+            self._last_pushed = None
+            return
+        i = target[1] if isinstance(target, tuple) else target
         spec = dict(self._effective_light(i) or {})
         if not spec:
             return
-        from engine.ui.ship_property_viewer import orthonormalize_basis
-        spec["orientation"] = orthonormalize_basis(forward, up)
+        spec["orientation"] = (fwd, u)
         self._pending_light[i] = spec
         self._rotate_accum[("light", i)] = [0.0, 0.0, 0.0]
         self._last_pushed = None
@@ -952,8 +995,30 @@ class ShipPropertyViewerPanel(Panel):
         kind, fields = self._scale_kind_and_fields(t)
         if kind == "xyz":
             self._scale_grab = (axis, fields[axis]["value"])   # per-axis
+        elif kind == "radius_xy_length":
+            # Oriented cone: the handle aligned with `forward` (=axis) scales
+            # Length (field 2); of the two perpendicular handles, the one aligned
+            # with right = cross(forward, up) scales Radius X (field 0), the other
+            # (aligned with up) scales Radius Y (field 1). Gizmo handles are body
+            # X/Y/Z, so match each frame vector by its dominant body component.
+            from engine.appc.light_emitters import _derive_up
+            spec = self._effective_emitter(t[1], t[2]) or {}
+            fwd = spec.get("axis") or (0.0, -1.0, 0.0)
+            up = spec.get("up") or _derive_up(fwd)
+            right = (fwd[1]*up[2] - fwd[2]*up[1],
+                     fwd[2]*up[0] - fwd[0]*up[2],
+                     fwd[0]*up[1] - fwd[1]*up[0])
+            def _dom(v):
+                return max(range(3), key=lambda k: abs(v[k]))
+            if axis == _dom(fwd):
+                field_idx = 2
+            elif axis == _dom(right):
+                field_idx = 0
+            else:
+                field_idx = 1
+            self._scale_grab = (field_idx, fields[field_idx]["value"])
         elif kind == "radius_length":
-            # Cylinder light OR strip/cone emitter: the handle aligned with the
+            # Cylinder light OR strip emitter: the handle aligned with the
             # node's body-frame axis scales Length (field 1); the two
             # perpendicular handles scale Radius (field 0). The gizmo axes are
             # body X/Y/Z, so the aligned handle is the dominant component of the
@@ -1003,8 +1068,17 @@ class ShipPropertyViewerPanel(Panel):
         else:
             spec = self._effective_light(i) or {}
         self._ring_grab_axis = tuple(spec.get("axis") or (0.0, -1.0, 0.0))
-        self._ring_grab_orientation = spec.get("orientation") \
-            or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        if t[0] == "emitter" and spec.get("kind") == "cone":
+            # A cone rotates from its (forward=axis, up) basis, like a Box light;
+            # seed the grab-start orientation from it (deriving up if absent) so
+            # the ring drag rolls the ellipse + re-aims from the grab pose.
+            from engine.appc.light_emitters import _derive_up
+            fwd = spec.get("axis") or (0.0, -1.0, 0.0)
+            up = spec.get("up") or _derive_up(fwd)
+            self._ring_grab_orientation = (tuple(fwd), tuple(up))
+        else:
+            self._ring_grab_orientation = spec.get("orientation") \
+                or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
         # Keyed by the full target tuple so light and emitter accumulators on
         # the same subsystem stay independent (see rotate_values).
         self._ring_grab_accum = list(self._rotate_accum.get(t, [0.0, 0.0, 0.0]))
@@ -1029,14 +1103,21 @@ class ShipPropertyViewerPanel(Panel):
             rotate_about_axis, orthonormalize_basis)
         k = self._axis_drag
         if t[0] == "emitter":
-            # Strip and cone both rotate their single `axis` (no orientation
-            # basis, unlike a Box). Restage the whole compacted list.
+            # A CONE rotates BOTH `forward` and `up` of its grab-start
+            # orientation (like a Box), then re-orthonormalizes; a strip rotates
+            # its single `axis`. Restage the whole compacted list.
             _, i, j = t
             lst = list(self._effective_emitters(i))
             if not (0 <= j < len(lst)):
                 return
             spec = dict(lst[j])
-            spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
+            if spec.get("kind") == "cone":
+                fwd, up = self._ring_grab_orientation
+                fwd = rotate_about_axis(fwd, k, d_body)
+                up = rotate_about_axis(up, k, d_body)
+                spec["axis"], spec["up"] = orthonormalize_basis(fwd, up)
+            else:
+                spec["axis"] = rotate_about_axis(self._ring_grab_axis, k, d_body)
             lst[j] = spec
             self._pending_emitter[i] = lst
             self._rotate_accum.setdefault(t, [0.0, 0.0, 0.0])
@@ -2001,9 +2082,16 @@ class ShipPropertyViewerPanel(Panel):
             if t is not None:
                 if t[0] == "emitter":
                     _, i, j = t
-                    axis = (self._effective_emitter(i, j) or {}).get("axis") \
-                        or (0.0, -1.0, 0.0)
-                    self._rotate_clipboard = ("cylinder_axis", tuple(axis))
+                    spec = self._effective_emitter(i, j) or {}
+                    if spec.get("kind") == "cone":
+                        from engine.appc.light_emitters import _derive_up
+                        fwd = spec.get("axis") or (0.0, -1.0, 0.0)
+                        up = spec.get("up") or _derive_up(fwd)
+                        self._rotate_clipboard = (
+                            "cone_orientation", (tuple(fwd), tuple(up)))
+                    else:
+                        axis = spec.get("axis") or (0.0, -1.0, 0.0)
+                        self._rotate_clipboard = ("cylinder_axis", tuple(axis))
                 else:
                     _, i = t
                     spec = self._effective_light(i) or {}
@@ -2024,9 +2112,14 @@ class ShipPropertyViewerPanel(Panel):
                     and self._rotate_clipboard[0] == self._rotate_clipboard_kind(t)):
                 if self._rotate_clipboard[0] == "box_orientation":
                     # box_orientation only matches a Box LIGHT target (an emitter
-                    # kind is always cylinder_axis), so t is ("light", i) here.
+                    # kind is cylinder_axis/cone_orientation), so t is
+                    # ("light", i) here.
                     fwd, up = self._rotate_clipboard[1]
                     self._set_orientation_absolute(t[1], fwd, up)
+                elif self._rotate_clipboard[0] == "cone_orientation":
+                    # cone_orientation only matches a CONE emitter target.
+                    fwd, up = self._rotate_clipboard[1]
+                    self._set_orientation_absolute(t, fwd, up)
                 else:
                     self._set_axis_absolute(t, self._rotate_clipboard[1])
             return True
@@ -2035,10 +2128,20 @@ class ShipPropertyViewerPanel(Panel):
             if t is not None:
                 if t[0] == "emitter":
                     _, i, j = t
-                    axis = list((self._effective_emitter(i, j) or {}).get("axis")
-                                or (0.0, -1.0, 0.0))
-                    axis[0] = -axis[0]
-                    self._set_axis_absolute(t, axis)
+                    spec = self._effective_emitter(i, j) or {}
+                    if spec.get("kind") == "cone":
+                        # Mirror the whole (forward, up) basis across X, like a
+                        # Box light.
+                        from engine.appc.light_emitters import _derive_up
+                        fwd = spec.get("axis") or (0.0, -1.0, 0.0)
+                        up = spec.get("up") or _derive_up(fwd)
+                        fwd = (-fwd[0], fwd[1], fwd[2])
+                        up = (-up[0], up[1], up[2])
+                        self._set_orientation_absolute(t, fwd, up)
+                    else:
+                        axis = list(spec.get("axis") or (0.0, -1.0, 0.0))
+                        axis[0] = -axis[0]
+                        self._set_axis_absolute(t, axis)
                 else:
                     _, i = t
                     spec = self._effective_light(i) or {}
