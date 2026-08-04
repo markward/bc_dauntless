@@ -68,6 +68,27 @@ window.setShipPropertyViewer = function (data) {
         scaleBtn.classList.toggle('active', data.active_tool === 'scale');
     }
 
+    // Action-tools row: Undo / Pipette / Mirror. Undo/Mirror disable without
+    // an undo entry / selection; Pipette shows .active while armed and stays
+    // enabled with a selection (to arm) or while already armed (to cancel).
+    var undoBtn = document.getElementById('spv-action-undo');
+    if (undoBtn) {
+        undoBtn.disabled = data.can_undo !== true;
+        undoBtn.classList.toggle('spv-tool--disabled', data.can_undo !== true);
+    }
+    var pipetteBtn = document.getElementById('spv-action-pipette');
+    if (pipetteBtn) {
+        pipetteBtn.classList.toggle('active', data.pipette_armed === true);
+        var pipDisabled = data.has_selection !== true && data.pipette_armed !== true;
+        pipetteBtn.disabled = pipDisabled;
+        pipetteBtn.classList.toggle('spv-tool--disabled', pipDisabled);
+    }
+    var mirrorBtn = document.getElementById('spv-action-mirror');
+    if (mirrorBtn) {
+        mirrorBtn.disabled = data.has_selection !== true;
+        mirrorBtn.classList.toggle('spv-tool--disabled', data.has_selection !== true);
+    }
+
     // Transform coordinate panel (top-right): visible only while
     // data.transform_coords is non-null (Transform tool active + a
     // subsystem/light selected). Mirrors the XYZ position and the
@@ -703,6 +724,19 @@ window.shipPropertyViewerToggle = function (action) {
 // real state.
 window.shipPropertyViewerSetTool = function (name) {
     dauntlessEvent('ship-property-viewer/set_tool:' + name);
+};
+
+// Action-tools row (Undo / Pipette / Mirror). Same event channel as the
+// toggles above; Python re-pushes the payload so button state mirrors panel
+// state (can_undo / pipette_armed / has_selection).
+window.shipPropertyViewerUndo = function () {
+    dauntlessEvent('ship-property-viewer/undo');
+};
+window.shipPropertyViewerPipette = function () {
+    dauntlessEvent('ship-property-viewer/pipette');
+};
+window.shipPropertyViewerMirror = function () {
+    dauntlessEvent('ship-property-viewer/mirror_element');
 };
 
 // Transform coordinate panel: mouse-only XYZ steppers + Copy/Paste/Mirror.

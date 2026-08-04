@@ -60,7 +60,11 @@ TOOLS_H_PT = TOOLS_BTN_PT
 # directly above #spv-tools with the same TOOLS_GAP_PT between the two rows.
 # Same width/button-size as the render row, so it shares TOOLS_W_PT.
 TRANSFORM_H_PT = TOOLS_BTN_PT
-TOOLS_CLUSTER_H_PT = TOOLS_H_PT + TOOLS_GAP_PT + TRANSFORM_H_PT
+# Action-tools row (#spv-action-tools: Undo / Pipette / Mirror), stacked
+# directly above #spv-transform-tools with the same TOOLS_GAP_PT.
+ACTION_H_PT = TOOLS_BTN_PT
+TOOLS_CLUSTER_H_PT = (TOOLS_H_PT + TOOLS_GAP_PT + TRANSFORM_H_PT
+                      + TOOLS_GAP_PT + ACTION_H_PT)
 
 # Top-right transform coordinate panel (#spv-coords). Anchored right:12/top:46
 # with width 220 / height ~172 (three coord rows + Copy/Paste/Mirror). Clicks
