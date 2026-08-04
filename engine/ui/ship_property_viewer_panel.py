@@ -815,6 +815,35 @@ class ShipPropertyViewerPanel(Panel):
             return None
         return ("light", i)
 
+    def _mirror_target_rotation(self, t) -> None:
+        """Reflect the rotate target `t`'s orientation across the ship X axis
+        (starboard): negate X of the axis (cylinder/strip) or of both forward
+        and up (box/cone), then set it absolutely."""
+        if t[0] == "emitter":
+            _, i, j = t
+            spec = self._effective_emitter(i, j) or {}
+            if spec.get("kind") == "cone":
+                from engine.appc.light_emitters import _derive_up
+                fwd = spec.get("axis") or (0.0, -1.0, 0.0)
+                up = spec.get("up") or _derive_up(fwd)
+                self._set_orientation_absolute(t, (-fwd[0], fwd[1], fwd[2]),
+                                               (-up[0], up[1], up[2]))
+            else:
+                axis = list(spec.get("axis") or (0.0, -1.0, 0.0))
+                axis[0] = -axis[0]
+                self._set_axis_absolute(t, axis)
+        else:
+            _, i = t
+            spec = self._effective_light(i) or {}
+            if spec.get("shape") == "Box":
+                fwd, up = spec.get("orientation") or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+                self._set_orientation_absolute(i, (-fwd[0], fwd[1], fwd[2]),
+                                               (-up[0], up[1], up[2]))
+            else:
+                axis = list(spec.get("axis") or (0.0, -1.0, 0.0))
+                axis[0] = -axis[0]
+                self._set_axis_absolute(t, axis)
+
     def rotate_values(self) -> Optional[dict]:
         """Data for the rotate-tool panel: `{"fields", "has_clipboard",
         "can_paste"}` for the current rotate target, or None when the rotate
@@ -2329,36 +2358,17 @@ class ShipPropertyViewerPanel(Panel):
         if action == "rotate_mirror":
             t = self._rotate_target()
             if t is not None:
-                if t[0] == "emitter":
-                    _, i, j = t
-                    spec = self._effective_emitter(i, j) or {}
-                    if spec.get("kind") == "cone":
-                        # Mirror the whole (forward, up) basis across X, like a
-                        # Box light.
-                        from engine.appc.light_emitters import _derive_up
-                        fwd = spec.get("axis") or (0.0, -1.0, 0.0)
-                        up = spec.get("up") or _derive_up(fwd)
-                        fwd = (-fwd[0], fwd[1], fwd[2])
-                        up = (-up[0], up[1], up[2])
-                        self._set_orientation_absolute(t, fwd, up)
-                    else:
-                        axis = list(spec.get("axis") or (0.0, -1.0, 0.0))
-                        axis[0] = -axis[0]
-                        self._set_axis_absolute(t, axis)
-                else:
-                    _, i = t
-                    spec = self._effective_light(i) or {}
-                    if spec.get("shape") == "Box":
-                        fwd, up = spec.get("orientation") \
-                            or ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-                        fwd = (-fwd[0], fwd[1], fwd[2])
-                        up = (-up[0], up[1], up[2])
-                        self._set_orientation_absolute(i, fwd, up)
-                    else:
-                        axis = list((self._effective_light(i) or {}).get("axis")
-                                    or (0.0, -1.0, 0.0))
-                        axis[0] = -axis[0]
-                        self._set_axis_absolute(t, axis)
+                self._mirror_target_rotation(t)
+            return True
+        if action == "mirror_element":
+            t = self._active_transform_target()
+            if t is not None:
+                pos = self._transform_target_pos()
+                if pos is not None:
+                    self._set_transform_target_pos((-pos[0], pos[1], pos[2]))
+                rt = self._rotate_target()
+                if rt is not None:
+                    self._mirror_target_rotation(rt)
             return True
         if action == "save":
             if (not self._pending_radius and not self._pending_light
