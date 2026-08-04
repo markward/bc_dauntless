@@ -48,7 +48,8 @@ uniform int  u_dyn_light_count;
 uniform vec4 u_dyn_light_a[MAX_DYN_LIGHTS];      // pos_a.xyz, radius
 uniform vec4 u_dyn_light_b[MAX_DYN_LIGHTS];      // pos_b.xyz, (w unused)
 uniform vec3 u_dyn_light_color[MAX_DYN_LIGHTS];  // color * intensity
-uniform vec4 u_dyn_light_dir[MAX_DYN_LIGHTS];    // dir.xyz, cos_half_angle (<0 = not a cone)
+uniform vec4 u_dyn_light_dir[MAX_DYN_LIGHTS];    // dir.xyz, spot_tan_x (<0 = not a cone)
+uniform vec4 u_dyn_light_up[MAX_DYN_LIGHTS];     // up.xyz,  spot_tan_y
 
 // ── Sun shadow map (PCF) ─────────────────────────────────────────────────
 // Applied ONLY to directional light index 0 (the sun). u_shadows_enabled == 0
@@ -510,16 +511,29 @@ void main() {
         vec3  L  = (lp - v_position_ws) / max(d, 1e-6);
         float nl = max(dot(n, L), 0.0);
 
-        // Cone/spot gate: cos_half_angle < 0 => not a cone => spot == 1.0
+        // Cone/spot gate: spot_tan_x < 0 => not a cone => spot == 1.0
         // (byte-identical to the pre-cone shader for point/strip lights).
-        float cha = u_dyn_light_dir[i].w;
+        float tx = u_dyn_light_dir[i].w;
         float spot = 1.0;
-        if (cha >= 0.0) {
-            vec3 cdir = normalize(u_dyn_light_dir[i].xyz);
-            // -L points from the light toward the fragment; inside the cone
-            // when its angle to the cone axis is <= half-angle.
-            float cosf = dot(-L, cdir);
-            spot = smoothstep(cha - 0.02, cha, cosf);   // 0.02 = fixed cos-space penumbra
+        if (tx >= 0.0) {
+            vec3 fwd = normalize(u_dyn_light_dir[i].xyz);
+            vec3 upv = normalize(u_dyn_light_up[i].xyz);
+            vec3 rgt = cross(fwd, upv);
+            if (dot(rgt, rgt) > 1e-6) {          // guard degenerate up
+                rgt = normalize(rgt);
+                upv = cross(rgt, fwd);
+                float ty = u_dyn_light_up[i].w;
+                vec3  dld = normalize(-L);        // light -> fragment
+                float fz  = dot(dld, fwd);
+                if (fz > 1e-4) {
+                    float ex = dot(dld, rgt) / (fz * tx);
+                    float ey = dot(dld, upv) / (fz * ty);
+                    float e  = ex*ex + ey*ey;     // <= 1 inside the elliptical cone
+                    spot = 1.0 - smoothstep(1.0 - 0.15, 1.0, e);  // soft edge
+                } else {
+                    spot = 0.0;                   // behind the aim
+                }
+            }
         }
         att *= spot;
 

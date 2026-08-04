@@ -132,8 +132,10 @@ struct DynamicLightDescriptor {
     glm::vec3 color{1.0f};       // linear RGB (HDR-capable)
     float     radius    = 0.0f;  // GU; attenuation reaches exactly 0 here
     float     intensity = 1.0f;  // scalar multiplier on color
-    glm::vec3 direction{0.0f};       // cone axis (world, unit); ignored if not a cone
-    float     cos_half_angle = -1.0f;// < 0  => not a cone (point/strip). cos(half-angle) for a cone.
+    glm::vec3 direction{0.0f};       // cone forward axis (world, unit); ignored if not a cone
+    float     spot_tan_x = -1.0f;    // < 0 => not a cone. tan(half-angle) along `right` (= radius/length).
+    glm::vec3 up{0.0f, 1.0f, 0.0f};  // cone up axis (world, unit) — orients the ellipse
+    float     spot_tan_y = -1.0f;    // tan(half-angle) along `up` (= radius_y/length)
 };
 inline constexpr int kMaxDynamicLightsPerFrame = 64;
 inline constexpr int kMaxDynamicLightsPerDraw  = 4;

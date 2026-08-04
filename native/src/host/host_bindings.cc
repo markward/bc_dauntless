@@ -2266,13 +2266,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   l.color = {std::get<0>(c), std::get<1>(c), std::get<2>(c)};
                   l.radius    = d["radius"].cast<float>();
                   l.intensity = d["intensity"].cast<float>();
-                  // Optional cone keys (default: not a cone). Point/strip omit both.
+                  // Optional cone keys (default: not a cone). Point/strip omit all.
                   if (d.contains("direction") && !d["direction"].is_none()) {
                       auto dir = d["direction"].cast<std::tuple<float, float, float>>();
                       l.direction = {std::get<0>(dir), std::get<1>(dir), std::get<2>(dir)};
                   }
-                  if (d.contains("cos_half_angle") && !d["cos_half_angle"].is_none()) {
-                      l.cos_half_angle = d["cos_half_angle"].cast<float>();
+                  if (d.contains("up") && !d["up"].is_none()) {
+                      auto up = d["up"].cast<std::tuple<float, float, float>>();
+                      l.up = {std::get<0>(up), std::get<1>(up), std::get<2>(up)};
+                  }
+                  if (d.contains("spot_tan_x") && !d["spot_tan_x"].is_none()) {
+                      l.spot_tan_x = d["spot_tan_x"].cast<float>();
+                  }
+                  if (d.contains("spot_tan_y") && !d["spot_tan_y"].is_none()) {
+                      l.spot_tan_y = d["spot_tan_y"].cast<float>();
                   }
                   g_dynamic_lights.push_back(l);
               }
@@ -2281,9 +2288,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Replace the active dynamic-light list, applied each frame(). Each "
           "dict has position (pos_a), color, radius, intensity, plus optional "
           "position_b (pos_b defaults to position for a point light), and "
-          "optional cone keys direction (3-tuple, world-space axis) and "
-          "cos_half_angle (float; absent/None => not a cone, point/strip "
-          "behaviour unchanged). Clamped to kMaxDynamicLightsPerFrame entries.");
+          "optional cone keys direction (3-tuple, world-space axis), up "
+          "(3-tuple, world-space axis orienting the ellipse; defaults to "
+          "{0,1,0}), spot_tan_x and spot_tan_y (tan(half-angle) along right/up; "
+          "absent/None => not a cone, point/strip behaviour unchanged). "
+          "Clamped to kMaxDynamicLightsPerFrame entries.");
 
     m.def("set_shockwaves",
           [](const std::vector<py::dict>& descs) {
@@ -2548,13 +2557,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       auto v = d["color"].cast<std::array<float, 3>>();
                       c.color = {v[0], v[1], v[2]};
                   }
+                  // radius_y defaults to radius (circular cone); up defaults
+                  // to the struct default {0,1,0}.
+                  c.radius_y = c.radius;
+                  if (d.contains("radius_y") && !d["radius_y"].is_none()) {
+                      c.radius_y = d["radius_y"].cast<float>();
+                  }
+                  if (d.contains("up") && !d["up"].is_none()) {
+                      auto v = d["up"].cast<std::array<float, 3>>();
+                      c.up = {v[0], v[1], v[2]};
+                  }
                   g_debug_cones.push_back(c);
               }
           },
           py::arg("cones"),
           "Set the world-space debug wireframe cones (SPV cone light-emitter "
           "overlay; rendered depth-test-off in viewer_mode only). Each dict: "
-          "apex, axis, radius, length, color. Applied each frame().");
+          "apex, axis, radius, length, color, plus optional radius_y (base "
+          "radius along up; defaults to radius) and up (3-tuple, orients the "
+          "ellipse; defaults to {0,1,0}). Applied each frame().");
 
     m.def("clear_debug_cones",
           []() { g_debug_cones.clear(); },

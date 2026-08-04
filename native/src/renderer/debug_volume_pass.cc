@@ -340,17 +340,35 @@ void DebugVolumePass::render(const std::vector<DebugCone>& cones,
         if (glm::dot(cn.axis, cn.axis) < 1e-12f) continue;
 
         // Map the unit cone (local +Z apex->base) onto this cone: local +Z ->
-        // axis (scaled by length), local X/Y -> a perpendicular basis scaled
-        // by radius, origin at apex. All in world space.
+        // axis (scaled by length), local X/Y -> a perpendicular (right, up)
+        // basis scaled by (radius, radius_y), origin at apex. All in world
+        // space. Prefer the AUTHORED up (mirrors the shader's elliptical
+        // gate: right = forward x up, re-orthogonalized up = right x
+        // forward); fall back to the old Gram-Schmidt construction when the
+        // authored up is degenerate or parallel to the axis.
         const glm::vec3 w = glm::normalize(cn.axis);
-        const glm::vec3 up = (std::abs(w.y) < 0.99f) ? glm::vec3(0, 1, 0)
-                                                      : glm::vec3(1, 0, 0);
-        const glm::vec3 u = glm::normalize(glm::cross(up, w));
-        const glm::vec3 v = glm::cross(w, u);
+        glm::vec3 u, v;
+        bool up_valid = glm::dot(cn.up, cn.up) > 1e-8f;
+        if (up_valid) {
+            const glm::vec3 up_n   = glm::normalize(cn.up);
+            const glm::vec3 right  = glm::cross(w, up_n);
+            if (glm::dot(right, right) > 1e-6f) {
+                u = glm::normalize(right);
+                v = glm::cross(u, w);
+            } else {
+                up_valid = false;   // parallel to axis; fall through
+            }
+        }
+        if (!up_valid) {
+            const glm::vec3 fallback_up = (std::abs(w.y) < 0.99f) ? glm::vec3(0, 1, 0)
+                                                                   : glm::vec3(1, 0, 0);
+            u = glm::normalize(glm::cross(fallback_up, w));
+            v = glm::cross(w, u);
+        }
 
         glm::mat4 M(1.0f);
         M[0] = glm::vec4(u * cn.radius, 0.0f);
-        M[1] = glm::vec4(v * cn.radius, 0.0f);
+        M[1] = glm::vec4(v * cn.radius_y, 0.0f);
         M[2] = glm::vec4(w * cn.length, 0.0f);
         M[3] = glm::vec4(cn.apex, 1.0f);
 

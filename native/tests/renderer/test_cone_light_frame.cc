@@ -1,16 +1,22 @@
 // native/tests/renderer/test_cone_light_frame.cc
 //
-// Task 1 (subsystem light emitters plan): cone/spot dynamic light type.
-// Renders a flat, camera-facing plane lit by a single dynamic light and
-// asserts:
-//   1. Cone bounds: with cos_half_angle = cos(30deg) and the cone aimed
-//      straight down at the plane, an on-axis fragment is lit and a
-//      fragment well outside the 30deg half-angle is dark (ambient-only;
-//      here ambient/directional are both zero so it reads exactly black).
-//   2. Non-cone identity: the SAME light with cos_half_angle = -1 (the
+// Task 1 (stretched-cone-emitter plan): elliptical, oriented cone/spot
+// dynamic light type. Renders a flat, camera-facing plane lit by a single
+// dynamic light and asserts:
+//   1. Cone bounds: with spot_tan_x = spot_tan_y = tan(30deg) (a circular
+//      cone) and the cone aimed straight down at the plane, an on-axis
+//      fragment is lit and a fragment well outside the 30deg half-angle is
+//      dark (ambient-only; here ambient/directional are both zero so it
+//      reads exactly black).
+//   2. Non-cone identity: the SAME light with spot_tan_x = -1 (the
 //      point/strip default) lights BOTH fragments -- proving the
-//      `cha >= 0.0` guard in opaque.frag never fires for non-cone lights,
+//      `tx >= 0.0` guard in opaque.frag never fires for non-cone lights,
 //      so the production point/strip path stays byte-identical.
+//   3. Elliptical bounds: a cone with a WIDE spot_tan_x (45deg) and a
+//      NARROW spot_tan_y (10deg) lights a fragment offset along the wide
+//      (x) axis but darkens the same-magnitude offset along the narrow
+//      (y) axis -- proving the ellipse is actually anisotropic, not just
+//      a relabeled circle.
 //
 // Uses a synthetic single-quad Model built directly from MeshCpu (no BC
 // assets required), so this test runs whenever a GL context is available --
@@ -126,19 +132,21 @@ TEST_F(ConeLightFrameTest, ConeBoundsToHalfAngle) {
     cam.aspect = 1.0f;
 
     // Cone apex 10 GU above the plane, aimed straight down (-Z), 30 deg
-    // half-angle. On-axis fragment (0,0,0): angle 0 -> lit. Off-axis
-    // fragment (30,0,0): angle atan(30/10) = 71.6 deg, well outside 30 deg
-    // -> dark. The off-axis point is INSIDE the light's radius (dist 31.6 <
-    // 60), so a non-cone (point) light at the same radius/intensity would
-    // light it -- isolating the cone gate, not radius falloff, as what
-    // darkens it.
+    // half-angle (circular: spot_tan_x == spot_tan_y). On-axis fragment
+    // (0,0,0): angle 0 -> lit. Off-axis fragment (30,0,0): angle
+    // atan(30/10) = 71.6 deg, well outside 30 deg -> dark. The off-axis
+    // point is INSIDE the light's radius (dist 31.6 < 60), so a non-cone
+    // (point) light at the same radius/intensity would light it --
+    // isolating the cone gate, not radius falloff, as what darkens it.
     renderer::DynamicLightDescriptor light;
     light.pos_a = light.pos_b = glm::vec3(0.0f, 0.0f, 10.0f);
     light.color = glm::vec3(1.0f);
     light.radius = 60.0f;
     light.intensity = 100.0f;
     light.direction = glm::vec3(0.0f, 0.0f, -1.0f);
-    light.cos_half_angle = std::cos(glm::radians(30.0f));
+    light.up = glm::vec3(0.0f, 1.0f, 0.0f);
+    light.spot_tan_x = std::tan(glm::radians(30.0f));
+    light.spot_tan_y = std::tan(glm::radians(30.0f));
     std::vector<renderer::DynamicLightDescriptor> lights = {light};
 
     glViewport(0, 0, 256, 256);
@@ -170,10 +178,10 @@ TEST_F(ConeLightFrameTest, ConeBoundsToHalfAngle) {
            "not radius falloff, must be what excludes it";
 }
 
-TEST_F(ConeLightFrameTest, NegativeCosHalfAngleActsAsNonConeIdentity) {
-    // Same geometry/light as above but cos_half_angle = -1 (the point/
+TEST_F(ConeLightFrameTest, NegativeSpotTanActsAsNonConeIdentity) {
+    // Same geometry/light as above but spot_tan_x = -1 (the point/
     // strip default). Both fragments must now be lit: proves the
-    // `cha >= 0.0` guard in opaque.frag keeps spot == 1.0 for non-cone
+    // `tx >= 0.0` guard in opaque.frag keeps spot == 1.0 for non-cone
     // lights -- this feature does not change existing point/strip
     // rendering.
     assets::Model plane = make_plane_model(100.0f);
@@ -192,7 +200,7 @@ TEST_F(ConeLightFrameTest, NegativeCosHalfAngleActsAsNonConeIdentity) {
     light.radius = 60.0f;
     light.intensity = 100.0f;
     light.direction = glm::vec3(0.0f, 0.0f, -1.0f);  // ignored: not a cone
-    light.cos_half_angle = -1.0f;
+    light.spot_tan_x = -1.0f;
     std::vector<renderer::DynamicLightDescriptor> lights = {light};
 
     glViewport(0, 0, 256, 256);
@@ -215,7 +223,64 @@ TEST_F(ConeLightFrameTest, NegativeCosHalfAngleActsAsNonConeIdentity) {
 
     EXPECT_GT(read_pixel_total(onaxis_px.x, onaxis_px.y), 0);
     EXPECT_GT(read_pixel_total(offaxis_px.x, offaxis_px.y), 0)
-        << "cos_half_angle=-1 must light the off-axis fragment too (spot "
+        << "spot_tan_x=-1 must light the off-axis fragment too (spot "
            "factor 1.0) -- this is the byte-identity guard for point/strip "
            "lights.";
+}
+
+TEST_F(ConeLightFrameTest, EllipticalConeBoundsToEllipse) {
+    // Same apex/aim as ConeBoundsToHalfAngle, but WIDE along x (45 deg) and
+    // NARROW along y (10 deg), up = (0,1,0). Height (apex -> plane) is 10 GU.
+    // A 6 GU offset along x subtends atan(6/10) = 30.96 deg < 45 deg -> lit.
+    // The SAME 6 GU offset along y subtends the same 30.96 deg, but that is
+    // well outside the 10 deg y half-angle -> dark. Equal offset, opposite
+    // verdicts: proves the ellipse is genuinely anisotropic, not a relabeled
+    // circle.
+    assets::Model plane = make_plane_model(100.0f);
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&plane));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, 300.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    renderer::DynamicLightDescriptor light;
+    light.pos_a = light.pos_b = glm::vec3(0.0f, 0.0f, 10.0f);
+    light.color = glm::vec3(1.0f);
+    light.radius = 60.0f;
+    light.intensity = 100.0f;
+    light.direction = glm::vec3(0.0f, 0.0f, -1.0f);
+    light.up = glm::vec3(0.0f, 1.0f, 0.0f);
+    light.spot_tan_x = std::tan(glm::radians(45.0f));
+    light.spot_tan_y = std::tan(glm::radians(10.0f));
+    std::vector<renderer::DynamicLightDescriptor> lights = {light};
+
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    lighting.ambient = glm::vec3(0.0f);
+    lighting.directional_count = 0;
+    submitter.submit_opaque(world, cam, *p,
+        [](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, &lights);
+
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    glm::ivec2 onaxis_px   = project_to_pixel(cam, glm::vec3(0.0f, 0.0f, 0.0f), 256, 256);
+    glm::ivec2 wide_px     = project_to_pixel(cam, glm::vec3(6.0f, 0.0f, 0.0f), 256, 256);
+    glm::ivec2 narrow_px   = project_to_pixel(cam, glm::vec3(0.0f, 6.0f, 0.0f), 256, 256);
+
+    EXPECT_GT(read_pixel_total(onaxis_px.x, onaxis_px.y), 0)
+        << "on-axis fragment should be lit inside the elliptical cone";
+    EXPECT_GT(read_pixel_total(wide_px.x, wide_px.y), 0)
+        << "6 GU offset along the WIDE (45 deg) x-axis should be lit";
+    EXPECT_EQ(read_pixel_total(narrow_px.x, narrow_px.y), 0)
+        << "the same 6 GU offset along the NARROW (10 deg) y-axis should be "
+           "dark -- proves x and y half-angles are independent";
 }
