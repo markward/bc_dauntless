@@ -247,6 +247,30 @@ def test_pipette_skips_color_when_source_is_not_an_emitter(spv_panel):
 # Payload keys
 # ----------------------------------------------------------------------
 
+def test_undo_while_armed_disarms_pipette(spv_panel):
+    p = spv_panel
+    p.dispatch_event("select_pin:0")
+    p.dispatch_event('set_radius:{"i":0,"value":3.0}')
+    p.dispatch_event("select_pin:0")
+    p.dispatch_event("pipette")
+    assert p._pipette_armed is True
+    p.dispatch_event("undo")            # non-select action while armed
+    assert p._pipette_armed is False    # disarmed...
+    assert 0 not in p._pending_radius   # ...AND the undo still happened
+
+
+def test_undo_reverses_pipette_apply(spv_panel):
+    p = spv_panel
+    p.set_subsystem_position(1, (5.0, 0.0, 0.0))
+    p.dispatch_event("select_pin:0")
+    before = p._effective_pos(0)
+    p.dispatch_event("pipette")
+    p.dispatch_event("select_pin:1")   # #1 is the SOURCE, applies onto #0
+    assert p._effective_pos(0) == (5.0, 0.0, 0.0)
+    p.dispatch_event("undo")
+    assert p._effective_pos(0) == before
+
+
 def test_render_payload_reports_pipette_armed_and_has_selection(spv_panel):
     p = spv_panel
     data = _payload_data(p.render_payload())

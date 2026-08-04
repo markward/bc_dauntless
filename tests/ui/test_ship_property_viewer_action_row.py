@@ -32,3 +32,9 @@ def test_js_defines_action_handlers():
     for fn in ("shipPropertyViewerUndo", "shipPropertyViewerPipette",
                "shipPropertyViewerMirror"):
         assert fn in text
+    # Guard the exact dispatch strings, not just the handler names — a
+    # button silently firing "mirror" instead of "mirror_element" (etc.)
+    # would pass the name-only check above but be a real regression.
+    for dispatch in ("ship-property-viewer/undo", "ship-property-viewer/pipette",
+                      "ship-property-viewer/mirror_element"):
+        assert dispatch in text

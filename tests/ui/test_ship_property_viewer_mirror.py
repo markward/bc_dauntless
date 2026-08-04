@@ -68,6 +68,17 @@ def test_mirror_element_negates_position_x(spv_panel):
     assert p._undo_stack
 
 
+def test_undo_reverses_mirror_element(spv_panel):
+    p = spv_panel
+    p.set_subsystem_position(0, (3.0, 1.0, 2.0))
+    p.dispatch_event("select_pin:0")
+    before = p._effective_pos(0)
+    p.dispatch_event("mirror_element")
+    assert p._effective_pos(0) == (-3.0, 1.0, 2.0)
+    p.dispatch_event("undo")
+    assert p._effective_pos(0) == before
+
+
 def test_mirror_element_flips_strip_emitter_axis_x(spv_panel):
     p = spv_panel
     # give subsystem 0 a strip emitter with a known axis

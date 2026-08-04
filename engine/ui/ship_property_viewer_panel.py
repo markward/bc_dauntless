@@ -1890,8 +1890,9 @@ class ShipPropertyViewerPanel(Panel):
     def _cursor_over_tools(x: float, y: float, dsf: float,
                           fb_w: float, fb_h: float) -> bool:
         """Cursor (framebuffer px) inside the bottom-right tool-button
-        cluster — BOTH rows: the render-tools row (#spv-tools) and the
-        transform-tools row (#spv-transform-tools) stacked directly above it.
+        cluster — all THREE rows: the render-tools row (#spv-tools), the
+        transform-tools row (#spv-transform-tools), and the action-tools row
+        (#spv-action-tools) stacked above it.
 
         Needs the viewport size (framebuffer px) because the cluster is anchored
         to the right/bottom edges. Returns False when the size is unknown."""
@@ -1942,9 +1943,6 @@ class ShipPropertyViewerPanel(Panel):
         return result
 
     def _dispatch_event_inner(self, action: str) -> bool:
-        if action == "undo":
-            self.undo()
-            return True
         if action == "pipette":
             if self._pipette_armed:
                 self._pipette_armed = False
@@ -1987,6 +1985,9 @@ class ShipPropertyViewerPanel(Panel):
             self._pipette_armed = False
             self._last_pushed = None
             # fall through to normal handling of the non-select action
+        if action == "undo":
+            self.undo()
+            return True
         if action == "cancel":
             self.close()
             return True
