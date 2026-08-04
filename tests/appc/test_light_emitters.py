@@ -2,9 +2,10 @@ import math
 import pytest
 from engine.appc.light_emitters import (
     default_emitter_spec, baked_emitters, emitter_spec_to_struct,
-    resolve_emitter_intensity)
+    resolve_emitter_intensity, _derive_up)
 from engine.appc.properties import SubsystemProperty
 from engine.appc.subsystem_glow import HEALTHY, DISABLED, DESTROYED
+from engine.ui.ship_property_viewer import emitter_spec_to_calls
 
 
 def _prop_with_emitters(specs):
@@ -25,7 +26,14 @@ def test_default_specs_have_all_keys():
     for kind in ("point", "strip", "cone"):
         s = default_emitter_spec(kind)
         assert s["kind"] == kind
-        assert set(s) == {"kind", "position", "axis", "length", "radius", "color", "intensity"}
+        assert set(s) == {"kind", "position", "axis", "length", "radius", "radius_y",
+                           "up", "color", "intensity"}
+
+
+def test_default_cone_spec_has_circular_radius_y_and_an_up():
+    s = default_emitter_spec("cone")
+    assert s["radius_y"] == pytest.approx(s["radius"])
+    assert len(s["up"]) == 3
 
 
 def test_baked_emitters_roundtrip():
@@ -37,6 +45,42 @@ def test_baked_emitters_roundtrip():
     assert got[0]["kind"] == "point"
     assert got[1]["kind"] == "cone"
     assert got[1]["radius"] == pytest.approx(1.0)
+
+
+def _apply_calls(prop, calls):
+    for name, args in calls:
+        getattr(prop, name)(*args)
+
+
+def test_elliptical_cone_roundtrips_radius_y_and_up_through_calls():
+    spec = default_emitter_spec("cone")
+    spec["radius"] = 1.0
+    spec["radius_y"] = 2.5
+    spec["length"] = 3.0
+    spec["axis"] = (0.0, -1.0, 0.0)
+    spec["up"] = (1.0, 0.0, 0.0)
+    p = SubsystemProperty()
+    _apply_calls(p, emitter_spec_to_calls(0, spec))
+
+    got = baked_emitters(p)
+    assert len(got) == 1
+    assert got[0]["radius_y"] == pytest.approx(2.5)
+    assert got[0]["up"] == pytest.approx((1.0, 0.0, 0.0))
+
+
+def test_legacy_cone_without_radius_y_or_up_setters_loads_circular():
+    # Mirrors a saved cone written before this feature: only the original
+    # Kind/Position/Axis/Length/Radius/Color/Intensity setters were emitted.
+    specs = [default_emitter_spec("cone")]
+    specs[0]["radius"] = 1.0
+    specs[0]["length"] = 2.0
+    specs[0]["axis"] = (0.0, -1.0, 0.0)
+    p = _prop_with_emitters(specs)   # legacy writer: no RadiusY/Up setters
+
+    got = baked_emitters(p)
+    assert len(got) == 1
+    assert got[0]["radius_y"] == pytest.approx(got[0]["radius"])
+    assert got[0]["up"] == pytest.approx(_derive_up(specs[0]["axis"]))
 
 
 def test_point_struct_is_degenerate_segment():
@@ -53,12 +97,39 @@ def test_strip_struct_has_two_endpoints():
     assert d["position_b"] == pytest.approx((0.0, 1.0, 0.0))
 
 
-def test_cone_struct_derives_half_angle():
+def test_elliptical_cone_struct_has_two_tangents_and_unit_up_no_cos_half_angle():
+    s = default_emitter_spec("cone")
+    s["radius"] = 1.0; s["radius_y"] = 2.0; s["length"] = 4.0
+    s["axis"] = (0.0, -1.0, 0.0); s["up"] = (1.0, 0.0, 0.0)
+    d = emitter_spec_to_struct(s)
+    assert d["direction"] == pytest.approx((0.0, -1.0, 0.0))
+    assert "cos_half_angle" not in d
+    assert d["spot_tan_x"] == pytest.approx(1.0 / 4.0)
+    assert d["spot_tan_y"] == pytest.approx(2.0 / 4.0)
+    ux, uy, uz = d["up"]
+    assert math.sqrt(ux * ux + uy * uy + uz * uz) == pytest.approx(1.0)
+
+
+def test_circular_cone_struct_has_equal_tangents():
     s = default_emitter_spec("cone")
     s["radius"] = 1.0; s["length"] = 1.0; s["axis"] = (0.0, -1.0, 0.0)
     d = emitter_spec_to_struct(s)
-    assert d["direction"] == pytest.approx((0.0, -1.0, 0.0))
-    assert d["cos_half_angle"] == pytest.approx(math.cos(math.atan2(1.0, 1.0)))
+    assert "cos_half_angle" not in d
+    assert d["spot_tan_x"] == pytest.approx(d["spot_tan_y"])
+
+
+def test_emitter_spec_to_calls_emits_radius_y_and_up_only_when_elliptical():
+    circ = default_emitter_spec("cone")
+    circ["radius"] = 1.0; circ["radius_y"] = 1.0
+    names = [n for n, _a in emitter_spec_to_calls(0, circ)]
+    assert "SetLightEmitterRadiusY" not in names
+    assert "SetLightEmitterUp" not in names
+
+    ellip = default_emitter_spec("cone")
+    ellip["radius"] = 1.0; ellip["radius_y"] = 2.0
+    names2 = [n for n, _a in emitter_spec_to_calls(0, ellip)]
+    assert "SetLightEmitterRadiusY" in names2
+    assert "SetLightEmitterUp" in names2
 
 
 class _Sub:

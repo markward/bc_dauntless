@@ -205,6 +205,55 @@ def test_strip_and_cone_transform_correctly_on_rotated_translated_ship():
         assert abs(g) <= 1.0 + 1e-6
 
 
+def test_elliptical_cone_up_transforms_with_direction_on_rotated_ship():
+    """Task 2 Step 5: `up` is a world DIRECTION (rotation-only, no
+    translation) transformed the same way as `direction`; spot_tan_x/
+    spot_tan_y pass through the producer unchanged (body-frame ratios)."""
+    loc = (10.0, -5.0, 2.0)
+    rot = TGMatrix3()
+    rot.MakeZRotation(math.pi / 2.0)  # 90 degrees about Z
+    ship = _Ship(loc=loc, rot=rot)
+
+    cone_body_pos = (0.0, 2.0, 0.0)
+    cone_axis = (0.0, -1.0, 0.0)
+    cone_up = (1.0, 0.0, 0.0)   # already orthogonal to cone_axis
+    prop = SubsystemProperty("sub")
+    prop.SetLightEmitterKind(0, "cone")
+    prop.SetLightEmitterPosition(0, *cone_body_pos)
+    prop.SetLightEmitterAxis(0, *cone_axis)
+    prop.SetLightEmitterLength(0, 2.0)
+    prop.SetLightEmitterRadius(0, 1.0)
+    prop.SetLightEmitterRadiusY(0, 2.0)
+    prop.SetLightEmitterUp(0, *cone_up)
+    prop.SetLightEmitterColor(0, 1.0, 0.5, 0.25)
+    prop.SetLightEmitterIntensity(0, 2.5)
+    sub = _Sub(prop)
+    spec = light_emitters.baked_emitters(prop)[0]
+
+    ship_instances = {ship: 11}
+    ship_emitters = {11: [(sub, False, 0.0, spec)]}
+
+    out = _build_emitter_light_render_data(ship_instances, ship_emitters)
+    assert len(out) == 1
+    d = out[0]
+
+    body_dir = TGPoint3(*cone_axis)
+    body_dir.MultMatrixLeft(rot)
+    body_up = TGPoint3(*cone_up)
+    body_up.MultMatrixLeft(rot)
+
+    for g, e in zip(d["direction"], (body_dir.x, body_dir.y, body_dir.z)):
+        assert g == pytest.approx(e)
+    for g, e in zip(d["up"], (body_up.x, body_up.y, body_up.z)):
+        assert g == pytest.approx(e)
+    # Rotation-only: not translated by `loc` (magnitude ~10).
+    for g in d["up"]:
+        assert abs(g) <= 1.0 + 1e-6
+
+    assert d["spot_tan_x"] == pytest.approx(1.0 / 2.0)
+    assert d["spot_tan_y"] == pytest.approx(2.0 / 2.0)
+
+
 # ---------------------------------------------------------------------------
 # Per-ship emitter cache build (spawn-time)
 # ---------------------------------------------------------------------------

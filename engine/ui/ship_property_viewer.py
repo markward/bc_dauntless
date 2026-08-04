@@ -147,7 +147,13 @@ def region_spec_to_calls(index, spec):
 
 def emitter_spec_to_calls(index, spec):
     """Full ordered SetLightEmitter* call list for one emitter spec (Task 3).
-    Point omits axis/length; strip/cone include them; all carry colour+intensity."""
+    Point omits axis/length; strip/cone include them; all carry colour+intensity.
+
+    Cone-only: RadiusY + Up are appended ONLY when the cone is elliptical
+    (`radius_y != radius`) -- mirrors the Box `orientation` identity-skip in
+    `region_spec_to_calls` below. A circular cone (roll is irrelevant for a
+    circle) and every legacy cone therefore emit neither setter, keeping
+    override files clean and legacy saves byte-identical."""
     kind = spec["kind"]
     px, py, pz = spec["position"]
     r, g, b = spec["color"]
@@ -162,6 +168,12 @@ def emitter_spec_to_calls(index, spec):
         ax, ay, az = spec["axis"]
         calls.append(("SetLightEmitterAxis", (index, ax, ay, az)))
         calls.append(("SetLightEmitterLength", (index, float(spec["length"]))))
+    if kind == "cone":
+        ry = float(spec.get("radius_y", spec["radius"]))
+        if abs(ry - float(spec["radius"])) > 1e-9:
+            calls.append(("SetLightEmitterRadiusY", (index, ry)))
+            ux, uy, uz = spec.get("up") or (0.0, 0.0, 1.0)
+            calls.append(("SetLightEmitterUp", (index, ux, uy, uz)))
     return calls
 
 
