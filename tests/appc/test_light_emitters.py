@@ -118,6 +118,19 @@ def test_circular_cone_struct_has_equal_tangents():
     assert d["spot_tan_x"] == pytest.approx(d["spot_tan_y"])
 
 
+def test_cone_reach_is_length_not_base_radius():
+    # The drawn cone frustum extends `length` (DebugCone's M[2] = forward *
+    # length); the light must fade out at that same distance, not at the
+    # base radius. Angular spread (spot_tan_x/y) stays driven by the base
+    # radii -- only the attenuation `radius` (reach) changes to `length`.
+    s = default_emitter_spec("cone")
+    s["radius"] = 1.0; s["radius_y"] = 2.5; s["length"] = 6.0
+    d = emitter_spec_to_struct(s)
+    assert d["radius"] == pytest.approx(6.0)
+    assert d["spot_tan_x"] == pytest.approx(1.0 / 6.0)
+    assert d["spot_tan_y"] == pytest.approx(2.5 / 6.0)
+
+
 def test_emitter_spec_to_calls_emits_radius_y_and_up_only_when_elliptical():
     circ = default_emitter_spec("cone")
     circ["radius"] = 1.0; circ["radius_y"] = 1.0

@@ -170,6 +170,8 @@ def emitter_spec_to_struct(spec: dict) -> dict:
     d["up"] = _orthonormalized_up((ax, ay, az), up)
     d["spot_tan_x"] = float(spec["radius"]) / length_safe
     d["spot_tan_y"] = float(spec.get("radius_y", spec["radius"])) / length_safe
+    d["radius"] = length_safe   # cone REACH = axial length (frustum extent), NOT the base
+                                 # radius. Base radius only drives angular spread above.
     return d
 
 
