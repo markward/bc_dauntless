@@ -38,7 +38,8 @@ class HardpointOverridesFileTarget:
 
     def write(self, leaf, edits) -> None:
         """edits: list of (subsystem, setter, args) 3-tuples and/or
-        (subsystem, "__region__", index, calls) 4-tuples.
+        (subsystem, "__region__", index, calls) / (subsystem, "__emitter__",
+        index, calls) 4-tuples.
         Reload → apply → emit → atomic."""
         import types
         with open(self.path, "r", encoding="utf-8") as fh:
@@ -47,9 +48,13 @@ class HardpointOverridesFileTarget:
         exec(compile(src, self.path, "exec"), module.__dict__)  # noqa: S102
         models = _writer.read_models(module)
         for edit in edits:
-            if len(edit) == 4:
+            if len(edit) == 4 and edit[1] == "__region__":
                 subsystem, tag, index, calls = edit
                 _writer.set_region(models, leaf, subsystem, index, calls)
+            elif len(edit) == 4 and edit[1] == "__emitter__":
+                subsystem, tag, index, calls = edit
+                _writer.set_region(models, leaf, subsystem, index, calls,
+                                    prefix="SetLightEmitter")
             else:
                 subsystem, setter, args = edit
                 _writer.set_setter(models, leaf, subsystem, setter, args)

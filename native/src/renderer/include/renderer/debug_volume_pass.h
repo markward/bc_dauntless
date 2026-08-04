@@ -39,6 +39,17 @@ struct DebugSphere {
     glm::vec3 color{0.0f, 1.0f, 0.0f};
 };
 
+/// One wireframe cone to draw, expressed in WORLD space. apex is the tip,
+/// axis points from apex toward the base (unit), radius is the base radius,
+/// length is the apex->base distance.
+struct DebugCone {
+    glm::vec3 apex{0.0f};
+    glm::vec3 axis{0.0f, -1.0f, 0.0f};   // unit, apex -> base
+    float     radius = 1.0f;             // base radius
+    float     length = 1.0f;             // apex -> base distance
+    glm::vec3 color{1.0f, 0.55f, 0.1f};
+};
+
 /// Developer debug overlay: draws bright wireframe cylinders in world space.
 /// Self-contained (owns its shader + a unit-cylinder mesh) and generic — the
 /// caller supplies the cylinders, so it is not tied to any subsystem. Depth
@@ -65,10 +76,14 @@ public:
     void render(const std::vector<DebugSphere>& spheres,
                 const scenegraph::Camera& camera);
 
+    void render(const std::vector<DebugCone>& cones,
+                const scenegraph::Camera& camera);
+
 private:
     void ensure_resources();
     void ensure_box_resources();
     void ensure_sphere_resources();
+    void ensure_cone_resources();
 
     unsigned int vao_ = 0;
     unsigned int vbo_ = 0;
@@ -82,6 +97,10 @@ private:
     unsigned int sphere_vao_ = 0;
     unsigned int sphere_vbo_ = 0;
     int sphere_vertex_count_ = 0;
+
+    unsigned int cone_vao_ = 0;
+    unsigned int cone_vbo_ = 0;
+    int cone_vertex_count_ = 0;
 };
 
 }  // namespace renderer

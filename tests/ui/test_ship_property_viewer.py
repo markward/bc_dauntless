@@ -312,6 +312,35 @@ def test_region_spec_to_calls_sphere():
     ]
 
 
+from engine.ui.ship_property_viewer import emitter_spec_to_calls
+
+
+def test_emitter_spec_to_calls_point_omits_axis_length():
+    spec = {"kind": "point", "position": (1.0, 0.0, 0.0), "axis": (0.0, 1.0, 0.0),
+            "length": 1.0, "radius": 0.5, "color": (1.0, 1.0, 1.0), "intensity": 2.0}
+    assert emitter_spec_to_calls(0, spec) == [
+        ("SetLightEmitterKind", (0, "point")),
+        ("SetLightEmitterPosition", (0, 1.0, 0.0, 0.0)),
+        ("SetLightEmitterRadius", (0, 0.5)),
+        ("SetLightEmitterColor", (0, 1.0, 1.0, 1.0)),
+        ("SetLightEmitterIntensity", (0, 2.0)),
+    ]
+
+
+def test_emitter_spec_to_calls_strip_and_cone_include_axis_length():
+    spec = {"kind": "strip", "position": (0.0, 0.0, 0.0), "axis": (0.0, -1.0, 0.0),
+            "length": 2.0, "radius": 0.25, "color": (0.2, 0.4, 0.6), "intensity": 1.5}
+    calls = emitter_spec_to_calls(1, spec)
+    assert ("SetLightEmitterAxis", (1, 0.0, -1.0, 0.0)) in calls
+    assert ("SetLightEmitterLength", (1, 2.0)) in calls
+    assert calls[0] == ("SetLightEmitterKind", (1, "strip"))
+
+    spec["kind"] = "cone"
+    calls = emitter_spec_to_calls(1, spec)
+    assert ("SetLightEmitterAxis", (1, 0.0, -1.0, 0.0)) in calls
+    assert ("SetLightEmitterLength", (1, 2.0)) in calls
+
+
 from engine.ui.ship_property_viewer import _light_annotation
 
 

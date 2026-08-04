@@ -352,6 +352,9 @@
         <div id="spv-ctx-addlight" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxAddLight()">Add Light Volume</div>
         <div id="spv-ctx-light" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxLight()">Edit Light…</div>
         <div id="spv-ctx-removelight" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxRemoveLight()">Remove Light Volume</div>
+        <div id="spv-ctx-addemitter" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxAddEmitter()">Add Light Emitter…</div>
+        <div id="spv-ctx-editemitter" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxEditEmitter()">Edit Emitter…</div>
+        <div id="spv-ctx-removeemitter" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxRemoveEmitter()">Remove Light Emitter</div>
       </div>
       <div id="spv-radius" class="spv-modal-backdrop" style="display:none;">
         <div class="spv-modal">
@@ -385,6 +388,41 @@
           <div class="spv-modal__row">
             <button class="spv-modal__btn" onclick="shipPropertyViewerLightCancel()">Cancel</button>
             <button class="spv-modal__btn spv-modal__btn--primary" onclick="shipPropertyViewerLightApply()">Apply</button>
+          </div>
+        </div>
+      </div>
+      <!-- Light Emitter modal: type picker + hue/sat colour wheel + HDR
+           intensity slider. Mirrors #spv-light's shape-picker pattern but for
+           independent subsystem-child light emitters (add_emitter/set_emitter).
+           Mouse-only (canvas pointer-drag for the wheel; pointer-drag + +/-
+           steppers for intensity) — no keyboard->CEF forwarding exists.
+           Spec: docs/superpowers/sdd/2026-07-29-subsystem-light-emitters/task-10-brief.md -->
+      <div id="spv-emitter" class="spv-modal-backdrop" style="display:none;">
+        <div class="spv-modal">
+          <div id="spv-emitter-title" class="spv-modal__title">Add Light Emitter</div>
+          <div class="spv-shape-row">
+            <button id="spv-emkind-point" class="spv-shape-btn"
+                    onclick="shipPropertyViewerEmitterKind('point')">Point</button>
+            <button id="spv-emkind-strip" class="spv-shape-btn"
+                    onclick="shipPropertyViewerEmitterKind('strip')">Strip</button>
+            <button id="spv-emkind-cone" class="spv-shape-btn"
+                    onclick="shipPropertyViewerEmitterKind('cone')">Cone</button>
+          </div>
+          <div class="spv-wheel-row">
+            <canvas id="spv-emitter-wheel" width="160" height="160"></canvas>
+          </div>
+          <div class="spv-stepper">
+            <span class="spv-stepper__label">Intensity</span>
+            <button class="spv-step-btn" onclick="shipPropertyViewerEmitterIntensityStep(-0.25)">&minus;</button>
+            <div id="spv-em-intensity-track" class="spv-intensity-track">
+              <div id="spv-em-intensity-fill" class="spv-intensity-fill"></div>
+            </div>
+            <span id="spv-em-intensity" class="spv-stepper__val">2.00</span>
+            <button class="spv-step-btn" onclick="shipPropertyViewerEmitterIntensityStep(0.25)">+</button>
+          </div>
+          <div class="spv-modal__row">
+            <button class="spv-modal__btn" onclick="shipPropertyViewerEmitterCancel()">Cancel</button>
+            <button class="spv-modal__btn spv-modal__btn--primary" onclick="shipPropertyViewerEmitterApply()">Apply</button>
           </div>
         </div>
       </div>

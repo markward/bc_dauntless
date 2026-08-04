@@ -132,6 +132,8 @@ struct DynamicLightDescriptor {
     glm::vec3 color{1.0f};       // linear RGB (HDR-capable)
     float     radius    = 0.0f;  // GU; attenuation reaches exactly 0 here
     float     intensity = 1.0f;  // scalar multiplier on color
+    glm::vec3 direction{0.0f};       // cone axis (world, unit); ignored if not a cone
+    float     cos_half_angle = -1.0f;// < 0  => not a cone (point/strip). cos(half-angle) for a cone.
 };
 inline constexpr int kMaxDynamicLightsPerFrame = 64;
 inline constexpr int kMaxDynamicLightsPerDraw  = 4;

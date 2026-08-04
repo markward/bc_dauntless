@@ -188,3 +188,30 @@ OVERRIDES = {"x": _x}
     ast.parse(text)
     m2 = _module(text)
     assert w.read_models(m2) == {"x": {}}           # empty function, still callable
+
+
+def test_emitter_setters_are_index_keyed_and_full_replace():
+    models = {}
+    w.set_region(models, "galaxy", "Impulse", 0, [
+        ("SetLightEmitterKind", (0, "point")),
+        ("SetLightEmitterRadius", (0, 1.0)),
+    ], prefix="SetLightEmitter")
+    # Re-set index 0 => old emitter-0 setters cleared, new ones only.
+    w.set_region(models, "galaxy", "Impulse", 0, [
+        ("SetLightEmitterKind", (0, "cone")),
+    ], prefix="SetLightEmitter")
+    calls = dict((s, a) for (s, a) in models["galaxy"]["Impulse"])
+    assert calls["SetLightEmitterKind"] == (0, "cone")
+    assert "SetLightEmitterRadius" not in calls   # cleared by full-replace
+    # Emit round-trips through ast.parse without error.
+    text = w.emit(models)
+    assert "SetLightEmitterKind" in text
+
+
+def test_emitter_and_glow_prefixes_coexist_on_one_subsystem():
+    models = {}
+    w.set_region(models, "galaxy", "Impulse", 0, [("SetGlowRegionShape", (0, "Box"))])
+    w.set_region(models, "galaxy", "Impulse", 0, [("SetLightEmitterKind", (0, "point"))],
+                 prefix="SetLightEmitter")
+    keys = set(s for (s, a) in models["galaxy"]["Impulse"])
+    assert {"SetGlowRegionShape", "SetLightEmitterKind"} <= keys   # neither clobbers the other

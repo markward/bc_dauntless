@@ -232,6 +232,7 @@ std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
 std::vector<renderer::DebugCylinder>         g_debug_cylinders;
 std::vector<renderer::DebugBox>              g_debug_boxes;
 std::vector<renderer::DebugSphere>           g_debug_spheres;
+std::vector<renderer::DebugCone>             g_debug_cones;
 std::unique_ptr<renderer::DebugVolumePass>   g_debug_volume_pass;
 // Ship Property Viewer transform gizmo: three coloured arrows set each frame
 // from Python. length == 0 -> hidden (production frames never touch it, so
@@ -556,6 +557,7 @@ void shutdown() {
     g_debug_cylinders.clear();
     g_debug_boxes.clear();
     g_debug_spheres.clear();
+    g_debug_cones.clear();
     g_debug_volume_pass.reset();
     g_transform_gizmo.length = 0.0f;
     g_gizmo_pass.reset();
@@ -922,6 +924,8 @@ void frame() {
         g_debug_volume_pass->render(g_debug_boxes, g_camera);
     if (viewer_mode && g_debug_volume_pass && !g_debug_spheres.empty())
         g_debug_volume_pass->render(g_debug_spheres, g_camera);
+    if (viewer_mode && g_debug_volume_pass && !g_debug_cones.empty())
+        g_debug_volume_pass->render(g_debug_cones, g_camera);
     if (viewer_mode && g_gizmo_pass && g_transform_gizmo.length > 0.0f)
         g_gizmo_pass->render(g_transform_gizmo, g_camera);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty()) {
@@ -2262,14 +2266,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   l.color = {std::get<0>(c), std::get<1>(c), std::get<2>(c)};
                   l.radius    = d["radius"].cast<float>();
                   l.intensity = d["intensity"].cast<float>();
+                  // Optional cone keys (default: not a cone). Point/strip omit both.
+                  if (d.contains("direction") && !d["direction"].is_none()) {
+                      auto dir = d["direction"].cast<std::tuple<float, float, float>>();
+                      l.direction = {std::get<0>(dir), std::get<1>(dir), std::get<2>(dir)};
+                  }
+                  if (d.contains("cos_half_angle") && !d["cos_half_angle"].is_none()) {
+                      l.cos_half_angle = d["cos_half_angle"].cast<float>();
+                  }
                   g_dynamic_lights.push_back(l);
               }
           },
           py::arg("lights"),
           "Replace the active dynamic-light list, applied each frame(). Each "
           "dict has position (pos_a), color, radius, intensity, plus optional "
-          "position_b (pos_b defaults to position for a point light). Clamped "
-          "to kMaxDynamicLightsPerFrame entries.");
+          "position_b (pos_b defaults to position for a point light), and "
+          "optional cone keys direction (3-tuple, world-space axis) and "
+          "cos_half_angle (float; absent/None => not a cone, point/strip "
+          "behaviour unchanged). Clamped to kMaxDynamicLightsPerFrame entries.");
 
     m.def("set_shockwaves",
           [](const std::vector<py::dict>& descs) {
@@ -2513,6 +2527,38 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("clear_debug_spheres",
           []() { g_debug_spheres.clear(); },
           "Clear the debug wireframe spheres. Takes effect next frame().");
+
+    m.def("set_debug_cones",
+          [](const std::vector<py::dict>& descs) {
+              g_debug_cones.clear();
+              g_debug_cones.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::DebugCone c;
+                  if (d.contains("apex")) {
+                      auto v = d["apex"].cast<std::array<float, 3>>();
+                      c.apex = {v[0], v[1], v[2]};
+                  }
+                  if (d.contains("axis")) {
+                      auto v = d["axis"].cast<std::array<float, 3>>();
+                      c.axis = {v[0], v[1], v[2]};
+                  }
+                  if (d.contains("radius")) c.radius = d["radius"].cast<float>();
+                  if (d.contains("length")) c.length = d["length"].cast<float>();
+                  if (d.contains("color")) {
+                      auto v = d["color"].cast<std::array<float, 3>>();
+                      c.color = {v[0], v[1], v[2]};
+                  }
+                  g_debug_cones.push_back(c);
+              }
+          },
+          py::arg("cones"),
+          "Set the world-space debug wireframe cones (SPV cone light-emitter "
+          "overlay; rendered depth-test-off in viewer_mode only). Each dict: "
+          "apex, axis, radius, length, color. Applied each frame().");
+
+    m.def("clear_debug_cones",
+          []() { g_debug_cones.clear(); },
+          "Clear the debug wireframe cones. Takes effect next frame().");
 
     m.def("set_transform_gizmo",
           [](std::array<float, 3> o,

@@ -5,7 +5,9 @@ import math
 import pytest
 
 from engine.appc.math import TGPoint3, TGMatrix3
-from engine.ui.glow_region_overlay import build_glow_region_overlay, GLOW_COLOR
+from engine.ui.glow_region_overlay import (
+    build_glow_region_overlay, build_emitter_overlay, GLOW_COLOR,
+)
 from engine.ui import glow_region_overlay as gro
 
 
@@ -351,3 +353,106 @@ def test_box_wireframe_tilts_with_orientation(monkeypatch):
     b = boxes[0]
     # ey carries the hy=2 extent along the forward axis (+X here), not body +Y.
     assert b["ey"] == pytest.approx((2.0, 0.0, 0.0), abs=1e-6)
+
+
+# ----------------------------------------------------------------------
+# Task 9: build_emitter_overlay — selection-scoped emitter wireframe feed
+# ----------------------------------------------------------------------
+
+def _emitter_spec(kind="point", position=(1.0, 2.0, 3.0), axis=(0.0, -1.0, 0.0),
+                  radius=0.5, length=4.0, color=(1.0, 0.5, 0.2)):
+    return {"kind": kind, "position": position, "axis": axis, "radius": radius,
+            "length": length, "color": color, "intensity": 2.0}
+
+
+class _FakePanel:
+    def __init__(self, selected=None, spec=None):
+        self._selected_emitter = selected
+        self._spec = spec
+
+    def _effective_emitter(self, i, j):
+        return self._spec
+
+
+def test_emitter_overlay_nothing_selected_yields_empty_lists():
+    ship = _Ship(_Pod(_Point(0.0, 0.0, 0.0)))
+    spheres, cyls, cones = build_emitter_overlay(ship, _FakePanel(selected=None))
+    assert spheres == [] and cyls == [] and cones == []
+
+
+def test_emitter_overlay_selected_but_spec_gone_yields_empty_lists():
+    # A stale selection (removed since selected) resolves to a falsy spec.
+    ship = _Ship(_Pod(_Point(0.0, 0.0, 0.0)))
+    spheres, cyls, cones = build_emitter_overlay(
+        ship, _FakePanel(selected=(0, 0), spec=None))
+    assert spheres == [] and cyls == [] and cones == []
+
+
+def test_emitter_overlay_none_ship_yields_empty_lists():
+    spheres, cyls, cones = build_emitter_overlay(
+        None, _FakePanel(selected=(0, 0), spec=_emitter_spec()))
+    assert spheres == [] and cyls == [] and cones == []
+
+
+def test_emitter_overlay_point_returns_sphere_only():
+    ship = _Ship(_Pod(_Point(0.0, 0.0, 0.0)))
+    spec = _emitter_spec("point", position=(1.0, 2.0, 3.0), radius=0.75)
+    spheres, cyls, cones = build_emitter_overlay(
+        ship, _FakePanel(selected=(0, 0), spec=spec))
+    assert cyls == [] and cones == []
+    assert len(spheres) == 1
+    s = spheres[0]
+    assert s["center"] == pytest.approx((1.0, 2.0, 3.0))
+    assert s["radius"] == pytest.approx(0.75)
+    assert s["color"] == (1.0, 0.5, 0.2)
+
+
+def test_emitter_overlay_strip_returns_cylinder_only():
+    ship = _Ship(_Pod(_Point(0.0, 0.0, 0.0)))
+    spec = _emitter_spec("strip")
+    spheres, cyls, cones = build_emitter_overlay(
+        ship, _FakePanel(selected=(0, 0), spec=spec))
+    assert spheres == [] and cones == []
+    assert len(cyls) == 1
+    c = cyls[0]
+    assert c["axis"] == pytest.approx((0.0, -1.0, 0.0))
+    assert c["radius"] == pytest.approx(0.5)
+    assert c["length"] == pytest.approx(4.0)
+
+
+def test_emitter_overlay_cone_transforms_into_world_space():
+    # Same rotated/translated ship as test_cylinder_rotated_and_translated_ship:
+    # +90deg about Z, ship at (10,0,0). body(1,2,3) -> world(-2,1,3) + loc
+    # = (8,1,3); body axis (0,-1,0) -> world (1,0,0).
+    rot = TGMatrix3().MakeZRotation(math.pi / 2.0)
+    ship = _Ship(_Pod(_Point(0.0, 0.0, 0.0)), rot=rot, loc=(10.0, 0.0, 0.0))
+    spec = _emitter_spec("cone", position=(1.0, 2.0, 3.0), axis=(0.0, -1.0, 0.0),
+                         radius=0.5, length=4.0)
+    spheres, cyls, cones = build_emitter_overlay(
+        ship, _FakePanel(selected=(0, 0), spec=spec))
+    assert spheres == [] and cyls == []
+    assert len(cones) == 1
+    c = cones[0]
+    assert c["apex"] == pytest.approx((8.0, 1.0, 3.0))
+    assert c["axis"] == pytest.approx((1.0, 0.0, 0.0))
+    n = math.sqrt(sum(a * a for a in c["axis"]))
+    assert abs(n - 1.0) < 1e-9
+    assert c["radius"] == pytest.approx(0.5)
+    assert c["length"] == pytest.approx(4.0)
+    assert c["color"] == pytest.approx((1.0, 0.5, 0.2))
+
+
+def test_emitter_overlay_zero_axis_falls_back_to_default_no_nan():
+    # A degenerate/authored zero axis must never reach DebugCone/DebugCylinder
+    # (they normalize in GLM -> NaN on a zero vector); it must fall back to
+    # the same default light_emitters gives an axis-less spec, (0,-1,0).
+    ship = _Ship(_Pod(_Point(0.0, 0.0, 0.0)))
+    spec = _emitter_spec("cone", axis=(0.0, 0.0, 0.0))
+    spheres, cyls, cones = build_emitter_overlay(
+        ship, _FakePanel(selected=(0, 0), spec=spec))
+    assert len(cones) == 1
+    ax = cones[0]["axis"]
+    assert ax == pytest.approx((0.0, -1.0, 0.0))
+    n = math.sqrt(sum(a * a for a in ax))
+    assert abs(n - 1.0) < 1e-9
+    assert not any(v != v for v in ax)   # no NaN component

@@ -481,6 +481,24 @@
 }
 .spv-step-btn:hover { background: rgba(255, 214, 90, 0.25); }
 
+/* Light Emitter modal: hue/sat colour wheel + HDR intensity slider
+   (task-10-brief.md). Mouse-only pointer-drag, mirrors .spv-shape-row /
+   .spv-radius-stepper's mouse-only convention. */
+.spv-wheel-row { display: flex; justify-content: center; padding: 10px 14px 4px; }
+#spv-emitter-wheel { cursor: crosshair; }
+.spv-intensity-track {
+    position: relative;
+    width: 120px; height: 14px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 230, 160, 0.4);
+    cursor: pointer;
+}
+.spv-intensity-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: rgba(255, 214, 90, 0.85);
+    pointer-events: none;
+}
+
 .spv-modal__body {
     color: #cdd3dc;
     padding: 10px 14px;

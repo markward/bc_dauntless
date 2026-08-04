@@ -145,6 +145,26 @@ def region_spec_to_calls(index, spec):
     return calls
 
 
+def emitter_spec_to_calls(index, spec):
+    """Full ordered SetLightEmitter* call list for one emitter spec (Task 3).
+    Point omits axis/length; strip/cone include them; all carry colour+intensity."""
+    kind = spec["kind"]
+    px, py, pz = spec["position"]
+    r, g, b = spec["color"]
+    calls = [
+        ("SetLightEmitterKind", (index, kind)),
+        ("SetLightEmitterPosition", (index, px, py, pz)),
+        ("SetLightEmitterRadius", (index, float(spec["radius"]))),
+        ("SetLightEmitterColor", (index, float(r), float(g), float(b))),
+        ("SetLightEmitterIntensity", (index, float(spec["intensity"]))),
+    ]
+    if kind in ("strip", "cone"):
+        ax, ay, az = spec["axis"]
+        calls.append(("SetLightEmitterAxis", (index, ax, ay, az)))
+        calls.append(("SetLightEmitterLength", (index, float(spec["length"]))))
+    return calls
+
+
 def _is_identity_orientation(ori, eps=1e-6):
     (fx, fy, fz), (ux, uy, uz) = ori
     return (abs(fx) < eps and abs(fy - 1.0) < eps and abs(fz) < eps and
@@ -224,6 +244,23 @@ def build_descriptors(ship) -> List[dict]:
         has, region = _light_annotation(sub)
         out[di]["light"] = has
         out[di]["light_region"] = region
+        di += 1
+    # Post-pass: annotate every subsystem descriptor with its baked light
+    # EMITTERS (0..N per subsystem — distinct from the single light-volume
+    # region above). Same re-walk pattern; same property accessor as
+    # _light_annotation. Never lets a bad/absent property crash descriptor
+    # build — falls back to no emitters.
+    di = 0
+    for sub in _iter_subsystems(ship):
+        local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+        if local is None:
+            continue
+        try:
+            from engine.appc.light_emitters import baked_emitters
+            prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
+            out[di]["emitters"] = baked_emitters(prop)
+        except Exception:
+            out[di]["emitters"] = []
         di += 1
     # Object emitters — non-damageable mount markers (shuttle bay, probe
     # launcher). Distinct "mount" kind/state so the pin renderer can style

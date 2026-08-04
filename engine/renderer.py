@@ -75,14 +75,15 @@ _REQUIRED_BINDINGS = frozenset({
 # never fatal. `set_officer_face` also appears as a hard `_h.set_officer_face`
 # call *inside* its own hasattr guard, so it is optional despite that inner ref.
 _OPTIONAL_BINDINGS = frozenset({
-    "cef_execute_javascript", "clear_debug_boxes", "clear_debug_cylinders",
+    "cef_execute_javascript", "clear_debug_boxes", "clear_debug_cones",
+    "clear_debug_cylinders",
     "clear_debug_spheres",
     "clear_spv_overlay_beams",
     "clear_target_reticle",
     "instance_node_world", "instance_surface_points", "play_instance_node_anim",
     "play_instance_node_clip", "set_cloak_dials", "set_cloak_ships",
     "clear_transform_gizmo",
-    "set_debug_boxes", "set_debug_cylinders", "set_debug_spheres",
+    "set_debug_boxes", "set_debug_cones", "set_debug_cylinders", "set_debug_spheres",
     "set_officer_face",
     "set_officer_jaw", "set_spv_overlay_beams",
     "set_target_reticle", "set_transform_gizmo",
@@ -990,6 +991,23 @@ def set_debug_spheres(spheres: list) -> None:
 def clear_debug_spheres() -> None:
     """Clear the debug wireframe spheres. Takes effect next frame()."""
     fn = getattr(_h, "clear_debug_spheres", None)
+    if fn is not None:
+        fn()
+
+
+def set_debug_cones(cones: list) -> None:
+    """Set the world-space debug wireframe cones (SPV cone light-emitter
+    overlay). `cones` is a list of dicts — apex, axis, radius, length, color.
+    Rendered depth-test-off in viewer_mode only. No-ops if the binding is
+    unavailable (headless / pre-rebuild)."""
+    fn = getattr(_h, "set_debug_cones", None)
+    if fn is not None:
+        fn(cones)
+
+
+def clear_debug_cones() -> None:
+    """Clear the debug wireframe cones. Takes effect next frame()."""
+    fn = getattr(_h, "clear_debug_cones", None)
     if fn is not None:
         fn()
 

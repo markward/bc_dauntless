@@ -25,6 +25,8 @@ import json
 
 # Setters whose first argument is a region index (so an edit targets one index).
 _INDEXED_PREFIX = "SetGlowRegion"
+_EMITTER_PREFIX = "SetLightEmitter"
+_INDEXED_PREFIXES = (_INDEXED_PREFIX, _EMITTER_PREFIX)
 
 
 class _Recorder:
@@ -59,8 +61,8 @@ def read_models(module) -> dict:
 
 
 def _replace_key(setter, args):
-    if setter.startswith(_INDEXED_PREFIX) and args:
-        return (setter, args[0])      # same setter AND same region index
+    if setter.startswith(_INDEXED_PREFIXES) and args:
+        return (setter, args[0])      # same setter AND same index
     return (setter,)
 
 
@@ -75,14 +77,15 @@ def set_setter(models, leaf, subsystem, setter, args) -> None:
     calls.append((setter, tuple(args)))
 
 
-def set_region(models, leaf, subsystem, index, calls) -> None:
-    """Replace all SetGlowRegion*(index, ...) calls for a subsystem with `calls`
-    (ordered [(setter, args), ...], each args starting with `index`). Non-glow
-    setters (e.g. SetRadius) and other region indices are left intact."""
+def set_region(models, leaf, subsystem, index, calls, prefix=_INDEXED_PREFIX) -> None:
+    """Replace all <prefix>*(index, ...) calls for a subsystem with `calls`
+    (ordered [(setter, args), ...], each args starting with `index`). Other
+    setters (e.g. SetRadius, or the other indexed prefix) and other indices
+    of the same prefix are left intact."""
     per_sub = models.setdefault(leaf, {})
     existing = per_sub.setdefault(subsystem, [])
     kept = [(s, a) for (s, a) in existing
-            if not (s.startswith(_INDEXED_PREFIX) and a and a[0] == index)]
+            if not (s.startswith(prefix) and a and a[0] == index)]
     kept.extend((s, tuple(a)) for (s, a) in calls)
     per_sub[subsystem] = kept
 
