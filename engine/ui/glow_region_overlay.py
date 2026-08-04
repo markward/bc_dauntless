@@ -141,8 +141,11 @@ def build_emitter_overlay(ship, panel) -> Tuple[List[dict], List[dict], List[dic
                           "radius": float(spec["radius"]),
                           "length": float(spec["length"]), "color": color})
     else:  # cone
+        upv = spec.get("up") or (0.0, 0.0, 1.0)
         cones.append({"apex": center, "axis": _world_dir(ship, spec["axis"]),
                       "radius": float(spec["radius"]),
+                      "radius_y": float(spec.get("radius_y", spec["radius"])),
+                      "up": _world_dir(ship, upv),
                       "length": float(spec["length"]), "color": color})
     return spheres, cylinders, cones
 

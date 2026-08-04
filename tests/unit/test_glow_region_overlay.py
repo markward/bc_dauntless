@@ -456,3 +456,45 @@ def test_emitter_overlay_zero_axis_falls_back_to_default_no_nan():
     n = math.sqrt(sum(a * a for a in ax))
     assert abs(n - 1.0) < 1e-9
     assert not any(v != v for v in ax)   # no NaN component
+
+
+# ----------------------------------------------------------------------
+# Task 4: build_emitter_overlay cone branch carries radius_y + world up
+# ----------------------------------------------------------------------
+
+def test_emitter_overlay_cone_elliptical_carries_radius_y_and_world_up():
+    # Same rotated/translated ship as test_emitter_overlay_cone_transforms_
+    # into_world_space: +90deg about Z, ship at (10,0,0). body up (1,0,0)
+    # -> world (0,1,0) (distinct from the axis transform, so a mix-up would
+    # fail this assertion).
+    rot = TGMatrix3().MakeZRotation(math.pi / 2.0)
+    ship = _Ship(_Pod(_Point(0.0, 0.0, 0.0)), rot=rot, loc=(10.0, 0.0, 0.0))
+    spec = _emitter_spec("cone", position=(1.0, 2.0, 3.0), axis=(0.0, -1.0, 0.0),
+                         radius=0.5, length=4.0)
+    spec["radius_y"] = 1.5
+    spec["up"] = (1.0, 0.0, 0.0)
+    spheres, cyls, cones = build_emitter_overlay(
+        ship, _FakePanel(selected=(0, 0), spec=spec))
+    assert len(cones) == 1
+    c = cones[0]
+    assert c["radius"] == pytest.approx(0.5)
+    assert c["radius_y"] == pytest.approx(1.5)
+    assert c["up"] == pytest.approx((0.0, 1.0, 0.0))
+    n = math.sqrt(sum(a * a for a in c["up"]))
+    assert abs(n - 1.0) < 1e-9
+
+
+def test_emitter_overlay_cone_circular_defaults_radius_y_to_radius():
+    # No explicit "up"/"radius_y" in the spec (legacy circular cone) -> a
+    # still-valid cone dict with radius_y defaulting to radius and up
+    # defaulting to the default (0,0,1) body axis (identity ship rotation
+    # here, so it passes through unchanged).
+    ship = _Ship(_Pod(_Point(0.0, 0.0, 0.0)))
+    spec = _emitter_spec("cone", radius=0.5)
+    assert "radius_y" not in spec and "up" not in spec
+    spheres, cyls, cones = build_emitter_overlay(
+        ship, _FakePanel(selected=(0, 0), spec=spec))
+    assert len(cones) == 1
+    c = cones[0]
+    assert c["radius_y"] == pytest.approx(c["radius"])
+    assert c["up"] == pytest.approx((0.0, 0.0, 1.0))

@@ -997,7 +997,9 @@ def clear_debug_spheres() -> None:
 
 def set_debug_cones(cones: list) -> None:
     """Set the world-space debug wireframe cones (SPV cone light-emitter
-    overlay). `cones` is a list of dicts — apex, axis, radius, length, color.
+    overlay). `cones` is a list of dicts — apex, axis, radius (X), radius_y
+    (Y, defaults to radius for a circular cone), up (world-space, orients
+    the elliptical cross-section; defaults to (0,0,1)), length, color.
     Rendered depth-test-off in viewer_mode only. No-ops if the binding is
     unavailable (headless / pre-rebuild)."""
     fn = getattr(_h, "set_debug_cones", None)

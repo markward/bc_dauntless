@@ -362,8 +362,12 @@ void DebugVolumePass::render(const std::vector<DebugCone>& cones,
         if (!up_valid) {
             const glm::vec3 fallback_up = (std::abs(w.y) < 0.99f) ? glm::vec3(0, 1, 0)
                                                                    : glm::vec3(1, 0, 0);
-            u = glm::normalize(glm::cross(fallback_up, w));
-            v = glm::cross(w, u);
+            // Same forward x up convention as the authored-up branch above
+            // (u = w x fallback_up, v = u x w) -- the previous reversed
+            // operand order (fallback_up x w) produced a mirrored X/Y basis
+            // for a degenerate-up cone.
+            u = glm::normalize(glm::cross(w, fallback_up));
+            v = glm::cross(u, w);
         }
 
         glm::mat4 M(1.0f);
