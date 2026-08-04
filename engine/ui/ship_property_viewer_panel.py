@@ -80,6 +80,11 @@ SCALE_MIN = 0.01
 
 
 class ShipPropertyViewerPanel(Panel):
+    # Actions the dispatch_event undo wrapper does not snapshot around:
+    # "undo" itself, "save"/"cancel" (which clear/discard state wholesale
+    # rather than mutate it), and any "overlay:" chrome toggle.
+    _NO_UNDO_ACTIONS = ("undo", "save", "cancel")
+
     def __init__(self, ship_getter: Callable[[], object]) -> None:
         super().__init__()
         self._ship_getter = ship_getter
@@ -192,6 +197,12 @@ class ShipPropertyViewerPanel(Panel):
         # persisted): descriptor index -> [x, y, z] cumulative degrees
         # since the light was last selected/reset. Reset every open/close.
         self._rotate_accum: dict = {}
+        # Undo stack: list of snapshots (deep copies of the four staged-edit
+        # dicts), one per real mutation. Pending-only — no redo, cleared on
+        # Save. Reset every open/close. See _snapshot_pending/undo.
+        self._undo_stack: list = []
+        # Transient snapshot captured at drag-begin, committed at drag-end.
+        self._drag_undo_before = None
 
     @property
     def name(self) -> str:
@@ -237,6 +248,8 @@ class ShipPropertyViewerPanel(Panel):
         self._scale_clipboard = None
         self._rotate_clipboard = None
         self._rotate_accum = {}
+        self._undo_stack = []
+        self._drag_undo_before = None
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
@@ -283,6 +296,8 @@ class ShipPropertyViewerPanel(Panel):
         self._scale_clipboard = None
         self._rotate_clipboard = None
         self._rotate_accum = {}
+        self._undo_stack = []
+        self._drag_undo_before = None
 
     def frame_to_bounds(self, center, radius: float) -> None:
         """Point the orbit camera at `center` and pull back so the model's
@@ -451,6 +466,37 @@ class ShipPropertyViewerPanel(Panel):
         lst[j] = spec
         self._pending_emitter[i] = lst
         self._last_pushed = None
+
+    # ------------------------------------------------------------------
+    # Undo (pending-only; no redo; cleared on Save)
+    # ------------------------------------------------------------------
+    def _snapshot_pending(self):
+        """Deep copy of the four staged-edit dicts — one undo unit."""
+        import copy
+        return (copy.deepcopy(self._pending_radius),
+                copy.deepcopy(self._pending_light),
+                copy.deepcopy(self._pending_emitter),
+                copy.deepcopy(self._pending_pos))
+
+    def _restore_pending(self, snap) -> None:
+        """Replace the four staged-edit dicts from a snapshot, drop a now-stale
+        emitter selection, and force a CEF re-push."""
+        import copy
+        r, l, e, p = snap
+        self._pending_radius = copy.deepcopy(r)
+        self._pending_light = copy.deepcopy(l)
+        self._pending_emitter = copy.deepcopy(e)
+        self._pending_pos = copy.deepcopy(p)
+        if self._selected_emitter is not None:
+            i, j = self._selected_emitter
+            if not (0 <= i < len(self._descriptors)) \
+                    or self._effective_emitter(i, j) is None:
+                self._selected_emitter = None
+        self._last_pushed = None
+
+    def undo(self) -> None:
+        if self._undo_stack:
+            self._restore_pending(self._undo_stack.pop())
 
     # ------------------------------------------------------------------
     # Transform gizmo (subsystem or light-volume target)
@@ -984,6 +1030,7 @@ class ShipPropertyViewerPanel(Panel):
         origin and the grabbed size value so `_apply_scale_drag` multiplies
         from a stable anchor. For xyz (Box) targets the axis picks the field;
         every other shape is uniform and scales field 0 (the radius)."""
+        self._drag_undo_before = self._snapshot_pending()
         self._axis_drag = axis
         self._axis_grab_param = grab_param
         g = self._active_gizmo()
@@ -1051,6 +1098,7 @@ class ShipPropertyViewerPanel(Panel):
         angle, the grab-start axis/orientation + degree accumulators, and the
         screen-vs-body sign (so a screen-CCW sweep rotates about the axis
         toward the camera)."""
+        self._drag_undo_before = self._snapshot_pending()
         g = self._active_gizmo()
         self._axis_drag = ring
         self._axis_grab_origin = g["origin"] if g else (0.0, 0.0, 0.0)
@@ -1155,6 +1203,7 @@ class ShipPropertyViewerPanel(Panel):
     def _begin_axis_drag(self, axis: int, grab_param: float) -> None:
         """Start an axis drag on `axis` (0/1/2), capturing the fixed drag-start
         body position and world origin so the drag mapping stays stable."""
+        self._drag_undo_before = self._snapshot_pending()
         target = self._active_transform_target()
         if target is None:
             return
@@ -1210,6 +1259,10 @@ class ShipPropertyViewerPanel(Panel):
 
     def _end_axis_drag(self) -> None:
         self._axis_drag = None
+        if self._drag_undo_before is not None:
+            if self._drag_undo_before != self._snapshot_pending():
+                self._undo_stack.append(self._drag_undo_before)
+            self._drag_undo_before = None
 
     def selected_subsystem_sphere(self) -> Optional[dict]:
         """Wireframe sphere for the selected subsystem's damage volume, or None.
@@ -1301,7 +1354,8 @@ class ShipPropertyViewerPanel(Panel):
                     self._coord_clipboard,
                     self._scale_clipboard,
                     self._rotate_clipboard,
-                    tuple(sorted((k, tuple(v)) for k, v in self._rotate_accum.items())))
+                    tuple(sorted((k, tuple(v)) for k, v in self._rotate_accum.items())),
+                    len(self._undo_stack))
         if snapshot == self._last_pushed:
             return None
         self._last_pushed = snapshot
@@ -1342,6 +1396,7 @@ class ShipPropertyViewerPanel(Panel):
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
             "close_overlays": self._close_overlays,
+            "can_undo": bool(self._undo_stack),
         }
         self._close_overlays = False
         return "setShipPropertyViewer(" + json.dumps(payload) + ");"
@@ -1751,6 +1806,21 @@ class ShipPropertyViewerPanel(Panel):
         return (y / s) <= TITLEBAR_H_PT or cls._cursor_over_left_column(x, y, dsf)
 
     def dispatch_event(self, action: str) -> bool:
+        """Public dispatch entry point: wraps `_dispatch_event_inner` with the
+        undo snapshot/record bracket, skipping "undo"/"save"/"cancel" (which
+        themselves clear/discard state) and "overlay:" chrome toggles."""
+        if action in self._NO_UNDO_ACTIONS or action.startswith("overlay:"):
+            return self._dispatch_event_inner(action)
+        before = self._snapshot_pending()
+        result = self._dispatch_event_inner(action)
+        if before != self._snapshot_pending():
+            self._undo_stack.append(before)
+        return result
+
+    def _dispatch_event_inner(self, action: str) -> bool:
+        if action == "undo":
+            self.undo()
+            return True
         if action == "cancel":
             self.close()
             return True
@@ -2198,6 +2268,8 @@ class ShipPropertyViewerPanel(Panel):
             self._pending_pos = {}
             self._saved_emitter.update(self._pending_emitter)
             self._pending_emitter = {}
+            self._undo_stack.clear()
+            self._drag_undo_before = None
             self._last_pushed = None
             return True
         return False
