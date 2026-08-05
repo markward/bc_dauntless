@@ -94,6 +94,20 @@
     pointer-events: auto;
 }
 
+/* Action-tools row (Undo/Pipette/Mirror), stacked directly above
+   #spv-transform-tools: 58px + 40px button + 6px gap = 104px from the
+   bottom. Reuses .spv-tool / .spv-tool.active for button styling;
+   TOOLS_CLUSTER_H_PT in ship_property_viewer_panel.py mirrors this
+   geometry for the click-guard. */
+#spv-action-tools {
+    position: absolute;
+    right: 12px;
+    bottom: 104px;
+    display: flex;
+    gap: 6px;
+    pointer-events: auto;
+}
+
 .spv-tool {
     width: 40px;
     height: 40px;
@@ -116,6 +130,12 @@
     background: rgba(255, 214, 90, 0.85);
     border-color: rgba(255, 240, 180, 0.9);
     color: rgb(40, 24, 8);
+}
+
+.spv-tool--disabled,
+.spv-tool:disabled {
+    opacity: 0.35;
+    pointer-events: none;
 }
 
 /* Subsystem list — same visual language as the target list panel
