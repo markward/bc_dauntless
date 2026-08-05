@@ -105,6 +105,25 @@ TEST(DynamicLightAttenuation, NonPositiveRadiusReturnsZero) {
     EXPECT_FLOAT_EQ(dynamic_light_attenuation(5.0f, -1.0f), 0.0f);
 }
 
+TEST(DynamicLightAttenuation, RadiusRelativeReachAboveShipCeiling) {
+    using renderer::dynamic_light_attenuation;
+    // radius 208 (>> R0): a fragment 30 GU from the light must now be
+    // substantial, not the ~0.0011 the old absolute inverse-square gave.
+    const float far_att = dynamic_light_attenuation(30.0f, 208.0f);
+    EXPECT_GT(far_att, 0.3f)
+        << "station-scale light must reach ~30 GU; old curve gave ~0.001";
+    // Sub-ceiling radius is byte-identical to the old absolute inverse-square.
+    // radius 10 <= R0 => ref == 1 => (w*w)/(d*d+1).
+    const float d = 5.0f, r = 10.0f;
+    const float ratio = d / r;
+    const float w = 1.0f - ratio*ratio*ratio*ratio;
+    const float expected_old = (w*w) / (d*d + 1.0f);
+    EXPECT_FLOAT_EQ(dynamic_light_attenuation(d, r), expected_old);
+    // Boundary invariants hold at large radius too.
+    EXPECT_NEAR(dynamic_light_attenuation(0.0f, 208.0f), 1.0f, 1e-5f);
+    EXPECT_FLOAT_EQ(dynamic_light_attenuation(208.0f, 208.0f), 0.0f);
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // select_dynamic_lights
 // ─────────────────────────────────────────────────────────────────────────

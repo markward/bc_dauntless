@@ -19,7 +19,13 @@ float dynamic_light_attenuation(float d, float radius) {
     if (radius <= 0.0f) return 0.0f;
     const float ratio = d / radius;
     const float w = glm::clamp(1.0f - ratio * ratio * ratio * ratio, 0.0f, 1.0f);
-    return (w * w) / (d * d + 1.0f);
+    // Inverse-square reference grows with radius ABOVE the ship-scale ceiling
+    // (threshold-offset): ref == 1 below the ceiling => legacy curve. See
+    // dynamic_lights.h. MUST bit-match opaque.frag.
+    const float ref = 1.0f + std::max(0.0f, radius - kDynLightShipCeilingGU)
+                              * kDynLightFalloffK;
+    const float dr = d / ref;
+    return (w * w) / (dr * dr + 1.0f);
 }
 
 namespace {

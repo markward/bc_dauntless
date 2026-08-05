@@ -24,6 +24,16 @@ float segment_distance(const glm::vec3& a, const glm::vec3& b,
 /// If you change this, change the shader too.
 float dynamic_light_attenuation(float d, float radius);
 
+// Ship-scale ceiling (GU): dynamic lights at or below this radius keep the
+// legacy absolute inverse-square falloff (ref == 1, byte-identical). Above it,
+// the inverse-square reference grows so a station-scale light stays bright
+// across its (large) volume instead of collapsing at a fixed 1 GU reference.
+// MUST match the literal in opaque.frag.
+constexpr float kDynLightShipCeilingGU = 40.0f;
+// Falloff-reference growth per GU of radius above the ceiling. Tuning knob.
+// MUST match the literal in opaque.frag.
+constexpr float kDynLightFalloffK = 0.3f;
+
 /// Select up to kMaxDynamicLightsPerDraw lights from `lights` that most
 /// strongly affect an instance centered at `instance_center_ws` with
 /// bounding radius `instance_radius_ws`. Score = intensity * luminance(color)

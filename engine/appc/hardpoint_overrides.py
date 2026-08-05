@@ -953,6 +953,11 @@ def _drydock(find):
         p.SetLightEmitterLength(0, 2.0)
 
 
+def _fedstarbase(find):
+    """fedstarbase."""
+    return
+
+
 OVERRIDES = {
     "galaxy": _galaxy,
     "GenericTemplate": _GenericTemplate,
@@ -988,4 +993,5 @@ OVERRIDES = {
     "vorcha": _vorcha,
     "warbird": _warbird,
     "drydock": _drydock,
+    "fedstarbase": _fedstarbase,
 }

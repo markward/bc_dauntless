@@ -506,7 +506,11 @@ void main() {
         // ratio*ratio*ratio*ratio, NOT pow(ratio, 4.0): GPU pow is not
         // correctly rounded; must bit-match renderer::dynamic_light_attenuation.
         float w   = clamp(1.0 - ratio*ratio*ratio*ratio, 0.0, 1.0);
-        float att = (w * w) / (d * d + 1.0);
+        // Threshold-offset radius-relative reference (kDynLightShipCeilingGU=40,
+        // kDynLightFalloffK=0.3 in dynamic_lights.h — keep in sync).
+        float ref = 1.0 + max(0.0, radius - 40.0) * 0.3;
+        float dr  = d / ref;
+        float att = (w * w) / (dr * dr + 1.0);
 
         vec3  L  = (lp - v_position_ws) / max(d, 1e-6);
         float nl = max(dot(n, L), 0.0);
