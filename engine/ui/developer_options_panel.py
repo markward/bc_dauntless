@@ -15,17 +15,20 @@ from typing import List, Optional, Tuple
 
 from engine.ui.panel import Panel
 from engine import dev_combat_cheats as cheats
+from engine import dev_light_preview as light_preview
 
 
 class DeveloperOptionsPanel(Panel):
     def __init__(self) -> None:
         super().__init__()
-        self._tabs: List[Tuple[str, str]] = [("combat", "Combat")]
+        self._tabs: List[Tuple[str, str]] = [("combat", "Combat"), ("lighting", "Lighting")]
         self._selected_tab = "combat"
         self._god_mode = cheats.god_mode_active()
         self._double_weapons = cheats.double_player_weapons_active()
         self._no_npc_shields = cheats.disable_npc_shields_active()
         self._disable_collisions = cheats.disable_collisions_active()
+        self._systems_damaged = light_preview.systems_damaged_active()
+        self._systems_disabled = light_preview.systems_disabled_active()
         self._visible = False
         self._focused = -1
         self._last_pushed: Optional[tuple] = None
@@ -44,6 +47,8 @@ class DeveloperOptionsPanel(Panel):
         self._double_weapons = cheats.double_player_weapons_active()
         self._no_npc_shields = cheats.disable_npc_shields_active()
         self._disable_collisions = cheats.disable_collisions_active()
+        self._systems_damaged = light_preview.systems_damaged_active()
+        self._systems_disabled = light_preview.systems_disabled_active()
         self._visible = True
 
     def close(self) -> None:
@@ -55,6 +60,7 @@ class DeveloperOptionsPanel(Panel):
             self._visible, tuple(self._tabs), self._selected_tab,
             self._focused, self._god_mode, self._double_weapons,
             self._no_npc_shields, self._disable_collisions,
+            self._systems_damaged, self._systems_disabled,
         )
         if snapshot == self._last_pushed:
             return None
@@ -71,6 +77,8 @@ class DeveloperOptionsPanel(Panel):
                 "double_weapons": self._double_weapons,
                 "no_npc_shields": self._no_npc_shields,
                 "disable_collisions": self._disable_collisions,
+                "systems_damaged": self._systems_damaged,
+                "systems_disabled": self._systems_disabled,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -102,6 +110,16 @@ class DeveloperOptionsPanel(Panel):
             cheats.set_disable_collisions(new_val)
             self._disable_collisions = new_val
             return True
+        if action == "toggle:systems_damaged":
+            light_preview.set_systems_damaged(not self._systems_damaged)
+            self._systems_damaged = light_preview.systems_damaged_active()
+            self._systems_disabled = light_preview.systems_disabled_active()
+            return True
+        if action == "toggle:systems_disabled":
+            light_preview.set_systems_disabled(not self._systems_disabled)
+            self._systems_damaged = light_preview.systems_damaged_active()
+            self._systems_disabled = light_preview.systems_disabled_active()
+            return True
         if action.startswith("tab:"):
             tab_id = action[len("tab:"):]
             if any(tid == tab_id for tid, _ in self._tabs):
@@ -123,6 +141,8 @@ class DeveloperOptionsPanel(Panel):
         if self._selected_tab == "combat":
             out += [("ctrl", "god_mode"), ("ctrl", "double_weapons"),
                     ("ctrl", "no_npc_shields"), ("ctrl", "disable_collisions")]
+        if self._selected_tab == "lighting":
+            out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled")]
         return out
 
     def handle_input(self, h) -> None:

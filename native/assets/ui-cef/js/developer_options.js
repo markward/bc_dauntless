@@ -24,6 +24,10 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'no_npc_shields'});
         out.push({kind: 'ctrl', target: 'disable_collisions'});
     }
+    if (state.selected_tab === 'lighting') {
+        out.push({kind: 'ctrl', target: 'systems_damaged'});
+        out.push({kind: 'ctrl', target: 'systems_disabled'});
+    }
     return out;
 }
 
@@ -72,6 +76,18 @@ function _doRenderCombatBody(state, focusables) {
     return html;
 }
 
+function _doRenderLightingBody(state, focusables) {
+    const focused = focusables[state.focused] || {};
+    const isFoc = (target) => focused.kind === 'ctrl' && focused.target === target;
+    const s = state.settings;
+    let html = '';
+    html += _doToggleRow('Set Systems Damaged', 'systems_damaged',
+                         s.systems_damaged, isFoc('systems_damaged'));
+    html += _doToggleRow('Set Systems Disabled', 'systems_disabled',
+                         s.systems_disabled, isFoc('systems_disabled'));
+    return html;
+}
+
 function setDeveloperOptions(state) {
     const root = document.getElementById('developer-options-panel');
     if (!root) return;
@@ -84,9 +100,10 @@ function setDeveloperOptions(state) {
     if (tabstrip) tabstrip.innerHTML = _doRenderTabstrip(state, focusables);
     const body = document.getElementById('do-body');
     if (body) {
-        body.innerHTML = (state.selected_tab === 'combat')
-            ? _doRenderCombatBody(state, focusables)
-            : '';
+        body.innerHTML =
+            (state.selected_tab === 'combat')   ? _doRenderCombatBody(state, focusables)
+          : (state.selected_tab === 'lighting') ? _doRenderLightingBody(state, focusables)
+          : '';
     }
     root.style.display = 'flex';
 }
