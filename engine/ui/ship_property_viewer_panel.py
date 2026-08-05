@@ -89,9 +89,16 @@ class ShipPropertyViewerPanel(Panel):
     # rather than mutate it), and any "overlay:" chrome toggle.
     _NO_UNDO_ACTIONS = ("undo", "save", "cancel")
 
-    def __init__(self, ship_getter: Callable[[], object]) -> None:
+    def __init__(self, ship_getter: Callable[[], object],
+                 on_saved: Optional[Callable[[object, dict], None]] = None
+                 ) -> None:
         super().__init__()
         self._ship_getter = ship_getter
+        # Optional caller hook invoked after a successful Save with
+        # (ship, specs_by_sub_id) — see the "save" action handler below.
+        # Construction-time config, not session state: never reset in
+        # open()/close().
+        self._on_saved = on_saved
         self._visible = False
         self._descriptors: List[dict] = []
         self.selected_index: Optional[int] = None
@@ -2419,5 +2426,19 @@ class ShipPropertyViewerPanel(Panel):
             self._undo_stack.clear()
             self._drag_undo_before = None
             self._last_pushed = None
+            if self._on_saved is not None:
+                try:
+                    from engine.ui.ship_property_viewer import _iter_subsystems
+                    specs_by_sub_id = {}
+                    di = 0
+                    for sub in _iter_subsystems(ship):
+                        local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+                        if local is None:
+                            continue                       # same skip as build_descriptors
+                        specs_by_sub_id[id(sub)] = self._effective_emitters(di)
+                        di += 1
+                    self._on_saved(ship, specs_by_sub_id)
+                except Exception:
+                    pass   # live refresh is best-effort; never break Save/persistence
             return True
         return False

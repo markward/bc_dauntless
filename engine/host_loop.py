@@ -6273,6 +6273,8 @@ def run(mission_name: Optional[str] = None,
                 return sess.player if sess is not None else None
             ship_property_viewer = ShipPropertyViewerPanel(
                 ship_getter=_spv_player,
+                on_saved=lambda ship, specs: refresh_ship_emitters(
+                    controller.session, ship, specs),
             )
             dev_mode.register_dev_pause_menu_entry(
                 "Ship Property Viewer", ship_property_viewer.open,
