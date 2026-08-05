@@ -79,8 +79,8 @@ def _galaxy(find):
     p = find("Sensor Array")
     if p is not None:
         p.SetGlowRegionShape(0, "Box")
-        p.SetGlowRegionPosition(0, 0.0, -0.29861956500569303, -0.5)
-        p.SetGlowRegionScale(0, 0.5335676748872048, 0.19850541821587558, 0.15858130015119873)
+        p.SetGlowRegionPosition(0, 0.0, -0.247236337851871, -0.5)
+        p.SetGlowRegionScale(0, 0.5335676748872048, 0.19850541821587558, 0.1565580972394518)
 
 
 def _GenericTemplate(find):
@@ -140,32 +140,37 @@ def _ambassador(find):
     """ambassador."""
     p = find("Sensor Array")
     if p is not None:
-        p.SetGlowRegionShape(0, "Sphere")
-        p.SetGlowRegionRadius(0, 0.4)
+        p.SetGlowRegionShape(0, "Cylinder")
+        p.SetGlowRegionPosition(0, 0.0, 0.2884088383781463, -0.3672613386331434)
+        p.SetGlowRegionAxis(0, 0.0, -0.9167388698405888, 0.3994869766630696)
+        p.SetGlowRegionRadius(0, 0.27890322579841986)
+        p.SetGlowRegionExtent(0, 0.0, 0.21370285093520475)
     p = find("Port Warp")
     if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")
+        p.SetGlowRegionPosition(0, -1.2, -1.8, 0.3)
         p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
         p.SetGlowRegionRadius(0, 0.3)
-        p.SetGlowRegionExtent(0, -2.5, 2.5)
+        p.SetGlowRegionExtent(0, -1.2259416887268986, 1.2259416887268986)
     p = find("Star Warp")
     if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+        p.SetGlowRegionPosition(0, 1.2, -1.8, 0.3)
+        p.SetGlowRegionAxis(0, -0.0, 1.0, 0.0)
         p.SetGlowRegionRadius(0, 0.3)
-        p.SetGlowRegionExtent(0, -2.5, 2.5)
+        p.SetGlowRegionExtent(0, -1.2259416887268986, 1.2259416887268986)
     p = find("Port Impulse")
     if p is not None:
-        p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.3)
-        p.SetGlowRegionExtent(0, 0.0, 2.0)
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, -1.0704943647077587, -0.24373511128921105, 0.4)
+        p.SetGlowRegionScale(0, 0.11640947970758357, 0.09674786008673641, 0.08689860760152306)
+        p.SetGlowRegionOrientation(0, 0.5866210275988871, 0.8098615745785361, 0.0, 0.0, 0.0, 1.0)
     p = find("Star Impulse")
     if p is not None:
-        p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.3)
-        p.SetGlowRegionExtent(0, 0.0, 2.0)
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, 1.0704943647077587, -0.24373511128921105, 0.4)
+        p.SetGlowRegionScale(0, 0.11640947970758357, 0.09674786008673641, 0.08689860760152306)
+        p.SetGlowRegionOrientation(0, -0.5866210275988871, 0.8098615745785361, 0.0, 0.0, 0.0, 1.0)
 
 
 def _birdofprey(find):
@@ -184,10 +189,26 @@ def _birdofprey(find):
         p.SetGlowRegionExtent(0, -0.5312, 0.5312)
     p = find("Impulse Engine")
     if p is not None:
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, 0.0, -0.5899387648717322, 0.03)
+        p.SetGlowRegionScale(0, 0.1199065414319709, 0.08745161469251926, 0.08080578196746682)
+        p.SetLightEmitterKind(0, "point")
+        p.SetLightEmitterPosition(0, 0.0, -0.6269898730574315, 0.03695259794034239)
+        p.SetLightEmitterRadius(0, 0.16520438239518337)
+        p.SetLightEmitterColor(0, 1.0, 0.9834784963569925, 0.8447312668262376)
+        p.SetLightEmitterIntensity(0, 1.0)
+    p = find("Fwd Torpedo")
+    if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")
+        p.SetGlowRegionPosition(0, 0.0, 0.8572529294499402, -0.033764)
         p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.15)
-        p.SetGlowRegionExtent(0, 0.0, 2.0)
+        p.SetGlowRegionRadius(0, 0.03134145990729312)
+        p.SetGlowRegionExtent(0, 0.0, 0.09062154882729402)
+        p.SetLightEmitterKind(0, "point")
+        p.SetLightEmitterPosition(0, 0.0, 0.8197669984830285, -0.033764)
+        p.SetLightEmitterRadius(0, 0.051763776534396094)
+        p.SetLightEmitterColor(0, 1.0, 0.45809755461141033, 0.2607827284788081)
+        p.SetLightEmitterIntensity(0, 2.0)
 
 
 def _bombfreighter(find):
@@ -881,27 +902,34 @@ def _vorcha(find):
     p = find("Port Warp")
     if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")
+        p.SetGlowRegionPosition(0, -1.9, -0.3330593280419536, -0.6)
         p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
         p.SetGlowRegionRadius(0, 0.225)
-        p.SetGlowRegionExtent(0, -1.875, 1.875)
+        p.SetGlowRegionExtent(0, -1.150005929372475, 1.150005929372475)
     p = find("Star Warp")
     if p is not None:
         p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, 1.0, 0.0)
+        p.SetGlowRegionPosition(0, 1.9, -0.3330593280419536, -0.6)
+        p.SetGlowRegionAxis(0, -0.0, 1.0, 0.0)
         p.SetGlowRegionRadius(0, 0.225)
-        p.SetGlowRegionExtent(0, -1.875, 1.875)
+        p.SetGlowRegionExtent(0, -1.150005929372475, 1.150005929372475)
     p = find("Port Impulse")
     if p is not None:
-        p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.25)
-        p.SetGlowRegionExtent(0, 0.0, 2.0)
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, -0.8116406833827726, -0.5409088336822937, -0.05265865539521759)
+        p.SetGlowRegionScale(0, 0.12364295502034257, 0.10482227838699068, 0.03141743612188066)
+        p.SetGlowRegionOrientation(0, 0.0, 1.0, 0.0, -0.19280795802661935, 0.0, 0.9812365114087457)
     p = find("Star Impulse")
     if p is not None:
-        p.SetGlowRegionShape(0, "Cylinder")
-        p.SetGlowRegionAxis(0, 0.0, -1.0, 0.0)
-        p.SetGlowRegionRadius(0, 0.25)
-        p.SetGlowRegionExtent(0, 0.0, 2.0)
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, 0.8116406833827726, -0.5409088336822937, -0.05265865539521759)
+        p.SetGlowRegionScale(0, 0.12364295502034257, 0.10482227838699068, 0.03141743612188066)
+        p.SetGlowRegionOrientation(0, -0.0, 1.0, 0.0, 0.19280795802661935, 0.0, 0.9812365114087457)
+    p = find("Aft Torpedo")
+    if p is not None:
+        p.SetGlowRegionShape(0, "Box")
+        p.SetGlowRegionPosition(0, 0.0, -0.5604198304861678, -0.037517662719546124)
+        p.SetGlowRegionScale(0, 0.08011480331046698, 0.07592416385128685, 0.05345113721427131)
 
 
 def _warbird(find):
