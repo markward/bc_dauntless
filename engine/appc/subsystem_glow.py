@@ -92,7 +92,13 @@ def impulse_gain(frac: float, now: float, powered: bool) -> float:
 
 
 def glow_state(sub) -> str:
-    """Three-state classification. Destroyed dominates disabled; None=healthy."""
+    """Three-state classification. Destroyed dominates disabled; None=healthy.
+    A dev-only forced-state preview (Developer Options -> Lighting) overrides
+    this for ALL subsystems when set -- purely visual, gated on dev mode."""
+    from engine import dev_light_preview          # lazy: avoids an import cycle
+    forced = dev_light_preview.forced_glow_state()
+    if forced is not None:
+        return forced
     if sub is None:
         return HEALTHY
     if sub.IsDestroyed():

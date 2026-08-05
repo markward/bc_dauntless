@@ -113,12 +113,16 @@ def test_render_payload_shape(panel):
     p.open()
     body = _body(p.render_payload())
     assert body["visible"] is True
-    assert body["tabs"] == [{"id": "combat", "label": "Combat"}]
+    assert body["tabs"] == [
+        {"id": "combat", "label": "Combat"},
+        {"id": "lighting", "label": "Lighting"},
+    ]
     assert body["selected_tab"] == "combat"
     assert body["focused"] == -1  # nothing keyboard-focused on first paint
     assert body["settings"] == {
         "god_mode": False, "double_weapons": False, "no_npc_shields": False,
         "disable_collisions": False,
+        "systems_damaged": False, "systems_disabled": False,
     }
 
 
@@ -188,6 +192,7 @@ def test_focusables_order(panel):
     p, _ = panel
     assert p._focusables() == [
         ("tab", "combat"),
+        ("tab", "lighting"),
         ("ctrl", "god_mode"),
         ("ctrl", "double_weapons"),
         ("ctrl", "no_npc_shields"),
