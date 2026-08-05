@@ -104,6 +104,16 @@ def test_save_invokes_on_saved_with_effective_specs(spv_panel_factory):
     assert isinstance(ship, _FakeShip)
     # specs is keyed by id(sub); at least one sub maps to a non-empty list
     assert any(v for v in specs.values())
+    # strengthen: the edit targeted descriptor i=0 ("Center Impulse"), which
+    # walks _iter_subsystems(ship) 1:1 (GetHull first, GetSensorSubsystem
+    # second) to di=0 -> ship._hull. A di off-by-one that mapped the edit
+    # onto the wrong subsystem would slip past the loose `any(...)` check
+    # above but not this: the EDITED sub must carry the new emitter, and the
+    # UN-edited sub must not.
+    assert id(ship._hull) in specs
+    assert len(specs[id(ship._hull)]) == 1
+    assert specs[id(ship._hull)][0]["kind"] == "point"
+    assert not specs.get(id(ship._sensors))
 
 
 def test_save_without_callback_does_not_crash(spv_panel_factory):
