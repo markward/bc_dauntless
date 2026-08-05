@@ -953,6 +953,26 @@ def _drydock(find):
         p.SetLightEmitterLength(0, 2.0)
 
 
+def _fedstarbase(find):
+    """fedstarbase."""
+    p = find("Hull")
+    if p is not None:
+        p.SetLightEmitterKind(0, "strip")
+        p.SetLightEmitterPosition(0, 62.44713303459625, 46.03170753401255, -25.486313338490277)
+        p.SetLightEmitterRadius(0, 207.9835039135548)
+        p.SetLightEmitterColor(0, 0.2869877287132258, 1.0, 0.2526304206828842)
+        p.SetLightEmitterIntensity(0, 17.0)
+        p.SetLightEmitterAxis(0, 0.0, -1.0, 0.0)
+        p.SetLightEmitterLength(0, 98.69393115206306)
+        p.SetLightEmitterKind(1, "strip")
+        p.SetLightEmitterPosition(1, -62.44713303459625, 46.03170753401255, -25.486313338490277)
+        p.SetLightEmitterRadius(1, 207.9835039135548)
+        p.SetLightEmitterColor(1, 0.2869877287132258, 1.0, 0.2526304206828842)
+        p.SetLightEmitterIntensity(1, 17.0)
+        p.SetLightEmitterAxis(1, -0.0, -1.0, 0.0)
+        p.SetLightEmitterLength(1, 98.69393115206306)
+
+
 OVERRIDES = {
     "galaxy": _galaxy,
     "GenericTemplate": _GenericTemplate,
@@ -988,4 +1008,5 @@ OVERRIDES = {
     "vorcha": _vorcha,
     "warbird": _warbird,
     "drydock": _drydock,
+    "fedstarbase": _fedstarbase,
 }
