@@ -931,7 +931,7 @@ def _rotate_body(R, v):
     return (off.x, off.y, off.z)
 
 
-def _build_ship_emitter_cache(ship):
+def _build_ship_emitter_cache(ship, specs_of=None):
     """Body-frame light-emitter cache for one ship, built once at spawn.
 
     Returns a list of `(sub, is_impulse, phase, spec)` tuples — one per baked
@@ -944,6 +944,12 @@ def _build_ship_emitter_cache(ship):
     desyncs the disabled-state flicker between emitters. Best-effort by
     construction (callers wrap in try/except); a subsystem with no
     `GetProperty` or no baked emitters is simply skipped.
+
+    `specs_of`, if given, is called as `specs_of(sub)` to obtain the spec
+    list for each subsystem instead of reading `sub.GetProperty()` — used by
+    `refresh_ship_emitters` to rebuild the cache from SPV's in-memory
+    effective specs (edited but not yet persisted) without a mission reload.
+    Default (`None`) reproduces the property-read path unchanged.
     """
     from engine.appc import light_emitters
     from engine.appc.subsystem_glow import impulse_engines
@@ -960,16 +966,34 @@ def _build_ship_emitter_cache(ship):
 
     entries = []
     for si, sub in enumerate(_iter_subsystems(ship)):
-        prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
-        if prop is None:
-            continue
-        specs = light_emitters.baked_emitters(prop)
+        if specs_of is None:
+            prop = sub.GetProperty() if hasattr(sub, "GetProperty") else None
+            specs = light_emitters.baked_emitters(prop) if prop is not None else []
+        else:
+            specs = specs_of(sub) or []
         if not specs:
             continue
         is_impulse = id(sub) in impulse_ids
         for j, spec in enumerate(specs):
             entries.append((sub, is_impulse, j * 1.7 + si, spec))
     return entries
+
+
+def refresh_ship_emitters(session, ship, specs_by_sub_id):
+    """Rebuild session.ship_emitters for `ship` from SPV effective specs.
+    `specs_by_sub_id` maps id(subsystem) -> list[spec]. No-op if the ship has
+    no live render instance. Best-effort (never raises)."""
+    if session is None or ship is None:
+        return
+    instances = getattr(session, "ship_instances", None)
+    iid = instances.get(ship) if instances else None
+    if iid is None:
+        return
+    try:
+        session.ship_emitters[iid] = _build_ship_emitter_cache(
+            ship, specs_of=lambda sub: specs_by_sub_id.get(id(sub), []))
+    except Exception as e:
+        dev_mode.log_swallowed("spv live emitter refresh", e)
 
 
 def _build_emitter_light_render_data(ship_instances, ship_emitters):
@@ -6249,6 +6273,8 @@ def run(mission_name: Optional[str] = None,
                 return sess.player if sess is not None else None
             ship_property_viewer = ShipPropertyViewerPanel(
                 ship_getter=_spv_player,
+                on_saved=lambda ship, specs: refresh_ship_emitters(
+                    controller.session, ship, specs),
             )
             dev_mode.register_dev_pause_menu_entry(
                 "Ship Property Viewer", ship_property_viewer.open,
