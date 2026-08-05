@@ -217,6 +217,18 @@ class ShipPropertyViewerPanel(Panel):
         # Pipette eyedropper: armed on the selected target, disarmed by the
         # next source pick (or ESC). Reset every open/close.
         self._pipette_armed = False
+        # Saved (persisted-to-file) edits are an in-memory overlay on top of the
+        # baked descriptors — the live subsystem property is only updated on the
+        # next ship build, so build_descriptors keeps reading the ORIGINAL until
+        # then. This overlay SURVIVES close/reopen of the same ship (so a
+        # re-opened SPV reflects edits saved this session), and is dropped only
+        # when the player ship IDENTITY changes (a respawn applies the file to
+        # the fresh property, making the overlay stale). See open().
+        self._authored_ship_id = None
+        self._saved_radius = {}
+        self._saved_light = {}
+        self._saved_emitter = {}
+        self._saved_pos = {}
 
     @property
     def name(self) -> str:
@@ -239,12 +251,17 @@ class ShipPropertyViewerPanel(Panel):
         self._expanded_groups = set()
         self._pending_radius = {}
         self._pending_light = {}
-        self._saved_light = {}
         self._pending_emitter = {}
-        self._saved_emitter = {}
-        self._saved_radius = {}
         self._pending_pos = {}
-        self._saved_pos = {}
+        # Persist the saved-edit overlay across open/close of the SAME ship so a
+        # re-opened SPV reflects edits saved this session (build_descriptors
+        # reads the still-original property until the next ship build). Drop it
+        # only when the ship identity changed — a respawn already applied the
+        # file to the fresh property, so the stale overlay would shadow it.
+        sid = id(ship) if ship is not None else None
+        if sid != self._authored_ship_id:
+            self._clear_saved_edits()
+            self._authored_ship_id = sid
         self._overlay_open = False
         self._close_overlays = False
         self._axis_drag = None
@@ -269,6 +286,15 @@ class ShipPropertyViewerPanel(Panel):
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self._visible = True
 
+    def _clear_saved_edits(self) -> None:
+        """Drop the persisted-edit overlay. Called from open() when the authored
+        ship identity changed (a respawn applied the file to the fresh property,
+        so the overlay would only shadow the now-correct baked values)."""
+        self._saved_radius = {}
+        self._saved_light = {}
+        self._saved_emitter = {}
+        self._saved_pos = {}
+
     def close(self) -> None:
         self._visible = False
         self._descriptors = []
@@ -282,12 +308,11 @@ class ShipPropertyViewerPanel(Panel):
         self._expanded_groups = set()
         self._pending_radius = {}
         self._pending_light = {}
-        self._saved_light = {}
         self._pending_emitter = {}
-        self._saved_emitter = {}
-        self._saved_radius = {}
         self._pending_pos = {}
-        self._saved_pos = {}
+        # NOTE: _saved_* (and _authored_ship_id) deliberately persist across
+        # close so a reopen of the same ship still shows edits saved this
+        # session. They are dropped in open() on a ship-identity change.
         self._overlay_open = False
         self._close_overlays = False
         self.camera = None
