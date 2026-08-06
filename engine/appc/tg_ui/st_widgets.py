@@ -50,6 +50,22 @@ class STCharacterMenu(STMenu):
     def GetLastChild(self):
         return self._children[-1] if self._children else None
 
+    def GetNthChild(self, n):
+        # TacticalMenuHandlers.GetOrderString:1908 reads the CURRENT order's
+        # button via GetNthChild(iIndex) and, when it is disabled, walks from
+        # GetFirstChild to the first ENABLED order instead. Without this the
+        # lookup fell through to a truthy _Stub, `not pButton.IsEnabled()`
+        # was False, and the fallback never ran -- GetTactic()/GetManeuver()
+        # kept reporting a tactic UpdateOrderMenus had just disabled. For the
+        # two attack orders g_dAIs has no (order, None, None) catch-all, so
+        # ChooseAIFromOrders then returned (None, None) and StartPlayerAI
+        # bailed at :1838: the tactical officer never engaged.
+        #
+        # Explicit bounds rather than a bare index: a negative n must be None,
+        # not Python's wrap-around to a real button from the other end.
+        i = int(n)
+        return self._children[i] if 0 <= i < len(self._children) else None
+
     def GetNextChild(self, child):
         try:
             i = self._children.index(child)
@@ -127,6 +143,33 @@ class STSubPane(TGPane):
     def SetExpandToFillParent(self, *_args) -> None:
         # TacticalMenuHandlers:644 opts out of fill-to-parent layout.
         pass
+
+    def GetButtonW(self, label) -> "STButton | None":
+        """Child button by label, or None when absent.
+
+        SWIG declares GetButtonW on STSubPane itself, not on TGPane
+        (sdk/Build/scripts/App.py:7781), and wraps the result as
+        `if val: val = STButtonPtr(val)` -- a NULL button stays falsy, so
+        None-when-absent is the faithful contract (same as STMenu.GetButtonW).
+
+        QuickBattle builds the AI Level selector as a bare STSubPane
+        (QuickBattle.py:1587) and drives the Low/Medium/High radio state
+        through `g_pAIMenu.GetButtonW(label).SetChosen(n)` (:2485-2487,
+        :2545-2555). Without this override the lookup fell through
+        TGObject.__getattr__ to a truthy _Stub and every SetChosen was a
+        silent no-op.
+
+        Linear scan over TGPane's `_children` rather than a parallel
+        label->button dict: STSubPane children arrive through the inherited
+        TGPane.AddChild/InsertChild/DeleteChild, so a second registry would be
+        a duplicate source of truth that those three would have to maintain.
+        Menus stay in the single digits.
+        """
+        key = str(label)
+        for child, _x, _y in self._children:
+            if isinstance(child, STButton) and child.GetLabel() == key:
+                return child
+        return None
 
 
 # ── Module-level registry (SDK: SortedRegionMenu_* module functions) ─────────

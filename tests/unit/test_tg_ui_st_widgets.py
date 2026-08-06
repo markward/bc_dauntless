@@ -133,3 +133,62 @@ def test_new_casts():
 def test_sorted_region_menu_clear_info_is_noop():
     m = SortedRegionMenu_CreateW("Set Course")
     m.ClearInfo()  # must not raise
+
+
+def test_subpane_get_button_w_returns_the_real_button():
+    # QuickBattle.py:1587 builds the AI Level selector as an STSubPane, adds
+    # Low/Medium/High STButtons, then drives the radio state through
+    # g_pAIMenu.GetButtonW(label).SetChosen(n) (:2485-2487, :2545-2555).
+    # STSubPane extends TGPane, which has no label lookup, so GetButtonW fell
+    # through TGObject.__getattr__ to a truthy _Stub and every SetChosen was a
+    # silent no-op -- the AI Level radio stayed on whatever CreateAIMenu chose.
+    # SWIG declares GetButtonW on STSubPane itself (sdk/.../App.py:7781).
+    pane = STSubPane_Create(10.0, 10.0, 1)
+    low, medium = STButton("Low"), STButton("Medium")
+    pane.AddChild(low)
+    pane.AddChild(medium)
+    assert pane.GetButtonW("Medium") is medium
+    assert pane.GetButtonW("Low") is low
+
+
+def test_subpane_get_button_w_returns_none_when_absent():
+    # `if val: val = STButtonPtr(val)` in the SWIG wrapper (App.py:7781-7784)
+    # means a NULL button stays falsy. None-when-absent is the faithful
+    # contract, matching STMenu.GetButtonW.
+    pane = STSubPane_Create(10.0, 10.0, 1)
+    pane.AddChild(STButton("Low"))
+    assert pane.GetButtonW("High") is None
+
+
+def test_subpane_get_button_w_ignores_non_button_children():
+    # STStylizedWindow.AddChild(g_pAIMenu) style nesting means a subpane's
+    # children are not all buttons; a submenu sharing a label must not be
+    # returned where the SDK expects an STButton to SetChosen on.
+    pane = STSubPane_Create(10.0, 10.0, 1)
+    pane.AddChild(STCharacterMenu_CreateW("Low"))
+    assert pane.GetButtonW("Low") is None
+
+
+def test_character_menu_nth_child_indexes_children():
+    # SWIG puts GetNthChild on TGPane (sdk/.../App.py:1352), the common
+    # ancestor of STCharacterMenu via STMenu->TGWindow->TGPane. Our STMenu
+    # descends from ObjectClass instead, so the whole child-traversal family
+    # is hand-added here -- GetFirstChild/GetNextChild already were,
+    # GetNthChild was not, and fell through to a truthy _Stub.
+    m = STCharacterMenu_CreateW("Tactics")
+    b0, b1, b2 = STButton("At Will"), STButton("Left"), STButton("Right")
+    m.AddChild(b0)
+    m.AddChild(b1)
+    m.AddChild(b2)
+    assert m.GetNthChild(0) is b0
+    assert m.GetNthChild(2) is b2
+
+
+def test_character_menu_nth_child_out_of_range_is_none():
+    # TacticalMenuHandlers.GetOrderString dereferences the result directly
+    # (`pButton.IsEnabled()`), so an out-of-range index must be a real None
+    # the caller can crash on visibly, not a truthy stub that silently lies.
+    m = STCharacterMenu_CreateW("Tactics")
+    m.AddChild(STButton("At Will"))
+    assert m.GetNthChild(1) is None
+    assert m.GetNthChild(-1) is None
