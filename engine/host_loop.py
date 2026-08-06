@@ -1125,14 +1125,15 @@ PHASER_BEAM_WIDTH_MUTATOR = 3.0
 
 # Brightness scale on phaser beam colours (additive blend) — dims the beam
 # without touching the hardpoint hue. Mirrors TRACTOR_BEAM_BRIGHTNESS below.
-PHASER_BEAM_BRIGHTNESS = 0.75
+PHASER_BEAM_BRIGHTNESS = 0.6
 
 # Brightness scale on torpedo quad layer colours (core, glow, flares) — a
 # visual-calibration knob, not an authenticity one. Colors themselves are now
 # audit-authentic (weapon-firing-mechanics.md); the glow layer draws at
 # additive alpha 1.2 (BC's two emissive passes, 0.8 + 0.4), so start at 1.0
-# and dial by eye in QuickBattle if the HDR pipeline reads too hot.
-TORPEDO_BRIGHTNESS = 1.0
+# and dial by eye in QuickBattle if the HDR pipeline reads too hot. Dialled to
+# 0.5 (half of the audit-authentic colours) — they read too hot on screen.
+TORPEDO_BRIGHTNESS = 0.5
 
 # BC's firing-ship attach gate is light.radius × 100 (weapon-firing-mechanics
 # audit §5.5); we fold it into the emitted radius because our light
