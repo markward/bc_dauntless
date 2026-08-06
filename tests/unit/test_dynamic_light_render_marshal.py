@@ -61,10 +61,13 @@ def test_photon_torpedo_emits_exactly_one_light():
     entry = out[0]
     assert entry["position"] == pytest.approx((5.0, 6.0, 7.0))
     assert entry["color"] == pytest.approx(_color_tuple(glow_color)[:3])
-    # photon: glow_size_a=3.0, glow_size_b=0.3 -> max=3.0
+    # photon: glow_size_a=3.0, glow_size_b=0.3 -> max=3.0. Radius = the scale
+    # (a live tuning knob — "Tune live in QuickBattle"; halved to 50 after
+    # Mark's live pass) times glow_size. Pin against the named constant, NOT a
+    # bare literal, so a re-tune of the scale doesn't orphan this test — same
+    # treatment as the intensity assertion below.
     assert entry["radius"] == pytest.approx(
         _TORPEDO_LIGHT_RADIUS_SCALE * 3.0)
-    assert entry["radius"] == pytest.approx(100.0 * 3.0)
     # Intensity is a tuning knob (VFX calibrate-up-then-down convention), not
     # audit-pinned evidence, so pin it against the named constant rather than
     # a bare literal — plus a sanity floor so a future accidental 0.0 fails.
