@@ -1051,7 +1051,54 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters):
             except Exception as _e:
                 dev_mode.log_swallowed("emitter light produce", _e)
                 continue
+    _log_emitter_light_census(out, ship_instances, ship_emitters, now)
     return out
+
+
+# Dev-only census throttle: game-time of the last emitter-light summary print.
+_last_emitter_census_gt = -1.0
+EMITTER_CENSUS_PERIOD_S = 5.0
+
+
+def _log_emitter_light_census(lights, ship_instances, ship_emitters, now) -> None:
+    """Print what the emitter producer actually emitted (--developer only).
+
+    Answers the one question static analysis cannot: in a LIVE mission, do a
+    given ship's authored emitters reach the frame at all? Prints one line per
+    ship that owns emitters plus the frame total, every
+    `EMITTER_CENSUS_PERIOD_S` seconds of GAME time (so it stays quiet under
+    pause). Purely diagnostic — never raises, and never runs in production."""
+    global _last_emitter_census_gt
+    if not dev_mode.is_enabled():
+        return
+    try:
+        # `now` runs backwards across a mission swap (game time restarts), so
+        # treat that as "print again" rather than silently suppressing forever.
+        if (_last_emitter_census_gt >= 0.0
+                and 0.0 <= now - _last_emitter_census_gt < EMITTER_CENSUS_PERIOD_S):
+            return
+        _last_emitter_census_gt = now
+        rows = []
+        for ship, iid in ship_instances.items():
+            entries = ship_emitters.get(iid)
+            if not entries:
+                continue
+            try:
+                name = ship.GetName()
+            except Exception:
+                name = "<unnamed>"
+            rows.append(f"{name!r} iid={iid} cached={len(entries)}")
+        print(f"[emitter-lights] frame total={len(lights)} "
+              f"(cap {MAX_DYNAMIC_LIGHTS_PER_FRAME}); "
+              f"emitter-owning ships: {'; '.join(rows) or 'NONE'}", flush=True)
+    except Exception as _e:
+        dev_mode.log_swallowed("emitter light census", _e)
+
+
+# Native clamps set_dynamic_lights to this many entries per frame
+# (renderer::kMaxDynamicLightsPerFrame); excess is silently dropped, so the
+# census above reports the total for comparison.
+MAX_DYNAMIC_LIGHTS_PER_FRAME = 64
 
 
 def _build_hit_vfx_render_data():
