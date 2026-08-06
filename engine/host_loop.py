@@ -1141,15 +1141,14 @@ TORPEDO_BRIGHTNESS = 1.0
 _TORPEDO_LIGHT_RADIUS_SCALE = 100.0
 
 # Scalar on the torpedo dynamic-light color; calibration knob (VFX
-# convention: start strong, dial back). Our windowed inverse-square
-# attenuation (denominator d^2+1 in GU) makes a bare 1.0 imperceptible — a
-# 2 GU flyby contributes only ~0.2, a 10 GU pass ~0.01 — whereas BC's
-# original torpedo light was un-attenuated full glow color anywhere inside
-# the gate radius. 20.0 is chosen so a several-GU flyby visibly tints the
-# hull (att ~= 1/(d^2+1) => ~0.8 at 5 GU with intensity 20); deliberately
-# strong for the first live pass — dial DOWN in QuickBattle. Since BC's
-# original was un-attenuated within the gate, err bright rather than dim.
-_TORPEDO_LIGHT_INTENSITY = 20.0
+# convention: start strong, dial back). Linear in the final cast brightness
+# (multiplies the light colour in set_dynamic_lights). A torpedo's radius is
+# _TORPEDO_LIGHT_RADIUS_SCALE × glow_size, which for real torpedoes exceeds
+# the ship-scale ceiling (kDynLightShipCeilingGU=40) — so the radius-relative
+# falloff (see project_dynamic_light_radius_relative_falloff) FLATTENS the
+# curve and the old 20.0 read WAY over the top. Dialed to 1.0 (~5% of the
+# pre-falloff 20.0) after Mark's live pass. Tune live in QuickBattle.
+_TORPEDO_LIGHT_INTENSITY = 1.0
 
 
 def _beam_descriptor_pair(ship, bank, ship_instances):
