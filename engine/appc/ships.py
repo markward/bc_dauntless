@@ -456,18 +456,39 @@ class ShipClass(DamageableObject):
                 st.y - pt.y * st.Dot(pt),
                 st.z - pt.z * st.Dot(pt),
             )
-            sf_proj.Unitize(); st_proj.Unitize()
-            cos_roll = sf_proj.Dot(st_proj)
-            if cos_roll > 1.0: cos_roll = 1.0
-            elif cos_roll < -1.0: cos_roll = -1.0
-            roll_angle = _math.acos(cos_roll)
-            # Sign: positive if (sf_proj × st_proj) is along +pt.
-            sign_axis = sf_proj.Cross(st_proj)
-            if sign_axis.Dot(pt) < 0.0:
-                roll_angle = -roll_angle
-            av_x += pt.x * roll_angle
-            av_y += pt.y * roll_angle
-            av_z += pt.z * roll_angle
+            # Either projection collapses to the zero vector when its source is
+            # collinear with primary_to — a secondary vector parallel to the
+            # target primary direction carries no roll information at all. That
+            # is not an exotic case: any commanded turn of ~90° puts the ship's
+            # current up (anti)parallel to the commanded forward, so
+            # TurnTowardOrientation and TurnTowardDifference both reach it, and
+            # ManeuverLoop hits it on every single loop maneuver.
+            #
+            # Unitize() leaves a zero vector unchanged (math.py:98-108), so the
+            # dot product below would be 0.0 and acos(0) would inject a spurious
+            # π/2 roll about primary_to. The sign check cannot catch it either
+            # (a zero cross product dots to 0.0, which is not < 0). Live symptom:
+            # a loop maneuver commanded as pure pitch got a first setpoint of
+            # (-0.280, 0.000, -0.280) — pitch AND yaw — and swung out of its own
+            # turn plane; the phantom roll also doubled the returned ETA, which
+            # halved the caller's update cadence on top of that.
+            #
+            # The lengths are Unitize()'s return value (pre-normalisation), so
+            # this costs no extra maths. Degenerate ⇒ leave roll_angle at 0.0.
+            sf_proj_len = sf_proj.Unitize()
+            st_proj_len = st_proj.Unitize()
+            if sf_proj_len > 1e-9 and st_proj_len > 1e-9:
+                cos_roll = sf_proj.Dot(st_proj)
+                if cos_roll > 1.0: cos_roll = 1.0
+                elif cos_roll < -1.0: cos_roll = -1.0
+                roll_angle = _math.acos(cos_roll)
+                # Sign: positive if (sf_proj × st_proj) is along +pt.
+                sign_axis = sf_proj.Cross(st_proj)
+                if sign_axis.Dot(pt) < 0.0:
+                    roll_angle = -roll_angle
+                av_x += pt.x * roll_angle
+                av_y += pt.y * roll_angle
+                av_z += pt.z * roll_angle
 
         # 3. Deceleration-aware magnitude. The raw command (|ω| = remaining
         # angle per second) saturates at MaxAngularVelocity for any large
@@ -596,6 +617,49 @@ class ShipClass(DamageableObject):
         forward = self.GetWorldRotation().GetCol(1)
         zero = TGPoint3(0.0, 0.0, 0.0)
         self.TurnDirectionsToDirections(forward, diff, zero, zero)
+
+    def TurnTowardDifference(self, difference_vec) -> float:
+        """Steer through a world-space rotation *delta* and return its ETA.
+
+        The odd one out of the TurnToward* family: the argument is neither a
+        point nor a heading but an axis·angle (rotation) vector — the turn axis
+        scaled by the radians still to turn. Sole SDK caller
+        AI/PlainAI/ManeuverLoop.py:121-126 builds it as
+        ``vTurnAxis`` (model space) → ``MultMatrixLeft(GetWorldRotation())``
+        → ``Scale(fTurnLeft)``, so it arrives already in WORLD frame: do not
+        re-apply the ship rotation to it.
+
+        Both the nose and the roll reference are rotated by the delta and handed
+        to TurnDirectionsToDirections, because the delta is a whole-frame
+        rotation. Steering only the nose would silently ignore any component
+        about the ship's own forward axis — a pure roll leaves forward
+        unchanged, and ManeuverLoop reaches exactly that case whenever its turn
+        axis is model-forward.
+
+        Returns the ETA in seconds from the shared controller. ManeuverLoop
+        halves it to schedule its next update, so a zero return means it
+        re-polls every tick; a zero-length delta is a no-op that preserves any
+        prior setpoint (TurnTowardDirection's convention).
+        """
+        from engine.appc.math import TGMatrix3
+
+        angle = (difference_vec.x ** 2 + difference_vec.y ** 2
+                 + difference_vec.z ** 2) ** 0.5
+        if angle < 1e-9:
+            return 0.0
+        axis = TGPoint3(difference_vec.x / angle,
+                        difference_vec.y / angle,
+                        difference_vec.z / angle)
+        delta = TGMatrix3().MakeRotation(angle, axis)
+
+        R = self.GetWorldRotation()
+        forward, up = R.GetCol(1), R.GetCol(2)
+        target_forward = TGPoint3(forward.x, forward.y, forward.z)
+        target_forward.MultMatrixLeft(delta)
+        target_up = TGPoint3(up.x, up.y, up.z)
+        target_up.MultMatrixLeft(delta)
+        return self.TurnDirectionsToDirections(forward, target_forward,
+                                              up, target_up)
 
     # In-system warp transit speed = this factor × the ship's impulse
     # MaxSpeed — deliberately the same 100× as the player's Ctrl+I boost

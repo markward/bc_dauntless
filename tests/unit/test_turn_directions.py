@@ -106,6 +106,49 @@ def test_clamp_to_max_angular_velocity():
     assert abs(av.z) <= 0.5 + 1e-9
 
 
+def test_secondary_from_collinear_with_primary_target_adds_no_roll():
+    """A secondary vector collinear with primary_to carries no roll information,
+    and must contribute none.
+
+    Projecting secondary_from onto the plane perpendicular to primary_to
+    collapses to the zero vector in that case. Unitize() leaves a zero vector
+    unchanged (math.py:98-108), so the dot product is 0.0 and acos(0) used to
+    inject a spurious π/2 roll about primary_to — a phantom quarter turn that
+    also doubled the returned ETA.
+
+    Reached for real by TurnTowardDifference (ManeuverLoop): a 90° pitch makes
+    the ship's current up exactly antiparallel to the commanded forward. The
+    live symptom was a loop maneuver that yawed out of its own turn plane —
+    observed as a first setpoint of (-0.280, 0.000, -0.280), pitch and yaw at
+    once, where only pitch was commanded."""
+    ship = _make_ship()
+    pf = TGPoint3(0.0, 1.0, 0.0)   # current forward
+    pt = TGPoint3(0.0, 0.0, -1.0)  # 90° pitch down
+    sf = TGPoint3(0.0, 0.0, 1.0)   # current up — antiparallel to pt
+    st = TGPoint3(0.0, 1.0, 0.0)   # up after that pitch
+    ship.TurnDirectionsToDirections(pf, pt, sf, st)
+    av = ship.GetTargetAngularVelocitySetpoint()
+    # Pure rotation about pf × pt = -X, magnitude π/2, nothing along pt.
+    assert av.x == pytest.approx(-math.pi / 2.0, rel=1e-6)
+    assert av.y == pytest.approx(0.0, abs=1e-9)
+    assert av.z == pytest.approx(0.0, abs=1e-9)
+
+
+def test_secondary_to_collinear_with_primary_target_adds_no_roll():
+    """The same collapse on the other projection — secondary_to collinear with
+    primary_to. Both projections are taken, so either can degenerate alone."""
+    ship = _make_ship()
+    pf = TGPoint3(0.0, 1.0, 0.0)
+    pt = TGPoint3(0.0, 0.0, -1.0)
+    sf = TGPoint3(1.0, 0.0, 0.0)   # projects fine
+    st = TGPoint3(0.0, 0.0, -1.0)  # collinear with pt — collapses
+    ship.TurnDirectionsToDirections(pf, pt, sf, st)
+    av = ship.GetTargetAngularVelocitySetpoint()
+    assert av.x == pytest.approx(-math.pi / 2.0, rel=1e-6)
+    assert av.y == pytest.approx(0.0, abs=1e-9)
+    assert av.z == pytest.approx(0.0, abs=1e-9)
+
+
 def test_secondary_both_zero_is_noop_for_secondary():
     """When secondary_from or secondary_to is the zero vector, the
     secondary constraint is skipped entirely (mirrors the SDK guard

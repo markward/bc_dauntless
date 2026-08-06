@@ -16,6 +16,7 @@ bottom of subsystems.py guarantees the normal load order).
 import math as _math
 import random
 
+from engine.core import ids
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.subsystems import (
@@ -1292,12 +1293,37 @@ class TorpedoSystem(WeaponSystem):
             if self._selected_slot == slot:
                 self._selected_slot = None
 
-    def LoadAmmoType(self, slot, count) -> None:
+    def LoadAmmoType(self, slot, count) -> int:
         """Load (+) / unload (-) ``count`` rounds into the type at ``slot``
-        (E3M1.py, MissionLib.LoadTorpedoes).  Clamped to [0, max] by the type."""
+        (E3M1.py, MissionLib.LoadTorpedoes).  Clamped to [0, max] by the type.
+
+        Returns the LEFTOVER — how many of the requested rounds could NOT be
+        loaded.  Not decoration: ``Actions.ShipScriptActions.ReloadShip``:394-395
+        hands the starbase's stock over a type at a time and puts the remainder
+        back, so returning ``None`` crashed the whole starbase dock sequence with
+        ``TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'``::
+
+            iLoadAtStarbase = iLoadAtStarbase - iTorpsToLoad   # stock not offered
+            iLoadLeftover   = pTorpSys.LoadAmmoType(iType, iTorpsToLoad)
+            SetCurrentStarbaseTorpedoLoad(iType, iLoadLeftover + iLoadAtStarbase)
+
+        The contract that arithmetic encodes is conservation: every torpedo is
+        either aboard the ship or still at the starbase, never both and never
+        neither.  So measure what the type actually absorbed rather than
+        re-deriving the clamp here — the type owns its own [0, max] rule, and an
+        undeclared-max (``_unlimited``) type absorbs nothing at all, which this
+        reports honestly as "all leftover" so the mission's starbase stock stays
+        consistent instead of quietly swallowing rounds into an inert reserve.
+        An absent slot likewise keeps the whole request at the starbase; claiming
+        0 there would DELETE the stock.
+        """
+        requested = int(count)
         ammo = self.GetAmmoType(slot)
-        if ammo is not None and hasattr(ammo, "AddAvailable"):
-            ammo.AddAvailable(int(count))
+        if ammo is None or not ids.implements(ammo, "AddAvailable"):
+            return requested
+        before = ammo.GetAvailable()
+        ammo.AddAvailable(requested)
+        return requested - (ammo.GetAvailable() - before)
 
     def GetNumAvailableTorpsToType(self, slot) -> int:
         """Rounds currently loaded for the type at ``slot`` (E3M1.py:2888,
