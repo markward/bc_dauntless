@@ -67,17 +67,55 @@ The editor can emit 7 container types. Dauntless's dispatch lives in `ai_driver.
 | `ConditionalAI` | `ConditionalAIEntity` | `ai.py:596` | ✅ `_tick_conditional` |
 | `PreprocessingAI` | `PreprocessingAIEntity` | `ai.py:481` | ✅ `_tick_preprocessing` |
 | `BuilderAI` (via `MakeBuilderAI.py`) | — | `ai.py:671` | ✅ `_tick_builder` |
-| **`RandomAI`** | `RandomAIEntity` | `ai.py:459` | ❌ **no branch — falls through to `return ai._status`** |
+| `RandomAI` | `RandomAIEntity` | `ai.py:459` | ✅ `_tick_random` (`ai_driver.py:478`) |
 | `CompoundAI` | `CompoundAIEntity` | n/a — emits a call to an `AI.Compound.*` module's `CreateAI`, which returns one of the above | n/a |
 
-### Gap A1 — `RandomAI` is never ticked
+**Every container type is now dispatched.**
 
-`RandomAI` exists as a class with `AddAI` (`ai.py:459–476`) but `tick_ai` has **no
-`isinstance(ai, RandomAI)` branch**, so a `RandomAI` node falls through to `return ai._status`
-and never picks or runs a child. Low blast radius today (its main use is QuickBattle's
-"FlyPointlessly" idle fallback in `QuickBattle/QuickBattleAI.py`), but any authored AI that
-relies on random behaviour selection is silently inert. A `_tick_random` that picks one child
-per evaluation and ticks it closes this.
+### Gap A1 — `RandomAI` is never ticked — ✅ CLOSED 2026-06-29 (`f631cf31`)
+
+_Was: `RandomAI` had the class and `AddAI` but `tick_ai` had no
+`isinstance(ai, RandomAI)` branch, so the node fell through to `return ai._status` and never
+picked or ran a child._
+
+`_tick_random` (`ai_driver.py:478`) closes it, and follows the RE'd original rather than the
+"pick one per evaluation" sketch this section originally proposed: `RandomAI::Update`
+(`0x004917f0`) keeps a per-child *already-tried* array and draws from the **un-tried** entries,
+clearing the flags and re-drawing when a child reports DORMANT/DONE. Drawing with replacement
+would let the same evasive maneuver repeat back-to-back. The node stays `US_ACTIVE` while a
+child runs, because its real use is as an infinite maneuver picker inside a forever-looping
+`SequenceAI` (`AI/Compound/Parts/NoSensorsEvasive.py:47-52`,
+`QuickBattle/QuickBattleAI.py:51-58`).
+
+⚠️ **This section sat stale for five weeks and misled a later session into planning work that
+was already done.** When closing a gap here, edit this file in the same change.
+
+Covered end-to-end by `tests/integration/test_no_sensors_evasive_smoke.py::
+test_losing_sensors_makes_the_ship_actually_jink`, which drives sensors across the disabled
+threshold and asserts the ship accumulates real angular travel — measured 3.68 rad over 20 s,
+and exactly 0.0 with the dispatch branch mutated out. The two older tests in that file assert
+only tree SHAPE and "one tick doesn't raise" on a ship with no impulse engine, so an entirely
+inert evasive passed both; that blind spot is how this gap and the `TurnTowardDifference`
+no-op both survived.
+
+### Observation — a one-shot subsystem kill skips the DISABLED event
+
+Not a gap with a confirmed BC answer, recorded while testing the above.
+`ShipSubsystem._condition_changed` fires `ET_SUBSYSTEM_DISABLED` only on the
+`OPERATIONAL → DISABLED` transition; a condition slammed straight to 0 goes
+`OPERATIONAL → DESTROYED` and fires `ET_SUBSYSTEM_DESTROYED` alone.
+`Conditions/ConditionSystemDisabled` registers for `ET_SUBSYSTEM_DISABLED` /
+`_OPERATIONAL` only, so a subsystem destroyed in a single hit never raises the
+"system disabled" doctrines. Incremental combat damage crosses the disabled line on the way
+down, so the doctrines do fire in ordinary play — which is why this is filed as an observation,
+not a bug. Resolving it needs evidence on whether BC emits both events (or whether the
+condition also watched DESTROYED).
+
+Also worth noting for anyone writing tests against it: `ConditionSystemDisabled` is purely
+event-driven. `SubsystemInfo.IsDisabled()` reads a cached `bDisabled` flag that starts at 0 and
+is only raised by the event handler, and the initial `CheckRootState()` reads that same cold
+flag — so a subsystem already disabled *before* the condition existed reads as healthy forever.
+That is the SDK's own behaviour.
 
 ---
 
@@ -186,8 +224,8 @@ Ordered by leverage.
    faithfulness invisible. Turn §4's first-pass table into a confirmed pass/fail by running the
    audit method below and resolving the ~10 flagged rows. This is the single biggest
    faithfulness lever and is pure verification (no behaviour change for the ✅ rows).
-2. **`RandomAI` dispatch (Gap A1).** Add a `_tick_random` branch to `tick_ai`. Small, isolated,
-   removes a whole inert container type.
+2. ~~**`RandomAI` dispatch (Gap A1).**~~ ✅ **DONE 2026-06-29 (`f631cf31`)**, end-to-end test
+   added 2026-08-06. See Gap A1 above.
 3. **`Avoid Obstacles` / collision-avoidance.** Currently partial; the Compound doctrines assume
    ships don't fly through each other / terrain. Compare `collision_avoidance.py` against the
    SDK preprocessor.
