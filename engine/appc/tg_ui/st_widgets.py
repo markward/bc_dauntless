@@ -50,6 +50,22 @@ class STCharacterMenu(STMenu):
     def GetLastChild(self):
         return self._children[-1] if self._children else None
 
+    def GetNthChild(self, n):
+        # TacticalMenuHandlers.GetOrderString:1908 reads the CURRENT order's
+        # button via GetNthChild(iIndex) and, when it is disabled, walks from
+        # GetFirstChild to the first ENABLED order instead. Without this the
+        # lookup fell through to a truthy _Stub, `not pButton.IsEnabled()`
+        # was False, and the fallback never ran -- GetTactic()/GetManeuver()
+        # kept reporting a tactic UpdateOrderMenus had just disabled. For the
+        # two attack orders g_dAIs has no (order, None, None) catch-all, so
+        # ChooseAIFromOrders then returned (None, None) and StartPlayerAI
+        # bailed at :1838: the tactical officer never engaged.
+        #
+        # Explicit bounds rather than a bare index: a negative n must be None,
+        # not Python's wrap-around to a real button from the other end.
+        i = int(n)
+        return self._children[i] if 0 <= i < len(self._children) else None
+
     def GetNextChild(self, child):
         try:
             i = self._children.index(child)

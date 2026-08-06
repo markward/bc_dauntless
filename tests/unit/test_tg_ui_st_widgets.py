@@ -168,3 +168,27 @@ def test_subpane_get_button_w_ignores_non_button_children():
     pane.AddChild(STCharacterMenu_CreateW("Low"))
     assert pane.GetButtonW("Low") is None
 
+
+def test_character_menu_nth_child_indexes_children():
+    # SWIG puts GetNthChild on TGPane (sdk/.../App.py:1352), the common
+    # ancestor of STCharacterMenu via STMenu->TGWindow->TGPane. Our STMenu
+    # descends from ObjectClass instead, so the whole child-traversal family
+    # is hand-added here -- GetFirstChild/GetNextChild already were,
+    # GetNthChild was not, and fell through to a truthy _Stub.
+    m = STCharacterMenu_CreateW("Tactics")
+    b0, b1, b2 = STButton("At Will"), STButton("Left"), STButton("Right")
+    m.AddChild(b0)
+    m.AddChild(b1)
+    m.AddChild(b2)
+    assert m.GetNthChild(0) is b0
+    assert m.GetNthChild(2) is b2
+
+
+def test_character_menu_nth_child_out_of_range_is_none():
+    # TacticalMenuHandlers.GetOrderString dereferences the result directly
+    # (`pButton.IsEnabled()`), so an out-of-range index must be a real None
+    # the caller can crash on visibly, not a truthy stub that silently lies.
+    m = STCharacterMenu_CreateW("Tactics")
+    m.AddChild(STButton("At Will"))
+    assert m.GetNthChild(1) is None
+    assert m.GetNthChild(-1) is None
