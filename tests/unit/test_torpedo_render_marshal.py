@@ -3,9 +3,9 @@ shape host_io.set_torpedoes expects. Task 2 of the authentic-projectile-
 visuals plan adds disruptor-bolt fields (id, is_disruptor, forward,
 shell_color, bolt_core_color, bolt_length, bolt_width) to every descriptor —
 BOTH torpedo-quad and disruptor-bolt families — because the C++ parser (Task
-3) reads every key unconditionally. TORPEDO_BRIGHTNESS is re-baselined to 1.0
-here (colors are now audit-authentic; dimming belongs to the glow-layer
-alpha, not the marshal)."""
+3) reads every key unconditionally. The audit-authentic colours read too hot on
+screen, so TORPEDO_BRIGHTNESS dims the quad layers' RGB here (alpha untouched);
+disruptor-bolt colours are exempt."""
 import App
 import pytest
 
@@ -63,8 +63,8 @@ def _make_disruptor():
     return t, shell, core
 
 
-def test_torpedo_brightness_rebaselined_to_1_0():
-    assert TORPEDO_BRIGHTNESS == 1.0
+def test_torpedo_brightness_dims_the_quad_layers():
+    assert TORPEDO_BRIGHTNESS == 0.5
 
 
 def test_all_descriptors_carry_the_full_key_set():
@@ -94,10 +94,17 @@ def test_photon_entry_fields():
     assert entry["glow_texture"].endswith("TorpedoGlow.tga")
     assert entry["flares_texture"].endswith("TorpedoFlares.tga")
 
-    # TORPEDO_BRIGHTNESS is now 1.0 — colors round-trip undimmed.
-    assert entry["core_color"] == pytest.approx(_color_tuple(core_color))
-    assert entry["glow_color"] == pytest.approx(_color_tuple(glow_color))
-    assert entry["flares_color"] == pytest.approx(_color_tuple(glow_color))
+    # Quad-layer colors are scaled by TORPEDO_BRIGHTNESS — RGB dimmed, alpha
+    # left alone (the glow layer's additive alpha is the renderer's business).
+    def dimmed(c):
+        r, g, b, a = _color_tuple(c)
+        return (r * TORPEDO_BRIGHTNESS, g * TORPEDO_BRIGHTNESS,
+                b * TORPEDO_BRIGHTNESS, a)
+
+    assert entry["core_color"] == pytest.approx(dimmed(core_color))
+    assert entry["glow_color"] == pytest.approx(dimmed(glow_color))
+    assert entry["flares_color"] == pytest.approx(dimmed(glow_color))
+    assert entry["core_color"][3] == pytest.approx(_color_tuple(core_color)[3])
 
     # Disruptor-only fields still present, at their neutral defaults.
     assert entry["shell_color"] == pytest.approx((1.0, 1.0, 1.0, 1.0))

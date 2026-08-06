@@ -10,9 +10,12 @@ uniform mat4 u_prev_viewproj;  // previous frame proj * view
 
 // Camera-motion-blur tuning — eye-tunable by rebuilding (like the filmic
 // grade). Depthless: the scene is reprojected as if at DISTANCE_GU.
-const float STRENGTH    = 1.0;    // motion-vector multiplier
+const float STRENGTH    = 0.7;    // motion-vector multiplier (dialled 2026-08-06)
 const int   SAMPLES     = 8;      // taps along the vector
-const float MAX_UV      = 0.05;   // cap on motion-vector length (screen frac)
+// Cap on motion-vector length (screen frac). Scaled alongside STRENGTH: fast
+// camera motion saturates this clamp, so leaving it at 0.05 would keep
+// full-length trails during exactly the hard turns where blur reads loudest.
+const float MAX_UV      = 0.04;
 const float DISTANCE_GU = 100.0;  // assumed scene distance (game units)
 
 void main() {
