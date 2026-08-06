@@ -1137,8 +1137,10 @@ TORPEDO_BRIGHTNESS = 1.0
 # BC's firing-ship attach gate is light.radius × 100 (weapon-firing-mechanics
 # audit §5.5); we fold it into the emitted radius because our light
 # attenuates with distance (BC's did not — its radius only gated
-# attachment). Tune live in QuickBattle.
-_TORPEDO_LIGHT_RADIUS_SCALE = 100.0
+# attachment). Halved to 50 after Mark's live pass — the ×100 range read too
+# far (and above the radius-relative ship ceiling it flattens, extending the
+# glow further still). Halving the scale halves the reach. Tune live in QuickBattle.
+_TORPEDO_LIGHT_RADIUS_SCALE = 50.0
 
 # Scalar on the torpedo dynamic-light color; calibration knob (VFX
 # convention: start strong, dial back). Linear in the final cast brightness
