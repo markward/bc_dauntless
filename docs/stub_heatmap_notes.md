@@ -10,20 +10,48 @@ So investigation notes about an open stub go **here**, keyed by `owner / attr`.
 
 ---
 
-## App / ET_PLAYER_TORPEDO_TYPE_CHANGED
+## App / ET_PLAYER_TORPEDO_TYPE_CHANGED — RESOLVED 2026-08-06 (live-verified)
 
-_Recovered 2026-08-05 from `git show f855271b:docs/stub_heatmap.md` — it had been
-written into the `markedResolvedOn` cell and was destroyed by the 2026-07-26
-regeneration._
+_Note recovered 2026-08-05 from `git show f855271b:docs/stub_heatmap.md` — it had
+been written into the `markedResolvedOn` cell and was destroyed by the 2026-07-26
+regeneration. Resolved the next day._
 
-LIVE GAP: BC fires this when the player changes torpedo type;
-`TacticalCharacterHandlers.PlayerTorpChanged` speaks the officer callout
-(`LoadingPhoton` / `LoadingQuantum`, or `PhotonsOnlyDaunt` for a 1-type Galaxy).
-Undefined in `events.py` and never dispatched — our CEF switch drives
-`weapon_config` directly and bypasses it, so the switch **works** but the officer
-stays silent. Wiring it = define the event + dispatch on `cycle_torpedo_type` +
-register the two SDK `PlayerTorpChanged` handlers. Not the torpedo count/fire
-bug (fixed 2026-07-17).
+Was: BC fires this when the player changes torpedo type and
+`TacticalCharacterHandlers.PlayerTorpChanged` speaks the callout (`LoadingPhoton` /
+`LoadingQuantum` / `LoadingTorps`, or `PhotonsOnlyDaunt` for a 1-type Galaxy). The
+switch worked; Felix stayed silent.
+
+**The note's plan was wrong about the work, in an instructive way.** It said
+"register the two SDK `PlayerTorpChanged` handlers" — but the SDK already
+registers them itself, every bridge load: `AttachMenuToTactical`
+(`Bridge/TacticalCharacterHandlers.py:59`) is called from
+`Bridge/Characters/Felix.py:187`. Only the CONSTANT and the DISPATCH were missing.
+
+**Diagnostic worth reusing:** the heatmap's `EventType | <name>` row *is*
+`events._validate_event_type` logging a live SDK registration against an undefined
+constant. This one read 498 hits across 103/194 runs — i.e. the SDK was
+registering that handler on nearly every run and it could never fire, because an
+undefined `App.ET_*` vends a fresh `_NamedStub` per access. **A high-coverage
+`EventType` row therefore means the SDK side is already wired and the fix is just
+"define the constant + post the event" — cheap.** Contrast a bare `App | ET_*` row
+with no `EventType` twin, which only tells you something read the name.
+
+Id `0x00800068` came from the live constant dump
+(`tools/probes/results/q13_constants_battle.txt:523`), completing the measured
+torpedo cluster (...65 reload, ...66 fired, ...67 ammo-consumed, ...68
+type-changed) — worth checking those dumps before ever inventing an id.
+
+Shipped in `976677b6`; dispatch + both gates live in
+`weapon_subsystems.TorpedoSystem._announce_player_type_change`.
+
+**Resolved with a MINUTE, not a date** (`2026-08-06 11:14`, the merge to main) —
+`parse_resolved_date` accepts `YYYY-MM-DD HH:MM`. Use that form whenever the fix
+lands the same day a run recorded the stub, because a bare date resolves to
+23:59:59 and silently swallows every post-fix hit that day. Here it matters:
+the 11:13 run still hit this stub 6 times, because the fix was committed on a
+branch at 10:43 and the working tree was switched back to main at ~10:45 to start
+unrelated work — so the live run genuinely did not contain it. With the minute
+form, any hit after 11:14 is correctly flagged REGRESSED instead of hidden.
 
 ## ShipClass / TurnTowardDifference — RESOLVED 2026-08-06
 
