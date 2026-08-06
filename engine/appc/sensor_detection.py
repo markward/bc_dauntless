@@ -168,6 +168,35 @@ def can_detect(observer, target) -> bool:
     return (dx * dx + dy * dy + dz * dz) <= (r * r)
 
 
+def clear_undetectable_player_lock(player) -> None:
+    """Drop *player*'s weapon lock once its target stops being detectable.
+
+    AI ships re-select through SelectTarget, which drops a contact its sensors
+    can no longer see. The player has no such preprocessor, so without this the
+    lock outlives the contact: the target list empties (its gate consults the
+    sensors) while the reticle stays welded to a ship you can neither see nor
+    fire on. Live-reported at 0% sensor power, 2026-08-06.
+
+    Gates on ``can_detect`` — the same predicate the firing chokepoint uses
+    (host_loop.py:716) — so lock and fire agree by construction. It subsumes
+    the cloak-only ``is_hidden_by_cloak`` check this replaced (cloak is its
+    first gate) and additionally covers dead/unpowered sensors, effective
+    range, and nebula concealment. Sensors at 0% power land here via
+    ``effective_sensor_range``'s GetNormalPowerPercentage() factor, which
+    collapses range to 0.0 whether or not the subsystem reports _is_offline.
+
+    Clearing the target also silences the weapons: FireWeapons no-ops with no
+    target.
+    """
+    if player is None:
+        return
+    target = player.GetTarget()
+    if target is None:
+        return
+    if not can_detect(player, target):
+        player.SetTarget(None)
+
+
 # ── AI candidate-selection gate ───────────────────────────────────────────────
 # The SDK's SelectTarget.FindGoodTarget and StarbaseAttack.GetTargets both
 # enumerate candidates via ObjectGroup.GetActiveObjectTupleInSet, which has no
