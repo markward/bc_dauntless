@@ -133,3 +133,38 @@ def test_new_casts():
 def test_sorted_region_menu_clear_info_is_noop():
     m = SortedRegionMenu_CreateW("Set Course")
     m.ClearInfo()  # must not raise
+
+
+def test_subpane_get_button_w_returns_the_real_button():
+    # QuickBattle.py:1587 builds the AI Level selector as an STSubPane, adds
+    # Low/Medium/High STButtons, then drives the radio state through
+    # g_pAIMenu.GetButtonW(label).SetChosen(n) (:2485-2487, :2545-2555).
+    # STSubPane extends TGPane, which has no label lookup, so GetButtonW fell
+    # through TGObject.__getattr__ to a truthy _Stub and every SetChosen was a
+    # silent no-op -- the AI Level radio stayed on whatever CreateAIMenu chose.
+    # SWIG declares GetButtonW on STSubPane itself (sdk/.../App.py:7781).
+    pane = STSubPane_Create(10.0, 10.0, 1)
+    low, medium = STButton("Low"), STButton("Medium")
+    pane.AddChild(low)
+    pane.AddChild(medium)
+    assert pane.GetButtonW("Medium") is medium
+    assert pane.GetButtonW("Low") is low
+
+
+def test_subpane_get_button_w_returns_none_when_absent():
+    # `if val: val = STButtonPtr(val)` in the SWIG wrapper (App.py:7781-7784)
+    # means a NULL button stays falsy. None-when-absent is the faithful
+    # contract, matching STMenu.GetButtonW.
+    pane = STSubPane_Create(10.0, 10.0, 1)
+    pane.AddChild(STButton("Low"))
+    assert pane.GetButtonW("High") is None
+
+
+def test_subpane_get_button_w_ignores_non_button_children():
+    # STStylizedWindow.AddChild(g_pAIMenu) style nesting means a subpane's
+    # children are not all buttons; a submenu sharing a label must not be
+    # returned where the SDK expects an STButton to SetChosen on.
+    pane = STSubPane_Create(10.0, 10.0, 1)
+    pane.AddChild(STCharacterMenu_CreateW("Low"))
+    assert pane.GetButtonW("Low") is None
+

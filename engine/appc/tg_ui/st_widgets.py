@@ -128,6 +128,33 @@ class STSubPane(TGPane):
         # TacticalMenuHandlers:644 opts out of fill-to-parent layout.
         pass
 
+    def GetButtonW(self, label) -> "STButton | None":
+        """Child button by label, or None when absent.
+
+        SWIG declares GetButtonW on STSubPane itself, not on TGPane
+        (sdk/Build/scripts/App.py:7781), and wraps the result as
+        `if val: val = STButtonPtr(val)` -- a NULL button stays falsy, so
+        None-when-absent is the faithful contract (same as STMenu.GetButtonW).
+
+        QuickBattle builds the AI Level selector as a bare STSubPane
+        (QuickBattle.py:1587) and drives the Low/Medium/High radio state
+        through `g_pAIMenu.GetButtonW(label).SetChosen(n)` (:2485-2487,
+        :2545-2555). Without this override the lookup fell through
+        TGObject.__getattr__ to a truthy _Stub and every SetChosen was a
+        silent no-op.
+
+        Linear scan over TGPane's `_children` rather than a parallel
+        label->button dict: STSubPane children arrive through the inherited
+        TGPane.AddChild/InsertChild/DeleteChild, so a second registry would be
+        a duplicate source of truth that those three would have to maintain.
+        Menus stay in the single digits.
+        """
+        key = str(label)
+        for child, _x, _y in self._children:
+            if isinstance(child, STButton) and child.GetLabel() == key:
+                return child
+        return None
+
 
 # ── Module-level registry (SDK: SortedRegionMenu_* module functions) ─────────
 
