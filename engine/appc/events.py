@@ -42,6 +42,25 @@ ET_WEAPON_FIRED:           int = 0x0080007C
 ET_WEAPON_FIRE_FAILED:     int = 0x00800037
 ET_TORPEDO_AMMO_CONSUMED:  int = 0x00800067
 
+# ── Player torpedo-type switch — REAL BC value from the q13 live constant dump
+# (tools/probes/results/q13_constants_battle.txt:523,
+# `App.ET_PLAYER_TORPEDO_TYPE_CHANGED = 8388712 (0x800068)`).  Note it completes
+# the measured torpedo cluster above: ...65 reload, ...66 fired, ...67
+# ammo-consumed, ...68 type-changed.
+#
+#   Source = the TORPEDO SYSTEM (Bridge/TacticalCharacterHandlers.py:270 casts it
+#            with TorpedoSystem_Cast and reads GetNumAmmoTypes /
+#            GetCurrentAmmoType off it).
+#   Destination = the SHIP, because the SDK registers on the player INSTANCE
+#            (TacticalCharacterHandlers.py:59, inside AttachMenuToTactical, which
+#            Bridge/Characters/Felix.py:187 calls at bridge load).
+#
+# Posted only for the PLAYER's ship and only on a real change — see
+# weapon_subsystems.TorpedoSystem._announce_player_type_change for why both gates
+# matter.  Felix's callout is AT_SAY_LINE "LoadingPhoton" / "LoadingQuantum" /
+# "LoadingTorps", or "PhotonsOnlyDaunt" on a single-type Galaxy.
+ET_PLAYER_TORPEDO_TYPE_CHANGED: int = 0x00800068
+
 # ── Friendly-fire events — REAL BC values from the q13 live constant dump
 # (tools/probes/results/q13_constants_menu.txt:364-366).  MissionLib's
 # FriendlyFireHandler raises REPORT when the accumulator crosses a warning

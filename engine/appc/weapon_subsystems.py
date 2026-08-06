@@ -1417,7 +1417,9 @@ class TorpedoSystem(WeaponSystem):
         populated (leaves the current selection unchanged)."""
         slot = int(slot)
         if slot in self._ammo_by_slot:
+            previous = self.GetCurrentAmmoSlot()
             self._selected_slot = slot
+            self._announce_player_type_change(previous)
 
     def CycleAmmoType(self) -> None:
         """Advance the selection to the next SELECTABLE slot (available > 0 or
@@ -1433,6 +1435,54 @@ class TorpedoSystem(WeaponSystem):
         except ValueError:
             idx = 0
         self._selected_slot = slots[(idx + 1) % len(slots)]
+        self._announce_player_type_change(current)
+
+    def _announce_player_type_change(self, previous_slot) -> None:
+        """Post ET_PLAYER_TORPEDO_TYPE_CHANGED so Felix speaks the switch.
+
+        Called from the only two deliberate-selection writers above.  Deliberately
+        NOT from the slot-removal path (``RemoveAmmoType`` clearing a selected
+        slot): QuickBattle hard-removes a Sovereign's empty PhasedPlasma at setup,
+        and that is curation, not the player switching weapon.
+
+        Two gates, both load-bearing:
+
+        * **Only on a real change.**  ``Actions.ShipScriptActions.ReloadShip``:400
+          ends every starbase dock with ``SetAmmoType(GetAmmoTypeNumber(), 0)`` —
+          re-selecting whatever is already current — so announcing unconditionally
+          would have Felix report a torpedo switch each time the player docks.
+          Compare against the EFFECTIVE previous slot (``GetCurrentAmmoSlot`` falls
+          back to the lowest loaded slot before anything is selected), not the raw
+          ``_selected_slot``, or the first real selection on a fresh system fires
+          spuriously.
+        * **Only for the player.**  BC's ET_PLAYER_ prefix is a locality gate, the
+          same rule ``_broadcast_ammo_consumed_if_player`` already follows.  The
+          SDK registers this handler on the player instance only, so an NPC's
+          event could not be heard anyway — but posting it per NPC ammo switch
+          (AI/Preprocessors ChooseTorpType) is pure noise on the queue.
+
+        Source = this system (the SDK casts it with ``TorpedoSystem_Cast``);
+        destination = the ship (what the SDK registered on).
+        """
+        if self.GetCurrentAmmoSlot() == previous_slot:
+            return
+        import App
+        ship = self.GetParentShip()
+        try:
+            if ship is None or ship is not App.Game_GetCurrentPlayer():
+                return
+        except Exception:
+            return
+        from engine import dev_mode
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_PLAYER_TORPEDO_TYPE_CHANGED)
+            evt.SetSource(self)
+            evt.SetDestination(ship)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed(
+                "ET_PLAYER_TORPEDO_TYPE_CHANGED broadcast", _e)
 
     def SetSkewFire(self, flag) -> None:
         """Pure broadcast to child tubes (0x0057B1C0) — NO system-level
