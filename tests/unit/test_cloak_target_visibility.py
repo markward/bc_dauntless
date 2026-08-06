@@ -97,17 +97,23 @@ def test_cloaked_ship_dropped_from_target_list_view():
         _gmod._current_game = saved
 
 
-def test_player_lock_logic_drops_cloaked_target():
-    """Mirror the host-loop guard: a player lock on a cloaked ship is dropped."""
+def test_player_lock_drops_cloaked_target():
+    """A player lock on a ship that finishes cloaking is dropped.
+
+    Calls the real guard rather than mirroring it. The previous version
+    inlined its own copy of the host-loop `if ... is_hidden_by_cloak(...)`
+    branch, so it could not have noticed the guard changing underneath it --
+    and it didn't when the predicate was widened to can_detect (see
+    tests/unit/test_player_lock_sensor_gate.py).
+    """
+    from engine.appc.sensor_detection import clear_undetectable_player_lock
     _, player, enemy, _ = _scene()
     player.SetTarget(enemy)
     assert player.GetTarget() is enemy
     # Not yet cloaked → lock holds.
-    if player.GetTarget() is not None and is_hidden_by_cloak(player.GetTarget()):
-        player.SetTarget(None)
+    clear_undetectable_player_lock(player)
     assert player.GetTarget() is enemy
     # Fully cloaked → the guard drops it.
     enemy.GetCloakingSubsystem().InstantCloak()
-    if player.GetTarget() is not None and is_hidden_by_cloak(player.GetTarget()):
-        player.SetTarget(None)
+    clear_undetectable_player_lock(player)
     assert player.GetTarget() is None

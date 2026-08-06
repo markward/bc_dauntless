@@ -77,7 +77,7 @@ from engine.appc import (
 from engine.appc import viewscreen_static as _vss
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
-from engine.appc.sensor_detection import can_detect, is_hidden_by_cloak
+from engine.appc.sensor_detection import can_detect, clear_undetectable_player_lock
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.ships import ShipClass
 from engine.appc.ship_death import _out_of_action as _oa
@@ -6721,16 +6721,15 @@ def run(mission_name: Optional[str] = None,
                 # cheap every tick and self-heals the per-bridge-load rebuild.
                 if _player is not None:
                     weapon_tactical_commands.sync(_player)
-                # Drop the player's weapon lock the instant its target finishes
-                # cloaking: you can't hold a lock on (or fire torpedoes at) a
-                # ship you can no longer see. FireWeapons no-ops with no target,
-                # so this also silences the player's weapons and clears the
-                # reticle. AI ships re-select via SelectTarget; the player has
-                # no such preprocessor, so the lock would otherwise persist.
-                if _player is not None and hasattr(_player, "GetTarget"):
-                    _ptgt = _player.GetTarget()
-                    if _ptgt is not None and is_hidden_by_cloak(_ptgt):
-                        _player.SetTarget(None)
+                # Drop the player's weapon lock the instant its target stops
+                # being detectable — cloaked, out of sensor range, lost in a
+                # nebula, or the player's own sensors dead/unpowered. You can't
+                # hold a lock on (or fire torpedoes at) a ship you can no longer
+                # see. FireWeapons no-ops with no target, so this also silences
+                # the player's weapons and clears the reticle. AI ships
+                # re-select via SelectTarget; the player has no such
+                # preprocessor, so the lock would otherwise persist.
+                clear_undetectable_player_lock(_player)
 
                 _scripts = registry.render_all()
                 for _panel_script in _scripts:
