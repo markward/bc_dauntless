@@ -1,6 +1,6 @@
 # Stub Telemetry Heatmap
 
-Accumulated from **201 runs** (2026-07-13 08:53 UTC .. 2026-08-06 14:55 UTC). Open: 230, resolved: 214, regressed: 0.
+Accumulated from **201 runs** (2026-07-13 08:53 UTC .. 2026-08-06 14:55 UTC). Open: 229, resolved: 215, regressed: 0.
 
 _Regression check: a resolved stub hit again (lastSeenOn > markedResolvedOn) is flagged below._
 
@@ -167,79 +167,78 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 155 | App | EnergyWeapon_Cast | 32 | 3/201 | 2026-08-06 10:09 UTC |  |
 | 156 | EnergyWeapon_Cast() | GetMaxCharge | 32 | 3/201 | 2026-08-06 10:09 UTC |  |
 | 157 | EnergyWeapon_Cast() | SetChargeLevel | 32 | 3/201 | 2026-08-06 10:09 UTC |  |
-| 158 | STCharacterMenu | RemoveItemW | 31 | 20/201 | 2026-08-06 11:38 UTC |  |
-| 159 | App | PulseWeaponProperty_Cast | 28 | 5/201 | 2026-08-06 14:55 UTC |  |
-| 160 | PulseWeaponProperty_Cast() | GetOrientationForward | 28 | 5/201 | 2026-08-06 14:55 UTC |  |
-| 161 | PulseWeaponProperty_Cast() | GetOrientationForward().x | 28 | 5/201 | 2026-08-06 14:55 UTC |  |
-| 162 | PulseWeaponProperty_Cast() | GetOrientationForward().y | 28 | 5/201 | 2026-08-06 14:55 UTC |  |
-| 163 | PulseWeaponProperty_Cast() | GetOrientationForward().z | 28 | 5/201 | 2026-08-06 14:55 UTC |  |
-| 164 | App | g_kMusicManager | 21 | 11/201 | 2026-08-06 11:38 UTC |  |
-| 165 | g_kMusicManager | PlayFanfare | 21 | 11/201 | 2026-08-06 11:38 UTC |  |
-| 166 | Waypoint | StartGetSubsystemMatch | 19 | 4/201 | 2026-08-06 10:09 UTC |  |
-| 167 | ShipClass | SetTargetable | 18 | 3/201 | 2026-08-06 10:09 UTC |  |
-| 168 | ShipClass | SetScannable | 16 | 1/201 | 2026-07-13 23:37 UTC |  |
-| 169 | App | TGCondition_Cast | 12 | 1/201 | 2026-07-13 23:37 UTC |  |
-| 170 | TGCondition_Cast() | GetStatus | 12 | 1/201 | 2026-07-13 23:37 UTC |  |
-| 171 | ShipClass | CompleteStop | 11 | 6/201 | 2026-07-17 21:33 UTC |  |
-| 172 | CharacterClass | SetAsExtra | 9 | 3/201 | 2026-08-06 10:09 UTC |  |
-| 173 | App | ET_SB12_RELOAD | 8 | 5/201 | 2026-08-06 10:09 UTC |  |
-| 174 | App | ET_SB12_REPAIR | 8 | 5/201 | 2026-08-06 10:09 UTC |  |
-| 175 | App | __path__ | 8 | 7/201 | 2026-07-14 12:26 UTC |  |
-| 176 | SensorSubsystem | SetNumProbes | 8 | 4/201 | 2026-08-06 10:09 UTC |  |
-| 177 | Game | InGodMode | 6 | 2/201 | 2026-07-16 18:38 UTC |  |
-| 178 | GridClass | GetPhaserSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 179 | GridClass | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 180 | GridClass | GetTorpedoSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 181 | GridClass | GetTractorBeamSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 182 | Sun | GetPhaserSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 183 | Sun | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 184 | Sun | GetTorpedoSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 185 | Sun | GetTractorBeamSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 186 | App | BlinkingLightProperty_Create | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
-| 187 | BlinkingLightProperty_Create() | GetName | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
-| 188 | BlinkingLightProperty_Create() | SetColor | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
-| 189 | BlinkingLightProperty_Create() | SetDuration | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
-| 190 | BlinkingLightProperty_Create() | SetOrientation | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
-| 191 | BlinkingLightProperty_Create() | SetPeriod | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
-| 192 | BlinkingLightProperty_Create() | SetPosition | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
-| 193 | BlinkingLightProperty_Create() | SetRadius | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
-| 194 | ShipSubsystem | SetInvincible | 4 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 195 | App | PSID_INVALID | 3 | 3/201 | 2026-08-06 10:09 UTC |  |
-| 196 | Game | SetGodMode | 3 | 2/201 | 2026-07-16 18:38 UTC |  |
-| 197 | GridClass | GetPhaserSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 198 | GridClass | GetPulseWeaponSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 199 | GridClass | GetTorpedoSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 200 | GridClass | GetTractorBeamSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 201 | Sun | GetPhaserSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 202 | Sun | GetPulseWeaponSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 203 | Sun | GetTorpedoSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 204 | Sun | GetTractorBeamSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
-| 205 | App | ET_CANCEL | 2 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 206 | App | ET_LOAD_GAME | 2 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 207 | ShipClass | IsPlayerShip | 2 | 1/201 | 2026-07-13 13:43 UTC |  |
-| 208 | App | ET_EXITED_WARP | 1 | 1/201 | 2026-07-22 14:57 UTC |  |
-| 209 | App | ET_NEW_GAME | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 210 | App | InterfaceModule_DoTheRightThing | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 211 | App | STStylizedWindow_Create | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 212 | AsteroidField | SetNavPoint | 1 | 1/201 | 2026-07-13 23:37 UTC |  |
-| 213 | AsteroidField | SetStatic | 1 | 1/201 | 2026-07-13 23:37 UTC |  |
-| 214 | EventType | ET_CANCEL | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 215 | EventType | ET_EXITED_WARP | 1 | 1/201 | 2026-07-22 14:57 UTC |  |
-| 216 | EventType | ET_INPUT_TOGGLE_PICK_FIRE | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 217 | EventType | ET_LOAD_GAME | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 218 | EventType | ET_NEW_GAME | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 219 | EventType | ET_WEAPON_FIRED | 1 | 1/201 | 2026-07-13 23:37 UTC |  |
-| 220 | ImpulseEngineSubsystem | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 221 | PhaserSystem | GetObjType | 1 | 1/201 | 2026-07-14 00:15 UTC |  |
-| 222 | STStylizedWindow_Create() | AddChild | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 223 | STStylizedWindow_Create() | InteriorChangedSize | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 224 | STStylizedWindow_Create() | SetVisible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 225 | ShipClass | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 226 | TGEvent | GetCString | 1 | 1/201 | 2026-07-13 23:37 UTC |  |
-| 227 | WarpEngineSubsystem | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 228 | _CinematicWindow | AddChild | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 229 | _CinematicWindow | MoveToFront | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 230 | _CinematicWindow | SetFocus | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 158 | App | PulseWeaponProperty_Cast | 28 | 5/201 | 2026-08-06 14:55 UTC |  |
+| 159 | PulseWeaponProperty_Cast() | GetOrientationForward | 28 | 5/201 | 2026-08-06 14:55 UTC |  |
+| 160 | PulseWeaponProperty_Cast() | GetOrientationForward().x | 28 | 5/201 | 2026-08-06 14:55 UTC |  |
+| 161 | PulseWeaponProperty_Cast() | GetOrientationForward().y | 28 | 5/201 | 2026-08-06 14:55 UTC |  |
+| 162 | PulseWeaponProperty_Cast() | GetOrientationForward().z | 28 | 5/201 | 2026-08-06 14:55 UTC |  |
+| 163 | App | g_kMusicManager | 21 | 11/201 | 2026-08-06 11:38 UTC |  |
+| 164 | g_kMusicManager | PlayFanfare | 21 | 11/201 | 2026-08-06 11:38 UTC |  |
+| 165 | Waypoint | StartGetSubsystemMatch | 19 | 4/201 | 2026-08-06 10:09 UTC |  |
+| 166 | ShipClass | SetTargetable | 18 | 3/201 | 2026-08-06 10:09 UTC |  |
+| 167 | ShipClass | SetScannable | 16 | 1/201 | 2026-07-13 23:37 UTC |  |
+| 168 | App | TGCondition_Cast | 12 | 1/201 | 2026-07-13 23:37 UTC |  |
+| 169 | TGCondition_Cast() | GetStatus | 12 | 1/201 | 2026-07-13 23:37 UTC |  |
+| 170 | ShipClass | CompleteStop | 11 | 6/201 | 2026-07-17 21:33 UTC |  |
+| 171 | CharacterClass | SetAsExtra | 9 | 3/201 | 2026-08-06 10:09 UTC |  |
+| 172 | App | ET_SB12_RELOAD | 8 | 5/201 | 2026-08-06 10:09 UTC |  |
+| 173 | App | ET_SB12_REPAIR | 8 | 5/201 | 2026-08-06 10:09 UTC |  |
+| 174 | App | __path__ | 8 | 7/201 | 2026-07-14 12:26 UTC |  |
+| 175 | SensorSubsystem | SetNumProbes | 8 | 4/201 | 2026-08-06 10:09 UTC |  |
+| 176 | Game | InGodMode | 6 | 2/201 | 2026-07-16 18:38 UTC |  |
+| 177 | GridClass | GetPhaserSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 178 | GridClass | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 179 | GridClass | GetTorpedoSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 180 | GridClass | GetTractorBeamSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 181 | Sun | GetPhaserSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 182 | Sun | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 183 | Sun | GetTorpedoSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 184 | Sun | GetTractorBeamSystem.GetNumChildSubsystems | 6 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 185 | App | BlinkingLightProperty_Create | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
+| 186 | BlinkingLightProperty_Create() | GetName | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
+| 187 | BlinkingLightProperty_Create() | SetColor | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
+| 188 | BlinkingLightProperty_Create() | SetDuration | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
+| 189 | BlinkingLightProperty_Create() | SetOrientation | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
+| 190 | BlinkingLightProperty_Create() | SetPeriod | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
+| 191 | BlinkingLightProperty_Create() | SetPosition | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
+| 192 | BlinkingLightProperty_Create() | SetRadius | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
+| 193 | ShipSubsystem | SetInvincible | 4 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 194 | App | PSID_INVALID | 3 | 3/201 | 2026-08-06 10:09 UTC |  |
+| 195 | Game | SetGodMode | 3 | 2/201 | 2026-07-16 18:38 UTC |  |
+| 196 | GridClass | GetPhaserSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 197 | GridClass | GetPulseWeaponSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 198 | GridClass | GetTorpedoSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 199 | GridClass | GetTractorBeamSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 200 | Sun | GetPhaserSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 201 | Sun | GetPulseWeaponSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 202 | Sun | GetTorpedoSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 203 | Sun | GetTractorBeamSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
+| 204 | App | ET_CANCEL | 2 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 205 | App | ET_LOAD_GAME | 2 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 206 | ShipClass | IsPlayerShip | 2 | 1/201 | 2026-07-13 13:43 UTC |  |
+| 207 | App | ET_EXITED_WARP | 1 | 1/201 | 2026-07-22 14:57 UTC |  |
+| 208 | App | ET_NEW_GAME | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 209 | App | InterfaceModule_DoTheRightThing | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 210 | App | STStylizedWindow_Create | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 211 | AsteroidField | SetNavPoint | 1 | 1/201 | 2026-07-13 23:37 UTC |  |
+| 212 | AsteroidField | SetStatic | 1 | 1/201 | 2026-07-13 23:37 UTC |  |
+| 213 | EventType | ET_CANCEL | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 214 | EventType | ET_EXITED_WARP | 1 | 1/201 | 2026-07-22 14:57 UTC |  |
+| 215 | EventType | ET_INPUT_TOGGLE_PICK_FIRE | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 216 | EventType | ET_LOAD_GAME | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 217 | EventType | ET_NEW_GAME | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 218 | EventType | ET_WEAPON_FIRED | 1 | 1/201 | 2026-07-13 23:37 UTC |  |
+| 219 | ImpulseEngineSubsystem | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 220 | PhaserSystem | GetObjType | 1 | 1/201 | 2026-07-14 00:15 UTC |  |
+| 221 | STStylizedWindow_Create() | AddChild | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 222 | STStylizedWindow_Create() | InteriorChangedSize | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 223 | STStylizedWindow_Create() | SetVisible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 224 | ShipClass | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 225 | TGEvent | GetCString | 1 | 1/201 | 2026-07-13 23:37 UTC |  |
+| 226 | WarpEngineSubsystem | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 227 | _CinematicWindow | AddChild | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 228 | _CinematicWindow | MoveToFront | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 229 | _CinematicWindow | SetFocus | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
 
 ## Resolved
 
@@ -459,6 +458,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | ShipClass | TurnTowardDifference | 2026-08-06 | 2026-07-29 08:14 UTC |
 | App | ET_PLAYER_TORPEDO_TYPE_CHANGED | 2026-08-06 11:14 | 2026-08-06 11:13 UTC |
 | EventType | ET_PLAYER_TORPEDO_TYPE_CHANGED | 2026-08-06 11:14 | 2026-08-06 11:13 UTC |
+| STCharacterMenu | RemoveItemW | 2026-08-06 15:16 | 2026-08-06 11:38 UTC |
 
 ## Boolean-test call sites (truthiness risk)
 

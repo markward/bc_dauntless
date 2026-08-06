@@ -199,6 +199,32 @@ class STMenu(ObjectClass):
             if child_or_name in self._children:
                 self._children.remove(child_or_name)
 
+    def RemoveItemW(self, label) -> None:
+        """Drop the item with this label. Silent when absent.
+
+        Real engine surface: the live BC method dump
+        (tools/probes/results/q13b_method_surface.txt) carries RemoveItem +
+        RemoveItemW on STMenu and every ST menu subclass; SWIG binds them at
+        sdk/Build/scripts/App.py:7728-7729. Neither existed here, so both fell
+        through TGObject.__getattr__ to a truthy _Stub.
+
+        Bridge/ScienceMenuHandlers.ExitedSet:227 removes a departed object's
+        row from Science -> "Scan Object" with this, and PropertyChange:277
+        calls ExitedSet directly as the remove half of a remove-then-re-add
+        refresh. As a no-op the row never left AND the refresh appended a
+        duplicate -- AddChild dedupes _buttons (a dict) but appends to
+        _children (a list), which engine/ui/crew_menu_panel.py:150 renders.
+
+        Silent on a miss because ExitedSet fires for every object leaving the
+        set, and most never had a row: CreateScanButton returns None for
+        unscannable, unnamed, and cloaked objects alike.
+        """
+        self.DeleteChild(str(label))
+
+    def RemoveItem(self, label) -> None:
+        """Narrow-string twin of RemoveItemW; the engine dump carries both."""
+        self.RemoveItemW(label)
+
     def KillChildren(self) -> None:
         self._children.clear()
         self._buttons.clear()

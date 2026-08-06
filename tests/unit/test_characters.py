@@ -722,3 +722,66 @@ def test_setdatabase_returns_loaded_db():
     result = c.SetDatabase("data/TGL/Bridge Menus.tgl")
     assert isinstance(result, TGLocalizationDatabase)
     assert result is c.GetDatabase()
+
+
+# ── STMenu.RemoveItem / RemoveItemW ──────────────────────────────────────────
+# Real engine surface: q13b_method_surface.txt (the live BC method dump) lists
+# RemoveItem + RemoveItemW on STMenu, STCharacterMenu, STTopLevelMenu,
+# STSubPane, STTargetMenu and more; SWIG binds them at
+# sdk/Build/scripts/App.py:7728-7729. Neither existed here, so both fell
+# through TGObject.__getattr__ to a truthy _Stub.
+#
+# Bridge/ScienceMenuHandlers.ExitedSet:227 calls
+# pScanMenu.RemoveItemW(pObject.GetDisplayName()) to drop a departed object's
+# row from Science -> "Scan Object", and PropertyChange:277 calls ExitedSet
+# directly as the remove half of a remove-then-re-add refresh. With the remove
+# a no-op the row never leaves, and the refresh appends a DUPLICATE: STMenu.
+# AddChild dedupes _buttons (a dict) but appends to _children (a list), and
+# engine/ui/crew_menu_panel.py:150 renders _children.
+
+def test_remove_item_w_drops_the_button_from_children():
+    menu = STMenu("Scan Object")
+    keep, drop = STButton_CreateW("Kessok Cruiser"), STButton_CreateW("Vagabond")
+    menu.AddChild(keep)
+    menu.AddChild(drop)
+    menu.RemoveItemW("Vagabond")
+    assert menu._children == [keep]
+
+
+def test_remove_item_w_drops_the_button_from_lookup():
+    # GetButtonW is the SDK's existence check; a removed row must read as absent.
+    menu = STMenu("Scan Object")
+    menu.AddChild(STButton_CreateW("Vagabond"))
+    menu.RemoveItemW("Vagabond")
+    assert menu.GetButtonW("Vagabond") is None
+
+
+def test_remove_item_w_on_a_missing_label_is_a_no_op():
+    # ExitedSet fires for every object leaving the set, most of which never had
+    # a scan row (unscannable, unnamed, cloaked -- CreateScanButton returns
+    # None for all three), so a miss must be silent rather than raise.
+    menu = STMenu("Scan Object")
+    keep = STButton_CreateW("Kessok Cruiser")
+    menu.AddChild(keep)
+    menu.RemoveItemW("Never Added")
+    assert menu._children == [keep]
+
+
+def test_remove_item_is_the_narrow_string_twin():
+    # The engine dump carries both spellings on every ST menu class; they are
+    # the same operation over a narrow vs wide string.
+    menu = STMenu("Scan Object")
+    menu.AddChild(STButton_CreateW("Vagabond"))
+    menu.RemoveItem("Vagabond")
+    assert menu._children == []
+
+
+def test_remove_then_re_add_does_not_duplicate_the_row():
+    # PropertyChange's refresh shape (ExitedSet -> re-add). This is the one the
+    # player sees: without a working remove the menu grows a second identical
+    # row every time a scannable object's name or scannability changes.
+    menu = STMenu("Scan Object")
+    menu.AddChild(STButton_CreateW("Vagabond"))
+    menu.RemoveItemW("Vagabond")
+    menu.AddChild(STButton_CreateW("Vagabond"))
+    assert [b.GetLabel() for b in menu._children] == ["Vagabond"]
