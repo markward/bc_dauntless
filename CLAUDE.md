@@ -271,12 +271,23 @@ merging, run the GATE instead:
 scripts/check_tests.sh        # builds C++, runs pytest + ctest, diffs failures
 ```
 
-It compares every failure against `tests/known_failures.txt` (the only entries
-are the 7 headless-GL scorch/heat-glow `FrameTest`s) and **exits non-zero,
-naming any failure not in that list** — that failure is a regression this tree
-introduced, not "pre-existing". When a baselined test starts passing the gate
-tells you to delete its line. **Never call a failure "pre-existing" by eyeball;
-run the gate.** A new required arg / changed output shape means you update that
+It compares every failure against `tests/known_failures.txt` and **exits
+non-zero, naming any failure not in that list** — that failure is a regression
+this tree introduced, not "pre-existing". When a baselined test starts passing
+the gate tells you to delete its line. **Never call a failure "pre-existing" by
+eyeball; run the gate.**
+
+**Read the ledger, never a remembered count.** This paragraph used to name "the
+7 headless-GL scorch/heat-glow `FrameTest`s" long after they were fixed
+(`5739e1b5` — they were never a headless-GL artifact; the shader's decal-normal
+gate had been un-negated and the tests kept seeding inward normals). As of
+2026-08-06 the ledger holds **zero ctest entries** and **exactly one pytest
+entry**: the order-dependent
+`test_engineer_emitters.py::test_shield_level_change_announces`. Prose about the
+baseline drifts, which is the whole reason the machine-checked ledger exists —
+`cat tests/known_failures.txt` instead of trusting any sentence here.
+
+A new required arg / changed output shape means you update that
 thing's tests in the same change. Order-flaky? Run it in isolation to separate
 cross-test pollution (reset leaked globals in `tests/conftest.py`'s autouse
 `_reset_leakable_engine_globals`) from a real break.
