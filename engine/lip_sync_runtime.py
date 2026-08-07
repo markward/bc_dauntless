@@ -17,7 +17,9 @@ import time
 from pathlib import Path
 
 from engine.appc import crew_speech
-from engine.appc.lip_data import parse_lip, lip_path_for, LipSegment
+from engine.appc.lip_data import (
+    parse_lip, lip_path_for, scale_segments, LipSegment,
+)
 from engine.appc.phoneme_map import default_phoneme_map
 from engine.lip_sync import LipSyncController, BlinkScheduler
 
@@ -63,10 +65,26 @@ def _abs_sfx(wav: str) -> str:
     return str(_GAME_DIR / wav)
 
 
+def _decoded_duration(wav: str) -> float:
+    """Real decoded length of a crew-speech voice clip, or 0.0 if unknown.
+
+    Keyed by the same string crew_speech loads the sound under, and read after
+    the bus has played it, so the sound is loaded by the time a speech listener
+    asks. 0.0 (no audio backend, load failure) means "unknown" -- never an
+    estimate, so callers can tell the two apart.
+    """
+    try:
+        from engine.audio.tg_sound import TGSoundManager
+        return float(TGSoundManager.instance().duration_for(wav))
+    except Exception:
+        return 0.0
+
+
 class LipSyncRuntime:
-    def __init__(self, renderer, get_characters, rng=None):
+    def __init__(self, renderer, get_characters, rng=None, audio_duration=None):
         self._r = renderer
         self._get_characters = get_characters  # () -> iterable of CharacterClass
+        self._audio_duration = audio_duration or _decoded_duration
         self._pm = default_phoneme_map()
         self._ctrl = LipSyncController(sink=self._sink, phoneme_map=self._pm)
         # Codes that actually move the mouth (non-closed viseme), for the
@@ -115,6 +133,13 @@ class LipSyncRuntime:
                 segs = parse_lip(lip)
             except Exception:
                 segs = []
+            # BC's .LIP timings are not on the clip's own clock -- most of the
+            # shipped corpus runs at 2x it (see scale_segments). Normalise onto
+            # the real decoded length so the mouth stops with the voice instead
+            # of flapping into the next speaker's line. Unknown length (0.0) ->
+            # play as authored rather than stretch onto crew_speech's estimate.
+            if segs:
+                segs = scale_segments(segs, self._audio_duration(wav))
         # A VOICE line with no phoneme data -> random phonemes for its duration
         # (BC's documented fallback, sdk/lipsync.html), so the mouth moves with
         # varied shapes while the officer talks. A text-only line (no wav) never
@@ -128,7 +153,9 @@ class LipSyncRuntime:
             iid = self._resolve(str(speaker))
             print(f"[lipsync] speak speaker={speaker!r} wav={wav!r} "
                   f"lip={'Y' if lip else ('flap' if flap else 'N')} "
-                  f"segs={len(segs)} iid={'Y' if iid is not None else 'N'}",
+                  f"segs={len(segs)} span={segs[-1].end if segs else 0.0:.2f}s "
+                  f"clip={self._audio_duration(wav) if wav else 0.0:.2f}s "
+                  f"iid={'Y' if iid is not None else 'N'}",
                   file=sys.stderr)
         if segs:
             self._ctrl.start(str(speaker), segs, now)

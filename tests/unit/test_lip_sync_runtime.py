@@ -1,12 +1,15 @@
 """LipSyncRuntime: game-relative wav resolution, the random-phoneme fallback for
-lines that ship no .LIP (BC's documented behavior, sdk/lipsync.html), and the
+lines that ship no .LIP (BC's documented behavior, sdk/lipsync.html), the
+normalisation of BC's 2x-timebase .LIP files onto the real clip length, and the
 speech->sink cue path. The pure controller is covered in
 test_lip_sync_controller; this exercises the BC-specific glue.
 """
 import random
+import struct
 
 from engine.lip_sync_runtime import (
     LipSyncRuntime, _random_phoneme_segments, _abs_sfx, _GAME_DIR,
+    _decoded_duration,
 )
 
 _CODES = [32, 37, 50, 66, 113]   # representative speaking codes
@@ -69,6 +72,68 @@ def test_no_lip_line_drives_flap_through_sink():
         assert any(c[1] > 0.0 for c in r.jaw_calls)
     finally:
         rt.close()
+
+
+# --- 2x .LIP timebase -------------------------------------------------------
+# Most shipped .LIP files are authored on a clock running at twice the voice
+# clip's (median speech-end/mp3 == 1.999 over 4799 pairs). Played verbatim the
+# mouth keeps moving for ~2x the line -- in E1M1's intro Picard's lips run right
+# through Saffi's replies. The runtime normalises each timeline onto the real
+# decoded clip length.
+_REC = struct.Struct("<iff")
+
+
+def _write_line(tmp_path, records, name="line"):
+    """A voice file plus its sibling .LIP. Returns the wav path."""
+    wav = tmp_path / (name + ".mp3")
+    wav.write_bytes(b"\0")
+    (tmp_path / (name + ".LIP")).write_bytes(
+        b"".join(_REC.pack(c, s, d) for c, s, d in records))
+    return str(wav)
+
+
+# 4s of .LIP over a 2s clip: silence-open-silence, so an unscaled timeline is
+# still holding the open viseme when the real audio has finished.
+_TWO_X_RECORDS = [(1, 0.0, 0.4), (56, 0.4, 3.2), (0, 3.6, 0.4)]
+
+
+def test_two_x_lip_timeline_is_normalised_to_the_clip_length(tmp_path):
+    r = _FakeRenderer()
+    wav = _write_line(tmp_path, _TWO_X_RECORDS)
+    rt = LipSyncRuntime(r, lambda: [_Char("Picard", 3)],
+                        audio_duration=lambda w: 2.0)
+    try:
+        rt._on_speech("Picard", wav, duration=2.0, now=0.0)
+        rt.update(1.0)                       # mid-line: mouth is open
+        assert any(c[1] != "neutral" for c in r.calls)
+        r.calls.clear(); r.jaw_calls.clear()
+        rt.update(2.05)                      # just past the end of the audio
+        assert r.calls[-1] == (3, "neutral", "neutral", 0.0)
+        assert r.jaw_calls[-1] == (3, 0.0)
+        r.calls.clear()
+        rt.update(2.5)                       # line is over: officer dropped
+        assert r.calls == []
+    finally:
+        rt.close()
+
+
+def test_timeline_plays_as_authored_when_the_clip_length_is_unknown(tmp_path):
+    """0.0 from the decoder (no audio backend / load failure) must not stretch
+    the timeline onto crew-speech's word-count estimate."""
+    r = _FakeRenderer()
+    wav = _write_line(tmp_path, _TWO_X_RECORDS)
+    rt = LipSyncRuntime(r, lambda: [_Char("Picard", 3)],
+                        audio_duration=lambda w: 0.0)
+    try:
+        rt._on_speech("Picard", wav, duration=2.0, now=0.0)
+        rt.update(2.05)                      # still mid-line on the 4s timeline
+        assert r.calls[-1][1] != "neutral"
+    finally:
+        rt.close()
+
+
+def test_decoded_duration_is_zero_without_an_audio_backend():
+    assert _decoded_duration("sfx/Bridge/Crew/XO/gf009.mp3") == 0.0
 
 
 def test_line_with_no_wav_is_ignored():

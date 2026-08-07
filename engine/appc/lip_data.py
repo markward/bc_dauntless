@@ -59,6 +59,38 @@ def parse_lip(path) -> list[LipSegment]:
     ]
 
 
+def scale_segments(segments, audio_duration: float):
+    """Return ``segments`` normalised so the timeline spans ``audio_duration``.
+
+    BC's authored ``.LIP`` timings are **not** reliably on the voice clip's own
+    clock: measured across all 4799 shipped ``.LIP``/``.mp3`` pairs, the median
+    ratio of LIP speech-end to real mp3 length is **1.999**, and 79% of pairs sit
+    within 5% of 2.0 (``Bridge/Crew`` and Episodes 1-7 are all 1.999; Episode 8
+    is the lone 1:1 folder). LISET was evidently fed half-rate source audio for
+    most of the corpus. Played verbatim, a line's mouth animation therefore runs
+    at half speed for twice the line -- the officer keeps flapping through the
+    *next* speaker's reply (E1M1's intro: Picard's ``E1M1Entrance1`` is 6.79 s of
+    audio against a 14.07 s timeline).
+
+    Normalising each timeline onto the clip's real decoded length fixes both the
+    2x majority and the 1:1 files with one rule, and is what BC's own engine must
+    do to stay in sync (``FUN_00706c60``, "%d phonemes generated to sequence",
+    builds a per-phoneme TGSequence at speak time).
+
+    ``audio_duration <= 0`` means the decoder could not tell us (no backend, load
+    failure) -- the segments are returned unchanged rather than stretched onto a
+    word-count estimate. A timeline with no length is likewise returned as-is.
+    """
+    segs = list(segments)
+    if not segs or audio_duration is None or audio_duration <= 0.0:
+        return segs
+    total = segs[-1].end
+    if total <= 0.0:
+        return segs
+    k = float(audio_duration) / total
+    return [LipSegment(s.code, s.start * k, s.duration * k) for s in segs]
+
+
 def lip_path_for(wav) -> str | None:
     """Return the sibling ``.LIP`` path for a voice file, or ``None`` if absent.
 
