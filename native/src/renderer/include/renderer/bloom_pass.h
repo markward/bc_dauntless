@@ -16,6 +16,13 @@ public:
     /// (half-res mip0). Rebuilds the mip chain if fw/fh changed.
     std::uint32_t render(std::uint32_t hdr_color_tex, int fw, int fh);
     void set_threshold(float t) { threshold_ = t; }
+    /// Smallest mip in the chain — a pure downsample of the thresholded bright
+    /// buffer, i.e. bright-energy-per-pixel for the whole frame. The upsample
+    /// walks downward and never writes it, so it stays a clean average. Used by
+    /// LensFlareHdrPass as its flare budget. 0 before the first render().
+    std::uint32_t coarsest_texture() const {
+        return mips_.empty() ? 0u : mips_.back().tex;
+    }
 private:
     struct Mip { std::uint32_t fbo = 0, tex = 0; int w = 0, h = 0; };
     void rebuild(int fw, int fh);

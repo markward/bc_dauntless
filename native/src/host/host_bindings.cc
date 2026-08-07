@@ -1006,7 +1006,9 @@ void frame() {
     float lens_flare_strength = 0.0f;
     if (dauntless_hdr::enabled() && dauntless_hdr_lens_flare::enabled()
             && exterior && g_lens_flare_hdr_pass) {
-        lens_flare_tex = g_lens_flare_hdr_pass->render(bloom_tex, fw, fh);
+        lens_flare_tex = g_lens_flare_hdr_pass->render(
+            bloom_tex, g_bloom_pass ? g_bloom_pass->coarsest_texture() : 0u,
+            fw, fh);
         lens_flare_strength = 0.12f;   // additive flare intensity (0.15 -20%)
     }
 

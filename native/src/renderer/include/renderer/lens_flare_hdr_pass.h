@@ -18,7 +18,12 @@ public:
     LensFlareHdrPass& operator=(const LensFlareHdrPass&) = delete;
     /// Generate the flare texture from bloom_mip0_tex; returns the half-res
     /// flare color texture. Rebuilds the target if fw/fh changed.
-    std::uint32_t render(std::uint32_t bloom_mip0_tex, int fw, int fh);
+    /// `bloom_coarse_tex` is BloomPass::coarsest_texture() — the frame's
+    /// bright-energy average, which scales the flare down when one huge bright
+    /// feature (a full-power phaser beam fired dead ahead) would otherwise
+    /// flood the frame. Pass 0 to disable the budget.
+    std::uint32_t render(std::uint32_t bloom_mip0_tex,
+                         std::uint32_t bloom_coarse_tex, int fw, int fh);
 private:
     void rebuild(int fw, int fh);
     void destroy();
