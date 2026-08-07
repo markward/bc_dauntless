@@ -18,6 +18,13 @@
 
 namespace renderer {
 
+// Flare budget strength. The flare is scaled by 1/(1 + kFlareBudget * mean),
+// where `mean` is average bright-buffer luminance. A star or a torpedo barely
+// moves that average, so their flares are untouched; a full-power beam fired
+// dead ahead saturates the bright buffer and gets scaled back hard. 0 = off
+// (linear, pre-2026-08-07 behaviour). Eye-calibrated — rebuild to change.
+constexpr float kFlareBudget = 4.0f;
+
 LensFlareHdrPass::LensFlareHdrPass()
     : shader_(std::make_unique<Shader>(shader_src::resolve_vs,
                                        shader_src::lens_flare_hdr_fs)),
@@ -87,7 +94,9 @@ void LensFlareHdrPass::rebuild(int fw, int fh) {
     fh_ = fh;
 }
 
-std::uint32_t LensFlareHdrPass::render(std::uint32_t bloom_mip0_tex, int fw, int fh) {
+std::uint32_t LensFlareHdrPass::render(std::uint32_t bloom_mip0_tex,
+                                       std::uint32_t bloom_coarse_tex,
+                                       int fw, int fh) {
     if (fw != fw_ || fh != fh_ || !fbo_) {
         rebuild(fw, fh);
     }
@@ -108,6 +117,16 @@ std::uint32_t LensFlareHdrPass::render(std::uint32_t bloom_mip0_tex, int fw, int
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, bloom_mip0_tex);
     shader_->set_int("u_src", 0);
+    shader_->set_float("u_aspect", fh > 0 ? static_cast<float>(fw)
+                                          / static_cast<float>(fh) : 1.0f);
+    // Flare budget: bind the coarsest bloom mip as the frame's bright-energy
+    // average. Without one, feed the shader a zero budget so it stays linear.
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, bloom_coarse_tex ? bloom_coarse_tex
+                                                  : bloom_mip0_tex);
+    shader_->set_int("u_coarse", 1);
+    shader_->set_float("u_budget", bloom_coarse_tex ? kFlareBudget : 0.0f);
+    glActiveTexture(GL_TEXTURE0);
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
