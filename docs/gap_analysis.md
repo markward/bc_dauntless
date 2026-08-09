@@ -720,7 +720,7 @@ across mission boundaries.
 **Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-2.1, OQ-4.1, OQ-4.2, OQ-4.3, OQ-4.4, OQ-5.1, OQ-5.2, OQ-5.3, OQ-6.2, OQ-7.4, OQ-8.1, OQ-8.2 (15)**  
 **Answered by instrumentation: OQ-7.1, OQ-7.2, OQ-7.3 (3)**  
 **Partially answered: OQ-2.2 (teleport confirmed; warp-exit velocity Phase 2), OQ-2.3 (arc/modes known; force law tuned by feel)**  
-**Still open: OQ-3.1–3.3, OQ-6.1, OQ-8.3, OQ-8.4 (5)**  
+**Still open: OQ-3.1–3.3, OQ-6.1, OQ-8.3, OQ-8.4 (6)**  
 **Instrumentation genuinely required: none remaining**
 
 **Phase 1 blockers: all resolved. Ready to begin Phase 1 implementation.**

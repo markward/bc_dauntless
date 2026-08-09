@@ -35,7 +35,7 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 | Ship hardpoints | `sdk/Build/scripts/ships/Hardpoints/` | Per-ship physics, weapons, arc geometry |
 | Ship construction | `sdk/Build/scripts/loadspacehelper.py:54–135` | Integration point between Appc and physics |
 | Mission lib | `sdk/Build/scripts/MissionLib.py` | Timer lifecycle, two-tier timer architecture |
-| Gap analysis | `docs/gap_analysis.md` | 8 gaps, 21 open questions, solution paths |
+| Gap analysis | `docs/gap_analysis.md` | 8 gaps, 26 open questions, solution paths |
 | Open questions | `docs/open_questions.md` | 4 instrumentation questions — Q4 closed |
 | Live game | `game/` | BC installation (gitignored) — needed for instrumentation |
 | Space dust pass | `native/src/renderer/dust_pass.cc`, `docs/superpowers/specs/2026-05-11-space-dust-particles-design.md` | Camera-anchored dust particles with motion smear; toggle via `_h.dust_set_enabled()` |
@@ -61,7 +61,7 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 | Q3 | Time scale interaction with physics/AI/timers | ✅ **Game time scales** (0.204 measured); real time does not |
 | Q4 | TimeSliceProcess priority semantics | ✅ Closed — static analysis sufficient |
 
-### Gap analysis OQs (21 total)
+### Gap analysis OQs (26 total)
 
 - Closed by static analysis: OQ-1.1, 1.2, 1.3, 2.1, 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 6.2, 7.4, 8.1, 8.2 (15)
 - Closed by instrumentation: OQ-7.1, OQ-7.2, OQ-7.3 (3)
