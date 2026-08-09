@@ -63,13 +63,20 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 
 ### Gap analysis OQs (26 total)
 
+**Audited against code 2026-08-09** — most "open" OQs were stale Phase-1 planning
+artifacts, already answered by shipped Phase-2 work. Counts are now machine-checked
+by `tests/docs/test_doc_consistency.py`; if you change a status, that test enforces
+the summary line agrees.
+
 - Closed by static analysis: OQ-1.1, 1.2, 1.3, 2.1, 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 6.2, 7.4, 8.1, 8.2 (15)
 - Closed by instrumentation: OQ-7.1, OQ-7.2, OQ-7.3 (3)
-- Partially answered: OQ-2.2 (teleport confirmed; warp-exit velocity Phase 2), OQ-2.3 (arc/modes known; force law tuned by feel)
-- Still open: OQ-3.1–3.3, OQ-6.1, OQ-8.3, OQ-8.4 — all Phase 2, all file-inspection or grep work
-- **No remaining OQs require running the live game**
+- Closed by code audit 2026-08-09 (5): OQ-3.1 *superseded* (BC ships NIF v3.1, which OpenMW cannot parse — we wrote our own loader), OQ-3.2 (damage geometry is a paired `*_vox.nif`, not node tags), OQ-3.3 (head graft, `model_compose.cc:206`), OQ-8.3 *dead surface* (`MorphBody`: zero SDK call sites), OQ-8.4 *superseded* (a static manifest would list a typo'd file BC deliberately re-registers)
+- Partially answered: OQ-2.2 — **do not conflate the halves.** In-system warp is implemented and preserves pre-warp speed; **set-to-set warp exit velocity is genuinely open** and our current behaviour is accidental. OQ-2.3 — the spring-damper is built and tested, but it is a *designed approximation*, not a reconstruction; the clean-room reference has no tractor force section, so it cannot be promoted
+- Still open: **OQ-6.1** (DynamicMusic) — the Maelstrom campaign drives it, but `g_kMusicManager`, `ET_MUSIC_DONE` and `ET_MUSIC_CONDITION_CHANGED` are all absent from our shim, so it silently does nothing. Confirmed by live telemetry (heatmap ranks 163/164, last seen 2026-08-06)
+- ⚠️ **OQ-6.1 needs a live run to verify** — music cannot be checked headlessly. The old "no remaining OQs require running the live game" line was wrong and has been removed
 
-**Phase 1 blockers: all resolved. Ready to begin Phase 1 implementation.**
+**Phase 1 blockers: all resolved.** Phase 3 build candidates are in
+`docs/superpowers/plans/2026-08-09-triage-report.md`.
 
 ## Instrumentation approach
 

@@ -52,6 +52,27 @@ def test_claude_md_oq_total_matches_gap_analysis():
     )
 
 
+def test_every_unmarked_oq_is_listed_as_still_open():
+    """An OQ with no status marker must appear on the 'Still open' line.
+
+    Catches the drift where an OQ is silently left unmarked and drops out of
+    the summary, becoming invisible to scoping.
+    """
+    text = GAP_ANALYSIS.read_text(encoding="utf-8")
+    match = re.search(r"Still open: (.*?) \(\d+\)", text)
+    assert match, "gap_analysis.md has no 'Still open: ... (N)' summary line"
+    summary = match.group(1)
+    for heading in unmarked_oqs(text):
+        ident = re.match(r"\*\*(OQ-\d+\.\d+)", heading).group(1)
+        major = ident.split("-")[1].split(".")[0]
+        # Accept either an explicit mention or a range covering it,
+        # e.g. 'OQ-3.1-3.3' covers OQ-3.2.
+        assert ident in summary or f"OQ-{major}." in summary, (
+            f"{ident} carries no status marker but is absent from the "
+            f"'Still open' summary: {summary}"
+        )
+
+
 def test_heatmap_header_open_count_matches_table():
     """Regression guard: header 'Open: N' must equal open-roadmap row count.
 
