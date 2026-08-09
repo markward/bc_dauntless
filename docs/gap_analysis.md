@@ -503,13 +503,58 @@ streamed music if OpenAL streaming proves complex.
 
 ### Open questions requiring investigation
 
-**OQ-6.1 — DynamicMusic transition model**  
+**OQ-6.1 — DynamicMusic transition model** — GENUINELY OPEN  
 `DynamicMusic.py` is 13KB suggesting non-trivial transition logic. How
 music states map to gameplay states (combat, exploration, bridge) and
 how crossfades are triggered is partially visible in Python but the
 audio engine side of smooth crossfading is not. Approach: read
 `DynamicMusic.py` fully; instrument music state changes during a
 representative play session.
+
+**Audited 2026-08-09 — confirmed open, and it is a LIVE silent no-op.**
+
+*It runs.* `DynamicMusic` is driven by the Maelstrom campaign —
+`Maelstrom.py:111` (`Initialize`), `:265` (`Terminate`), and `ChangeMusic` from
+Episodes 1, 4, 6, 7 and 8. It is **not** module-stubbed in either stub list
+(`tools/mission_harness.py`, `tests/conftest.py`), so the SDK module executes.
+
+*It does nothing.* Every engine symbol it needs is absent from our shim, so
+`App.<name>` resolves to `_NamedStub` and collapses silently:
+
+| Symbol | Status | Needed for |
+|---|---|---|
+| `App.g_kMusicManager` | MISSING | `LoadMusic`, `UnloadMusic`, `StartMusic`, `StopMusic`, `PlayFanfare` |
+| `App.ET_MUSIC_DONE` | MISSING | queue advance — `MusicDone()` drives `ProcessQueue()` |
+| `App.ET_MUSIC_CONDITION_CHANGED` | MISSING | state-machine transitions |
+
+Confirmed by **live telemetry**, not inference: `docs/stub_heatmap.md` ranks 163
+and 164 record `App.g_kMusicManager` and `g_kMusicManager.PlayFanfare` at 21 hits
+each, coverage 11/201, last seen **2026-08-06** — current, not historical. Our
+audio layer has no music path at all (`engine/audio/` has ambient, alert, rumble
+and hum, no music).
+
+*Scope — smaller than the OQ implies.* The transition logic is **SDK-side**:
+`DynamicMusic.py` owns the queue and state machine (`EnqueueMusic`,
+`ProcessQueue`, `SwitchMusic`, `OverrideMusic`, `PlayFanfare`, and the
+`StandardCombatMusic` class). We do not build a transition engine — we supply
+manager primitives plus the two event types, and the SDK sequences tracks by
+waiting for `ET_MUSIC_DONE`.
+
+Per the clean-room reference (`spec/TGAudio.md §6`, *reviewed-not-tested*,
+confidence *partial*): `TGMusic::StartMusic` (`0x00713D60`) **registers a fade
+timer via TGTimerManager**, `LoadMusic` (`0x00713AD0`) reads a
+`Sound/StreamMusic` config toggle, and `SetVolume` (`0x00714660`) resolves a
+handle to `TGSound::SetVolume`. So transitions are volume-ramped rather than
+abrupt, and we already have `TGSound.SetVolume` (`engine/audio/tg_sound.py:141`)
+to ramp. BC's second path, `TGRedbook` (CD audio via `mciSendCommandA`), is not
+applicable to us.
+
+Open sub-question the reference did not settle: whether the fade is a true
+**crossfade** (both tracks audible) or a fade-out-then-fade-in. The section is
+graded reviewed-not-tested and does not say. Resolve by ear against the real
+game before committing to one.
+
+**Not verifiable headlessly** — music playback needs a live run to confirm.
 
 **OQ-6.2 — 3D audio attenuation model ✅**  
 Use OpenAL's `AL_INVERSE_DISTANCE_CLAMPED` model — the physically correct
