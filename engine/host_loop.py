@@ -136,6 +136,60 @@ def shutdown_audio() -> None:
     _audio_backend_ready = False
 
 
+_music_player = None
+
+
+def _music_sound_adapter(path):
+    """Adapt a TGSound + its playing handle to the surface MusicPlayer wants:
+    SetVolume(gain) / Stop() / .playing.
+
+    TGSound exposes SetVolume and Stop, but liveness lives on the handle
+    returned by Play() as is_live() — see engine/audio/tg_sound.py:51. This
+    bridges the two rather than teaching MusicPlayer about handles.
+    """
+    from engine.audio.tg_sound import TGSound
+
+    class _MusicSound:
+        def __init__(self, p):
+            # positional=False: music is 2D, not anchored in the scene.
+            self._snd = TGSound(p, False)
+            self._handle = self._snd.Play()
+        def SetVolume(self, gain):
+            self._snd.SetVolume(gain)
+        def Stop(self):
+            self._snd.Stop()
+        @property
+        def playing(self):
+            h = self._handle
+            return bool(h.is_live()) if h is not None else False
+
+    return _MusicSound(path)
+
+
+def _pump_music(dt) -> None:
+    """Drive the music player and advance DynamicMusic's queue.
+
+    Without this, MusicManager and MusicPlayer are two halves that never meet:
+    nothing injects the backend, nothing ramps the volume, and nothing tells
+    the SDK a track ended. Lazily wired on first tick so audio boot ordering
+    is untouched.
+    """
+    global _music_player
+    import App
+    mgr = getattr(App, "g_kMusicManager", None)
+    if mgr is None:
+        return
+    if _music_player is None:
+        from engine.audio.music import MusicPlayer
+        _music_player = MusicPlayer(sound_factory=_music_sound_adapter)
+        mgr.set_backend(_music_player)
+    _music_player.update(dt)
+    # A finished non-looping track advances the SDK queue. MusicPlayer.finished()
+    # is False for looping tracks, so this cannot fire every frame.
+    if _music_player.finished():
+        mgr.notify_track_finished()
+
+
 def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> None:
     if _audio_mod is None:
         return
@@ -163,6 +217,9 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> Non
     ux, uy, uz = camera_up
     _audio_mod.update(px, py, pz, fx, fy, fz, ux, uy, uz, dt)
     _alert_listener.tick(player)
+    # Music ramps on the same dt as the rest of the audio layer, so it freezes
+    # under pause rather than sliding on wall-clock.
+    _pump_music(dt)
 
 
 def _bootstrap_firing_pipeline() -> None:

@@ -144,3 +144,41 @@ def test_manager_forwards_playback_to_its_backend():
     assert b.played == ["sfx/Music/combat.mp3"]
     m.StopMusic()
     assert b.stopped == 1
+
+
+def test_track_end_broadcasts_et_music_done_carrying_the_track_name(monkeypatch):
+    """DynamicMusic.MusicDone gates its queue advance on
+    `pEvent.GetCString() == dsMusicTypes[sCurrentMusicType]`, so the event MUST
+    carry the finished track's name. Without it the playlist stalls on track one
+    while music is still audible — a silent failure."""
+    sent = []
+
+    class _EvtMgr:
+        def AddBroadcastPythonFuncHandler(self, *a, **k): pass
+        def BroadcastEvent(self, evt): sent.append(evt)
+
+    monkeypatch.setattr(App, "g_kEventManager", _EvtMgr(), raising=False)
+
+    m = MusicManager()
+    m.LoadMusic("sfx/Music/combat.mp3", "Cbt Panic 1")
+    m.StartMusic("Cbt Panic 1")
+    m.notify_track_finished()
+
+    assert len(sent) == 1
+    assert sent[0].GetEventType() == App.ET_MUSIC_DONE
+    assert sent[0].GetCString() == "Cbt Panic 1"
+    assert m.current() is None, "a finished track is no longer current"
+
+
+def test_track_end_on_an_idle_manager_is_a_no_op(monkeypatch):
+    sent = []
+
+    class _EvtMgr:
+        def AddBroadcastPythonFuncHandler(self, *a, **k): pass
+        def BroadcastEvent(self, evt): sent.append(evt)
+
+    monkeypatch.setattr(App, "g_kEventManager", _EvtMgr(), raising=False)
+
+    m = MusicManager()
+    m.notify_track_finished()
+    assert sent == [], "no track was playing, so nothing finished"

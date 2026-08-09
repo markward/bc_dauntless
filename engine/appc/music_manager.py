@@ -113,5 +113,28 @@ class MusicManager:
 
     # ── host-facing ──────────────────────────────────────────────────────────
 
+    def notify_track_finished(self) -> None:
+        """Called by the host when the current track reaches its end.
+
+        Broadcasts ET_MUSIC_DONE **carrying the finished track's name**, which
+        DynamicMusic.MusicDone (DynamicMusic.py:121) handles to advance its
+        queue via ProcessQueue (:132).
+
+        The name payload is load-bearing: MusicDone gates on
+        `pEvent.GetCString() == dsMusicTypes[sCurrentMusicType]`. Send the event
+        without it and the comparison never matches, ProcessQueue never runs,
+        and the playlist stalls on its first track — with music still audible,
+        so the failure is silent.
+        """
+        if self._current is None:
+            return
+        finished = self._current
+        self._current = None
+        import App
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_MUSIC_DONE)
+        evt.SetCString(finished)
+        App.g_kEventManager.BroadcastEvent(evt)
+
     def current(self) -> "str | None":
         return self._current

@@ -617,6 +617,22 @@ def _reset_leakable_engine_globals():
         App._next_event_type_id = 1200
     except Exception:
         pass
+    # Music: g_kMusicManager is a process-lifetime singleton and host_loop
+    # lazily installs a MusicPlayer backend into it on the first audio tick.
+    # Both survive across tests, so a mission that loaded tracks leaves them
+    # registered and a stale backend keeps ramping — reset both.
+    try:
+        App.g_kMusicManager.StopMusic()
+        App.g_kMusicManager._paths.clear()
+        App.g_kMusicManager.set_backend(None)
+        App.g_kMusicManager.SetEnabled(1)
+    except Exception:
+        pass
+    try:
+        import engine.host_loop as _hl
+        _hl._music_player = None
+    except Exception:
+        pass
     # TopWindow singleton: _ViewModeController now reads bridge/tactical
     # visibility straight off this singleton (pull model), so a test that
     # calls ForceTacticalVisible/ToggleBridgeAndTactical would otherwise

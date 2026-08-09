@@ -587,7 +587,7 @@ streamed music if OpenAL streaming proves complex.
 
 ### Open questions requiring investigation
 
-**OQ-6.1 — DynamicMusic transition model** — GENUINELY OPEN  
+**OQ-6.1 — DynamicMusic transition model** ✅ *implemented, NOT live-verified*  
 `DynamicMusic.py` is 13KB suggesting non-trivial transition logic. How
 music states map to gameplay states (combat, exploration, bridge) and
 how crossfades are triggered is partially visible in Python but the
@@ -639,6 +639,36 @@ graded reviewed-not-tested and does not say. Resolve by ear against the real
 game before committing to one.
 
 **Not verifiable headlessly** — music playback needs a live run to confirm.
+
+**Implemented 2026-08-09 — ⚠️ NOT LIVE-VERIFIED.**
+`engine/appc/music_manager.py` (`g_kMusicManager`), `engine/audio/music.py`
+(`MusicPlayer`, ramped), `App.ET_MUSIC_DONE` / `ET_MUSIC_CONDITION_CHANGED`,
+and the host wiring in `engine/host_loop.py` (`_pump_music`). Covered by
+`tests/unit/test_music_manager.py` (14) and
+`tests/audio/test_music_playback.py` (8).
+
+Two things the build surfaced that the audit had not:
+
+- **Every signature came from a real SDK call site, and they are not what you
+  would guess.** `LoadMusic(sFile, sMusicType, 2.0)` takes the **file first**;
+  `UnloadMusic(sMusic)` unloads **one track by name**, not everything;
+  `StartMusic(name, looping)` **returns** success and `DynamicMusic.py:178`
+  branches on it; and `IsEnabled()`/`SetEnabled()` exist and are used by
+  `E8M2.py:6558-6568`. A guessed-signature first draft broke 14 QuickBattle
+  tests, because supplying a real manager makes the previously-silent SDK path
+  actually execute.
+- **`ET_MUSIC_DONE` must carry the track name.** `DynamicMusic.MusicDone` gates
+  on `pEvent.GetCString() == dsMusicTypes[sCurrentMusicType]`, and `TGEvent` had
+  no `SetCString`/`GetCString` — so the comparison would never match,
+  `ProcessQueue()` would never run, and the playlist would stall on its first
+  track *with music still audible*. Added in `engine/appc/events.py`.
+
+Also corrected: DynamicMusic is driven by **QuickBattle**
+(`QuickBattleGame.py:66 SetupMusic`) as well as the Maelstrom campaign.
+
+**Open sub-question, unchanged:** whether BC crossfades (both tracks audible) or
+fades out then in. `MusicPlayer` implements fade-out-then-in, the conservative
+reading; a crossfade needs two concurrent sounds, not a tweak.
 
 **OQ-6.2 — 3D audio attenuation model ✅**  
 Use OpenAL's `AL_INVERSE_DISTANCE_CLAMPED` model — the physically correct
@@ -924,8 +954,9 @@ across mission boundaries.
 **Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-2.1, OQ-4.1, OQ-4.2, OQ-4.3, OQ-4.4, OQ-5.1, OQ-5.2, OQ-5.3, OQ-6.2, OQ-7.4, OQ-8.1, OQ-8.2 (15)**  
 **Answered by instrumentation: OQ-7.1, OQ-7.2, OQ-7.3 (3)**  
 **Closed by code audit 2026-08-09: OQ-3.1 (superseded — OpenMW cannot parse v3.1), OQ-3.2, OQ-3.3, OQ-8.3 (dead surface), OQ-8.4 (superseded) (5)**  
+**Built 2026-08-09 (Phase 3): OQ-6.1 (DynamicMusic — implemented, NOT live-verified), OQ-2.2 set-to-set warp exit velocity (chosen default, NOT live-verified) (2)**  
 **Partially answered: OQ-2.2 (teleport confirmed; warp-exit velocity Phase 2), OQ-2.3 (arc/modes known; force law tuned by feel)**  
-**Still open: OQ-6.1 (1)**  
+**Still open: none (0)**  
 **Instrumentation genuinely required: none remaining**
 
 **Phase 1 blockers: all resolved. Ready to begin Phase 1 implementation.**
