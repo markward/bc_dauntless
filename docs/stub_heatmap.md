@@ -8,6 +8,32 @@ _Regression check: a resolved stub hit again (lastSeenOn > markedResolvedOn) is 
 
 _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell and commit — it moves to Resolved on the next regeneration, and is flagged again if it is ever hit after that date._
 
+> **Triage pass 2026-08-09.** Selection rule: `lastSeenOn` at least 14 days before
+> the newest run in the header — runs continued, this stub stopped being hit.
+> That selected **60** candidates; **16** were verified in code and dated, and
+> **44 were deliberately left open**.
+>
+> Staleness alone is *not* evidence of a fix. Most of the 44 carry `cov=1/201` or
+> `2/201`: they were hit in one or two early exploratory runs, so "stopped being
+> hit" almost certainly means *the missions being exercised changed*, not that
+> anything was implemented. Dating those would silently disarm the regression
+> detector for each one. Left open, with the owning class checked where cheap —
+> e.g. `Torpedo_Cast().GetObjID` stays open because no `appc` object class
+> defines `GetObjID`; the `GridClass`/`Sun` weapon-system getters stay open
+> because nothing defines them.
+>
+> Two of the 16 are worth knowing about:
+> - **rank 10 `ShipClass.GetSceneNodeId` (1520 hits)** was a **phantom** — a name
+>   that exists nowhere in the SDK or `App.py`, invented by our own code. It
+>   resolved to a truthy `_Stub`, `int()` collapsed it to 0, and every weapon
+>   sound played unattached; the tests passed only because the fakes defined the
+>   phantom. The probe was removed (`engine/appc/weapon_subsystems.py:606-613`),
+>   so these hits are historical residue.
+> - **ranks 45/46 `Planet.GetCloakingSubsystem`** were fixed by resolving the
+>   method through the target's *class* rather than the instance
+>   (`engine/appc/sensor_detection.py:42-56`) — without it every planet read as
+>   cloaked and vanished from sensors.
+
 | rank | owner | attr | total hits | coverage | lastSeenOn | markedResolvedOn |
 |---|---|---|---|---|---|---|
 | 1 | TGParagraph | SetString | 44024 | 105/201 | 2026-08-06 14:55 UTC |  |
@@ -19,7 +45,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 7 | SparkEmitterProperty_Create() | SetPosition | 2344 | 55/201 | 2026-08-06 10:09 UTC |  |
 | 8 | TGParagraph | GetRight | 1824 | 115/201 | 2026-08-06 14:55 UTC |  |
 | 9 | ShipClass | GetTargetOffsetTG | 1619 | 65/201 | 2026-08-06 11:38 UTC |  |
-| 10 | ShipClass | GetSceneNodeId | 1520 | 50/201 | 2026-07-16 18:38 UTC |  |
+| 10 | ShipClass | GetSceneNodeId | 1520 | 50/201 | 2026-07-16 18:38 UTC | 2026-08-09 |
 | 11 | TGPane | GetRight | 1520 | 115/201 | 2026-08-06 14:55 UTC |  |
 | 12 | App | SparkEmitterProperty_Create | 1375 | 55/201 | 2026-08-06 10:09 UTC |  |
 | 13 | SparkEmitterProperty_Create() | GetName | 1375 | 55/201 | 2026-08-06 10:09 UTC |  |
@@ -35,7 +61,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 23 | EngPowerCtrl | GetBottom | 608 | 115/201 | 2026-08-06 14:55 UTC |  |
 | 24 | ExplodeEmitterProperty_Create() | SetOrientation | 594 | 55/201 | 2026-08-06 10:09 UTC |  |
 | 25 | ExplodeEmitterProperty_Create() | SetPosition | 594 | 55/201 | 2026-08-06 10:09 UTC |  |
-| 26 | ShipClass | SetSplashDamage | 590 | 66/201 | 2026-07-23 19:20 UTC |  |
+| 26 | ShipClass | SetSplashDamage | 590 | 66/201 | 2026-07-23 19:20 UTC | 2026-08-09 |
 | 27 | EventType | ET_SET_TARGET | 588 | 110/201 | 2026-08-06 14:55 UTC |  |
 | 28 | App | ET_TRACTOR_BEAM_STARTED_FIRING | 578 | 111/201 | 2026-08-06 14:55 UTC |  |
 | 29 | App | ET_TRACTOR_BEAM_STOPPED_FIRING | 576 | 111/201 | 2026-08-06 14:55 UTC |  |
@@ -54,8 +80,8 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 42 | STTopLevelMenu | GetContainingWindow | 348 | 55/201 | 2026-08-06 10:09 UTC |  |
 | 43 | App | ExplodeEmitterProperty_Create | 339 | 55/201 | 2026-08-06 10:09 UTC |  |
 | 44 | ExplodeEmitterProperty_Create() | GetName | 339 | 55/201 | 2026-08-06 10:09 UTC |  |
-| 45 | Planet | GetCloakingSubsystem | 324 | 1/201 | 2026-07-13 23:37 UTC |  |
-| 46 | Planet | GetCloakingSubsystem.IsTryingToCloak | 324 | 1/201 | 2026-07-13 23:37 UTC |  |
+| 45 | Planet | GetCloakingSubsystem | 324 | 1/201 | 2026-07-13 23:37 UTC | 2026-08-09 |
+| 46 | Planet | GetCloakingSubsystem.IsTryingToCloak | 324 | 1/201 | 2026-07-13 23:37 UTC | 2026-08-09 |
 | 47 | EngPowerCtrl | GetRight | 304 | 115/201 | 2026-08-06 14:55 UTC |  |
 | 48 | TGFrame | GetBottom | 304 | 115/201 | 2026-08-06 14:55 UTC |  |
 | 49 | TGParagraph | GetBottom | 304 | 115/201 | 2026-08-06 14:55 UTC |  |
@@ -67,7 +93,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 55 | STButton | SetName | 292 | 113/201 | 2026-08-06 14:55 UTC |  |
 | 56 | EventType | ET_TRACTOR_BEAM_STARTED_FIRING | 279 | 106/201 | 2026-08-06 14:55 UTC |  |
 | 57 | EventType | ET_TRACTOR_BEAM_STOPPED_FIRING | 278 | 106/201 | 2026-08-06 14:55 UTC |  |
-| 58 | PulseWeaponSystem | ShouldBeAimed | 270 | 1/201 | 2026-07-14 00:15 UTC |  |
+| 58 | PulseWeaponSystem | ShouldBeAimed | 270 | 1/201 | 2026-07-14 00:15 UTC | 2026-08-09 |
 | 59 | App | ET_SET_WARP_SEQUENCE | 224 | 55/201 | 2026-08-06 14:55 UTC |  |
 | 60 | EventType | ET_SET_WARP_SEQUENCE | 224 | 55/201 | 2026-08-06 14:55 UTC |  |
 | 61 | App | CinematicWindow_Cast | 212 | 198/201 | 2026-08-06 14:55 UTC |  |
@@ -79,7 +105,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 67 | STTopLevelMenu | GetContainingWindow.GetBorderWidth | 174 | 55/201 | 2026-08-06 10:09 UTC |  |
 | 68 | STTopLevelMenu | GetContainingWindow.GetMaximumHeight | 174 | 55/201 | 2026-08-06 10:09 UTC |  |
 | 69 | STTopLevelMenu | GetContainingWindow.SetMaximumSize | 174 | 55/201 | 2026-08-06 10:09 UTC |  |
-| 70 | App | Torpedo_Cast | 170 | 9/201 | 2026-07-17 19:27 UTC |  |
+| 70 | App | Torpedo_Cast | 170 | 9/201 | 2026-07-17 19:27 UTC | 2026-08-09 |
 | 71 | App | UtopiaModule_ConvertGameUnitsToKilometers | 152 | 18/201 | 2026-08-06 10:09 UTC |  |
 | 72 | WaypointEvent_Create() | GetEventType | 150 | 25/201 | 2026-08-06 10:09 UTC |  |
 | 73 | STButton | GetName | 146 | 59/201 | 2026-08-06 14:55 UTC |  |
@@ -111,7 +137,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 99 | Torpedo_Cast() | GetObjID | 110 | 9/201 | 2026-07-17 19:27 UTC |  |
 | 100 | App | GENUS_STATION | 107 | 16/201 | 2026-08-06 11:38 UTC |  |
 | 101 | App | SPECIES_UNKNOWN | 95 | 78/201 | 2026-08-06 14:55 UTC |  |
-| 102 | ShipClass | GetImpulse | 92 | 3/201 | 2026-07-23 07:41 UTC |  |
+| 102 | ShipClass | GetImpulse | 92 | 3/201 | 2026-07-23 07:41 UTC | 2026-08-09 |
 | 103 | TGPane | SetAlwaysHandleEvents | 89 | 78/201 | 2026-08-06 14:55 UTC |  |
 | 104 | TGPane | SetNotAlwaysHandleEvents | 88 | 77/201 | 2026-08-06 14:55 UTC |  |
 | 105 | WarpSequence_Cast() | GetDestination | 85 | 38/201 | 2026-08-06 14:55 UTC |  |
@@ -134,7 +160,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 122 | STTargetMenu | ForceUpdate | 58 | 55/201 | 2026-08-06 10:09 UTC |  |
 | 123 | STTopLevelMenu | Resize | 58 | 55/201 | 2026-08-06 10:09 UTC |  |
 | 124 | STTopLevelMenu | ResizeToContents | 58 | 55/201 | 2026-08-06 10:09 UTC |  |
-| 125 | CharacterClass | AddPositionZoom | 57 | 24/201 | 2026-07-22 21:44 UTC |  |
+| 125 | CharacterClass | AddPositionZoom | 57 | 24/201 | 2026-07-22 21:44 UTC | 2026-08-09 |
 | 126 | App | MapWindow_Cast | 55 | 48/201 | 2026-08-06 10:09 UTC |  |
 | 127 | MapWindow_Cast() | IsWindowActive | 55 | 48/201 | 2026-08-06 10:09 UTC |  |
 | 128 | TacticalControlWindow | SetNotVisible | 55 | 48/201 | 2026-08-06 10:09 UTC |  |
@@ -163,7 +189,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 151 | CharacterClass | SetAudioMode | 42 | 40/201 | 2026-08-06 10:09 UTC |  |
 | 152 | App | ET_KEYBOARD | 41 | 21/201 | 2026-08-06 09:25 UTC |  |
 | 153 | CharacterClass | SetRandomAnimationEnabled | 39 | 38/201 | 2026-08-06 09:25 UTC |  |
-| 154 | ShipClass | IsDestroyBrokenSystems | 38 | 10/201 | 2026-07-17 19:27 UTC |  |
+| 154 | ShipClass | IsDestroyBrokenSystems | 38 | 10/201 | 2026-07-17 19:27 UTC | 2026-08-09 |
 | 155 | App | EnergyWeapon_Cast | 32 | 3/201 | 2026-08-06 10:09 UTC |  |
 | 156 | EnergyWeapon_Cast() | GetMaxCharge | 32 | 3/201 | 2026-08-06 10:09 UTC |  |
 | 157 | EnergyWeapon_Cast() | SetChargeLevel | 32 | 3/201 | 2026-08-06 10:09 UTC |  |
@@ -176,10 +202,10 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 164 | g_kMusicManager | PlayFanfare | 21 | 11/201 | 2026-08-06 11:38 UTC |  |
 | 165 | Waypoint | StartGetSubsystemMatch | 19 | 4/201 | 2026-08-06 10:09 UTC |  |
 | 166 | ShipClass | SetTargetable | 18 | 3/201 | 2026-08-06 10:09 UTC |  |
-| 167 | ShipClass | SetScannable | 16 | 1/201 | 2026-07-13 23:37 UTC |  |
+| 167 | ShipClass | SetScannable | 16 | 1/201 | 2026-07-13 23:37 UTC | 2026-08-09 |
 | 168 | App | TGCondition_Cast | 12 | 1/201 | 2026-07-13 23:37 UTC |  |
 | 169 | TGCondition_Cast() | GetStatus | 12 | 1/201 | 2026-07-13 23:37 UTC |  |
-| 170 | ShipClass | CompleteStop | 11 | 6/201 | 2026-07-17 21:33 UTC |  |
+| 170 | ShipClass | CompleteStop | 11 | 6/201 | 2026-07-17 21:33 UTC | 2026-08-09 |
 | 171 | CharacterClass | SetAsExtra | 9 | 3/201 | 2026-08-06 10:09 UTC |  |
 | 172 | App | ET_SB12_RELOAD | 8 | 5/201 | 2026-08-06 10:09 UTC |  |
 | 173 | App | ET_SB12_REPAIR | 8 | 5/201 | 2026-08-06 10:09 UTC |  |
@@ -202,7 +228,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 190 | BlinkingLightProperty_Create() | SetPeriod | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
 | 191 | BlinkingLightProperty_Create() | SetPosition | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
 | 192 | BlinkingLightProperty_Create() | SetRadius | 4 | 2/201 | 2026-08-05 18:49 UTC |  |
-| 193 | ShipSubsystem | SetInvincible | 4 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 193 | ShipSubsystem | SetInvincible | 4 | 1/201 | 2026-07-13 23:39 UTC | 2026-08-09 |
 | 194 | App | PSID_INVALID | 3 | 3/201 | 2026-08-06 10:09 UTC |  |
 | 195 | Game | SetGodMode | 3 | 2/201 | 2026-07-16 18:38 UTC |  |
 | 196 | GridClass | GetPhaserSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
@@ -215,7 +241,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 203 | Sun | GetTractorBeamSystem | 3 | 2/201 | 2026-07-13 12:09 UTC |  |
 | 204 | App | ET_CANCEL | 2 | 1/201 | 2026-07-13 23:39 UTC |  |
 | 205 | App | ET_LOAD_GAME | 2 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 206 | ShipClass | IsPlayerShip | 2 | 1/201 | 2026-07-13 13:43 UTC |  |
+| 206 | ShipClass | IsPlayerShip | 2 | 1/201 | 2026-07-13 13:43 UTC | 2026-08-09 |
 | 207 | App | ET_EXITED_WARP | 1 | 1/201 | 2026-07-22 14:57 UTC |  |
 | 208 | App | ET_NEW_GAME | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
 | 209 | App | InterfaceModule_DoTheRightThing | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
@@ -228,14 +254,14 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 216 | EventType | ET_LOAD_GAME | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
 | 217 | EventType | ET_NEW_GAME | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
 | 218 | EventType | ET_WEAPON_FIRED | 1 | 1/201 | 2026-07-13 23:37 UTC |  |
-| 219 | ImpulseEngineSubsystem | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 219 | ImpulseEngineSubsystem | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC | 2026-08-09 |
 | 220 | PhaserSystem | GetObjType | 1 | 1/201 | 2026-07-14 00:15 UTC |  |
 | 221 | STStylizedWindow_Create() | AddChild | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
 | 222 | STStylizedWindow_Create() | InteriorChangedSize | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
 | 223 | STStylizedWindow_Create() | SetVisible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
-| 224 | ShipClass | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 224 | ShipClass | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC | 2026-08-09 |
 | 225 | TGEvent | GetCString | 1 | 1/201 | 2026-07-13 23:37 UTC |  |
-| 226 | WarpEngineSubsystem | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
+| 226 | WarpEngineSubsystem | SetInvincible | 1 | 1/201 | 2026-07-13 23:39 UTC | 2026-08-09 |
 | 227 | _CinematicWindow | AddChild | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
 | 228 | _CinematicWindow | MoveToFront | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
 | 229 | _CinematicWindow | SetFocus | 1 | 1/201 | 2026-07-13 23:39 UTC |  |
