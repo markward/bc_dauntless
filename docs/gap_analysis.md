@@ -691,20 +691,54 @@ clips on the base layer, procedural head IK (`GlanceAt`/`TurnTowards`) on an
 upper layer. Python only issues high-level commands; blend weights are engine
 policy. No instrumentation needed.
 
-**OQ-8.3 — MorphBody usage and scope**  
+**OQ-8.3 — MorphBody usage and scope** ✅ *dead surface*  
 `CharacterClass.MorphBody()` suggests mesh morphing exists beyond
 texture swapping. Used rarely in the visible source. Likely for species
 variation or damage states. Approach: search all character creation
 scripts for `MorphBody` calls, identify all usage contexts, assess
 whether reimplementation is required for Phase 1.
 
-**OQ-8.4 — Animation file catalogue completeness**  
+**Answer: dead surface — nothing calls it.** `MorphBody` appears exactly once
+across the whole tree outside comments: the SWIG binding line
+`sdk/Build/scripts/App.py:4736`. A grep of all 1,228 SDK scripts finds **zero**
+call sites. It is deliberately unimplemented; `engine/appc/characters.py:1359`
+and `:1379` document it as a silent no-op. Do not reimplement it on the strength
+of the binding's existence — "the SWIG surface has it" is not evidence that the
+game uses it.
+
+**OQ-8.4 — Animation file catalogue completeness** ✅ *superseded*  
 Animations are loaded by string path from `data/animations/*.nif`. The
 full catalogue of animation files is not in the SDK — only the scripts
 referencing them. A complete reimplementation needs all animation assets.
 Approach: extract all `LoadAnimation` call paths from the Python source
 statically to build a complete asset manifest before attempting
 reimplementation.
+
+**Superseded — and the proposed approach would have produced a wrong manifest.**
+Assets come from the BC installation (`game/data/animations/`), not from a
+manifest we build. SDK scripts register name → path at runtime via
+`g_kAnimationManager.LoadAnimation` (`engine/appc/animation_manager.py:19`),
+and the host resolves paths lazily at load time
+(`engine/host_loop.py:1475 _resolve_asset_path`).
+
+A static extraction of `LoadAnimation` call paths would be actively misleading,
+because BC's own registrations are not a clean list of real files:
+
+- **Registration is LAST-write-wins, and that is load-bearing.** BC re-registers
+  a name precisely to *correct* it. On a real `LoadBridge.Load("GalaxyBridge")`
+  exactly two names are registered twice: `DBCameraSitDown` first points at
+  `DB_Camera_Sit_Downp.nif` — a typo for a file that does not exist
+  (`GalaxyBridge.py:193`) — then at the correct path; and `H_Talk_E_M` is
+  cross-registered to a different clip. A static manifest would list the
+  non-existent typo file as a required asset.
+- **Some registered paths have no extension** (`CommonAnimations.py:647,655`),
+  and are tolerated where BC tolerates them — in the file loader, which probes
+  the directory case-insensitively for `.NIF`/`.nif`.
+
+Covered by `tests/unit/test_animation_manager.py` and
+`tests/unit/test_host_loop_asset_path.py`
+(`test_extension_less_path_resolves_to_the_real_uppercase_nif`,
+`test_a_genuinely_missing_file_degrades_without_raising`).
 
 ---
 
@@ -760,9 +794,9 @@ across mission boundaries.
 **Total open questions: 26**  
 **Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-2.1, OQ-4.1, OQ-4.2, OQ-4.3, OQ-4.4, OQ-5.1, OQ-5.2, OQ-5.3, OQ-6.2, OQ-7.4, OQ-8.1, OQ-8.2 (15)**  
 **Answered by instrumentation: OQ-7.1, OQ-7.2, OQ-7.3 (3)**  
-**Closed by code audit 2026-08-09: OQ-3.1 (superseded — OpenMW cannot parse v3.1), OQ-3.2, OQ-3.3 (3)**  
+**Closed by code audit 2026-08-09: OQ-3.1 (superseded — OpenMW cannot parse v3.1), OQ-3.2, OQ-3.3, OQ-8.3 (dead surface), OQ-8.4 (superseded) (5)**  
 **Partially answered: OQ-2.2 (teleport confirmed; warp-exit velocity Phase 2), OQ-2.3 (arc/modes known; force law tuned by feel)**  
-**Still open: OQ-6.1, OQ-8.3, OQ-8.4 (3)**  
+**Still open: OQ-6.1 (1)**  
 **Instrumentation genuinely required: none remaining**
 
 **Phase 1 blockers: all resolved. Ready to begin Phase 1 implementation.**
