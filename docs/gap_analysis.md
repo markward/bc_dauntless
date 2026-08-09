@@ -80,7 +80,12 @@ the Python side; the SWIG `thisown` flag is set by the C++ factory methods,
 not by Python code.
 
 **OQ-1.3 — Serialisation format for save/load** ✅  
-39 classes define `__getstate__` and `__setstate__`. The pattern is uniform:
+*(Count corrected 2026-08-09: the figure below was "39 classes". Measured today —
+**46** `def __getstate__` and **46** `def __setstate__` across **38** files. The
+substantive claim — uniform pattern, no novel serialisation contract — is
+unaffected; only the number was wrong.)*
+
+46 classes define `__getstate__` and `__setstate__`. The pattern is uniform:
 `__getstate__` returns a plain dict of Python-side state (object names,
 configuration values), discarding any Appc handles. `__setstate__` re-looks
 up live Appc objects by name and re-attaches handlers. `cPickle` is imported
@@ -484,6 +489,40 @@ stores only `SetDirection(vec)` + `SetRight(vec)` — no `SetArcWidthAngles` /
 
 `TorpedoTube.CanHit()` and `IsInArc()` are SWIG-exposed C++ methods but are
 **never called from Python** — zero call sites across all 1228 scripts.
+
+**Verified 2026-08-09 — the TORPEDO claim holds, but it hid a PHASER gap.**
+Re-running the grep finds exactly **one** `.CanHit(` call site in the SDK, and it
+is not on a tube:
+
+```
+sdk/Build/scripts/Conditions/ConditionInPhaserFiringArc.py:175
+    if ((not self.bDangerousOnly) or pBank.CanFire()) and pBank.CanHit(vTargetLocation):
+```
+
+`pBank` is a **`PhaserBank`**, so OQ-5.2's torpedo-scoped claim is still true —
+but `engine/appc/weapon_subsystems.py:684` records `CanHit`/`IsInArc` as
+"DELIBERATELY ABSENT (verified zero SDK call sites **on a tube**)" and adds that
+they are "unspecifiable — their BC signatures cannot be recovered from the SDK".
+Both parts now need qualifying:
+
+- **We do not implement `PhaserBank.CanHit`.** The call therefore resolves via
+  `TGObject.__getattr__` to a truthy `_Stub`, which would make the arc test pass
+  unconditionally and report "target in phaser firing arc" without checking the
+  arc. `ConditionInPhaserFiringArc` is live AI code (`AI/Setup.py`,
+  `AI/Compound/FedAttack.py`).
+- **Latent, not confirmed-live.** `CanHit` does **not** appear in
+  `docs/stub_heatmap.md`, so it was never hit across 201 recorded runs — the
+  code path evidently does not execute in the missions exercised so far. Stated
+  as a latent risk, not an observed bug, per the rule against asserting stub
+  behaviour from reasoning alone.
+- **No longer unspecifiable.** The clean-room reference publishes
+  `PhaserBank_CanHit` at `0x00619030`, alongside `PhaserBank_GetArcWidthAngles`,
+  `GetArcHeightAngles`, the four Arc*Angle{Min,Max} accessors,
+  `GetOrientationForward/Right/Up` and `GetMaxPhaserRange` — enough surface to
+  specify `CanHit(vWorldPoint)` as a point-in-arc-cone-and-range test. (Names and
+  addresses are *identity facts*; behaviour was not asked and is not claimed.)
+
+Carried to the triage report as a Phase 3 candidate.
 
 Python AI handles torpedo firing eligibility entirely through maneuvering:
 `TorpedoRun.py` flies the ship until it is within `fIdealFacingThreshold = PI/16`
