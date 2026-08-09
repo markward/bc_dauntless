@@ -681,8 +681,19 @@ class Weapon(ShipSubsystem):
     SetSkewFire, and IsSkewFire are now implemented for the BC-faithful dispatch
     tick (weapon-firing-mechanics.md §3.1/§2.10).  DELIBERATELY ABSENT (verified
     zero SDK call sites on a tube): SetFiring, GetTargetID,
-    GetOverallConditionPercentage, IsInArc, CanHit.  IsInArc/CanHit are additionally
-    unspecifiable — their BC signatures cannot be recovered from the SDK.
+    GetOverallConditionPercentage, IsInArc, CanHit.
+
+    ⚠ "Zero SDK call sites" above was verified ON A TUBE, and that scoping
+    matters: `CanHit` HAS one SDK call site, on a PhaserBank —
+    Conditions/ConditionInPhaserFiringArc.py:175, live under FedAttack. It is
+    implemented on PhaserBank (see PhaserBank.CanHit); only the tube lacks it.
+    `IsInArc` genuinely has zero call sites and stays absent.
+
+    The former claim that both were "unspecifiable — their BC signatures cannot
+    be recovered from the SDK" is retired (2026-08-09): the clean-room reference
+    publishes PhaserBank_CanHit at 0x00619030 alongside GetArcWidthAngles,
+    GetArcHeightAngles and GetMaxPhaserRange, which is enough to specify it as a
+    point-in-arc-cone-and-range test.
 
     GetProperty/SetProperty are inherited from ShipSubsystem (subsystems.py:273).
     """
@@ -1936,6 +1947,51 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
         if v < 0.0:                self._charge_level = 0.0
         elif v > self._max_charge: self._charge_level = self._max_charge
         else:                      self._charge_level = v
+
+    def CanHit(self, target_world_point) -> int:
+        """1 if `target_world_point` lies inside this bank's firing arc and
+        within its maximum range, else 0.
+
+        The sole Python caller is Conditions/ConditionInPhaserFiringArc.py:175
+        (`pBank.CanHit(vTargetLocation)`), reached from AI/Compound/FedAttack.py
+        and AI/Setup.py.
+
+        Must return a REAL int. Undefined, this resolved to a truthy
+        `_Stub` via TGObject.__getattr__, so the condition reported every
+        target as in-arc and FedAttack fired with no arc discipline at all.
+        The gap was latent rather than observed — `CanHit` never appears in
+        docs/stub_heatmap.md, so the path did not execute in 201 recorded runs.
+
+        Range semantics: MaxDamageDistance == 0 means UNBOUNDED, not
+        unreachable. Most hardpoints omit the field, and reading 0 as a
+        zero-radius limit would silently disable every such bank.
+        """
+        if not isinstance(target_world_point, TGPoint3):
+            return 0
+        ship = self.GetParentShip()
+        origin = subsystem_world_position(self, ship)
+        if origin is None:
+            return 0
+
+        dx = target_world_point.x - origin.x
+        dy = target_world_point.y - origin.y
+        dz = target_world_point.z - origin.z
+        dist = _math.sqrt(dx * dx + dy * dy + dz * dz)
+        if dist <= 0.0:
+            return 0
+
+        max_range = 0.0
+        prop = self.GetProperty() if hasattr(self, "GetProperty") else None
+        if prop is not None and hasattr(prop, "GetMaxDamageDistance"):
+            try:
+                max_range = float(prop.GetMaxDamageDistance())
+            except Exception:
+                max_range = 0.0
+        if max_range > 0.0 and dist > max_range:
+            return 0
+
+        aim = TGPoint3(dx / dist, dy / dist, dz / dist)
+        return 1 if _emitter_in_arc(self, ship, aim) else 0
 
 
 class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
