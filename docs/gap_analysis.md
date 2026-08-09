@@ -166,12 +166,18 @@ instrumentation. Not needed for Phase 1.
   velocity **drops back to the pre-warp `_current_speed`** — instant transit, not
   a change of impulse state. Covered by
   `tests/unit/test_in_system_warp_preserves_speed.py`.
-- **Set-to-set warp (the teleport this OQ asks about) — STILL OPEN.** Nothing in
-  our set-change path sets or zeros velocity: a grep for `SetVelocity` across
-  `engine/appc/sets.py` and the warp modules returns nothing, and all 12
-  `tests/unit/test_warp_*.py` files cover in-system warp, warp state, VFX or core
-  breach — none asserts arrival velocity. **Our current behaviour is therefore
-  accidental (whatever velocity the ship carried), not a chosen design.**
+- **Set-to-set warp (the teleport this OQ asks about) — RESOLVED 2026-08-09 as a
+  CHOSEN DEFAULT.** *Was:* nothing in the set-change path set or zeroed velocity,
+  so arrival velocity was whatever the ship carried in — accidental, not
+  designed, and unrelated to the placement heading. *Now:* the ship keeps its
+  commanded throttle and the velocity vector is re-derived along the
+  placement's new world-forward (`engine/appc/warp.py`, `_PlacePlayerAction`,
+  after `PlaceObjectByName`). Covered by
+  `tests/unit/test_warp_exit_velocity.py`, including the case that a ship
+  warping while pointing +Y leaves along its new +X facing.
+
+  ⚠️ **This is a chosen default, not recovered BC behaviour, and it is not
+  live-verified.** Do not cite it as evidence of what BC does.
 
 The clean-room reference could not settle it: three queries all returned
 *below-relevance-floor*. The correct section is almost certainly

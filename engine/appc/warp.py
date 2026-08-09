@@ -345,6 +345,27 @@ class _PlacePlayerAction(TGAction):
         dest.AddObjectToSet(ship, ship.GetName())
         ship.PlaceObjectByName(self._placement)
 
+        # Warp arrival velocity. The placement supplies a NEW orientation, so
+        # re-derive the velocity vector along the new facing while preserving
+        # the commanded throttle (chosen default, Mark 2026-08-09).
+        #
+        # Before this, NOTHING set velocity on a set-to-set warp: a grep for
+        # SetVelocity across the set-change path returned nothing and none of
+        # the 12 test_warp_*.py files asserted arrival velocity, so whatever
+        # vector the ship carried in survived the teleport — accidental, not
+        # designed, and unrelated to the placement heading.
+        #
+        # NOT recovered BC behaviour. The clean-room reference could not reach
+        # it (three queries below its relevance floor; the likely section,
+        # spec/ShipClass.md "Movement, docking & warp", scored 0.32 against a
+        # 0.35 floor). Re-ask when that scorer improves, and treat this as a
+        # deliberate default in the meantime.
+        from engine.appc.math import TGPoint3
+        speed = float(getattr(ship, "_current_speed", 0.0) or 0.0)
+        fwd = ship.GetWorldForwardTG() if hasattr(ship, "GetWorldForwardTG") else None
+        if fwd is not None and hasattr(ship, "SetVelocity"):
+            ship.SetVelocity(TGPoint3(fwd.x * speed, fwd.y * speed, fwd.z * speed))
+
 
 def _silence_ship_weapons(ship):
     """Stop any looping weapon-fire SFX on a ship's weapon banks.
