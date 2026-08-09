@@ -301,6 +301,9 @@ $RECYCLE.BIN/
 *.cert
 secrets/
 
+# MCP server config — holds bearer tokens for local/LAN reference servers
+.mcp.json
+
 # =============================================================================
 # DOCUMENTATION BUILD OUTPUT
 # =============================================================================
