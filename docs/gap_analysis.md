@@ -153,6 +153,28 @@ purely visual/sequencing — no physics integration occurs.
 zeroed, preserved from entry, or derived from placement orientation requires
 instrumentation. Not needed for Phase 1.
 
+**Audited 2026-08-09 — still open, and split in two. Do not conflate the halves:**
+
+- **In-system warp (cruise within a set) — IMPLEMENTED.** `_step_in_system_warp`
+  (`engine/appc/ship_motion.py:252`) cruises at
+  `IN_SYSTEM_WARP_SPEED_FACTOR × impulse MaxSpeed`, and on arrival the published
+  velocity **drops back to the pre-warp `_current_speed`** — instant transit, not
+  a change of impulse state. Covered by
+  `tests/unit/test_in_system_warp_preserves_speed.py`.
+- **Set-to-set warp (the teleport this OQ asks about) — STILL OPEN.** Nothing in
+  our set-change path sets or zeros velocity: a grep for `SetVelocity` across
+  `engine/appc/sets.py` and the warp modules returns nothing, and all 12
+  `tests/unit/test_warp_*.py` files cover in-system warp, warp state, VFX or core
+  breach — none asserts arrival velocity. **Our current behaviour is therefore
+  accidental (whatever velocity the ship carried), not a chosen design.**
+
+The clean-room reference could not settle it: three queries all returned
+*below-relevance-floor*. The correct section is almost certainly
+`spec/ShipClass.md — Movement, docking & warp`, which surfaced as top candidate
+at relevance **0.32 against the server's 0.35 floor** — a near miss, reported
+upstream. That is a **retrieval** limit, **not** evidence the corpus is silent;
+re-ask when the scorer improves rather than treating this as documented-absent.
+
 **Phase 1 implementation:** disable collisions → remove from origin set → add
 to destination set at named placement → re-enable collisions.
 
@@ -183,6 +205,23 @@ names: HOLD ≈ zero-velocity constraint, TOW ≈ gentle follow, PULL ≈ strong
 attract, PUSH ≈ repel, DOCK_STAGE_1/2 ≈ progressive position lock. No
 instrumentation needed as a starting point; empirical measurement optional
 if the feel is wrong after initial tuning.
+
+**Audited 2026-08-09 — the prescribed Phase 2 force law is BUILT; fidelity to BC
+remains unverifiable.** `engine/appc/tractor.py` implements a mass-aware,
+reciprocal spring model (`TRACTOR_REFERENCE_SPEED_GUPS = 5.0`; mass-scaled
+engagement speed with an inverse-mass split mirroring `collisions.py`; hulls
+reporting `mass <= 0` fall back to effectively immovable). All six modes are
+present. 93 tractor tests pass (`uv run pytest tests/ -k tractor`).
+
+Stays ⚠️ deliberately. What is built is a *designed approximation*, signed off in
+the design — **not** a reconstruction of BC's law, and nothing available can
+promote it. The clean-room reference does not cover tractor forces: a
+`search_reference("tractor")` returns only the UI toggle
+(`spec/TacWeaponsCtrl.md §4.3 RefreshTractorToggle`, itself "owned as a stub")
+plus generic weapon/subsystem overviews, and a direct force-model question
+returned *below-relevance-floor* (best 0.20). Treat the numbers as tuning
+constants, not as recovered engine values, and do not later cite this OQ as
+evidence that BC behaves this way.
 
 ---
 
