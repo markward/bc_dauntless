@@ -220,24 +220,65 @@ from Python source spec. Validate against actual BC assets.
 
 ### Open questions requiring investigation
 
-**OQ-3.1 — BC NIF version compatibility with OpenMW loader**  
+**OQ-3.1 — BC NIF version compatibility with OpenMW loader** ✅ *superseded*  
 OpenMW targets Morrowind NIF v4.0.0.2. BC may use a different version
 or custom extensions not covered by OpenMW's loader. Approach: run
 actual BC NIF files through OpenMW loader, identify which block types
 fail, cross-reference with NifSkope definitions.
 
-**OQ-3.2 — Surface and internal damage geometry tagging**  
+**Superseded — the question's premise is void.** BC ships NIF **v3.1**, which
+OpenMW does not parse at all; the proposed experiment cannot be run. The
+OpenMW-as-diff-oracle relationship was dropped during the loader design and
+replaced with snapshot tests plus an end-of-file sanity check
+(`docs/superpowers/specs/2026-05-08-nif-loader-design.md:60-63, 67-87`). We wrote
+our own v3.1 parser: `native/src/nif/`. OpenMW survives only as *readable*
+algorithmic reference for block types that persisted across versions — a grep
+for `OpenMW` across `native/src` and `engine/` returns no code hits.
+
+**OQ-3.2 — Surface and internal damage geometry tagging** ✅  
 Hardpoints reference `SetDamageResolution()` suggesting geometry is
 tagged for damage visualisation. How damage geometry is marked in the
 NIF files is not visible from Python source. Approach: inspect BC NIF
 files in NifSkope, identify damage-related node naming conventions.
 
-**OQ-3.3 — Character body/head NIF assembly**  
+**Answer: damage geometry is not node-tagged. It is a separate voxel NIF.**
+Each hull has a paired `*_vox.nif` containing `NiBinaryVoxelExtraData` /
+`NiBinaryVoxelData` — a binary occupancy mask of the hull interior. The on-disk
+format is reverse-engineered and validated against the full 84-file `*_vox.nif`
+corpus (`docs/engine/nibinaryvoxeldata-format-v3.1.md`) and implemented in
+`native/src/voxel/` (`decode.cc`, `plane_index.cc`, `volume.h`, `voxelize.h`)
+with the block parsed at `native/src/nif/src/blocks/extra_data.cc`. Covered by
+ctest `VoxelDataHeader.GalaxyHeaderDecodesToConfirmedValues`,
+`VoxelVolume.IndexRoundTripAndSetGet`,
+`SurfaceVoxelize.MarksVoxelsTrianglePassesThrough`.
+
+The OQ's premise about `SetDamageResolution()` was a misreading: it is a
+**per-ship-class scalar** (15.0 for every class in
+`GlobalPropertyTemplates.py`), stored at `engine/appc/ships.py:802` — a grid
+resolution, not a geometry tag.
+
+**OQ-3.3 — Character body/head NIF assembly** ✅  
 `CharacterClass_Create()` takes separate body and head NIF paths and
 assembles them at runtime. How the skeleton is merged and how
 `ReplaceBodyAndHead()` swaps textures on the assembled model is
 engine-side. Approach: inspect character NIF files in NifSkope,
 examine skeleton node structure.
+
+**Answer: implemented as a head graft onto the body skeleton.**
+`graft_head_cpu()` (`native/src/assets/src/model_compose.cc:206`) finds the
+attach bone in the body skeleton and grafts **all visible meshes** of the head
+Model, remapping bone weights by name. BC "head" NIFs are full Bip01 body+head
+templates, so the earlier approach of grafting the `Bip01 Head` node subtree
+picked up only hidden skeleton-placeholder boxes and missed the real face mesh
+(parented under `Bip01 Spine1`) — the "lego skeleton head" bug, documented at
+`model_compose.cc:212-225`. Covered by ctest `GraftHeadCpu.*` in
+`native/tests/assets/cpu/model_compose_test.cc`, including
+`GraftsHeadMeshNotParentedUnderAttachNode` (guards that bug),
+`RemapsMultiBoneWeightsByName` and `RigidFallbackWhenHeadModelHasNoSkeleton`.
+
+Note `ReplaceBodyAndHead()` takes **texture** paths, not NIFs
+(`engine/appc/characters.py:554`, comment at `:455`); it repoints the base
+texture stage (ctest `SetBaseTextureCpu.RepointsBaseStageToAppendedTexture`).
 
 ---
 
@@ -709,18 +750,19 @@ across mission boundaries.
 |---|---|---|---|---|
 | 1. Appc interface | Yes | Medium | Static analysis + instrumentation | OQ-1.1 to 1.3 |
 | 2. Physics | Yes | Low | PyBullet + hardpoints data | OQ-2.1 to 2.3 |
-| 3. NIF Renderer | No (Phase 2) | Hard | OpenMW + NifSkope | OQ-3.1 to 3.3 |
+| 3. NIF Renderer | No (Phase 2) | Hard | Own v3.1 parser (`native/src/nif/`); NifSkope schema as reference | OQ-3.1 to 3.3 |
 | 4. Event system | Yes | Medium | Best-effort + refinement | OQ-4.1 to 4.4 |
 | 5. Spatial queries | Yes | Low | numpy + PyBullet | OQ-5.1 to 5.3 |
 | 6. Audio | No (Phase 2) | Low | OpenAL / openal-soft | OQ-6.1 to 6.2 |
 | 7. Game loop | Yes | Medium | Instrumentation (4 OQs) | OQ-7.1 to 7.4 |
-| 8. Animation | No (Phase 2) | Medium | OpenMW + rhubarb-lip-sync | OQ-8.1 to 8.4 |
+| 8. Animation | No (Phase 2) | Medium | Own NIF anim binder; BC `.LIP` data (`engine/lip_sync.py`) | OQ-8.1 to 8.4 |
 
-**Total open questions: 21**  
+**Total open questions: 26**  
 **Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-2.1, OQ-4.1, OQ-4.2, OQ-4.3, OQ-4.4, OQ-5.1, OQ-5.2, OQ-5.3, OQ-6.2, OQ-7.4, OQ-8.1, OQ-8.2 (15)**  
 **Answered by instrumentation: OQ-7.1, OQ-7.2, OQ-7.3 (3)**  
+**Closed by code audit 2026-08-09: OQ-3.1 (superseded — OpenMW cannot parse v3.1), OQ-3.2, OQ-3.3 (3)**  
 **Partially answered: OQ-2.2 (teleport confirmed; warp-exit velocity Phase 2), OQ-2.3 (arc/modes known; force law tuned by feel)**  
-**Still open: OQ-3.1–3.3, OQ-6.1, OQ-8.3, OQ-8.4 (6)**  
+**Still open: OQ-6.1, OQ-8.3, OQ-8.4 (3)**  
 **Instrumentation genuinely required: none remaining**
 
 **Phase 1 blockers: all resolved. Ready to begin Phase 1 implementation.**
