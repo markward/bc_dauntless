@@ -29,8 +29,8 @@ session the same class of error appeared repeatedly:
 | OQ-8.4 | Need an animation asset manifest | Animation shipped and running |
 | OQ-8.3 | `MorphBody` scope unknown | Zero SDK call sites; SWIG binding only |
 | heatmap #45/46 | `Planet.GetCloakingSubsystem`, 324 hits | Coverage `1/201`, last seen 2026-07-13; class-based fix documented at `engine/appc/sensor_detection.py:42-50` |
-| `gap_analysis.md` | "21 open questions" | 26 OQ entries actually present |
-| `stub_heatmap.md` | "Open: 229" | Header count drifting from table contents |
+| `CLAUDE.md:38,64` | "21 open questions" | 26 OQ entries actually present in `gap_analysis.md` |
+| `gap_analysis.md:723` | "Still open: … **(5)**" | Six items listed on that very line |
 
 Stale documentation that asserts gaps is worse than absent documentation: it
 manufactures confident, wrong work. This branch fixes the record, then builds
@@ -129,8 +129,15 @@ and a wrongly-dated row silently disarms that detector for that stub.
 
 One reviewable commit. Corrects `docs/gap_analysis.md`,
 `docs/open_questions.md`, the gap assertions in `docs/engine/*.md`, and
-`docs/stub_heatmap.md` markers. Reconciles the two self-reported counts
-(`gap_analysis.md`'s "21", the heatmap header's "229") against actual contents.
+`docs/stub_heatmap.md` markers. Reconciles the self-reported counts against
+actual contents: `CLAUDE.md`'s "21 open questions" (26 present) and
+`gap_analysis.md:723`'s "(5)" (six listed).
+
+**The heatmap header is correct** — 229 open roadmap rows, header says
+`Open: 229`, verified by row count. An earlier draft of this spec claimed it was
+drifting; that came from counting rows across all four tables instead of the
+open roadmap alone. Recorded here because it is the same error class the branch
+exists to fix: a confident gap claim made without running the check.
 
 Also records the dead-surface findings with their MCP addresses, so a later
 session does not rediscover them as gaps. Includes the cloak accessors and the
