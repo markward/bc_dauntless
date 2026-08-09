@@ -127,7 +127,9 @@ and a wrongly-dated row silently disarms that detector for that stub.
 
 ## Phase 2 — Triage and correct
 
-One reviewable commit. Corrects `docs/gap_analysis.md`,
+One commit per gap area, not one commit for the whole phase — a reviewer can
+reject the renderer audit while accepting the audio one, and a bad conclusion can
+be reverted without unwinding the rest. Corrects `docs/gap_analysis.md`,
 `docs/open_questions.md`, the gap assertions in `docs/engine/*.md`, and
 `docs/stub_heatmap.md` markers. Reconciles the self-reported counts against
 actual contents: `CLAUDE.md`'s "21 open questions" (26 present) and
