@@ -403,7 +403,16 @@ the two event types it waits on. Three tasks: manager surface, audio playback, w
 - Test: `tests/unit/test_music_manager.py` (create)
 
 **Interfaces:**
-- Produces: `MusicManager` with `LoadMusic(name, path) -> None`, `UnloadMusic() -> None`, `StartMusic(name, looping=1, start_time=0.0) -> None`, `StopMusic() -> None`, `PlayFanfare(name) -> None`, `current() -> str | None`; module-level `App.g_kMusicManager`; int constants `App.ET_MUSIC_DONE`, `App.ET_MUSIC_CONDITION_CHANGED`.
+- Produces: `MusicManager` with **signatures taken from real SDK call sites, not inferred** — `LoadMusic(path, name, beat=0.0) -> None` (FILE first, `DynamicMusic.py:60`), `UnloadMusic(name) -> None` (one track by name, `:78`), `StartMusic(name, looping=1) -> int` (**returns 1/0**, branched on at `:178`), `StopMusic() -> None`, `PlayFanfare(name) -> None`, `IsEnabled() -> int` / `SetEnabled(value) -> None` (`E8M2.py:6558-6568`), `set_backend(backend)`, `current() -> str | None`; module-level `App.g_kMusicManager`; int constants `App.ET_MUSIC_DONE`, `App.ET_MUSIC_CONDITION_CHANGED`.
+
+> ⚠️ **CORRECTED 2026-08-09 mid-execution.** The first draft of this task guessed
+> the signatures and was wrong four ways: argument order (name/path reversed),
+> `UnloadMusic`'s arity (it takes a name), `StartMusic`'s return (load-bearing),
+> and it omitted `IsEnabled`/`SetEnabled` entirely. Implementing the guess broke
+> 14 QuickBattle/host-loop tests, because supplying a real `g_kMusicManager`
+> makes the previously-silent SDK path actually execute. **Read the call sites:**
+> `grep -rn "g_kMusicManager\." sdk/Build/scripts/`. Note also that DynamicMusic
+> is driven by QuickBattle (`QuickBattleGame.py:66`) as well as Maelstrom.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -588,7 +597,7 @@ silent no-op. Supplies the TGMusic-shaped primitives; the SDK keeps the queue."
 
 **Interfaces:**
 - Consumes: `engine/audio/tg_sound.py` `SetVolume(gain)` (line 141).
-- Produces: `MusicPlayer` with `play(path, looping=True, start_time=0.0) -> None`, `play_oneshot(path) -> None`, `stop() -> None`, `update(dt) -> None`, `volume() -> float`; constant `FADE_SECONDS = 2.0`.
+- Produces: `MusicPlayer` with `play(path, looping=True) -> None`, `play_oneshot(path) -> None`, `stop() -> None`, `update(dt) -> None`, `volume() -> float`; constant `FADE_SECONDS = 2.0`. (No `start_time`: the SDK's only call is `StartMusic(sMusicName, bLooping)`.)
 
 - [ ] **Step 1: Write the failing test**
 
