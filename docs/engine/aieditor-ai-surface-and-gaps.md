@@ -131,7 +131,7 @@ highest-signal checklist because each is a discrete engine capability a doctrine
 | **Alert Level** | alert-state escalation | ✅ works — handled via the generic `GotFocus` path (`ai_driver.py:242`); `ShipClass.SetAlertLevel` implemented (`ships.py:474`, collapses the XO-menu layer) |
 | **Avoid Obstacles** | collision avoidance | ⚠️ partial — [`collision_avoidance.py`](../../../engine/appc/collision_avoidance.py) (188 ln) referenced from `core/loop.py`; minimal vs. SDK |
 | **Tractor Beam Docking** | docking-stage tractor | ⚠️ tractor weapon + VFX shipped (`TractorBeamSystem`, modes); the *docking-sequence* AI (`AI/Compound/DockWithStarbase.py`) is unverified end-to-end |
-| **Cloaking** | stealth attack behaviour | ❌ **gated off** — `ShipClass.GetCloakingSubsystem` returns `None` by design (`ships.py:581`); SDK `FedAttack`/`NonFedAttack`/`CloakAttack` test this truthy, so the cloak branch is never taken |
+| **Cloaking** | stealth attack behaviour | ✅ **implemented** — `ShipClass.GetCloakingSubsystem` returns the real subsystem (`ships.py:992`); returns `None` only for hulls with no `CloakingSubsystemProperty`, which is the faithful behaviour. Corrected 2026-08-09 — see note below |
 | **Starbase Attack** | stationary-target doctrine | depends on Compound + the conditions below |
 | **Felix Report / AI Status** | telemetry/logging | n/a (debug-only) |
 
@@ -229,8 +229,30 @@ Ordered by leverage.
 3. **`Avoid Obstacles` / collision-avoidance.** Currently partial; the Compound doctrines assume
    ships don't fly through each other / terrain. Compare `collision_avoidance.py` against the
    SDK preprocessor.
-4. **`Cloaking` / `CloakAttack`.** `GetCloakingSubsystem` is a deliberate `None` stub; implement
-   the cloak subsystem surface to unlock the cloak doctrines (Romulan/Klingon faithfulness).
+4. ~~**`Cloaking` / `CloakAttack`.** `GetCloakingSubsystem` is a deliberate `None` stub~~
+   ✅ **WAS ALREADY DONE — this entry was wrong.** Corrected 2026-08-09.
+
+   `GetCloakingSubsystem` returns the real subsystem (`engine/appc/ships.py:992`); the
+   cloaking system shipped (phases A–E). This row was written before that work and never
+   updated, and on 2026-08-09 it caused a *false confirmed gap*: the clean-room reference
+   was asked to confirm `ShipClass_GetCloakingSubsystem` (it does exist, dispatching at
+   `0x0060a4b0`), and the combination was reported as settling a design question and
+   warranting implementation. It warranted nothing — the code had been there for months.
+
+   **The lesson, not the line, is what matters here:** a prose gap-doc is *never* evidence
+   about our own implementation. Read the code. This entire document is a map drawn at one
+   moment; treat every ❌ in it as a hypothesis to re-check against `engine/`, not a fact.
+
+   Remaining genuine cloak work is tracked elsewhere: Phase E VFX and decloak cadence.
+
+   **Dead surface, deliberately absent.** `CloakingSubsystem_{Get,Set}CloakTime` and
+   `CloakingSubsystem_{Get,Set}ShieldDelay` exist in the SWIG binding with **zero** call
+   sites across the 1,228 SDK scripts, so they are not implemented and should not be
+   rediscovered as a gap. Per the clean-room reference's object model for
+   `CloakingSubsystem` (`sizeof` = `0xBC`), the backing values `g_cloakTime` (`0x8e4e1c`)
+   and `g_shieldDelay` (`0x8e4e20`) are **class-static globals** — one shared cloak cadence
+   across every ship, *not* per-instance fields. Build them that way if they are ever
+   needed. (Layout section graded *partial*; rows marked scouted are unverified.)
 5. **AI inspector (dev tool).** `AIActiveLogView.py` shows the original game shipped a live
    AI-tree monitor. A Dauntless developer-mode "AI inspector" overlay (render each ship's active
    AI subtree + current node + condition states) fits the existing dev tooling (Ship Property

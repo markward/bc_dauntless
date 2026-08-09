@@ -1,5 +1,15 @@
 # DamageTool & Hull-Damage Gaps
 
+> **Gap claims re-verified against code 2026-08-09** — all accurate, no corrections
+> needed. Checked: Gap 1 (`engine/appc/visible_damage.py` exists),
+> Gap 2 (`engine/appc/hull_carve.py` carries `strength` / `influ_radius` /
+> `STRENGTH_PER_HULL`), the stated absence of a native `HullCarveField::clear()`
+> (`native/src/scenegraph/include/scenegraph/hull_carve.h:51-72` exposes only
+> `add`, `count`, `slots`), and the ⚠ live `Damage.tga` issue
+> (`native/src/renderer/breach_pass.cc:43-46` does load the `Damage1-4.tga` HUD
+> glyphs). Contrast `aieditor-ai-surface-and-gaps.md`, whose cloaking row was
+> stale and produced a false confirmed gap — verify before citing either.
+
 **What this is:** an analysis of BC's `DamageTool` and the hull-damage system it
 authors, mapped against Dauntless's voxel-carve damage system, with prioritized
 gaps. Reference material beside
