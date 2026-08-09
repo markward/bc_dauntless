@@ -106,8 +106,19 @@ Permitted status outcomes:
 
 Mechanical selection, then per-row verification:
 
-> **Candidate** = low run-coverage **and** `lastSeenOn` materially older than
-> the most recent runs — i.e. the stub stopped being hit.
+> **Candidate** = `lastSeenOn` is **at least 14 days before the newest run
+> recorded in the heatmap header** (currently 2026-08-06). That is: runs have
+> continued, and this stub has stopped being hit.
+
+Run-coverage (`x/201`) is *secondary* evidence — it says how widespread the
+stub was, not whether it is still live — so it informs the write-up but never
+selects a row on its own. The `Planet.GetCloakingSubsystem` row qualifies on the
+primary rule: last seen 2026-07-13, 24 days before the newest run.
+
+The 14-day threshold is a starting heuristic for selecting rows to *read*, not a
+resolution criterion — nothing is marked without the code check below. If it
+proves to select too much or too little in practice, tune it and note the change
+here rather than silently widening the sweep.
 
 Candidates are verified in code before any status change. Verified rows get a
 date in `markedResolvedOn`; rows that fail verification stay open with a note
