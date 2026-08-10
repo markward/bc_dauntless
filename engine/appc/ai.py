@@ -282,6 +282,25 @@ class ArtificialIntelligence:
     # a stale ID return None, matching Appc's "AI was destroyed" semantics.
     _registry: "dict[int, weakref.ref[ArtificialIntelligence]]" = {}
 
+    # ── Conformance to BC's AI base, checked 2026-08-10 ──────────────────────
+    # spec/ArtificialIntelligence.md §2 (reviewed-not-tested) gives the real
+    # header: owner-ship handle +0x04, parent-node ID +0x08, name +0x0c,
+    # blackboard hash map +0x10..+0x1f, active +0x20, hasFocus +0x21,
+    # paused +0x22, interruptable +0x23 (default 1), unique ID +0x24.
+    # Our _interruptable/_paused/_has_focus and the id registry match.
+    #
+    # DELIBERATELY ABSENT — the embedded BLACKBOARD (+0x10..+0x1f): a 37-bucket
+    # hash map of {key, value, next} entries holding per-node scratch state.
+    # It is NOT script-visible: the published contract has exactly 14
+    # ArtificialIntelligence_* entries (GetAIByID, GetID, GetName, GetObject,
+    # GetShip, HasFocus, IsActive, IsInterruptable, IsPaused, LogAITree, Pause,
+    # Reset, SetInterruptable, Unpause) and none of them reads or writes it. It
+    # is engine-internal scratch, so there is nothing for the SDK to observe.
+    # Do not implement it speculatively.
+    #
+    # ALSO ABSENT, both harmless: the parent-node ID at +0x08 (set by the
+    # parent's AddAI, 0 for a root — we hold parent links directly), and
+    # LogAITree, a debug dump with zero SDK call sites.
     def __init__(self, pShip=None, name: str = ""):
         self._ship = pShip
         self._name = name

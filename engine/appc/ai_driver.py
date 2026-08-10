@@ -273,6 +273,25 @@ def _dispatch_priority_child(child, game_time: float) -> int:
 def _tick_priority_list(ai: PriorityListAI, game_time: float) -> int:
     # ai._ais is sorted lowest priority-int first (highest priority).
     #
+    # ✅ CONFIRMED 2026-08-10 against the clean-room reference plus SDK usage.
+    # spec/PriorityListAI.md §1: the node "runs the highest-priority runnable
+    # child" — but that phrasing does NOT fix the numeric direction, so it was
+    # settled from the SDK. AI/Compound/NonFedAttack.py:444-447 builds
+    #   AddAI(pEvadeTorps_2, 1) / (pFwdTorpsOrPulseReady, 2)
+    #   / (pRearTorpsReady..., 3) / (pICOMoveAround, 4)
+    # Dodging incoming torpedoes must outrank a generic move-around fallback,
+    # so priority 1 is the MOST urgent: lower int = higher priority, exactly as
+    # the sort assumes. Same pattern in Defend.py:102-103 (defendee-attacked 1,
+    # idle circling 2). Do not "fix" this to descending.
+    #
+    # ⚠️ The reference cannot validate the run-tick itself: spec/PriorityListAI.md
+    # records IsInterruptable, AddAI(priority), RemoveAIByPriority and the
+    # run-tick virtuals (0x490310/0x490140/0x4901e0/0x490270/0x4902a0/0x490340/
+    # 0x490560) as SEH-framed WALLS — catalogued but not reconstructed. The
+    # decompiled reading below therefore remains our own evidence, unconfirmed
+    # by the corpus. Only the ctor and ForEachChild (slot 18) are byte-exact;
+    # AllChildrenDone (slot 17) is behaviour-verified at ~87%.
+    #
     # Dormancy is NOT a parent-side latch. The decompiled
     # PriorityListAI::Update (0x00490340) keeps a per-entry "skip" byte
     # (entry+0x04) and sets it **only** when a child's Update returns US_DONE
