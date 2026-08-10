@@ -251,6 +251,33 @@ condition-callback dispatch (`SetString("module*function")` → `GetCString()` �
 `strop.split`) therefore works. **Only the text-widget `SetString` is missing.**
 Checked rather than assumed — the two are unrelated despite the shared name.
 
+### 3.4a Blink family — fully specified already, no query needed *(ranks 38/39/40)*
+
+`CharacterClass.SetBlinkChance` (427 hits), `SetAnimatedSpeaking` (380),
+`SetBlinkStages` (380). Clean asymmetry: **`GetBlinkChance` exists**
+(`engine/appc/characters.py:1206`) but all three setters are absent — so
+`pCharacter.SetBlinkChance(0.1)` no-ops and the getter always returns the default.
+Real call sites in `MissionLib.py:1579` and every bridge character
+(`Bridge/Characters/Draxon.py:49,55,60`).
+
+**Defaults are already in our tier-0 spec** — `docs/engine/characterclass-reference.md`
+(gameplay-tested, outranks the clean-room reference):
+
+| Field | Offset | Default |
+|---|---|---|
+| BlinkChance | `+0xB8` | `0.1` |
+| BlinkStages | `+0x178` | `-1` |
+| blink animation name (`m_pBlink`) | `+0xbc` | owned `char*`, `SetBlinkAnimation` |
+| RandomAnimationEnabled | `+0x13C` | `1` |
+| AudioMode | `+0x84` | `2` (CAM_VOCAL) |
+
+Note `BlinkChance`'s default of `0.1` is exactly what `Draxon.py:49` sets explicitly —
+consistent, and a useful cross-check. `BlinkStages` defaulting to **-1** (not 0) is the
+kind of value that a stub would silently get wrong.
+
+**No clean-room query was spent here.** Tier-0 is checked first by policy and it
+already answered; the reference would have been the lower-tier source.
+
 ### 3.5 Note on the music work (branch `fix/open-question-reconciliation`)
 
 While scouting: that branch adds `SetCString`/`GetCString` to the base `TGEvent`
@@ -272,3 +299,46 @@ revisited — not a bug, a redundancy.
    the `TGUIObject` header is recovered and SDK usage settles the `GetRight`/`GetBottom`
    semantics the spec left ambiguous. Bounded, headless-testable, no open questions.
 5. **§3.2 collision-alert default** — needs evidence we do not have yet; do not guess.
+
+---
+
+## Appendix — clean-room reference: what it answered, and what is still worth asking
+
+**Answered, and directly implementable:**
+
+- **`TGUIObject` shared widget header** (§3.3a) — the single biggest win. Unblocks
+  ~104,000 hits of layout accessors. Grade *reviewed-not-tested*, confidence *partial*.
+- **`ProximityManager` process-global collision toggles** (§3.3) — two flags, MP/SP,
+  gating player-involving pairs only, with the MP-copies-SP ordering hazard.
+- **`CharacterClass_SetCollisionAlertEnabled` exists** at `0x005fe6c0` (*faithful*,
+  identity fact) — though its behaviour and default are not covered.
+
+**Asked and genuinely could not answer** (record as retrieval-limited, not silence):
+
+| Question | Outcome |
+|---|---|
+| What does `CinematicWindow.SetInteractive` do? | below floor (best 0.23); the section *exists* at relevance 0.57 |
+| Collision-alert default value | below floor (best 0.18) |
+| Is `GetRight` an edge or a width? | `layout` re-serves the same section verbatim; settled from SDK usage instead |
+| Tractor-beam force law | no tractor force section exists (best 0.20) |
+| Set-to-set warp arrival velocity | below floor (best 0.32 — a near miss) |
+
+**Not worth asking — cheaper or better sources exist:**
+
+- Anything `CharacterClass` — our tier-0 `characterclass-reference.md` is
+  gameplay-tested and outranks the reference (see §3.4a, where it supplied the
+  defaults outright).
+- Anything answerable by grepping the 1,228 SDK scripts for call sites. The
+  `GetRight` ambiguity is the worked example: the reference gave the layout, the SDK
+  settled the semantics, and only the combination was conclusive.
+- The renderer, which is out of scope by design.
+
+**Worth asking once retrieval improves** — all three are near-misses on material the
+corpus plausibly holds: `CinematicWindow.SetInteractive`, the collision-alert default,
+and set-to-set warp arrival velocity.
+
+**Feedback owed upstream:** `spec/TGUIObject.md §2`'s accessor column pairs
+`GetWidth`/`GetRight` on one slot and `GetHeight`/`GetBottom` on another, which reads
+as though each pair is one quantity. 135 SDK call sites show `GetRight`/`GetBottom`
+are absolute **edges**, distinct from the sizes. Worth correcting at the source — an
+implementer trusting that column alone would invert every layout.
