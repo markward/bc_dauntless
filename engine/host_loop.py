@@ -136,6 +136,81 @@ def shutdown_audio() -> None:
     _audio_backend_ready = False
 
 
+_music_player = None
+
+
+def _music_sound_adapter(path, looping=True):
+    """Adapt a loaded TGSound + its playing handle to the surface MusicPlayer
+    wants: SetVolume(gain) / Stop() / .playing.
+
+    ⚠️ MUST go through TGSoundManager.LoadSound. Constructing `TGSound(path,
+    False)` directly does NOT work and fails SILENTLY: the ctor only asks the
+    audio system whether a sound of that NAME is already registered
+    (`_loaded = _audio.get_sound(name) != 0`, tg_sound.py) — it never reads the
+    file. LoadSound is what resolves the path, reads the bytes and calls
+    `_audio.load_sound(...)` before constructing the handle.
+
+    That was the live bug behind "music not playing" (2026-08-10): every symbol
+    DynamicMusic needed was implemented and reached — g_kMusicManager stopped
+    appearing in the stub telemetry entirely — but each track was an unloaded
+    TGSound whose Play() did nothing. No error, no log, just silence.
+    tests/audio/test_music_adapter.py pins the LoadSound route so a future edit
+    cannot quietly regress to direct construction.
+
+    `looping` must reach the sound too: DynamicMusic passes bLooping through
+    StartMusic, and an ambient bed that plays once and stops is not the same
+    thing as one that loops.
+    """
+    from engine.audio.tg_sound import TGSound, TGSoundManager
+
+    # LS_STREAMED, not LS_3D: music is 2D. `positional` is derived from the
+    # loadspec inside LoadSound (positional = loadspec == LS_3D).
+    snd = TGSoundManager.instance().LoadSound(path, path, TGSound.LS_STREAMED)
+    if snd is None:
+        return None                     # unreadable file / no audio backend
+
+    class _MusicSound:
+        def __init__(self, s, loop):
+            self._snd = s
+            if hasattr(s, "SetLooping"):
+                s.SetLooping(1 if loop else 0)
+            self._handle = s.Play()
+        def SetVolume(self, gain):
+            self._snd.SetVolume(gain)
+        def Stop(self):
+            self._snd.Stop()
+        @property
+        def playing(self):
+            h = self._handle
+            return bool(h.is_live()) if h is not None else False
+
+    return _MusicSound(snd, looping)
+
+
+def _pump_music(dt) -> None:
+    """Drive the music player and advance DynamicMusic's queue.
+
+    Without this, MusicManager and MusicPlayer are two halves that never meet:
+    nothing injects the backend, nothing ramps the volume, and nothing tells
+    the SDK a track ended. Lazily wired on first tick so audio boot ordering
+    is untouched.
+    """
+    global _music_player
+    import App
+    mgr = getattr(App, "g_kMusicManager", None)
+    if mgr is None:
+        return
+    if _music_player is None:
+        from engine.audio.music import MusicPlayer
+        _music_player = MusicPlayer(sound_factory=_music_sound_adapter)
+        mgr.set_backend(_music_player)
+    _music_player.update(dt)
+    # A finished non-looping track advances the SDK queue. MusicPlayer.finished()
+    # is False for looping tracks, so this cannot fire every frame.
+    if _music_player.finished():
+        mgr.notify_track_finished()
+
+
 def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> None:
     if _audio_mod is None:
         return
@@ -163,6 +238,9 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> Non
     ux, uy, uz = camera_up
     _audio_mod.update(px, py, pz, fx, fy, fz, ux, uy, uz, dt)
     _alert_listener.tick(player)
+    # Music ramps on the same dt as the rest of the audio layer, so it freezes
+    # under pause rather than sliding on wall-clock.
+    _pump_music(dt)
 
 
 def _bootstrap_firing_pipeline() -> None:

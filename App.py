@@ -189,6 +189,7 @@ from engine.appc.save_load import SaveLoadManager
 from engine.appc.config_mapping import TGConfigMapping
 from engine.appc.lod_models import LODModelManager
 from engine.appc.animation_manager import AnimationManager
+from engine.appc.music_manager import MusicManager
 from engine.appc.debug import (
     CPyDebug, TGProfilingInfo,
     TGProfilingInfo_EnableProfiling, TGProfilingInfo_DisableProfiling,
@@ -838,6 +839,7 @@ def TacticalControlWindow_Create():
 g_kSetManager = SetManager()
 g_kModelManager = ModelManager()
 g_kAnimationManager = AnimationManager()
+g_kMusicManager = MusicManager()
 g_kTGActionManager = TGActionManager()
 g_kModelPropertyManager = TGModelPropertyManager()
 g_kLODModelManager = LODModelManager()
@@ -924,6 +926,11 @@ ET_SET_PLAYER = 110
 # STANDING / SEATED. Not present in the original ET_* dump; 100-111 are all taken
 # in this block (checked), so 112 is the next free contiguous value.
 ET_CHARACTER_ANIMATION_DONE = 112
+# Music events DynamicMusic.py waits on. MusicDone (DynamicMusic.py:121)
+# advances the queue off ET_MUSIC_DONE; without a real distinct int both
+# would collapse to int()==0 and silently compare equal.
+ET_MUSIC_DONE = 1100
+ET_MUSIC_CONDITION_CHANGED = 1101
 
 # Used by Conditions/Condition*.py — broadcast events the SDK conditions
 # subscribe to. Values arbitrary but stable; keep contiguous with the

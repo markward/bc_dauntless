@@ -80,7 +80,12 @@ the Python side; the SWIG `thisown` flag is set by the C++ factory methods,
 not by Python code.
 
 **OQ-1.3 — Serialisation format for save/load** ✅  
-39 classes define `__getstate__` and `__setstate__`. The pattern is uniform:
+*(Count corrected 2026-08-09: the figure below was "39 classes". Measured today —
+**46** `def __getstate__` and **46** `def __setstate__` across **38** files. The
+substantive claim — uniform pattern, no novel serialisation contract — is
+unaffected; only the number was wrong.)*
+
+46 classes define `__getstate__` and `__setstate__`. The pattern is uniform:
 `__getstate__` returns a plain dict of Python-side state (object names,
 configuration values), discarding any Appc handles. `__setstate__` re-looks
 up live Appc objects by name and re-attaches handlers. `cPickle` is imported
@@ -153,6 +158,39 @@ purely visual/sequencing — no physics integration occurs.
 zeroed, preserved from entry, or derived from placement orientation requires
 instrumentation. Not needed for Phase 1.
 
+**Audited 2026-08-09 — still open, and split in two. Do not conflate the halves:**
+
+- **In-system warp (cruise within a set) — IMPLEMENTED.** `_step_in_system_warp`
+  (`engine/appc/ship_motion.py:252`) cruises at
+  `IN_SYSTEM_WARP_SPEED_FACTOR × impulse MaxSpeed`, and on arrival the published
+  velocity **drops back to the pre-warp `_current_speed`** — instant transit, not
+  a change of impulse state. Covered by
+  `tests/unit/test_in_system_warp_preserves_speed.py`.
+- **Set-to-set warp (the teleport this OQ asks about) — RESOLVED 2026-08-09 as a
+  CHOSEN DEFAULT.** *Was:* nothing in the set-change path set or zeroed velocity,
+  so arrival velocity was whatever the ship carried in — accidental, not
+  designed, and unrelated to the placement heading. *Now:* the ship keeps its
+  commanded throttle and the velocity vector is re-derived along the
+  placement's new world-forward (`engine/appc/warp.py`, `_PlacePlayerAction`,
+  after `PlaceObjectByName`). Covered by
+  `tests/unit/test_warp_exit_velocity.py`, including the case that a ship
+  warping while pointing +Y leaves along its new +X facing.
+
+  ⚠️ **CORRECTED 2026-08-10 — arrival velocity is EXACTLY ZERO.** The ship
+  arrives at rest. BC derives velocity by one of three rules during drop-out,
+  and at completion the not-warping entry action sets velocity to the zero
+  vector — established, not assumed: 243 reads, one write, all three components
+  zeroed. The "keep throttle, re-aim along the new facing" rule above was a
+  *chosen default* adopted while the reference could not reach the answer, and
+  it was wrong. Do not reintroduce it because arriving at rest flies worse.
+
+The clean-room reference could not settle it: three queries all returned
+*below-relevance-floor*. The correct section is almost certainly
+`spec/ShipClass.md — Movement, docking & warp`, which surfaced as top candidate
+at relevance **0.32 against the server's 0.35 floor** — a near miss, reported
+upstream. That is a **retrieval** limit, **not** evidence the corpus is silent;
+re-ask when the scorer improves rather than treating this as documented-absent.
+
 **Phase 1 implementation:** disable collisions → remove from origin set → add
 to destination set at named placement → re-enable collisions.
 
@@ -183,6 +221,23 @@ names: HOLD ≈ zero-velocity constraint, TOW ≈ gentle follow, PULL ≈ strong
 attract, PUSH ≈ repel, DOCK_STAGE_1/2 ≈ progressive position lock. No
 instrumentation needed as a starting point; empirical measurement optional
 if the feel is wrong after initial tuning.
+
+**Audited 2026-08-09 — the prescribed Phase 2 force law is BUILT; fidelity to BC
+remains unverifiable.** `engine/appc/tractor.py` implements a mass-aware,
+reciprocal spring model (`TRACTOR_REFERENCE_SPEED_GUPS = 5.0`; mass-scaled
+engagement speed with an inverse-mass split mirroring `collisions.py`; hulls
+reporting `mass <= 0` fall back to effectively immovable). All six modes are
+present. 93 tractor tests pass (`uv run pytest tests/ -k tractor`).
+
+Stays ⚠️ deliberately. What is built is a *designed approximation*, signed off in
+the design — **not** a reconstruction of BC's law, and nothing available can
+promote it. The clean-room reference does not cover tractor forces: a
+`search_reference("tractor")` returns only the UI toggle
+(`spec/TacWeaponsCtrl.md §4.3 RefreshTractorToggle`, itself "owned as a stub")
+plus generic weapon/subsystem overviews, and a direct force-model question
+returned *below-relevance-floor* (best 0.20). Treat the numbers as tuning
+constants, not as recovered engine values, and do not later cite this OQ as
+evidence that BC behaves this way.
 
 ---
 
@@ -220,24 +275,65 @@ from Python source spec. Validate against actual BC assets.
 
 ### Open questions requiring investigation
 
-**OQ-3.1 — BC NIF version compatibility with OpenMW loader**  
+**OQ-3.1 — BC NIF version compatibility with OpenMW loader** ✅ *superseded*  
 OpenMW targets Morrowind NIF v4.0.0.2. BC may use a different version
 or custom extensions not covered by OpenMW's loader. Approach: run
 actual BC NIF files through OpenMW loader, identify which block types
 fail, cross-reference with NifSkope definitions.
 
-**OQ-3.2 — Surface and internal damage geometry tagging**  
+**Superseded — the question's premise is void.** BC ships NIF **v3.1**, which
+OpenMW does not parse at all; the proposed experiment cannot be run. The
+OpenMW-as-diff-oracle relationship was dropped during the loader design and
+replaced with snapshot tests plus an end-of-file sanity check
+(`docs/superpowers/specs/2026-05-08-nif-loader-design.md:60-63, 67-87`). We wrote
+our own v3.1 parser: `native/src/nif/`. OpenMW survives only as *readable*
+algorithmic reference for block types that persisted across versions — a grep
+for `OpenMW` across `native/src` and `engine/` returns no code hits.
+
+**OQ-3.2 — Surface and internal damage geometry tagging** ✅  
 Hardpoints reference `SetDamageResolution()` suggesting geometry is
 tagged for damage visualisation. How damage geometry is marked in the
 NIF files is not visible from Python source. Approach: inspect BC NIF
 files in NifSkope, identify damage-related node naming conventions.
 
-**OQ-3.3 — Character body/head NIF assembly**  
+**Answer: damage geometry is not node-tagged. It is a separate voxel NIF.**
+Each hull has a paired `*_vox.nif` containing `NiBinaryVoxelExtraData` /
+`NiBinaryVoxelData` — a binary occupancy mask of the hull interior. The on-disk
+format is reverse-engineered and validated against the full 84-file `*_vox.nif`
+corpus (`docs/engine/nibinaryvoxeldata-format-v3.1.md`) and implemented in
+`native/src/voxel/` (`decode.cc`, `plane_index.cc`, `volume.h`, `voxelize.h`)
+with the block parsed at `native/src/nif/src/blocks/extra_data.cc`. Covered by
+ctest `VoxelDataHeader.GalaxyHeaderDecodesToConfirmedValues`,
+`VoxelVolume.IndexRoundTripAndSetGet`,
+`SurfaceVoxelize.MarksVoxelsTrianglePassesThrough`.
+
+The OQ's premise about `SetDamageResolution()` was a misreading: it is a
+**per-ship-class scalar** (15.0 for every class in
+`GlobalPropertyTemplates.py`), stored at `engine/appc/ships.py:802` — a grid
+resolution, not a geometry tag.
+
+**OQ-3.3 — Character body/head NIF assembly** ✅  
 `CharacterClass_Create()` takes separate body and head NIF paths and
 assembles them at runtime. How the skeleton is merged and how
 `ReplaceBodyAndHead()` swaps textures on the assembled model is
 engine-side. Approach: inspect character NIF files in NifSkope,
 examine skeleton node structure.
+
+**Answer: implemented as a head graft onto the body skeleton.**
+`graft_head_cpu()` (`native/src/assets/src/model_compose.cc:206`) finds the
+attach bone in the body skeleton and grafts **all visible meshes** of the head
+Model, remapping bone weights by name. BC "head" NIFs are full Bip01 body+head
+templates, so the earlier approach of grafting the `Bip01 Head` node subtree
+picked up only hidden skeleton-placeholder boxes and missed the real face mesh
+(parented under `Bip01 Spine1`) — the "lego skeleton head" bug, documented at
+`model_compose.cc:212-225`. Covered by ctest `GraftHeadCpu.*` in
+`native/tests/assets/cpu/model_compose_test.cc`, including
+`GraftsHeadMeshNotParentedUnderAttachNode` (guards that bug),
+`RemapsMultiBoneWeightsByName` and `RigidFallbackWhenHeadModelHasNoSkeleton`.
+
+Note `ReplaceBodyAndHead()` takes **texture** paths, not NIFs
+(`engine/appc/characters.py:554`, comment at `:455`); it repoints the base
+texture stage (ctest `SetBaseTextureCpu.RepointsBaseStageToAppendedTexture`).
 
 ---
 
@@ -405,6 +501,40 @@ stores only `SetDirection(vec)` + `SetRight(vec)` — no `SetArcWidthAngles` /
 `TorpedoTube.CanHit()` and `IsInArc()` are SWIG-exposed C++ methods but are
 **never called from Python** — zero call sites across all 1228 scripts.
 
+**Verified 2026-08-09 — the TORPEDO claim holds, but it hid a PHASER gap.**
+Re-running the grep finds exactly **one** `.CanHit(` call site in the SDK, and it
+is not on a tube:
+
+```
+sdk/Build/scripts/Conditions/ConditionInPhaserFiringArc.py:175
+    if ((not self.bDangerousOnly) or pBank.CanFire()) and pBank.CanHit(vTargetLocation):
+```
+
+`pBank` is a **`PhaserBank`**, so OQ-5.2's torpedo-scoped claim is still true —
+but `engine/appc/weapon_subsystems.py:684` records `CanHit`/`IsInArc` as
+"DELIBERATELY ABSENT (verified zero SDK call sites **on a tube**)" and adds that
+they are "unspecifiable — their BC signatures cannot be recovered from the SDK".
+Both parts now need qualifying:
+
+- **We do not implement `PhaserBank.CanHit`.** The call therefore resolves via
+  `TGObject.__getattr__` to a truthy `_Stub`, which would make the arc test pass
+  unconditionally and report "target in phaser firing arc" without checking the
+  arc. `ConditionInPhaserFiringArc` is live AI code (`AI/Setup.py`,
+  `AI/Compound/FedAttack.py`).
+- **Latent, not confirmed-live.** `CanHit` does **not** appear in
+  `docs/stub_heatmap.md`, so it was never hit across 201 recorded runs — the
+  code path evidently does not execute in the missions exercised so far. Stated
+  as a latent risk, not an observed bug, per the rule against asserting stub
+  behaviour from reasoning alone.
+- **No longer unspecifiable.** The clean-room reference publishes
+  `PhaserBank_CanHit` at `0x00619030`, alongside `PhaserBank_GetArcWidthAngles`,
+  `GetArcHeightAngles`, the four Arc*Angle{Min,Max} accessors,
+  `GetOrientationForward/Right/Up` and `GetMaxPhaserRange` — enough surface to
+  specify `CanHit(vWorldPoint)` as a point-in-arc-cone-and-range test. (Names and
+  addresses are *identity facts*; behaviour was not asked and is not claimed.)
+
+Carried to the triage report as a Phase 3 candidate.
+
 Python AI handles torpedo firing eligibility entirely through maneuvering:
 `TorpedoRun.py` flies the ship until it is within `fIdealFacingThreshold = PI/16`
 (~11°) of the target before the preprocessor fires. No Python arc query occurs.
@@ -462,13 +592,129 @@ streamed music if OpenAL streaming proves complex.
 
 ### Open questions requiring investigation
 
-**OQ-6.1 — DynamicMusic transition model**  
+**OQ-6.1 — DynamicMusic transition model** ✅ *implemented, NOT live-verified*  
 `DynamicMusic.py` is 13KB suggesting non-trivial transition logic. How
 music states map to gameplay states (combat, exploration, bridge) and
 how crossfades are triggered is partially visible in Python but the
 audio engine side of smooth crossfading is not. Approach: read
 `DynamicMusic.py` fully; instrument music state changes during a
 representative play session.
+
+**Audited 2026-08-09 — confirmed open, and it is a LIVE silent no-op.**
+
+*It runs.* `DynamicMusic` is driven by the Maelstrom campaign —
+`Maelstrom.py:111` (`Initialize`), `:265` (`Terminate`), and `ChangeMusic` from
+Episodes 1, 4, 6, 7 and 8. It is **not** module-stubbed in either stub list
+(`tools/mission_harness.py`, `tests/conftest.py`), so the SDK module executes.
+
+*It does nothing.* Every engine symbol it needs is absent from our shim, so
+`App.<name>` resolves to `_NamedStub` and collapses silently:
+
+| Symbol | Status | Needed for |
+|---|---|---|
+| `App.g_kMusicManager` | MISSING | `LoadMusic`, `UnloadMusic`, `StartMusic`, `StopMusic`, `PlayFanfare` |
+| `App.ET_MUSIC_DONE` | MISSING | queue advance — `MusicDone()` drives `ProcessQueue()` |
+| `App.ET_MUSIC_CONDITION_CHANGED` | MISSING | state-machine transitions |
+
+Confirmed by **live telemetry**, not inference: `docs/stub_heatmap.md` ranks 163
+and 164 record `App.g_kMusicManager` and `g_kMusicManager.PlayFanfare` at 21 hits
+each, coverage 11/201, last seen **2026-08-06** — current, not historical. Our
+audio layer has no music path at all (`engine/audio/` has ambient, alert, rumble
+and hum, no music).
+
+*Scope — smaller than the OQ implies.* The transition logic is **SDK-side**:
+`DynamicMusic.py` owns the queue and state machine (`EnqueueMusic`,
+`ProcessQueue`, `SwitchMusic`, `OverrideMusic`, `PlayFanfare`, and the
+`StandardCombatMusic` class). We do not build a transition engine — we supply
+manager primitives plus the two event types, and the SDK sequences tracks by
+waiting for `ET_MUSIC_DONE`.
+
+Per the clean-room reference (`spec/TGAudio.md §6`, *reviewed-not-tested*,
+confidence *partial*): `TGMusic::StartMusic` (`0x00713D60`) **registers a fade
+timer via TGTimerManager**, `LoadMusic` (`0x00713AD0`) reads a
+`Sound/StreamMusic` config toggle, and `SetVolume` (`0x00714660`) resolves a
+handle to `TGSound::SetVolume`. So transitions are volume-ramped rather than
+abrupt, and we already have `TGSound.SetVolume` (`engine/audio/tg_sound.py:141`)
+to ramp. BC's second path, `TGRedbook` (CD audio via `mciSendCommandA`), is not
+applicable to us.
+
+Open sub-question the reference did not settle: whether the fade is a true
+**crossfade** (both tracks audible) or a fade-out-then-fade-in. The section is
+graded reviewed-not-tested and does not say. Resolve by ear against the real
+game before committing to one.
+
+**Not verifiable headlessly** — music playback needs a live run to confirm.
+
+**Implemented 2026-08-09 — ⚠️ STILL NOT WORKING IN-GAME as of 2026-08-10.**
+
+Mark's live run: **no music plays.** Root cause found and fixed, but the fix is
+itself unverified. The host adapter built each stream with `TGSound(path, False)`,
+which does **not** read the file — that ctor only asks whether a sound of that
+NAME is already registered. Every track was an unloaded handle whose `Play()` did
+nothing: silence, no error, no log. `TGSoundManager.LoadSound` is the route that
+resolves the path, reads the bytes and registers them first. Also fixed: `looping`
+never reached the sound. Pinned by `tests/audio/test_music_adapter.py` (proven to
+fail on the old form).
+
+Telemetry from that run corroborates the diagnosis rather than contradicting it:
+`g_kMusicManager` does not appear in it at all (last seen 2026-08-07, before the
+implementation), so DynamicMusic *is* reaching our real manager — everything
+above the adapter works.
+
+⚠️ **Do not mark OQ-6.1 resolved until music is heard in-game.**
+
+**2026-08-10, second live run: still silent.** The `LoadSound` fix did not do it
+either. Deferred to a dedicated session — see
+`docs/engine/music-not-playing-handoff.md`, which records what is proven working,
+the five hypotheses already ruled out (assets, MP3 support, DynamicMusic reach,
+and two wrong adapter forms), and the ordered diagnostic steps. The failure is
+silent at every layer, which is why three static fixes have missed it; it needs a
+live run with instrumentation.
+`engine/appc/music_manager.py` (`g_kMusicManager`), `engine/audio/music.py`
+(`MusicPlayer`, ramped), `App.ET_MUSIC_DONE` / `ET_MUSIC_CONDITION_CHANGED`,
+and the host wiring in `engine/host_loop.py` (`_pump_music`). Covered by
+`tests/unit/test_music_manager.py` (14) and
+`tests/audio/test_music_playback.py` (8).
+
+Two things the build surfaced that the audit had not:
+
+- **Every signature came from a real SDK call site, and they are not what you
+  would guess.** `LoadMusic(sFile, sMusicType, 2.0)` takes the **file first**;
+  `UnloadMusic(sMusic)` unloads **one track by name**, not everything;
+  `StartMusic(name, looping)` **returns** success and `DynamicMusic.py:178`
+  branches on it; and `IsEnabled()`/`SetEnabled()` exist and are used by
+  `E8M2.py:6558-6568`. A guessed-signature first draft broke 14 QuickBattle
+  tests, because supplying a real manager makes the previously-silent SDK path
+  actually execute.
+- **`ET_MUSIC_DONE` must carry the track name.** `DynamicMusic.MusicDone` gates
+  on `pEvent.GetCString() == dsMusicTypes[sCurrentMusicType]`, and `TGEvent` had
+  no `SetCString`/`GetCString` — so the comparison would never match,
+  `ProcessQueue()` would never run, and the playlist would stall on its first
+  track *with music still audible*. Added in `engine/appc/events.py`.
+
+Also corrected: DynamicMusic is driven by **QuickBattle**
+(`QuickBattleGame.py:66 SetupMusic`) as well as the Maelstrom campaign.
+
+**RESOLVED 2026-08-10 — BC CROSSFADES.** The fade-out-then-in reading was wrong
+and `MusicPlayer` has been rewritten around BC's volume-ramp record
+(`spec/TGMusic.md 2.1`: handle / duration / remaining / startVolume / endVolume,
+and "there may be more than one of them live at once").
+
+On a track change, TWO records are scheduled at the same instant with the same
+duration — outgoing current→0, incoming 0→1 — and both streams are audible for
+the whole fade. The clinching falsifier: **with no current track the incoming
+record is startVolume 1, duration 0.** The fade-in exists only when there is
+something to fade out of, which a sequential design cannot produce.
+
+Also corrected by the same source: the third `LoadMusic` argument is the track's
+**fade grid** (2.0 s in shipping data), not an inert "beat hint" — a change is
+quantised to the *outgoing* track's value; `StopMusic` is a **hard** stop that
+does not wait for a ramp; and a start requested mid-transition is **queued**.
+
+⚠️ Still unconfirmed: whether "quantised to the fade grid" means only that the
+duration comes from the outgoing track (implemented) or that the change is also
+deferred to a grid boundary (not implemented — that would be a scheduler, and
+inventing one was not warranted).
 
 **OQ-6.2 — 3D audio attenuation model ✅**  
 Use OpenAL's `AL_INVERSE_DISTANCE_CLAMPED` model — the physically correct
@@ -650,20 +896,54 @@ clips on the base layer, procedural head IK (`GlanceAt`/`TurnTowards`) on an
 upper layer. Python only issues high-level commands; blend weights are engine
 policy. No instrumentation needed.
 
-**OQ-8.3 — MorphBody usage and scope**  
+**OQ-8.3 — MorphBody usage and scope** ✅ *dead surface*  
 `CharacterClass.MorphBody()` suggests mesh morphing exists beyond
 texture swapping. Used rarely in the visible source. Likely for species
 variation or damage states. Approach: search all character creation
 scripts for `MorphBody` calls, identify all usage contexts, assess
 whether reimplementation is required for Phase 1.
 
-**OQ-8.4 — Animation file catalogue completeness**  
+**Answer: dead surface — nothing calls it.** `MorphBody` appears exactly once
+across the whole tree outside comments: the SWIG binding line
+`sdk/Build/scripts/App.py:4736`. A grep of all 1,228 SDK scripts finds **zero**
+call sites. It is deliberately unimplemented; `engine/appc/characters.py:1359`
+and `:1379` document it as a silent no-op. Do not reimplement it on the strength
+of the binding's existence — "the SWIG surface has it" is not evidence that the
+game uses it.
+
+**OQ-8.4 — Animation file catalogue completeness** ✅ *superseded*  
 Animations are loaded by string path from `data/animations/*.nif`. The
 full catalogue of animation files is not in the SDK — only the scripts
 referencing them. A complete reimplementation needs all animation assets.
 Approach: extract all `LoadAnimation` call paths from the Python source
 statically to build a complete asset manifest before attempting
 reimplementation.
+
+**Superseded — and the proposed approach would have produced a wrong manifest.**
+Assets come from the BC installation (`game/data/animations/`), not from a
+manifest we build. SDK scripts register name → path at runtime via
+`g_kAnimationManager.LoadAnimation` (`engine/appc/animation_manager.py:19`),
+and the host resolves paths lazily at load time
+(`engine/host_loop.py:1475 _resolve_asset_path`).
+
+A static extraction of `LoadAnimation` call paths would be actively misleading,
+because BC's own registrations are not a clean list of real files:
+
+- **Registration is LAST-write-wins, and that is load-bearing.** BC re-registers
+  a name precisely to *correct* it. On a real `LoadBridge.Load("GalaxyBridge")`
+  exactly two names are registered twice: `DBCameraSitDown` first points at
+  `DB_Camera_Sit_Downp.nif` — a typo for a file that does not exist
+  (`GalaxyBridge.py:193`) — then at the correct path; and `H_Talk_E_M` is
+  cross-registered to a different clip. A static manifest would list the
+  non-existent typo file as a required asset.
+- **Some registered paths have no extension** (`CommonAnimations.py:647,655`),
+  and are tolerated where BC tolerates them — in the file loader, which probes
+  the directory case-insensitively for `.NIF`/`.nif`.
+
+Covered by `tests/unit/test_animation_manager.py` and
+`tests/unit/test_host_loop_asset_path.py`
+(`test_extension_less_path_resolves_to_the_real_uppercase_nif`,
+`test_a_genuinely_missing_file_degrades_without_raising`).
 
 ---
 
@@ -709,18 +989,20 @@ across mission boundaries.
 |---|---|---|---|---|
 | 1. Appc interface | Yes | Medium | Static analysis + instrumentation | OQ-1.1 to 1.3 |
 | 2. Physics | Yes | Low | PyBullet + hardpoints data | OQ-2.1 to 2.3 |
-| 3. NIF Renderer | No (Phase 2) | Hard | OpenMW + NifSkope | OQ-3.1 to 3.3 |
+| 3. NIF Renderer | No (Phase 2) | Hard | Own v3.1 parser (`native/src/nif/`); NifSkope schema as reference | OQ-3.1 to 3.3 |
 | 4. Event system | Yes | Medium | Best-effort + refinement | OQ-4.1 to 4.4 |
 | 5. Spatial queries | Yes | Low | numpy + PyBullet | OQ-5.1 to 5.3 |
 | 6. Audio | No (Phase 2) | Low | OpenAL / openal-soft | OQ-6.1 to 6.2 |
 | 7. Game loop | Yes | Medium | Instrumentation (4 OQs) | OQ-7.1 to 7.4 |
-| 8. Animation | No (Phase 2) | Medium | OpenMW + rhubarb-lip-sync | OQ-8.1 to 8.4 |
+| 8. Animation | No (Phase 2) | Medium | Own NIF anim binder; BC `.LIP` data (`engine/lip_sync.py`) | OQ-8.1 to 8.4 |
 
-**Total open questions: 21**  
+**Total open questions: 26**  
 **Answered by static analysis: OQ-1.1, OQ-1.2, OQ-1.3, OQ-2.1, OQ-4.1, OQ-4.2, OQ-4.3, OQ-4.4, OQ-5.1, OQ-5.2, OQ-5.3, OQ-6.2, OQ-7.4, OQ-8.1, OQ-8.2 (15)**  
 **Answered by instrumentation: OQ-7.1, OQ-7.2, OQ-7.3 (3)**  
+**Closed by code audit 2026-08-09: OQ-3.1 (superseded — OpenMW cannot parse v3.1), OQ-3.2, OQ-3.3, OQ-8.3 (dead surface), OQ-8.4 (superseded) (5)**  
+**Built 2026-08-09 (Phase 3): OQ-6.1 (DynamicMusic — implemented, NOT live-verified), OQ-2.2 set-to-set warp exit velocity (chosen default, NOT live-verified) (2)**  
 **Partially answered: OQ-2.2 (teleport confirmed; warp-exit velocity Phase 2), OQ-2.3 (arc/modes known; force law tuned by feel)**  
-**Still open: OQ-3.1–3.3, OQ-6.1, OQ-8.3, OQ-8.4 (5)**  
+**Still open: none (0)**  
 **Instrumentation genuinely required: none remaining**
 
 **Phase 1 blockers: all resolved. Ready to begin Phase 1 implementation.**

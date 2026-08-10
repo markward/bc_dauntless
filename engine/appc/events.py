@@ -82,6 +82,24 @@ class TGEvent(TGObject):
         self._event_type: int = 0
         self._destination: "TGEventHandlerObject | None" = None
         self._source: "TGObject | None" = None
+        self._cstring: str = ""
+
+    def SetCString(self, value) -> None:
+        """String payload carried by the event.
+
+        Load-bearing for music: DynamicMusic.MusicDone (DynamicMusic.py:121)
+        gates its queue advance on
+        `pEvent.GetCString() == dsMusicTypes[sCurrentMusicType]`. Without a real
+        string here, GetCString resolved to a truthy `_Stub`, the comparison was
+        never equal, ProcessQueue() never ran and the playlist stalled on its
+        first track — silently, with music still audible.
+        """
+        self._cstring = "" if value is None else str(value)
+
+    def GetCString(self) -> str:
+        """Must return a real str, never a `_Stub`: callers compare it to a
+        string, and a stub compares unequal to everything."""
+        return self._cstring
 
     def SetEventType(self, event_type: int) -> None:
         self._event_type = event_type

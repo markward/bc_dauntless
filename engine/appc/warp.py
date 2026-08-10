@@ -345,6 +345,25 @@ class _PlacePlayerAction(TGAction):
         dest.AddObjectToSet(ship, ship.GetName())
         ship.PlaceObjectByName(self._placement)
 
+        # Warp arrival velocity: EXACTLY ZERO. The ship arrives at rest.
+        #
+        # BC derives velocity by one of three rules during drop-out, and at
+        # completion the not-warping entry action sets velocity to the ZERO
+        # VECTOR. Established, not assumed: 243 reads of that vector, one
+        # write, all three components zeroed.
+        #
+        # ⚠️ This replaced a WRONG implementation (2026-08-09) that preserved
+        # the commanded throttle and re-aimed it along the placement's new
+        # facing. That was a chosen default adopted because the reference could
+        # not then reach the answer — and it was not what BC does. Do not
+        # reintroduce it because arriving at rest feels worse to fly.
+        #
+        # Before either version, NOTHING set velocity here at all: whatever
+        # vector the ship carried in survived the teleport.
+        from engine.appc.math import TGPoint3
+        if hasattr(ship, "SetVelocity"):
+            ship.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+
 
 def _silence_ship_weapons(ship):
     """Stop any looping weapon-fire SFX on a ship's weapon banks.
