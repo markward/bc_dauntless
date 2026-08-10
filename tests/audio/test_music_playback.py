@@ -32,8 +32,9 @@ class _FakeSound:
 
 def _player():
     made = []
-    def factory(path):
+    def factory(path, looping=True):
         s = _FakeSound(path)
+        s.looping = looping
         made.append(s)
         return s
     return MusicPlayer(sound_factory=factory), made

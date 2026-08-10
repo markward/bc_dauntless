@@ -139,21 +139,42 @@ def shutdown_audio() -> None:
 _music_player = None
 
 
-def _music_sound_adapter(path):
-    """Adapt a TGSound + its playing handle to the surface MusicPlayer wants:
-    SetVolume(gain) / Stop() / .playing.
+def _music_sound_adapter(path, looping=True):
+    """Adapt a loaded TGSound + its playing handle to the surface MusicPlayer
+    wants: SetVolume(gain) / Stop() / .playing.
 
-    TGSound exposes SetVolume and Stop, but liveness lives on the handle
-    returned by Play() as is_live() — see engine/audio/tg_sound.py:51. This
-    bridges the two rather than teaching MusicPlayer about handles.
+    ⚠️ MUST go through TGSoundManager.LoadSound. Constructing `TGSound(path,
+    False)` directly does NOT work and fails SILENTLY: the ctor only asks the
+    audio system whether a sound of that NAME is already registered
+    (`_loaded = _audio.get_sound(name) != 0`, tg_sound.py) — it never reads the
+    file. LoadSound is what resolves the path, reads the bytes and calls
+    `_audio.load_sound(...)` before constructing the handle.
+
+    That was the live bug behind "music not playing" (2026-08-10): every symbol
+    DynamicMusic needed was implemented and reached — g_kMusicManager stopped
+    appearing in the stub telemetry entirely — but each track was an unloaded
+    TGSound whose Play() did nothing. No error, no log, just silence.
+    tests/audio/test_music_adapter.py pins the LoadSound route so a future edit
+    cannot quietly regress to direct construction.
+
+    `looping` must reach the sound too: DynamicMusic passes bLooping through
+    StartMusic, and an ambient bed that plays once and stops is not the same
+    thing as one that loops.
     """
-    from engine.audio.tg_sound import TGSound
+    from engine.audio.tg_sound import TGSound, TGSoundManager
+
+    # LS_STREAMED, not LS_3D: music is 2D. `positional` is derived from the
+    # loadspec inside LoadSound (positional = loadspec == LS_3D).
+    snd = TGSoundManager.instance().LoadSound(path, path, TGSound.LS_STREAMED)
+    if snd is None:
+        return None                     # unreadable file / no audio backend
 
     class _MusicSound:
-        def __init__(self, p):
-            # positional=False: music is 2D, not anchored in the scene.
-            self._snd = TGSound(p, False)
-            self._handle = self._snd.Play()
+        def __init__(self, s, loop):
+            self._snd = s
+            if hasattr(s, "SetLooping"):
+                s.SetLooping(1 if loop else 0)
+            self._handle = s.Play()
         def SetVolume(self, gain):
             self._snd.SetVolume(gain)
         def Stop(self):
@@ -163,7 +184,7 @@ def _music_sound_adapter(path):
             h = self._handle
             return bool(h.is_live()) if h is not None else False
 
-    return _MusicSound(path)
+    return _MusicSound(snd, looping)
 
 
 def _pump_music(dt) -> None:

@@ -93,8 +93,8 @@ class MusicPlayer:
     def play_oneshot(self, path) -> None:
         """Fanfare sting layered over the current track — no ramp, no swap.
         The underlying track keeps playing underneath and is resumed by the
-        SDK afterwards."""
-        self._factory(path)
+        SDK afterwards. Never loops: a looping sting would never stop."""
+        self._factory(path, False)
 
     def stop(self) -> None:
         """HARD stop. Does not wait for, or schedule, a ramp."""
@@ -166,9 +166,18 @@ class MusicPlayer:
         # live here and clearing is safe.
         self._ramps = []
 
-        incoming = self._factory(path)
+        # looping must reach the sound: an ambient bed that plays once and
+        # stops is not the same thing as one that loops.
+        incoming = self._factory(path, bool(looping))
         self._current = incoming
         self._looping = bool(looping)
+
+        if incoming is None:
+            # Factory could not load the file (missing asset / no backend).
+            # Leave whatever was playing alone rather than tearing it down for
+            # a track that never started.
+            self._current = outgoing
+            return
 
         if outgoing is not None:
             # Same instant, same duration, mirrored — this is the crossfade.

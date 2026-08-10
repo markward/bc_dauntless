@@ -645,7 +645,23 @@ game before committing to one.
 
 **Not verifiable headlessly** — music playback needs a live run to confirm.
 
-**Implemented 2026-08-09 — ⚠️ NOT LIVE-VERIFIED.**
+**Implemented 2026-08-09 — ⚠️ STILL NOT WORKING IN-GAME as of 2026-08-10.**
+
+Mark's live run: **no music plays.** Root cause found and fixed, but the fix is
+itself unverified. The host adapter built each stream with `TGSound(path, False)`,
+which does **not** read the file — that ctor only asks whether a sound of that
+NAME is already registered. Every track was an unloaded handle whose `Play()` did
+nothing: silence, no error, no log. `TGSoundManager.LoadSound` is the route that
+resolves the path, reads the bytes and registers them first. Also fixed: `looping`
+never reached the sound. Pinned by `tests/audio/test_music_adapter.py` (proven to
+fail on the old form).
+
+Telemetry from that run corroborates the diagnosis rather than contradicting it:
+`g_kMusicManager` does not appear in it at all (last seen 2026-08-07, before the
+implementation), so DynamicMusic *is* reaching our real manager — everything
+above the adapter works.
+
+⚠️ **Do not mark OQ-6.1 resolved until music is heard in-game.**
 `engine/appc/music_manager.py` (`g_kMusicManager`), `engine/audio/music.py`
 (`MusicPlayer`, ramped), `App.ET_MUSIC_DONE` / `ET_MUSIC_CONDITION_CHANGED`,
 and the host wiring in `engine/host_loop.py` (`_pump_music`). Covered by
