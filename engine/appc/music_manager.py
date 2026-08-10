@@ -36,6 +36,7 @@ device present.
 class MusicManager:
     def __init__(self) -> None:
         self._paths: dict[str, str] = {}   # music NAME -> file path
+        self._fades: dict[str, float] = {}  # music NAME -> fade grid (seconds)
         self._current: "str | None" = None
         self._enabled: bool = True
         self._backend = None               # injected by the host, see set_backend
@@ -51,11 +52,14 @@ class MusicManager:
         """Register `name` -> `path`. Argument order is BC's: the FILE comes
         first (`DynamicMusic.py:60` passes `(sFile, sMusicType, 2.0)`).
 
-        `beat` is BC's beat/tempo hint. The SDK hard-codes 2.0 with a standing
-        '***FIXME: Get accurate beat info.' comment, so nothing depends on it;
-        accepted and ignored rather than dropped from the signature.
+        `beat` is the track's **fade grid**, and it is LOAD-BEARING — a track
+        change is quantised to the OUTGOING track's value (2.0 s in shipping
+        data). An earlier version of this method accepted and discarded it as a
+        mere "beat/tempo hint"; that was wrong, and it is stored now.
         """
-        self._paths[str(name)] = str(path)
+        key = str(name)
+        self._paths[key] = str(path)
+        self._fades[key] = float(beat)
 
     def UnloadMusic(self, name) -> None:
         """Unload ONE track by name. `DynamicMusic.UnloadMusic` loops over
@@ -65,6 +69,7 @@ class MusicManager:
         if self._current == key:
             self.StopMusic()
         self._paths.pop(key, None)
+        self._fades.pop(key, None)
 
     def StartMusic(self, name, looping=1) -> int:
         """Begin `name`. Returns 1 on success, 0 on failure.
@@ -78,9 +83,15 @@ class MusicManager:
         path = self._paths.get(key)
         if path is None or not self._enabled:
             return 0
+        # The fade is the OUTGOING track's grid, not the incoming one's — a
+        # change is quantised to what is already playing. With nothing playing
+        # the player builds a duration-0 record and the track starts at full
+        # volume (the falsifier that proves BC crossfades rather than
+        # fading out then in).
+        fade = self._fades.get(self._current, 0.0) if self._current else 0.0
         self._current = key
         if self._backend is not None:
-            self._backend.play(path, looping=bool(looping))
+            self._backend.play(path, looping=bool(looping), fade=fade)
         return 1
 
     def StopMusic(self) -> None:

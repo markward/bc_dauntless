@@ -1,13 +1,16 @@
-"""Warp arrival velocity.
+"""Warp arrival velocity — EXACTLY ZERO. The ship arrives at rest.
 
-Set-to-set warp is a teleport: the ship is removed from one set, added to
-another, and placed at a named placement that supplies a NEW orientation.
-Chosen behaviour (Mark, 2026-08-09): keep the commanded throttle, re-aim the
-velocity along the new facing. Previously nothing set velocity at all, so
-arrival velocity was accidental.
+Corrected 2026-08-10 from the clean-room reference. This was briefly implemented
+as "keep the commanded throttle, re-aim along the new facing" — a chosen default,
+and wrong.
 
-This is a CHOSEN default, not recovered BC behaviour — the clean-room reference
-could not reach it (best relevance 0.32 against a 0.35 floor).
+BC derives velocity by one of three rules during drop-out, and at completion the
+not-warping entry action sets velocity to the ZERO VECTOR. That was checked
+rather than assumed: 243 reads of the vector, one write, all three components
+zeroed.
+
+Not a default we get to pick. Do not re-introduce a "preserve throttle" rule
+because it feels better to fly.
 """
 from engine.appc.math import TGPoint3
 from engine.appc.warp import _PlacePlayerAction
@@ -48,20 +51,21 @@ def _run(monkeypatch, ship, dest_name="dest"):
     return dest
 
 
-def test_arrival_velocity_follows_the_new_heading(monkeypatch):
+def test_arrival_velocity_is_the_zero_vector(monkeypatch):
+    """All three components zeroed, regardless of throttle carried in."""
     ship = _Placed(speed=4.0, heading=TGPoint3(0.0, 1.0, 0.0))
     _run(monkeypatch, ship)
     v = ship.GetVelocity()
-    assert (round(v.x, 6), round(v.y, 6), round(v.z, 6)) == (0.0, 4.0, 0.0)
+    assert (v.x, v.y, v.z) == (0.0, 0.0, 0.0)
 
 
-def test_arrival_velocity_uses_placement_heading_not_pre_warp_heading(monkeypatch):
-    """The whole point: the placement re-aims the ship, so a ship that warps
-    while pointing +Y must leave along its NEW facing, here +X."""
+def test_heading_does_not_leak_into_arrival_velocity(monkeypatch):
+    """Guards the specific error this replaced: velocity re-aimed along the
+    placement's facing. A ship arriving pointing +X must still be at rest."""
     ship = _Placed(speed=3.0, heading=TGPoint3(1.0, 0.0, 0.0))
     _run(monkeypatch, ship)
     v = ship.GetVelocity()
-    assert (round(v.x, 6), round(v.y, 6), round(v.z, 6)) == (3.0, 0.0, 0.0)
+    assert (v.x, v.y, v.z) == (0.0, 0.0, 0.0)
 
 
 def test_a_stopped_ship_arrives_stopped(monkeypatch):

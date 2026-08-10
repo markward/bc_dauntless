@@ -74,7 +74,7 @@ the summary line agrees.
 - Partially answered: OQ-2.2 — **do not conflate the halves.** In-system warp is implemented and preserves pre-warp speed; **set-to-set warp exit velocity is genuinely open** and our current behaviour is accidental. OQ-2.3 — the spring-damper is built and tested, but it is a *designed approximation*, not a reconstruction; the clean-room reference has no tractor force section, so it cannot be promoted
 - Built 2026-08-09 (Phase 3): **OQ-6.1** DynamicMusic (`engine/appc/music_manager.py`, `engine/audio/music.py`, `_pump_music` in `host_loop.py`) and **OQ-2.2** set-to-set warp exit velocity (`engine/appc/warp.py`)
 - ⚠️ **Both need a live run before being called done.** Music cannot be checked headlessly, and the warp velocity is a *chosen* default, not recovered BC behaviour. The old "no remaining OQs require running the live game" line was wrong and has been removed
-- ⚠️ Unsettled: whether BC **crossfades** music (both tracks audible) or fades out then in. We implement fade-out-then-in; a crossfade needs two concurrent sounds, not a tweak
+- ✅ Settled 2026-08-10: BC **crossfades** — two ramp records, same instant, same duration, both streams audible. `MusicPlayer` rewritten around BC's volume-ramp record. Falsifier: with no current track the incoming record is startVolume 1 / duration 0, so the fade-in exists only when fading out of something. Warp arrival velocity is likewise **exactly zero**, not the chosen default we briefly shipped
 
 **Phase 1 blockers: all resolved.** Phase 3 build candidates are in
 `docs/superpowers/plans/2026-08-09-triage-report.md`.

@@ -176,8 +176,13 @@ instrumentation. Not needed for Phase 1.
   `tests/unit/test_warp_exit_velocity.py`, including the case that a ship
   warping while pointing +Y leaves along its new +X facing.
 
-  ⚠️ **This is a chosen default, not recovered BC behaviour, and it is not
-  live-verified.** Do not cite it as evidence of what BC does.
+  ⚠️ **CORRECTED 2026-08-10 — arrival velocity is EXACTLY ZERO.** The ship
+  arrives at rest. BC derives velocity by one of three rules during drop-out,
+  and at completion the not-warping entry action sets velocity to the zero
+  vector — established, not assumed: 243 reads, one write, all three components
+  zeroed. The "keep throttle, re-aim along the new facing" rule above was a
+  *chosen default* adopted while the reference could not reach the answer, and
+  it was wrong. Do not reintroduce it because arriving at rest flies worse.
 
 The clean-room reference could not settle it: three queries all returned
 *below-relevance-floor*. The correct section is almost certainly
@@ -666,9 +671,26 @@ Two things the build surfaced that the audit had not:
 Also corrected: DynamicMusic is driven by **QuickBattle**
 (`QuickBattleGame.py:66 SetupMusic`) as well as the Maelstrom campaign.
 
-**Open sub-question, unchanged:** whether BC crossfades (both tracks audible) or
-fades out then in. `MusicPlayer` implements fade-out-then-in, the conservative
-reading; a crossfade needs two concurrent sounds, not a tweak.
+**RESOLVED 2026-08-10 — BC CROSSFADES.** The fade-out-then-in reading was wrong
+and `MusicPlayer` has been rewritten around BC's volume-ramp record
+(`spec/TGMusic.md 2.1`: handle / duration / remaining / startVolume / endVolume,
+and "there may be more than one of them live at once").
+
+On a track change, TWO records are scheduled at the same instant with the same
+duration — outgoing current→0, incoming 0→1 — and both streams are audible for
+the whole fade. The clinching falsifier: **with no current track the incoming
+record is startVolume 1, duration 0.** The fade-in exists only when there is
+something to fade out of, which a sequential design cannot produce.
+
+Also corrected by the same source: the third `LoadMusic` argument is the track's
+**fade grid** (2.0 s in shipping data), not an inert "beat hint" — a change is
+quantised to the *outgoing* track's value; `StopMusic` is a **hard** stop that
+does not wait for a ramp; and a start requested mid-transition is **queued**.
+
+⚠️ Still unconfirmed: whether "quantised to the fade grid" means only that the
+duration comes from the outgoing track (implemented) or that the change is also
+deferred to a grid boundary (not implemented — that would be a scheduler, and
+inventing one was not warranted).
 
 **OQ-6.2 — 3D audio attenuation model ✅**  
 Use OpenAL's `AL_INVERSE_DISTANCE_CLAMPED` model — the physically correct

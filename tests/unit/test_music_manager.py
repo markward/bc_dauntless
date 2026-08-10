@@ -16,9 +16,15 @@ from engine.appc.music_manager import MusicManager
 
 
 class _Backend:
+    """Mirrors MusicPlayer's real surface — including `fade`. A double that
+    omits a parameter the real class requires hides exactly the bug it should
+    catch."""
     def __init__(self):
         self.played, self.oneshots, self.stopped = [], [], 0
-    def play(self, path, looping=True): self.played.append(path)
+        self.fades = []
+    def play(self, path, looping=True, fade=0.0):
+        self.played.append(path)
+        self.fades.append(fade)
     def play_oneshot(self, path): self.oneshots.append(path)
     def stop(self): self.stopped += 1
 
@@ -182,3 +188,20 @@ def test_track_end_on_an_idle_manager_is_a_no_op(monkeypatch):
     m = MusicManager()
     m.notify_track_finished()
     assert sent == [], "no track was playing, so nothing finished"
+
+
+def test_fade_passed_to_the_backend_is_the_OUTGOING_tracks_grid():
+    """A track change is quantised to the grid of what is already playing, not
+    of the track being started. Registered per track by LoadMusic's third
+    argument (2.0 in shipping data)."""
+    m = MusicManager()
+    b = _Backend()
+    m.set_backend(b)
+    m.LoadMusic("a.mp3", "A", 2.0)
+    m.LoadMusic("b.mp3", "B", 5.0)
+
+    m.StartMusic("A")
+    assert b.fades[0] == 0.0, "nothing playing => duration-0 record, no fade-in"
+
+    m.StartMusic("B")
+    assert b.fades[1] == 2.0, "A's grid (2.0), not B's (5.0)"
