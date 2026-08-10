@@ -662,6 +662,14 @@ implementation), so DynamicMusic *is* reaching our real manager — everything
 above the adapter works.
 
 ⚠️ **Do not mark OQ-6.1 resolved until music is heard in-game.**
+
+**2026-08-10, second live run: still silent.** The `LoadSound` fix did not do it
+either. Deferred to a dedicated session — see
+`docs/engine/music-not-playing-handoff.md`, which records what is proven working,
+the five hypotheses already ruled out (assets, MP3 support, DynamicMusic reach,
+and two wrong adapter forms), and the ordered diagnostic steps. The failure is
+silent at every layer, which is why three static fixes have missed it; it needs a
+live run with instrumentation.
 `engine/appc/music_manager.py` (`g_kMusicManager`), `engine/audio/music.py`
 (`MusicPlayer`, ramped), `App.ET_MUSIC_DONE` / `ET_MUSIC_CONDITION_CHANGED`,
 and the host wiring in `engine/host_loop.py` (`_pump_music`). Covered by
