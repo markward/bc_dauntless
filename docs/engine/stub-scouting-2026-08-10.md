@@ -124,8 +124,19 @@ Both `CinematicWindow_Cast` and `SetInteractive` are absent; `MWT_CINEMATIC` is 
 comment states the intent: *"Ensure that the cinematic window is set interactive. If
 we were in warp during a cutscene, then the normal mechanism will not be triggered."*
 So this is a **recovery path for input/interactivity after a warp-during-cutscene**.
-Whether anything is currently broken depends on what `SetInteractive` gates — unknown,
-and the reference has no `CinematicWindow` section. **Open question.**
+Whether anything is currently broken depends on what `SetInteractive` gates.
+
+Reference status — three distinct outcomes, do not collapse them:
+`search_reference("CinematicWindow")` **does** match a section,
+`spec/STWindowLeaves.md §1 Overview` (relevance 0.57). But asking what it does returns
+*below-relevance-floor* (best 0.23). So: **the section exists and its contents are
+currently unreachable by retrieval** — which is neither "no section" nor "corpus
+silent". Re-ask when the scorer improves; do not record this as documented-absent.
+
+*(An earlier draft of this document asserted "the reference has no `CinematicWindow`
+section". That was written without searching, and it was wrong. Recorded rather than
+quietly fixed — asserting a gap without running the check is the exact habit this
+whole line of work exists to break.)*
 
 ### 3.2 `CharacterClass_IsCollisionAlertEnabled` — default unknown *(2,847 hits, 140/201)*
 
@@ -175,6 +186,57 @@ non-collidable — similar intent, different shape.
 *Not* the same thing as §3.2: that is the bridge-crew **alert callout**, this is
 physical collision **response**. Do not conflate them.
 
+### 3.3a The UI layout cluster is now IMPLEMENTABLE — `TGUIObject` header recovered
+
+The four biggest open rows are all layout accessors and together account for
+**~104,000 hits**: `TGParagraph.SetString` (44,024), `TGIcon.GetRight` (40,801),
+`TGFrame.GetRight` (14,643), `TGPane.GetBottom` (4,256), plus
+`TGParagraph.GetRight`/`GetBottom`, `EngPowerCtrl.GetRight`, `TGFrame.GetBottom`.
+
+From `spec/TGUIObject.md §2` (*reviewed-not-tested*, confidence *partial*) — the
+shared widget header, offsets from the object base:
+
+| Offset | Field | Accessors named by the spec |
+|---|---|---|
+| `+0x14` | parent (`TGUIObject*`) | `GetParent`, `GetConceptualParent`, `HasAncestor` |
+| `+0x18` | x (left) | `GetPosition` / `GetBounds` / `GetLeft` |
+| `+0x1c` | y (top) | `GetTop` |
+| `+0x20` | width | `GetWidth` / **`GetRight`** |
+| `+0x24` | height | `GetHeight` / **`GetBottom`** |
+| `+0x28` | flags (init `8` = visible) | `Get/SetFlags` |
+| `+0x2c` | reserved (init 0) | — |
+
+`+0x18..+0x24` is a **`TGRect` sub-object** (4 dwords), constructed by `0x00739db0`,
+reset by `TGRect_Clear` (`0x0073a080`). Flag bits: `0x01` Enabled, `0x02` Selected,
+`0x04` Highlighted, `0x08` Visible, `0x10` Exclusive, `0x20` SkipParent, `0x40`
+AlwaysHandleEvents, `0x80` UseParentBatch, `0x100` NoFocus, `0x200` BatchChildPolys.
+
+**⚠️ Do not implement `GetRight` as "return width".** The spec table pairs
+`GetWidth`/`GetRight` on one slot and `GetHeight`/`GetBottom` on another, which reads
+as though they are the same quantity. **SDK usage proves they are not** — 135
+`.GetRight()`/`.GetBottom()` call sites, and `StylizedWindow.py` settles it three ways:
+
+```python
+:373  pPreTitle.SetPosition(pTopLeft.GetRight(), 0.0, 0)          # chain to the right EDGE
+:380  pMinimize.SetPosition(pPostTitleRightCap.GetRight()
+                            + pPreButtonSpacing.GetWidth(), 0.0, 0)  # both in ONE expression
+:376  pNamePane.SetPosition(..., pPreTitle.GetBottom()
+                            - pNamePane.GetHeight(), 0)             # bottom MINUS height -> a y
+```
+
+Line 380 would be pointless if `GetRight` were `GetWidth`, and line 376's
+`GetBottom() - GetHeight()` is only meaningful as *edge minus size = coordinate*.
+
+**Implement as:** `GetRight()` → absolute right edge, `GetBottom()` → absolute bottom
+edge, both distinct from `GetWidth()`/`GetHeight()`. Whether the underlying slots
+literally store right/bottom (making the spec's "width"/"height" labels the author's
+interpretation) or the accessors compute `x + width` is unresolved and does not
+change the observable behaviour we must match.
+
+*Asked the reference to disambiguate; the `layout` area re-serves the same section
+verbatim regardless of how the question is refined, so the corpus does not settle it.
+**Worth reporting upstream:** the accessor column is misleading as written.*
+
 ### 3.4 `TGParagraph.SetString` — the largest single row *(44,024 hits, 105/201)*
 
 Open-table rank 1. `TGParagraph` exists (`engine/appc/tg_ui/widgets.py:320`) but has
@@ -206,6 +268,7 @@ revisited — not a bug, a redundancy.
 2. **§2.1 `collisions.py` cloaked-collision** — the only confirmed live bug found.
    Three-line fix; the correct form already exists in `sensor_detection.py`.
 3. **§1.3 worktree filtering + §1.2** — small generator changes, better signal.
-4. **§3.4 UI cluster** — largest hit counts, but they are HUD widgets; assess whether
-   they are cosmetic before spending on them.
+4. **§3.3a UI layout cluster** — ~104,000 hits and now the best-specified item here:
+   the `TGUIObject` header is recovered and SDK usage settles the `GetRight`/`GetBottom`
+   semantics the spec left ambiguous. Bounded, headless-testable, no open questions.
 5. **§3.2 collision-alert default** — needs evidence we do not have yet; do not guess.
