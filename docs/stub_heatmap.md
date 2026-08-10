@@ -80,8 +80,8 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 42 | STTopLevelMenu | GetContainingWindow | 348 | 55/201 | 2026-08-06 10:09 UTC |  |
 | 43 | App | ExplodeEmitterProperty_Create | 339 | 55/201 | 2026-08-06 10:09 UTC |  |
 | 44 | ExplodeEmitterProperty_Create() | GetName | 339 | 55/201 | 2026-08-06 10:09 UTC |  |
-| 45 | Planet | GetCloakingSubsystem | 324 | 1/201 | 2026-07-13 23:37 UTC | 2026-08-09 |
-| 46 | Planet | GetCloakingSubsystem.IsTryingToCloak | 324 | 1/201 | 2026-07-13 23:37 UTC | 2026-08-09 |
+| 45 | Planet | GetCloakingSubsystem | 324 | 1/201 | 2026-07-13 23:37 UTC |  |
+| 46 | Planet | GetCloakingSubsystem.IsTryingToCloak | 324 | 1/201 | 2026-07-13 23:37 UTC |  |
 | 47 | EngPowerCtrl | GetRight | 304 | 115/201 | 2026-08-06 14:55 UTC |  |
 | 48 | TGFrame | GetBottom | 304 | 115/201 | 2026-08-06 14:55 UTC |  |
 | 49 | TGParagraph | GetBottom | 304 | 115/201 | 2026-08-06 14:55 UTC |  |

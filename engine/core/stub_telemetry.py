@@ -97,6 +97,36 @@ def record_attr(owner_type: str, attr_name: str) -> None:
 
 
 def record_bool(owner_type: str) -> None:
+    """Record a truth-test of a stub, keyed by CALL SITE only.
+
+    ⚠️ SCOUTED 2026-08-10 — ATTRIBUTION GAP, the single biggest obstacle to
+    clearing the truthiness table.
+
+    `owner_type` is accepted and then DISCARDED: only `_caller(3)` is stored.
+    So `docs/stub_heatmap.md`'s "Boolean-test call sites" table says *where* a
+    stub was truth-tested but never *which* stub — and one line can truth-test
+    several different names over a run. Triaging any row therefore means
+    opening the file and reasoning about which name on that line is undefined,
+    which is slow and error-prone; it is why that table has sat unactioned.
+
+    The fix is small and the data is already in hand: `_Stub` carries BOTH
+    `_stub_owner` and `_stub_name` (`engine/core/ids.py:43-45`), and
+    `_Stub.__bool__` already passes the owner here. To make the table
+    self-describing:
+
+      1. `_Stub.__bool__` -> `record_bool(self._stub_owner, self._stub_name)`
+      2. key `_bool_sites` on `(owner, attr, site)` instead of `site`
+      3. widen the generator's table in `tools/stub_heatmap.py` (the row
+         builder near its `Boolean-test call sites` heading) with owner/attr
+         columns
+
+    Keep the site in the key: the same stub truth-tested from two places is two
+    distinct bugs with different fixes. Note the counter is keyed data, so old
+    `stub_hits.jsonl` records carry the narrow key — the generator must tolerate
+    both shapes rather than assuming the wide one.
+
+    See docs/engine/stub-scouting-2026-08-10.md for the rows this blocks.
+    """
     if not ENABLED:
         return
     try:
@@ -112,7 +142,21 @@ def record_coercion(kind: str) -> None:
     This is the int()==0 collapse trap: an undefined constant silently
     coerces to 0 and sails through comparisons/dict lookups instead of
     raising, so it needs its own signal distinct from record_bool's
-    truthiness trap."""
+    truthiness trap.
+
+    ⚠️ SCOUTED 2026-08-10 — WORSE ATTRIBUTION GAP THAN record_bool.
+    This does not even *receive* an owner or attr, only `kind`, so the
+    "Numeric-coercion call sites" table identifies a coercion site with no clue
+    which constant collapsed. That matters more here than for truthiness: the
+    known casualties of this trap were all *constants* (`WC_*` keyboard codes,
+    `TGUIObject.ALIGN_*`, `EngRepairPane.REPAIR_AREA`), and a site like
+    `engine/appc/input.py:123` coerces a different constant on every keypress.
+
+    Fix alongside record_bool: `_Stub.__int__`/`__float__`/`__index__`
+    (`engine/core/ids.py`) have `self._stub_owner`/`self._stub_name` in scope —
+    pass them through and key on `(kind, owner, attr, site)`.
+
+    See docs/engine/stub-scouting-2026-08-10.md."""
     if not ENABLED:
         return
     try:
