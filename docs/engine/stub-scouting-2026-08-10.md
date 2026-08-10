@@ -437,3 +437,65 @@ three attempts. Repeated rephrasing to squeeze under the floor is extracting a g
 titles and section headings appear to be scored as ordinary body text. Being able to
 scope a question to a named document — or weighting title terms — would convert
 several of these near misses into answers.
+
+---
+
+## Part 5 — Radar range: asked, and the answer is a definitive "not here"
+
+Mark's call to ask rather than assume was right — it cost two queries against a
+planned measurement session, and it settled the question.
+
+**Result: the clean-room reference cannot supply the radar range.** Two independent
+confirmations:
+
+1. **No specification section exists.** `radarscope` scores **0.00** — *measured
+   silence*, the strongest negative the server gives, not a retrieval miss.
+2. **No range accessor is published.** `RadarScope`'s entire scripted surface is four
+   entries: `RadarScope_Create` (`0x006326b0`), `RadarScope_CreateShipIcon`
+   (`0x006327b0`), `RadarScope_SetTargetBracket` (`0x00632820`), `RadarScope_Update`
+   (`0x00632740`). The display range is never script-settable — it lives inside
+   `RadarScope_Update`, which has no reconstructed body.
+
+Useful by-product: **the class is `RadarScope`**, a direct `TGPane` descendant
+(`TGObject → TGAttrObject → TGTemplatedAttrObject → TGEventHandlerObject → TGUIObject
+→ TGPane → RadarScope`). The `hierarchy` area answered that *faithfully* — edges come
+from the type-conversion graph the program registers at startup, not from naming. Note
+`SetRange` is unrelated: it belongs to `STNumericBar`, a UI bar widget.
+
+**So the measurement experiment stands** as the route —
+`docs/instrumented_experiments/2026-05-26-radar-range-calibration.md`. `1000.0` GU in
+`engine/appc/radar.py:104` remains a chosen value, now with it *established* that no
+documentary source can confirm it.
+
+### 5.1 ⚠️ A `layout` misretrieval that would have been believed
+
+Asking **"What is the object model and field layout of RadarScope?"** with `area=layout`
+returned `spec/ArtificialIntelligence.md — 2. Object model (memory layout)`, introduced
+as *"The object model is documented"* followed by a verbatim field table — vtable
+`0x0088BB54`, owner-ship handle, blackboard hash map, `interruptable` default 1.
+
+**None of that is RadarScope.** It is `ArtificialIntelligence`'s layout, served in
+answer to a question about an unrelated UI widget.
+
+The tell is buried in the Consulted table:
+
+```
+specification sections | 1377 | 1 section(s) at or above the relevance floor 0.35 (best 0.35)
+specification sections | 1377 | 93 object-model section(s) (no class named)
+```
+
+`no class named` — the resolver failed to bind `RadarScope` and fell back to a generic
+object-model match sitting exactly *on* the 0.35 floor. The citation names its true
+source honestly, so this is not a fabrication; but the framing answers as though the
+table belongs to the class that was asked about, and a reader in a hurry would take it
+as RadarScope's layout and implement AI blackboard fields into a radar widget.
+
+This is the `layout` path's version of the failure the relevance floor was built to
+prevent, and it is more dangerous than a below-floor refusal precisely because it
+*looks* like a good answer. **Report upstream:** when the class resolver reports
+`no class named`, the layout area should refuse rather than fall back to a generic
+object-model section. Contrast the `api` area, which matched `radarscope` at 0.00 and
+correctly returned nothing from the spec corpus.
+
+**Standing rule for us:** on any `layout` answer, check that the cited document is the
+class you asked about. The document name is right there in the Claim — read it.
