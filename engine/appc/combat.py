@@ -296,8 +296,43 @@ def _iter_subsystems(ship):
             yield s
 
 
+def _hull_box_for(ship):
+    """The ship's cached hull box as ``(centre, half_extents)`` in the body
+    frame at the ship's CURRENT scale, or ``None``.
+
+    ``ship._shield_hull_box`` is written at spawn by the host loop's realize
+    step from the renderer's ``model_aabb`` (see
+    ``engine/host_loop.py`` ↦ ``_cache_shield_hull_box``), in world units at
+    ``GetScale() == 1``. The per-frame ``GetScale()`` multiplier is applied
+    here so a rescaled ship (DockWithStarbase, asteroid systems) keeps its
+    centre offset in step with the instance matrix.
+
+    Returns ``None`` for anything malformed or degenerate so the caller
+    degrades to the raw-axis rule instead of raising inside a combat tick.
+    ``_``-prefixed names raise ``AttributeError`` on the ``TGObject`` stub
+    path (see ``engine/core/ids.py``), so ``getattr(..., None)`` is safe.
+    """
+    box = getattr(ship, "_shield_hull_box", None)
+    try:
+        centre, half = box
+        cx, cy, cz = (float(v) for v in centre)
+        hx, hy, hz = (float(v) for v in half)
+    except (TypeError, ValueError):
+        return None
+    if hx <= 0.0 or hy <= 0.0 or hz <= 0.0:
+        return None
+    try:
+        scale = float(ship.GetScale())
+    except (AttributeError, TypeError, ValueError):
+        scale = 1.0
+    if scale <= 0.0:
+        scale = 1.0
+    return ((cx * scale, cy * scale, cz * scale),
+            (hx * scale, hy * scale, hz * scale))
+
+
 def _shield_face_from_hit_point(ship, hit_point) -> int:
-    """Body-frame dominant-axis selection via :func:`_body_frame_delta`.
+    """Hull-box dominant-axis selection via :func:`_body_frame_delta`.
 
     Face indices follow the ``ShieldSubsystem`` class constants:
     FRONT/REAR ↔ ±body-Y, TOP/BOTTOM ↔ ±body-Z, LEFT/RIGHT ↔ ∓body-X,
@@ -306,8 +341,30 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
     ``R.GetCol(2)`` = ship-up). Ships lacking ``GetWorldRotation``
     receive identity R from :func:`_body_frame_delta`, so legacy
     fixtures keep their pre-rotation behaviour.
+
+    The delta is measured from the hull AABB **centre** and normalised by the
+    hull **half-extents** before the dominant-axis compare — i.e. the hull box
+    is mapped to a unit cube, where "largest component" and "which face of the
+    box" are the same question. Comparing raw components instead applies a 45°
+    cone to a hull that is 4–8× longer than it is tall: on a Galaxy that labels
+    only 6.6% of the dorsal surface TOP (Sovereign 4.2%, Keldon 5.7%), billing
+    every other dorsal hit to FRONT/REAR/LEFT/RIGHT — and on hulls whose model
+    origin sits off the AABB centre (Sovereign −0.07 in Z, Keldon +0.14) it
+    inverts the dorsal/ventral call outright for hits near the mid-plane.
+
+    NOTE this normalisation is OUR design, not recovered BC behaviour — the
+    clean-room reference has no section on the engine's face-selection rule.
+
+    Ships with no cached box (not yet realized, headless, test fakes) fall back
+    to the raw-component compare, which is exact for an isotropic hull.
     """
     bx, by, bz = _body_frame_delta(ship, hit_point)
+    box = _hull_box_for(ship)
+    if box is not None:
+        (cx, cy, cz), (hx, hy, hz) = box
+        bx = (bx - cx) / hx
+        by = (by - cy) / hy
+        bz = (bz - cz) / hz
     abs_x, abs_y, abs_z = abs(bx), abs(by), abs(bz)
     if abs_y >= abs_x and abs_y >= abs_z:
         return 0 if by >= 0 else 1

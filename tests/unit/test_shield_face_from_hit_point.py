@@ -212,3 +212,116 @@ def test_legacy_ship_without_get_world_rotation(world_offset, expected_face):
     loc = TGPoint3(7.0, 8.0, 9.0)
     ship = _ShipNoRotation(loc)
     assert _shield_face_from_hit_point(ship, _hit(loc, world_offset)) == expected_face
+
+
+# ── anisotropic hulls: the hull box, not a 45° cone, decides the face ───────
+#
+# BC hulls are 4-8x longer than they are tall. Comparing the RAW body-frame
+# components picks the face by a 45 degree cone, which on a Galaxy labels only
+# 6.6% of the dorsal surface TOP -- every other dorsal hit is billed to
+# FRONT/REAR/LEFT/RIGHT. The fix normalises the body delta by the ship's
+# half-extents (mapping the hull box to a unit cube) and measures it from the
+# hull AABB centre rather than the model origin.
+#
+# Half-extents/centres below are the real values read out of the shipped NIFs
+# via renderer model_aabb, scaled by BC_MODEL_SCALE (0.01).
+
+# Galaxy: centred on its origin, 3.3 : 4.6 : 1 (X : Y : Z).
+GALAXY_BOX = ((0.0, 0.0, 0.0), (2.3206, 3.2217, 0.7050))
+# Sovereign: 2.8 : 8.5 : 1, and its model origin sits 0.0698 BELOW the hull
+# AABB centre (17% of the Z half-extent).
+SOVEREIGN_BOX = ((0.0, -0.1853, -0.0698), (1.1543, 3.4988, 0.4140))
+
+
+class _ShipWithHullBox(_ShipWithRotation):
+    """Ship carrying the cached hull box the renderer registers at spawn:
+    (centre, half_extents) in body frame, world units at scale 1."""
+
+    def __init__(self, loc, R, box, scale=1.0):
+        super().__init__(loc, R)
+        self._shield_hull_box = box
+        self._scale = scale
+
+    def GetScale(self) -> float:
+        return self._scale
+
+
+def _boxed_ship(box, scale=1.0):
+    return _ShipWithHullBox(TGPoint3(0.0, 0.0, 0.0), TGMatrix3(), box, scale)
+
+
+def test_anisotropic_dorsal_hit_is_top():
+    """A hit on the top of the saucer, well off the centreline. Raw components
+    make |y| dominant (-> FRONT); normalised by the half-extents it is clearly
+    the dorsal face."""
+    ship = _boxed_ship(GALAXY_BOX)
+    assert _shield_face_from_hit_point(ship, TGPoint3(1.5, 2.0, 0.65)) == TOP
+
+
+def test_anisotropic_ventral_hit_is_bottom():
+    ship = _boxed_ship(GALAXY_BOX)
+    assert _shield_face_from_hit_point(ship, TGPoint3(1.5, 2.0, -0.65)) == BOTTOM
+
+
+def test_anisotropic_port_bow_hit_is_left():
+    """Port flank forward of amidships: raw |y| > |x| bills it FRONT, but it is
+    proportionally far further out to port than it is forward."""
+    ship = _boxed_ship(GALAXY_BOX)
+    assert _shield_face_from_hit_point(ship, TGPoint3(-2.2, 2.5, 0.2)) == LEFT
+
+
+def test_bow_hit_still_front_with_hull_box():
+    """The normalisation must not steal genuine bow hits from FRONT."""
+    ship = _boxed_ship(GALAXY_BOX)
+    assert _shield_face_from_hit_point(ship, TGPoint3(0.3, 3.2, 0.1)) == FRONT
+
+
+def test_offset_origin_uses_aabb_centre_not_model_origin():
+    """The Sovereign's model origin sits below its hull AABB centre. A point
+    between the two is ABOVE the hull's mid-plane -- dorsal -- even though its
+    raw body-frame z is negative."""
+    ship = _boxed_ship(SOVEREIGN_BOX)
+    assert _shield_face_from_hit_point(ship, TGPoint3(0.0, -0.1853, -0.02)) == TOP
+
+
+def test_hull_box_scales_with_get_scale():
+    """The cached box is stored at GetScale()==1; a rescaled ship must have its
+    centre offset scaled to match, or the sign flips near the mid-plane."""
+    ship = _boxed_ship(SOVEREIGN_BOX, scale=2.0)
+    # Same relative point as the test above, doubled.
+    assert _shield_face_from_hit_point(ship, TGPoint3(0.0, -0.3706, -0.04)) == TOP
+
+
+def test_missing_hull_box_falls_back_to_raw_axes():
+    """Ships with no cached box (headless, tests, unrealized ships) keep the
+    pre-existing isotropic behaviour rather than raising."""
+    loc = TGPoint3(0.0, 0.0, 0.0)
+    ship = _ShipWithRotation(loc, TGMatrix3())
+    assert _shield_face_from_hit_point(ship, TGPoint3(1.5, 2.0, 0.65)) == FRONT
+
+
+@pytest.mark.parametrize("bad_box", [None, (), ((0.0, 0.0),), ((0, 0, 0), (0, 0, 0))])
+def test_malformed_hull_box_falls_back(bad_box):
+    """A short/zero/None box must degrade to the raw-axis rule, never divide
+    by zero or raise inside a combat tick."""
+    ship = _ShipWithHullBox(TGPoint3(0.0, 0.0, 0.0), TGMatrix3(), bad_box)
+    assert _shield_face_from_hit_point(ship, TGPoint3(1.5, 2.0, 0.65)) == FRONT
+
+
+# ── spawn-path integration: the cached box comes from the renderer AABB ─────
+
+
+def test_cached_hull_box_drives_face_selection():
+    """The host loop's realize step caches the same model_aabb it hands the
+    shield bubble; a Galaxy-proportioned NIF AABB must make a dorsal hit read
+    TOP end-to-end (NIF units in, face index out)."""
+    from engine.host_loop import BC_MODEL_SCALE, _cache_shield_hull_box
+
+    ship = _ShipWithRotation(TGPoint3(0.0, 0.0, 0.0), TGMatrix3())
+    # Real Galaxy.nif AABB (renderer model_aabb, NIF units).
+    _cache_shield_hull_box(ship, (0.0, 0.0, -0.0029), (232.064, 322.166, 70.4982))
+
+    assert ship._shield_hull_box[1][2] == pytest.approx(70.4982 * BC_MODEL_SCALE)
+    # Dorsal, off the centreline and forward of amidships.
+    hit = TGPoint3(1.5, 2.0, 0.65)
+    assert _shield_face_from_hit_point(ship, hit) == TOP

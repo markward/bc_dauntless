@@ -178,9 +178,17 @@ void ShieldPass::submit(const scenegraph::World& world,
 
         shader.set_mat4("u_world", inst->world);
         shader.set_mat4("u_ship_local", ship_local);
-        // World-space ship center for the impact-centered splash UV in
-        // the fragment shader. inst->world's column 3 holds translation.
-        shader.set_vec3("u_ship_center", glm::vec3(inst->world[3]));
+        // World-space centre OF THE BUBBLE for the impact-centred splash UV
+        // and the hemisphere gate. Must be the bubble's own centre, not the
+        // ship origin (inst->world[3]): the ellipsoid is translated to
+        // state.aabb_center, and on real hulls that differs from the model
+        // origin (Sovereign -6.98 in Z, Keldon +14.30). Using the origin
+        // skewed the splash tangent basis and the gate's terminator.
+        // Skin mode leaves ship_local identity, but its verts are the hull's
+        // own, so the hull AABB centre is still the right pivot.
+        shader.set_vec3("u_bubble_center",
+                        glm::vec3(inst->world *
+                                  glm::vec4(state.aabb_center, 1.0f)));
 
         glm::vec4 pts[ShieldState::MaxHits];
         glm::vec4 col[ShieldState::MaxHits];
@@ -195,9 +203,6 @@ void ShieldPass::submit(const scenegraph::World& world,
         shader.set_vec4_array("u_hit_color_intensity", col, ShieldState::MaxHits);
         shader.set_int_array("u_hit_tex_index", tex_idx, ShieldState::MaxHits);
 
-        const float largest_axis = std::max({state.aabb_half_extents.x,
-                                              state.aabb_half_extents.y,
-                                              state.aabb_half_extents.z});
         // aabb_half_extents is in NIF units; the ship's world matrix
         // applies a uniform scale (SHIP_SCALE on the host side). Recover
         // it from the column length so hit_radius lands in world units
@@ -205,11 +210,13 @@ void ShieldPass::submit(const scenegraph::World& world,
         // against). Without this the radius is ~10× too large and the
         // hex pattern bleeds across the entire ellipsoid.
         const float scale_factor = glm::length(glm::vec3(inst->world[0]));
-        // 0.6 = larger splash for visual debug; tune down later once the
-        // bubble silhouette is verified to clear the hull. With 0.25 the
-        // flash only covered ~quarter of the bubble surface and made it
-        // hard to see whether the ship was clipping out.
-        shader.set_float("u_hit_radius", largest_axis * scale_factor * 1.5f);
+        // Keyed to the SMALLEST half-extent — see shield_hit_radius. The old
+        // largest-axis × 1.5 made the radius 2–4× the bubble's whole vertical
+        // size on BC's 4–8:1 hulls, so a single hit washed the entire bubble
+        // and the mirrored far-side splash was never culled.
+        shader.set_float("u_hit_radius",
+                         shield_hit_radius(state.aabb_half_extents,
+                                           scale_factor));
 
         glBindVertexArray(mesh->vao());
         glDrawElements(GL_TRIANGLES,
