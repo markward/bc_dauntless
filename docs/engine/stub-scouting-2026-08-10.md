@@ -342,3 +342,98 @@ and set-to-set warp arrival velocity.
 as though each pair is one quantity. 135 SDK call sites show `GetRight`/`GetBottom`
 are absolute **edges**, distinct from the sizes. Worth correcting at the source — an
 implementer trusting that column alone would invert every layout.
+
+---
+
+## Part 4 — Questions raised by our own uncertainty comments *(2026-08-10)*
+
+Mined the tree for comments admitting uncertainty about BC's real behaviour
+(`by feel`, `assumption`, `unverified`, `we do NOT know`, `unspecified`, `may differ`)
+and put the answerable ones to the clean-room reference.
+
+### 4.1 ✅ `SequenceAI` — our implementation VERIFIED CORRECT
+
+`engine/appc/ai.py:597-606` matches `spec/SequenceAI.md §2` (*reviewed-not-tested*)
+field for field:
+
+| Spec field | Offset | Spec default | Ours |
+|---|---|---|---|
+| child count / child array | `+0x28` / `+0x30` | 0 | `_ais = []` ✅ |
+| current index | `+0x2c` | `-1` (none) | `_current_child = None` ✅ |
+| loops remaining | `+0x34` | 1 | `_loops_remaining = 1` ✅ |
+| loop count | `+0x38` | 1 | `_loop_count = 1` ✅ |
+| `skipDormant` | `+0x3c` | 0 | `_skip_dormant = False` ✅ |
+| `resetIfInterrupted` | `+0x3d` | 0 | `_reset_if_interrupted = False` ✅ |
+| `doubleCheckAllDone` | `+0x3e` | 0 | `_double_check_all_done = False` ✅ |
+
+A positive result, and worth as much as a defect: it independently confirms the
+`skip_dormant` default of 0 that `engine/appc/ai_optimized.py`'s divergence argument
+rests on.
+
+### 4.2 The `PS_DONE` divergence stands — still genuinely open
+
+`engine/appc/ai_optimized.py:145-162` records the sharpest uncertainty in the tree:
+*"it ran a native class whose no-target/no-ship return value we do NOT know (still an
+open question for the RE project)."*
+
+The reference does **not** close it, and its shape explains why:
+
+- `search_reference("PreprocessingAI")` matches only a `spec/README.md` ranking row —
+  there is **no PreprocessingAI class specification**.
+- The published API contract has 9 `PreprocessingAI_*` entries — `Cast` `0x00605130`,
+  `Create` `0x00605000`, `ForceDormantStatus` `0x00605480`, `ForceStatusChange`
+  `0x00605500`, `ForceUpdate` `0x00605410`, `Get/SetContainedAI`,
+  `GetPreprocessingInstance`, `SetPreprocessingMethod` — and **no `Update`**.
+
+That absence *corroborates our comment*: `Update` was never script-exposed, so it is
+internal native code, precisely the ~20% of functions with no reconstructed body.
+**Keep the divergence and keep the comment.** Do not let a future session quietly
+"resolve" this by inference.
+
+### 4.3 Audio voice-eviction tie rule — unreachable, keep the pin
+
+`native/src/audio/src/audio_system.cc:118` pins a tie to *drop the new voice* rather
+than steal, flagged "PINNED BUT UNVERIFIED ... arbitrary and was never verified".
+Since `BC_DEFAULT_PRIORITY == REMOTE_PULSE_PRIORITY == 0.5`, a saturated pool is
+all-ties, so this rule decides every dropped pulse/tractor voice.
+
+Reference: unreachable. Two attempts returned *below-relevance-floor* (best 0.22, then
+0.34). `spec/TGAudio.md` has seven sections including `§7 Walls / deferred`, so the
+material may exist. **The existing pin and its regression test
+(`AudioSystemTest.EvictionFillStealTieDropAndBelowCap`) stay as they are** — the code
+comment's instruction not to "fix" it on the assumption that ties should steal is
+still the right standing order.
+
+### 4.4 Still unasked, and why
+
+- **Radar range** (`engine/appc/radar.py:104`, `1000.0` GU "chosen by feel; original
+  BC value is opaque"). There is already a planned measurement
+  (`docs/instrumented_experiments/2026-05-26-radar-range-calibration.md`); measuring
+  beats asking.
+- **Weapon fire-timer re-seed distribution** (`weapon_subsystems.py:1073`,
+  `uniform(0, 0.33)` — "BC's draw distribution is unverified in the corpus"). The
+  router self-reports as *weak* on floating-point computation, so this is a poor fit.
+- **Tuned-by-feel VFX/physics constants** (`ship_death.py` THROES_DURATION,
+  `tractor.py`, `collisions.py`, `sensors_panel.py`). Established as out of reach —
+  see §3.3 for the tractor precedent.
+
+### 4.5 Practical usage rule for the reference *(earned the hard way)*
+
+Across ~15 queries a clear pattern: **`layout` and `api` answer reliably; `behaviour`
+answers only when the question happens to use the corpus's own section vocabulary.**
+
+Five behaviour questions landed *below-relevance-floor* at 0.32, 0.34, 0.23, 0.22 and
+0.20 — several of them near misses on material that plausibly exists. Notably, phrasing
+a question in the shape of a section **title** ("what does the walls and deferred
+section list") scores *worse*, because words like "walls", "deferred" and "overview"
+recur across all 85 documents and dilute relevance; that query retrieved
+`spec/STButtonFamily.md`'s walls section instead of `TGAudio`'s.
+
+**So:** lead with `search_reference` on one distinctive noun to find the vocabulary,
+prefer `layout`/`api` where the question can be posed that way, and stop after two or
+three attempts. Repeated rephrasing to squeeze under the floor is extracting a guess.
+
+**Feedback owed upstream** (alongside the `GetRight` accessor-column issue): document
+titles and section headings appear to be scored as ordinary body text. Being able to
+scope a question to a named document — or weighting title terms — would convert
+several of these near misses into answers.
