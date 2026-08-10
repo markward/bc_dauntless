@@ -239,6 +239,31 @@ def _emit_cloaked_collision(obj_a, obj_b) -> None:
     cloaked or cloaking ship.  Raise-safe; the source is the cloaked ship."""
     import App
     for cloaked, other in ((obj_a, obj_b), (obj_b, obj_a)):
+        # ⚠️ SCOUTED 2026-08-10 — LIVE BUG, highest-priority row found while
+        # scouting the heatmap. This fires ET_CLOAKED_COLLISION for EVERY
+        # collision involving a non-ship.
+        #
+        # `getattr(instance, "GetCloakingSubsystem", None)` never returns None:
+        # TGObject.__getattr__ vends a truthy `_Stub` for any method the class
+        # does not define. So on a Planet/asteroid/station the chain is
+        #   getter is None      -> False (it is a _Stub)
+        #   cloak is None       -> False (calling a _Stub yields a _Stub)
+        #   not IsTryingToCloak -> False (the _Stub is truthy)
+        # and the event fires. HelmMenuHandlers.CloakedCollision then plays a
+        # "we hit a cloaked ship" line for ramming a planet.
+        #
+        # THE FIX IS ALREADY WRITTEN ELSEWHERE: resolve through the *class*, as
+        # engine/appc/sensor_detection.py:42-56 does —
+        #   getter = getattr(type(cloaked), "GetCloakingSubsystem", None)
+        # Only ShipClass defines the real method (ships.py:992); everything else
+        # then correctly yields None. Apply that form here.
+        #
+        # Provenance: this site — not sensor_detection.py — is what produced
+        # docs/stub_heatmap.md ranks 45/46 (`Planet.GetCloakingSubsystem` and
+        # the chained `.IsTryingToCloak`, 324 hits each). The chained attr is
+        # this loop's signature. Those two rows were dated markedResolvedOn
+        # 2026-08-09 on the strength of the sensor_detection fix; that
+        # attribution was WRONG and the dates have been reverted.
         getter = getattr(cloaked, "GetCloakingSubsystem", None)
         if getter is None:
             continue

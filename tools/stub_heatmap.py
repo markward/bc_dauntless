@@ -261,6 +261,15 @@ def render(attr_rows: "list", bool_rows: "list", meta: dict,
     L += ["_Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn`"
           " cell and commit — it moves to Resolved on the next regeneration, and is"
           " flagged again if it is ever hit after that date._", ""]
+    # Emitted by the generator ON PURPOSE. Regeneration preserves ONLY the
+    # markedResolvedOn column (see parse_existing_annotations), so any prose
+    # hand-added to the heatmap is destroyed on the next run. Scouting notes
+    # therefore live in their own document, and this pointer has to be printed
+    # here to survive.
+    L += ["> **Scouting notes:** `docs/engine/stub-scouting-2026-08-10.md` —"
+          " what it would take to plug these, why the two risk tables below are"
+          " currently hard to action, and one confirmed live bug."
+          " **Do not add prose to this file: regeneration deletes it.**", ""]
     L += ["| rank | owner | attr | total hits | coverage | lastSeenOn | markedResolvedOn |",
           "|---|---|---|---|---|---|---|"]
     for i, r in enumerate(openr, 1):

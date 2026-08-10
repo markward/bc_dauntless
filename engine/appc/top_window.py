@@ -267,6 +267,27 @@ class _TopWindow:
         pass
 
     def ToggleMapWindow(self) -> None:
+        # ⚠️ SCOUTED 2026-08-10 — ARMED TRAP. Implementing this without also
+        # implementing App.MapWindow_Cast will make the tactical map toggle at
+        # the start of EVERY cutscene.
+        #
+        # MissionLib.py:747-749 (the cutscene-setup path, immediately before
+        # pTop.StartCutscene) reads:
+        #
+        #     pMap = App.MapWindow_Cast(pTop.FindMainWindow(App.MWT_TACTICAL_MAP))
+        #     if pMap and pMap.IsWindowActive():
+        #         pTop.ToggleMapWindow()
+        #
+        # Intent: close the map IF it is open. But `MapWindow_Cast` is absent
+        # from our shim, so it yields a truthy `_NamedStub`; `IsWindowActive()`
+        # on that stub is truthy too; the guard is therefore ALWAYS true and
+        # this method is always called. Harmless only because it is a no-op —
+        # the day it toggles for real, a closed map will OPEN on every cutscene.
+        # (`MWT_TACTICAL_MAP` itself is fine: top_window.py:26.)
+        #
+        # Fix the guard first: implement `MapWindow_Cast` to return None for
+        # anything that is not a real map window. Live in 47/201 recorded runs
+        # (docs/stub_heatmap.md, truthiness rank 17).
         pass
 
     def ToggleCinematicWindow(self) -> None:
