@@ -352,8 +352,19 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
     origin sits off the AABB centre (Sovereign −0.07 in Z, Keldon +0.14) it
     inverts the dorsal/ventral call outright for hits near the mid-plane.
 
-    NOTE this normalisation is OUR design, not recovered BC behaviour — the
-    clean-room reference has no section on the engine's face-selection rule.
+    NOTE this normalisation is OUR design, not recovered BC behaviour. It has
+    NOT been checked against the clean-room reference: that server was
+    unreachable for the whole of the session this was written in (a routing
+    problem, not a decline), so its silence is UNTESTED — do not read this note
+    as "the corpus has no section on it". Two questions would settle it:
+    ``api: "ShieldClass_"`` (does any engine entry map a point to a face, and
+    does the damage entry take a face / a point / a direction?) and
+    ``layout: ShieldClass fields`` (does it store per-face geometry?). A
+    specific hypothesis to put to it: the shield bubble is known from the
+    binary to be AABB half-extents × √3 (see kShieldEllipsoidAxisScale), and
+    normalising the delta by those same half-extents is exactly "map that
+    ellipsoid to a unit sphere, take the dominant axis" — so this may well be
+    convergent with BC rather than merely a reasonable guess.
 
     Ships with no cached box (not yet realized, headless, test fakes) fall back
     to the raw-component compare, which is exact for an isotropic hull.
