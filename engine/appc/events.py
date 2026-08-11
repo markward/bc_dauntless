@@ -124,6 +124,38 @@ def TGEvent_Create() -> TGEvent:
     return TGEvent()
 
 
+class WaypointEvent(TGEvent):
+    """Waypoint-arrival event — carries the placement the ship just reached.
+
+    Emitted by SDK script, not by the engine: AI/PlainAI/FollowWaypoints.py:278
+    builds one per arrival, sets destination (the ship), type
+    (ET_AI_REACHED_WAYPOINT) and placement (the Waypoint), then broadcasts via
+    g_kEventManager.AddEvent.
+
+    Consumers read BOTH halves back — Conditions/ConditionReachedWaypoint.py:47
+    matches `GetDestination()` against its watched ship and
+    `GetPlacement().GetName()` against its watched waypoint name — so the
+    placement must round-trip as the real object, not a name.
+
+    Everything except the placement is inherited: TGEvent already carries the
+    event type and destination.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._placement: "TGObject | None" = None
+
+    def SetPlacement(self, placement: "TGObject") -> None:
+        self._placement = placement
+
+    def GetPlacement(self) -> "TGObject | None":
+        return self._placement
+
+
+def WaypointEvent_Create() -> WaypointEvent:
+    return WaypointEvent()
+
+
 class TGBoolEvent(TGEvent):
     """Boolean-carrying event subclass.  Used by ET_INPUT_FIRE_* events to
     signal bFiring=1 (start) / bFiring=0 (stop).  See sdk/Build/scripts/
