@@ -10,6 +10,7 @@ from engine.appc.events import (
     ET_PLAYER_TORPEDO_TYPE_CHANGED,
     ET_FRIENDLY_FIRE_DAMAGE, ET_FRIENDLY_FIRE_REPORT, ET_FRIENDLY_FIRE_GAME_OVER,
     ObjectExplodingEvent, ObjectExplodingEvent_Create,
+    WaypointEvent, WaypointEvent_Create,
     TGEventHandlerObject, TGEventManager,
     TGPythonInstanceWrapper,
     ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL,
@@ -169,6 +170,7 @@ from engine.appc.actions import (
 )
 from engine.appc.warp import (
     WarpSequence_Create,
+    WarpSequence_Cast,
     ChangeRenderedSetAction_Create,
     ChangeRenderedSetAction_CreateFromSet,
 )
@@ -968,6 +970,13 @@ ET_AI_ORBITTING = 208
 # orbit" → HelmMenuHandlers.Orbitting plays the KiskaLeaveOrbit line) and
 # Bridge/HelmCharacterHandlers.AIDone.
 ET_AI_DONE = 209
+# Fired by AI/PlainAI/FollowWaypoints.ReachedWaypoint (FollowWaypoints.py:278)
+# each time a ship crosses fCloseEnough of its current waypoint. WaypointEvent:
+# destination = the ship, GetPlacement() = the Waypoint reached. Consumed by
+# Conditions/ConditionReachedWaypoint (registered by AI/Setup.py:125) and the
+# mission handler at Maelstrom/Episode8/E8M2/E8M2.py:514. 200-209 are taken in
+# this block (checked), so 210 is the next free contiguous value.
+ET_AI_REACHED_WAYPOINT = 210
 
 # ── Input event types — used by DefaultKeyboardBinding + TacticalInterfaceHandlers
 # Values are stable arbitrary integers well above the Phase-1 event range.
