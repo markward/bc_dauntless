@@ -174,3 +174,112 @@ TEST(ShieldState, EllipsoidCircumscribesAabbCorners) {
                 EXPECT_LE(d, 1.0f + 1e-4f);
             }
 }
+
+// ── impact splash geometry ─────────────────────────────────────────────────
+//
+// Two defects fixed together (see engine/appc/combat.py for the gameplay half):
+//
+//  1. splash_sample() in shaders/shield.frag projects the fragment offset onto
+//     a basis perpendicular to `impact_dir` with NO near/far hemisphere gate.
+//     The point diametrically opposite the hit projects to uv (0.5, 0.5) --
+//     the texture's exact CENTRE -- so the bubble grew a second, identically
+//     centred splash on the opposite face.
+//  2. The falloff radius was keyed to the LARGEST half-extent, which on BC's
+//     4-8:1 hulls is 2-4x the entire vertical size of the bubble, so that
+//     mirrored splash was never culled by distance either. With depth-test on
+//     and the hull between them, the mirror is the one the player can see.
+//
+// Real Galaxy.nif / Sovereign.nif AABBs (renderer model_aabb, NIF units).
+namespace {
+constexpr glm::vec3 kGalaxyHalf{232.064f, 322.166f, 70.4982f};
+constexpr glm::vec3 kSovereignHalf{115.429f, 349.8808f, 41.3978f};
+
+// Mirror splash_sample() from shaders/shield.frag so the tests can reason about
+// which bubble points it paints. Keep in sync with the shader.
+glm::vec3 splash_center(glm::vec3 hit, glm::vec3 bubble_centre, glm::vec3 frag) {
+    glm::vec3 impact_dir = glm::normalize(hit - bubble_centre);
+    return bubble_centre + impact_dir * glm::length(frag - bubble_centre);
+}
+
+glm::vec2 splash_uv(glm::vec3 hit, glm::vec3 bubble_centre,
+                    glm::vec3 frag, float radius) {
+    glm::vec3 impact_dir = glm::normalize(hit - bubble_centre);
+    glm::vec3 ref = std::abs(impact_dir.z) < 0.9f ? glm::vec3(0, 0, 1)
+                                                   : glm::vec3(0, 1, 0);
+    glm::vec3 t1 = glm::normalize(glm::cross(impact_dir, ref));
+    glm::vec3 t2 = glm::cross(impact_dir, t1);
+    glm::vec3 offset = frag - splash_center(hit, bubble_centre, frag);
+    return glm::vec2(glm::dot(offset, t1), glm::dot(offset, t2))
+           / (2.0f * radius) + 0.5f;
+}
+}  // namespace
+
+TEST(ShieldSplash, HitRadiusStaysInsideTheThinnestBubbleAxis) {
+    // The splash must be a localised patch, not a wash over the whole bubble.
+    // Bubble semi-axis on axis k is half_k * kShieldEllipsoidAxisScale, so a
+    // hit at one pole is 2x that from the opposite pole. Radius must be under
+    // that on EVERY axis or the mirrored splash survives the falloff.
+    for (glm::vec3 half : {kGalaxyHalf, kSovereignHalf}) {
+        const float r = shield_hit_radius(half, /*instance_scale=*/1.0f);
+        EXPECT_GT(r, 0.0f);
+        for (int k = 0; k < 3; ++k) {
+            const float antipodal = 2.0f * kShieldEllipsoidAxisScale * half[k];
+            EXPECT_LT(r, antipodal)
+                << "axis " << k << ": splash reaches the opposite face";
+        }
+    }
+}
+
+TEST(ShieldSplash, HitRadiusScalesWithTheInstanceMatrix) {
+    const float r1 = shield_hit_radius(kGalaxyHalf, 1.0f);
+    const float r2 = shield_hit_radius(kGalaxyHalf, 2.0f);
+    EXPECT_FLOAT_EQ(r2, 2.0f * r1);
+}
+
+TEST(ShieldSplash, AntipodalBubblePointWouldGetTheTextureCentre) {
+    // Documents defect 1: without a hemisphere gate the far pole samples uv
+    // (0.5, 0.5). This is the geometry the gate below has to reject.
+    const glm::vec3 centre(0.0f);
+    const float semi_z = kGalaxyHalf.z * kShieldEllipsoidAxisScale;
+    const glm::vec3 hit(0.0f, 0.0f, -kGalaxyHalf.z);        // ventral hull hit
+    const glm::vec3 far_pole(0.0f, 0.0f, semi_z);           // DORSAL bubble point
+    const glm::vec2 uv = splash_uv(hit, centre, far_pole, 100.0f);
+    EXPECT_NEAR(uv.x, 0.5f, 1e-4f);
+    EXPECT_NEAR(uv.y, 0.5f, 1e-4f);
+}
+
+TEST(ShieldSplash, GateRejectsTheFarHemisphereAndKeepsTheNearOne) {
+    const glm::vec3 impact_dir(0.0f, 0.0f, -1.0f);   // hit came from below
+    EXPECT_FLOAT_EQ(shield_splash_gate(glm::vec3(0, 0, -1), impact_dir), 1.0f);
+    EXPECT_FLOAT_EQ(shield_splash_gate(glm::vec3(0, 0, 1), impact_dir), 0.0f);
+    // Exactly on the terminator: fully suppressed, and the ramp is smooth, so
+    // there is no hard seam across the bubble.
+    EXPECT_FLOAT_EQ(shield_splash_gate(glm::vec3(0, 1, 0), impact_dir), 0.0f);
+    const float mid = shield_splash_gate(
+        glm::normalize(glm::vec3(0.0f, 1.0f, -0.2f)), impact_dir);
+    EXPECT_GT(mid, 0.0f);
+    EXPECT_LT(mid, 1.0f);
+}
+
+TEST(ShieldSplash, SplashLandsOnTheBubbleOnEveryAxis) {
+    // The bubble is sqrt(3)x the hull AABB, so a hull hit sits well INSIDE it
+    // -- 236 world-units in on a Galaxy's long axis. Measuring falloff from the
+    // hit point charges that gap against the splash radius and blanks bow and
+    // stern flashes entirely; projecting the impact direction onto the
+    // fragment's own radius puts the splash centre ON the bubble instead.
+    const glm::vec3 centre(0.0f);
+    const float r = shield_hit_radius(kGalaxyHalf, 1.0f);
+    for (int k = 0; k < 3; ++k) {
+        glm::vec3 hit(0.0f), pole(0.0f);
+        hit[k] = kGalaxyHalf[k];                                  // hull surface
+        pole[k] = kGalaxyHalf[k] * kShieldEllipsoidAxisScale;     // bubble surface
+
+        // Naive measure: the gap alone exceeds the radius on the long axes,
+        // i.e. the splash would be invisible there.
+        if (k != 2) EXPECT_GT(glm::length(pole - hit), r) << "axis " << k;
+
+        // Projected measure: the splash is centred exactly on the bubble.
+        EXPECT_NEAR(glm::length(pole - splash_center(hit, centre, pole)),
+                    0.0f, 1e-3f) << "axis " << k;
+    }
+}

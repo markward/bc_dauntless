@@ -3908,6 +3908,33 @@ def _model_extent_from_aabb(center: tuple, half_extents: tuple) -> float:
     return _math.sqrt(cx*cx + cy*cy + cz*cz) + _math.sqrt(hx*hx + hy*hy + hz*hz)
 
 
+def _cache_shield_hull_box(ship, center: tuple, half_extents: tuple) -> None:
+    """Cache the ship's hull AABB on the ship for shield-face selection.
+
+    `combat._shield_face_from_hit_point` needs the hull's proportions to decide
+    which shield face a world hit point belongs to: comparing raw body-frame
+    components applies a 45° cone to a hull that is 4-8x longer than it is
+    tall, so dorsal/ventral hits get billed to FRONT/REAR/LEFT/RIGHT. It also
+    needs the AABB CENTRE, because a model origin that sits off-centre (real
+    on the Sovereign and Keldon) inverts the dorsal/ventral call near the
+    mid-plane. This is the same AABB the renderer centres the shield bubble on
+    (`engine/shields.register_ship_shield` -> `shield_pass.cc`), so the
+    gameplay face and the drawn bubble now share one reference frame.
+
+    Stored in world units at `GetScale() == 1` (i.e. NIF units x
+    BC_MODEL_SCALE, the flat NIF->world factor `_ship_world_matrix` uses);
+    `combat._hull_box_for` re-applies the ship's current `GetScale()`.
+
+    Best-effort: a failure here only costs face-selection accuracy, so it must
+    never block spawning the instance.
+    """
+    s = BC_MODEL_SCALE
+    ship._shield_hull_box = (
+        (center[0] * s, center[1] * s, center[2] * s),
+        (half_extents[0] * s, half_extents[1] * s, half_extents[2] * s),
+    )
+
+
 def _model_sphere_radius_from_aabb(center: tuple, half_extents: tuple) -> float:
     """Bounding-sphere radius of a NIF whose geometry is an origin-centred
     sphere — the largest single-axis half-extent, which equals that sphere's
@@ -4139,8 +4166,11 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
             dev_mode.log_swallowed("realize ship_emitters cache", _e)
 
         # Shield render state. No-op for ships without a ShieldProperty.
+        # The hull box is cached unconditionally (even for unshielded hulls) —
+        # it costs nothing and keeps the two call sites symmetric.
         try:
             from engine.shields import register_ship_shield
+            _cache_shield_hull_box(ship, center, half_extents)
             register_ship_shield(
                 r_, instance_id=iid, ship=ship,
                 aabb_center=center, aabb_half_extents=half_extents,
@@ -4709,6 +4739,7 @@ class _MissionLoader:
             try:
                 from engine.shields import register_ship_shield
                 center, half_extents = r_.model_aabb(handle)
+                _cache_shield_hull_box(ship, center, half_extents)
                 register_ship_shield(
                     r_, instance_id=iid, ship=ship,
                     aabb_center=center, aabb_half_extents=half_extents,

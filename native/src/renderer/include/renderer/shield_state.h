@@ -32,6 +32,43 @@ enum class ShieldMode : std::uint8_t { Ellipsoid = 0, Skin = 1 };
 /// literal as the binary (0x3FDDB3D7).
 inline constexpr float kShieldEllipsoidAxisScale = 1.7320508f;
 
+/// Splash size, as a multiple of the hull's SMALLEST half-extent. Tune-by-eye;
+/// changing it needs a rebuild. Must stay below 2·√3 ≈ 3.46 or the splash
+/// reaches the opposite pole of the bubble on the thinnest axis.
+inline constexpr float kShieldHitRadiusScale = 2.0f;
+
+/// Width of the smooth terminator on the hemisphere gate, in units of
+/// cos(angle) away from the terminator plane. Small enough to stay a localised
+/// splash, wide enough that the cutoff is not a hard seam.
+inline constexpr float kShieldSplashGateFeather = 0.25f;
+
+/// Falloff radius for one impact splash, in WORLD units.
+///
+/// Keyed to the SMALLEST half-extent so the splash is a localised patch on
+/// every hull. It used to be keyed to the LARGEST, which on BC's 4–8:1 hulls
+/// made the radius 2–4× the entire vertical size of the bubble — the falloff
+/// could never isolate a face, and the mirrored far-side splash (see
+/// shield_splash_gate) was never culled by distance either.
+///
+/// `instance_scale` is the uniform NIF→world factor recovered from the
+/// instance matrix, because `half_extents` are in NIF units.
+float shield_hit_radius(const glm::vec3& half_extents, float instance_scale);
+
+/// Near/far hemisphere gate for the impact splash: 1 on the hit-facing side of
+/// the bubble, 0 on the far side, with a smooth terminator between.
+///
+/// Without it, `splash_sample` in shaders/shield.frag paints the texture's
+/// CENTRE on the point diametrically opposite the hit (its UV projection along
+/// `impact_dir` has no sign), so a ventral hit grows a full-brightness splash
+/// on the DORSAL face. The shield pass runs after the opaque hull with depth
+/// test on, so the hull hides the true splash and leaves the mirror visible —
+/// the player sees the impact centred on the wrong face.
+///
+/// Both arguments must be unit length. MUST match the expression in
+/// shaders/shield.frag — keep in sync.
+float shield_splash_gate(const glm::vec3& frag_dir_from_centre,
+                         const glm::vec3& impact_dir);
+
 struct Hit {
     glm::vec3 point_world{0.0f};
     glm::vec4 color_rgba{0.0f};

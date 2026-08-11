@@ -1,6 +1,7 @@
 // native/src/renderer/shield_state.cc
 #include "renderer/shield_state.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace renderer {
@@ -8,7 +9,26 @@ namespace renderer {
 namespace {
 constexpr float kInactive = 0.01f;
 constexpr glm::vec4 kZero(0.0f);
+
+// GLSL smoothstep, so the CPU gate and the shader agree bit-for-shape.
+float smoothstep01(float edge0, float edge1, float x) {
+    if (edge1 <= edge0) return x < edge0 ? 0.0f : 1.0f;
+    const float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
 }  // namespace
+
+float shield_hit_radius(const glm::vec3& half_extents, float instance_scale) {
+    const float smallest =
+        std::min({half_extents.x, half_extents.y, half_extents.z});
+    return smallest * instance_scale * kShieldHitRadiusScale;
+}
+
+float shield_splash_gate(const glm::vec3& frag_dir_from_centre,
+                         const glm::vec3& impact_dir) {
+    return smoothstep01(0.0f, kShieldSplashGateFeather,
+                        glm::dot(frag_dir_from_centre, impact_dir));
+}
 
 void ShieldState::push_hit(const glm::vec3& point_world,
                            const glm::vec4& rgba,
