@@ -534,10 +534,44 @@ class WarpSequence(TGSequence):
         self._dest_module = dest_module
         self._warp_time = float(warp_time)
         self._placement = placement
+        # No cross-mission warp path exists yet; see the accessors below.
+        self._dest_mission = None
+        self._dest_episode = None
 
     def GetShip(self):          return self._ship
     def GetDestination(self):   return self._dest_module
     def GetPlacementName(self):  return self._placement
+
+    # ── Cross-mission / cross-episode destination ────────────────────────────
+    # BC's WarpSequence can target a new mission or episode as well as a new
+    # set (WarpSequence_GetDestinationMission 0x0061f7a0,
+    # _GetDestinationEpisode 0x0061f810), set via SetEventDestination.
+    #
+    # Dauntless only ever builds SET warps -- WarpSequence_Create takes a
+    # dest_module and nothing writes a mission or episode -- so both are
+    # legitimately empty here. They must still EXIST and return a real falsy
+    # value: Conditions/ConditionWarpingToMission.py:23 does
+    #     if pWarpSequence and (GetDestinationMission() or GetDestinationEpisode())
+    # and a missing attribute resolves to a TRUTHY _Stub, which made that
+    # condition fire for every warp in the game (heatmap rank 95).
+    #
+    # When cross-mission warp is built, store the target here rather than
+    # reintroducing the stub.
+    def GetDestinationMission(self):  return self._dest_mission
+    def GetDestinationEpisode(self):  return self._dest_episode
+
+
+def WarpSequence_Cast(obj):
+    """SWIG downcast. Returns the object if it IS a WarpSequence, else None.
+
+    Load-bearing for the warp conditions: both
+    Conditions/ConditionWarpingToSet.CheckState and .SequenceSet wrap
+    GetWarpSequence() in this cast and then branch on `if pWarpSequence`.
+    Undefined, it resolved to a truthy _Stub, so a ship with NO warp sequence
+    still tested as warping (heatmap rank 62 -- 286 hits, the single
+    highest-traffic name in this gap).
+    """
+    return obj if isinstance(obj, WarpSequence) else None
 
 
 def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Start"):
