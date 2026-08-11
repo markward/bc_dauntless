@@ -352,18 +352,37 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
     origin sits off the AABB centre (Sovereign −0.07 in Z, Keldon +0.14) it
     inverts the dorsal/ventral call outright for hits near the mid-plane.
 
-    NOTE this normalisation is OUR design, not recovered BC behaviour. It has
-    NOT been checked against the clean-room reference: that server was
-    unreachable for the whole of the session this was written in (a routing
-    problem, not a decline), so its silence is UNTESTED — do not read this note
-    as "the corpus has no section on it". Two questions would settle it:
-    ``api: "ShieldClass_"`` (does any engine entry map a point to a face, and
-    does the damage entry take a face / a point / a direction?) and
-    ``layout: ShieldClass fields`` (does it store per-face geometry?). A
-    specific hypothesis to put to it: the shield bubble is known from the
+    The normalisation is OUR design. Checked against the clean-room reference
+    2026-08-11 — what it settles, and what it does not:
+
+    * CONFIRMED, and it is why this approach is sound: ``ShieldClass`` holds
+      **no geometry at all**. Its object model (``sizeof 0x15C``,
+      reviewed-not-tested) is six per-facing scalars — ``m_curShields[6]``,
+      ``m_fraction[6]``, ``m_breached[6]`` — plus a seventh "combined" fraction
+      and a ``FloatRangeWatcher[7]``; the caps live on the companion
+      ShieldProperty. No extents, offsets, normals or bounding box anywhere in
+      the class. So BC's facing decision is necessarily made from hull geometry
+      held elsewhere, exactly as it is here.
+    * CONFIRMED: the facing set and order are front, rear, top, bottom, left,
+      right, with ``GetNumShields()`` a fixed 6 — matching ShieldSubsystem's
+      constants — and the seventh combined watcher slot matches our
+      ``_shield_watchers`` array of ``NUM_SHIELDS + 1``.
+    * CONFIRMED: of the 20 scripted ``ShieldClass_`` entries, every
+      facing-taking one takes an ALREADY-RESOLVED index. There is no scripted
+      entry that applies damage to a shield, and none that maps a point or a
+      direction to a facing. The chooser is engine-internal and was never
+      script-visible, so this function is filling a genuine engine gap rather
+      than duplicating surface the SDK could have called.
+    * NOT SETTLED: which component chooses the facing, and by what rule. Three
+      queries all returned ``below-relevance-floor`` (best 0.13). That is
+      RETRIEVAL-LIMITED, **not** corpus silence — the material may well exist.
+      Do not record it as a documented gap. Worth retrying with the corpus's
+      own vocabulary; "facing" is its word, "shield face" is not.
+
+    Standing hypothesis for whoever retries: the bubble is known from the
     binary to be AABB half-extents × √3 (see kShieldEllipsoidAxisScale), and
     normalising the delta by those same half-extents is exactly "map that
-    ellipsoid to a unit sphere, take the dominant axis" — so this may well be
+    ellipsoid to a unit sphere, take the dominant axis" — so this may be
     convergent with BC rather than merely a reasonable guess.
 
     Ships with no cached box (not yet realized, headless, test fakes) fall back
