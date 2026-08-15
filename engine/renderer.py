@@ -45,7 +45,10 @@ _REQUIRED_BINDINGS = frozenset({
     "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "motion_blur_enabled",
     "motion_blur_set_enabled", "nebula_lightning_enabled",
-    "nebula_lightning_set_enabled", "play_instance_gesture", "play_instance_idle",
+    "nebula_lightning_set_enabled",
+    "nonfinite_probe_enabled", "nonfinite_probe_set_enabled",
+    "nonfinite_probe_stats",
+    "play_instance_gesture", "play_instance_idle",
     "play_instance_walk",
     "procedural_sky_enabled", "procedural_sky_set_enabled", "restore_rest_pose",
     "rim_set_enabled", "set_backdrops", "set_bridge_ambient_scale",
@@ -450,6 +453,33 @@ def set_hdr_lens_flare_enabled(enabled: bool) -> None:
     """Toggle image-based Modern Lens Flares (Modern VFX). Default: on. When on,
     the classic per-sun billboard flares are suppressed by the host loop."""
     _h.hdr_lens_flare_set_enabled(enabled)
+
+
+def set_nonfinite_probe_enabled(enabled: bool, dump_dir: str = "",
+                                max_dumps: int = 8) -> None:
+    """Toggle the developer NaN/Inf detector on the HDR target.
+
+    Off by default: it inspects every texel and does a synchronous readback.
+    Checked each frame BEFORE bloom, because bloom_prefilter.frag sanitises its
+    input -- the source of a non-finite value is invisible downstream of it.
+    `dump_dir` must be an ABSOLUTE path (GLFW changes the process cwd on macOS);
+    empty means count and log but write no PNGs. Enabling resets the counters.
+    """
+    _h.nonfinite_probe_set_enabled(bool(enabled), str(dump_dir), int(max_dumps))
+
+
+def nonfinite_probe_enabled() -> bool:
+    """True when the non-finite probe is running."""
+    return bool(_h.nonfinite_probe_enabled())
+
+
+def nonfinite_probe_stats() -> dict:
+    """Probe counters plus the grid cells flagged on the most recent hit.
+
+    Keys: enabled, frames_probed, frames_flagged, dumps_written, grid_w,
+    grid_h, last_cells (list of (x, y), bottom-left origin).
+    """
+    return dict(_h.nonfinite_probe_stats())
 
 
 def set_shadows_enabled(enabled: bool) -> None:

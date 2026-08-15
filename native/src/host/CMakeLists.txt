@@ -5,6 +5,7 @@
 set(HOST_BINDINGS_SOURCES
     host_bindings.cc
     developer_mode.cc
+    frame_dump.cc
 )
 
 # Python extension module (.so / .pyd / .dylib) for pytest.

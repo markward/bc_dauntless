@@ -56,6 +56,8 @@
 #include <renderer/viewscreen_static_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/bloom_pass.h>
+#include <renderer/nonfinite_probe.h>
+#include "frame_dump.h"
 #include <renderer/resolve_pass.h>
 #include <renderer/ldr_target.h>
 #include <renderer/smaa_pass.h>
@@ -117,6 +119,12 @@ namespace dauntless_hdr_lens_flare {
     void set_enabled(bool v);  // defined in frame.cc
 }
 namespace dauntless_procedural_sky {
+    bool enabled();            // defined in frame.cc
+    void set_enabled(bool v);  // defined in frame.cc
+}
+// Developer diagnostic: opaque.frag reports the non-finite shading term as a
+// code in alpha. Driven from nonfinite_probe_set_enabled (see below).
+namespace dauntless_nan_debug {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
 }
@@ -255,6 +263,39 @@ std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
 std::unique_ptr<renderer::HdrTarget>       g_viewscreen_hdr;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
+// Developer-only NaN/Inf detector for the HDR target. Off by default even under
+// --developer: it inspects every texel and does a synchronous readback.
+std::unique_ptr<renderer::NonfiniteProbe>  g_nonfinite_probe;
+// opaque.frag's u_nan_debug cause codes, index == code. Keep in lockstep with
+// the if/else chain at the end of that shader's main().
+const char* const kNanCauseNames[] = {
+    "none",
+    "n (normalize(v_normal_ws) - zero/degenerate vertex normal)",     //  1
+    "V (view vector - camera at the fragment)",                       //  2
+    "sun_sf (sun_shadow_factor)",                                     //  3
+    "lit_dir (directional diffuse)",                                  //  4
+    "spec_acc (specular - normalize(L+V) with L == -V)",              //  5
+    "lit_dyn (dynamic lights - cone 0/0, or att*nl*Inf)",             //  6
+    "n_body (body-frame normal)",                                     //  7
+    "base.rgb (base colour texture)",                                 //  8
+    "decal_emissive (damage-decal ember / heat-glow)",                //  9
+    "glow_flicker (decal glow flicker)",                              // 10
+    "lit (combined diffuse, post-decal soot mix)",                    // 11
+    "spec (specular * specular map)",                                 // 12
+    "rim (Fresnel rim)",                                              // 13
+    "nac/region_gain (glow_region_mult)",                             // 14
+    "glow_rgb (hue_rotate of the glow map)",                          // 15
+    "self_illum (self illumination)",                                 // 16
+    "final_color (finite inputs, non-finite result)",                 // 17
+};
+bool        g_nfprobe_enabled   = false;
+std::string g_nfprobe_dump_dir;              // absolute; empty = no PNG dumps
+int         g_nfprobe_max_dumps = 8;         // cap so a steady source can't fill the disk
+int         g_nfprobe_dumps     = 0;
+long long   g_nfprobe_frames    = 0;         // frames probed
+long long   g_nfprobe_hits      = 0;         // frames holding a non-finite texel
+bool        g_nfprobe_dump_pending = false;  // set at probe time, serviced pre-swap
+std::vector<std::pair<int, int>> g_nfprobe_last_cells;  // grid coords, bottom-left origin
 std::unique_ptr<renderer::LensFlareHdrPass> g_lens_flare_hdr_pass;  // image-based screen-space flare
 std::unique_ptr<renderer::ResolvePass>     g_resolve_pass;
 std::unique_ptr<renderer::LdrTarget>       g_ldr_target;
@@ -479,6 +520,7 @@ void init(int width, int height, const std::string& title) {
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_viewscreen_hdr  = std::make_unique<renderer::HdrTarget>();
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
+    g_nonfinite_probe = std::make_unique<renderer::NonfiniteProbe>();
     g_lens_flare_hdr_pass = std::make_unique<renderer::LensFlareHdrPass>();
     g_resolve_pass = std::make_unique<renderer::ResolvePass>();
     g_ldr_target   = std::make_unique<renderer::LdrTarget>();
@@ -566,6 +608,7 @@ void shutdown() {
     g_bridge_pass.reset();
     g_viewscreen_static_pass.reset();
     g_bloom_pass.reset();
+    g_nonfinite_probe.reset();
     g_lens_flare_hdr_pass.reset();
     g_motion_blur_pass.reset();
     g_have_prev_viewproj = false;
@@ -972,6 +1015,55 @@ void frame() {
                               lookup, interior);
     }
 
+    // ── Non-finite probe (developer diagnostic) ────────────────────────────
+    // Runs BEFORE the bloom chain, and that ordering is the whole point.
+    // bloom_prefilter.frag now sanitises its input, so a NaN/Inf in the HDR
+    // target leaves no trace downstream — the black rectangles it used to
+    // produce are exactly what we fixed. Watching the HDR target keeps the
+    // SOURCE observable after its symptom is gone. See nonfinite_probe.h.
+    if (g_nfprobe_enabled && g_nonfinite_probe) {
+        const auto& probe = g_nonfinite_probe->run(g_hdr_target->color_texture(),
+                                                    fw, fh);
+        ++g_nfprobe_frames;
+        if (probe.any) {
+            ++g_nfprobe_hits;
+            g_nfprobe_last_cells.clear();
+            constexpr int GW = renderer::NonfiniteProbe::kGridW;
+            constexpr int GH = renderer::NonfiniteProbe::kGridH;
+            for (int y = 0; y < GH; ++y) {
+                for (int x = 0; x < GW; ++x) {
+                    if (probe.grid[static_cast<std::size_t>(y) * GW + x])
+                        g_nfprobe_last_cells.emplace_back(x, y);
+                }
+            }
+            // Cell coords are bottom-left origin; report the first hit in
+            // pixels too, so it can be matched against what was on screen.
+            const int cx = g_nfprobe_last_cells.front().first;
+            const int cy = g_nfprobe_last_cells.front().second;
+            const int code = probe.max_code;
+            const int n_names = static_cast<int>(
+                sizeof(kNanCauseNames) / sizeof(kNanCauseNames[0]));
+            // Code 1 also means "flagged, cause not recorded" -- alpha's normal
+            // value. Only claim a cause when the shader-side debug was on AND
+            // the writer emitted a real code.
+            const char* cause =
+                (!dauntless_nan_debug::enabled() || code <= 0)
+                    ? "unknown (shader cause-probe off)"
+                : (code < n_names) ? kNanCauseNames[code]
+                                   : "unrecognised code (non-opaque pass?)";
+            std::fprintf(stderr,
+                "[nonfinite] frame %lld: %d/%d cells; first cell (%d,%d) "
+                "~= pixels x[%d..%d] y[%d..%d] (bottom-left origin); "
+                "cause=%d %s\n",
+                g_nfprobe_frames, probe.flagged_cells, GW * GH, cx, cy,
+                cx * fw / GW, (cx + 1) * fw / GW,
+                cy * fh / GH, (cy + 1) * fh / GH,
+                code, cause);
+            g_nfprobe_dump_pending =
+                !g_nfprobe_dump_dir.empty() && g_nfprobe_dumps < g_nfprobe_max_dumps;
+        }
+    }
+
     // Compute bloom from the HDR target while the HDR FBO is still in use.
     // bloom_tex is set to the HDR color texture as a harmless dummy when HDR is
     // off — the resolve's OFF branch never samples u_bloom.
@@ -1117,6 +1209,28 @@ void frame() {
     dauntless::ui_cef::pump();
     dauntless::ui_cef::composite();
 #endif
+
+    // Serviced here, not at probe time: the artefact only exists once the
+    // resolve + post chain + UI have composited into the back buffer, and this
+    // is the last moment before it is presented and lost.
+    if (g_nfprobe_dump_pending) {
+        g_nfprobe_dump_pending = false;
+        char name[128];
+        std::snprintf(name, sizeof(name), "/nonfinite_%04d_frame%lld.png",
+                      g_nfprobe_dumps, g_nfprobe_frames);
+        const std::string path = g_nfprobe_dump_dir + name;
+        if (dauntless::dump_default_framebuffer_png(path, fw, fh)) {
+            ++g_nfprobe_dumps;
+            std::fprintf(stderr, "[nonfinite] wrote %s\n", path.c_str());
+            if (g_nfprobe_dumps >= g_nfprobe_max_dumps) {
+                std::fprintf(stderr,
+                    "[nonfinite] dump cap (%d) reached; still counting hits\n",
+                    g_nfprobe_max_dumps);
+            }
+        } else {
+            std::fprintf(stderr, "[nonfinite] FAILED to write %s\n", path.c_str());
+        }
+    }
 
     g_window->swap_buffers();
 }
@@ -2925,6 +3039,50 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool e) { dauntless_hdr::set_enabled(e); },
           py::arg("enabled"),
           "Toggle the HDR resolve (tonemap+bloom+grade). Default: on.");
+    m.def("nonfinite_probe_set_enabled",
+          [](bool enabled, const std::string& dump_dir, int max_dumps) {
+              g_nfprobe_enabled   = enabled;
+              g_nfprobe_dump_dir  = dump_dir;
+              g_nfprobe_max_dumps = max_dumps;
+              // The per-term cause probe in opaque.frag is only meaningful
+              // while this is running, and it costs a pile of finiteness tests
+              // per hull fragment, so it rides the same switch.
+              dauntless_nan_debug::set_enabled(enabled);
+              if (enabled) {
+                  g_nfprobe_frames = 0;
+                  g_nfprobe_hits   = 0;
+                  g_nfprobe_dumps  = 0;
+                  g_nfprobe_last_cells.clear();
+              }
+              g_nfprobe_dump_pending = false;
+          },
+          py::arg("enabled"), py::arg("dump_dir") = std::string(),
+          py::arg("max_dumps") = 8,
+          "Developer NaN/Inf detector on the HDR target, checked every frame "
+          "BEFORE bloom. Off by default: it inspects every texel and does a "
+          "synchronous readback. `dump_dir` must be ABSOLUTE (GLFW changes the "
+          "process cwd on macOS); empty disables PNG dumps. Enabling resets the "
+          "counters.");
+    m.def("nonfinite_probe_enabled",
+          []() { return g_nfprobe_enabled; },
+          "True when the non-finite probe is running.");
+    m.def("nonfinite_probe_stats",
+          []() {
+              py::dict d;
+              d["enabled"]        = g_nfprobe_enabled;
+              d["frames_probed"]  = g_nfprobe_frames;
+              d["frames_flagged"] = g_nfprobe_hits;
+              d["dumps_written"]  = g_nfprobe_dumps;
+              d["grid_w"]         = renderer::NonfiniteProbe::kGridW;
+              d["grid_h"]         = renderer::NonfiniteProbe::kGridH;
+              py::list cells;
+              for (const auto& c : g_nfprobe_last_cells)
+                  cells.append(py::make_tuple(c.first, c.second));
+              d["last_cells"] = cells;   // bottom-left origin
+              return d;
+          },
+          "Counters plus the grid cells flagged on the most recent hit "
+          "(bottom-left origin, grid_w x grid_h).");
     m.def("hdr_lens_flare_set_enabled",
           [](bool enabled) { dauntless_hdr_lens_flare::set_enabled(enabled); },
           py::arg("enabled"),
@@ -3480,6 +3638,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_F8")    = GLFW_KEY_F8;
     keys.attr("KEY_F9")    = GLFW_KEY_F9;
     keys.attr("KEY_F10")   = GLFW_KEY_F10;
+    keys.attr("KEY_F11")   = GLFW_KEY_F11;
     keys.attr("KEY_F12")          = GLFW_KEY_F12;
     keys.attr("KEY_LEFT_BRACKET")  = GLFW_KEY_LEFT_BRACKET;
     keys.attr("KEY_RIGHT_BRACKET") = GLFW_KEY_RIGHT_BRACKET;

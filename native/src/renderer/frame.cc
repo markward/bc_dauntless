@@ -45,6 +45,19 @@ namespace {
     void set_enabled(bool v) { g_specular_enabled = v; }
 }
 
+// Developer diagnostic: makes opaque.frag report WHICH shading term went
+// non-finite, as a code in the alpha channel, for NonfiniteProbe to read back.
+// Off by default -- when off the shader writes the literal alpha 1.0 it always
+// has, so the production path is unchanged. Driven from the same Python call
+// that enables the probe: the code is only meaningful while the probe runs.
+namespace dauntless_nan_debug {
+namespace {
+    bool g_nan_debug = false;
+}
+    bool enabled() { return g_nan_debug; }
+    void set_enabled(bool v) { g_nan_debug = v; }
+}
+
 // Toggle for the opaque-pass Fresnel rim term. Default on so the
 // "Modern VFX" group ships enabled. host_bindings.cc forward-declares
 // set_enabled; frame.cc reads enabled() per draw when binding the
@@ -549,6 +562,8 @@ void draw_model(const assets::Model& model,
                 renderer::glossiness_to_specular_power(mat.glossiness));
             prog.set_int("u_specular_enabled",
                            dauntless_specular::enabled() ? 1 : 0);
+            prog.set_int("u_nan_debug",
+                           dauntless_nan_debug::enabled() ? 1 : 0);
             prog.set_float("u_rim_strength", rim_strength);
 
             glBindVertexArray(mesh.vao());

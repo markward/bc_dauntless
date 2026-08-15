@@ -11,6 +11,8 @@
 #include <renderer/bloom_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/window.h>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -151,6 +153,66 @@ TEST_F(BloomPassTest, BlackInputProducesNoBloom) {
         EXPECT_LT(buf[i + 2], 0.01f) << "B channel non-zero at index " << i;
     }
 
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// ── Test 4: a single non-finite texel must NOT poison the bloom chain ───────
+//
+// Regression test for the HDR black-square bug.
+//
+// Before bloom_prefilter.frag sanitised its input, ONE bad texel produced a
+// hard-edged black rectangle tens of pixels across, for a single frame, at an
+// unpredictable position:
+//   * prefilter computed max(b - thr, 0) / max(b, 1e-5); with b == +Inf that is
+//     Inf/Inf == NaN;
+//   * NaN survives every weighted sum in bloom_down/bloom_up, and bilinear
+//     filtering spreads it over whole texels rather than fading it, so it
+//     climbs the mip chain growing a couple of texels per level;
+//   * resolve.frag adds the bloom then clamps, and max(NaN, 0.0) is 0.0 on
+//     IEEE-maxNum hardware -- so the block comes out pure black.
+//
+// The source is RGBA32F so NaN/Inf are stored bit-exactly (a render-target
+// write of a too-large FINITE value may saturate instead of yielding +Inf,
+// which is a separate hardware question and must not be tangled up here).
+//
+// Assert on the whole output: not one texel of mip0 may be non-finite.
+TEST_F(BloomPassTest, NonFiniteInputDoesNotPoisonTheChain) {
+    const float kNaN = std::numeric_limits<float>::quiet_NaN();
+    const float kInf = std::numeric_limits<float>::infinity();
+
+    std::uint32_t tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    std::vector<float> img(64 * 64 * 4, 0.25f);
+    // One NaN texel and one +Inf texel, far apart.
+    for (int c = 0; c < 3; ++c) {
+        img[((20 * 64) + 20) * 4 + c] = kNaN;
+        img[((44 * 64) + 44) * 4 + c] = kInf;
+    }
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 64, 64, 0,
+                 GL_RGBA, GL_FLOAT, img.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    renderer::BloomPass bloom;
+    bloom.set_threshold(0.1f);
+    std::uint32_t bloom_tex = bloom.render(tex, 64, 64);
+    ASSERT_NE(bloom_tex, 0u);
+
+    auto buf = readback_texture(bloom_tex, 32, 32);   // mip0 = 32x32
+    int non_finite = 0;
+    for (std::size_t i = 0; i < buf.size(); ++i) {
+        if (!std::isfinite(buf[i])) ++non_finite;
+    }
+    EXPECT_EQ(non_finite, 0)
+        << non_finite << " of " << buf.size()
+        << " bloom components are NaN/Inf -- the prefilter is letting "
+           "non-finite values into the mip chain again";
+
+    glDeleteTextures(1, &tex);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

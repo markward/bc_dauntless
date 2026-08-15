@@ -160,3 +160,37 @@ def register_for_frame(_h, session, player) -> None:
         _h.keys.KEY_F8, _toggle_hum_diagnostic,
         "Toggle engine-hum diagnostic readout (dev) — F8",
     )
+
+    # F11: toggle the non-finite (NaN/Inf) probe on the HDR target.
+    #
+    # Diagnostic for the HDR black-square bug. bloom_prefilter.frag now
+    # sanitises its input, so a stray NaN/Inf no longer paints a black
+    # rectangle -- which also means it no longer announces itself. This keeps
+    # the SOURCE observable: it counts flagged frames, prints the screen
+    # region, and writes a PNG of each offending frame (the artefact is
+    # single-frame and unpredictable, so hand-capture is not viable).
+    #
+    # Off by default even in dev mode: every texel is inspected and the
+    # readback stalls the pipeline.
+    _nfprobe_dump_dir = _PROJECT_ROOT / "nonfinite_dumps"
+
+    def _toggle_nonfinite_probe() -> None:
+        from engine import renderer as _r
+        if _r.nonfinite_probe_enabled():
+            stats = _r.nonfinite_probe_stats()
+            _r.set_nonfinite_probe_enabled(False)
+            print(
+                "[nonfinite] OFF - {0} flagged / {1} frames, {2} PNG(s) in {3}"
+                .format(stats["frames_flagged"], stats["frames_probed"],
+                        stats["dumps_written"], _nfprobe_dump_dir)
+            )
+        else:
+            _nfprobe_dump_dir.mkdir(parents=True, exist_ok=True)
+            # Absolute path: GLFW changes the process cwd on macOS.
+            _r.set_nonfinite_probe_enabled(True, str(_nfprobe_dump_dir))
+            print("[nonfinite] ON - dumps -> {0}".format(_nfprobe_dump_dir))
+
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_F11, _toggle_nonfinite_probe,
+        "Toggle NaN/Inf HDR probe + frame dumps (dev) — F11",
+    )
