@@ -161,6 +161,7 @@ from engine.appc.actions import (
     SubtitleAction, SubtitleAction_Create,
     TGActionManager,
     TGActionManager_RegisterAction, TGActionManager_UnregisterAction,
+    TGActionManager_KillActions,
     TGActionManager_FindAction, TGActionManager_SkipEvents,
     TGCreditAction, TGCreditAction_Create,
     TGCreditAction_SetDefaultColor, TGCreditAction_GetDefaultColor,

@@ -1189,3 +1189,91 @@ def test_skip_events_does_not_silence_the_follow_on_line(monkeypatch):
     sub = _App.TopWindow_GetTopWindow().FindMainWindow(_App.MWT_SUBTITLE)
     snap = sub._snapshot(now=0.0)
     assert snap is not None and snap["speech"] == "line two"
+
+
+# ── TGActionManager.KillActions ────────────────────────────────────────────
+#
+# App.TGActionManager_KillActions (sdk/Build/scripts/App.py:10105) aborts the
+# actions registered under a name, or every registered action when called with
+# no name. E1M1.SkipOpeningSequence:1772 uses the named form; E6M1/E6M2 use
+# both. E1M1 registers SIX sequences under "CharacterIntros" (lines 2052, 2145,
+# 2213, 2291, 2390, 2463) -- killing only the last one would leave five intro
+# sequences playing under the undock cutscene.
+
+class _KillActionsRecordingAction(TGAction):
+    def __init__(self):
+        super().__init__()
+        self.aborted = 0
+
+    def Abort(self):
+        self.aborted += 1
+        super().Abort()
+
+
+def test_kill_actions_aborts_every_action_under_the_name():
+    mgr = TGActionManager()
+    a, b, c = _KillActionsRecordingAction(), _KillActionsRecordingAction(), _KillActionsRecordingAction()
+    mgr.RegisterAction(a, "CharacterIntros")
+    mgr.RegisterAction(b, "CharacterIntros")
+    mgr.RegisterAction(c, "CharacterIntros")
+    mgr.KillActions("CharacterIntros")
+    assert (a.aborted, b.aborted, c.aborted) == (1, 1, 1)
+
+
+def test_kill_actions_unregisters_the_name():
+    mgr = TGActionManager()
+    mgr.RegisterAction(_KillActionsRecordingAction(), "CharacterIntros")
+    mgr.KillActions("CharacterIntros")
+    assert mgr.IsRegistered("CharacterIntros") == 0
+    assert mgr.FindAction("CharacterIntros") is None
+
+
+def test_kill_actions_leaves_other_names_alone():
+    mgr = TGActionManager()
+    keep = _KillActionsRecordingAction()
+    mgr.RegisterAction(_KillActionsRecordingAction(), "CharacterIntros")
+    mgr.RegisterAction(keep, "FriendlyFireWarning")
+    mgr.KillActions("CharacterIntros")
+    assert keep.aborted == 0
+    assert mgr.IsRegistered("FriendlyFireWarning") == 1
+
+
+def test_kill_actions_with_no_name_kills_everything():
+    mgr = TGActionManager()
+    a, b = _KillActionsRecordingAction(), _KillActionsRecordingAction()
+    mgr.RegisterAction(a, "One")
+    mgr.RegisterAction(b, "Two")
+    mgr.KillActions()
+    assert (a.aborted, b.aborted) == (1, 1)
+    assert mgr.IsRegistered("One") == 0
+    assert mgr.IsRegistered("Two") == 0
+
+
+def test_kill_actions_on_unknown_name_is_a_no_op():
+    mgr = TGActionManager()
+    mgr.KillActions("NeverRegistered")  # must not raise
+
+
+def test_find_action_still_returns_the_most_recent_registration():
+    # Regression guard for the name -> list registry change.
+    mgr = TGActionManager()
+    a, b = TGAction(), TGAction()
+    mgr.RegisterAction(a, "X")
+    mgr.RegisterAction(b, "X")
+    assert mgr.FindAction("X") is b
+
+
+def test_module_level_wrapper_routes_to_the_app_singleton():
+    import App
+    from engine.appc.actions import TGActionManager_KillActions
+    a = _KillActionsRecordingAction()
+    App.g_kTGActionManager.RegisterAction(a, "PlanTaskFour")
+    TGActionManager_KillActions("PlanTaskFour")
+    assert a.aborted == 1
+    assert App.g_kTGActionManager.IsRegistered("PlanTaskFour") == 0
+
+
+def test_app_exports_kill_actions_as_a_callable_not_a_stub():
+    import App
+    assert callable(App.TGActionManager_KillActions)
+    assert type(App.TGActionManager_KillActions).__name__ != "_NamedStub"

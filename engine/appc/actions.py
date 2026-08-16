@@ -739,19 +739,48 @@ class TGActionManager(TGEventHandlerObject):
     """
     def __init__(self):
         super().__init__()
-        self._registered: dict = {}  # name -> action (most-recent under each key)
+        # name -> [action, ...] in registration order. A LIST, not a single
+        # slot: E1M1 registers six separate sequences under "CharacterIntros"
+        # (E1M1.py:2052, 2145, 2213, 2291, 2390, 2463) and KillActions must
+        # take out all of them, not just the last.
+        self._registered: dict = {}
 
     def RegisterAction(self, action, name: str) -> None:
-        self._registered[str(name)] = action
+        self._registered.setdefault(str(name), []).append(action)
 
     def UnregisterAction(self, name: str) -> None:
         self._registered.pop(str(name), None)
 
     def FindAction(self, name: str):
-        return self._registered.get(str(name))
+        # Most-recent registration wins — MissionLib's FriendlyFireWarning
+        # pattern re-fetches the action it just posted.
+        actions = self._registered.get(str(name))
+        return actions[-1] if actions else None
 
     def IsRegistered(self, name: str) -> int:
-        return 1 if str(name) in self._registered else 0
+        return 1 if self._registered.get(str(name)) else 0
+
+    def KillActions(self, name: str | None = None) -> None:
+        """Abort registered actions — BC's TGActionManager_KillActions.
+
+        With a name, aborts every action registered under it and drops the
+        name. With no name, aborts everything (E6M1.py:894, E6M2.py:1043).
+
+        Abort, not Skip: Skip() COMPLETES the action and advances its
+        dependents, which would run the very sequence the caller asked to
+        stop. The caller is expected to drive the mission forward itself —
+        E1M1.SkipOpeningSequence calls UndockCutscene(TRUE) right after.
+        """
+        if name is None:
+            groups = list(self._registered.values())
+            self._registered.clear()
+        else:
+            groups = [self._registered.pop(str(name), [])]
+        for group in groups:
+            for action in group:
+                abort = getattr(action, "Abort", None)
+                if callable(abort):
+                    abort()
 
     def ProcessEvent(self, event) -> None:
         # SDK manager-ObjPtr deferred-completion pattern: ViewscreenOn /
@@ -788,6 +817,16 @@ def TGActionManager_RegisterAction(action, name: str) -> None:
 def TGActionManager_UnregisterAction(name: str) -> None:
     import App
     App.g_kTGActionManager.UnregisterAction(name)
+
+
+def TGActionManager_KillActions(name: str | None = None) -> None:
+    """Module-level wrapper — sdk/Build/scripts/App.py:10105.
+
+    Called by E1M1.SkipOpeningSequence:1772, MissionLib.py:4104, and E6M1 /
+    E6M2 (both the named and the kill-everything forms).
+    """
+    import App
+    App.g_kTGActionManager.KillActions(name)
 
 
 def TGActionManager_FindAction(name: str):
