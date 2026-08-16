@@ -137,14 +137,12 @@ class _WarpSoundAction(TGAction):
 
 
 def _clear_all_targets(ship) -> None:
-    """Drop every target the instant warp engages: the player's current target
-    + subsystem lock, and the whole target-list HUD (rows + persistent hint).
+    """Drop the player's target + subsystem lock the instant warp engages.
 
-    Warping leaves the system — there is nothing to target. Mirrors the SDK's
-    own ``ClearTargetList`` + ``ClearPersistentTarget`` pairing
-    (Multiplayer/MissionShared.py:353-354). Control is removed for the warp, so
-    no CycleTarget can re-populate the list before arrival. Fail-open: a failure
-    here never blocks the warp.
+    The target LIST needs no clearing: mid-warp the player is alone in the
+    _WarpTransit set, so the derived membership is empty by construction and
+    repopulates from the destination on arrival. Fail-open: a failure here
+    never blocks the warp.
     """
     try:
         if ship is not None:
@@ -158,7 +156,6 @@ def _clear_all_targets(ship) -> None:
         from engine.appc.target_menu import STTargetMenu_GetTargetMenu
         menu = STTargetMenu_GetTargetMenu()
         if menu is not None:
-            menu.ClearTargetList()
             menu.ClearPersistentTarget()
     except Exception:
         pass

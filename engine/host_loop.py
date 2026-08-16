@@ -3306,21 +3306,9 @@ def reset_sdk_globals() -> None:
     # rebuilds _SubtitleWindow).
     from engine.appc import crew_speech
     crew_speech.bus().reset()
-    # Unhook the target-menu subscriber from the live bridge set so a
-    # mission swap doesn't leave a dangling subscription on a recreated
-    # set. unwire_from_bridge_set is idempotent — safe to call even when
-    # no subscription is active.
-    try:
-        import App as _App
-        from engine.appc.target_menu import unwire_from_bridge_set
-        _bridge = _App.g_kSetManager.GetSet("bridge")
-        if _bridge is not None:
-            unwire_from_bridge_set(_bridge)
-    except Exception:
-        # Defensive: subscriber-cleanup failure must not block the rest
-        # of the reset. Matches the broader reset_sdk_globals discipline
-        # (each step is independently best-effort).
-        pass
+    # (The target menu needs no unhooking on swap: membership is derived
+    # every frame from the player's containing set, so there is no
+    # subscription that could dangle on a recreated set.)
     # Reset the UpdateToolTip throttle and clear the tooltip owner. Without
     # this, _tooltip_dispatch_state["last"] keeps the PRIOR mission's game
     # time (which can be minutes) while the new mission's clock restarts at
@@ -5819,33 +5807,19 @@ def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> No
     r.set_visible(player_iid, not is_bridge)
 
 
-def _wire_target_menu_to_player_set(controller) -> None:
-    """Subscribe the target-menu singleton to the player's containing
-    spatial set, then bulk-rebuild rows for ships already there.
+def _ensure_target_menu() -> None:
+    """Create the target-menu singleton if the mission load cleared it.
 
-    Idempotent. Called once at startup AND from controller.post_load_hook
-    after every mission swap (reset_sdk_globals clears the singleton and
-    unwires the previous subscription, so a fresh wire is required).
-
-    The player's _containing_set is the spatial set the mission added
-    them to (e.g. "Biranu1") — NOT the "bridge" set, which in this
-    codebase holds the bridge-interior ObjectClass and is enumerated
-    by the renderer's bridge pass.
+    Membership is no longer wired here. It is derived every frame from the
+    player's containing set (see the contact push in the host loop), so there
+    is no subscription to bind and nothing to rebind on warp — which is exactly
+    the fault this replaced: the old wiring bound to one set at mission load
+    and never rebound, so ships spawned into a departed system kept getting
+    rows while the destination system got none.
     """
     import App as _App
     if _App.STTargetMenu_GetTargetMenu() is None:
         _App.STTargetMenu_CreateW("Targets")
-    spatial_set = None
-    if controller.session is not None and controller.session.player is not None:
-        spatial_set = getattr(controller.session.player, "_containing_set", None)
-    if spatial_set is None:
-        return
-    from engine.appc.target_menu import wire_to_bridge_set
-    wire_to_bridge_set(spatial_set)
-    menu = _App.STTargetMenu_GetTargetMenu()
-    if menu is not None:
-        menu.RebuildShipMenus(spatial_set)
-        menu.ResetAffiliationColors()
 
 
 def resolve_officer_menu_layout() -> None:
@@ -6461,7 +6435,7 @@ def run(mission_name: Optional[str] = None,
             # remote sets) into render instances. The bridge is realized as
             # is_bridge=True; comm sets with geometry/characters as False.
             realize_all_sets(controller, r)
-            _wire_target_menu_to_player_set(controller)
+            _ensure_target_menu()
             # SDK LoadBridge.ConfigureForShip equivalent: attach each bridge
             # officer's menu-acknowledgement handlers (per-character guarded —
             # one station's unimplemented Appc surface must not silence the
@@ -6995,14 +6969,24 @@ def run(mission_name: Optional[str] = None,
                     and not ship_property_viewer.is_open()
                     and not TopWindow_GetTopWindow().IsCutsceneMode())
 
+                # Contact membership — push the player's current system every
+                # frame. Worst case this is one frame stale; it can never be
+                # permanently wrong, which is what the old set-subscription was
+                # (bound at mission load, never rebound on warp).
+                _menu = App.STTargetMenu_GetTargetMenu()
+                _game = Game_GetCurrentGame()
+                _player = _game.GetPlayer() if _game is not None else None
+                if _menu is not None and _player is not None:
+                    from engine.appc.perception import contacts_for
+                    _menu.set_contacts(contacts_for(_player))
+
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView
                 # filters rows where IsVisible() == 0. We walk the
                 # player's spatial set (e.g. "Biranu1"), not the
                 # bridge set (which holds bridge-interior objects).
-                _menu = App.STTargetMenu_GetTargetMenu()
-                _game = Game_GetCurrentGame()
-                _player = _game.GetPlayer() if _game is not None else None
+                # Unchanged in stage 1; stage 3 folds this into the
+                # perception query and deletes the module.
                 _player_set = getattr(_player, "_containing_set", None) if _player is not None else None
                 if _menu is not None and _player is not None and _player_set is not None:
                     update_target_list_visibility(

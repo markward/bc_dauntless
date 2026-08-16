@@ -179,10 +179,17 @@ def test_depart_then_arrive_cleans_transit_set():
 
 def test_warp_clears_all_targets():
     # Engaging warp must drop the player's current target + subsystem lock and
-    # empty the target-list HUD (rows + persistent hint) — nothing to target
-    # once we leave the system.
+    # the persistent hint — nothing to target once we leave the system.
+    #
+    # Warp does NOT clear the target-list ROWS any more, and must not: list
+    # membership is derived from the player's containing set every frame, so
+    # it empties in transit and refills from the destination on its own. What
+    # is asserted here instead is that the derived ANSWER has changed — the
+    # enemy left behind is no longer a contact. The list-emptying itself is
+    # covered by tests/integration/test_target_list_follows_player_system.py.
     import types, sys
     from engine.appc import target_menu
+    from engine.appc.perception import contacts_for
 
     menu = target_menu.STTargetMenu_CreateW("targets")
     src = _make_set("SrcT")
@@ -207,5 +214,5 @@ def test_warp_clears_all_targets():
 
     assert player.GetTarget() is None            # current target dropped
     assert player.GetTargetSubsystem() is None   # subsystem lock dropped
-    assert menu._children == []                  # target-list rows cleared
+    assert contacts_for(player) == ()            # enemy left behind is no contact
     assert menu.GetPersistentTarget() is None    # persistent hint cleared

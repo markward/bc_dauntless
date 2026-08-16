@@ -225,7 +225,6 @@ from engine.appc.target_menu import (
     STTargetMenu,
     STTargetMenu_CreateW, STTargetMenu_GetTargetMenu,
     _reset_target_menu_singleton,
-    wire_to_bridge_set, unwire_from_bridge_set,
 )
 from engine.sdk_ui.widgets.ship_display import (
     ShipDisplay_Create, ShipDisplay_Cast,
