@@ -11,7 +11,7 @@ import App
 import pytest
 
 from engine import host_io, host_loop
-from engine.host_loop import _fn_key_prev, _poll_raw_keyboard
+from engine.host_loop import _poll_raw_keyboard
 from engine.input_map import InputMap
 
 
@@ -59,7 +59,11 @@ def wired(monkeypatch):
     import KeyConfig
     KeyConfig.MapScancodes()
     _SEEN.clear()
-    _fn_key_prev.clear()
+    # Reach the level cache through the MODULE, never a from-import: several
+    # tests importlib.reload(host_loop) (tests/host/test_bc_model_scale.py:28),
+    # which rebinds _fn_key_prev to a fresh dict and leaves a from-imported
+    # name pointing at the orphan.
+    host_loop._fn_key_prev.clear()
     host_loop._raw_key_pairs_host = None
     App.g_kRootWindow.AddPythonFuncHandlerForInstance(App.ET_KEYBOARD, _HANDLER)
     host = _FakeHost()
@@ -67,7 +71,7 @@ def wired(monkeypatch):
     yield host, _SEEN, InputMap()
     App.g_kRootWindow.RemoveHandlerForInstance(App.ET_KEYBOARD, _HANDLER)
     _SEEN.clear()
-    _fn_key_prev.clear()
+    host_loop._fn_key_prev.clear()
     host_loop._raw_key_pairs_host = None
 
 

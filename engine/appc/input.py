@@ -118,8 +118,17 @@ def _raw_keyboard_destination():
 
     BC bubbles a raw keyboard event up the window chain; our ProcessEvent
     dispatches on exactly one object, so we pick the first candidate that
-    actually registered a handler. Order mirrors BC: the root window (where
-    mission scripts hook — E1M1.CrewIntros:1971) before the TopWindow.
+    actually registered a handler.
+
+    THE ORDER (root window before TopWindow) IS OUR CHOICE, NOT ESTABLISHED
+    FIDELITY. It is chosen because that is where mission scripts hook
+    (E1M1.CrewIntros:1971). The evidence actually points the other way: BC's
+    modal handlers (BridgeUtils.ModalKeyboardHandler,
+    E3M1.FilteredKeyboardHandler) exist to SetHandled() a key before it becomes
+    an ET_INPUT_* action, which needs a real bubbling chain with veto. Handlers
+    SDK scripts register on panes/buttons/movie panes (E1M2.py:4243-4247/5199,
+    E8M2.py:6495, MainMenu, Multiplayer) are unreachable here. See
+    docs/engine/e1m1-skip-intro.md § "Still open".
 
     Returns None when nothing registered, which is the common case; callers
     must treat that as "post nothing".
