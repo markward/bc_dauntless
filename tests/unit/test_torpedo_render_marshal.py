@@ -64,7 +64,7 @@ def _make_disruptor():
 
 
 def test_torpedo_brightness_dims_the_quad_layers():
-    assert TORPEDO_BRIGHTNESS == 0.5
+    assert TORPEDO_BRIGHTNESS == 0.25
 
 
 def test_all_descriptors_carry_the_full_key_set():
