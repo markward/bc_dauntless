@@ -111,25 +111,20 @@ class STTargetMenu(STTopLevelMenu):
         """Push this frame's contacts (perception.Contact records, from
         perception.perceived_by).
 
-        Row VISIBILITY is set here, from `Contact.perceivable`. It used to be
-        written by a second pass (engine.ui.target_list_visibility) that
-        recomputed range and cloak on its own; the two rules could disagree,
-        and did — that pass ignored death entirely, so SDK CycleTarget
-        (TacticalInterfaceHandlers.py:701-730, which skips rows where
-        IsVisible() == 0) could select a contact the target list refused to
-        draw. One record now decides both, so they cannot diverge.
-
-        ⚠️ The `SetNotVisible` branch below is currently reachable only with
-        synthetic records. `perceived_by` defines `targetable = perceivable and
-        ...`, so `targetable ⇒ perceivable`, and the production push can never
-        carry `perceivable=False, targetable=True` — every LISTED row is
-        `IsVisible() == 1` in-game. Do not conclude the flag is what protects
-        SDK CycleTarget / TargetNearestEnemy today: the `targetable` gate on
-        the listing (see `_rows` and `GetObjectEntry`) is. The branch goes live
-        in stage 4, when nebula concealment decouples "can't draw it" from
-        "isn't there" — see the Stage 4 outline in
-        docs/superpowers/plans/2026-08-16-contact-perception-stage-3.md, which
-        records that it needs production-path coverage at that point.
+        Every row this builds is always `SetVisible()`. `perceived_by`
+        defines `targetable = perceivable and alive_or_wreck and
+        IsTargetable()`, so `targetable ⇒ perceivable` — a contact this list
+        ever draws a row for is, by construction, one it was allowed to
+        perceive. A contact that fails detection (nebula, cloak, out of
+        sensor range) is simply absent from `_rows()` (filtered on
+        `Contact.targetable`, see `_rows`/`GetObjectEntry`); it never becomes
+        a greyed-out row, it is removed from the list entirely. There is no
+        production path — synthetic or otherwise — that needs this method to
+        mark a listed row not-visible; `SetNotVisible` remains real SDK
+        surface (STMenu/STSubsystemMenu) that other code drives directly
+        (e.g. test_sdk_cycle_target_skips_invisible), and SDK CycleTarget
+        (TacticalInterfaceHandlers.py:701-730) still skips any row for which
+        `IsVisible() == 0`.
 
         Idempotent and cheap: rows are built once per ship and reused, so a
         repeated push costs a dict lookup per contact.
@@ -145,10 +140,7 @@ class STTargetMenu(STTopLevelMenu):
             row = self._row_cache.get(c.ship)
             if row is None:
                 continue
-            if c.perceivable:
-                row.SetVisible()
-            else:
-                row.SetNotVisible()
+            row.SetVisible()
 
     def contact_for(self, ship):
         """The pushed Contact record for ``ship``, or None if it is not a

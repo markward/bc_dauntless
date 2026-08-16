@@ -33,33 +33,11 @@ def test_perceivable_contact_row_is_visible():
     assert menu.GetObjectEntry(ship).IsVisible() == 1
 
 
-def test_unperceivable_contact_row_is_not_visible():
-    """SDK CycleTarget skips rows where IsVisible() is 0, so an out-of-range
-    contact must not be Tab-selectable."""
-    menu = _menu()
-    ship = _ship("Faraway")
-    menu.set_contacts([_contact(ship, perceivable=False)])
-    row = menu.GetObjectEntry(ship)
-    assert row is not None
-    assert row.IsVisible() == 0
-
-
 def test_non_targetable_contact_gets_no_row():
     menu = _menu()
     ship = _ship("Kessok")
     menu.set_contacts([_contact(ship, targetable=False)])
     assert menu.GetNumChildren() == 0
-
-
-def test_visibility_follows_a_later_push():
-    menu = _menu()
-    ship = _ship("Galor")
-    menu.set_contacts([_contact(ship, perceivable=True)])
-    assert menu.GetObjectEntry(ship).IsVisible() == 1
-
-    menu.set_contacts([_contact(ship, perceivable=False)])
-
-    assert menu.GetObjectEntry(ship).IsVisible() == 0
 
 
 # ── Record retention ─────────────────────────────────────────────────────────
