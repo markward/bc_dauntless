@@ -195,7 +195,7 @@ def test_warp_clears_all_targets():
     src.AddObjectToSet(enemy, "enemy")
     player.SetTarget(enemy)
     player.SetTargetSubsystem(object())
-    menu.AddChild(target_menu.STSubsystemMenu(enemy, "enemy"))
+    menu.set_contacts([enemy])
     menu.SetPersistentTarget("enemy")
     assert len(menu._children) == 1
 

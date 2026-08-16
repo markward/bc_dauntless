@@ -30,7 +30,7 @@ def test_in_range_ship_remains_visible():
     game, player, mission = _setup_game_with_player()
     try:
         nearby = _ship("Nearby", 1000.0, 0.0, 0.0)
-        target_menu.RebuildShipMenu(nearby)
+        target_menu.set_contacts([nearby])
 
         update_target_list_visibility(target_menu, [nearby], player, range_units=30000.0)
 
@@ -48,7 +48,7 @@ def test_out_of_range_ship_becomes_invisible():
     game, player, mission = _setup_game_with_player()
     try:
         far = _ship("Far", 100000.0, 0.0, 0.0)
-        target_menu.RebuildShipMenu(far)
+        target_menu.set_contacts([far])
 
         update_target_list_visibility(target_menu, [far], player, range_units=30000.0)
 
@@ -67,7 +67,7 @@ def test_ship_pops_back_when_back_in_range():
     game, player, mission = _setup_game_with_player()
     try:
         wanderer = _ship("Wanderer", 100000.0, 0.0, 0.0)
-        target_menu.RebuildShipMenu(wanderer)
+        target_menu.set_contacts([wanderer])
         update_target_list_visibility(target_menu, [wanderer], player, range_units=30000.0)
         assert target_menu.GetObjectEntry(wanderer).IsVisible() == 0
 

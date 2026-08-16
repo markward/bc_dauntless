@@ -23,7 +23,7 @@ def _build_ship():
 def test_phaser_row_has_two_child_rows():
     menu = STTargetMenu("targets")
     ship = _build_ship()
-    menu.RebuildShipMenu(ship)
+    menu.set_contacts([ship])
     row = menu.GetObjectEntry(ship)        # the per-ship STSubsystemMenu
     labels = [c.GetLabel() for c in row._children]
     assert "Phasers" in labels

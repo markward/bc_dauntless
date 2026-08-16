@@ -34,7 +34,7 @@ def _build(hardpoint, class_name):
 
 def _rows(ship):
     menu = STTargetMenu("t")
-    menu.RebuildShipMenu(ship)
+    menu.set_contacts([ship])
     row = menu.GetObjectEntry(ship)
     return [c.GetLabel() for c in row._children]
 

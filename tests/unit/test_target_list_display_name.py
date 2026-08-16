@@ -18,7 +18,7 @@ def test_target_row_uses_display_name():
     ship.SetDisplayName("USS Sovereign")
 
     menu = STTargetMenu_CreateW("Targets")
-    menu.RebuildShipMenu(ship)
+    menu.set_contacts([ship])
 
     row = menu.GetObjectEntry(ship)
     assert row is not None
@@ -31,7 +31,7 @@ def test_target_row_falls_back_to_name_when_no_display_name():
     # No SetDisplayName -> GetDisplayName falls back to GetName.
 
     menu = STTargetMenu_CreateW("Targets")
-    menu.RebuildShipMenu(ship)
+    menu.set_contacts([ship])
 
     row = menu.GetObjectEntry(ship)
     assert row is not None

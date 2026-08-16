@@ -37,10 +37,14 @@ def test_full_pipeline_real_sdk_real_ship_real_subsystems():
         # Spawn a real ship with default subsystems.
         kor = ShipClass_Create("Kor")
         kor.SetName("Kor")
-        bridge.AddObjectToSet(kor, "Kor")  # fires the subscriber → RebuildShipMenu
+        bridge.AddObjectToSet(kor, "Kor")
 
-        # Verify the row landed in the singleton with subsystems.
+        # The menu's children are DERIVED from a pushed contact list, so
+        # membership comes from the set explicitly rather than from an
+        # add-event subscriber.
         menu = App.STTargetMenu_GetTargetMenu()
+        menu.RebuildShipMenus(bridge)
+        menu.ResetAffiliationColors()
         row = menu.GetObjectEntry(kor)
         assert row is not None
         assert row.GetAffiliation() == "ENEMY"

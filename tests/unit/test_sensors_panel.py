@@ -49,8 +49,7 @@ def test_payload_lists_visible_contacts_with_affiliations():
         spatial.AddObjectToSet(far, "Far")
         player._containing_set = spatial
 
-        for s in (ally, foe, far):
-            menu.RebuildShipMenu(s)
+        menu.set_contacts([ally, foe, far])
         menu.ResetAffiliationColors()
         # All three rows visible (sensor visibility runs separately).
         for child in menu._children:
@@ -89,7 +88,7 @@ def test_payload_is_idempotent_until_state_changes():
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "X")
         player._containing_set = spatial
-        menu.RebuildShipMenu(ship)
+        menu.set_contacts([ship])
         menu._children[0].SetVisible()
 
         panel = SensorsPanel()
@@ -120,7 +119,7 @@ def test_payload_marks_targeted_contact():
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "Galaxy")
         player._containing_set = spatial
-        menu.RebuildShipMenu(ship)
+        menu.set_contacts([ship])
         menu._children[0].SetVisible()
         # Add to bridge set so player.SetTarget("Galaxy") resolves.
         bridge = App.g_kSetManager.GetSet("bridge")
@@ -156,7 +155,7 @@ def test_payload_skips_invisible_rows():
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "Cloaked")
         player._containing_set = spatial
-        menu.RebuildShipMenu(ship)
+        menu.set_contacts([ship])
         menu._children[0].SetNotVisible()  # not picked up by sensors
 
         panel = SensorsPanel()
