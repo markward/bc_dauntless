@@ -3326,6 +3326,11 @@ def reset_sdk_globals() -> None:
     # Force the next tick to re-run sensor identification for the new mission.
     global _last_identify_gt
     _last_identify_gt = None
+    # Re-apply the dev-only PlayedTutorial force after the clear. This function
+    # runs once at start-of-mission and again on every swap, so it is the one
+    # seam that covers both load paths (host_loop.py:4550 and :6240).
+    from engine import dev_tutorial_flag
+    dev_tutorial_flag.apply_played_tutorial_flag()
 
 
 def _episode_tgl_path(mission_module_name: str) -> Optional[str]:
