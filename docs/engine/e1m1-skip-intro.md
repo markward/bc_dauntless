@@ -142,12 +142,113 @@ SDK binds each chord under exactly one of those states. A raw handler that does
 not inspect `GetKeyState()` — and `SkipOpeningSequence` does not — therefore
 runs **twice** per chord press.
 
-### Modifier-code labels are now a reachable path
+### Modifier-code labels — CLOSED 2026-08-16
 
-`GetDisplayStringFromUnicode` looks up only the bare-int key, so a code
+`GetDisplayStringFromUnicode` used to look up only the bare-int key, so a code
 registered *exclusively* under a `(wc_code, modifier)` tuple (`WC_CAPS_S`,
-`WC_ALT_F`, …) returns `""` instead of its label. Task 3 deferred this as
-"unreachable by any live call site". **That is no longer true**: `OnChordDown`
-→ `_emit` → `_dispatch_raw_keyboard` hands chord codes to SDK handlers, which
-read them back with `pEvent.GetUnicode()`. It still fails safe — an empty label
-never spuriously matches a skip key — but the path is live.
+`WC_ALT_F`, …) returned `""` instead of its label. Task 3 deferred this as
+"unreachable by any live call site"; that stopped being true the moment
+`OnChordDown` → `_emit` → `_dispatch_raw_keyboard` began handing chord codes to
+SDK handlers, which read them back with `pEvent.GetUnicode()`.
+
+**Fixed** — the lookup now falls back to the tuple entry, so `WC_CAPS_S`
+resolves to BC's `"S"`. That is half of the Shift+S fix below; the label is
+what makes the comparison against `"s"` fail for the right reason.
+
+⚠️ The fallback breaks on the **first** matching tuple, and `WC_ALT_S` is
+registered twice under different modifiers (`KeyConfig.py:319` `KY_ALT`,
+`:568` `KY_ALTGR`). All 111 multi-registered `WC_*` codes in the real table
+were enumerated and every duplicate pair agrees on its label, so the pick is
+correct today — **by data coincidence, not by construction.** An SDK-table
+change introducing a genuinely ambiguous pair would silently take the first
+registration with no signal.
+
+### Shift+key must not re-emit the bare code
+
+BC registers the shifted variant of every letter as a separate WC code with its
+own label (`UKConfig.py:70` `WC_S` → `"s"`; `:196` `WC_CAPS_S` → `"S"`, under
+`KY_SHIFT`). `_poll_raw_keyboard` therefore suppresses on **Shift** as well as
+ALT/CTRL — the chord poller owns shifted presses and emits `WC_CAPS_*`. Without
+that, Shift+S emitted the bare `WC_S`, whose label `"s"` matched the skip key.
+
+Note the docstring's "the chord poller already owns shifted presses" is only
+true for the A–Z / 0–9 / F1–F12 subset `MODIFIER_CHORDS` is built from.
+`_raw_key_pairs` also carries bare punctuation (`WC_OPEN_BRACKET`, `WC_MINUS`,
+…) which has no owning chord, so BC's shifted-punctuation labels (`"{"`, `":"`)
+can never be produced here. Not a new hole — ALT/CTRL already suppressed that
+same set — but shifted punctuation is now silent rather than wrong.
+
+### ⚠️ `TGSequence.Stop()`'s dispatch is inverted — a real latent bug
+
+Found while fixing the skip's dialogue bleed; **deliberately not fixed**, because
+the task that found it was scoped to `Abort()`.
+
+```python
+# engine/appc/actions.py — TGSequence.Stop()
+if hasattr(action, "Stop") and not isinstance(action, TGSequence):
+    action.Stop()
+else:
+    action.Abort()
+```
+
+`TGSequence` is the **only** class in the tree with a real `Stop()`, and it is
+explicitly excluded. Every other class relies on `TGObject.__getattr__`, which
+vends a truthy `_Stub` for undefined attributes — so `hasattr(action, "Stop")`
+is `True` for a leaf child and the call lands on a stub no-op. Verified:
+
+```
+hasattr(ca, 'Stop')        = True
+ca.Stop resolves to        = <engine.core.ids._Stub object>
+ids.implements(ca, 'Stop') = False
+CharacterAction.Abort invocations during a real TGSequence.Stop(): 0
+```
+
+Consequence: **`Stop()` never stops a playing `TGSoundAction`'s audio.** Only
+nested sequences ever reach the `Abort()` branch. The fix is
+`ids.implements(action, "Stop")` — never `hasattr` for engine surface.
+
+⚠️ `tests/unit/test_actions.py::test_stop_never_reaches_character_action_abort`
+currently **pins this bug as though it were desired behaviour**. Its docstring
+explains the situation, but the test *name* asserts the defect is correct. When
+`Stop()` is fixed that test must be **rewritten, not repaired**.
+
+### ⚠️ Speech-bus ownership is inferred, not owned
+
+`CharacterAction.Abort()` gates its audio cut on `self._playing and
+self._speaking` so an action that does not own the single-channel speech bus
+cannot cut it — the case that motivated it is `AT_SAY_LINE_AFTER_TURN` still
+*turning*, which has not spoken yet (`ai.py` — `_speak` is the turn's
+`on_complete`) yet would otherwise silence whoever is actually speaking.
+
+Both flags are load-bearing. `_speaking` is not cleared on natural completion,
+so a finished action carries it `True` forever, and `TGActionManager.KillActions()`
+aborts long-finished registrations by design (`RegisterAction` appends and never
+prunes; the SDK registers bare `CharacterAction`s directly —
+`MissionLib.py:3972, 3976, 4015`). `_playing` is the only thing stopping a
+stale action from cutting a live line.
+
+**Known limitation, reproduced not theorised:** a line that finished speaking
+and was then preempted by *another* line before anyone aborted the stale first
+one is not covered — `_speaking` is stale and `_playing` is still true. It needs
+two colliding speech sources plus a skip, and it is a strict subset of the
+pre-fix behaviour (which cut unconditionally), so it is not a regression.
+
+**Recommended follow-up:** replace both flags with a bus ownership token —
+capture a monotonic line id in `_do_play`, gate on
+`bus().current_token() == self._token`. That subsumes `_playing` and
+`_speaking` and closes the limitation above in one mechanism.
+
+### Minor, recorded so they are not rediscovered
+
+- `engine/host_loop.py` — the comment on the `reset_sdk_globals()` dev-flag call
+  names `MissionController._drain_pending_swap` / `MissionController.load_quickbattle`.
+  **There is no `MissionController` class.** The real owners are
+  `HostController._drain_pending_swap` and `_MissionLoader.load_quickbattle`
+  (`_init_mission` is correct). Comment-only.
+- The raw dispatch ignores the `AllowKeyboardInput(0)` lockout that
+  `_OnKeyboardEvent_Dispatch` honours. This is **required** for this feature —
+  E1M1's intro runs with control removed — but it now applies to every key and
+  every `ET_KEYBOARD` handler rather than to four small tables.
+- Aborting a mid-turn `AT_SAY_LINE_AFTER_TURN` leaves the officer swivelled with
+  no turn-back (`Skip()` turns back; `Abort()` does not). Matches pre-fix
+  behaviour, but the skip makes it easy to trigger.
