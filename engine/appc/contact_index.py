@@ -20,6 +20,23 @@ ship_lifecycle.publish_added call beside them).
 Keyed by the SetClass OBJECT, not its name: QuickBattle renames a set in place
 when reloading a region (QuickBattle.py:2678 appends "Dupe"), so a name key
 would silently split one bucket in two.
+
+This index's correctness rests on one fact: engine/appc/sets.py:186
+(`self._objects[identifier] = obj`, in `SetClass.AddObjectToSet`) is the ONLY
+place that inserts an object into a set's object dict, with the call to
+`contact_index.on_added` sitting right beside it. Every reader here — the
+target/hail/scan lists, sensor_detection.concealment_at — trusts that a set's
+buckets and its `_objects` dict never drift apart because there is exactly one
+door in. Three call sites still bypass the index and scan
+`GetClassObjectList(App.CT_NEBULA)` directly instead of `nebulae_in` —
+host_loop.py:3770 and :7505 (nebula rendering) and
+engine.appc.nebula_runtime._nebulae_in_set — so they agree with the index today
+only because that single-insertion invariant holds. A future second write path
+into `_objects` (a mission script poking a set's dict directly, a save/load
+restore that reconstructs membership by hand, and so on) would desync
+**sensors**, which read this index via `concealment_at`, from the **renderer**,
+which still scans the set — producing a nebula that is drawn but no longer
+conceals, or vice versa, with no exception raised on either side.
 """
 from __future__ import annotations
 

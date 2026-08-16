@@ -32,9 +32,19 @@ class Contact:
 
     Consumers do no further arithmetic: the target list reads `targetable`,
     the radar reads `perceivable` plus its own display clip, and the range
-    readouts read `surface_gu`. Distance is computed once here — before this,
-    the same player-to-contact vector was derived in five places under two
-    different conventions.
+    readouts read `surface_gu`. For that listing/radar/readout path, distance
+    is now computed once here, replacing five call sites that used to derive
+    the same player-to-contact vector under two different conventions.
+
+    That consolidation is NOT total, and two sites still recompute the
+    identical squared distance independently — do not describe this class as
+    "the only place distance is computed" without naming them:
+    `sensor_detection.can_detect` (its own range/cloak/nebula gate, which this
+    module does not yet call — see the STAGE 3 SCOPE note above) recomputes it
+    every frame **by design**, because a later stage merges the two; and
+    `engine.ui.weapons_display_panel`'s phaser-range check derives the same
+    vector again for its own arc test — a sixth site the original five-site
+    survey never counted. Neither is in scope to fix here; noting them is.
     """
     ship: object
     dist_sq_gu: float
@@ -111,7 +121,14 @@ def _surface_gu(dist_sq: float, ship) -> float:
 
 def contacts_for(observer) -> tuple:
     """Targetable ships in *observer*'s system. Back-compat wrapper over
-    perceived_by for callers not yet migrated to Contact records."""
+    perceived_by for callers not yet migrated to Contact records.
+
+    Has zero production callers as of this branch — `_pump_contacts` moved to
+    `perceived_by` directly. Only tests call this now. It is kept, not
+    deleted, because its tests are real coverage of the membership rule; it is
+    just not on a hot path, so there is no obligation to keep it fast or to
+    route new production code through it.
+    """
     return tuple(c.ship for c in perceived_by(observer) if c.targetable)
 
 

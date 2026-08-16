@@ -72,6 +72,26 @@ class STTargetMenu(STTopLevelMenu):
     This is why warp needs no target-list code: mid-warp the player is alone in
     the _WarpTransit set, so the pushed list is empty and the menu empties
     itself; on arrival it fills from the destination set.
+
+    THE LISTING NARROWED ON THIS BRANCH. Before, `_contacts` carried only the
+    `IsTargetable()` filter, so `GetObjectEntry` / `GetSubmenuW` /
+    `GetNumChildren` still answered for a ship that was out of sensor range or
+    cloaked — a caller could resolve a row for a contact the panel never drew.
+    Now `_rows()` filters on `Contact.targetable`, which `perceived_by` defines
+    as `perceivable and alive_or_wreck and IsTargetable()` — range and cloak
+    are folded in, so these three answer for strictly fewer ships than before.
+    This is deliberate, and was traced safe rather than assumed safe: the
+    displayed list and the radar already filtered on `IsVisible`, so no visible
+    UI surface changed; the SDK's `CycleTarget` falls back through its
+    `GetFirstChild`/`GetLastChild` path whenever `GetNextChild` returns None,
+    so a narrower sibling chain degrades to "wrap to the ends," not a crash;
+    and BC's own menu is sensor-gated too —
+    `sdk/Build/scripts/Maelstrom/Episode1/E1M2/E1M2.py:6694` calls
+    `pSensors.IsObjectVisible(...)` and only *then* asks the menu, which shows
+    the SDK does not expect the menu to answer for ships its own sensors have
+    already ruled out. A future reader who finds `GetObjectEntry` returning
+    None for a ship that is plainly still in the set should land on this
+    paragraph, not have to re-derive the reasoning from the diff.
     """
 
     def __init__(self, label: str = ""):
