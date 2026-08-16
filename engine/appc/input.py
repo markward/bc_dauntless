@@ -185,6 +185,29 @@ class TGInputManager(TGObject):
             self._registered[(int(wc_code), int(modifier))] = (
                 int(ky_code), database, str(name))
 
+    def GetDisplayStringFromUnicode(self, wc_code):
+        """Printable label for a key — BC's help-text primitive.
+
+        RegisterUnicodeKey already carries both halves: the 4th argument is
+        the label ("s", "ESC", "F1") and the 3rd is the TGL database to
+        localize it through. UKConfig.py:14 documents the fallback — with no
+        database, the label itself is the answer.
+
+        Returns _TGString so callers can chain .GetCString(), which is how
+        every SDK call site consumes it (E1M1.SkipOpeningSequence:1764,
+        E1M1's tactical help text:3324-3339).
+        """
+        from engine.appc.localization import _TGString
+        entry = self._registered.get(int(wc_code))
+        if entry is None:
+            # Unregistered key: an empty label, NOT a stub. A truthy stub here
+            # would make every "is this the skip key?" comparison ambiguous.
+            return _TGString("")
+        _ky, database, name = entry
+        if database is None:
+            return _TGString(name)
+        return _TGString(str(database.GetString(name)))
+
     def OnKeyDown(self, wc_code: int) -> None:
         self._emit(int(wc_code), KS_KEYDOWN)
 
