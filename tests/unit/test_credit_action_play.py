@@ -10,7 +10,7 @@ def test_play_calls_host_add_text():
     ca = TGCreditAction_Create("Disable the patrol", host, 0.5, 0.5, 5.0, 0.25, 0.5, 16)
     ca.Play()
     assert len(host._active_texts) == 1
-    text, _start, _expires, _fade_in, _fade_out = host._active_texts[0]
+    text, _start, _expires, _fade_in, _fade_out, _placement = host._active_texts[0]
     assert text == "Disable the patrol"
 
 
@@ -18,7 +18,7 @@ def test_play_uses_duration_from_args():
     host = _SubtitleWindow()
     ca = TGCreditAction_Create("hi", host, 0.0, 0.0, 7.5)
     ca.Play()
-    text, start, expires, fade_in, fade_out = host._active_texts[0]
+    text, start, expires, fade_in, fade_out, placement = host._active_texts[0]
     # Expiry is monotonic-now + 7.5; just check that 7.5 went through.
     # Approximate by reading the action's stored duration.
     assert ca._duration_s == 7.5
@@ -79,7 +79,7 @@ def test_fade_args_default_to_zero_on_short_form():
 def test_fades_reach_the_banner_slot():
     host = _SubtitleWindow()
     TGCreditAction_Create("Friendly Fire", host, 0.0, 0.25, 5.0, 0.25, 0.5, 12).Play()
-    _text, _start, _expiry, fade_in, fade_out = host._active_texts[0]
+    _text, _start, _expiry, fade_in, fade_out, _placement = host._active_texts[0]
     assert (fade_in, fade_out) == (0.25, 0.5)
 
 
@@ -112,3 +112,92 @@ def test_episode_title_on_a_host_without_the_title_slot_falls_back_to_text():
     class _Bare: pass
     TGCreditAction_Create('Episode 1 - "Picking up the Pieces"', _Bare(),
                           0.5, 0.025, 5.0, 0.25, 0.5, 12).Play()  # must not raise
+
+
+# ── banner placement (fX/fY/justify) ────────────────────────────────────────
+# sdk/Build/scripts/Maelstrom/Episode1/E1M1/E1M1.py:1966-1967 -- the SDK's own
+# banner placement call, positional (text, window, fX, fY, dur, fadeIn,
+# fadeOut, size, iJustifyX, iJustifyY). Root cause + rule:
+# docs/superpowers/sdd/... /banner-placement-brief.md.
+
+def test_e1m1_exact_call_captures_placement():
+    host = _SubtitleWindow()
+    ca = TGCreditAction_Create(
+        "Press 's' to skip introduction", host,
+        0, 0.05, 10, 0.25, 0.5, 16,
+        TGCreditAction.JUSTIFY_CENTER, TGCreditAction.JUSTIFY_TOP,
+    )
+    assert ca._placement["center_x"] is True
+    assert ca._placement["y"] == pytest.approx(0.05)
+    assert ca._placement["center_y"] is False
+
+
+def test_placement_reaches_the_active_texts_entry():
+    host = _SubtitleWindow()
+    TGCreditAction_Create(
+        "Press 's' to skip introduction", host,
+        0, 0.05, 10, 0.25, 0.5, 16,
+        TGCreditAction.JUSTIFY_CENTER, TGCreditAction.JUSTIFY_TOP,
+    ).Play()
+    placement = host._active_texts[0][5]
+    assert placement["center_x"] is True
+    assert placement["y"] == pytest.approx(0.05)
+
+
+def test_bonus_case_fy_does_not_collapse_to_top():
+    # E4M6's Bonus1 banner: fY=0.75, still JUSTIFY_TOP -- must not collapse
+    # to a fixed top slot; the raw fY fraction must survive distinctly from
+    # E1M1's fY=0.05.
+    host = _SubtitleWindow()
+    TGCreditAction_Create(
+        "Bonus1", host, 0.05, 0.75, 4.0, 0.0, 0.0, 12,
+        TGCreditAction.JUSTIFY_CENTER, TGCreditAction.JUSTIFY_TOP,
+    ).Play()
+    placement = host._active_texts[0][5]
+    assert placement["y"] == pytest.approx(0.75)
+    assert placement["center_y"] is False
+
+
+def test_left_justified_x_uses_fx_fraction_not_centred():
+    host = _SubtitleWindow()
+    ca = TGCreditAction_Create(
+        "text", host, 0.2, 0.35, 3.0, 0.0, 0.0, 12,
+        TGCreditAction.JUSTIFY_LEFT, TGCreditAction.JUSTIFY_TOP,
+    )
+    assert ca._placement["center_x"] is False
+    assert ca._placement["x"] == pytest.approx(0.2)
+
+
+def test_justify_center_on_y_centers_vertically_and_ignores_fy():
+    # The other half of the settled Y rule: JUSTIFY_CENTER -> centre
+    # vertically, fY ignored. No shipped SDK caller uses this (every known
+    # TextBanner/direct call is JUSTIFY_TOP), but it's part of the rule
+    # TGCreditAction implements and must not silently collapse to top-anchor.
+    host = _SubtitleWindow()
+    ca = TGCreditAction_Create(
+        "text", host, 0.0, 0.9, 3.0, 0.0, 0.0, 12,
+        TGCreditAction.JUSTIFY_CENTER, TGCreditAction.JUSTIFY_CENTER,
+    )
+    assert ca._placement["center_y"] is True
+    # fY (0.9) is captured verbatim even though it's ignored at render time
+    # -- the resolver doesn't need to know that; JS decides what to draw.
+    assert ca._placement["y"] == pytest.approx(0.9)
+
+
+def test_short_args_fall_back_to_centred_x_and_default_top_y():
+    # TGCreditAction_Create(text, window) -- no x/y/justify at all.
+    host = _SubtitleWindow()
+    ca = TGCreditAction_Create("brief", host)
+    assert ca._placement["center_x"] is True
+    assert ca._placement["center_y"] is False
+    assert ca._placement["y"] == pytest.approx(0.05)
+
+
+def test_unparseable_placement_args_do_not_raise():
+    host = _SubtitleWindow()
+    ca = TGCreditAction_Create(
+        "text", host, "not-a-number", None, 3.0, 0.0, 0.0, 12,
+        TGCreditAction.JUSTIFY_CENTER, TGCreditAction.JUSTIFY_TOP,
+    )  # must not raise
+    assert ca._placement["center_x"] is True
+    assert ca._placement["y"] == pytest.approx(0.05)

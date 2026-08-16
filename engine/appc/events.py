@@ -7,6 +7,18 @@ from engine.core import stub_telemetry
 # value that won't collide with the SDK's ET_INPUT_FIRE_* range (those are
 # Appc-side constants exposed via App.py:13834+).
 ET_KEYBOARD_EVENT: int = 0x1000
+# BC's raw per-key window event (sdk/Build/scripts/App.py:13224). Distinct from
+# ET_KEYBOARD_EVENT above: that one is our internal broadcast into
+# KeyboardBinding; this one is what BC delivers down the window chain and what
+# SDK scripts hook via AddPythonFuncHandlerForInstance (E1M1.CrewIntros:1971,
+# E1M1.RemoveSkipHandler:2479).
+#
+# REAL BC value, measured, not invented — read out of the ORIGINAL GAME:
+#   tools/probes/results/q13_constants_battle.txt:459
+#     App.ET_KEYBOARD = 196610 (0x30002) int
+#   tools/probes/results/ghidra_export/stbc_constants.csv:449
+#     App.ET_KEYBOARD,module,,ET_KEYBOARD,int,196610,0x30002,196610 (0x30002)
+ET_KEYBOARD: int = 0x30002
 ET_WEAPON_HIT:     int = 0x1100  # reserved range above input-event ids
 ET_WARP_BUTTON_PRESSED: int = 0x1200   # warp button activated (synthesized from CEF Set Course)
 
@@ -196,6 +208,16 @@ class TGKeyboardEvent(TGEvent):
 
     def GetUnicodeKey(self) -> int:
         return self._unicode_key
+
+    # BC's published names (sdk/Build/scripts/App.py:1062-1063). SDK scripts
+    # call the bare forms (E1M1.SkipOpeningSequence, CinematicInterfaceHandlers
+    # .HandleKeyboard); our own engine code and tests use the *Key forms. Both
+    # must resolve or one side silently gets a _Stub.
+    def SetUnicode(self, k) -> None:
+        self.SetUnicodeKey(k)
+
+    def GetUnicode(self) -> int:
+        return self.GetUnicodeKey()
 
     def SetKeyState(self, s) -> None:
         self._key_state = int(s)

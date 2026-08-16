@@ -35,14 +35,30 @@ def test_add_text_records_start_expiry_and_fades(monkeypatch):
     sw = _SubtitleWindow()
     monkeypatch.setattr("engine.appc.windows.time.monotonic", lambda: 100.0)
     sw._add_text("hello", 5.0, 0.25, 0.5)
-    assert sw._active_texts == [("hello", 100.0, 105.0, 0.25, 0.5)]
+    text, start, expiry, fade_in, fade_out, placement = sw._active_texts[0]
+    assert (text, start, expiry, fade_in, fade_out) == (
+        "hello", 100.0, 105.0, 0.25, 0.5,
+    )
+    # No placement passed -- falls back to centred-X, top-anchored fY=0.05
+    # (see the banner-placement brief's fallback rule).
+    assert placement["center_x"] is True
+    assert placement["y"] == pytest.approx(0.05)
 
 
 def test_add_text_defaults_to_no_fade(monkeypatch):
     sw = _SubtitleWindow()
     monkeypatch.setattr("engine.appc.windows.time.monotonic", lambda: 0.0)
     sw._add_text("hello", 5.0)
-    assert sw._active_texts == [("hello", 0.0, 5.0, 0.0, 0.0)]
+    text, start, expiry, fade_in, fade_out, _placement = sw._active_texts[0]
+    assert (text, start, expiry, fade_in, fade_out) == ("hello", 0.0, 5.0, 0.0, 0.0)
+
+
+def test_add_text_records_explicit_placement(monkeypatch):
+    sw = _SubtitleWindow()
+    monkeypatch.setattr("engine.appc.windows.time.monotonic", lambda: 0.0)
+    placement = {"center_x": False, "x": 0.2, "center_y": False, "y": 0.35}
+    sw._add_text("hello", 5.0, 0.0, 0.0, placement)
+    assert sw._active_texts[0][5] == placement
 
 
 def test_snapshot_returns_none_when_hidden_and_empty():
@@ -66,8 +82,12 @@ def test_snapshot_prunes_expired_text(monkeypatch):
     sw._add_text("expired", 1.0)
     sw._add_text("alive", 10.0)
     snap = sw._snapshot(now=5.0)
-    assert snap["lines"] == [{"text": "alive", "opacity": 1.0}]
-    assert sw._active_texts == [("alive", 0.0, 10.0, 0.0, 0.0)]
+    assert len(snap["lines"]) == 1
+    assert snap["lines"][0]["text"] == "alive"
+    assert snap["lines"][0]["opacity"] == 1.0
+    assert len(sw._active_texts) == 1
+    text, start, expiry, fade_in, fade_out, _placement = sw._active_texts[0]
+    assert (text, start, expiry, fade_in, fade_out) == ("alive", 0.0, 10.0, 0.0, 0.0)
 
 
 def test_snapshot_visible_true_when_text_active_even_if_set_off(monkeypatch):
@@ -76,7 +96,8 @@ def test_snapshot_visible_true_when_text_active_even_if_set_off(monkeypatch):
     sw._add_text("hello", 5.0)
     snap = sw._snapshot(now=1.0)
     assert snap["visible"] is True
-    assert snap["lines"] == [{"text": "hello", "opacity": 1.0}]
+    assert snap["lines"][0]["text"] == "hello"
+    assert snap["lines"][0]["opacity"] == 1.0
 
 
 def test_subtitle_window_class_exports_sm_constants():
@@ -151,7 +172,8 @@ def test_snapshot_banner_expires_exactly_at_expiry(monkeypatch):
     monkeypatch.setattr("engine.appc.windows.time.monotonic", lambda: 0.0)
     sw._add_text("Friendly Fire", 3.0)  # expiry == 3.0
     snap = sw._snapshot(now=2.999)
-    assert snap["lines"] == [{"text": "Friendly Fire", "opacity": 1.0}]  # just live
+    assert snap["lines"][0]["text"] == "Friendly Fire"  # just live
+    assert snap["lines"][0]["opacity"] == 1.0
     assert sw._snapshot(now=3.0) is None                                 # exact boundary -> gone
 
 
@@ -299,7 +321,8 @@ def test_all_three_slots_can_be_live_at_once(monkeypatch):
     sw.set_crew_line("Liu", "Captain.", 5.0)
     sw._add_episode_title("Episode 1", "Picking up the Pieces", 5.0)
     snap = sw._snapshot(now=1.0)
-    assert snap["lines"] == [{"text": "Friendly Fire", "opacity": 1.0}]
+    assert snap["lines"][0]["text"] == "Friendly Fire"
+    assert snap["lines"][0]["opacity"] == 1.0
     assert snap["speaker"] == "Liu"
     assert snap["title_text"] == "Picking up the Pieces"
     assert snap["visible"] is True

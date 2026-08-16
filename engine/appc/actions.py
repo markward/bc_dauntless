@@ -395,6 +395,17 @@ class TGSequence(TGAction):
             self._on_dependency_complete(action)
 
     def _begin_step(self, step: "_Step") -> None:
+        # Defense in depth for Abort(): a child that was already mid-flight
+        # when Abort() ran can still deliver a late _ET_SEQ_STEP_COMPLETED
+        # (e.g. a completion event posted just before Abort() cancelled its
+        # timer, or a caller who calls Completed() directly). Without this
+        # guard that event reaches _on_dependency_complete and launches the
+        # next step on a sequence that is supposed to be dead -- the E1M1
+        # skip-intro bug: an aborted CharacterIntros sequence kept bleeding
+        # dialogue because nothing here consulted _playing the way
+        # _maybe_complete already does.
+        if not self._playing:
+            return
         if step.started:
             return
         step.started = True
@@ -470,10 +481,35 @@ class TGSequence(TGAction):
         self._pending_timers.append((mgr, step, timer))
 
     def Abort(self) -> None:
+        # Cancel scheduled steps first, same as before.
         for mgr, _step, timer in self._pending_timers:
             mgr.RemoveTimer(timer)
         self._pending_timers = []
+        # Mirror Skip()'s dance (see below) for the same reason it matters
+        # there: capture which children are genuinely mid-flight BEFORE
+        # marking every step started, then stop just those -- not launch
+        # them, which is what Skip() does and Abort() must not. Marking every
+        # step started first means an in-flight child's own inline completion
+        # (or a stray _on_dependency_complete re-entry while we're aborting
+        # it) can never use _begin_step to fire a dependent; the _playing
+        # guard added to _begin_step is the belt to this braces for a
+        # completion event that arrives after we're done here entirely.
+        #
+        # Abort()ing the child (never Skip()) is deliberate: Skip() COMPLETES
+        # an action and cascades to its dependents -- the opposite of "kill
+        # this". Calling action.Abort() also recurses naturally when the
+        # child is itself a nested TGSequence (e.g. E1M1's per-officer
+        # CharacterIntros sequence), so its own in-flight children stop too.
+        in_flight = [s.action for s in self._steps
+                     if s.started and id(s.action) not in self._completed_actions]
+        for step in self._steps:
+            step.started = True
         self._playing = False
+        for action in in_flight:
+            try:
+                action.Abort()
+            except Exception:
+                pass
         # A torn-down master sequence (e.g. MissionLib.DeleteQueuedActions, or a
         # mission swap) must also free its id so the next QueueActionToPlay
         # starts fresh rather than appending onto the aborted master.
@@ -739,19 +775,48 @@ class TGActionManager(TGEventHandlerObject):
     """
     def __init__(self):
         super().__init__()
-        self._registered: dict = {}  # name -> action (most-recent under each key)
+        # name -> [action, ...] in registration order. A LIST, not a single
+        # slot: E1M1 registers six separate sequences under "CharacterIntros"
+        # (E1M1.py:2052, 2145, 2213, 2291, 2390, 2463) and KillActions must
+        # take out all of them, not just the last.
+        self._registered: dict = {}
 
     def RegisterAction(self, action, name: str) -> None:
-        self._registered[str(name)] = action
+        self._registered.setdefault(str(name), []).append(action)
 
     def UnregisterAction(self, name: str) -> None:
         self._registered.pop(str(name), None)
 
     def FindAction(self, name: str):
-        return self._registered.get(str(name))
+        # Most-recent registration wins — MissionLib's FriendlyFireWarning
+        # pattern re-fetches the action it just posted.
+        actions = self._registered.get(str(name))
+        return actions[-1] if actions else None
 
     def IsRegistered(self, name: str) -> int:
-        return 1 if str(name) in self._registered else 0
+        return 1 if self._registered.get(str(name)) else 0
+
+    def KillActions(self, name: str | None = None) -> None:
+        """Abort registered actions — BC's TGActionManager_KillActions.
+
+        With a name, aborts every action registered under it and drops the
+        name. With no name, aborts everything (E6M1.py:894, E6M2.py:1043).
+
+        Abort, not Skip: Skip() COMPLETES the action and advances its
+        dependents, which would run the very sequence the caller asked to
+        stop. The caller is expected to drive the mission forward itself —
+        E1M1.SkipOpeningSequence calls UndockCutscene(TRUE) right after.
+        """
+        if name is None:
+            groups = list(self._registered.values())
+            self._registered.clear()
+        else:
+            groups = [self._registered.pop(str(name), [])]
+        for group in groups:
+            for action in group:
+                abort = getattr(action, "Abort", None)
+                if callable(abort):
+                    abort()
 
     def ProcessEvent(self, event) -> None:
         # SDK manager-ObjPtr deferred-completion pattern: ViewscreenOn /
@@ -788,6 +853,16 @@ def TGActionManager_RegisterAction(action, name: str) -> None:
 def TGActionManager_UnregisterAction(name: str) -> None:
     import App
     App.g_kTGActionManager.UnregisterAction(name)
+
+
+def TGActionManager_KillActions(name: str | None = None) -> None:
+    """Module-level wrapper — sdk/Build/scripts/App.py:10105.
+
+    Called by E1M1.SkipOpeningSequence:1772, MissionLib.py:4104, and E6M1 /
+    E6M2 (both the named and the kill-everything forms).
+    """
+    import App
+    App.g_kTGActionManager.KillActions(name)
 
 
 def TGActionManager_FindAction(name: str):
@@ -853,9 +928,24 @@ def parse_episode_title(text) -> tuple[str, str] | None:
 # Timed text overlay on the SubtitleWindow. Two SDK callers: MissionLib.
 # TextBanner (transient notices) and MissionLib.EpisodeTitleAction (the episode
 # title card) -- told apart by parse_episode_title(). We honour the SDK's
-# duration and fade args; its x/y/font-size/colour are deliberately ignored
-# (our layout owns placement).
+# duration and fade args, AND (since the banner-placement fix) its x/y/
+# justification -- a banner's on-screen position is real SDK-authored data
+# (see the table of every TextBanner/direct call site in the banner-placement
+# brief), not ours to override. Font size and colour remain ours.
 # Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md
+# Spec: docs/superpowers/sdd/2026-08-16-e1m1-skip-intro-prompt/banner-placement-brief.md
+
+# Single source of truth for the fallback fY (top-anchor offset) used both
+# when the SDK omits fY entirely (short-form TGCreditAction_Create(text,
+# window)) and when a supplied fY is unparseable -- see
+# _resolve_credit_placement below. Also re-exported for
+# engine.appc.windows._DEFAULT_BANNER_PLACEMENT so a caller of _add_text
+# with no placement at all (defensive default, not currently reachable in
+# production -- TGCreditAction always supplies one) falls back to the same
+# value instead of a second hardcoded 0.05.
+_DEFAULT_BANNER_FX = 0.0
+_DEFAULT_BANNER_FY = 0.05
+
 
 class TGCreditAction(TGTimedAction):
     JUSTIFY_LEFT   = 0
@@ -879,6 +969,11 @@ class TGCreditAction(TGTimedAction):
         self._fade_out = float(args[6]) if len(args) > 6 else 0.0
         self._color = _credit_default_color
         self._played = False
+        fx = args[2] if len(args) > 2 else _DEFAULT_BANNER_FX
+        fy = args[3] if len(args) > 3 else _DEFAULT_BANNER_FY
+        jx = args[8] if len(args) > 8 else self.JUSTIFY_CENTER
+        jy = args[9] if len(args) > 9 else self.JUSTIFY_TOP
+        self._placement = _resolve_credit_placement(fx, fy, jx, jy)
 
     def SetColor(self, r: float, g: float, b: float, a: float = 1.0) -> None:
         self._color = (float(r), float(g), float(b), float(a))
@@ -907,13 +1002,55 @@ class TGCreditAction(TGTimedAction):
 
         adder = getattr(host, "_add_text", None)
         if adder is None: return
-        adder(self._text, self._duration_s, self._fade_in, self._fade_out)
+        adder(self._text, self._duration_s, self._fade_in, self._fade_out,
+              self._placement)
 
     def Restart(self) -> None:
         # TGSequence.Restart() re-fires Play on every child. Reset the
         # idempotency flag so the credit action delivers its text again.
         self._played = False
         super().Restart()
+
+
+def _resolve_credit_placement(fx, fy, jx, jy) -> dict:
+    """Resolve a TGCreditAction's raw fX/fY/iJustifyX/iJustifyY into a
+    placement dict the SubtitleWindow snapshot -> CEF mirror can render
+    directly. Rule (settled from the complete corpus of SDK TextBanner /
+    direct TGCreditAction_Create call sites -- see the banner-placement
+    brief):
+
+      X: JUSTIFY_CENTER -> centre horizontally, ignore fX (every known
+         caller). JUSTIFY_LEFT -> fX is a fraction of viewport width from
+         the left. Anything else falls back to centred, same as missing.
+      Y: JUSTIFY_TOP -> the banner's top edge sits at fY (fraction of
+         viewport height). JUSTIFY_CENTER -> centre vertically, ignore fY.
+         Anything else falls back to top-anchored.
+
+    Missing/unparseable fx/fy fall back to (_DEFAULT_BANNER_FX,
+    _DEFAULT_BANNER_FY) -- centred-X and fY=0.05, matching MissionLib.
+    TextBanner's own bHCentered=1/bVCentered=0 defaults. jx/jy are guarded
+    the same way (any comparison failure falls back to centred-X/top-Y),
+    not just fx/fy: never raises, because this runs mid-cutscene and a stub
+    or a bad SDK value of ANY of the four args must not crash the skip
+    prompt.
+    """
+    try:
+        fx = float(fx)
+    except (TypeError, ValueError):
+        fx = _DEFAULT_BANNER_FX
+    try:
+        fy = float(fy)
+    except (TypeError, ValueError):
+        fy = _DEFAULT_BANNER_FY
+    try:
+        center_x = jx != TGCreditAction.JUSTIFY_LEFT
+    except Exception:
+        center_x = True
+    try:
+        center_y = jy == TGCreditAction.JUSTIFY_CENTER
+    except Exception:
+        center_y = False
+    return {"center_x": center_x, "x": fx, "center_y": center_y, "y": fy}
 
 
 def TGCreditAction_Create(*args) -> TGCreditAction:

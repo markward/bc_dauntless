@@ -68,7 +68,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 54 | App | ExplodeEmitterProperty_Create | 374 | 62/233 | 2026-08-10 11:34 UTC |  |
 | 55 | ExplodeEmitterProperty_Create() | GetName | 374 | 62/233 | 2026-08-10 11:34 UTC |  |
 | 56 | KeyboardBinding | FindKey | 342 | 56/233 | 2026-08-10 11:34 UTC |  |
-| 57 | TGInputManager | GetDisplayStringFromUnicode | 342 | 56/233 | 2026-08-10 11:34 UTC |  |
+| 57 | TGInputManager | GetDisplayStringFromUnicode | 342 | 56/233 | 2026-08-10 11:34 UTC | 2026-08-16 |
 | 58 | App | ET_SET_WARP_SEQUENCE | 326 | 75/233 | 2026-08-10 11:30 UTC |  |
 | 59 | EventType | ET_SET_WARP_SEQUENCE | 326 | 75/233 | 2026-08-10 11:30 UTC |  |
 | 60 | Planet | GetCloakingSubsystem | 324 | 1/233 | 2026-07-13 23:37 UTC |  |

@@ -356,7 +356,8 @@ def _poll_mouse_buttons(host) -> None:
 _fn_key_prev: dict = {}
 
 
-def _poll_key_table(keymap, suppress: bool = False) -> None:
+def _poll_key_table(keymap, suppress: bool = False,
+                    raw_only: bool = False) -> None:
     """Edge-detect each (glfw_key, WC_code) in `keymap` and forward rising/
     falling edges to g_kInputManager.OnKeyDown/OnKeyUp.  Shares the module
     _fn_key_prev level cache so every polled key derives both edges from
@@ -366,15 +367,23 @@ def _poll_key_table(keymap, suppress: bool = False) -> None:
     While `suppress` is true (ALT/CTRL held) every key in the table reads as
     UP: the chord poller owns modified keys, and a held base key (e.g. fire)
     gets a clean falling edge.
+
+    `raw_only` routes the edges to OnRawKeyDown/OnRawKeyUp instead — BC's raw
+    ET_KEYBOARD window event WITHOUT the ET_INPUT_* binding translation.  See
+    TGInputManager._emit_raw for why the general key stream takes that half
+    only.  Because every caller shares _fn_key_prev, no glfw key may appear in
+    two tables; _poll_raw_keyboard excludes the keys the other pollers own.
     """
     import App  # deferred: module-top import reorders sound-manager init
+    down_name, up_name = (("OnRawKeyDown", "OnRawKeyUp") if raw_only
+                          else ("OnKeyDown", "OnKeyUp"))
     for glfw_key, wc in keymap:
         down = (not suppress) and bool(host_io.key_state(glfw_key))
         was_down = _fn_key_prev.get(glfw_key, False)
         if down and not was_down:
-            App.g_kInputManager.OnKeyDown(wc)
+            getattr(App.g_kInputManager, down_name)(wc)
         elif was_down and not down:
-            App.g_kInputManager.OnKeyUp(wc)
+            getattr(App.g_kInputManager, up_name)(wc)
         _fn_key_prev[glfw_key] = down
 
 
@@ -516,6 +525,110 @@ def _poll_fire_keys(host, input_map) -> None:
         (input_map.code("fire_secondary"), App.WC_X),
         (input_map.code("fire_tertiary"),  App.WC_G),
     ), suppress=suppress)
+
+
+# Keys the general raw poller must never claim: bare modifiers (the chord
+# poller owns modified presses, and BC has no WC entry for a lone Alt/Ctrl/
+# Shift/Super anyway).  Everything else the host exposes that our WC table also
+# names is forwarded — see _raw_key_pairs.
+_RAW_KEY_EXCLUDE_NAMES: frozenset = frozenset((
+    "LEFT_ALT", "RIGHT_ALT", "LEFT_CONTROL", "RIGHT_CONTROL",
+    "LEFT_SHIFT", "RIGHT_SHIFT", "LEFT_SUPER", "RIGHT_SUPER",
+))
+
+# Cache of the (glfw_key, WC_code) scan, keyed by the host `keys` submodule
+# object (constant for a process, but tests swap fakes in). Module-level so
+# tests can invalidate it.
+_raw_key_pairs_cache: tuple = ()
+_raw_key_pairs_host = None
+
+
+def _raw_key_pairs(host) -> tuple:
+    """[(glfw_key, WC_code)] for every key the host exposes that BC also names.
+
+    Derived, not hand-listed, so the day host_bindings.cc exports another key
+    it becomes available to SDK ET_KEYBOARD handlers with no second edit here.
+    The WC lookup goes to engine.appc.input's real module globals rather than
+    App.<name>: App's module __getattr__ hands back a _NamedStub for undefined
+    WC_ names, whose int() is 0, which would silently map several host keys
+    onto slot 0.
+    """
+    global _raw_key_pairs_cache, _raw_key_pairs_host
+    keys = getattr(host, "keys", None) if host is not None else None
+    if keys is None:
+        return ()
+    if _raw_key_pairs_host is keys:
+        return _raw_key_pairs_cache
+    from engine.appc import input as _input_mod
+    pairs = []
+    for attr in sorted(dir(keys)):
+        if not attr.startswith("KEY_"):
+            continue
+        name = attr[len("KEY_"):]
+        if name in _RAW_KEY_EXCLUDE_NAMES:
+            continue
+        glfw_key = getattr(keys, attr, None)
+        wc = getattr(_input_mod, "WC_" + name, None)
+        if isinstance(glfw_key, int) and isinstance(wc, int):
+            pairs.append((glfw_key, wc))
+    _raw_key_pairs_cache = tuple(pairs)
+    _raw_key_pairs_host = keys
+    return _raw_key_pairs_cache
+
+
+def _owned_glfw_keys(input_map) -> set:
+    """GLFW codes already forwarded by _poll_fire_keys / _poll_function_keys.
+
+    Those two pollers go through _emit, which ALREADY raw-dispatches, and they
+    share _fn_key_prev with us — forwarding their keys here would both
+    double-deliver the keystroke and corrupt the shared edge cache.
+    """
+    return {input_map.code(a) for a in (
+        "fire_primary", "fire_secondary", "fire_tertiary",
+        "talk_helm", "talk_tactical", "talk_xo",
+        "talk_science", "talk_engineering",
+    )}
+
+
+def _poll_raw_keyboard(host, input_map) -> None:
+    """Forward the general key stream as BC's raw ET_KEYBOARD window event.
+
+    BC delivers every keystroke to the window chain as ET_KEYBOARD *in
+    addition* to whatever ET_INPUT_* action the binding table produces; SDK
+    scripts hook it with AddPythonFuncHandlerForInstance(App.ET_KEYBOARD, ...)
+    — E1M1.CrewIntros:1971 registers SkipOpeningSequence that way, which is
+    what makes "Press 's' to skip introduction" work.  Without this poller the
+    only keys that ever reached g_kInputManager were mouse buttons, the
+    crew-talk F-keys, the fire keys and the ALT/CTRL/CAPS chords, so no such
+    handler ever fired.
+
+    Raw half only (OnRawKeyDown/Up) — see TGInputManager._emit_raw: the
+    ET_INPUT_* half of these keys has live consumers that would fight our
+    host-side flight controls.
+
+    Suppressed on ALT, CTRL, *and* Shift — stricter than _poll_fire_keys /
+    _poll_crew_talk_keys, which deliberately keep firing under Shift.  Those
+    two map a physical key to a FIXED WC slot (the key that fires phasers is
+    still "fire", shifted or not), so there is nothing for Shift to change.
+    This poller's whole job is different: it reports WHICH CHARACTER the SDK
+    should see, and BC registers the shifted variant of every letter as a
+    distinct WC code with its own label (KeyConfig.py: WC_S -> "s",
+    WC_CAPS_S -> "S"). The chord poller already owns shifted presses and
+    emits that correct WC_CAPS_* code via OnChordDown -> _emit, which raw-
+    dispatches too — so suppressing the bare key here does not silence
+    Shift+<letter>, it just stops this poller from ALSO reporting the wrong
+    (unshifted) character underneath it.  Without this, Shift+S made E1M1's
+    skip prompt fire on the bare WC_S label ("s") even though BC's own
+    WC_CAPS_S carries the distinct label "S", which fails BC's comparison.
+    """
+    pairs = _raw_key_pairs(host)
+    if not pairs:
+        return
+    owned = _owned_glfw_keys(input_map)
+    alt, ctrl, shift = _modifier_state(host)
+    _poll_key_table(
+        tuple(p for p in pairs if p[0] not in owned),
+        suppress=(alt or ctrl or shift), raw_only=True)
 
 
 _skip_dialogue_prev: bool = False
@@ -3326,6 +3439,26 @@ def reset_sdk_globals() -> None:
     # Force the next tick to re-run sensor identification for the new mission.
     global _last_identify_gt
     _last_identify_gt = None
+    # Drop the named-action registry. g_kTGActionManager is a process-lifetime
+    # singleton (App.py) and RegisterAction appends to a per-name LIST, so
+    # without this every action ever registered is retained forever — and the
+    # no-argument KillActions() form (E6M1.py:894, E6M2.py:1043, ...) would
+    # Abort() a previous mission's actions, which is not inert (TGSequence.Abort
+    # unregisters the object id, TGSoundAction.Abort stops audio). Clear only:
+    # the LIST semantics are correct (E1M1 registers six sequences under
+    # "CharacterIntros" and the skip must kill all six) — only the lifetime was
+    # wrong, and pruning on registration would drop the not-yet-started
+    # sequences this feature exists to kill.
+    _action_mgr = getattr(App, "g_kTGActionManager", None)
+    if isinstance(getattr(_action_mgr, "_registered", None), dict):
+        _action_mgr._registered.clear()
+    # Re-apply the dev-only PlayedTutorial force after the clear. This function
+    # runs once at start-of-mission and again on every swap, so it is the one
+    # seam that covers every load path: _init_mission,
+    # MissionController._drain_pending_swap and MissionController.load_quickbattle
+    # all route through reset_sdk_globals().
+    from engine import dev_tutorial_flag
+    dev_tutorial_flag.apply_played_tutorial_flag()
 
 
 def _episode_tgl_path(mission_module_name: str) -> Optional[str]:
@@ -7258,6 +7391,12 @@ def run(mission_name: Optional[str] = None,
                 _poll_function_keys(_h, input_map)
                 _poll_fire_keys(_h, input_map)
                 _poll_modifier_chords(_h)
+                # General key stream → BC's raw ET_KEYBOARD window event.
+                # Runs AFTER the three tables above so their _fn_key_prev
+                # entries are already written for this frame (it skips the
+                # keys they own, but the ordering keeps that invariant
+                # obvious).
+                _poll_raw_keyboard(_h, input_map)
                 _poll_skip_dialogue(_h, input_map)
 
                 # Advance weapon charge / reload for every ship in every

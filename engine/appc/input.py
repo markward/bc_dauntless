@@ -113,6 +113,51 @@ KS_KEYREPEAT = TGKeyboardEvent.KS_KEYREPEAT
 KS_NORMAL    = TGKeyboardEvent.KS_NORMAL
 
 
+def _raw_keyboard_destination():
+    """First object in BC's window chain with an ET_KEYBOARD instance handler.
+
+    BC bubbles a raw keyboard event up the window chain; our ProcessEvent
+    dispatches on exactly one object, so we pick the first candidate that
+    actually registered a handler.
+
+    THE ORDER (root window before TopWindow) IS OUR CHOICE, NOT ESTABLISHED
+    FIDELITY. It is chosen because that is where mission scripts hook
+    (E1M1.CrewIntros:1971). The evidence actually points the other way: BC's
+    modal handlers (BridgeUtils.ModalKeyboardHandler,
+    E3M1.FilteredKeyboardHandler) exist to SetHandled() a key before it becomes
+    an ET_INPUT_* action, which needs a real bubbling chain with veto. Handlers
+    SDK scripts register on panes/buttons/movie panes (E1M2.py:4243-4247/5199,
+    E8M2.py:6495, MainMenu, Multiplayer) are unreachable here. See
+    docs/engine/e1m1-skip-intro.md § "Still open".
+
+    Returns None when nothing registered, which is the common case; callers
+    must treat that as "post nothing".
+    """
+    import App  # deferred: input is imported during App bootstrap
+    et = App.ET_KEYBOARD
+    if not isinstance(et, int):
+        # Defensive: a regressed export would make every registration a fresh
+        # unreachable key. Post nothing rather than pretend to dispatch.
+        return None
+    candidates = []
+    root = getattr(App, "g_kRootWindow", None)
+    if root is not None:
+        candidates.append(root)
+    top = App.TopWindow_GetTopWindow()
+    if top is not None:
+        # _TopWindow keeps its handler chain by COMPOSITION on `_events`
+        # rather than inheriting one; route through it so both the probe
+        # below and AddEvent's destination check land on the same object.
+        # (Same reasoning as KeyboardBinding._resolve_destination.)
+        events_obj = getattr(top, "_events", None)
+        candidates.append(events_obj if events_obj is not None else top)
+    for cand in candidates:
+        handlers = getattr(cand, "_handlers", None)
+        if isinstance(handlers, dict) and handlers.get(et):
+            return cand
+    return None
+
+
 class TGInputManager(TGObject):
     """Receives host-side key/button events and emits TGKeyboardEvents
     into the event manager.  Registration table is populated by mission
@@ -149,11 +194,55 @@ class TGInputManager(TGObject):
             self._registered[(int(wc_code), int(modifier))] = (
                 int(ky_code), database, str(name))
 
+    def GetDisplayStringFromUnicode(self, wc_code):
+        """Printable label for a key — BC's help-text primitive.
+
+        RegisterUnicodeKey already carries both halves: the 4th argument is
+        the label ("s", "ESC", "F1") and the 3rd is the TGL database to
+        localize it through. UKConfig.py:14 documents the fallback — with no
+        database, the label itself is the answer.
+
+        Modifier-augmented entries (KeyConfig.py registers WC_CAPS_S with
+        modifier=KY_SHIFT and label "S") are stored under a (wc_code,
+        modifier) TUPLE key so they don't shadow the bare key — see
+        RegisterUnicodeKey. A bare-int-only lookup here left every such
+        entry permanently blank (WC_CAPS_S -> ""), which is what let
+        Shift+S's wrong-but-truthy comparison through in E1M1's skip
+        handler. WC_CAPS_S (0x853) and WC_S (0x53) are distinct codes, so
+        finding the tuple entry whose [0] == wc_code is unambiguous.
+
+        Returns _TGString so callers can chain .GetCString(), which is how
+        every SDK call site consumes it (E1M1.SkipOpeningSequence:1764,
+        E1M1's tactical help text:3324-3339).
+        """
+        from engine.appc.localization import _TGString
+        wc_code = int(wc_code)
+        entry = self._registered.get(wc_code)
+        if entry is None:
+            for key, candidate in self._registered.items():
+                if isinstance(key, tuple) and key[0] == wc_code:
+                    entry = candidate
+                    break
+        if entry is None:
+            # Unregistered key: an empty label, NOT a stub. A truthy stub here
+            # would make every "is this the skip key?" comparison ambiguous.
+            return _TGString("")
+        _ky, database, name = entry
+        if database is None:
+            return _TGString(name)
+        return _TGString(str(database.GetString(name)))
+
     def OnKeyDown(self, wc_code: int) -> None:
         self._emit(int(wc_code), KS_KEYDOWN)
 
     def OnKeyUp(self, wc_code: int) -> None:
         self._emit(int(wc_code), KS_KEYUP)
+
+    def OnRawKeyDown(self, wc_code: int) -> None:
+        self._emit_raw(int(wc_code), KS_KEYDOWN)
+
+    def OnRawKeyUp(self, wc_code: int) -> None:
+        self._emit_raw(int(wc_code), KS_KEYUP)
 
     def OnChordDown(self, wc_code: int) -> None:
         """Modifier-chord press.  BC's input manager produces a character
@@ -171,6 +260,55 @@ class TGInputManager(TGObject):
         evt.SetUnicodeKey(wc_code)
         evt.SetKeyState(key_state)
         self._event_manager.AddEvent(evt)
+        self._dispatch_raw_keyboard(wc_code, key_state)
+
+    def _emit_raw(self, wc_code: int, key_state: int) -> None:
+        """Raw-ONLY delivery: BC's ET_KEYBOARD window event, with no
+        ET_KEYBOARD_EVENT broadcast and therefore no KeyboardBinding →
+        ET_INPUT_* translation.
+
+        WHY THE HALF: dauntless drives flight, camera and throttle host-side
+        off host_io.key_state (engine/input_map.py), NOT off the SDK binding
+        table.  BC binds most of those same keys to ET_INPUT_* actions
+        (DefaultKeyboardBinding.py:80-95 maps W/S/A/D/Q/E to
+        ET_INPUT_TURN_*/ROLL_*), and TacticalInterfaceHandlers.Initialize
+        registers TurnUp/TurnDown/... on the TCW for them (line 68-73).  Those
+        handlers call TurnShip, which does
+        MissionLib.SetPlayerAI("Captain", None) → pPlayer.ClearAI() before
+        setting an angular velocity — so routing the general key stream
+        through the binding layer would clear the player's AI mid-cutscene and
+        add a second, fighting rotation driver.  Until flight control itself
+        moves onto the SDK binding path, the general poller delivers only the
+        raw window event, which is the half no other consumer duplicates.
+
+        The four special-cased host pollers (mouse buttons, crew-talk F-keys,
+        fire keys, ALT/CTRL/CAPS chords) keep using _emit and therefore keep
+        BOTH halves; their ET_INPUT_* consumers are live and wanted.
+        """
+        if wc_code not in self._registered_codes:
+            return
+        self._dispatch_raw_keyboard(wc_code, key_state)
+
+    def _dispatch_raw_keyboard(self, wc_code: int, key_state: int) -> None:
+        """Post BC's raw ET_KEYBOARD event to the window chain.
+
+        Additive to the ET_KEYBOARD_EVENT broadcast above, not a replacement:
+        KeyboardBinding still translates bound keys into ET_INPUT_* events.
+        Gated by _registered_codes via the caller, so unmapped keys stay
+        silent. All three key states are posted — BC delivers down, up and
+        character events to windows, which is why
+        CinematicInterfaceHandlers.HandleKeyboard inspects GetKeyState().
+        """
+        dest = _raw_keyboard_destination()
+        if dest is None:
+            return
+        import App
+        raw = TGKeyboardEvent()
+        raw.SetUnicodeKey(wc_code)
+        raw.SetKeyState(key_state)
+        raw.SetEventType(App.ET_KEYBOARD)
+        raw.SetDestination(dest)
+        self._event_manager.AddEvent(raw)
 
 
 class KeyboardBinding(TGObject):

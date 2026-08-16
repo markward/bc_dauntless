@@ -610,6 +610,411 @@ def test_stop_cancels_pending_delay_timers():
     assert log == []
 
 
+# ── TGSequence.Abort() must also stop in-flight children ────────────────────
+#
+# Regression: TGSequence.Abort() only ever cancelled SCHEDULED steps (pending
+# timers). It did nothing about a step already mid-flight -- so when that
+# child later posted its own completion, _on_dependency_complete (unlike
+# _maybe_complete) never consulted _playing and happily launched the next
+# step on a sequence the caller had just killed. E1M1's "s" skip-intro key
+# hit this exactly: App.TGActionManager_KillActions("CharacterIntros") called
+# Abort() on the currently-playing officer-intro sequence, the in-flight line
+# finished anyway, and the chain kept going underneath the undock cutscene.
+
+class _AsyncAction(TGAction):
+    """An action that starts playing but never auto-completes -- models a
+    real in-flight child (a voice line, a nested sequence) whose completion
+    arrives later via its own Completed()/event, not inline from Play()."""
+    def Play(self) -> None:
+        self._playing = True
+
+
+class _AbortRecordingAction(TGAction):
+    def __init__(self):
+        super().__init__()
+        self.abort_count = 0
+
+    def Play(self) -> None:
+        self._playing = True     # in-flight; never auto-completes
+
+    def Abort(self) -> None:
+        self.abort_count += 1
+        super().Abort()
+
+
+def test_abort_does_not_launch_dependent_when_inflight_child_later_completes():
+    """THE direct regression test for the reported bug."""
+    log = []
+    child = _AsyncAction()
+    follower = _RecordingAction(log, "next")
+    s = App.TGSequence_Create()
+    s.AddAction(child)
+    s.AddAction(follower, child)
+    s.Play()
+    assert child.IsPlaying()          # in flight
+    assert log == []                  # follower not started yet
+
+    s.Abort()
+    assert not s.IsPlaying()
+    child.Completed()                 # late-arriving completion (raced the abort)
+
+    assert log == [], (
+        "an aborted sequence must not launch a dependent step when an "
+        "in-flight child later completes")
+
+
+def test_abort_stops_inflight_child():
+    child = _AbortRecordingAction()
+    s = App.TGSequence_Create()
+    s.AddAction(child)
+    s.Play()
+    assert child.IsPlaying()
+
+    s.Abort()
+
+    assert child.abort_count == 1
+
+
+def test_abort_does_not_abort_a_child_that_already_completed():
+    child = _AbortRecordingAction()
+    cond = App.TGConditionAction_Create()   # stays pending -> keeps s playing
+    s = App.TGSequence_Create()
+    s.AddAction(child)
+    s.AddAction(cond)
+    s.Play()
+    assert child.IsPlaying()
+    child.Completed()                 # child finishes on its own...
+    assert not child.IsPlaying()
+    assert s.IsPlaying()              # ...but the sequence is still waiting on cond
+
+    s.Abort()
+
+    assert child.abort_count == 0     # already-finished child left alone
+
+
+def test_abort_stops_inflight_nested_sequence_children(monkeypatch):
+    """Nested case: aborting an outer sequence aborts an in-flight inner
+    sequence's own in-flight children -- E1M1's exact shape (CrewIntros'
+    outer sequence of per-officer TGScriptActions, each of which builds and
+    registers an INNER sequence holding the actual CharacterAction lines)."""
+    from engine.audio.tg_sound import TGSoundManager
+    handle = _FakeVoiceHandle()
+    monkeypatch.setattr(TGSoundManager, "duration_for",
+                        lambda self, name: 5.0, raising=True)
+    monkeypatch.setattr(TGSoundManager, "PlaySound",
+                        lambda self, name: handle, raising=True)
+
+    inner_sound = App.TGSoundAction_Create("SaffiIntroLine")
+    inner = TGSequence_Create()
+    inner.AddAction(inner_sound)
+
+    outer = TGSequence_Create()
+    outer.AddAction(inner)
+    outer.Play()
+
+    assert inner.IsPlaying()
+    assert inner_sound.IsPlaying()
+
+    outer.Abort()
+
+    assert handle.stopped             # the deeply-nested voice line was cut
+    assert not inner_sound.IsPlaying()
+    assert not inner.IsPlaying()
+    assert not outer.IsPlaying()
+
+
+def test_begin_step_playing_guard_alone_stops_a_late_dependent_after_stop():
+    """Pins the `_begin_step` `_playing` guard IN ISOLATION from the
+    `started = True` marking `Abort()` performs -- mutation testing showed
+    each mechanism individually uncovered (removing either alone left the
+    rest of the suite green; only removing BOTH went red).
+
+    `Stop()` (unlike `Abort()`) never marks steps started -- it just calls
+    `.Abort()`/`.Stop()` on every child and sets `self._playing = False`
+    directly. So a late-arriving completion from a child `Stop()` touched
+    reaches `_on_dependency_complete` -> `_begin_step` with its dependent
+    step still `started = False`; the ONLY thing stopping that dependent
+    from launching is the `_playing` guard."""
+    log = []
+    a = _AsyncAction()
+    b = _RecordingAction(log, "b")
+    s = App.TGSequence_Create()
+    s.AddAction(a)
+    s.AddAction(b, a)          # b depends on a, delay 0
+    s.Play()
+    assert a.IsPlaying()
+    assert log == []           # b not started
+
+    s.Stop()
+    assert not s.IsPlaying()
+
+    a.Completed()               # late-arriving completion; Stop() never
+                                 # marked b.started, so only the _playing
+                                 # guard in _begin_step can stop this
+
+    assert log == [], (
+        "the _playing guard in _begin_step must alone stop a late "
+        "dependent on a Stop()ped sequence")
+
+
+def test_abort_does_not_fire_completion_events():
+    """A killed sequence must not look like a finished one -- otherwise the
+    outer CrewIntros sequence would treat the kill as a normal completion and
+    advance straight into the next officer's intro."""
+    import sys, types
+    fired = []
+    mod = types.ModuleType("_test_seq_abort_no_complete")
+    mod.on_done = lambda obj, ev: fired.append(True)
+    sys.modules["_test_seq_abort_no_complete"] = mod
+    App.g_kTGActionManager.AddPythonFuncHandlerForInstance(
+        App.ET_ACTION_COMPLETED, "_test_seq_abort_no_complete.on_done")
+
+    child = _AsyncAction()
+    s = App.TGSequence_Create()
+    s.AddAction(child)
+    ev = App.TGEvent_Create()
+    ev.SetEventType(App.ET_ACTION_COMPLETED)
+    ev.SetDestination(App.g_kTGActionManager)
+    s.AddCompletedEvent(ev)
+    s.Play()
+
+    s.Abort()
+
+    assert fired == []                # a killed sequence must not look finished
+    App.g_kTGActionManager.RemoveHandlerForInstance(
+        App.ET_ACTION_COMPLETED, "_test_seq_abort_no_complete.on_done")
+    del sys.modules["_test_seq_abort_no_complete"]
+
+
+def test_character_action_abort_stops_audio(monkeypatch):
+    """The consequence of the fix, made explicit: aborting an in-flight
+    CharacterAction line cuts its audio immediately -- the line stops
+    mid-word rather than finishing, mirroring Skip()'s audio-stop but without
+    completing the action (an aborted line must not look finished either)."""
+    from engine.appc import crew_speech
+    from engine.appc.localization import TGLocalizationDatabase
+
+    crew_speech.bus().reset()
+    b = crew_speech.bus()
+    handles = []
+
+    def fake_play(self, wav):
+        h = _FakeVoiceHandle()
+        handles.append(h)
+        return (5.0, h)
+
+    monkeypatch.setattr(type(b), "_play_voice", fake_play, raising=True)
+    db = TGLocalizationDatabase(
+        "x.tgl", strings={"L1": "line one"}, sounds={"L1": "l1.wav"})
+    line = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L1", None, 0, db)
+    line.Play()
+    assert line.IsPlaying()
+    assert len(handles) == 1
+
+    line.Abort()
+
+    assert not line.IsPlaying()
+    assert handles[0].stopped
+
+
+def test_unplayed_character_action_abort_does_not_cut_unrelated_audio(monkeypatch):
+    """I1: CharacterAction.Abort() must not cut whatever UNRELATED line is
+    live on the single-channel crew-speech bus when THIS action never
+    played -- it never acquired the channel, so it has no business freeing
+    it. Directly reachable: TGActionManager.KillActions() calls .Abort()
+    straight on every registered action with no started/in-flight
+    distinction at all (`abort = getattr(action, "Abort", None); abort()`),
+    and so do MissionLib.GameOver / DeleteQueuedActions and
+    E3M2.PlayerDestroyed / RunAction.LostFocus on a possibly-unplayed
+    registered/master action.
+
+    CORRECTION vs the path first suspected: TGSequence.Stop() does **not**
+    reach this. `hasattr(action, "Stop")` is vacuously True for ANY
+    TGObject lacking a genuine Stop() override -- TGObject.__getattr__ hands
+    back a truthy _Stub for any unknown name (engine/core/ids.py:121-126,
+    the exact "never grep/hasattr for Appc surface" trap this project's own
+    docs warn about) -- so Stop()'s per-step dispatch always takes the
+    `action.Stop()` branch (a no-op stub) for a CharacterAction, never
+    `action.Abort()`. Verified empirically with a spy on
+    `CharacterAction.Abort` across a real `TGSequence.Stop()` call: zero
+    invocations. Tested directly against `.Abort()` here instead, which is
+    both the real reachable shape and decoupled from that unrelated,
+    pre-existing Stop()-dispatch gap (out of scope for this fix)."""
+    from engine.appc import crew_speech
+    from engine.appc.localization import TGLocalizationDatabase
+
+    crew_speech.bus().reset()
+    b = crew_speech.bus()
+    handles = []
+
+    def fake_play(self, wav):
+        h = _FakeVoiceHandle()
+        handles.append(h)
+        return (5.0, h)
+
+    monkeypatch.setattr(type(b), "_play_voice", fake_play, raising=True)
+    db = TGLocalizationDatabase(
+        "x.tgl", strings={"Other": "someone else's line", "L1": "line one"},
+        sounds={"Other": "other.wav", "L1": "l1.wav"})
+
+    # An unrelated line is live on the bus, owned by nobody in this test.
+    crew_speech.emit("Bystander", db, "Other", 0)
+    assert len(handles) == 1
+
+    never_played = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L1", None, 0, db)
+    assert not never_played.IsPlaying()       # confirmed: never played
+
+    never_played.Abort()                      # e.g. a blanket KillActions()
+
+    assert not handles[0].stopped, (
+        "an unplayed CharacterAction's Abort() cut an unrelated live line")
+
+
+def test_stop_never_reaches_character_action_abort(monkeypatch):
+    """Pins the correction above as its own assertion, independent of the
+    audio question: TGSequence.Stop() must not invoke CharacterAction.Abort
+    at all today (the hasattr/_Stub trap routes it to the no-op .Stop()
+    stub instead). If this ever starts failing, `Stop()`'s per-step
+    dispatch changed and test_unplayed_character_action_abort_does_not_cut_
+    unrelated_audio's docstring (and the fix report) need a second look."""
+    calls = []
+    real_abort = App.CharacterAction.Abort
+
+    def spy_abort(self):
+        calls.append(True)
+        return real_abort(self)
+
+    monkeypatch.setattr(App.CharacterAction, "Abort", spy_abort, raising=True)
+
+    ca = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L1", None, 0, None)
+    dep = App.TGConditionAction_Create()      # never satisfied: stays pending
+    s = App.TGSequence_Create()
+    s.AddAction(dep)
+    s.AddAction(ca, dep, 1.0)
+    s.Play()
+    assert not ca.IsPlaying()
+
+    s.Stop()
+
+    assert calls == []
+
+
+def test_abort_of_inflight_turning_character_action_does_not_cut_the_channel(
+        monkeypatch):
+    """I2 regression: an AT_SAY_LINE_AFTER_TURN action that is in-flight
+    (Play() called, IsPlaying() True) but still mid-TURN has not spoken yet
+    -- _speak() is the turn's on_complete, not called inline -- so it owns
+    nothing on the bus. Aborting it (e.g. a blanket KillActions() while it is
+    still turning) must not silence whoever else IS speaking."""
+    from engine.appc import crew_speech
+    from engine.appc.localization import TGLocalizationDatabase
+    from engine.appc.characters import CharacterClass_Create
+    import engine.bridge_character_anim as bca
+
+    crew_speech.bus().reset()
+    b = crew_speech.bus()
+    handles = []
+
+    def fake_play(self, wav):
+        h = _FakeVoiceHandle()
+        handles.append(h)
+        return (5.0, h)
+
+    monkeypatch.setattr(type(b), "_play_voice", fake_play, raising=True)
+    db = TGLocalizationDatabase(
+        "x.tgl",
+        strings={"Other": "someone else's line", "Turned": "turned line"},
+        sounds={"Other": "other.wav", "Turned": "turned.wav"})
+
+    crew_speech.emit("Bystander", db, "Other", 0)
+    assert len(handles) == 1                  # the bystander's voice is live
+
+    # request_turn_to swapped for a recorder that never invokes on_complete
+    # -- the officer is genuinely still turning, forever, from this test's
+    # point of view.
+    class _FakeTurnController:
+        def __init__(self):
+            self.calls = []
+
+        def request_turn_to(self, character, detail, *, back=False,
+                            now=False, on_complete=None):
+            self.calls.append(dict(detail=detail, on_complete=on_complete))
+
+    ctrl = _FakeTurnController()
+    monkeypatch.setattr(bca, "get_controller", lambda: ctrl)
+
+    ch = CharacterClass_Create()
+    ch.SetActive(1)
+    line = App.CharacterAction_Create(
+        ch, App.CharacterAction.AT_SAY_LINE_AFTER_TURN, "Turned", "Captain",
+        0, db)
+    line.Play()
+
+    assert line.IsPlaying()
+    assert len(ctrl.calls) == 1                # turn issued...
+    assert len(handles) == 1                   # ...but the line has NOT spoken
+
+    line.Abort()
+
+    assert not handles[0].stopped, (
+        "aborting a line that is still turning (never spoke) must not cut "
+        "the channel someone else owns")
+
+
+def test_abort_of_naturally_completed_character_action_does_not_cut_new_line(
+        monkeypatch):
+    """Pins the `_playing` half of the `Abort()` gate IN ISOLATION from
+    `_speaking` -- the same defect class as M1 (a mechanism individually
+    uncovered), reintroduced by the I1/I2 fix itself. `_speaking` is never
+    reset except by a fresh `Play()` (see the reset added there), so a
+    naturally-completed line carries `_speaking == True` forever. Only
+    `_playing` (cleared by `Completed()`) stops `Abort()` from cutting a
+    brand new, unrelated line when it hits that stale, long-finished
+    registration. This is a routine shape, not a contrived one:
+    `TGActionManager.RegisterAction` appends and never prunes, so
+    `KillActions()` routinely aborts long-finished actions alongside live
+    ones."""
+    from engine.appc import crew_speech
+    from engine.appc.localization import TGLocalizationDatabase
+
+    crew_speech.bus().reset()
+    b = crew_speech.bus()
+    handles = []
+
+    def fake_play(self, wav):
+        h = _FakeVoiceHandle()
+        handles.append(h)
+        return (5.0, h)
+
+    monkeypatch.setattr(type(b), "_play_voice", fake_play, raising=True)
+    db = TGLocalizationDatabase(
+        "x.tgl", strings={"L1": "line one", "L2": "line two"},
+        sounds={"L1": "l1.wav", "L2": "l2.wav"})
+
+    finished = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L1", None, 0, db)
+    finished.Play()
+    assert finished.IsPlaying()
+    assert len(handles) == 1
+
+    _advance_real_time(5.1)                  # let the 5s line run out
+    assert not finished.IsPlaying()          # completed naturally, not cut
+    assert not handles[0].stopped
+
+    # A brand new, unrelated line now holds the channel.
+    crew_speech.emit("Someone", db, "L2", 0)
+    assert len(handles) == 2
+
+    finished.Abort()                         # e.g. a stale KillActions() hit
+
+    assert not handles[1].stopped, (
+        "aborting an already-finished CharacterAction cut a brand new, "
+        "unrelated line -- the _playing half of the gate is load-bearing")
+
+
 # ── TGSoundAction / TGCreditAction inline completion ─────────────────────────
 
 def test_sound_action_completes_inline_so_chain_advances():
@@ -1189,3 +1594,91 @@ def test_skip_events_does_not_silence_the_follow_on_line(monkeypatch):
     sub = _App.TopWindow_GetTopWindow().FindMainWindow(_App.MWT_SUBTITLE)
     snap = sub._snapshot(now=0.0)
     assert snap is not None and snap["speech"] == "line two"
+
+
+# ── TGActionManager.KillActions ────────────────────────────────────────────
+#
+# App.TGActionManager_KillActions (sdk/Build/scripts/App.py:10105) aborts the
+# actions registered under a name, or every registered action when called with
+# no name. E1M1.SkipOpeningSequence:1772 uses the named form; E6M1/E6M2 use
+# both. E1M1 registers SIX sequences under "CharacterIntros" (lines 2052, 2145,
+# 2213, 2291, 2390, 2463) -- killing only the last one would leave five intro
+# sequences playing under the undock cutscene.
+
+class _KillActionsRecordingAction(TGAction):
+    def __init__(self):
+        super().__init__()
+        self.aborted = 0
+
+    def Abort(self):
+        self.aborted += 1
+        super().Abort()
+
+
+def test_kill_actions_aborts_every_action_under_the_name():
+    mgr = TGActionManager()
+    a, b, c = _KillActionsRecordingAction(), _KillActionsRecordingAction(), _KillActionsRecordingAction()
+    mgr.RegisterAction(a, "CharacterIntros")
+    mgr.RegisterAction(b, "CharacterIntros")
+    mgr.RegisterAction(c, "CharacterIntros")
+    mgr.KillActions("CharacterIntros")
+    assert (a.aborted, b.aborted, c.aborted) == (1, 1, 1)
+
+
+def test_kill_actions_unregisters_the_name():
+    mgr = TGActionManager()
+    mgr.RegisterAction(_KillActionsRecordingAction(), "CharacterIntros")
+    mgr.KillActions("CharacterIntros")
+    assert mgr.IsRegistered("CharacterIntros") == 0
+    assert mgr.FindAction("CharacterIntros") is None
+
+
+def test_kill_actions_leaves_other_names_alone():
+    mgr = TGActionManager()
+    keep = _KillActionsRecordingAction()
+    mgr.RegisterAction(_KillActionsRecordingAction(), "CharacterIntros")
+    mgr.RegisterAction(keep, "FriendlyFireWarning")
+    mgr.KillActions("CharacterIntros")
+    assert keep.aborted == 0
+    assert mgr.IsRegistered("FriendlyFireWarning") == 1
+
+
+def test_kill_actions_with_no_name_kills_everything():
+    mgr = TGActionManager()
+    a, b = _KillActionsRecordingAction(), _KillActionsRecordingAction()
+    mgr.RegisterAction(a, "One")
+    mgr.RegisterAction(b, "Two")
+    mgr.KillActions()
+    assert (a.aborted, b.aborted) == (1, 1)
+    assert mgr.IsRegistered("One") == 0
+    assert mgr.IsRegistered("Two") == 0
+
+
+def test_kill_actions_on_unknown_name_is_a_no_op():
+    mgr = TGActionManager()
+    mgr.KillActions("NeverRegistered")  # must not raise
+
+
+def test_find_action_still_returns_the_most_recent_registration():
+    # Regression guard for the name -> list registry change.
+    mgr = TGActionManager()
+    a, b = TGAction(), TGAction()
+    mgr.RegisterAction(a, "X")
+    mgr.RegisterAction(b, "X")
+    assert mgr.FindAction("X") is b
+
+
+def test_module_level_wrapper_routes_to_the_app_singleton():
+    import App
+    from engine.appc.actions import TGActionManager_KillActions
+    a = _KillActionsRecordingAction()
+    App.g_kTGActionManager.RegisterAction(a, "PlanTaskFour")
+    TGActionManager_KillActions("PlanTaskFour")
+    assert a.aborted == 1
+    assert App.g_kTGActionManager.IsRegistered("PlanTaskFour") == 0
+
+
+def test_app_exports_kill_actions_as_a_callable_not_a_stub():
+    import App
+    assert callable(App.TGActionManager_KillActions)
+    assert type(App.TGActionManager_KillActions).__name__ != "_NamedStub"

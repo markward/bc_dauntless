@@ -3,7 +3,7 @@ from engine.core import stub_telemetry
 from engine.appc.events import (
     TGEvent, TGEvent_Create,
     TGBoolEvent, TGBoolEvent_Create,
-    TGKeyboardEvent, ET_KEYBOARD_EVENT,
+    TGKeyboardEvent, ET_KEYBOARD_EVENT, ET_KEYBOARD,
     WeaponHitEvent, ET_WEAPON_HIT, ET_WARP_BUTTON_PRESSED,
     ET_TORPEDO_RELOAD, ET_TORPEDO_FIRED,
     ET_WEAPON_FIRED, ET_WEAPON_FIRE_FAILED, ET_TORPEDO_AMMO_CONSUMED,
@@ -161,6 +161,7 @@ from engine.appc.actions import (
     SubtitleAction, SubtitleAction_Create,
     TGActionManager,
     TGActionManager_RegisterAction, TGActionManager_UnregisterAction,
+    TGActionManager_KillActions,
     TGActionManager_FindAction, TGActionManager_SkipEvents,
     TGCreditAction, TGCreditAction_Create,
     TGCreditAction_SetDefaultColor, TGCreditAction_GetDefaultColor,

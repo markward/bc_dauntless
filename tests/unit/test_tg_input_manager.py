@@ -102,3 +102,87 @@ def test_keyup_works_for_modifier_registered_code():
     )
     im.OnKeyUp(App.WC_CAPS_K)
     assert [evt.GetKeyState() for evt in captured] == [KS_KEYUP]
+
+
+# ── GetDisplayStringFromUnicode ────────────────────────────────────────────
+#
+# BC returns the printable label for a key so scripts can build help text
+# ("Press 's' to skip introduction", E1M1's W/S/A/D tactical help). The label
+# comes from the 4th RegisterUnicodeKey argument, localized through the 3rd
+# (a TGL database). Rank 57 in docs/stub_heatmap.md, 342 live hits.
+
+class _FakeDatabase:
+    """Minimal TGL database stand-in: GetString(key) -> localized text."""
+    def __init__(self, mapping):
+        self._mapping = mapping
+
+    def GetString(self, key):
+        from engine.appc.localization import _TGString
+        return _TGString(self._mapping.get(str(key), str(key)))
+
+
+def test_display_string_uses_the_registered_name():
+    from engine.appc.input import WC_S, KY_S
+    im, _ = _fresh_manager()
+    im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+    assert im.GetDisplayStringFromUnicode(WC_S).GetCString() == "s"
+
+
+def test_display_string_is_localized_through_the_database():
+    from engine.appc.input import WC_ESCAPE, KY_ESCAPE
+    im, _ = _fresh_manager()
+    db = _FakeDatabase({"ESC": "Esc"})
+    im.RegisterUnicodeKey(WC_ESCAPE, KY_ESCAPE, db, "ESC")
+    assert im.GetDisplayStringFromUnicode(WC_ESCAPE).GetCString() == "Esc"
+
+
+def test_display_string_falls_back_to_the_name_when_db_lacks_the_key():
+    from engine.appc.input import WC_S, KY_S
+    im, _ = _fresh_manager()
+    im.RegisterUnicodeKey(WC_S, KY_S, _FakeDatabase({}), "s")
+    assert im.GetDisplayStringFromUnicode(WC_S).GetCString() == "s"
+
+
+def test_display_string_for_unregistered_key_is_empty_not_a_stub():
+    from engine.appc.input import WC_S
+    im, _ = _fresh_manager()
+    result = im.GetDisplayStringFromUnicode(WC_S)
+    assert result.GetCString() == ""
+
+
+def test_display_string_result_compares_equal_to_a_plain_str():
+    # E1M1.SkipOpeningSequence compares
+    #   kDisplayString.GetCString() == kSkipKey.GetCString()
+    # where the right side comes from a TGL lookup. Both must be str-comparable.
+    from engine.appc.input import WC_S, KY_S
+    im, _ = _fresh_manager()
+    im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+    lhs = im.GetDisplayStringFromUnicode(WC_S).GetCString()
+    assert lhs == "s"
+
+
+def test_display_string_finds_the_tuple_registered_shift_variant():
+    """RegisterUnicodeKey stores modifier variants under a (wc_code,
+    modifier) tuple key, not the bare int (KeyConfig.py:195 registers
+    WC_CAPS_S with modifier=KY_SHIFT and label "S", distinct from WC_S's "s").
+    A bare-int-only lookup leaves every shifted key permanently blank --
+    GetDisplayStringFromUnicode must fall back to the tuple entry whose
+    [0] == wc_code."""
+    import App
+    im, _ = _fresh_manager()
+    im.RegisterUnicodeKey(App.WC_CAPS_S, App.KY_S, None, "S", App.KY_SHIFT)
+    assert im.GetDisplayStringFromUnicode(App.WC_CAPS_S).GetCString() == "S"
+
+
+def test_display_string_against_the_real_key_config_table():
+    """Against KeyConfig.MapScancodes() -- the real registration table BC
+    ships, not a fake -- WC_CAPS_S must resolve to "S" and bare WC_S must
+    still resolve to "s". This is the check that would have caught the
+    empty-label gap the bare-int-only lookup left behind."""
+    import App
+    import KeyConfig
+    KeyConfig.MapScancodes()
+    assert App.g_kInputManager.GetDisplayStringFromUnicode(
+        App.WC_S).GetCString() == "s"
+    assert App.g_kInputManager.GetDisplayStringFromUnicode(
+        App.WC_CAPS_S).GetCString() == "S"

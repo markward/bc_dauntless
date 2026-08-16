@@ -41,6 +41,36 @@ def test_reset_clears_viewscreen_in_use_flag():
     assert not MissionLib.IsViewscreenOn()
 
 
+def test_reset_clears_the_named_action_registry():
+    """g_kTGActionManager is a process-lifetime singleton (App.py:846) and
+    RegisterAction appends to a per-name LIST, so without a reset every action
+    ever registered is retained across mission swaps. The no-argument
+    KillActions() form (E6M1.py:894/1013/3816/3851, E6M2.py:1043/3270/3316)
+    then calls Abort() on a previous mission's actions — TGSequence.Abort()
+    unregisters the object id, TGSoundAction.Abort() stops audio. Retention
+    must be bounded to one mission.
+
+    NOTE the LIST semantics are correct and must stay: E1M1 registers six
+    separate sequences under "CharacterIntros" and the skip must kill them all.
+    Only the lifetime was wrong.
+    """
+    class _Recorder:
+        def __init__(self):
+            self.aborted = 0
+
+        def Abort(self):
+            self.aborted += 1
+
+    stale = _Recorder()
+    App.g_kTGActionManager.RegisterAction(stale, "CharacterIntros")
+
+    reset_sdk_globals()
+
+    assert App.g_kTGActionManager._registered == {}
+    App.TGActionManager_KillActions()          # next mission's bare form
+    assert stale.aborted == 0, "a previous mission's action was aborted"
+
+
 def test_reset_rearms_ship_display_slots():
     from engine.sdk_ui.widgets import ship_display
     ship_display._create_count = 2          # both per-bridge slots consumed
