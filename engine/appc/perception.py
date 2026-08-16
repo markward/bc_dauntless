@@ -5,17 +5,29 @@ answers the per-observer question, which cannot be stored: the same ship is
 perceivable to one observer and not another at the same instant, so a stored
 answer would have to be per-observer-per-frame.
 
-STAGE 3 SCOPE: folds range, cloak, and the sensors-offline short-circuit into
-one query — `perceived_by` — reproducing the UI detectability rule that used
-to live in engine.ui.target_list_visibility (now deleted; the target menu
-derives row visibility from these records) and engine.ui.target_list_view
-exactly, with NO nebula concealment. Distance was previously recomputed in five places
-under two different conventions; it is now computed once here. `contacts_for`
-stays as a thin back-compat wrapper for callers not yet migrated to Contact
-records. Stage 4 switches perceivability to sensor_detection.can_detect
-(which adds nebula concealment with a stateful hysteresis latch) and makes
-cloak range-defeatable, both behind a stock-BC fidelity toggle. See
-docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md.
+Stage 3 folded range, cloak, and the sensors-offline short-circuit into one
+query — `perceived_by` — replacing the UI detectability rule that used to live
+in engine.ui.target_list_visibility (now deleted; the target menu derives row
+visibility from these records) and engine.ui.target_list_view. Distance was
+previously recomputed in five places under two different conventions; it is now
+computed once here. `contacts_for` stays as a thin back-compat wrapper for
+callers not yet migrated to Contact records.
+
+STAGE 4 SCOPE: there is now exactly ONE detection rule.
+`sensor_detection.can_detect` — already the gate for weapons, AI targeting and
+the player's lock — is what `perceived_by` calls, so the target list and radar
+gained nebula concealment and the range-contest cloak. Before this you could
+select and hold a target you could not fire on; that is a DELIBERATE gameplay
+change, pinned by tests/unit/test_nebula_hides_contacts_from_ui.py.
+
+Two consequences worth knowing before editing the loop below. First,
+`can_detect` mutates a per-(observer, target) hysteresis latch, so it must be
+called EXACTLY ONCE per contact per frame — this module is now a writer of that
+shared state, not just a reader. Second, it takes the squared distance this
+module already computed rather than deriving it again; that hand-off is what
+keeps the five-site consolidation from being undone.
+
+See docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md.
 """
 from __future__ import annotations
 
@@ -36,15 +48,14 @@ class Contact:
     is now computed once here, replacing five call sites that used to derive
     the same player-to-contact vector under two different conventions.
 
-    That consolidation is NOT total, and two sites still recompute the
-    identical squared distance independently — do not describe this class as
-    "the only place distance is computed" without naming them:
-    `sensor_detection.can_detect` (its own range/cloak/nebula gate, which this
-    module does not yet call — see the STAGE 3 SCOPE note above) recomputes it
-    every frame **by design**, because a later stage merges the two; and
+    That consolidation is NOT total — do not describe this class as "the only
+    place distance is computed" without naming the exception.
+    `sensor_detection.can_detect` used to recompute the identical squared
+    distance every frame; it no longer does for this path, because
+    `perceived_by` hands its value in via `dist_sq_gu=`. Still outstanding:
     `engine.ui.weapons_display_panel`'s phaser-range check derives the same
     vector again for its own arc test — a sixth site the original five-site
-    survey never counted. Neither is in scope to fix here; noting them is.
+    survey never counted. Not in scope to fix here; noting it is.
     """
     ship: object
     dist_sq_gu: float
@@ -67,8 +78,7 @@ def perceived_by(observer) -> tuple:
     makes warp self-correcting: mid-warp the player sits alone in the
     _WarpTransit set, so the list empties without anyone clearing it.
     """
-    from engine.appc.sensor_detection import (
-        effective_sensor_range, is_hidden_by_cloak)
+    from engine.appc.sensor_detection import can_detect, effective_sensor_range
     from engine.appc.ship_death import _out_of_action, is_targetable_wreck
 
     if observer is None:
@@ -80,9 +90,10 @@ def perceived_by(observer) -> tuple:
         return ()
 
     # Sensors offline => effective range 0 => nothing perceivable. One check,
-    # before any iteration.
+    # before any iteration. can_detect re-derives this per contact and returns
+    # False on its own for range 0, so this is purely a saved-work short
+    # circuit; the answer is the same either way.
     range_gu = effective_sensor_range(observer)
-    range_sq = range_gu * range_gu
     ox, oy, oz = _get_xyz(observer)
 
     out = []
@@ -92,13 +103,15 @@ def perceived_by(observer) -> tuple:
         sx, sy, sz = _get_xyz(ship)
         dx, dy, dz = sx - ox, sy - oy, sz - oz
         dist_sq = dx * dx + dy * dy + dz * dz
-        # Cheap bools before the distance comparison; nothing here samples a
-        # field or takes a square root.
-        perceivable = (
-            range_gu > 0.0
-            and not is_hidden_by_cloak(ship)
-            and dist_sq <= range_sq
-        )
+        # ONE detection rule, shared with the weapons, AI targeting and the
+        # player's lock. can_detect also mutates a per-(observer, target)
+        # hysteresis latch, so it must be called EXACTLY ONCE per contact per
+        # frame — a second call anywhere would drive the latch twice as fast as
+        # the frame rate and let a lock re-acquire on the same frame it broke.
+        # The already-derived squared distance is handed in rather than
+        # recomputed inside.
+        perceivable = range_gu > 0.0 and can_detect(
+            observer, ship, dist_sq_gu=dist_sq)
         alive_or_wreck = (not _out_of_action(ship)) or is_targetable_wreck(ship)
         out.append(Contact(
             ship=ship,

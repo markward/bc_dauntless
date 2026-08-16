@@ -634,7 +634,7 @@ def test_destroyed_ship_excluded_from_target_list():
         _set_current_game(None)
 
 
-def test_view_does_not_re_derive_detectability():
+def test_view_does_not_re_derive_detectability(monkeypatch):
     """The record is the frame's answer; the view does not second-guess it.
 
     Cloaking a ship without re-pushing must NOT change the listing — the next
@@ -643,7 +643,18 @@ def test_view_does_not_re_derive_detectability():
     is_hidden_by_cloak / _out_of_action copy of the rule on top of the record,
     which is the same duplication that retired engine.ui.target_list_visibility
     for disagreeing with the menu.
+
+    Held under ENHANCED_SENSOR_CONTEST = False so that cloaking is guaranteed
+    to change the answer at all. Since stage 4 the push runs can_detect, where
+    cloak is a range multiplier, and this fixture leaves the enemy at the
+    player's own position — well inside the cloak bubble — so with the flag at
+    its default the row correctly survives the push and there would be no
+    before/after difference for this test to observe. The subject here is the
+    VIEW's non-duplication, not the cloak rule; the flag just restores a
+    detectability change for it to not-re-derive.
     """
+    import engine.appc.sensor_detection as sd
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
     from engine.ui.target_list_view import TargetListView
     from engine.appc.sets import SetClass
     from engine.appc.subsystems import CloakingSubsystem

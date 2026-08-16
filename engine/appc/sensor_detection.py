@@ -140,21 +140,24 @@ def concealment_at(ship) -> float:
 def is_hidden_by_cloak(target) -> bool:
     """True iff *target* is fully cloaked and therefore invisible to everyone.
 
-    ⚠️ THIS NO LONGER MATCHES ``can_detect``. It was written as the
-    range-independent companion to that function's cloak gate, but that gate is
-    now a range *contest* (ENHANCED_SENSOR_CONTEST / CLOAK_RANGE_FACTOR above):
-    ``can_detect`` will report a cloaked ship inside 1% of effective sensor
-    range, while this helper stays absolute — any cloak hides the contact at
-    any distance.
+    ⚠️ HAS NO PRODUCTION CALLERS, and does NOT match ``can_detect``. It was
+    written as the range-independent companion to that function's cloak gate,
+    but that gate is now a range *contest* (ENHANCED_SENSOR_CONTEST /
+    CLOAK_RANGE_FACTOR above): ``can_detect`` reports a cloaked ship inside 1%
+    of effective sensor range, while this helper stays absolute — any cloak
+    hides the contact at any distance.
 
-    The divergence is DELIBERATE and TEMPORARY, not an oversight and not a bug
-    to "fix" by reverting either side. Its consequence is visible in game: a
-    cloaked ship inside the bubble is shootable (the firing gate and the
-    player's lock run ``can_detect``) but absent from the radar and target
-    list, which run this helper via its one production caller,
-    ``engine.appc.perception.perceived_by`` (perception.py:99). The next task
-    moves those surfaces onto ``can_detect``, at which point that caller — and
-    with it this helper's production role — goes away.
+    Its last production caller was ``engine.appc.perception.perceived_by``,
+    which drove the radar and target list. That call is gone: detection is now
+    ONE rule, ``can_detect``, everywhere. The temporary divergence it used to
+    document (a cloaked ship inside the bubble being shootable but absent from
+    the target list) no longer exists.
+
+    Do NOT reintroduce it as a detectability gate — reaching for it is how the
+    UI drifted away from the weapons in the first place, and it also bypasses
+    the nebula concealment and the per-pair hysteresis latch that ``can_detect``
+    owns. It survives only as a narrow "is this ship fully cloaked?" predicate
+    with test coverage (tests/unit/test_cloak_target_visibility.py).
 
     Gate on IsCloaked() (fully hidden), not IsTryingToCloak() — a mid-cloak ship
     stays visible until the fade completes. That much still matches
@@ -163,7 +166,7 @@ def is_hidden_by_cloak(target) -> bool:
     return cloak is not None and bool(cloak.IsCloaked())
 
 
-def can_detect(observer, target) -> bool:
+def can_detect(observer, target, dist_sq_gu=None) -> bool:
     """True iff *observer* can detect *target* within its effective sensor
     range, accounting for nebula tactical concealment.
 
@@ -171,6 +174,16 @@ def can_detect(observer, target) -> bool:
     LOCK_BREAK_T. A broken lock latches (per-pair hysteresis) until
     concealment drops to LOCK_BREAK_T - HYSTERESIS. When below the
     threshold, effective range is reduced by (1 - CONCEAL_K * concealment).
+
+    *dist_sq_gu* is the SQUARED observer→target centre distance in game units.
+    Pass it only when the caller has already derived that exact number for its
+    own reasons; when None (every caller but one) it is computed here, so the
+    default behaviour is unchanged. The one caller that supplies it is
+    ``engine.appc.perception.perceived_by``, which computes it for the Contact
+    record it builds — recomputing it here would restore a duplicate derivation
+    one stage after five of them were consolidated. A wrong value silently
+    produces a wrong detection answer, so do NOT pass an approximation, a
+    cached value from a previous frame, or a surface distance.
     """
     # ── Cloak gate ────────────────────────────────────────────────────────
     # Stock BC: a fully cloaked target is undetectable — the SDK SelectTarget
@@ -201,10 +214,12 @@ def can_detect(observer, target) -> bool:
     # Scale range by the concealment factor (no-op when conceal == 0).
     r = r * (1.0 - CONCEAL_K * conceal)
 
-    ox, oy, oz = _get_xyz(observer)
-    tx, ty, tz = _get_xyz(target)
-    dx, dy, dz = tx - ox, ty - oy, tz - oz
-    return (dx * dx + dy * dy + dz * dz) <= (r * r)
+    if dist_sq_gu is None:
+        ox, oy, oz = _get_xyz(observer)
+        tx, ty, tz = _get_xyz(target)
+        dx, dy, dz = tx - ox, ty - oy, tz - oz
+        dist_sq_gu = dx * dx + dy * dy + dz * dz
+    return dist_sq_gu <= (r * r)
 
 
 def clear_undetectable_player_lock(player) -> None:

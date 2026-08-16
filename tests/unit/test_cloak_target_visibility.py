@@ -1,7 +1,8 @@
 """A fully cloaked ship drops off the player's target list / radar and can't be
 held as a weapon lock — the same per-render road the destruction filter uses.
 
-Surfaces (all keyed on sensor_detection.is_hidden_by_cloak):
+Surfaces (all keyed on sensor_detection.can_detect, since stage 4 routed
+perception.perceived_by through it — they were keyed on is_hidden_by_cloak):
   * radar / sensor panel — filters rows on STSubsystemMenu.IsVisible(); the
     per-tick perception push drops a cloaked contact from the menu.
   * target list view — its _snapshot inclusion predicate drops cloaked ships
@@ -11,6 +12,16 @@ Surfaces (all keyed on sensor_detection.is_hidden_by_cloak):
 
 Boundary matches can_detect: hidden only while fully CLOAKED, visible again the
 moment it starts decloaking.
+
+⚠️ CLOAK IS NO LONGER ABSOLUTE ON THESE SURFACES. Cloak multiplies effective
+sensor range by CLOAK_RANGE_FACTOR (tests/unit/test_cloak_detection_contest.py),
+and since stage 4 the radar and target list run that same rule. `_scene()`
+models no BaseSensorRange, so effective range is FALLBACK_RANGE_GU (30000) and
+the cloak bubble is 300 GU — with the enemy 50 GU away, a cloaked ship stays
+listed under the default configuration. The "drops off the list" tests below
+therefore state STOCK BC and are held under ENHANCED_SENSOR_CONTEST = False,
+each paired with a companion pinning the default. Their assertions are
+unchanged; only the configuration they describe is now explicit.
 """
 import App
 
@@ -78,7 +89,13 @@ def test_is_hidden_by_cloak_predicate():
     assert not is_hidden_by_cloak(plain)
 
 
-def test_cloaked_ship_marked_not_visible_for_radar():
+def test_cloaked_ship_marked_not_visible_for_radar(monkeypatch):
+    """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False — see the
+    module docstring. The enemy sits 50 GU away, inside the 300 GU cloak
+    bubble, so with the flag at its default it stays on the radar; the
+    companion below pins that."""
+    import engine.appc.sensor_detection as sd
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
     pSet, player, enemy, menu = _scene()
     _pump(menu, player)
     assert _enemy_visible(menu, enemy)
@@ -91,7 +108,30 @@ def test_cloaked_ship_marked_not_visible_for_radar():
     assert _enemy_visible(menu, enemy)
 
 
-def test_cloaked_ship_dropped_from_target_list_view():
+def test_cloaked_ship_stays_on_radar_inside_the_bubble():
+    """INTENTIONAL BEHAVIOUR CHANGE (stage 4, ENHANCED_SENSOR_CONTEST
+    default-on). The radar now runs the same range contest the weapons do, so a
+    cloaked ship you can already shoot is one you can also see. Previously the
+    radar ran the absolute is_hidden_by_cloak and dropped it at any range.
+
+    50 GU is inside the 300 GU bubble (FALLBACK_RANGE_GU x CLOAK_RANGE_FACTOR);
+    beyond it the contact goes, which keeps the original guarantee live.
+    """
+    pSet, player, enemy, menu = _scene()
+    enemy.GetCloakingSubsystem().InstantCloak()
+    _pump(menu, player)
+    assert _enemy_visible(menu, enemy)
+
+    enemy.SetTranslateXYZ(0, 500, 0)
+    _pump(menu, player)
+    assert not _enemy_visible(menu, enemy)
+
+
+def test_cloaked_ship_dropped_from_target_list_view(monkeypatch):
+    """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False — see the
+    module docstring and the companion below."""
+    import engine.appc.sensor_detection as sd
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
     pSet, player, enemy, menu = _scene()
 
     class _Game:
@@ -117,6 +157,34 @@ def test_cloaked_ship_dropped_from_target_list_view():
         rows_after = view._snapshot()[3]
         names_after = {r[0] for r in rows_after}
         assert "Enemy" not in names_after
+    finally:
+        _gmod._current_game = saved
+
+
+def test_cloaked_ship_stays_in_target_list_view_inside_the_bubble():
+    """INTENTIONAL BEHAVIOUR CHANGE (stage 4, ENHANCED_SENSOR_CONTEST
+    default-on) — the target list is the other surface that used to run the
+    absolute is_hidden_by_cloak. Same 50 GU / 300 GU geometry as the radar
+    companion above."""
+    pSet, player, enemy, menu = _scene()
+
+    class _Game:
+        def GetPlayer(self):
+            return player
+        GetCurrentPlayer = GetPlayer
+    import engine.core.game as _gmod
+    saved = _gmod._current_game
+    _gmod._current_game = _Game()
+    try:
+        from engine.ui.target_list_view import TargetListView
+        view = TargetListView()
+        enemy.GetCloakingSubsystem().InstantCloak()
+        _pump(menu, player)
+        assert "Enemy" in {r[0] for r in view._snapshot()[3]}
+
+        enemy.SetTranslateXYZ(0, 500, 0)
+        _pump(menu, player)
+        assert "Enemy" not in {r[0] for r in view._snapshot()[3]}
     finally:
         _gmod._current_game = saved
 
