@@ -19,6 +19,18 @@ def _listed(*ships):
 
 
 
+def _pump(target_menu, player):
+    """One frame of the host loop's contact push (host_loop._pump_contacts).
+
+    The listing is DERIVED from the pushed record, so a change to a ship's
+    state reaches the panel on the next push — as it does in game, where the
+    push runs every frame before the panels render. The view no longer keeps
+    its own copy of the cloak/death rule to short-circuit that.
+    """
+    from engine.appc.perception import perceived_by
+    target_menu.set_contacts(perceived_by(player))
+
+
 def _setup_game_with_player():
     from engine.core.game import Game, Episode, Mission, _set_current_game
     mission = Mission()
@@ -575,17 +587,30 @@ def test_query_subsystem_condition_defaults_to_100_when_resolution_misses():
 
 def test_destroyed_ship_excluded_from_target_list():
     """A ship that is dying or dead (death sequence in progress) must drop
-    off the target list immediately, not linger for the throes window."""
+    off the target list immediately, not linger for the throes window.
+
+    Driven through the real push: death is decided ONCE, by
+    perception.perceived_by, and reaches the panel as `Contact.targetable`.
+    The view used to re-run _out_of_action on its own, a second copy of the
+    rule that could disagree with the record.
+    """
     from engine.ui.target_list_view import TargetListView
+    from engine.appc.sets import SetClass
+    from engine.appc import contact_index
+    contact_index.reset()
     App._reset_target_menu_singleton()
     target_menu = App.STTargetMenu_CreateW("Targets")
     game, player, mission = _setup_game_with_player()
     try:
+        pSet = SetClass()
+        pSet.AddObjectToSet(player, "Player")
         alive = ShipClass(); alive.SetName("Alive")
+        pSet.AddObjectToSet(alive, "Alive")
         doomed = ShipClass(); doomed.SetName("Doomed")
-        target_menu.set_contacts(_listed(alive, doomed))
+        pSet.AddObjectToSet(doomed, "Doomed")
 
         doomed.SetDying(True)   # death sequence started -> not a valid target
+        _pump(target_menu, player)
 
         view = TargetListView()
         script = view.render_payload()
@@ -597,12 +622,55 @@ def test_destroyed_ship_excluded_from_target_list():
 
         # A fully dead ship is likewise excluded.
         alive.SetDead(True)
+        _pump(target_menu, player)
         view.invalidate()
         script2 = view.render_payload()
         body2 = script2[len("setTargetList("):-2]
         names2 = [r["name"] for r in json.loads(body2)["rows"]]
         assert names2 == []
     finally:
+        contact_index.reset()
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_view_does_not_re_derive_detectability():
+    """The record is the frame's answer; the view does not second-guess it.
+
+    Cloaking a ship without re-pushing must NOT change the listing — the next
+    push is what drops the row (tests/unit/test_cloak_target_visibility.py
+    covers that path end to end). The view used to carry its own
+    is_hidden_by_cloak / _out_of_action copy of the rule on top of the record,
+    which is the same duplication that retired engine.ui.target_list_visibility
+    for disagreeing with the menu.
+    """
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.sets import SetClass
+    from engine.appc.subsystems import CloakingSubsystem
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc import contact_index
+    contact_index.reset()
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        pSet = SetClass()
+        pSet.AddObjectToSet(player, "Player")
+        enemy = ShipClass_Create("Warbird"); enemy.SetName("Enemy")
+        enemy.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
+        pSet.AddObjectToSet(enemy, "Enemy")
+        _pump(target_menu, player)
+
+        view = TargetListView()
+        assert [r[0] for r in view._snapshot()[3]] == ["Enemy"]
+
+        enemy.GetCloakingSubsystem().InstantCloak()      # no re-push
+        assert [r[0] for r in view._snapshot()[3]] == ["Enemy"]
+
+        _pump(target_menu, player)                       # the frame that drops it
+        assert [r[0] for r in view._snapshot()[3]] == []
+    finally:
+        contact_index.reset()
         from engine.core.game import _set_current_game
         _set_current_game(None)
 
@@ -613,18 +681,23 @@ def test_destroyed_ship_lingers_in_list_then_drops_after_removal():
     import json
     from engine.ui.target_list_view import TargetListView
     from engine.appc.ships import ShipClass
-    from engine.appc import ship_death
+    from engine.appc.sets import SetClass
+    from engine.appc import contact_index, ship_death
 
     ship_death.reset()
+    contact_index.reset()
     App._reset_target_menu_singleton()
     target_menu = App.STTargetMenu_CreateW("Targets")
     game, player, mission = _setup_game_with_player()
     try:
+        pSet = SetClass()
+        pSet.AddObjectToSet(player, "Player")
         wreck = ShipClass(); wreck.SetName("Doomed")
-        target_menu.set_contacts(_listed(wreck))
+        pSet.AddObjectToSet(wreck, "Doomed")
 
         # Enter the death sequence: now dying (out of action) but a wreck.
         ship_death.begin(wreck)
+        _pump(target_menu, player)
         view = TargetListView()
         state = json.loads(view.render_payload()[len("setTargetList("):-2])
         assert "Doomed" in [r["name"] for r in state["rows"]]   # listed as a wreck
@@ -633,10 +706,12 @@ def test_destroyed_ship_lingers_in_list_then_drops_after_removal():
         ship_death.advance(ship_death.THROES_DURATION)
         ship_death.advance(ship_death.WRECK_LINGER_DURATION)
         assert ship_death.is_targetable_wreck(wreck) is False
+        _pump(target_menu, player)
         state2 = json.loads(view.render_payload()[len("setTargetList("):-2])
         assert "Doomed" not in [r["name"] for r in state2["rows"]]
     finally:
         ship_death.reset()
+        contact_index.reset()
         from engine.core.game import _set_current_game
         _set_current_game(None)
 

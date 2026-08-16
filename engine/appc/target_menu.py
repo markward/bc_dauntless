@@ -381,10 +381,18 @@ class STTargetMenu(STTopLevelMenu):
         target list from real ships.
 
         ⚠️ It takes a SET, not an observer, so it cannot answer perception:
-        the records it synthesises are flat "listed and drawable" with ZERO
-        distances. Do NOT read `contact_for(...).surface_gu` after a push from
+        the records it synthesises are flat "listed and drawable" with NO
+        distance. Do NOT read `contact_for(...).surface_gu` after a push from
         here — only after the host loop's `perceived_by` push, which is the
         production path. This exists for bootstrap/test population only.
+
+        The distances are NaN, not 0.0, and that is deliberate. `contact_for`
+        cannot tell a synthesised zero from a genuine one, so a reader that
+        wrongly trusts these would render a perfectly plausible "0.00 km" — a
+        believable wrong number is the worst failure mode this codebase has
+        (it is the same shape as the silent `_Stub` no-ops in
+        docs/stub_heatmap.md). NaN propagates through the km conversion and
+        shows up on screen as "nan km": still broken, but visibly so.
         """
         import App as _App
         from engine.appc.perception import Contact
@@ -393,8 +401,9 @@ class STTargetMenu(STTopLevelMenu):
             source_set = _App.g_kSetManager.GetSet("bridge")
         if source_set is None:
             return
+        nan = float("nan")
         self.set_contacts([
-            Contact(ship=o, dist_sq_gu=0.0, surface_gu=0.0,
+            Contact(ship=o, dist_sq_gu=nan, surface_gu=nan,
                     perceivable=True, targetable=True)
             for o in source_set.GetObjectList() if isinstance(o, ShipClass)])
 

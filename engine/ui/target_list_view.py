@@ -212,20 +212,24 @@ class TargetListView(Panel):
         game = Game_GetCurrentGame()
         player = game.GetPlayer() if game is not None else None
 
-        from engine.appc.ship_death import _out_of_action, is_targetable_wreck
-        from engine.appc.sensor_detection import is_hidden_by_cloak
         rows = []
         child = target_menu.GetFirstChild()
         while child is not None:
             if isinstance(child, STSubsystemMenu):
                 ship = child.GetShip()
-                # A living ship, or a destroyed ship still inside its wreck
-                # linger window, is a valid target; a ship past final removal —
-                # or one that is fully cloaked — is dropped (same per-render
-                # road the destruction filter uses).
-                if ship is not None and ship is not player \
-                        and not is_hidden_by_cloak(ship) \
-                        and (not _out_of_action(ship) or is_targetable_wreck(ship)):
+                # The menu's children ARE the frame's targetable contacts
+                # (STTargetMenu._rows filters on Contact.targetable, which
+                # already folds in cloak, death, the wreck-linger window and
+                # IsTargetable). This used to re-run is_hidden_by_cloak and
+                # _out_of_action here on top of that — a second copy of the
+                # rule that could disagree with the record, which is exactly
+                # what got engine.ui.target_list_visibility retired.
+                #
+                # The player-identity guard stays: perceived_by never emits a
+                # record for the observer, but STTargetMenu.RebuildShipMenus
+                # (published Appc surface, bulk population from a SET) has no
+                # observer and cannot make that call.
+                if ship is not None and ship is not player:
                     hull_pct = _query_hull_percentage(ship)
                     shield_pct = _query_shield_percentage(ship)
                     has_shields = _query_has_shields(ship)

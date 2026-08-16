@@ -113,3 +113,27 @@ def contacts_for(observer) -> tuple:
     """Targetable ships in *observer*'s system. Back-compat wrapper over
     perceived_by for callers not yet migrated to Contact records."""
     return tuple(c.ship for c in perceived_by(observer) if c.targetable)
+
+
+def surface_gu_for(ship):
+    """This frame's `surface_gu` for *ship*, from the pushed contact record,
+    or None when there is no record.
+
+    THE read path for the on-screen range readouts (engine.ui.reticle_text and
+    engine.ui.ship_display_panel). It reads the record the host loop already
+    pushed (host_loop._pump_contacts, every frame, before the panels render)
+    rather than calling perceived_by a second time — a second call would redo
+    the whole per-observer pass to answer one number.
+
+    None is a real answer, not a failure, and callers MUST fall back to their
+    own read for it. contact_index buckets ShipClass only, so a targeted PLANET
+    or station ObjectClass never has a record — and the surface convention
+    matters most there (orbiting Haven reads 26 km, not 42). None also covers
+    the pre-menu boot frames and the headless fixtures that never push.
+    """
+    import App
+    menu = App.STTargetMenu_GetTargetMenu()
+    if menu is None:
+        return None
+    contact = menu.contact_for(ship)
+    return None if contact is None else contact.surface_gu

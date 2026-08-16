@@ -104,11 +104,16 @@ def test_cloaked_ship_dropped_from_target_list_view():
     try:
         from engine.ui.target_list_view import TargetListView
         view = TargetListView()
+        _pump(menu, player)
         rows_before = view._snapshot()[3]
         names_before = {r[0] for r in rows_before}
         assert "Enemy" in names_before
 
+        # The view reads the pushed record; it no longer keeps its own copy of
+        # is_hidden_by_cloak to short-circuit it. The frame's push is what
+        # drops the row -- which is the production path, run every frame.
         enemy.GetCloakingSubsystem().InstantCloak()
+        _pump(menu, player)
         rows_after = view._snapshot()[3]
         names_after = {r[0] for r in rows_after}
         assert "Enemy" not in names_after

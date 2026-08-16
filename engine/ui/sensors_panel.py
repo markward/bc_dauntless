@@ -1,14 +1,16 @@
 """CEF view for the bottom-left Sensors / radar panel.
 
-Each tick, walks the player's spatial set, runs each ship through
+Each tick, walks the frame's pushed contacts, runs each through
 radar_projection.project_contact, and emits a `setRadar(...)` JS call
 with the filtered contact list. Idempotent — re-emits only when the
 snapshot changes.
 
-Visibility shares state with the target list: only ships whose
-STSubsystemMenu.IsVisible() == 1 are emitted. The host loop's per-frame
-contact push (host_loop._pump_contacts) sets that flag from the frame's
-perception.Contact record; we read the result.
+Membership and detectability come from the same perception.Contact records
+the target list reads (pushed by host_loop._pump_contacts every frame): the
+radar draws a contact when its record says `perceivable`. What it does NOT
+share is the range — the disc clips to RadarDisplay.GetRange(), a display
+scale, while perception uses the player's actual sensor range. The target
+list legitimately lists contacts the disc does not draw.
 
 Spec: docs/ui_designs/05-sensors-radar.md
 """
@@ -94,8 +96,10 @@ class SensorsPanel(Panel):
         if player is None:
             return (True, minimize_state, ())
 
-        spatial = getattr(player, "_containing_set", None)
-        if spatial is None:
+        # A player in no set has no contacts (perceived_by returns () for that
+        # case, so the push is empty). Kept as a cheap early-out only — the
+        # set is NOT walked for membership any more; see below.
+        if getattr(player, "_containing_set", None) is None:
             return (True, minimize_state, ())
 
         menu = App.STTargetMenu_GetTargetMenu()
@@ -108,13 +112,35 @@ class SensorsPanel(Panel):
         player_rot = player.GetWorldRotation()
 
         rows = []
-        for ship in spatial.GetObjectList():
-            if ship is player:
+        # Membership is the frame's pushed contact list, walked once. This used
+        # to walk player._containing_set and look each ship back up with
+        # GetObjectEntry — a SECOND membership source, which is the failure the
+        # contact model exists to remove (a set pointer that outlives the ships
+        # it named, e.g. across a warp).
+        #
+        # The record's own verdict decides drawability: the menu's children are
+        # this frame's targetable contacts, and `perceivable` is what
+        # set_contacts writes into each row's IsVisible.
+        #
+        # The RANGE CLIP below stays the radar's own. It reads
+        # RadarDisplay.GetRange() (1000 GU default), not the player's sensor
+        # range (2000 GU on a Galaxy), so the target list legitimately lists
+        # contacts the disc does not draw — display scale and perception are
+        # different concepts. It is also a DISC-PLANE clip, not a 3D distance,
+        # so `Contact.dist_sq_gu` cannot answer it: a contact directly overhead
+        # at 2x range still renders at the centre with a full-length stem.
+        row = menu.GetFirstChild()
+        while row is not None:
+            # Advance first: the child list is DERIVED, so hold no cursor into
+            # it across the body.
+            this_row, row = row, menu.GetNextChild(row)
+            if not isinstance(this_row, STSubsystemMenu):
                 continue
-            row = menu.GetObjectEntry(ship)
-            if row is None or not isinstance(row, STSubsystemMenu):
+            ship = this_row.GetShip()
+            if ship is None or ship is player:
                 continue
-            if row.IsVisible() != 1:
+            record = menu.contact_for(ship)
+            if record is None or not record.perceivable:
                 continue
             contact = project_contact(
                 player_pos=player_pos,
@@ -125,7 +151,7 @@ class SensorsPanel(Panel):
             )
             if contact is None:
                 continue
-            aff = row.GetAffiliation()
+            aff = this_row.GetAffiliation()
             kind = _AFFILIATION_TO_KIND.get(aff, "ship")
             rows.append((
                 ship.GetName(),
