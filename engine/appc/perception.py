@@ -17,17 +17,25 @@ from engine.appc import contact_index
 
 
 def contacts_for(observer) -> tuple:
-    """Ships in *observer*'s containing set, excluding *observer*.
+    """Ships in *observer*'s containing set that it may target, excluding
+    *observer* itself.
 
     Empty when there is no observer or it is in no set — which is also what
     makes warp self-correcting: mid-warp the player sits alone in the
     _WarpTransit set, so the list empties without anyone clearing it.
+
+    The targetable gate is the mission's authored flag (SetTargetable), read
+    through to the object rather than stored here: the mission owns it and
+    flips it on reveal beats, and a copy would go stale on any missed write.
     """
     if observer is None:
         return ()
-    pSet = observer.GetContainingSet()
+    pSet = observer.GetContainingSet() if hasattr(observer, "GetContainingSet") else None
     # A real SetClass exposes _objects; a _Stub or None does not. hasattr()
     # cannot discriminate — TGObject.__getattr__ answers every name.
     if pSet is None or not hasattr(pSet, "_objects"):
         return ()
-    return tuple(s for s in contact_index.ships_in(pSet) if s is not observer)
+    return tuple(
+        s for s in contact_index.ships_in(pSet)
+        if s is not observer and s.IsTargetable()
+    )
