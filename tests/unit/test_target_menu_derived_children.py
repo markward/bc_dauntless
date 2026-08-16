@@ -90,14 +90,60 @@ def test_sibling_traversal_walks_the_projection():
 
 def test_rebuild_ship_menu_populates_subsystem_rows():
     """RebuildShipMenu still refreshes a row's subsystem tree — it is real
-    SDK surface (MissionLib.HideSubsystems), it just no longer adds a child."""
+    SDK surface (MissionLib.HideSubsystems), it just no longer adds a child.
+
+    Asserting on the SUBSYSTEM rows, not merely that the ship row exists:
+    set_contacts already guarantees the latter, so a no-op RebuildShipMenu
+    would pass that. ShipClass_Create installs the default subsystem set.
+    """
+    from engine.appc.ships import ShipClass_Create
     menu = _menu()
-    ship = _ship("Galor")
+    ship = ShipClass_Create("Test")
+    ship.SetName("Galor")
     menu.set_contacts([ship])
+    row = menu.GetObjectEntry(ship)
+    row.KillChildren()
+    assert row._children == []
 
     menu.RebuildShipMenu(ship)
 
-    assert menu.GetObjectEntry(ship) is not None
+    assert len(row._children) > 0
+
+
+def test_get_submenu_w_resolves_a_row_by_display_name():
+    """SDK: E2M0.py:3692 points a tutorial arrow at a Warbird's target-list row
+    by looking it up with GetSubmenuW(<localized display name>)."""
+    menu = _menu()
+    ship = _ship("Romulan_Warbird1")
+    ship.SetDisplayName("Warbird")
+    menu.set_contacts([ship])
+
+    row = menu.GetSubmenuW("Warbird")
+
+    assert row is menu.GetObjectEntry(ship)
+
+
+def test_get_submenu_w_is_none_for_a_ship_outside_the_contact_list():
+    """Must agree with GetObjectEntry: a cached row for a departed ship is
+    not a listed row."""
+    menu = _menu()
+    ship = _ship("Romulan_Warbird1")
+    ship.SetDisplayName("Warbird")
+    menu.set_contacts([ship])
+    menu.set_contacts([])
+
+    assert menu.GetSubmenuW("Warbird") is None
+
+
+def test_get_submenu_narrow_variant_resolves_the_same_row():
+    """SDK: E1M2.py:6685/6697 use the non-W spelling. STMenu.GetSubmenu
+    delegates to GetSubmenuW, so the override must serve both."""
+    menu = _menu()
+    ship = _ship("Facility")
+    menu.set_contacts([ship])
+
+    assert menu.GetSubmenu("Facility") is menu.GetObjectEntry(ship)
+    assert menu.GetSubmenu("NoSuchShip") is None
 
 
 def test_rebuild_ship_menu_for_a_non_contact_does_not_list_it():

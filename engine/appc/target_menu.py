@@ -162,6 +162,30 @@ class STTargetMenu(STTopLevelMenu):
             return None
         return self._row_cache.get(ship)
 
+    def GetSubmenuW(self, label) -> "STMenu | None":
+        """Return the listed row whose GetLabel() is ``label``, else None.
+
+        Searches the PROJECTION rather than STMenu._submenus, for the same
+        reason GetObjectEntry does: rows are never AddChild'd here (AddChild is
+        a no-op on a derived list), so _submenus would stay empty forever, and a
+        second registry could disagree with what the panel draws. A ship that is
+        not a current contact returns None.
+
+        Rows are labelled with the ship's display name, which is exactly what
+        the SDK looks up:
+          * Maelstrom/Episode2/E2M0/E2M0.py:3692-3697 — resolves a Warbird's
+            row (a localized string from the mission database) to point a
+            tutorial arrow at it.
+          * Maelstrom/Episode1/E1M2/E1M2.py:6685,6697 — same shape via the
+            narrow GetSubmenu spelling, which STMenu delegates to this method,
+            so overriding here serves both.
+        """
+        key = str(label)
+        for row in self._rows():
+            if row.GetLabel() == key:
+                return row
+        return None
+
     # ── Mutators SDK scripts actually call ──
 
     def ClearTargetList(self) -> None:

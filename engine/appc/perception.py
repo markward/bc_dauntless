@@ -27,6 +27,15 @@ def contacts_for(observer) -> tuple:
     The targetable gate is the mission's authored flag (SetTargetable), read
     through to the object rather than stored here: the mission owns it and
     flips it on reveal beats, and a copy would go stale on any missed write.
+
+    ⚠️ NOT observer-generic as written: ``IsTargetable()`` is a TARGET-LIST
+    rule, not a perception rule. The Hail and Science-scan menus ask the same
+    membership question but gate on their own authored flags (``IsHailable``,
+    ``IsScannable``), and BC lists objects that are hailable or scannable
+    without being targetable. Do NOT adopt this function as-is for those menus
+    — a hail list built on it would silently drop every non-targetable contact.
+    Factor the observer-generic core (set membership minus self) out first and
+    let each menu supply its own gate.
     """
     if observer is None:
         return ()
