@@ -899,6 +899,18 @@ def parse_episode_title(text) -> tuple[str, str] | None:
 # Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md
 # Spec: docs/superpowers/sdd/2026-08-16-e1m1-skip-intro-prompt/banner-placement-brief.md
 
+# Single source of truth for the fallback fY (top-anchor offset) used both
+# when the SDK omits fY entirely (short-form TGCreditAction_Create(text,
+# window)) and when a supplied fY is unparseable -- see
+# _resolve_credit_placement below. Also re-exported for
+# engine.appc.windows._DEFAULT_BANNER_PLACEMENT so a caller of _add_text
+# with no placement at all (defensive default, not currently reachable in
+# production -- TGCreditAction always supplies one) falls back to the same
+# value instead of a second hardcoded 0.05.
+_DEFAULT_BANNER_FX = 0.0
+_DEFAULT_BANNER_FY = 0.05
+
+
 class TGCreditAction(TGTimedAction):
     JUSTIFY_LEFT   = 0
     JUSTIFY_RIGHT  = 1
@@ -921,8 +933,8 @@ class TGCreditAction(TGTimedAction):
         self._fade_out = float(args[6]) if len(args) > 6 else 0.0
         self._color = _credit_default_color
         self._played = False
-        fx = args[2] if len(args) > 2 else 0.0
-        fy = args[3] if len(args) > 3 else 0.05
+        fx = args[2] if len(args) > 2 else _DEFAULT_BANNER_FX
+        fy = args[3] if len(args) > 3 else _DEFAULT_BANNER_FY
         jx = args[8] if len(args) > 8 else self.JUSTIFY_CENTER
         jy = args[9] if len(args) > 9 else self.JUSTIFY_TOP
         self._placement = _resolve_credit_placement(fx, fy, jx, jy)
@@ -978,21 +990,30 @@ def _resolve_credit_placement(fx, fy, jx, jy) -> dict:
          viewport height). JUSTIFY_CENTER -> centre vertically, ignore fY.
          Anything else falls back to top-anchored.
 
-    Missing/unparseable fx/fy fall back to (0.0, 0.05) -- centred-X and
-    fY=0.05, matching MissionLib.TextBanner's own bHCentered=1/bVCentered=0
-    defaults. Never raises: this runs mid-cutscene, and a stub or a bad SDK
-    value must not crash the skip prompt.
+    Missing/unparseable fx/fy fall back to (_DEFAULT_BANNER_FX,
+    _DEFAULT_BANNER_FY) -- centred-X and fY=0.05, matching MissionLib.
+    TextBanner's own bHCentered=1/bVCentered=0 defaults. jx/jy are guarded
+    the same way (any comparison failure falls back to centred-X/top-Y),
+    not just fx/fy: never raises, because this runs mid-cutscene and a stub
+    or a bad SDK value of ANY of the four args must not crash the skip
+    prompt.
     """
     try:
         fx = float(fx)
     except (TypeError, ValueError):
-        fx = 0.0
+        fx = _DEFAULT_BANNER_FX
     try:
         fy = float(fy)
     except (TypeError, ValueError):
-        fy = 0.05
-    center_x = jx != TGCreditAction.JUSTIFY_LEFT
-    center_y = jy == TGCreditAction.JUSTIFY_CENTER
+        fy = _DEFAULT_BANNER_FY
+    try:
+        center_x = jx != TGCreditAction.JUSTIFY_LEFT
+    except Exception:
+        center_x = True
+    try:
+        center_y = jy == TGCreditAction.JUSTIFY_CENTER
+    except Exception:
+        center_y = False
     return {"center_x": center_x, "x": fx, "center_y": center_y, "y": fy}
 
 

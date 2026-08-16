@@ -254,6 +254,40 @@ out.bannerOnlyOpacity = els["sdk-banner"].style.opacity;
 // visible -- #sdk-subtitle is captions-only now.
 out.bannerAloneCaptionHidden = els["sdk-subtitle"].hidden;
 
+// Placement arithmetic -- the actual defect this fix corrects (a live
+// in-game report: the banner rendered in the bottom caption box instead of
+// centred near the top). PLACEMENT above is E1M1's own resolved values
+// (fY=0.05, JUSTIFY_CENTER/JUSTIFY_TOP -> center_x=true, center_y=false,
+// y=0.05); assert the actual CSS renderBanner computes from it, not just
+// that opacity/visibility data reached the DOM.
+out.e1m1Left = els["sdk-banner"].style.left;
+out.e1m1Top = els["sdk-banner"].style.top;
+out.e1m1Transform = els["sdk-banner"].style.transform;
+
+// Non-default case 1: JUSTIFY_LEFT on X (fX is a left-offset fraction, not
+// centred) with JUSTIFY_TOP on Y (e.g. HelmMenuHandlers' "Entering <name>",
+// fX=0/JUSTIFY_LEFT would resolve the same way -- fX=0.2 here just makes
+// the non-zero offset visible in the assertion).
+run({entries: [{
+  type: "subtitle", visible: true,
+  lines: [{text: "x", opacity: 1, center_x: false, x: 0.2, center_y: false, y: 0.35}],
+}]});
+out.leftXLeft = els["sdk-banner"].style.left;
+out.leftXTop = els["sdk-banner"].style.top;
+out.leftXTransform = els["sdk-banner"].style.transform;
+
+// Non-default case 2: JUSTIFY_CENTER on BOTH X and Y -- the other half of
+// the settled Y rule (center_y=true ignores fY and centres vertically).
+// No shipped SDK caller uses this, but it's part of the rule and untested
+// at the JS layer otherwise.
+run({entries: [{
+  type: "subtitle", visible: true,
+  lines: [{text: "x", opacity: 1, center_x: true, x: 0, center_y: true, y: 0.9}],
+}]});
+out.centerYLeft = els["sdk-banner"].style.left;
+out.centerYTop = els["sdk-banner"].style.top;
+out.centerYTransform = els["sdk-banner"].style.transform;
+
 // Crew caption present alongside a fading banner line in the same payload:
 // the caption must never be dimmed by the banner's fade -- container stays
 // at full opacity, and the banner still renders (decoupled) in its own box.
@@ -319,3 +353,23 @@ def test_banner_box_fades_with_its_text_but_a_caption_box_never_dims():
     assert out["hiddenResetBanner"] == "1"
     assert out["titleLiveClassAdded"] is True
     assert out["titleLiveClassRemovedAfterExpiry"] is False
+
+    # Placement arithmetic -- E1M1's own resolved values (fY=0.05,
+    # centred-X, top-Y) must land the box centred-X / 5vh from the top.
+    # This is the actual live-reported defect: the banner rendered inside
+    # the bottom caption box instead of here.
+    assert out["e1m1Left"] == "50%"
+    assert out["e1m1Top"] == "5vh"
+    assert out["e1m1Transform"] == "translate(-50%, 0)"
+
+    # Non-default: JUSTIFY_LEFT on X -- fX is a left-offset fraction, no
+    # centring transform on that axis.
+    assert out["leftXLeft"] == "20vw"
+    assert out["leftXTop"] == "35vh"
+    assert out["leftXTransform"] == "translate(0, 0)"
+
+    # Non-default: JUSTIFY_CENTER on both X and Y -- centred on both axes,
+    # fY (0.9) ignored entirely.
+    assert out["centerYLeft"] == "50%"
+    assert out["centerYTop"] == "50%"
+    assert out["centerYTransform"] == "translate(-50%, -50%)"

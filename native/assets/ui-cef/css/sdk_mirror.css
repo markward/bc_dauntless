@@ -76,10 +76,20 @@
 /* Mission banners. `left`/`top`/`transform` are set per-frame from JS
    (renderBanner in sdk_mirror.js) from the payload's placement fractions —
    this rule supplies only the static visual family, matching #sdk-subtitle
-   (Antonio, the dark body + salmon rule, the text-shadow) so a banner reads
-   as the same kind of overlay as a caption despite living in its own,
+   (Antonio, the dark body, the salmon accent, the text-shadow) so a banner
+   reads as the same kind of overlay as a caption despite living in its own,
    independently-positioned slot. No `top`/`left` default here: JS always
-   sets both before un-hiding the element. */
+   sets both before un-hiding the element.
+
+   #sdk-subtitle's accent (border-left + a single top-right radius) is a
+   left-anchored design -- it reads correctly against that box's own
+   left-aligned text and translateX(-50%)-only centring. A banner can be
+   centred on BOTH axes (JUSTIFY_CENTER/JUSTIFY_CENTER), so a left-side
+   accent + one rounded corner would read asymmetric no matter where the
+   box lands. Use a top accent (also thematically apt: banners are
+   TOP-anchored by every known SDK caller) and symmetric bottom-corner
+   rounding instead -- same "family" (accent line + selective rounding),
+   no left/right bias. */
 #sdk-banner {
   position: absolute;
   max-width: 60vw;
@@ -87,8 +97,8 @@
   text-align: center;
 
   background: rgba(10, 10, 16, 0.85);       /* --bc-body-bg */
-  border-left: 4px solid rgb(216, 94, 86);  /* --bc-menu1-base */
-  border-top-right-radius: 14px;            /* the bc-panel tell */
+  border-top: 4px solid rgb(216, 94, 86);   /* --bc-menu1-base */
+  border-radius: 0 0 14px 14px;             /* symmetric bc-panel tell */
 
   font-family: "Antonio", sans-serif;
   font-size: 13px;

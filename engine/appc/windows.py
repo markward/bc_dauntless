@@ -10,6 +10,7 @@ import time
 
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.tg_ui.widgets import TGPane
+from engine.appc.actions import _DEFAULT_BANNER_FX, _DEFAULT_BANNER_FY
 
 # Pane-index constants, mirrored from the SDK module
 # Tactical/Interface/TacticalControlWindow.py so host-side layout invocation
@@ -217,11 +218,13 @@ class TacticalControlWindow(TGEventHandlerObject):
 # Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md
 
 # Fallback placement for a banner created without an explicit placement dict
-# (or via _add_text's default arg) -- centred-X, top-anchored fY=0.05. Matches
-# TGCreditAction's own fallback (see the banner-placement brief) and
-# MissionLib.TextBanner's bHCentered=1/bVCentered=0 defaults.
+# (or via _add_text's default arg) -- centred-X, top-anchored fY=0.05. Reuses
+# TGCreditAction's own fallback constants (see the banner-placement brief) so
+# the 0.05 default has one source of truth instead of a second hardcoded
+# copy; matches MissionLib.TextBanner's bHCentered=1/bVCentered=0 defaults.
 _DEFAULT_BANNER_PLACEMENT = {
-    "center_x": True, "x": 0.0, "center_y": False, "y": 0.05,
+    "center_x": True, "x": _DEFAULT_BANNER_FX,
+    "center_y": False, "y": _DEFAULT_BANNER_FY,
 }
 
 

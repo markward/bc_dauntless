@@ -168,6 +168,22 @@ def test_left_justified_x_uses_fx_fraction_not_centred():
     assert ca._placement["x"] == pytest.approx(0.2)
 
 
+def test_justify_center_on_y_centers_vertically_and_ignores_fy():
+    # The other half of the settled Y rule: JUSTIFY_CENTER -> centre
+    # vertically, fY ignored. No shipped SDK caller uses this (every known
+    # TextBanner/direct call is JUSTIFY_TOP), but it's part of the rule
+    # TGCreditAction implements and must not silently collapse to top-anchor.
+    host = _SubtitleWindow()
+    ca = TGCreditAction_Create(
+        "text", host, 0.0, 0.9, 3.0, 0.0, 0.0, 12,
+        TGCreditAction.JUSTIFY_CENTER, TGCreditAction.JUSTIFY_CENTER,
+    )
+    assert ca._placement["center_y"] is True
+    # fY (0.9) is captured verbatim even though it's ignored at render time
+    # -- the resolver doesn't need to know that; JS decides what to draw.
+    assert ca._placement["y"] == pytest.approx(0.9)
+
+
 def test_short_args_fall_back_to_centred_x_and_default_top_y():
     # TGCreditAction_Create(text, window) -- no x/y/justify at all.
     host = _SubtitleWindow()
