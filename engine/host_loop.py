@@ -606,17 +606,29 @@ def _poll_raw_keyboard(host, input_map) -> None:
     ET_INPUT_* half of these keys has live consumers that would fight our
     host-side flight controls.
 
-    ALT/CTRL suppression matches the other pollers: the chord poller owns
-    modified presses.
+    Suppressed on ALT, CTRL, *and* Shift — stricter than _poll_fire_keys /
+    _poll_crew_talk_keys, which deliberately keep firing under Shift.  Those
+    two map a physical key to a FIXED WC slot (the key that fires phasers is
+    still "fire", shifted or not), so there is nothing for Shift to change.
+    This poller's whole job is different: it reports WHICH CHARACTER the SDK
+    should see, and BC registers the shifted variant of every letter as a
+    distinct WC code with its own label (KeyConfig.py: WC_S -> "s",
+    WC_CAPS_S -> "S"). The chord poller already owns shifted presses and
+    emits that correct WC_CAPS_* code via OnChordDown -> _emit, which raw-
+    dispatches too — so suppressing the bare key here does not silence
+    Shift+<letter>, it just stops this poller from ALSO reporting the wrong
+    (unshifted) character underneath it.  Without this, Shift+S made E1M1's
+    skip prompt fire on the bare WC_S label ("s") even though BC's own
+    WC_CAPS_S carries the distinct label "S", which fails BC's comparison.
     """
     pairs = _raw_key_pairs(host)
     if not pairs:
         return
     owned = _owned_glfw_keys(input_map)
-    alt, ctrl, _shift = _modifier_state(host)
+    alt, ctrl, shift = _modifier_state(host)
     _poll_key_table(
         tuple(p for p in pairs if p[0] not in owned),
-        suppress=(alt or ctrl), raw_only=True)
+        suppress=(alt or ctrl or shift), raw_only=True)
 
 
 _skip_dialogue_prev: bool = False

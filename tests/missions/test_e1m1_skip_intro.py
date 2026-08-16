@@ -121,6 +121,44 @@ def test_pressing_s_on_the_host_reaches_the_sdk_skip_branch(skip_module,
     assert calls["killed"] == ["CharacterIntros"]
 
 
+def test_holding_shift_while_pressing_s_does_not_reach_the_sdk_skip_branch(
+        skip_module, monkeypatch):
+    """THE DEFECT: BC registers the shifted variant of every letter as a
+    separate WC code with its own label (KeyConfig.py:70/195 -- WC_S -> "s",
+    WC_CAPS_S -> "S"), so Shift+S produces the label "S", which fails
+    E1M1's comparison against its lowercase SkipKey "s". BC does not skip
+    the intro on Shift+S.
+
+    Drives the SAME two pollers host_loop runs every frame, in the SAME
+    order (chords, then the general raw stream) -- not OnKeyDown directly.
+    That is the point: the previous unit tests all passed while holding
+    Shift and pressing S skipped the intro in the actual game, because the
+    raw poller kept forwarding the bare (unshifted) WC_S underneath the
+    chord poller's correct WC_CAPS_S.
+    """
+    e1m1, calls = skip_module
+    import KeyConfig
+    KeyConfig.MapScancodes()
+    host_loop._fn_key_prev.clear()
+    host_loop._chord_prev.clear()
+    host_loop._raw_key_pairs_host = None
+    host = _FakeHost()
+    monkeypatch.setattr(host_io, "_h", host)
+    _register(e1m1)
+    try:
+        host.down.add(_FakeKeys.KEY_S)
+        host.down.add(_FakeKeys.KEY_LEFT_SHIFT)
+        host_loop._poll_modifier_chords(host)
+        host_loop._poll_raw_keyboard(host, InputMap())
+    finally:
+        _unregister(e1m1)
+        host_loop._fn_key_prev.clear()
+        host_loop._chord_prev.clear()
+        host_loop._raw_key_pairs_host = None
+    assert calls["undock"] == [], "Shift+S incorrectly skipped the intro"
+    assert calls["killed"] == []
+
+
 def test_pressing_a_different_key_does_not_skip(skip_module):
     e1m1, calls = skip_module
     import KeyConfig

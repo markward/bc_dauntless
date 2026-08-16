@@ -126,6 +126,24 @@ def test_alt_or_ctrl_suppresses_the_base_key(wired):
     assert seen == []
 
 
+def test_shift_also_suppresses_the_base_key(wired):
+    """Unlike _poll_fire_keys / _poll_crew_talk_keys (which map a physical
+    key to a fixed WC slot and intentionally still fire under Shift), the raw
+    poller's job is to report WHICH CHARACTER the SDK should see -- and under
+    Shift that is a different WC code (WC_CAPS_S, not WC_S). The chord poller
+    already owns shifted presses and emits the correct code via OnChordDown;
+    if the raw poller also emitted the bare WC_S here, E1M1's skip prompt
+    would fire on Shift+S -- BC's own WC_CAPS_S is a distinct code with its
+    own ("S") label, so BC does not skip on Shift+S."""
+    host, seen, im = wired
+    host.down = {_FakeKeys.KEY_S, _FakeKeys.KEY_LEFT_SHIFT}
+    _poll_raw_keyboard(host, im)
+    assert seen == []
+    host.down = {_FakeKeys.KEY_S, _FakeKeys.KEY_RIGHT_SHIFT}
+    _poll_raw_keyboard(host, im)
+    assert seen == []
+
+
 def test_raw_forwarding_does_not_drive_the_sdk_turn_handlers(wired, monkeypatch):
     """VERIFICATION POINT: BC binds WC_S -> ET_INPUT_TURN_DOWN
     (DefaultKeyboardBinding.py:84) and TacticalInterfaceHandlers.Initialize

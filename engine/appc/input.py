@@ -202,12 +202,27 @@ class TGInputManager(TGObject):
         localize it through. UKConfig.py:14 documents the fallback — with no
         database, the label itself is the answer.
 
+        Modifier-augmented entries (KeyConfig.py registers WC_CAPS_S with
+        modifier=KY_SHIFT and label "S") are stored under a (wc_code,
+        modifier) TUPLE key so they don't shadow the bare key — see
+        RegisterUnicodeKey. A bare-int-only lookup here left every such
+        entry permanently blank (WC_CAPS_S -> ""), which is what let
+        Shift+S's wrong-but-truthy comparison through in E1M1's skip
+        handler. WC_CAPS_S (0x853) and WC_S (0x53) are distinct codes, so
+        finding the tuple entry whose [0] == wc_code is unambiguous.
+
         Returns _TGString so callers can chain .GetCString(), which is how
         every SDK call site consumes it (E1M1.SkipOpeningSequence:1764,
         E1M1's tactical help text:3324-3339).
         """
         from engine.appc.localization import _TGString
-        entry = self._registered.get(int(wc_code))
+        wc_code = int(wc_code)
+        entry = self._registered.get(wc_code)
+        if entry is None:
+            for key, candidate in self._registered.items():
+                if isinstance(key, tuple) and key[0] == wc_code:
+                    entry = candidate
+                    break
         if entry is None:
             # Unregistered key: an empty label, NOT a stub. A truthy stub here
             # would make every "is this the skip key?" comparison ambiguous.

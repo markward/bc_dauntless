@@ -159,3 +159,30 @@ def test_display_string_result_compares_equal_to_a_plain_str():
     im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
     lhs = im.GetDisplayStringFromUnicode(WC_S).GetCString()
     assert lhs == "s"
+
+
+def test_display_string_finds_the_tuple_registered_shift_variant():
+    """RegisterUnicodeKey stores modifier variants under a (wc_code,
+    modifier) tuple key, not the bare int (KeyConfig.py:195 registers
+    WC_CAPS_S with modifier=KY_SHIFT and label "S", distinct from WC_S's "s").
+    A bare-int-only lookup leaves every shifted key permanently blank --
+    GetDisplayStringFromUnicode must fall back to the tuple entry whose
+    [0] == wc_code."""
+    import App
+    im, _ = _fresh_manager()
+    im.RegisterUnicodeKey(App.WC_CAPS_S, App.KY_S, None, "S", App.KY_SHIFT)
+    assert im.GetDisplayStringFromUnicode(App.WC_CAPS_S).GetCString() == "S"
+
+
+def test_display_string_against_the_real_key_config_table():
+    """Against KeyConfig.MapScancodes() -- the real registration table BC
+    ships, not a fake -- WC_CAPS_S must resolve to "S" and bare WC_S must
+    still resolve to "s". This is the check that would have caught the
+    empty-label gap the bare-int-only lookup left behind."""
+    import App
+    import KeyConfig
+    KeyConfig.MapScancodes()
+    assert App.g_kInputManager.GetDisplayStringFromUnicode(
+        App.WC_S).GetCString() == "s"
+    assert App.g_kInputManager.GetDisplayStringFromUnicode(
+        App.WC_CAPS_S).GetCString() == "S"
