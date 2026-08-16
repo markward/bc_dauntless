@@ -20,12 +20,21 @@ gained nebula concealment and the range-contest cloak. Before this you could
 select and hold a target you could not fire on; that is a DELIBERATE gameplay
 change, pinned by tests/unit/test_nebula_hides_contacts_from_ui.py.
 
+Both halves sit behind ONE toggle, `sensor_detection.ENHANCED_SENSOR_CONTEST`
+(code-only, no UI). Turned off, this module hands `apply_concealment=False` to
+`can_detect`, which then answers range + absolute cloak + distance — the
+pre-stage-4 rule exactly, with no second copy of it living here. Read that
+flag's docstring before touching this: its off state is deliberately
+asymmetric (weapons keep applying nebula concealment), because "off" means
+"how the game behaved before", warts included.
+
 Two consequences worth knowing before editing the loop below. First,
 `can_detect` mutates a per-(observer, target) hysteresis latch, so it must be
-called EXACTLY ONCE per contact per frame — this module is now a writer of that
-shared state, not just a reader. Second, it takes the squared distance this
-module already computed rather than deriving it again; that hand-off is what
-keeps the five-site consolidation from being undone.
+called EXACTLY ONCE per contact per frame — with the toggle on this module is a
+writer of that shared state, not just a reader (with it off the nebula gate is
+skipped entirely, so nothing is written). Second, it takes the squared distance
+this module already computed rather than deriving it again; that hand-off is
+what keeps the five-site consolidation from being undone.
 
 See docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md.
 """
@@ -78,6 +87,7 @@ def perceived_by(observer) -> tuple:
     makes warp self-correcting: mid-warp the player sits alone in the
     _WarpTransit set, so the list empties without anyone clearing it.
     """
+    from engine.appc import sensor_detection as sd
     from engine.appc.sensor_detection import can_detect, effective_sensor_range
     from engine.appc.ship_death import _out_of_action, is_targetable_wreck
 
@@ -95,6 +105,10 @@ def perceived_by(observer) -> tuple:
     # circuit; the answer is the same either way.
     range_gu = effective_sensor_range(observer)
     ox, oy, oz = _get_xyz(observer)
+    # Read the stage-4 toggle ONCE per frame, not per contact, so every row in
+    # a frame is answered under one configuration even if it were flipped
+    # mid-pass. See the gate note in the loop below.
+    apply_conceal = sd.ENHANCED_SENSOR_CONTEST
 
     out = []
     for ship in contact_index.ships_in(pSet):
@@ -110,8 +124,14 @@ def perceived_by(observer) -> tuple:
         # the frame rate and let a lock re-acquire on the same frame it broke.
         # The already-derived squared distance is handed in rather than
         # recomputed inside.
+        #
+        # `apply_concealment` carries the stage-4 toggle: with it off, the same
+        # call yields range + absolute cloak + distance, which IS the
+        # pre-stage-4 UI rule exactly — so the off state is a real rollback
+        # without a second copy of the rule here to drift out of step.
         perceivable = range_gu > 0.0 and can_detect(
-            observer, ship, dist_sq_gu=dist_sq)
+            observer, ship, dist_sq_gu=dist_sq,
+            apply_concealment=apply_conceal)
         alive_or_wreck = (not _out_of_action(ship)) or is_targetable_wreck(ship)
         out.append(Contact(
             ship=ship,

@@ -26,22 +26,42 @@ LOCK_BREAK_T = 0.28  # density above which detection fails outright. Matched to 
                      # so only the densest clump cores fully hide a ship.
 HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detection
 
-# ── Cloak-as-contest constants (INTENTIONAL divergence from stock BC) ─────────
-# In BC a cloaked ship is absolutely undetectable. Here cloak instead multiplies
-# the observer's *effective* sensor range, so sensing is a contest rather than a
-# binary: a Galaxy's 2000 GU sensors reach 20 GU against a cloaked contact —
-# one third of its 60 GU phaser range, i.e. you must be effectively on top of it.
+# ── The stage-4 sensing toggle (INTENTIONAL divergence from stock BC) ─────────
+# ONE flag covering BOTH stage-4 sensing changes as a set. It does NOT mean
+# "cloak"; it means "sensing is a contest of degrees rather than a set of
+# absolutes". Turning it off restores how the game behaved before stage 4.
 #
-# Because it scales *effective* range (post condition and power), boosting
-# sensor power widens the bubble and wrecked sensors remove it entirely.
+#   (1) CLOAK IS A RANGE CONTEST, not an absolute. In BC a cloaked ship is
+#       undetectable at any range. Here cloak multiplies the observer's
+#       *effective* sensor range by CLOAK_RANGE_FACTOR, so a Galaxy's 2000 GU
+#       sensors reach 20 GU against a cloaked contact — one third of its 60 GU
+#       phaser range, i.e. you must be effectively on top of it. Because it
+#       scales *effective* range (post condition and power), boosting sensor
+#       power widens the bubble and wrecked sensors remove it entirely. 1% (not
+#       1.5%) was chosen to keep cloak viable — do not "improve" the number.
 #
-# The change is symmetric: can_detect is also the AI candidate-selection gate
-# and the FireScript firing gate, so AI ships gain the same capability and a
-# cloaked attack run becomes detectable close in. 1% (not 1.5%) was chosen to
-# keep cloak viable — do not "improve" the number.
+#   (2) NEBULA CONCEALMENT REACHES THE UI. perception.perceived_by (target list,
+#       radar) routes through can_detect, so nebula-hidden contacts leave the
+#       list instead of staying selectable-but-unshootable.
 #
-# Set ENHANCED_SENSOR_CONTEST = False to restore stock BC exactly (cloak
-# absolute). Deliberately code-only: there is no UI toggle.
+# Both are symmetric across the game: can_detect is also the AI
+# candidate-selection gate and the FireScript firing gate, so AI ships gain the
+# same capabilities and a cloaked attack run becomes detectable close in.
+#
+# ⚠️ KNOWN WART IN THE OFF STATE — this is deliberate, do not "fix" it.
+# With the flag False the UI ignores nebulae but can_detect keeps applying
+# concealment unconditionally for weapons and AI (it always did, since long
+# before stage 4). So the two surfaces disagree again: you can select a
+# nebula-hidden target you cannot fire on. That inconsistency IS the
+# pre-stage-4 behaviour, and restoring prior behaviour — warts included — is
+# what an off switch is for. Making the off state internally consistent would
+# mean disabling nebula concealment for weapons too, which is NOT prior
+# behaviour and would be a third, unasked-for game. Pinned by
+# tests/unit/test_nebula_hides_contacts_from_ui.py::
+# test_weapons_still_apply_nebula_concealment_with_the_toggle_off.
+#
+# Deliberately code-only: there is no UI toggle. It exists so the changes can be
+# exposed to users later if that is ever wanted.
 ENHANCED_SENSOR_CONTEST = True
 CLOAK_RANGE_FACTOR = 0.01
 
@@ -166,7 +186,7 @@ def is_hidden_by_cloak(target) -> bool:
     return cloak is not None and bool(cloak.IsCloaked())
 
 
-def can_detect(observer, target, dist_sq_gu=None) -> bool:
+def can_detect(observer, target, dist_sq_gu=None, apply_concealment=True) -> bool:
     """True iff *observer* can detect *target* within its effective sensor
     range, accounting for nebula tactical concealment.
 
@@ -174,6 +194,16 @@ def can_detect(observer, target, dist_sq_gu=None) -> bool:
     LOCK_BREAK_T. A broken lock latches (per-pair hysteresis) until
     concealment drops to LOCK_BREAK_T - HYSTERESIS. When below the
     threshold, effective range is reduced by (1 - CONCEAL_K * concealment).
+
+    *apply_concealment* False skips the nebula gate entirely — no density
+    sample, no latch mutation, no range scaling — leaving range + cloak +
+    distance. It exists for ONE caller: ``perception.perceived_by`` passes
+    ``ENHANCED_SENSOR_CONTEST`` through it, so that with the stage-4 toggle off
+    the target list and radar get the pre-stage-4 rule back. Weapons and AI pass
+    nothing and keep concealment unconditionally, which is what they did before
+    stage 4 — see the ⚠️ wart note on ENHANCED_SENSOR_CONTEST above for why the
+    off state is deliberately asymmetric. Do NOT reach for this to "skip the
+    expensive bit": the sample is the rule.
 
     *dist_sq_gu* is the SQUARED observer→target centre distance in game units.
     Pass it only when the caller has already derived that exact number for its
@@ -204,15 +234,16 @@ def can_detect(observer, target, dist_sq_gu=None) -> bool:
         r = r * CLOAK_RANGE_FACTOR
 
     # ── Nebula concealment gate ───────────────────────────────────────────
-    conceal = concealment_at(target)
-    key = (id(observer), id(target))
-    thresh = LOCK_BREAK_T - (HYSTERESIS if key in _broken else 0.0)
-    if conceal >= thresh:
-        _broken.add(key)
-        return False
-    _broken.discard(key)
-    # Scale range by the concealment factor (no-op when conceal == 0).
-    r = r * (1.0 - CONCEAL_K * conceal)
+    if apply_concealment:
+        conceal = concealment_at(target)
+        key = (id(observer), id(target))
+        thresh = LOCK_BREAK_T - (HYSTERESIS if key in _broken else 0.0)
+        if conceal >= thresh:
+            _broken.add(key)
+            return False
+        _broken.discard(key)
+        # Scale range by the concealment factor (no-op when conceal == 0).
+        r = r * (1.0 - CONCEAL_K * conceal)
 
     if dist_sq_gu is None:
         ox, oy, oz = _get_xyz(observer)
