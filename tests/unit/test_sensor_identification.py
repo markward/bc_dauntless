@@ -70,6 +70,57 @@ def test_out_of_range_contact_not_identified():
     assert _identified == []
 
 
+def _cloaked_contact_in_set(distance_gu):
+    """A fully cloaked BirdOfPrey at *distance_gu* in the player's set. The
+    player carries 2000 GU sensors, so its cloak bubble (CLOAK_RANGE_FACTOR) is
+    20 GU."""
+    from engine.appc.subsystems import CloakingSubsystem
+    _subscribe()
+    s, player, sensors = _player_in_set(base_range=2000.0)
+    target = ShipClass_Create("BirdOfPrey")
+    target.SetTranslateXYZ(float(distance_gu), 0.0, 0.0)
+    target.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
+    target.GetCloakingSubsystem().InstantCloak()
+    s.AddObjectToSet(target, "Bird")
+    return player, sensors, target
+
+
+def test_cloaked_contact_inside_the_bubble_is_identified():
+    """INTENTIONAL stage-4 gameplay change (ENHANCED_SENSOR_CONTEST, default on).
+
+    The identification sweep gates on sensor_detection.can_detect, and cloak is
+    now a multiplier on effective sensor range rather than an absolute. A
+    cloaked ship 15 GU away is inside the player's 20 GU bubble, so it IS
+    identified: it joins the known set and the callout fires. Deliberate
+    divergence from BC — if this fails, ask "was the change reverted?".
+    """
+    player, sensors, target = _cloaked_contact_in_set(15.0)
+    sensor_identification.identify_contacts(player)
+    assert sensors.IsObjectKnown(target) == 1
+    assert target in _identified
+
+
+def test_cloaked_contact_outside_the_bubble_is_not_identified():
+    """The bubble boundary holds: at 30 GU — well inside the 2000 GU sensor
+    reach but outside the 20 GU cloak bubble — a cloaked ship stays unknown and
+    silent, exactly as in stock BC."""
+    player, sensors, target = _cloaked_contact_in_set(30.0)
+    sensor_identification.identify_contacts(player)
+    assert sensors.IsObjectKnown(target) == 0
+    assert _identified == []
+
+
+def test_cloaked_contact_is_never_identified_with_the_contest_off(monkeypatch):
+    """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False: cloak is
+    absolute, so even the 15 GU contact the contest identifies stays unknown."""
+    import engine.appc.sensor_detection as sd
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
+    player, sensors, target = _cloaked_contact_in_set(15.0)
+    sensor_identification.identify_contacts(player)
+    assert sensors.IsObjectKnown(target) == 0
+    assert _identified == []
+
+
 def test_player_not_identified_to_itself():
     _subscribe()
     s, player, sensors = _player_in_set()

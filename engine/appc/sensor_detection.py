@@ -140,12 +140,25 @@ def concealment_at(ship) -> float:
 def is_hidden_by_cloak(target) -> bool:
     """True iff *target* is fully cloaked and therefore invisible to everyone.
 
-    Range-independent companion to ``can_detect``'s cloak gate, for the
-    player-facing surfaces that don't run a full sensor check: the target
-    list, the radar, and the player's weapon lock all need to drop a contact
-    the instant it finishes cloaking. Gate on IsCloaked() (fully hidden), not
-    IsTryingToCloak() — a mid-cloak ship stays visible until the fade
-    completes, matching can_detect and the SDK SelectTarget.FindGoodTarget."""
+    ⚠️ THIS NO LONGER MATCHES ``can_detect``. It was written as the
+    range-independent companion to that function's cloak gate, but that gate is
+    now a range *contest* (ENHANCED_SENSOR_CONTEST / CLOAK_RANGE_FACTOR above):
+    ``can_detect`` will report a cloaked ship inside 1% of effective sensor
+    range, while this helper stays absolute — any cloak hides the contact at
+    any distance.
+
+    The divergence is DELIBERATE and TEMPORARY, not an oversight and not a bug
+    to "fix" by reverting either side. Its consequence is visible in game: a
+    cloaked ship inside the bubble is shootable (the firing gate and the
+    player's lock run ``can_detect``) but absent from the radar and target
+    list, which run this helper via its one production caller,
+    ``engine.appc.perception.perceived_by`` (perception.py:99). The next task
+    moves those surfaces onto ``can_detect``, at which point that caller — and
+    with it this helper's production role — goes away.
+
+    Gate on IsCloaked() (fully hidden), not IsTryingToCloak() — a mid-cloak ship
+    stays visible until the fade completes. That much still matches
+    ``can_detect`` and the SDK SelectTarget.FindGoodTarget."""
     cloak = _cloak_subsystem(target)
     return cloak is not None and bool(cloak.IsCloaked())
 
