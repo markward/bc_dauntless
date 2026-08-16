@@ -5,38 +5,61 @@ answers the per-observer question, which cannot be stored: the same ship is
 perceivable to one observer and not another at the same instant, so a stored
 answer would have to be per-observer-per-frame.
 
-STAGE 1 SCOPE: membership only. Detectability (range, cloak, nebula) is still
-applied downstream by engine.ui.target_list_visibility exactly as before, so
-this change alters no behaviour. Stage 3 folds those rules in here and deletes
-that module; stage 4 changes the rules themselves. See
+STAGE 3 SCOPE: folds range, cloak, and the sensors-offline short-circuit into
+one query — `perceived_by` — reproducing today's UI detectability rule
+(engine.ui.target_list_visibility / engine.ui.target_list_view) exactly, with
+NO nebula concealment. Distance was previously recomputed in five places
+under two different conventions; it is now computed once here. `contacts_for`
+stays as a thin back-compat wrapper for callers not yet migrated to Contact
+records. Stage 4 switches perceivability to sensor_detection.can_detect
+(which adds nebula concealment with a stateful hysteresis latch) and makes
+cloak range-defeatable, both behind a stock-BC fidelity toggle. See
 docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from engine.appc import contact_index
+from engine.appc.subsystems import _get_xyz
+from engine.core.ids import implements
 
 
-def contacts_for(observer) -> tuple:
-    """Ships in *observer*'s containing set that it may target, excluding
-    *observer* itself.
+@dataclass(frozen=True)
+class Contact:
+    """One contact, fully resolved for this frame.
+
+    Consumers do no further arithmetic: the target list reads `targetable`,
+    the radar reads `perceivable` plus its own display clip, and the range
+    readouts read `surface_gu`. Distance is computed once here — before this,
+    the same player-to-contact vector was derived in five places under two
+    different conventions.
+    """
+    ship: object
+    dist_sq_gu: float
+    surface_gu: float
+    perceivable: bool
+    # ⚠️ NOT observer-generic: `targetable` folds in `IsTargetable()`, which
+    # is a TARGET-LIST rule, not a perception rule. The Hail and
+    # Science-scan menus ask the same membership+perceivability question but
+    # gate on their own authored flags (`IsHailable`, `IsScannable`), and BC
+    # lists objects that are hailable or scannable without being targetable.
+    # Do NOT read this field for those menus — build their own gate on
+    # `perceivable` instead.
+    targetable: bool
+
+
+def perceived_by(observer) -> tuple:
+    """Every ship in *observer*'s system, resolved for this frame.
 
     Empty when there is no observer or it is in no set — which is also what
     makes warp self-correcting: mid-warp the player sits alone in the
     _WarpTransit set, so the list empties without anyone clearing it.
-
-    The targetable gate is the mission's authored flag (SetTargetable), read
-    through to the object rather than stored here: the mission owns it and
-    flips it on reveal beats, and a copy would go stale on any missed write.
-
-    ⚠️ NOT observer-generic as written: ``IsTargetable()`` is a TARGET-LIST
-    rule, not a perception rule. The Hail and Science-scan menus ask the same
-    membership question but gate on their own authored flags (``IsHailable``,
-    ``IsScannable``), and BC lists objects that are hailable or scannable
-    without being targetable. Do NOT adopt this function as-is for those menus
-    — a hail list built on it would silently drop every non-targetable contact.
-    Factor the observer-generic core (set membership minus self) out first and
-    let each menu supply its own gate.
     """
+    from engine.appc.sensor_detection import (
+        effective_sensor_range, is_hidden_by_cloak)
+    from engine.appc.ship_death import _out_of_action, is_targetable_wreck
+
     if observer is None:
         return ()
     pSet = observer.GetContainingSet()
@@ -44,7 +67,48 @@ def contacts_for(observer) -> tuple:
     # cannot discriminate — TGObject.__getattr__ answers every name.
     if pSet is None or not hasattr(pSet, "_objects"):
         return ()
-    return tuple(
-        s for s in contact_index.ships_in(pSet)
-        if s is not observer and s.IsTargetable()
-    )
+
+    # Sensors offline => effective range 0 => nothing perceivable. One check,
+    # before any iteration.
+    range_gu = effective_sensor_range(observer)
+    range_sq = range_gu * range_gu
+    ox, oy, oz = _get_xyz(observer)
+
+    out = []
+    for ship in contact_index.ships_in(pSet):
+        if ship is observer:
+            continue
+        sx, sy, sz = _get_xyz(ship)
+        dx, dy, dz = sx - ox, sy - oy, sz - oz
+        dist_sq = dx * dx + dy * dy + dz * dz
+        # Cheap bools before the distance comparison; nothing here samples a
+        # field or takes a square root.
+        perceivable = (
+            range_gu > 0.0
+            and not is_hidden_by_cloak(ship)
+            and dist_sq <= range_sq
+        )
+        alive_or_wreck = (not _out_of_action(ship)) or is_targetable_wreck(ship)
+        out.append(Contact(
+            ship=ship,
+            dist_sq_gu=dist_sq,
+            surface_gu=_surface_gu(dist_sq, ship),
+            perceivable=perceivable,
+            targetable=perceivable and alive_or_wreck and bool(ship.IsTargetable()),
+        ))
+    return tuple(out)
+
+
+def _surface_gu(dist_sq: float, ship) -> float:
+    """Distance to the target's bounding sphere, BC's range-readout convention
+    (verified against the original game by orbiting Haven — see
+    engine/ui/reticle_text.py). Negligible for ships, decisive for planets."""
+    d = dist_sq ** 0.5
+    r = ship.GetRadius() if implements(ship, "GetRadius") else 0.0
+    return d - r if d > r else 0.0
+
+
+def contacts_for(observer) -> tuple:
+    """Targetable ships in *observer*'s system. Back-compat wrapper over
+    perceived_by for callers not yet migrated to Contact records."""
+    return tuple(c.ship for c in perceived_by(observer) if c.targetable)
