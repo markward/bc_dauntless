@@ -56,52 +56,148 @@ class STComponentMenu(STMenu):
 
 
 class STTargetMenu(STTopLevelMenu):
-    """The whole target list — children are STSubsystemMenu rows."""
+    """The whole target list — children are STSubsystemMenu rows.
+
+    Children are DERIVED, not stored. `_row_cache` holds one row per ship ever
+    seen (identity-stable, because CycleTarget resolves a row then walks
+    siblings from it); `_contacts` is the membership pushed each frame. The
+    child list is their intersection, computed on read.
+
+    This is why warp needs no target-list code: mid-warp the player is alone in
+    the _WarpTransit set, so the pushed list is empty and the menu empties
+    itself; on arrival it fills from the destination set.
+    """
 
     def __init__(self, label: str = ""):
+        # Set before super().__init__ — the base assigns self._children, which
+        # is a property here whose getter reads these.
+        self._row_cache: dict = {}
+        self._contacts: tuple = ()
         super().__init__(label)
         # The last ship the player manually selected. Survives across
         # mission saves so a reload restores the selection. SDK callers
         # mutate via ClearPersistentTarget; engine sets it on real clicks.
         self._persistent_target_name: str | None = None
 
+    # ── Derived membership ───────────────────────────────────────────────────
+
+    def set_contacts(self, ships) -> None:
+        """Push this frame's membership (from perception.contacts_for).
+
+        Idempotent and cheap: rows are built once per ship and reused, so a
+        repeated push costs a dict lookup per contact.
+        """
+        from engine.appc.ships import ShipClass
+        self._contacts = tuple(s for s in ships if isinstance(s, ShipClass))
+        for ship in self._contacts:
+            if ship not in self._row_cache:
+                self.RebuildShipMenu(ship)
+
+    def _rows(self) -> list:
+        """The projection: cached rows for the current contacts, in order.
+
+        Defensive on both attributes: `_children` is a property, so anything
+        that reads it during base-class construction would land here before
+        __init__ finishes. TGObject.__getattr__ raises for _private names, so
+        getattr-with-default is the guard that works.
+        """
+        cache = getattr(self, "_row_cache", None)
+        contacts = getattr(self, "_contacts", None)
+        if not cache or not contacts:
+            return []
+        return [cache[s] for s in contacts if s in cache]
+
+    @property
+    def _children(self) -> list:
+        # STMenu.__init__ assigns self._children = []; the setter below absorbs
+        # that. Everything that reads children — base class, SDK, our CEF views
+        # — goes through this, so nothing can bypass the projection.
+        return self._rows()
+
+    @_children.setter
+    def _children(self, value) -> None:
+        # Membership is derived; there is nothing to store. STMenu.__init__ and
+        # KillChildren both assign here and both are correctly no-ops.
+        pass
+
     # ── Sibling traversal required by CycleTarget ──
     def GetFirstChild(self):
-        return self._children[0] if self._children else None
+        rows = self._rows()
+        return rows[0] if rows else None
 
     def GetLastChild(self):
-        return self._children[-1] if self._children else None
+        rows = self._rows()
+        return rows[-1] if rows else None
 
     def GetNextChild(self, child):
+        rows = self._rows()
         try:
-            i = self._children.index(child)
+            i = rows.index(child)
         except ValueError:
             return None
-        return self._children[i + 1] if i + 1 < len(self._children) else None
+        return rows[i + 1] if i + 1 < len(rows) else None
 
     def GetPrevChild(self, child):
+        rows = self._rows()
         try:
-            i = self._children.index(child)
+            i = rows.index(child)
         except ValueError:
             return None
-        return self._children[i - 1] if i > 0 else None
+        return rows[i - 1] if i > 0 else None
+
+    def GetNumChildren(self) -> int:
+        return len(self._rows())
 
     def GetObjectEntry(self, ship):
-        """Return the STSubsystemMenu whose GetShip() is ``ship``.
+        """Return the listed STSubsystemMenu whose GetShip() is ``ship``.
 
         SDK: TacticalInterfaceHandlers.py:711 (CycleTarget). Identity
         comparison — the SDK passes the actual ShipClass object.
+
+        Returns None for a ship that is not a current contact even if a row is
+        cached, so this agrees with the listing by construction — SDK
+        CycleTarget must never be able to select a contact the panel drops.
         """
-        for child in self._children:
-            if isinstance(child, STSubsystemMenu) and child.GetShip() is ship:
-                return child
+        if ship not in self._contacts:
+            return None
+        return self._row_cache.get(ship)
+
+    def GetSubmenuW(self, label) -> "STMenu | None":
+        """Return the listed row whose GetLabel() is ``label``, else None.
+
+        Searches the PROJECTION rather than STMenu._submenus, for the same
+        reason GetObjectEntry does: rows are never AddChild'd here (AddChild is
+        a no-op on a derived list), so _submenus would stay empty forever, and a
+        second registry could disagree with what the panel draws. A ship that is
+        not a current contact returns None.
+
+        Rows are labelled with the ship's display name, which is exactly what
+        the SDK looks up:
+          * Maelstrom/Episode2/E2M0/E2M0.py:3692-3697 — resolves a Warbird's
+            row (a localized string from the mission database) to point a
+            tutorial arrow at it.
+          * Maelstrom/Episode1/E1M2/E1M2.py:6685,6697 — same shape via the
+            narrow GetSubmenu spelling, which STMenu delegates to this method,
+            so overriding here serves both.
+        """
+        key = str(label)
+        for row in self._rows():
+            if row.GetLabel() == key:
+                return row
         return None
 
     # ── Mutators SDK scripts actually call ──
 
     def ClearTargetList(self) -> None:
-        """SDK: Multiplayer/MissionShared.py:353."""
-        self.KillChildren()
+        """SDK: Multiplayer/MissionShared.py:353.
+
+        Under a derived list this can only drop the cached rows — the contents
+        come back on the next push if those ships are still present. That is
+        correct for its real caller (MissionShared.ClearShips deletes the ships
+        immediately afterwards, so the next push is empty anyway).
+        """
+        self._row_cache.clear()
+        self._contacts = ()
 
     def ClearPersistentTarget(self) -> None:
         """SDK: TacticalInterfaceHandlers.py:656, HelmMenuHandlers.py:947,
@@ -128,8 +224,12 @@ class STTargetMenu(STTopLevelMenu):
         return self._persistent_target_name
 
     def RebuildShipMenu(self, ship) -> None:
-        """Add or refresh the row for ``ship``. SDK callsites:
-        MissionLib.py:2200, MissionLib.py:2225.
+        """Create or refresh the cached row for ``ship``. SDK callsites:
+        MissionLib.py:2200, MissionLib.py:2225 (HideSubsystems /
+        ShowSubsystems).
+
+        It no longer decides whether the ship is LISTED — set_contacts does
+        that — so a mission may refresh a ship in another set harmlessly.
 
         Passes ``App.CT_SHIP_SUBSYSTEM`` to ``StartGetSubsystemMatch`` so
         all subsystems (sensor, impulse, warp, weapons, shields, hull, etc.)
@@ -148,7 +248,7 @@ class STTargetMenu(STTopLevelMenu):
         from engine.appc.ships import ShipClass
         if ship is None or not isinstance(ship, ShipClass):
             return
-        row = self.GetObjectEntry(ship)
+        row = self._row_cache.get(ship)
         if row is None:
             # Target-list label uses the localized display name ("USS Sovereign",
             # "Galor"), not the raw internal identifier ("player",
@@ -156,7 +256,7 @@ class STTargetMenu(STTopLevelMenu):
             # list regressed to identifiers once sensor-identification began
             # populating it. Affiliation/group lookups still key off GetName().
             row = STSubsystemMenu(ship, ship.GetDisplayName())
-            self.AddChild(row)
+            self._row_cache[ship] = row
         row.KillChildren()
         kIter = ship.StartGetSubsystemMatch(_App.CT_SHIP_SUBSYSTEM)
         sub = ship.GetNextSubsystemMatch(kIter)
@@ -207,13 +307,13 @@ class STTargetMenu(STTopLevelMenu):
                 self._add_subsystem_row(recurse_into, child)
 
     def RebuildShipMenus(self, source_set=None) -> None:
-        """Bulk rebuild. Never called from SDK Python; included so the
-        engine auto-population hook has a single entry point.
+        """Bulk refresh from a set. Never called from SDK Python; included so
+        the engine auto-population hook has a single entry point.
 
-        Walks ``source_set`` (or the "bridge" set when ``None``, for
-        backward compatibility with existing tests) and rebuilds rows
-        for every ShipClass member. Non-ship members are skipped —
-        see RebuildShipMenu for the underlying reason.
+        Retained for the existing callers; it now pushes membership rather
+        than appending children, so its effect is the same as set_contacts
+        over that set's ships. Non-ship members are skipped — see
+        RebuildShipMenu for the underlying reason.
 
         In this codebase the "bridge" set holds the bridge interior
         only; spawned ships live in mission-named spatial sets like
@@ -226,9 +326,8 @@ class STTargetMenu(STTopLevelMenu):
             source_set = _App.g_kSetManager.GetSet("bridge")
         if source_set is None:
             return
-        for obj in source_set.GetObjectList():
-            if isinstance(obj, ShipClass):
-                self.RebuildShipMenu(obj)
+        self.set_contacts([o for o in source_set.GetObjectList()
+                           if isinstance(o, ShipClass)])
 
     def ResetAffiliationColors(self) -> None:
         """Recompute every row's affiliation token. SDK callsites:
@@ -294,42 +393,6 @@ def STComponentMenu_Cast(obj):
     if obj is None:
         return None
     return obj
-
-
-# ── Bridge-set integration ───────────────────────────────────────────────────
-
-def _on_bridge_set_event(event: str, obj, identifier: str) -> None:
-    """SetClass subscriber callback — drives target-menu rows from
-    bridge-set add/remove events."""
-    menu = STTargetMenu_GetTargetMenu()
-    if menu is None:
-        return
-    if event == "added":
-        if hasattr(obj, "StartGetSubsystemMatch"):
-            menu.RebuildShipMenu(obj)
-            menu.ResetAffiliationColors()
-    elif event == "removed":
-        row = menu.GetObjectEntry(obj)
-        if row is not None:
-            menu.DeleteChild(row)
-
-
-def wire_to_bridge_set(bridge_set) -> None:
-    """Subscribe the target-menu singleton to a bridge set.
-
-    Idempotent — subscribing the same callback twice is a no-op (the
-    SetClass.subscribe API enforces uniqueness).
-    """
-    bridge_set.subscribe(_on_bridge_set_event)
-
-
-def unwire_from_bridge_set(bridge_set) -> None:
-    """Counterpart to wire_to_bridge_set — removes the target-menu
-    callback from this bridge set's subscriber list. Called by
-    ``reset_sdk_globals`` on mission swap so the subscription doesn't
-    leak across missions.
-    """
-    bridge_set.unsubscribe(_on_bridge_set_event)
 
 
 # ── Cloak → target-menu gate ─────────────────────────────────────────────────

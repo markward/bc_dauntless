@@ -229,7 +229,7 @@ def test_player_list_uses_scaled_range_when_range_units_omitted():
     enemy.SetTranslateXYZ(1000.0, 0.0, 0.0)
 
     menu = App.STTargetMenu_CreateW("Targets")
-    menu.RebuildShipMenu(enemy)
+    menu.set_contacts([enemy])
 
     # Undamaged: 2000 GU range, enemy at 1000 GU -> visible.
     update_target_list_visibility(menu, [enemy], player)
@@ -254,7 +254,7 @@ def test_player_list_explicit_range_units_still_honored():
     enemy.SetTranslateXYZ(2500.0, 0.0, 0.0)  # beyond 2000 base, inside 30000
 
     menu = App.STTargetMenu_CreateW("Targets")
-    menu.RebuildShipMenu(enemy)
+    menu.set_contacts([enemy])
 
     # Explicit override ignores the scaled range and uses 30000.
     update_target_list_visibility(menu, [enemy], player, range_units=30000.0)

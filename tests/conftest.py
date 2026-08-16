@@ -870,6 +870,13 @@ def _reset_leakable_engine_globals():
         warp_state.reset()
     except Exception:
         pass
+    # ContactIndex buckets ships by SetClass; sets created in one test would
+    # otherwise leak into the next and make membership assertions order-dependent.
+    try:
+        from engine.appc import contact_index
+        contact_index.reset()
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True)

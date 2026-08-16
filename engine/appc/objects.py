@@ -98,6 +98,16 @@ class ObjectClass(TGEventHandlerObject):
         # read a real bool. See SetScannable for the ET_SCANNABLE_CHANGE
         # broadcast.
         self._scannable: bool = True
+        # Whether this object may be targeted at all. Default True: across the
+        # SDK, SetTargetable(0) is only ever used to narratively hide a specific
+        # ship until a reveal beat (E3M1's Amagon, E3M2's Warbird + Kessok,
+        # E6M4's Kessok + Keldon, E6M2's probe, E5M2's outpost, E3M5's Gon
+        # device, and several asteroid fields), and the same ships are
+        # SetTargetable(1)'d back on reveal. The overwhelming majority of ships
+        # never touch it, which only makes sense if the engine default is
+        # targetable — the same argument that settled _scannable above. Eager
+        # init so IsTargetable reads a real bool rather than a _Stub.
+        self._targetable: bool = True
 
     # ── Identity ──────────────────────────────────────────────────────────────
 
@@ -198,6 +208,19 @@ class ObjectClass(TGEventHandlerObject):
 
     def IsScannable(self) -> int:
         return 1 if self._scannable else 0
+
+    # ── Targetable state ──────────────────────────────────────────────────────
+    # BC's ObjectClass::IsTargetable / ShipClass::IsTargetable are real published
+    # surface (sdk/Build/scripts/App.py:3924, :5480). Unlike hailable/scannable
+    # there is NO ET_TARGETABLE_CHANGE in BC: the Hail and Science menus are
+    # imperatively maintained button lists that need a rebuild signal, whereas
+    # the target list is engine-built and re-reads the flag. Ours is derived for
+    # the same reason, so a reveal is picked up by the next query.
+    def SetTargetable(self, value) -> None:
+        self._targetable = bool(value)
+
+    def IsTargetable(self) -> int:
+        return 1 if self._targetable else 0
 
     def ReplaceTexture(self, new_texture_path: str, old_texture_name: str) -> None:
         """BC ObjectClass::ReplaceTexture — swap a texture on this object's model.

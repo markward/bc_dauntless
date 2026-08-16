@@ -19,8 +19,9 @@ def _populate_target_menu(target_menu, names):
     ships = []
     for n in names:
         ship = ShipClass(); ship.SetName(n)
-        target_menu.AddChild(App.STSubsystemMenu(ship, n))
         ships.append(ship)
+    # Children are derived from the pushed contact list, not appended.
+    target_menu.set_contacts(ships)
     return ships
 
 
