@@ -46,6 +46,26 @@ def test_et_keyboard_is_a_real_int():
     assert App.ET_KEYBOARD != App.ET_KEYBOARD_EVENT
 
 
+def test_et_keyboard_is_the_measured_bc_value():
+    """Not an invented id: 196610 was read out of the original game.
+
+    tools/probes/results/q13_constants_battle.txt:459 and
+    tools/probes/results/ghidra_export/stbc_constants.csv:449 both record
+    `App.ET_KEYBOARD = 196610 (0x30002)`.
+    """
+    assert App.ET_KEYBOARD == 0x30002
+
+
+def test_et_keyboard_collides_with_no_other_app_event_constant():
+    others = {
+        n: getattr(App, n) for n in dir(App)
+        if n.startswith("ET_") and n != "ET_KEYBOARD"
+        and type(getattr(App, n)) is int
+    }
+    clash = [n for n, v in others.items() if v == App.ET_KEYBOARD]
+    assert not clash, "ET_KEYBOARD aliases %r" % (clash,)
+
+
 def test_keydown_reaches_a_root_window_et_keyboard_handler():
     mod = _capture_module()
     root = _root_with_handler(mod)

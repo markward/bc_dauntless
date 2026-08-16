@@ -3427,9 +3427,24 @@ def reset_sdk_globals() -> None:
     # Force the next tick to re-run sensor identification for the new mission.
     global _last_identify_gt
     _last_identify_gt = None
+    # Drop the named-action registry. g_kTGActionManager is a process-lifetime
+    # singleton (App.py) and RegisterAction appends to a per-name LIST, so
+    # without this every action ever registered is retained forever — and the
+    # no-argument KillActions() form (E6M1.py:894, E6M2.py:1043, ...) would
+    # Abort() a previous mission's actions, which is not inert (TGSequence.Abort
+    # unregisters the object id, TGSoundAction.Abort stops audio). Clear only:
+    # the LIST semantics are correct (E1M1 registers six sequences under
+    # "CharacterIntros" and the skip must kill all six) — only the lifetime was
+    # wrong, and pruning on registration would drop the not-yet-started
+    # sequences this feature exists to kill.
+    _action_mgr = getattr(App, "g_kTGActionManager", None)
+    if isinstance(getattr(_action_mgr, "_registered", None), dict):
+        _action_mgr._registered.clear()
     # Re-apply the dev-only PlayedTutorial force after the clear. This function
     # runs once at start-of-mission and again on every swap, so it is the one
-    # seam that covers both load paths (host_loop.py:4550 and :6240).
+    # seam that covers every load path: _init_mission,
+    # MissionController._drain_pending_swap and MissionController.load_quickbattle
+    # all route through reset_sdk_globals().
     from engine import dev_tutorial_flag
     dev_tutorial_flag.apply_played_tutorial_flag()
 

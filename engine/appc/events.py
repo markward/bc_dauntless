@@ -12,7 +12,13 @@ ET_KEYBOARD_EVENT: int = 0x1000
 # KeyboardBinding; this one is what BC delivers down the window chain and what
 # SDK scripts hook via AddPythonFuncHandlerForInstance (E1M1.CrewIntros:1971,
 # E1M1.RemoveSkipHandler:2479).
-ET_KEYBOARD: int = 0x1001
+#
+# REAL BC value, measured, not invented — read out of the ORIGINAL GAME:
+#   tools/probes/results/q13_constants_battle.txt:459
+#     App.ET_KEYBOARD = 196610 (0x30002) int
+#   tools/probes/results/ghidra_export/stbc_constants.csv:449
+#     App.ET_KEYBOARD,module,,ET_KEYBOARD,int,196610,0x30002,196610 (0x30002)
+ET_KEYBOARD: int = 0x30002
 ET_WEAPON_HIT:     int = 0x1100  # reserved range above input-event ids
 ET_WARP_BUTTON_PRESSED: int = 0x1200   # warp button activated (synthesized from CEF Set Course)
 
