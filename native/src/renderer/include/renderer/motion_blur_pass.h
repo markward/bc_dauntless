@@ -24,7 +24,8 @@ public:
     /// and restores them.
     void draw(std::uint32_t src_tex, std::uint32_t dst_fbo, int fw, int fh,
               const glm::mat4& inv_proj, const glm::mat3& cam_rot,
-              const glm::vec3& cam_pos, const glm::mat4& prev_viewproj);
+              const glm::vec3& cam_pos, const glm::mat4& prev_viewproj,
+              float shutter);
 private:
     std::unique_ptr<renderer::Shader> shader_;
     std::uint32_t vao_ = 0, vbo_ = 0;

@@ -305,6 +305,10 @@ std::unique_ptr<renderer::SmaaPass>        g_smaa_pass;
 std::unique_ptr<renderer::MotionBlurPass>  g_motion_blur_pass;
 glm::mat4 g_prev_viewproj = glm::mat4(1.0f);   // previous exterior frame proj*view
 bool      g_have_prev_viewproj = false;         // false until first exterior frame
+// Motion blur is normalised to this frame rate. At or above it the shutter
+// scale is 1.0 and the blur is exactly as tuned; below it the blur shrinks in
+// proportion, instead of growing because the frame took longer.
+constexpr double kMotionBlurRefDt = 1.0 / 60.0;
 // Sun shadow map: depth-only caster FBO rendered once per frame from the sun's
 // POV (see frame()), shared by the main view and the viewscreen RTT. Owned here
 // so its GL handles are released in shutdown() while the context is current.
@@ -1132,10 +1136,23 @@ void frame() {
             const glm::mat3 cam_rot  = glm::mat3(glm::inverse(g_camera.view_matrix()));
             const glm::vec3 cam_pos  = g_camera.eye;
             const glm::mat4 prev     = g_prev_viewproj;
-            passes.emplace_back([inv_proj, cam_rot, cam_pos, prev, fw, fh]
+            // Shutter-angle normalisation. The motion vector is a per-FRAME
+            // displacement, so a dipped framerate moves the camera further and
+            // smears harder -- blur measuring frames instead of time. Scaling
+            // by kMotionBlurRefDt/dt restores a fixed exposure duration.
+            // Clamped to 1.0 deliberately: above the reference rate the
+            // physically consistent scale would be > 1 and the blur would GROW
+            // relative to how it was tuned. This only ever reduces.
+            // `dt` is the wall-clock frame time already computed at the top
+            // of frame(); no second timestamp is tracked for this.
+            const float shutter =
+                (dt > 1e-6f)
+                    ? static_cast<float>(std::min(kMotionBlurRefDt / dt, 1.0))
+                    : 1.0f;
+            passes.emplace_back([inv_proj, cam_rot, cam_pos, prev, fw, fh, shutter]
                                 (std::uint32_t s, std::uint32_t d) {
                 g_motion_blur_pass->draw(s, d, fw, fh, inv_proj, cam_rot,
-                                         cam_pos, prev);
+                                         cam_pos, prev, shutter);
             });
         }
         if (filmic_on)

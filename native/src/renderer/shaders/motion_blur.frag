@@ -6,7 +6,15 @@ uniform sampler2D u_src;
 uniform mat4 u_inv_proj;       // inverse(camera proj)
 uniform mat3 u_cam_rot;        // camera view->world rotation
 uniform vec3 u_cam_pos;        // camera world position
+uniform float u_shutter;       // frame-time normalisation, (0, 1]
 uniform mat4 u_prev_viewproj;  // previous frame proj * view
+// Shutter scale: kRefDt / dt, clamped to 1.0 by the host. The motion vector
+// below is a PER-FRAME displacement, so without this the blur grows whenever
+// the framerate dips -- a longer frame means the camera travelled further, and
+// the blur ends up measuring frames rather than time. Scaling by the frame
+// time converts it back to a fixed exposure duration, the way a real camera's
+// shutter angle does. 1.0 at or above the reference rate (blur never grows),
+// 0.5 at half of it, and so on.
 
 // Camera-motion-blur tuning — eye-tunable by rebuilding (like the filmic
 // grade). Depthless: the scene is reprojected as if at DISTANCE_GU.
@@ -33,7 +41,7 @@ void main() {
     vec2 uv_prev = (clip_prev.xy / clip_prev.w) * 0.5 + 0.5;
 
     // Screen-space motion vector, capped.
-    vec2 mv = (v_uv - uv_prev) * STRENGTH;
+    vec2 mv = (v_uv - uv_prev) * STRENGTH * u_shutter;
     float len = length(mv);
     if (len > MAX_UV) mv *= MAX_UV / len;
 
