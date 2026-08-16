@@ -186,8 +186,10 @@ class SetClass(TGEventHandlerObject):
         self._objects[identifier] = obj
         from engine.appc.ships import ShipClass
         from engine.appc import ship_lifecycle
+        from engine.appc import contact_index
         if isinstance(obj, ShipClass):
             ship_lifecycle.publish_added(obj)
+            contact_index.on_added(self, obj)
             self._resolve_player_identity_before_broadcast(obj, identifier)
         self._fire("added", obj, identifier)
         # BC broadcasts ET_ENTERED_SET whenever a ship is added to a set. Mission
@@ -235,6 +237,8 @@ class SetClass(TGEventHandlerObject):
     def RemoveObjectFromSet(self, name: str):
         obj = self._objects.get(name)
         if obj is not None:
+            from engine.appc import contact_index
+            contact_index.on_removed(self, obj)
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
         return self._objects.pop(name, None)
@@ -242,6 +246,8 @@ class SetClass(TGEventHandlerObject):
     def DeleteObjectFromSet(self, name: str) -> None:
         obj = self._objects.get(name)
         if obj is not None:
+            from engine.appc import contact_index
+            contact_index.on_removed(self, obj)
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
         self._objects.pop(name, None)
