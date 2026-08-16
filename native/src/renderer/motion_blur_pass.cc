@@ -35,7 +35,8 @@ MotionBlurPass::~MotionBlurPass() {
 void MotionBlurPass::draw(std::uint32_t src_tex, std::uint32_t dst_fbo,
                           int fw, int fh, const glm::mat4& inv_proj,
                           const glm::mat3& cam_rot, const glm::vec3& cam_pos,
-                          const glm::mat4& prev_viewproj) {
+                          const glm::mat4& prev_viewproj,
+                          float shutter) {
     const GLboolean prev_cull       = glIsEnabled(GL_CULL_FACE);
     const GLboolean prev_depth_test = glIsEnabled(GL_DEPTH_TEST);
     const GLboolean prev_blend      = glIsEnabled(GL_BLEND);
@@ -53,6 +54,7 @@ void MotionBlurPass::draw(std::uint32_t src_tex, std::uint32_t dst_fbo,
     shader_->set_mat3("u_cam_rot", cam_rot);
     shader_->set_vec3("u_cam_pos", cam_pos);
     shader_->set_mat4("u_prev_viewproj", prev_viewproj);
+    shader_->set_float("u_shutter", shutter);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, src_tex);

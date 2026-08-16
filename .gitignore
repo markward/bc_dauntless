@@ -336,3 +336,6 @@ cache/
 
 # Keep the example env file
 !.env.example
+
+# Developer NaN/Inf probe frame dumps (engine/dev_keybindings.py, F11)
+nonfinite_dumps/

@@ -27,7 +27,7 @@ uniform int u_specular_enabled;
 // gain, not the material term, governs how visible the rim reads.
 uniform float u_rim_strength;
 const float RIM_POWER = 36.0;  // sharp, edge-only falloff (higher = thinner)
-const float RIM_GAIN  = 17.0;  // peak edge brightness (tuned by eye on Galaxy; reduced from 20.8)
+const float RIM_GAIN  = 12.75; // peak edge brightness (20.8 -> 17.0 -> -25% 2026-08-16)
 
 uniform vec3 u_ambient_light;
 uniform vec3 u_camera_pos_ws;
@@ -404,6 +404,30 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
     }
 }
 
+// ── Non-finite cause probe (developer diagnostic) ──────────────────────────
+// When u_nan_debug is on, a fragment whose shading went NaN/Inf reports WHICH
+// intermediate term did it, as an integer code in the ALPHA channel.
+//
+// Alpha, and the RGB left exactly as-is — NOT a marker colour. NonfiniteProbe
+// finds the offending frame by looking for non-finite RGB, so overwriting RGB
+// would stop the probe firing and no frame would ever be dumped. This way the
+// frame renders identically, the probe still catches it, and the code rides
+// along in a channel the probe can max-reduce and report.
+//
+// Codes are ordered UPSTREAM FIRST and the search stops at the first hit, so
+// what gets reported is the ROOT term rather than everything downstream of it
+// (a NaN normal poisons essentially every later term, and "rim is NaN" would
+// be a true but useless answer).
+uniform int u_nan_debug;   // 0 = off; alpha stays 1.0, production path unchanged
+
+bool nf1(float v) {
+    // Same belt-and-braces test as nonfinite_probe.frag: isnan/isinf are the
+    // spec answer, the comparison forms survive a fast-math compiler folding
+    // those builtins away.
+    return isnan(v) || isinf(v) || !(v == v) || !(abs(v) <= 3.4028235e38);
+}
+bool nf3(vec3 v) { return nf1(v.x) || nf1(v.y) || nf1(v.z); }
+
 out vec4 frag_color;
 
 void main() {
@@ -529,7 +553,24 @@ void main() {
                 float ty = u_dyn_light_up[i].w;
                 vec3  dld = normalize(-L);        // light -> fragment
                 float fz  = dot(dld, fwd);
-                if (fz > 1e-4) {
+                // tx/ty must be strictly positive, not merely >= 0 like the
+                // outer gate. A cone authored with radius 0 (SetLightEmitter-
+                // Radius(i, 0.0) -- one keystroke in the SPV's light editor)
+                // yields spot_tan == 0 exactly, and then:
+                //   * off the axis planes, num/0 == +/-Inf, e == Inf, the
+                //     smoothstep saturates and spot == 0 -- emits nothing;
+                //   * ON an axis plane the numerator is exactly 0 too, giving
+                //     0/0 == NaN. That does NOT poison the fragment here:
+                //     spot is 1.0 - smoothstep(...), smoothstep clamps
+                //     internally, and clamp(NaN, 0, 1) == 0 on IEEE-maxNum
+                //     hardware -- so spot comes out as 1.0 and the light is
+                //     applied at FULL strength precisely where the cone has no
+                //     interior. A light leak, not a black pixel. (Hardware that
+                //     propagates NaN through clamp would get the black pixel
+                //     instead; 0/0 is undefined behaviour either way.)
+                // Requiring tx/ty > 0 sends a degenerate cone down the else
+                // branch, so it uniformly emits nothing.
+                if (fz > 1e-4 && tx > 0.0 && ty > 0.0) {
                     float ex = dot(dld, rgt) / (fz * tx);
                     float ey = dot(dld, upv) / (fz * ty);
                     float e  = ex*ex + ey*ey;     // <= 1 inside the elliptical cone
@@ -572,7 +613,20 @@ void main() {
 
     vec3 rim = vec3(0.0);
     if (u_rim_strength > 0.0) {
-        float f = pow(1.0 - max(dot(n, V), 0.0), RIM_POWER);
+        // clamp, NOT max. n and V are both normalize()d, so dot() can land a
+        // single ulp ABOVE 1.0 when a normal points exactly at the camera --
+        // making the base a tiny NEGATIVE number. pow(x, y) is undefined for
+        // x < 0 in GLSL and evaluates as exp2(y * log2(x)), so log2 of a
+        // negative gives NaN. max() only ever guarded the dot < 0 end.
+        //
+        // This was the source of the HDR black-square bug: one face-on hull
+        // pixel per few thousand frames went NaN here, and the bloom chain
+        // spread it into a hard-edged black rectangle tens of pixels across.
+        // The bloom prefilter no longer propagates it, but the NaN itself
+        // belongs dead at the source. cloak_refraction.frag already clamps the
+        // same quantity for the same reason.
+        float ndv = clamp(dot(n, V), 0.0, 1.0);
+        float f = pow(1.0 - ndv, RIM_POWER);
         rim = RIM_GAIN * f * lit_dir * u_rim_strength;
     }
 
@@ -607,5 +661,29 @@ void main() {
     vec3 final_color = lit * refl_mask + self_illum + spec * refl_mask
                      + rim + decal_emissive;
 
-    frag_color = vec4(final_color, 1.0);
+    // Cause code for the non-finite probe (see u_nan_debug above). Off => the
+    // alpha written is the literal 1.0 this shader has always written.
+    float out_alpha = 1.0;
+    if (u_nan_debug != 0) {
+        int code = 0;
+        if      (nf3(n))              code = 1;   // normalize(v_normal_ws) — zero/degenerate normal
+        else if (nf3(V))              code = 2;   // view vector (camera at the fragment)
+        else if (nf1(sun_sf))         code = 3;   // sun_shadow_factor
+        else if (nf3(lit_dir))        code = 4;   // directional diffuse
+        else if (nf3(spec_acc))       code = 5;   // specular accum — normalize(L+V) with L == -V
+        else if (nf3(lit_dyn))        code = 6;   // dynamic lights — cone 0/0, att*nl*Inf
+        else if (nf3(n_body))         code = 7;   // body-frame normal
+        else if (nf3(base.rgb))       code = 8;   // base colour texture
+        else if (nf3(decal_emissive)) code = 9;   // damage-decal ember / heat-glow
+        else if (nf1(glow_flicker))   code = 10;  // decal glow flicker
+        else if (nf3(lit))            code = 11;  // combined diffuse (post-decal soot mix)
+        else if (nf3(spec))           code = 12;  // specular * specular map
+        else if (nf3(rim))            code = 13;  // Fresnel rim
+        else if (nf1(nac) || nf1(region_gain)) code = 14;  // glow_region_mult
+        else if (nf3(glow_rgb))       code = 15;  // hue_rotate of the glow map
+        else if (nf3(self_illum))     code = 16;  // self illumination
+        else if (nf3(final_color))    code = 17;  // finite inputs, non-finite result
+        if (code != 0) out_alpha = float(code);
+    }
+    frag_color = vec4(final_color, out_alpha);
 }

@@ -36,6 +36,8 @@ add_executable(renderer_tests
     filmic_pass_test.cc
     motion_blur_pass_test.cc
     bloom_pass_test.cc
+    nonfinite_probe_test.cc
+    rim_fresnel_test.cc
     smaa_pass_test.cc
     particle_math_test.cc
     particle_pass_test.cc

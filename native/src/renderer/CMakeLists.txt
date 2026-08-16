@@ -77,6 +77,7 @@ embed_shader(SHADER_SMAA_BLEND_VS  shaders/smaa_blend.vert  smaa_blend_vs)
 embed_shader(SHADER_SMAA_BLEND_FS  shaders/smaa_blend.frag  smaa_blend_fs)
 embed_shader(SHADER_SHADOW_VS shaders/shadow.vert shadow_vs)
 embed_shader(SHADER_SHADOW_FS shaders/shadow.frag shadow_fs)
+embed_shader(SHADER_NONFINITE_PROBE_FS shaders/nonfinite_probe.frag nonfinite_probe_fs)
 embed_shader(SHADER_BLOOM_PREFILTER_FS shaders/bloom_prefilter.frag bloom_prefilter_fs)
 embed_shader(SHADER_BLOOM_DOWN_FS shaders/bloom_down.frag bloom_down_fs)
 embed_shader(SHADER_BLOOM_UP_FS shaders/bloom_up.frag bloom_up_fs)
@@ -103,6 +104,7 @@ add_library(renderer STATIC
     cubemap_target.cc
     ldr_target.cc
     bloom_pass.cc
+    nonfinite_probe.cc
     resolve_pass.cc
     filmic_pass.cc
     motion_blur_pass.cc

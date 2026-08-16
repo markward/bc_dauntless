@@ -10,6 +10,7 @@
 #include <renderer/nebula_wake_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/pipeline.h>
+#include <renderer/nonfinite_probe.h>
 #include <renderer/window.h>
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -167,6 +168,56 @@ TEST_F(FrameTest, OpaquePassWithRimEnabledRunsWithoutGLError) {
             return reinterpret_cast<const assets::Model*>(h);
         }, lighting, scenegraph::Pass::Space);
 
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// ── Fresnel rim: the real shader must not emit non-finite texels ──────────
+// Companion to rim_fresnel_test.cc, which pins the EXPRESSION; this exercises
+// the actual opaque.frag through the real submit path and checks the rendered
+// HDR target with NonfiniteProbe -- the same instrument that found the bug.
+//
+// Be clear about what this does and does not prove: it would NOT reliably have
+// caught the original bug, which needed a normal within ~3e-4 rad of the view
+// vector and fired about once per few thousand frames. It is a guard against
+// GROSS non-finite output from the rim path, and the natural home for anything
+// worse that gets introduced later. The deterministic proof lives next door.
+TEST_F(FrameTest, RimEnabledPassProducesNoNonFiniteTexels) {
+    auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
+
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_rim_eligible(iid, true);
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    // Dead-on view: maximises the number of fragments whose normal is close to
+    // the view vector, which is where the rim's pow() degenerates.
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 1500.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    // A float target: an 8-bit backbuffer cannot hold a NaN, so rendering to
+    // one would destroy the evidence before the probe ever saw it.
+    renderer::HdrTarget hdr;
+    hdr.resize(256, 256);
+    hdr.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    submitter.submit_opaque_in_pass(world, cam, *p,
+        [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting, scenegraph::Pass::Space);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    renderer::NonfiniteProbe probe;
+    const auto& r = probe.run(hdr.color_texture(), 256, 256);
+    EXPECT_FALSE(r.any)
+        << r.flagged_cells << " cell(s) of the rim-lit hull hold NaN/Inf"
+        << " (cause code " << r.max_code << ")";
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

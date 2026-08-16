@@ -1258,7 +1258,10 @@ PHASER_BEAM_BRIGHTNESS = 0.6
 # additive alpha 1.2 (BC's two emissive passes, 0.8 + 0.4), so start at 1.0
 # and dial by eye in QuickBattle if the HDR pipeline reads too hot. Dialled to
 # 0.5 (half of the audit-authentic colours) — they read too hot on screen.
-TORPEDO_BRIGHTNESS = 0.5
+# Halved again to 0.25 on 2026-08-16. Quad layers only (core/glow/flares);
+# disruptor bolt colours and the dynamic light a torpedo casts are deliberately
+# NOT scaled by this.
+TORPEDO_BRIGHTNESS = 0.25
 
 # BC's firing-ship attach gate is light.radius × 100 (weapon-firing-mechanics
 # audit §5.5); we fold it into the emitted radius because our light

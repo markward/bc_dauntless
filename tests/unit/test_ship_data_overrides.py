@@ -243,11 +243,39 @@ def test_baked_galaxy_impulse_is_box():
 
 
 def test_baked_akira_section_applies_on_real_load():
+    """The akira's impulse glows are ORIENTED BOXES, not the authored cylinder.
+
+    Both impulse engines were deliberately re-authored in the Ship Property
+    Viewer's glow editor: a box matches the real emitter shape, and the
+    orientation lets it follow the angled impulse housings. The pair is
+    mirrored (Star Impulse is the same box at +X with a negated first
+    orientation component), which is the tell that this was intentional rather
+    than a stray save.
+    """
+    from engine.appc.properties import read_indexed_setter_args as _args
     _load_real_hardpoint("akira")
+
     p = _find("Port Impulse")
     assert p is not None
-    assert p.GetGlowRegionShape(0) == "Cylinder"
-    assert p.GetGlowRegionRadius(0) == 0.23  # akira's authored hardpoint radius
+    assert p.GetGlowRegionShape(0) == "Box"
+    assert _args(p, "GlowRegionPosition", 0) == (
+        -0.96, 0.6828797110455359, -0.05)
+    assert _args(p, "GlowRegionScale", 0) == (
+        0.17803892234299573, 0.04311316788421988, 0.04277875352139736)
+    # An oriented box: without this the glow sits axis-aligned and misses the
+    # angled housing, which is the whole reason the shape was changed.
+    assert _args(p, "GlowRegionOrientation", 0) == (
+        0.7261573365587868, 0.687528561269893, 0.0, 0.0, 0.0, 1.0)
+
+    # Mirrored twin — pins the symmetry, so a one-sided edit fails here.
+    s = _find("Star Impulse")
+    assert s is not None
+    assert s.GetGlowRegionShape(0) == "Box"
+    assert _args(s, "GlowRegionPosition", 0) == (
+        0.96, 0.6828797110455359, -0.05)
+    assert _args(s, "GlowRegionScale", 0) == _args(p, "GlowRegionScale", 0)
+    assert _args(s, "GlowRegionOrientation", 0) == (
+        -0.7261573365587868, 0.687528561269893, 0.0, 0.0, 0.0, 1.0)
 
 
 def test_sovereign_sdk_hardpoint_gets_baked_glow_and_skin_shield():

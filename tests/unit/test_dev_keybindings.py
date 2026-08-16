@@ -28,6 +28,7 @@ class _Keys:
     KEY_F8 = 297
     KEY_F9 = 298
     KEY_F10 = 299
+    KEY_F11 = 300
     KEY_LEFT_BRACKET = 91
     KEY_RIGHT_BRACKET = 93
 

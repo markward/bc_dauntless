@@ -25,6 +25,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -35,6 +36,7 @@
 #include <assets/model.h>
 
 #include <renderer/frame.h>
+#include <renderer/hdr_target.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
 
@@ -60,6 +62,45 @@ assets::Model make_plane_model(float half_extent) {
     assets::Mesh mesh = assets::upload_mesh(cpu);
     mesh.set_cpu_data(cpu);  // compute_model_aabb (dynamic-light selection
                               // radius) reads cpu_data(), not the GL buffer.
+    m.meshes.push_back(std::move(mesh));
+
+    assets::Node root;
+    root.name = "root";
+    root.parent_index = -1;
+    root.local_transform = glm::mat4(1.0f);
+    root.meshes = {0};
+    m.nodes.push_back(std::move(root));
+    m.root_node = 0;
+    return m;
+}
+
+// Build the same quad in the x == 0 PLANE (spanning y and z), normal +X.
+//
+// Every vertex has x == 0.0 EXACTLY, so the interpolated v_position_ws.x is
+// exactly 0.0 across the whole surface (interpolating a constant). Put the cone
+// light at x == 0 too and dld.x is exactly 0 for every fragment -- which is what
+// makes the degenerate-cone 0/0 reproducible instead of a lucky pixel. See
+// ZeroWidthConeOnAxisPlaneIsFinite.
+assets::Model make_plane_model_yz(float half_extent) {
+    assets::MeshCpu cpu;
+    cpu.vertices.resize(4);
+    cpu.vertices[0].position = {0.0f, -half_extent, -half_extent};
+    cpu.vertices[1].position = {0.0f, -half_extent,  half_extent};
+    cpu.vertices[2].position = {0.0f,  half_extent,  half_extent};
+    cpu.vertices[3].position = {0.0f,  half_extent, -half_extent};
+    // Normals point +Z, TOWARD the light, not along the quad's geometric +X.
+    // Deliberate: the surface has to have nl > 0 or the cone gate's effect
+    // multiplies out to nothing and the test cannot see it. Culling uses the
+    // winding, not this, so the quad still renders.
+    for (auto& v : cpu.vertices) v.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+    // Reversed relative to make_plane_model's Z=0 quad: viewed from +X the
+    // camera's screen-right is world -Z, which flips the handedness, so
+    // {0,1,2} would wind CW and be culled as a back face (GL_CCW front).
+    cpu.indices = {0, 2, 1, 0, 3, 2};
+
+    assets::Model m;
+    assets::Mesh mesh = assets::upload_mesh(cpu);
+    mesh.set_cpu_data(cpu);
     m.meshes.push_back(std::move(mesh));
 
     assets::Node root;
@@ -176,6 +217,185 @@ TEST_F(ConeLightFrameTest, ConeBoundsToHalfAngle) {
         << "fragment 71.6 deg off-axis (well outside the 30 deg cone, but "
            "still inside the light's radius) must be dark -- the spot gate, "
            "not radius falloff, must be what excludes it";
+}
+
+// ── A ZERO-width cone must emit nothing, WITHOUT poisoning the fragment ────
+//
+// spot_tan == 0 is trivially authorable -- SetLightEmitterRadius(i, 0.0) on a
+// cone emitter, which the SPV's light editor can produce with one keystroke and
+// which sat in hardpoint_overrides.py for several hours during the HDR
+// black-square hunt. The old gate was `tx >= 0.0`, which let a zero tangent
+// straight into `dot(dld, rgt) / (fz * tx)`.
+//
+// This test pins the SEMANTICS the guard must preserve: a zero-width cone had
+// no interior before the fix either (num/0 == Inf -> saturated smoothstep ->
+// spot 0), so it must not turn into a full point light on the way to losing the
+// NaN. The light faces the plane head-on, so a point light here WOULD be bright
+// and this assertion has teeth.
+//
+// It does NOT reproduce the NaN, and was verified not to: reverting the guard
+// leaves it passing. The rasterizer shades at PIXEL CENTRES, so the fragment
+// nearest the axis still sits half a pixel off it, leaving dot(dld, rgt) small
+// but non-zero -- Inf, not NaN. ZeroWidthConeOnAxisPlaneIsFinite is the test
+// that actually catches the bug.
+//
+// Rendered to a FLOAT target on purpose: the sibling tests read RGBA8, where a
+// NaN converts to 0 and is indistinguishable from "correctly dark" -- the bug
+// would hide inside the very assertion meant to catch it.
+TEST_F(ConeLightFrameTest, ZeroWidthConeDoesNotBecomeAPointLight) {
+    assets::Model plane = make_plane_model(100.0f);
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&plane));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, 300.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    renderer::DynamicLightDescriptor light;
+    light.pos_a = light.pos_b = glm::vec3(0.0f, 0.0f, 10.0f);
+    light.color = glm::vec3(1.0f);
+    light.radius = 60.0f;
+    light.intensity = 100.0f;
+    light.direction = glm::vec3(0.0f, 0.0f, -1.0f);
+    light.up = glm::vec3(0.0f, 1.0f, 0.0f);
+    light.spot_tan_x = 0.0f;   // radius 0 => zero-width cone
+    light.spot_tan_y = 0.0f;
+    std::vector<renderer::DynamicLightDescriptor> lights = {light};
+
+    renderer::HdrTarget hdr;
+    hdr.resize(256, 256);
+    hdr.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    lighting.ambient = glm::vec3(0.0f);
+    lighting.directional_count = 0;
+    submitter.submit_opaque(world, cam, *p,
+        [](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, &lights);
+
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    glm::ivec2 onaxis_px = project_to_pixel(cam, glm::vec3(0.0f, 0.0f, 0.0f), 256, 256);
+    float px[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    glReadPixels(onaxis_px.x, onaxis_px.y, 1, 1, GL_RGBA, GL_FLOAT, px);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    for (int c = 0; c < 3; ++c) {
+        EXPECT_TRUE(std::isfinite(px[c]))
+            << "zero-width cone produced a non-finite channel " << c
+            << " (got " << px[c] << ")";
+    }
+    // Ambient and directional are both zero, so "emits nothing" reads as black.
+    // This pins the SEMANTICS the guard preserves: a zero-width cone had no
+    // interior before the fix either (Inf -> saturated smoothstep -> spot 0),
+    // so it must not become a full point light on the way to losing the NaN.
+    EXPECT_FLOAT_EQ(px[0], 0.0f) << "a zero-width cone must not light anything";
+    EXPECT_FLOAT_EQ(px[1], 0.0f);
+    EXPECT_FLOAT_EQ(px[2], 0.0f);
+}
+
+// ── A zero-width cone must not LEAK light along its axis planes ───────────
+//
+// THE REGRESSION TEST for the `tx >= 0.0` gate letting spot_tan == 0 reach
+// `dot(dld, rgt) / (fz * tx)`. Verified by reverting the guard and watching it
+// fail.
+//
+// What actually goes wrong is worth stating precisely, because the obvious
+// guess is wrong. 0/0 gives NaN, so e is NaN -- but spot is
+// `1.0 - smoothstep(0.85, 1.0, e)`, and smoothstep clamps internally. On
+// IEEE-maxNum hardware clamp(NaN, 0, 1) is 0, so t == 0, smoothstep returns 0,
+// and spot comes out as 1.0. The NaN is swallowed and the light is applied at
+// FULL strength exactly where the cone has no interior at all. (On hardware
+// where clamp propagates NaN instead, the same expression poisons the fragment
+// -- 0/0 is undefined behaviour either way, which is the deeper reason to
+// guard it.)
+//
+// Making it deterministic: aiming the light at a point does not work, because
+// fragments are shaded at PIXEL CENTRES and the nearest one still sits half a
+// pixel off axis (num/0 == Inf, no leak). So the zero is arranged by
+// construction -- the quad lies in the x == 0 plane with every vertex x == 0.0
+// exactly, so interpolation gives v_position_ws.x == 0.0 for EVERY fragment;
+// the light also sits at x == 0, so (lp - pos).x is exactly 0 and stays 0
+// through L and dld; and fwd/upv are unit and axis-aligned, so
+// rgt = cross(fwd, upv) = (1,0,0) exactly. dot(dld, rgt) == dld.x == 0 across
+// the whole surface.
+TEST_F(ConeLightFrameTest, ZeroWidthConeDoesNotLeakLightOnItsAxisPlane) {
+    assets::Model plane = make_plane_model_yz(100.0f);
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&plane));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(300.0f, 0.0f, 0.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    renderer::DynamicLightDescriptor light;
+    light.pos_a = light.pos_b = glm::vec3(0.0f, 0.0f, 10.0f);  // x == 0: the whole point
+    light.color = glm::vec3(1.0f);
+    light.radius = 60.0f;
+    light.intensity = 100.0f;
+    light.direction = glm::vec3(0.0f, 0.0f, -1.0f);
+    light.up = glm::vec3(0.0f, 1.0f, 0.0f);
+    light.spot_tan_x = 0.0f;   // radius 0 => zero-width cone, no interior
+    light.spot_tan_y = 0.0f;
+    std::vector<renderer::DynamicLightDescriptor> lights = {light};
+
+    // Float target: an RGBA8 backbuffer would clamp away the overbright leak
+    // this test is looking for, and turn any NaN into 0.
+    renderer::HdrTarget hdr;
+    hdr.resize(256, 256);
+    hdr.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    lighting.ambient = glm::vec3(0.25f);   // the ONLY light that may reach the hull
+    lighting.directional_count = 0;
+    submitter.submit_opaque(world, cam, *p,
+        [](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, &lights);
+
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    std::vector<float> px(256 * 256 * 4);
+    glReadPixels(0, 0, 256, 256, GL_RGBA, GL_FLOAT, px.data());
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    int nonfinite = 0, rendered = 0, leaked = 0;
+    float brightest = 0.0f;
+    for (int i = 0; i < 256 * 256; ++i) {
+        for (int c = 0; c < 3; ++c) {
+            if (!std::isfinite(px[i * 4 + c])) ++nonfinite;
+        }
+        const float r = px[i * 4];
+        if (r > 0.01f) ++rendered;
+        // intensity 100 vs ambient 0.25: a leak is not subtle.
+        if (std::isfinite(r) && r > 1.0f) ++leaked;
+        if (std::isfinite(r) && r > brightest) brightest = r;
+    }
+
+    // Proves the quad actually rendered: without this a culled or off-screen
+    // frame would report zero leaks and pass vacuously. This guard has already
+    // caught one wrong winding.
+    ASSERT_GT(rendered, 1000) << "the plane did not render (culled or "
+                                 "off-screen), so nothing below proved anything";
+    EXPECT_EQ(leaked, 0)
+        << leaked << " fragments lit beyond ambient (brightest " << brightest
+        << ") -- a zero-width cone has no interior, so spot_tan == 0 must not "
+           "reach the divide in opaque.frag's cone gate";
+    EXPECT_EQ(nonfinite, 0)
+        << nonfinite << " non-finite components: on this hardware clamp() "
+           "swallows the 0/0, but hardware that propagates NaN would poison "
+           "the fragment here";
 }
 
 TEST_F(ConeLightFrameTest, NegativeSpotTanActsAsNonConeIdentity) {
