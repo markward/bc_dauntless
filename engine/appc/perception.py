@@ -29,12 +29,24 @@ asymmetric (weapons keep applying nebula concealment), because "off" means
 "how the game behaved before", warts included.
 
 Two consequences worth knowing before editing the loop below. First,
-`can_detect` mutates a per-(observer, target) hysteresis latch, so it must be
-called EXACTLY ONCE per contact per frame — with the toggle on this module is a
-writer of that shared state, not just a reader (with it off the nebula gate is
-skipped entirely, so nothing is written). Second, it takes the squared distance
-this module already computed rather than deriving it again; that hand-off is
-what keeps the five-site consolidation from being undone.
+`can_detect` mutates a per-(observer, target) hysteresis latch, so with the
+toggle on this module is a WRITER of that shared state, not just a reader (with
+it off the nebula gate is skipped entirely, so nothing is written). The
+invariant that protects is IDEMPOTENCY, not call-count: the latch is set
+membership, not a counter, and concealment is stable within a frame, so
+re-asking the same (observer, target) in the same frame returns the same answer
+and leaves the same state. ⚠️ Earlier text here claimed `can_detect` "must be
+called EXACTLY ONCE per contact per frame"; that was never true and would have
+condemned legitimate call sites that already exist — `host_loop.py:907` (the
+per-tick firing chokepoint), `projectiles.py:375` (once per in-flight torpedo),
+`sensor_identification.py:127`, and `clear_undetectable_player_lock` all hit the
+same key repeatedly in one frame. Do not refuse a needed call on that basis; DO
+keep the latch idempotent, because if it ever gains a per-call time or counter
+term the UI and the lock guard start disagreeing on the frame a lock breaks
+(pinned by tests/unit/test_nebula_hides_contacts_from_ui.py::
+test_the_hysteresis_latch_is_idempotent_within_a_frame). Second, it takes the
+squared distance this module already computed rather than deriving it again;
+that hand-off is what keeps the five-site consolidation from being undone.
 
 See docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md.
 """
@@ -119,9 +131,12 @@ def perceived_by(observer) -> tuple:
         dist_sq = dx * dx + dy * dy + dz * dz
         # ONE detection rule, shared with the weapons, AI targeting and the
         # player's lock. can_detect also mutates a per-(observer, target)
-        # hysteresis latch, so it must be called EXACTLY ONCE per contact per
-        # frame — a second call anywhere would drive the latch twice as fast as
-        # the frame rate and let a lock re-acquire on the same frame it broke.
+        # hysteresis latch, which this loop writes once per contact. That is
+        # economy, NOT a uniqueness requirement: other frame-synchronous callers
+        # (the firing chokepoint, torpedo guidance, sensor identification, the
+        # lock guard) legitimately re-ask the same key in the same frame, and
+        # the answer is stable because the latch is set membership and
+        # concealment does not move within a frame. See the module docstring.
         # The already-derived squared distance is handed in rather than
         # recomputed inside.
         #

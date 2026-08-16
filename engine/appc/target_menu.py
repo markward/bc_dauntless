@@ -120,11 +120,25 @@ class STTargetMenu(STTopLevelMenu):
         `Contact.targetable`, see `_rows`/`GetObjectEntry`); it never becomes
         a greyed-out row, it is removed from the list entirely. There is no
         production path — synthetic or otherwise — that needs this method to
-        mark a listed row not-visible; `SetNotVisible` remains real SDK
-        surface (STMenu/STSubsystemMenu) that other code drives directly
-        (e.g. test_sdk_cycle_target_skips_invisible), and SDK CycleTarget
-        (TacticalInterfaceHandlers.py:701-730) still skips any row for which
-        `IsVisible() == 0`.
+        mark a listed row not-visible.
+
+        THE `SetVisible()` IS NOT DECORATION, and it is not "the row was just
+        built so make it visible" either — a fresh row already is. It is state
+        NORMALISATION on a REUSED row: `_row_cache` keeps one row per ship for
+        the life of the menu, so a row carries whatever the last caller left on
+        it. `SetNotVisible` is real SDK surface (STMenu/STSubsystemMenu) driven
+        directly against a target-list row today
+        (tests/integration/test_target_list_sdk_integration.py::
+        test_sdk_cycle_target_skips_invisible), and SDK CycleTarget
+        (TacticalInterfaceHandlers.py:701-730) skips any row for which
+        `IsVisible() == 0`. Nothing else ever clears that flag, so without the
+        re-assert one such call would leave a live, perceivable contact
+        permanently unselectable. Pinned by
+        tests/unit/test_target_menu_visibility_derived.py::
+        test_a_row_left_not_visible_comes_back_on_the_next_push — deleting the
+        call fails that test (verified by mutation). Note no *SDK script*
+        currently hides a target-list row, so this defends an invariant on
+        reused rows rather than fixing a bug the shipped game hits today.
 
         Idempotent and cheap: rows are built once per ship and reused, so a
         repeated push costs a dict lookup per contact.

@@ -370,8 +370,19 @@ Four landings, so a structural fix and a gameplay change are never bisected toge
 
 **Hysteresis latch coupling.** `can_detect` mutates a module-global `_broken` set keyed by
 `(id(observer), id(target))` (`sensor_detection.py:156-162`). Once the UI calls it, the UI
-drives the same latch the weapons read. The query must call it **once per contact per
-frame** — this is a correctness requirement, not an optimisation.
+drives the same latch the weapons read. The requirement is that the call be
+**idempotent within a frame**, not that it happen exactly once: the latch is set
+membership rather than a counter, and concealment is stable within a frame, so re-asking
+the same `(observer, target)` returns the same answer and leaves the same state. An
+earlier revision of this section said the query "must call it once per contact per frame —
+a correctness requirement"; that is **false and always was**. Several call sites already
+hit the same key several times in one frame — `host_loop.py:907` (firing chokepoint),
+`projectiles.py:375` (per in-flight torpedo), `sensor_identification.py:127`, and
+`clear_undetectable_player_lock`. `perceived_by` calling once per contact is economy, not
+a rule. What must be preserved is idempotency: if the latch ever gains a per-call time or
+counter term, the UI and the lock guard begin disagreeing on the frame a lock breaks. That
+is the property pinned by
+`tests/unit/test_nebula_hides_contacts_from_ui.py::test_the_hysteresis_latch_is_idempotent_within_a_frame`.
 
 **Blast radius.** Roughly 30 target-list tests, plus `target_list_visibility`'s own tests,
 which are deleted rather than updated. `scripts/check_tests.sh` is the gate; never call a

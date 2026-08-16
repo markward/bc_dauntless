@@ -46,7 +46,11 @@ HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detecti
 #
 # Both are symmetric across the game: can_detect is also the AI
 # candidate-selection gate and the FireScript firing gate, so AI ships gain the
-# same capabilities and a cloaked attack run becomes detectable close in.
+# same capabilities and a cloaked attack run becomes detectable close in. That
+# includes ACQUISITION, not just continued fire — StarbaseAttack.GetTargets
+# reaches the candidate filter with no cloak skip of its own, so a station
+# picks up a cloaked ship inside its (large) bubble. See the ⚠️ note above
+# _observing_ship for the paths and the numbers.
 #
 # ⚠️ KNOWN WART IN THE OFF STATE — this is deliberate, do not "fix" it.
 # With the flag False the UI ignores nebulae but can_detect keeps applying
@@ -186,7 +190,8 @@ def is_hidden_by_cloak(target) -> bool:
     return cloak is not None and bool(cloak.IsCloaked())
 
 
-def can_detect(observer, target, dist_sq_gu=None, apply_concealment=True) -> bool:
+def can_detect(observer, target, *, dist_sq_gu=None,
+               apply_concealment=True) -> bool:
     """True iff *observer* can detect *target* within its effective sensor
     range, accounting for nebula tactical concealment.
 
@@ -194,6 +199,15 @@ def can_detect(observer, target, dist_sq_gu=None, apply_concealment=True) -> boo
     LOCK_BREAK_T. A broken lock latches (per-pair hysteresis) until
     concealment drops to LOCK_BREAK_T - HYSTERESIS. When below the
     threshold, effective range is reduced by (1 - CONCEAL_K * concealment).
+
+    BOTH optional parameters are KEYWORD-ONLY, deliberately. ``bool`` is a
+    subclass of ``int``, so the natural misreading ``can_detect(a, b, False)``
+    would bind ``dist_sq_gu=False`` — and ``False <= r * r`` is True for any
+    positive range, a silent always-detect that no assertion would catch. The
+    bare ``*`` makes that a TypeError at the call site
+    (tests/unit/test_sensor_detection.py::
+    test_can_detect_refuses_positional_optional_arguments). Do not remove it
+    for brevity.
 
     *apply_concealment* False skips the nebula gate entirely — no density
     sample, no latch mutation, no range scaling — leaving range + cloak +
@@ -291,6 +305,22 @@ def clear_undetectable_player_lock(player) -> None:
 # (mission proximity checks, MissionLib's player scan, the player target list)
 # runs with the global None and is unaffected; only SelectTarget.FindGoodTarget
 # and StarbaseAttack.GetTargets publish an observer.
+#
+# ⚠️ THE TWO PUBLISHERS DO NOT BEHAVE THE SAME ABOUT CLOAK, and an earlier note
+# here claimed they did. `SelectTarget.FindGoodTarget` carries its OWN absolute
+# cloak skip downstream of this filter (sdk/Build/scripts/AI/Preprocessors.py:
+# 1446), so no cloaked contact survives that path whatever this gate answers.
+# `AI/PlainAI/StarbaseAttack.py::GetTargets` has NO such skip — it returns
+# GetActiveObjectTupleInSet directly — so with ENHANCED_SENSOR_CONTEST on,
+# STATIONS DO ACQUIRE CLOAKED SHIPS inside their bubble, from cold. Do not write
+# "the AI cannot acquire a cloaked contact" anywhere; it is true of one path
+# only. The bubble is CLOAK_RANGE_FACTOR of BaseSensorRange, and station
+# hardpoints author large ones (fedstarbase 12000 GU -> 120 GU, cardstarbase
+# 5000 -> 50, and the 18 of 52 hardpoint files that author no SetBaseSensorRange
+# fall back to FALLBACK_RANGE_GU -> 300 GU). Whether those numbers are right is
+# a TUNING question for the project owner and is deliberately NOT clamped here.
+# Pinned by tests/unit/test_cloak_detection_contest.py's "AI ACQUISITION"
+# section, which drives this filter directly.
 
 _observing_ship = None
 

@@ -1,5 +1,7 @@
 """Sensor-damage detection scaling: range formula, detection predicate,
 and the AI candidate-selection gate."""
+import pytest
+
 import App
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem
@@ -79,6 +81,27 @@ def test_can_detect_false_when_observer_blind():
     target = ShipClass_Create("BirdOfPrey")
     target.SetTranslateXYZ(10.0, 0.0, 0.0)
     assert can_detect(observer, target) is False
+
+
+def test_can_detect_refuses_positional_optional_arguments():
+    """The two optional parameters are KEYWORD-ONLY, and that is a bug fix.
+
+    `bool` is a subclass of `int`, so the natural misreading
+    `can_detect(observer, target, False)` — read as "don't apply concealment" —
+    used to bind `dist_sq_gu=False`. `False <= r * r` is True for any positive
+    range, i.e. a silent always-detect that no assertion anywhere would catch.
+    Keyword-only turns that misreading into a TypeError at the call site.
+    """
+    observer, _ = _ship_with_sensor(2000.0, at=(0.0, 0.0, 0.0))
+    target = ShipClass_Create("BirdOfPrey")
+    target.SetTranslateXYZ(2500.0, 0.0, 0.0)  # OUTSIDE the 2000 GU reach
+
+    with pytest.raises(TypeError):
+        can_detect(observer, target, False)
+
+    # The keyword spelling of the same intent still works and still answers
+    # from the real geometry.
+    assert can_detect(observer, target, apply_concealment=False) is False
 
 
 def test_observing_sets_and_restores_global():
@@ -395,10 +418,14 @@ def test_fire_script_engages_a_cloaked_target_inside_the_bubble():
     does (tests/unit/test_phaser_cloaked_target_no_fire.py). A cloaked attack
     run is detectable close in. Deliberate divergence from BC.
 
-    NOTE this covers the *firing* half only. The AI cannot ACQUIRE a cloaked
-    contact from cold: SelectTarget.FindGoodTarget carries its own absolute
-    cloak skip in the SDK (AI/Preprocessors.py:1446-1450), downstream of the
-    can_detect candidate filter. See test_select_target_drops_cloaked.py.
+    NOTE this covers the *firing* half only, and it is NOT true that the AI
+    cannot ACQUIRE a cloaked contact — an earlier version of this docstring said
+    so and was wrong. `SelectTarget.FindGoodTarget` does carry its own absolute
+    cloak skip (AI/Preprocessors.py:1446-1450) downstream of the candidate
+    filter, so THAT path never acquires one (test_select_target_drops_cloaked.py)
+    — but `AI/PlainAI/StarbaseAttack.py::GetTargets` has no such skip, so
+    stations acquire cloaked ships inside their bubble. Pinned by the
+    "AI ACQUISITION" section of tests/unit/test_cloak_detection_contest.py.
     """
     fs, target = _fire_script_at(15.0)
     assert fs.TargetVisible(target) == 1
