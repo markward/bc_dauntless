@@ -1453,6 +1453,12 @@ class CharacterAction(TGAction):
         # sequence step chained after the line advances when the line finishes.
         # Non-speak types (MOVE/TURN/GLANCE/...) complete inline as before.
         self._playing = True
+        # A replayed/Restart()ed action must not carry a stale _speaking from
+        # its previous run into this one's pre-speech turn phase (reopens
+        # I2: Abort() during THIS play's turn would wrongly believe it still
+        # owns the channel from before). _do_play() sets it fresh once (if
+        # ever) this play actually speaks.
+        self._speaking = False
         at = self._action_type
         if at == self.AT_MOVE:
             # Movement (walk-on / sit-down) completes when the walk clip settles:

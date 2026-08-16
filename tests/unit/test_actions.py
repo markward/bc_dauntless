@@ -964,6 +964,57 @@ def test_abort_of_inflight_turning_character_action_does_not_cut_the_channel(
         "the channel someone else owns")
 
 
+def test_abort_of_naturally_completed_character_action_does_not_cut_new_line(
+        monkeypatch):
+    """Pins the `_playing` half of the `Abort()` gate IN ISOLATION from
+    `_speaking` -- the same defect class as M1 (a mechanism individually
+    uncovered), reintroduced by the I1/I2 fix itself. `_speaking` is never
+    reset except by a fresh `Play()` (see the reset added there), so a
+    naturally-completed line carries `_speaking == True` forever. Only
+    `_playing` (cleared by `Completed()`) stops `Abort()` from cutting a
+    brand new, unrelated line when it hits that stale, long-finished
+    registration. This is a routine shape, not a contrived one:
+    `TGActionManager.RegisterAction` appends and never prunes, so
+    `KillActions()` routinely aborts long-finished actions alongside live
+    ones."""
+    from engine.appc import crew_speech
+    from engine.appc.localization import TGLocalizationDatabase
+
+    crew_speech.bus().reset()
+    b = crew_speech.bus()
+    handles = []
+
+    def fake_play(self, wav):
+        h = _FakeVoiceHandle()
+        handles.append(h)
+        return (5.0, h)
+
+    monkeypatch.setattr(type(b), "_play_voice", fake_play, raising=True)
+    db = TGLocalizationDatabase(
+        "x.tgl", strings={"L1": "line one", "L2": "line two"},
+        sounds={"L1": "l1.wav", "L2": "l2.wav"})
+
+    finished = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L1", None, 0, db)
+    finished.Play()
+    assert finished.IsPlaying()
+    assert len(handles) == 1
+
+    _advance_real_time(5.1)                  # let the 5s line run out
+    assert not finished.IsPlaying()          # completed naturally, not cut
+    assert not handles[0].stopped
+
+    # A brand new, unrelated line now holds the channel.
+    crew_speech.emit("Someone", db, "L2", 0)
+    assert len(handles) == 2
+
+    finished.Abort()                         # e.g. a stale KillActions() hit
+
+    assert not handles[1].stopped, (
+        "aborting an already-finished CharacterAction cut a brand new, "
+        "unrelated line -- the _playing half of the gate is load-bearing")
+
+
 # ── TGSoundAction / TGCreditAction inline completion ─────────────────────────
 
 def test_sound_action_completes_inline_so_chain_advances():
