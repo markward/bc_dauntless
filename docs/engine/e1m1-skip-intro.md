@@ -40,3 +40,22 @@ cold-launched E1M1 never shows the prompt.
 VarManager scope across launches and delete the dev force (or keep it purely as
 a testing shortcut). Until then the feature is dev-only, and a production
 playthrough will not show the prompt on a replay the way BC does.
+
+## Still open
+
+**`KeyboardBinding.FindKey`** (heatmap rank 56, same 342 hits as
+`GetDisplayStringFromUnicode`) is still a stub — checked 2026-08-16:
+
+```
+$ uv run python -c "
+import sys; sys.path.insert(0,'build/python')
+import App
+print(type(App.g_kKeyboardBinding.FindKey).__name__)
+"
+_Stub
+```
+
+It is the same class of gap as `GetDisplayStringFromUnicode` and blocks the
+*generic* Backspace skip in `CinematicInterfaceHandlers`, but it is **out of
+scope** for this plan — E1M1's skip prompt does not call it. Left unannotated
+in `docs/stub_heatmap.md`.
