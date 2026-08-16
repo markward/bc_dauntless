@@ -113,6 +113,42 @@ KS_KEYREPEAT = TGKeyboardEvent.KS_KEYREPEAT
 KS_NORMAL    = TGKeyboardEvent.KS_NORMAL
 
 
+def _raw_keyboard_destination():
+    """First object in BC's window chain with an ET_KEYBOARD instance handler.
+
+    BC bubbles a raw keyboard event up the window chain; our ProcessEvent
+    dispatches on exactly one object, so we pick the first candidate that
+    actually registered a handler. Order mirrors BC: the root window (where
+    mission scripts hook — E1M1.CrewIntros:1971) before the TopWindow.
+
+    Returns None when nothing registered, which is the common case; callers
+    must treat that as "post nothing".
+    """
+    import App  # deferred: input is imported during App bootstrap
+    et = App.ET_KEYBOARD
+    if not isinstance(et, int):
+        # Defensive: a regressed export would make every registration a fresh
+        # unreachable key. Post nothing rather than pretend to dispatch.
+        return None
+    candidates = []
+    root = getattr(App, "g_kRootWindow", None)
+    if root is not None:
+        candidates.append(root)
+    top = App.TopWindow_GetTopWindow()
+    if top is not None:
+        # _TopWindow keeps its handler chain by COMPOSITION on `_events`
+        # rather than inheriting one; route through it so both the probe
+        # below and AddEvent's destination check land on the same object.
+        # (Same reasoning as KeyboardBinding._resolve_destination.)
+        events_obj = getattr(top, "_events", None)
+        candidates.append(events_obj if events_obj is not None else top)
+    for cand in candidates:
+        handlers = getattr(cand, "_handlers", None)
+        if isinstance(handlers, dict) and handlers.get(et):
+            return cand
+    return None
+
+
 class TGInputManager(TGObject):
     """Receives host-side key/button events and emits TGKeyboardEvents
     into the event manager.  Registration table is populated by mission
@@ -171,6 +207,28 @@ class TGInputManager(TGObject):
         evt.SetUnicodeKey(wc_code)
         evt.SetKeyState(key_state)
         self._event_manager.AddEvent(evt)
+        self._dispatch_raw_keyboard(wc_code, key_state)
+
+    def _dispatch_raw_keyboard(self, wc_code: int, key_state: int) -> None:
+        """Post BC's raw ET_KEYBOARD event to the window chain.
+
+        Additive to the ET_KEYBOARD_EVENT broadcast above, not a replacement:
+        KeyboardBinding still translates bound keys into ET_INPUT_* events.
+        Gated by _registered_codes via the caller, so unmapped keys stay
+        silent. All three key states are posted — BC delivers down, up and
+        character events to windows, which is why
+        CinematicInterfaceHandlers.HandleKeyboard inspects GetKeyState().
+        """
+        dest = _raw_keyboard_destination()
+        if dest is None:
+            return
+        import App
+        raw = TGKeyboardEvent()
+        raw.SetUnicodeKey(wc_code)
+        raw.SetKeyState(key_state)
+        raw.SetEventType(App.ET_KEYBOARD)
+        raw.SetDestination(dest)
+        self._event_manager.AddEvent(raw)
 
 
 class KeyboardBinding(TGObject):
