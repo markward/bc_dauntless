@@ -26,28 +26,48 @@ from __future__ import annotations
 # SetClass -> list of ShipClass, in insertion order.
 _buckets: dict = {}
 
+# SetClass -> list of Nebula (App.CT_NEBULA), in insertion order. Nebulae
+# essentially never spawn or despawn mid-mission, so — like the ship
+# buckets above — this is genuinely event-maintained state rather than
+# something worth rediscovering by scanning the set on every query.
+# sensor_detection.concealment_at reads this instead of calling
+# pSet.GetClassObjectList(App.CT_NEBULA) once per ship, per call.
+_nebula_buckets: dict = {}
+
 
 def on_added(pSet, obj) -> None:
-    """Record *obj* as present in *pSet*. Non-ships are ignored, so no
-    read-time type test is needed. Idempotent."""
+    """Record *obj* as present in *pSet*. Ships and nebulae are bucketed;
+    everything else is ignored, so no read-time type test is needed.
+    Idempotent."""
     from engine.appc.ships import ShipClass
-    if not isinstance(obj, ShipClass):
+    from App import Nebula
+    if isinstance(obj, ShipClass):
+        bucket = _buckets.setdefault(pSet, [])
+        if obj not in bucket:
+            bucket.append(obj)
         return
-    bucket = _buckets.setdefault(pSet, [])
-    if obj not in bucket:
-        bucket.append(obj)
+    if isinstance(obj, Nebula):
+        bucket = _nebula_buckets.setdefault(pSet, [])
+        if obj not in bucket:
+            bucket.append(obj)
 
 
 def on_removed(pSet, obj) -> None:
-    """Drop *obj* from *pSet*'s bucket. Silent if absent — RemoveObjectFromSet
-    is called for objects that were never ships."""
+    """Drop *obj* from *pSet*'s bucket(s). Silent if absent —
+    RemoveObjectFromSet is called for objects that were never ships or
+    nebulae."""
     bucket = _buckets.get(pSet)
-    if not bucket:
-        return
-    try:
-        bucket.remove(obj)
-    except ValueError:
-        pass
+    if bucket:
+        try:
+            bucket.remove(obj)
+        except ValueError:
+            pass
+    nebula_bucket = _nebula_buckets.get(pSet)
+    if nebula_bucket:
+        try:
+            nebula_bucket.remove(obj)
+        except ValueError:
+            pass
 
 
 def ships_in(pSet) -> tuple:
@@ -55,6 +75,13 @@ def ships_in(pSet) -> tuple:
     return tuple(_buckets.get(pSet, ()))
 
 
+def nebulae_in(pSet) -> tuple:
+    """Nebulae currently in *pSet*, in insertion order. Empty for an unknown
+    set or a set with none."""
+    return tuple(_nebula_buckets.get(pSet, ()))
+
+
 def reset() -> None:
     """Drop every bucket. Called on mission swap and between tests."""
     _buckets.clear()
+    _nebula_buckets.clear()

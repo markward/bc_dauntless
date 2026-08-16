@@ -187,9 +187,14 @@ class SetClass(TGEventHandlerObject):
         from engine.appc.ships import ShipClass
         from engine.appc import ship_lifecycle
         from engine.appc import contact_index
+        # contact_index buckets both ships and nebulae (on_added no-ops for
+        # anything else), so this must run for every object, not just ships —
+        # a nebula added here is the only route MetaNebula instances enter a
+        # set by, and sensor_detection.concealment_at reads the index instead
+        # of scanning GetClassObjectList(App.CT_NEBULA) per query.
+        contact_index.on_added(self, obj)
         if isinstance(obj, ShipClass):
             ship_lifecycle.publish_added(obj)
-            contact_index.on_added(self, obj)
             self._resolve_player_identity_before_broadcast(obj, identifier)
         self._fire("added", obj, identifier)
         # BC broadcasts ET_ENTERED_SET whenever a ship is added to a set. Mission

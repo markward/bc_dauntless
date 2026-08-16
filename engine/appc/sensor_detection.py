@@ -104,7 +104,8 @@ def concealment_at(ship) -> float:
         return 0.0
     t = _game_time()
     best = 0.0
-    for obj in pSet.GetClassObjectList(App.CT_NEBULA):
+    from engine.appc import contact_index
+    for obj in contact_index.nebulae_in(pSet):
         neb = App.MetaNebula_Cast(obj)
         if neb is None:
             continue
