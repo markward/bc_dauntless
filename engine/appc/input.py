@@ -214,6 +214,12 @@ class TGInputManager(TGObject):
     def OnKeyUp(self, wc_code: int) -> None:
         self._emit(int(wc_code), KS_KEYUP)
 
+    def OnRawKeyDown(self, wc_code: int) -> None:
+        self._emit_raw(int(wc_code), KS_KEYDOWN)
+
+    def OnRawKeyUp(self, wc_code: int) -> None:
+        self._emit_raw(int(wc_code), KS_KEYUP)
+
     def OnChordDown(self, wc_code: int) -> None:
         """Modifier-chord press.  BC's input manager produces a character
         event (KS_NORMAL) alongside the keydown; the SDK binds each chord
@@ -230,6 +236,33 @@ class TGInputManager(TGObject):
         evt.SetUnicodeKey(wc_code)
         evt.SetKeyState(key_state)
         self._event_manager.AddEvent(evt)
+        self._dispatch_raw_keyboard(wc_code, key_state)
+
+    def _emit_raw(self, wc_code: int, key_state: int) -> None:
+        """Raw-ONLY delivery: BC's ET_KEYBOARD window event, with no
+        ET_KEYBOARD_EVENT broadcast and therefore no KeyboardBinding →
+        ET_INPUT_* translation.
+
+        WHY THE HALF: dauntless drives flight, camera and throttle host-side
+        off host_io.key_state (engine/input_map.py), NOT off the SDK binding
+        table.  BC binds most of those same keys to ET_INPUT_* actions
+        (DefaultKeyboardBinding.py:80-95 maps W/S/A/D/Q/E to
+        ET_INPUT_TURN_*/ROLL_*), and TacticalInterfaceHandlers.Initialize
+        registers TurnUp/TurnDown/... on the TCW for them (line 68-73).  Those
+        handlers call TurnShip, which does
+        MissionLib.SetPlayerAI("Captain", None) → pPlayer.ClearAI() before
+        setting an angular velocity — so routing the general key stream
+        through the binding layer would clear the player's AI mid-cutscene and
+        add a second, fighting rotation driver.  Until flight control itself
+        moves onto the SDK binding path, the general poller delivers only the
+        raw window event, which is the half no other consumer duplicates.
+
+        The four special-cased host pollers (mouse buttons, crew-talk F-keys,
+        fire keys, ALT/CTRL/CAPS chords) keep using _emit and therefore keep
+        BOTH halves; their ET_INPUT_* consumers are live and wanted.
+        """
+        if wc_code not in self._registered_codes:
+            return
         self._dispatch_raw_keyboard(wc_code, key_state)
 
     def _dispatch_raw_keyboard(self, wc_code: int, key_state: int) -> None:
