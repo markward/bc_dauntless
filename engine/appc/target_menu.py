@@ -99,6 +99,18 @@ class STTargetMenu(STTopLevelMenu):
         IsVisible() == 0) could select a contact the target list refused to
         draw. One record now decides both, so they cannot diverge.
 
+        ⚠️ The `SetNotVisible` branch below is currently reachable only with
+        synthetic records. `perceived_by` defines `targetable = perceivable and
+        ...`, so `targetable ⇒ perceivable`, and the production push can never
+        carry `perceivable=False, targetable=True` — every LISTED row is
+        `IsVisible() == 1` in-game. Do not conclude the flag is what protects
+        SDK CycleTarget / TargetNearestEnemy today: the `targetable` gate on
+        the listing (see `_rows` and `GetObjectEntry`) is. The branch goes live
+        in stage 4, when nebula concealment decouples "can't draw it" from
+        "isn't there" — see the Stage 4 outline in
+        docs/superpowers/plans/2026-08-16-contact-perception-stage-3.md, which
+        records that it needs production-path coverage at that point.
+
         Idempotent and cheap: rows are built once per ship and reused, so a
         repeated push costs a dict lookup per contact.
         """
