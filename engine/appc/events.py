@@ -197,6 +197,16 @@ class TGKeyboardEvent(TGEvent):
     def GetUnicodeKey(self) -> int:
         return self._unicode_key
 
+    # BC's published names (sdk/Build/scripts/App.py:1062-1063). SDK scripts
+    # call the bare forms (E1M1.SkipOpeningSequence, CinematicInterfaceHandlers
+    # .HandleKeyboard); our own engine code and tests use the *Key forms. Both
+    # must resolve or one side silently gets a _Stub.
+    def SetUnicode(self, k) -> None:
+        self.SetUnicodeKey(k)
+
+    def GetUnicode(self) -> int:
+        return self.GetUnicodeKey()
+
     def SetKeyState(self, s) -> None:
         self._key_state = int(s)
 
