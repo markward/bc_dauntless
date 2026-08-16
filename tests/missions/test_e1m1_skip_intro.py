@@ -76,6 +76,63 @@ def test_pressing_s_reaches_the_sdk_skip_branch(skip_module):
     assert calls["killed"] == ["CharacterIntros"]
 
 
+def test_skip_stops_inflight_intro_dialogue_from_restarting(skip_module):
+    """THE reported live bug, end to end: pressing 's' does not stop the
+    dialogue -- the line that was playing finishes, then the next line
+    starts, and the chain keeps going underneath the undock cutscene.
+
+    Registers a two-line TGSequence under "CharacterIntros" -- the same
+    shape E1M1.IntroduceSaffi builds (App.TGActionManager_RegisterAction(...,
+    "CharacterIntros") then .Play(), holding the actual CharacterAction
+    lines) -- then drives the REAL 's' keypress through
+    App.g_kInputManager, which reaches the real
+    E1M1.SkipOpeningSequence -> App.TGActionManager_KillActions
+    ("CharacterIntros") -> TGSequence.Abort(). Finally it simulates the
+    in-flight first line completing late, exactly as reported: the line that
+    was already playing when 's' was pressed finishes on its own, and that
+    completion must NOT resurrect the chain by starting the next line.
+    """
+    e1m1, calls = skip_module
+    import KeyConfig
+    from engine.appc import crew_speech
+    from engine.appc.localization import TGLocalizationDatabase
+
+    KeyConfig.MapScancodes()
+    crew_speech.bus().reset()
+
+    db = TGLocalizationDatabase(
+        "x.tgl",
+        strings={"L1": "line one", "L2": "line two"},
+        sounds={"L1": "l1.wav", "L2": "l2.wav"},
+    )
+    line1 = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L1", None, 0, db)
+    line2 = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L2", None, 0, db)
+    intro = App.TGSequence_Create()
+    intro.AddAction(line1)
+    intro.AppendAction(line2, line1)
+    App.TGActionManager_RegisterAction(intro, "CharacterIntros")
+    intro.Play()
+
+    assert line1.IsPlaying()
+    assert not line2.IsPlaying()          # line 2 has not started yet
+
+    _register(e1m1)
+    try:
+        App.g_kInputManager.OnKeyDown(WC_S)     # the reported "press s" moment
+    finally:
+        _unregister(e1m1)
+    assert calls["undock"] == [1]
+    assert calls["killed"] == ["CharacterIntros"]
+
+    line1.Completed()          # the in-flight line finishes late, as reported
+
+    assert not line2.IsPlaying(), (
+        "an aborted CharacterIntros sequence launched the next line when "
+        "the in-flight line completed -- the exact reported bug")
+
+
 class _FakeKeys:
     KEY_S = ord("S")
     KEY_LEFT_ALT, KEY_RIGHT_ALT = 342, 346

@@ -610,6 +610,180 @@ def test_stop_cancels_pending_delay_timers():
     assert log == []
 
 
+# ── TGSequence.Abort() must also stop in-flight children ────────────────────
+#
+# Regression: TGSequence.Abort() only ever cancelled SCHEDULED steps (pending
+# timers). It did nothing about a step already mid-flight -- so when that
+# child later posted its own completion, _on_dependency_complete (unlike
+# _maybe_complete) never consulted _playing and happily launched the next
+# step on a sequence the caller had just killed. E1M1's "s" skip-intro key
+# hit this exactly: App.TGActionManager_KillActions("CharacterIntros") called
+# Abort() on the currently-playing officer-intro sequence, the in-flight line
+# finished anyway, and the chain kept going underneath the undock cutscene.
+
+class _AsyncAction(TGAction):
+    """An action that starts playing but never auto-completes -- models a
+    real in-flight child (a voice line, a nested sequence) whose completion
+    arrives later via its own Completed()/event, not inline from Play()."""
+    def Play(self) -> None:
+        self._playing = True
+
+
+class _AbortRecordingAction(TGAction):
+    def __init__(self):
+        super().__init__()
+        self.abort_count = 0
+
+    def Play(self) -> None:
+        self._playing = True     # in-flight; never auto-completes
+
+    def Abort(self) -> None:
+        self.abort_count += 1
+        super().Abort()
+
+
+def test_abort_does_not_launch_dependent_when_inflight_child_later_completes():
+    """THE direct regression test for the reported bug."""
+    log = []
+    child = _AsyncAction()
+    follower = _RecordingAction(log, "next")
+    s = App.TGSequence_Create()
+    s.AddAction(child)
+    s.AddAction(follower, child)
+    s.Play()
+    assert child.IsPlaying()          # in flight
+    assert log == []                  # follower not started yet
+
+    s.Abort()
+    assert not s.IsPlaying()
+    child.Completed()                 # late-arriving completion (raced the abort)
+
+    assert log == [], (
+        "an aborted sequence must not launch a dependent step when an "
+        "in-flight child later completes")
+
+
+def test_abort_stops_inflight_child():
+    child = _AbortRecordingAction()
+    s = App.TGSequence_Create()
+    s.AddAction(child)
+    s.Play()
+    assert child.IsPlaying()
+
+    s.Abort()
+
+    assert child.abort_count == 1
+
+
+def test_abort_does_not_abort_a_child_that_already_completed():
+    child = _AbortRecordingAction()
+    cond = App.TGConditionAction_Create()   # stays pending -> keeps s playing
+    s = App.TGSequence_Create()
+    s.AddAction(child)
+    s.AddAction(cond)
+    s.Play()
+    assert child.IsPlaying()
+    child.Completed()                 # child finishes on its own...
+    assert not child.IsPlaying()
+    assert s.IsPlaying()              # ...but the sequence is still waiting on cond
+
+    s.Abort()
+
+    assert child.abort_count == 0     # already-finished child left alone
+
+
+def test_abort_stops_inflight_nested_sequence_children(monkeypatch):
+    """Nested case: aborting an outer sequence aborts an in-flight inner
+    sequence's own in-flight children -- E1M1's exact shape (CrewIntros'
+    outer sequence of per-officer TGScriptActions, each of which builds and
+    registers an INNER sequence holding the actual CharacterAction lines)."""
+    from engine.audio.tg_sound import TGSoundManager
+    handle = _FakeVoiceHandle()
+    monkeypatch.setattr(TGSoundManager, "duration_for",
+                        lambda self, name: 5.0, raising=True)
+    monkeypatch.setattr(TGSoundManager, "PlaySound",
+                        lambda self, name: handle, raising=True)
+
+    inner_sound = App.TGSoundAction_Create("SaffiIntroLine")
+    inner = TGSequence_Create()
+    inner.AddAction(inner_sound)
+
+    outer = TGSequence_Create()
+    outer.AddAction(inner)
+    outer.Play()
+
+    assert inner.IsPlaying()
+    assert inner_sound.IsPlaying()
+
+    outer.Abort()
+
+    assert handle.stopped             # the deeply-nested voice line was cut
+    assert not inner_sound.IsPlaying()
+    assert not inner.IsPlaying()
+    assert not outer.IsPlaying()
+
+
+def test_abort_does_not_fire_completion_events():
+    """A killed sequence must not look like a finished one -- otherwise the
+    outer CrewIntros sequence would treat the kill as a normal completion and
+    advance straight into the next officer's intro."""
+    import sys, types
+    fired = []
+    mod = types.ModuleType("_test_seq_abort_no_complete")
+    mod.on_done = lambda obj, ev: fired.append(True)
+    sys.modules["_test_seq_abort_no_complete"] = mod
+    App.g_kTGActionManager.AddPythonFuncHandlerForInstance(
+        App.ET_ACTION_COMPLETED, "_test_seq_abort_no_complete.on_done")
+
+    child = _AsyncAction()
+    s = App.TGSequence_Create()
+    s.AddAction(child)
+    ev = App.TGEvent_Create()
+    ev.SetEventType(App.ET_ACTION_COMPLETED)
+    ev.SetDestination(App.g_kTGActionManager)
+    s.AddCompletedEvent(ev)
+    s.Play()
+
+    s.Abort()
+
+    assert fired == []                # a killed sequence must not look finished
+    App.g_kTGActionManager.RemoveHandlerForInstance(
+        App.ET_ACTION_COMPLETED, "_test_seq_abort_no_complete.on_done")
+    del sys.modules["_test_seq_abort_no_complete"]
+
+
+def test_character_action_abort_stops_audio(monkeypatch):
+    """The consequence of the fix, made explicit: aborting an in-flight
+    CharacterAction line cuts its audio immediately -- the line stops
+    mid-word rather than finishing, mirroring Skip()'s audio-stop but without
+    completing the action (an aborted line must not look finished either)."""
+    from engine.appc import crew_speech
+    from engine.appc.localization import TGLocalizationDatabase
+
+    crew_speech.bus().reset()
+    b = crew_speech.bus()
+    handles = []
+
+    def fake_play(self, wav):
+        h = _FakeVoiceHandle()
+        handles.append(h)
+        return (5.0, h)
+
+    monkeypatch.setattr(type(b), "_play_voice", fake_play, raising=True)
+    db = TGLocalizationDatabase(
+        "x.tgl", strings={"L1": "line one"}, sounds={"L1": "l1.wav"})
+    line = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L1", None, 0, db)
+    line.Play()
+    assert line.IsPlaying()
+    assert len(handles) == 1
+
+    line.Abort()
+
+    assert not line.IsPlaying()
+    assert handles[0].stopped
+
+
 # ── TGSoundAction / TGCreditAction inline completion ─────────────────────────
 
 def test_sound_action_completes_inline_so_chain_advances():

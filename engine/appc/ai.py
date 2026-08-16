@@ -1920,6 +1920,30 @@ class CharacterAction(TGAction):
             self._issue_turn_back(turn_to)
         super().Skip()
 
+    def Abort(self) -> None:
+        # Aborting an in-flight line must cut its audio immediately --
+        # otherwise a killed CharacterIntros sequence (TGSequence.Abort()
+        # calling action.Abort() on the in-flight child) leaves the
+        # currently-speaking line's voice playing out under whatever the
+        # caller does next (E1M1's skip branch moves straight into the
+        # silent undock cutscene). Unlike Skip(), this must NOT complete the
+        # action or issue the pending turn-back: an aborted line is dead, not
+        # finished, and its dependents must not advance -- TGSequence.Abort()
+        # / the _playing guard in _begin_step already refuse to launch them;
+        # this only has to make sure OUR half, the audio, actually stops.
+        if self._action_type in (self.AT_SPEAK_LINE,
+                                 self.AT_SPEAK_LINE_NO_FLAP_LIPS,
+                                 self.AT_SAY_LINE,
+                                 self.AT_SAY_LINE_AFTER_TURN):
+            from engine.appc import crew_speech
+            crew_speech.bus().skip_current()
+        # A deferred _speak (AT_SAY_LINE_AFTER_TURN awaiting the forward
+        # turn's on_complete) must not belatedly speak after we've been
+        # killed -- same latch Skip() sets.
+        self._skipped = True
+        self._turn_owed = None
+        super().Abort()
+
     def _issue_turn_back(self, detail) -> None:
         """BC's TurnBack sub-action: START the reverse swivel and do not await it
         (it self-completes on starting the animation), so the caller owns — and

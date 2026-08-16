@@ -395,6 +395,17 @@ class TGSequence(TGAction):
             self._on_dependency_complete(action)
 
     def _begin_step(self, step: "_Step") -> None:
+        # Defense in depth for Abort(): a child that was already mid-flight
+        # when Abort() ran can still deliver a late _ET_SEQ_STEP_COMPLETED
+        # (e.g. a completion event posted just before Abort() cancelled its
+        # timer, or a caller who calls Completed() directly). Without this
+        # guard that event reaches _on_dependency_complete and launches the
+        # next step on a sequence that is supposed to be dead -- the E1M1
+        # skip-intro bug: an aborted CharacterIntros sequence kept bleeding
+        # dialogue because nothing here consulted _playing the way
+        # _maybe_complete already does.
+        if not self._playing:
+            return
         if step.started:
             return
         step.started = True
@@ -470,10 +481,35 @@ class TGSequence(TGAction):
         self._pending_timers.append((mgr, step, timer))
 
     def Abort(self) -> None:
+        # Cancel scheduled steps first, same as before.
         for mgr, _step, timer in self._pending_timers:
             mgr.RemoveTimer(timer)
         self._pending_timers = []
+        # Mirror Skip()'s dance (see below) for the same reason it matters
+        # there: capture which children are genuinely mid-flight BEFORE
+        # marking every step started, then stop just those -- not launch
+        # them, which is what Skip() does and Abort() must not. Marking every
+        # step started first means an in-flight child's own inline completion
+        # (or a stray _on_dependency_complete re-entry while we're aborting
+        # it) can never use _begin_step to fire a dependent; the _playing
+        # guard added to _begin_step is the belt to this braces for a
+        # completion event that arrives after we're done here entirely.
+        #
+        # Abort()ing the child (never Skip()) is deliberate: Skip() COMPLETES
+        # an action and cascades to its dependents -- the opposite of "kill
+        # this". Calling action.Abort() also recurses naturally when the
+        # child is itself a nested TGSequence (e.g. E1M1's per-officer
+        # CharacterIntros sequence), so its own in-flight children stop too.
+        in_flight = [s.action for s in self._steps
+                     if s.started and id(s.action) not in self._completed_actions]
+        for step in self._steps:
+            step.started = True
         self._playing = False
+        for action in in_flight:
+            try:
+                action.Abort()
+            except Exception:
+                pass
         # A torn-down master sequence (e.g. MissionLib.DeleteQueuedActions, or a
         # mission swap) must also free its id so the next QueueActionToPlay
         # starts fresh rather than appending onto the aborted master.
