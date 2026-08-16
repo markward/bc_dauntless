@@ -17,6 +17,22 @@ import sys
 
 from engine.appc.ships import ShipClass_Create
 from engine.appc.target_menu import STTargetMenu
+from engine.appc.perception import Contact
+
+
+def _listed(*ships):
+    """Contact records for ships the player can see and target — what
+    perceived_by returns for an in-range, uncloaked, living contact.
+
+    set_contacts takes perception.Contact records rather than bare ships: the
+    record carries the frame's verdict, and the menu derives both the listing
+    (`targetable`) and each row's IsVisible (`perceivable`) from it. Distances
+    are 0.0 because nothing in this file reads them.
+    """
+    return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
+                    perceivable=True, targetable=True) for s in ships]
+
+
 
 
 def _build(hardpoint, class_name):
@@ -34,7 +50,7 @@ def _build(hardpoint, class_name):
 
 def _rows(ship):
     menu = STTargetMenu("t")
-    menu.set_contacts([ship])
+    menu.set_contacts(_listed(ship))
     row = menu.GetObjectEntry(ship)
     return [c.GetLabel() for c in row._children]
 

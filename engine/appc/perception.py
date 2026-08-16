@@ -6,9 +6,10 @@ perceivable to one observer and not another at the same instant, so a stored
 answer would have to be per-observer-per-frame.
 
 STAGE 3 SCOPE: folds range, cloak, and the sensors-offline short-circuit into
-one query — `perceived_by` — reproducing today's UI detectability rule
-(engine.ui.target_list_visibility / engine.ui.target_list_view) exactly, with
-NO nebula concealment. Distance was previously recomputed in five places
+one query — `perceived_by` — reproducing the UI detectability rule that used
+to live in engine.ui.target_list_visibility (now deleted; the target menu
+derives row visibility from these records) and engine.ui.target_list_view
+exactly, with NO nebula concealment. Distance was previously recomputed in five places
 under two different conventions; it is now computed once here. `contacts_for`
 stays as a thin back-compat wrapper for callers not yet migrated to Contact
 records. Stage 4 switches perceivability to sensor_detection.can_detect

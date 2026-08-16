@@ -189,7 +189,13 @@ def test_warp_clears_all_targets():
     # covered by tests/integration/test_target_list_follows_player_system.py.
     import types, sys
     from engine.appc import target_menu
-    from engine.appc.perception import contacts_for
+    from engine.appc.perception import Contact, contacts_for
+
+    def _listed(*ships):
+        """set_contacts takes perception.Contact records, not bare ships — the
+        menu derives the listing and each row's IsVisible from the record."""
+        return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
+                        perceivable=True, targetable=True) for s in ships]
 
     menu = target_menu.STTargetMenu_CreateW("targets")
     src = _make_set("SrcT")
@@ -202,7 +208,7 @@ def test_warp_clears_all_targets():
     src.AddObjectToSet(enemy, "enemy")
     player.SetTarget(enemy)
     player.SetTargetSubsystem(object())
-    menu.set_contacts([enemy])
+    menu.set_contacts(_listed(enemy))
     menu.SetPersistentTarget("enemy")
     assert len(menu._children) == 1
 

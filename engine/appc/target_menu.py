@@ -60,8 +60,14 @@ class STTargetMenu(STTopLevelMenu):
 
     Children are DERIVED, not stored. `_row_cache` holds one row per ship ever
     seen (identity-stable, because CycleTarget resolves a row then walks
-    siblings from it); `_contacts` is the membership pushed each frame. The
-    child list is their intersection, computed on read.
+    siblings from it); `_contacts` is the tuple of perception.Contact records
+    pushed each frame. The child list is their intersection, computed on read.
+
+    The records are RETAINED, not unpacked to ships: a contact carries the
+    frame's verdict (`perceivable`, `targetable`) and its distances
+    (`dist_sq_gu`, `surface_gu`), and readers reach them through
+    `contact_for`. Keeping only the ships would force every reader to run a
+    second perception query, which is the duplication this model removes.
 
     This is why warp needs no target-list code: mid-warp the player is alone in
     the _WarpTransit set, so the pushed list is empty and the menu empties
@@ -81,20 +87,57 @@ class STTargetMenu(STTopLevelMenu):
 
     # ── Derived membership ───────────────────────────────────────────────────
 
-    def set_contacts(self, ships) -> None:
-        """Push this frame's membership (from perception.contacts_for).
+    def set_contacts(self, contacts) -> None:
+        """Push this frame's contacts (perception.Contact records, from
+        perception.perceived_by).
+
+        Row VISIBILITY is set here, from `Contact.perceivable`. It used to be
+        written by a second pass (engine.ui.target_list_visibility) that
+        recomputed range and cloak on its own; the two rules could disagree,
+        and did — that pass ignored death entirely, so SDK CycleTarget
+        (TacticalInterfaceHandlers.py:701-730, which skips rows where
+        IsVisible() == 0) could select a contact the target list refused to
+        draw. One record now decides both, so they cannot diverge.
 
         Idempotent and cheap: rows are built once per ship and reused, so a
         repeated push costs a dict lookup per contact.
         """
+        from engine.appc.perception import Contact
         from engine.appc.ships import ShipClass
-        self._contacts = tuple(s for s in ships if isinstance(s, ShipClass))
-        for ship in self._contacts:
-            if ship not in self._row_cache:
-                self.RebuildShipMenu(ship)
+        self._contacts = tuple(
+            c for c in contacts
+            if isinstance(c, Contact) and isinstance(c.ship, ShipClass))
+        for c in self._contacts:
+            if c.ship not in self._row_cache:
+                self.RebuildShipMenu(c.ship)
+            row = self._row_cache.get(c.ship)
+            if row is None:
+                continue
+            if c.perceivable:
+                row.SetVisible()
+            else:
+                row.SetNotVisible()
+
+    def contact_for(self, ship):
+        """The pushed Contact record for ``ship``, or None if it is not a
+        current contact.
+
+        The read path for everything the record already answers — most of all
+        `surface_gu`, BC's range readout. Callers must use this rather than
+        re-deriving distance from world positions; that duplication is what
+        let five call sites drift onto two different conventions.
+        """
+        for c in self._contacts:
+            if c.ship is ship:
+                return c
+        return None
 
     def _rows(self) -> list:
-        """The projection: cached rows for the current contacts, in order.
+        """The projection: cached rows for the current TARGETABLE contacts.
+
+        `targetable` is the record's own verdict — it already folds in
+        IsTargetable(), death, and the wreck-linger window — so the listing
+        and the visibility flag come from the same answer.
 
         Defensive on both attributes: `_children` is a property, so anything
         that reads it during base-class construction would land here before
@@ -105,7 +148,8 @@ class STTargetMenu(STTopLevelMenu):
         contacts = getattr(self, "_contacts", None)
         if not cache or not contacts:
             return []
-        return [cache[s] for s in contacts if s in cache]
+        return [cache[c.ship] for c in contacts
+                if c.targetable and c.ship in cache]
 
     @property
     def _children(self) -> list:
@@ -154,11 +198,15 @@ class STTargetMenu(STTopLevelMenu):
         SDK: TacticalInterfaceHandlers.py:711 (CycleTarget). Identity
         comparison — the SDK passes the actual ShipClass object.
 
-        Returns None for a ship that is not a current contact even if a row is
-        cached, so this agrees with the listing by construction — SDK
-        CycleTarget must never be able to select a contact the panel drops.
+        Returns None for a ship that is not LISTED even if a row is cached, so
+        this agrees with the projection by construction — SDK CycleTarget must
+        never be able to select a contact the panel drops. `_contacts` is now
+        wider than the listing (it carries a record for every ship in the
+        system, targetable or not), so the gate is the record's `targetable`
+        flag, which is exactly what `_rows` filters on.
         """
-        if ship not in self._contacts:
+        c = self.contact_for(ship)
+        if c is None or not c.targetable:
             return None
         return self._row_cache.get(ship)
 
@@ -319,15 +367,24 @@ class STTargetMenu(STTopLevelMenu):
         only; spawned ships live in mission-named spatial sets like
         "Biranu1". Pass that spatial set explicitly to populate the
         target list from real ships.
+
+        ⚠️ It takes a SET, not an observer, so it cannot answer perception:
+        the records it synthesises are flat "listed and drawable" with ZERO
+        distances. Do NOT read `contact_for(...).surface_gu` after a push from
+        here — only after the host loop's `perceived_by` push, which is the
+        production path. This exists for bootstrap/test population only.
         """
         import App as _App
+        from engine.appc.perception import Contact
         from engine.appc.ships import ShipClass
         if source_set is None:
             source_set = _App.g_kSetManager.GetSet("bridge")
         if source_set is None:
             return
-        self.set_contacts([o for o in source_set.GetObjectList()
-                           if isinstance(o, ShipClass)])
+        self.set_contacts([
+            Contact(ship=o, dist_sq_gu=0.0, surface_gu=0.0,
+                    perceivable=True, targetable=True)
+            for o in source_set.GetObjectList() if isinstance(o, ShipClass)])
 
     def ResetAffiliationColors(self) -> None:
         """Recompute every row's affiliation token. SDK callsites:

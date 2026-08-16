@@ -23,6 +23,13 @@ def _ship(name):
     return s
 
 
+def _ships(contacts):
+    """_pump_contacts returns perception.Contact RECORDS now, not ships — the
+    record is what the menu needs to derive both membership and row
+    visibility. These tests are about WHICH contacts get pushed, so unwrap."""
+    return tuple(c.ship for c in contacts)
+
+
 def test_pump_contacts_pushes_the_players_set_into_the_menu():
     contact_index.reset()
     App._reset_target_menu_singleton()
@@ -33,7 +40,7 @@ def test_pump_contacts_pushes_the_players_set_into_the_menu():
     galor = _ship("Galor")
     pSet.AddObjectToSet(galor, "Galor")
 
-    assert _pump_contacts(menu, player) == (galor,)
+    assert _ships(_pump_contacts(menu, player)) == (galor,)
     assert menu.GetNumChildren() == 1
 
 
@@ -46,7 +53,7 @@ def test_pump_contacts_excludes_ships_in_other_sets():
     here.AddObjectToSet(player, "player")
     elsewhere.AddObjectToSet(_ship("Galor"), "Galor")
 
-    assert _pump_contacts(menu, player) == ()
+    assert _ships(_pump_contacts(menu, player)) == ()
     assert menu.GetNumChildren() == 0
 
 

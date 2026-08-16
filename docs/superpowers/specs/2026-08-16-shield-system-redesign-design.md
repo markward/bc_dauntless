@@ -157,16 +157,70 @@ become live again if the gate ever moved.
 
 Two 0.5 s quanta.
 
-### 6.1 Charge tick — `ShieldSubsystem`
+### 6.1 Charge tick — `ShieldSubsystem`, power-linked
 
-Accumulate `dt`; at each 0.5 s boundary apply the regen quantum and recompute the
-per-facing fraction. Threshold read at `0x008E529C`.
+**Regen is driven by delivered power, not by a fixed rate.** This is the change
+that makes power management govern shield recovery, and it is in scope.
 
-**Scoped out, deliberately:** BC derives its quantum from accumulated *power*
-(× 1/6, × 0.85) and distributes it by a per-facing property weight. We keep our
-existing rate-based regen and adopt only the 0.5 s quantisation. Coupling shield
-regen to the power system is a larger change with its own blast radius and belongs
-in its own pass. Recorded here as a known remaining divergence.
+Accumulate both elapsed time **and received power** each frame. `PoweredSubsystem`
+already exposes `GetPowerReceived()` — BC's `+0x88` — so no new power
+infrastructure is needed. At each 0.5 s boundary (threshold `0x008E529C`):
+
+```
+quantum = accumulated_power * (1/6)          # 0x0088BACC
+reset the time accumulator
+
+if not disabled and not powered off:
+    quantum *= 0.85                          # 0x00892FBC
+    for i in 0..5:
+        rate    = charge_per_second_scalar * (1/6)      # ShieldProperty +0x48
+        added   = charge_weight[i] * quantum / rate     # ShieldProperty +0x78 + 4i
+        cur[i]  = min(cur[i] + added, max[i])
+        fraction[i] = cur[i] / max[i]  (0.0 if max[i] <= 0)
+else:
+    for i in 0..5:
+        drain cur[i] through the power grid if the generator is merely off
+        and the ship has a power system; otherwise zero it outright
+        fraction[i] = 0.0
+
+reset the power accumulator
+```
+
+The two `1/6` factors cancel, so the added charge reduces to
+`charge_weight[i] × accumulated_power ÷ charge_per_second_scalar`. Both `1/6`s are
+kept in the code anyway, matching the original's shape, because they cancel only
+while both remain constants.
+
+**A naming trap worth guarding.** `GetShieldChargePerSecond(i)` (`0x00617450`) is a
+direct read of `+0x78 + 4·i` — the per-facing **weight** in the formula above. The
+scalar the tick divides by is a *different* field (`+0x48`). The published name
+describes the weight, not the resulting rate. Our `ShieldProperty` must keep the two
+distinct rather than collapsing them.
+
+**Two gameplay consequences, both intended:**
+
+1. Shields recover only as fast as power reaches the generator, so diverting power
+   is now a direct lever on shield recovery.
+2. A generator that is off or disabled **actively bleeds** charge rather than merely
+   failing to add it. Today we drain to zero on the `SetAlertLevel` transition
+   instead; that becomes continuous, in the tick, where BC does it.
+
+⚠️ **Open question — quantum threading.** The per-facing helper (`0x0056A420`)
+returns the *unused* part of the quantum, but the reference's reading of the tick
+does not record that return being consumed. Two readings:
+
+- **Not threaded** (chosen): each facing draws from the full quantum independently;
+  power scales all six equally.
+- **Threaded**: facing 0 draws first and the remainder waterfalls to 1..5, making
+  power a shared budget with a fixed priority order.
+
+I have taken *not threaded*, because the tick is described as applying the helper
+"with the quantum" without qualification. But a function that returns an unused
+remainder which nobody consumes is odd, and threading is the more interesting
+mechanic — so this is the single most likely thing in this section to be wrong.
+**Queued for the next reference round.** Falsifier in-game: with power starved,
+threaded gives a strong front-to-back charge gradient across facings; not-threaded
+charges all six in proportion to their weights.
 
 ### 6.2 Beam dwell — `engine/appc/beam_dwell.py`
 
@@ -235,10 +289,19 @@ No geometry, no facing choice, no ramp.
 | `AddDamage` (`objects.py:863`) | none — bypasses shields |
 | splash (`splash_damage.py:54`) | none — never selects a facing |
 
-When `segment is None` and shields are online, facing selection falls back to
-today's point-based rule. This is a documented approximation, not a hidden one: it
-keeps existing callers and tests working, and it is exactly correct for a hit
-recorded on the bubble surface.
+**`segment` is a required parameter — there is no default and no fallback.** The
+point-based facing rule is **deleted**, not kept as a silent approximation.
+
+Its type is `Segment | None`, and `None` is an explicit, meaningful value: "this
+path selects no facing." That is not a degraded case — it is exactly BC's semantics
+for those three call sites, which reach the hull branch with facing `-1`. Making the
+argument required forces every future caller to state which it is, rather than
+inheriting an approximation by omission.
+
+Cost, stated plainly: **67 `apply_hit` call sites across `tests/`** must be updated.
+That is mechanical, but it is not free, and it lands in the same change — a required
+argument with stale callers is exactly the orphaned-test failure mode this project
+has a rule against.
 
 ## 11. Testing
 
@@ -256,8 +319,15 @@ green against exactly that fixture. Includes a **grazing shot where the entry po
 and the impact point select different facings** — the direct regression test for
 §4.4.
 
-**Cadence** — dwell accumulates, flushes at 0.5 s, emits a partial pulse on target
-change, and **never** dumps a facing-less pulse on the hull (defect 1).
+**Beam cadence** — dwell accumulates, flushes at 0.5 s, emits a partial pulse on
+target change, and **never** dumps a facing-less pulse on the hull (defect 1).
+
+**Power-linked regen** — regen scales with delivered power; **zero delivered power
+means zero regen** (the headline gameplay assertion, and the one most likely to be
+noticed if it regresses); charge is quantised to 0.5 s rather than continuous; and
+an off or disabled generator **bleeds** charge rather than holding it. The
+per-facing weight and the scalar rate are asserted as distinct fields, so a future
+refactor cannot quietly collapse them (§6.1's naming trap).
 
 **Splash** — each of six facings caps at one sixth; remainder routes on.
 
@@ -275,7 +345,6 @@ Named so they are not mistaken for oversights:
 - **Hull/subsystem distribution** — BC offers every overlapping subsystem the *full*
   damage and sums residuals; we apply weighted shares. A real divergence, deferred
   by decision 2. Our q05 data is non-discriminating between the two models.
-- **Power-derived charge quantum** — §6.1.
 - **The mode multiplier table** (`0.25 / 0.5 / 0.5` at `0x00893170`) — values now
   known, but the index → power-level mapping is not established.
 - **Facing names** — pending q19.

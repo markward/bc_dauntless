@@ -3,6 +3,22 @@ import pytest
 
 import App
 from engine.appc.ships import ShipClass
+from engine.appc.perception import Contact
+
+
+def _listed(*ships):
+    """Contact records for ships the player can see and target — what
+    perceived_by returns for an in-range, uncloaked, living contact.
+
+    set_contacts takes perception.Contact records rather than bare ships: the
+    record carries the frame's verdict, and the menu derives both the listing
+    (`targetable`) and each row's IsVisible (`perceivable`) from it. Distances
+    are 0.0 because nothing in this file reads them.
+    """
+    return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
+                    perceivable=True, targetable=True) for s in ships]
+
+
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +74,7 @@ def test_st_target_menu_child_traversal():
     ship_a.SetName("A"); ship_b.SetName("B"); ship_c.SetName("C")
     # Membership is pushed, not appended: children are derived from the
     # contact list, so the menu builds its own rows.
-    target_menu.set_contacts([ship_a, ship_b, ship_c])
+    target_menu.set_contacts(_listed(ship_a, ship_b, ship_c))
     sub_a = target_menu.GetObjectEntry(ship_a)
     sub_b = target_menu.GetObjectEntry(ship_b)
     sub_c = target_menu.GetObjectEntry(ship_c)
@@ -75,7 +91,7 @@ def test_st_target_menu_get_object_entry_by_ship_identity():
     target_menu = App.STTargetMenu("Targets")
     ship_a, ship_b = ShipClass(), ShipClass()
     ship_a.SetName("A"); ship_b.SetName("B")
-    target_menu.set_contacts([ship_a, ship_b])
+    target_menu.set_contacts(_listed(ship_a, ship_b))
     sub_a = target_menu.GetFirstChild()
     sub_b = target_menu.GetLastChild()
     assert sub_a.GetShip() is ship_a
@@ -108,7 +124,7 @@ def test_subsystem_menu_cast_lenient_passthrough():
 
 def test_clear_target_list_removes_all_rows():
     target_menu = App.STTargetMenu("Targets")
-    target_menu.set_contacts([ShipClass(), ShipClass()])
+    target_menu.set_contacts(_listed(ShipClass(), ShipClass()))
     assert target_menu.GetFirstChild() is not None
     target_menu.ClearTargetList()
     assert target_menu.GetFirstChild() is None
@@ -160,7 +176,7 @@ def test_reset_affiliation_colors_recomputes_each_row():
         a = ShipClass(); a.SetName("Dauntless")
         b = ShipClass(); b.SetName("Kor")
         target_menu = App.STTargetMenu("Targets")
-        target_menu.set_contacts([a, b])
+        target_menu.set_contacts(_listed(a, b))
         sub_a, sub_b = target_menu.GetObjectEntry(a), target_menu.GetObjectEntry(b)
 
         target_menu.ResetAffiliationColors()
@@ -183,7 +199,7 @@ def test_rebuild_ship_menu_creates_row_for_new_ship():
 
     # set_contacts is the listing path; it calls RebuildShipMenu for any
     # contact without a cached row.
-    target_menu.set_contacts([ship])
+    target_menu.set_contacts(_listed(ship))
 
     row = target_menu.GetObjectEntry(ship)
     assert isinstance(row, App.STSubsystemMenu)
@@ -193,7 +209,7 @@ def test_rebuild_ship_menu_creates_row_for_new_ship():
 def test_rebuild_ship_menu_reuses_existing_row():
     target_menu = App.STTargetMenu("Targets")
     ship = ShipClass(); ship.SetName("Dauntless")
-    target_menu.set_contacts([ship])
+    target_menu.set_contacts(_listed(ship))
     first = target_menu.GetObjectEntry(ship)
     target_menu.RebuildShipMenu(ship)
     second = target_menu.GetObjectEntry(ship)
@@ -220,7 +236,7 @@ def test_rebuild_ship_menu_populates_subsystem_children_in_phase2():
     target_menu = App.STTargetMenu("Targets")
     ship = ShipClass_Create("Test")
     ship.SetName("Dauntless")
-    target_menu.set_contacts([ship])
+    target_menu.set_contacts(_listed(ship))
     row = target_menu.GetObjectEntry(ship)
     assert row is not None
     assert len(row._children) > 0
@@ -239,7 +255,7 @@ def test_rebuild_ship_menu_populates_subsystem_rows():
     ship = ShipClass_Create("Test")
     ship.SetName("Test Ship")
 
-    target_menu.set_contacts([ship])
+    target_menu.set_contacts(_listed(ship))
     row = target_menu.GetObjectEntry(ship)
 
     assert len(row._children) > 0, (
@@ -261,7 +277,7 @@ def test_set_target_by_name_resolves_via_target_menu_when_no_containing_set():
     target_menu = App.STTargetMenu_CreateW("Targets")
     ship_a = ShipClass(); ship_a.SetName("Alpha")
     ship_b = ShipClass(); ship_b.SetName("Bravo")
-    target_menu.set_contacts([ship_a, ship_b])
+    target_menu.set_contacts(_listed(ship_a, ship_b))
 
     player = ShipClass(); player.SetName("Player")
     # Deliberately NOT added to any set.
@@ -285,7 +301,7 @@ def test_set_target_by_name_prefers_containing_set_over_target_menu():
 
     target_menu = App.STTargetMenu_CreateW("Targets")
     menu_ship = ShipClass(); menu_ship.SetName("Target")
-    target_menu.set_contacts([menu_ship])
+    target_menu.set_contacts(_listed(menu_ship))
 
     # A different object with the same name lives in a set.
     pSet = SetClass(); pSet.SetName("battle")

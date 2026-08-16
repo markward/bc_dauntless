@@ -3,7 +3,7 @@ and the AI candidate-selection gate."""
 import App
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import SensorSubsystem
-from engine.ui.target_list_visibility import update_target_list_visibility
+from engine.appc.perception import perceived_by
 from engine.appc.sensor_detection import (
     FALLBACK_RANGE_GU, effective_sensor_range, can_detect,
     observing, current_observing_ship,
@@ -221,44 +221,67 @@ def test_install_is_idempotent():
     assert getattr(second, "_sensor_gated", False) is True
 
 
-def test_player_list_uses_scaled_range_when_range_units_omitted():
+def _menu_visible(menu, ship):
+    """Is *ship* drawable on the player's target list / radar?
+
+    Both surfaces walk the menu's children and keep IsVisible() == 1 rows, so
+    a contact leaves the display either by losing its row or by having it
+    flagged not-visible. The single perception push decides both from one
+    record, so a contact out of sensor reach now loses the row outright — the
+    stronger of the two outcomes.
+    """
+    row = menu.GetObjectEntry(ship)
+    return row is not None and row.IsVisible() == 1
+
+
+def test_player_list_uses_scaled_range():
     App._reset_target_menu_singleton()
     player, sensors = _ship_with_sensor(2000.0, at=(0.0, 0.0, 0.0))
-    player.SetName("Player")
-    enemy = ShipClass_Create("BirdOfPrey"); enemy.SetName("Enemy")
+    enemy = ShipClass_Create("BirdOfPrey")
     enemy.SetTranslateXYZ(1000.0, 0.0, 0.0)
+    _set_with(("Player", player), ("Enemy", enemy))
 
     menu = App.STTargetMenu_CreateW("Targets")
-    menu.set_contacts([enemy])
 
     # Undamaged: 2000 GU range, enemy at 1000 GU -> visible.
-    update_target_list_visibility(menu, [enemy], player)
-    assert menu.GetObjectEntry(enemy).IsVisible() == 1
+    menu.set_contacts(perceived_by(player))
+    assert _menu_visible(menu, enemy) is True
 
     # Damaged to 40% -> 800 GU range, enemy at 1000 GU now out of range.
     sensors.SetCondition(40.0)
-    update_target_list_visibility(menu, [enemy], player)
-    assert menu.GetObjectEntry(enemy).IsVisible() == 0
+    menu.set_contacts(perceived_by(player))
+    assert _menu_visible(menu, enemy) is False
 
     # Repaired: visible again.
     sensors.SetCondition(100.0)
-    update_target_list_visibility(menu, [enemy], player)
-    assert menu.GetObjectEntry(enemy).IsVisible() == 1
+    menu.set_contacts(perceived_by(player))
+    assert _menu_visible(menu, enemy) is True
 
 
-def test_player_list_explicit_range_units_still_honored():
+def test_player_list_reach_comes_from_the_sensor_alone():
+    """Was test_player_list_explicit_range_units_still_honored.
+
+    It pinned the `range_units=30000.0` override argument on the retired
+    update_target_list_visibility. That parameter had no production caller —
+    the host loop always passed the scaled range — and it died with the
+    module. The value it asserted survives unchanged: with 30000 GU of reach,
+    a contact 2500 GU out is listed and drawable. The contrast below is the
+    replacement for "override": the SAME contact at the SAME place vanishes on
+    a 2000 GU sensor, so reach now comes from the sensor and nowhere else.
+    """
     App._reset_target_menu_singleton()
-    player, sensors = _ship_with_sensor(2000.0, at=(0.0, 0.0, 0.0))
-    player.SetName("Player")
-    enemy = ShipClass_Create("BirdOfPrey"); enemy.SetName("Enemy")
+    player, sensors = _ship_with_sensor(30000.0, at=(0.0, 0.0, 0.0))
+    enemy = ShipClass_Create("BirdOfPrey")
     enemy.SetTranslateXYZ(2500.0, 0.0, 0.0)  # beyond 2000 base, inside 30000
+    _set_with(("Player", player), ("Enemy", enemy))
 
     menu = App.STTargetMenu_CreateW("Targets")
-    menu.set_contacts([enemy])
+    menu.set_contacts(perceived_by(player))
+    assert _menu_visible(menu, enemy) is True
 
-    # Explicit override ignores the scaled range and uses 30000.
-    update_target_list_visibility(menu, [enemy], player, range_units=30000.0)
-    assert menu.GetObjectEntry(enemy).IsVisible() == 1
+    sensors.SetBaseSensorRange(2000.0)
+    menu.set_contacts(perceived_by(player))
+    assert _menu_visible(menu, enemy) is False
 
 
 def test_bootstrap_installs_sensor_gate():

@@ -99,40 +99,62 @@ def test_affiliation_restored_after_repair():
     assert _affiliation_for(enemy, player) == "ENEMY"
 
 
+def _pump(menu, player):
+    """One frame of the host loop's contact push (host_loop._pump_contacts).
+
+    Replaces update_target_list_visibility(..., range_units=30000.0): the
+    fixture's SensorSubsystem carries no BaseSensorRange, so
+    effective_sensor_range returns FALLBACK_RANGE_GU — which IS 30000.0. Same
+    reach, one source.
+    """
+    from engine.appc.perception import perceived_by
+    menu.set_contacts(perceived_by(player))
+
+
+def _drawable(menu, ship):
+    """Is *ship* drawable on the target list / radar? Both surfaces walk the
+    menu's children and keep IsVisible() == 1 rows, so a contact leaves the
+    display either by losing its row or by having it flagged not-visible. With
+    the sensors dead, the contact now loses the row outright — the stronger
+    outcome — so "absent" reads as not drawable."""
+    row = menu.GetObjectEntry(ship)
+    return row is not None and row.IsVisible() == 1
+
+
 def test_update_visibility_hides_all_rows_when_sensors_offline():
-    """When player sensors offline, every row in the target menu goes
-    invisible — radar and target-list views read this via row.IsVisible()."""
-    from engine.ui.target_list_visibility import update_target_list_visibility
+    """When player sensors go offline, no row in the target menu is drawable —
+    radar and target-list views read this via row.IsVisible()."""
+    from engine.appc.sets import SetClass
 
     _, player, enemy, sensors, _ = _setup()
     target_menu = App.STTargetMenu_CreateW("Targets")
     enemy.SetTranslateXYZ(1000.0, 0.0, 0.0)  # well within 30000 range
-    target_menu.set_contacts([enemy])
-    update_target_list_visibility(target_menu, [enemy], player,
-                                  range_units=30000.0)
-    assert target_menu.GetObjectEntry(enemy).IsVisible() == 1
+    pSet = SetClass()
+    pSet.AddObjectToSet(player, "Player")
+    pSet.AddObjectToSet(enemy, "Enemy")
+    _pump(target_menu, player)
+    assert _drawable(target_menu, enemy) is True
 
-    # Disable sensors; next update flips visibility to 0.
+    # Disable sensors; the next push makes it undrawable.
     sensors.SetCondition(10.0)
-    update_target_list_visibility(target_menu, [enemy], player,
-                                  range_units=30000.0)
-    assert target_menu.GetObjectEntry(enemy).IsVisible() == 0
+    _pump(target_menu, player)
+    assert _drawable(target_menu, enemy) is False
 
 
 def test_update_visibility_restores_after_sensor_repair():
-    from engine.ui.target_list_visibility import update_target_list_visibility
+    from engine.appc.sets import SetClass
 
     _, player, enemy, sensors, _ = _setup()
     target_menu = App.STTargetMenu_CreateW("Targets")
     enemy.SetTranslateXYZ(1000.0, 0.0, 0.0)
-    target_menu.set_contacts([enemy])
+    pSet = SetClass()
+    pSet.AddObjectToSet(player, "Player")
+    pSet.AddObjectToSet(enemy, "Enemy")
 
     sensors.SetCondition(10.0)
-    update_target_list_visibility(target_menu, [enemy], player,
-                                  range_units=30000.0)
-    assert target_menu.GetObjectEntry(enemy).IsVisible() == 0
+    _pump(target_menu, player)
+    assert _drawable(target_menu, enemy) is False
 
     sensors.SetCondition(100.0)
-    update_target_list_visibility(target_menu, [enemy], player,
-                                  range_units=30000.0)
-    assert target_menu.GetObjectEntry(enemy).IsVisible() == 1
+    _pump(target_menu, player)
+    assert _drawable(target_menu, enemy) is True

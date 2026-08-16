@@ -3,7 +3,7 @@ held as a weapon lock — the same per-render road the destruction filter uses.
 
 Surfaces (all keyed on sensor_detection.is_hidden_by_cloak):
   * radar / sensor panel — filters rows on STSubsystemMenu.IsVisible(); the
-    per-tick update_target_list_visibility now marks cloaked rows NotVisible.
+    per-tick perception push drops a cloaked contact from the menu.
   * target list view — its _snapshot inclusion predicate drops cloaked ships
     alongside _out_of_action (destroyed) ships.
   * player weapon lock — the host loop clears GetTarget() when it cloaks, which
@@ -17,8 +17,16 @@ import App
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import CloakingSubsystem
 from engine.appc.sensor_detection import is_hidden_by_cloak
+from engine.appc.perception import perceived_by
 from engine.appc.target_menu import STTargetMenu_CreateW, STSubsystemMenu
-from engine.ui.target_list_visibility import update_target_list_visibility
+
+
+def _pump(menu, player):
+    """One frame of the contact push — the same call host_loop._pump_contacts
+    makes. Replaces update_target_list_visibility(..., range_units=30000.0):
+    these fixtures model no BaseSensorRange, so effective_sensor_range returns
+    FALLBACK_RANGE_GU, which IS 30000.0. Same reach, one source."""
+    menu.set_contacts(perceived_by(player))
 
 
 def _scene():
@@ -41,7 +49,18 @@ def _scene():
 
 
 def _enemy_visible(menu, enemy):
+    """Visible to the radar == a LISTED row whose IsVisible() is 1.
+
+    Both halves count, because the sensors panel walks the menu's children and
+    keeps the ones with IsVisible() == 1: a contact leaves the radar either by
+    losing its row or by having that row flagged not-visible. This helper used
+    to require the row to exist; a cloaked ship now loses it outright (its
+    perception record is neither perceivable nor targetable), which is the
+    strictly stronger outcome, so "absent" reads as not visible.
+    """
     row = menu.GetObjectEntry(enemy)
+    if row is None:
+        return False
     assert isinstance(row, STSubsystemMenu)
     return row.IsVisible() == 1
 
@@ -61,14 +80,14 @@ def test_is_hidden_by_cloak_predicate():
 
 def test_cloaked_ship_marked_not_visible_for_radar():
     pSet, player, enemy, menu = _scene()
-    update_target_list_visibility(menu, pSet.GetObjectList(), player, range_units=30000.0)
+    _pump(menu, player)
     assert _enemy_visible(menu, enemy)
     enemy.GetCloakingSubsystem().InstantCloak()
-    update_target_list_visibility(menu, pSet.GetObjectList(), player, range_units=30000.0)
+    _pump(menu, player)
     assert not _enemy_visible(menu, enemy)
     # Decloak restores it.
     enemy.GetCloakingSubsystem().InstantDecloak()
-    update_target_list_visibility(menu, pSet.GetObjectList(), player, range_units=30000.0)
+    _pump(menu, player)
     assert _enemy_visible(menu, enemy)
 
 

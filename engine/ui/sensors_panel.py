@@ -6,8 +6,9 @@ with the filtered contact list. Idempotent — re-emits only when the
 snapshot changes.
 
 Visibility shares state with the target list: only ships whose
-STSubsystemMenu.IsVisible() == 1 are emitted. The host loop already
-runs update_target_list_visibility() each tick; we read the result.
+STSubsystemMenu.IsVisible() == 1 are emitted. The host loop's per-frame
+contact push (host_loop._pump_contacts) sets that flag from the frame's
+perception.Contact record; we read the result.
 
 Spec: docs/ui_designs/05-sensors-radar.md
 """

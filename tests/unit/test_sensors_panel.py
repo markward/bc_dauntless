@@ -5,6 +5,22 @@ import json
 import App
 from engine.appc.ships import ShipClass
 from engine.appc.math import TGPoint3
+from engine.appc.perception import Contact
+
+
+def _listed(*ships):
+    """Contact records for ships the player can see and target — what
+    perceived_by returns for an in-range, uncloaked, living contact.
+
+    set_contacts takes perception.Contact records rather than bare ships: the
+    record carries the frame's verdict, and the menu derives both the listing
+    (`targetable`) and each row's IsVisible (`perceivable`) from it. Distances
+    are 0.0 because nothing in this file reads them.
+    """
+    return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
+                    perceivable=True, targetable=True) for s in ships]
+
+
 
 
 def _setup_game():
@@ -49,7 +65,7 @@ def test_payload_lists_visible_contacts_with_affiliations():
         spatial.AddObjectToSet(far, "Far")
         player._containing_set = spatial
 
-        menu.set_contacts([ally, foe, far])
+        menu.set_contacts(_listed(ally, foe, far))
         menu.ResetAffiliationColors()
         # All three rows visible (sensor visibility runs separately).
         for child in menu._children:
@@ -88,7 +104,7 @@ def test_payload_is_idempotent_until_state_changes():
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "X")
         player._containing_set = spatial
-        menu.set_contacts([ship])
+        menu.set_contacts(_listed(ship))
         menu._children[0].SetVisible()
 
         panel = SensorsPanel()
@@ -119,7 +135,7 @@ def test_payload_marks_targeted_contact():
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "Galaxy")
         player._containing_set = spatial
-        menu.set_contacts([ship])
+        menu.set_contacts(_listed(ship))
         menu._children[0].SetVisible()
         # Add to bridge set so player.SetTarget("Galaxy") resolves.
         bridge = App.g_kSetManager.GetSet("bridge")
@@ -155,7 +171,7 @@ def test_payload_skips_invisible_rows():
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "Cloaked")
         player._containing_set = spatial
-        menu.set_contacts([ship])
+        menu.set_contacts(_listed(ship))
         menu._children[0].SetNotVisible()  # not picked up by sensors
 
         panel = SensorsPanel()
