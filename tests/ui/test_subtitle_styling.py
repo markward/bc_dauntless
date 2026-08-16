@@ -172,6 +172,41 @@ def test_js_reads_the_new_payload_keys():
         assert key in JS
 
 
+# ── banner placement (moved out of the caption box) ─────────────────────────
+# Root cause + rule: docs/superpowers/sdd/2026-08-16-e1m1-skip-intro-prompt/
+# banner-placement-brief.md. Banners (TGCreditAction via _add_text) now
+# render in their own top-centred slot, #sdk-banner, positioned per-frame
+# from the SDK's own fX/fY/justify args -- not pinned inside the bottom
+# caption box (#sdk-subtitle), which is captions-only again.
+
+def test_banner_element_exists_in_index_html():
+    assert 'id="sdk-banner"' in HTML
+
+
+def test_banner_css_rule_exists():
+    assert "#sdk-banner {" in CSS
+
+
+def test_banner_box_keeps_the_antonio_text_shadow_visual_language():
+    rule = _rule(CSS, "#sdk-banner")
+    assert 'font-family: "Antonio", sans-serif;' in rule
+    assert "text-shadow:" in rule
+
+
+def test_js_reads_the_placement_keys():
+    for key in ("center_x", "center_y"):
+        assert key in JS
+
+
+def test_caption_box_no_longer_mentions_banners_in_its_slot_comment():
+    # The slot-comment header documents what each mirror element renders;
+    # once banners move out, #sdk-subtitle's own doc must not still claim
+    # to be a "banner strip" -- stale doc, not stale behaviour, but this
+    # keeps the two from drifting apart again.
+    assert "banner-strip" not in HTML.lower()
+    assert "mission-objective/banner" not in HTML
+
+
 _NODE_HARNESS = r"""
 const fs = require("fs");
 
@@ -188,7 +223,7 @@ function makeEl() {
   };
 }
 
-const els = {"sdk-subtitle": makeEl()};
+const els = {"sdk-subtitle": makeEl(), "sdk-banner": makeEl()};
 global.document = {getElementById: function (id) { return els[id] || null; }};
 global.dauntlessEvent = function () {};
 
@@ -196,32 +231,46 @@ eval(fs.readFileSync(process.argv[2], "utf8"));
 
 function run(payload) {
   els["sdk-subtitle"].style.opacity = "unset";
+  els["sdk-banner"].style.opacity = "unset";
   setSdkMirror(payload);
   return els["sdk-subtitle"].style.opacity;
 }
 
+const PLACEMENT = {center_x: true, x: 0.0, center_y: false, y: 0.05};
+
 const out = {};
 
-// Banner only (no crew line): container opacity must mirror the (single)
-// line's fade opacity, not stay pinned at full alpha.
+// Banner only (no crew line): the BANNER box (#sdk-banner, not the caption
+// box) must mirror the (single) line's fade opacity -- banners moved out of
+// #sdk-subtitle in the banner-placement fix (they render top-centred, not
+// in the bottom caption box).
 out.bannerOnly = run({entries: [{
-  type: "subtitle", visible: true, lines: [{text: "x", opacity: 0.4}],
+  type: "subtitle", visible: true,
+  lines: [{text: "x", opacity: 0.4, ...PLACEMENT}],
 }]});
+out.bannerOnlyOpacity = els["sdk-banner"].style.opacity;
+
+// A banner alone (no crew line/speech) must never make the caption box
+// visible -- #sdk-subtitle is captions-only now.
+out.bannerAloneCaptionHidden = els["sdk-subtitle"].hidden;
 
 // Crew caption present alongside a fading banner line in the same payload:
 // the caption must never be dimmed by the banner's fade -- container stays
-// at full opacity.
+// at full opacity, and the banner still renders (decoupled) in its own box.
 out.captionWithFadingBannerLine = run({entries: [{
   type: "subtitle", visible: true, speaker: "LIU", speech: "Captain.",
-  lines: [{text: "x", opacity: 0.2}],
+  lines: [{text: "x", opacity: 0.2, ...PLACEMENT}],
 }]});
+out.captionWithFadingBannerLineBannerOpacity = els["sdk-banner"].style.opacity;
 
-// A fully hidden render (nothing live) must reset the container's inline
-// opacity so a previously-fading banner cannot leave the box dimmed for
-// whatever renders in it next.
+// A fully hidden render (nothing live) must reset both boxes' inline
+// opacity so a previously-fading banner/caption cannot leave either box
+// dimmed for whatever renders in it next.
 els["sdk-subtitle"].style.opacity = "0.123";
+els["sdk-banner"].style.opacity = "0.456";
 setSdkMirror({entries: [{type: "subtitle", visible: false, lines: []}]});
 out.hiddenReset = els["sdk-subtitle"].style.opacity;
+out.hiddenResetBanner = els["sdk-banner"].style.opacity;
 
 // A live episode title (title_text present on the SAME subtitle entry)
 // must add the modifier class that lifts the caption box clear of the
@@ -260,8 +309,13 @@ def test_banner_box_fades_with_its_text_but_a_caption_box_never_dims():
         Path(harness_path).unlink()
     assert result.returncode == 0, result.stderr
     out = json.loads(result.stdout)
-    assert out["bannerOnly"] == "0.400"
+    # Banners no longer live in the caption box at all.
+    assert out["bannerOnly"] == "1"
+    assert out["bannerOnlyOpacity"] == "0.400"
+    assert out["bannerAloneCaptionHidden"] is True
     assert out["captionWithFadingBannerLine"] == "1"
+    assert out["captionWithFadingBannerLineBannerOpacity"] == "0.200"
     assert out["hiddenReset"] == "1"
+    assert out["hiddenResetBanner"] == "1"
     assert out["titleLiveClassAdded"] is True
     assert out["titleLiveClassRemovedAfterExpiry"] is False

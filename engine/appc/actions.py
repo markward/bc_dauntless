@@ -892,9 +892,12 @@ def parse_episode_title(text) -> tuple[str, str] | None:
 # Timed text overlay on the SubtitleWindow. Two SDK callers: MissionLib.
 # TextBanner (transient notices) and MissionLib.EpisodeTitleAction (the episode
 # title card) -- told apart by parse_episode_title(). We honour the SDK's
-# duration and fade args; its x/y/font-size/colour are deliberately ignored
-# (our layout owns placement).
+# duration and fade args, AND (since the banner-placement fix) its x/y/
+# justification -- a banner's on-screen position is real SDK-authored data
+# (see the table of every TextBanner/direct call site in the banner-placement
+# brief), not ours to override. Font size and colour remain ours.
 # Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md
+# Spec: docs/superpowers/sdd/2026-08-16-e1m1-skip-intro-prompt/banner-placement-brief.md
 
 class TGCreditAction(TGTimedAction):
     JUSTIFY_LEFT   = 0
@@ -918,6 +921,11 @@ class TGCreditAction(TGTimedAction):
         self._fade_out = float(args[6]) if len(args) > 6 else 0.0
         self._color = _credit_default_color
         self._played = False
+        fx = args[2] if len(args) > 2 else 0.0
+        fy = args[3] if len(args) > 3 else 0.05
+        jx = args[8] if len(args) > 8 else self.JUSTIFY_CENTER
+        jy = args[9] if len(args) > 9 else self.JUSTIFY_TOP
+        self._placement = _resolve_credit_placement(fx, fy, jx, jy)
 
     def SetColor(self, r: float, g: float, b: float, a: float = 1.0) -> None:
         self._color = (float(r), float(g), float(b), float(a))
@@ -946,13 +954,46 @@ class TGCreditAction(TGTimedAction):
 
         adder = getattr(host, "_add_text", None)
         if adder is None: return
-        adder(self._text, self._duration_s, self._fade_in, self._fade_out)
+        adder(self._text, self._duration_s, self._fade_in, self._fade_out,
+              self._placement)
 
     def Restart(self) -> None:
         # TGSequence.Restart() re-fires Play on every child. Reset the
         # idempotency flag so the credit action delivers its text again.
         self._played = False
         super().Restart()
+
+
+def _resolve_credit_placement(fx, fy, jx, jy) -> dict:
+    """Resolve a TGCreditAction's raw fX/fY/iJustifyX/iJustifyY into a
+    placement dict the SubtitleWindow snapshot -> CEF mirror can render
+    directly. Rule (settled from the complete corpus of SDK TextBanner /
+    direct TGCreditAction_Create call sites -- see the banner-placement
+    brief):
+
+      X: JUSTIFY_CENTER -> centre horizontally, ignore fX (every known
+         caller). JUSTIFY_LEFT -> fX is a fraction of viewport width from
+         the left. Anything else falls back to centred, same as missing.
+      Y: JUSTIFY_TOP -> the banner's top edge sits at fY (fraction of
+         viewport height). JUSTIFY_CENTER -> centre vertically, ignore fY.
+         Anything else falls back to top-anchored.
+
+    Missing/unparseable fx/fy fall back to (0.0, 0.05) -- centred-X and
+    fY=0.05, matching MissionLib.TextBanner's own bHCentered=1/bVCentered=0
+    defaults. Never raises: this runs mid-cutscene, and a stub or a bad SDK
+    value must not crash the skip prompt.
+    """
+    try:
+        fx = float(fx)
+    except (TypeError, ValueError):
+        fx = 0.0
+    try:
+        fy = float(fy)
+    except (TypeError, ValueError):
+        fy = 0.05
+    center_x = jx != TGCreditAction.JUSTIFY_LEFT
+    center_y = jy == TGCreditAction.JUSTIFY_CENTER
+    return {"center_x": center_x, "x": fx, "center_y": center_y, "y": fy}
 
 
 def TGCreditAction_Create(*args) -> TGCreditAction:

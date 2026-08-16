@@ -216,6 +216,15 @@ class TacticalControlWindow(TGEventHandlerObject):
 # (and prunes expired entries) once per tick, computing fade opacity in Python.
 # Spec: docs/superpowers/specs/2026-07-13-subtitle-episode-title-visual-language-design.md
 
+# Fallback placement for a banner created without an explicit placement dict
+# (or via _add_text's default arg) -- centred-X, top-anchored fY=0.05. Matches
+# TGCreditAction's own fallback (see the banner-placement brief) and
+# MissionLib.TextBanner's bHCentered=1/bVCentered=0 defaults.
+_DEFAULT_BANNER_PLACEMENT = {
+    "center_x": True, "x": 0.0, "center_y": False, "y": 0.05,
+}
+
+
 class _SubtitleWindow:
     # SM_* constants are duplicated on the exported SubtitleWindow class
     # below — SDK code accesses them as App.SubtitleWindow.SM_TACTICAL.
@@ -226,8 +235,12 @@ class _SubtitleWindow:
         self._id = "subtitle-0"
         self._visible = False
         self._mode = self._SM_TACTICAL
-        # (text, start, expiry, fade_in, fade_out) -- mission banners.
-        self._active_texts: list[tuple[str, float, float, float, float]] = []
+        # (text, start, expiry, fade_in, fade_out, placement) -- mission
+        # banners. placement is a dict — see _DEFAULT_BANNER_PLACEMENT and
+        # TGCreditAction._placement (engine/appc/actions.py).
+        self._active_texts: list[
+            tuple[str, float, float, float, float, dict]
+        ] = []
         # Single replaceable crew-speech slot (speaker, text, expiry). Separate
         # from _active_texts so a SpeakLine preemption is a clean replacement
         # and never collides with a mission banner. Owned by CrewSpeechBus.
@@ -266,11 +279,13 @@ class _SubtitleWindow:
     def _add_text(
         self, text: str, duration_s: float,
         fade_in: float = 0.0, fade_out: float = 0.0,
+        placement: dict | None = None,
     ) -> None:
         now = time.monotonic()
         self._active_texts.append((
             str(text), now, now + float(duration_s),
             float(fade_in), float(fade_out),
+            placement if placement is not None else _DEFAULT_BANNER_PLACEMENT,
         ))
 
     def _add_episode_title(
@@ -324,8 +339,12 @@ class _SubtitleWindow:
                         or has_crew or has_title),
             "mode": self._mode,
             "lines": [
-                {"text": t, "opacity": self._fade_opacity(now, s, e, fi, fo)}
-                for (t, s, e, fi, fo) in self._active_texts
+                {
+                    "text": t,
+                    "opacity": self._fade_opacity(now, s, e, fi, fo),
+                    **placement,
+                }
+                for (t, s, e, fi, fo, placement) in self._active_texts
             ],
         }
         if has_crew:

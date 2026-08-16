@@ -40,7 +40,14 @@ def test_credit_action_text_reaches_mirror_payload(monkeypatch):
     out = panel.render_payload()
     body = _decode(out)
     subtitle_entry = next(e for e in body["entries"] if e["type"] == "subtitle")
-    assert subtitle_entry["lines"] == [{"text": "Disable the patrol", "opacity": 1.0}]
+    # Lines now also carry placement (fX/fY/justify from the SDK call) --
+    # see docs/superpowers/sdd/2026-08-16-e1m1-skip-intro-prompt/
+    # banner-placement-brief.md. This call omits iJustifyX/iJustifyY, so
+    # both fall back to their defaults (JUSTIFY_CENTER/JUSTIFY_TOP).
+    assert subtitle_entry["lines"] == [{
+        "text": "Disable the patrol", "opacity": 1.0,
+        "center_x": True, "x": 0.0, "center_y": False, "y": 0.0,
+    }]
 
     # Same state → next render returns None.
     assert panel.render_payload() is None

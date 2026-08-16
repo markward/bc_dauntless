@@ -1,9 +1,15 @@
 /* SDK UI mirror slots — receives JSON payloads from SDKMirrorPanel.
-   #sdk-subtitle is the caption box: crew speech (speaker + line) and transient
-   mission banners. #sdk-episode-title is the two-tier episode card.
+   #sdk-subtitle is the caption box: crew speech (speaker + line) only.
+   #sdk-banner is the transient mission-banner slot (TGCreditAction via
+   MissionLib.TextBanner / a direct TGCreditAction_Create, e.g. E1M1's
+   "Press 's' to skip introduction") — positioned per-frame from the SDK's
+   own fX/fY/justification args, NOT pinned inside the caption box. See
+   docs/superpowers/sdd/2026-08-16-e1m1-skip-intro-prompt/
+   banner-placement-brief.md for the placement rule and why banners moved
+   out of #sdk-subtitle. #sdk-episode-title is the two-tier episode card.
    #sdk-stylized-stack is a centred column of dauntless modals for
-   STStylizedWindow instances. SDK pixel coords are ignored; layout is
-   dictated by these slot rules.
+   STStylizedWindow instances. SDK pixel coords are ignored for the
+   stylized stack; layout there is dictated by CSS slot rules.
 
    Fades are driven by a per-frame `opacity` written into the payload from
    Python, NOT by a CSS transition or animation: that payload value is
@@ -64,6 +70,36 @@
 }
 
 .sdk-subtitle__line {
+  display: inline-block;
+}
+
+/* Mission banners. `left`/`top`/`transform` are set per-frame from JS
+   (renderBanner in sdk_mirror.js) from the payload's placement fractions —
+   this rule supplies only the static visual family, matching #sdk-subtitle
+   (Antonio, the dark body + salmon rule, the text-shadow) so a banner reads
+   as the same kind of overlay as a caption despite living in its own,
+   independently-positioned slot. No `top`/`left` default here: JS always
+   sets both before un-hiding the element. */
+#sdk-banner {
+  position: absolute;
+  max-width: 60vw;
+  padding: 10px 20px 12px 16px;
+  text-align: center;
+
+  background: rgba(10, 10, 16, 0.85);       /* --bc-body-bg */
+  border-left: 4px solid rgb(216, 94, 86);  /* --bc-menu1-base */
+  border-top-right-radius: 14px;            /* the bc-panel tell */
+
+  font-family: "Antonio", sans-serif;
+  font-size: 13px;
+  line-height: 1.25;
+  color: rgb(235, 225, 255);                /* --bc-label-text */
+  text-shadow: 0 0 3px #000;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.sdk-banner__line {
   display: inline-block;
 }
 
