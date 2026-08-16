@@ -30,7 +30,7 @@ def contacts_for(observer) -> tuple:
     """
     if observer is None:
         return ()
-    pSet = observer.GetContainingSet() if hasattr(observer, "GetContainingSet") else None
+    pSet = observer.GetContainingSet()
     # A real SetClass exposes _objects; a _Stub or None does not. hasattr()
     # cannot discriminate — TGObject.__getattr__ answers every name.
     if pSet is None or not hasattr(pSet, "_objects"):
