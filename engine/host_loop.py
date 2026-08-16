@@ -3309,6 +3309,14 @@ def reset_sdk_globals() -> None:
     # (The target menu needs no unhooking on swap: membership is derived
     # every frame from the player's containing set, so there is no
     # subscription that could dangle on a recreated set.)
+    #
+    # Drop the contact buckets, though. They key on the SetClass object, so a
+    # stale bucket is never wrong — the incoming mission builds new sets and
+    # gets fresh buckets. It is a leak: without this, every set and every ship
+    # from every mission played this session stays referenced for the life of
+    # the process.
+    from engine.appc import contact_index
+    contact_index.reset()
     # Reset the UpdateToolTip throttle and clear the tooltip owner. Without
     # this, _tooltip_dispatch_state["last"] keeps the PRIOR mission's game
     # time (which can be minutes) while the new mission's clock restarts at
@@ -5822,6 +5830,33 @@ def _ensure_target_menu() -> None:
         _App.STTargetMenu_CreateW("Targets")
 
 
+def _pump_contacts(menu, player) -> tuple:
+    """Push the player's current system into the target menu. Every frame.
+
+    This IS the contact model: membership is derived, never stored, so the
+    push is not a refresh of some authoritative list — it is the only thing
+    that makes the list exist. Worst case it is one frame stale; it can never
+    be permanently wrong, which is exactly what the set-subscription this
+    replaced was (bound at mission load, never rebound on warp, so ships
+    spawned into a departed system kept their rows and the destination's
+    ships got none).
+
+    Affiliation is recomputed alongside membership because it is derived from
+    the mission's friendly/enemy/neutral groups, which missions reassign
+    mid-flight (E2M2, E2M6 both call ResetAffiliationColors after regrouping).
+    Doing it here keeps colours right without having to catch those calls.
+
+    Returns the contacts pushed, so callers and tests can see the answer.
+
+    Spec: docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md
+    """
+    from engine.appc.perception import contacts_for
+    contacts = contacts_for(player)
+    menu.set_contacts(contacts)
+    menu.ResetAffiliationColors()
+    return contacts
+
+
 def resolve_officer_menu_layout() -> None:
     """Run the SDK's tactical-control-window layout so the officer-menu window
     resolves an absolute on-screen rect.
@@ -6977,14 +7012,7 @@ def run(mission_name: Optional[str] = None,
                 _game = Game_GetCurrentGame()
                 _player = _game.GetPlayer() if _game is not None else None
                 if _menu is not None and _player is not None:
-                    from engine.appc.perception import contacts_for
-                    _menu.set_contacts(contacts_for(_player))
-                    # Affiliation is derived from the mission's friendly/enemy/
-                    # neutral groups, which missions reassign mid-flight (E2M2,
-                    # E2M6 both call ResetAffiliationColors after regrouping).
-                    # Recomputing it with membership keeps colours correct
-                    # without those explicit calls needing to be caught.
-                    _menu.ResetAffiliationColors()
+                    _pump_contacts(_menu, _player)
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView

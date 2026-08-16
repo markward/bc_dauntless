@@ -6,9 +6,9 @@ player had left.
 """
 import App
 from engine.appc import contact_index
-from engine.appc.perception import contacts_for
 from engine.appc.sets import SetClass
 from engine.appc.ships import ShipClass
+from engine.host_loop import _pump_contacts
 
 
 def _ship(name):
@@ -25,12 +25,12 @@ def _menu():
 def _pump(menu, player):
     """One frame of the host loop's contact push.
 
-    Mirrors the push in engine/host_loop.py exactly — membership followed by
-    the affiliation recompute. Keep the two in step: nothing headless can run
-    the host-loop call site itself.
+    Calls the real production helper rather than re-stating what it does, so
+    these tests cannot pass against a mirror that has drifted from run(). The
+    call site inside run() is guarded separately by
+    tests/host/test_contacts_pump.py.
     """
-    menu.set_contacts(contacts_for(player))
-    menu.ResetAffiliationColors()
+    return _pump_contacts(menu, player)
 
 
 def test_ships_spawned_into_the_departed_system_do_not_appear():
