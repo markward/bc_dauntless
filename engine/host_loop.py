@@ -6979,6 +6979,12 @@ def run(mission_name: Optional[str] = None,
                 if _menu is not None and _player is not None:
                     from engine.appc.perception import contacts_for
                     _menu.set_contacts(contacts_for(_player))
+                    # Affiliation is derived from the mission's friendly/enemy/
+                    # neutral groups, which missions reassign mid-flight (E2M2,
+                    # E2M6 both call ResetAffiliationColors after regrouping).
+                    # Recomputing it with membership keeps colours correct
+                    # without those explicit calls needing to be caught.
+                    _menu.ResetAffiliationColors()
 
                 # Sensor-visibility update — flip per-row IsVisible
                 # based on range from the player. TargetListView

@@ -23,8 +23,14 @@ def _menu():
 
 
 def _pump(menu, player):
-    """One frame of the host loop's contact push."""
+    """One frame of the host loop's contact push.
+
+    Mirrors the push in engine/host_loop.py exactly — membership followed by
+    the affiliation recompute. Keep the two in step: nothing headless can run
+    the host-loop call site itself.
+    """
     menu.set_contacts(contacts_for(player))
+    menu.ResetAffiliationColors()
 
 
 def test_ships_spawned_into_the_departed_system_do_not_appear():
@@ -87,6 +93,39 @@ def test_ship_spawned_into_the_players_current_system_appears():
 
     assert menu.GetNumChildren() == 1
     assert menu.GetFirstChild().GetShip().GetName() == "Galor"
+
+
+def test_pushed_contacts_get_their_mission_affiliation():
+    """Affiliation is recomputed with membership, not once at mission load.
+
+    Nothing else in engine/ calls ResetAffiliationColors, so if the per-frame
+    push drops it every contact keeps the STSubsystemMenu constructor default
+    and the target list + radar paint friend and foe alike as UNKNOWN.
+    """
+    from engine.core.game import Game, Episode, Mission, _set_current_game
+    contact_index.reset()
+    menu = _menu()
+    mission = Mission()
+    mission.GetFriendlyGroup().AddName("Dauntless")
+    mission.GetEnemyGroup().AddName("Kor")
+    episode = Episode(); episode.SetCurrentMission(mission)
+    game = Game(); game.SetCurrentEpisode(episode)
+    pSet = SetClass()
+    player = _ship("player")
+    pSet.AddObjectToSet(player, "player")
+    game.SetPlayer(player)
+    _set_current_game(game)
+    try:
+        friend, foe = _ship("Dauntless"), _ship("Kor")
+        pSet.AddObjectToSet(friend, "Dauntless")
+        pSet.AddObjectToSet(foe, "Kor")
+
+        _pump(menu, player)
+
+        assert menu.GetObjectEntry(friend).GetAffiliation() == "FRIENDLY"
+        assert menu.GetObjectEntry(foe).GetAffiliation() == "ENEMY"
+    finally:
+        _set_current_game(None)
 
 
 def test_warp_transit_empties_the_list_with_no_explicit_clear():
