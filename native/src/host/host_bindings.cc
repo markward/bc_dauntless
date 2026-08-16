@@ -1101,7 +1101,7 @@ void frame() {
         lens_flare_tex = g_lens_flare_hdr_pass->render(
             bloom_tex, g_bloom_pass ? g_bloom_pass->coarsest_texture() : 0u,
             fw, fh);
-        lens_flare_strength = 0.12f;   // additive flare intensity (0.15 -20%)
+        lens_flare_strength = 0.108f;  // additive flare intensity (0.15 -20% -10%)
     }
 
     if (any_post) { g_ldr_target->resize(fw, fh); g_ldr_target->bind(); }
