@@ -373,17 +373,32 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
       direction to a facing. The chooser is engine-internal and was never
       script-visible, so this function is filling a genuine engine gap rather
       than duplicating surface the SDK could have called.
-    * NOT SETTLED: which component chooses the facing, and by what rule. Three
-      queries all returned ``below-relevance-floor`` (best 0.13). That is
-      RETRIEVAL-LIMITED, **not** corpus silence — the material may well exist.
-      Do not record it as a documented gap. Worth retrying with the corpus's
-      own vocabulary; "facing" is its word, "shield face" is not.
+    * ✅ SETTLED 2026-08-16 — ``stbc_reference`` ``spec/ShieldFacingDamage.md``
+      (``reviewed-not-tested``; the routines are unreconstructed — read from
+      the original, never executed). The chooser is **ShipClass::TestHit**
+      (``0x005AE730``), NOT ShieldClass, and it runs at collision-detection
+      time. The bubble lives on ShipClass (``+0x24C..+0x254`` semi-axes,
+      ``+0x258..+0x260`` centre), built from the MODEL bound half-extents × √3.
 
-    Standing hypothesis for whoever retries: the bubble is known from the
-    binary to be AABB half-extents × √3 (see kShieldEllipsoidAxisScale), and
-    normalising the delta by those same half-extents is exactly "map that
-    ellipsoid to a unit sphere, take the dominant axis" — so this may be
-    convergent with BC rather than merely a reasonable guess.
+      The normalisation here is **vindicated**: dividing by the semi-axes
+      rather than the raw half-extents differs only by uniform scalars (√3 and
+      two node scales), which cannot change which axis dominates. The axis →
+      index table and the y → z → x tie order both match the binary exactly.
+
+    ⚠️ **Known divergence — the INPUT, not the rule.** BC does not take the
+    dominant axis of the impact point. It takes it of the point where the
+    shot's SEGMENT ENTERS the ellipsoid, from a ray/sphere intersection
+    against the unit sphere. The two agree for an impact recorded exactly on
+    the bubble surface and diverge for grazing shots and long per-frame steps,
+    where the entry point and the normalised impact can select different
+    facings. Closing this needs the segment (previous → current projectile
+    position, or muzzle → muzzle+dir·length for a beam) plumbed to this
+    function, which no caller currently passes.
+
+    Two related divergences live elsewhere and are NOT this function's
+    problem, but belong in the same change: absorption is a pass-through ramp
+    rather than the strict cascade in ``ShieldSubsystem.ApplyDamage``, and
+    beams apply damage in 0.5 s pulses rather than per tick.
 
     Ships with no cached box (not yet realized, headless, test fakes) fall back
     to the raw-component compare, which is exact for an isotropic hull.
