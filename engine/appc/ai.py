@@ -1423,6 +1423,13 @@ class CharacterAction(TGAction):
         # Skip (Backspace) bookkeeping — see _queue_say_line / Skip.
         self._skipped: bool = False
         self._turn_owed = None      # detail of a turn-back this action still owes
+        # True only once this action has actually called crew_speech.emit()
+        # AND been accepted onto the single-channel bus (a truthy duration
+        # back from emit() -- see _do_play). A SAY_LINE_AFTER_TURN that is
+        # still mid-turn has not reached _speak() yet, so this stays False
+        # while _playing is True; Abort() gates its audio cut on both so it
+        # never silences a channel it never actually acquired.
+        self._speaking: bool = False
         # Spoken lines are skippable by default (Backspace →
         # TGActionManager_SkipEvents), matching BC where dialogue lines skip
         # without the SDK marking each CharacterAction explicitly.
@@ -1886,8 +1893,13 @@ class CharacterAction(TGAction):
             # Without the fallback the line resolves to no text and no wav
             # and the bus stays silent.
             db = cc.GetDatabase()
-        return crew_speech.emit(name, db, self._detail,
-                                self._priority) or 0.0
+        dur = crew_speech.emit(name, db, self._detail, self._priority) or 0.0
+        # crew_speech.emit()/bus().speak() return a truthy duration only when
+        # the bus actually accepted this line (0.0 means dropped -- nothing
+        # to say, or a higher-priority line still holds the channel). Only a
+        # truthy return means WE now own the channel -- see Abort().
+        self._speaking = dur > 0.0
+        return dur
 
     def Skip(self) -> None:
         # Our line is the one holding the crew-speech channel (single-channel
@@ -1921,20 +1933,38 @@ class CharacterAction(TGAction):
         super().Skip()
 
     def Abort(self) -> None:
-        # Aborting an in-flight line must cut its audio immediately --
-        # otherwise a killed CharacterIntros sequence (TGSequence.Abort()
-        # calling action.Abort() on the in-flight child) leaves the
-        # currently-speaking line's voice playing out under whatever the
-        # caller does next (E1M1's skip branch moves straight into the
-        # silent undock cutscene). Unlike Skip(), this must NOT complete the
-        # action or issue the pending turn-back: an aborted line is dead, not
-        # finished, and its dependents must not advance -- TGSequence.Abort()
-        # / the _playing guard in _begin_step already refuse to launch them;
-        # this only has to make sure OUR half, the audio, actually stops.
-        if self._action_type in (self.AT_SPEAK_LINE,
-                                 self.AT_SPEAK_LINE_NO_FLAP_LIPS,
-                                 self.AT_SAY_LINE,
-                                 self.AT_SAY_LINE_AFTER_TURN):
+        # Aborting an in-flight line that is ACTUALLY SPEAKING must cut its
+        # audio immediately -- otherwise a killed CharacterIntros sequence
+        # (TGSequence.Abort() calling action.Abort() on the in-flight child)
+        # leaves the currently-speaking line's voice playing out under
+        # whatever the caller does next (E1M1's skip branch moves straight
+        # into the silent undock cutscene).
+        #
+        # Gated on `self._playing and self._speaking`, NOT on action_type
+        # alone: Abort() now fires in far more contexts than Skip() ever did
+        # -- TGSequence.Stop() calls .Abort() on EVERY step including ones
+        # that never played (an unplayed CharacterAction has _playing=False,
+        # _speaking=False), and a SAY_LINE_AFTER_TURN that is in-flight but
+        # still mid-turn has not reached _speak() yet (_playing=True,
+        # _speaking=False -- it owns nothing on the bus). Either case cutting
+        # the channel would silence whatever UNRELATED line is actually live
+        # -- this action never acquired it, so it has no business freeing it.
+        # `_speaking` only goes True from a truthy (accepted) return out of
+        # crew_speech.emit() in _do_play(); `_playing` closes the remaining
+        # gap where the line already finished naturally (Completed() clears
+        # _playing but _speaking is never explicitly reset).
+        #
+        # Unlike Skip(), this must NOT complete the action or issue the
+        # pending turn-back: an aborted line is dead, not finished, and its
+        # dependents must not advance -- TGSequence.Abort() / the _playing
+        # guard in _begin_step already refuse to launch them; this only has
+        # to make sure OUR half, the audio, actually stops when it is ours
+        # to stop.
+        if (self._playing and self._speaking
+                and self._action_type in (self.AT_SPEAK_LINE,
+                                          self.AT_SPEAK_LINE_NO_FLAP_LIPS,
+                                          self.AT_SAY_LINE,
+                                          self.AT_SAY_LINE_AFTER_TURN)):
             from engine.appc import crew_speech
             crew_speech.bus().skip_current()
         # A deferred _speak (AT_SAY_LINE_AFTER_TURN awaiting the forward

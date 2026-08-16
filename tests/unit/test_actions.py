@@ -723,6 +723,40 @@ def test_abort_stops_inflight_nested_sequence_children(monkeypatch):
     assert not outer.IsPlaying()
 
 
+def test_begin_step_playing_guard_alone_stops_a_late_dependent_after_stop():
+    """Pins the `_begin_step` `_playing` guard IN ISOLATION from the
+    `started = True` marking `Abort()` performs -- mutation testing showed
+    each mechanism individually uncovered (removing either alone left the
+    rest of the suite green; only removing BOTH went red).
+
+    `Stop()` (unlike `Abort()`) never marks steps started -- it just calls
+    `.Abort()`/`.Stop()` on every child and sets `self._playing = False`
+    directly. So a late-arriving completion from a child `Stop()` touched
+    reaches `_on_dependency_complete` -> `_begin_step` with its dependent
+    step still `started = False`; the ONLY thing stopping that dependent
+    from launching is the `_playing` guard."""
+    log = []
+    a = _AsyncAction()
+    b = _RecordingAction(log, "b")
+    s = App.TGSequence_Create()
+    s.AddAction(a)
+    s.AddAction(b, a)          # b depends on a, delay 0
+    s.Play()
+    assert a.IsPlaying()
+    assert log == []           # b not started
+
+    s.Stop()
+    assert not s.IsPlaying()
+
+    a.Completed()               # late-arriving completion; Stop() never
+                                 # marked b.started, so only the _playing
+                                 # guard in _begin_step can stop this
+
+    assert log == [], (
+        "the _playing guard in _begin_step must alone stop a late "
+        "dependent on a Stop()ped sequence")
+
+
 def test_abort_does_not_fire_completion_events():
     """A killed sequence must not look like a finished one -- otherwise the
     outer CrewIntros sequence would treat the kill as a normal completion and
@@ -782,6 +816,152 @@ def test_character_action_abort_stops_audio(monkeypatch):
 
     assert not line.IsPlaying()
     assert handles[0].stopped
+
+
+def test_unplayed_character_action_abort_does_not_cut_unrelated_audio(monkeypatch):
+    """I1: CharacterAction.Abort() must not cut whatever UNRELATED line is
+    live on the single-channel crew-speech bus when THIS action never
+    played -- it never acquired the channel, so it has no business freeing
+    it. Directly reachable: TGActionManager.KillActions() calls .Abort()
+    straight on every registered action with no started/in-flight
+    distinction at all (`abort = getattr(action, "Abort", None); abort()`),
+    and so do MissionLib.GameOver / DeleteQueuedActions and
+    E3M2.PlayerDestroyed / RunAction.LostFocus on a possibly-unplayed
+    registered/master action.
+
+    CORRECTION vs the path first suspected: TGSequence.Stop() does **not**
+    reach this. `hasattr(action, "Stop")` is vacuously True for ANY
+    TGObject lacking a genuine Stop() override -- TGObject.__getattr__ hands
+    back a truthy _Stub for any unknown name (engine/core/ids.py:121-126,
+    the exact "never grep/hasattr for Appc surface" trap this project's own
+    docs warn about) -- so Stop()'s per-step dispatch always takes the
+    `action.Stop()` branch (a no-op stub) for a CharacterAction, never
+    `action.Abort()`. Verified empirically with a spy on
+    `CharacterAction.Abort` across a real `TGSequence.Stop()` call: zero
+    invocations. Tested directly against `.Abort()` here instead, which is
+    both the real reachable shape and decoupled from that unrelated,
+    pre-existing Stop()-dispatch gap (out of scope for this fix)."""
+    from engine.appc import crew_speech
+    from engine.appc.localization import TGLocalizationDatabase
+
+    crew_speech.bus().reset()
+    b = crew_speech.bus()
+    handles = []
+
+    def fake_play(self, wav):
+        h = _FakeVoiceHandle()
+        handles.append(h)
+        return (5.0, h)
+
+    monkeypatch.setattr(type(b), "_play_voice", fake_play, raising=True)
+    db = TGLocalizationDatabase(
+        "x.tgl", strings={"Other": "someone else's line", "L1": "line one"},
+        sounds={"Other": "other.wav", "L1": "l1.wav"})
+
+    # An unrelated line is live on the bus, owned by nobody in this test.
+    crew_speech.emit("Bystander", db, "Other", 0)
+    assert len(handles) == 1
+
+    never_played = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L1", None, 0, db)
+    assert not never_played.IsPlaying()       # confirmed: never played
+
+    never_played.Abort()                      # e.g. a blanket KillActions()
+
+    assert not handles[0].stopped, (
+        "an unplayed CharacterAction's Abort() cut an unrelated live line")
+
+
+def test_stop_never_reaches_character_action_abort(monkeypatch):
+    """Pins the correction above as its own assertion, independent of the
+    audio question: TGSequence.Stop() must not invoke CharacterAction.Abort
+    at all today (the hasattr/_Stub trap routes it to the no-op .Stop()
+    stub instead). If this ever starts failing, `Stop()`'s per-step
+    dispatch changed and test_unplayed_character_action_abort_does_not_cut_
+    unrelated_audio's docstring (and the fix report) need a second look."""
+    calls = []
+    real_abort = App.CharacterAction.Abort
+
+    def spy_abort(self):
+        calls.append(True)
+        return real_abort(self)
+
+    monkeypatch.setattr(App.CharacterAction, "Abort", spy_abort, raising=True)
+
+    ca = App.CharacterAction_Create(
+        None, App.CharacterAction.AT_SAY_LINE, "L1", None, 0, None)
+    dep = App.TGConditionAction_Create()      # never satisfied: stays pending
+    s = App.TGSequence_Create()
+    s.AddAction(dep)
+    s.AddAction(ca, dep, 1.0)
+    s.Play()
+    assert not ca.IsPlaying()
+
+    s.Stop()
+
+    assert calls == []
+
+
+def test_abort_of_inflight_turning_character_action_does_not_cut_the_channel(
+        monkeypatch):
+    """I2 regression: an AT_SAY_LINE_AFTER_TURN action that is in-flight
+    (Play() called, IsPlaying() True) but still mid-TURN has not spoken yet
+    -- _speak() is the turn's on_complete, not called inline -- so it owns
+    nothing on the bus. Aborting it (e.g. a blanket KillActions() while it is
+    still turning) must not silence whoever else IS speaking."""
+    from engine.appc import crew_speech
+    from engine.appc.localization import TGLocalizationDatabase
+    from engine.appc.characters import CharacterClass_Create
+    import engine.bridge_character_anim as bca
+
+    crew_speech.bus().reset()
+    b = crew_speech.bus()
+    handles = []
+
+    def fake_play(self, wav):
+        h = _FakeVoiceHandle()
+        handles.append(h)
+        return (5.0, h)
+
+    monkeypatch.setattr(type(b), "_play_voice", fake_play, raising=True)
+    db = TGLocalizationDatabase(
+        "x.tgl",
+        strings={"Other": "someone else's line", "Turned": "turned line"},
+        sounds={"Other": "other.wav", "Turned": "turned.wav"})
+
+    crew_speech.emit("Bystander", db, "Other", 0)
+    assert len(handles) == 1                  # the bystander's voice is live
+
+    # request_turn_to swapped for a recorder that never invokes on_complete
+    # -- the officer is genuinely still turning, forever, from this test's
+    # point of view.
+    class _FakeTurnController:
+        def __init__(self):
+            self.calls = []
+
+        def request_turn_to(self, character, detail, *, back=False,
+                            now=False, on_complete=None):
+            self.calls.append(dict(detail=detail, on_complete=on_complete))
+
+    ctrl = _FakeTurnController()
+    monkeypatch.setattr(bca, "get_controller", lambda: ctrl)
+
+    ch = CharacterClass_Create()
+    ch.SetActive(1)
+    line = App.CharacterAction_Create(
+        ch, App.CharacterAction.AT_SAY_LINE_AFTER_TURN, "Turned", "Captain",
+        0, db)
+    line.Play()
+
+    assert line.IsPlaying()
+    assert len(ctrl.calls) == 1                # turn issued...
+    assert len(handles) == 1                   # ...but the line has NOT spoken
+
+    line.Abort()
+
+    assert not handles[0].stopped, (
+        "aborting a line that is still turning (never spoke) must not cut "
+        "the channel someone else owns")
 
 
 # ── TGSoundAction / TGCreditAction inline completion ─────────────────────────
