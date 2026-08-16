@@ -553,7 +553,24 @@ void main() {
                 float ty = u_dyn_light_up[i].w;
                 vec3  dld = normalize(-L);        // light -> fragment
                 float fz  = dot(dld, fwd);
-                if (fz > 1e-4) {
+                // tx/ty must be strictly positive, not merely >= 0 like the
+                // outer gate. A cone authored with radius 0 (SetLightEmitter-
+                // Radius(i, 0.0) -- one keystroke in the SPV's light editor)
+                // yields spot_tan == 0 exactly, and then:
+                //   * off the axis planes, num/0 == +/-Inf, e == Inf, the
+                //     smoothstep saturates and spot == 0 -- emits nothing;
+                //   * ON an axis plane the numerator is exactly 0 too, giving
+                //     0/0 == NaN. That does NOT poison the fragment here:
+                //     spot is 1.0 - smoothstep(...), smoothstep clamps
+                //     internally, and clamp(NaN, 0, 1) == 0 on IEEE-maxNum
+                //     hardware -- so spot comes out as 1.0 and the light is
+                //     applied at FULL strength precisely where the cone has no
+                //     interior. A light leak, not a black pixel. (Hardware that
+                //     propagates NaN through clamp would get the black pixel
+                //     instead; 0/0 is undefined behaviour either way.)
+                // Requiring tx/ty > 0 sends a degenerate cone down the else
+                // branch, so it uniformly emits nothing.
+                if (fz > 1e-4 && tx > 0.0 && ty > 0.0) {
                     float ex = dot(dld, rgt) / (fz * tx);
                     float ey = dot(dld, upv) / (fz * ty);
                     float e  = ex*ex + ey*ey;     // <= 1 inside the elliptical cone
