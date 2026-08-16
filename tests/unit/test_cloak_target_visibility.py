@@ -121,7 +121,7 @@ def test_cloaked_ship_dropped_from_target_list_view():
         _gmod._current_game = saved
 
 
-def test_player_lock_drops_cloaked_target():
+def test_player_lock_drops_cloaked_target(monkeypatch):
     """A player lock on a ship that finishes cloaking is dropped.
 
     Calls the real guard rather than mirroring it. The previous version
@@ -129,7 +129,16 @@ def test_player_lock_drops_cloaked_target():
     branch, so it could not have noticed the guard changing underneath it --
     and it didn't when the predicate was widened to can_detect (see
     tests/unit/test_player_lock_sensor_gate.py).
+
+    STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False. This
+    fixture puts the enemy 50 GU away, and cloak is now a range multiplier
+    (see tests/unit/test_cloak_detection_contest.py), so with the flag at its
+    default the lock survives at this distance -- the contest companion below
+    pins that. The assertion here is unchanged; only the configuration it
+    describes is now explicit.
     """
+    import engine.appc.sensor_detection as sd
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
     from engine.appc.sensor_detection import clear_undetectable_player_lock
     _, player, enemy, _ = _scene()
     player.SetTarget(enemy)
@@ -139,5 +148,30 @@ def test_player_lock_drops_cloaked_target():
     assert player.GetTarget() is enemy
     # Fully cloaked → the guard drops it.
     enemy.GetCloakingSubsystem().InstantCloak()
+    clear_undetectable_player_lock(player)
+    assert player.GetTarget() is None
+
+
+def test_player_lock_survives_close_cloak_but_drops_beyond_the_bubble():
+    """INTENTIONAL DIVERGENCE (ENHANCED_SENSOR_CONTEST default-on): the lock is
+    kept while the cloaked ship is inside 1% of effective sensor range.
+
+    These fixtures model no BaseSensorRange, so effective range is
+    FALLBACK_RANGE_GU (30000) and the cloak bubble is 300 GU. The enemy sits at
+    50 GU -> still locked. Push it past the bubble and the guard drops it, which
+    keeps the original "undetectable target loses the lock" guarantee live under
+    the default configuration.
+    """
+    from engine.appc.sensor_detection import clear_undetectable_player_lock
+    _, player, enemy, _ = _scene()
+    player.SetTarget(enemy)
+    enemy.GetCloakingSubsystem().InstantCloak()
+
+    # 50 GU, inside the 300 GU cloak bubble → the lock holds.
+    clear_undetectable_player_lock(player)
+    assert player.GetTarget() is enemy
+
+    # Beyond the bubble → dropped, exactly as a cloaked ship always was.
+    enemy.SetTranslateXYZ(0, 500, 0)
     clear_undetectable_player_lock(player)
     assert player.GetTarget() is None

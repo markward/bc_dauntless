@@ -26,6 +26,25 @@ LOCK_BREAK_T = 0.28  # density above which detection fails outright. Matched to 
                      # so only the densest clump cores fully hide a ship.
 HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detection
 
+# ── Cloak-as-contest constants (INTENTIONAL divergence from stock BC) ─────────
+# In BC a cloaked ship is absolutely undetectable. Here cloak instead multiplies
+# the observer's *effective* sensor range, so sensing is a contest rather than a
+# binary: a Galaxy's 2000 GU sensors reach 20 GU against a cloaked contact —
+# one third of its 60 GU phaser range, i.e. you must be effectively on top of it.
+#
+# Because it scales *effective* range (post condition and power), boosting
+# sensor power widens the bubble and wrecked sensors remove it entirely.
+#
+# The change is symmetric: can_detect is also the AI candidate-selection gate
+# and the FireScript firing gate, so AI ships gain the same capability and a
+# cloaked attack run becomes detectable close in. 1% (not 1.5%) was chosen to
+# keep cloak viable — do not "improve" the number.
+#
+# Set ENHANCED_SENSOR_CONTEST = False to restore stock BC exactly (cloak
+# absolute). Deliberately code-only: there is no UI toggle.
+ENHANCED_SENSOR_CONTEST = True
+CLOAK_RANGE_FACTOR = 0.01
+
 # Per-(observer_id, target_id) latch: a broken lock needs a margin to re-acquire.
 _broken: set = set()
 
@@ -141,16 +160,22 @@ def can_detect(observer, target) -> bool:
     threshold, effective range is reduced by (1 - CONCEAL_K * concealment).
     """
     # ── Cloak gate ────────────────────────────────────────────────────────
-    # A fully cloaked target is undetectable — the SDK SelectTarget drops a
-    # contact on ET_CLOAK_COMPLETED. Mid-cloak (CLOAKING) stays visible until
-    # the transition finishes, so gate on IsCloaked(), not IsTryingToCloak().
+    # Stock BC: a fully cloaked target is undetectable — the SDK SelectTarget
+    # drops a contact on ET_CLOAK_COMPLETED. Here (ENHANCED_SENSOR_CONTEST)
+    # cloak instead multiplies effective range by CLOAK_RANGE_FACTOR, applied
+    # after effective_sensor_range so it scales with condition and power.
+    # Mid-cloak (CLOAKING) stays fully visible until the transition finishes,
+    # so gate on IsCloaked(), not IsTryingToCloak().
     cloak = _cloak_subsystem(target)
-    if cloak is not None and cloak.IsCloaked():
+    cloaked = cloak is not None and bool(cloak.IsCloaked())
+    if cloaked and not ENHANCED_SENSOR_CONTEST:
         return False
 
     r = effective_sensor_range(observer)
     if r <= 0.0:
         return False
+    if cloaked:
+        r = r * CLOAK_RANGE_FACTOR
 
     # ── Nebula concealment gate ───────────────────────────────────────────
     conceal = concealment_at(target)
