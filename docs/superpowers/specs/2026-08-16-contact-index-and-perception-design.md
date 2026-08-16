@@ -99,10 +99,20 @@ they adopt this.
 Consumers do no further arithmetic. Distance is computed **once per contact per frame**
 and reused by every consumer.
 
-**`TargetRowCache`** *(new, beside `STTargetMenu`)*
-Owns `STSubsystemMenu` lifecycle only: create a row, rebuild its subsystem tree on
-`RebuildShipMenu`, evict on `publish_destroyed`. Rows survive leaving a system, so a warp
-round-trip keeps subsystem trees warm. Knows nothing about sets or detectability.
+**Row cache** *(`STTargetMenu._row_cache`)*
+One `STSubsystemMenu` per ship ever seen, so row identity is stable across queries —
+`CycleTarget` resolves a row via `GetObjectEntry` then walks siblings from it. Refreshed by
+`RebuildShipMenu`. Rows survive leaving a system, so a warp round-trip does not pay to
+rebuild subsystem trees.
+
+Kept as a dict on the menu rather than its own class: it is a dict plus one refresh method,
+and the menu is its only consumer. Splitting it would add a unit boundary that carries no
+interface.
+
+**No eviction.** A row for a ship that leaves the world becomes unreachable, because the
+projection only ever walks the current contact list, and the singleton is recreated on
+mission swap (`_reset_target_menu_singleton`). A `ship_lifecycle` subscription would buy
+nothing and introduce a subscriber-lifetime bug class.
 
 **`STTargetMenu`** *(modified)*
 Stays the SDK-facing façade. Gains `set_contacts()`; every child accessor becomes a
@@ -298,10 +308,19 @@ E3M1's Amagon, E3M2's Warbird and Kessok, E6M4's Kessok and Keldon, E6M2's probe
 outpost, E3M5's Gon device, and the E2M1/Belaruz4/Cebalrai1 asteroid fields. Every one of
 those ships is currently still targetable.
 
-Implemented alongside the existing hailable/scannable pair, following the same shape:
-default on the class, missions override, and a change broadcast — `ET_HAILABLE_CHANGE` and
-`ET_SCANNABLE_CHANGE` have targetable's equivalent, so a reveal updates immediately rather
-than at the next rebuild.
+Implemented alongside the existing hailable/scannable pair: default on the class, missions
+override. Defaults follow the same reasoning that settled `_scannable` — the vast majority
+of ships never touch the flag, so the default must be the one that makes the feature work
+without opting in. `ObjectClass` and `ShipClass` therefore default **targetable**.
+
+**No change broadcast, deliberately.** BC defines `ET_HAILABLE_CHANGE` and
+`ET_SCANNABLE_CHANGE` but has **no `ET_TARGETABLE_CHANGE`** — verified against
+`sdk/Build/scripts/App.py`. The reason corroborates this whole design: the Hail and Science
+menus are imperatively maintained button lists, so they need a notification to rebuild
+(`HelmMenuHandlers.py:194`, `ScienceMenuHandlers.py:97`). BC's target list needs none
+because the engine re-reads the flag when it builds the list — it is *already* a derived
+read. Adding an invented event here would be both unfaithful and pointless: the next query
+picks the flag up anyway.
 
 Kept as a **separate stored flag from cloak**, deliberately. The mission owns the authored
 flag; the cloaking subsystem owns cloak state. One shared boolean would mean decloak
