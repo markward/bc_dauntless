@@ -193,3 +193,35 @@ def test_no_observer_or_no_set_reads_empty():
     adrift.SetName("Adrift")
     assert perceived_by(None) == ()
     assert perceived_by(adrift) == ()
+
+
+# ── Module boundary ──────────────────────────────────────────────────────────
+
+def test_perception_does_not_reach_the_ui_layer():
+    """perception is the MODEL half of the contact system; it must not depend
+    on the SDK/UI surface.
+
+    It used to, through one line: `surface_gu_for` read this frame's pushed
+    record out of `App.STTargetMenu_GetTargetMenu()`, giving
+    perception -> App -> target_menu -> perception, a cycle broken only by the
+    fact that both legs were lazy imports. That accessor now lives on
+    STTargetMenu (engine.appc.target_menu.surface_gu_to), which already
+    depended on perception, so the arrow points one way. A lazy `import App`
+    inside a function body is exactly how the cycle hid last time, so this
+    reads the SOURCE rather than the module namespace.
+    """
+    import ast
+    import pathlib
+
+    import engine.appc.perception as perception
+
+    src = pathlib.Path(perception.__file__).read_text()
+    imported = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Import):
+            imported.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            imported.add(node.module.split(".")[0])
+
+    assert "App" not in imported
+    assert not any(m.startswith("engine.ui") or m == "engine.ui" for m in imported)

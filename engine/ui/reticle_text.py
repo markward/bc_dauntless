@@ -7,7 +7,7 @@ See docs/superpowers/specs/2026-06-09-reticle-chrome-bars-text-design.md
 """
 from __future__ import annotations
 
-from engine.appc.perception import surface_gu_for
+from engine.appc.target_menu import surface_gu_to
 from engine.core.ids import implements
 from engine.units import GU_TO_KM, GUPS_TO_KPH
 from engine.ui.ship_property_viewer import project
@@ -54,7 +54,7 @@ def build_reticle_text(player, camera, viewport) -> dict:
     # planet itself renders wider than 25 km. Negligible for small ships,
     # decisive for planets/stations.
     #
-    # perception.surface_gu_for is the ONE place the player-to-contact vector
+    # target_menu.surface_gu_to is the ONE place the player-to-contact vector
     # is derived — including for a targeted PLANET, which has no Contact record
     # (contact_index buckets ShipClass only) and so takes that function's miss
     # path. There is deliberately no local fallback here: this file used to
@@ -62,7 +62,7 @@ def build_reticle_text(player, camera, viewport) -> dict:
     # duplication survived the consolidation that was supposed to remove it.
     # `centre` and `radius` stay live because they position the box, which is a
     # projection rather than a readout.
-    dist_gu = surface_gu_for(target, player)
+    dist_gu = surface_gu_to(target, player)
     # implements(), NOT hasattr(): a targeted planet is an ObjectClass with no
     # GetVelocity, and hasattr() is vacuously true on any TGObject — so this
     # read a _Stub and only came out as 0 kph because _Stub arithmetic collapses

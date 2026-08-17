@@ -185,6 +185,63 @@ class STTargetMenu(STTopLevelMenu):
                 return c
         return None
 
+    def surface_gu_to(self, ship, observer) -> float:
+        """Surface distance from *observer* to *ship*, in GU. ALWAYS answers.
+
+        The cache half of the two range readouts (see the module-level
+        `surface_gu_to`, which is what they actually call): read this frame's
+        pushed record if there is a usable one, otherwise measure. It lives on
+        the menu because the record is the menu's state — asking perception for
+        it made the model layer import App to reach this class, which is the
+        cycle this method's move broke.
+
+        Fast path: the record the host loop already pushed this frame
+        (host_loop._pump_contacts, before the panels render). Reading it beats
+        calling perceived_by again, which would redo the whole per-observer
+        pass to answer one number.
+
+        Miss path: `perception.measure_surface_gu`, the same arithmetic the
+        records themselves were built from — one implementation, not one plus a
+        copy. Deliberately NOT inlined here; a second derivation inside the menu
+        is precisely how five call sites drifted onto two conventions before.
+        Two ways to miss from here (the third, no menu at all, can only be seen
+        by the module-level function):
+
+          * a targeted PLANET or station. contact_index buckets ShipClass only,
+            so an ObjectClass never has a record — and this is where the
+            convention earns its keep (orbiting Haven reads 26 km, not 42; on a
+            ship the radius subtraction is a rounding error).
+          * a NaN record. RebuildShipMenus synthesises `surface_gu=NaN` on
+            purpose because it takes a set, not an observer, and so cannot
+            answer distance. NaN is treated as a miss; without that, "nan km"
+            would render on screen.
+
+        ⚠️ *observer* is used ONLY on the miss path. The record path returns
+        `contact.surface_gu` whoever you pass, because this menu stores no
+        observer alongside its contacts and so cannot check: it holds one
+        frame's push, and that push came from the player.
+        `surface_gu_to(ship, other_ship)` will therefore silently hand back the
+        PLAYER's distance whenever a record exists. Both callers pass the
+        player, so this is consistent today — but do not read this as answering
+        a per-observer question; it does not, and making it do so means putting
+        the observer into the pushed record.
+
+        *observer* is required and must not be None: measuring a distance from
+        nowhere has no answer, and there is no sentinel to hand back (that is
+        the whole point). Both callers already hold the player and bail before
+        reaching here without one — ship_display_panel returns (None, None) on
+        a null player, and the reticle is not built without one — so requiring
+        it deletes two unreachable branches rather than pushing work onto
+        anybody.
+        """
+        from engine.appc.perception import measure_surface_gu
+        contact = self.contact_for(ship)
+        # `x != x` is the NaN test that needs no import and no isinstance:
+        # Contact.surface_gu is always a float.
+        if contact is not None and contact.surface_gu == contact.surface_gu:
+            return contact.surface_gu
+        return measure_surface_gu(observer, ship)
+
     def _rows(self) -> list:
         """The projection: cached rows for the current TARGETABLE contacts.
 
@@ -423,7 +480,7 @@ class STTargetMenu(STTopLevelMenu):
         answer.
 
         The hazard is now caught rather than merely visible.
-        `perception.surface_gu_for` — the single read path for both range
+        `surface_gu_to` — the single read path for both range
         readouts — treats a NaN record as a miss and measures against the
         observer instead, so a push from here no longer puts "nan km" on
         screen. That is a property of the reader, not a licence to synthesise
@@ -482,6 +539,35 @@ def STTargetMenu_CreateW(label: str = "") -> STTargetMenu:
 def STTargetMenu_GetTargetMenu() -> "STTargetMenu | None":
     """SDK accessor — TacticalInterfaceHandlers + MissionLib + others."""
     return _target_menu_singleton
+
+
+def surface_gu_to(ship, observer) -> float:
+    """Surface distance from *observer* to *ship*, in GU. ALWAYS answers.
+
+    THE read path for the on-screen range readouts (engine.ui.reticle_text and
+    engine.ui.ship_display_panel), and the only distance derivation either of
+    them performs. Callers do ONE unconditional read; there is deliberately no
+    sentinel for them to branch on, because the branch is how the duplication
+    came back last time. Both readouts used to keep their entire original
+    computation as a `if dist is None:` fallback, which added a layer instead of
+    replacing one — the single worst regression this subsystem has had.
+
+    This function exists rather than making the readouts fetch the singleton
+    themselves for exactly that reason: `STTargetMenu_GetTargetMenu()` is None
+    on boot frames and in headless fixtures, so a caller holding the menu would
+    need an `if menu is None:` branch — and that branch is where a caller-side
+    recomputation grows back. Resolving the singleton here keeps the third miss
+    case (no menu at all) inside the one implementation.
+
+    The record/NaN/observer semantics are `STTargetMenu.surface_gu_to`'s; read
+    that docstring before relying on the *observer* argument, which the record
+    path ignores.
+    """
+    from engine.appc.perception import measure_surface_gu
+    menu = STTargetMenu_GetTargetMenu()
+    if menu is None:
+        return measure_surface_gu(observer, ship)
+    return menu.surface_gu_to(ship, observer)
 
 
 def _reset_target_menu_singleton() -> None:

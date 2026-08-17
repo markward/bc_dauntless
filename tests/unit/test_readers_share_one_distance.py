@@ -135,7 +135,7 @@ def test_ship_display_range_falls_back_without_a_record():
     only — so it never has a record. The readout must survive.
 
     Assertion unchanged; only where the miss is handled moved. It used to be a
-    local recompute in _range_and_speed_to and is now surface_gu_for's miss
+    local recompute in _range_and_speed_to and is now surface_gu_to's miss
     path, so this doubles as the characterization that the move preserved the
     number."""
     from engine.ui.ship_display_panel import _range_and_speed_to
@@ -192,7 +192,7 @@ def test_bulk_rebuild_synthesises_no_distance_at_all():
 
     The record assertions are unchanged. The READOUT assertion changed: it used
     to demand "nan km" on screen, on the reasoning that visibly broken beats
-    plausibly wrong. surface_gu_for now treats a NaN record as a miss and
+    plausibly wrong. surface_gu_to now treats a NaN record as a miss and
     measures against the observer the caller passed, which is neither — it is
     the right number. That is why the readout half of this test moved from
     isnan() to the real distance; the hazard the NaN guards against is gone at
@@ -214,20 +214,24 @@ def test_bulk_rebuild_synthesises_no_distance_at_all():
     assert rng_km == pytest.approx(200.0 * GU_TO_KM)
 
 
-# ── surface_gu_for always answers ────────────────────────────────────────────
+# ── surface_gu_to always answers ─────────────────────────────────────────────
 #
 # The readouts used to keep their whole original derivation as a guarded
-# fallback for `surface_gu_for(...) is None`. That was a second copy of the
-# rule, not a replacement of it. surface_gu_for now answers every case itself,
+# fallback for `surface_gu_to(...) is None`. That was a second copy of the
+# rule, not a replacement of it. surface_gu_to now answers every case itself,
 # through the same perception._surface_gu the record path uses, so the callers
 # have one unconditional read and there is exactly one derivation.
+#
+# It lives in engine.appc.target_menu (it reads STTargetMenu's pushed record);
+# these tests are unchanged from when it was perception.surface_gu_for apart
+# from the import and the name.
 
-def test_surface_gu_for_answers_for_a_planet_with_no_record():
+def test_surface_gu_to_answers_for_a_planet_with_no_record():
     """The case that matters: contact_index buckets ShipClass only, so a
     targeted planet NEVER has a record — and the surface convention is
     decisive there (Haven, radius 90, orbited at 240 GU centres reads the
     150 GU surface distance, not 240)."""
-    from engine.appc.perception import surface_gu_for
+    from engine.appc.target_menu import surface_gu_to
 
     contact_index.reset()
     App._reset_target_menu_singleton()
@@ -235,13 +239,13 @@ def test_surface_gu_for_answers_for_a_planet_with_no_record():
     player = _observer(pSet)
     haven = _planet(pSet, y=240.0, radius=90.0)
 
-    assert surface_gu_for(haven, player) == pytest.approx(150.0)
+    assert surface_gu_to(haven, player) == pytest.approx(150.0)
 
 
-def test_surface_gu_for_answers_with_no_menu_at_all():
+def test_surface_gu_to_answers_with_no_menu_at_all():
     """Boot frames and headless fixtures: nothing has been pushed, and
     STTargetMenu_GetTargetMenu() is None. Still an answer, not a None."""
-    from engine.appc.perception import surface_gu_for
+    from engine.appc.target_menu import surface_gu_to
 
     contact_index.reset()
     App._reset_target_menu_singleton()
@@ -250,13 +254,13 @@ def test_surface_gu_for_answers_with_no_menu_at_all():
     lone = _placed(pSet, "Galor", y=205.0, radius=5.0)
 
     assert App.STTargetMenu_GetTargetMenu() is None
-    assert surface_gu_for(lone, player) == pytest.approx(200.0)
+    assert surface_gu_to(lone, player) == pytest.approx(200.0)
 
 
-def test_surface_gu_for_prefers_the_record_over_live_geometry():
+def test_surface_gu_to_prefers_the_record_over_live_geometry():
     """The record path is actually taken — proven with a record whose
     surface_gu no longer matches the live geometry."""
-    from engine.appc.perception import surface_gu_for
+    from engine.appc.target_menu import surface_gu_to
 
     _pSet, player, target = _scene()
     _menu, contacts = _pump(player)
@@ -265,14 +269,14 @@ def test_surface_gu_for_prefers_the_record_over_live_geometry():
     target.SetTranslateXYZ(0.0, 905.0, 0.0)   # no re-push
 
     assert pushed_gu == pytest.approx(200.0)
-    assert surface_gu_for(target, player) == pytest.approx(pushed_gu)
+    assert surface_gu_to(target, player) == pytest.approx(pushed_gu)
 
 
 def test_a_nan_record_is_treated_as_a_miss():
     """RebuildShipMenus deliberately synthesises NaN (it has no observer, so
     it cannot answer distance). With no caller fallback left to catch it, a
     NaN must be a miss here or "nan km" reaches the screen."""
-    from engine.appc.perception import surface_gu_for
+    from engine.appc.target_menu import surface_gu_to
 
     contact_index.reset()
     App._reset_target_menu_singleton()
@@ -284,10 +288,10 @@ def test_a_nan_record_is_treated_as_a_miss():
     menu.RebuildShipMenus(pSet)
 
     assert math.isnan(menu.contact_for(target).surface_gu)   # still NaN
-    assert surface_gu_for(target, player) == pytest.approx(200.0)
+    assert surface_gu_to(target, player) == pytest.approx(200.0)
 
 
-def test_surface_gu_for_uses_the_observer_only_on_the_miss_path():
+def test_surface_gu_to_uses_the_observer_only_on_the_miss_path():
     """The observer is NOT a per-observer question. STTargetMenu stores no
     observer alongside its contacts, so the record path cannot check who is
     asking and hands back the pushed (player's) distance regardless. Pinned so
@@ -295,19 +299,19 @@ def test_surface_gu_for_uses_the_observer_only_on_the_miss_path():
     putting the observer into the record.
 
     Same two ships, two different observers, one push."""
-    from engine.appc.perception import surface_gu_for
+    from engine.appc.target_menu import surface_gu_to
 
     _pSet, player, target = _scene()
     elsewhere = _placed(_pSet, "Bystander", y=-1000.0)
     _menu, contacts = _pump(player)
 
     # Record present: the observer argument is ignored.
-    assert surface_gu_for(target, elsewhere) == pytest.approx(contacts[0].surface_gu)
+    assert surface_gu_to(target, elsewhere) == pytest.approx(contacts[0].surface_gu)
 
     # Record absent: now it is the observer that decides. Bystander sits
     # 1205 GU from the target, less its radius 5.
     App._reset_target_menu_singleton()
-    assert surface_gu_for(target, elsewhere) == pytest.approx(1200.0)
+    assert surface_gu_to(target, elsewhere) == pytest.approx(1200.0)
 
 
 # ── the readouts, on a planet ────────────────────────────────────────────────

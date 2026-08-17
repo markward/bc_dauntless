@@ -13,6 +13,14 @@ previously recomputed in five places under two different conventions; it is now
 computed once here. `contacts_for` stays as a thin back-compat wrapper for
 callers not yet migrated to Contact records.
 
+WHAT THIS MODULE IS NOT: a cache accessor. `surface_gu_for` used to live here
+and read the frame's pushed record out of `App.STTargetMenu_GetTargetMenu()`,
+which made the model layer depend on the UI layer —
+perception -> App -> target_menu -> perception, a cycle held apart only by lazy
+imports. It is now `target_menu.surface_gu_to`, on the class that owns the
+record; what stayed is the measurement it falls back to,
+`measure_surface_gu`. This module imports no App and knows nothing about menus.
+
 STAGE 4 SCOPE: there is now exactly ONE detection rule.
 `sensor_detection.can_detect` — already the gate for weapons, AI targeting and
 the player's lock — is what `perceived_by` calls, so the target list and radar
@@ -218,6 +226,31 @@ def _surface_gu(dist_sq: float, ship) -> float:
     return d - r if d > r else 0.0
 
 
+def measure_surface_gu(observer, ship) -> float:
+    """Measure *observer* → *ship* surface distance from LIVE world positions.
+
+    THE arithmetic, in one place. `perceived_by` reaches `_surface_gu`
+    directly because it already holds the squared centre distance (it computed
+    it for `can_detect`'s `dist_sq_gu=` hand-off, and re-deriving it here would
+    undo exactly the consolidation this module exists for); every other caller
+    wants this, which does the vector too.
+
+    Named for the VERB because the distinction matters at the call site: this
+    always measures, where `target_menu.surface_gu_to` prefers the frame's
+    already-pushed record and falls back to this. A caller that wants "the
+    number on screen" wants that one; this is the measurement it delegates to,
+    and keeping it here is what stops a second copy of the convention growing
+    inside the menu.
+
+    *ship*'s bounding radius is what is subtracted, so the two arguments are
+    NOT interchangeable despite both being positions.
+    """
+    ox, oy, oz = _get_xyz(observer)
+    sx, sy, sz = _get_xyz(ship)
+    dx, dy, dz = sx - ox, sy - oy, sz - oz
+    return _surface_gu(dx * dx + dy * dy + dz * dz, ship)
+
+
 def contacts_for(observer) -> tuple:
     """Targetable ships in *observer*'s system. Back-compat wrapper over
     perceived_by for callers not yet migrated to Contact records.
@@ -231,62 +264,3 @@ def contacts_for(observer) -> tuple:
     return tuple(c.ship for c in perceived_by(observer) if c.targetable)
 
 
-def surface_gu_for(ship, observer) -> float:
-    """Surface distance from *observer* to *ship*, in GU. ALWAYS answers.
-
-    THE read path for the on-screen range readouts (engine.ui.reticle_text and
-    engine.ui.ship_display_panel), and the only distance derivation either of
-    them performs. Callers do ONE unconditional read; there is deliberately no
-    sentinel for them to branch on, because the branch is how the duplication
-    came back last time. Both readouts used to keep their entire original
-    computation as a `if dist is None:` fallback, which added a layer instead of
-    replacing one.
-
-    Fast path: the record the host loop already pushed this frame
-    (host_loop._pump_contacts, before the panels render). Reading it beats
-    calling perceived_by again, which would redo the whole per-observer pass to
-    answer one number.
-
-    Miss path — same arithmetic, via `_surface_gu`, so there is one
-    implementation and not one plus a copy. Three ways to miss, all real:
-
-      * a targeted PLANET or station. contact_index buckets ShipClass only, so
-        an ObjectClass never has a record — and this is where the convention
-        earns its keep (orbiting Haven reads 26 km, not 42; on a ship the
-        radius subtraction is a rounding error).
-      * boot frames and headless fixtures, where no menu exists or nothing has
-        been pushed yet.
-      * a NaN record. STTargetMenu.RebuildShipMenus synthesises
-        `surface_gu=NaN` on purpose because it takes a set, not an observer,
-        and so cannot answer distance. NaN is treated as a miss here; without
-        that, "nan km" would render on screen.
-
-    ⚠️ *observer* is used ONLY on the miss path. The record path returns
-    `contact.surface_gu` whoever you pass, because STTargetMenu stores no
-    observer alongside its contacts and so cannot check: it holds one frame's
-    push, and that push came from the player. `surface_gu_for(ship, other_ship)`
-    will therefore silently hand back the PLAYER's distance whenever a record
-    exists. Both callers pass the player, so this is consistent today — but do
-    not read this function as answering a per-observer question; it does not,
-    and making it do so means putting the observer into the pushed record.
-
-    *observer* is required and must not be None: measuring a distance from
-    nowhere has no answer, and there is no sentinel to hand back (that is the
-    whole point of this function). Both callers already hold the player and bail
-    before reaching here without one — ship_display_panel returns (None, None)
-    on a null player, and the reticle is not built without one — so requiring it
-    deletes two unreachable branches rather than pushing work onto anybody.
-    """
-    import App
-    menu = App.STTargetMenu_GetTargetMenu()
-    if menu is not None:
-        contact = menu.contact_for(ship)
-        # `x != x` is the NaN test that needs no import and no isinstance:
-        # Contact.surface_gu is always a float.
-        if contact is not None and contact.surface_gu == contact.surface_gu:
-            return contact.surface_gu
-
-    ox, oy, oz = _get_xyz(observer)
-    sx, sy, sz = _get_xyz(ship)
-    dx, dy, dz = sx - ox, sy - oy, sz - oz
-    return _surface_gu(dx * dx + dy * dy + dz * dz, ship)

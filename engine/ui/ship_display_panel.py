@@ -547,22 +547,23 @@ def _range_and_speed_to(ship, player):
     measured from the surface). Negligible for small ships, decisive for
     planets/stations.
 
-    perception.surface_gu_for is the ONE place the player-to-contact vector is
+    target_menu.surface_gu_to is the ONE place the player-to-contact vector is
     derived — the frame's Contact record when there is one, and the same
-    perception._surface_gu arithmetic when there is not (a targeted planet or
-    station is an ObjectClass, and contact_index buckets ships only). No local
-    fallback: this function used to repeat the whole derivation behind an
-    `is None` guard, so what was billed as replacing five independent
-    derivations actually left two of them in place. It is also why the
-    GetWorldLocation()/GetTranslate() split with reticle_text's twin could
-    persist; both now go through engine.appc.subsystems._get_xyz.
+    perception._surface_gu arithmetic (via perception.measure_surface_gu) when
+    there is not (a targeted planet or station is an ObjectClass, and
+    contact_index buckets ships only). No local fallback: this function used to
+    repeat the whole derivation behind an `is None` guard, so what was billed as
+    replacing five independent derivations actually left two of them in place.
+    It is also why the GetWorldLocation()/GetTranslate() split with
+    reticle_text's twin could persist; both now go through
+    engine.appc.subsystems._get_xyz.
     """
-    from engine.appc.perception import surface_gu_for
+    from engine.appc.target_menu import surface_gu_to
     from engine.units import GU_TO_KM, GUPS_TO_KPH
     try:
         if player is None or ship is None:
             return None, None
-        range_km = surface_gu_for(ship, player) * GU_TO_KM
+        range_km = surface_gu_to(ship, player) * GU_TO_KM
         vel = ship.GetVelocityTG() if hasattr(ship, "GetVelocityTG") else None
         if vel is None:
             speed_kph = 0.0
