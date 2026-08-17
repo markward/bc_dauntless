@@ -61,8 +61,8 @@ from engine.appc.sensor_detection import can_detect
 # "the AI cannot acquire a cloaked contact" anywhere; it is true of one path
 # only. The bubble is CLOAK_DETECTION_BASE_GU plus CLOAK_RANGE_FACTOR of
 # BaseSensorRange, and station hardpoints author large ones (fedstarbase
-# 12000 GU -> 125 GU, cardstarbase 5000 -> 55, and the 18 of 52 hardpoint files
-# that author no SetBaseSensorRange fall back to FALLBACK_RANGE_GU -> 305 GU).
+# 12000 GU -> 70 GU, cardstarbase 5000 -> 35, and the 18 of 52 hardpoint files
+# that author no SetBaseSensorRange fall back to FALLBACK_RANGE_GU -> 160 GU).
 # Whether those numbers are right is a TUNING question for the project owner
 # and is deliberately NOT clamped here.
 # Pinned by tests/unit/test_cloak_detection_contest.py's "AI ACQUISITION"

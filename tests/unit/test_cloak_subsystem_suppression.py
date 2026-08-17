@@ -11,7 +11,7 @@ nebula concealment is a plausible second producer later.
 tests/unit/test_cloak_target_visibility.py uses: these fixtures model no
 BaseSensorRange, so effective range is FALLBACK_RANGE_GU (30000) and the cloak
 bubble is CLOAK_DETECTION_BASE_GU + FALLBACK_RANGE_GU * CLOAK_RANGE_FACTOR =
-305 GU — well past the 50 GU separation used below.
+160 GU — well past the 50 GU separation used below.
 """
 import json
 
@@ -162,7 +162,7 @@ def test_subsystem_lock_drops_when_target_cloaks_outside_the_bubble():
         assert sub is not None
         player.SetTargetSubsystem(sub)
 
-        # Cloak AND push well past the 305 GU bubble — clear_undetectable_
+        # Cloak AND push well past the 160 GU bubble — clear_undetectable_
         # player_lock (the host loop's per-tick guard) drops the ship-level
         # target, but on its own leaves the subsystem lock dangling.
         enemy.GetCloakingSubsystem().InstantCloak()

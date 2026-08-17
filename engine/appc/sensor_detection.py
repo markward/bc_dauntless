@@ -45,15 +45,15 @@ HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detecti
 #
 #   (1) CLOAK IS A RANGE CONTEST, not an absolute. In BC a cloaked ship is
 #       undetectable at any range. Here cloak bubble = CLOAK_DETECTION_BASE_GU
-#       (a flat 5 GU) plus CLOAK_RANGE_FACTOR (1%) of the observer's
-#       *effective* sensor range, so a Galaxy's 2000 GU sensors reach 25 GU
-#       against a cloaked contact — well under half its 60 GU phaser range,
-#       i.e. you must be effectively on top of it. Because the percentage term
-#       scales *effective* range (post condition and power), boosting sensor
-#       power widens the bubble; wrecked sensors still remove it entirely (the flat
-#       base never applies past the `r <= 0.0` guard below). The flat base was
-#       added because a pure 1% bubble (20 GU on a Galaxy) played too small;
-#       do not "improve" either number without a play-tested reason.
+#       (a flat 10 GU) plus CLOAK_RANGE_FACTOR (0.5%) of the observer's
+#       *effective* sensor range, so a Galaxy's 2000 GU sensors reach 20 GU
+#       against a cloaked contact — a third of its 60 GU phaser range, i.e. you
+#       must be effectively on top of it. Because the percentage term scales
+#       *effective* range (post condition and power), boosting sensor power
+#       widens the bubble; wrecked sensors still remove it entirely (the flat
+#       base never applies past the `r <= 0.0` guard below). Both numbers are
+#       play-tested settings, arrived at over three passes; do not "improve"
+#       either without a play-tested reason.
 #
 #   (2) NEBULA CONCEALMENT REACHES THE UI. perception.perceived_by (target list,
 #       radar) routes through can_detect, so nebula-hidden contacts leave the
@@ -66,7 +66,8 @@ HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detecti
 # reaches the candidate filter with no cloak skip of its own, so a station
 # picks up a cloaked ship inside its (large) bubble. See the ⚠️ note above
 # `_observing_ship` in engine/appc/ai_sensor_gate.py for the paths and the
-# numbers.
+# numbers. The 0.5% factor halves those station bubbles, which is the main
+# reason the flat base was raised as the factor came down.
 #
 # ⚠️ KNOWN WART IN THE OFF STATE — this is deliberate, do not "fix" it.
 # With the flag False the UI ignores nebulae but can_detect keeps applying
@@ -83,14 +84,24 @@ HYSTERESIS = 0.08    # target must drop to T-HYSTERESIS (0.20) before re-detecti
 # Deliberately code-only: there is no UI toggle. It exists so the changes can be
 # exposed to users later if that is ever wanted.
 ENHANCED_SENSOR_CONTEST = True
-CLOAK_RANGE_FACTOR = 0.01
-CLOAK_DETECTION_BASE_GU = 5.0  # flat bubble floor, added atop the CLOAK_RANGE_FACTOR
+CLOAK_RANGE_FACTOR = 0.005
+CLOAK_DETECTION_BASE_GU = 10.0  # flat bubble floor, added atop the CLOAK_RANGE_FACTOR
                                  # percentage; does NOT scale with sensor condition, so
-                                 # damage compresses the bubble toward 5 GU rather than
+                                 # damage compresses the bubble toward 10 GU rather than
                                  # toward zero (fully offline sensors still return False
                                  # via the `r <= 0.0` guard, ahead of this term).
-                                 # Retuned from 10.0 -> 5.0 2026-08-17 after play-testing
-                                 # (Galaxy's bubble: 30 GU -> 25 GU).
+                                 # Retuned 2026-08-17 after play-testing: 10.0 -> 5.0
+                                 # (bubble 30 -> 25 GU), then 5.0/1% -> 10.0/0.5%
+                                 # (Galaxy 25 -> 20 GU, and the sensor-less
+                                 # FALLBACK_RANGE_GU case 305 -> 160 GU).
+                                 # ⚠️ The flat base is now HALF a Galaxy's bubble
+                                 # (10 of 20 GU), up from a fifth, so sensor damage and
+                                 # a sensor-power boost move the bubble far less than
+                                 # they did — the lever spans 10-20 GU, not 5-25. That
+                                 # is the trade the shape makes: it compresses the
+                                 # player-to-station spread (a 6x sensor-range ratio
+                                 # becomes 2.3x in bubble terms) at the cost of the
+                                 # power lever's authority.
 
 # Per-(observer, target) latch: a broken lock needs a margin to re-acquire.
 #
@@ -250,7 +261,7 @@ def is_hidden_by_cloak(target) -> bool:
     used for — read the whole docstring before reaching for it. Detectability
     is ONE rule, ``can_detect``, everywhere, and that rule is a range *contest*
     (ENHANCED_SENSOR_CONTEST / CLOAK_RANGE_FACTOR / CLOAK_DETECTION_BASE_GU
-    above): a cloaked ship stays perceivable inside a flat 5 GU plus 1% of
+    above): a cloaked ship stays perceivable inside a flat 10 GU plus 0.5% of
     effective sensor range. So a True return from this function does NOT mean
     "invisible to everyone" or "absent from the target list" — a cloaked
     contact well inside its bubble is routinely BOTH perceivable and
@@ -319,7 +330,7 @@ def can_detect(observer, target, *, dist_sq_gu=None,
     # Stock BC: a fully cloaked target is undetectable — the SDK SelectTarget
     # drops a contact on ET_CLOAK_COMPLETED. Here (ENHANCED_SENSOR_CONTEST)
     # cloak instead shrinks effective range to CLOAK_DETECTION_BASE_GU (a flat
-    # 5 GU floor) plus CLOAK_RANGE_FACTOR of it, applied after
+    # 10 GU floor) plus CLOAK_RANGE_FACTOR of it, applied after
     # effective_sensor_range so the percentage term scales with condition and
     # power while the flat term does not. Mid-cloak (CLOAKING) stays fully
     # visible until the transition finishes, so gate on IsCloaked(), not
