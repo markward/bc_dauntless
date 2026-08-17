@@ -90,6 +90,16 @@ class Contact:
     # Do NOT read this field for those menus — build their own gate on
     # `perceivable` instead.
     targetable: bool
+    # Named for the EFFECT, not the CAUSE: a fuzzy sensor return you can
+    # target at ship level but not pick apart by subsystem. Cloak is the only
+    # producer today (a cloaked contact inside its detection bubble is
+    # `targetable` but not `subsystems_targetable` — you can shoot at it, not
+    # snipe its warp core), but nebula concealment is a plausible second one
+    # later, and a field called `cloaked` would then be a lie. Defaults True
+    # so every pre-existing `Contact(...)` construction site (tests, the bulk
+    # `RebuildShipMenus` synthesiser) keeps its prior "subsystems visible"
+    # behaviour without editing every call site.
+    subsystems_targetable: bool = True
 
 
 def perceived_by(observer) -> tuple:
@@ -148,12 +158,21 @@ def perceived_by(observer) -> tuple:
             observer, ship, dist_sq_gu=dist_sq,
             apply_concealment=apply_conceal)
         alive_or_wreck = (not _out_of_action(ship)) or is_targetable_wreck(ship)
+        # A cloaked contact is a fuzzy sensor return: targetable at ship level
+        # (once it clears the checks above) but not down to individual
+        # subsystems. `is_hidden_by_cloak` is an absolute IsCloaked() read, not
+        # a detectability gate — `perceivable`/`targetable` above already
+        # settled detectability via can_detect's range-contest cloak bubble,
+        # so a cloaked ship well inside that bubble is routinely perceivable
+        # AND cloaked at once. That combination is exactly what this field
+        # exists to express.
         out.append(Contact(
             ship=ship,
             dist_sq_gu=dist_sq,
             surface_gu=_surface_gu(dist_sq, ship),
             perceivable=perceivable,
             targetable=perceivable and alive_or_wreck and bool(ship.IsTargetable()),
+            subsystems_targetable=not sd.is_hidden_by_cloak(ship),
         ))
     return tuple(out)
 

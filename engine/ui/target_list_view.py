@@ -263,11 +263,24 @@ class TargetListView(Panel):
                             )
                         return not _query_subsystem_destroyed(ship, sub_child.GetLabel())
 
+                    # A cloaked contact is a fuzzy sensor return: targetable
+                    # at ship level, but its subsystem tree is suppressed
+                    # here at the VIEW layer only. `child._children` (the
+                    # cached STMenu subsystem rows in STTargetMenu._row_cache)
+                    # is deliberately left untouched — it is reused across
+                    # frames and across a contact leaving/re-entering the
+                    # list, so rebuilding or mutating it here would corrupt
+                    # that cache for every other reader. Read from the
+                    # pushed Contact record (the frame's own answer), not a
+                    # second cloak check.
+                    contact = target_menu.contact_for(ship)
+                    subsystems_targetable = (
+                        contact is None or contact.subsystems_targetable)
                     subsystems = tuple(
                         _sub_entry(sub_child)
                         for sub_child in child._children
                         if _keep(sub_child)
-                    )
+                    ) if subsystems_targetable else ()
                     name = ship.GetName()
                     rows.append((
                         name,
@@ -296,14 +309,33 @@ class TargetListView(Panel):
         """If the player's locked subsystem has been destroyed, hand the lock
         off to the next surviving sibling in its group; when the whole group is
         gone, clear the lock back to ship-level targeting. Runs every tick so a
-        subsystem dying from any cause triggers the handoff."""
+        subsystem dying from any cause triggers the handoff.
+
+        Also drops the lock outright — no handoff, straight to ship-level —
+        when the locked ship has cloaked (`Contact.subsystems_targetable`
+        False). A fuzzy sensor return has no subsystem to hand the lock off
+        to; the player keeps the ship-level target, only the subsystem pick
+        clears. Reads the pushed record rather than re-deriving cloak state,
+        same reasoning as `_snapshot`'s subsystem suppression."""
         from engine.core.game import Game_GetCurrentGame
         game = Game_GetCurrentGame()
         player = game.GetPlayer() if game is not None else None
         if player is None or not hasattr(player, "GetTargetSubsystem"):
             return
         locked = player.GetTargetSubsystem()
-        if locked is None or not hasattr(locked, "IsDestroyed"):
+        if locked is None:
+            return
+
+        target = player.GetTarget()
+        if target is not None:
+            import App
+            target_menu = App.STTargetMenu_GetTargetMenu()
+            contact = target_menu.contact_for(target) if target_menu is not None else None
+            if contact is not None and not contact.subsystems_targetable:
+                player.SetTargetSubsystem(None)
+                return
+
+        if not hasattr(locked, "IsDestroyed"):
             return
         try:
             destroyed = bool(locked.IsDestroyed())

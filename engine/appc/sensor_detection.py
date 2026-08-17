@@ -170,27 +170,30 @@ def concealment_at(ship) -> float:
 
 
 def is_hidden_by_cloak(target) -> bool:
-    """True iff *target* is fully cloaked and therefore invisible to everyone.
+    """True iff *target*'s cloaking subsystem currently reports IsCloaked().
 
-    ⚠️ HAS NO PRODUCTION CALLERS, and does NOT match ``can_detect``. It was
-    written as the range-independent companion to that function's cloak gate,
-    but that gate is now a range *contest* (ENHANCED_SENSOR_CONTEST /
-    CLOAK_RANGE_FACTOR / CLOAK_DETECTION_BASE_GU above): ``can_detect``
-    reports a cloaked ship inside a flat 10 GU plus 1% of effective sensor
-    range, while this helper stays absolute — any cloak hides the contact at
-    any distance.
+    ⚠️ NOT A DETECTABILITY GATE, and its name is now a near-miss for what it's
+    used for — read the whole docstring before reaching for it. Detectability
+    is ONE rule, ``can_detect``, everywhere, and that rule is a range *contest*
+    (ENHANCED_SENSOR_CONTEST / CLOAK_RANGE_FACTOR / CLOAK_DETECTION_BASE_GU
+    above): a cloaked ship stays perceivable inside a flat 10 GU plus 1% of
+    effective sensor range. So a True return from this function does NOT mean
+    "invisible to everyone" or "absent from the target list" — a cloaked
+    contact well inside its bubble is routinely BOTH perceivable and
+    ``is_hidden_by_cloak`` at once. Do NOT reintroduce it as a detectability
+    gate — reaching for it is how the UI drifted away from the weapons before
+    stage 4, and it also bypasses the nebula concealment and the per-pair
+    hysteresis latch that ``can_detect`` owns.
 
-    Its last production caller was ``engine.appc.perception.perceived_by``,
-    which drove the radar and target list. That call is gone: detection is now
-    ONE rule, ``can_detect``, everywhere. The temporary divergence it used to
-    document (a cloaked ship inside the bubble being shootable but absent from
-    the target list) no longer exists.
-
-    Do NOT reintroduce it as a detectability gate — reaching for it is how the
-    UI drifted away from the weapons in the first place, and it also bypasses
-    the nebula concealment and the per-pair hysteresis latch that ``can_detect``
-    owns. It survives only as a narrow "is this ship fully cloaked?" predicate
-    with test coverage (tests/unit/test_cloak_target_visibility.py).
+    Its production caller is ``engine.appc.perception.perceived_by``, which
+    uses it for a narrower question than detectability: whether a contact that
+    already cleared ``can_detect`` should read as a fuzzy sensor return —
+    targetable at ship level but not by subsystem
+    (``Contact.subsystems_targetable``). A cloaked ship gives you a rough
+    contact, not a detailed scan of its subsystems, independent of how close
+    that contact is. It also keeps its narrower, longer-standing test coverage
+    as an "is this ship fully cloaked?" predicate
+    (tests/unit/test_cloak_target_visibility.py).
 
     Gate on IsCloaked() (fully hidden), not IsTryingToCloak() — a mid-cloak ship
     stays visible until the fade completes. That much still matches
