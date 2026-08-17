@@ -250,7 +250,7 @@ def test_toggle_off_agrees_with_the_pre_stage_4_rule_everywhere(monkeypatch,
 # ── Cloak reaches the UI too (the other half of dropping is_hidden_by_cloak) ──
 
 def _cloak_scene(x):
-    """Observer with 2000 GU sensors (flat 10 GU plus 1% = 30 GU cloak
+    """Observer with 2000 GU sensors (flat 5 GU plus 1% = 25 GU cloak
     bubble) and one cloaked contact at (x, 0, 0). No nebula."""
     contact_index.reset()
     from engine.appc.sets import SetClass
@@ -270,7 +270,7 @@ def test_a_cloaked_ship_inside_the_bubble_is_now_perceivable():
 
 
 def test_a_cloaked_ship_beyond_the_bubble_is_still_hidden():
-    """45 GU clears the 30 GU bubble with a 15 GU margin."""
+    """45 GU clears the 25 GU bubble with a 20 GU margin."""
     observer, target = _cloak_scene(45.0)
 
     assert _record_for(observer, target).perceivable is False

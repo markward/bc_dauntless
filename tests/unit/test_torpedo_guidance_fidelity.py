@@ -84,7 +84,7 @@ def test_cloaked_target_steers_to_frozen_last_seen(monkeypatch):
 
 def _cloak_scene(target_x):
     """Firing ship with a REAL 2000 GU SensorSubsystem — so its cloak bubble is
-    a flat 10 GU plus 1% of that, 30 GU — plus a fully cloaked target at
+    a flat 5 GU plus 1% of that, 25 GU — plus a fully cloaked target at
     (target_x, 0, 0).
 
     Real engine objects, not fakes: _target_visible swallows every exception and
@@ -128,9 +128,9 @@ def test_torpedo_keeps_homing_when_target_cloaks_inside_the_bubble():
     """INTENTIONAL stage-4 gameplay change (ENHANCED_SENSOR_CONTEST, default on).
 
     Torpedo guidance consults sensor_detection.can_detect via _target_visible,
-    and cloak is now a flat 10 GU plus a percentage of effective sensor range
+    and cloak is now a flat 5 GU plus a percentage of effective sensor range
     rather than an absolute. At 15 GU the cloaked target is inside the firing
-    ship's 30 GU bubble, so the torpedo keeps tracking it: cloaking to shake a
+    ship's 25 GU bubble, so the torpedo keeps tracking it: cloaking to shake a
     torpedo no longer works at knife range. This is a deliberate divergence
     from BC — if it starts failing, ask "was the change reverted?", not "what
     broke?".
@@ -150,7 +150,7 @@ def test_torpedo_keeps_homing_when_target_cloaks_inside_the_bubble():
 
 
 def test_torpedo_coasts_on_last_seen_when_target_cloaks_outside_the_bubble():
-    """The bubble boundary still holds: at 45 GU (well outside the 30 GU
+    """The bubble boundary still holds: at 45 GU (well outside the 25 GU
     bubble) a cloaked target is invisible, the cache stays frozen, and the
     torpedo steers to the stale last-seen point on -x. Stock BC's
     shake-the-torpedo trick is intact at any real engagement distance."""

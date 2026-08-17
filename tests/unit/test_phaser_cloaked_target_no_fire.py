@@ -59,7 +59,7 @@ class _Ship:
 class _SensorShip(_Ship):
     """Firing ship carrying a REAL SensorSubsystem at a Galaxy's 2000 GU base
     range, so its cloak bubble (flat CLOAK_DETECTION_BASE_GU plus 1%
-    CLOAK_RANGE_FACTOR) is 30 GU rather than the 310 GU the sensor-less
+    CLOAK_RANGE_FACTOR) is 25 GU rather than the 305 GU the sensor-less
     fallback would give. Mirrors
     tests/unit/test_sensor_detection.py::_ship_with_sensor."""
 
@@ -121,10 +121,10 @@ def _build_system(banks, ship):
 def test_start_firing_no_op_and_no_sfx_when_target_cloaked(monkeypatch):
     """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False.
 
-    Cloak bubble is now flat-10-plus-a-percentage of effective range rather
+    Cloak bubble is now flat-5-plus-a-percentage of effective range rather
     than an absolute (see tests/unit/test_cloak_detection_contest.py). This
     ship models no BaseSensorRange, so its effective range is
-    FALLBACK_RANGE_GU (30000) and its cloak bubble is 310 GU -- the 50 GU
+    FALLBACK_RANGE_GU (30000) and its cloak bubble is 305 GU -- the 50 GU
     target below is inside it. The assertions are unchanged; the flag makes
     explicit the configuration they have always described. The companion test
     pins the default configuration.
@@ -146,9 +146,9 @@ def test_start_firing_no_op_and_no_sfx_when_target_cloaked(monkeypatch):
 
 def test_start_firing_engages_close_cloaked_target_but_not_beyond_the_bubble():
     """INTENTIONAL DIVERGENCE (ENHANCED_SENSOR_CONTEST default-on): a cloaked
-    ship inside the flat-10-plus-1% bubble is a legal target and IS fired on.
+    ship inside the flat-5-plus-1% bubble is a legal target and IS fired on.
 
-    Uses _SensorShip (2000 GU sensors -> a 30 GU cloak bubble) rather than the
+    Uses _SensorShip (2000 GU sensors -> a 25 GU cloak bubble) rather than the
     30000 GU fallback, so both cases sit INSIDE the bank's 60 GU
     GetMaxDamageDistance and the only thing separating them is detectability --
     otherwise PhaserSystem._can_engage would be doing the work and the second
@@ -158,7 +158,7 @@ def test_start_firing_engages_close_cloaked_target_but_not_beyond_the_bubble():
     bank = _FakeBank()
     sys = _build_system([bank], ship)
 
-    # 15 GU, inside the 30 GU cloak bubble and inside weapon range → fires.
+    # 15 GU, inside the 25 GU cloak bubble and inside weapon range → fires.
     sys.StartFiring(target=_CloakedTarget(15, 0, 0))
     assert len(bank.fire_calls) == 1
     assert sys._fire_held is True
@@ -192,7 +192,7 @@ def test_pump_stops_when_target_cloaks_mid_burst(monkeypatch):
     """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False.
 
     Same reason as the StartFiring case above: this ship's fallback 30000 GU
-    effective range gives a 310 GU cloak bubble, so the 50 GU target below is
+    effective range gives a 305 GU cloak bubble, so the 50 GU target below is
     detectable while cloaked with the flag at its default. Assertions
     unchanged; the companion below pins the default configuration.
     """
@@ -221,7 +221,7 @@ def test_pump_stops_when_target_cloaks_mid_burst(monkeypatch):
 def test_pump_continues_on_close_cloak_and_stops_outside_the_bubble():
     """INTENTIONAL DIVERGENCE (ENHANCED_SENSOR_CONTEST default-on): a target
     that cloaks while inside the bubble stays engaged; the burst only stops once
-    it is outside. _SensorShip (30 GU bubble, 60 GU weapon range) keeps both
+    it is outside. _SensorShip (25 GU bubble, 60 GU weapon range) keeps both
     cases inside weapon range so detectability is the only variable.
     """
     from engine.host_loop import _pump_held_weapons
@@ -233,7 +233,7 @@ def test_pump_continues_on_close_cloak_and_stops_outside_the_bubble():
     sys.StartFiring(target=_PlainTarget(15, 0, 0))
     assert sys._fire_held is True
 
-    # Cloaks at 15 GU — inside the 30 GU bubble, so the burst continues.
+    # Cloaks at 15 GU — inside the 25 GU bubble, so the burst continues.
     sys._held_target = _CloakedTarget(15, 0, 0)
     bank.fire_calls.clear()
     bank._firing = False                   # bank cycled

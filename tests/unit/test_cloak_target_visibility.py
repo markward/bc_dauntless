@@ -17,7 +17,7 @@ moment it starts decloaking.
 CLOAK_DETECTION_BASE_GU plus CLOAK_RANGE_FACTOR of effective sensor range
 (tests/unit/test_cloak_detection_contest.py), and since stage 4 the radar and
 target list run that same rule. `_scene()` models no BaseSensorRange, so
-effective range is FALLBACK_RANGE_GU (30000) and the cloak bubble is 310 GU —
+effective range is FALLBACK_RANGE_GU (30000) and the cloak bubble is 305 GU —
 with the enemy 50 GU away, a cloaked ship stays listed under the default
 configuration. The "drops off the list" tests below
 therefore state STOCK BC and are held under ENHANCED_SENSOR_CONTEST = False,
@@ -92,7 +92,7 @@ def test_is_hidden_by_cloak_predicate():
 
 def test_cloaked_ship_marked_not_visible_for_radar(monkeypatch):
     """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False — see the
-    module docstring. The enemy sits 50 GU away, inside the 310 GU cloak
+    module docstring. The enemy sits 50 GU away, inside the 305 GU cloak
     bubble, so with the flag at its default it stays on the radar; the
     companion below pins that."""
     import engine.appc.sensor_detection as sd
@@ -115,7 +115,7 @@ def test_cloaked_ship_stays_on_radar_inside_the_bubble():
     cloaked ship you can already shoot is one you can also see. Previously the
     radar ran the absolute is_hidden_by_cloak and dropped it at any range.
 
-    50 GU is inside the 310 GU bubble (CLOAK_DETECTION_BASE_GU plus
+    50 GU is inside the 305 GU bubble (CLOAK_DETECTION_BASE_GU plus
     FALLBACK_RANGE_GU x CLOAK_RANGE_FACTOR); beyond it the contact goes, which
     keeps the original guarantee live.
     """
@@ -166,7 +166,7 @@ def test_cloaked_ship_dropped_from_target_list_view(monkeypatch):
 def test_cloaked_ship_stays_in_target_list_view_inside_the_bubble():
     """INTENTIONAL BEHAVIOUR CHANGE (stage 4, ENHANCED_SENSOR_CONTEST
     default-on) — the target list is the other surface that used to run the
-    absolute is_hidden_by_cloak. Same 50 GU / 310 GU geometry as the radar
+    absolute is_hidden_by_cloak. Same 50 GU / 305 GU geometry as the radar
     companion above."""
     pSet, player, enemy, menu = _scene()
 
@@ -228,7 +228,7 @@ def test_player_lock_survives_close_cloak_but_drops_beyond_the_bubble():
     sensor-range bubble.
 
     These fixtures model no BaseSensorRange, so effective range is
-    FALLBACK_RANGE_GU (30000) and the cloak bubble is 310 GU. The enemy sits at
+    FALLBACK_RANGE_GU (30000) and the cloak bubble is 305 GU. The enemy sits at
     50 GU -> still locked. Push it past the bubble and the guard drops it, which
     keeps the original "undetectable target loses the lock" guarantee live under
     the default configuration.
@@ -238,7 +238,7 @@ def test_player_lock_survives_close_cloak_but_drops_beyond_the_bubble():
     player.SetTarget(enemy)
     enemy.GetCloakingSubsystem().InstantCloak()
 
-    # 50 GU, inside the 310 GU cloak bubble → the lock holds.
+    # 50 GU, inside the 305 GU cloak bubble → the lock holds.
     clear_undetectable_player_lock(player)
     assert player.GetTarget() is enemy
 

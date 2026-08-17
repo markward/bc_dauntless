@@ -293,8 +293,8 @@ def test_fire_script_target_visible_gated_by_firing_ship_sensors():
 
 
 def _fire_script_at(distance_gu):
-    """A gated FireScript whose firing ship has 2000 GU sensors (a flat 10 GU
-    plus 1% = 30 GU cloak bubble) locked onto a fully cloaked BirdOfPrey at
+    """A gated FireScript whose firing ship has 2000 GU sensors (a flat 5 GU
+    plus 1% = 25 GU cloak bubble) locked onto a fully cloaked BirdOfPrey at
     *distance_gu*."""
     from engine.appc.subsystems import CloakingSubsystem
     install_ai_sensor_gate()
@@ -320,7 +320,7 @@ def test_fire_script_engages_a_cloaked_target_inside_the_bubble():
 
     FireScript.TargetVisible is the AI's firing gate and runs through
     can_detect, so the contest is symmetric: an AI ship keeps engaging a target
-    that cloaks inside its 30 GU bubble, exactly as the player's phaser gate now
+    that cloaks inside its 25 GU bubble, exactly as the player's phaser gate now
     does (tests/unit/test_phaser_cloaked_target_no_fire.py). A cloaked attack
     run is detectable close in. Deliberate divergence from BC.
 
@@ -340,7 +340,7 @@ def test_fire_script_engages_a_cloaked_target_inside_the_bubble():
 
 def test_fire_script_stops_at_a_cloaked_target_outside_the_bubble():
     """The bubble boundary holds: at 45 GU — inside the 2000 GU sensor reach but
-    well outside the 30 GU cloak bubble — the firing gate trips, as in stock
+    well outside the 25 GU cloak bubble — the firing gate trips, as in stock
     BC."""
     fs, target = _fire_script_at(45.0)
     assert fs.TargetVisible(target) == 0

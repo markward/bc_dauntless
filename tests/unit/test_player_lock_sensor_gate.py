@@ -83,8 +83,8 @@ def test_lock_drops_when_the_target_cloaks():
     # Behaviour the host loop already had; it must survive the swap from
     # is_hidden_by_cloak to can_detect (whose first gate is the same test).
     # Still passes unchanged under ENHANCED_SENSOR_CONTEST: cloak bubble is
-    # flat 10 GU plus a percentage of range, and this fixture's 1000 GU base
-    # range gives a 20 GU cloak bubble against an enemy 50 GU away --
+    # flat 5 GU plus a percentage of range, and this fixture's 1000 GU base
+    # range gives a 15 GU cloak bubble against an enemy 50 GU away --
     # comfortably outside it. See tests/unit/test_cloak_detection_contest.py.
     player, enemy, _ = _scene()
     enemy.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
