@@ -437,8 +437,15 @@ class STTargetMenu(STTopLevelMenu):
             return
         nan = float("nan")
         self.set_contacts([
+            # subsystems_targetable=True is explicit, not the dataclass
+            # default acquired by accident: this synthesiser has no cloak
+            # state to consult (it takes a SET, not an observer), and a
+            # silently-inherited True is exactly the "believable wrong
+            # number" this method's own distance handling goes out of its
+            # way to avoid — see the NaN-distance note above.
             Contact(ship=o, dist_sq_gu=nan, surface_gu=nan,
-                    perceivable=True, targetable=True)
+                    perceivable=True, targetable=True,
+                    subsystems_targetable=True)
             for o in source_set.GetObjectList() if isinstance(o, ShipClass)])
 
     def ResetAffiliationColors(self) -> None:

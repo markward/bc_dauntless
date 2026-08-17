@@ -137,6 +137,82 @@ def test_subsystem_lock_drops_to_ship_level_when_target_cloaks():
         restore()
 
 
+def test_subsystem_lock_drops_when_target_cloaks_outside_the_bubble():
+    """When a target cloaks OUTSIDE its detection bubble,
+    sensor_detection.clear_undetectable_player_lock drops the ship-level
+    target via SetTarget(None) — but ShipClass.SetTarget never touches
+    _target_subsystem, so nothing else clears the stale subsystem lock
+    either. _reconcile_subsystem_lock must catch the target=None case, and
+    that clearing must not leak onto whatever the player targets next.
+    """
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.sensor_detection import clear_undetectable_player_lock
+    pSet, player, enemy, menu = _scene()
+    other = ShipClass_Create("Other")
+    other.SetName("Other")
+    other.SetTranslateXYZ(0, 60, 0)
+    pSet.AddObjectToSet(other, "Other")
+    restore = _with_current_game(player)
+    try:
+        _pump(menu, player)
+        player.SetTarget(enemy)
+        it = enemy.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
+        sub = enemy.GetNextSubsystemMatch(it)
+        enemy.EndGetSubsystemMatch(it)
+        assert sub is not None
+        player.SetTargetSubsystem(sub)
+
+        # Cloak AND push well past the 310 GU bubble — clear_undetectable_
+        # player_lock (the host loop's per-tick guard) drops the ship-level
+        # target, but on its own leaves the subsystem lock dangling.
+        enemy.GetCloakingSubsystem().InstantCloak()
+        enemy.SetTranslateXYZ(0, 5000, 0)
+        clear_undetectable_player_lock(player)
+        assert player.GetTarget() is None
+        assert player.GetTargetSubsystem() is sub  # still dangling, pre-fix
+
+        view = TargetListView()
+        view._reconcile_subsystem_lock()
+        assert player.GetTargetSubsystem() is None
+
+        # The stale subsystem must not resurface on a DIFFERENT ship.
+        player.SetTarget(other)
+        assert player.GetTargetSubsystem() is None
+    finally:
+        restore()
+
+
+def test_dispatch_event_subsystem_click_rechecks_cloak_flag():
+    """A click's action string is built from a payload rendered on a PRIOR
+    frame. If the ship finished cloaking since, honouring the click must not
+    set a subsystem lock the current record disallows."""
+    from engine.ui.target_list_view import TargetListView
+    pSet, player, enemy, menu = _scene()
+    restore = _with_current_game(player)
+    try:
+        _pump(menu, player)
+        it = enemy.StartGetSubsystemMatch(App.CT_SHIP_SUBSYSTEM)
+        sub = enemy.GetNextSubsystemMatch(it)
+        enemy.EndGetSubsystemMatch(it)
+        assert sub is not None
+        sub_name = sub.GetName()
+
+        # Cloak (still inside the bubble — the ship stays targetable) and
+        # push, so the record now says subsystems_targetable=False, before
+        # the click is dispatched.
+        enemy.GetCloakingSubsystem().InstantCloak()
+        _pump(menu, player)
+
+        view = TargetListView()
+        handled = view.dispatch_event("Enemy/" + sub_name)
+
+        assert handled is True
+        assert player.GetTarget() is enemy      # ship-level click still lands
+        assert player.GetTargetSubsystem() is None  # subsystem click refused
+    finally:
+        restore()
+
+
 def test_enhanced_sensor_contest_off_cloaked_ship_undetected_untouched(monkeypatch):
     """With the stage-4 toggle off, cloak is absolute again — the ship never
     becomes a contact at all, so the subsystem question doesn't arise. Pins

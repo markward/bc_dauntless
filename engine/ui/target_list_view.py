@@ -316,7 +316,19 @@ class TargetListView(Panel):
         False). A fuzzy sensor return has no subsystem to hand the lock off
         to; the player keeps the ship-level target, only the subsystem pick
         clears. Reads the pushed record rather than re-deriving cloak state,
-        same reasoning as `_snapshot`'s subsystem suppression."""
+        same reasoning as `_snapshot`'s subsystem suppression.
+
+        And drops the lock when there is no ship-level target at all.
+        `sensor_detection.clear_undetectable_player_lock` (a ship cloaking
+        OUTSIDE its detection bubble is one way there) calls
+        `player.SetTarget(None)`, but `ShipClass.SetTarget` never touches
+        `_target_subsystem` — nothing does, there are only four clear sites
+        and none of them covers this. Left alone, the stale subsystem
+        reference survives with no ship attached and resurfaces as
+        `selected_subsystem` the moment the player targets a DIFFERENT ship,
+        since `GetTargetSubsystem()` answers unconditionally regardless of
+        the current ship-level target. Pre-existing gap; closed here because
+        this is the natural place, not because this branch introduced it."""
         from engine.core.game import Game_GetCurrentGame
         game = Game_GetCurrentGame()
         player = game.GetPlayer() if game is not None else None
@@ -327,13 +339,16 @@ class TargetListView(Panel):
             return
 
         target = player.GetTarget()
-        if target is not None:
-            import App
-            target_menu = App.STTargetMenu_GetTargetMenu()
-            contact = target_menu.contact_for(target) if target_menu is not None else None
-            if contact is not None and not contact.subsystems_targetable:
-                player.SetTargetSubsystem(None)
-                return
+        if target is None:
+            player.SetTargetSubsystem(None)
+            return
+
+        import App
+        target_menu = App.STTargetMenu_GetTargetMenu()
+        contact = target_menu.contact_for(target) if target_menu is not None else None
+        if contact is not None and not contact.subsystems_targetable:
+            player.SetTargetSubsystem(None)
+            return
 
         if not hasattr(locked, "IsDestroyed"):
             return
@@ -432,6 +447,22 @@ class TargetListView(Panel):
         target_ship = player.GetTarget()
         if target_ship is None:
             return True  # ship resolution failed, but the SetTarget call already happened
+
+        # Re-check subsystems_targetable at click time, not just at render
+        # time. The clicked payload was rendered from a PRIOR frame's push;
+        # if the ship finished cloaking in between, honouring the click
+        # would set a subsystem lock the record no longer allows. Without
+        # this the hole would self-heal one frame later via
+        # _reconcile_subsystem_lock (which runs first thing in the next
+        # render_payload), but there is no reason to let even a one-frame
+        # flicker through when the record to check is one call away.
+        import App
+        target_menu = App.STTargetMenu_GetTargetMenu()
+        contact = target_menu.contact_for(target_ship) if target_menu is not None else None
+        if contact is not None and not contact.subsystems_targetable:
+            player.SetTargetSubsystem(None)
+            return True
+
         sub = _resolve_subsystem_by_name(target_ship, suffix)
         player.SetTargetSubsystem(sub)
         return True
