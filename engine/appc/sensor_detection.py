@@ -84,14 +84,20 @@ CLOAK_DETECTION_BASE_GU = 10.0  # flat bubble floor, added atop the CLOAK_RANGE_
 #
 # WEAK ON BOTH SIDES, DELIBERATELY — do not "simplify" this back to a set of
 # `(id(observer), id(target))` tuples. Raw ids do not keep their objects alive,
-# so once a ship died CPython was free to hand its address to an unrelated new
-# object, which then inherited the dead pair's latch and started life on the
-# easier `LOCK_BREAK_T - HYSTERESIS` re-acquisition threshold. That is not
-# hypothetical: it reproduces on the very next allocation of the same size
-# (tests/unit/test_concealment_latch_lifetime.py::
-# test_a_recycled_id_cannot_inherit_a_stale_latch). Weak references make the
-# entry disappear with the ship instead, and stop the latch from pinning dead
-# ships in memory the way a strong-keyed dict would.
+# so a dead pair's entry can be inherited by an unrelated new object that
+# CPython allocates at the same address, silently granting it the easier
+# `LOCK_BREAK_T - HYSTERESIS` re-acquisition threshold.
+#
+# HARDENING, NOT A LIVE-BUG FIX — be honest about which this is. A real
+# `ShipClass` cannot hit that today, because every `TGObject` is strongly
+# pinned for the process lifetime by `engine/core/ids.py`'s `_registry`
+# (`unregister` has exactly one caller, `TGSequence`), so a ship's `id()` is
+# never recycled while the game runs. The recycle is reachable for plain
+# non-TGObject observers/targets — which is what the test fixtures are, and
+# what tests/unit/test_concealment_latch_lifetime.py::
+# test_a_recycled_id_cannot_inherit_a_stale_latch demonstrates. The weak keying
+# also stops the latch depending on that registry pin for its correctness, and
+# stops it from pinning dead ships itself the way a strong-keyed dict would.
 _broken: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 

@@ -123,17 +123,17 @@ def test_view_dispatch_event_sets_player_target():
 def test_row_flag_does_not_gate_the_payload_drawability_is_targetable():
     """DRAWABILITY IS `targetable`, NOT the row's IsVisible flag.
 
-    The view used to re-filter its rows on `child.IsVisible()`. That filter was
-    dead: `STTargetMenu.set_contacts` asserts `SetVisible()` on EVERY listed
-    row, unconditionally, so in production the flag is write-once-True for
-    anything the projection lists and the filter could never drop a row. Row
-    visibility is pump-owned; the projection (`Contact.targetable`) is what
-    decides what the panel draws.
+    The view used to re-filter its rows on `child.IsVisible()`. Row visibility
+    is PUMP-OWNED: `STTargetMenu.set_contacts` asserts `SetVisible()` on EVERY
+    listed row, unconditionally, every frame — so on a frame that has been
+    pushed the flag carries no information and the filter dropped nothing. The
+    projection (`Contact.targetable`) is what decides what the panel draws.
 
-    Driven here through the SDK surface that can clear the flag —
-    `SetNotVisible`, which SDK CycleTarget reads — WITHOUT an intervening push,
-    which is the only window in which the flag and the projection can disagree
-    at all. The row must still be drawn.
+    Between a `SetNotVisible` and the next push the two CAN disagree, and there
+    the old filter was not redundant but wrong: it blanked a live contact from
+    the panel. That is the window this test drives — `SetNotVisible` (real SDK
+    surface, read by CycleTarget) with no intervening push. The row must still
+    be drawn.
     """
     import json
     from engine.ui.target_list_view import TargetListView

@@ -283,13 +283,20 @@ class TargetListView(Panel):
                     ) if subsystems_targetable else ()
                     name = ship.GetName()
                     # NO `IsVisible()` HERE, DELIBERATELY — do not re-add it.
-                    # `STTargetMenu.set_contacts` asserts `SetVisible()` on
-                    # every listed row unconditionally, so for anything this
-                    # loop can reach the flag is write-once-True and a filter
-                    # on it could never fire. Visibility is pump-owned;
-                    # drawability is `Contact.targetable`, which the projection
-                    # (`_rows`) has already applied by the time we walk the
-                    # children. Pinned by tests/unit/test_target_list_view.py::
+                    # VISIBILITY IS PUMP-OWNED: `STTargetMenu.set_contacts`
+                    # asserts `SetVisible()` on every listed row
+                    # unconditionally, every frame, so the flag carries no
+                    # information this panel wants. Drawability is
+                    # `Contact.targetable`, which the projection (`_rows`) has
+                    # already applied by the time we walk the children.
+                    #
+                    # The filter that used to be here was not merely redundant,
+                    # it was WRONG in the one window where the flag and the
+                    # projection can disagree: an SDK caller clearing a row via
+                    # `SetNotVisible` (real surface — CycleTarget reads it)
+                    # would blank a live contact from the panel until the next
+                    # push re-asserted it. Pinned by
+                    # tests/unit/test_target_list_view.py::
                     # test_row_flag_does_not_gate_the_payload_drawability_is_targetable.
                     rows.append((
                         name,

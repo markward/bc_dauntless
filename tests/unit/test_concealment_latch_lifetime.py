@@ -9,7 +9,12 @@ ENGINE, not of any one caller, and both are pinned here:
   * it must not outlive the ships it is about. Keyed on `id()`, a dead ship's
     entry could be inherited by an unrelated later object that CPython happens
     to allocate at the same address — silently granting it the easier
-    `LOCK_BREAK_T - HYSTERESIS` re-acquisition threshold.
+    `LOCK_BREAK_T - HYSTERESIS` re-acquisition threshold. That is HARDENING,
+    not a live-bug fix: a real `ShipClass` is strongly pinned for the process
+    lifetime by `engine/core/ids.py`'s `_registry`, so its `id()` is never
+    recycled while the game runs. It is reachable for the plain non-TGObject
+    observers/targets used below, and the point of the weak keying is that the
+    latch no longer depends on that registry pin for its correctness.
 
 The geometry below is chosen so the latch is BEHAVIOURALLY OBSERVABLE: at
 x=180 in test_nebula_concealment's dense sphere the concealment sits inside the
@@ -124,7 +129,11 @@ def test_a_dead_observer_drops_out_of_the_latch():
 
 
 def test_a_recycled_id_cannot_inherit_a_stale_latch():
-    """A NEW object allocated at a dead ship's address must start unlatched.
+    """A NEW object allocated at a dead contact's address must start unlatched.
+
+    See the module docstring: this is hardening, and the recycle it drives is
+    reachable for the plain non-TGObject fakes here, not for a real ShipClass
+    (which `engine/core/ids.py`'s `_registry` pins for the process lifetime).
 
     CPython reuses the freed slot for the very next same-sized allocation, so
     this is constructible without waiting on chance: drop the last reference to

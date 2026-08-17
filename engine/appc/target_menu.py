@@ -81,8 +81,8 @@ class STTargetMenu(STTopLevelMenu):
     as `perceivable and alive_or_wreck and IsTargetable()` — range and cloak
     are folded in, so these three answer for strictly fewer ships than before.
     This is deliberate, and was traced safe rather than assumed safe: the
-    displayed list and the radar both take their drawability from the record
-    (`targetable` / `perceivable`), not from the row's `IsVisible` flag, so no
+    displayed list and the radar both take their drawability from this same
+    `targetable` projection, not from the row's `IsVisible` flag, so no
     visible UI surface changed; the SDK's `CycleTarget` falls back through its
     `GetFirstChild`/`GetLastChild` path whenever `GetNextChild` returns None,
     so a narrower sibling chain degrades to "wrap to the ends," not a crash;
@@ -128,12 +128,14 @@ class STTargetMenu(STTopLevelMenu):
         production path — synthetic or otherwise — that needs this method to
         mark a listed row not-visible.
 
-        THE CONSEQUENCE FOR READERS: `IsVisible()` is write-once-True for
-        anything this menu lists, so it answers NO question about
-        detectability and a reader that filters on it filters nothing. Nothing
-        writes `perceivable` into it. Read `perceivable` off the record
-        (`contact_for`) instead — engine.ui.target_list_view carried exactly
-        such a dead `if is_vis` filter until it was removed.
+        THE CONSEQUENCE FOR READERS: this method re-asserts `IsVisible()` for
+        everything it lists, every frame, so the flag answers NO question about
+        detectability — nothing writes `perceivable` into it. A reader that
+        filters on it drops nothing on a pushed frame, and between a
+        `SetNotVisible` and the next push it drops the WRONG thing: a live,
+        perceivable contact. Read `perceivable` off the record (`contact_for`)
+        instead — engine.ui.target_list_view carried exactly such an
+        `if is_vis` filter until it was removed.
 
         THE `SetVisible()` IS NOT DECORATION, and it is not "the row was just
         built so make it visible" either — a fresh row already is. It is state
@@ -187,8 +189,11 @@ class STTargetMenu(STTopLevelMenu):
         """The projection: cached rows for the current TARGETABLE contacts.
 
         `targetable` is the record's own verdict — it already folds in
-        IsTargetable(), death, and the wreck-linger window — so the listing
-        and the visibility flag come from the same answer.
+        IsTargetable(), death, and the wreck-linger window — so every reader
+        that walks these children (the target list, the radar) gets its
+        drawability from ONE answer. It says nothing about the rows'
+        `IsVisible` flag, which `set_contacts` asserts True for everything
+        listed here; see that method's docstring.
 
         Defensive on both attributes: `_children` is a property, so anything
         that reads it during base-class construction would land here before

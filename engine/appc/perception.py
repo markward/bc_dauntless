@@ -88,6 +88,27 @@ class Contact:
     """
     ship: object
     surface_gu: float
+    # KEPT ON PURPOSE THOUGH NO PRODUCTION READER ASKS FOR IT TODAY — and yes,
+    # that is the same criterion that removed `dist_sq_gu`. The two cases are
+    # not alike, so do not "finish the job" by deleting this one:
+    #
+    #   * `dist_sq_gu` was a CONSTRUCTION ARTIFACT — a value that happened to
+    #     be computed on the way to something else, with no consumer present
+    #     or planned. Carrying it claimed a need nobody had.
+    #   * `perceivable` is the PERCEPTION CORE. It is deliberately separate
+    #     from `targetable` (the target-list gate) because the Hail and
+    #     Science-scan menus are expected to read it with their own authored
+    #     gates when they adopt this query — see the ⚠️ note on `targetable`
+    #     just below, which is the same point from the other side. Removing it
+    #     now and re-adding it then is churn, and collapsing the two fields
+    #     into one would lose this module's central idea: perceivability is
+    #     observer state, targetability is a per-menu policy on top of it.
+    #
+    # Its last in-tree reader was engine/ui/sensors_panel.py, whose check was
+    # dropped once `targetable ⇒ perceivable` was pinned at the source
+    # (tests/unit/test_perceived_by.py::test_targetable_always_implies_perceivable);
+    # it is still exercised directly by that test and by
+    # tests/unit/test_nebula_hides_contacts_from_ui.py.
     perceivable: bool
     # ⚠️ NOT observer-generic: `targetable` folds in `IsTargetable()`, which
     # is a TARGET-LIST rule, not a perception rule. The Hail and
