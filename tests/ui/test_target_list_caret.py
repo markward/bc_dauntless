@@ -101,6 +101,22 @@ def test_base_caret_rule_declares_an_explicit_width():
         "caret occupies the same box as a populated one")
 
 
+def test_base_caret_rule_uses_border_box_so_width_is_not_inflated_by_padding():
+    """`width` alone is not enough to pin the footprint: this file declares
+    no box-sizing anywhere, and content-box (the default) treats `width` as
+    content-only, so the declared 14px plus the rule's 8px of horizontal
+    padding would silently render as a 22px box — inflating every
+    populated-caret row's width and shifting its name column right. Round-2
+    fix-up: `width: 14px` was asserted (previous test) without also pinning
+    `box-sizing: border-box`, so a regression that dropped just this one
+    declaration would re-inflate the box with no test failure — the same
+    vacuity shape hit repeatedly in this subsystem. box-sizing: border-box
+    makes the declared width the TOTAL box, padding included."""
+    css = _source(CSS)
+    props = _declared_properties(_rule(css, ".target-list__caret"))
+    assert props.get("box-sizing") == "border-box"
+
+
 def test_empty_caret_modifier_does_not_resize_the_box():
     """The modifier class must NOT redeclare width/margin/padding — if it
     did, the two states could once again diverge in footprint. This is the

@@ -95,11 +95,17 @@
      * existed): a populated caret's box used to be sized by its glyph
      * content alone, so a row with NO subsystems (a phantom-chevron fix —
      * an empty span with no glyph) collapsed to just its padding and the
-     * name column shifted left relative to rows that DO have a caret. Set
-     * to 14px == font-size, the standard single-glyph box for a 14px
-     * triangle character, so both the populated and empty states occupy
-     * the same footprint. text-align centres the glyph inside that box
-     * (previously it just filled the shrink-wrapped span). */
+     * name column shifted left relative to rows that DO have a caret.
+     * box-sizing: border-box makes 14px the TOTAL box (padding included),
+     * not just the content — without it, content-box (the default, and
+     * nothing in this file or scoped to this class sets border-box) would
+     * add the 8px of horizontal padding on top, inflating to 22px and
+     * shifting every populated-caret row right instead. 14px == font-size,
+     * the standard single-glyph box for a 14px triangle character, so both
+     * the populated and empty states occupy the same footprint. text-align
+     * centres the glyph inside that box (previously it just filled the
+     * shrink-wrapped span). */
+    box-sizing: border-box;
     width: 14px;
     text-align: center;
     margin-right: 8px;
