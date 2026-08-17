@@ -54,6 +54,19 @@ def _placed(pSet, name, y=0.0, radius=0.0):
     return s
 
 
+def _planet(pSet, name="Haven", y=0.0, radius=90.0):
+    """A targeted PLANET — an ObjectClass, so contact_index never buckets it
+    and it can never have a Contact record. Built the way
+    tests/unit/test_ship_only_loops_filter_non_ships.py builds one."""
+    from engine.appc.math import TGPoint3
+    from engine.appc.planet import Planet
+    p = Planet(radius, "planet.nif")
+    p.SetName(name)
+    p.SetWorldLocation(TGPoint3(0.0, y, 0.0))
+    pSet.AddObjectToSet(p, name)
+    return p
+
+
 def _pump(player):
     """One frame of the host loop's contact push (host_loop._pump_contacts)."""
     App._reset_target_menu_singleton()
@@ -119,7 +132,12 @@ def test_ship_display_range_reads_the_record_not_the_world_position():
 
 def test_ship_display_range_falls_back_without_a_record():
     """A targeted PLANET is an ObjectClass, and contact_index buckets ships
-    only — so it never has a record. The local read must survive."""
+    only — so it never has a record. The readout must survive.
+
+    Assertion unchanged; only where the miss is handled moved. It used to be a
+    local recompute in _range_and_speed_to and is now surface_gu_for's miss
+    path, so this doubles as the characterization that the move preserved the
+    number."""
     from engine.ui.ship_display_panel import _range_and_speed_to
 
     contact_index.reset()
@@ -170,8 +188,15 @@ def test_reticle_range_reads_the_record_not_the_world_position():
 def test_bulk_rebuild_synthesises_no_distance_at_all():
     """RebuildShipMenus takes a SET, not an observer, so it cannot answer
     distance — and contact_for cannot tell its synthesised value from a real
-    one. Its records therefore carry NaN, so a reader that wrongly trusts them
-    renders "nan km" instead of a perfectly believable "0.00 km"."""
+    one. Its records therefore carry NaN, never a believable 0.0.
+
+    The record assertions are unchanged. The READOUT assertion changed: it used
+    to demand "nan km" on screen, on the reasoning that visibly broken beats
+    plausibly wrong. surface_gu_for now treats a NaN record as a miss and
+    measures against the observer the caller passed, which is neither — it is
+    the right number. That is why the readout half of this test moved from
+    isnan() to the real distance; the hazard the NaN guards against is gone at
+    the reader, not weakened."""
     from engine.ui.ship_display_panel import _range_and_speed_to
 
     contact_index.reset()
@@ -186,7 +211,150 @@ def test_bulk_rebuild_synthesises_no_distance_at_all():
     assert math.isnan(menu.contact_for(target).surface_gu)
     assert math.isnan(menu.contact_for(target).dist_sq_gu)
     rng_km, _speed = _range_and_speed_to(target, player)
-    assert math.isnan(rng_km)
+    assert not math.isnan(rng_km)
+    assert rng_km == pytest.approx(200.0 * GU_TO_KM)
+
+
+# ── surface_gu_for always answers ────────────────────────────────────────────
+#
+# The readouts used to keep their whole original derivation as a guarded
+# fallback for `surface_gu_for(...) is None`. That was a second copy of the
+# rule, not a replacement of it. surface_gu_for now answers every case itself,
+# through the same perception._surface_gu the record path uses, so the callers
+# have one unconditional read and there is exactly one derivation.
+
+def test_surface_gu_for_answers_for_a_planet_with_no_record():
+    """The case that matters: contact_index buckets ShipClass only, so a
+    targeted planet NEVER has a record — and the surface convention is
+    decisive there (Haven, radius 90, orbited at 240 GU centres reads the
+    150 GU surface distance, not 240)."""
+    from engine.appc.perception import surface_gu_for
+
+    contact_index.reset()
+    App._reset_target_menu_singleton()
+    pSet = SetClass()
+    player = _observer(pSet)
+    haven = _planet(pSet, y=240.0, radius=90.0)
+
+    assert surface_gu_for(haven, player) == pytest.approx(150.0)
+
+
+def test_surface_gu_for_answers_with_no_menu_at_all():
+    """Boot frames and headless fixtures: nothing has been pushed, and
+    STTargetMenu_GetTargetMenu() is None. Still an answer, not a None."""
+    from engine.appc.perception import surface_gu_for
+
+    contact_index.reset()
+    App._reset_target_menu_singleton()
+    pSet = SetClass()
+    player = _observer(pSet)
+    lone = _placed(pSet, "Galor", y=205.0, radius=5.0)
+
+    assert App.STTargetMenu_GetTargetMenu() is None
+    assert surface_gu_for(lone, player) == pytest.approx(200.0)
+
+
+def test_surface_gu_for_prefers_the_record_over_live_geometry():
+    """The record path is actually taken — proven with a record whose
+    surface_gu no longer matches the live geometry."""
+    from engine.appc.perception import surface_gu_for
+
+    _pSet, player, target = _scene()
+    _menu, contacts = _pump(player)
+    pushed_gu = contacts[0].surface_gu
+
+    target.SetTranslateXYZ(0.0, 905.0, 0.0)   # no re-push
+
+    assert pushed_gu == pytest.approx(200.0)
+    assert surface_gu_for(target, player) == pytest.approx(pushed_gu)
+
+
+def test_a_nan_record_is_treated_as_a_miss():
+    """RebuildShipMenus deliberately synthesises NaN (it has no observer, so
+    it cannot answer distance). With no caller fallback left to catch it, a
+    NaN must be a miss here or "nan km" reaches the screen."""
+    from engine.appc.perception import surface_gu_for
+
+    contact_index.reset()
+    App._reset_target_menu_singleton()
+    pSet = SetClass()
+    player = _observer(pSet)
+    target = _placed(pSet, "Galor", y=205.0, radius=5.0)
+
+    menu = App.STTargetMenu_CreateW("Targets")
+    menu.RebuildShipMenus(pSet)
+
+    assert math.isnan(menu.contact_for(target).surface_gu)   # still NaN
+    assert surface_gu_for(target, player) == pytest.approx(200.0)
+
+
+def test_surface_gu_for_with_no_observer_at_all_is_nan():
+    """"How far is X from the player" has no answer with no player. NaN, not
+    0.0: a believable wrong number is the failure mode this codebase ranks
+    worst (see target_menu.RebuildShipMenus). Unreachable from either readout
+    — both already bail before asking — so this pins the contract, not a
+    rendered value."""
+    from engine.appc.perception import surface_gu_for
+    from engine.core.game import _set_current_game
+
+    contact_index.reset()
+    App._reset_target_menu_singleton()
+    pSet = SetClass()
+    lone = _placed(pSet, "Galor", y=205.0, radius=5.0)
+    _set_current_game(None)
+
+    assert math.isnan(surface_gu_for(lone))
+
+
+# ── the readouts, on a planet ────────────────────────────────────────────────
+
+def _planet_scene():
+    contact_index.reset()
+    App._reset_target_menu_singleton()
+    pSet = SetClass()
+    player = _observer(pSet)
+    haven = _planet(pSet, y=240.0, radius=90.0)
+    player.SetTarget(haven)
+    _pump(player)          # a real frame push — the planet gets no record
+    return pSet, player, haven
+
+
+def test_reticle_reads_a_planet_surface_distance():
+    """26.25 km = 150 GU surface distance. Same number the caller-side
+    fallback produced before it was deleted."""
+    from engine.ui.reticle_text import build_reticle_text
+
+    _pSet, player, _haven = _planet_scene()
+
+    payload = build_reticle_text(player, _camera(), _viewport())
+
+    assert payload["visible"] is True
+    assert payload["line2"].startswith("26.25 km")
+
+
+def test_ship_display_reads_a_planet_surface_distance():
+    from engine.ui.ship_display_panel import _range_and_speed_to
+
+    _pSet, player, haven = _planet_scene()
+
+    rng_km, _speed = _range_and_speed_to(haven, player)
+
+    assert rng_km == pytest.approx(150.0 * GU_TO_KM)
+
+
+def test_the_two_readouts_agree_on_a_planet():
+    """The miss path is shared too, not just the record path."""
+    from engine.ui.reticle_text import build_reticle_text
+    from engine.ui.ship_display_panel import _range_and_speed_to
+
+    _pSet, player, haven = _planet_scene()
+
+    rng_km, _speed = _range_and_speed_to(haven, player)
+    shown_km = float(
+        build_reticle_text(player, _camera(), _viewport())["line2"]
+        .split(" km")[0])
+
+    assert shown_km == pytest.approx(rng_km, abs=0.01)
 
 
 def test_the_two_readouts_agree():

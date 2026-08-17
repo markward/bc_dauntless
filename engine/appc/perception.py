@@ -180,25 +180,65 @@ def contacts_for(observer) -> tuple:
     return tuple(c.ship for c in perceived_by(observer) if c.targetable)
 
 
-def surface_gu_for(ship):
-    """This frame's `surface_gu` for *ship*, from the pushed contact record,
-    or None when there is no record.
+def surface_gu_for(ship, observer=None) -> float:
+    """Surface distance from *observer* to *ship*, in GU. ALWAYS answers.
 
     THE read path for the on-screen range readouts (engine.ui.reticle_text and
-    engine.ui.ship_display_panel). It reads the record the host loop already
-    pushed (host_loop._pump_contacts, every frame, before the panels render)
-    rather than calling perceived_by a second time — a second call would redo
-    the whole per-observer pass to answer one number.
+    engine.ui.ship_display_panel), and the only distance derivation either of
+    them performs. Callers do ONE unconditional read; there is deliberately no
+    sentinel for them to branch on, because the branch is how the duplication
+    came back last time. Both readouts used to keep their entire original
+    computation as a `if dist is None:` fallback, which added a layer instead of
+    replacing one.
 
-    None is a real answer, not a failure, and callers MUST fall back to their
-    own read for it. contact_index buckets ShipClass only, so a targeted PLANET
-    or station ObjectClass never has a record — and the surface convention
-    matters most there (orbiting Haven reads 26 km, not 42). None also covers
-    the pre-menu boot frames and the headless fixtures that never push.
+    Fast path: the record the host loop already pushed this frame
+    (host_loop._pump_contacts, before the panels render). Reading it beats
+    calling perceived_by again, which would redo the whole per-observer pass to
+    answer one number.
+
+    Miss path — same arithmetic, via `_surface_gu`, so there is one
+    implementation and not one plus a copy. Three ways to miss, all real:
+
+      * a targeted PLANET or station. contact_index buckets ShipClass only, so
+        an ObjectClass never has a record — and this is where the convention
+        earns its keep (orbiting Haven reads 26 km, not 42; on a ship the
+        radius subtraction is a rounding error).
+      * boot frames and headless fixtures, where no menu exists or nothing has
+        been pushed yet.
+      * a NaN record. STTargetMenu.RebuildShipMenus synthesises
+        `surface_gu=NaN` on purpose because it takes a set, not an observer,
+        and so cannot answer distance. NaN is treated as a miss here; without
+        that, "nan km" would render on screen.
+
+    *observer* defaults to `App.Game_GetCurrentPlayer()`, which is the same
+    object both readouts already hold (`Game.GetCurrentPlayer` IS
+    `Game.GetPlayer` — engine/core/game.py:372 — and that is what host_loop and
+    ship_display_panel._get_player read). They pass it explicitly anyway, so the
+    miss path measures from exactly the ship the deleted fallbacks measured
+    from, rather than from a global that a test fixture or a future second
+    viewpoint could disagree with.
+
+    With no observer resolvable at all the question has no answer, and this
+    returns NaN rather than 0.0: a plausible-looking wrong distance is the worst
+    failure mode in this codebase (same reasoning as RebuildShipMenus'
+    deliberate NaN). Neither readout can reach it — ship_display_panel returns
+    (None, None) on a null player and the reticle is not built without one.
     """
     import App
     menu = App.STTargetMenu_GetTargetMenu()
-    if menu is None:
-        return None
-    contact = menu.contact_for(ship)
-    return None if contact is None else contact.surface_gu
+    if menu is not None:
+        contact = menu.contact_for(ship)
+        # `x != x` is the NaN test that needs no import and no isinstance:
+        # Contact.surface_gu is always a float.
+        if contact is not None and contact.surface_gu == contact.surface_gu:
+            return contact.surface_gu
+
+    if observer is None:
+        observer = App.Game_GetCurrentPlayer()
+    if observer is None:
+        return float("nan")
+
+    ox, oy, oz = _get_xyz(observer)
+    sx, sy, sz = _get_xyz(ship)
+    dx, dy, dz = sx - ox, sy - oy, sz - oz
+    return _surface_gu(dx * dx + dy * dy + dz * dz, ship)

@@ -408,17 +408,25 @@ class STTargetMenu(STTopLevelMenu):
 
         ⚠️ It takes a SET, not an observer, so it cannot answer perception:
         the records it synthesises are flat "listed and drawable" with NO
-        distance. Do NOT read `contact_for(...).surface_gu` after a push from
-        here — only after the host loop's `perceived_by` push, which is the
-        production path. This exists for bootstrap/test population only.
+        distance. Only the host loop's `perceived_by` push carries a real one.
+        This exists for bootstrap/test population only.
 
-        The distances are NaN, not 0.0, and that is deliberate. `contact_for`
-        cannot tell a synthesised zero from a genuine one, so a reader that
-        wrongly trusts these would render a perfectly plausible "0.00 km" — a
-        believable wrong number is the worst failure mode this codebase has
-        (it is the same shape as the silent `_Stub` no-ops in
-        docs/stub_heatmap.md). NaN propagates through the km conversion and
-        shows up on screen as "nan km": still broken, but visibly so.
+        The distances are NaN, not 0.0, and that is deliberate — keep it.
+        `contact_for` cannot tell a synthesised zero from a genuine one, so a
+        reader that trusted these would render a perfectly plausible
+        "0.00 km", and a believable wrong number is the worst failure mode this
+        codebase has (same shape as the silent `_Stub` no-ops in
+        docs/stub_heatmap.md). NaN is the value no reader can mistake for an
+        answer.
+
+        The hazard is now caught rather than merely visible.
+        `perception.surface_gu_for` — the single read path for both range
+        readouts — treats a NaN record as a miss and measures against the
+        observer instead, so a push from here no longer puts "nan km" on
+        screen. That is a property of the reader, not a licence to synthesise
+        0.0 here: any NEW reader of `contact_for(...).surface_gu` must handle
+        NaN itself (pinned by tests/unit/test_readers_share_one_distance.py::
+        test_bulk_rebuild_synthesises_no_distance_at_all).
         """
         import App as _App
         from engine.appc.perception import Contact
