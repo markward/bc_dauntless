@@ -119,8 +119,11 @@ class SensorsPanel(Panel):
         # it named, e.g. across a warp).
         #
         # The record's own verdict decides drawability: the menu's children are
-        # this frame's targetable contacts, and `perceivable` is what
-        # set_contacts writes into each row's IsVisible.
+        # this frame's targetable contacts (`_rows()` filters on
+        # `Contact.targetable`). NOTHING writes `perceivable` into a row's
+        # IsVisible — `set_contacts` asserts `SetVisible()` on every listed row
+        # unconditionally, so that flag is write-once-True here and answers no
+        # question this panel asks.
         #
         # The RANGE CLIP below stays the radar's own. It reads
         # RadarDisplay.GetRange() (1000 GU default), not the player's sensor

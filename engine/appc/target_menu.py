@@ -81,8 +81,9 @@ class STTargetMenu(STTopLevelMenu):
     as `perceivable and alive_or_wreck and IsTargetable()` — range and cloak
     are folded in, so these three answer for strictly fewer ships than before.
     This is deliberate, and was traced safe rather than assumed safe: the
-    displayed list and the radar already filtered on `IsVisible`, so no visible
-    UI surface changed; the SDK's `CycleTarget` falls back through its
+    displayed list and the radar both take their drawability from the record
+    (`targetable` / `perceivable`), not from the row's `IsVisible` flag, so no
+    visible UI surface changed; the SDK's `CycleTarget` falls back through its
     `GetFirstChild`/`GetLastChild` path whenever `GetNextChild` returns None,
     so a narrower sibling chain degrades to "wrap to the ends," not a crash;
     and BC's own menu is sensor-gated too —
@@ -121,6 +122,13 @@ class STTargetMenu(STTopLevelMenu):
         a greyed-out row, it is removed from the list entirely. There is no
         production path — synthetic or otherwise — that needs this method to
         mark a listed row not-visible.
+
+        THE CONSEQUENCE FOR READERS: `IsVisible()` is write-once-True for
+        anything this menu lists, so it answers NO question about
+        detectability and a reader that filters on it filters nothing. Nothing
+        writes `perceivable` into it. Read `perceivable` off the record
+        (`contact_for`) instead — engine.ui.target_list_view carried exactly
+        such a dead `if is_vis` filter until it was removed.
 
         THE `SetVisible()` IS NOT DECORATION, and it is not "the row was just
         built so make it visible" either — a fresh row already is. It is state

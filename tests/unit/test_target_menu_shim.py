@@ -11,9 +11,11 @@ def _listed(*ships):
     perceived_by returns for an in-range, uncloaked, living contact.
 
     set_contacts takes perception.Contact records rather than bare ships: the
-    record carries the frame's verdict, and the menu derives both the listing
-    (`targetable`) and each row's IsVisible (`perceivable`) from it. Distances
-    are 0.0 because nothing in this file reads them.
+    record carries the frame's verdict, and the menu derives the listing from
+    `targetable`. Row IsVisible is NOT derived from `perceivable` — set_contacts
+    asserts SetVisible() on every listed row, so that flag answers nothing about
+    detectability; readers that need it read `perceivable` off the record.
+    Distances are 0.0 because nothing in this file reads them.
     """
     return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
                     perceivable=True, targetable=True) for s in ships]

@@ -282,10 +282,18 @@ class TargetListView(Panel):
                         if _keep(sub_child)
                     ) if subsystems_targetable else ()
                     name = ship.GetName()
+                    # NO `IsVisible()` HERE, DELIBERATELY — do not re-add it.
+                    # `STTargetMenu.set_contacts` asserts `SetVisible()` on
+                    # every listed row unconditionally, so for anything this
+                    # loop can reach the flag is write-once-True and a filter
+                    # on it could never fire. Visibility is pump-owned;
+                    # drawability is `Contact.targetable`, which the projection
+                    # (`_rows`) has already applied by the time we walk the
+                    # children. Pinned by tests/unit/test_target_list_view.py::
+                    # test_row_flag_does_not_gate_the_payload_drawability_is_targetable.
                     rows.append((
                         name,
                         child.GetAffiliation(),
-                        child.IsVisible(),
                         hull_pct,
                         shield_pct,
                         has_shields,
@@ -387,8 +395,7 @@ class TargetListView(Panel):
                     ],
                     "expanded": expanded,
                 }
-                for (name, aff, is_vis, hull, shields, has_shields, subs, expanded) in rows
-                if is_vis
+                for (name, aff, hull, shields, has_shields, subs, expanded) in rows
             ],
         }
         return "setTargetList(" + json.dumps(payload) + ");"

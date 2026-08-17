@@ -193,7 +193,7 @@ def test_warp_clears_all_targets():
 
     def _listed(*ships):
         """set_contacts takes perception.Contact records, not bare ships — the
-        menu derives the listing and each row's IsVisible from the record."""
+        menu derives the listing from the record's `targetable`."""
         return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
                         perceivable=True, targetable=True) for s in ships]
 

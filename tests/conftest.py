@@ -877,6 +877,16 @@ def _reset_leakable_engine_globals():
         contact_index.reset()
     except Exception:
         pass
+    # can_detect latches a per-(observer, target) broken lock so re-acquisition
+    # needs a HYSTERESIS margin. Production clears it on mission swap
+    # (host_loop); nothing cleared it between tests, so any test that put a
+    # contact in a dense nebula left the latch set for the next one. Cleared
+    # here so no test has to remember to do it itself.
+    try:
+        from engine.appc.sensor_detection import reset_concealment_state
+        reset_concealment_state()
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True)

@@ -9,9 +9,11 @@ def _listed(*ships):
     perceived_by returns for an in-range, uncloaked, living contact.
 
     set_contacts takes perception.Contact records rather than bare ships: the
-    record carries the frame's verdict, and the menu derives both the listing
-    (`targetable`) and each row's IsVisible (`perceivable`) from it. Distances
-    are 0.0 because nothing in this file reads them.
+    record carries the frame's verdict, and the menu derives the listing from
+    `targetable`. Row IsVisible is NOT derived from `perceivable` — set_contacts
+    asserts SetVisible() on every listed row, so that flag answers nothing about
+    detectability; readers that need it read `perceivable` off the record.
+    Distances are 0.0 because nothing in this file reads them.
     """
     return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
                     perceivable=True, targetable=True) for s in ships]
@@ -114,6 +116,42 @@ def test_view_dispatch_event_sets_player_target():
         assert player.GetTarget() is a
     finally:
         App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_row_flag_does_not_gate_the_payload_drawability_is_targetable():
+    """DRAWABILITY IS `targetable`, NOT the row's IsVisible flag.
+
+    The view used to re-filter its rows on `child.IsVisible()`. That filter was
+    dead: `STTargetMenu.set_contacts` asserts `SetVisible()` on EVERY listed
+    row, unconditionally, so in production the flag is write-once-True for
+    anything the projection lists and the filter could never drop a row. Row
+    visibility is pump-owned; the projection (`Contact.targetable`) is what
+    decides what the panel draws.
+
+    Driven here through the SDK surface that can clear the flag —
+    `SetNotVisible`, which SDK CycleTarget reads — WITHOUT an intervening push,
+    which is the only window in which the flag and the projection can disagree
+    at all. The row must still be drawn.
+    """
+    import json
+    from engine.ui.target_list_view import TargetListView
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    _setup_game_with_player()
+    try:
+        a = ShipClass(); a.SetName("Dauntless")
+        target_menu.set_contacts(_listed(a))
+        target_menu.GetObjectEntry(a).SetNotVisible()
+        assert target_menu.GetObjectEntry(a).IsVisible() == 0  # not vacuous
+
+        view = TargetListView()
+        state = json.loads(view.render_payload()[len("setTargetList("):-2])
+
+        assert [r["name"] for r in state["rows"]] == ["Dauntless"]
+    finally:
         from engine.core.game import _set_current_game
         _set_current_game(None)
 

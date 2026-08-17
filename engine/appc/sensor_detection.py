@@ -10,6 +10,8 @@ target list and the AI candidate-selection gate.
 See docs/superpowers/specs/2026-06-10-sensor-damage-detection-scaling-design.md
 """
 
+import weakref
+
 import App
 from engine.appc.subsystems import _is_offline, _get_xyz
 from engine.appc import nebula_density as _nd
@@ -77,13 +79,56 @@ CLOAK_DETECTION_BASE_GU = 10.0  # flat bubble floor, added atop the CLOAK_RANGE_
                                  # toward zero (fully offline sensors still return False
                                  # via the `r <= 0.0` guard, ahead of this term).
 
-# Per-(observer_id, target_id) latch: a broken lock needs a margin to re-acquire.
-_broken: set = set()
+# Per-(observer, target) latch: a broken lock needs a margin to re-acquire.
+#
+# WEAK ON BOTH SIDES, DELIBERATELY — do not "simplify" this back to a set of
+# `(id(observer), id(target))` tuples. Raw ids do not keep their objects alive,
+# so once a ship died CPython was free to hand its address to an unrelated new
+# object, which then inherited the dead pair's latch and started life on the
+# easier `LOCK_BREAK_T - HYSTERESIS` re-acquisition threshold. That is not
+# hypothetical: it reproduces on the very next allocation of the same size
+# (tests/unit/test_concealment_latch_lifetime.py::
+# test_a_recycled_id_cannot_inherit_a_stale_latch). Weak references make the
+# entry disappear with the ship instead, and stop the latch from pinning dead
+# ships in memory the way a strong-keyed dict would.
+_broken: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _latched(observer, target) -> bool:
+    """True iff this pair's lock is currently broken."""
+    try:
+        targets = _broken.get(observer)
+    except TypeError:
+        # Not weak-referenceable (no engine object is like this today; guard so
+        # an exotic caller degrades to "no hysteresis", never to a crash).
+        return False
+    return targets is not None and target in targets
+
+
+def _set_latched(observer, target, broken: bool) -> None:
+    """Record (or clear) this pair's broken-lock latch."""
+    try:
+        targets = _broken.get(observer)
+        if broken:
+            if targets is None:
+                targets = weakref.WeakSet()
+                _broken[observer] = targets
+            targets.add(target)
+        elif targets is not None:
+            targets.discard(target)
+    except TypeError:
+        pass
 
 
 def reset_concealment_state():
-    """Clear per-(observer,target) lock-break latches. Called on mission swap
-    so a new mission's ships don't inherit stale id()-keyed latches."""
+    """Clear per-(observer,target) lock-break latches.
+
+    Called on mission swap (host_loop) so a new mission's ships don't inherit
+    stale latches, and from tests/conftest.py's autouse
+    `_reset_leakable_engine_globals` so one test's broken lock cannot leak into
+    the next. Both, not either: the weak keying above stops a DEAD ship's entry
+    being inherited, but a test that keeps its ships alive still needs the
+    explicit clear."""
     _broken.clear()
 
 
@@ -264,12 +309,12 @@ def can_detect(observer, target, *, dist_sq_gu=None,
     # ── Nebula concealment gate ───────────────────────────────────────────
     if apply_concealment:
         conceal = concealment_at(target)
-        key = (id(observer), id(target))
-        thresh = LOCK_BREAK_T - (HYSTERESIS if key in _broken else 0.0)
+        thresh = LOCK_BREAK_T - (HYSTERESIS if _latched(observer, target)
+                                 else 0.0)
         if conceal >= thresh:
-            _broken.add(key)
+            _set_latched(observer, target, True)
             return False
-        _broken.discard(key)
+        _set_latched(observer, target, False)
         # Scale range by the concealment factor (no-op when conceal == 0).
         r = r * (1.0 - CONCEAL_K * conceal)
 

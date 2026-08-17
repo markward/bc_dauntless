@@ -13,9 +13,11 @@ def _listed(*ships):
     perceived_by returns for an in-range, uncloaked, living contact.
 
     set_contacts takes perception.Contact records rather than bare ships: the
-    record carries the frame's verdict, and the menu derives both the listing
-    (`targetable`) and each row's IsVisible (`perceivable`) from it. Distances
-    are 0.0 because nothing in this file reads them.
+    record carries the frame's verdict, and the menu derives the listing from
+    `targetable`. Row IsVisible is NOT derived from `perceivable` — every
+    listed row is asserted visible — so `perceivable` is read off the record
+    directly by the panels that care. Distances are 0.0 because nothing in this
+    file reads them.
     """
     return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
                     perceivable=True, targetable=True) for s in ships]
@@ -245,10 +247,10 @@ def test_payload_skips_invisible_rows():
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "Cloaked")
         player._containing_set = spatial
-        # Not picked up by sensors. Expressed as the RECORD saying so rather
-        # than by writing the row flag by hand: set_contacts derives
-        # IsVisible from Contact.perceivable, and the panel now reads the
-        # record directly, so the record is the only input. (This
+        # Not picked up by sensors. Expressed as the RECORD saying so because
+        # the record is the only input: the panel reads `perceivable` off it
+        # directly, and the row's IsVisible flag is no help — set_contacts
+        # asserts SetVisible() on every listed row. (This
         # perceivable=False + targetable=True pairing is synthetic —
         # perceived_by defines targetable as implying perceivable — and it is
         # exactly the listed-but-not-drawable branch STTargetMenu.set_contacts

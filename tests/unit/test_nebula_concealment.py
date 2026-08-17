@@ -63,8 +63,8 @@ def test_can_detect_blocked_when_target_concealed():
     range is not the reason detection fails — concealment is.
     """
     s, n = _set_with_dense_nebula()
-    # Ensure the hysteresis latch is clean for this pair.
-    sd._broken.clear()
+    # The hysteresis latch starts clean: tests/conftest.py's autouse
+    # _reset_leakable_engine_globals clears it for every test.
     observer = _Ship("E", 0.0, 0.0, 300.0, s)
     hidden = _Ship("P", 0.0, 0.0, 0.0, s)     # in the dense core
     assert sd.can_detect(observer, hidden) is False
@@ -73,7 +73,6 @@ def test_can_detect_blocked_when_target_concealed():
 def test_can_detect_succeeds_in_clear_space():
     """Two ships well outside the nebula sphere can detect each other."""
     s, n = _set_with_dense_nebula()
-    sd._broken.clear()
     observer = _Ship("E", 0.0, 0.0, 5300.0, s)
     visible = _Ship("P", 0.0, 0.0, 5000.0, s)  # both far outside (sphere r=200)
     assert sd.can_detect(observer, visible) is True

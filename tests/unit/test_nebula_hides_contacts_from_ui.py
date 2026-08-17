@@ -67,7 +67,6 @@ def _scene():
     origin), an observer 300 GU out in clear space, one contact buried in the
     core and one contact far outside."""
     contact_index.reset()
-    sd.reset_concealment_state()
     pSet, neb = _tnc._set_with_dense_nebula()
     observer = _observer(pSet, 0.0, 0.0, 300.0)
     hidden = _contact(pSet, "Hidden", 0.0, 0.0, 0.0)
@@ -183,7 +182,7 @@ def test_toggle_off_leaves_the_hysteresis_latch_untouched_by_the_ui(monkeypatch)
     _pSet, observer, hidden, _clear = _scene()
 
     perceived_by(observer)
-    assert (id(observer), id(hidden)) not in sd._broken
+    assert sd._latched(observer, hidden) is False
 
 
 def _pre_stage_4_rule(observer, ship):
@@ -221,7 +220,6 @@ def test_toggle_off_agrees_with_the_pre_stage_4_rule_everywhere(monkeypatch,
     """
     monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
     contact_index.reset()
-    sd.reset_concealment_state()
     pSet, _neb = _tnc._set_with_dense_nebula()
     observer = _observer(pSet, 0.0, 0.0, 300.0, base_range=2000.0)
     observer.GetSensorSubsystem()._condition = condition
@@ -246,7 +244,7 @@ def test_toggle_off_agrees_with_the_pre_stage_4_rule_everywhere(monkeypatch,
             % rec.ship.GetName())
 
     # And the UI wrote nothing to the shared latch while doing it.
-    assert sd._broken == set()
+    assert sum(len(t) for t in sd._broken.values()) == 0
 
 
 # ── Cloak reaches the UI too (the other half of dropping is_hidden_by_cloak) ──
@@ -255,7 +253,6 @@ def _cloak_scene(x):
     """Observer with 2000 GU sensors (flat 10 GU plus 1% = 30 GU cloak
     bubble) and one cloaked contact at (x, 0, 0). No nebula."""
     contact_index.reset()
-    sd.reset_concealment_state()
     from engine.appc.sets import SetClass
     pSet = SetClass()
     observer = _observer(pSet, 0.0, 0.0, 0.0, base_range=2000.0)
@@ -295,7 +292,6 @@ def test_precomputed_distance_matches_the_internal_computation():
     record; passing it in must not change the answer. This is what protects the
     hand-off from drifting away from the real computation."""
     contact_index.reset()
-    sd.reset_concealment_state()
     from engine.appc.sets import SetClass
     pSet = SetClass()
     observer = _observer(pSet, 0.0, 0.0, 0.0, base_range=2000.0)
@@ -312,7 +308,6 @@ def test_precomputed_distance_is_actually_used():
     """Guards against the parameter being accepted and then ignored: a
     deliberately wrong value must change the answer."""
     contact_index.reset()
-    sd.reset_concealment_state()
     from engine.appc.sets import SetClass
     pSet = SetClass()
     observer = _observer(pSet, 0.0, 0.0, 0.0, base_range=2000.0)

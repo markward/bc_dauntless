@@ -7016,11 +7016,13 @@ def run(mission_name: Optional[str] = None,
                 # rebound on warp).
                 #
                 # There is no second visibility pass: _pump_contacts pushes
-                # perception.Contact records and the menu flips each row's
-                # IsVisible from the record's `perceivable`. The pass that used
-                # to live here (engine.ui.target_list_visibility) applied its
-                # own range/cloak rule and ignored death, so it could leave a
-                # row Tab-selectable that the target list refused to draw.
+                # perception.Contact records and the menu's listing is derived
+                # from each record's `targetable`. (Row IsVisible is NOT derived
+                # from `perceivable` — set_contacts asserts SetVisible() on every
+                # listed row; drawability lives in the record, not the flag.) The
+                # pass that used to live here (engine.ui.target_list_visibility)
+                # applied its own range/cloak rule and ignored death, so it could
+                # leave a row Tab-selectable that the target list refused to draw.
                 _menu = App.STTargetMenu_GetTargetMenu()
                 _game = Game_GetCurrentGame()
                 _player = _game.GetPlayer() if _game is not None else None

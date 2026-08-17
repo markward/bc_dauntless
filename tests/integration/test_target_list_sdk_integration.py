@@ -22,9 +22,11 @@ def _populate_target_menu(target_menu, names):
         ship = ShipClass(); ship.SetName(n)
         ships.append(ship)
     # Children are derived from the pushed contact list, not appended. The
-    # push carries perception.Contact records, not bare ships: row visibility
-    # comes off the record's `perceivable`, which is exactly what SDK
-    # CycleTarget reads back as IsVisible().
+    # push carries perception.Contact records, not bare ships: the listing
+    # comes off the record's `targetable`. Row visibility does NOT come off
+    # `perceivable` — set_contacts asserts SetVisible() on every listed row —
+    # so the IsVisible() flag SDK CycleTarget reads is True here for all three,
+    # and the test below clears one by hand to drive that SDK path.
     target_menu.set_contacts([
         Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
                 perceivable=True, targetable=True) for s in ships])
