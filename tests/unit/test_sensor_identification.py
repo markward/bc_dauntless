@@ -72,8 +72,8 @@ def test_out_of_range_contact_not_identified():
 
 def _cloaked_contact_in_set(distance_gu):
     """A fully cloaked BirdOfPrey at *distance_gu* in the player's set. The
-    player carries 2000 GU sensors, so its cloak bubble (CLOAK_RANGE_FACTOR) is
-    20 GU."""
+    player carries 2000 GU sensors, so its cloak bubble (a flat
+    CLOAK_DETECTION_BASE_GU 10 GU plus 1% CLOAK_RANGE_FACTOR) is 30 GU."""
     from engine.appc.subsystems import CloakingSubsystem
     _subscribe()
     s, player, sensors = _player_in_set(base_range=2000.0)
@@ -89,9 +89,9 @@ def test_cloaked_contact_inside_the_bubble_is_identified():
     """INTENTIONAL stage-4 gameplay change (ENHANCED_SENSOR_CONTEST, default on).
 
     The identification sweep gates on sensor_detection.can_detect, and cloak is
-    now a multiplier on effective sensor range rather than an absolute. A
-    cloaked ship 15 GU away is inside the player's 20 GU bubble, so it IS
-    identified: it joins the known set and the callout fires. Deliberate
+    now a flat 10 GU plus a percentage of effective sensor range rather than an
+    absolute. A cloaked ship 15 GU away is inside the player's 30 GU bubble, so
+    it IS identified: it joins the known set and the callout fires. Deliberate
     divergence from BC — if this fails, ask "was the change reverted?".
     """
     player, sensors, target = _cloaked_contact_in_set(15.0)
@@ -101,10 +101,10 @@ def test_cloaked_contact_inside_the_bubble_is_identified():
 
 
 def test_cloaked_contact_outside_the_bubble_is_not_identified():
-    """The bubble boundary holds: at 30 GU — well inside the 2000 GU sensor
-    reach but outside the 20 GU cloak bubble — a cloaked ship stays unknown and
-    silent, exactly as in stock BC."""
-    player, sensors, target = _cloaked_contact_in_set(30.0)
+    """The bubble boundary holds: at 45 GU — well inside the 2000 GU sensor
+    reach but well outside the 30 GU cloak bubble — a cloaked ship stays
+    unknown and silent, exactly as in stock BC."""
+    player, sensors, target = _cloaked_contact_in_set(45.0)
     sensor_identification.identify_contacts(player)
     assert sensors.IsObjectKnown(target) == 0
     assert _identified == []
