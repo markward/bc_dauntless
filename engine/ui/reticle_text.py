@@ -7,6 +7,7 @@ See docs/superpowers/specs/2026-06-09-reticle-chrome-bars-text-design.md
 """
 from __future__ import annotations
 
+from engine.appc.target_menu import surface_gu_to
 from engine.core.ids import implements
 from engine.units import GU_TO_KM, GUPS_TO_KPH
 from engine.ui.ship_property_viewer import project
@@ -44,9 +45,6 @@ def build_reticle_text(player, camera, viewport) -> dict:
         return {"visible": False}
 
     centre = target.GetWorldLocation()
-    pc = player.GetWorldLocation()
-    dx, dy, dz = centre.x - pc.x, centre.y - pc.y, centre.z - pc.z
-    dist_gu = (dx * dx + dy * dy + dz * dz) ** 0.5
     radius = target.GetRadius() if hasattr(target, "GetRadius") else 0.0
     # BC's range readout is the distance to the target's BOUNDING SPHERE,
     # not to its centre. Confirmed against the original game by orbiting
@@ -55,7 +53,16 @@ def build_reticle_text(player, camera, viewport) -> dict:
     # (150 GU ≈ 26 km); a centre-distance readout would say 42 km, and the
     # planet itself renders wider than 25 km. Negligible for small ships,
     # decisive for planets/stations.
-    dist_gu = dist_gu - radius if dist_gu > radius else 0.0
+    #
+    # target_menu.surface_gu_to is the ONE place the player-to-contact vector
+    # is derived — including for a targeted PLANET, which has no Contact record
+    # (contact_index buckets ShipClass only) and so takes that function's miss
+    # path. There is deliberately no local fallback here: this file used to
+    # repeat the whole computation behind an `is None` guard, which meant the
+    # duplication survived the consolidation that was supposed to remove it.
+    # `centre` and `radius` stay live because they position the box, which is a
+    # projection rather than a readout.
+    dist_gu = surface_gu_to(target, player)
     # implements(), NOT hasattr(): a targeted planet is an ObjectClass with no
     # GetVelocity, and hasattr() is vacuously true on any TGObject — so this
     # read a _Stub and only came out as 0 kph because _Stub arithmetic collapses

@@ -93,11 +93,35 @@ function setTargetList(state) {
         // instead of CSS-rotating. CSS rotation promotes the caret
         // to its own GPU layer in CEF, which reduces text crispness
         // of the surrounding row.
+        //
+        // Rows with zero subsystem rows (a cloaked contact's fuzzy return,
+        // or an inert object like an asteroid whose hull/shields/power are
+        // non-targetable) have nothing to expand. Emitting a live caret
+        // there is a phantom affordance — it implies children that don't
+        // exist and toggles to nothing when clicked. We still emit the
+        // span (same base class — target_list.css gives .target-list__caret
+        // an explicit `width` + `margin-right`, so both states occupy the
+        // same box; it is NOT flex-sized, and it is NOT content-driven) so
+        // the name column stays aligned with rows that DO have a caret; we
+        // just drop the glyph and the onclick, and add a modifier class
+        // (target_list.css overrides its cursor to `default`) so CSS/tests
+        // can tell the two apart without relying on absence-of-content.
+        //
+        // Side effect, intentional: with no onclick/stopPropagation on the
+        // empty caret, a click there now falls through (normal DOM bubbling)
+        // to the row's own onclick and selects the ship — same as clicking
+        // the name or bars. That's reasonable (there's nothing else to do
+        // in that zone on a childless row) but wasn't true before this fix,
+        // when the caret always intercepted its own clicks.
+        const hasSubsystems = Array.isArray(row.subsystems) && row.subsystems.length > 0;
         const caretGlyph = expanded ? '&#9662;' : '&#9656;';  // ▾ / ▸
+        const caretHtml = hasSubsystems
+            ? '<span class="target-list__caret"'
+              + ' onclick="event.stopPropagation();' + toggleAttr + '">' + caretGlyph + '</span>'
+            : '<span class="target-list__caret target-list__caret--empty"></span>';
         html += '<div class="target-list__row target-list__row--' + aff + chosen + expandedCls + '"'
               +   ' onclick="' + targetAttr + '">'
-              +   '<span class="target-list__caret"'
-              +   ' onclick="event.stopPropagation();' + toggleAttr + '">' + caretGlyph + '</span>'
+              +   caretHtml
               +   '<span class="target-list__name">' + nameHtml + '</span>'
               +   '<span class="target-list__bars">'
               +     '<span class="target-list__bar target-list__bar--hull"'

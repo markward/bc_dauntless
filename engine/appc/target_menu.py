@@ -60,12 +60,39 @@ class STTargetMenu(STTopLevelMenu):
 
     Children are DERIVED, not stored. `_row_cache` holds one row per ship ever
     seen (identity-stable, because CycleTarget resolves a row then walks
-    siblings from it); `_contacts` is the membership pushed each frame. The
-    child list is their intersection, computed on read.
+    siblings from it); `_contacts` is the tuple of perception.Contact records
+    pushed each frame. The child list is their intersection, computed on read.
+
+    The records are RETAINED, not unpacked to ships: a contact carries the
+    frame's verdict (`perceivable`, `targetable`) and its distance
+    (`surface_gu`), and readers reach them through
+    `contact_for`. Keeping only the ships would force every reader to run a
+    second perception query, which is the duplication this model removes.
 
     This is why warp needs no target-list code: mid-warp the player is alone in
     the _WarpTransit set, so the pushed list is empty and the menu empties
     itself; on arrival it fills from the destination set.
+
+    THE LISTING NARROWED ON THIS BRANCH. Before, `_contacts` carried only the
+    `IsTargetable()` filter, so `GetObjectEntry` / `GetSubmenuW` /
+    `GetNumChildren` still answered for a ship that was out of sensor range or
+    cloaked — a caller could resolve a row for a contact the panel never drew.
+    Now `_rows()` filters on `Contact.targetable`, which `perceived_by` defines
+    as `perceivable and alive_or_wreck and IsTargetable()` — range and cloak
+    are folded in, so these three answer for strictly fewer ships than before.
+    This is deliberate, and was traced safe rather than assumed safe: the
+    displayed list and the radar both take their drawability from this same
+    `targetable` projection, not from the row's `IsVisible` flag, so no
+    visible UI surface changed; the SDK's `CycleTarget` falls back through its
+    `GetFirstChild`/`GetLastChild` path whenever `GetNextChild` returns None,
+    so a narrower sibling chain degrades to "wrap to the ends," not a crash;
+    and BC's own menu is sensor-gated too —
+    `sdk/Build/scripts/Maelstrom/Episode1/E1M2/E1M2.py:6694` calls
+    `pSensors.IsObjectVisible(...)` and only *then* asks the menu, which shows
+    the SDK does not expect the menu to answer for ships its own sensors have
+    already ruled out. A future reader who finds `GetObjectEntry` returning
+    None for a ship that is plainly still in the set should land on this
+    paragraph, not have to re-derive the reasoning from the diff.
     """
 
     def __init__(self, label: str = ""):
@@ -74,27 +101,156 @@ class STTargetMenu(STTopLevelMenu):
         self._row_cache: dict = {}
         self._contacts: tuple = ()
         super().__init__(label)
-        # The last ship the player manually selected. Survives across
-        # mission saves so a reload restores the selection. SDK callers
-        # mutate via ClearPersistentTarget; engine sets it on real clicks.
+        # The last ship the player manually selected — the slot BC's
+        # persistent-target hint would live in.
+        #
+        # NOTHING WRITES IT YET, deliberately. `ClearPersistentTarget` (real
+        # SWIG surface, App.py:8074) clears it; the matching Set/Get accessors
+        # were ours, unpublished, and had no callers, so they were deleted
+        # rather than left looking like a working hook. Build the writer and
+        # its reader together if persistent-target restore is ever wanted.
         self._persistent_target_name: str | None = None
 
     # ── Derived membership ───────────────────────────────────────────────────
 
-    def set_contacts(self, ships) -> None:
-        """Push this frame's membership (from perception.contacts_for).
+    def set_contacts(self, contacts) -> None:
+        """Push this frame's contacts (perception.Contact records, from
+        perception.perceived_by).
+
+        Every row this builds is always `SetVisible()`. `perceived_by`
+        defines `targetable = perceivable and alive_or_wreck and
+        IsTargetable()`, so `targetable ⇒ perceivable` — a contact this list
+        ever draws a row for is, by construction, one it was allowed to
+        perceive. A contact that fails detection (nebula, cloak, out of
+        sensor range) is simply absent from `_rows()` (filtered on
+        `Contact.targetable`, see `_rows`/`GetObjectEntry`); it never becomes
+        a greyed-out row, it is removed from the list entirely. There is no
+        production path — synthetic or otherwise — that needs this method to
+        mark a listed row not-visible.
+
+        THE CONSEQUENCE FOR READERS: this method re-asserts `IsVisible()` for
+        everything it lists, every frame, so the flag answers NO question about
+        detectability — nothing writes `perceivable` into it. A reader that
+        filters on it drops nothing on a pushed frame, and between a
+        `SetNotVisible` and the next push it drops the WRONG thing: a live,
+        perceivable contact. Read `perceivable` off the record (`contact_for`)
+        instead — engine.ui.target_list_view carried exactly such an
+        `if is_vis` filter until it was removed.
+
+        THE `SetVisible()` IS NOT DECORATION, and it is not "the row was just
+        built so make it visible" either — a fresh row already is. It is state
+        NORMALISATION on a REUSED row: `_row_cache` keeps one row per ship for
+        the life of the menu, so a row carries whatever the last caller left on
+        it. `SetNotVisible` is real SDK surface (STMenu/STSubsystemMenu) driven
+        directly against a target-list row today
+        (tests/integration/test_target_list_sdk_integration.py::
+        test_sdk_cycle_target_skips_invisible), and SDK CycleTarget
+        (TacticalInterfaceHandlers.py:701-730) skips any row for which
+        `IsVisible() == 0`. Nothing else ever clears that flag, so without the
+        re-assert one such call would leave a live, perceivable contact
+        permanently unselectable. Pinned by
+        tests/unit/test_target_menu_visibility_derived.py::
+        test_a_row_left_not_visible_comes_back_on_the_next_push — deleting the
+        call fails that test (verified by mutation). Note no *SDK script*
+        currently hides a target-list row, so this defends an invariant on
+        reused rows rather than fixing a bug the shipped game hits today.
 
         Idempotent and cheap: rows are built once per ship and reused, so a
         repeated push costs a dict lookup per contact.
         """
+        from engine.appc.perception import Contact
         from engine.appc.ships import ShipClass
-        self._contacts = tuple(s for s in ships if isinstance(s, ShipClass))
-        for ship in self._contacts:
-            if ship not in self._row_cache:
-                self.RebuildShipMenu(ship)
+        self._contacts = tuple(
+            c for c in contacts
+            if isinstance(c, Contact) and isinstance(c.ship, ShipClass))
+        for c in self._contacts:
+            if c.ship not in self._row_cache:
+                self.RebuildShipMenu(c.ship)
+            row = self._row_cache.get(c.ship)
+            if row is None:
+                continue
+            row.SetVisible()
+
+    def contact_for(self, ship):
+        """The pushed Contact record for ``ship``, or None if it is not a
+        current contact.
+
+        The read path for everything the record already answers — most of all
+        `surface_gu`, BC's range readout. Callers must use this rather than
+        re-deriving distance from world positions; that duplication is what
+        let five call sites drift onto two different conventions.
+        """
+        for c in self._contacts:
+            if c.ship is ship:
+                return c
+        return None
+
+    def surface_gu_to(self, ship, observer) -> float:
+        """Surface distance from *observer* to *ship*, in GU. ALWAYS answers.
+
+        The cache half of the two range readouts (see the module-level
+        `surface_gu_to`, which is what they actually call): read this frame's
+        pushed record if there is a usable one, otherwise measure. It lives on
+        the menu because the record is the menu's state — asking perception for
+        it made the model layer import App to reach this class, which is the
+        cycle this method's move broke.
+
+        Fast path: the record the host loop already pushed this frame
+        (host_loop._pump_contacts, before the panels render). Reading it beats
+        calling perceived_by again, which would redo the whole per-observer
+        pass to answer one number.
+
+        Miss path: `perception.measure_surface_gu_to`, the same arithmetic the
+        records themselves were built from — one implementation, not one plus a
+        copy. Deliberately NOT inlined here; a second derivation inside the menu
+        is precisely how five call sites drifted onto two conventions before.
+        Two ways to miss from here (the third, no menu at all, can only be seen
+        by the module-level function):
+
+          * a targeted PLANET or station. contact_index buckets ShipClass only,
+            so an ObjectClass never has a record — and this is where the
+            convention earns its keep (orbiting Haven reads 26 km, not 42; on a
+            ship the radius subtraction is a rounding error).
+          * a NaN record. RebuildShipMenus synthesises `surface_gu=NaN` on
+            purpose because it takes a set, not an observer, and so cannot
+            answer distance. NaN is treated as a miss; without that, "nan km"
+            would render on screen.
+
+        ⚠️ *observer* is used ONLY on the miss path. The record path returns
+        `contact.surface_gu` whoever you pass, because this menu stores no
+        observer alongside its contacts and so cannot check: it holds one
+        frame's push, and that push came from the player.
+        `surface_gu_to(ship, other_ship)` will therefore silently hand back the
+        PLAYER's distance whenever a record exists. Both callers pass the
+        player, so this is consistent today — but do not read this as answering
+        a per-observer question; it does not, and making it do so means putting
+        the observer into the pushed record.
+
+        *observer* is required and must not be None: measuring a distance from
+        nowhere has no answer, and there is no sentinel to hand back (that is
+        the whole point). Both callers already hold the player and bail before
+        reaching here without one — ship_display_panel returns (None, None) on
+        a null player, and the reticle is not built without one — so requiring
+        it deletes two unreachable branches rather than pushing work onto
+        anybody.
+        """
+        from engine.appc.perception import measure_surface_gu_to
+        contact = self.contact_for(ship)
+        # `x != x` is the NaN test that needs no import and no isinstance:
+        # Contact.surface_gu is always a float.
+        if contact is not None and contact.surface_gu == contact.surface_gu:
+            return contact.surface_gu
+        return measure_surface_gu_to(ship, observer)
 
     def _rows(self) -> list:
-        """The projection: cached rows for the current contacts, in order.
+        """The projection: cached rows for the current TARGETABLE contacts.
+
+        `targetable` is the record's own verdict — it already folds in
+        IsTargetable(), death, and the wreck-linger window — so every reader
+        that walks these children (the target list, the radar) gets its
+        drawability from ONE answer. It says nothing about the rows'
+        `IsVisible` flag, which `set_contacts` asserts True for everything
+        listed here; see that method's docstring.
 
         Defensive on both attributes: `_children` is a property, so anything
         that reads it during base-class construction would land here before
@@ -105,7 +261,8 @@ class STTargetMenu(STTopLevelMenu):
         contacts = getattr(self, "_contacts", None)
         if not cache or not contacts:
             return []
-        return [cache[s] for s in contacts if s in cache]
+        return [cache[c.ship] for c in contacts
+                if c.targetable and c.ship in cache]
 
     @property
     def _children(self) -> list:
@@ -154,11 +311,15 @@ class STTargetMenu(STTopLevelMenu):
         SDK: TacticalInterfaceHandlers.py:711 (CycleTarget). Identity
         comparison — the SDK passes the actual ShipClass object.
 
-        Returns None for a ship that is not a current contact even if a row is
-        cached, so this agrees with the listing by construction — SDK
-        CycleTarget must never be able to select a contact the panel drops.
+        Returns None for a ship that is not LISTED even if a row is cached, so
+        this agrees with the projection by construction — SDK CycleTarget must
+        never be able to select a contact the panel drops. `_contacts` is now
+        wider than the listing (it carries a record for every ship in the
+        system, targetable or not), so the gate is the record's `targetable`
+        flag, which is exactly what `_rows` filters on.
         """
-        if ship not in self._contacts:
+        c = self.contact_for(ship)
+        if c is None or not c.targetable:
             return None
         return self._row_cache.get(ship)
 
@@ -203,25 +364,6 @@ class STTargetMenu(STTopLevelMenu):
         """SDK: TacticalInterfaceHandlers.py:656, HelmMenuHandlers.py:947,
         MissionShared.py:354."""
         self._persistent_target_name = None
-
-    def SetPersistentTarget(self, name) -> None:
-        """Engine-internal — NOT in the SDK SWIG surface.
-
-        The original BC engine sets the persistent-target hint
-        automatically when the player manually selects a target.
-        We expose it as a Python method so our engine layer (which
-        also handles click events) can drive it the same way. SDK
-        scripts only ever call ClearPersistentTarget.
-        """
-        self._persistent_target_name = str(name) if name else None
-
-    def GetPersistentTarget(self) -> "str | None":
-        """Engine-internal — NOT in the SDK SWIG surface.
-
-        Read by the save/load path so a reloaded game can re-fire
-        ET_RESTORE_PERSISTENT_TARGET and SetTarget on the same ship.
-        """
-        return self._persistent_target_name
 
     def RebuildShipMenu(self, ship) -> None:
         """Create or refresh the cached row for ``ship``. SDK callsites:
@@ -307,27 +449,64 @@ class STTargetMenu(STTopLevelMenu):
                 self._add_subsystem_row(recurse_into, child)
 
     def RebuildShipMenus(self, source_set=None) -> None:
-        """Bulk refresh from a set. Never called from SDK Python; included so
-        the engine auto-population hook has a single entry point.
+        """Bulk refresh from a set. Never called from SDK Python.
 
-        Retained for the existing callers; it now pushes membership rather
-        than appending children, so its effect is the same as set_contacts
-        over that set's ships. Non-ship members are skipped — see
-        RebuildShipMenu for the underlying reason.
+        NOT the engine auto-population hook — it used to be, and this docstring
+        used to call it "a single entry point" for one, which is stale. The
+        hook is `host_loop._pump_contacts`, which pushes
+        `perception.perceived_by(player)` every frame. This is a
+        bootstrap/test-population helper and nothing more.
+
+        It pushes membership rather than appending children, so its effect is
+        the same as set_contacts over that set's ships. Non-ship members are
+        skipped — see RebuildShipMenu for the underlying reason.
 
         In this codebase the "bridge" set holds the bridge interior
         only; spawned ships live in mission-named spatial sets like
         "Biranu1". Pass that spatial set explicitly to populate the
         target list from real ships.
+
+        ⚠️ It takes a SET, not an observer, so it cannot answer perception:
+        the records it synthesises are flat "listed and drawable" with NO
+        distance. Only the host loop's `perceived_by` push carries a real one.
+        This exists for bootstrap/test population only.
+
+        The distance is NaN, not 0.0, and that is deliberate — keep it.
+        `contact_for` cannot tell a synthesised zero from a genuine one, so a
+        reader that trusted these would render a perfectly plausible
+        "0.00 km", and a believable wrong number is the worst failure mode this
+        codebase has (same shape as the silent `_Stub` no-ops in
+        docs/stub_heatmap.md). NaN is the value no reader can mistake for an
+        answer.
+
+        The hazard is now caught rather than merely visible.
+        `surface_gu_to` — the single read path for both range
+        readouts — treats a NaN record as a miss and measures against the
+        observer instead, so a push from here no longer puts "nan km" on
+        screen. That is a property of the reader, not a licence to synthesise
+        0.0 here: any NEW reader of `contact_for(...).surface_gu` must handle
+        NaN itself (pinned by tests/unit/test_readers_share_one_distance.py::
+        test_bulk_rebuild_synthesises_no_distance_at_all).
         """
         import App as _App
+        from engine.appc.perception import Contact
         from engine.appc.ships import ShipClass
         if source_set is None:
             source_set = _App.g_kSetManager.GetSet("bridge")
         if source_set is None:
             return
-        self.set_contacts([o for o in source_set.GetObjectList()
-                           if isinstance(o, ShipClass)])
+        nan = float("nan")
+        self.set_contacts([
+            # subsystems_targetable=True is explicit, not the dataclass
+            # default acquired by accident: this synthesiser has no cloak
+            # state to consult (it takes a SET, not an observer), and a
+            # silently-inherited True is exactly the "believable wrong
+            # number" this method's own distance handling goes out of its
+            # way to avoid — see the NaN-distance note above.
+            Contact(ship=o, surface_gu=nan,
+                    perceivable=True, targetable=True,
+                    subsystems_targetable=True)
+            for o in source_set.GetObjectList() if isinstance(o, ShipClass)])
 
     def ResetAffiliationColors(self) -> None:
         """Recompute every row's affiliation token. SDK callsites:
@@ -360,6 +539,35 @@ def STTargetMenu_CreateW(label: str = "") -> STTargetMenu:
 def STTargetMenu_GetTargetMenu() -> "STTargetMenu | None":
     """SDK accessor — TacticalInterfaceHandlers + MissionLib + others."""
     return _target_menu_singleton
+
+
+def surface_gu_to(ship, observer) -> float:
+    """Surface distance from *observer* to *ship*, in GU. ALWAYS answers.
+
+    THE read path for the on-screen range readouts (engine.ui.reticle_text and
+    engine.ui.ship_display_panel), and the only distance derivation either of
+    them performs. Callers do ONE unconditional read; there is deliberately no
+    sentinel for them to branch on, because the branch is how the duplication
+    came back last time. Both readouts used to keep their entire original
+    computation as a `if dist is None:` fallback, which added a layer instead of
+    replacing one — the single worst regression this subsystem has had.
+
+    This function exists rather than making the readouts fetch the singleton
+    themselves for exactly that reason: `STTargetMenu_GetTargetMenu()` is None
+    on boot frames and in headless fixtures, so a caller holding the menu would
+    need an `if menu is None:` branch — and that branch is where a caller-side
+    recomputation grows back. Resolving the singleton here keeps the third miss
+    case (no menu at all) inside the one implementation.
+
+    The record/NaN/observer semantics are `STTargetMenu.surface_gu_to`'s; read
+    that docstring before relying on the *observer* argument, which the record
+    path ignores.
+    """
+    from engine.appc.perception import measure_surface_gu_to
+    menu = STTargetMenu_GetTargetMenu()
+    if menu is None:
+        return measure_surface_gu_to(ship, observer)
+    return menu.surface_gu_to(ship, observer)
 
 
 def _reset_target_menu_singleton() -> None:

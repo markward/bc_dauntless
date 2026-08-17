@@ -22,6 +22,7 @@ import App
 from engine.appc.sensor_detection import clear_undetectable_player_lock
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import CloakingSubsystem, SensorSubsystem
+from tests.helpers.cloak_geometry import assert_outside
 
 
 def _scene(separation_gu=50.0):
@@ -82,6 +83,11 @@ def test_lock_drops_when_sensors_are_destroyed():
 def test_lock_drops_when_the_target_cloaks():
     # Behaviour the host loop already had; it must survive the swap from
     # is_hidden_by_cloak to can_detect (whose first gate is the same test).
+    # Still passes unchanged under ENHANCED_SENSOR_CONTEST: the cloak bubble is
+    # a flat floor plus a fraction of range, and this fixture's 1000 GU base
+    # range leaves an enemy 50 GU away comfortably outside it. Pinned rather
+    # than assumed. See tests/unit/test_cloak_detection_contest.py.
+    assert_outside(50.0, 1000.0)
     player, enemy, _ = _scene()
     enemy.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
     clear_undetectable_player_lock(player)

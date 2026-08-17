@@ -91,7 +91,6 @@ from engine.appc.subsystems import (
     impulse_online_fraction,
 )
 from engine.appc.weapon_subsystems import _target_undetectable
-from engine.ui.target_list_visibility import update_target_list_visibility
 
 _alert_listener: "AlertAudioListener" = AlertAudioListener()
 
@@ -257,7 +256,7 @@ def _bootstrap_firing_pipeline() -> None:
     """
     # Install the sensor-damage AI gate first so it is live regardless of
     # whether any later pipeline step short-circuits. Idempotent.
-    from engine.appc.sensor_detection import install_ai_sensor_gate
+    from engine.appc.ai_sensor_gate import install_ai_sensor_gate
     install_ai_sensor_gate()
 
     import App
@@ -5846,12 +5845,18 @@ def _pump_contacts(menu, player) -> tuple:
     mid-flight (E2M2, E2M6 both call ResetAffiliationColors after regrouping).
     Doing it here keeps colours right without having to catch those calls.
 
+    Pushes perception.Contact RECORDS, not ships: the record carries this
+    frame's verdict (perceivable / targetable) and its distances, so the menu
+    derives row visibility from the same answer it derives membership from.
+    That is what retired engine.ui.target_list_visibility, whose separate pass
+    recomputed range and cloak under its own rule and ignored death entirely.
+
     Returns the contacts pushed, so callers and tests can see the answer.
 
     Spec: docs/superpowers/specs/2026-08-16-contact-index-and-perception-design.md
     """
-    from engine.appc.perception import contacts_for
-    contacts = contacts_for(player)
+    from engine.appc.perception import perceived_by
+    contacts = perceived_by(player)
     menu.set_contacts(contacts)
     menu.ResetAffiliationColors()
     return contacts
@@ -7004,28 +7009,26 @@ def run(mission_name: Optional[str] = None,
                     and not ship_property_viewer.is_open()
                     and not TopWindow_GetTopWindow().IsCutsceneMode())
 
-                # Contact membership — push the player's current system every
-                # frame. Worst case this is one frame stale; it can never be
-                # permanently wrong, which is what the old set-subscription was
-                # (bound at mission load, never rebound on warp).
+                # Contact membership AND per-row visibility — push the player's
+                # current system every frame. Worst case this is one frame
+                # stale; it can never be permanently wrong, which is what the
+                # old set-subscription was (bound at mission load, never
+                # rebound on warp).
+                #
+                # There is no second visibility pass: _pump_contacts pushes
+                # perception.Contact records and the menu's listing is derived
+                # from each record's `targetable`. (Row IsVisible is NOT derived
+                # from `perceivable` — set_contacts asserts SetVisible() on every
+                # listed row; drawability lives in the record, not the flag.) The
+                # pass that used to live here (engine.ui.target_list_visibility)
+                # applied its own range/cloak rule and ignored death, so it could
+                # leave a row Tab-selectable that the target list refused to draw.
                 _menu = App.STTargetMenu_GetTargetMenu()
                 _game = Game_GetCurrentGame()
                 _player = _game.GetPlayer() if _game is not None else None
                 if _menu is not None and _player is not None:
                     _pump_contacts(_menu, _player)
 
-                # Sensor-visibility update — flip per-row IsVisible
-                # based on range from the player. TargetListView
-                # filters rows where IsVisible() == 0. We walk the
-                # player's spatial set (e.g. "Biranu1"), not the
-                # bridge set (which holds bridge-interior objects).
-                # Unchanged in stage 1; stage 3 folds this into the
-                # perception query and deletes the module.
-                _player_set = getattr(_player, "_containing_set", None) if _player is not None else None
-                if _menu is not None and _player is not None and _player_set is not None:
-                    update_target_list_visibility(
-                        _menu, _player_set.GetObjectList(), _player
-                    )
                 # Surface 2 of weapons-config: reconcile the equipment-gated
                 # weapon/defense command rows on the F2 Tactical menu. Idempotent
                 # + raise-safe + early-out when no Tactical menu exists, so it's

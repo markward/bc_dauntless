@@ -189,7 +189,13 @@ def test_warp_clears_all_targets():
     # covered by tests/integration/test_target_list_follows_player_system.py.
     import types, sys
     from engine.appc import target_menu
-    from engine.appc.perception import contacts_for
+    from engine.appc.perception import Contact, contacts_for
+
+    def _listed(*ships):
+        """set_contacts takes perception.Contact records, not bare ships — the
+        menu derives the listing from the record's `targetable`."""
+        return [Contact(ship=s, surface_gu=0.0,
+                        perceivable=True, targetable=True) for s in ships]
 
     menu = target_menu.STTargetMenu_CreateW("targets")
     src = _make_set("SrcT")
@@ -202,8 +208,8 @@ def test_warp_clears_all_targets():
     src.AddObjectToSet(enemy, "enemy")
     player.SetTarget(enemy)
     player.SetTargetSubsystem(object())
-    menu.set_contacts([enemy])
-    menu.SetPersistentTarget("enemy")
+    menu.set_contacts(_listed(enemy))
+    menu._persistent_target_name = "enemy"
     assert len(menu._children) == 1
 
     mod = types.ModuleType("FakeSys.DestT")
@@ -215,4 +221,7 @@ def test_warp_clears_all_targets():
     assert player.GetTarget() is None            # current target dropped
     assert player.GetTargetSubsystem() is None   # subsystem lock dropped
     assert contacts_for(player) == ()            # enemy left behind is no contact
-    assert menu.GetPersistentTarget() is None    # persistent hint cleared
+    # Persistent hint cleared — warp.py calls the published
+    # ClearPersistentTarget(); the unpublished Set/Get accessors are gone, so
+    # the slot is seeded and read directly here.
+    assert menu._persistent_target_name is None

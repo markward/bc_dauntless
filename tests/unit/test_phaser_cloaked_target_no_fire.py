@@ -14,6 +14,7 @@ Mirrors the fixture shape of test_phaser_fire_range_gate.py.
 """
 from engine.appc.math import TGPoint3
 from engine.appc.subsystems import PhaserSystem
+from tests.helpers.cloak_geometry import inside_gu, outside_gu
 
 
 class _FakeCloak:
@@ -54,6 +55,24 @@ class _Ship:
                 if i == 1: return TGPoint3(0.0, 1.0, 0.0)
                 return TGPoint3(0.0, 0.0, 1.0)
         return _R()
+
+
+class _SensorShip(_Ship):
+    """Firing ship carrying a REAL SensorSubsystem at a Galaxy's 2000 GU base
+    range, giving a far smaller cloak bubble than the sensor-less fallback
+    would. Distances come from tests.helpers.cloak_geometry. Mirrors
+    tests/unit/test_sensor_detection.py::_ship_with_sensor."""
+
+    def __init__(self, x, y, z):
+        super().__init__(x, y, z)
+        from engine.appc.subsystems import SensorSubsystem
+        self._sensors = SensorSubsystem("Sensors")
+        self._sensors._max_condition = 100.0
+        self._sensors._condition = 100.0
+        self._sensors.SetBaseSensorRange(2000.0)
+
+    def GetSensorSubsystem(self):
+        return self._sensors
 
 
 class _FakeBank:
@@ -99,7 +118,20 @@ def _build_system(banks, ship):
 
 # ── StartFiring gate ──────────────────────────────────────────────────────
 
-def test_start_firing_no_op_and_no_sfx_when_target_cloaked():
+def test_start_firing_no_op_and_no_sfx_when_target_cloaked(monkeypatch):
+    """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False.
+
+    Cloak bubble is now a flat floor plus a percentage of effective range
+    rather than an absolute (see tests/unit/test_cloak_detection_contest.py).
+    This ship models no BaseSensorRange, so its effective range is
+    FALLBACK_RANGE_GU and its bubble is the largest in the game -- the 50 GU
+    target below is well inside it, asserted below rather than assumed. The
+    assertions are unchanged; the flag makes
+    explicit the configuration they have always described. The companion test
+    pins the default configuration.
+    """
+    import engine.appc.sensor_detection as sd
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
     ship = _Ship(0, 0, 0)
     target = _CloakedTarget(50, 0, 0)  # in range, but cloaked
     bank = _FakeBank()
@@ -110,6 +142,34 @@ def test_start_firing_no_op_and_no_sfx_when_target_cloaked():
     assert bank.fire_calls == []            # emitter.Fire never reached → no SFX
     assert bank.IsFiring() == 0
     # Held state must NOT latch — otherwise the host pump would keep trying.
+    assert sys._fire_held is False
+
+
+def test_start_firing_engages_close_cloaked_target_but_not_beyond_the_bubble():
+    """INTENTIONAL DIVERGENCE (ENHANCED_SENSOR_CONTEST default-on): a cloaked
+    ship inside the bubble is a legal target and IS fired on.
+
+    Uses _SensorShip (2000 GU sensors -> a small cloak bubble) rather than the
+    30000 GU fallback, so both cases sit INSIDE the bank's 60 GU
+    GetMaxDamageDistance and the only thing separating them is detectability --
+    otherwise PhaserSystem._can_engage would be doing the work and the second
+    assertion would pass for the wrong reason.
+    """
+    ship = _SensorShip(0, 0, 0)
+    bank = _FakeBank()
+    sys = _build_system([bank], ship)
+
+    # Inside the cloak bubble and inside weapon range → fires.
+    sys.StartFiring(target=_CloakedTarget(inside_gu(), 0, 0))
+    assert len(bank.fire_calls) == 1
+    assert sys._fire_held is True
+
+    # Still inside the 60 GU weapon range, but outside the cloak bubble →
+    # undetectable, so no shot, no SFX, no held latch (the ship's-horn guard).
+    sys.StopFiring()
+    bank.fire_calls.clear()
+    sys.StartFiring(target=_CloakedTarget(outside_gu(), 0, 0))
+    assert bank.fire_calls == []
     assert sys._fire_held is False
 
 
@@ -128,7 +188,16 @@ def test_start_firing_dispatches_when_target_detectable():
 
 # ── held-trigger pump gate (host_loop._pump_held_weapons) ─────────────────
 
-def test_pump_stops_when_target_cloaks_mid_burst():
+def test_pump_stops_when_target_cloaks_mid_burst(monkeypatch):
+    """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False.
+
+    Same reason as the StartFiring case above: this ship's fallback 30000 GU
+    effective range gives the game's largest cloak bubble, so the 50 GU target below is
+    detectable while cloaked with the flag at its default. Assertions
+    unchanged; the companion below pins the default configuration.
+    """
+    import engine.appc.sensor_detection as sd
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
     from engine.host_loop import _pump_held_weapons
     ship = _Ship(0, 0, 0)
     bank = _FakeBank(can_fire=True)
@@ -146,6 +215,39 @@ def test_pump_stops_when_target_cloaks_mid_burst():
 
     assert bank.fire_calls == []            # no re-fire → no restarted SFX
     assert sys._fire_held is False          # held state cleared
+    assert sys._held_target is None
+
+
+def test_pump_continues_on_close_cloak_and_stops_outside_the_bubble():
+    """INTENTIONAL DIVERGENCE (ENHANCED_SENSOR_CONTEST default-on): a target
+    that cloaks while inside the bubble stays engaged; the burst only stops once
+    it is outside. _SensorShip's bubble is far below its 60 GU weapon range, so
+    both cases stay inside weapon range and detectability is the only variable.
+    """
+    from engine.host_loop import _pump_held_weapons
+    ship = _SensorShip(0, 0, 0)
+    bank = _FakeBank(can_fire=True)
+    sys = _build_system([bank], ship)
+    ship.GetPhaserSystem = lambda: sys
+
+    sys.StartFiring(target=_PlainTarget(inside_gu(), 0, 0))
+    assert sys._fire_held is True
+
+    # Cloaks inside the bubble, so the burst continues.
+    sys._held_target = _CloakedTarget(inside_gu(), 0, 0)
+    bank.fire_calls.clear()
+    bank._firing = False                   # bank cycled
+    _pump_held_weapons([ship], 0.34)
+    assert len(bank.fire_calls) == 1
+    assert sys._fire_held is True
+
+    # Slips outside the bubble, so the burst stops.
+    sys._held_target = _CloakedTarget(outside_gu(), 0, 0)
+    bank.fire_calls.clear()
+    bank._firing = False
+    _pump_held_weapons([ship], 0.34)
+    assert bank.fire_calls == []
+    assert sys._fire_held is False
     assert sys._held_target is None
 
 

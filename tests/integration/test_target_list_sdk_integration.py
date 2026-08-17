@@ -1,6 +1,7 @@
 # tests/integration/test_target_list_sdk_integration.py
 """Load real SDK scripts against the target_menu shim."""
 import App
+from engine.appc.perception import Contact
 from engine.appc.ships import ShipClass
 
 
@@ -20,8 +21,15 @@ def _populate_target_menu(target_menu, names):
     for n in names:
         ship = ShipClass(); ship.SetName(n)
         ships.append(ship)
-    # Children are derived from the pushed contact list, not appended.
-    target_menu.set_contacts(ships)
+    # Children are derived from the pushed contact list, not appended. The
+    # push carries perception.Contact records, not bare ships: the listing
+    # comes off the record's `targetable`. Row visibility does NOT come off
+    # `perceivable` — set_contacts asserts SetVisible() on every listed row —
+    # so the IsVisible() flag SDK CycleTarget reads is True here for all three,
+    # and the test below clears one by hand to drive that SDK path.
+    target_menu.set_contacts([
+        Contact(ship=s, surface_gu=0.0,
+                perceivable=True, targetable=True) for s in ships])
     return ships
 
 

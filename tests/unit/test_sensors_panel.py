@@ -5,6 +5,38 @@ import json
 import App
 from engine.appc.ships import ShipClass
 from engine.appc.math import TGPoint3
+from engine.appc.perception import Contact
+
+
+def _listed(*ships):
+    """Contact records for ships the player can see and target — what
+    perceived_by returns for an in-range, uncloaked, living contact.
+
+    set_contacts takes perception.Contact records rather than bare ships: the
+    record carries the frame's verdict, and the menu derives the listing from
+    `targetable`. Row IsVisible is NOT derived from `perceivable` — every
+    listed row is asserted visible — so `perceivable` is read off the record
+    directly by the panels that care. The distance is 0.0 because nothing in
+    this file reads it.
+    """
+    return [Contact(ship=s, surface_gu=0.0,
+                    perceivable=True, targetable=True) for s in ships]
+
+
+def _undetected(*ships):
+    """A contact the player's sensors did not pick up this frame — the shape
+    `perceived_by` really produces for one.
+
+    BOTH flags are False, deliberately: `targetable` is built as `perceivable
+    and ...`, so there is no such thing as a perceivable=False,
+    targetable=True record outside a test's imagination. This helper used to
+    build exactly that pairing, and it was the only exerciser of a since-removed
+    unreachable guard in SensorsPanel._snapshot.
+    """
+    return [Contact(ship=s, surface_gu=0.0,
+                    perceivable=False, targetable=False) for s in ships]
+
+
 
 
 def _setup_game():
@@ -49,7 +81,7 @@ def test_payload_lists_visible_contacts_with_affiliations():
         spatial.AddObjectToSet(far, "Far")
         player._containing_set = spatial
 
-        menu.set_contacts([ally, foe, far])
+        menu.set_contacts(_listed(ally, foe, far))
         menu.ResetAffiliationColors()
         # All three rows visible (sensor visibility runs separately).
         for child in menu._children:
@@ -75,6 +107,72 @@ def test_payload_lists_visible_contacts_with_affiliations():
         _set_current_game(None)
 
 
+def test_radar_membership_comes_from_the_push_not_a_second_set_walk():
+    """The pushed records ARE the frame's contact list.
+
+    The panel used to walk player._containing_set and look each ship back up
+    in the menu with GetObjectEntry — a second membership source, which is the
+    exact failure the contact model exists to kill (a set pointer that outlives
+    the ships it named, e.g. across a warp). Here the player's set pointer no
+    longer holds the contact; the radar still draws what the frame pushed.
+    """
+    from engine.ui.sensors_panel import SensorsPanel
+    from engine.appc.sets import SetClass
+
+    App._reset_target_menu_singleton()
+    menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game()
+    try:
+        ship = _make_ship("Galor", x=0.0, y=400.0, z=0.0)
+        stale = SetClass()
+        App.g_kSetManager.AddSet(stale, "test_set")
+        player._containing_set = stale      # does NOT contain "Galor"
+
+        menu.set_contacts(_listed(ship))
+
+        panel = SensorsPanel()
+        state = json.loads(panel.render_payload()[len("setRadar("):-2])
+        assert [c["name"] for c in state["contacts"]] == ["Galor"]
+    finally:
+        App.g_kSetManager.DeleteSet("test_set")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_radar_keeps_its_own_display_clip():
+    """Preserve: the radar clips to RadarDisplay.GetRange() (1000 GU by
+    default), NOT to the player's sensor range (2000 GU on a Galaxy). The
+    target list legitimately lists contacts the radar does not draw — display
+    scale and perception are different concepts, and the record carries no
+    radar range."""
+    from engine.ui.sensors_panel import SensorsPanel, DEFAULT_RANGE_GU
+    from engine.appc.sets import SetClass
+
+    App._reset_target_menu_singleton()
+    menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game()
+    try:
+        near = _make_ship("Near", x=0.0, y=DEFAULT_RANGE_GU * 0.5, z=0.0)
+        # Well inside a Galaxy's 2000 GU sensors, well outside the 1000 GU disc.
+        far = _make_ship("Far", x=0.0, y=DEFAULT_RANGE_GU * 1.5, z=0.0)
+        spatial = SetClass()
+        App.g_kSetManager.AddSet(spatial, "test_set")
+        spatial.AddObjectToSet(near, "Near")
+        spatial.AddObjectToSet(far, "Far")
+        player._containing_set = spatial
+        menu.set_contacts(_listed(near, far))
+
+        panel = SensorsPanel()
+        state = json.loads(panel.render_payload()[len("setRadar("):-2])
+        # Both are perceivable contacts; only one is drawable.
+        assert menu.contact_for(far).perceivable is True
+        assert [c["name"] for c in state["contacts"]] == ["Near"]
+    finally:
+        App.g_kSetManager.DeleteSet("test_set")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
 def test_payload_is_idempotent_until_state_changes():
     from engine.ui.sensors_panel import SensorsPanel
     from engine.appc.sets import SetClass
@@ -88,7 +186,7 @@ def test_payload_is_idempotent_until_state_changes():
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "X")
         player._containing_set = spatial
-        menu.set_contacts([ship])
+        menu.set_contacts(_listed(ship))
         menu._children[0].SetVisible()
 
         panel = SensorsPanel()
@@ -119,7 +217,7 @@ def test_payload_marks_targeted_contact():
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "Galaxy")
         player._containing_set = spatial
-        menu.set_contacts([ship])
+        menu.set_contacts(_listed(ship))
         menu._children[0].SetVisible()
         # Add to bridge set so player.SetTarget("Galaxy") resolves.
         bridge = App.g_kSetManager.GetSet("bridge")
@@ -142,7 +240,7 @@ def test_payload_marks_targeted_contact():
         _set_current_game(None)
 
 
-def test_payload_skips_invisible_rows():
+def test_an_undetected_contact_is_never_drawn():
     from engine.ui.sensors_panel import SensorsPanel
     from engine.appc.sets import SetClass
 
@@ -155,8 +253,13 @@ def test_payload_skips_invisible_rows():
         App.g_kSetManager.AddSet(spatial, "test_set")
         spatial.AddObjectToSet(ship, "Cloaked")
         player._containing_set = spatial
-        menu.set_contacts([ship])
-        menu._children[0].SetNotVisible()  # not picked up by sensors
+        # Not picked up by sensors. Expressed as the RECORD saying so because
+        # the record is the only input, and with BOTH flags down — which is
+        # what perceived_by actually produces, `targetable` being
+        # `perceivable and ...`. The contact therefore never becomes a row at
+        # all; it is dropped by the projection, not by a second check inside
+        # the panel.
+        menu.set_contacts(_undetected(ship))
 
         panel = SensorsPanel()
         script = panel.render_payload()

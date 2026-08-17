@@ -1,5 +1,6 @@
 from engine.appc.projectiles import Torpedo
 from engine.appc.math import TGPoint3
+from tests.helpers.cloak_geometry import inside_gu, outside_gu
 
 
 class FakeShip:
@@ -80,6 +81,110 @@ def test_cloaked_target_steers_to_frozen_last_seen(monkeypatch):
     t2_vel_before_x = t._velocity.x
     projectiles._guide(t, 0.016)
     assert t._velocity.x >= t2_vel_before_x         # still steering +x-ward
+
+
+def _cloak_scene(target_x):
+    """Firing ship with a REAL 2000 GU SensorSubsystem, plus a fully cloaked
+    target at (target_x, 0, 0). Pass target_x from
+    tests.helpers.cloak_geometry so a cloak retune needs no edit here.
+
+    Real engine objects, not fakes: _target_visible swallows every exception and
+    returns True, so a fake missing a method would make these tests pass for the
+    wrong reason. Mirrors tests/unit/test_cloak_detection_contest.py::_observer.
+    """
+    from engine.appc.ships import ShipClass, ShipClass_Create
+    from engine.appc.subsystems import CloakingSubsystem, SensorSubsystem
+    src = ShipClass_Create("Galaxy")
+    src.SetTranslateXYZ(0.0, 0.0, 0.0)
+    sensors = SensorSubsystem("Sensors")
+    sensors._max_condition = 100.0
+    sensors._condition = 100.0
+    sensors.SetBaseSensorRange(2000.0)
+    src.SetSensorSubsystem(sensors)
+    tgt = ShipClass()
+    tgt.SetTranslateXYZ(float(target_x), 0.0, 0.0)
+    tgt.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
+    tgt.GetCloakingSubsystem().InstantCloak()
+    return src, tgt
+
+
+def _torp_with_stale_cache(src, tgt):
+    """Torpedo fired by *src* at *tgt*, flying +y at 10 GU/s, with its last-seen
+    cache seeded to a sentinel BEHIND it on -x.
+
+    That sentinel is the discriminator. Steering toward the live target (+x)
+    versus toward the sentinel (-x) separates "still homing" from "coasting on
+    the frozen last-seen position" by the SIGN of velocity.x, which a boolean on
+    _target_visible alone could not do. (Note the cloak path is not literally
+    ballistic — true ballistic is the dead-target case, covered by
+    test_dead_target_goes_ballistic_no_cache, which returns before any steering.)
+    """
+    t = _torp(target=tgt)
+    t._source_ship = src
+    t._last_seen_target_pos = TGPoint3(-999.0, -999.0, -999.0)
+    return t
+
+
+def test_torpedo_keeps_homing_when_target_cloaks_inside_the_bubble():
+    """INTENTIONAL stage-4 gameplay change (ENHANCED_SENSOR_CONTEST, default on).
+
+    Torpedo guidance consults sensor_detection.can_detect via _target_visible,
+    and cloak is now a flat floor plus a percentage of effective sensor range
+    rather than an absolute. Inside the firing ship's bubble the torpedo keeps
+    tracking a cloaked target: cloaking to shake a
+    torpedo no longer works at knife range. This is a deliberate divergence
+    from BC — if it starts failing, ask "was the change reverted?", not "what
+    broke?".
+    """
+    from engine.appc import projectiles
+    src, tgt = _cloak_scene(inside_gu())
+    t = _torp_with_stale_cache(src, tgt)
+
+    assert projectiles._target_visible(t, tgt) is True
+    projectiles._guide(t, 0.016)
+
+    # Cache refreshed to the LIVE position, and steering +x toward it.
+    assert (t._last_seen_target_pos.x,
+            t._last_seen_target_pos.y,
+            t._last_seen_target_pos.z) == (inside_gu(), 0.0, 0.0)
+    assert t._velocity.x > 0.0
+
+
+def test_torpedo_coasts_on_last_seen_when_target_cloaks_outside_the_bubble():
+    """The bubble boundary still holds: comfortably outside the bubble a
+    cloaked target is invisible, the cache stays frozen, and the
+    torpedo steers to the stale last-seen point on -x. Stock BC's
+    shake-the-torpedo trick is intact at any real engagement distance."""
+    from engine.appc import projectiles
+    src, tgt = _cloak_scene(outside_gu())
+    t = _torp_with_stale_cache(src, tgt)
+
+    assert projectiles._target_visible(t, tgt) is False
+    projectiles._guide(t, 0.016)
+
+    assert (t._last_seen_target_pos.x,
+            t._last_seen_target_pos.y,
+            t._last_seen_target_pos.z) == (-999.0, -999.0, -999.0)
+    assert t._velocity.x < 0.0
+
+
+def test_torpedo_cloak_cache_is_absolute_with_the_contest_off(monkeypatch):
+    """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False: any
+    cloak freezes the cache regardless of range, even at the 15 GU that the
+    contest makes trackable."""
+    import engine.appc.sensor_detection as sd
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
+    from engine.appc import projectiles
+    src, tgt = _cloak_scene(inside_gu())
+    t = _torp_with_stale_cache(src, tgt)
+
+    assert projectiles._target_visible(t, tgt) is False
+    projectiles._guide(t, 0.016)
+
+    assert (t._last_seen_target_pos.x,
+            t._last_seen_target_pos.y,
+            t._last_seen_target_pos.z) == (-999.0, -999.0, -999.0)
+    assert t._velocity.x < 0.0
 
 
 def test_speed_constant_under_guidance():

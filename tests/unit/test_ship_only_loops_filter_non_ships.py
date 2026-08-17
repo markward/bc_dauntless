@@ -13,6 +13,9 @@ Covered here:
   * ship_motion's immobility gate — vacuously true on any non-ship.
   * DamageableObject.IsDying/IsDead — BC defines them there, we defined them
     on ShipClass only.
+  * subsystems._get_xyz's accessor probe — the same trap in the shared
+    position helper: it tried GetTranslate first behind a hasattr, so any
+    TGObject without a real one read the stub's components as the ORIGIN.
 """
 import App
 import pytest
@@ -145,6 +148,53 @@ def test_reticle_text_does_not_stub_probe_a_planet_target(_watch_stubs):
     assert "0 kph" in out["line2"]
     hits = _watch_stubs()
     assert not any(attr.startswith("GetVelocity") for _owner, attr in hits)
+
+
+# ── the shared position helper ───────────────────────────────────────────────
+
+
+def test_get_xyz_probes_the_accessor_with_implements_not_hasattr():
+    """`_get_xyz` tries GetTranslate, GetWorldLocation, ... in order. hasattr
+    is vacuously true for all of them on any TGObject, so the loop always
+    "found" GetTranslate, called the `_Stub`, and read .x/.y/.z off it as 0.0 —
+    the origin, for an object that has a perfectly good position.
+
+    A Torpedo is the live example: a TGObject (not an ObjectClass) with a real
+    GetWorldLocation (projectiles.py:133) and no GetTranslate. Every
+    ObjectClass defines GetTranslate, which is why this never fired in
+    production — but _get_xyz is the shared helper behind perception and
+    can_detect, and a positionless read there is silent."""
+    from engine.appc.projectiles import Torpedo
+    from engine.appc.subsystems import _get_xyz
+    from engine.core.ids import implements
+
+    torp = Torpedo()
+    torp._position = TGPoint3(0.0, 500.0, 0.0)
+
+    # The premise: no real GetTranslate, but a real GetWorldLocation.
+    assert not implements(torp, "GetTranslate")
+    assert implements(torp, "GetWorldLocation")
+    assert hasattr(torp, "GetTranslate")          # ...and hasattr says yes
+
+    assert _get_xyz(torp) == (0.0, 500.0, 0.0)
+
+
+def test_get_xyz_is_unchanged_for_every_object_class():
+    """The fix must not move any position that used to resolve. ObjectClass
+    really defines GetTranslate, so ships, planets and bare objects keep
+    taking the first accessor exactly as before."""
+    from engine.appc.objects import ObjectClass
+    from engine.appc.subsystems import _get_xyz
+
+    ship = _ship("Galaxy", loc=(1.0, -2.0, 3.0))
+    planet = Planet(150.0, "planet.nif")
+    planet.SetWorldLocation(TGPoint3(4.0, 5.0, -6.0))
+    bare = ObjectClass()
+    bare.SetWorldLocation(TGPoint3(-7.0, 8.0, 9.0))
+
+    assert _get_xyz(ship) == (1.0, -2.0, 3.0)
+    assert _get_xyz(planet) == (4.0, 5.0, -6.0)
+    assert _get_xyz(bare) == (-7.0, 8.0, 9.0)
 
 
 # ── ship_motion: immobility gate ─────────────────────────────────────────────

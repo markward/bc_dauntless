@@ -212,20 +212,24 @@ class TargetListView(Panel):
         game = Game_GetCurrentGame()
         player = game.GetPlayer() if game is not None else None
 
-        from engine.appc.ship_death import _out_of_action, is_targetable_wreck
-        from engine.appc.sensor_detection import is_hidden_by_cloak
         rows = []
         child = target_menu.GetFirstChild()
         while child is not None:
             if isinstance(child, STSubsystemMenu):
                 ship = child.GetShip()
-                # A living ship, or a destroyed ship still inside its wreck
-                # linger window, is a valid target; a ship past final removal —
-                # or one that is fully cloaked — is dropped (same per-render
-                # road the destruction filter uses).
-                if ship is not None and ship is not player \
-                        and not is_hidden_by_cloak(ship) \
-                        and (not _out_of_action(ship) or is_targetable_wreck(ship)):
+                # The menu's children ARE the frame's targetable contacts
+                # (STTargetMenu._rows filters on Contact.targetable, which
+                # already folds in cloak, death, the wreck-linger window and
+                # IsTargetable). This used to re-run is_hidden_by_cloak and
+                # _out_of_action here on top of that — a second copy of the
+                # rule that could disagree with the record, which is exactly
+                # what got engine.ui.target_list_visibility retired.
+                #
+                # The player-identity guard stays: perceived_by never emits a
+                # record for the observer, but STTargetMenu.RebuildShipMenus
+                # (published Appc surface, bulk population from a SET) has no
+                # observer and cannot make that call.
+                if ship is not None and ship is not player:
                     hull_pct = _query_hull_percentage(ship)
                     shield_pct = _query_shield_percentage(ship)
                     has_shields = _query_has_shields(ship)
@@ -259,16 +263,44 @@ class TargetListView(Panel):
                             )
                         return not _query_subsystem_destroyed(ship, sub_child.GetLabel())
 
+                    # A cloaked contact is a fuzzy sensor return: targetable
+                    # at ship level, but its subsystem tree is suppressed
+                    # here at the VIEW layer only. `child._children` (the
+                    # cached STMenu subsystem rows in STTargetMenu._row_cache)
+                    # is deliberately left untouched — it is reused across
+                    # frames and across a contact leaving/re-entering the
+                    # list, so rebuilding or mutating it here would corrupt
+                    # that cache for every other reader. Read from the
+                    # pushed Contact record (the frame's own answer), not a
+                    # second cloak check.
+                    contact = target_menu.contact_for(ship)
+                    subsystems_targetable = (
+                        contact is None or contact.subsystems_targetable)
                     subsystems = tuple(
                         _sub_entry(sub_child)
                         for sub_child in child._children
                         if _keep(sub_child)
-                    )
+                    ) if subsystems_targetable else ()
                     name = ship.GetName()
+                    # NO `IsVisible()` HERE, DELIBERATELY — do not re-add it.
+                    # VISIBILITY IS PUMP-OWNED: `STTargetMenu.set_contacts`
+                    # asserts `SetVisible()` on every listed row
+                    # unconditionally, every frame, so the flag carries no
+                    # information this panel wants. Drawability is
+                    # `Contact.targetable`, which the projection (`_rows`) has
+                    # already applied by the time we walk the children.
+                    #
+                    # The filter that used to be here was not merely redundant,
+                    # it was WRONG in the one window where the flag and the
+                    # projection can disagree: an SDK caller clearing a row via
+                    # `SetNotVisible` (real surface — CycleTarget reads it)
+                    # would blank a live contact from the panel until the next
+                    # push re-asserted it. Pinned by
+                    # tests/unit/test_target_list_view.py::
+                    # test_row_flag_does_not_gate_the_payload_drawability_is_targetable.
                     rows.append((
                         name,
                         child.GetAffiliation(),
-                        child.IsVisible(),
                         hull_pct,
                         shield_pct,
                         has_shields,
@@ -292,14 +324,48 @@ class TargetListView(Panel):
         """If the player's locked subsystem has been destroyed, hand the lock
         off to the next surviving sibling in its group; when the whole group is
         gone, clear the lock back to ship-level targeting. Runs every tick so a
-        subsystem dying from any cause triggers the handoff."""
+        subsystem dying from any cause triggers the handoff.
+
+        Also drops the lock outright — no handoff, straight to ship-level —
+        when the locked ship has cloaked (`Contact.subsystems_targetable`
+        False). A fuzzy sensor return has no subsystem to hand the lock off
+        to; the player keeps the ship-level target, only the subsystem pick
+        clears. Reads the pushed record rather than re-deriving cloak state,
+        same reasoning as `_snapshot`'s subsystem suppression.
+
+        And drops the lock when there is no ship-level target at all.
+        `sensor_detection.clear_undetectable_player_lock` (a ship cloaking
+        OUTSIDE its detection bubble is one way there) calls
+        `player.SetTarget(None)`, but `ShipClass.SetTarget` never touches
+        `_target_subsystem` — nothing does, there are only four clear sites
+        and none of them covers this. Left alone, the stale subsystem
+        reference survives with no ship attached and resurfaces as
+        `selected_subsystem` the moment the player targets a DIFFERENT ship,
+        since `GetTargetSubsystem()` answers unconditionally regardless of
+        the current ship-level target. Pre-existing gap; closed here because
+        this is the natural place, not because this branch introduced it."""
         from engine.core.game import Game_GetCurrentGame
         game = Game_GetCurrentGame()
         player = game.GetPlayer() if game is not None else None
         if player is None or not hasattr(player, "GetTargetSubsystem"):
             return
         locked = player.GetTargetSubsystem()
-        if locked is None or not hasattr(locked, "IsDestroyed"):
+        if locked is None:
+            return
+
+        target = player.GetTarget()
+        if target is None:
+            player.SetTargetSubsystem(None)
+            return
+
+        import App
+        target_menu = App.STTargetMenu_GetTargetMenu()
+        contact = target_menu.contact_for(target) if target_menu is not None else None
+        if contact is not None and not contact.subsystems_targetable:
+            player.SetTargetSubsystem(None)
+            return
+
+        if not hasattr(locked, "IsDestroyed"):
             return
         try:
             destroyed = bool(locked.IsDestroyed())
@@ -336,8 +402,7 @@ class TargetListView(Panel):
                     ],
                     "expanded": expanded,
                 }
-                for (name, aff, is_vis, hull, shields, has_shields, subs, expanded) in rows
-                if is_vis
+                for (name, aff, hull, shields, has_shields, subs, expanded) in rows
             ],
         }
         return "setTargetList(" + json.dumps(payload) + ");"
@@ -396,6 +461,22 @@ class TargetListView(Panel):
         target_ship = player.GetTarget()
         if target_ship is None:
             return True  # ship resolution failed, but the SetTarget call already happened
+
+        # Re-check subsystems_targetable at click time, not just at render
+        # time. The clicked payload was rendered from a PRIOR frame's push;
+        # if the ship finished cloaking in between, honouring the click
+        # would set a subsystem lock the record no longer allows. Without
+        # this the hole would self-heal one frame later via
+        # _reconcile_subsystem_lock (which runs first thing in the next
+        # render_payload), but there is no reason to let even a one-frame
+        # flicker through when the record to check is one call away.
+        import App
+        target_menu = App.STTargetMenu_GetTargetMenu()
+        contact = target_menu.contact_for(target_ship) if target_menu is not None else None
+        if contact is not None and not contact.subsystems_targetable:
+            player.SetTargetSubsystem(None)
+            return True
+
         sub = _resolve_subsystem_by_name(target_ship, suffix)
         player.SetTargetSubsystem(sub)
         return True

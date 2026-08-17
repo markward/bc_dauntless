@@ -1,13 +1,16 @@
 """CEF view for the bottom-left Sensors / radar panel.
 
-Each tick, walks the player's spatial set, runs each ship through
+Each tick, walks the frame's pushed contacts, runs each through
 radar_projection.project_contact, and emits a `setRadar(...)` JS call
 with the filtered contact list. Idempotent — re-emits only when the
 snapshot changes.
 
-Visibility shares state with the target list: only ships whose
-STSubsystemMenu.IsVisible() == 1 are emitted. The host loop already
-runs update_target_list_visibility() each tick; we read the result.
+Membership and detectability come from the same perception.Contact records
+the target list reads (pushed by host_loop._pump_contacts every frame): the
+radar draws a contact when its record says `perceivable`. What it does NOT
+share is the range — the disc clips to RadarDisplay.GetRange(), a display
+scale, while perception uses the player's actual sensor range. The target
+list legitimately lists contacts the disc does not draw.
 
 Spec: docs/ui_designs/05-sensors-radar.md
 """
@@ -93,8 +96,10 @@ class SensorsPanel(Panel):
         if player is None:
             return (True, minimize_state, ())
 
-        spatial = getattr(player, "_containing_set", None)
-        if spatial is None:
+        # A player in no set has no contacts (perceived_by returns () for that
+        # case, so the push is empty). Kept as a cheap early-out only — the
+        # set is NOT walked for membership any more; see below.
+        if getattr(player, "_containing_set", None) is None:
             return (True, minimize_state, ())
 
         menu = App.STTargetMenu_GetTargetMenu()
@@ -107,14 +112,49 @@ class SensorsPanel(Panel):
         player_rot = player.GetWorldRotation()
 
         rows = []
-        for ship in spatial.GetObjectList():
-            if ship is player:
+        # Membership is the frame's pushed contact list, walked once. This used
+        # to walk player._containing_set and look each ship back up with
+        # GetObjectEntry — a SECOND membership source, which is the failure the
+        # contact model exists to remove (a set pointer that outlives the ships
+        # it named, e.g. across a warp).
+        #
+        # The record's own verdict decides drawability: the menu's children are
+        # this frame's targetable contacts (`_rows()` filters on
+        # `Contact.targetable`). NOTHING writes `perceivable` into a row's
+        # IsVisible — `set_contacts` asserts `SetVisible()` on every listed row
+        # unconditionally, so that flag is write-once-True here and answers no
+        # question this panel asks.
+        #
+        # The RANGE CLIP below stays the radar's own. It reads
+        # RadarDisplay.GetRange() (1000 GU default), not the player's sensor
+        # range (2000 GU on a Galaxy), so the target list legitimately lists
+        # contacts the disc does not draw — display scale and perception are
+        # different concepts. It is also a DISC-PLANE clip, not a 3D distance,
+        # so no centre-distance the record could carry would answer it: a
+        # contact directly overhead at 2x range still renders at the centre
+        # with a full-length stem. (That is half of why `Contact` carries no
+        # squared centre distance — the other half is that nothing else read
+        # it either. See engine/appc/perception.py:Contact.)
+        row = menu.GetFirstChild()
+        while row is not None:
+            # Advance first: the child list is DERIVED, so hold no cursor into
+            # it across the body.
+            this_row, row = row, menu.GetNextChild(row)
+            if not isinstance(this_row, STSubsystemMenu):
                 continue
-            row = menu.GetObjectEntry(ship)
-            if row is None or not isinstance(row, STSubsystemMenu):
+            ship = this_row.GetShip()
+            if ship is None or ship is player:
                 continue
-            if row.IsVisible() != 1:
-                continue
+            # NO perceivability re-check here. This loop's source is the
+            # menu's children, i.e. `_rows()`, which filters on
+            # `Contact.targetable` — and `perceived_by` builds `targetable` as
+            # `perceivable and ...`, so every row reached here is perceivable
+            # by construction and has a record. The guard that used to sit on
+            # this line (`record is None or not record.perceivable: continue`)
+            # could only ever fire for a hand-built record the production path
+            # cannot produce. The implication is pinned at its source by
+            # tests/unit/test_perceived_by.py::
+            # test_targetable_always_implies_perceivable.
             contact = project_contact(
                 player_pos=player_pos,
                 player_rot=player_rot,
@@ -124,7 +164,7 @@ class SensorsPanel(Panel):
             )
             if contact is None:
                 continue
-            aff = row.GetAffiliation()
+            aff = this_row.GetAffiliation()
             kind = _AFFILIATION_TO_KIND.get(aff, "ship")
             rows.append((
                 ship.GetName(),

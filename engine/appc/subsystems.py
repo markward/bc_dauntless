@@ -2577,11 +2577,32 @@ def _get_xyz(ship) -> tuple:
     """Read a ship's world-space position as a tuple of floats. Adapts
     to whichever accessor the shim exposes. Falls back to (0, 0, 0) so
     the helper is safe to call against a ship that hasn't been
-    positioned yet (e.g. just spawned)."""
+    positioned yet (e.g. just spawned).
+
+    ⚠️ The accessor probe is `implements()`, NOT `hasattr()`. hasattr is
+    vacuously true for all five names on every TGObject — `__getattr__` vends a
+    truthy `_Stub` — so the loop always "found" GetTranslate first, called the
+    stub, and read `.x/.y/.z` off it as 0.0. Any TGObject whose class does not
+    really define GetTranslate but does define a later accessor therefore
+    resolved to the ORIGIN instead of its position. Measured, not reasoned:
+    a Torpedo (projectiles.py, a TGObject with a real GetWorldLocation at :133
+    and no GetTranslate) read (0,0,0) under hasattr and (0,500,0) under
+    implements.
+
+    That was latent, not live. `ObjectClass` really defines GetTranslate, so
+    every ObjectClass descendant — ShipClass, Planet, PhysicsObjectClass,
+    DamageableObject — resolved through the first accessor either way, and a
+    census of the three call sites (perception.perceived_by,
+    perception.measure_surface_gu_to, sensor_detection.can_detect) found only
+    ObjectClass arguments. The full class scan puts exactly two families in the
+    changed set, neither of which reaches any of them: Torpedo, and the
+    ShipSubsystem/Weapon hierarchy. Running both implementations side by side
+    over the whole test suite produced zero divergences.
+    """
     # GetTranslate() returns a TGPoint3 with .x, .y, .z attributes.
     for name in ("GetTranslate", "GetWorldLocation", "GetTranslation", "GetPosition",
                  "GetTranslateXYZ"):
-        if hasattr(ship, name):
+        if implements(ship, name):
             try:
                 t = getattr(ship, name)()
                 # TGPoint3 / any object with .x .y .z

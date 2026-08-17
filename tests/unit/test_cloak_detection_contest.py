@@ -1,0 +1,211 @@
+"""Cloak is a range contest, not an absolute — INTENTIONAL divergence from BC.
+
+Every assertion here pins a deliberate gameplay change. If one of these starts
+failing, the question is "was the change reverted?", not "what broke?".
+"""
+from engine.appc import sensor_detection as sd
+from engine.appc.sensor_detection import can_detect
+from engine.appc.ai_sensor_gate import observing, _wrap_active_tuple
+from engine.appc.ships import ShipClass, ShipClass_Create
+from engine.appc.subsystems import CloakingSubsystem, SensorSubsystem
+from tests.helpers.cloak_geometry import bubble_gu, inside_gu, outside_gu
+
+
+def _observer(base_range=2000.0, condition=100.0):
+    """Observer with a REAL sensor subsystem — follows
+    tests/unit/test_sensor_detection.py::_ship_with_sensor. A bare ShipClass()
+    has none, so effective_sensor_range would return FALLBACK_RANGE_GU (30000),
+    fifteen times a Galaxy's real reach, and every assertion below would be
+    measuring the fallback instead of the thing it names."""
+    ship = ShipClass_Create("Galaxy")
+    ship.SetName("player")
+    ship.SetTranslateXYZ(0.0, 0.0, 0.0)
+    sensors = SensorSubsystem("Sensors")
+    sensors._max_condition = 100.0
+    sensors._condition = condition
+    sensors.SetBaseSensorRange(base_range)
+    ship.SetSensorSubsystem(sensors)
+    return ship
+
+
+def _target(x, cloaked=False, mid_cloak=False):
+    """A contact at (x, 0, 0). Cloak construction follows
+    tests/unit/test_select_target_drops_cloaked.py::_kitted_ship.
+
+    ``mid_cloak`` drives the subsystem into CLOAK_CLOAKING — the transitional
+    state — via the same StartCloaking() the SDK's CloakShip preprocessor
+    calls. IsTryingToCloak() is then 1 while IsCloaked() is still 0.
+    """
+    s = ShipClass()
+    s.SetName("Warbird")
+    s.SetTranslateXYZ(x, 0.0, 0.0)
+    if cloaked or mid_cloak:
+        s.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
+        if mid_cloak:
+            s.GetCloakingSubsystem().StartCloaking()
+        else:
+            s.GetCloakingSubsystem().InstantCloak()
+    return s
+
+
+def test_cloaked_ship_is_detected_inside_flat_plus_percent_bubble():
+    """Comfortably inside the bubble, which sits well under a Galaxy's 60 GU
+    phaser range: you must be effectively on top of a cloaked ship to see it."""
+    assert can_detect(_observer(), _target(inside_gu(), cloaked=True)) is True
+
+
+def test_cloaked_ship_is_not_detected_beyond_the_bubble():
+    """Comfortably outside — a multiple of the bubble radius, not a hair past
+    the boundary, so this cannot pass on a rounding accident."""
+    assert can_detect(_observer(), _target(outside_gu(), cloaked=True)) is False
+
+
+def test_uncloaked_ship_at_the_same_distance_is_still_detected():
+    """The bubble must apply ONLY to cloaked targets."""
+    assert can_detect(_observer(), _target(45.0)) is True
+
+
+def test_cloak_reach_scales_with_sensor_condition():
+    """The percentage term scales EFFECTIVE range, so damage shrinks the bubble
+    toward the flat floor — this is what makes boosting sensor power meaningful.
+    Halving condition halves the percentage term while the floor stays put.
+
+    The probe sits at the MIDPOINT of the two bubbles, derived from the live
+    constants: inside the full-condition bubble, outside the half-condition one.
+
+    ⚠️ THE WINDOW THIS TEST WORKS IN IS THE FLOOR'S SHARE OF THE BUBBLE, and it
+    narrows every time the floor rises relative to the factor. It IS the
+    condition lever's authority: when the floor dominates, damage and power
+    barely move detection, the window closes, and this test becomes unwritable.
+    If it ever fails with the midpoint derived correctly, the message is not
+    "fix the probe" — it is that the lever has stopped meaning anything."""
+    full = bubble_gu(2000.0)
+    half = bubble_gu(1000.0)
+    probe = (full + half) / 2.0
+    assert half < probe < full, (
+        f"condition lever has collapsed: full={full} half={half} — the floor "
+        f"now dominates the percentage term, so this test cannot be written")
+    assert can_detect(_observer(), _target(probe, cloaked=True)) is True
+    assert can_detect(_observer(condition=50.0),
+                      _target(probe, cloaked=True)) is False
+
+
+def test_mid_cloak_ship_stays_fully_visible_with_no_bubble_applied():
+    """The bubble is gated on IsCloaked(), not IsTryingToCloak(): a ship
+    part-way through the fade is still fully sighted at full sensor range.
+    The probe is far beyond the cloak bubble but well inside raw sensor reach,
+    so this only passes if no bubble was applied."""
+    mid = _target(outside_gu() * 10.0, mid_cloak=True)
+    cloak = mid.GetCloakingSubsystem()
+    assert cloak.IsTryingToCloak() == 1
+    assert cloak.IsCloaked() == 0
+    assert can_detect(_observer(), mid) is True
+
+
+def test_cloak_bubble_is_exactly_base_plus_factor_of_effective_range():
+    """The bubble's boundary is exactly CLOAK_DETECTION_BASE_GU +
+    effective_range * CLOAK_RANGE_FACTOR — the formula's SHAPE, pinned.
+
+    Why this exists: every other test here probes a distance with a margin, so
+    the whole file passed identically under BOTH the 5 GU/1% and the 10 GU/0.5%
+    tunings (verified by mutation 2026-08-17). That left the arithmetic
+    untested — dropping the flat term, multiplying instead of adding, or
+    fat-fingering 0.05 for 0.005 would all have stayed green while gutting
+    cloak. This test reads the constants rather than hardcoding them, so a
+    deliberate retune stays free; only a change to the SHAPE fails it.
+
+    `can_detect` compares `dist_sq <= r * r`, so a target exactly ON the
+    boundary IS detected and the first assertion is the true edge."""
+    r = bubble_gu()
+    assert can_detect(_observer(), _target(r, cloaked=True)) is True
+    assert can_detect(_observer(), _target(r + 0.5, cloaked=True)) is False
+
+
+def test_cloak_bubble_stays_well_inside_phaser_range():
+    """A TUNING GUARD, not a formula test: the bubble must stay a fraction of a
+    Galaxy's 60 GU phaser range, because "you must be effectively on top of it"
+    is the whole design intent — a bubble approaching weapon range would mean
+    cloak no longer protects anyone from the player.
+
+    Deliberately a loose bound (half of phaser range), so ordinary retuning
+    never trips it. It catches the order-of-magnitude slip — 0.05 for 0.005
+    gives a Galaxy 110 GU, nearly twice its phaser reach — which is exactly the
+    error no other assertion here would notice."""
+    r = bubble_gu()
+    assert 0.0 < r <= 30.0, f"Galaxy cloak bubble {r} GU vs 60 GU phaser range"
+
+
+def test_offline_sensors_detect_nothing_even_point_blank():
+    """20% is below the default 25% disabled threshold -> range 0."""
+    assert can_detect(_observer(condition=20.0),
+                      _target(1.0, cloaked=True)) is False
+
+
+def test_toggle_off_restores_absolute_cloak(monkeypatch):
+    """Flipping the flag must return stock BC exactly: cloak is absolute."""
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
+    assert can_detect(_observer(), _target(1.0, cloaked=True)) is False
+
+
+def test_toggle_off_leaves_uncloaked_detection_untouched(monkeypatch):
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
+    assert can_detect(_observer(), _target(500.0)) is True
+
+
+# ── AI ACQUISITION: the candidate filter ─────────────────────────────────────
+#
+# The biggest gameplay consequence of the contest, and it is NOT covered by the
+# FireScript tests in tests/unit/test_ai_sensor_gate.py — those pin the
+# *firing* half, where the AI already holds a lock.
+#
+# `ai_sensor_gate._wrap_active_tuple` is the candidate filter: it gates
+# ObjectGroup.GetActiveObjectTupleInSet on `can_detect` while an observer is
+# published. Two SDK enumerators publish one. `SelectTarget.FindGoodTarget`
+# carries its OWN absolute cloak skip downstream (AI/Preprocessors.py:1446),
+# so a cloaked contact never survives THAT path — but
+# `AI/PlainAI/StarbaseAttack.py::GetTargets` has no such skip and returns
+# `GetActiveObjectTupleInSet` straight out. So stations DO acquire cloaked
+# ships inside their bubble, and station hardpoints author large sensor ranges
+# (fedstarbase 12000 GU, cardstarbase 5000, and the 18 of 52 hardpoint files
+# authoring none inherit FALLBACK_RANGE_GU 30000) so their bubbles dwarf a
+# Galaxy's. Current figures come from tests.helpers.cloak_geometry.bubble_gu --
+# deliberately not restated here, because they move with every retune. Whether
+# they are right is a TUNING question for the project owner; these tests pin
+# only that the mechanism reaches this surface, both on and off.
+
+def _candidates(observer, contacts):
+    """Run *contacts* through the AI candidate filter as *observer* sees them.
+
+    Wraps a fake enumerator the way install_ai_sensor_gate wraps the real
+    ObjectGroup.GetActiveObjectTupleInSet, then publishes the observer exactly
+    as _wrap_get_targets does around StarbaseAttack.GetTargets.
+    """
+    wrapped = _wrap_active_tuple(lambda self, pSet: tuple(contacts))
+    with observing(observer):
+        return wrapped(object(), None)
+
+
+def test_ai_acquires_a_cloaked_contact_inside_the_bubble():
+    """A station/AI enumerating candidates GETS a cloaked ship inside its
+    bubble. This is acquisition from cold, not re-engagement of an existing
+    lock."""
+    cloaked = _target(inside_gu(), cloaked=True)
+    assert _candidates(_observer(), [cloaked]) == (cloaked,)
+
+
+def test_ai_does_not_acquire_a_cloaked_contact_outside_the_bubble():
+    """The boundary holds on this surface too: well inside raw sensor reach but
+    outside the cloak bubble, the contact is filtered out, while an uncloaked
+    ship at the same range survives."""
+    cloaked = _target(outside_gu(), cloaked=True)
+    plain = _target(outside_gu())
+    assert _candidates(_observer(), [cloaked, plain]) == (plain,)
+
+
+def test_ai_acquires_no_cloaked_contact_at_all_with_the_contest_off(monkeypatch):
+    """STOCK BC, held under ENHANCED_SENSOR_CONTEST = False: cloak is absolute
+    on the acquisition path too, so even a point-blank contact is dropped."""
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
+    cloaked = _target(1.0, cloaked=True)
+    plain = _target(1.0)
+    assert _candidates(_observer(), [cloaked, plain]) == (plain,)

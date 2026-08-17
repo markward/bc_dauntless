@@ -1,6 +1,36 @@
 import json
 import App
 from engine.appc.ships import ShipClass
+from engine.appc.perception import Contact
+
+
+def _listed(*ships):
+    """Contact records for ships the player can see and target — what
+    perceived_by returns for an in-range, uncloaked, living contact.
+
+    set_contacts takes perception.Contact records rather than bare ships: the
+    record carries the frame's verdict, and the menu derives the listing from
+    `targetable`. Row IsVisible is NOT derived from `perceivable` — set_contacts
+    asserts SetVisible() on every listed row, so that flag answers nothing about
+    detectability; readers that need it read `perceivable` off the record.
+    The distance is 0.0 because nothing in this file reads it.
+    """
+    return [Contact(ship=s, surface_gu=0.0,
+                    perceivable=True, targetable=True) for s in ships]
+
+
+
+
+def _pump(target_menu, player):
+    """One frame of the host loop's contact push (host_loop._pump_contacts).
+
+    The listing is DERIVED from the pushed record, so a change to a ship's
+    state reaches the panel on the next push — as it does in game, where the
+    push runs every frame before the panels render. The view no longer keeps
+    its own copy of the cloak/death rule to short-circuit that.
+    """
+    from engine.appc.perception import perceived_by
+    target_menu.set_contacts(perceived_by(player))
 
 
 def _setup_game_with_player():
@@ -25,7 +55,7 @@ def test_view_payload_lists_rows_with_affiliations():
 
         a = ShipClass(); a.SetName("Dauntless")
         b = ShipClass(); b.SetName("Kor")
-        target_menu.set_contacts([a, b])
+        target_menu.set_contacts(_listed(a, b))
         target_menu.ResetAffiliationColors()
 
         view = TargetListView()
@@ -59,7 +89,7 @@ def test_view_payload_is_idempotent_until_state_changes():
 
         # A row added → next call re-emits.
         a = ShipClass(); a.SetName("X")
-        target_menu.set_contacts([a])
+        target_menu.set_contacts(_listed(a))
         assert view.render_payload() is not None
     finally:
         from engine.core.game import _set_current_game
@@ -76,7 +106,7 @@ def test_view_dispatch_event_sets_player_target():
     App.g_kSetManager.AddSet(bridge_set, "bridge")
     try:
         a = ShipClass(); a.SetName("Dauntless")
-        target_menu.set_contacts([a])
+        target_menu.set_contacts(_listed(a))
         bridge = App.g_kSetManager.GetSet("bridge")
         bridge.AddObjectToSet(a, "Dauntless")
 
@@ -86,6 +116,42 @@ def test_view_dispatch_event_sets_player_target():
         assert player.GetTarget() is a
     finally:
         App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_row_flag_does_not_gate_the_payload_drawability_is_targetable():
+    """DRAWABILITY IS `targetable`, NOT the row's IsVisible flag.
+
+    The view used to re-filter its rows on `child.IsVisible()`. Row visibility
+    is PUMP-OWNED: `STTargetMenu.set_contacts` asserts `SetVisible()` on EVERY
+    listed row, unconditionally, every frame — so on a frame that has been
+    pushed the flag carries no information and the filter dropped nothing. The
+    projection (`Contact.targetable`) is what decides what the panel draws.
+
+    Between a `SetNotVisible` and the next push the two CAN disagree, and there
+    the old filter was not redundant but wrong: it blanked a live contact from
+    the panel. That is the window this test drives — `SetNotVisible` (real SDK
+    surface, read by CycleTarget) with no intervening push. The row must still
+    be drawn.
+    """
+    import json
+    from engine.ui.target_list_view import TargetListView
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    _setup_game_with_player()
+    try:
+        a = ShipClass(); a.SetName("Dauntless")
+        target_menu.set_contacts(_listed(a))
+        target_menu.GetObjectEntry(a).SetNotVisible()
+        assert target_menu.GetObjectEntry(a).IsVisible() == 0  # not vacuous
+
+        view = TargetListView()
+        state = json.loads(view.render_payload()[len("setTargetList("):-2])
+
+        assert [r["name"] for r in state["rows"]] == ["Dauntless"]
+    finally:
         from engine.core.game import _set_current_game
         _set_current_game(None)
 
@@ -103,7 +169,7 @@ def test_view_payload_includes_subsystems_and_health():
     try:
         ship = ShipClass_Create("Galaxy")
         ship.SetName("USS Galaxy")
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
         bridge = App.g_kSetManager.GetSet("bridge")
         if bridge is None:
             from engine.appc.sets import SetClass
@@ -145,7 +211,7 @@ def test_dispatch_event_subsystem_click_sets_both_target_and_subsystem():
     try:
         ship = ShipClass_Create("Galaxy")
         ship.SetName("USS Galaxy")
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
         bridge = App.g_kSetManager.GetSet("bridge")
         if bridge is None:
             from engine.appc.sets import SetClass
@@ -182,7 +248,7 @@ def test_dispatch_event_ship_only_click_clears_subsystem():
     try:
         ship = ShipClass_Create("Galaxy")
         ship.SetName("USS Galaxy")
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
         bridge = App.g_kSetManager.GetSet("bridge")
         if bridge is None:
             from engine.appc.sets import SetClass
@@ -217,7 +283,7 @@ def test_view_payload_excludes_player_ship():
     try:
         # Push both the player and an enemy as contacts.
         enemy = ShipClass(); enemy.SetName("Kor")
-        target_menu.set_contacts([player, enemy])
+        target_menu.set_contacts(_listed(player, enemy))
 
         view = TargetListView()
         script = view.render_payload()
@@ -243,7 +309,7 @@ def test_view_payload_rows_collapsed_by_default():
     game, player, mission = _setup_game_with_player()
     try:
         kor = ShipClass(); kor.SetName("Kor")
-        target_menu.set_contacts([kor])
+        target_menu.set_contacts(_listed(kor))
 
         view = TargetListView()
         script = view.render_payload()
@@ -264,7 +330,7 @@ def test_dispatch_event_toggle_expands_row():
     game, player, mission = _setup_game_with_player()
     try:
         kor = ShipClass(); kor.SetName("Kor")
-        target_menu.set_contacts([kor])
+        target_menu.set_contacts(_listed(kor))
 
         view = TargetListView()
         # First emit captures the collapsed state in the snapshot cache.
@@ -300,7 +366,7 @@ def test_dispatch_event_toggle_does_not_change_player_target():
     game, player, mission = _setup_game_with_player()
     try:
         kor = ShipClass(); kor.SetName("Kor")
-        target_menu.set_contacts([kor])
+        target_menu.set_contacts(_listed(kor))
 
         view = TargetListView()
         assert player.GetTarget() is None
@@ -320,7 +386,7 @@ def _make_targeted_ship(name="USS Galaxy"):
     """Build a ShipClass via ShipClass_Create and register it in the
     bridge set so `SetTarget(name)` can resolve it. Caller must still
     push the ship into the target menu's contact list (via
-    `target_menu.set_contacts([ship])`) for it to appear in render
+    `target_menu.set_contacts(_listed(ship))`) for it to appear in render
     output. Caller is responsible for game + bridge-set teardown."""
     from engine.appc.ships import ShipClass_Create
     from engine.appc.sets import SetClass
@@ -350,7 +416,7 @@ def test_view_payload_hull_pct_is_integer_percent_not_ratio():
         hull.SetMaxCondition(1000.0)
         hull.SetCondition(500.0)
         ship.SetHull(hull)
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
 
         view = TargetListView()
         script = view.render_payload()
@@ -379,7 +445,7 @@ def test_view_payload_shield_pct_is_integer_percent_not_ratio():
         # Seed all six faces; SetMaxShields seeds current when current==0.
         for face in range(ShieldSubsystem.NUM_SHIELDS):
             shields.SetMaxShields(face, 1000.0)
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
 
         view = TargetListView()
         script = view.render_payload()
@@ -405,7 +471,7 @@ def test_view_payload_flags_shieldless_target():
     game, player, mission = _setup_game_with_player()
     try:
         ship = _make_targeted_ship("Inert-rock")  # ShipClass_Create → shields max 0
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
 
         view = TargetListView()
         script = view.render_payload()
@@ -438,7 +504,7 @@ def test_view_payload_subsystems_carry_condition_pct():
         first_sub.SetCondition(300.0)
         damaged_name = first_sub.GetName()
 
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
         view = TargetListView()
         script = view.render_payload()
         body = script[len("setTargetList("):-2]
@@ -514,7 +580,7 @@ def test_nested_children_and_expanded_reach_payload():
         ps.AddToSet("Scene Root", PhaserProperty("Dorsal Phaser 1"))
         ps.AddToSet("Scene Root", PhaserProperty("Dorsal Phaser 2"))
         ship.SetupProperties()
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
 
         view = TargetListView()
         # Prime the snapshot cache before toggling.
@@ -559,17 +625,30 @@ def test_query_subsystem_condition_defaults_to_100_when_resolution_misses():
 
 def test_destroyed_ship_excluded_from_target_list():
     """A ship that is dying or dead (death sequence in progress) must drop
-    off the target list immediately, not linger for the throes window."""
+    off the target list immediately, not linger for the throes window.
+
+    Driven through the real push: death is decided ONCE, by
+    perception.perceived_by, and reaches the panel as `Contact.targetable`.
+    The view used to re-run _out_of_action on its own, a second copy of the
+    rule that could disagree with the record.
+    """
     from engine.ui.target_list_view import TargetListView
+    from engine.appc.sets import SetClass
+    from engine.appc import contact_index
+    contact_index.reset()
     App._reset_target_menu_singleton()
     target_menu = App.STTargetMenu_CreateW("Targets")
     game, player, mission = _setup_game_with_player()
     try:
+        pSet = SetClass()
+        pSet.AddObjectToSet(player, "Player")
         alive = ShipClass(); alive.SetName("Alive")
+        pSet.AddObjectToSet(alive, "Alive")
         doomed = ShipClass(); doomed.SetName("Doomed")
-        target_menu.set_contacts([alive, doomed])
+        pSet.AddObjectToSet(doomed, "Doomed")
 
         doomed.SetDying(True)   # death sequence started -> not a valid target
+        _pump(target_menu, player)
 
         view = TargetListView()
         script = view.render_payload()
@@ -581,12 +660,66 @@ def test_destroyed_ship_excluded_from_target_list():
 
         # A fully dead ship is likewise excluded.
         alive.SetDead(True)
+        _pump(target_menu, player)
         view.invalidate()
         script2 = view.render_payload()
         body2 = script2[len("setTargetList("):-2]
         names2 = [r["name"] for r in json.loads(body2)["rows"]]
         assert names2 == []
     finally:
+        contact_index.reset()
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_view_does_not_re_derive_detectability(monkeypatch):
+    """The record is the frame's answer; the view does not second-guess it.
+
+    Cloaking a ship without re-pushing must NOT change the listing — the next
+    push is what drops the row (tests/unit/test_cloak_target_visibility.py
+    covers that path end to end). The view used to carry its own
+    is_hidden_by_cloak / _out_of_action copy of the rule on top of the record,
+    which is the same duplication that retired engine.ui.target_list_visibility
+    for disagreeing with the menu.
+
+    Held under ENHANCED_SENSOR_CONTEST = False so that cloaking is guaranteed
+    to change the answer at all. Since stage 4 the push runs can_detect, where
+    cloak is a range multiplier, and this fixture leaves the enemy at the
+    player's own position — well inside the cloak bubble — so with the flag at
+    its default the row correctly survives the push and there would be no
+    before/after difference for this test to observe. The subject here is the
+    VIEW's non-duplication, not the cloak rule; the flag just restores a
+    detectability change for it to not-re-derive.
+    """
+    import engine.appc.sensor_detection as sd
+    monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.sets import SetClass
+    from engine.appc.subsystems import CloakingSubsystem
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc import contact_index
+    contact_index.reset()
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        pSet = SetClass()
+        pSet.AddObjectToSet(player, "Player")
+        enemy = ShipClass_Create("Warbird"); enemy.SetName("Enemy")
+        enemy.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
+        pSet.AddObjectToSet(enemy, "Enemy")
+        _pump(target_menu, player)
+
+        view = TargetListView()
+        assert [r[0] for r in view._snapshot()[3]] == ["Enemy"]
+
+        enemy.GetCloakingSubsystem().InstantCloak()      # no re-push
+        assert [r[0] for r in view._snapshot()[3]] == ["Enemy"]
+
+        _pump(target_menu, player)                       # the frame that drops it
+        assert [r[0] for r in view._snapshot()[3]] == []
+    finally:
+        contact_index.reset()
         from engine.core.game import _set_current_game
         _set_current_game(None)
 
@@ -597,18 +730,23 @@ def test_destroyed_ship_lingers_in_list_then_drops_after_removal():
     import json
     from engine.ui.target_list_view import TargetListView
     from engine.appc.ships import ShipClass
-    from engine.appc import ship_death
+    from engine.appc.sets import SetClass
+    from engine.appc import contact_index, ship_death
 
     ship_death.reset()
+    contact_index.reset()
     App._reset_target_menu_singleton()
     target_menu = App.STTargetMenu_CreateW("Targets")
     game, player, mission = _setup_game_with_player()
     try:
+        pSet = SetClass()
+        pSet.AddObjectToSet(player, "Player")
         wreck = ShipClass(); wreck.SetName("Doomed")
-        target_menu.set_contacts([wreck])
+        pSet.AddObjectToSet(wreck, "Doomed")
 
         # Enter the death sequence: now dying (out of action) but a wreck.
         ship_death.begin(wreck)
+        _pump(target_menu, player)
         view = TargetListView()
         state = json.loads(view.render_payload()[len("setTargetList("):-2])
         assert "Doomed" in [r["name"] for r in state["rows"]]   # listed as a wreck
@@ -617,10 +755,12 @@ def test_destroyed_ship_lingers_in_list_then_drops_after_removal():
         ship_death.advance(ship_death.THROES_DURATION)
         ship_death.advance(ship_death.WRECK_LINGER_DURATION)
         assert ship_death.is_targetable_wreck(wreck) is False
+        _pump(target_menu, player)
         state2 = json.loads(view.render_payload()[len("setTargetList("):-2])
         assert "Doomed" not in [r["name"] for r in state2["rows"]]
     finally:
         ship_death.reset()
+        contact_index.reset()
         from engine.core.game import _set_current_game
         _set_current_game(None)
 
@@ -667,7 +807,7 @@ def test_destroyed_child_subsystem_removed_but_parent_kept():
     game, player, mission = _setup_game_with_player()
     try:
         ship = _make_phaser_aggregator_ship()
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
 
         _resolve(ship, "Dorsal Phaser 1").SetCondition(0.0)  # destroyed
 
@@ -693,7 +833,7 @@ def test_parent_delisted_when_all_children_destroyed():
     game, player, mission = _setup_game_with_player()
     try:
         ship = _make_phaser_aggregator_ship()
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
 
         _resolve(ship, "Dorsal Phaser 1").SetCondition(0.0)
         _resolve(ship, "Dorsal Phaser 2").SetCondition(0.0)
@@ -732,7 +872,7 @@ def test_destroyed_leaf_subsystem_removed_from_list():
         leaf_name = leaf.GetName()
         leaf.SetCondition(0.0)
 
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
         view = TargetListView()
         script = view.render_payload()
         state = json.loads(script[len("setTargetList("):-2])
@@ -754,7 +894,7 @@ def test_locked_subsystem_destroyed_reassigns_to_next_sibling():
     game, player, mission = _setup_game_with_player()
     try:
         ship = _make_phaser_aggregator_ship()
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
         bank1 = _resolve(ship, "Dorsal Phaser 1")
         bank2 = _resolve(ship, "Dorsal Phaser 2")
         player.SetTarget("USS Galaxy")
@@ -780,7 +920,7 @@ def test_last_child_destroyed_clears_lock_to_ship_level():
     game, player, mission = _setup_game_with_player()
     try:
         ship = _make_phaser_aggregator_ship()
-        target_menu.set_contacts([ship])
+        target_menu.set_contacts(_listed(ship))
         bank1 = _resolve(ship, "Dorsal Phaser 1")
         bank2 = _resolve(ship, "Dorsal Phaser 2")
         player.SetTarget("USS Galaxy")
