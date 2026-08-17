@@ -93,11 +93,26 @@ function setTargetList(state) {
         // instead of CSS-rotating. CSS rotation promotes the caret
         // to its own GPU layer in CEF, which reduces text crispness
         // of the surrounding row.
+        //
+        // Rows with zero subsystem rows (a cloaked contact's fuzzy return,
+        // or an inert object like an asteroid whose hull/shields/power are
+        // non-targetable) have nothing to expand. Emitting a live caret
+        // there is a phantom affordance — it implies children that don't
+        // exist and toggles to nothing when clicked. We still emit the
+        // span (same base class, so CSS's fixed 14px width + 8px margin
+        // still reserve the slot) so the name column stays aligned with
+        // rows that DO have a caret; we just drop the glyph and the
+        // onclick, and add a modifier class so CSS/tests can tell the two
+        // apart without relying on absence-of-content.
+        const hasSubsystems = Array.isArray(row.subsystems) && row.subsystems.length > 0;
         const caretGlyph = expanded ? '&#9662;' : '&#9656;';  // ▾ / ▸
+        const caretHtml = hasSubsystems
+            ? '<span class="target-list__caret"'
+              + ' onclick="event.stopPropagation();' + toggleAttr + '">' + caretGlyph + '</span>'
+            : '<span class="target-list__caret target-list__caret--empty"></span>';
         html += '<div class="target-list__row target-list__row--' + aff + chosen + expandedCls + '"'
               +   ' onclick="' + targetAttr + '">'
-              +   '<span class="target-list__caret"'
-              +   ' onclick="event.stopPropagation();' + toggleAttr + '">' + caretGlyph + '</span>'
+              +   caretHtml
               +   '<span class="target-list__name">' + nameHtml + '</span>'
               +   '<span class="target-list__bars">'
               +     '<span class="target-list__bar target-list__bar--hull"'
