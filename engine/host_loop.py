@@ -256,7 +256,7 @@ def _bootstrap_firing_pipeline() -> None:
     """
     # Install the sensor-damage AI gate first so it is live regardless of
     # whether any later pipeline step short-circuits. Idempotent.
-    from engine.appc.sensor_detection import install_ai_sensor_gate
+    from engine.appc.ai_sensor_gate import install_ai_sensor_gate
     install_ai_sensor_gate()
 
     import App

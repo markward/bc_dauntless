@@ -4,7 +4,8 @@ Every assertion here pins a deliberate gameplay change. If one of these starts
 failing, the question is "was the change reverted?", not "what broke?".
 """
 from engine.appc import sensor_detection as sd
-from engine.appc.sensor_detection import can_detect, observing, _wrap_active_tuple
+from engine.appc.sensor_detection import can_detect
+from engine.appc.ai_sensor_gate import observing, _wrap_active_tuple
 from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.subsystems import CloakingSubsystem, SensorSubsystem
 
@@ -106,10 +107,10 @@ def test_toggle_off_leaves_uncloaked_detection_untouched(monkeypatch):
 # ── AI ACQUISITION: the candidate filter ─────────────────────────────────────
 #
 # The biggest gameplay consequence of the contest, and it is NOT covered by the
-# FireScript tests in tests/unit/test_sensor_detection.py — those pin the
+# FireScript tests in tests/unit/test_ai_sensor_gate.py — those pin the
 # *firing* half, where the AI already holds a lock.
 #
-# `sensor_detection._wrap_active_tuple` is the candidate filter: it gates
+# `ai_sensor_gate._wrap_active_tuple` is the candidate filter: it gates
 # ObjectGroup.GetActiveObjectTupleInSet on `can_detect` while an observer is
 # published. Two SDK enumerators publish one. `SelectTarget.FindGoodTarget`
 # carries its OWN absolute cloak skip downstream (AI/Preprocessors.py:1446),
