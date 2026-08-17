@@ -23,6 +23,7 @@ from engine.appc.ai import (
     ArtificialIntelligence, PlainAI, PriorityListAI, SequenceAI,
     ConditionalAI, PreprocessingAI, BuilderAI, RandomAI,
 )
+from engine.appc.sensor_detection import is_hidden_by_cloak
 
 US_ACTIVE = ArtificialIntelligence.US_ACTIVE
 US_DONE = ArtificialIntelligence.US_DONE
@@ -622,6 +623,29 @@ def _sync_fire_script_target_subsystem(inst) -> None:
             target = ship.GetTarget()
             if target is not None and _subsystem_belongs_to(resolved, target):
                 chosen = resolved
+
+    # A cloaked target is a fuzzy sensor return, not a detailed scan: force
+    # hull-centre aim, mirroring the player-side suppression in
+    # target_list_view (Contact.subsystems_targetable). We do NOT reach for
+    # subsystems_targetable itself here — that record is per-observer and is
+    # only ever pushed for the player by perception.perceived_by, so calling
+    # contact_for from an AI ship would hand back the PLAYER's answer, not
+    # this AI's. Cloak is absolute state on the target (is_hidden_by_cloak is
+    # a plain IsCloaked() check), which is exactly why the same predicate is
+    # correct for both sides — and it is what subsystems_targetable is itself
+    # derived from.
+    #
+    # No ENHANCED_SENSOR_CONTEST gate needed: with that flag off, cloak is
+    # absolute and can_detect() returns False for a cloaked target, so no AI
+    # ever HAS a cloaked ship.GetTarget() to reach this branch at all.
+    #
+    # Re-fetch the target rather than reuse the `target` local above: that
+    # local only exists when sub_id resolved to a live subsystem, so it can
+    # be unbound here (e.g. idTargetedSubsystem is None) while the ship still
+    # has a cloaked GetTarget().
+    current_target = ship.GetTarget()
+    if current_target is not None and is_hidden_by_cloak(current_target):
+        chosen = None
 
     # Only write on change — avoids churn and drives the dev log (below) on
     # transitions rather than every fire tick.

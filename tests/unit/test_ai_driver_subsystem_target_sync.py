@@ -11,7 +11,7 @@ from engine import dev_mode
 from engine.appc.ai import PreprocessingAI, PreprocessingAI_Create
 from engine.appc.ai_driver import tick_ai, _sync_fire_script_target_subsystem
 from engine.appc.ships import ShipClass
-from engine.appc.subsystems import PowerSubsystem, ShieldSubsystem
+from engine.appc.subsystems import CloakingSubsystem, PowerSubsystem, ShieldSubsystem
 
 
 class _FireScriptLike:
@@ -107,6 +107,54 @@ def test_sync_clears_dead_or_unresolvable_id():
     inst = _FireScriptLike(999999999)   # never-registered id
     _wire(inst, ours)
     inst.idTargetedSubsystem = 999999999
+    _sync_fire_script_target_subsystem(inst)
+    assert ours.GetTargetSubsystem() is None
+
+
+# ── Cloaked target -> forced hull-centre aim ──────────────────────────────────
+# Symmetric with the player-side suppression in
+# tests/unit/test_cloak_subsystem_suppression.py: a cloaked contact is a fuzzy
+# sensor return, not a detailed scan, on BOTH sides of the gun. We gate on
+# sensor_detection.is_hidden_by_cloak(target) — an absolute IsCloaked() check —
+# rather than reaching for Contact.subsystems_targetable, because that record
+# is per-observer and only ever pushed for the player (perception.perceived_by);
+# calling contact_for from an AI ship would hand back the PLAYER's contact
+# record, not this AI's. Cloak itself is absolute state on the target, which is
+# exactly why the same predicate is correct for both sides — and it is what
+# subsystems_targetable is itself derived from.
+
+def test_sync_forces_hull_centre_when_target_is_cloaked():
+    ours, target, shield = _ship_with_target_and_subsystem()
+    target.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
+    target.GetCloakingSubsystem().InstantCloak()
+    inst = _FireScriptLike(shield.GetObjID())
+    _wire(inst, ours)
+    inst.idTargetedSubsystem = shield.GetObjID()
+    _sync_fire_script_target_subsystem(inst)
+    assert ours.GetTargetSubsystem() is None
+
+
+def test_sync_still_picks_subsystem_when_target_is_not_cloaked():
+    """Control: identical setup, no cloak. Proves the gate above is
+    cloak-driven, not something else silently swallowing the choice."""
+    ours, target, shield = _ship_with_target_and_subsystem()
+    inst = _FireScriptLike(shield.GetObjID())
+    _wire(inst, ours)
+    inst.idTargetedSubsystem = shield.GetObjID()
+    _sync_fire_script_target_subsystem(inst)
+    assert ours.GetTargetSubsystem() is shield
+
+
+def test_sync_drops_existing_subsystem_lock_when_target_cloaks_mid_fight():
+    ours, target, shield = _ship_with_target_and_subsystem()
+    inst = _FireScriptLike(shield.GetObjID())
+    _wire(inst, ours)
+    inst.idTargetedSubsystem = shield.GetObjID()
+    _sync_fire_script_target_subsystem(inst)
+    assert ours.GetTargetSubsystem() is shield  # locked on, pre-cloak
+
+    target.SetCloakingSubsystem(CloakingSubsystem("Cloaking Device"))
+    target.GetCloakingSubsystem().InstantCloak()
     _sync_fire_script_target_subsystem(inst)
     assert ours.GetTargetSubsystem() is None
 
