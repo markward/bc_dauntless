@@ -56,7 +56,7 @@ Both were found by reading the post-stage-3 code, and both change what this plan
 - Test: `tests/unit/test_cloak_detection_contest.py`
 
 **Interfaces:**
-- Produces: `ENHANCED_SENSOR_CONTEST: bool` (default `True`), `CLOAK_RANGE_FACTOR: float` (`0.01`)
+- Produces: `ENHANCED_SENSOR_CONTEST: bool` (default `True`), `CLOAK_RANGE_FACTOR: float` (`0.01` as planned; retuned live and joined by `CLOAK_DETECTION_BASE_GU` — read the constants, not this line)
 - `can_detect(observer, target) -> bool` — signature unchanged
 
 **The change.** Today `can_detect` returns `False` the moment the target is cloaked, before any sensor maths runs:

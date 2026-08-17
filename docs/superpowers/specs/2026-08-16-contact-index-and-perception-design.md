@@ -259,6 +259,17 @@ sensors)" (`sensor_detection.py:171`), which is not true today.
 
 ### 2. Cloak becomes range-defeatable
 
+> ⚠️ **SUPERSEDED AS BUILT (2026-08-17).** The shipped formula gained a flat
+> floor and was retuned four times on live passes; it is now
+> `CLOAK_DETECTION_BASE_GU + effective_range * CLOAK_RANGE_FACTOR`. **Do not read
+> the numbers below as current** — they are the design-time proposal. The live
+> values are the constants in `engine/appc/sensor_detection.py`, and tests derive
+> from them via `tests/helpers/cloak_geometry.py` so retuning needs no test edit.
+> Also note this section assumed the change would reach AI acquisition
+> automatically; it did not, because `AI/Preprocessors.py:1444-1450` discards
+> cloaked candidates downstream. Closed separately by the fallback in
+> `ai_sensor_gate._wrap_find_good_target`.
+
 Cloak stops being an early return and becomes a range multiplier:
 
 ```python

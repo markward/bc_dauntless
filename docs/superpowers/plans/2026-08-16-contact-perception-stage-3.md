@@ -702,7 +702,7 @@ Item 7 is the one to watch: if nebulae start hiding contacts, stage 4 has leaked
 
 Recorded so the intent survives; gets its own plan after stage 3 is live-verified.
 
-**The mechanic Mark specified.** Cloak stops being an early return in `can_detect` and becomes a range multiplier — `CLOAK_RANGE_FACTOR = 0.01` of *effective* sensor range, so it scales with sensor condition and power. A Galaxy (2,000 GU sensors) detects a cloaked ship at **20 GU**, one third of its 60 GU phaser range. Symmetric: AI ships get the same capability, and since `can_detect` is also the AI target-selection and firing gate, cloaked attack runs become detectable at close range. 1% was chosen over 1.5% specifically to keep cloak viable.
+**The mechanic Mark specified.** ⚠️ Numbers here are design-time and were superseded by four live retunes plus a flat floor — see the spec note and `engine/appc/sensor_detection.py`. Cloak stops being an early return in `can_detect` and becomes a range multiplier — `CLOAK_RANGE_FACTOR = 0.01` of *effective* sensor range, so it scales with sensor condition and power. A Galaxy (2,000 GU sensors) detects a cloaked ship at **20 GU**, one third of its 60 GU phaser range. Symmetric: AI ships get the same capability, and since `can_detect` is also the AI target-selection and firing gate, cloaked attack runs become detectable at close range. 1% was chosen over 1.5% specifically to keep cloak viable.
 
 **Also in stage 4:** switch `perceived_by` from the current UI rule to `can_detect`, which brings nebula concealment (with its per-pair hysteresis latch) to the target list and radar.
 
