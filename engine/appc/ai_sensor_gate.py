@@ -39,6 +39,8 @@ because the arrow would then point the wrong way.
 See docs/superpowers/specs/2026-06-10-sensor-damage-detection-scaling-design.md
 """
 
+import App
+
 from engine.appc.sensor_detection import can_detect
 
 # ── AI candidate-selection gate ───────────────────────────────────────────────
@@ -117,17 +119,73 @@ def _wrap_active_tuple(orig):
     return _gated_active
 
 
+def _best_detectable_candidate(select_target, ship):
+    """Re-pick a target from the SENSOR-GATED enumeration, for the case where the
+    SDK declined outright.
+
+    Runs only inside `_gated_find`'s `observing(ship)` window, so
+    `GetActiveObjectTupleInSet` is already filtered to what *ship* can detect —
+    which, since stage 4, includes a cloaked contact inside its bubble. This is
+    what the SDK's own loop throws away at
+    sdk/Build/scripts/AI/Preprocessors.py:1444-1450 with an unconditional
+    `if pCloakSystem.IsCloaked(): continue`.
+
+    Scoring is the SDK's OWN `GetTargetRating`, and the dead/dying and
+    skip-ourselves filters mirror its loop exactly. The ONLY rule that differs is
+    cloak, which `can_detect` has already decided upstream. Do not add scoring or
+    filtering of our own here — the point of the fallback shape is that the
+    original selection logic stays the single source of ranking.
+
+    Returns a NAME (as FindGoodTarget does), or None.
+    """
+    pSet = ship.GetContainingSet()
+    group = getattr(select_target, "pTargetGroup", None)
+    if pSet is None or group is None:
+        return None
+
+    own_id = ship.GetObjID()
+    live = []
+    for obj in group.GetActiveObjectTupleInSet(pSet):
+        pDam = App.DamageableObject_Cast(obj)
+        if pDam and (pDam.IsDead() or pDam.IsDying()):
+            continue
+        if obj.GetObjID() == own_id:
+            continue
+        live.append(obj)
+    if not live:
+        return None
+    return max(live, key=select_target.GetTargetRating).GetName()
+
+
 def _wrap_find_good_target(orig):
     """Wrap SelectTarget.FindGoodTarget (the candidate-enumeration method) so
     the querying ship is published as the current observer for the duration of
     the original call. FindGoodTarget calls ObjectGroup.GetActiveObjectTupleInSet,
-    which the companion wrapper filters while an observer is published."""
+    which the companion wrapper filters while an observer is published.
+
+    ALSO supplies the acquisition half of the stage-4 cloak contest. The SDK path
+    runs first and untouched, and its answer always wins — so uncloaked enemies
+    keep their existing priority and ordinary engagements are unchanged. Only
+    when it returns None do we re-pick (see `_best_detectable_candidate`), which
+    is precisely the case its absolute cloak skip creates.
+
+    ⚠️ NO ENHANCED_SENSOR_CONTEST CHECK BELONGS HERE, and its absence is load-
+    bearing rather than an omission. With the flag off, `can_detect` rejects
+    cloaked contacts at every range, so the gated enumeration hands the fallback
+    nothing and stock BC's absolute behaviour returns on its own. Adding a flag
+    check would give this module a detection rule of its own — exactly what the
+    header disclaims. Pinned by tests/unit/test_ai_acquires_close_cloaked.py::
+    test_contest_off_restores_absolute_cloak_with_no_flag_check_here.
+    """
 
     def _gated_find(self):
         code_ai = getattr(self, "pCodeAI", None)
         ship = code_ai.GetShip() if code_ai is not None else None
         with observing(ship):
-            return orig(self)
+            name = orig(self)
+            if name is not None or ship is None:
+                return name
+            return _best_detectable_candidate(self, ship)
 
     _gated_find._sensor_gated = True
     return _gated_find
