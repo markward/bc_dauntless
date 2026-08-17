@@ -30,6 +30,7 @@ from engine.appc.perception import perceived_by
 from engine.appc.sensor_detection import can_detect
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import CloakingSubsystem, SensorSubsystem, _get_xyz
+from tests.helpers.cloak_geometry import inside_gu, outside_gu
 
 import test_nebula_concealment as _tnc
 
@@ -250,8 +251,9 @@ def test_toggle_off_agrees_with_the_pre_stage_4_rule_everywhere(monkeypatch,
 # ── Cloak reaches the UI too (the other half of dropping is_hidden_by_cloak) ──
 
 def _cloak_scene(x):
-    """Observer with 2000 GU sensors (flat 5 GU plus 1% = 25 GU cloak
-    bubble) and one cloaked contact at (x, 0, 0). No nebula."""
+    """Observer with 2000 GU sensors and one cloaked contact at (x, 0, 0). No
+    nebula. Pass x from tests.helpers.cloak_geometry so a cloak retune needs no
+    edit here."""
     contact_index.reset()
     from engine.appc.sets import SetClass
     pSet = SetClass()
@@ -264,14 +266,15 @@ def test_a_cloaked_ship_inside_the_bubble_is_now_perceivable():
     """INTENTIONAL BEHAVIOUR CHANGE. The UI used to run the absolute
     `is_hidden_by_cloak`, so a cloaked ship you could already shoot was absent
     from the radar and target list. It now runs the same range contest."""
-    observer, target = _cloak_scene(15.0)
+    observer, target = _cloak_scene(inside_gu())
 
     assert _record_for(observer, target).perceivable is True
 
 
 def test_a_cloaked_ship_beyond_the_bubble_is_still_hidden():
-    """45 GU clears the 25 GU bubble with a 20 GU margin."""
-    observer, target = _cloak_scene(45.0)
+    """Comfortably outside the bubble — a multiple of its radius, not a hair
+    past the boundary."""
+    observer, target = _cloak_scene(outside_gu())
 
     assert _record_for(observer, target).perceivable is False
 
@@ -280,7 +283,7 @@ def test_toggle_off_restores_absolute_cloak_in_the_ui(monkeypatch):
     """Stock BC: flipping ENHANCED_SENSOR_CONTEST off makes cloak absolute for
     the UI as well as for the weapons — one rule, one toggle."""
     monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
-    observer, target = _cloak_scene(15.0)
+    observer, target = _cloak_scene(inside_gu())
 
     assert _record_for(observer, target).perceivable is False
 

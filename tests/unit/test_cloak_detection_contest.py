@@ -8,6 +8,7 @@ from engine.appc.sensor_detection import can_detect
 from engine.appc.ai_sensor_gate import observing, _wrap_active_tuple
 from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.subsystems import CloakingSubsystem, SensorSubsystem
+from tests.helpers.cloak_geometry import bubble_gu, inside_gu, outside_gu
 
 
 def _observer(base_range=2000.0, condition=100.0):
@@ -48,15 +49,15 @@ def _target(x, cloaked=False, mid_cloak=False):
 
 
 def test_cloaked_ship_is_detected_inside_flat_plus_percent_bubble():
-    """2000 GU sensors give a flat-10 + 0.5% = 20 GU cloak bubble — well under
-    half a Galaxy's 60 GU phaser range. You must be effectively on top of it."""
-    assert can_detect(_observer(), _target(15.0, cloaked=True)) is True
+    """Comfortably inside the bubble, which sits well under a Galaxy's 60 GU
+    phaser range: you must be effectively on top of a cloaked ship to see it."""
+    assert can_detect(_observer(), _target(inside_gu(), cloaked=True)) is True
 
 
 def test_cloaked_ship_is_not_detected_beyond_the_bubble():
-    """45 GU clears the 20 GU bubble with a 25 GU margin — well outside, not
-    just past the boundary."""
-    assert can_detect(_observer(), _target(45.0, cloaked=True)) is False
+    """Comfortably outside — a multiple of the bubble radius, not a hair past
+    the boundary, so this cannot pass on a rounding accident."""
+    assert can_detect(_observer(), _target(outside_gu(), cloaked=True)) is False
 
 
 def test_uncloaked_ship_at_the_same_distance_is_still_detected():
@@ -65,31 +66,36 @@ def test_uncloaked_ship_at_the_same_distance_is_still_detected():
 
 
 def test_cloak_reach_scales_with_sensor_condition():
-    """The 0.5% term is a percentage of EFFECTIVE range, so damage shrinks the
-    bubble toward the flat 10 GU floor — this is what makes boosting sensor
-    power meaningful. Full condition: 2000 GU effective -> 10+10=20 GU
-    bubble. 50% condition: 1000 GU effective -> 10+5=15 GU bubble.
+    """The percentage term scales EFFECTIVE range, so damage shrinks the bubble
+    toward the flat floor — this is what makes boosting sensor power meaningful.
+    Halving condition halves the percentage term while the floor stays put.
 
-    ⚠️ THE MARGIN THIS TEST HAS TO WORK IN IS NARROW AND SHRINKING. Raising the
-    flat base while cutting the factor (5 GU/1% -> 10 GU/0.5% on 2026-08-17)
-    compressed the full-vs-half spread from 25/15 GU to 20/15 GU, so the probe
-    distance has only a 5 GU window and sits at its midpoint: 2.5 GU inside the
-    full bubble, 2.5 GU outside the half. A further retune in the same direction
-    closes the window entirely and makes this test unwritable — which is itself
-    the signal that the condition lever has stopped meaning anything. Do not
-    respond by moving the probe onto a boundary (`dist == r` DETECTS, so a
-    boundary pick passes for the wrong reason); re-derive both legs."""
-    assert can_detect(_observer(), _target(17.5, cloaked=True)) is True
+    The probe sits at the MIDPOINT of the two bubbles, derived from the live
+    constants: inside the full-condition bubble, outside the half-condition one.
+
+    ⚠️ THE WINDOW THIS TEST WORKS IN IS THE FLOOR'S SHARE OF THE BUBBLE, and it
+    narrows every time the floor rises relative to the factor. It IS the
+    condition lever's authority: when the floor dominates, damage and power
+    barely move detection, the window closes, and this test becomes unwritable.
+    If it ever fails with the midpoint derived correctly, the message is not
+    "fix the probe" — it is that the lever has stopped meaning anything."""
+    full = bubble_gu(2000.0)
+    half = bubble_gu(1000.0)
+    probe = (full + half) / 2.0
+    assert half < probe < full, (
+        f"condition lever has collapsed: full={full} half={half} — the floor "
+        f"now dominates the percentage term, so this test cannot be written")
+    assert can_detect(_observer(), _target(probe, cloaked=True)) is True
     assert can_detect(_observer(condition=50.0),
-                      _target(17.5, cloaked=True)) is False
+                      _target(probe, cloaked=True)) is False
 
 
 def test_mid_cloak_ship_stays_fully_visible_with_no_bubble_applied():
     """The bubble is gated on IsCloaked(), not IsTryingToCloak(): a ship
     part-way through the fade is still fully sighted at full sensor range.
-    500 GU is well beyond the 20 GU cloak bubble, so this only passes if no
-    bubble was applied."""
-    mid = _target(500.0, mid_cloak=True)
+    The probe is far beyond the cloak bubble but well inside raw sensor reach,
+    so this only passes if no bubble was applied."""
+    mid = _target(outside_gu() * 10.0, mid_cloak=True)
     cloak = mid.GetCloakingSubsystem()
     assert cloak.IsTryingToCloak() == 1
     assert cloak.IsCloaked() == 0
@@ -110,7 +116,7 @@ def test_cloak_bubble_is_exactly_base_plus_factor_of_effective_range():
 
     `can_detect` compares `dist_sq <= r * r`, so a target exactly ON the
     boundary IS detected and the first assertion is the true edge."""
-    r = sd.CLOAK_DETECTION_BASE_GU + 2000.0 * sd.CLOAK_RANGE_FACTOR
+    r = bubble_gu()
     assert can_detect(_observer(), _target(r, cloaked=True)) is True
     assert can_detect(_observer(), _target(r + 0.5, cloaked=True)) is False
 
@@ -125,7 +131,7 @@ def test_cloak_bubble_stays_well_inside_phaser_range():
     never trips it. It catches the order-of-magnitude slip — 0.05 for 0.005
     gives a Galaxy 110 GU, nearly twice its phaser reach — which is exactly the
     error no other assertion here would notice."""
-    r = sd.CLOAK_DETECTION_BASE_GU + 2000.0 * sd.CLOAK_RANGE_FACTOR
+    r = bubble_gu()
     assert 0.0 < r <= 30.0, f"Galaxy cloak bubble {r} GU vs 60 GU phaser range"
 
 
@@ -159,12 +165,13 @@ def test_toggle_off_leaves_uncloaked_detection_untouched(monkeypatch):
 # so a cloaked contact never survives THAT path — but
 # `AI/PlainAI/StarbaseAttack.py::GetTargets` has no such skip and returns
 # `GetActiveObjectTupleInSet` straight out. So stations DO acquire cloaked
-# ships inside their bubble, and the bubble is a flat 10 GU plus 0.5% of
-# BaseSensorRange: fedstarbase 12000 GU -> 70 GU, cardstarbase 5000 -> 35,
-# and the 18 of 52 hardpoint files that author no SetBaseSensorRange inherit
-# FALLBACK_RANGE_GU (30000) -> 160 GU. Whether those numbers are right is a
-# TUNING question for the project owner; these tests pin only that the
-# mechanism reaches this surface, both on and off.
+# ships inside their bubble, and station hardpoints author large sensor ranges
+# (fedstarbase 12000 GU, cardstarbase 5000, and the 18 of 52 hardpoint files
+# authoring none inherit FALLBACK_RANGE_GU 30000) so their bubbles dwarf a
+# Galaxy's. Current figures come from tests.helpers.cloak_geometry.bubble_gu --
+# deliberately not restated here, because they move with every retune. Whether
+# they are right is a TUNING question for the project owner; these tests pin
+# only that the mechanism reaches this surface, both on and off.
 
 def _candidates(observer, contacts):
     """Run *contacts* through the AI candidate filter as *observer* sees them.
@@ -180,18 +187,18 @@ def _candidates(observer, contacts):
 
 def test_ai_acquires_a_cloaked_contact_inside_the_bubble():
     """A station/AI enumerating candidates GETS a cloaked ship inside its
-    flat-10-plus-0.5% bubble. This is acquisition from cold, not re-engagement
-    of an existing lock."""
-    cloaked = _target(15.0, cloaked=True)
+    bubble. This is acquisition from cold, not re-engagement of an existing
+    lock."""
+    cloaked = _target(inside_gu(), cloaked=True)
     assert _candidates(_observer(), [cloaked]) == (cloaked,)
 
 
 def test_ai_does_not_acquire_a_cloaked_contact_outside_the_bubble():
-    """The boundary holds on this surface too: at 45 GU — well inside the
-    2000 GU sensor reach, well outside the 20 GU cloak bubble — the contact
-    is filtered out, while an uncloaked ship at the same range survives."""
-    cloaked = _target(45.0, cloaked=True)
-    plain = _target(45.0)
+    """The boundary holds on this surface too: well inside raw sensor reach but
+    outside the cloak bubble, the contact is filtered out, while an uncloaked
+    ship at the same range survives."""
+    cloaked = _target(outside_gu(), cloaked=True)
+    plain = _target(outside_gu())
     assert _candidates(_observer(), [cloaked, plain]) == (plain,)
 
 

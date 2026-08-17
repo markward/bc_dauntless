@@ -17,7 +17,7 @@ moment it starts decloaking.
 CLOAK_DETECTION_BASE_GU plus CLOAK_RANGE_FACTOR of effective sensor range
 (tests/unit/test_cloak_detection_contest.py), and since stage 4 the radar and
 target list run that same rule. `_scene()` models no BaseSensorRange, so
-effective range is FALLBACK_RANGE_GU (30000) and the cloak bubble is 160 GU —
+effective range is FALLBACK_RANGE_GU (30000), the game's largest bubble —
 with the enemy 50 GU away, a cloaked ship stays listed under the default
 configuration. The "drops off the list" tests below
 therefore state STOCK BC and are held under ENHANCED_SENSOR_CONTEST = False,
@@ -31,6 +31,7 @@ from engine.appc.subsystems import CloakingSubsystem
 from engine.appc.sensor_detection import is_hidden_by_cloak
 from engine.appc.perception import perceived_by
 from engine.appc.target_menu import STTargetMenu_CreateW, STSubsystemMenu
+from tests.helpers.cloak_geometry import assert_inside, FALLBACK_SENSOR_GU
 
 
 def _pump(menu, player):
@@ -57,6 +58,12 @@ def _scene():
     pSet.AddObjectToSet(enemy, "Enemy")
     menu = STTargetMenu_CreateW("Targets")
     menu.RebuildShipMenus(pSet)
+    # These fixtures author no BaseSensorRange, so the observer falls back to
+    # FALLBACK_RANGE_GU and gets the game's largest cloak bubble. The 50 GU
+    # separation above is meant to sit INSIDE it; pin that rather than assume it,
+    # so a cloak retune fails loudly here instead of silently turning every
+    # "inside the bubble" test below into an "outside the bubble" one.
+    assert_inside(50.0, FALLBACK_SENSOR_GU)
     return pSet, player, enemy, menu
 
 
@@ -92,7 +99,7 @@ def test_is_hidden_by_cloak_predicate():
 
 def test_cloaked_ship_marked_not_visible_for_radar(monkeypatch):
     """STOCK-BC BEHAVIOUR, held under ENHANCED_SENSOR_CONTEST = False — see the
-    module docstring. The enemy sits 50 GU away, inside the 160 GU cloak
+    module docstring. The enemy sits 50 GU away, inside the cloak
     bubble, so with the flag at its default it stays on the radar; the
     companion below pins that."""
     import engine.appc.sensor_detection as sd
@@ -115,7 +122,7 @@ def test_cloaked_ship_stays_on_radar_inside_the_bubble():
     cloaked ship you can already shoot is one you can also see. Previously the
     radar ran the absolute is_hidden_by_cloak and dropped it at any range.
 
-    50 GU is inside the 160 GU bubble (CLOAK_DETECTION_BASE_GU plus
+    50 GU is inside the bubble (CLOAK_DETECTION_BASE_GU plus
     FALLBACK_RANGE_GU x CLOAK_RANGE_FACTOR); beyond it the contact goes, which
     keeps the original guarantee live.
     """
@@ -166,7 +173,7 @@ def test_cloaked_ship_dropped_from_target_list_view(monkeypatch):
 def test_cloaked_ship_stays_in_target_list_view_inside_the_bubble():
     """INTENTIONAL BEHAVIOUR CHANGE (stage 4, ENHANCED_SENSOR_CONTEST
     default-on) — the target list is the other surface that used to run the
-    absolute is_hidden_by_cloak. Same 50 GU / 160 GU geometry as the radar
+    absolute is_hidden_by_cloak. Same 50-GU-inside-the-bubble geometry as the radar
     companion above."""
     pSet, player, enemy, menu = _scene()
 
@@ -224,11 +231,11 @@ def test_player_lock_drops_cloaked_target(monkeypatch):
 
 def test_player_lock_survives_close_cloak_but_drops_beyond_the_bubble():
     """INTENTIONAL DIVERGENCE (ENHANCED_SENSOR_CONTEST default-on): the lock is
-    kept while the cloaked ship is inside the flat-10-plus-0.5%-of-effective-
+    kept while the cloaked ship is inside the floor-plus-fraction-of-effective-
     sensor-range bubble.
 
     These fixtures model no BaseSensorRange, so effective range is
-    FALLBACK_RANGE_GU (30000) and the cloak bubble is 160 GU. The enemy sits at
+    FALLBACK_RANGE_GU (30000), the game's largest bubble. The enemy sits at
     50 GU -> still locked. Push it past the bubble and the guard drops it, which
     keeps the original "undetectable target loses the lock" guarantee live under
     the default configuration.
@@ -238,7 +245,7 @@ def test_player_lock_survives_close_cloak_but_drops_beyond_the_bubble():
     player.SetTarget(enemy)
     enemy.GetCloakingSubsystem().InstantCloak()
 
-    # 50 GU, inside the 160 GU cloak bubble → the lock holds.
+    # 50 GU, inside the cloak bubble → the lock holds.
     clear_undetectable_player_lock(player)
     assert player.GetTarget() is enemy
 

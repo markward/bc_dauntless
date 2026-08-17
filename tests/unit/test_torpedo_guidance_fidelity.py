@@ -1,5 +1,6 @@
 from engine.appc.projectiles import Torpedo
 from engine.appc.math import TGPoint3
+from tests.helpers.cloak_geometry import inside_gu, outside_gu
 
 
 class FakeShip:
@@ -83,9 +84,9 @@ def test_cloaked_target_steers_to_frozen_last_seen(monkeypatch):
 
 
 def _cloak_scene(target_x):
-    """Firing ship with a REAL 2000 GU SensorSubsystem — so its cloak bubble is
-    a flat 5 GU plus 1% of that, 25 GU — plus a fully cloaked target at
-    (target_x, 0, 0).
+    """Firing ship with a REAL 2000 GU SensorSubsystem, plus a fully cloaked
+    target at (target_x, 0, 0). Pass target_x from
+    tests.helpers.cloak_geometry so a cloak retune needs no edit here.
 
     Real engine objects, not fakes: _target_visible swallows every exception and
     returns True, so a fake missing a method would make these tests pass for the
@@ -128,15 +129,15 @@ def test_torpedo_keeps_homing_when_target_cloaks_inside_the_bubble():
     """INTENTIONAL stage-4 gameplay change (ENHANCED_SENSOR_CONTEST, default on).
 
     Torpedo guidance consults sensor_detection.can_detect via _target_visible,
-    and cloak is now a flat 5 GU plus a percentage of effective sensor range
-    rather than an absolute. At 15 GU the cloaked target is inside the firing
-    ship's 25 GU bubble, so the torpedo keeps tracking it: cloaking to shake a
+    and cloak is now a flat floor plus a percentage of effective sensor range
+    rather than an absolute. Inside the firing ship's bubble the torpedo keeps
+    tracking a cloaked target: cloaking to shake a
     torpedo no longer works at knife range. This is a deliberate divergence
     from BC — if it starts failing, ask "was the change reverted?", not "what
     broke?".
     """
     from engine.appc import projectiles
-    src, tgt = _cloak_scene(15.0)
+    src, tgt = _cloak_scene(inside_gu())
     t = _torp_with_stale_cache(src, tgt)
 
     assert projectiles._target_visible(t, tgt) is True
@@ -145,17 +146,17 @@ def test_torpedo_keeps_homing_when_target_cloaks_inside_the_bubble():
     # Cache refreshed to the LIVE position, and steering +x toward it.
     assert (t._last_seen_target_pos.x,
             t._last_seen_target_pos.y,
-            t._last_seen_target_pos.z) == (15.0, 0.0, 0.0)
+            t._last_seen_target_pos.z) == (inside_gu(), 0.0, 0.0)
     assert t._velocity.x > 0.0
 
 
 def test_torpedo_coasts_on_last_seen_when_target_cloaks_outside_the_bubble():
-    """The bubble boundary still holds: at 45 GU (well outside the 25 GU
-    bubble) a cloaked target is invisible, the cache stays frozen, and the
+    """The bubble boundary still holds: comfortably outside the bubble a
+    cloaked target is invisible, the cache stays frozen, and the
     torpedo steers to the stale last-seen point on -x. Stock BC's
     shake-the-torpedo trick is intact at any real engagement distance."""
     from engine.appc import projectiles
-    src, tgt = _cloak_scene(45.0)
+    src, tgt = _cloak_scene(outside_gu())
     t = _torp_with_stale_cache(src, tgt)
 
     assert projectiles._target_visible(t, tgt) is False
@@ -174,7 +175,7 @@ def test_torpedo_cloak_cache_is_absolute_with_the_contest_off(monkeypatch):
     import engine.appc.sensor_detection as sd
     monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
     from engine.appc import projectiles
-    src, tgt = _cloak_scene(15.0)
+    src, tgt = _cloak_scene(inside_gu())
     t = _torp_with_stale_cache(src, tgt)
 
     assert projectiles._target_visible(t, tgt) is False

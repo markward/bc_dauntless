@@ -60,11 +60,14 @@ from engine.appc.sensor_detection import can_detect
 # STATIONS DO ACQUIRE CLOAKED SHIPS inside their bubble, from cold. Do not write
 # "the AI cannot acquire a cloaked contact" anywhere; it is true of one path
 # only. The bubble is CLOAK_DETECTION_BASE_GU plus CLOAK_RANGE_FACTOR of
-# BaseSensorRange, and station hardpoints author large ones (fedstarbase
-# 12000 GU -> 70 GU, cardstarbase 5000 -> 35, and the 18 of 52 hardpoint files
-# that author no SetBaseSensorRange fall back to FALLBACK_RANGE_GU -> 160 GU).
-# Whether those numbers are right is a TUNING question for the project owner
-# and is deliberately NOT clamped here.
+# BaseSensorRange, and station hardpoints author large ones — fedstarbase
+# 12000 GU and cardstarbase 5000, while the 18 of 52 hardpoint files that author
+# no SetBaseSensorRange fall back to FALLBACK_RANGE_GU (30000), the largest
+# bubble in the game. Multiply those by CLOAK_RANGE_FACTOR for the current
+# figures; they are deliberately NOT restated here, because they move with every
+# retune and the stale copies cost more to correct than the retune itself.
+# Whether they are right is a TUNING question for the project owner and is
+# deliberately NOT clamped here.
 # Pinned by tests/unit/test_cloak_detection_contest.py's "AI ACQUISITION"
 # section, which drives this filter directly.
 

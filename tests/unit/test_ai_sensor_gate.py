@@ -18,6 +18,7 @@ from engine.appc.ai_sensor_gate import (
     install_ai_sensor_gate,
 )
 from engine.appc.objects import ObjectGroup
+from tests.helpers.cloak_geometry import inside_gu, outside_gu
 
 
 def _ship_with_sensor(base_range, condition=100.0, max_condition=100.0,
@@ -293,9 +294,11 @@ def test_fire_script_target_visible_gated_by_firing_ship_sensors():
 
 
 def _fire_script_at(distance_gu):
-    """A gated FireScript whose firing ship has 2000 GU sensors (a flat 5 GU
-    plus 1% = 25 GU cloak bubble) locked onto a fully cloaked BirdOfPrey at
-    *distance_gu*."""
+    """A gated FireScript whose firing ship has 2000 GU sensors, locked onto a
+    fully cloaked BirdOfPrey at *distance_gu*.
+
+    Pass distances from tests.helpers.cloak_geometry (inside_gu/outside_gu) so a
+    cloak retune needs no edit here."""
     from engine.appc.subsystems import CloakingSubsystem
     install_ai_sensor_gate()
     import AI.Preprocessors as pp
@@ -320,7 +323,7 @@ def test_fire_script_engages_a_cloaked_target_inside_the_bubble():
 
     FireScript.TargetVisible is the AI's firing gate and runs through
     can_detect, so the contest is symmetric: an AI ship keeps engaging a target
-    that cloaks inside its 25 GU bubble, exactly as the player's phaser gate now
+    that cloaks inside its bubble, exactly as the player's phaser gate now
     does (tests/unit/test_phaser_cloaked_target_no_fire.py). A cloaked attack
     run is detectable close in. Deliberate divergence from BC.
 
@@ -333,16 +336,15 @@ def test_fire_script_engages_a_cloaked_target_inside_the_bubble():
     stations acquire cloaked ships inside their bubble. Pinned by the
     "AI ACQUISITION" section of tests/unit/test_cloak_detection_contest.py.
     """
-    fs, target = _fire_script_at(15.0)
+    fs, target = _fire_script_at(inside_gu())
     assert fs.TargetVisible(target) == 1
     assert fs.bTargetVisible == 1
 
 
 def test_fire_script_stops_at_a_cloaked_target_outside_the_bubble():
-    """The bubble boundary holds: at 45 GU — inside the 2000 GU sensor reach but
-    well outside the 25 GU cloak bubble — the firing gate trips, as in stock
-    BC."""
-    fs, target = _fire_script_at(45.0)
+    """The bubble boundary holds: well inside the 2000 GU sensor reach but
+    outside the cloak bubble, the firing gate trips, as in stock BC."""
+    fs, target = _fire_script_at(outside_gu())
     assert fs.TargetVisible(target) == 0
     assert fs.bTargetVisible == 0
 
@@ -357,6 +359,6 @@ def test_fire_script_cloak_gate_is_absolute_with_the_contest_off(monkeypatch):
     split did not clone the toggle."""
     import engine.appc.sensor_detection as sd
     monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
-    fs, target = _fire_script_at(15.0)
+    fs, target = _fire_script_at(inside_gu())
     assert fs.TargetVisible(target) == 0
     assert fs.bTargetVisible == 0
