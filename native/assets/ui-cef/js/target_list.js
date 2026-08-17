@@ -99,11 +99,20 @@ function setTargetList(state) {
         // non-targetable) have nothing to expand. Emitting a live caret
         // there is a phantom affordance — it implies children that don't
         // exist and toggles to nothing when clicked. We still emit the
-        // span (same base class, so CSS's fixed 14px width + 8px margin
-        // still reserve the slot) so the name column stays aligned with
-        // rows that DO have a caret; we just drop the glyph and the
-        // onclick, and add a modifier class so CSS/tests can tell the two
-        // apart without relying on absence-of-content.
+        // span (same base class — target_list.css gives .target-list__caret
+        // an explicit `width` + `margin-right`, so both states occupy the
+        // same box; it is NOT flex-sized, and it is NOT content-driven) so
+        // the name column stays aligned with rows that DO have a caret; we
+        // just drop the glyph and the onclick, and add a modifier class
+        // (target_list.css overrides its cursor to `default`) so CSS/tests
+        // can tell the two apart without relying on absence-of-content.
+        //
+        // Side effect, intentional: with no onclick/stopPropagation on the
+        // empty caret, a click there now falls through (normal DOM bubbling)
+        // to the row's own onclick and selects the ship — same as clicking
+        // the name or bars. That's reasonable (there's nothing else to do
+        // in that zone on a childless row) but wasn't true before this fix,
+        // when the caret always intercepted its own clicks.
         const hasSubsystems = Array.isArray(row.subsystems) && row.subsystems.length > 0;
         const caretGlyph = expanded ? '&#9662;' : '&#9656;';  // ▾ / ▸
         const caretHtml = hasSubsystems

@@ -91,6 +91,17 @@
 }
 
 .target-list__caret {
+    /* Explicit width (was content-driven/shrink-to-fit before this rule
+     * existed): a populated caret's box used to be sized by its glyph
+     * content alone, so a row with NO subsystems (a phantom-chevron fix —
+     * an empty span with no glyph) collapsed to just its padding and the
+     * name column shifted left relative to rows that DO have a caret. Set
+     * to 14px == font-size, the standard single-glyph box for a 14px
+     * triangle character, so both the populated and empty states occupy
+     * the same footprint. text-align centres the glyph inside that box
+     * (previously it just filled the shrink-wrapped span). */
+    width: 14px;
+    text-align: center;
     margin-right: 8px;
     font-size: 14px;
     line-height: 1;
@@ -110,6 +121,17 @@
  * insert the glyph as text content; the CSS just doesn't touch it.
  * (Previous implementation used transform: rotate(90deg) here, but
  * GPU layer promotion from the transform reduced text crispness.) */
+
+/* Childless rows (a cloaked ship's fuzzy return, an inert asteroid) get an
+ * empty caret span — same width/margin/padding as above so nothing shifts,
+ * but no click target (nothing to toggle) and no pointer cursor (nothing is
+ * clickable here). A click in this zone therefore falls through to the
+ * row's own onclick and selects the row, same as clicking the name or bars —
+ * that is an intentional, if previously undocumented, side effect of
+ * dropping the caret's onclick/stopPropagation; see target_list.js. */
+.target-list__caret--empty {
+    cursor: default;
+}
 
 .target-list__name {
     font-size: 13px;

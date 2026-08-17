@@ -224,7 +224,7 @@ def test_player_lock_drops_cloaked_target(monkeypatch):
 
 def test_player_lock_survives_close_cloak_but_drops_beyond_the_bubble():
     """INTENTIONAL DIVERGENCE (ENHANCED_SENSOR_CONTEST default-on): the lock is
-    kept while the cloaked ship is inside the flat-10-plus-1%-of-effective-
+    kept while the cloaked ship is inside the flat-5-plus-1%-of-effective-
     sensor-range bubble.
 
     These fixtures model no BaseSensorRange, so effective range is
