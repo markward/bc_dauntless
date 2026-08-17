@@ -2593,7 +2593,7 @@ def _get_xyz(ship) -> tuple:
     every ObjectClass descendant — ShipClass, Planet, PhysicsObjectClass,
     DamageableObject — resolved through the first accessor either way, and a
     census of the three call sites (perception.perceived_by,
-    perception.measure_surface_gu, sensor_detection.can_detect) found only
+    perception.measure_surface_gu_to, sensor_detection.can_detect) found only
     ObjectClass arguments. The full class scan puts exactly two families in the
     changed set, neither of which reaches any of them: Torpedo, and the
     ShipSubsystem/Weapon hierarchy. Running both implementations side by side

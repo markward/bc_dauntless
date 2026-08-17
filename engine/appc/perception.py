@@ -19,7 +19,8 @@ which made the model layer depend on the UI layer —
 perception -> App -> target_menu -> perception, a cycle held apart only by lazy
 imports. It is now `target_menu.surface_gu_to`, on the class that owns the
 record; what stayed is the measurement it falls back to,
-`measure_surface_gu`. This module imports no App and knows nothing about menus.
+`measure_surface_gu_to`. This module imports no App and knows nothing about
+menus.
 
 STAGE 4 SCOPE: there is now exactly ONE detection rule.
 `sensor_detection.can_detect` — already the gate for weapons, AI targeting and
@@ -226,8 +227,8 @@ def _surface_gu(dist_sq: float, ship) -> float:
     return d - r if d > r else 0.0
 
 
-def measure_surface_gu(observer, ship) -> float:
-    """Measure *observer* → *ship* surface distance from LIVE world positions.
+def measure_surface_gu_to(ship, observer) -> float:
+    """Measure the *observer* → *ship* surface distance from LIVE world positions.
 
     THE arithmetic, in one place. `perceived_by` reaches `_surface_gu`
     directly because it already holds the squared centre distance (it computed
@@ -235,15 +236,24 @@ def measure_surface_gu(observer, ship) -> float:
     undo exactly the consolidation this module exists for); every other caller
     wants this, which does the vector too.
 
-    Named for the VERB because the distinction matters at the call site: this
-    always measures, where `target_menu.surface_gu_to` prefers the frame's
-    already-pushed record and falls back to this. A caller that wants "the
-    number on screen" wants that one; this is the measurement it delegates to,
-    and keeping it here is what stops a second copy of the convention growing
-    inside the menu.
+    ARGUMENT ORDER IS `(ship, observer)`, matching `target_menu.surface_gu_to`
+    and `STTargetMenu.surface_gu_to` exactly — all three entry points to this
+    quantity take the same two things the same way round, and the shared `_to`
+    suffix is the reminder that the DESTINATION comes first. That symmetry is
+    load-bearing, not cosmetic: the two arguments are indistinguishable
+    ship-like objects and only *ship*'s bounding radius is subtracted, so a
+    transposition does not raise — it silently returns a believable wrong
+    number. Pinned by tests/unit/test_perceived_by.py::
+    test_the_three_surface_distance_entry_points_share_one_argument_order,
+    which uses a 90 GU planet so the transposed answer differs. Do not "improve"
+    one of the three signatures on its own.
 
-    *ship*'s bounding radius is what is subtracted, so the two arguments are
-    NOT interchangeable despite both being positions.
+    The name still carries the VERB because the distinction matters at the call
+    site: this always measures, where `target_menu.surface_gu_to` prefers the
+    frame's already-pushed record and falls back to this. A caller that wants
+    "the number on screen" wants that one; this is the measurement it delegates
+    to, and keeping it here is what stops a second copy of the convention
+    growing inside the menu.
     """
     ox, oy, oz = _get_xyz(observer)
     sx, sy, sz = _get_xyz(ship)

@@ -15,6 +15,17 @@ consult it and supplies the observer they lack. Split out of
 sensor_detection.py, which needed "and also an SDK monkey-patch installer" to
 describe itself.
 
+TO INTERCEPT THE PREDICATE IN A TEST, PATCH ``ai_sensor_gate.can_detect``, not
+``sensor_detection.can_detect``. The name is bound into this module's globals at
+import (``from ... import can_detect``), where before the split the wrappers
+resolved it out of sensor_detection's own globals, so patching it there no
+longer reaches them. Patching the *flag* is unaffected and still belongs on
+sensor_detection — ``can_detect`` reads ``ENHANCED_SENSOR_CONTEST`` at call
+time, from its own module, and this module deliberately does not import it (see
+tests/unit/test_ai_sensor_gate.py::
+test_fire_script_cloak_gate_is_absolute_with_the_contest_off, which patches the
+flag on sensor_detection precisely to assert the toggle was not cloned here).
+
 ⚠️ THE DEPENDENCY RUNS ONE WAY, and the split was made on that finding:
 ``observing`` / ``current_observing_ship`` moved HERE rather than staying with
 the predicate because nothing in sensor_detection reads them — not

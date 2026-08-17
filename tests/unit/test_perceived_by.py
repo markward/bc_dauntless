@@ -195,6 +195,52 @@ def test_no_observer_or_no_set_reads_empty():
     assert perceived_by(adrift) == ()
 
 
+# ── Argument order, across all three surface-distance entry points ───────────
+
+def test_the_three_surface_distance_entry_points_share_one_argument_order():
+    """`(ship, observer)` — the same order in all three, so a transposition
+    cannot be written by accident.
+
+    One function became three when `surface_gu_for` was split
+    (target_menu.surface_gu_to, STTargetMenu.surface_gu_to,
+    perception.measure_surface_gu_to). They take two INDISTINGUISHABLE
+    ship-like objects, and only the FIRST one's bounding radius is subtracted,
+    so transposing them does not raise — it silently returns a believable wrong
+    number. That failure mode is the one this codebase guards hardest against
+    (it is why RebuildShipMenus synthesises NaN rather than 0.0), and prose
+    saying "the arguments are not interchangeable" is exactly the mitigation
+    that fails when a fourth caller is added in a hurry.
+
+    The pair below is chosen so the transposition IS detectable: Haven has a
+    90 GU radius and the player none, 240 GU apart. Right way round: 150.
+    Transposed: 240. A test using two radius-less ships would pass under either
+    order and pin nothing.
+    """
+    from engine.appc.perception import measure_surface_gu_to
+    from engine.appc.target_menu import surface_gu_to
+    from engine.appc.math import TGPoint3
+    from engine.appc.planet import Planet
+
+    contact_index.reset()
+    import App
+    App._reset_target_menu_singleton()
+    pSet = SetClass()
+    player, _ = _observer(pSet)
+    haven = Planet(90.0, "planet.nif")
+    haven.SetName("Haven")
+    haven.SetWorldLocation(TGPoint3(240.0, 0.0, 0.0))
+    pSet.AddObjectToSet(haven, "Haven")
+
+    # The measurement and the reader agree on the SAME argument tuple...
+    assert measure_surface_gu_to(haven, player) == pytest.approx(150.0)
+    assert surface_gu_to(haven, player) == pytest.approx(150.0)
+
+    # ...and the assertion is not vacuous: transposing changes the answer,
+    # because it is the first argument's radius that comes off.
+    assert measure_surface_gu_to(player, haven) == pytest.approx(240.0)
+    assert surface_gu_to(player, haven) == pytest.approx(240.0)
+
+
 # ── Module boundary ──────────────────────────────────────────────────────────
 
 def test_perception_does_not_reach_the_ui_layer():

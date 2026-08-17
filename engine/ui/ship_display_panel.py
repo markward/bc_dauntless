@@ -549,7 +549,7 @@ def _range_and_speed_to(ship, player):
 
     target_menu.surface_gu_to is the ONE place the player-to-contact vector is
     derived — the frame's Contact record when there is one, and the same
-    perception._surface_gu arithmetic (via perception.measure_surface_gu) when
+    perception._surface_gu arithmetic (via perception.measure_surface_gu_to) when
     there is not (a targeted planet or station is an ObjectClass, and
     contact_index buckets ships only). No local fallback: this function used to
     repeat the whole derivation behind an `is None` guard, so what was billed as

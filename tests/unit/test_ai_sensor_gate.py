@@ -172,7 +172,7 @@ def test_install_is_idempotent():
     assert getattr(second, "_sensor_gated", False) is True
 
 
-def test_bootstrap_installs_sensor_gate():
+def test_bootstrap_installs_sensor_gate(monkeypatch):
     """The host bootstrap installs the AI sensor gate. We first verify the
     installer wraps the method (real traceback on failure), then confirm the
     bootstrap path triggers it too. Later pipeline steps may need fuller host
@@ -210,6 +210,25 @@ def test_bootstrap_installs_sensor_gate():
     for module_name in targets:
         assert importlib.import_module(module_name).install_ai_sensor_gate \
             is install_ai_sensor_gate
+
+    # And the statement is REACHED, not merely present. The static check above
+    # catches a wrong import target; it cannot catch the call being deleted,
+    # reordered behind an early return, or wrapped in a condition that is false
+    # in production. Recording the call is the only assertion here that can:
+    # host_loop's import is function-local, so it re-resolves the attribute from
+    # the module on every call and sees this patch. Verified non-vacuous by
+    # mutation — commenting out host_loop's `install_ai_sensor_gate()` line
+    # fails on `calls == 1` while every other assertion in this file stays green.
+    import engine.appc.ai_sensor_gate as gate
+
+    calls = []
+    monkeypatch.setattr(gate, "install_ai_sensor_gate",
+                        lambda: calls.append("called"))
+    try:
+        host_loop._bootstrap_firing_pipeline()
+    except Exception:
+        pass
+    assert len(calls) == 1, "bootstrap did not call install_ai_sensor_gate"
 
 
 def test_wrap_get_targets_publishes_ship_arg_during_call():

@@ -200,7 +200,7 @@ class STTargetMenu(STTopLevelMenu):
         calling perceived_by again, which would redo the whole per-observer
         pass to answer one number.
 
-        Miss path: `perception.measure_surface_gu`, the same arithmetic the
+        Miss path: `perception.measure_surface_gu_to`, the same arithmetic the
         records themselves were built from — one implementation, not one plus a
         copy. Deliberately NOT inlined here; a second derivation inside the menu
         is precisely how five call sites drifted onto two conventions before.
@@ -234,13 +234,13 @@ class STTargetMenu(STTopLevelMenu):
         it deletes two unreachable branches rather than pushing work onto
         anybody.
         """
-        from engine.appc.perception import measure_surface_gu
+        from engine.appc.perception import measure_surface_gu_to
         contact = self.contact_for(ship)
         # `x != x` is the NaN test that needs no import and no isinstance:
         # Contact.surface_gu is always a float.
         if contact is not None and contact.surface_gu == contact.surface_gu:
             return contact.surface_gu
-        return measure_surface_gu(observer, ship)
+        return measure_surface_gu_to(ship, observer)
 
     def _rows(self) -> list:
         """The projection: cached rows for the current TARGETABLE contacts.
@@ -563,10 +563,10 @@ def surface_gu_to(ship, observer) -> float:
     that docstring before relying on the *observer* argument, which the record
     path ignores.
     """
-    from engine.appc.perception import measure_surface_gu
+    from engine.appc.perception import measure_surface_gu_to
     menu = STTargetMenu_GetTargetMenu()
     if menu is None:
-        return measure_surface_gu(observer, ship)
+        return measure_surface_gu_to(ship, observer)
     return menu.surface_gu_to(ship, observer)
 
 
