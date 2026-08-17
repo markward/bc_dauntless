@@ -22,7 +22,7 @@ def _menu():
 
 
 def _contact(ship, perceivable=True, targetable=True, surface_gu=10.0):
-    return Contact(ship=ship, dist_sq_gu=100.0, surface_gu=surface_gu,
+    return Contact(ship=ship, surface_gu=surface_gu,
                    perceivable=perceivable, targetable=targetable)
 
 

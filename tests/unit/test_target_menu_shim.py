@@ -15,9 +15,9 @@ def _listed(*ships):
     `targetable`. Row IsVisible is NOT derived from `perceivable` — set_contacts
     asserts SetVisible() on every listed row, so that flag answers nothing about
     detectability; readers that need it read `perceivable` off the record.
-    Distances are 0.0 because nothing in this file reads them.
+    The distance is 0.0 because nothing in this file reads it.
     """
-    return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
+    return [Contact(ship=s, surface_gu=0.0,
                     perceivable=True, targetable=True) for s in ships]
 
 
@@ -134,10 +134,30 @@ def test_clear_target_list_removes_all_rows():
 
 def test_clear_persistent_target_drops_hint():
     target_menu = App.STTargetMenu("Targets")
-    target_menu.SetPersistentTarget("USS Enterprise")
-    assert target_menu.GetPersistentTarget() == "USS Enterprise"
+    target_menu._persistent_target_name = "USS Enterprise"
     target_menu.ClearPersistentTarget()
-    assert target_menu.GetPersistentTarget() is None
+    assert target_menu._persistent_target_name is None
+
+
+def test_only_the_published_persistent_target_accessor_exists():
+    """`ClearPersistentTarget` is real SWIG surface — sdk/Build/scripts/App.py
+    :8074, called from TacticalInterfaceHandlers.py:656,
+    Bridge/HelmMenuHandlers.py:947 and Multiplayer/MissionShared.py:354 — so it
+    stays.
+
+    `SetPersistentTarget` / `GetPersistentTarget` were never published (grep
+    App.py: the only `PersistentTarget` binding is the Clear one) and were ours
+    alone, with zero production callers. `GetPersistentTarget`'s docstring
+    claimed a save/load reader that re-fires `ET_RESTORE_PERSISTENT_TARGET`;
+    nothing in this tree defines or fires that event. Deleted rather than left
+    as a plausible-looking hook nobody drives. If persistent-target restore is
+    ever built, add the accessors back WITH the caller.
+    """
+    from engine.appc.target_menu import STTargetMenu
+
+    assert hasattr(STTargetMenu, "ClearPersistentTarget")
+    assert not hasattr(STTargetMenu, "SetPersistentTarget")
+    assert not hasattr(STTargetMenu, "GetPersistentTarget")
 
 
 def _make_mission_with_groups(friendly=(), enemy=(), neutral=()):

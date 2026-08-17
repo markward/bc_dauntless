@@ -63,13 +63,23 @@ def test_observer_is_never_its_own_contact():
     assert perceived_by(player) == ()
 
 
-def test_distance_is_squared_centre_distance():
-    contact_index.reset()
-    pSet = SetClass()
-    player, _ = _observer(pSet)
-    _placed(pSet, "Galor", x=30.0)
+def test_the_record_carries_no_squared_distance():
+    """`dist_sq_gu` is NOT on the record, deliberately — do not put it back.
 
-    assert perceived_by(player)[0].dist_sq_gu == pytest.approx(900.0)
+    It had zero readers. `perceived_by` genuinely needs the squared centre
+    distance as a LOCAL (it feeds `can_detect`'s `dist_sq_gu=` hand-off and
+    `_surface_gu`), but nothing downstream ever asked the record for it: the
+    target list reads `targetable`, the radar reads `perceivable` and then
+    clips in its own DISC PLANE (a 3D centre distance cannot answer that), and
+    the range readouts read `surface_gu`. Carrying it made the record look like
+    the answer to a question no consumer asks.
+
+    The two things that DO use it are still pinned, by
+    test_surface_distance_subtracts_the_target_radius below and by
+    tests/unit/test_nebula_hides_contacts_from_ui.py::
+    test_precomputed_distance_is_actually_used.
+    """
+    assert "dist_sq_gu" not in Contact.__dataclass_fields__
 
 
 def test_surface_distance_subtracts_the_target_radius():
@@ -130,6 +140,39 @@ def test_non_targetable_contact_is_still_perceivable():
 
     assert got[0].perceivable is True
     assert got[0].targetable is False
+
+
+def test_targetable_always_implies_perceivable():
+    """THE IMPLICATION THE UI RELIES ON — it holds in only one direction.
+
+    `targetable` is built as `perceivable and alive_or_wreck and
+    IsTargetable()`, so it can never be True while `perceivable` is False. That
+    is what lets the target list and the radar walk the SAME children (filtered
+    on `targetable`) without either re-checking perceivability: a listed row is
+    a perceivable one by construction. engine/ui/sensors_panel.py used to carry
+    a `not record.perceivable: continue` guard inside that walk which could
+    therefore never fire; it was removed and this is what replaced it.
+
+    Swept over the clauses that can each pull one flag down independently —
+    out of range, mission-untargetable, and both at once.
+    """
+    contact_index.reset()
+    pSet = SetClass()
+    player, _ = _observer(pSet, base_range=2000.0)
+    _placed(pSet, "Close", x=10.0)
+    _placed(pSet, "Faraway", x=2500.0)
+    untargetable = _placed(pSet, "Kessok", x=20.0)
+    untargetable.SetTargetable(0)
+    both = _placed(pSet, "FarAndHidden", x=2600.0)
+    both.SetTargetable(0)
+
+    got = perceived_by(player)
+
+    assert len(got) == 4                                   # not vacuous
+    assert {c.perceivable for c in got} == {True, False}    # both values seen
+    assert {c.targetable for c in got} == {True, False}
+    for c in got:
+        assert not (c.targetable and not c.perceivable), c.ship.GetName()
 
 
 def test_contacts_for_still_returns_targetable_ships():

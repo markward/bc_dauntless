@@ -64,8 +64,8 @@ class STTargetMenu(STTopLevelMenu):
     pushed each frame. The child list is their intersection, computed on read.
 
     The records are RETAINED, not unpacked to ships: a contact carries the
-    frame's verdict (`perceivable`, `targetable`) and its distances
-    (`dist_sq_gu`, `surface_gu`), and readers reach them through
+    frame's verdict (`perceivable`, `targetable`) and its distance
+    (`surface_gu`), and readers reach them through
     `contact_for`. Keeping only the ships would force every reader to run a
     second perception query, which is the duplication this model removes.
 
@@ -101,9 +101,14 @@ class STTargetMenu(STTopLevelMenu):
         self._row_cache: dict = {}
         self._contacts: tuple = ()
         super().__init__(label)
-        # The last ship the player manually selected. Survives across
-        # mission saves so a reload restores the selection. SDK callers
-        # mutate via ClearPersistentTarget; engine sets it on real clicks.
+        # The last ship the player manually selected — the slot BC's
+        # persistent-target hint would live in.
+        #
+        # NOTHING WRITES IT YET, deliberately. `ClearPersistentTarget` (real
+        # SWIG surface, App.py:8074) clears it; the matching Set/Get accessors
+        # were ours, unpublished, and had no callers, so they were deleted
+        # rather than left looking like a working hook. Build the writer and
+        # its reader together if persistent-target restore is ever wanted.
         self._persistent_target_name: str | None = None
 
     # ── Derived membership ───────────────────────────────────────────────────
@@ -298,25 +303,6 @@ class STTargetMenu(STTopLevelMenu):
         MissionShared.py:354."""
         self._persistent_target_name = None
 
-    def SetPersistentTarget(self, name) -> None:
-        """Engine-internal — NOT in the SDK SWIG surface.
-
-        The original BC engine sets the persistent-target hint
-        automatically when the player manually selects a target.
-        We expose it as a Python method so our engine layer (which
-        also handles click events) can drive it the same way. SDK
-        scripts only ever call ClearPersistentTarget.
-        """
-        self._persistent_target_name = str(name) if name else None
-
-    def GetPersistentTarget(self) -> "str | None":
-        """Engine-internal — NOT in the SDK SWIG surface.
-
-        Read by the save/load path so a reloaded game can re-fire
-        ET_RESTORE_PERSISTENT_TARGET and SetTarget on the same ship.
-        """
-        return self._persistent_target_name
-
     def RebuildShipMenu(self, ship) -> None:
         """Create or refresh the cached row for ``ship``. SDK callsites:
         MissionLib.py:2200, MissionLib.py:2225 (HideSubsystems /
@@ -401,13 +387,17 @@ class STTargetMenu(STTopLevelMenu):
                 self._add_subsystem_row(recurse_into, child)
 
     def RebuildShipMenus(self, source_set=None) -> None:
-        """Bulk refresh from a set. Never called from SDK Python; included so
-        the engine auto-population hook has a single entry point.
+        """Bulk refresh from a set. Never called from SDK Python.
 
-        Retained for the existing callers; it now pushes membership rather
-        than appending children, so its effect is the same as set_contacts
-        over that set's ships. Non-ship members are skipped — see
-        RebuildShipMenu for the underlying reason.
+        NOT the engine auto-population hook — it used to be, and this docstring
+        used to call it "a single entry point" for one, which is stale. The
+        hook is `host_loop._pump_contacts`, which pushes
+        `perception.perceived_by(player)` every frame. This is a
+        bootstrap/test-population helper and nothing more.
+
+        It pushes membership rather than appending children, so its effect is
+        the same as set_contacts over that set's ships. Non-ship members are
+        skipped — see RebuildShipMenu for the underlying reason.
 
         In this codebase the "bridge" set holds the bridge interior
         only; spawned ships live in mission-named spatial sets like
@@ -419,7 +409,7 @@ class STTargetMenu(STTopLevelMenu):
         distance. Only the host loop's `perceived_by` push carries a real one.
         This exists for bootstrap/test population only.
 
-        The distances are NaN, not 0.0, and that is deliberate — keep it.
+        The distance is NaN, not 0.0, and that is deliberate — keep it.
         `contact_for` cannot tell a synthesised zero from a genuine one, so a
         reader that trusted these would render a perfectly plausible
         "0.00 km", and a believable wrong number is the worst failure mode this
@@ -451,7 +441,7 @@ class STTargetMenu(STTopLevelMenu):
             # silently-inherited True is exactly the "believable wrong
             # number" this method's own distance handling goes out of its
             # way to avoid — see the NaN-distance note above.
-            Contact(ship=o, dist_sq_gu=nan, surface_gu=nan,
+            Contact(ship=o, surface_gu=nan,
                     perceivable=True, targetable=True,
                     subsystems_targetable=True)
             for o in source_set.GetObjectList() if isinstance(o, ShipClass)])

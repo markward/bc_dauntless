@@ -130,8 +130,11 @@ class SensorsPanel(Panel):
         # range (2000 GU on a Galaxy), so the target list legitimately lists
         # contacts the disc does not draw — display scale and perception are
         # different concepts. It is also a DISC-PLANE clip, not a 3D distance,
-        # so `Contact.dist_sq_gu` cannot answer it: a contact directly overhead
-        # at 2x range still renders at the centre with a full-length stem.
+        # so no centre-distance the record could carry would answer it: a
+        # contact directly overhead at 2x range still renders at the centre
+        # with a full-length stem. (That is half of why `Contact` carries no
+        # squared centre distance — the other half is that nothing else read
+        # it either. See engine/appc/perception.py:Contact.)
         row = menu.GetFirstChild()
         while row is not None:
             # Advance first: the child list is DERIVED, so hold no cursor into
@@ -142,9 +145,16 @@ class SensorsPanel(Panel):
             ship = this_row.GetShip()
             if ship is None or ship is player:
                 continue
-            record = menu.contact_for(ship)
-            if record is None or not record.perceivable:
-                continue
+            # NO perceivability re-check here. This loop's source is the
+            # menu's children, i.e. `_rows()`, which filters on
+            # `Contact.targetable` — and `perceived_by` builds `targetable` as
+            # `perceivable and ...`, so every row reached here is perceivable
+            # by construction and has a record. The guard that used to sit on
+            # this line (`record is None or not record.perceivable: continue`)
+            # could only ever fire for a hand-built record the production path
+            # cannot produce. The implication is pinned at its source by
+            # tests/unit/test_perceived_by.py::
+            # test_targetable_always_implies_perceivable.
             contact = project_contact(
                 player_pos=player_pos,
                 player_rot=player_rot,

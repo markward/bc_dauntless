@@ -16,19 +16,25 @@ def _listed(*ships):
     record carries the frame's verdict, and the menu derives the listing from
     `targetable`. Row IsVisible is NOT derived from `perceivable` — every
     listed row is asserted visible — so `perceivable` is read off the record
-    directly by the panels that care. Distances are 0.0 because nothing in this
-    file reads them.
+    directly by the panels that care. The distance is 0.0 because nothing in
+    this file reads it.
     """
-    return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
+    return [Contact(ship=s, surface_gu=0.0,
                     perceivable=True, targetable=True) for s in ships]
 
 
 def _undetected(*ships):
-    """Listed, but not drawable this frame — the branch STTargetMenu
-    documents. The radar reads `perceivable`; the target list reads
-    `targetable`."""
-    return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
-                    perceivable=False, targetable=True) for s in ships]
+    """A contact the player's sensors did not pick up this frame — the shape
+    `perceived_by` really produces for one.
+
+    BOTH flags are False, deliberately: `targetable` is built as `perceivable
+    and ...`, so there is no such thing as a perceivable=False,
+    targetable=True record outside a test's imagination. This helper used to
+    build exactly that pairing, and it was the only exerciser of a since-removed
+    unreachable guard in SensorsPanel._snapshot.
+    """
+    return [Contact(ship=s, surface_gu=0.0,
+                    perceivable=False, targetable=False) for s in ships]
 
 
 
@@ -234,7 +240,7 @@ def test_payload_marks_targeted_contact():
         _set_current_game(None)
 
 
-def test_payload_skips_invisible_rows():
+def test_an_undetected_contact_is_never_drawn():
     from engine.ui.sensors_panel import SensorsPanel
     from engine.appc.sets import SetClass
 
@@ -248,13 +254,11 @@ def test_payload_skips_invisible_rows():
         spatial.AddObjectToSet(ship, "Cloaked")
         player._containing_set = spatial
         # Not picked up by sensors. Expressed as the RECORD saying so because
-        # the record is the only input: the panel reads `perceivable` off it
-        # directly, and the row's IsVisible flag is no help — set_contacts
-        # asserts SetVisible() on every listed row. (This
-        # perceivable=False + targetable=True pairing is synthetic —
-        # perceived_by defines targetable as implying perceivable — and it is
-        # exactly the listed-but-not-drawable branch STTargetMenu.set_contacts
-        # documents.)
+        # the record is the only input, and with BOTH flags down — which is
+        # what perceived_by actually produces, `targetable` being
+        # `perceivable and ...`. The contact therefore never becomes a row at
+        # all; it is dropped by the projection, not by a second check inside
+        # the panel.
         menu.set_contacts(_undetected(ship))
 
         panel = SensorsPanel()

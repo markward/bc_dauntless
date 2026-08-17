@@ -28,7 +28,7 @@ def _populate_target_menu(target_menu, names):
     # so the IsVisible() flag SDK CycleTarget reads is True here for all three,
     # and the test below clears one by hand to drive that SDK path.
     target_menu.set_contacts([
-        Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
+        Contact(ship=s, surface_gu=0.0,
                 perceivable=True, targetable=True) for s in ships])
     return ships
 

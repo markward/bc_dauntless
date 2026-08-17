@@ -56,6 +56,28 @@ def test_no_sensor_subsystem_returns_fallback():
     assert effective_sensor_range(_NoSensorShip()) == FALLBACK_RANGE_GU
 
 
+def test_a_tgobject_that_models_no_sensor_subsystem_reaches_the_fallback():
+    """The capability probe must be `ids.implements`, not `hasattr`.
+
+    `TGObject.__getattr__` vends a truthy `_Stub` for any undefined method, so
+    `hasattr(obj, "GetSensorSubsystem")` is True for EVERY engine object.
+    An ObjectClass therefore used to get a `_Stub` back, `_is_offline(_Stub)`
+    answered truthy, and the function returned 0.0 — "blind" — for an object
+    that simply does not model sensors. The documented answer for that is
+    FALLBACK_RANGE_GU, which is already what the sensor-less test fixtures
+    above get; the 0.0 was an artifact of the vacuous probe, not a decision.
+
+    No production caller is affected: every `can_detect` / `perceived_by`
+    observer in the tree is a ShipClass (player, `pCodeAI.GetShip()`,
+    StarbaseAttack's `pShip`, a torpedo's source ship, a weapon system's parent
+    ship), and ShipClass really does define `GetSensorSubsystem`, so both
+    probes answered True for it before and after.
+    """
+    from engine.appc.objects import ObjectClass
+
+    assert effective_sensor_range(ObjectClass()) == FALLBACK_RANGE_GU
+
+
 def test_zero_base_range_returns_fallback():
     ship, _ = _ship_with_sensor(0.0)
     assert effective_sensor_range(ship) == FALLBACK_RANGE_GU

@@ -209,7 +209,6 @@ def test_bulk_rebuild_synthesises_no_distance_at_all():
     menu.RebuildShipMenus(pSet)
 
     assert math.isnan(menu.contact_for(target).surface_gu)
-    assert math.isnan(menu.contact_for(target).dist_sq_gu)
     rng_km, _speed = _range_and_speed_to(target, player)
     assert not math.isnan(rng_km)
     assert rng_km == pytest.approx(200.0 * GU_TO_KM)

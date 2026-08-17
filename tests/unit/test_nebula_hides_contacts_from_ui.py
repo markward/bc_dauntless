@@ -125,13 +125,13 @@ def test_a_ship_in_clear_space_is_unaffected():
 
 def test_a_concealed_contact_still_reports_its_real_distance():
     """Concealment removes perceivability, NOT the record. The range readouts
-    read `dist_sq_gu`/`surface_gu` off it, so those must stay the true
-    geometric distance — observer at z=300, contact at the origin."""
+    read `surface_gu` off it, so it must stay the true geometric distance —
+    observer at z=300, contact at the origin, less the contact's radius."""
     _pSet, observer, hidden, _clear = _scene()
 
     record = _record_for(observer, hidden)
     assert record.perceivable is False
-    assert record.dist_sq_gu == pytest.approx(90000.0)
+    assert record.surface_gu == pytest.approx(300.0 - hidden.GetRadius())
 
 
 # ── The toggle covers BOTH stage-4 changes ───────────────────────────────────

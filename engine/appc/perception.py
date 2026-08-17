@@ -69,17 +69,24 @@ class Contact:
     is now computed once here, replacing five call sites that used to derive
     the same player-to-contact vector under two different conventions.
 
-    That consolidation is NOT total — do not describe this class as "the only
+    ONLY `surface_gu` IS CARRIED. The squared centre distance is a LOCAL in
+    `perceived_by` — it feeds `can_detect`'s `dist_sq_gu=` hand-off and
+    `_surface_gu` — and was deliberately taken off this record because nothing
+    downstream read it: the radar's clip is in its own DISC PLANE, which a 3D
+    centre distance cannot answer (see engine/ui/sensors_panel.py), and the
+    readouts want the surface convention. Do not re-add it "for completeness";
+    a field with no reader is a claim that some consumer needs it.
+
+    The consolidation is NOT total — do not describe this class as "the only
     place distance is computed" without naming the exception.
     `sensor_detection.can_detect` used to recompute the identical squared
     distance every frame; it no longer does for this path, because
-    `perceived_by` hands its value in via `dist_sq_gu=`. Still outstanding:
+    `perceived_by` hands its local in via `dist_sq_gu=`. Still outstanding:
     `engine.ui.weapons_display_panel`'s phaser-range check derives the same
     vector again for its own arc test — a sixth site the original five-site
     survey never counted. Not in scope to fix here; noting it is.
     """
     ship: object
-    dist_sq_gu: float
     surface_gu: float
     perceivable: bool
     # ⚠️ NOT observer-generic: `targetable` folds in `IsTargetable()`, which
@@ -111,14 +118,19 @@ def perceived_by(observer) -> tuple:
     """
     from engine.appc import sensor_detection as sd
     from engine.appc.sensor_detection import can_detect, effective_sensor_range
+    from engine.appc.sets import SetClass
     from engine.appc.ship_death import _out_of_action, is_targetable_wreck
 
     if observer is None:
         return ()
     pSet = observer.GetContainingSet()
-    # A real SetClass exposes _objects; a _Stub or None does not. hasattr()
-    # cannot discriminate — TGObject.__getattr__ answers every name.
-    if pSet is None or not hasattr(pSet, "_objects"):
+    # Ask the TYPE, not the private dict. This used to be
+    # `not hasattr(pSet, "_objects")` — a duck-type test reaching into
+    # SetClass's own internals, i.e. exactly the structure contact_index
+    # replaced as the membership source. `contact_index` buckets by SetClass,
+    # so SetClass is the honest precondition; a `_Stub` or a None set is
+    # rejected the same way it was before.
+    if not isinstance(pSet, SetClass):
         return ()
 
     # Sensors offline => effective range 0 => nothing perceivable. One check,
@@ -168,7 +180,6 @@ def perceived_by(observer) -> tuple:
         # exists to express.
         out.append(Contact(
             ship=ship,
-            dist_sq_gu=dist_sq,
             surface_gu=_surface_gu(dist_sq, ship),
             perceivable=perceivable,
             targetable=perceivable and alive_or_wreck and bool(ship.IsTargetable()),

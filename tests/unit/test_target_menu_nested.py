@@ -15,9 +15,9 @@ def _listed(*ships):
     `targetable`. Row IsVisible is NOT derived from `perceivable` — set_contacts
     asserts SetVisible() on every listed row, so that flag answers nothing about
     detectability; readers that need it read `perceivable` off the record.
-    Distances are 0.0 because nothing in this file reads them.
+    The distance is 0.0 because nothing in this file reads it.
     """
-    return [Contact(ship=s, dist_sq_gu=0.0, surface_gu=0.0,
+    return [Contact(ship=s, surface_gu=0.0,
                     perceivable=True, targetable=True) for s in ships]
 
 

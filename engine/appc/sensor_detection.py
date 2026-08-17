@@ -15,6 +15,7 @@ import weakref
 import App
 from engine.appc.subsystems import _is_offline, _get_xyz
 from engine.appc import nebula_density as _nd
+from engine.core.ids import implements
 
 # Range used when a ship models no sensor subsystem or carries no
 # BaseSensorRange hardpoint data. Preserves the player target list's
@@ -168,9 +169,15 @@ def effective_sensor_range(ship) -> float:
     percentage, and 0.0 once the sensor subsystem is offline (disabled or
     destroyed). Returns FALLBACK_RANGE_GU for ships that don't model a
     sensor subsystem or carry no BaseSensorRange.
+
+    The capability probe is ``ids.implements``, NOT ``hasattr``:
+    ``TGObject.__getattr__`` vends a truthy ``_Stub`` for any undefined method,
+    so ``hasattr`` is vacuously True for every engine object and a non-ship
+    used to get a ``_Stub`` back — which ``_is_offline`` then read as offline,
+    silently answering 0.0 ("blind") instead of the documented fallback.
     """
     sensors = (ship.GetSensorSubsystem()
-               if (ship is not None and hasattr(ship, "GetSensorSubsystem"))
+               if (ship is not None and implements(ship, "GetSensorSubsystem"))
                else None)
     if sensors is None:
         return FALLBACK_RANGE_GU
@@ -192,10 +199,14 @@ def concealment_at(ship) -> float:
     Concealment is toggle-independent: it reads the density field regardless
     of any VFX or display setting.
     """
-    pSet = ship.GetContainingSet() if hasattr(ship, "GetContainingSet") else None
+    # `implements`, not `hasattr` — see effective_sensor_range. (Both probes
+    # answer the same today: ObjectClass, ShipClass and MetaNebula all really
+    # define these two, and the plain-class test fakes define them too. The
+    # switch removes the vacuous-True hazard rather than changing an answer.)
+    pSet = ship.GetContainingSet() if implements(ship, "GetContainingSet") else None
     if pSet is None:
         return 0.0
-    loc = ship.GetWorldLocation() if hasattr(ship, "GetWorldLocation") else None
+    loc = ship.GetWorldLocation() if implements(ship, "GetWorldLocation") else None
     if loc is None:
         return 0.0
     t = _game_time()
@@ -336,7 +347,7 @@ def clear_undetectable_player_lock(player) -> None:
     fire on. Live-reported at 0% sensor power, 2026-08-06.
 
     Gates on ``can_detect`` — the same predicate the firing chokepoint uses
-    (host_loop.py:716) — so lock and fire agree by construction. It subsumes
+    (host_loop.py:907) — so lock and fire agree by construction. It subsumes
     the cloak-only ``is_hidden_by_cloak`` check this replaced (cloak is its
     first gate) and additionally covers dead/unpowered sensors, effective
     range, and nebula concealment. Sensors at 0% power land here via
