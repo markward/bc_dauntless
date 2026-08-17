@@ -180,7 +180,7 @@ def contacts_for(observer) -> tuple:
     return tuple(c.ship for c in perceived_by(observer) if c.targetable)
 
 
-def surface_gu_for(ship, observer=None) -> float:
+def surface_gu_for(ship, observer) -> float:
     """Surface distance from *observer* to *ship*, in GU. ALWAYS answers.
 
     THE read path for the on-screen range readouts (engine.ui.reticle_text and
@@ -210,19 +210,21 @@ def surface_gu_for(ship, observer=None) -> float:
         and so cannot answer distance. NaN is treated as a miss here; without
         that, "nan km" would render on screen.
 
-    *observer* defaults to `App.Game_GetCurrentPlayer()`, which is the same
-    object both readouts already hold (`Game.GetCurrentPlayer` IS
-    `Game.GetPlayer` — engine/core/game.py:372 — and that is what host_loop and
-    ship_display_panel._get_player read). They pass it explicitly anyway, so the
-    miss path measures from exactly the ship the deleted fallbacks measured
-    from, rather than from a global that a test fixture or a future second
-    viewpoint could disagree with.
+    ⚠️ *observer* is used ONLY on the miss path. The record path returns
+    `contact.surface_gu` whoever you pass, because STTargetMenu stores no
+    observer alongside its contacts and so cannot check: it holds one frame's
+    push, and that push came from the player. `surface_gu_for(ship, other_ship)`
+    will therefore silently hand back the PLAYER's distance whenever a record
+    exists. Both callers pass the player, so this is consistent today — but do
+    not read this function as answering a per-observer question; it does not,
+    and making it do so means putting the observer into the pushed record.
 
-    With no observer resolvable at all the question has no answer, and this
-    returns NaN rather than 0.0: a plausible-looking wrong distance is the worst
-    failure mode in this codebase (same reasoning as RebuildShipMenus'
-    deliberate NaN). Neither readout can reach it — ship_display_panel returns
-    (None, None) on a null player and the reticle is not built without one.
+    *observer* is required and must not be None: measuring a distance from
+    nowhere has no answer, and there is no sentinel to hand back (that is the
+    whole point of this function). Both callers already hold the player and bail
+    before reaching here without one — ship_display_panel returns (None, None)
+    on a null player, and the reticle is not built without one — so requiring it
+    deletes two unreachable branches rather than pushing work onto anybody.
     """
     import App
     menu = App.STTargetMenu_GetTargetMenu()
@@ -232,11 +234,6 @@ def surface_gu_for(ship, observer=None) -> float:
         # Contact.surface_gu is always a float.
         if contact is not None and contact.surface_gu == contact.surface_gu:
             return contact.surface_gu
-
-    if observer is None:
-        observer = App.Game_GetCurrentPlayer()
-    if observer is None:
-        return float("nan")
 
     ox, oy, oz = _get_xyz(observer)
     sx, sy, sz = _get_xyz(ship)

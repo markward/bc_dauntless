@@ -288,22 +288,27 @@ def test_a_nan_record_is_treated_as_a_miss():
     assert surface_gu_for(target, player) == pytest.approx(200.0)
 
 
-def test_surface_gu_for_with_no_observer_at_all_is_nan():
-    """"How far is X from the player" has no answer with no player. NaN, not
-    0.0: a believable wrong number is the failure mode this codebase ranks
-    worst (see target_menu.RebuildShipMenus). Unreachable from either readout
-    — both already bail before asking — so this pins the contract, not a
-    rendered value."""
+def test_surface_gu_for_uses_the_observer_only_on_the_miss_path():
+    """The observer is NOT a per-observer question. STTargetMenu stores no
+    observer alongside its contacts, so the record path cannot check who is
+    asking and hands back the pushed (player's) distance regardless. Pinned so
+    nobody reads the parameter as more than it is: making it per-observer means
+    putting the observer into the record.
+
+    Same two ships, two different observers, one push."""
     from engine.appc.perception import surface_gu_for
-    from engine.core.game import _set_current_game
 
-    contact_index.reset()
+    _pSet, player, target = _scene()
+    elsewhere = _placed(_pSet, "Bystander", y=-1000.0)
+    _menu, contacts = _pump(player)
+
+    # Record present: the observer argument is ignored.
+    assert surface_gu_for(target, elsewhere) == pytest.approx(contacts[0].surface_gu)
+
+    # Record absent: now it is the observer that decides. Bystander sits
+    # 1205 GU from the target, less its radius 5.
     App._reset_target_menu_singleton()
-    pSet = SetClass()
-    lone = _placed(pSet, "Galor", y=205.0, radius=5.0)
-    _set_current_game(None)
-
-    assert math.isnan(surface_gu_for(lone))
+    assert surface_gu_for(target, elsewhere) == pytest.approx(1200.0)
 
 
 # ── the readouts, on a planet ────────────────────────────────────────────────
