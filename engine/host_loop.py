@@ -2418,6 +2418,23 @@ def _tactical_hud_visible(*, is_exterior: bool, spv_open: bool,
         and not cutscene_active and not cinematic_active
 
 
+def _tactical_orders_visible(*, tactical_menu_open: bool, spv_open: bool,
+                             cutscene_active: bool,
+                             cinematic_active: bool = False) -> bool:
+    """Whether the Orders/Tactics/Maneuvers command panes should show this
+    frame. Shown whenever the Tactical crew menu is open, in EITHER view
+    (matches SetupBridgeTactical + SetupTacticalTactical) — a broader gate
+    than _tactical_hud_visible's bridge_tactical_active, which is
+    bridge-view-only. Hidden under SPV and during a cutscene.
+
+    Also hidden in BC's cinematic mode (F9), a clean camera view — the panel
+    would otherwise stay on screen if the Tactical menu was open when the
+    user pressed F9. cinematic_active carries that gate, mirroring
+    _tactical_hud_visible/_reticle_visible."""
+    return (tactical_menu_open and not spv_open and not cutscene_active
+            and not cinematic_active)
+
+
 def _reticle_visible(*, is_exterior: bool, has_player: bool,
                      reticle_hidden: bool,
                      cinematic_active: bool = False) -> bool:
@@ -7070,16 +7087,16 @@ def run(mission_name: Optional[str] = None,
                 ship_display_target.visible = _tac_visible
                 weapons_display.visible     = _tac_visible
 
-                # Orders/Tactics/Maneuvers command panes: shown whenever the
-                # Tactical crew menu is open, in EITHER view (matches
-                # SetupBridgeTactical + SetupTacticalTactical) — a broader
-                # gate than _tac_visible/_bridge_tactical_active above, which
-                # is bridge-view-only. Still hidden under SPV/cutscene.
+                # Orders/Tactics/Maneuvers command panes: see
+                # _tactical_orders_visible — a broader gate than
+                # _tac_visible/_bridge_tactical_active above, which is
+                # bridge-view-only.
                 _tactical_menu_open = crew_menu_panel.open_menu_label() == "Tactical"
-                tactical_orders_panel.visible = (
-                    _tactical_menu_open
-                    and not ship_property_viewer.is_open()
-                    and not TopWindow_GetTopWindow().IsCutsceneMode())
+                tactical_orders_panel.visible = _tactical_orders_visible(
+                    tactical_menu_open=_tactical_menu_open,
+                    spv_open=ship_property_viewer.is_open(),
+                    cutscene_active=_top_window.IsCutsceneMode(),
+                    cinematic_active=_top_window.is_cinematic_active())
 
                 # Contact membership AND per-row visibility — push the player's
                 # current system every frame. Worst case this is one frame
