@@ -120,8 +120,11 @@ def _raw_keyboard_destination():
     dispatches on exactly one object, so we pick the first candidate that
     actually registered a handler.
 
-    THE ORDER (root window before TopWindow) IS OUR CHOICE, NOT ESTABLISHED
-    FIDELITY. It is chosen because that is where mission scripts hook
+    A focused MAIN window goes first (see the comment on the prepend below);
+    that half IS established fidelity — BC routes input to the focused window.
+
+    THE REST OF THE ORDER (root window before TopWindow) IS OUR CHOICE, NOT
+    ESTABLISHED FIDELITY. It is chosen because that is where mission scripts hook
     (E1M1.CrewIntros:1971). The evidence actually points the other way: BC's
     modal handlers (BridgeUtils.ModalKeyboardHandler,
     E3M1.FilteredKeyboardHandler) exist to SetHandled() a key before it becomes
@@ -140,10 +143,31 @@ def _raw_keyboard_destination():
         # unreachable key. Post nothing rather than pretend to dispatch.
         return None
     candidates = []
+    top = App.TopWindow_GetTopWindow()
+    # BC delivers the raw keystroke to the FOCUSED window first, and that is
+    # the seam the cinematic camera keys live on: CinematicInterfaceHandlers
+    # .HandleKeyboard is the cinematic window's ET_KEYBOARD handler, and its
+    # g_dKeyToEventMapping table (:154-159) — read at :114 and nowhere else —
+    # is the ONLY thing that maps WC_F1..F6 to the camera modes. Left to the
+    # global binding those keys mean ET_INPUT_TALK_TO_* (bridge crew menus).
+    # Only a focused MAIN window counts, exactly as in
+    # KeyboardBinding._resolve_destination: QuickBattle's OpenConfigDialog
+    # focuses config panes, which must not capture the raw stream. A focused
+    # window that registered no ET_KEYBOARD handler falls through to the scan
+    # below unchanged, so the root-window-before-TopWindow ordering below is
+    # preserved for everything else (E1M1's skip-intro handler included).
+    # getattr-guarded throughout: tests monkeypatch TopWindow_GetTopWindow
+    # with doubles that have neither GetFocus nor _main_windows.
+    if top is not None:
+        get_focus = getattr(top, "GetFocus", None)
+        focus = get_focus() if callable(get_focus) else None
+        if focus is not None:
+            mains = getattr(top, "_main_windows", None)
+            if isinstance(mains, dict) and any(w is focus for w in mains.values()):
+                candidates.append(focus)
     root = getattr(App, "g_kRootWindow", None)
     if root is not None:
         candidates.append(root)
-    top = App.TopWindow_GetTopWindow()
     if top is not None:
         # _TopWindow keeps its handler chain by COMPOSITION on `_events`
         # rather than inheriting one; route through it so both the probe

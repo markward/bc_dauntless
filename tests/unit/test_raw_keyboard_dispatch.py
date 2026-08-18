@@ -126,6 +126,118 @@ def test_no_destination_when_nothing_registered_a_handler(monkeypatch):
     im.OnKeyDown(WC_S)  # no exception
 
 
+# ── Focus-aware routing ─────────────────────────────────────────────────────
+# BC delivers the raw keystroke to the FOCUSED window first. That is the seam
+# the cinematic camera keys live on: CinematicInterfaceHandlers.HandleKeyboard
+# (:96) is the cinematic window's ET_KEYBOARD handler, and its
+# g_dKeyToEventMapping table (:154-159) — consulted at :114 and NOWHERE else —
+# is what maps WC_F1..F6 to the camera modes. Same prepend
+# KeyboardBinding._resolve_destination already makes for bound ET_INPUT_*
+# events; only a MAIN window counts, so QuickBattle's config-pane SetFocus()
+# cannot start swallowing raw keystrokes.
+
+def _cine_with_handler():
+    """Focus the cinematic main window and give it an ET_KEYBOARD handler."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+    cine.AddPythonFuncHandlerForInstance(App.ET_KEYBOARD, _HELPER + ".capture")
+    tw.SetFocus(cine)
+    return tw, cine
+
+
+def test_focused_main_window_outranks_the_root_window():
+    mod = _capture_module()
+    root = _root_with_handler(mod)          # root has one too — real contest
+    try:
+        _tw, cine = _cine_with_handler()
+        assert _raw_keyboard_destination() is cine
+    finally:
+        _remove(root)
+
+
+def test_keystroke_actually_reaches_the_focused_window():
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        _tw, cine = _cine_with_handler()
+        em = TGEventManager()
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert len(mod.captured) == 1
+        assert mod.captured[0].GetEventType() == App.ET_KEYBOARD
+        # Identity, not just arrival: the same probe is registered on the root
+        # window, so a count alone cannot tell the two destinations apart.
+        assert mod.captured[0].GetDestination() is cine
+    finally:
+        _remove(root)
+
+
+def test_focused_window_without_a_keyboard_handler_falls_through_to_root():
+    """The existing root-window-before-TopWindow ordering is preserved for
+    every window that did not register ET_KEYBOARD — E1M1's skip-intro handler
+    lives on the root window and must keep its keystrokes."""
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        from engine.appc import top_window
+        top_window.reset_for_tests()
+        tw = top_window.TopWindow_GetTopWindow()
+        tw.SetFocus(tw.FindMainWindow(top_window.MWT_CINEMATIC))  # no handlers
+        assert _raw_keyboard_destination() is root
+    finally:
+        _remove(root)
+
+
+def test_focused_non_main_window_is_not_a_candidate():
+    """QuickBattle's OpenConfigDialog focuses config panes. A focused pane
+    that happens to carry an ET_KEYBOARD handler must not hijack the raw
+    stream — only main windows are focus candidates."""
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        from engine.appc import top_window
+        top_window.reset_for_tests()
+        tw = top_window.TopWindow_GetTopWindow()
+        pane = TGEventHandlerObject()
+        pane.AddPythonFuncHandlerForInstance(
+            App.ET_KEYBOARD, _HELPER + ".capture")
+        tw.SetFocus(pane)
+        assert _raw_keyboard_destination() is root
+    finally:
+        _remove(root)
+
+
+def test_nothing_focused_still_resolves_the_root_window():
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        from engine.appc import top_window
+        top_window.reset_for_tests()
+        assert top_window.TopWindow_GetTopWindow().GetFocus() is None
+        assert _raw_keyboard_destination() is root
+    finally:
+        _remove(root)
+
+
+def test_a_plain_top_window_double_does_not_raise(monkeypatch):
+    """The focus probe must be as defensive as the _events probe beside it:
+    tests monkeypatch TopWindow_GetTopWindow with doubles that have neither
+    GetFocus nor _main_windows."""
+    class _Bare:
+        pass
+
+    monkeypatch.setattr(App, "TopWindow_GetTopWindow", lambda: _Bare())
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        assert _raw_keyboard_destination() is root
+    finally:
+        _remove(root)
+
+
 def test_internal_keyboard_event_broadcast_still_fires():
     # Regression guard: the raw path is additive, not a replacement.
     from engine.appc.events import ET_KEYBOARD_EVENT
