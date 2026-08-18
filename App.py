@@ -20,7 +20,7 @@ from engine.appc.input import (
     TGInputManager, KeyboardBinding,
     WC_LBUTTON, WC_RBUTTON, WC_MBUTTON,
     KY_LBUTTON, KY_RBUTTON, KY_MBUTTON,
-    WC_F1, WC_F2, WC_F3, WC_F4, WC_F5,
+    WC_F1, WC_F2, WC_F3, WC_F4, WC_F5, WC_F6, WC_F9,
     KY_F1, KY_F2, KY_F3, KY_F4, KY_F5,
     WC_F, WC_G, WC_X,
     KY_F, KY_G, KY_X,

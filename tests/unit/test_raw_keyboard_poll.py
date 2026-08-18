@@ -25,6 +25,8 @@ class _FakeKeys:
     KEY_X = ord("X")          # owned by _poll_fire_keys
     KEY_G = ord("G")          # owned by _poll_fire_keys
     KEY_F1 = 290              # owned by _poll_function_keys
+    KEY_F6 = 295              # owned by _poll_function_keys (cinematic FreeOrbit)
+    KEY_F9 = 298              # owned by _poll_function_keys (cinematic toggle)
     KEY_LEFT_ALT = 342
     KEY_RIGHT_ALT = 346
     KEY_LEFT_CONTROL = 341
@@ -96,6 +98,19 @@ def test_keys_owned_by_the_fire_and_crew_pollers_are_not_double_forwarded(wired)
     host, seen, im = wired
     for glfw in (_FakeKeys.KEY_F, _FakeKeys.KEY_X, _FakeKeys.KEY_G,
                  _FakeKeys.KEY_F1):
+        host.down = {glfw}
+        _poll_raw_keyboard(host, im)
+    assert seen == []
+
+
+def test_cinematic_fkeys_owned_by_the_function_key_poller_are_not_double_forwarded(wired):
+    """F6/F9 are fixed cinematic keys forwarded by _poll_function_keys (see
+    test_fkey_poll.py::test_f9_and_f6_edges_are_forwarded), not input_map
+    actions. They share _fn_key_prev with the raw poller, so _owned_glfw_keys
+    must exclude them too, or the raw poller would both double-deliver the
+    keystroke and desync the shared edge cache for _poll_function_keys."""
+    host, seen, im = wired
+    for glfw in (_FakeKeys.KEY_F6, _FakeKeys.KEY_F9):
         host.down = {glfw}
         _poll_raw_keyboard(host, im)
     assert seen == []

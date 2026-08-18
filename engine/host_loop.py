@@ -474,7 +474,8 @@ def _poll_modifier_chords(host) -> None:
 
 
 def _poll_function_keys(host, input_map) -> None:
-    """Forward the crew-talk keys (F1-F5 by default) into g_kInputManager.
+    """Forward the crew-talk keys (F1-F5 by default) plus the fixed cinematic
+    keys (F6, F9) into g_kInputManager.
 
     The physical key for each crew-talk action comes from `input_map`; the
     WC_F1..F5 code feeding the BC binding stays fixed, so DefaultKeyboardBinding's
@@ -489,13 +490,25 @@ def _poll_function_keys(host, input_map) -> None:
     import App  # deferred: module-top import reorders sound-manager init
     alt, ctrl, _shift = _modifier_state(host)
     suppress = alt or ctrl
-    _poll_key_table((
+    _keys = getattr(host_io._h, "keys", None)
+    _table = [
         (input_map.code("talk_helm"),        App.WC_F1),
         (input_map.code("talk_tactical"),    App.WC_F2),
         (input_map.code("talk_xo"),          App.WC_F3),
         (input_map.code("talk_science"),     App.WC_F4),
         (input_map.code("talk_engineering"), App.WC_F5),
-    ), suppress=suppress)
+    ]
+    # Cinematic mode: F9 toggles it, F6 selects FreeOrbit. Fixed keys, not
+    # input_map actions. F7/F8 are deliberately absent — dev keybindings own
+    # those (engine/dev_keybindings.py).
+    # F9 listed ahead of F6: test_f9_and_f6_edges_are_forwarded exercises a
+    # frame where F9 releases and F6 presses simultaneously, and
+    # _poll_key_table appends edges in table order — F9's "up" must land
+    # before F6's "down" to match g_kInputManager's expected call order.
+    if _keys is not None:
+        _table.append((getattr(_keys, "KEY_F9", -1), App.WC_F9))
+        _table.append((getattr(_keys, "KEY_F6", -1), App.WC_F6))
+    _poll_key_table(tuple(_table), suppress=suppress)
 
 
 def _poll_fire_keys(host, input_map) -> None:
@@ -581,12 +594,21 @@ def _owned_glfw_keys(input_map) -> set:
     Those two pollers go through _emit, which ALREADY raw-dispatches, and they
     share _fn_key_prev with us — forwarding their keys here would both
     double-deliver the keystroke and corrupt the shared edge cache.
+
+    F6/F9 are fixed cinematic keys (not input_map actions) that
+    _poll_function_keys also owns; read defensively via host_io._h since the
+    native host may be absent (headless).
     """
-    return {input_map.code(a) for a in (
+    owned = {input_map.code(a) for a in (
         "fire_primary", "fire_secondary", "fire_tertiary",
         "talk_helm", "talk_tactical", "talk_xo",
         "talk_science", "talk_engineering",
     )}
+    _keys = getattr(host_io._h, "keys", None)
+    if _keys is not None:
+        owned.add(getattr(_keys, "KEY_F6", -1))
+        owned.add(getattr(_keys, "KEY_F9", -1))
+    return owned
 
 
 def _poll_raw_keyboard(host, input_map) -> None:

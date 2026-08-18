@@ -8,6 +8,7 @@ from engine.input_map import InputMap
 
 class _FakeKeys:
     KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5 = 290, 291, 292, 293, 294
+    KEY_F6, KEY_F9 = 295, 298
 
 
 class _FakeHost:
@@ -75,3 +76,35 @@ def test_poller_routes_key_state_through_host_io(monkeypatch):
     down.clear()
     _poll_function_keys(None, im)              # falling edge via the wrapper
     assert calls == [("down", App.WC_F1), ("up", App.WC_F1)]
+
+
+def test_f9_and_f6_are_exported(monkeypatch):
+    """WC_F1..F12 are generated in engine/appc/input.py:53-54; the App
+    re-export list was what stopped at F5, so App.WC_F9 was a _NamedStub and
+    BC's BindKey(App.WC_F9, ...) could never register."""
+    import App
+    assert App.__dict__.get("WC_F6") == 0x75
+    assert App.__dict__.get("WC_F9") == 0x78
+
+
+def test_f9_and_f6_edges_are_forwarded(monkeypatch):
+    """F9 toggles cinematic mode and F6 selects FreeOrbit, so both must reach
+    g_kInputManager. They are fixed keys, not input_map actions."""
+    im = InputMap()
+    calls = []
+    monkeypatch.setattr(App.g_kInputManager, "OnKeyDown",
+                        lambda wc: calls.append(("down", wc)))
+    monkeypatch.setattr(App.g_kInputManager, "OnKeyUp",
+                        lambda wc: calls.append(("up", wc)))
+    host = _FakeHost()
+    monkeypatch.setattr(host_io, "_h", host)
+
+    host.down.add(298)                         # F9 down
+    _poll_function_keys(host, im)
+    assert calls == [("down", App.WC_F9)]
+
+    host.down.clear()
+    host.down.add(295)                         # F9 up, F6 down
+    _poll_function_keys(host, im)
+    assert calls == [("down", App.WC_F9), ("up", App.WC_F9),
+                     ("down", App.WC_F6)]
