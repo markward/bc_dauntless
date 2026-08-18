@@ -5163,8 +5163,12 @@ def _active_cutscene_camera():
     cinematic mode were off.
     """
     import App as _App
+    from engine.core import ids as _ids
     _top = _App.TopWindow_GetTopWindow()
-    if _top is not None and getattr(_top, "is_cinematic_active", None) is not None \
+    # implements(), not getattr-with-default: a TGObject-derived test double
+    # vends a truthy callable _Stub for unknown names, which would wrongly
+    # enter this branch (engine/core/ids.py convention; final-review finding).
+    if _top is not None and _ids.implements(_top, "is_cinematic_active") \
             and _top.is_cinematic_active():
         _game = _App.Game_GetCurrentGame()
         _pcam = _game.GetPlayerCamera() if _game is not None else None
