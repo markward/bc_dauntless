@@ -187,6 +187,10 @@ def CameraMode_Create(kind, pCamera=None):
             "Chase": ChaseMode,
             "Target": TargetMode,
             "Placement": PlacementMode,
+            # CameraModes.Placement (the SDK builder registered under the NAME
+            # "Placement") passes the KIND "PlacementWatch" — the two strings
+            # are not interchangeable. Both map to PlacementMode.
+            "PlacementWatch": PlacementMode,
             "ZoomTarget": ZoomTargetMode,
         }
         cls = _dispatch.get(kind)

@@ -345,3 +345,16 @@ def test_sweep_glides_on_small_tracking_motion():
     t._loc = TGPoint3(1.0, 0.0, 0.0)            # 1 GU tracking step
     eye, _fwd, _up = m.Update(dt=1.0 / 60.0)
     assert 0.0 < eye[0] < 1.0                   # glided partway, not snapped
+
+
+# ── Kind-string dispatch ──────────────────────────────────────────────────────
+# CameraModes.py's builders are the SDK's own mode factories, and the kind
+# string they pass to CameraMode_Create is NOT always the named-mode key that
+# Camera.NewMode looks up. CameraModes.Placement (CameraModes.py:165) is
+# registered under the name "Placement" but builds kind "PlacementWatch".
+from engine.appc.camera_modes import CameraMode_Create
+
+
+def test_camera_mode_create_placementwatch_kind_returns_placement_mode():
+    """CameraModes.Placement passes kind "PlacementWatch", not "Placement"."""
+    assert isinstance(CameraMode_Create("PlacementWatch"), PlacementMode)
