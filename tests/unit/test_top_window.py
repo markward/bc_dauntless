@@ -847,6 +847,91 @@ def test_is_cinematic_active_false_when_another_child_holds_focus():
     assert tw.is_cinematic_active() is False
 
 
+# ── Entering cinematic mode drops an open crew menu ─────────────────────────
+# Live bug: F9 hides the tactical HUD but leaves an already-open crew/officer
+# menu on screen. Cinematic mode should be a clean camera view. The fix reuses
+# the exact primitive StartCutscene already calls at its own entry
+# (_drop_open_crew_menu, :103/:369) -- must fire on ENTER only, never on exit.
+
+def _wired_officer_for_menu_drop_test(name="Helm", label="Helm"):
+    """A bridge officer with a menu attached and registered on the TCW's menu
+    list, with a CrewMenuPanel wired -- mirrors
+    tests/unit/test_cutscene_menu_drop.py's _wired_officer, which exercises
+    the same App.STTopLevelMenu_GetOpenMenu()/GetOwner()/MenuDown() primitive
+    _drop_open_crew_menu uses."""
+    import App
+    from engine.appc.characters import STTopLevelMenu_CreateW
+    from engine.appc.windows import TacticalControlWindow
+    from engine.ui import crew_menu_hotkeys
+    from engine.ui.crew_menu_panel import CrewMenuPanel
+
+    TacticalControlWindow._instance = None
+    tcw = TacticalControlWindow.GetInstance()
+    db = App.g_kLocalizationManager.Load("data/TGL/Bridge Menus.tgl")
+    tac_menu = STTopLevelMenu_CreateW(db.GetString("Tactical"))
+    tac_menu.AddChild(App.STButton_CreateW(db.GetString("Manual Aim")))
+    tcw.SetTacticalMenu(tac_menu)
+    App.g_kLocalizationManager.Unload(db)
+
+    menu = STTopLevelMenu_CreateW(label)
+    tcw.AddMenuToList(menu)
+    panel = CrewMenuPanel()
+    crew_menu_hotkeys.wire(tcw, panel)
+    officer = App.CharacterClass_Create("b.nif", "h.nif")
+    officer.SetCharacterName(name)
+    officer.SetMenu(menu)
+    return officer, menu, panel
+
+
+def test_entering_cinematic_mode_drops_an_open_crew_menu():
+    """The bug: F9 (ToggleCinematicWindow, entering) must close whatever crew
+    menu is currently up, exactly as StartCutscene already does."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    officer, _menu, panel = _wired_officer_for_menu_drop_test()
+    officer.MenuUp()
+    assert panel.has_open_menu() is True
+
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ToggleCinematicWindow()          # ENTER cinematic mode
+
+    assert tw.is_cinematic_active() is True
+    assert panel.has_open_menu() is False
+    assert officer.IsMenuUp() == 0
+
+
+def test_leaving_cinematic_mode_does_not_drop_a_crew_menu():
+    """The other half: leaving cinematic mode must NOT run the drop. A menu
+    opened only after entering (there is nothing before entry to leave open
+    in real play -- F1-F5 are vetoed while focused on the cinematic window --
+    but the shim-level primitive itself must not fire on exit either way)
+    must still be open once the player toggles back out."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    officer, _menu, panel = _wired_officer_for_menu_drop_test()
+
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ToggleCinematicWindow()          # enter -- nothing open yet
+    assert tw.is_cinematic_active() is True
+
+    officer.MenuUp()                    # opened while already in cinematic mode
+    assert panel.has_open_menu() is True
+
+    tw.ToggleCinematicWindow()          # LEAVE cinematic mode
+    assert tw.is_cinematic_active() is False
+    assert panel.has_open_menu() is True    # unchanged -- exit must not drop
+    assert officer.IsMenuUp() == 1
+
+
+def test_entering_cinematic_mode_is_safe_with_no_menu_open():
+    """No open menu -> the drop must be a harmless no-op, not raise."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ToggleCinematicWindow()          # must not raise
+    assert tw.is_cinematic_active() is True
+
+
 # ── Lazy SDK handler registration ───────────────────────────────────────────
 # CinematicInterfaceHandlers.Initialize(pWindow) is what binds the six
 # ET_INPUT_CINEMATIC_* events to camera modes. No SDK script calls it — BC's

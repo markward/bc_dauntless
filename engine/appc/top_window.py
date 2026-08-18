@@ -293,12 +293,21 @@ class _TopWindow:
     def ToggleCinematicWindow(self) -> None:
         """Enter/leave BC's cinematic mode by moving focus to the
         MWT_CINEMATIC main window. Focus is the whole state — see
-        is_cinematic_active."""
+        is_cinematic_active.
+
+        Entering must drop any open crew/officer menu, the same way
+        StartCutscene does at its own entry (_drop_open_crew_menu) — cinematic
+        mode is meant to be a clean camera view, and a menu left over from
+        before F9 has no window to belong to anymore. Only on ENTRY: leaving
+        cinematic mode must not touch anything."""
         cine = self._main_windows.get(MWT_CINEMATIC)
         if cine is None:
             return
         self._init_cinematic_handlers(cine)
-        self._focus = None if self._focus is cine else cine
+        entering = self._focus is not cine
+        self._focus = cine if entering else None
+        if entering:
+            _drop_open_crew_menu()
 
     def _init_cinematic_handlers(self, cine) -> None:
         """Run the SDK's CinematicInterfaceHandlers wiring once, on first
