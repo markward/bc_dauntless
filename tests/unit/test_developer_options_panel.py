@@ -197,6 +197,7 @@ def test_focusables_order(panel):
         ("ctrl", "double_weapons"),
         ("ctrl", "no_npc_shields"),
         ("ctrl", "disable_collisions"),
+        ("ctrl", "quick_repair"),
     ]
 
 
@@ -248,3 +249,73 @@ def test_open_resyncs_disable_collisions(panel):
 def test_focusables_include_disable_collisions(panel):
     p, _ = panel
     assert ("ctrl", "disable_collisions") in p._focusables()
+
+
+# ---- Quick Repair action button ------------------------------------------
+# Moved off the F9 dev keybinding, which BC needs for ET_INPUT_TOGGLE_CINEMATIC_MODE.
+# Unlike every other control here this is a one-shot ACTION, not a toggle.
+
+def test_quick_repair_action_repairs_the_current_player(panel, monkeypatch):
+    """Uses a real ship (not a fake) so the button exercises the actual
+    dispatch -> repair_ship_fully plumbing, as the old F9 test did."""
+    import App
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.properties import RepairSubsystemProperty
+
+    p, _ = panel
+    ship = ShipClass_Create("DevOptPlayer")
+    prop = RepairSubsystemProperty("Engineering")
+    prop.SetMaxRepairPoints(50.0)
+    prop.SetNumRepairTeams(3)
+    ship.GetRepairSubsystem().SetProperty(prop)
+    ship.GetSensorSubsystem().SetMaxCondition(8000.0)
+    sensors = ship.GetSensorSubsystem()
+    sensors.SetCondition(100.0)              # damaged + auto-enqueued
+    assert ship.GetRepairSubsystem()._queue
+
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ship)
+    assert p.dispatch_event("action:quick_repair") is True
+
+    assert sensors.GetCondition() == sensors.GetMaxCondition()
+    assert ship.GetRepairSubsystem()._queue == []
+
+
+def test_quick_repair_action_without_a_player_is_a_noop(panel, monkeypatch):
+    import App
+    p, _ = panel
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: None)
+    assert p.dispatch_event("action:quick_repair") is True   # handled, no raise
+
+
+def test_quick_repair_is_focusable_on_the_combat_tab(panel):
+    p, _ = panel
+    p.dispatch_event("tab:combat")
+    assert ("ctrl", "quick_repair") in p._focusables()
+
+
+def test_enter_on_quick_repair_row_runs_the_repair(panel, monkeypatch):
+    """Keyboard activation must route the ACTION row to action:, not toggle:
+    (a "toggle:quick_repair" dispatch is unhandled and silently does nothing)."""
+    import App
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.properties import RepairSubsystemProperty
+
+    p, _ = panel
+    ship = ShipClass_Create("DevOptKeyPlayer")
+    prop = RepairSubsystemProperty("Engineering")
+    prop.SetMaxRepairPoints(50.0)
+    prop.SetNumRepairTeams(3)
+    ship.GetRepairSubsystem().SetProperty(prop)
+    ship.GetSensorSubsystem().SetMaxCondition(8000.0)
+    sensors = ship.GetSensorSubsystem()
+    sensors.SetCondition(100.0)
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ship)
+
+    p.open()
+    r = _Reader()
+    steps = p._focusables().index(("ctrl", "quick_repair")) + 1
+    for _ in range(steps):
+        r.press(r.keys.KEY_DOWN); p.handle_input(r)
+    r.press(r.keys.KEY_ENTER); p.handle_input(r)
+
+    assert sensors.GetCondition() == sensors.GetMaxCondition()

@@ -61,6 +61,19 @@ function _doToggleRow(label, key, on, focused) {
          + '</div>';
 }
 
+// One-shot action row: fires on click instead of showing an On/Off state.
+function _doActionRow(label, key, buttonText, focused) {
+    return '<div class="cp-row' + (focused ? ' cp-focused' : '') + '">'
+         +   '<div class="cp-row__label">' + escapeHtmlDO(label) + '</div>'
+         +   '<div class="cp-row__control">'
+         +     '<button class="cp-toggle"'
+         +        ' onclick="dauntlessEvent(\'developer-options/action:' + key + '\')">'
+         +       escapeHtmlDO(buttonText)
+         +     '</button>'
+         +   '</div>'
+         + '</div>';
+}
+
 function _doRenderCombatBody(state, focusables) {
     const focused = focusables[state.focused] || {};
     const isFoc = (target) => focused.kind === 'ctrl' && focused.target === target;
@@ -73,6 +86,8 @@ function _doRenderCombatBody(state, focusables) {
                          s.no_npc_shields, isFoc('no_npc_shields'));
     html += _doToggleRow('Disable Collisions', 'disable_collisions',
                          s.disable_collisions, isFoc('disable_collisions'));
+    html += _doActionRow('Quick Repair Player Ship', 'quick_repair',
+                         'Repair', isFoc('quick_repair'));
     return html;
 }
 

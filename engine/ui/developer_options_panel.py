@@ -19,6 +19,10 @@ from engine import dev_light_preview as light_preview
 
 
 class DeveloperOptionsPanel(Panel):
+    # Controls that fire once instead of flipping a flag. They have no entry in
+    # `settings` and dispatch under "action:" rather than "toggle:".
+    _ACTION_CONTROLS = frozenset({"quick_repair"})
+
     def __init__(self) -> None:
         super().__init__()
         self._tabs: List[Tuple[str, str]] = [("combat", "Combat"), ("lighting", "Lighting")]
@@ -120,6 +124,15 @@ class DeveloperOptionsPanel(Panel):
             self._systems_damaged = light_preview.systems_damaged_active()
             self._systems_disabled = light_preview.systems_disabled_active()
             return True
+        if action == "action:quick_repair":
+            # One-shot ACTION, not a toggle: nothing to mirror in state, so
+            # there is no local flag and no render_payload entry. Lived on the
+            # F9 dev keybinding until BC's ET_INPUT_TOGGLE_CINEMATIC_MODE
+            # needed that key back.
+            import App
+            from engine.appc.subsystems import repair_ship_fully
+            repair_ship_fully(App.Game_GetCurrentPlayer())
+            return True
         if action.startswith("tab:"):
             tab_id = action[len("tab:"):]
             if any(tid == tab_id for tid, _ in self._tabs):
@@ -140,7 +153,8 @@ class DeveloperOptionsPanel(Panel):
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "combat":
             out += [("ctrl", "god_mode"), ("ctrl", "double_weapons"),
-                    ("ctrl", "no_npc_shields"), ("ctrl", "disable_collisions")]
+                    ("ctrl", "no_npc_shields"), ("ctrl", "disable_collisions"),
+                    ("ctrl", "quick_repair")]
         if self._selected_tab == "lighting":
             out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled")]
         return out
@@ -168,6 +182,7 @@ class DeveloperOptionsPanel(Panel):
 
         activate = _pressed(k_space) or _pressed(k_enter)
         if activate and kind == "ctrl":
-            self.dispatch_event("toggle:" + target)
+            verb = "action:" if target in self._ACTION_CONTROLS else "toggle:"
+            self.dispatch_event(verb + target)
         elif activate and kind == "tab":
             self.dispatch_event("tab:" + target)
