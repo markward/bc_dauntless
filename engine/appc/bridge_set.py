@@ -446,31 +446,15 @@ class CameraObjectClass(_LoudStub):
     # (the viewscreen zoom is resolved in host_loop._viewscreen_scene_feed, not
     # via a recorded hierarchy).
 
-    _MODE_FACTORY = {
-        "Locked": ("LockedMode", {}),
-        "Chase": ("ChaseMode", {}),
-        "ReverseChase": ("ChaseMode", {"reverse": True}),
-        "Target": ("TargetMode", {}),
-        "Placement": ("PlacementMode", {}),
-        "ZoomTarget": ("ZoomTargetMode", {}),
-        "ViewscreenZoomTarget": ("ZoomTargetMode", {}),
-    }
-
     def GetNamedCameraMode(self, name, *args):
         if "_named_modes" not in self.__dict__:
             self._named_modes = {}
             self._mode_stack = []
         if name in self._named_modes:
             return self._named_modes[name]
-        spec = self._MODE_FACTORY.get(name)
-        if spec is None:
-            mode = self._mode_from_sdk_builder(name)
-            if mode is None:
-                return None
-        else:
-            from engine.appc import camera_modes
-            cls = getattr(camera_modes, spec[0])
-            mode = cls(**spec[1])
+        mode = self._mode_from_sdk_builder(name)
+        if mode is None:
+            return None
         mode._owner_camera = self
         self._named_modes[name] = mode
         return mode

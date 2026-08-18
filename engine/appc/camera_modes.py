@@ -180,7 +180,12 @@ def CameraMode_Create(kind, pCamera=None):
     captain path — unchanged). `pCamera` is tagged as the mode owner (used by
     ZoomTargetMode's Source fallback)."""
     if kind == "ReverseChase":
-        mode = ChaseMode(reverse=True)
+        # The SDK never passes this KIND (CameraModes.ReverseChase builds
+        # "Chase"); it is a NAME in Camera.NewMode. Kept as a defensive mapping
+        # so a direct create still points the right way — ahead of the target,
+        # which for BC is purely the DefaultPosition sign.
+        mode = ChaseMode()
+        mode.SetAttrPoint("DefaultPosition", TGPoint3(0.0, 1.0, 0.1))
     else:
         _dispatch = {
             "Locked": LockedMode,
@@ -219,26 +224,53 @@ class LockedMode(CameraMode):
         return (eye, fwd, up)
 
 
-CHASE_DIST_GU = 12.0
-CHASE_UP_GU = 3.0
+# BC's authored Chase attrs (CameraModes.Chase, CameraModes.py:12-32).
+# DefaultPosition is a body-frame DIRECTION; Distance is a multiple of the
+# target's radius — the same shape our player chase camera independently uses
+# (CAM_BACK_RADII et al, engine/cameras/__init__.py). Used when a mode is
+# constructed bare, i.e. by anything that does not run the SDK builder.
+CHASE_DEFAULT_POSITION = (0.0, -1.0, 0.1)
+CHASE_DEFAULT_DISTANCE = 4.0
+
+
+def _target_radius(obj, default=1.0):
+    """Target radius in game units, or `default` when the object has no real
+    GetRadius. Asks the MRO — a TGObject's __getattr__ hands back a truthy
+    recursive _Stub, so hasattr/getattr cannot answer this (same reasoning as
+    _target_alive above)."""
+    from engine.core.ids import implements
+    if not implements(obj, "GetRadius"):
+        return default
+    try:
+        r = float(obj.GetRadius())
+    except Exception:
+        return default
+    return r if r > 1e-6 else default
 
 
 class ChaseMode(CameraMode):
-    """Follow the target from behind (ChaseCam) or ahead (ReverseChaseCam),
-    looking at it. Offset built in the target body frame, mapped to world via
-    the column-vector convention (mirrors engine/cameras/chase.py)."""
+    """Follow the target along DefaultPosition, looking back at it.
 
-    def __init__(self, reverse=False):
-        super().__init__()
-        self._reverse = reverse
+    BC ships ONE Chase mode class. CameraModes.Chase and CameraModes.ReverseChase
+    both build kind "Chase" and differ only by the SIGN of DefaultPosition
+    (CameraModes.py:22 vs :40) — there is no reverse flag, and adding one here
+    made the mode ignore its authored attrs. Offset is built in the target body
+    frame and mapped to world via the column-vector convention.
+    """
 
     def _ideal(self, pose_of=None):
         t = self.GetAttrIDObject("Target")
         if not _target_alive(t):
             return None
         loc, R = _obj_pose(t, pose_of)
-        sign = 1.0 if self._reverse else -1.0           # behind = -forward
-        off = _apply_rot(R, TGPoint3(0.0, sign * CHASE_DIST_GU, CHASE_UP_GU))
+        d = self.GetAttrPoint("DefaultPosition")
+        dx, dy, dz = (d.x, d.y, d.z) if d is not None else CHASE_DEFAULT_POSITION
+        n = _math.sqrt(dx * dx + dy * dy + dz * dz)
+        if n < 1e-9:
+            return None
+        reach = (self.GetAttrFloat("Distance", CHASE_DEFAULT_DISTANCE)
+                 * _target_radius(t))
+        off = _apply_rot(R, TGPoint3(dx / n * reach, dy / n * reach, dz / n * reach))
         eye = (loc.x + off[0], loc.y + off[1], loc.z + off[2])
         fwd = _unit(loc.x - eye[0], loc.y - eye[1], loc.z - eye[2])
         up = _unit(*_apply_rot(R, TGPoint3(0.0, 0.0, 1.0)))

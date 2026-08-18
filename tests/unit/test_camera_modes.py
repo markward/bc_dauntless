@@ -5,15 +5,19 @@ from engine.appc.math import TGPoint3, TGMatrix3
 
 class _FakeTarget:
     """Minimal stand-in for an ObjectClass target."""
-    def __init__(self, loc, rot=None):
+    def __init__(self, loc, rot=None, radius=1.0):
         self._loc = TGPoint3(*loc)
         self._rot = rot if rot is not None else TGMatrix3()  # identity
+        self._radius = radius
 
     def GetWorldLocation(self):
         return TGPoint3(self._loc.x, self._loc.y, self._loc.z)
 
     def GetWorldRotation(self):
         return self._rot
+
+    def GetRadius(self):
+        return self._radius
 
 
 def test_locked_mode_snap_identity_rotation():
@@ -103,45 +107,47 @@ def test_dt_zero_does_not_snap_mid_sweep():
     assert eye2 == eye1, f"dt=0.0 must freeze the sweep; got {eye2} != {eye1}"
 
 
-from engine.appc.camera_modes import ChaseMode, TargetMode, CHASE_DIST_GU, CHASE_UP_GU
+from engine.appc.camera_modes import (
+    ChaseMode, TargetMode, CHASE_DEFAULT_DISTANCE,
+)
 
 
 def test_chase_mode_sits_behind_target():
-    t = _FakeTarget((0.0, 0.0, 0.0))           # identity rot: fwd = +Y (GetCol(1))
+    """Bare ChaseMode falls back to BC's authored Chase attrs: behind (-Y) with
+    a slight up-tilt, at Distance x radius."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)  # identity rot: fwd = +Y (GetCol(1))
     m = ChaseMode()
     m.SetAttrIDObject("Target", t)
     m.SnapToIdealPosition()
     eye, fwd, up = m.Update()
-    # Behind = -Y of forward, so eye.y is negative ~ -CHASE_DIST_GU; looks +Y.
-    assert eye[1] < 0.0
-    assert abs(eye[1] + CHASE_DIST_GU) < 1e-6
+    assert eye[1] < 0.0                         # behind
+    assert eye[2] > 0.0                         # authored up-tilt applied
     assert fwd[1] > 0.9                         # looking toward the ship (+Y)
-    # Check that the up-offset is applied: under identity rotation, eye.z should equal CHASE_UP_GU.
-    assert abs(eye[2] - CHASE_UP_GU) < 1e-6
+    reach = math.sqrt(eye[0] ** 2 + eye[1] ** 2 + eye[2] ** 2)
+    assert abs(reach - CHASE_DEFAULT_DISTANCE * 1.0) < 1e-6
 
 
 def test_reverse_chase_sits_in_front():
-    t = _FakeTarget((0.0, 0.0, 0.0))
-    m = ChaseMode(reverse=True)
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = ChaseMode()
+    m.SetAttrPoint("DefaultPosition", TGPoint3(0.0, 1.0, 0.1))   # ReverseChase
     m.SetAttrIDObject("Target", t)
     m.SnapToIdealPosition()
     eye, fwd, up = m.Update()
-    assert abs(eye[1] - CHASE_DIST_GU) < 1e-6  # in front (+Y), exact value
+    assert eye[1] > 0.0                           # in front (+Y)
     assert fwd[1] < -0.9                          # looking back toward ship
 
 
 def test_chase_mode_applies_target_rotation():
     # Target yawed 180° about Z: body -Y "behind" maps to world +Y (in front).
     r = TGMatrix3().MakeZRotation(math.pi)
-    t = _FakeTarget((0.0, 0.0, 0.0), rot=r)
+    t = _FakeTarget((0.0, 0.0, 0.0), rot=r, radius=1.0)
     m = ChaseMode()
     m.SetAttrIDObject("Target", t)
     m.SnapToIdealPosition()
     eye, fwd, up = m.Update()
-    # Under 180° yaw, -Y offset becomes +Y in world: eye should be at +CHASE_DIST_GU
-    assert abs(eye[1] - CHASE_DIST_GU) < 1e-6  # in front (not behind)
-    # Z offset unaffected by Z-rotation
-    assert abs(eye[2] - CHASE_UP_GU) < 1e-6
+    assert eye[1] > 0.0                         # -Y body offset → +Y world
+    assert eye[2] > 0.0                         # Z offset unaffected by Z-rotation
 
 
 def test_target_mode_looks_from_source_to_target():
@@ -300,9 +306,13 @@ def test_camera_mode_create_dispatches_on_kind():
 
 
 def test_camera_mode_create_reverse_chase_is_reversed():
+    """Reversal is the DefaultPosition sign, not a constructor flag."""
     m = CameraMode_Create("ReverseChase")
     assert isinstance(m, ChaseMode)
-    assert m._reverse is True
+    m.SetAttrIDObject("Target", _FakeTarget((0.0, 0.0, 0.0), radius=1.0))
+    m.SnapToIdealPosition()
+    eye, _fwd, _up = m.Update()
+    assert eye[1] > 0.0                          # ahead of the target
 
 
 def test_camera_mode_create_default_is_place_by_direction():
@@ -358,3 +368,47 @@ from engine.appc.camera_modes import CameraMode_Create
 def test_camera_mode_create_placementwatch_kind_returns_placement_mode():
     """CameraModes.Placement passes kind "PlacementWatch", not "Placement"."""
     assert isinstance(CameraMode_Create("PlacementWatch"), PlacementMode)
+
+
+# ── Chase geometry comes from the authored attrs ──────────────────────────────
+# BC ships ONE Chase mode class. CameraModes.Chase and CameraModes.ReverseChase
+# both build kind "Chase" and differ only by the sign of DefaultPosition
+# (CameraModes.py:22 vs :40). Distance/Minimum/Maximum are radius multiples, as
+# our own player chase camera independently is (engine/cameras/__init__.py).
+
+def test_chase_distance_is_radius_relative():
+    """Eye sits Distance x target radius along DefaultPosition, so the camera
+    pulls back for a big hull instead of sitting a fixed distance from every
+    ship."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=2.0)
+    m = ChaseMode()
+    m.SetAttrIDObject("Target", t)
+    m.SetAttrPoint("DefaultPosition", TGPoint3(0.0, -1.0, 0.0))
+    m.SetAttrFloat("Distance", 4.0)
+    m.SnapToIdealPosition()
+    eye, _fwd, _up = m.Update()
+    assert abs(eye[1] + 8.0) < 1e-6          # 4.0 x radius 2.0, behind
+
+
+def test_chase_scales_with_a_bigger_hull():
+    """Same attrs, bigger ship, further back — the point of radius-relative."""
+    m = ChaseMode()
+    m.SetAttrIDObject("Target", _FakeTarget((0.0, 0.0, 0.0), radius=6.0))
+    m.SetAttrPoint("DefaultPosition", TGPoint3(0.0, -1.0, 0.0))
+    m.SetAttrFloat("Distance", 4.0)
+    m.SnapToIdealPosition()
+    eye, _fwd, _up = m.Update()
+    assert abs(eye[1] + 24.0) < 1e-6
+
+
+def test_reverse_chase_is_default_position_sign_not_a_flag():
+    """ReverseChase is +Y DefaultPosition, no constructor argument."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=2.0)
+    m = ChaseMode()
+    m.SetAttrIDObject("Target", t)
+    m.SetAttrPoint("DefaultPosition", TGPoint3(0.0, 1.0, 0.0))
+    m.SetAttrFloat("Distance", 4.0)
+    m.SnapToIdealPosition()
+    eye, fwd, _up = m.Update()
+    assert abs(eye[1] - 8.0) < 1e-6          # ahead of the target
+    assert fwd[1] < -0.9                     # looking back at it
