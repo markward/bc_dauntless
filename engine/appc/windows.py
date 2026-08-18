@@ -445,11 +445,24 @@ class _CinematicWindow(TGEventHandlerObject):
     a truthy stub for IsWindowActive() silently flips those guards.
     """
 
-    def IsWindowActive(self):
-        return 0
+    def __init__(self):
+        super().__init__()
+        # BC's normal-state default is interactive; StartCinematicMode passes
+        # bInteractive explicitly when a script wants it non-interactive.
+        self._interactive = 1
+
+    def SetInteractive(self, value):
+        self._interactive = 1 if value else 0
 
     def IsInteractive(self):
-        return 1
+        return self._interactive
+
+    def IsWindowActive(self):
+        """Active == holds TopWindow focus. Derived, never stored: a second
+        flag could disagree with focus, and focus is what routing reads."""
+        import App
+        top = App.TopWindow_GetTopWindow()
+        return 1 if (top is not None and top.GetFocus() is self) else 0
 
 
 class _MainViewWindow(TGEventHandlerObject):

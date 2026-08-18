@@ -291,7 +291,19 @@ class _TopWindow:
         pass
 
     def ToggleCinematicWindow(self) -> None:
-        pass
+        """Enter/leave BC's cinematic mode by moving focus to the
+        MWT_CINEMATIC main window. Focus is the whole state — see
+        is_cinematic_active."""
+        cine = self._main_windows.get(MWT_CINEMATIC)
+        if cine is None:
+            return
+        self._focus = None if self._focus is cine else cine
+
+    def is_cinematic_active(self) -> bool:
+        """True while the cinematic main window holds focus. Derived rather
+        than stored so it cannot drift out of sync with GetFocus()."""
+        cine = self._main_windows.get(MWT_CINEMATIC)
+        return cine is not None and self._focus is cine
 
     def ToggleWireframe(self) -> None:
         pass

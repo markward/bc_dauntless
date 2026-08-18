@@ -797,3 +797,51 @@ def test_dispatch_toggle_helper_respects_mission_swallow():
         __name__ + "._swallowing_handler")
     top_window.dispatch_toggle_bridge_and_tactical()
     assert tw.IsBridgeVisible() is True      # held on bridge
+
+
+# ── Cinematic mode ──────────────────────────────────────────────────────────
+# BC enters cinematic mode by focusing the MWT_CINEMATIC main window
+# (Actions/CameraScriptActions.py:StartCinematicMode compares GetFocus()
+# against it). Focus is the single source of truth — there is no second flag.
+
+def test_toggle_cinematic_window_focuses_and_unfocuses():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+
+    assert tw.GetFocus() is None
+    assert tw.is_cinematic_active() is False
+
+    tw.ToggleCinematicWindow()
+    assert tw.GetFocus() is cine
+    assert tw.is_cinematic_active() is True
+    assert cine.IsWindowActive() == 1
+
+    tw.ToggleCinematicWindow()
+    assert tw.GetFocus() is None
+    assert tw.is_cinematic_active() is False
+    assert cine.IsWindowActive() == 0
+
+
+def test_cinematic_window_interactive_state_round_trips():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    cine = top_window.TopWindow_GetTopWindow().FindMainWindow(
+        top_window.MWT_CINEMATIC)
+    assert cine.IsInteractive() == 1        # BC normal-state default, unchanged
+    cine.SetInteractive(0)
+    assert cine.IsInteractive() == 0
+    cine.SetInteractive(1)
+    assert cine.IsInteractive() == 1
+
+
+def test_is_cinematic_active_false_when_another_child_holds_focus():
+    """QuickBattle's OpenConfigDialog focuses a config pane. That must not read
+    as cinematic mode."""
+    from engine.appc import top_window
+    from engine.appc.events import TGEventHandlerObject
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.SetFocus(TGEventHandlerObject())
+    assert tw.is_cinematic_active() is False
