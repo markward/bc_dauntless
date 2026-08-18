@@ -35,6 +35,24 @@ def test_paragraph_holds_text():
     assert para.GetText() == "Updated"
 
 
+def test_paragraph_set_string_is_the_non_w_spelling_of_set_text():
+    """``TGParagraph.SetString`` is real published surface
+    (sdk/Build/scripts/App.py:1647) and only ``SetStringW`` was aliased here,
+    so the non-W spelling fell through TGObject.__getattr__ to a silent _Stub.
+
+    Sole SDK caller: CinematicInterfaceHandlers.UpdateCameraModeText:255, the
+    "Chase View" / "Reverse Cyclable View" caption. It creates the paragraph
+    once and thereafter only calls SetString, so with a stub the caption is
+    frozen on whichever camera mode the player picked first."""
+    from engine.core.ids import implements
+
+    para = TGParagraph_CreateW("Chase View", 1.0, None)
+    assert implements(para, "SetString") or any(
+        "SetString" in k.__dict__ for k in type(para).__mro__)
+    para.SetString("Reverse Cyclable View")
+    assert para.GetText() == "Reverse Cyclable View"
+
+
 def test_icon_group_records_atlas_locations():
     g = TGIconGroup("LCARS_1024")
     tex = g.LoadIconTexture("Data/Icons/Bridge/RadarBorder.tga")

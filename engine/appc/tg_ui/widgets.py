@@ -373,8 +373,15 @@ class TGParagraph(TGPane):
     def SetText(self, text) -> None:
         self._segments = [("text", str(text))] if text else []
 
-    # SDK W-variant setter name used by some callers.
+    # SDK setter names. BOTH spellings are real published surface
+    # (sdk/Build/scripts/App.py:1647-1648 binds TGParagraph_SetString and
+    # TGParagraph_SetStringW); only the W form was aliased, so
+    # CinematicInterfaceHandlers.UpdateCameraModeText:255 -- which creates its
+    # caption paragraph once and thereafter only calls SetString -- silently
+    # hit TGObject.__getattr__'s _Stub and froze the cinematic camera-mode
+    # caption on the first mode the player selected.
     SetStringW = SetText
+    SetString = SetText
 
     def SetFont(self, *args) -> None:   pass
     def SetColor(self, color) -> None:  self._color = color
