@@ -1126,3 +1126,37 @@ def test_cinematic_window_cast_survives_the_real_sdk_call_shape():
     pCinematic.SetInteractive(0)
     assert pCinematic.IsInteractive() == 0
     assert tw.FindMainWindow(App.MWT_CINEMATIC).IsInteractive() == 0
+
+
+# ── Toggle drives the real SDK camera switch ────────────────────────────────
+# BC's C++ engine calls Camera.PlayerCameraAsCinematic/AsSpace on window
+# switch; our toggle (ToggleCinematicWindow) is that seam. NewMode runs
+# against the seeded player camera (bReplace=1), so the raw current mode
+# (arg 0, unresolved) must be the Invalid* marker and the stack must not grow
+# across repeated toggles.
+
+def test_toggle_switches_the_player_camera_to_cinematic_and_back():
+    """BC's engine calls Camera.PlayerCameraAsCinematic/AsSpace on window
+    switch; our toggle is that seam. Raw mode (arg 0) is the marker; NewMode
+    replaces (bReplace=1) so the stack must not grow with repeated toggles."""
+    import App
+    from engine.appc import top_window
+    from engine.core.game import Game, _set_current_game
+
+    top_window.reset_for_tests()
+    _set_current_game(Game())
+    tw = top_window.TopWindow_GetTopWindow()
+    cam = App.Game_GetCurrentGame().GetPlayerCamera()
+
+    tw.ToggleCinematicWindow()               # enter
+    raw = cam.GetCurrentCameraMode(0)
+    assert getattr(raw, "_named", None) == "InvalidCinematic"
+
+    tw.ToggleCinematicWindow()               # exit
+    raw = cam.GetCurrentCameraMode(0)
+    assert getattr(raw, "_named", None) == "InvalidSpace"
+
+    depth_before = len(cam._mode_stack)
+    for _ in range(4):
+        tw.ToggleCinematicWindow()
+    assert len(cam._mode_stack) == depth_before

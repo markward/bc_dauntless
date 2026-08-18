@@ -308,6 +308,18 @@ class _TopWindow:
         self._focus = cine if entering else None
         if entering:
             _drop_open_crew_menu()
+        # BC's engine switches the player camera on window activation
+        # (PlayerCameraAsCinematic/AsSpace); this toggle is our seam for it.
+        # Guarded like _init_cinematic_handlers: a Camera failure must not
+        # wedge the toggle, but must not be silent.
+        try:
+            import Camera
+            if self._focus is cine:
+                Camera.PlayerCameraAsCinematic()
+            else:
+                Camera.PlayerCameraAsSpace()
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            print("[cinematic] player-camera mode switch failed:", exc)
 
     def _init_cinematic_handlers(self, cine) -> None:
         """Run the SDK's CinematicInterfaceHandlers wiring once, on first
