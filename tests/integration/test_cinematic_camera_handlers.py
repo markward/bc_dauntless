@@ -152,3 +152,30 @@ def test_camera_target_never_selects_the_player_as_its_own_source(cinematic_worl
     CinematicInterfaceHandlers.CameraTarget(cine, App.TGEvent_Create())
 
     assert mode.GetAttrIDObject("Source") is None
+
+
+def test_camera_target_never_cycles_onto_a_waypoint_or_placement(cinematic_world):
+    """The live defect: waypoints and placements sat in
+    SetClass.GetTargetableObjects, so pressing F3 parked the cinematic camera
+    on an invisible nav marker. Press it once per object in the set (plus one)
+    so every position in the handler's `(iStartIndex + 1) % len(lSources)`
+    cycle is visited — a source that is not a ship must never come up."""
+    import CinematicInterfaceHandlers
+    from engine.appc.placement import PlacementObject, Waypoint
+
+    game, pSet, _player, other, cine = cinematic_world
+    wp = Waypoint()
+    wp.SetTranslateXYZ(0.0, 50.0, 0.0)
+    pSet.AddObjectToSet(wp, "Waypoint1")
+    placement = PlacementObject()
+    placement.SetTranslateXYZ(0.0, -50.0, 0.0)
+    pSet.AddObjectToSet(placement, "Placement1")
+
+    mode = game.GetPlayerCamera().GetNamedCameraMode("CinematicReverseTarget")
+    seen = []
+    for _ in range(6):
+        CinematicInterfaceHandlers.CameraTarget(cine, App.TGEvent_Create())
+        seen.append(mode.GetAttrIDObject("Source"))
+
+    assert wp not in seen and placement not in seen
+    assert set(seen) == {other}

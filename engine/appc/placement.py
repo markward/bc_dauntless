@@ -21,6 +21,21 @@ class PlacementObject(ObjectClass):
         super().__init__()
         self._is_static: bool = False
         self._is_nav_point: bool = False
+        # NOT targetable, overriding ObjectClass's permissive default. That
+        # default is argued FOR SHIPS (objects.py:101-110): the overwhelming
+        # majority of SDK ships never call SetTargetable, so targeting only
+        # works if the engine default is on. A placement is not a ship — it is
+        # an invisible position/orientation marker, and BC gives you no way to
+        # target a waypoint. Inheriting the ship default made every waypoint
+        # and placement in a set read as a targetable object, which is what
+        # F3's source cycle reads (SetClass.GetTargetableObjects, the only SDK
+        # caller — CinematicInterfaceHandlers.CameraTarget:356): the cinematic
+        # camera attached to nav markers. Fixed here rather than filtered in
+        # GetTargetableObjects because the flag itself was wrong; nothing else
+        # reads IsTargetable on a placement (perception buckets ShipClass only,
+        # via contact_index; the target-menu/SPV readers are subsystem-level).
+        # Still a flag, so SetTargetable can turn one back on.
+        self._targetable: bool = False
 
     def SetStatic(self, static) -> None:
         self._is_static = bool(static)

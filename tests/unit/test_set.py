@@ -454,8 +454,11 @@ def test_get_targetable_objects_must_be_alive_flag_filters_dying_objects():
 
 
 def test_get_targetable_objects_must_be_alive_keeps_objects_with_no_isdying():
-    """Waypoints / placements never die and do not implement IsDying; they must
-    survive the bMustBeAlive filter rather than be dropped by a stub call."""
+    """An object that never dies and does not implement IsDying must survive
+    the bMustBeAlive filter rather than be dropped by a stub call. (Real
+    placements are excluded a line earlier, by IsTargetable — see
+    test_get_targetable_objects_excludes_waypoints_and_placements; this pins
+    the bMustBeAlive leg on its own.)"""
     from engine.core.ids import TGObject
 
     class _Bare(TGObject):
@@ -466,3 +469,19 @@ def test_get_targetable_objects_must_be_alive_keeps_objects_with_no_isdying():
     assert not any("IsDying" in k.__dict__ for k in type(bare).__mro__)
     s.AddObjectToSet(bare, "bare")
     assert s.GetTargetableObjects(None, 1) == [bare]
+
+
+def test_get_targetable_objects_excludes_waypoints_and_placements():
+    """THE live F3 defect: CameraTarget cycles its camera Source through this
+    list, so a targetable waypoint parked the cinematic camera on a nav marker
+    instead of a ship. Placements are not targetable in BC — the exclusion is
+    PlacementObject's own IsTargetable, not a special case in this filter."""
+    from engine.appc.placement import PlacementObject, Waypoint
+
+    s = SetClass_Create()
+    ship = ShipClass_Create("Galaxy")
+    s.AddObjectToSet(ship, "ship")
+    s.AddObjectToSet(Waypoint(), "wp1")
+    s.AddObjectToSet(PlacementObject(), "placement1")
+
+    assert s.GetTargetableObjects(None, 0) == [ship]

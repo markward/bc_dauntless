@@ -511,9 +511,13 @@ class SetClass(TGEventHandlerObject):
         unknown name, so hasattr is vacuously True and every object would look
         both targetable and dying). An object that does not implement the call
         at all is kept: IsTargetable's property default is permissive
-        (properties.py:260), and waypoints/placements never implement IsDying
-        yet plainly are alive — the same treatment camera_modes._target_alive
-        gives a missing IsDying.
+        (properties.py:260), and an object with no IsDying plainly is alive —
+        the same treatment camera_modes._target_alive gives a missing IsDying.
+
+        Waypoints and placements ARE excluded, but by their own flag, not by a
+        special case here: PlacementObject sets _targetable False (you cannot
+        target a nav marker in BC), because otherwise F3's source cycle — this
+        method's only SDK caller — attached the cinematic camera to them.
         """
         from engine.core.ids import implements
 
