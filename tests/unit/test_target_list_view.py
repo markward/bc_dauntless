@@ -236,6 +236,58 @@ def test_dispatch_event_subsystem_click_sets_both_target_and_subsystem():
         _set_current_game(None)
 
 
+def test_dispatch_event_will_not_lock_a_non_targetable_group_header():
+    """Clicking a group header ("Warp Engines") targets the SHIP but must not
+    set a subsystem lock.
+
+    BC flags every aggregator `SetTargetable(0)` — the player can lock the
+    Port Warp nacelle, never the "Warp Engines" group. The header exists to
+    organise the list, and the JS wires its row body to the same
+    `target/<ship>/<subsystem>` action a lockable leaf uses, so the refusal
+    has to be enforced here.
+    """
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.properties import WeaponSystemProperty, PhaserProperty
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = ShipClass_Create("Galaxy")
+        ps = ship.GetPropertySet()
+        group = WeaponSystemProperty("Phasers")
+        group.SetWeaponSystemType(WeaponSystemProperty.WST_PHASER)
+        group.SetTargetable(0)                     # as every real hardpoint does
+        ps.AddToSet("Scene Root", group)
+        leaf = PhaserProperty("Dorsal Phaser 1")
+        leaf.SetTargetable(1)
+        ps.AddToSet("Scene Root", leaf)
+        ship.SetupProperties()
+        ship.SetName("USS Galaxy")
+        target_menu.set_contacts(_listed(ship))
+        bridge = App.g_kSetManager.GetSet("bridge")
+        if bridge is None:
+            from engine.appc.sets import SetClass
+            bridge = SetClass()
+            App.g_kSetManager.AddSet(bridge, "bridge")
+        bridge.AddObjectToSet(ship, "USS Galaxy")
+
+        view = TargetListView()
+        assert view.dispatch_event("USS Galaxy/Phasers") is True
+        assert player.GetTarget() is ship
+        assert player.GetTargetSubsystem() is None, \
+            "a non-targetable group header must never become the subsystem lock"
+
+        # The lockable leaf underneath it still locks normally.
+        assert view.dispatch_event("USS Galaxy/Dorsal Phaser 1") is True
+        assert player.GetTargetSubsystem() is not None
+        assert player.GetTargetSubsystem().GetName() == "Dorsal Phaser 1"
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
 def test_dispatch_event_ship_only_click_clears_subsystem():
     """Clicking the ship row (no subsystem) sets the target ship and
     clears any previously selected subsystem."""

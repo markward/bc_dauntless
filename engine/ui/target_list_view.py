@@ -478,6 +478,15 @@ class TargetListView(Panel):
             return True
 
         sub = _resolve_subsystem_by_name(target_ship, suffix)
+        # A non-targetable subsystem is a GROUP HEADER ("Warp Engines",
+        # "Phasers", ...), drawn to organise the list but never lockable —
+        # BC flags every aggregator SetTargetable(0). The JS gives a header
+        # row the same click action as a lockable leaf, so the refusal is
+        # enforced here; the click still retargets the ship.
+        from engine.appc.target_menu import _is_targetable
+        if sub is not None and not _is_targetable(sub):
+            player.SetTargetSubsystem(None)
+            return True
         player.SetTargetSubsystem(sub)
         return True
 

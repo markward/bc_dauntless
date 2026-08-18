@@ -48,3 +48,65 @@ def test_phaser_row_has_two_child_rows():
     phaser_row = next(c for c in row._children if c.GetLabel() == "Phasers")
     child_labels = sorted(gc.GetLabel() for gc in phaser_row._children)
     assert child_labels == ["Dorsal Phaser 1", "Dorsal Phaser 2"]
+
+
+# ── Non-targetable aggregators are GROUP HEADERS, not deletions ───────────────
+#
+# Every aggregator in BC's hardpoints is SetTargetable(0) — "Warp Engines",
+# "Phasers", "Torpedoes", "Impulse Engines", "Tractors" (49/52 WeaponSystem,
+# 23/24 WarpEngine, 28/29 ImpulseEngine across the 52 hardpoint files). The
+# flag means "the player cannot LOCK this", not "do not display it": the
+# leaves under it are individually targetable and BC listed them grouped.
+#
+# The test above passes without this rule only because its synthetic
+# WeaponSystemProperty keeps the default targetable=1, which no real
+# hardpoint does.
+
+def _build_ship_bc_faithful():
+    """Same ship, but with the aggregator flagged the way every real
+    hardpoint flags it: SetTargetable(0) on the group, 1 on the leaves."""
+    ship = ShipClass_Create("X")
+    ps = ship.GetPropertySet()
+    phasers = WeaponSystemProperty("Phasers")
+    phasers.SetWeaponSystemType(WeaponSystemProperty.WST_PHASER)
+    phasers.SetTargetable(0)                      # ← as galaxy.py does
+    ps.AddToSet("Scene Root", phasers)
+    for nm in ("Dorsal Phaser 1", "Dorsal Phaser 2"):
+        leaf = PhaserProperty(nm)
+        leaf.SetTargetable(1)
+        ps.AddToSet("Scene Root", leaf)
+    ship.SetupProperties()
+    return ship
+
+
+def test_non_targetable_aggregator_still_groups_its_targetable_children():
+    menu = STTargetMenu("targets")
+    ship = _build_ship_bc_faithful()
+    menu.set_contacts(_listed(ship))
+    row = menu.GetObjectEntry(ship)
+    labels = [c.GetLabel() for c in row._children]
+    # The group header survives...
+    assert "Phasers" in labels
+    # ...and the leaves are nested UNDER it, not promoted to the top level.
+    assert "Dorsal Phaser 1" not in labels
+    phaser_row = next(c for c in row._children if c.GetLabel() == "Phasers")
+    assert sorted(gc.GetLabel() for gc in phaser_row._children) == [
+        "Dorsal Phaser 1", "Dorsal Phaser 2",
+    ]
+
+
+def test_non_targetable_leaf_with_no_targetable_descendant_is_dropped():
+    """The asteroid rule still holds: a non-targetable subsystem with nothing
+    targetable beneath it is not a group header, it is simply absent."""
+    ship = ShipClass_Create("Y")
+    ps = ship.GetPropertySet()
+    dead = WeaponSystemProperty("Tractors")
+    dead.SetWeaponSystemType(WeaponSystemProperty.WST_TRACTOR)
+    dead.SetTargetable(0)                         # no children at all
+    ps.AddToSet("Scene Root", dead)
+    ship.SetupProperties()
+
+    menu = STTargetMenu("targets")
+    menu.set_contacts(_listed(ship))
+    row = menu.GetObjectEntry(ship)
+    assert "Tractors" not in [c.GetLabel() for c in row._children]

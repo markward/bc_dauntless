@@ -12,6 +12,37 @@ from __future__ import annotations
 from engine.appc.characters import STMenu, STTopLevelMenu
 
 
+def _is_targetable(sub) -> bool:
+    """Whether the player may LOCK ``sub``.
+
+    Defaults to True when the flag is unreadable: a subsystem that cannot
+    answer should stay lockable rather than silently drop out of the list.
+    """
+    if not hasattr(sub, "IsTargetable"):
+        return True
+    try:
+        return bool(sub.IsTargetable())
+    except Exception:
+        return True
+
+
+def _has_targetable_descendant(sub) -> bool:
+    """True when anything beneath ``sub`` is lockable — i.e. ``sub`` is a
+    group header worth drawing even though it is not itself targetable.
+
+    Recursive, so a targetable leaf under two non-targetable levels still
+    keeps both headers alive.
+    """
+    n = sub.GetNumChildSubsystems() if hasattr(sub, "GetNumChildSubsystems") else 0
+    for i in range(n):
+        child = sub.GetChildSubsystem(i)
+        if child is None:
+            continue
+        if _is_targetable(child) or _has_targetable_descendant(child):
+            return True
+    return False
+
+
 class STSubsystemMenu(STMenu):
     """One row in the target list — represents a single ship.
 
@@ -412,41 +443,48 @@ class STTargetMenu(STTopLevelMenu):
         child subsystems so aggregators (Phasers, Impulse Engines, Tractors,
         ...) become expandable parents of their leaves.
 
-        Filters like BC's native RebuildShipMenu, mirroring
-        AI/Preprocessors.GetTargetableSubsystems:
+        Filtering rules:
 
         * The **hull** is never a subsystem row — it is the ship-level bar.
           (An asteroid's hull property is Targetable(1), so it must be
           excluded by type, not by the targetable flag.)
         * A **targetable** subsystem gets a row; its children recurse under it.
-        * A **non-targetable** subsystem gets NO row, but its children still
-          recurse at the PARENT level — so a targetable weapon bank under a
-          non-targetable "Torpedoes"/"Phasers" group is promoted, while an
-          inert asteroid's Shield Generator / Power Plant (Targetable(0), no
-          children) simply vanishes.
+        * A **non-targetable** subsystem gets a row *only if something
+          targetable lives beneath it* — it is then a GROUP HEADER. With
+          nothing targetable beneath, it is dropped entirely (an inert
+          asteroid's Shield Generator / Power Plant, or a childless
+          "Engineering", simply vanishes).
+
+        `IsTargetable()` answers "can the player LOCK this?", NOT "should it
+        be displayed?". Every aggregator in BC's hardpoints is
+        `SetTargetable(0)` — "Warp Engines", "Impulse Engines", "Phasers",
+        "Torpedoes", "Tractors" (49/52 WeaponSystem, 23/24 WarpEngine, 28/29
+        ImpulseEngine across the 52 files in sdk/.../Hardpoints) — while their
+        nacelles/banks/tubes are `SetTargetable(1)`. So treating the flag as a
+        display filter deletes every group header on essentially every ship,
+        which is what commit 215dfad0 did: a Galaxy rendered as 26 flat rows.
+
+        That commit took its rule from `AI/Preprocessors.
+        GetTargetableSubsystems` (Preprocessors.py:949-961), which flattens
+        deliberately — it is building the AI's list of lockable leaves, a
+        different question from what the menu should draw. `MissionLib.
+        HideSubsystems`, cited as the other justification, cannot discriminate
+        between the two rules: it sets Targetable(0) on *every* subsystem
+        including the leaves, so the menu empties either way.
         """
         from engine.appc.subsystems import HullSubsystem
         if isinstance(sub, HullSubsystem):
             return
-        targetable = True
-        if hasattr(sub, "IsTargetable"):
-            try:
-                targetable = bool(sub.IsTargetable())
-            except Exception:
-                targetable = True
+        if not (_is_targetable(sub) or _has_targetable_descendant(sub)):
+            return
+        label = sub.GetName() if hasattr(sub, "GetName") else ""
+        sub_row = STMenu(label)
+        parent_row.AddChild(sub_row)
         n = sub.GetNumChildSubsystems() if hasattr(sub, "GetNumChildSubsystems") else 0
-        if targetable:
-            label = sub.GetName() if hasattr(sub, "GetName") else ""
-            sub_row = STMenu(label)
-            parent_row.AddChild(sub_row)
-            recurse_into = sub_row
-        else:
-            # Not a row itself, but promote any targetable descendants.
-            recurse_into = parent_row
         for i in range(n):
             child = sub.GetChildSubsystem(i)
             if child is not None:
-                self._add_subsystem_row(recurse_into, child)
+                self._add_subsystem_row(sub_row, child)
 
     def RebuildShipMenus(self, source_set=None) -> None:
         """Bulk refresh from a set. Never called from SDK Python.
