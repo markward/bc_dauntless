@@ -1115,6 +1115,23 @@ ET_INPUT_VIEWSCREEN_DOWN      = 1087
 ET_INPUT_FIRSTPERSON          = 1088
 ET_INPUT_TAB_FOCUS_CHANGE     = 1089
 ET_INPUT_TOGGLE_PICK_FIRE     = 1090
+
+# Cinematic-mode camera keys. BC's CinematicInterfaceHandlers binds these to
+# F1-F6 while the cinematic window holds focus (CinematicInterfaceHandlers.py:
+# 154-159); F9 (ET_INPUT_TOGGLE_CINEMATIC_MODE, 1006) enters the mode. Defined
+# here so the six handler registrations get six DISTINCT event types — an
+# undefined App.<NAME> is a truthy _NamedStub that coerces to int()==0, which
+# would silently collapse all six onto one bogus type.
+#
+# NOTE the range: 1091 is NOT free — ET_MOUSE takes it (below), even though it
+# sits after ET_INPUT_TOGGLE_PICK_FIRE = 1090 and so looks like the next value.
+# 1100/1101 are ET_MUSIC_*. 1102+ is clear.
+ET_INPUT_CINEMATIC_DROPANDWATCH = 1102
+ET_INPUT_CINEMATIC_CHASE        = 1103
+ET_INPUT_CINEMATIC_TARGET       = 1104
+ET_INPUT_CINEMATIC_TORPCAM      = 1105
+ET_INPUT_CINEMATIC_WIDETARGET   = 1106
+ET_INPUT_CINEMATIC_FREEORBIT    = 1107
 ET_MOUSE                      = 1091
 
 # ── FloatRangeWatcher condition event ─────────────────────────────────────────
