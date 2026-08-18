@@ -367,3 +367,102 @@ def test_get_rendered_set_ignores_bridge_shortcut_during_cutscene():
     # Cutscene ends: the shortcut is restored.
     tw.EndCutscene()
     assert App.g_kSetManager.GetRenderedSet() is bridge
+
+
+# ── SetClass.GetTargetableObjects ────────────────────────────────────────────
+# CinematicInterfaceHandlers.CameraTarget:356 does
+#   lSources = pSet.GetTargetableObjects(pPlayer, 0)
+#   if lSources: ... range(len(lSources)) ...
+# With no real method the name fell through SetClass.__getattr__ to a truthy,
+# non-iterable _RendererStub: the `if` passed and len() raised
+#   TypeError: object of type '_RendererStub' has no len()
+# — the live F3 crash. Same bug class as GetNavPoints (sets.py:481).
+
+
+def test_get_targetable_objects_result_supports_len_and_indexing():
+    """THE crash reproduction: the SDK's `range(len(lSources))` +
+    `lSources[i]` must work on whatever this returns."""
+    s = SetClass_Create()
+    player = ShipClass_Create("Galaxy")
+    other = ShipClass_Create("Galaxy")
+    s.AddObjectToSet(player, "player")
+    s.AddObjectToSet(other, "other")
+
+    lSources = s.GetTargetableObjects(player, 0)
+
+    assert len(lSources) == 1
+    assert lSources[0] is other
+    assert list(lSources) == [other]
+
+
+def test_get_targetable_objects_on_an_empty_set_is_falsy_not_a_truthy_stub():
+    """A set with nothing to target must return an EMPTY list, so the SDK's
+    `if lSources:` guard is skipped. A stub was truthy here."""
+    s = SetClass_Create()
+    assert s.GetTargetableObjects(None, 0) == []
+    assert not s.GetTargetableObjects(None, 0)
+
+
+def test_get_targetable_objects_skips_the_skip_object():
+    s = SetClass_Create()
+    player = ShipClass_Create("Galaxy")
+    s.AddObjectToSet(player, "player")
+    assert s.GetTargetableObjects(player, 0) == []
+    assert s.GetTargetableObjects(None, 0) == [player]
+
+
+def test_get_targetable_objects_excludes_untargetable_objects():
+    s = SetClass_Create()
+    visible = ShipClass_Create("Galaxy")
+    hidden = ShipClass_Create("Galaxy")
+    hidden.SetTargetable(0)
+    s.AddObjectToSet(visible, "visible")
+    s.AddObjectToSet(hidden, "hidden")
+    assert s.GetTargetableObjects(None, 0) == [visible]
+
+
+def test_get_targetable_objects_keeps_objects_with_no_istargetable_at_all():
+    """The property default is permissive (properties.py:260), and an object
+    that cannot answer must not silently vanish from the list — the same
+    treatment camera_modes._target_alive gives a missing IsDying. Asked via
+    engine.core.ids.implements: hasattr() cannot answer it, because
+    TGObject.__getattr__ vends a truthy _Stub for every unknown name."""
+    from engine.core.ids import TGObject
+
+    class _Bare(TGObject):
+        pass
+
+    s = SetClass_Create()
+    bare = _Bare()
+    assert not any("IsTargetable" in k.__dict__ for k in type(bare).__mro__)
+    s.AddObjectToSet(bare, "bare")
+    assert s.GetTargetableObjects(None, 0) == [bare]
+
+
+def test_get_targetable_objects_must_be_alive_flag_filters_dying_objects():
+    """bMustBeAlive=1 drops a dying object; =0 (what CameraTarget passes, with
+    the comment "Sources don't need to be alive...") keeps it."""
+    s = SetClass_Create()
+    alive = ShipClass_Create("Galaxy")
+    dying = ShipClass_Create("Galaxy")
+    dying._dying = True
+    s.AddObjectToSet(alive, "alive")
+    s.AddObjectToSet(dying, "dying")
+
+    assert s.GetTargetableObjects(None, 0) == [alive, dying]
+    assert s.GetTargetableObjects(None, 1) == [alive]
+
+
+def test_get_targetable_objects_must_be_alive_keeps_objects_with_no_isdying():
+    """Waypoints / placements never die and do not implement IsDying; they must
+    survive the bMustBeAlive filter rather than be dropped by a stub call."""
+    from engine.core.ids import TGObject
+
+    class _Bare(TGObject):
+        pass
+
+    s = SetClass_Create()
+    bare = _Bare()
+    assert not any("IsDying" in k.__dict__ for k in type(bare).__mro__)
+    s.AddObjectToSet(bare, "bare")
+    assert s.GetTargetableObjects(None, 1) == [bare]
