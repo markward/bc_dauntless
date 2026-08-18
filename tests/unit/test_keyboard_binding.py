@@ -235,9 +235,15 @@ def test_focused_main_window_wins_when_it_handles_the_event():
     top_window.reset_for_tests()
     tw = top_window.TopWindow_GetTopWindow()
     cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+    tw.ToggleCinematicWindow()                 # focus it + lazily wire the SDK
+    # Probe registered AFTER the toggle: the toggle now runs
+    # CinematicInterfaceHandlers.Initialize, which registers the real
+    # CameraChase for this event type. The chain is LIFO, so registering last
+    # puts the probe first, and it stops the chain by not calling
+    # CallNextHandler — CameraChase needs a live player camera and this test
+    # is about routing, not camera modes.
     cine.AddPythonFuncHandlerForInstance(
         App.ET_INPUT_CINEMATIC_CHASE, __name__ + "._resolver_probe")
-    tw.ToggleCinematicWindow()                 # focus it
 
     em = TGEventManager()
     kb = KeyboardBinding(em)
@@ -286,7 +292,9 @@ def test_focused_window_without_a_handler_falls_through():
     del _resolver_hits[:]
     top_window.reset_for_tests()
     tw = top_window.TopWindow_GetTopWindow()
-    tw.ToggleCinematicWindow()                 # focused, but no handlers
+    # Focused, and carrying the SDK's cinematic handlers — but none of them is
+    # for ET_INPUT_TALK_TO_HELM, which is the point.
+    tw.ToggleCinematicWindow()
     tcw = TGEventHandlerObject()
     tcw.AddPythonFuncHandlerForInstance(
         App.ET_INPUT_TALK_TO_HELM, __name__ + "._resolver_probe")

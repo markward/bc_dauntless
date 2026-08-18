@@ -845,3 +845,146 @@ def test_is_cinematic_active_false_when_another_child_holds_focus():
     tw = top_window.TopWindow_GetTopWindow()
     tw.SetFocus(TGEventHandlerObject())
     assert tw.is_cinematic_active() is False
+
+
+# ── Lazy SDK handler registration ───────────────────────────────────────────
+# CinematicInterfaceHandlers.Initialize(pWindow) is what binds the six
+# ET_INPUT_CINEMATIC_* events to camera modes. No SDK script calls it — BC's
+# engine ran it at window construction — so we run it lazily on first toggle,
+# because the module imports Camera and must not be pulled into App bootstrap.
+
+def test_first_toggle_registers_the_sdk_cinematic_handlers():
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+
+    assert cine._handlers == {}
+    tw.ToggleCinematicWindow()
+    assert cine._handlers.get(App.ET_INPUT_CINEMATIC_CHASE)
+    assert cine._handlers.get(App.ET_INPUT_CINEMATIC_FREEORBIT)
+
+
+def test_first_toggle_registers_the_windows_raw_keyboard_handler():
+    """Initialize()'s loop (CinematicInterfaceHandlers.py:54-56) registers ONLY
+    the ET_INPUT_* handlers; it never registers HandleKeyboard. In real BC the
+    engine wires the window's keyboard handler at construction. Without it the
+    F1-F6 camera keys have no path at all: the g_dKeyToEventMapping table is
+    consulted from inside HandleKeyboard (:114) and nowhere else."""
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+
+    tw.ToggleCinematicWindow()
+    assert cine._handlers.get(App.ET_KEYBOARD) == [
+        "CinematicInterfaceHandlers.HandleKeyboard"]
+
+
+def test_handlers_are_registered_once_not_per_toggle():
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+    for _ in range(4):
+        tw.ToggleCinematicWindow()
+    assert len(cine._handlers[App.ET_INPUT_CINEMATIC_CHASE]) == 1
+    assert len(cine._handlers[App.ET_KEYBOARD]) == 1
+
+
+def test_a_failing_initialize_neither_wedges_the_toggle_nor_stays_silent(capsys):
+    """Cinematic mode without its F-key handlers is degraded, not broken — so
+    a failure must not block the focus flip. But it must not be silent either,
+    or a missing-surface gap looks like a working feature."""
+    import CinematicInterfaceHandlers
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+
+    def _boom(_pWindow):
+        raise RuntimeError("missing engine surface")
+
+    real = CinematicInterfaceHandlers.Initialize
+    CinematicInterfaceHandlers.Initialize = _boom
+    try:
+        tw.ToggleCinematicWindow()
+    finally:
+        CinematicInterfaceHandlers.Initialize = real
+
+    assert tw.is_cinematic_active() is True
+    assert "missing engine surface" in capsys.readouterr().out
+
+
+def test_a_failing_initialize_is_not_retried_every_toggle(capsys):
+    """The once-only latch is set BEFORE the attempt, so a broken Initialize
+    cannot spam the log (or half-register) on every subsequent toggle."""
+    import CinematicInterfaceHandlers
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+
+    def _boom(_pWindow):
+        raise RuntimeError("missing engine surface")
+
+    real = CinematicInterfaceHandlers.Initialize
+    CinematicInterfaceHandlers.Initialize = _boom
+    try:
+        for _ in range(4):
+            tw.ToggleCinematicWindow()
+    finally:
+        CinematicInterfaceHandlers.Initialize = real
+
+    assert capsys.readouterr().out.count("missing engine surface") == 1
+
+
+# ── CinematicWindow_Cast ────────────────────────────────────────────────────
+# Seven SDK sites do
+#     pCinematic = App.CinematicWindow_Cast(pTop.FindMainWindow(MWT_CINEMATIC))
+#     if pCinematic: pCinematic.SetInteractive(...) / .IsInteractive()
+# (MissionLib:784, TacticalInterfaceHandlers:1038, WarpSequence:504,
+# CinematicInterfaceHandlers:316, CameraScriptActions:396+413,
+# QuickBattle:3324).  Undefined, the name resolved to a truthy _NamedStub —
+# rank 64 in docs/stub_heatmap.md, 246 live hits — so every one of them called
+# SetInteractive/IsInteractive on a stub and the real window state was
+# unreachable from SDK code.  Same shape as the armed MapWindow_Cast trap
+# documented at top_window.py:269.
+
+def test_cinematic_window_cast_returns_the_real_window():
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    cine = top_window.TopWindow_GetTopWindow().FindMainWindow(
+        top_window.MWT_CINEMATIC)
+    assert App.CinematicWindow_Cast(cine) is cine
+
+
+def test_cinematic_window_cast_rejects_a_non_cinematic_window():
+    """A REAL cast, not an identity function: anything that is not a
+    _CinematicWindow must come back None so `if pCinematic:` skips."""
+    import App
+    from engine.appc import top_window
+    from engine.appc.events import TGEventHandlerObject
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert App.CinematicWindow_Cast(None) is None
+    assert App.CinematicWindow_Cast(tw.FindMainWindow(
+        top_window.MWT_TACTICAL)) is None
+    assert App.CinematicWindow_Cast(TGEventHandlerObject()) is None
+
+
+def test_cinematic_window_cast_survives_the_real_sdk_call_shape():
+    """CinematicInterfaceHandlers.ToggleCinematicMode:316-318 reads
+    IsInteractive() off the cast result — that must be Task 2's real state,
+    not a stub's truthy answer."""
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    pCinematic = App.CinematicWindow_Cast(tw.FindMainWindow(App.MWT_CINEMATIC))
+    assert pCinematic is not None
+    pCinematic.SetInteractive(0)
+    assert pCinematic.IsInteractive() == 0
+    assert tw.FindMainWindow(App.MWT_CINEMATIC).IsInteractive() == 0

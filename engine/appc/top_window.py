@@ -297,7 +297,44 @@ class _TopWindow:
         cine = self._main_windows.get(MWT_CINEMATIC)
         if cine is None:
             return
+        self._init_cinematic_handlers(cine)
         self._focus = None if self._focus is cine else cine
+
+    def _init_cinematic_handlers(self, cine) -> None:
+        """Run the SDK's CinematicInterfaceHandlers wiring once, on first
+        toggle. Deferred (not done at construction) because the module imports
+        Camera, which must not enter App bootstrap.
+
+        TWO registrations, because BC splits them:
+          * Initialize(pWindow) binds the six ET_INPUT_CINEMATIC_* events (and
+            skip/zoom/quicksave) to their handlers — its own loop, :54-56.
+          * HandleKeyboard is NOT in that loop. BC's engine wires the window's
+            raw ET_KEYBOARD handler at window construction, and that handler is
+            the ONLY consumer of g_dKeyToEventMapping (:114) — the table that
+            maps WC_F1..F6 to the camera modes. Without it the F-keys reach the
+            global binding instead, where WC_F1..F5 mean ET_INPUT_TALK_TO_*,
+            and the camera events can never fire.
+
+        No SDK script calls Initialize, so there is no double-init to guard
+        against beyond our own repeat toggles.
+
+        A failure here must not wedge the toggle — cinematic mode without its
+        F-key handlers is degraded, not broken — but it must not be silent
+        either, or a missing-surface gap would look like a working feature.
+        The latch is set BEFORE the attempt so a broken Initialize is not
+        retried (and cannot half-register) on every subsequent toggle.
+        """
+        if getattr(cine, "_handlers_initialized", False):
+            return
+        cine._handlers_initialized = True
+        try:
+            import App
+            import CinematicInterfaceHandlers
+            CinematicInterfaceHandlers.Initialize(cine)
+            cine.AddPythonFuncHandlerForInstance(
+                App.ET_KEYBOARD, "CinematicInterfaceHandlers.HandleKeyboard")
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            print("[cinematic] CinematicInterfaceHandlers.Initialize failed:", exc)
 
     def is_cinematic_active(self) -> bool:
         """True while the cinematic main window holds focus. Derived rather

@@ -30,6 +30,7 @@ from engine.appc.input import (
 from engine.appc.windows import (
     TacticalControlWindow,
     SubtitleWindow, SubtitleWindow_Cast,
+    CinematicWindow_Cast,
     STStylizedWindow_CreateW,
 )
 from engine.appc.tg_ui.widgets import (
