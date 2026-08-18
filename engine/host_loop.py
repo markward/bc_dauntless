@@ -2418,6 +2418,22 @@ def _tactical_hud_visible(*, is_exterior: bool, spv_open: bool,
         and not cutscene_active and not cinematic_active
 
 
+def _reticle_visible(*, is_exterior: bool, has_player: bool,
+                     reticle_hidden: bool,
+                     cinematic_active: bool = False) -> bool:
+    """Whether the target reticle + its captions should show this frame.
+    Exterior-view element only (on the bridge it would draw over the bridge
+    scene), needs a player to target from, and hides during a cutscene
+    started with bHideReticle — reticle_hidden folds in the bHideReticle arg
+    so E1M2's bHideReticle=FALSE cutscenes keep it.
+
+    Also hidden in BC's cinematic mode (F9), a clean camera view that is NOT
+    a cutscene (no letterbox, reticle_hidden stays False) — cinematic_active
+    carries that gate, mirroring _tactical_hud_visible."""
+    return (is_exterior and has_player and not reticle_hidden
+            and not cinematic_active)
+
+
 def _bridge_freelook_suppressed(*, crew_menu_open: bool,
                                 cutscene_active: bool,
                                 bridge_cutscene_pending: bool = False) -> bool:
@@ -7983,10 +7999,16 @@ def run(mission_name: Optional[str] = None,
                 # would draw over the bridge scene. Also hidden during a
                 # cutscene started with bHideReticle (BC's clean cinematic
                 # frame) — reticle_hidden() folds in the bHideReticle arg so
-                # E1M2's bHideReticle=FALSE cutscenes keep it.
+                # E1M2's bHideReticle=FALSE cutscenes keep it — and in
+                # cinematic mode (F9), which is a clean camera view but NOT
+                # a cutscene.
                 from engine.appc.top_window import TopWindow_GetTopWindow
-                if (player is not None and view_mode.is_exterior
-                        and not TopWindow_GetTopWindow().reticle_hidden()):
+                _reticle_top = TopWindow_GetTopWindow()
+                if _reticle_visible(
+                        is_exterior=view_mode.is_exterior,
+                        has_player=player is not None,
+                        reticle_hidden=_reticle_top.reticle_hidden(),
+                        cinematic_active=_reticle_top.is_cinematic_active()):
                     r.set_target_reticle(build_target_reticle(player))
                     _rcam = _ReticleCam(eye=eye, target=target, up=up_vec,
                                         fov_y_rad=director.fov_y_rad,
