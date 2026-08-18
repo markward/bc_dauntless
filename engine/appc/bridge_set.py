@@ -479,6 +479,10 @@ class CameraObjectClass(_LoudStub):
         if mode is None:
             return None
         mode._owner_camera = self
+        # Tag the registration name. GetCurrentCameraMode's hierarchy walk
+        # follows edges keyed by _named — an untagged mode dead-ends a
+        # multi-step chain (Target->Chase) at its first hop.
+        mode._named = name
         self._named_modes[name] = mode
         return mode
 

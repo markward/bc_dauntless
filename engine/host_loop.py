@@ -5154,8 +5154,24 @@ def _active_cutscene_camera():
 
     Gated on a live IsValid() mode so plain comm 'maincamera's, mode-less
     cameras, and dead-target modes all return None and the director resumes.
+
+    BC's cinematic mode (F9) outranks both: while the cinematic window holds
+    focus, the player camera's hierarchy-RESOLVED mode drives the exterior
+    view. The default InvalidCinematic->DropAndWatch edge dead-ends invalid
+    (no DropAndWatch mode class yet), so before an F-key re-points the edge
+    the resolution fails IsValid() and everything below proceeds as if
+    cinematic mode were off.
     """
     import App as _App
+    _top = _App.TopWindow_GetTopWindow()
+    if _top is not None and getattr(_top, "is_cinematic_active", None) is not None \
+            and _top.is_cinematic_active():
+        _game = _App.Game_GetCurrentGame()
+        _pcam = _game.GetPlayerCamera() if _game is not None else None
+        if _pcam is not None:
+            _mode = _pcam.GetCurrentCameraMode()       # hierarchy-resolved
+            if _mode is not None and _mode.IsValid():
+                return (_pcam, _mode)
     rendered = _App.g_kSetManager.get_explicit_rendered_set()
     if rendered is None:
         return None

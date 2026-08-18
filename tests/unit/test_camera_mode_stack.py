@@ -205,3 +205,20 @@ def test_camera_without_edges_resolves_to_raw_top():
     m = c.GetNamedCameraMode("Locked")
     c.PushCameraMode(m)
     assert c.GetCurrentCameraMode() is m
+
+
+def test_resolution_walks_two_hops_through_builder_modes():
+    """InvalidSpace -> Target -> Chase: builder-created modes must carry a
+    _named tag or the walk dead-ends at its first hop (the bug this pins:
+    GetNamedCameraMode's builder path once stored modes untagged)."""
+    c = _cam()
+    ship = _FakeShip()
+    marker = ChaseMode()
+    c.AddNamedCameraMode("InvalidSpace", marker)
+    c.AddModeHierarchy("InvalidSpace", "Target")
+    c.AddModeHierarchy("Target", "Chase")
+    c.GetNamedCameraMode("Target")               # built, but never made valid
+    chase = c.GetNamedCameraMode("Chase")
+    chase.SetAttrIDObject("Target", ship)
+    c.PushCameraMode(marker)
+    assert c.GetCurrentCameraMode() is chase
