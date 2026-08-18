@@ -57,12 +57,13 @@ def test_none_when_mode_target_dead():
     App.g_kSetManager.DeleteSet("cc_dead_set")
 
 
-# ── BC cinematic mode (F9): the player camera's resolved mode wins ──────────
-# While the cinematic window holds focus, the exterior view is driven by the
-# player camera's hierarchy-RESOLVED mode (Task 1's GetCurrentCameraMode());
-# the mission cutscene camera and the director only get the frame back when
-# the resolution dead-ends invalid (default InvalidCinematic->DropAndWatch
-# edge, no DropAndWatch mode class) or cinematic mode is off.
+# ── BC cinematic mode (F9): player camera drives when no set camera does ────
+# While the cinematic window holds focus, the player camera's hierarchy-
+# RESOLVED mode (GetCurrentCameraMode()) drives the exterior view — but only
+# AFTER the rendered set's live cutscene camera, which outranks it (see
+# test_mission_cutscene_camera_beats_cinematic_mode for the SDK evidence).
+# The director gets the frame when the resolution dead-ends invalid (default
+# InvalidCinematic->DropAndWatch edge, no DropAndWatch mode class yet).
 
 def _current_game():
     """Install a current Game if the harness has none. The conftest autouse
