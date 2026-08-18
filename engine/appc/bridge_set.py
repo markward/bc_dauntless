@@ -329,8 +329,9 @@ class CameraObjectClass(_LoudStub):
     SetRemoteCam consumes it. The host renders a comm set through this camera
     when the bridge viewscreen is showing it.
 
-    The unbuilt camera-mode/control surface (GetNamedCameraMode, PushCameraMode,
-    LookForward, AddModeHierarchy, etc.) degrades to no-ops via _LoudStub.__getattr__
+    The camera-mode/control surface (GetNamedCameraMode, PushCameraMode,
+    AddNamedCameraMode, AddModeHierarchy, GetCurrentCameraMode) is real; the
+    rest (LookForward, etc.) still degrades to no-ops via _LoudStub.__getattr__
     — exactly like ZoomCameraObjectClass. This prevents AttributeError from
     aborting the SDK's SendActivationEvent → ViewscreenOn chain before
     SetRemoteCam fires. Real explicit methods (GetNiFrustum, SetTranslate,
@@ -442,9 +443,31 @@ class CameraObjectClass(_LoudStub):
     # Real replacement for the _LoudStub no-ops so the SDK's Camera.NewMode
     # (sdk/Build/scripts/Camera.py) can push live modes. The mode's Update()
     # then drives the rendered exterior view (host_loop._active_cutscene_camera).
-    # AddModeHierarchy stays a no-op — the mode-fallback tree is out of scope
-    # (the viewscreen zoom is resolved in host_loop._viewscreen_scene_feed, not
-    # via a recorded hierarchy).
+    # AddModeHierarchy now records a real name->name fallback edge and
+    # GetCurrentCameraMode() resolves it: BC pushes an always-invalid marker
+    # mode as the camera's current mode and walks hierarchy edges by name
+    # until it finds a valid one (Camera.py:630-646). This is the mechanism
+    # the cinematic F-keys use to pick the live exterior camera.
+
+    def AddNamedCameraMode(self, name, mode) -> None:
+        """Register `mode` under `name`, pre-empting the CameraModes.<name>
+        builder. BC's MakePlayerCamera uses this for the four always-invalid
+        Invalid* markers (Camera.py:624-628)."""
+        if "_named_modes" not in self.__dict__:
+            self._named_modes = {}
+            self._mode_stack = []
+        mode._named = name
+        mode._owner_camera = self
+        self._named_modes[name] = mode
+
+    def AddModeHierarchy(self, parent, child) -> None:
+        """Record the fallback edge parent->child (REPLACING any existing edge
+        from `parent` — the cinematic F-keys re-point the InvalidCinematic edge
+        on every press, CinematicInterfaceHandlers.py:339). Resolution happens
+        in GetCurrentCameraMode."""
+        if "_mode_hierarchy" not in self.__dict__:
+            self._mode_hierarchy = {}
+        self._mode_hierarchy[str(parent)] = str(child)
 
     def GetNamedCameraMode(self, name, *args):
         if "_named_modes" not in self.__dict__:
@@ -527,16 +550,31 @@ class CameraObjectClass(_LoudStub):
         return None
 
     def GetCurrentCameraMode(self, *args):
+        """BC's two reads (Camera.py:463 vs :478): with a falsy first arg,
+        the RAW top of the mode stack; with no arg, the hierarchy-RESOLVED
+        mode — from the raw top, follow _mode_hierarchy edges by _named tag
+        while the mode is invalid. Returns the first valid mode, or the last
+        mode reached when the walk dead-ends (callers gate on IsValid())."""
         stack = self._ensure_stack()
-        return stack[-1] if stack else None
-
-    def AddModeHierarchy(self, *args):
-        # BC's viewscreen mode chain (InvalidViewscreen -> ViewscreenZoomTarget
-        # -> ViewscreenForward) is first-valid-wins and is installed at camera
-        # creation. We resolve that chain in host_loop._viewscreen_scene_feed by
-        # asking whether ViewscreenZoomTarget has a live Target, so nothing needs
-        # to be recorded here.
-        return None
+        top = stack[-1] if stack else None
+        if args and not args[0]:
+            return top
+        mode = top
+        edges = self.__dict__.get("_mode_hierarchy")
+        if mode is None or not edges:
+            return mode
+        seen = set()
+        while not mode.IsValid():
+            name = getattr(mode, "_named", None)
+            nxt = edges.get(name) if name is not None else None
+            if nxt is None or nxt in seen:
+                return mode
+            seen.add(nxt)
+            nxt_mode = self.GetNamedCameraMode(nxt)
+            if nxt_mode is None:
+                return mode
+            mode = nxt_mode
+        return mode
 
 
 def CameraObjectClass_CreateFromNiCamera(niCamera, name):

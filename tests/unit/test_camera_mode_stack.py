@@ -125,3 +125,83 @@ class _FakeShip:
     def GetWorldRotation(self):
         from engine.appc.math import TGMatrix3
         return TGMatrix3()
+
+
+# ── Mode hierarchy (AddModeHierarchy for real) ───────────────────────────────
+# BC pushes an always-invalid marker mode and resolves the EFFECTIVE mode by
+# walking name->name hierarchy edges (Camera.py:630-646). The cinematic F-keys
+# re-point one edge (CinematicInterfaceHandlers.CameraChase:339) — the
+# hierarchy IS the camera selector. GetCurrentCameraMode(0) is the raw top
+# (NewMode's identity compare, Camera.py:463); no-arg is resolved
+# (Camera.py:478 "may not be the mode we pushed").
+
+def _valid_chase(cam, ship):
+    m = cam.GetNamedCameraMode("Chase")
+    m.SetAttrIDObject("Target", ship)
+    return m
+
+
+def test_add_named_camera_mode_preempts_the_builder():
+    c = _cam()
+    marker = ChaseMode()                     # bare: no Target -> never valid
+    c.AddNamedCameraMode("InvalidCinematic", marker)
+    assert c.GetNamedCameraMode("InvalidCinematic") is marker
+    assert marker._named == "InvalidCinematic"
+
+
+def test_resolution_walks_an_edge_to_a_valid_mode():
+    c = _cam()
+    ship = _FakeShip()
+    marker = ChaseMode()
+    c.AddNamedCameraMode("InvalidCinematic", marker)
+    chase = _valid_chase(c, ship)
+    c.AddModeHierarchy("InvalidCinematic", "Chase")
+    c.PushCameraMode(marker)
+    assert c.GetCurrentCameraMode(0) is marker          # raw
+    assert c.GetCurrentCameraMode() is chase            # resolved
+
+
+def test_edges_replace_not_append():
+    c = _cam()
+    ship = _FakeShip()
+    marker = ChaseMode()
+    c.AddNamedCameraMode("InvalidCinematic", marker)
+    chase = _valid_chase(c, ship)
+    target = c.GetNamedCameraMode("Target")
+    target.SetAttrIDObject("Source", ship)
+    target.SetAttrIDObject("Target", ship)
+    c.AddModeHierarchy("InvalidCinematic", "Chase")
+    c.AddModeHierarchy("InvalidCinematic", "Target")    # F-key re-point
+    c.PushCameraMode(marker)
+    assert c.GetCurrentCameraMode() is target
+
+
+def test_resolution_dead_end_returns_the_invalid_tail():
+    """A chain that never reaches a valid mode returns the last (invalid) mode
+    — callers gate on IsValid(), so the director keeps the frame."""
+    c = _cam()
+    marker = ChaseMode()
+    c.AddNamedCameraMode("InvalidCinematic", marker)
+    c.PushCameraMode(marker)
+    resolved = c.GetCurrentCameraMode()
+    assert resolved is marker and not resolved.IsValid()
+
+
+def test_resolution_survives_an_edge_cycle():
+    c = _cam()
+    a, b = ChaseMode(), ChaseMode()
+    c.AddNamedCameraMode("A", a)
+    c.AddNamedCameraMode("B", b)
+    c.AddModeHierarchy("A", "B")
+    c.AddModeHierarchy("B", "A")
+    c.PushCameraMode(a)
+    resolved = c.GetCurrentCameraMode()      # must terminate
+    assert resolved in (a, b)
+
+
+def test_camera_without_edges_resolves_to_raw_top():
+    """Cameras nobody seeds (mission CutsceneCam) behave exactly as today."""
+    c = _cam()
+    m = c.GetNamedCameraMode("Locked")
+    c.PushCameraMode(m)
+    assert c.GetCurrentCameraMode() is m
