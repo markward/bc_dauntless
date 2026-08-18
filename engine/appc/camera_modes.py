@@ -279,8 +279,93 @@ class ChaseMode(CameraMode):
         return (eye, fwd, up)
 
 
+# BC's authored Target attrs (CameraModes.Target, CameraModes.py:55-73), used
+# when a mode is constructed bare — i.e. by anything that does not run the SDK
+# builder. Module-level so a live look can retune the framing without touching
+# the SDK's authored numbers. See TargetMode's docstring for the units.
+TARGET_DEFAULT_BACK_WATCH_POS = 7.95     # back component of the eye offset
+TARGET_DEFAULT_UP_WATCH_POS = 0.95       # up component of the eye offset
+TARGET_DEFAULT_LOOK_BETWEEN = 0.05       # aim fraction, target → source
+TARGET_DEFAULT_DISTANCE = 4.0            # standoff, multiples of Source radius
+TARGET_DEFAULT_MINIMUM_DISTANCE = 2.0    # GU floor on that standoff
+TARGET_DEFAULT_MAXIMUM_DISTANCE = 40.0   # GU ceiling on that standoff
+
+
 class TargetMode(CameraMode):
-    """Look from a source object to a target object (TargetWatch)."""
+    """Over-the-shoulder shot of the Source, framing the Target (TargetWatch).
+
+    BC ships ONE Target mode class and three builders feed it (CameraModes.py):
+    Target (:55), WideTarget (:75) and CinematicReverseTarget (:334) — the last
+    is what F3 drives (CinematicInterfaceHandlers.CameraTarget cycles its
+    "Source" through SetClass.GetTargetableObjects). They differ ONLY in their
+    authored numbers, so every one of them has to come out of this one class,
+    exactly as Chase/ReverseChase already do.
+
+    ⚠️ THE FRAMING IS INFERRED. The clean-room reference documents the camera
+    cluster's object model and per-frame tick (spec/CameraObjectClass.md) but
+    says nothing about any mode's placement algorithm, and every CameraMode
+    attribute is set through the generic SWIG attr bag, so no reconstructed
+    body names these attrs. What IS sourced is the attribute NAMES and their
+    authored VALUES, read verbatim: SweepTime 1.0, PositionThreshold 0.01,
+    DotThreshold 0.98, MinimumDistance 2.0, Distance 4.0, MaximumDistance 40.0,
+    BackWatchPos 7.95, UpWatchPos 0.95, LookBetween 0.05, MaxLagDist 1.0,
+    MaxUpAngleChange PI/2 — plus WideTarget's 8.0/32.0/64.0 + 8.0/1.25 and
+    CinematicReverseTarget's 2.0/4.0/16.0 + 7.95/0.95. Everything below is read
+    off those names and magnitudes.
+
+    Placement (INFERRED):
+      axis   = unit(target - source)                    # the look axis
+      offset = unit(-axis*BackWatchPos + source_up*UpWatchPos)
+      eye    = source + offset * reach
+      lookat = target + (source - target) * LookBetween
+      fwd    = unit(lookat - eye)
+    so the camera stands BEHIND the Source along the source→target axis and
+    slightly ABOVE it, with both objects in frame. This replaced putting the eye
+    EXACTLY at the source's origin and staring at the target — the live F3
+    defect (you sat inside the hull) — which used none of the authored attrs.
+
+    BackWatchPos / UpWatchPos are read as a RATIO (a direction), not absolute
+    game units: 7.95 : 0.95 is a 6.8° lift, the same shape as ChaseMode's
+    authored DefaultPosition (0, -1.0, 0.1) — 5.7° — which our ChaseMode
+    normalises and scales by Distance for exactly this reason. Reading their
+    magnitudes as GU as well would have them fight `Distance` for control of the
+    standoff, and would make WideTarget (8.0 / 1.25) an almost identical shot to
+    Target (7.95 / 0.95) when the SDK plainly authors it as the wide one.
+
+    `Distance` is the standoff, in multiples of the SOURCE's radius, clamped to
+    [MinimumDistance, MaximumDistance] absolute GU. Two reasons for the
+    radius-relative reading, both structural: Target authors the IDENTICAL
+    triple to Chase (2.0 / 4.0 / 40.0), which our ChaseMode already reads as
+    radius × Distance; and the eye is anchored to the Source, so the standoff
+    must scale with the hull it is parked behind or the shot clips a starbase
+    and abandons a shuttle. The clamps then do real work — they are the reason
+    the triple is a triple — bounding the radius-scaled reach in absolute GU
+    (a starbase Source at CinematicReverseTarget's Maximum 16.0 is pulled in
+    from 80 GU; a probe is pushed out to the Minimum 2.0). The radius is the
+    SOURCE's, not the Target's, because it is the Source the eye must clear.
+
+    `LookBetween` interpolates FROM THE TARGET back toward the Source, so the
+    authored 0.05 aims 5% off the target and keeps the source's shoulder in
+    frame. The opposite reading is self-refuting: 0.05 from the source would
+    aim the camera essentially AT the hull it is parked directly behind, with
+    the target off-screen — the mode would frame nothing.
+
+    Up is the SOURCE's up axis (GetCol(2), column-vector right-handed), which
+    is also the elevation reference the UpWatchPos lift is measured along, so
+    the shot stays level with the deck it is anchored to.
+
+    Validity: a dead/absent Source or Target, or a Source and Target at the same
+    point (no axis, so no shot) — BC's authored Target → Chase edge does the
+    fallback (Camera.py:634), as it does for TorpCam.
+
+    DELIBERATELY UNUSED: SweepTime, PositionThreshold, DotThreshold, MaxLagDist
+    and MaxUpAngleChange. Our sweep is the base class's global SWEEP_TAU_S glide
+    with the _pose_discontinuity cut, shared by all nine modes; there is no
+    defensible mapping from a per-mode sweep duration, a position/dot
+    convergence pair, a lag leash and an up-rotation rate limiter onto it that
+    is not simply invented. The same three sweep attrs are already unused on
+    every other mode that authors them (Chase, TorpCam, FreeOrbit...).
+    """
 
     def _ideal(self, pose_of=None):
         src = self.GetAttrIDObject("Source")
@@ -289,10 +374,40 @@ class TargetMode(CameraMode):
             return None
         s, sR = _obj_pose(src, pose_of)
         d, _dR = _obj_pose(dst, pose_of)
-        eye = (s.x, s.y, s.z)
-        fwd = _unit(d.x - s.x, d.y - s.y, d.z - s.z)
+        ax, ay, az = d.x - s.x, d.y - s.y, d.z - s.z
+        sep = _math.sqrt(ax * ax + ay * ay + az * az)
+        if sep < 1e-6:
+            return None            # no source→target axis ⇒ no shot
+        ax, ay, az = ax / sep, ay / sep, az / sep
         up = _unit(*_apply_rot(sR, TGPoint3(0.0, 0.0, 1.0)))
+        back = self.GetAttrFloat("BackWatchPos", TARGET_DEFAULT_BACK_WATCH_POS)
+        rise = self.GetAttrFloat("UpWatchPos", TARGET_DEFAULT_UP_WATCH_POS)
+        ox, oy, oz = (-ax * back + up[0] * rise,
+                      -ay * back + up[1] * rise,
+                      -az * back + up[2] * rise)
+        n = _math.sqrt(ox * ox + oy * oy + oz * oz)
+        if n < 1e-9:               # both components authored 0: straight back
+            ox, oy, oz, n = -ax, -ay, -az, 1.0
+        reach = self._reach(src)
+        eye = (s.x + ox / n * reach, s.y + oy / n * reach, s.z + oz / n * reach)
+        between = self.GetAttrFloat("LookBetween", TARGET_DEFAULT_LOOK_BETWEEN)
+        look = (d.x + (s.x - d.x) * between,
+                d.y + (s.y - d.y) * between,
+                d.z + (s.z - d.z) * between)
+        fwd = _unit(look[0] - eye[0], look[1] - eye[1], look[2] - eye[2])
         return (eye, fwd, up)
+
+    def _reach(self, src):
+        """Standoff from the Source: Distance × the Source's radius, clamped to
+        [MinimumDistance, MaximumDistance] in absolute GU (INFERRED — see the
+        class docstring)."""
+        reach = (self.GetAttrFloat("Distance", TARGET_DEFAULT_DISTANCE)
+                 * _target_radius(src))
+        hi = self.GetAttrFloat("MaximumDistance", TARGET_DEFAULT_MAXIMUM_DISTANCE)
+        if hi > 0.0:
+            reach = min(reach, hi)
+        return max(reach, self.GetAttrFloat("MinimumDistance",
+                                            TARGET_DEFAULT_MINIMUM_DISTANCE))
 
 
 class PlacementMode(CameraMode):

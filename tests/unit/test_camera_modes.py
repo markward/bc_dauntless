@@ -109,6 +109,7 @@ def test_dt_zero_does_not_snap_mid_sweep():
 
 from engine.appc.camera_modes import (
     ChaseMode, TargetMode, CHASE_DEFAULT_DISTANCE,
+    TARGET_DEFAULT_DISTANCE, TARGET_DEFAULT_MINIMUM_DISTANCE,
 )
 
 
@@ -151,15 +152,133 @@ def test_chase_mode_applies_target_rotation():
 
 
 def test_target_mode_looks_from_source_to_target():
-    src = _FakeTarget((0.0, 0.0, 0.0))
+    """Over-the-shoulder: the eye stands OFF the Source (never inside it),
+    behind it along the source→target axis and slightly above, still looking
+    toward the Target.
+
+    This used to assert eye == the source's own origin — i.e. the camera sat
+    INSIDE the source hull, which is the live F3 defect, not the behaviour.
+    """
+    src = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
     dst = _FakeTarget((0.0, 100.0, 0.0))
     m = TargetMode()
     m.SetAttrIDObject("Source", src)
     m.SetAttrIDObject("Target", dst)
     m.SnapToIdealPosition()
     eye, fwd, up = m.Update()
-    assert eye == (0.0, 0.0, 0.0)
-    assert abs(fwd[1] - 1.0) < 1e-6              # +Y toward dst
+    assert eye != (0.0, 0.0, 0.0)                # NOT inside the source
+    assert eye[1] < 0.0                          # behind the source (away from dst)
+    assert eye[2] > 0.0                          # authored UpWatchPos lift
+    assert abs(fwd[1] - 1.0) < 1e-2              # still +Y toward dst
+    assert up == (0.0, 0.0, 1.0)                 # source col2 (identity rot)
+
+
+def test_target_mode_standoff_is_distance_times_source_radius():
+    """BC authors Distance 4.0 on Target — the SAME triple ChaseMode authors
+    (Minimum 2.0 / Distance 4.0 / Maximum 40.0), which is why it is read the
+    same way: a multiple of the radius of the object the eye is anchored to."""
+    src = _FakeTarget((0.0, 0.0, 0.0), radius=2.0)
+    dst = _FakeTarget((0.0, 100.0, 0.0))
+    m = TargetMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", dst)
+    m.SnapToIdealPosition()
+    eye, _fwd, _up = m.Update()
+    reach = math.sqrt(eye[0] ** 2 + eye[1] ** 2 + eye[2] ** 2)
+    assert abs(reach - TARGET_DEFAULT_DISTANCE * 2.0) < 1e-6
+
+
+def test_target_mode_standoff_clamped_to_maximum_distance():
+    """CinematicReverseTarget (F3) authors MaximumDistance 16.0: a starbase-
+    sized Source must not push the eye 80 GU out."""
+    src = _FakeTarget((0.0, 0.0, 0.0), radius=20.0)
+    dst = _FakeTarget((0.0, 500.0, 0.0))
+    m = TargetMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", dst)
+    m.SetAttrFloat("MaximumDistance", 16.0)
+    m.SnapToIdealPosition()
+    eye, _fwd, _up = m.Update()
+    reach = math.sqrt(eye[0] ** 2 + eye[1] ** 2 + eye[2] ** 2)
+    assert abs(reach - 16.0) < 1e-6
+
+
+def test_target_mode_standoff_clamped_to_minimum_distance():
+    src = _FakeTarget((0.0, 0.0, 0.0), radius=0.1)
+    dst = _FakeTarget((0.0, 100.0, 0.0))
+    m = TargetMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", dst)
+    m.SnapToIdealPosition()
+    eye, _fwd, _up = m.Update()
+    reach = math.sqrt(eye[0] ** 2 + eye[1] ** 2 + eye[2] ** 2)
+    assert abs(reach - TARGET_DEFAULT_MINIMUM_DISTANCE) < 1e-6
+
+
+def test_target_mode_look_between_blends_from_the_target_toward_the_source():
+    """LookBetween interpolates FROM THE TARGET back toward the Source: the
+    authored 0.05 nudges the aim 5% off the target so the source stays in
+    frame. Read the other way round (source → target) the camera would aim
+    5% of the way to the target — i.e. essentially AT the ship it is parked
+    behind, with the target off-screen entirely.
+
+    Assert against a strongly off-axis eye (BackWatchPos 0 / UpWatchPos 1)
+    where the two readings are separable, at LookBetween 0.5.
+    """
+    src = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    dst = _FakeTarget((0.0, 100.0, 0.0))
+    m = TargetMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", dst)
+    m.SetAttrFloat("BackWatchPos", 0.0)
+    m.SetAttrFloat("UpWatchPos", 1.0)
+    m.SetAttrFloat("LookBetween", 0.5)
+    m.SnapToIdealPosition()
+    eye, fwd, _up = m.Update()
+    assert abs(eye[2] - TARGET_DEFAULT_DISTANCE) < 1e-6     # straight up, 4 GU
+    look = (0.0, 50.0, 0.0)                                  # halfway back
+    want = (look[0] - eye[0], look[1] - eye[1], look[2] - eye[2])
+    n = math.sqrt(sum(c * c for c in want))
+    for got, expect in zip(fwd, (c / n for c in want)):
+        assert abs(got - expect) < 1e-9
+    # ...and measurably NOT aiming at the raw target, nor at the source.
+    assert abs(fwd[2] - (-4.0 / math.sqrt(100.0 ** 2 + 16.0))) > 1e-3
+    assert fwd[1] > 0.9
+
+
+def test_wide_target_stands_further_off_than_plain_target():
+    """WideTarget and CinematicReverseTarget are the same class with different
+    authored numbers (CameraModes.py:75-92, :334-355); the "wide" difference
+    has to survive the shared implementation."""
+    def _shot(distance, minimum, maximum, up_watch):
+        src = _FakeTarget((0.0, 0.0, 0.0), radius=2.0)
+        dst = _FakeTarget((0.0, 400.0, 0.0))
+        m = TargetMode()
+        m.SetAttrIDObject("Source", src)
+        m.SetAttrIDObject("Target", dst)
+        for k, v in (("SweepTime", 1.0), ("PositionThreshold", 0.01),
+                     ("DotThreshold", 0.98), ("MinimumDistance", minimum),
+                     ("Distance", distance), ("MaximumDistance", maximum),
+                     ("BackWatchPos", 8.0), ("UpWatchPos", up_watch),
+                     ("LookBetween", 0.05)):
+            m.SetAttrFloat(k, v)
+        m.SnapToIdealPosition()
+        eye, _fwd, _up = m.Update()
+        return math.sqrt(sum(c * c for c in eye))
+
+    wide = _shot(32.0, 8.0, 64.0, 1.25)          # CameraModes.WideTarget
+    close = _shot(4.0, 2.0, 16.0, 0.95)          # CameraModes.CinematicReverseTarget
+    assert wide > close * 4.0
+
+
+def test_target_mode_invalid_when_source_and_target_coincide():
+    """No source→target axis ⇒ no shot. BC's authored Target → Chase edge
+    handles the fallback; inventing an axis here would frame nothing."""
+    same = _FakeTarget((7.0, 7.0, 7.0))
+    m = TargetMode()
+    m.SetAttrIDObject("Source", same)
+    m.SetAttrIDObject("Target", same)
+    assert not m.IsValid()
 
 
 def test_chase_invalid_without_target():
