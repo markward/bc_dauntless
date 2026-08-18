@@ -350,6 +350,25 @@ class Game(TGObject):
 
     def SetPlayer(self, player) -> None:
         self._player = player
+        # Camera.MakePlayerCamera_PlayerChanged's table (Camera.py:685-703):
+        # anchor every player-relative camera mode on the new player.
+        if player is not None:
+            cam = self.GetPlayerCamera()
+            for _mode_name, _attr in (
+                ("Chase", "Target"), ("Target", "Source"),
+                ("ReverseChase", "Target"), ("ZoomTarget", "Source"),
+                ("Map", "Target"), ("WideTarget", "Source"),
+                ("FreeOrbit", "Target"), ("DropAndWatch", "Target"),
+                ("ViewscreenZoomTarget", "Source"),
+                ("ViewscreenForward", "Target"), ("ViewscreenBack", "Target"),
+                ("ViewscreenLeft", "Target"), ("ViewscreenRight", "Target"),
+                ("ViewscreenUp", "Target"), ("ViewscreenDown", "Target"),
+                ("FirstPerson", "Target"), ("TorpCam", "Target"),
+                ("CinematicReverseTarget", "Target"),
+            ):
+                _mode = cam.GetNamedCameraMode(_mode_name)
+                if _mode is not None:
+                    _mode.SetAttrIDObject(_attr, player)
         # BC fires ET_SET_PLAYER when the current player is assigned so the
         # HelmMenuHandlers broadcast handlers (OrbitMenuPlayerChanged et al.)
         # (re)wire per-player state and repopulate the Orbit/Nav menus from the
@@ -381,8 +400,28 @@ class Game(TGObject):
         run against a real mode instead of TGObject's truthy _Stub."""
         if self._player_camera is None:
             from engine.appc.bridge_set import CameraObjectClass_Create
+            from engine.appc.camera_modes import CameraMode_Create
             self._player_camera = CameraObjectClass_Create(
                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, "MainPlayerCamera")
+            cam = self._player_camera
+            # MakePlayerCamera's four always-invalid markers: bare Chase modes
+            # never given a Target (Camera.py:624-628).
+            for _name in ("InvalidViewscreen", "InvalidSpace",
+                          "InvalidCinematic", "InvalidMap"):
+                cam.AddNamedCameraMode(_name, CameraMode_Create("Chase", cam))
+            # Default fallback edges, verbatim Camera.py:630-646.
+            for _parent, _child in (
+                ("InvalidViewscreen", "ViewscreenZoomTarget"),
+                ("ViewscreenZoomTarget", "ViewscreenForward"),
+                ("InvalidSpace", "Target"),
+                ("Target", "Chase"),
+                ("ZoomTarget", "Chase"),
+                ("InvalidCinematic", "DropAndWatch"),
+                ("TorpCam", "Chase"),
+                ("CinematicReverseTarget", "Chase"),
+                ("InvalidMap", "Map"),
+            ):
+                cam.AddModeHierarchy(_parent, _child)
         return self._player_camera
 
     def GetPlayerSet(self):

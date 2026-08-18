@@ -326,3 +326,27 @@ def test_insert_after_obj_detaches_other_from_prior_chain():
     assert c.GetNext() is b
     assert b.GetPrev() is c
     assert b.GetNext() is None
+
+
+# ── Targetable ────────────────────────────────────────────────────────────────
+# ObjectClass defaults _targetable True, and that default is right FOR SHIPS
+# (objects.py:101-110). A placement is not a ship: you cannot target a waypoint
+# in BC, and F3's source cycle reads SetClass.GetTargetableObjects, so a
+# permissive default parked the cinematic camera on nav markers.
+
+def test_placement_object_is_not_targetable():
+    assert PlacementObject().IsTargetable() == 0
+
+
+def test_waypoint_is_not_targetable():
+    assert Waypoint().IsTargetable() == 0
+
+
+def test_placement_targetable_can_still_be_set():
+    """The flag is still a flag — SetTargetable round-trips, so a mission that
+    deliberately reveals a placement is not locked out."""
+    p = PlacementObject()
+    p.SetTargetable(1)
+    assert p.IsTargetable() == 1
+    p.SetTargetable(0)
+    assert p.IsTargetable() == 0

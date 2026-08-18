@@ -797,3 +797,366 @@ def test_dispatch_toggle_helper_respects_mission_swallow():
         __name__ + "._swallowing_handler")
     top_window.dispatch_toggle_bridge_and_tactical()
     assert tw.IsBridgeVisible() is True      # held on bridge
+
+
+# ── Cinematic mode ──────────────────────────────────────────────────────────
+# BC enters cinematic mode by focusing the MWT_CINEMATIC main window
+# (Actions/CameraScriptActions.py:StartCinematicMode compares GetFocus()
+# against it). Focus is the single source of truth — there is no second flag.
+
+def test_toggle_cinematic_window_focuses_and_unfocuses():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+
+    assert tw.GetFocus() is None
+    assert tw.is_cinematic_active() is False
+
+    tw.ToggleCinematicWindow()
+    assert tw.GetFocus() is cine
+    assert tw.is_cinematic_active() is True
+    assert cine.IsWindowActive() == 1
+
+    tw.ToggleCinematicWindow()
+    assert tw.GetFocus() is None
+    assert tw.is_cinematic_active() is False
+    assert cine.IsWindowActive() == 0
+
+
+def test_cinematic_window_interactive_state_round_trips():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    cine = top_window.TopWindow_GetTopWindow().FindMainWindow(
+        top_window.MWT_CINEMATIC)
+    assert cine.IsInteractive() == 1        # BC normal-state default, unchanged
+    cine.SetInteractive(0)
+    assert cine.IsInteractive() == 0
+    cine.SetInteractive(1)
+    assert cine.IsInteractive() == 1
+
+
+def test_is_cinematic_active_false_when_another_child_holds_focus():
+    """QuickBattle's OpenConfigDialog focuses a config pane. That must not read
+    as cinematic mode."""
+    from engine.appc import top_window
+    from engine.appc.events import TGEventHandlerObject
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.SetFocus(TGEventHandlerObject())
+    assert tw.is_cinematic_active() is False
+
+
+# ── Entering cinematic mode drops an open crew menu ─────────────────────────
+# Live bug: F9 hides the tactical HUD but leaves an already-open crew/officer
+# menu on screen. Cinematic mode should be a clean camera view. The fix reuses
+# the exact primitive StartCutscene already calls at its own entry
+# (_drop_open_crew_menu, :103/:369) -- must fire on ENTER only, never on exit.
+
+def _wired_officer_for_menu_drop_test(name="Helm", label="Helm"):
+    """A bridge officer with a menu attached and registered on the TCW's menu
+    list, with a CrewMenuPanel wired -- mirrors
+    tests/unit/test_cutscene_menu_drop.py's _wired_officer, which exercises
+    the same App.STTopLevelMenu_GetOpenMenu()/GetOwner()/MenuDown() primitive
+    _drop_open_crew_menu uses."""
+    import App
+    from engine.appc.characters import STTopLevelMenu_CreateW
+    from engine.appc.windows import TacticalControlWindow
+    from engine.ui import crew_menu_hotkeys
+    from engine.ui.crew_menu_panel import CrewMenuPanel
+
+    TacticalControlWindow._instance = None
+    tcw = TacticalControlWindow.GetInstance()
+    db = App.g_kLocalizationManager.Load("data/TGL/Bridge Menus.tgl")
+    tac_menu = STTopLevelMenu_CreateW(db.GetString("Tactical"))
+    tac_menu.AddChild(App.STButton_CreateW(db.GetString("Manual Aim")))
+    tcw.SetTacticalMenu(tac_menu)
+    App.g_kLocalizationManager.Unload(db)
+
+    menu = STTopLevelMenu_CreateW(label)
+    tcw.AddMenuToList(menu)
+    panel = CrewMenuPanel()
+    crew_menu_hotkeys.wire(tcw, panel)
+    officer = App.CharacterClass_Create("b.nif", "h.nif")
+    officer.SetCharacterName(name)
+    officer.SetMenu(menu)
+    return officer, menu, panel
+
+
+def test_entering_cinematic_mode_drops_an_open_crew_menu():
+    """The bug: F9 (ToggleCinematicWindow, entering) must close whatever crew
+    menu is currently up, exactly as StartCutscene already does."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    officer, _menu, panel = _wired_officer_for_menu_drop_test()
+    officer.MenuUp()
+    assert panel.has_open_menu() is True
+
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ToggleCinematicWindow()          # ENTER cinematic mode
+
+    assert tw.is_cinematic_active() is True
+    assert panel.has_open_menu() is False
+    assert officer.IsMenuUp() == 0
+
+
+def test_leaving_cinematic_mode_does_not_drop_a_crew_menu():
+    """The other half: leaving cinematic mode must NOT run the drop. A menu
+    opened only after entering (there is nothing before entry to leave open
+    in real play -- F1-F5 are vetoed while focused on the cinematic window --
+    but the shim-level primitive itself must not fire on exit either way)
+    must still be open once the player toggles back out."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    officer, _menu, panel = _wired_officer_for_menu_drop_test()
+
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ToggleCinematicWindow()          # enter -- nothing open yet
+    assert tw.is_cinematic_active() is True
+
+    officer.MenuUp()                    # opened while already in cinematic mode
+    assert panel.has_open_menu() is True
+
+    tw.ToggleCinematicWindow()          # LEAVE cinematic mode
+    assert tw.is_cinematic_active() is False
+    assert panel.has_open_menu() is True    # unchanged -- exit must not drop
+    assert officer.IsMenuUp() == 1
+
+
+def test_entering_cinematic_mode_is_safe_with_no_menu_open():
+    """No open menu -> the drop must be a harmless no-op, not raise."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ToggleCinematicWindow()          # must not raise
+    assert tw.is_cinematic_active() is True
+
+
+# ── Lazy SDK handler registration ───────────────────────────────────────────
+# CinematicInterfaceHandlers.Initialize(pWindow) is what binds the six
+# ET_INPUT_CINEMATIC_* events to camera modes. No SDK script calls it — BC's
+# engine ran it at window construction — so we run it lazily on first toggle,
+# because the module imports Camera and must not be pulled into App bootstrap.
+
+def test_first_toggle_registers_the_sdk_cinematic_handlers():
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+
+    assert cine._handlers == {}
+    tw.ToggleCinematicWindow()
+    assert cine._handlers.get(App.ET_INPUT_CINEMATIC_CHASE)
+    assert cine._handlers.get(App.ET_INPUT_CINEMATIC_FREEORBIT)
+
+
+def test_first_toggle_registers_the_windows_raw_keyboard_handler():
+    """Initialize()'s loop (CinematicInterfaceHandlers.py:54-56) registers ONLY
+    the ET_INPUT_* handlers; it never registers HandleKeyboard. In real BC the
+    engine wires the window's keyboard handler at construction. Without it the
+    F1-F6 camera keys have no path at all: the g_dKeyToEventMapping table is
+    consulted from inside HandleKeyboard (:114) and nowhere else."""
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+
+    tw.ToggleCinematicWindow()
+    assert cine._handlers.get(App.ET_KEYBOARD) == [
+        "CinematicInterfaceHandlers.HandleKeyboard"]
+
+
+def test_handlers_are_registered_once_not_per_toggle():
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+    for _ in range(4):
+        tw.ToggleCinematicWindow()
+    assert len(cine._handlers[App.ET_INPUT_CINEMATIC_CHASE]) == 1
+    assert len(cine._handlers[App.ET_KEYBOARD]) == 1
+
+
+def test_a_failing_initialize_neither_wedges_the_toggle_nor_stays_silent(capsys):
+    """Cinematic mode without its F-key handlers is degraded, not broken — so
+    a failure must not block the focus flip. But it must not be silent either,
+    or a missing-surface gap looks like a working feature."""
+    import CinematicInterfaceHandlers
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+
+    def _boom(_pWindow):
+        raise RuntimeError("missing engine surface")
+
+    real = CinematicInterfaceHandlers.Initialize
+    CinematicInterfaceHandlers.Initialize = _boom
+    try:
+        tw.ToggleCinematicWindow()
+    finally:
+        CinematicInterfaceHandlers.Initialize = real
+
+    assert tw.is_cinematic_active() is True
+    assert "missing engine surface" in capsys.readouterr().out
+
+
+def test_a_failing_keyboard_registration_names_that_step_not_initialize(capsys):
+    """The two wiring steps are independent and fail independently. Blaming
+    Initialize for a HandleKeyboard registration failure would send whoever
+    reads the log to the wrong module."""
+    import CinematicInterfaceHandlers
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+
+    def _raise(*_a, **_k):
+        raise RuntimeError("registration blew up")
+
+    real = CinematicInterfaceHandlers.Initialize
+    CinematicInterfaceHandlers.Initialize = lambda _w: None   # step 1 succeeds
+    cine.AddPythonFuncHandlerForInstance = _raise             # step 2 fails
+    try:
+        tw.ToggleCinematicWindow()
+    finally:
+        CinematicInterfaceHandlers.Initialize = real
+
+    out = capsys.readouterr().out
+    assert "registration blew up" in out
+    assert "HandleKeyboard" in out
+    assert "Initialize failed" not in out
+    assert tw.is_cinematic_active() is True
+
+
+def test_a_failing_initialize_still_wires_the_keyboard_handler(capsys):
+    """Independent steps: losing the camera-mode handlers must not also cost
+    the raw keyboard route (and vice versa)."""
+    import App
+    import CinematicInterfaceHandlers
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+
+    def _boom(_pWindow):
+        raise RuntimeError("missing engine surface")
+
+    real = CinematicInterfaceHandlers.Initialize
+    CinematicInterfaceHandlers.Initialize = _boom
+    try:
+        tw.ToggleCinematicWindow()
+    finally:
+        CinematicInterfaceHandlers.Initialize = real
+
+    assert capsys.readouterr().out.count("missing engine surface") == 1
+    assert cine._handlers.get(App.ET_KEYBOARD) == [
+        "CinematicInterfaceHandlers.HandleKeyboard"]
+
+
+def test_a_failing_initialize_is_not_retried_every_toggle(capsys):
+    """The once-only latch is set BEFORE the attempt, so a broken Initialize
+    cannot spam the log (or half-register) on every subsequent toggle."""
+    import CinematicInterfaceHandlers
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+
+    def _boom(_pWindow):
+        raise RuntimeError("missing engine surface")
+
+    real = CinematicInterfaceHandlers.Initialize
+    CinematicInterfaceHandlers.Initialize = _boom
+    try:
+        for _ in range(4):
+            tw.ToggleCinematicWindow()
+    finally:
+        CinematicInterfaceHandlers.Initialize = real
+
+    assert capsys.readouterr().out.count("missing engine surface") == 1
+
+
+# ── CinematicWindow_Cast ────────────────────────────────────────────────────
+# Seven SDK sites do
+#     pCinematic = App.CinematicWindow_Cast(pTop.FindMainWindow(MWT_CINEMATIC))
+#     if pCinematic: pCinematic.SetInteractive(...) / .IsInteractive()
+# (MissionLib:784, TacticalInterfaceHandlers:1038, WarpSequence:504,
+# CinematicInterfaceHandlers:316, CameraScriptActions:396+413,
+# QuickBattle:3324).  Undefined, the name resolved to a truthy _NamedStub —
+# rank 64 in docs/stub_heatmap.md, 246 live hits — so every one of them called
+# SetInteractive/IsInteractive on a stub and the real window state was
+# unreachable from SDK code.  Same shape as the armed MapWindow_Cast trap
+# documented at top_window.py:269.
+
+def test_cinematic_window_cast_returns_the_real_window():
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    cine = top_window.TopWindow_GetTopWindow().FindMainWindow(
+        top_window.MWT_CINEMATIC)
+    assert App.CinematicWindow_Cast(cine) is cine
+
+
+def test_cinematic_window_cast_rejects_a_non_cinematic_window():
+    """A REAL cast, not an identity function: anything that is not a
+    _CinematicWindow must come back None so `if pCinematic:` skips."""
+    import App
+    from engine.appc import top_window
+    from engine.appc.events import TGEventHandlerObject
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert App.CinematicWindow_Cast(None) is None
+    assert App.CinematicWindow_Cast(tw.FindMainWindow(
+        top_window.MWT_TACTICAL)) is None
+    assert App.CinematicWindow_Cast(TGEventHandlerObject()) is None
+
+
+def test_cinematic_window_cast_survives_the_real_sdk_call_shape():
+    """CinematicInterfaceHandlers.ToggleCinematicMode:316-318 reads
+    IsInteractive() off the cast result — that must be Task 2's real state,
+    not a stub's truthy answer."""
+    import App
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    pCinematic = App.CinematicWindow_Cast(tw.FindMainWindow(App.MWT_CINEMATIC))
+    assert pCinematic is not None
+    pCinematic.SetInteractive(0)
+    assert pCinematic.IsInteractive() == 0
+    assert tw.FindMainWindow(App.MWT_CINEMATIC).IsInteractive() == 0
+
+
+# ── Toggle drives the real SDK camera switch ────────────────────────────────
+# BC's C++ engine calls Camera.PlayerCameraAsCinematic/AsSpace on window
+# switch; our toggle (ToggleCinematicWindow) is that seam. NewMode runs
+# against the seeded player camera (bReplace=1), so the raw current mode
+# (arg 0, unresolved) must be the Invalid* marker and the stack must not grow
+# across repeated toggles.
+
+def test_toggle_switches_the_player_camera_to_cinematic_and_back():
+    """BC's engine calls Camera.PlayerCameraAsCinematic/AsSpace on window
+    switch; our toggle is that seam. Raw mode (arg 0) is the marker; NewMode
+    replaces (bReplace=1) so the stack must not grow with repeated toggles."""
+    import App
+    from engine.appc import top_window
+    from engine.core.game import Game, _set_current_game
+
+    top_window.reset_for_tests()
+    _set_current_game(Game())
+    tw = top_window.TopWindow_GetTopWindow()
+    cam = App.Game_GetCurrentGame().GetPlayerCamera()
+
+    tw.ToggleCinematicWindow()               # enter
+    raw = cam.GetCurrentCameraMode(0)
+    assert getattr(raw, "_named", None) == "InvalidCinematic"
+
+    tw.ToggleCinematicWindow()               # exit
+    raw = cam.GetCurrentCameraMode(0)
+    assert getattr(raw, "_named", None) == "InvalidSpace"
+
+    depth_before = len(cam._mode_stack)
+    for _ in range(4):
+        tw.ToggleCinematicWindow()
+    assert len(cam._mode_stack) == depth_before

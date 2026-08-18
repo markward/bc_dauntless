@@ -101,34 +101,15 @@ def test_right_bracket_noop_without_target_or_on_self():
     ship_death.reset()
 
 
-def test_f9_quick_repairs_player_ship():
-    """Task 9: F9 wires to repair_ship_fully(player) — a real ship (not the
-    minimal _Ship fake above, which lacks the subsystem getters) so the
-    handler exercises the actual dev-key -> repair_ship_fully plumbing."""
-    from engine.appc.ships import ShipClass_Create
-    from engine.appc.properties import RepairSubsystemProperty
-
-    player = ShipClass_Create("F9Player")
-    prop = RepairSubsystemProperty("Engineering")
-    prop.SetMaxRepairPoints(50.0)
-    prop.SetNumRepairTeams(3)
-    player.GetRepairSubsystem().SetProperty(prop)
-    player.GetSensorSubsystem().SetMaxCondition(8000.0)
-    sensors = player.GetSensorSubsystem()
-    sensors.SetCondition(100.0)              # damaged + auto-enqueued
-    bay = player.GetRepairSubsystem()
-    assert bay._queue
-
-    register_for_frame(_FakeHost(), session=None, player=player)
-    _handler_for(_Keys.KEY_F9)()
-
-    assert sensors.GetCondition() == sensors.GetMaxCondition()
-    assert bay._queue == []
-
-
-def test_f9_quick_repair_noop_without_player():
+def test_f9_is_not_bound_to_any_dev_tool():
+    """BC binds F9 to ET_INPUT_TOGGLE_CINEMATIC_MODE in every
+    Default*KeyboardBinding.py (line 128). Quick-repair used to squat on it and
+    now lives on the Developer Options > Combat "Quick Repair Player Ship"
+    button — see test_developer_options_panel.py, which carries the repair
+    coverage this test used to hold."""
     register_for_frame(_FakeHost(), session=None, player=None)
-    _handler_for(_Keys.KEY_F9)()   # must not raise
+    with pytest.raises(KeyError):
+        _handler_for(_Keys.KEY_F9)
 
 
 def test_f8_toggles_the_hum_diagnostic_readout():

@@ -126,6 +126,190 @@ def test_no_destination_when_nothing_registered_a_handler(monkeypatch):
     im.OnKeyDown(WC_S)  # no exception
 
 
+# ── Focus-aware routing ─────────────────────────────────────────────────────
+# BC delivers the raw keystroke to the FOCUSED window first. That is the seam
+# the cinematic camera keys live on: CinematicInterfaceHandlers.HandleKeyboard
+# (:96) is the cinematic window's ET_KEYBOARD handler, and its
+# g_dKeyToEventMapping table (:154-159) — consulted at :114 and NOWHERE else —
+# is what maps WC_F1..F6 to the camera modes. Same prepend
+# KeyboardBinding._resolve_destination already makes for bound ET_INPUT_*
+# events; only a MAIN window counts, so QuickBattle's config-pane SetFocus()
+# cannot start swallowing raw keystrokes.
+
+def _cine_with_handler():
+    """Focus the cinematic main window and give it an ET_KEYBOARD handler."""
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+    cine.AddPythonFuncHandlerForInstance(App.ET_KEYBOARD, _HELPER + ".capture")
+    tw.SetFocus(cine)
+    return tw, cine
+
+
+def test_focused_main_window_outranks_the_root_window():
+    mod = _capture_module()
+    root = _root_with_handler(mod)          # root has one too — real contest
+    try:
+        _tw, cine = _cine_with_handler()
+        assert _raw_keyboard_destination() is cine
+    finally:
+        _remove(root)
+
+
+def test_keystroke_actually_reaches_the_focused_window():
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        _tw, cine = _cine_with_handler()
+        em = TGEventManager()
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert len(mod.captured) == 1
+        assert mod.captured[0].GetEventType() == App.ET_KEYBOARD
+        # Identity, not just arrival: the same probe is registered on the root
+        # window, so a count alone cannot tell the two destinations apart.
+        assert mod.captured[0].GetDestination() is cine
+    finally:
+        _remove(root)
+
+
+def test_a_non_interactive_focused_window_never_takes_the_raw_stream():
+    """Actions/CameraScriptActions.StartCinematicMode's bInteractive DEFAULTS
+    TO 0 (:392) and is applied for real now that CinematicWindow_Cast exists
+    (:405). That path runs on EVERY player warp (WarpSequence.py:73), plus
+    MissionLib:1950, E3M4:1525/1904, E8M2:6530, HelmMenuHandlers:876.
+
+    IsInteractive() == 0 means BC's window is not taking user input, and
+    HandleKeyboard's non-interactive branch (:99-108) bubbles the key on with
+    CallNextHandler. We dispatch to exactly ONE object and implement no
+    bubbling, so the faithful equivalent is for the window not to win the
+    destination at all — leaving the raw stream exactly where it went before
+    focus-aware routing existed. Without this gate every raw ET_KEYBOARD
+    consumer (E1M1.SkipOpeningSequence on the root window,
+    BridgeUtils.ModalKeyboardHandler, E3M1.FilteredKeyboardHandler) goes deaf
+    for the whole of every warp.
+    """
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        _tw, cine = _cine_with_handler()
+        App.CinematicWindow_Cast(cine).SetInteractive(0)
+
+        assert _raw_keyboard_destination() is root
+        em = TGEventManager()
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert len(mod.captured) == 1
+        assert mod.captured[0].GetDestination() is root
+    finally:
+        _remove(root)
+
+
+def test_interactivity_gates_the_raw_stream_both_ways():
+    """The same focused window, flipped back interactive, takes the stream
+    again — so the gate is shown to be the interactivity flag and not a dead
+    route. StopCinematicMode restores SetInteractive(1) (:422)."""
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        _tw, cine = _cine_with_handler()
+        pCinematic = App.CinematicWindow_Cast(cine)
+
+        pCinematic.SetInteractive(0)
+        assert _raw_keyboard_destination() is root
+        pCinematic.SetInteractive(1)
+        assert _raw_keyboard_destination() is cine
+    finally:
+        _remove(root)
+
+
+def test_a_focused_main_window_with_no_interactive_flag_still_wins():
+    """The gate must key on a REAL int. A main window with no IsInteractive at
+    all vends a truthy _Stub whose int() is 0 — coercing that would silently
+    delete the whole focus prepend (the exact collapse class CLAUDE.md's
+    numeric-coercion table exists to catch)."""
+    from engine.appc import top_window
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        top_window.reset_for_tests()
+        tw = top_window.TopWindow_GetTopWindow()
+        main = tw.FindMainWindow(top_window.MWT_TACTICAL)   # no IsInteractive
+        main.AddPythonFuncHandlerForInstance(
+            App.ET_KEYBOARD, _HELPER + ".capture")
+        tw.SetFocus(main)
+        assert not isinstance(main.IsInteractive(), int)    # a _Stub today
+        assert _raw_keyboard_destination() is main
+    finally:
+        _remove(root)
+
+
+def test_focused_window_without_a_keyboard_handler_falls_through_to_root():
+    """The existing root-window-before-TopWindow ordering is preserved for
+    every window that did not register ET_KEYBOARD — E1M1's skip-intro handler
+    lives on the root window and must keep its keystrokes."""
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        from engine.appc import top_window
+        top_window.reset_for_tests()
+        tw = top_window.TopWindow_GetTopWindow()
+        tw.SetFocus(tw.FindMainWindow(top_window.MWT_CINEMATIC))  # no handlers
+        assert _raw_keyboard_destination() is root
+    finally:
+        _remove(root)
+
+
+def test_focused_non_main_window_is_not_a_candidate():
+    """QuickBattle's OpenConfigDialog focuses config panes. A focused pane
+    that happens to carry an ET_KEYBOARD handler must not hijack the raw
+    stream — only main windows are focus candidates."""
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        from engine.appc import top_window
+        top_window.reset_for_tests()
+        tw = top_window.TopWindow_GetTopWindow()
+        pane = TGEventHandlerObject()
+        pane.AddPythonFuncHandlerForInstance(
+            App.ET_KEYBOARD, _HELPER + ".capture")
+        tw.SetFocus(pane)
+        assert _raw_keyboard_destination() is root
+    finally:
+        _remove(root)
+
+
+def test_nothing_focused_still_resolves_the_root_window():
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        from engine.appc import top_window
+        top_window.reset_for_tests()
+        assert top_window.TopWindow_GetTopWindow().GetFocus() is None
+        assert _raw_keyboard_destination() is root
+    finally:
+        _remove(root)
+
+
+def test_a_plain_top_window_double_does_not_raise(monkeypatch):
+    """The focus probe must be as defensive as the _events probe beside it:
+    tests monkeypatch TopWindow_GetTopWindow with doubles that have neither
+    GetFocus nor _main_windows."""
+    class _Bare:
+        pass
+
+    monkeypatch.setattr(App, "TopWindow_GetTopWindow", lambda: _Bare())
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        assert _raw_keyboard_destination() is root
+    finally:
+        _remove(root)
+
+
 def test_internal_keyboard_event_broadcast_still_fires():
     # Regression guard: the raw path is additive, not a replacement.
     from engine.appc.events import ET_KEYBOARD_EVENT
@@ -140,3 +324,117 @@ def test_internal_keyboard_event_broadcast_still_fires():
         ET_KEYBOARD_EVENT, None, _HELPER + "_bcast.capture")
     im.OnKeyDown(WC_S)
     assert len(mod.captured) == 1
+
+
+# ── Raw-first ordering + the EventHandled veto ─────────────────────────────
+# BC runs the window's ET_KEYBOARD handler FIRST and consults the global
+# keyboard binding only from inside it, gated on the handled flag
+# (CinematicInterfaceHandlers.HandleKeyboard:114 then :117). Our shim keeps the
+# binding on its own ET_KEYBOARD_EVENT broadcast, so the faithful equivalent is
+# to dispatch raw first and skip the broadcast when the raw event came back
+# handled. Without that a key means TWO things at once — the live F9-then-F3
+# defect, where the cinematic target camera ALSO opened the XO menu.
+
+def _broadcast_capture(suffix):
+    """Register a module capturing ET_KEYBOARD_EVENT broadcasts."""
+    from engine.appc.events import ET_KEYBOARD_EVENT
+    name = _HELPER + "_bcast_" + suffix
+    mod = types.ModuleType(name)
+    mod.captured = []
+    mod.capture = lambda _obj, evt: mod.captured.append(evt)
+    sys.modules[name] = mod
+    return mod, name, ET_KEYBOARD_EVENT
+
+
+def test_raw_window_event_is_dispatched_before_the_binding_broadcast():
+    order = []
+    mod = _capture_module()
+    mod.capture = lambda _obj, evt: order.append("raw")
+    root = _root_with_handler(mod)
+    bmod, bname, ET_KBE = _broadcast_capture("order")
+    bmod.capture = lambda _obj, evt: order.append("broadcast")
+    try:
+        em = TGEventManager()
+        em.AddBroadcastPythonFuncHandler(ET_KBE, None, bname + ".capture")
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert order == ["raw", "broadcast"]
+    finally:
+        _remove(root)
+
+
+def test_a_handler_that_sets_handled_suppresses_the_binding_broadcast():
+    """InterfaceHandlers.TriggerKeyboardEvents:58 is exactly this: a window
+    translated the key through its OWN table, so the global binding must not
+    translate it a second time."""
+    mod = _capture_module()
+    mod.capture = lambda _obj, evt: evt.SetHandled()
+    root = _root_with_handler(mod)
+    bmod, bname, ET_KBE = _broadcast_capture("suppressed")
+    try:
+        em = TGEventManager()
+        em.AddBroadcastPythonFuncHandler(ET_KBE, None, bname + ".capture")
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert bmod.captured == []
+    finally:
+        _remove(root)
+
+
+def test_a_handler_that_does_not_set_handled_leaves_the_binding_alone():
+    """The suppression must bite ONLY on a genuine consume. A window handler
+    that looked at the key and passed is the common case (every raw
+    ET_KEYBOARD hook the SDK registers except the modal filters), and the
+    binding translation must still run exactly as it did before the
+    reorder."""
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    bmod, bname, ET_KBE = _broadcast_capture("unhandled")
+    try:
+        em = TGEventManager()
+        em.AddBroadcastPythonFuncHandler(ET_KBE, None, bname + ".capture")
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert len(bmod.captured) == 1
+        assert bmod.captured[0].GetUnicode() == WC_S
+    finally:
+        _remove(root)
+
+
+def test_with_no_window_handler_at_all_the_binding_still_runs(monkeypatch):
+    """_raw_keyboard_destination returns None for most of the game's life
+    (nothing registered ET_KEYBOARD). 'No destination' is NOT 'handled'."""
+    monkeypatch.setattr(App, "g_kRootWindow", TGEventHandlerObject())
+    monkeypatch.setattr(App, "TopWindow_GetTopWindow", lambda: None)
+    bmod, bname, ET_KBE = _broadcast_capture("nodest")
+    em = TGEventManager()
+    em.AddBroadcastPythonFuncHandler(ET_KBE, None, bname + ".capture")
+    im = TGInputManager(em)
+    im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+    im.OnKeyDown(WC_S)
+    assert len(bmod.captured) == 1
+
+
+def test_the_handled_flag_does_not_leak_between_keystrokes():
+    """The raw event is built per keystroke; a consumed press must not deafen
+    the next one."""
+    mod = _capture_module()
+    state = {"consume": True}
+    mod.capture = lambda _obj, evt: evt.SetHandled() if state["consume"] else None
+    root = _root_with_handler(mod)
+    bmod, bname, ET_KBE = _broadcast_capture("noleak")
+    try:
+        em = TGEventManager()
+        em.AddBroadcastPythonFuncHandler(ET_KBE, None, bname + ".capture")
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert bmod.captured == []
+        state["consume"] = False
+        im.OnKeyDown(WC_S)
+        assert len(bmod.captured) == 1
+    finally:
+        _remove(root)

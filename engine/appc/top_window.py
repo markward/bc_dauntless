@@ -291,7 +291,84 @@ class _TopWindow:
         pass
 
     def ToggleCinematicWindow(self) -> None:
-        pass
+        """Enter/leave BC's cinematic mode by moving focus to the
+        MWT_CINEMATIC main window. Focus is the whole state — see
+        is_cinematic_active.
+
+        Entering must drop any open crew/officer menu, the same way
+        StartCutscene does at its own entry (_drop_open_crew_menu) — cinematic
+        mode is meant to be a clean camera view, and a menu left over from
+        before F9 has no window to belong to anymore. Only on ENTRY: leaving
+        cinematic mode must not touch anything."""
+        cine = self._main_windows.get(MWT_CINEMATIC)
+        if cine is None:
+            return
+        self._init_cinematic_handlers(cine)
+        entering = self._focus is not cine
+        self._focus = cine if entering else None
+        if entering:
+            _drop_open_crew_menu()
+        # BC's engine switches the player camera on window activation
+        # (PlayerCameraAsCinematic/AsSpace); this toggle is our seam for it.
+        # Guarded like _init_cinematic_handlers: a Camera failure must not
+        # wedge the toggle, but must not be silent.
+        try:
+            import Camera
+            if self._focus is cine:
+                Camera.PlayerCameraAsCinematic()
+            else:
+                Camera.PlayerCameraAsSpace()
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            print("[cinematic] player-camera mode switch failed:", exc)
+
+    def _init_cinematic_handlers(self, cine) -> None:
+        """Run the SDK's CinematicInterfaceHandlers wiring once, on first
+        toggle. Deferred (not done at construction) because the module imports
+        Camera, which must not enter App bootstrap.
+
+        TWO registrations, because BC splits them:
+          * Initialize(pWindow) binds the six ET_INPUT_CINEMATIC_* events (and
+            skip/zoom/quicksave) to their handlers — its own loop, :54-56.
+          * HandleKeyboard is NOT in that loop. BC's engine wires the window's
+            raw ET_KEYBOARD handler at window construction, and that handler is
+            the ONLY consumer of g_dKeyToEventMapping (:114) — the table that
+            maps WC_F1..F6 to the camera modes. Without it the F-keys reach the
+            global binding instead, where WC_F1..F5 mean ET_INPUT_TALK_TO_*,
+            and the camera events can never fire.
+
+        No SDK script calls Initialize, so there is no double-init to guard
+        against beyond our own repeat toggles.
+
+        A failure here must not wedge the toggle — cinematic mode without its
+        F-key handlers is degraded, not broken — but it must not be silent
+        either, or a missing-surface gap would look like a working feature.
+        The latch is set BEFORE the attempt so a broken Initialize is not
+        retried (and cannot half-register) on every subsequent toggle.
+        """
+        if getattr(cine, "_handlers_initialized", False):
+            return
+        cine._handlers_initialized = True
+        # Two separate try blocks, deliberately: the steps fail independently
+        # and a shared block would both misattribute the failure and let step
+        # one's failure silently cost us step two.
+        try:
+            import CinematicInterfaceHandlers
+            CinematicInterfaceHandlers.Initialize(cine)
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            print("[cinematic] CinematicInterfaceHandlers.Initialize failed:", exc)
+        try:
+            import App
+            cine.AddPythonFuncHandlerForInstance(
+                App.ET_KEYBOARD, "CinematicInterfaceHandlers.HandleKeyboard")
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            print("[cinematic] registering CinematicInterfaceHandlers."
+                  "HandleKeyboard for ET_KEYBOARD failed:", exc)
+
+    def is_cinematic_active(self) -> bool:
+        """True while the cinematic main window holds focus. Derived rather
+        than stored so it cannot drift out of sync with GetFocus()."""
+        cine = self._main_windows.get(MWT_CINEMATIC)
+        return cine is not None and self._focus is cine
 
     def ToggleWireframe(self) -> None:
         pass

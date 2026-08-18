@@ -23,6 +23,18 @@ from engine.ui.panel import Panel
 _logger = logging.getLogger(__name__)
 
 
+def _cinematic_active() -> bool:
+    """True while BC's cinematic mode (F9) holds focus. Read fresh each
+    snapshot so the per-tick pump's payload diff re-emits on both edges:
+    entry hides the open menu, exit re-shows it. Guarded — a headless panel
+    with no top window must render normally."""
+    try:
+        from engine.appc.top_window import TopWindow_GetTopWindow
+        return TopWindow_GetTopWindow().is_cinematic_active()
+    except Exception:
+        return False
+
+
 def _current_player():
     """Return the current player ship, or None.
 
@@ -100,11 +112,20 @@ class CrewMenuPanel(Panel):
         restarts.
         """
         self._widgets_by_id = {}
+        # Cinematic mode (F9) SUPPRESSES RENDERING ONLY: report every menu
+        # closed while it holds focus, leaving _open_menu_id (and all SDK
+        # widget state) untouched. A mission script raising a menu during
+        # cinematic mode (scripted AT_MENU_UP) still owns it — the menu
+        # reappears by construction on the first snapshot after exit.
+        # Entry-time dropping of a PLAYER-opened menu is separate and earlier
+        # (_drop_open_crew_menu in _TopWindow.ToggleCinematicWindow).
+        suppressed = _cinematic_active()
         menus = []
         for m in TacticalControlWindow.GetInstance().GetMenuList():
             node = self._snapshot_node(m)
             if node is not None:
-                node["open"] = (node["id"] == self._open_menu_id)
+                node["open"] = (node["id"] == self._open_menu_id
+                                and not suppressed)
                 menus.append(node)
         return {"menus": menus}
 

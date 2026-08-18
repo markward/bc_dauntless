@@ -474,7 +474,8 @@ def _poll_modifier_chords(host) -> None:
 
 
 def _poll_function_keys(host, input_map) -> None:
-    """Forward the crew-talk keys (F1-F5 by default) into g_kInputManager.
+    """Forward the crew-talk keys (F1-F5 by default) plus the fixed cinematic
+    keys (F6, F9) into g_kInputManager.
 
     The physical key for each crew-talk action comes from `input_map`; the
     WC_F1..F5 code feeding the BC binding stays fixed, so DefaultKeyboardBinding's
@@ -489,13 +490,25 @@ def _poll_function_keys(host, input_map) -> None:
     import App  # deferred: module-top import reorders sound-manager init
     alt, ctrl, _shift = _modifier_state(host)
     suppress = alt or ctrl
-    _poll_key_table((
+    _keys = getattr(host_io._h, "keys", None)
+    _table = [
         (input_map.code("talk_helm"),        App.WC_F1),
         (input_map.code("talk_tactical"),    App.WC_F2),
         (input_map.code("talk_xo"),          App.WC_F3),
         (input_map.code("talk_science"),     App.WC_F4),
         (input_map.code("talk_engineering"), App.WC_F5),
-    ), suppress=suppress)
+    ]
+    # Cinematic mode: F9 toggles it, F6 selects FreeOrbit. Fixed keys, not
+    # input_map actions. F7/F8 are deliberately absent — dev keybindings own
+    # those (engine/dev_keybindings.py).
+    # F9 listed ahead of F6: test_f9_and_f6_edges_are_forwarded exercises a
+    # frame where F9 releases and F6 presses simultaneously, and
+    # _poll_key_table appends edges in table order — F9's "up" must land
+    # before F6's "down" to match g_kInputManager's expected call order.
+    if _keys is not None:
+        _table.append((getattr(_keys, "KEY_F9", -1), App.WC_F9))
+        _table.append((getattr(_keys, "KEY_F6", -1), App.WC_F6))
+    _poll_key_table(tuple(_table), suppress=suppress)
 
 
 def _poll_fire_keys(host, input_map) -> None:
@@ -581,12 +594,21 @@ def _owned_glfw_keys(input_map) -> set:
     Those two pollers go through _emit, which ALREADY raw-dispatches, and they
     share _fn_key_prev with us — forwarding their keys here would both
     double-deliver the keystroke and corrupt the shared edge cache.
+
+    F6/F9 are fixed cinematic keys (not input_map actions) that
+    _poll_function_keys also owns; read defensively via host_io._h since the
+    native host may be absent (headless).
     """
-    return {input_map.code(a) for a in (
+    owned = {input_map.code(a) for a in (
         "fire_primary", "fire_secondary", "fire_tertiary",
         "talk_helm", "talk_tactical", "talk_xo",
         "talk_science", "talk_engineering",
     )}
+    _keys = getattr(host_io._h, "keys", None)
+    if _keys is not None:
+        owned.add(getattr(_keys, "KEY_F6", -1))
+        owned.add(getattr(_keys, "KEY_F9", -1))
+    return owned
 
 
 def _poll_raw_keyboard(host, input_map) -> None:
@@ -2380,16 +2402,53 @@ class _ViewModeController:
 
 def _tactical_hud_visible(*, is_exterior: bool, spv_open: bool,
                           cutscene_active: bool,
-                          bridge_tactical_active: bool = False) -> bool:
+                          bridge_tactical_active: bool = False,
+                          cinematic_active: bool = False) -> bool:
     """Whether the tactical HUD (ship displays, sensors, target list,
     weapons) should show this frame. It is an exterior-view element, but is
     ALSO shown on the bridge while the player is in bridge-tactical mode
     (the Tactical officer's menu is open, BC's g_bIsInBridgeTactical). Hidden
     while the Ship Property Viewer owns the frame, and during a cutscene so the
     letterbox frame stays cinematic (BC hides the tactical UI during
-    StartCutscene..EndCutscene)."""
+    StartCutscene..EndCutscene).
+
+    Also hidden in BC's cinematic mode (F9), which is a clean camera view.
+    Unlike a cutscene it applies no letterbox — only the HUD goes."""
     return (is_exterior or bridge_tactical_active) and not spv_open \
-        and not cutscene_active
+        and not cutscene_active and not cinematic_active
+
+
+def _tactical_orders_visible(*, tactical_menu_open: bool, spv_open: bool,
+                             cutscene_active: bool,
+                             cinematic_active: bool = False) -> bool:
+    """Whether the Orders/Tactics/Maneuvers command panes should show this
+    frame. Shown whenever the Tactical crew menu is open, in EITHER view
+    (matches SetupBridgeTactical + SetupTacticalTactical) — a broader gate
+    than _tactical_hud_visible's bridge_tactical_active, which is
+    bridge-view-only. Hidden under SPV and during a cutscene.
+
+    Also hidden in BC's cinematic mode (F9), a clean camera view — the panel
+    would otherwise stay on screen if the Tactical menu was open when the
+    user pressed F9. cinematic_active carries that gate, mirroring
+    _tactical_hud_visible/_reticle_visible."""
+    return (tactical_menu_open and not spv_open and not cutscene_active
+            and not cinematic_active)
+
+
+def _reticle_visible(*, is_exterior: bool, has_player: bool,
+                     reticle_hidden: bool,
+                     cinematic_active: bool = False) -> bool:
+    """Whether the target reticle + its captions should show this frame.
+    Exterior-view element only (on the bridge it would draw over the bridge
+    scene), needs a player to target from, and hides during a cutscene
+    started with bHideReticle — reticle_hidden folds in the bHideReticle arg
+    so E1M2's bHideReticle=FALSE cutscenes keep it.
+
+    Also hidden in BC's cinematic mode (F9), a clean camera view that is NOT
+    a cutscene (no letterbox, reticle_hidden stays False) — cinematic_active
+    carries that gate, mirroring _tactical_hud_visible."""
+    return (is_exterior and has_player and not reticle_hidden
+            and not cinematic_active)
 
 
 def _bridge_freelook_suppressed(*, crew_menu_open: bool,
@@ -5128,20 +5187,48 @@ def _active_cutscene_camera():
 
     Gated on a live IsValid() mode so plain comm 'maincamera's, mode-less
     cameras, and dead-target modes all return None and the director resumes.
+
+    Precedence (BC's): the rendered set's live cutscene camera wins; the
+    cinematic-mode (F9) branch runs only when that yields nothing; the final
+    fallback is the director (None). Evidence for the ordering:
+    AI/Compound/DockWithStarbase.py SetupCutscene enters cinematic mode AND
+    installs an authored "DockingCam" (CutsceneCameraBegin + Camera.Placement
+    + MakeRenderedSet) — in BC the set camera renders the docking sweep even
+    though the cinematic window holds focus and the player camera's resolved
+    mode is valid. If cinematic focus outranked the set camera, that authored
+    sweep would be dead code.
+
+    While cinematic mode is active with no set cutscene camera, the player
+    camera's hierarchy-RESOLVED mode drives the exterior view. The default
+    InvalidCinematic->DropAndWatch edge now resolves to a real DropAndWatchMode
+    (engine/appc/camera_modes.py), so bare F9 gives BC's flyby shot as soon as
+    SetPlayer has wired its Target; with no player ship that mode fails
+    IsValid() and we fall through as if cinematic mode were off.
     """
     import App as _App
+    from engine.core import ids as _ids
     rendered = _App.g_kSetManager.get_explicit_rendered_set()
-    if rendered is None:
-        return None
-    get_active = getattr(rendered, "GetActiveCamera", None)
-    cam = get_active() if callable(get_active) else None
-    if cam is None:
-        return None
-    get_mode = getattr(cam, "GetCurrentCameraMode", None)
-    mode = get_mode() if callable(get_mode) else None
-    if mode is None or not mode.IsValid():
-        return None
-    return (cam, mode)
+    if rendered is not None:
+        get_active = getattr(rendered, "GetActiveCamera", None)
+        cam = get_active() if callable(get_active) else None
+        if cam is not None:
+            get_mode = getattr(cam, "GetCurrentCameraMode", None)
+            mode = get_mode() if callable(get_mode) else None
+            if mode is not None and mode.IsValid():
+                return (cam, mode)
+    _top = _App.TopWindow_GetTopWindow()
+    # implements(), not getattr-with-default: a TGObject-derived test double
+    # vends a truthy callable _Stub for unknown names, which would wrongly
+    # enter this branch (engine/core/ids.py convention; final-review finding).
+    if _top is not None and _ids.implements(_top, "is_cinematic_active") \
+            and _top.is_cinematic_active():
+        _game = _App.Game_GetCurrentGame()
+        _pcam = _game.GetPlayerCamera() if _game is not None else None
+        if _pcam is not None:
+            _mode = _pcam.GetCurrentCameraMode()       # hierarchy-resolved
+            if _mode is not None and _mode.IsValid():
+                return (_pcam, _mode)
+    return None
 
 
 def _cutscene_pose(mode, dt, pose_of=None):
@@ -6984,30 +7071,32 @@ def run(mission_name: Optional[str] = None,
                 # _NULL_PICKER.is_open() is False, so this is a no-op in
                 # production / non-dev.
                 from engine.appc.top_window import TopWindow_GetTopWindow
+                _top_window = TopWindow_GetTopWindow()
                 _bridge_tactical_active = (
                     view_mode.is_bridge
                     and crew_menu_panel.open_menu_label() == "Tactical")
                 _tac_visible = _tactical_hud_visible(
                     is_exterior=view_mode.is_exterior,
                     spv_open=ship_property_viewer.is_open(),
-                    cutscene_active=TopWindow_GetTopWindow().IsCutsceneMode(),
-                    bridge_tactical_active=_bridge_tactical_active)
+                    cutscene_active=_top_window.IsCutsceneMode(),
+                    bridge_tactical_active=_bridge_tactical_active,
+                    cinematic_active=_top_window.is_cinematic_active())
                 target_list_view.visible    = _tac_visible
                 sensors_panel.visible       = _tac_visible
                 ship_display_player.visible = _tac_visible
                 ship_display_target.visible = _tac_visible
                 weapons_display.visible     = _tac_visible
 
-                # Orders/Tactics/Maneuvers command panes: shown whenever the
-                # Tactical crew menu is open, in EITHER view (matches
-                # SetupBridgeTactical + SetupTacticalTactical) — a broader
-                # gate than _tac_visible/_bridge_tactical_active above, which
-                # is bridge-view-only. Still hidden under SPV/cutscene.
+                # Orders/Tactics/Maneuvers command panes: see
+                # _tactical_orders_visible — a broader gate than
+                # _tac_visible/_bridge_tactical_active above, which is
+                # bridge-view-only.
                 _tactical_menu_open = crew_menu_panel.open_menu_label() == "Tactical"
-                tactical_orders_panel.visible = (
-                    _tactical_menu_open
-                    and not ship_property_viewer.is_open()
-                    and not TopWindow_GetTopWindow().IsCutsceneMode())
+                tactical_orders_panel.visible = _tactical_orders_visible(
+                    tactical_menu_open=_tactical_menu_open,
+                    spv_open=ship_property_viewer.is_open(),
+                    cutscene_active=_top_window.IsCutsceneMode(),
+                    cinematic_active=_top_window.is_cinematic_active())
 
                 # Contact membership AND per-row visibility — push the player's
                 # current system every frame. Worst case this is one frame
@@ -7927,10 +8016,16 @@ def run(mission_name: Optional[str] = None,
                 # would draw over the bridge scene. Also hidden during a
                 # cutscene started with bHideReticle (BC's clean cinematic
                 # frame) — reticle_hidden() folds in the bHideReticle arg so
-                # E1M2's bHideReticle=FALSE cutscenes keep it.
+                # E1M2's bHideReticle=FALSE cutscenes keep it — and in
+                # cinematic mode (F9), which is a clean camera view but NOT
+                # a cutscene.
                 from engine.appc.top_window import TopWindow_GetTopWindow
-                if (player is not None and view_mode.is_exterior
-                        and not TopWindow_GetTopWindow().reticle_hidden()):
+                _reticle_top = TopWindow_GetTopWindow()
+                if _reticle_visible(
+                        is_exterior=view_mode.is_exterior,
+                        has_player=player is not None,
+                        reticle_hidden=_reticle_top.reticle_hidden(),
+                        cinematic_active=_reticle_top.is_cinematic_active()):
                     r.set_target_reticle(build_target_reticle(player))
                     _rcam = _ReticleCam(eye=eye, target=target, up=up_vec,
                                         fov_y_rad=director.fov_y_rad,

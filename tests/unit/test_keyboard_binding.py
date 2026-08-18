@@ -218,3 +218,129 @@ def test_alt_1_chord_reaches_real_top_window_manage_power_handler():
     finally:
         top.RemoveHandlerForInstance(
             App.ET_MANAGE_POWER, __name__ + "._manage_power_probe")
+
+
+# ── Focus-aware routing ─────────────────────────────────────────────────────
+# BC routes keyboard input to the focused window first; we prepend the focused
+# MAIN window to the candidate scan. The bridge crew menus (F1-F5 ->
+# ET_INPUT_TALK_TO_*) register on the TCW, so they keep those keys whenever
+# cinematic mode is not focused.
+
+def test_focused_main_window_wins_when_it_handles_the_event():
+    import App
+    from engine.appc import top_window
+    from engine.appc.input import KS_NORMAL
+
+    del _resolver_hits[:]
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+    tw.ToggleCinematicWindow()                 # focus it + lazily wire the SDK
+    # Probe registered AFTER the toggle: the toggle now runs
+    # CinematicInterfaceHandlers.Initialize, which registers the real
+    # CameraChase for this event type. The chain is LIFO, so registering last
+    # puts the probe first, and it stops the chain by not calling
+    # CallNextHandler — CameraChase needs a live player camera and this test
+    # is about routing, not camera modes.
+    cine.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_CINEMATIC_CHASE, __name__ + "._resolver_probe")
+
+    em = TGEventManager()
+    kb = KeyboardBinding(em)
+    kb.SetDefaultDestination(TGEventHandlerObject())
+    kb.BindKey(App.WC_F2, KS_NORMAL, App.ET_INPUT_CINEMATIC_CHASE)
+    evt = TGKeyboardEvent()
+    evt.SetUnicodeKey(App.WC_F2)
+    evt.SetKeyState(KS_NORMAL)
+    kb.OnKeyboardEvent(None, evt)
+
+    assert _resolver_hits == [cine]
+
+
+def test_bridge_menu_keeps_f1_while_cinematic_is_unfocused():
+    """THE regression guard: F1 must still reach the crew-menu handler on the
+    TCW when cinematic mode is not active."""
+    import App
+    from engine.appc import top_window
+    from engine.appc.input import KS_NORMAL
+
+    del _resolver_hits[:]
+    top_window.reset_for_tests()                # nothing focused
+    tcw = TGEventHandlerObject()
+    tcw.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_TALK_TO_HELM, __name__ + "._resolver_probe")
+
+    em = TGEventManager()
+    kb = KeyboardBinding(em)
+    kb.SetDefaultDestination(tcw)
+    kb.BindKey(App.WC_F1, KS_NORMAL, App.ET_INPUT_TALK_TO_HELM)
+    evt = TGKeyboardEvent()
+    evt.SetUnicodeKey(App.WC_F1)
+    evt.SetKeyState(KS_NORMAL)
+    kb.OnKeyboardEvent(None, evt)
+
+    assert _resolver_hits == [tcw]
+
+
+def test_focused_window_without_a_handler_falls_through():
+    """A focused cinematic window must not swallow event types it never
+    registered — those still reach the TCW."""
+    import App
+    from engine.appc import top_window
+    from engine.appc.input import KS_NORMAL
+
+    del _resolver_hits[:]
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    # Focused, and carrying the SDK's cinematic handlers — but none of them is
+    # for ET_INPUT_TALK_TO_HELM, which is the point.
+    tw.ToggleCinematicWindow()
+    tcw = TGEventHandlerObject()
+    tcw.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_TALK_TO_HELM, __name__ + "._resolver_probe")
+
+    em = TGEventManager()
+    kb = KeyboardBinding(em)
+    kb.SetDefaultDestination(tcw)
+    kb.BindKey(App.WC_F1, KS_NORMAL, App.ET_INPUT_TALK_TO_HELM)
+    evt = TGKeyboardEvent()
+    evt.SetUnicodeKey(App.WC_F1)
+    evt.SetKeyState(KS_NORMAL)
+    kb.OnKeyboardEvent(None, evt)
+
+    assert _resolver_hits == [tcw]
+
+
+def test_focused_non_main_window_is_not_a_candidate():
+    """QuickBattle focuses config panes. Those must not capture keyboard
+    events as a side effect of focus-aware routing."""
+    import App
+    from engine.appc import top_window
+    from engine.appc.input import KS_NORMAL
+
+    del _resolver_hits[:]
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    pane = TGEventHandlerObject()
+    pane.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_TALK_TO_HELM, __name__ + "._resolver_probe")
+    tw.SetFocus(pane)                          # focused, but NOT a main window
+
+    tcw = TGEventHandlerObject()
+    tcw.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_TALK_TO_HELM, __name__ + "._resolver_probe2")
+
+    em = TGEventManager()
+    kb = KeyboardBinding(em)
+    kb.SetDefaultDestination(tcw)
+    kb.BindKey(App.WC_F1, KS_NORMAL, App.ET_INPUT_TALK_TO_HELM)
+    evt = TGKeyboardEvent()
+    evt.SetUnicodeKey(App.WC_F1)
+    evt.SetKeyState(KS_NORMAL)
+    kb.OnKeyboardEvent(None, evt)
+
+    assert _resolver_hits == [tcw]
+
+
+def _resolver_probe2(pObject, pEvent):
+    _resolver_hits.append(pObject)

@@ -136,17 +136,11 @@ def register_for_frame(_h, session, player) -> None:
         "Spawn/despawn skinned test character (SP1) — F7",
     )
 
-    # F9: quick-repair the player ship (stock BC's Caps+R debug binding,
-    # ET_INPUT_DEBUG_QUICK_REPAIR -> TacticalInterfaceHandlers.RepairShip).
-    # Live-verify lever for the repair feature: damage, watch the queue
-    # fill + Brex speak, F9, watch it all clear.
-    def _quick_repair() -> None:
-        from engine.appc.subsystems import repair_ship_fully
-        repair_ship_fully(player)
-
-    dev_mode.register_dev_keybinding(
-        _h.keys.KEY_F9, _quick_repair, "Quick-repair player ship (dev) — F9"
-    )
+    # NOTE: F9 is deliberately NOT bound here. BC binds it to
+    # ET_INPUT_TOGGLE_CINEMATIC_MODE in every Default*KeyboardBinding.py, and
+    # quick-repair used to squat on it. Quick-repair now lives on the
+    # Developer Options > Combat > "Quick Repair Player Ship" button
+    # (engine/ui/developer_options_panel.py). Do not re-bind F9 to a dev tool.
 
     # F8: toggle the engine-hum audio-geometry console readout (Part 2 of the
     # exterior-audio-fidelity live-verification pass — see

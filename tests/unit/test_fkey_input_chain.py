@@ -106,3 +106,35 @@ def test_stock_mapping_bound_for_all_five():
         binding = App.g_kKeyboardBinding._bindings.get(key)
         assert binding is not None, wc_name
         assert binding[0] == getattr(App, et_name), wc_name
+
+
+def test_cinematic_input_constants_are_defined_and_distinct():
+    """CinematicInterfaceHandlers.Initialize registers six F-key handlers
+    (F1-F6, CinematicInterfaceHandlers.py:154-159). An undefined App.<NAME>
+    hands back a truthy _NamedStub that coerces to int()==0, so all six would
+    register on the SAME bogus event type and shadow one another — the
+    undefined-constant collapse class documented in docs/stub_heatmap.md."""
+    import App
+    names = (
+        "ET_INPUT_CINEMATIC_DROPANDWATCH",
+        "ET_INPUT_CINEMATIC_CHASE",
+        "ET_INPUT_CINEMATIC_TARGET",
+        "ET_INPUT_CINEMATIC_TORPCAM",
+        "ET_INPUT_CINEMATIC_WIDETARGET",
+        "ET_INPUT_CINEMATIC_FREEORBIT",
+    )
+    values = [App.__dict__.get(n) for n in names]
+    assert all(isinstance(v, int) for v in values), dict(zip(names, values))
+    assert len(set(values)) == len(names)
+    assert App.ET_INPUT_TOGGLE_CINEMATIC_MODE not in values
+
+    # ...and must not alias ANY other event constant. 1091 looked like the next
+    # free value after ET_INPUT_TOGGLE_PICK_FIRE = 1090, but ET_MOUSE holds it.
+    others = {
+        App.__dict__[n]: n for n in App.__dict__
+        if n.startswith("ET_") and n not in names
+        and type(App.__dict__[n]) is int
+    }
+    clash = set(values) & set(others)
+    assert not clash, "cinematic code collides with %r" % (
+        {c: others[c] for c in clash},)

@@ -488,6 +488,50 @@ class SetClass(TGEventHandlerObject):
         orbit/nav handlers repopulate)."""
         return []
 
+    def GetTargetableObjects(self, pSkipObject=None, bMustBeAlive=0):
+        """Objects in this set that may be targeted (SDK
+        ``SetClass_GetTargetableObjects``), as a real, ITERABLE list.
+
+        Consumed by CinematicInterfaceHandlers.CameraTarget:356 — F3 in
+        cinematic mode — which immediately does ``range(len(lSources))`` and
+        ``lSources[i]``. Must not fall through ``__getattr__``: that vends a
+        truthy, non-iterable ``_RendererStub``, which sails past the SDK's
+        ``if lSources:`` guard and then raises
+        ``TypeError: object of type '_RendererStub' has no len()``. Same bug
+        class, and the same fix, as GetNavPoints just above.
+
+        ``pSkipObject`` is excluded from the result (CameraTarget passes the
+        player: you cannot reverse-target yourself). ``bMustBeAlive`` drops
+        dying/dead objects; CameraTarget passes 0 with the comment "Sources
+        don't need to be alive...".
+
+        Both filters ask the MRO via engine.core.ids.implements rather than
+        hasattr/getattr-with-default, which cannot answer the question on a
+        TGObject (its ``__getattr__`` hands back a truthy ``_Stub`` for every
+        unknown name, so hasattr is vacuously True and every object would look
+        both targetable and dying). An object that does not implement the call
+        at all is kept: IsTargetable's property default is permissive
+        (properties.py:260), and an object with no IsDying plainly is alive —
+        the same treatment camera_modes._target_alive gives a missing IsDying.
+
+        Waypoints and placements ARE excluded, but by their own flag, not by a
+        special case here: PlacementObject sets _targetable False (you cannot
+        target a nav marker in BC), because otherwise F3's source cycle — this
+        method's only SDK caller — attached the cinematic camera to them.
+        """
+        from engine.core.ids import implements
+
+        results = []
+        for obj in self._objects.values():
+            if pSkipObject is not None and obj is pSkipObject:
+                continue
+            if implements(obj, "IsTargetable") and not obj.IsTargetable():
+                continue
+            if bMustBeAlive and implements(obj, "IsDying") and obj.IsDying():
+                continue
+            results.append(obj)
+        return results
+
 
 class SetManager:
     def __init__(self):

@@ -445,11 +445,48 @@ class _CinematicWindow(TGEventHandlerObject):
     a truthy stub for IsWindowActive() silently flips those guards.
     """
 
-    def IsWindowActive(self):
-        return 0
+    def __init__(self):
+        super().__init__()
+        # BC's normal-state default is interactive; StartCinematicMode passes
+        # bInteractive explicitly when a script wants it non-interactive.
+        self._interactive = 1
+
+    def SetInteractive(self, value):
+        self._interactive = 1 if value else 0
 
     def IsInteractive(self):
-        return 1
+        return self._interactive
+
+    def IsWindowActive(self):
+        """Active == holds TopWindow focus. Derived, never stored: a second
+        flag could disagree with focus, and focus is what routing reads."""
+        import App
+        top = App.TopWindow_GetTopWindow()
+        return 1 if (top is not None and top.GetFocus() is self) else 0
+
+
+def CinematicWindow_Cast(obj):
+    """SDK cast helper; returns obj if it walks like a CinematicWindow else None.
+
+    A REAL cast, not an identity function. Seven SDK sites take the
+    `pCinematic = App.CinematicWindow_Cast(pTop.FindMainWindow(MWT_CINEMATIC))`
+    / `if pCinematic:` shape (MissionLib.py:784,
+    Bridge/TacticalInterfaceHandlers.py:1038, WarpSequence.py:504,
+    CinematicInterfaceHandlers.py:316, Actions/CameraScriptActions.py:396+413,
+    QuickBattle/QuickBattle.py:3324) and then call SetInteractive/IsInteractive
+    on the result. Absent, the name resolved through App's module __getattr__
+    to a truthy _NamedStub — docs/stub_heatmap.md rank 64, 246 live hits in
+    230/233 recorded runs, with rank 65 being CinematicWindow_Cast().
+    SetInteractive — so all seven operated on a stub and the window's real
+    interactive state was unreachable from SDK code. Same class of gap as the
+    WarpSequence_Cast bug and the armed MapWindow_Cast trap documented at
+    top_window.py:269.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, _CinematicWindow):
+        return obj
+    return None
 
 
 class _MainViewWindow(TGEventHandlerObject):
