@@ -5155,15 +5155,33 @@ def _active_cutscene_camera():
     Gated on a live IsValid() mode so plain comm 'maincamera's, mode-less
     cameras, and dead-target modes all return None and the director resumes.
 
-    BC's cinematic mode (F9) outranks both: while the cinematic window holds
-    focus, the player camera's hierarchy-RESOLVED mode drives the exterior
-    view. The default InvalidCinematic->DropAndWatch edge dead-ends invalid
-    (no DropAndWatch mode class yet), so before an F-key re-points the edge
-    the resolution fails IsValid() and everything below proceeds as if
-    cinematic mode were off.
+    Precedence (BC's): the rendered set's live cutscene camera wins; the
+    cinematic-mode (F9) branch runs only when that yields nothing; the final
+    fallback is the director (None). Evidence for the ordering:
+    AI/Compound/DockWithStarbase.py SetupCutscene enters cinematic mode AND
+    installs an authored "DockingCam" (CutsceneCameraBegin + Camera.Placement
+    + MakeRenderedSet) — in BC the set camera renders the docking sweep even
+    though the cinematic window holds focus and the player camera's resolved
+    mode is valid. If cinematic focus outranked the set camera, that authored
+    sweep would be dead code.
+
+    While cinematic mode is active with no set cutscene camera, the player
+    camera's hierarchy-RESOLVED mode drives the exterior view. The default
+    InvalidCinematic->DropAndWatch edge dead-ends invalid (no DropAndWatch
+    mode class yet), so before an F-key re-points the edge the resolution
+    fails IsValid() and we fall through as if cinematic mode were off.
     """
     import App as _App
     from engine.core import ids as _ids
+    rendered = _App.g_kSetManager.get_explicit_rendered_set()
+    if rendered is not None:
+        get_active = getattr(rendered, "GetActiveCamera", None)
+        cam = get_active() if callable(get_active) else None
+        if cam is not None:
+            get_mode = getattr(cam, "GetCurrentCameraMode", None)
+            mode = get_mode() if callable(get_mode) else None
+            if mode is not None and mode.IsValid():
+                return (cam, mode)
     _top = _App.TopWindow_GetTopWindow()
     # implements(), not getattr-with-default: a TGObject-derived test double
     # vends a truthy callable _Stub for unknown names, which would wrongly
@@ -5176,18 +5194,7 @@ def _active_cutscene_camera():
             _mode = _pcam.GetCurrentCameraMode()       # hierarchy-resolved
             if _mode is not None and _mode.IsValid():
                 return (_pcam, _mode)
-    rendered = _App.g_kSetManager.get_explicit_rendered_set()
-    if rendered is None:
-        return None
-    get_active = getattr(rendered, "GetActiveCamera", None)
-    cam = get_active() if callable(get_active) else None
-    if cam is None:
-        return None
-    get_mode = getattr(cam, "GetCurrentCameraMode", None)
-    mode = get_mode() if callable(get_mode) else None
-    if mode is None or not mode.IsValid():
-        return None
-    return (cam, mode)
+    return None
 
 
 def _cutscene_pose(mode, dt, pose_of=None):

@@ -98,20 +98,27 @@ def test_cinematic_mode_drives_the_player_camera_resolved_mode():
     assert got_mode.IsValid()
 
 
-def test_cinematic_mode_beats_a_mission_cutscene_camera():
-    """BC-faithful: the cinematic window holds focus, so the player camera
-    outranks a rendered set's live CutsceneCam while F9 is active."""
+def test_mission_cutscene_camera_beats_cinematic_mode():
+    """BC precedence: the rendered set's live cutscene camera outranks the
+    F9 cinematic window. Evidence: AI/Compound/DockWithStarbase.py
+    SetupCutscene (lines 26-42) enters cinematic mode AND installs an
+    authored "DockingCam" (CutsceneCameraBegin + Camera.Placement +
+    MakeRenderedSet) — in BC the set's active camera renders the docking
+    sweep even though the cinematic window holds focus and the player
+    camera's resolved mode is valid. If cinematic focus outranked the set
+    camera, that authored sweep would be dead code. The player camera
+    takes over only once the set camera is gone (e.g. after DeleteSet)."""
     ship = App.ShipClass_Create("CineSelRival")
     ship.SetTranslate(TGPoint3(10.0, 0.0, 0.0))
     s, set_cam, set_mode = _space_set_with_cutscene_cam("cc_cine_set", ship)
     tw, game, pcam = _enter_cinematic_with_player()
     pcam.AddModeHierarchy("InvalidCinematic", "Chase")
     got = _active_cutscene_camera()
-    tw.ToggleCinematicWindow()
-    after = _active_cutscene_camera()
     App.g_kSetManager.DeleteSet("cc_cine_set")
-    assert got is not None and got[0] is pcam           # cinematic wins...
-    assert after is not None and after[0] is set_cam    # ...set cam resumes
+    after = _active_cutscene_camera()
+    tw.ToggleCinematicWindow()
+    assert got is not None and got[0] is set_cam        # set camera wins under F9
+    assert after is not None and after[0] is pcam       # cinematic takes over once gone
 
 
 def test_cinematic_mode_with_unresolvable_mode_falls_through():
