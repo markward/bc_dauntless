@@ -157,8 +157,16 @@ function setTargetList(state) {
                       + ' onclick="event.stopPropagation();' + subToggleAttr + '">'
                       + (subExpanded ? '&#9662;' : '&#9656;') + '</span>'
                     : '<span class="target-list__sub-bullet">&#8226;</span>';
+                // A row WITH children is a group header ("Warp Engines",
+                // "Phasers"). BC flags every aggregator SetTargetable(0), so it
+                // is not lockable — its whole row toggles, like the caret.
+                // Only a lockable leaf row sets the subsystem lock. The engine
+                // refuses a non-targetable lock anyway (target_list_view.
+                // dispatch_event), so this keeps the click from quietly
+                // clearing the lock the player already had.
+                const subRowAttr = hasChildren ? subToggleAttr : subAttr;
                 html += '<div class="target-list__sub target-list__sub--' + aff + subChosen + '"'
-                      +   ' onclick="' + subAttr + '">'
+                      +   ' onclick="' + subRowAttr + '">'
                       +   subCaret
                       +   '<span class="target-list__sub-name">' + escapeHtml(subName) + '</span>'
                       +   '<span class="target-list__sub-bar"'

@@ -9,8 +9,9 @@ Pins the three fixes that make an asteroid render like the original game:
      pegs the hull at 300/300 = 100% via the shared property template, even
      though the hardpoint declared a larger max.
 
-Also guards that a real warship KEEPS its targetable systems but likewise
-drops the hull row and any non-targetable group.
+Also guards that a real warship KEEPS its targetable systems, drops the hull
+row, and GROUPS its leaves under the non-targetable aggregators BC ships them
+under ("Warp Engines" -> Port/Star Warp).
 """
 import importlib
 import sys
@@ -87,6 +88,39 @@ def test_warship_keeps_targetable_systems_but_no_hull_row():
     assert not any("hull" in r.lower() for r in rows)
     # A targetable system is present (Shield Generator / Sensor Array etc.).
     assert any(r in ("Shield Generator", "Sensor Array", "Power Plant") for r in rows)
+
+
+# ── Grouping under real hardpoint data ────────────────────────────────────────
+
+def _tree(ship):
+    """Row labels as (label, [child labels]) pairs — the shape the HUD draws."""
+    menu = STTargetMenu("t")
+    menu.set_contacts(_listed(ship))
+    row = menu.GetObjectEntry(ship)
+    return [(c.GetLabel(), [gc.GetLabel() for gc in c._children])
+            for c in row._children]
+
+
+def test_galaxy_groups_nacelles_under_warp_engines():
+    """galaxy.py: WarpEngines.SetTargetable(0) with Port/Star Warp
+    SetTargetable(1). The group is a header, not a deletion."""
+    tree = dict(_tree(_build("galaxy", "Galaxy")))
+    assert "Warp Engines" in tree, "the aggregator must remain as a group header"
+    assert sorted(tree["Warp Engines"]) == ["Port Warp", "Star Warp"]
+    # ...and the nacelles must NOT also appear at the top level.
+    assert "Port Warp" not in tree
+
+
+def test_galaxy_groups_every_bc_aggregator():
+    tree = dict(_tree(_build("galaxy", "Galaxy")))
+    for group, n in (("Impulse Engines", 3), ("Warp Engines", 2),
+                     ("Torpedoes", 6), ("Phasers", 8), ("Tractors", 4)):
+        assert group in tree, group + " must be a group header"
+        assert len(tree[group]) == n, group + " child count"
+    # Engineering is non-targetable AND childless -> still dropped.
+    assert "Engineering" not in tree
+    # Genuinely top-level targetable systems stay flat.
+    assert tree["Sensor Array"] == []
 
 
 # ── #2: shield-less targets ───────────────────────────────────────────────────

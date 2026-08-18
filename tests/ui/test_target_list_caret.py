@@ -171,3 +171,25 @@ def test_empty_caret_click_falls_through_to_the_row_handler():
             "+ aff + chosen + expandedCls + '\"'\n"
             "              +   ' onclick=\"' + targetAttr + '\">'"
             in text)
+
+
+def test_group_header_row_toggles_instead_of_locking():
+    """A subsystem row WITH children is a group header ("Warp Engines",
+    "Phasers"). BC flags every aggregator SetTargetable(0), so it cannot be
+    the subsystem lock — its whole row must toggle expansion.
+
+    Pins the routing, not just the presence of a variable: the sub-row div's
+    onclick must be `subRowAttr`, and `subRowAttr` must select the TOGGLE
+    action when the row has children. Reverting either half (div back to
+    `subAttr`, or the ternary to an unconditional `subAttr`) fails this.
+
+    The engine refuses the lock independently
+    (test_dispatch_event_will_not_lock_a_non_targetable_group_header); this
+    keeps the click from clearing a lock the player already had.
+    """
+    text = _source(JS)
+    assert "const subRowAttr = hasChildren ? subToggleAttr : subAttr;" in text
+    assert ("html += '<div class=\"target-list__sub target-list__sub--' "
+            "+ aff + subChosen + '\"'\n"
+            "                      +   ' onclick=\"' + subRowAttr + '\">'"
+            in text)
