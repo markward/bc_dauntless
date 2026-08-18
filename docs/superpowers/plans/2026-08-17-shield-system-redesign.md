@@ -1,5 +1,20 @@
 # Shield System Redesign Implementation Plan
 
+> ## ⛔ ABANDONED — 2026-08-18. DO NOT EXECUTE THIS PLAN.
+>
+> This redesign was implemented in full on `feat/shield-system-redesign`
+> (26 commits, gate green throughout) and **failed live testing**. Mark's
+> verdict after several in-game passes: the behaviour ended up *further* from
+> stock BC than what it replaced. The branch was never merged and main is
+> unaffected.
+>
+> **Do not restart from this document.** Any future attempt should begin from
+> a fresh live baseline of current behaviour, not from this plan's task list.
+>
+> See `docs/engine/shield-redesign-postmortem.md` for what went wrong, and for
+> the handful of findings that ARE worth keeping.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace our strict-cascade shield model with BC's ellipsoid facing selection, pass-through absorption ramp, and power-linked 0.5 s charge cadence.
