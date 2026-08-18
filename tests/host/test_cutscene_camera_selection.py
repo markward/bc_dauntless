@@ -62,8 +62,9 @@ def test_none_when_mode_target_dead():
 # RESOLVED mode (GetCurrentCameraMode()) drives the exterior view — but only
 # AFTER the rendered set's live cutscene camera, which outranks it (see
 # test_mission_cutscene_camera_beats_cinematic_mode for the SDK evidence).
-# The director gets the frame when the resolution dead-ends invalid (default
-# InvalidCinematic->DropAndWatch edge, no DropAndWatch mode class yet).
+# The director gets the frame when the resolution dead-ends invalid (the
+# default InvalidCinematic->DropAndWatch edge builds a real DropAndWatchMode,
+# which is invalid until SetPlayer wires its Target).
 
 def _current_game():
     """Install a current Game if the harness has none. The conftest autouse
@@ -123,8 +124,9 @@ def test_mission_cutscene_camera_beats_cinematic_mode():
 
 
 def test_cinematic_mode_with_unresolvable_mode_falls_through():
-    """Default edge dead-ends invalid (no DropAndWatch class): the existing
-    logic keeps the frame — None here, absent a mission cutscene camera."""
+    """Default edge dead-ends invalid — DropAndWatch has no Target with no
+    player ship — so the director keeps the frame: None here, absent a mission
+    cutscene camera."""
     from engine.appc import top_window
     top_window.reset_for_tests()
     tw = top_window.TopWindow_GetTopWindow()

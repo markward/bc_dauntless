@@ -401,6 +401,199 @@ def test_chase_scales_with_a_bigger_hull():
     assert abs(eye[1] + 24.0) < 1e-6
 
 
+# ── DropAndWatch ──────────────────────────────────────────────────────────────
+# BC's DEFAULT cinematic mode (Camera.py:641 wires
+# AddModeHierarchy("InvalidCinematic", "DropAndWatch")), so bare F9 lands here.
+# The camera DROPS to a fixed world point and WATCHES the ship fly past,
+# re-dropping once the ship gets too far away.
+from engine.appc.camera_modes import DropAndWatchMode
+
+
+def test_camera_mode_create_dispatches_dropandwatch():
+    """CameraModes.DropAndWatch (CameraModes.py:145) builds kind "DropAndWatch";
+    it used to fall through to the always-invalid PlaceByDirection attr bag."""
+    assert isinstance(CameraMode_Create("DropAndWatch"), DropAndWatchMode)
+
+
+def test_drop_and_watch_invalid_without_target():
+    assert not DropAndWatchMode().IsValid()
+
+
+class _MovingTarget(_FakeTarget):
+    """_FakeTarget plus the PhysicsObjectClass velocity surface."""
+    def __init__(self, loc, vel, rot=None, radius=1.0):
+        super().__init__(loc, rot=rot, radius=radius)
+        self._vel = TGPoint3(*vel)
+
+    def GetVelocityTG(self):
+        return TGPoint3(self._vel.x, self._vel.y, self._vel.z)
+
+
+def _authored_drop_and_watch(target):
+    """A mode carrying the SDK's authored attrs (CameraModes.py:147-159)."""
+    m = DropAndWatchMode()
+    for name, v in (("AwayDistance", 0.0), ("RotateSpeed", 0.0),
+                    ("AnticipationTime", 2.5), ("ForwardOffset", 0.5),
+                    ("SideOffset", 3.0), ("AwayDistanceFactor", 1.2),
+                    ("AxisAvoidAngles", 45.0), ("SlowSpeedThreshold", 0.5),
+                    ("SlowRotationThreshold", 0.1), ("RotateSpeedAccel", 0.025),
+                    ("MaxRotateSpeed", 0.2)):
+        m.SetAttrFloat(name, v)
+    m.SetAttrIDObject("Target", target)
+    return m
+
+
+def test_drop_and_watch_drops_off_to_the_side_of_a_stationary_target():
+    """Drop point = ForwardOffset/SideOffset in the target's body frame, scaled
+    by its radius (ChaseMode's radius-relative convention). A stationary target
+    contributes no anticipation term."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)   # identity: fwd +Y, right +X
+    m = _authored_drop_and_watch(t)
+    eye, _fwd, up = m.Update()
+    assert eye == (3.0, 0.5, 0.0)                  # right*3.0 + forward*0.5
+    assert up == (0.0, 0.0, 1.0)                   # target col2
+
+
+def test_drop_and_watch_offsets_scale_with_the_hull():
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=4.0)
+    eye, _fwd, _up = _authored_drop_and_watch(t).Update()
+    assert eye == (12.0, 2.0, 0.0)
+
+
+def test_drop_and_watch_point_stays_put_while_the_target_moves():
+    """THE defining behaviour: the drop point is state, not a per-frame
+    function of the target's pose. Steps kept inside the re-drop radius."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    first, _fwd, _up = m.Update()
+    for i in range(1, 6):
+        t._loc = TGPoint3(0.0, 0.5 * i, 0.0)
+        eye, _fwd, _up = m.Update(1.0 / 60.0)
+        assert eye == first, f"drop point moved on step {i}: {eye} != {first}"
+
+
+def test_drop_and_watch_keeps_looking_at_the_moving_target():
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    m.Update()
+    t._loc = TGPoint3(0.0, 2.0, 0.0)
+    _eye, fwd, _up = m.Update()                    # no dt => snap to ideal
+    want = math.sqrt(3.0 ** 2 + 1.5 ** 2)
+    assert abs(fwd[0] - (-3.0 / want)) < 1e-9      # from (3,0.5,0) to (0,2,0)
+    assert abs(fwd[1] - (1.5 / want)) < 1e-9
+
+
+def test_drop_and_watch_anticipates_the_targets_motion():
+    """The drop point leads the target by velocity * AnticipationTime, so the
+    ship flies INTO the shot: 10 GU/s * 2.5 s = 25 GU ahead, + ForwardOffset."""
+    t = _MovingTarget((0.0, 0.0, 0.0), (0.0, 10.0, 0.0), radius=1.0)
+    eye, _fwd, _up = _authored_drop_and_watch(t).Update()
+    assert abs(eye[1] - 25.5) < 1e-9        # 25 lead + 0.5 forward offset
+
+
+def test_drop_and_watch_avoids_a_dead_astern_view():
+    """AxisAvoidAngles 45.0: a target flying straight along its own forward axis
+    must not end up framed dead-astern / dead-ahead — the anticipation term is
+    ALONG that axis, so this is the degenerate case of the placement."""
+    t = _MovingTarget((0.0, 0.0, 0.0), (0.0, 10.0, 0.0), radius=1.0)
+    eye, fwd, _up = _authored_drop_and_watch(t).Update()
+    axis = (0.0, 1.0, 0.0)                  # identity rotation => forward is +Y
+    along = abs(fwd[0] * axis[0] + fwd[1] * axis[1] + fwd[2] * axis[2])
+    assert along <= math.cos(math.radians(45.0)) + 1e-9, (
+        f"view direction {fwd} is only "
+        f"{math.degrees(math.acos(min(1.0, along))):.1f}deg off the flight axis")
+
+
+def test_drop_and_watch_avoidance_falls_back_to_the_right_axis():
+    """With no SideOffset the drop lands exactly on the target's track, so the
+    sideways nudge has no direction of its own and uses the body right axis."""
+    t = _MovingTarget((0.0, 0.0, 0.0), (0.0, 10.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    m.SetAttrFloat("SideOffset", 0.0)
+    eye, _fwd, _up = m.Update()
+    assert abs(eye[0] - 25.5) < 1e-9        # pushed out along +X (right)
+    assert abs(eye[1] - 25.5) < 1e-9        # along-track component preserved
+
+
+def test_drop_and_watch_target_without_velocity_surface_drops_at_its_position(
+        monkeypatch):
+    """GetVelocityTG is PhysicsObjectClass surface — a waypoint / placement
+    target has none, and must simply drop with no anticipation term instead of
+    raising. Decided on the MRO: this target is TGObject-derived, so
+    hasattr/getattr are vacuously true and calling the vended _Stub would both
+    lie (its arithmetic collapses to 0) and burn a heatmap hit every frame."""
+    from engine.core import ids as _ids
+    from engine.core import stub_telemetry
+
+    class _NoVelocityTarget(_ids.TGObject):
+        def __init__(self):
+            super().__init__()
+            self._pos = TGPoint3(0.0, 0.0, 0.0)
+
+        def GetWorldLocation(self):  return TGPoint3(self._pos.x, self._pos.y, self._pos.z)
+        def GetWorldRotation(self):  return TGMatrix3()
+        def GetRadius(self):         return 1.0
+
+    t = _NoVelocityTarget()
+    assert hasattr(t, "GetVelocityTG")             # !!! true, and it is a _Stub
+
+    hits = []
+    monkeypatch.setattr(stub_telemetry, "ENABLED", True)
+    monkeypatch.setattr(stub_telemetry, "record_attr",
+                        lambda owner, attr: hits.append((owner, attr)))
+    eye, _fwd, _up = _authored_drop_and_watch(t).Update()
+    assert eye == (3.0, 0.5, 0.0)                  # no anticipation term
+    assert not [h for h in hits if h[1] == "GetVelocityTG"], hits
+
+
+def test_drop_and_watch_redrops_once_the_target_gets_too_far():
+    """d0 = drop→target distance at drop time (3.041 here); the camera re-drops
+    once the target passes d0 * AwayDistanceFactor."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    first, _fwd, _up = m.Update()
+    assert first == (3.0, 0.5, 0.0)
+    t._loc = TGPoint3(0.0, 50.0, 0.0)              # far past d0 * 1.2
+    eye, _fwd, _up = m.Update()
+    assert eye != first
+    assert eye == (3.0, 50.5, 0.0)                 # dropped beside the new pose
+
+
+def test_drop_and_watch_redrop_cuts_instead_of_gliding():
+    """The base sweep already handles this: a new drop point is a big jump, so
+    _pose_discontinuity cuts. Verified, not assumed — no cut logic of our own."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    m.Update()
+    t._loc = TGPoint3(0.0, 50.0, 0.0)
+    eye, _fwd, _up = m.Update(1.0 / 60.0)          # WITH dt: would glide
+    assert eye == (3.0, 50.5, 0.0)                 # cut straight to the new drop
+
+
+def test_drop_and_watch_away_distance_floors_the_redrop_radius():
+    """WarpSequence.py:252 re-authors AwayDistance 100000.0 for its arrival
+    shot — read as a floor on d0, that pins the camera for the whole arrival."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    m.SetAttrFloat("AwayDistance", 1000.0)
+    first, _fwd, _up = m.Update()
+    t._loc = TGPoint3(0.0, 500.0, 0.0)             # way past the un-floored d0
+    eye, _fwd, _up = m.Update()
+    assert eye == first
+
+
+def test_drop_and_watch_redrops_when_the_target_changes():
+    """A new Target is a new shot even if the old drop point is still in range
+    (3.041 away here, under the 3.650 re-drop radius)."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    first, _fwd, _up = m.Update()
+    m.SetAttrIDObject("Target", _FakeTarget((0.0, 1.0, 0.0), radius=1.0))
+    eye, _fwd, _up = m.Update()
+    assert first == (3.0, 0.5, 0.0)
+    assert eye == (3.0, 1.5, 0.0)
+
+
 def test_reverse_chase_is_default_position_sign_not_a_flag():
     """ReverseChase is +Y DefaultPosition, no constructor argument."""
     t = _FakeTarget((0.0, 0.0, 0.0), radius=2.0)

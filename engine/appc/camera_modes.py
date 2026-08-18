@@ -197,6 +197,7 @@ def CameraMode_Create(kind, pCamera=None):
             # are not interchangeable. Both map to PlacementMode.
             "PlacementWatch": PlacementMode,
             "ZoomTarget": ZoomTargetMode,
+            "DropAndWatch": DropAndWatchMode,
         }
         cls = _dispatch.get(kind)
         mode = cls() if cls is not None else PlaceByDirectionMode(kind)
@@ -326,6 +327,179 @@ class PlacementMode(CameraMode):
                 dx, dy, dz = d.x, d.y, d.z
             fwd = _unit(dx - s.x, dy - s.y, dz - s.z)
         return (eye, fwd, up)
+
+
+# BC's authored DropAndWatch attrs (CameraModes.DropAndWatch, CameraModes.py:
+# 144-162), used when a mode is constructed bare — i.e. by anything that does
+# not run the SDK builder. ForwardOffset/SideOffset are multiples of the
+# target's radius (our inference, matching ChaseMode's authored Distance);
+# AnticipationTime is seconds; AxisAvoidAngles is degrees.
+DROP_DEFAULT_ANTICIPATION_TIME = 2.5
+DROP_DEFAULT_FORWARD_OFFSET = 0.5
+DROP_DEFAULT_SIDE_OFFSET = 3.0
+DROP_DEFAULT_AWAY_DISTANCE = 0.0
+DROP_DEFAULT_AWAY_DISTANCE_FACTOR = 1.2
+DROP_DEFAULT_AXIS_AVOID_ANGLES = 45.0
+
+
+def _distance(p, loc):
+    """|p - loc| where p is a 3-tuple and loc a TGPoint3."""
+    dx, dy, dz = p[0] - loc.x, p[1] - loc.y, p[2] - loc.z
+    return _math.sqrt(dx * dx + dy * dy + dz * dz)
+
+
+def _target_velocity(obj):
+    """(vx, vy, vz) world velocity in GU/s, or zeros when the object has no
+    real GetVelocityTG (it is PhysicsObjectClass surface, so waypoints and
+    placements lack it). Asks the MRO for the same reason _target_alive does:
+    a TGObject's __getattr__ hands back a truthy _Stub whose arithmetic
+    silently collapses to 0, so hasattr/getattr cannot answer this."""
+    from engine.core.ids import implements
+    if not implements(obj, "GetVelocityTG"):
+        return (0.0, 0.0, 0.0)
+    try:
+        v = obj.GetVelocityTG()
+        return (float(v.x), float(v.y), float(v.z))
+    except Exception:
+        return (0.0, 0.0, 0.0)
+
+
+class DropAndWatchMode(CameraMode):
+    """Drop the camera at a fixed world point and watch the target fly past.
+
+    ⚠️ THIS IS NOT A RECONSTRUCTION OF BC'S ALGORITHM. The clean-room reference
+    has no DropAndWatch entry, so only half of this is sourced:
+
+    * SOURCED — the attribute NAMES and their authored VALUES, read verbatim
+      from CameraModes.DropAndWatch (CameraModes.py:144-162): AwayDistance 0.0,
+      RotateSpeed 0.0, AnticipationTime 2.5, ForwardOffset 0.5, SideOffset 3.0,
+      AwayDistanceFactor 1.2, AxisAvoidAngles 45.0, SlowSpeedThreshold 0.5,
+      SlowRotationThreshold 0.1, RotateSpeedAccel 0.025, MaxRotateSpeed 0.2.
+      Also sourced: the mode takes a "Target" (Camera.LowDropAndWatch,
+      Camera.py:276) and WarpSequence.py:248-271 re-authors AwayDistance
+      100000.0 / ForwardOffset 10.0 / a random SideOffset for its arrival shot.
+    * INFERRED — everything below: that the drop point is
+      target_loc + velocity*AnticipationTime offset by ForwardOffset/SideOffset
+      in the target's body frame, that those offsets are radius-relative, the
+      off-axis avoidance rule, and the re-drop rule. All of it is read off the
+      parameter names and defaults, not recovered from the binary. Treat it as
+      a plausible flyby shot that honours the authored numbers, not as BC.
+
+    Placement (inferred):
+      drop = target_loc + velocity*AnticipationTime
+             + radius*(forward*ForwardOffset + right*SideOffset)
+      Radius-relative because that is what ChaseMode's authored Distance is
+      (a multiple of GetRadius), so the shot frames a Galaxy and a shuttle the
+      same way. Body axes are column-vector right-handed: GetCol(0) = right,
+      GetCol(1) = forward, GetCol(2) = up (CLAUDE.md).
+
+    Off-axis avoidance (inferred): AxisAvoidAngles 45.0 reads as "never let the
+    shot line up with the flight axis" — dead-ahead and dead-astern are the two
+    framings a flyby exists to avoid, and both are the degenerate case of this
+    placement (the anticipation term is along forward, so a fast target out-runs
+    any SideOffset and the camera lands on its track). The drop point is pushed
+    sideways — perpendicular to the target's forward axis, keeping its
+    along-track component — until the view direction is at least
+    AxisAvoidAngles off that axis. The perpendicular direction is the offset's
+    own, or the target's right axis when the offset is purely along-track.
+
+    Re-drop (inferred): d0 is the drop-point→target distance recorded AT DROP
+    TIME, floored by AwayDistance; the camera re-drops once the target passes
+    d0*AwayDistanceFactor away, and whenever there is no drop point yet or the
+    Target changed identity. That reading is what makes WarpSequence's
+    AwayDistance 100000.0 sensible: it floors d0 so high that the arrival shot
+    never re-drops. The re-drop needs no cut logic of its own — a new drop point
+    is a big jump, so the base Update()'s _pose_discontinuity check cuts rather
+    than gliding (tested, not assumed).
+
+    DELIBERATELY NOT IMPLEMENTED: the slow-orbit drift (RotateSpeed,
+    RotateSpeedAccel, MaxRotateSpeed, SlowSpeedThreshold,
+    SlowRotationThreshold). Those five read as "when the target is nearly
+    stationary, orbit it slowly instead of staring", but their coordinate frame,
+    axis and easing are pure guesswork — inventing camera motion is worse than
+    holding still, so they are read from the SDK and left unused. Same for
+    RangeAngle1-4, which only WarpSequence.py sets and CameraModes never
+    authors.
+    """
+
+    def __init__(self):
+        super().__init__()
+        # STATEFUL — unlike the other five modes, whose _ideal() is a pure
+        # function of the target's current pose. Staying put while the ship
+        # moves IS the shot, so the drop point is computed only on a re-drop.
+        self._drop = None            # world drop point (3-tuple) or None
+        self._drop_dist = None       # d0: drop→target distance at drop time
+        self._drop_target = None     # identity of the target we dropped for
+
+    def _ideal(self, pose_of=None):
+        t = self.GetAttrIDObject("Target")
+        if not _target_alive(t):
+            return None
+        loc, R = _obj_pose(t, pose_of)
+        if self._needs_drop(t, loc):
+            self._drop = self._compute_drop(t, loc, R)
+            self._drop_target = t
+            self._drop_dist = max(
+                _distance(self._drop, loc),
+                self.GetAttrFloat("AwayDistance", DROP_DEFAULT_AWAY_DISTANCE))
+        eye = self._drop
+        fwd = _unit(loc.x - eye[0], loc.y - eye[1], loc.z - eye[2])
+        u = R.GetCol(2)
+        return (eye, fwd, _unit(u.x, u.y, u.z))
+
+    def _needs_drop(self, t, loc):
+        """True when the shot is over and the camera should drop again: no drop
+        point yet, a different Target, or the target has flown past
+        d0 * AwayDistanceFactor (INFERRED — see the class docstring)."""
+        if self._drop is None or self._drop_target is not t:
+            return True
+        factor = self.GetAttrFloat("AwayDistanceFactor",
+                                   DROP_DEFAULT_AWAY_DISTANCE_FACTOR)
+        return _distance(self._drop, loc) > self._drop_dist * factor
+
+    def _compute_drop(self, t, loc, R):
+        """Where to put the camera for the next pass (INFERRED — see the class
+        docstring; none of this shape is recovered from BC)."""
+        r = _target_radius(t)
+        vx, vy, vz = _target_velocity(t)
+        lead = self.GetAttrFloat("AnticipationTime", DROP_DEFAULT_ANTICIPATION_TIME)
+        # Drop where the ship is GOING, so it flies into the shot rather than
+        # out of it.
+        ax, ay, az = loc.x + vx * lead, loc.y + vy * lead, loc.z + vz * lead
+        fo = self.GetAttrFloat("ForwardOffset", DROP_DEFAULT_FORWARD_OFFSET) * r
+        so = self.GetAttrFloat("SideOffset", DROP_DEFAULT_SIDE_OFFSET) * r
+        f, s = R.GetCol(1), R.GetCol(0)   # column-vector: 1 = forward, 0 = right
+        drop = (ax + f.x * fo + s.x * so,
+                ay + f.y * fo + s.y * so,
+                az + f.z * fo + s.z * so)
+        return self._avoid_axis(drop, loc, f, s)
+
+    def _avoid_axis(self, drop, loc, f, s):
+        """Push the drop point sideways until the shot is at least
+        AxisAvoidAngles off the target's flight axis (INFERRED — see the class
+        docstring). Decompose drop-target into its along-axis component `a` and
+        its perpendicular `perp`: the view direction sits atan2(|perp|, |a|) off
+        the axis, so the shot clears the cone as soon as
+        |perp| >= |a| * tan(AxisAvoidAngles). Only |perp| is grown — the
+        along-track lead the anticipation bought is left alone — and its
+        direction is the offset's own, or the body right axis when the drop
+        landed exactly on the track."""
+        deg = self.GetAttrFloat("AxisAvoidAngles", DROP_DEFAULT_AXIS_AVOID_ANGLES)
+        deg = min(max(deg, 0.0), 89.0)    # 90 deg would demand an infinite push
+        if deg <= 0.0:
+            return drop
+        dx, dy, dz = drop[0] - loc.x, drop[1] - loc.y, drop[2] - loc.z
+        a = dx * f.x + dy * f.y + dz * f.z
+        px, py, pz = dx - a * f.x, dy - a * f.y, dz - a * f.z
+        p = _math.sqrt(px * px + py * py + pz * pz)
+        need = abs(a) * _math.tan(_math.radians(deg))
+        if p >= need:
+            return drop
+        if p < 1e-9:
+            px, py, pz, p = s.x, s.y, s.z, 1.0
+        return (loc.x + a * f.x + px / p * need,
+                loc.y + a * f.y + py / p * need,
+                loc.z + a * f.z + pz / p * need)
 
 
 class ZoomTargetMode(CameraMode):

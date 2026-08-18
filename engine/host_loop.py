@@ -5167,9 +5167,10 @@ def _active_cutscene_camera():
 
     While cinematic mode is active with no set cutscene camera, the player
     camera's hierarchy-RESOLVED mode drives the exterior view. The default
-    InvalidCinematic->DropAndWatch edge dead-ends invalid (no DropAndWatch
-    mode class yet), so before an F-key re-points the edge the resolution
-    fails IsValid() and we fall through as if cinematic mode were off.
+    InvalidCinematic->DropAndWatch edge now resolves to a real DropAndWatchMode
+    (engine/appc/camera_modes.py), so bare F9 gives BC's flyby shot as soon as
+    SetPlayer has wired its Target; with no player ship that mode fails
+    IsValid() and we fall through as if cinematic mode were off.
     """
     import App as _App
     from engine.core import ids as _ids
