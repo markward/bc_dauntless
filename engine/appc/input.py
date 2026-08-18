@@ -380,6 +380,18 @@ class KeyboardBinding(TGObject):
         destination (today's behaviour) when none did."""
         from engine.core import ids
         candidates = []
+        # BC routes keyboard input to the focused window first. Only a focused
+        # MAIN window counts: QuickBattle's OpenConfigDialog focuses config
+        # panes, which must not start capturing keyboard events. An event type
+        # the focused window did not register falls through to the scan below
+        # unchanged — that is what keeps the bridge crew menus on F1-F5.
+        import App as _App
+        _top = _App.TopWindow_GetTopWindow()
+        _focus = _top.GetFocus() if _top is not None else None
+        if _focus is not None:
+            _mains = getattr(_top, "_main_windows", None)
+            if isinstance(_mains, dict) and any(w is _focus for w in _mains.values()):
+                candidates.append(_focus)
         tcw = self._default_destination
         if tcw is not None:
             candidates.append(tcw)
