@@ -207,6 +207,39 @@ def test_camera_without_edges_resolves_to_raw_top():
     assert c.GetCurrentCameraMode() is m
 
 
+def test_invalid_torpcam_falls_back_to_chase_through_the_hierarchy():
+    """F4 (CinematicInterfaceHandlers.CameraTorpCam:387) re-points
+    InvalidCinematic -> TorpCam, and BC authors TorpCam -> Chase
+    (Camera.py:642). So with nothing in the air the composition — NOT any
+    fallback of TorpCameraMode's own — must land on the Chase camera. Verified
+    rather than assumed, because "report invalid and let the hierarchy do it"
+    is only correct if the hierarchy really does it."""
+    from engine.appc.camera_modes import TorpCameraMode
+    c = _cam()
+    ship = _FakeShip()
+    marker = ChaseMode()
+    c.AddNamedCameraMode("InvalidCinematic", marker)
+    c.AddModeHierarchy("InvalidCinematic", "TorpCam")
+    c.AddModeHierarchy("TorpCam", "Chase")
+    torpcam = c.GetNamedCameraMode("TorpCam")        # via CameraModes.TorpCam
+    assert isinstance(torpcam, TorpCameraMode)
+    torpcam.SetAttrIDObject("Target", ship)          # the player, per Camera.py:702
+    chase = _valid_chase(c, ship)
+    c.PushCameraMode(marker)
+    assert not torpcam.IsValid()                     # no torpedo in flight
+    assert c.GetCurrentCameraMode() is chase
+
+
+def test_named_torpcam_carries_the_sdk_authored_attrs():
+    """The named-mode path runs CameraModes.TorpCam, which is where BC keeps the
+    seven authored numbers — a bare class would silently lose them."""
+    m = _cam().GetNamedCameraMode("TorpCam")
+    assert m.GetAttrFloat("StartDistance") == 4.0
+    assert m.GetAttrFloat("LaterDistance") == 8.0
+    assert m.GetAttrFloat("MoveDistanceTime") == 6.0
+    assert m.GetAttrFloat("DelayAfterTorpGone") == 2.0
+
+
 def test_resolution_walks_two_hops_through_builder_modes():
     """InvalidSpace -> Target -> Chase: builder-created modes must carry a
     _named tag or the walk dead-ends at its first hop (the bug this pins:

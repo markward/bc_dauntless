@@ -198,6 +198,7 @@ def CameraMode_Create(kind, pCamera=None):
             "PlacementWatch": PlacementMode,
             "ZoomTarget": ZoomTargetMode,
             "DropAndWatch": DropAndWatchMode,
+            "TorpCam": TorpCameraMode,
         }
         cls = _dispatch.get(kind)
         mode = cls() if cls is not None else PlaceByDirectionMode(kind)
@@ -635,6 +636,216 @@ class DropAndWatchMode(CameraMode):
         return (loc.x + a * f.x + px / p * need,
                 loc.y + a * f.y + py / p * need,
                 loc.z + a * f.z + pz / p * need)
+
+
+# BC's authored TorpCam attrs (CameraModes.TorpCam, CameraModes.py:318-332),
+# used when a mode is constructed bare — i.e. by anything that does not run the
+# SDK builder. The two DISTANCES are read as ABSOLUTE game units (see the
+# TorpCameraMode docstring); they are module-level so a live look can retune the
+# ride without touching the SDK's authored numbers.
+TORP_DEFAULT_START_DISTANCE = 4.0        # GU behind the torpedo at launch
+TORP_DEFAULT_LATER_DISTANCE = 8.0        # GU behind it once the ramp is done
+TORP_DEFAULT_MOVE_DISTANCE_TIME = 6.0    # seconds of ride time for that ramp
+TORP_DEFAULT_DELAY_AFTER_TORP_GONE = 2.0  # seconds to hold the pose on the hit
+
+
+class TorpCameraMode(CameraMode):
+    """Ride behind the player's torpedo — BC's F4 cinematic camera.
+
+    ⚠️ THIS IS NOT A RECONSTRUCTION OF BC'S ALGORITHM. The clean-room reference
+    has no TorpCam entry, so only part of this is sourced:
+
+    * SOURCED — the attribute NAMES and their authored VALUES, read verbatim
+      from CameraModes.TorpCam (CameraModes.py:321-329): SweepTime 2.0,
+      PositionThreshold 0.01, DotThreshold 0.98, DelayAfterTorpGone 2.0,
+      StartDistance 4.0, LaterDistance 8.0, MoveDistanceTime 6.0. Also sourced:
+      the mode's "Target" attr is the PLAYER SHIP, not a torpedo
+      (Camera.MakePlayerCamera_PlayerChanged's 18-row table, Camera.py:702);
+      F4 selects it by re-pointing AddModeHierarchy("InvalidCinematic",
+      "TorpCam") (CinematicInterfaceHandlers.py:387); and an invalid TorpCam
+      falls through the authored edge TorpCam -> Chase (Camera.py:642).
+    * INFERRED — everything else below. Read off the parameter names and
+      magnitudes, not recovered from the binary.
+
+    Finding the torpedo (INFERRED): the Target is the FIRING ship, so the shot
+    to ride is that ship's most recently fired in-flight torpedo — the highest
+    _id among engine.appc.projectiles._active whose _source_ship is the Target.
+    _source_ship is what weapon_subsystems._spawn_projectile stamps on every
+    launch and what projectiles._matches_source already filters on.
+
+    Latching (INFERRED): once riding a torpedo the mode keeps riding THAT one
+    until it leaves the registry. Re-picking the newest every frame would make
+    the camera hop down a salvo as each tube fires. Same statefulness as
+    DropAndWatchMode's drop point. The latch holds only a plain reference and is
+    dropped the instant the torpedo leaves _active, so it can never keep an
+    expired torpedo alive or fight projectiles.expire().
+
+    Placement (INFERRED): eye = torpedo_position - flight_direction * distance,
+    forward = flight_direction. Behind it, looking along the flight path — which
+    is also looking AT the torpedo, since the two coincide exactly when the eye
+    is on the velocity axis. The flight direction is the torpedo's VELOCITY
+    (it carries no rotation), so a homing torpedo that turns swings the camera
+    round behind it; the last good direction is reused for a degenerate
+    (zero-velocity) tick. Up is the FIRING SHIP's up axis (GetCol(2),
+    column-vector right-handed) — the torpedo has no roll frame of its own, and
+    this keeps the shot level with the deck it was fired from.
+
+    Distance units (INFERRED, and the main judgement call): StartDistance /
+    LaterDistance are ABSOLUTE game units, not radius multiples. ChaseMode's
+    authored Distance is radius-relative because its Target IS the framed
+    object; here the Target is the firing ship, so the same reading would put
+    the camera 4 x a Galaxy's radius behind a torpedo and frame nothing. The
+    magnitudes agree: a photon torpedo's authored glow quad is 3.0 GU across
+    (Tactical/Projectiles/PhotonTorpedo.py:37), so 4 GU behind it is a close
+    ride and 8 GU is a pulled-back one. Exposed as the module-level
+    TORP_DEFAULT_* constants so a live look can retune them.
+
+    Ramp (INFERRED): distance goes StartDistance -> LaterDistance LINEARLY over
+    MoveDistanceTime seconds of RIDE time (time this torpedo has been ridden,
+    not wall clock), then clamps — the camera eases back as the torpedo runs.
+    Linear is the obvious default; nothing in the authored numbers implies a
+    curve.
+
+    DelayAfterTorpGone (INFERRED use, sourced value): when the torpedo leaves
+    the registry — impact or TTL, projectiles.update_all expires both the same
+    way — the last pose is HELD for DelayAfterTorpGone seconds so the hit is on
+    screen, then the mode reports invalid and releases the latch, so the next
+    shot gets its own ride.
+
+    Validity: invalid with no Target, with a Target that has nothing in the air,
+    and once the hold has elapsed. The mode does NOT implement a fallback of its
+    own — BC's authored TorpCam -> Chase edge does that in
+    CameraObjectClass.GetCurrentCameraMode's hierarchy walk (tested, not
+    assumed: tests/unit/test_camera_mode_stack.py).
+
+    DELIBERATELY UNUSED: SweepTime, PositionThreshold and DotThreshold. Our
+    sweep is the base class's global SWEEP_TAU_S exponential glide with the
+    _pose_discontinuity cut, shared by all nine modes; there is no defensible
+    mapping from a per-mode sweep duration and a position/dot convergence pair
+    onto it that is not just invented, and the same three attrs are already
+    unused on every other mode that authors them (Chase, Target, FreeOrbit...).
+    """
+
+    def __init__(self):
+        super().__init__()
+        # STATEFUL — like DropAndWatchMode, and for the same kind of reason:
+        # WHICH torpedo is being ridden is a latch, not a per-frame lookup.
+        self._torp = None        # latched in-flight torpedo, or None
+        self._ride_t = 0.0       # seconds this torpedo has been ridden (ramp)
+        self._gone_t = None      # seconds since it left the registry (None = riding)
+        self._final = None       # last pose while riding, held during _gone_t
+        self._dir = None         # last good unit flight direction
+        # dt for the frame currently being computed, parked here by Update() so
+        # _ideal() — whose signature carries no dt, and is shared by nine modes
+        # — can advance the ride/hold timers. None outside an Update (e.g.
+        # IsValid()'s bare _ideal() probe), which reads as "no time passed".
+        self._dt = None
+
+    def Update(self, dt=None, pose_of=None):
+        """Carry `dt` into _ideal() for the ride/hold timers, then defer to the
+        base sweep. Overridden here rather than widening _ideal()'s signature
+        across all nine modes — the same contained pattern DropAndWatchMode
+        established."""
+        self._dt = dt
+        try:
+            return super().Update(dt, pose_of)
+        finally:
+            self._dt = None
+
+    # ── Timer helpers ─────────────────────────────────────────────────────────
+    def _elapsed(self):
+        """Seconds to charge the timers this frame. dt=None (snap) and dt=0.0
+        (paused sim) are both "no time passed"."""
+        dt = self._dt
+        return dt if dt and dt > 0.0 else 0.0
+
+    # ── Torpedo selection ─────────────────────────────────────────────────────
+    def _still_in_flight(self, torp):
+        """True while the latched torpedo is still in the live registry.
+        Identity, not equality — and re-read every frame, so the latch tolerates
+        projectiles.expire() removing it at any point."""
+        from engine.appc import projectiles
+        return any(t is torp for t in projectiles._active)
+
+    def _acquire(self, target):
+        """The Target ship's most recently fired in-flight torpedo (highest
+        _id), or None. _source_ship is the same firing-object field
+        projectiles._matches_source filters on."""
+        from engine.appc import projectiles
+        best = None
+        for t in projectiles._active:
+            if t._source_ship is not target:
+                continue
+            if best is None or t._id > best._id:
+                best = t
+        return best
+
+    def _release(self):
+        self._torp = None
+        self._ride_t = 0.0
+        self._gone_t = None
+        self._final = None
+        self._dir = None
+
+    def _ideal(self, pose_of=None):
+        t = self.GetAttrIDObject("Target")
+        if not _target_alive(t):
+            return None
+        # The latched torpedo may vanish from the registry at any point
+        # (update_all expires it on impact or TTL): notice, drop the reference,
+        # and start the hold.
+        if self._torp is not None and not self._still_in_flight(self._torp):
+            self._torp = None
+            self._gone_t = 0.0
+        if self._torp is None and self._gone_t is None:
+            self._torp = self._acquire(t)
+            self._ride_t = 0.0
+        if self._torp is None:
+            return self._hold()
+        return self._ride(t)
+
+    def _hold(self):
+        """Keep the final pose on screen for DelayAfterTorpGone seconds so the
+        hit is seen, then go invalid and release the latch for the next shot."""
+        if self._gone_t is None or self._final is None:
+            return None
+        if self._gone_t >= self.GetAttrFloat("DelayAfterTorpGone",
+                                             TORP_DEFAULT_DELAY_AFTER_TORP_GONE):
+            self._release()
+            return None
+        self._gone_t += self._elapsed()
+        return self._final
+
+    def _ride(self, target):
+        """Sit `_distance()` behind the torpedo along its velocity, looking the
+        way it is going (INFERRED — see the class docstring)."""
+        p = self._torp.GetWorldLocation()
+        v = self._torp.GetVelocityTG()
+        speed = _math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+        if speed > 1e-9:
+            self._dir = (v.x / speed, v.y / speed, v.z / speed)
+        if self._dir is None:
+            return None            # a torpedo that has never moved frames nothing
+        fwd = self._dir
+        d = self._distance()
+        eye = (p.x - fwd[0] * d, p.y - fwd[1] * d, p.z - fwd[2] * d)
+        _loc, R = _obj_pose(target, None)
+        u = R.GetCol(2)
+        pose = (eye, fwd, _unit(u.x, u.y, u.z))
+        self._final = pose
+        self._ride_t += self._elapsed()
+        return pose
+
+    def _distance(self):
+        """StartDistance -> LaterDistance, linear over MoveDistanceTime seconds
+        of ride time, then clamped (INFERRED — see the class docstring)."""
+        start = self.GetAttrFloat("StartDistance", TORP_DEFAULT_START_DISTANCE)
+        later = self.GetAttrFloat("LaterDistance", TORP_DEFAULT_LATER_DISTANCE)
+        span = self.GetAttrFloat("MoveDistanceTime",
+                                 TORP_DEFAULT_MOVE_DISTANCE_TIME)
+        if span <= 0.0:
+            return later
+        return start + (later - start) * min(1.0, self._ride_t / span)
 
 
 class ZoomTargetMode(CameraMode):

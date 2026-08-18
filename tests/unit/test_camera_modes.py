@@ -787,3 +787,267 @@ def test_reverse_chase_is_default_position_sign_not_a_flag():
     eye, fwd, _up = m.Update()
     assert abs(eye[1] - 8.0) < 1e-6          # ahead of the target
     assert fwd[1] < -0.9                     # looking back at it
+
+
+# ── TorpCam ───────────────────────────────────────────────────────────────────
+# BC's F4 cinematic camera (CinematicInterfaceHandlers.CameraTorpCam:383 re-points
+# AddModeHierarchy("InvalidCinematic", "TorpCam")). The mode's Target attr is the
+# PLAYER SHIP (Camera.py:702), so the torpedo has to be found from the live
+# projectile registry. The seven authored numbers are SDK-sourced
+# (CameraModes.py:318-332); everything these tests pin about HOW they are used
+# — absolute-GU distances, the look direction, the linear ramp, the latch — is
+# inference, see the TorpCameraMode docstring.
+import pytest
+
+from engine.appc.camera_modes import (
+    TorpCameraMode, TORP_DEFAULT_START_DISTANCE, TORP_DEFAULT_LATER_DISTANCE,
+)
+from engine.appc import projectiles as _projectiles
+
+
+@pytest.fixture
+def torp_registry():
+    """The in-flight torpedo registry is a module global; keep it swept."""
+    _projectiles._active.clear()
+    yield _projectiles._active
+    _projectiles._active.clear()
+
+
+def _fire(source, pos=(0.0, 100.0, 0.0), vel=(0.0, 19.0, 0.0)):
+    """Register an in-flight torpedo fired by `source`, as
+    weapon_subsystems._spawn_projectile does (it sets _source_ship then
+    register()s). 19.0 GU/s is PhotonTorpedo.GetLaunchSpeed()."""
+    t = _projectiles.Torpedo()
+    t._source_ship = source
+    t._position = TGPoint3(*pos)
+    t._velocity = TGPoint3(*vel)
+    _projectiles.register(t)
+    return t
+
+
+def _authored_torp_cam(target):
+    """A mode carrying the SDK's authored attrs (CameraModes.py:321-329)."""
+    m = TorpCameraMode()
+    for name, v in (("SweepTime", 2.0), ("PositionThreshold", 0.01),
+                    ("DotThreshold", 0.98), ("DelayAfterTorpGone", 2.0),
+                    ("StartDistance", 4.0), ("LaterDistance", 8.0),
+                    ("MoveDistanceTime", 6.0)):
+        m.SetAttrFloat(name, v)
+    m.SetAttrIDObject("Target", target)
+    return m
+
+
+def test_camera_mode_create_dispatches_torpcam():
+    """CameraModes.TorpCam (CameraModes.py:319) builds kind "TorpCam"; it used
+    to fall through to the always-invalid PlaceByDirection attr bag."""
+    assert isinstance(CameraMode_Create("TorpCam"), TorpCameraMode)
+
+
+def test_torp_cam_invalid_without_target():
+    assert not TorpCameraMode().IsValid()
+
+
+def test_torp_cam_invalid_without_an_in_flight_torpedo(torp_registry):
+    """A player with nothing in the air has no shot to ride — the mode reports
+    invalid and BC's TorpCam->Chase edge takes over (Camera.py:642)."""
+    m = _authored_torp_cam(_FakeTarget((0.0, 0.0, 0.0)))
+    assert not m.IsValid()
+
+
+def test_torp_cam_rides_behind_the_players_torpedo(torp_registry):
+    """Eye sits StartDistance BEHIND the torpedo along its velocity, looking
+    along the flight path — which puts the torpedo dead centre."""
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    _fire(ship, pos=(0.0, 100.0, 0.0), vel=(0.0, 19.0, 0.0))
+    m = _authored_torp_cam(ship)
+    eye, fwd, up = m.Update()                      # dt=None => snap to ideal
+    assert eye == (0.0, 100.0 - TORP_DEFAULT_START_DISTANCE, 0.0)
+    assert fwd == (0.0, 1.0, 0.0)
+    assert up == (0.0, 0.0, 1.0)                   # firing ship's col2
+
+
+def test_torp_cam_ignores_another_ships_torpedo(torp_registry):
+    """_source_ship is the filter (projectiles._matches_source's idiom): an
+    enemy salvo in the same registry must not hijack the player's TorpCam."""
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    _fire(_FakeTarget((500.0, 0.0, 0.0)), pos=(500.0, 0.0, 0.0))
+    m = _authored_torp_cam(ship)
+    assert not m.IsValid()
+
+
+def test_torp_cam_picks_the_most_recently_fired_torpedo(torp_registry):
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    _fire(ship, pos=(0.0, 100.0, 0.0))
+    _fire(ship, pos=(0.0, 20.0, 0.0))              # newest: higher _id
+    eye, _fwd, _up = _authored_torp_cam(ship).Update()
+    assert eye == (0.0, 20.0 - TORP_DEFAULT_START_DISTANCE, 0.0)
+
+
+def test_torp_cam_latches_and_does_not_hop_to_a_newer_torpedo(torp_registry):
+    """THE defining statefulness: once riding, keep riding THAT torpedo. Firing
+    the rest of the salvo mid-ride must not make the camera hop."""
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    first = _fire(ship, pos=(0.0, 100.0, 0.0))
+    m = _authored_torp_cam(ship)
+    m.Update()
+    assert m._torp is first
+    _fire(ship, pos=(0.0, 20.0, 0.0))              # second tube, same salvo
+    m.Update(1.0 / 60.0)
+    assert m._torp is first
+    eye, _fwd, _up = m._ideal()
+    assert eye[1] < 100.0 and eye[1] > 20.0        # still on the first torpedo
+
+
+def test_torp_cam_distance_ramps_from_start_toward_later(torp_registry):
+    """StartDistance 4.0 -> LaterDistance 8.0 over MoveDistanceTime 6.0 s of
+    ride time: the camera eases back as the torpedo runs (linear ramp is our
+    inference)."""
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    _fire(ship, pos=(0.0, 100.0, 0.0))
+    m = _authored_torp_cam(ship)
+    eye, _fwd, _up = m._ideal()
+    assert abs((100.0 - eye[1]) - 4.0) < 1e-9
+    for _ in range(6):
+        m.Update(0.5)                              # 3.0 s = half the ramp
+    eye, _fwd, _up = m._ideal()
+    assert abs((100.0 - eye[1]) - 6.0) < 1e-9
+
+
+def test_torp_cam_distance_clamps_at_later_distance(torp_registry):
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    _fire(ship, pos=(0.0, 100.0, 0.0))
+    m = _authored_torp_cam(ship)
+    for _ in range(40):
+        m.Update(0.5)                              # 20 s, way past MoveDistanceTime
+    eye, _fwd, _up = m._ideal()
+    assert abs((100.0 - eye[1]) - TORP_DEFAULT_LATER_DISTANCE) < 1e-9
+
+
+def test_torp_cam_holds_the_final_pose_after_the_torpedo_is_gone(torp_registry):
+    """DelayAfterTorpGone 2.0 exists so you SEE the hit: the pose the shot ended
+    on is held after update_all drops the torpedo out of _active."""
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    torp = _fire(ship, pos=(0.0, 100.0, 0.0))
+    m = _authored_torp_cam(ship)
+    final, _fwd, _up = m.Update()
+    _projectiles.expire(torp)                      # impact
+    assert m.IsValid()
+    eye, _fwd, _up = m._ideal()
+    assert eye == final
+
+
+def test_torp_cam_goes_invalid_after_the_delay(torp_registry):
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    torp = _fire(ship, pos=(0.0, 100.0, 0.0))
+    m = _authored_torp_cam(ship)
+    m.Update()
+    _projectiles.expire(torp)
+    for _ in range(3):
+        m.Update(0.5)                              # 1.5 s < DelayAfterTorpGone
+    assert m.IsValid()
+    m.Update(0.5)                                  # 2.0 s
+    assert not m.IsValid()
+
+
+def test_torp_cam_reacquires_after_the_hold_expires(torp_registry):
+    """The latch is released once the hold is over, so the NEXT shot gets its
+    own ride (F4 stays selected across a whole engagement)."""
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    torp = _fire(ship, pos=(0.0, 100.0, 0.0))
+    m = _authored_torp_cam(ship)
+    m.Update()
+    _projectiles.expire(torp)
+    for _ in range(4):
+        m.Update(0.5)
+    assert not m.IsValid()
+    nxt = _fire(ship, pos=(0.0, 30.0, 0.0))
+    assert m.IsValid()
+    assert m._torp is nxt
+    eye, _fwd, _up = m._ideal()
+    assert abs((30.0 - eye[1]) - TORP_DEFAULT_START_DISTANCE) < 1e-9
+
+
+def test_torp_cam_paused_sim_does_not_advance_the_ramp(torp_registry):
+    """dt=0.0 is a paused sim and dt=None is the snap path — neither is elapsed
+    time, so neither may advance the ride timer (same rule as DropAndWatch's
+    orbit, test_drop_and_watch_orbit_freezes_on_a_paused_sim)."""
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    _fire(ship, pos=(0.0, 100.0, 0.0))
+    m = _authored_torp_cam(ship)
+    for _ in range(4):
+        m.Update(0.5)
+    ridden = m._ride_t
+    assert ridden > 0.0
+    for _ in range(60):
+        m.Update(0.0)
+    assert m._ride_t == ridden, f"paused sim advanced the ramp: {m._ride_t}"
+    for _ in range(5):
+        m.Update()
+    assert m._ride_t == ridden, f"snap advanced the ramp: {m._ride_t}"
+
+
+def test_torp_cam_paused_sim_does_not_advance_the_gone_timer(torp_registry):
+    """A paused sim must not burn the hold — freeze on the hit, do not cut."""
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    torp = _fire(ship, pos=(0.0, 100.0, 0.0))
+    m = _authored_torp_cam(ship)
+    m.Update()
+    _projectiles.expire(torp)
+    m.Update(0.5)
+    gone = m._gone_t
+    assert gone > 0.0
+    for _ in range(60):
+        m.Update(0.0)
+    assert m._gone_t == gone, f"paused sim advanced the hold: {m._gone_t}"
+    for _ in range(5):
+        m.Update()
+    assert m._gone_t == gone, f"snap advanced the hold: {m._gone_t}"
+    assert m.IsValid()
+
+
+def test_torp_cam_distance_is_absolute_game_units_not_radius_relative(
+        torp_registry):
+    """The judgement call, pinned: StartDistance/LaterDistance are ABSOLUTE GU.
+    The Target attr is the FIRING SHIP, not the framed object, so ChaseMode's
+    radius-relative reading would put the camera 4 x a Galaxy's radius behind a
+    ~1 GU torpedo. A bigger firing hull must not change the ride distance."""
+    small = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    big = _FakeTarget((0.0, 0.0, 0.0), radius=40.0)
+    _fire(small, pos=(0.0, 100.0, 0.0))
+    a, _fwd, _up = _authored_torp_cam(small)._ideal()
+    _projectiles._active.clear()
+    _fire(big, pos=(0.0, 100.0, 0.0))
+    b, _fwd, _up = _authored_torp_cam(big)._ideal()
+    assert a == b
+
+
+def test_torp_cam_follows_the_torpedos_heading(torp_registry):
+    """The ride axis is the torpedo's VELOCITY, so a homing torpedo that turns
+    swings the camera round behind it."""
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    torp = _fire(ship, pos=(0.0, 100.0, 0.0), vel=(19.0, 0.0, 0.0))
+    m = _authored_torp_cam(ship)
+    _eye, fwd, _up = m._ideal()
+    assert fwd == (1.0, 0.0, 0.0)
+    torp._velocity = TGPoint3(0.0, 0.0, 19.0)
+    eye, fwd, _up = m._ideal()
+    assert fwd == (0.0, 0.0, 1.0)
+    assert eye == (0.0, 100.0, -TORP_DEFAULT_START_DISTANCE)
+
+
+def test_torp_cam_does_not_probe_stub_surface_on_the_torpedo(
+        torp_registry, monkeypatch):
+    """A Torpedo is TGObject-derived, so hasattr is vacuously true for every
+    engine name — the mode must decide optional surface on the MRO
+    (engine.core.ids.implements) instead of burning heatmap hits every frame."""
+    from engine.core import stub_telemetry
+    ship = _FakeTarget((0.0, 0.0, 0.0))
+    _fire(ship, pos=(0.0, 100.0, 0.0))
+    hits = []
+    monkeypatch.setattr(stub_telemetry, "ENABLED", True)
+    monkeypatch.setattr(stub_telemetry, "record_attr",
+                        lambda owner, attr: hits.append((owner, attr)))
+    m = _authored_torp_cam(ship)
+    m.Update()
+    m.Update(1.0 / 60.0)
+    assert not hits, hits
