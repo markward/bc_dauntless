@@ -74,10 +74,19 @@ These are independent of the redesign and survive it:
   space they drift off the hull as the ship moves. (Fix is small and
   self-contained; salvageable independently — see `e8f6cc9d`.)
 - **Our torpedo detonation surface is a bounding sphere; BC's is the shield
-  ellipsoid.** `TestHit` *is* the collision test. On flat hulls the gap is
-  large: a Marauder's sphere is ~2.6 GU against a 0.55 GU vertical bubble, so
-  torpedoes detonate ~2 GU short of the shield and reach bare hull. **This gap
-  exists on `main` today** and is independent of the redesign.
+  ellipsoid.** `TestHit` *is* the collision test. A Marauder's sphere is
+  ~2.6 GU against a 0.55 GU vertical bubble.
+  > ⚠️ **CORRECTION 2026-08-18.** This was first written as "this gap exists on
+  > `main` today". That claim is **UNVERIFIED and the code reading contradicts
+  > it.** On `main`, `_shield_face_from_hit_point` always returns a facing 0-5 —
+  > it has no "no facing" path — so every hit with shields online is absorbed by
+  > some face. "Torpedoes reach bare hull" needs the redesign's segment-based
+  > `_resolve_facing`, which returns `None` when the segment never reaches the
+  > ellipsoid. So it looks like a **regression the redesign introduced**, not a
+  > pre-existing gap. What IS real on main is a *fidelity* divergence: facing is
+  > chosen from the hit POINT rather than BC's segment-entry rule, and the
+  > renderer draws a sqrt(3) bubble that gameplay does not use. Settle it
+  > in-game before acting on it.
 - **Facing index → name ("0 = front") remains unsourced.** No string table, no
   enum. Probe `tools/probes/q19_shield_facing_and_beam.py` is written and still
   unrun; it would settle it in minutes on the original game.
