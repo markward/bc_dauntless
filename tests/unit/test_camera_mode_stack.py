@@ -80,3 +80,48 @@ def test_pop_camera_mode_unknown_name_is_none():
     c = _cam()
     c.PushCameraMode(c.GetNamedCameraMode("Placement"))
     assert c.PopCameraMode("NeverPushed") is None
+
+
+# ── BC-convention name resolution ─────────────────────────────────────────────
+# BC expects 18 named modes on the player camera (Camera.py:685-703); our
+# _MODE_FACTORY table carried 7. The rest resolve through the SDK's own builders
+# in CameraModes.py, which is where BC keeps each mode's authored attrs.
+
+def test_named_mode_firstperson_resolves_to_locked():
+    """CameraModes.FirstPerson builds kind "Locked" with a zeroed Position."""
+    assert isinstance(_cam().GetNamedCameraMode("FirstPerson"), LockedMode)
+
+
+def test_named_mode_widetarget_resolves_to_target():
+    assert isinstance(_cam().GetNamedCameraMode("WideTarget"), TargetMode)
+
+
+def test_viewscreen_directions_differ_by_forward_attr():
+    """The six Viewscreen* directions are all LockedMode; only their authored
+    Forward attr distinguishes them. Resolving them to a bare class would make
+    forward and left identical."""
+    c = _cam()
+    fwd = c.GetNamedCameraMode("ViewscreenForward").GetAttrPoint("Forward")
+    left = c.GetNamedCameraMode("ViewscreenLeft").GetAttrPoint("Forward")
+    assert (fwd.x, fwd.y, fwd.z) != (left.x, left.y, left.z)
+
+
+def test_reverse_chase_still_looks_ahead_of_target():
+    """REGRESSION GUARD, not a new behaviour: CameraModes.ReverseChase builds
+    kind "Chase" and differs from Chase only by a DefaultPosition attr that
+    ChaseMode does not read. Resolving it through CameraModes would silently
+    flip it to a normal chase, so _MODE_FACTORY must stay authoritative here."""
+    c = _cam()
+    m = c.GetNamedCameraMode("ReverseChase")
+    m.SetAttrIDObject("Target", _FakeShip())
+    eye, _fwd, _up = m.Update()
+    assert eye[1] > 0.0            # ahead of the target (+Y), not behind
+
+
+class _FakeShip:
+    def GetWorldLocation(self):
+        return TGPoint3(0.0, 0.0, 0.0)
+
+    def GetWorldRotation(self):
+        from engine.appc.math import TGMatrix3
+        return TGMatrix3()

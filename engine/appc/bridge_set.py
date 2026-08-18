@@ -464,13 +464,42 @@ class CameraObjectClass(_LoudStub):
             return self._named_modes[name]
         spec = self._MODE_FACTORY.get(name)
         if spec is None:
-            return None
-        from engine.appc import camera_modes
-        cls = getattr(camera_modes, spec[0])
-        mode = cls(**spec[1])
+            mode = self._mode_from_sdk_builder(name)
+            if mode is None:
+                return None
+        else:
+            from engine.appc import camera_modes
+            cls = getattr(camera_modes, spec[0])
+            mode = cls(**spec[1])
         mode._owner_camera = self
         self._named_modes[name] = mode
         return mode
+
+    def _mode_from_sdk_builder(self, name):
+        """Resolve a named mode by running CameraModes.<name>(self) — the BC
+        convention, and the same path the bridge camera uses.
+
+        The SDK builders carry each mode's authored attrs, which is the whole
+        point: the six Viewscreen* directions are all kind "Locked" and differ
+        ONLY by their Forward attr, so resolving them to a bare class would
+        make forward, back, left and right identical.
+
+        Returns None for any name CameraModes has no builder for.
+        """
+        try:
+            import CameraModes
+        except ImportError:
+            return None
+        fn = getattr(CameraModes, name, None)
+        if not callable(fn):
+            return None            # e.g. the App module CameraModes imports
+        try:
+            return fn(self)
+        except Exception:
+            # A builder may reach for surface we lack (GalaxyBridgeCaptain
+            # imports Bridge.GalaxyBridge). An unresolvable name is a no-op
+            # mode, exactly as it is today — never a crash mid-cutscene.
+            return None
 
     def _ensure_stack(self):
         if "_mode_stack" not in self.__dict__:
