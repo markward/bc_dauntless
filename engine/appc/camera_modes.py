@@ -340,6 +340,15 @@ DROP_DEFAULT_SIDE_OFFSET = 3.0
 DROP_DEFAULT_AWAY_DISTANCE = 0.0
 DROP_DEFAULT_AWAY_DISTANCE_FACTOR = 1.2
 DROP_DEFAULT_AXIS_AVOID_ANGLES = 45.0
+# Slow-orbit drift. RotateSpeed is the INITIAL/current rate (state, not config)
+# and RotateSpeedAccel ramps it to MaxRotateSpeed while the target is slow;
+# 0.2 rad/s is ~11.5 deg/s, a full orbit in ~31 s, reached from rest in ~8 s.
+# Radians/second is our reading of the units — see the class docstring.
+DROP_DEFAULT_ROTATE_SPEED = 0.0
+DROP_DEFAULT_ROTATE_SPEED_ACCEL = 0.025
+DROP_DEFAULT_MAX_ROTATE_SPEED = 0.2
+DROP_DEFAULT_SLOW_SPEED_THRESHOLD = 0.5        # GU/s
+DROP_DEFAULT_SLOW_ROTATION_THRESHOLD = 0.1     # rad/s
 
 
 def _distance(p, loc):
@@ -364,6 +373,39 @@ def _target_velocity(obj):
         return (0.0, 0.0, 0.0)
 
 
+def _rotate_about(p, centre, axis, angle):
+    """Rodrigues: rotate point `p` (3-tuple) by `angle` radians about the axis
+    `axis` (unit 3-tuple) through `centre` (TGPoint3). Distance from `centre`
+    and the component along `axis` are both preserved exactly in exact
+    arithmetic, so an orbit neither closes on nor climbs off the target."""
+    vx, vy, vz = p[0] - centre.x, p[1] - centre.y, p[2] - centre.z
+    kx, ky, kz = axis
+    c, s = _math.cos(angle), _math.sin(angle)
+    d = kx * vx + ky * vy + kz * vz
+    cx, cy, cz = ky * vz - kz * vy, kz * vx - kx * vz, kx * vy - ky * vx
+    return (centre.x + vx * c + cx * s + kx * d * (1.0 - c),
+            centre.y + vy * c + cy * s + ky * d * (1.0 - c),
+            centre.z + vz * c + cz * s + kz * d * (1.0 - c))
+
+
+def _target_angular_velocity(obj):
+    """(wx, wy, wz) angular velocity in rad/s, or zeros when the object has no
+    real GetAngularVelocityTG — same PhysicsObjectClass-surface reasoning (and
+    same MRO probe) as _target_velocity above."""
+    from engine.core.ids import implements
+    if not implements(obj, "GetAngularVelocityTG"):
+        return (0.0, 0.0, 0.0)
+    try:
+        w = obj.GetAngularVelocityTG()
+        return (float(w.x), float(w.y), float(w.z))
+    except Exception:
+        return (0.0, 0.0, 0.0)
+
+
+def _magnitude(v):
+    return _math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+
+
 class DropAndWatchMode(CameraMode):
     """Drop the camera at a fixed world point and watch the target fly past.
 
@@ -381,9 +423,10 @@ class DropAndWatchMode(CameraMode):
     * INFERRED — everything below: that the drop point is
       target_loc + velocity*AnticipationTime offset by ForwardOffset/SideOffset
       in the target's body frame, that those offsets are radius-relative, the
-      off-axis avoidance rule, and the re-drop rule. All of it is read off the
-      parameter names and defaults, not recovered from the binary. Treat it as
-      a plausible flyby shot that honours the authored numbers, not as BC.
+      off-axis avoidance rule, the re-drop rule, and the slow-orbit drift. All
+      of it is read off the parameter names and defaults, not recovered from
+      the binary. Treat it as a plausible flyby shot that honours the authored
+      numbers, not as BC.
 
     Placement (inferred):
       drop = target_loc + velocity*AnticipationTime
@@ -412,14 +455,42 @@ class DropAndWatchMode(CameraMode):
     is a big jump, so the base Update()'s _pose_discontinuity check cuts rather
     than gliding (tested, not assumed).
 
-    DELIBERATELY NOT IMPLEMENTED: the slow-orbit drift (RotateSpeed,
-    RotateSpeedAccel, MaxRotateSpeed, SlowSpeedThreshold,
-    SlowRotationThreshold). Those five read as "when the target is nearly
-    stationary, orbit it slowly instead of staring", but their coordinate frame,
-    axis and easing are pure guesswork — inventing camera motion is worse than
-    holding still, so they are read from the SDK and left unused. Same for
-    RangeAngle1-4, which only WarpSequence.py sets and CameraModes never
-    authors.
+    Slow-orbit drift (INFERRED): park the ship and the shot used to freeze
+    solid — still camera, still subject — which is the one case where this mode
+    stops being cinematic. The five remaining authored attrs read as the fix:
+    when the target is nearly stationary, orbit it slowly instead of staring.
+    SOURCED are only the five NUMBERS (RotateSpeed 0.0, RotateSpeedAccel 0.025,
+    MaxRotateSpeed 0.2, SlowSpeedThreshold 0.5, SlowRotationThreshold 0.1) and
+    their names; the magnitudes are what make the reading plausible — 0.2 rad/s
+    is ~11.5 deg/s, a full orbit in ~31 s, reached from rest in ~8 s at
+    0.025 rad/s^2. Everything about HOW they are used is our reading, NOT
+    reverse-engineered, specifically:
+
+      * that RotateSpeed is the INITIAL/current rate — state, not config —
+        which RotateSpeedAccel ramps toward MaxRotateSpeed;
+      * that the rates are radians/second (degrees would make MaxRotateSpeed a
+        30-minute orbit, which is not a camera move);
+      * that the slow test is an AND of the two thresholds (a station-keeping
+        but tumbling ship already animates the frame);
+      * that the DROP POINT is orbited, rather than the shot being re-derived —
+        so the framing the placement chose is kept, and because rotating about
+        an axis through the target holds |drop - target| at d0, the re-drop rule
+        above is not tripped by the drift itself (tested, not assumed);
+      * that the orbit axis is the target's up axis (GetCol(2), column-vector
+        right-handed) through its CURRENT position, which also preserves the
+        shot's elevation;
+      * that the rate decays symmetrically once the target speeds up again. BC
+        authors no separate decel term, so reusing RotateSpeedAccel is an
+        assumption;
+      * that a re-drop restarts the drift from the authored RotateSpeed, and
+        that a fresh drop point is used as authored for the frame it was made.
+
+    A target that implements neither GetVelocityTG nor GetAngularVelocityTG
+    (waypoints, placements — it is PhysicsObjectClass surface) reads as fully
+    stationary, so the drift engages for it.
+
+    STILL DELIBERATELY NOT IMPLEMENTED: RangeAngle1-4, which only
+    WarpSequence.py sets and CameraModes never authors.
     """
 
     def __init__(self):
@@ -430,6 +501,22 @@ class DropAndWatchMode(CameraMode):
         self._drop = None            # world drop point (3-tuple) or None
         self._drop_dist = None       # d0: drop→target distance at drop time
         self._drop_target = None     # identity of the target we dropped for
+        self._rotate_speed = None    # current orbit rate, rad/s (None = unseeded)
+        # dt for the frame currently being computed, parked here by Update() so
+        # _ideal() — whose signature carries no dt, and is shared by eight modes
+        # — can integrate the orbit. None outside an Update (e.g. IsValid()'s
+        # bare _ideal() probe), which reads as "no time passed": never drift.
+        self._dt = None
+
+    def Update(self, dt=None, pose_of=None):
+        """Carry `dt` into _ideal() for the orbit integrator, then defer to the
+        base sweep. Overridden here rather than widening _ideal()'s signature
+        across all eight modes — DropAndWatch is the only stateful one."""
+        self._dt = dt
+        try:
+            return super().Update(dt, pose_of)
+        finally:
+            self._dt = None
 
     def _ideal(self, pose_of=None):
         t = self.GetAttrIDObject("Target")
@@ -442,10 +529,58 @@ class DropAndWatchMode(CameraMode):
             self._drop_dist = max(
                 _distance(self._drop, loc),
                 self.GetAttrFloat("AwayDistance", DROP_DEFAULT_AWAY_DISTANCE))
+            # A fresh drop point is used as authored for the frame it was made;
+            # the drift accumulates FROM it, starting next frame, from the
+            # authored initial RotateSpeed (a re-drop is a new shot).
+            self._rotate_speed = self.GetAttrFloat("RotateSpeed",
+                                                  DROP_DEFAULT_ROTATE_SPEED)
+        else:
+            self._advance_orbit(t, loc, R)
         eye = self._drop
         fwd = _unit(loc.x - eye[0], loc.y - eye[1], loc.z - eye[2])
         u = R.GetCol(2)
         return (eye, fwd, _unit(u.x, u.y, u.z))
+
+    def _is_slow(self, t):
+        """True when the target is barely moving, so the shot needs the drift to
+        stay alive: linear speed under SlowSpeedThreshold AND angular speed
+        under SlowRotationThreshold. The conjunction is INFERRED — a ship that
+        is stationary but spinning is already animating the frame. A target
+        with neither physics accessor reads as fully stationary (waypoints and
+        placements never move), so the drift engages for it."""
+        return (_magnitude(_target_velocity(t))
+                < self.GetAttrFloat("SlowSpeedThreshold",
+                                    DROP_DEFAULT_SLOW_SPEED_THRESHOLD)
+                and _magnitude(_target_angular_velocity(t))
+                < self.GetAttrFloat("SlowRotationThreshold",
+                                    DROP_DEFAULT_SLOW_ROTATION_THRESHOLD))
+
+    def _advance_orbit(self, t, loc, R):
+        """Drift the drop point one frame around the target (INFERRED — see the
+        class docstring). The rate accelerates at RotateSpeedAccel toward
+        MaxRotateSpeed; the orbit is about the target's up axis, through the
+        target's current position, so the drop distance and elevation the shot
+        was framed with are preserved."""
+        dt = self._dt
+        if not dt or dt <= 0.0:      # None (snap) or 0.0 (paused): no time passed
+            return
+        if self._rotate_speed is None:
+            self._rotate_speed = self.GetAttrFloat("RotateSpeed",
+                                                  DROP_DEFAULT_ROTATE_SPEED)
+        accel = self.GetAttrFloat("RotateSpeedAccel",
+                                  DROP_DEFAULT_ROTATE_SPEED_ACCEL)
+        cap = self.GetAttrFloat("MaxRotateSpeed", DROP_DEFAULT_MAX_ROTATE_SPEED)
+        if self._is_slow(t):
+            self._rotate_speed = min(cap, self._rotate_speed + accel * dt)
+        else:
+            # BC authors no separate decel term; reusing RotateSpeedAccel to ease
+            # back to rest is our symmetry assumption, not a recovered constant.
+            self._rotate_speed = max(0.0, self._rotate_speed - accel * dt)
+        angle = self._rotate_speed * dt
+        if abs(angle) < 1e-12:
+            return
+        u = R.GetCol(2)
+        self._drop = _rotate_about(self._drop, loc, _unit(u.x, u.y, u.z), angle)
 
     def _needs_drop(self, t, loc):
         """True when the shot is over and the camera should drop again: no drop

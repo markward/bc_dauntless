@@ -462,8 +462,13 @@ def test_drop_and_watch_offsets_scale_with_the_hull():
 
 def test_drop_and_watch_point_stays_put_while_the_target_moves():
     """THE defining behaviour: the drop point is state, not a per-frame
-    function of the target's pose. Steps kept inside the re-drop radius."""
-    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    function of the target's pose. Steps kept inside the re-drop radius.
+
+    The target REPORTS the 30 GU/s it is being stepped at (0.5 GU per 60 Hz
+    frame): a target that moves while reporting no velocity reads as stationary
+    to the slow-orbit drift, which would then legitimately drift the drop
+    point. This test is about a MOVING target, so it says so."""
+    t = _MovingTarget((0.0, 0.0, 0.0), (0.0, 30.0, 0.0), radius=1.0)
     m = _authored_drop_and_watch(t)
     first, _fwd, _up = m.Update()
     for i in range(1, 6):
@@ -592,6 +597,183 @@ def test_drop_and_watch_redrops_when_the_target_changes():
     eye, _fwd, _up = m.Update()
     assert first == (3.0, 0.5, 0.0)
     assert eye == (3.0, 1.5, 0.0)
+
+
+# ── DropAndWatch: the slow-orbit drift ────────────────────────────────────────
+# INFERRED behaviour (see the DropAndWatchMode docstring): when the target is
+# nearly stationary the camera slowly orbits its drop point about the target's
+# up axis so the shot does not freeze solid. The five authored numbers
+# (RotateSpeed / RotateSpeedAccel / MaxRotateSpeed / SlowSpeedThreshold /
+# SlowRotationThreshold) are SDK-sourced; everything these tests pin about how
+# they are USED is our reading, not recovered BC.
+
+
+class _SpinningTarget(_MovingTarget):
+    """_MovingTarget plus the PhysicsObjectClass angular-velocity surface."""
+    def __init__(self, loc, vel, angvel, rot=None, radius=1.0):
+        super().__init__(loc, vel, rot=rot, radius=radius)
+        self._angvel = TGPoint3(*angvel)
+
+    def GetAngularVelocityTG(self):
+        return TGPoint3(self._angvel.x, self._angvel.y, self._angvel.z)
+
+
+def _unit3(x, y, z):
+    n = math.sqrt(x * x + y * y + z * z)
+    return (x / n, y / n, z / n)
+
+
+def _sep(a, b):
+    return math.sqrt(sum((a[i] - b[i]) ** 2 for i in range(3)))
+
+
+def _drop_angle(m, t):
+    """Bearing of the mode's drop point about the target's up axis (+Z for an
+    identity rotation), in radians — the quantity the drift advances."""
+    d, loc = m._drop, t.GetWorldLocation()
+    return math.atan2(d[1] - loc.y, d[0] - loc.x)
+
+
+def _run(m, seconds, dt=1.0 / 60.0):
+    out = None
+    for _ in range(int(round(seconds / dt))):
+        out = m.Update(dt)
+    return out
+
+
+def test_drop_and_watch_orbits_a_stationary_target():
+    """THE bug this fixes: park the ship, press F9, and the frame was frozen
+    solid — still camera, still subject. The camera must drift, and must keep
+    looking at the target while it does."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    first, _fwd, _up = m.Update()
+    eye, fwd, _up = _run(m, 2.0)
+    assert _sep(eye, first) > 1e-3, f"camera never moved: {eye} == {first}"
+    to_target = _unit3(-eye[0], -eye[1], -eye[2])
+    assert sum(fwd[i] * to_target[i] for i in range(3)) > 0.999, (
+        f"drifting camera stopped looking at the target: {fwd} vs {to_target}")
+
+
+def test_drop_and_watch_does_not_orbit_a_fast_target():
+    """REGRESSION GUARD for the live-verified flyby: a moving ship already
+    animates the shot, so the drift must stay out of it. 30 GU/s is 60x
+    SlowSpeedThreshold."""
+    t = _MovingTarget((0.0, 0.0, 0.0), (0.0, 30.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    m.Update()
+    dropped = m._drop
+    _run(m, 5.0)
+    assert m._drop == dropped, f"drop point drifted on a fast target: {m._drop}"
+
+
+def test_drop_and_watch_orbit_eases_in():
+    """RotateSpeed 0.0 is the INITIAL rate and RotateSpeedAccel 0.025 rad/s^2
+    ramps it: the drift must creep in, not snap to MaxRotateSpeed on frame one."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    m.Update()
+
+    def swept():
+        a0 = _drop_angle(m, t)
+        m.Update(1.0 / 60.0)
+        return abs(_drop_angle(m, t) - a0)
+
+    early = swept()
+    _run(m, 4.0)
+    later = swept()
+    assert early < (0.2 / 60.0) * 0.1, f"drift jumped straight to speed: {early}"
+    assert later > early * 10.0, f"drift never accelerated: {early} -> {later}"
+
+
+def test_drop_and_watch_orbit_rate_is_capped_at_max_rotate_speed():
+    """MaxRotateSpeed 0.2 rad/s ~ 11.5 deg/s: a full orbit in ~31 s. Reached
+    from rest in ~8 s at RotateSpeedAccel, and never exceeded after that."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    m.Update()
+    _run(m, 30.0)
+    assert abs(m._rotate_speed - 0.2) < 1e-12, m._rotate_speed
+    a0 = _drop_angle(m, t)
+    m.Update(1.0 / 60.0)
+    assert abs(abs(_drop_angle(m, t) - a0) - 0.2 / 60.0) < 1e-9
+
+
+def test_drop_and_watch_does_not_orbit_a_slow_but_spinning_target():
+    """The slow test is an AND (INFERRED): a ship that is holding station but
+    tumbling already animates the frame, so the camera must not add drift.
+    0.5 rad/s is 5x SlowRotationThreshold with the linear speed at zero."""
+    t = _SpinningTarget((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.5),
+                        radius=1.0)
+    m = _authored_drop_and_watch(t)
+    m.Update()
+    dropped = m._drop
+    _run(m, 5.0)
+    assert m._drop == dropped, f"drift ignored SlowRotationThreshold: {m._drop}"
+
+
+def test_drop_and_watch_orbit_freezes_on_a_paused_sim():
+    """dt=0.0 is a paused sim (test_dt_zero_does_not_snap_mid_sweep) and
+    dt=None is the snap path — neither is elapsed time, so neither may advance
+    the orbit or its rate."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    m.Update()
+    _run(m, 2.0)                       # spin the rate up so a freeze is visible
+    frozen, rate = m._drop, m._rotate_speed
+    assert rate > 0.0                  # the drift really is running
+    for _ in range(60):
+        m.Update(0.0)
+    assert m._drop == frozen, f"paused sim advanced the orbit: {m._drop}"
+    assert m._rotate_speed == rate, "paused sim accelerated the orbit rate"
+    for _ in range(5):
+        m.Update()                     # dt=None: snap, still no elapsed time
+    assert m._drop == frozen, f"snap advanced the orbit: {m._drop}"
+    assert m._rotate_speed == rate
+
+
+def test_drop_and_watch_orbit_preserves_the_drop_distance():
+    """The drift must compose with the re-drop rule rather than fight it:
+    orbiting holds |drop - target| at d0, so d0 * AwayDistanceFactor is never
+    tripped by the drift itself (a re-drop would reset the rate to RotateSpeed,
+    so a rate still pinned at the cap proves one shot ran unbroken)."""
+    t = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    m = _authored_drop_and_watch(t)
+    m.Update()
+    first, d0 = m._drop, m._drop_dist
+    _run(m, 30.0)
+    loc = t.GetWorldLocation()
+    assert abs(_sep(m._drop, (loc.x, loc.y, loc.z)) - d0) < 1e-9
+    assert _sep(m._drop, first) > 1e-3          # it really did orbit
+    assert abs(m._rotate_speed - 0.2) < 1e-12   # ...without ever re-dropping
+
+
+def test_drop_and_watch_orbits_a_target_with_no_physics_surface(monkeypatch):
+    """GetVelocityTG / GetAngularVelocityTG are PhysicsObjectClass surface; a
+    waypoint or placement target has neither and never moves, so it must read
+    as stationary (drift ON) rather than raising. Decided on the MRO — this
+    target is TGObject-derived, so hasattr is vacuously true and calling the
+    vended _Stub would both lie and burn a heatmap hit every frame."""
+    from engine.core import ids as _ids
+    from engine.core import stub_telemetry
+
+    class _NoPhysicsTarget(_ids.TGObject):
+        def GetWorldLocation(self):  return TGPoint3(0.0, 0.0, 0.0)
+        def GetWorldRotation(self):  return TGMatrix3()
+        def GetRadius(self):         return 1.0
+
+    t = _NoPhysicsTarget()
+    assert hasattr(t, "GetAngularVelocityTG")      # !!! true, and it is a _Stub
+
+    hits = []
+    monkeypatch.setattr(stub_telemetry, "ENABLED", True)
+    monkeypatch.setattr(stub_telemetry, "record_attr",
+                        lambda owner, attr: hits.append((owner, attr)))
+    m = _authored_drop_and_watch(t)
+    first, _fwd, _up = m.Update()
+    eye, _fwd, _up = _run(m, 2.0)
+    assert _sep(eye, first) > 1e-3, f"static target never drifted: {eye}"
+    assert not [h for h in hits if h[1] == "GetAngularVelocityTG"], hits
 
 
 def test_reverse_chase_is_default_position_sign_not_a_flag():
