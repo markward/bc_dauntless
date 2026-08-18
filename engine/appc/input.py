@@ -314,13 +314,36 @@ class TGInputManager(TGObject):
         self._emit(int(wc_code), KS_NORMAL)
 
     def _emit(self, wc_code: int, key_state: int) -> None:
+        """Both halves of BC's keystroke delivery, in BC's ORDER.
+
+        BC runs the focused window's raw ET_KEYBOARD handler FIRST and reaches
+        the global keyboard binding only from inside it, gated on the handled
+        flag: CinematicInterfaceHandlers.HandleKeyboard translates the key
+        through the window's OWN table at :114 (TriggerKeyboardEvents, which
+        calls pEvent.SetHandled() on a table hit — InterfaceHandlers.py:58) and
+        only then, `if (pEvent.EventHandled() == 0)` (:117), calls
+        g_kKeyboardBinding.LaunchEvent.
+
+        We keep the binding on its own ET_KEYBOARD_EVENT broadcast rather than
+        calling LaunchEvent inline, so the faithful equivalent is: dispatch raw
+        first, broadcast only if the raw event came back unhandled. Emitting
+        the broadcast first and unconditionally (the old order) made every key
+        mean TWO things at once — F3 in cinematic mode ran the target-camera
+        handler AND opened the XO crew menu.
+
+        The veto bites ONLY on a genuine consume. No window handler registered,
+        or a handler that looked and passed, leaves EventHandled() == 0 and the
+        broadcast runs exactly as before — which is what keeps the bridge crew
+        menus (F1-F5 -> ET_INPUT_TALK_TO_*) working outside cinematic mode.
+        """
         if wc_code not in self._registered_codes:
+            return
+        if self._dispatch_raw_keyboard(wc_code, key_state):
             return
         evt = TGKeyboardEvent()
         evt.SetUnicodeKey(wc_code)
         evt.SetKeyState(key_state)
         self._event_manager.AddEvent(evt)
-        self._dispatch_raw_keyboard(wc_code, key_state)
 
     def _emit_raw(self, wc_code: int, key_state: int) -> None:
         """Raw-ONLY delivery: BC's ET_KEYBOARD window event, with no
@@ -349,19 +372,29 @@ class TGInputManager(TGObject):
             return
         self._dispatch_raw_keyboard(wc_code, key_state)
 
-    def _dispatch_raw_keyboard(self, wc_code: int, key_state: int) -> None:
+    def _dispatch_raw_keyboard(self, wc_code: int, key_state: int) -> bool:
         """Post BC's raw ET_KEYBOARD event to the window chain.
 
-        Additive to the ET_KEYBOARD_EVENT broadcast above, not a replacement:
-        KeyboardBinding still translates bound keys into ET_INPUT_* events.
-        Gated by _registered_codes via the caller, so unmapped keys stay
-        silent. All three key states are posted — BC delivers down, up and
+        Returns True only if a handler CONSUMED the key (called SetHandled on
+        it — InterfaceHandlers.TriggerKeyboardEvents:58, BridgeUtils
+        .ModalKeyboardHandler, E3M1.FilteredKeyboardHandler). `_emit` uses that
+        as BC's veto over the binding translation. "No destination" is NOT
+        "handled": with nothing registered for ET_KEYBOARD — the common case —
+        this returns False and the binding runs untouched.
+
+        Ahead of the ET_KEYBOARD_EVENT broadcast, not a replacement for it:
+        KeyboardBinding still translates unconsumed bound keys into ET_INPUT_*
+        events. Gated by _registered_codes via the caller, so unmapped keys
+        stay silent. All three key states are posted — BC delivers down, up and
         character events to windows, which is why
         CinematicInterfaceHandlers.HandleKeyboard inspects GetKeyState().
+
+        A fresh event per keystroke, so the handled flag cannot leak from one
+        press to the next.
         """
         dest = _raw_keyboard_destination()
         if dest is None:
-            return
+            return False
         import App
         raw = TGKeyboardEvent()
         raw.SetUnicodeKey(wc_code)
@@ -369,6 +402,7 @@ class TGInputManager(TGObject):
         raw.SetEventType(App.ET_KEYBOARD)
         raw.SetDestination(dest)
         self._event_manager.AddEvent(raw)
+        return raw.EventHandled() != 0
 
 
 class KeyboardBinding(TGObject):

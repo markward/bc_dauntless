@@ -95,6 +95,45 @@ class TGEvent(TGObject):
         self._destination: "TGEventHandlerObject | None" = None
         self._source: "TGObject | None" = None
         self._cstring: str = ""
+        # BC's TGIEvent handled flag — see SetHandled below. Eager init so
+        # TGObject.__getattr__ can never vend a truthy _Stub for it.
+        self._handled: int = 0
+
+    def SetHandled(self) -> None:
+        """Mark this event as consumed, BC's TGIEvent.SetHandled
+        (sdk/Build/scripts/App.py:1007).
+
+        This is the veto that stops one keystroke being acted on twice. A
+        window handler that translates a key through its OWN table calls it
+        (InterfaceHandlers.TriggerKeyboardEvents:58), and the callers that come
+        after — the global keyboard binding
+        (CinematicInterfaceHandlers.HandleKeyboard:117), the next handler in
+        the window chain (:121) — skip their work when it is set.
+
+        Lives on TGEvent, not TGKeyboardEvent: BC binds it on TGIEvent, the
+        base interface-event class, and the SDK calls it on mouse button
+        events too (CinematicInterfaceHandlers:173,
+        TacticalControlHandlers:72).
+
+        There is no ClearHandled in BC's surface, and events are per-dispatch
+        objects, so the flag is one-way for an event's lifetime.
+        """
+        self._handled = 1
+
+    def EventHandled(self) -> int:
+        """1 if some handler consumed this event, else 0 — BC's
+        TGIEvent.EventHandled (sdk/Build/scripts/App.py:1006).
+
+        MUST be a real int. The SDK reads it BOTH ways: `== 0`
+        (BridgeHandlers:368, CharacterMenuInterfaceHandlers:76,
+        TacticalControlHandlers:86, CinematicInterfaceHandlers:117) and as a
+        bare truth test (`if not pEvent.EventHandled():` —
+        CinematicInterfaceHandlers:121, MapModeInterfaceHandlers:93,
+        MultiplayerInterfaceHandlers:57). A `_Stub` answer is truthy AND
+        int()s to 0, so it gets each of those two shapes wrong in the
+        OPPOSITE direction — see CLAUDE.md's truthiness/coercion tables.
+        """
+        return self._handled
 
     def SetCString(self, value) -> None:
         """String payload carried by the event.

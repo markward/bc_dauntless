@@ -272,3 +272,58 @@ def test_broadcast_handler_reregistering_itself_does_not_skip_siblings():
         assert order == ["reregister", "sibling"]
     finally:
         del sys.modules["_test_broadcast_reentrant"]
+
+
+# ── Handled state — BC's TGIEvent.SetHandled / EventHandled ────────────────
+# sdk/Build/scripts/App.py:1006-1007 binds both onto TGIEvent, the base
+# interface-event class, so EVERY event the SDK hands a window carries them.
+# They are the veto that keeps one keystroke from being consumed twice:
+# InterfaceHandlers.TriggerKeyboardEvents:58 calls SetHandled() after it
+# translates a key through a window's own table, and
+# CinematicInterfaceHandlers.HandleKeyboard:117 then consults the GLOBAL
+# binding only `if (pEvent.EventHandled() == 0)`.
+#
+# Both call shapes in the SDK are pinned here: `== 0` (BridgeHandlers:368,
+# CharacterMenuInterfaceHandlers:76, TacticalControlHandlers:86) and the bare
+# truth test (`if not pEvent.EventHandled():` — CinematicInterfaceHandlers:121,
+# MapModeInterfaceHandlers:93, MultiplayerInterfaceHandlers:57).
+
+def test_a_fresh_event_is_not_handled():
+    assert TGEvent_Create().EventHandled() == 0
+
+
+def test_set_handled_marks_the_event():
+    ev = TGEvent_Create()
+    ev.SetHandled()
+    assert ev.EventHandled() == 1
+
+
+def test_event_handled_returns_a_real_int_not_a_stub():
+    """`_Stub` is truthy AND int()s to 0, so a stub answer would make BOTH SDK
+    call shapes wrong in opposite directions. Only a real int is safe."""
+    ev = TGEvent_Create()
+    assert type(ev.EventHandled()) is int
+    ev.SetHandled()
+    assert type(ev.EventHandled()) is int
+
+
+def test_handled_state_is_per_event_instance():
+    a, b = TGEvent_Create(), TGEvent_Create()
+    a.SetHandled()
+    assert (a.EventHandled(), b.EventHandled()) == (1, 0)
+
+
+def test_every_sdk_event_subclass_inherits_handled_state():
+    """SetHandled is called on keyboard events (InterfaceHandlers:58), mouse
+    BUTTON events (CinematicInterfaceHandlers:173,
+    TacticalControlHandlers:72) and plain TGEvents, so it belongs on the base
+    class, not on TGKeyboardEvent."""
+    from engine.appc.events import (
+        TGBoolEvent, TGKeyboardEvent, WaypointEvent, WeaponHitEvent,
+    )
+    for cls in (TGEvent, TGKeyboardEvent, TGBoolEvent, WaypointEvent,
+                WeaponHitEvent):
+        ev = cls()
+        assert ev.EventHandled() == 0, cls.__name__
+        ev.SetHandled()
+        assert ev.EventHandled() == 1, cls.__name__

@@ -324,3 +324,117 @@ def test_internal_keyboard_event_broadcast_still_fires():
         ET_KEYBOARD_EVENT, None, _HELPER + "_bcast.capture")
     im.OnKeyDown(WC_S)
     assert len(mod.captured) == 1
+
+
+# ── Raw-first ordering + the EventHandled veto ─────────────────────────────
+# BC runs the window's ET_KEYBOARD handler FIRST and consults the global
+# keyboard binding only from inside it, gated on the handled flag
+# (CinematicInterfaceHandlers.HandleKeyboard:114 then :117). Our shim keeps the
+# binding on its own ET_KEYBOARD_EVENT broadcast, so the faithful equivalent is
+# to dispatch raw first and skip the broadcast when the raw event came back
+# handled. Without that a key means TWO things at once — the live F9-then-F3
+# defect, where the cinematic target camera ALSO opened the XO menu.
+
+def _broadcast_capture(suffix):
+    """Register a module capturing ET_KEYBOARD_EVENT broadcasts."""
+    from engine.appc.events import ET_KEYBOARD_EVENT
+    name = _HELPER + "_bcast_" + suffix
+    mod = types.ModuleType(name)
+    mod.captured = []
+    mod.capture = lambda _obj, evt: mod.captured.append(evt)
+    sys.modules[name] = mod
+    return mod, name, ET_KEYBOARD_EVENT
+
+
+def test_raw_window_event_is_dispatched_before_the_binding_broadcast():
+    order = []
+    mod = _capture_module()
+    mod.capture = lambda _obj, evt: order.append("raw")
+    root = _root_with_handler(mod)
+    bmod, bname, ET_KBE = _broadcast_capture("order")
+    bmod.capture = lambda _obj, evt: order.append("broadcast")
+    try:
+        em = TGEventManager()
+        em.AddBroadcastPythonFuncHandler(ET_KBE, None, bname + ".capture")
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert order == ["raw", "broadcast"]
+    finally:
+        _remove(root)
+
+
+def test_a_handler_that_sets_handled_suppresses_the_binding_broadcast():
+    """InterfaceHandlers.TriggerKeyboardEvents:58 is exactly this: a window
+    translated the key through its OWN table, so the global binding must not
+    translate it a second time."""
+    mod = _capture_module()
+    mod.capture = lambda _obj, evt: evt.SetHandled()
+    root = _root_with_handler(mod)
+    bmod, bname, ET_KBE = _broadcast_capture("suppressed")
+    try:
+        em = TGEventManager()
+        em.AddBroadcastPythonFuncHandler(ET_KBE, None, bname + ".capture")
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert bmod.captured == []
+    finally:
+        _remove(root)
+
+
+def test_a_handler_that_does_not_set_handled_leaves_the_binding_alone():
+    """The suppression must bite ONLY on a genuine consume. A window handler
+    that looked at the key and passed is the common case (every raw
+    ET_KEYBOARD hook the SDK registers except the modal filters), and the
+    binding translation must still run exactly as it did before the
+    reorder."""
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    bmod, bname, ET_KBE = _broadcast_capture("unhandled")
+    try:
+        em = TGEventManager()
+        em.AddBroadcastPythonFuncHandler(ET_KBE, None, bname + ".capture")
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert len(bmod.captured) == 1
+        assert bmod.captured[0].GetUnicode() == WC_S
+    finally:
+        _remove(root)
+
+
+def test_with_no_window_handler_at_all_the_binding_still_runs(monkeypatch):
+    """_raw_keyboard_destination returns None for most of the game's life
+    (nothing registered ET_KEYBOARD). 'No destination' is NOT 'handled'."""
+    monkeypatch.setattr(App, "g_kRootWindow", TGEventHandlerObject())
+    monkeypatch.setattr(App, "TopWindow_GetTopWindow", lambda: None)
+    bmod, bname, ET_KBE = _broadcast_capture("nodest")
+    em = TGEventManager()
+    em.AddBroadcastPythonFuncHandler(ET_KBE, None, bname + ".capture")
+    im = TGInputManager(em)
+    im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+    im.OnKeyDown(WC_S)
+    assert len(bmod.captured) == 1
+
+
+def test_the_handled_flag_does_not_leak_between_keystrokes():
+    """The raw event is built per keystroke; a consumed press must not deafen
+    the next one."""
+    mod = _capture_module()
+    state = {"consume": True}
+    mod.capture = lambda _obj, evt: evt.SetHandled() if state["consume"] else None
+    root = _root_with_handler(mod)
+    bmod, bname, ET_KBE = _broadcast_capture("noleak")
+    try:
+        em = TGEventManager()
+        em.AddBroadcastPythonFuncHandler(ET_KBE, None, bname + ".capture")
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert bmod.captured == []
+        state["consume"] = False
+        im.OnKeyDown(WC_S)
+        assert len(bmod.captured) == 1
+    finally:
+        _remove(root)
