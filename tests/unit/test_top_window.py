@@ -918,6 +918,59 @@ def test_a_failing_initialize_neither_wedges_the_toggle_nor_stays_silent(capsys)
     assert "missing engine surface" in capsys.readouterr().out
 
 
+def test_a_failing_keyboard_registration_names_that_step_not_initialize(capsys):
+    """The two wiring steps are independent and fail independently. Blaming
+    Initialize for a HandleKeyboard registration failure would send whoever
+    reads the log to the wrong module."""
+    import CinematicInterfaceHandlers
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+
+    def _raise(*_a, **_k):
+        raise RuntimeError("registration blew up")
+
+    real = CinematicInterfaceHandlers.Initialize
+    CinematicInterfaceHandlers.Initialize = lambda _w: None   # step 1 succeeds
+    cine.AddPythonFuncHandlerForInstance = _raise             # step 2 fails
+    try:
+        tw.ToggleCinematicWindow()
+    finally:
+        CinematicInterfaceHandlers.Initialize = real
+
+    out = capsys.readouterr().out
+    assert "registration blew up" in out
+    assert "HandleKeyboard" in out
+    assert "Initialize failed" not in out
+    assert tw.is_cinematic_active() is True
+
+
+def test_a_failing_initialize_still_wires_the_keyboard_handler(capsys):
+    """Independent steps: losing the camera-mode handlers must not also cost
+    the raw keyboard route (and vice versa)."""
+    import App
+    import CinematicInterfaceHandlers
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+
+    def _boom(_pWindow):
+        raise RuntimeError("missing engine surface")
+
+    real = CinematicInterfaceHandlers.Initialize
+    CinematicInterfaceHandlers.Initialize = _boom
+    try:
+        tw.ToggleCinematicWindow()
+    finally:
+        CinematicInterfaceHandlers.Initialize = real
+
+    assert capsys.readouterr().out.count("missing engine surface") == 1
+    assert cine._handlers.get(App.ET_KEYBOARD) == [
+        "CinematicInterfaceHandlers.HandleKeyboard"]
+
+
 def test_a_failing_initialize_is_not_retried_every_toggle(capsys):
     """The once-only latch is set BEFORE the attempt, so a broken Initialize
     cannot spam the log (or half-register) on every subsequent toggle."""

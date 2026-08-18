@@ -13,11 +13,14 @@ _raw_keyboard_destination picks the FOCUSED cinematic window -> HandleKeyboard
 -> TriggerKeyboardEvents -> ET_INPUT_CINEMATIC_* delivered back to that window,
 where CinematicInterfaceHandlers.Initialize registered the camera handlers.
 """
+import pytest
+
 import App
 from engine.appc import top_window
 from engine.appc.input import TGInputManager
 
 _hits: list = []
+_talk_hits: list = []
 
 
 def _probe(obj, evt):
@@ -25,6 +28,10 @@ def _probe(obj, evt):
     real CameraChase/CameraFreeOrbit handler underneath never runs — those
     need a live player camera, which is not what this test is about."""
     _hits.append((obj, evt.GetEventType()))
+
+
+def _talk_probe(obj, _evt):
+    _talk_hits.append(obj)
 
 
 def _focused_cinematic_window():
@@ -95,11 +102,18 @@ def test_only_the_six_mapped_keys_produce_a_camera_event():
 
 
 def test_a_non_interactive_cinematic_window_ignores_the_camera_keys():
-    """HandleKeyboard's first gate (:99) — StartCinematicMode(bInteractive=0)
-    is how scripted cinematics lock the player out of the camera. That gate is
-    only reachable now that CinematicWindow_Cast/SetInteractive are real; it is
-    flipped back on inside the test so the suppression is shown to be the gate
-    and not simply a dead route."""
+    """StartCinematicMode(bInteractive=0) is how scripted cinematics lock the
+    player out of the camera, and it is only real now that
+    CinematicWindow_Cast/SetInteractive are.
+
+    TWO layers agree here, and it matters which one acts first: the raw
+    keystroke never even reaches this window, because
+    _raw_keyboard_destination declines a non-interactive window (see
+    test_a_non_interactive_focused_window_never_takes_the_raw_stream — the key
+    must keep flowing to the root window during every warp). HandleKeyboard's
+    own gate (:99) is the second line of defence. Interactivity is flipped back
+    on inside the test so the suppression is shown to be the flag and not
+    simply a dead route."""
     del _hits[:]
     _tw, cine = _focused_cinematic_window()
     cine.AddPythonFuncHandlerForInstance(
@@ -112,3 +126,61 @@ def test_a_non_interactive_cinematic_window_ignores_the_camera_keys():
     App.CinematicWindow_Cast(cine).SetInteractive(1)
     _press(App.WC_F2, App.KY_F2, "F2")
     assert _hits == [(cine, App.ET_INPUT_CINEMATIC_CHASE)]
+
+
+# ── KNOWN DEFECT, pinned ────────────────────────────────────────────────────
+# In BC, g_kKeyboardBinding.LaunchEvent is called ONLY from inside
+# HandleKeyboard, gated on pEvent.EventHandled() == 0 (:117-119) — so a key the
+# cinematic table consumed never reaches the global binding. Our shim does the
+# binding translation on the independent ET_KEYBOARD_EVENT broadcast in
+# TGInputManager._emit, which runs before and regardless of the raw dispatch,
+# and DefaultKeyboardBinding.py:121-126 binds WC_F1..F6 -> ET_INPUT_TALK_TO_*
+# under the same KS_KEYDOWN. So F2 in cinematic mode fires the camera event AND
+# still opens the Tactical crew menu.
+#
+# Closing it means dispatching raw BEFORE the broadcast and skipping the
+# broadcast when the raw event was handled, which needs real
+# TGEvent.SetHandled/EventHandled (both are _Stubs today) and reorders a
+# live-verified path — out of scope here.
+#
+# strict=True is the point: when someone fixes this, the XPASS FAILS the suite
+# and forces them to delete the marker, so the defect cannot silently outlive
+# its fix.
+
+@pytest.mark.xfail(strict=True, reason=(
+    "known divergence: our ET_KEYBOARD_EVENT broadcast translates the binding "
+    "unconditionally, so a cinematic camera key ALSO fires its "
+    "ET_INPUT_TALK_TO_* binding. BC gates LaunchEvent on EventHandled()."))
+def test_cinematic_camera_key_does_not_also_open_the_crew_menu():
+    from engine.appc.events import ET_KEYBOARD_EVENT, TGEventHandlerObject
+    from engine.appc.input import KS_KEYDOWN, register_input_handlers
+
+    del _hits[:]
+    del _talk_hits[:]
+
+    # The App-module-load registration can have been cleared by an earlier
+    # test's world reset; re-arm it only if it is actually missing, because
+    # registering twice would double-deliver every bound key.
+    live = App.g_kEventManager._broadcast_handlers.get(ET_KEYBOARD_EVENT, [])
+    if not any(n.endswith("_OnKeyboardEvent_Dispatch") for _d, n in live):
+        register_input_handlers(App.g_kEventManager)
+
+    kb = App.g_kKeyboardBinding
+    previous_destination = kb._default_destination
+    tcw = TGEventHandlerObject()
+    tcw.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_TALK_TO_TACTICAL, __name__ + "._talk_probe")
+    kb.SetDefaultDestination(tcw)
+    kb.BindKey(App.WC_F2, KS_KEYDOWN, App.ET_INPUT_TALK_TO_TACTICAL)
+    try:
+        _tw, cine = _focused_cinematic_window()
+        cine.AddPythonFuncHandlerForInstance(
+            App.ET_INPUT_CINEMATIC_CHASE, __name__ + "._probe")
+        _press(App.WC_F2, App.KY_F2, "F2")
+        # The camera half is asserted by
+        # test_f2_in_cinematic_mode_fires_the_chase_camera_event; asserting it
+        # here too would let a routing regression masquerade as this xfail.
+        assert _talk_hits == []
+    finally:
+        kb.SetDefaultDestination(previous_destination)
+        kb._bindings.pop((App.WC_F2, KS_KEYDOWN), None)

@@ -113,6 +113,40 @@ KS_KEYREPEAT = TGKeyboardEvent.KS_KEYREPEAT
 KS_NORMAL    = TGKeyboardEvent.KS_NORMAL
 
 
+def _window_takes_raw_input(window) -> bool:
+    """False only for a focused window that explicitly reports IsInteractive()
+    == 0 — BC's "this window is not taking user input" state.
+
+    Actions/CameraScriptActions.StartCinematicMode's bInteractive DEFAULTS TO 0
+    (:392) and applies it via SetInteractive (:405); that runs on EVERY player
+    warp (WarpSequence.py:73), plus MissionLib:1950, E3M4:1525/1904, E8M2:6530,
+    HelmMenuHandlers:876, MP Mission5:1045. StopCinematicMode sets it back to 1
+    (:422).
+
+    In BC, HandleKeyboard's non-interactive branch (CinematicInterfaceHandlers
+    .py:99-108) still RECEIVES the key and bubbles it on with CallNextHandler
+    (its Skip-Events escape hatch aside). We dispatch to exactly one object and
+    implement no bubbling, so without this gate a non-interactive cinematic
+    window would win the destination for every key and then drop it — killing
+    E1M1.SkipOpeningSequence, BridgeUtils.ModalKeyboardHandler and
+    E3M1.FilteredKeyboardHandler for the whole of every warp. Declining the
+    destination leaves the raw stream exactly where it went before focus-aware
+    routing existed, which is the faithful single-destination equivalent.
+
+    THE `isinstance(..., int)` TEST IS LOAD-BEARING, NOT DEFENSIVE PADDING.
+    Most main windows have no IsInteractive at all; on the TGObject-derived
+    ones the name vends a truthy _Stub whose int() is 0, so coercing the answer
+    would silently classify EVERY such window as non-interactive and delete the
+    focus prepend outright. Only a real int 0 closes the gate — see CLAUDE.md's
+    numeric-coercion table for the bug class.
+    """
+    probe = getattr(window, "IsInteractive", None)
+    if not callable(probe):
+        return True
+    value = probe()
+    return not (isinstance(value, int) and value == 0)
+
+
 def _raw_keyboard_destination():
     """First object in BC's window chain with an ET_KEYBOARD instance handler.
 
@@ -163,7 +197,9 @@ def _raw_keyboard_destination():
         focus = get_focus() if callable(get_focus) else None
         if focus is not None:
             mains = getattr(top, "_main_windows", None)
-            if isinstance(mains, dict) and any(w is focus for w in mains.values()):
+            if (isinstance(mains, dict)
+                    and any(w is focus for w in mains.values())
+                    and _window_takes_raw_input(focus)):
                 candidates.append(focus)
     root = getattr(App, "g_kRootWindow", None)
     if root is not None:

@@ -175,6 +175,78 @@ def test_keystroke_actually_reaches_the_focused_window():
         _remove(root)
 
 
+def test_a_non_interactive_focused_window_never_takes_the_raw_stream():
+    """Actions/CameraScriptActions.StartCinematicMode's bInteractive DEFAULTS
+    TO 0 (:392) and is applied for real now that CinematicWindow_Cast exists
+    (:405). That path runs on EVERY player warp (WarpSequence.py:73), plus
+    MissionLib:1950, E3M4:1525/1904, E8M2:6530, HelmMenuHandlers:876.
+
+    IsInteractive() == 0 means BC's window is not taking user input, and
+    HandleKeyboard's non-interactive branch (:99-108) bubbles the key on with
+    CallNextHandler. We dispatch to exactly ONE object and implement no
+    bubbling, so the faithful equivalent is for the window not to win the
+    destination at all — leaving the raw stream exactly where it went before
+    focus-aware routing existed. Without this gate every raw ET_KEYBOARD
+    consumer (E1M1.SkipOpeningSequence on the root window,
+    BridgeUtils.ModalKeyboardHandler, E3M1.FilteredKeyboardHandler) goes deaf
+    for the whole of every warp.
+    """
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        _tw, cine = _cine_with_handler()
+        App.CinematicWindow_Cast(cine).SetInteractive(0)
+
+        assert _raw_keyboard_destination() is root
+        em = TGEventManager()
+        im = TGInputManager(em)
+        im.RegisterUnicodeKey(WC_S, KY_S, None, "s")
+        im.OnKeyDown(WC_S)
+        assert len(mod.captured) == 1
+        assert mod.captured[0].GetDestination() is root
+    finally:
+        _remove(root)
+
+
+def test_interactivity_gates_the_raw_stream_both_ways():
+    """The same focused window, flipped back interactive, takes the stream
+    again — so the gate is shown to be the interactivity flag and not a dead
+    route. StopCinematicMode restores SetInteractive(1) (:422)."""
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        _tw, cine = _cine_with_handler()
+        pCinematic = App.CinematicWindow_Cast(cine)
+
+        pCinematic.SetInteractive(0)
+        assert _raw_keyboard_destination() is root
+        pCinematic.SetInteractive(1)
+        assert _raw_keyboard_destination() is cine
+    finally:
+        _remove(root)
+
+
+def test_a_focused_main_window_with_no_interactive_flag_still_wins():
+    """The gate must key on a REAL int. A main window with no IsInteractive at
+    all vends a truthy _Stub whose int() is 0 — coercing that would silently
+    delete the whole focus prepend (the exact collapse class CLAUDE.md's
+    numeric-coercion table exists to catch)."""
+    from engine.appc import top_window
+    mod = _capture_module()
+    root = _root_with_handler(mod)
+    try:
+        top_window.reset_for_tests()
+        tw = top_window.TopWindow_GetTopWindow()
+        main = tw.FindMainWindow(top_window.MWT_TACTICAL)   # no IsInteractive
+        main.AddPythonFuncHandlerForInstance(
+            App.ET_KEYBOARD, _HELPER + ".capture")
+        tw.SetFocus(main)
+        assert not isinstance(main.IsInteractive(), int)    # a _Stub today
+        assert _raw_keyboard_destination() is main
+    finally:
+        _remove(root)
+
+
 def test_focused_window_without_a_keyboard_handler_falls_through_to_root():
     """The existing root-window-before-TopWindow ordering is preserved for
     every window that did not register ET_KEYBOARD — E1M1's skip-intro handler

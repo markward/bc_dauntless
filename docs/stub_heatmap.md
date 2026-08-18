@@ -75,8 +75,8 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 61 | Planet | GetCloakingSubsystem.IsTryingToCloak | 324 | 1/233 | 2026-07-13 23:37 UTC |  |
 | 62 | App | WarpSequence_Cast | 286 | 59/233 | 2026-08-10 11:30 UTC |  |
 | 63 | App | UtopiaModule_ConvertGameUnitsToKilometers | 256 | 23/233 | 2026-08-10 11:34 UTC |  |
-| 64 | App | CinematicWindow_Cast | 246 | 230/233 | 2026-08-10 15:55 UTC |  |
-| 65 | CinematicWindow_Cast() | SetInteractive | 246 | 230/233 | 2026-08-10 15:55 UTC |  |
+| 64 | App | CinematicWindow_Cast | 246 | 230/233 | 2026-08-10 15:55 UTC | 2026-08-18 |
+| 65 | CinematicWindow_Cast() | SetInteractive | 246 | 230/233 | 2026-08-10 15:55 UTC | 2026-08-18 |
 | 66 | Game | AddPersistentModule | 233 | 233/233 | 2026-08-10 15:55 UTC |  |
 | 67 | STButton | GetName | 212 | 85/233 | 2026-08-10 11:34 UTC |  |
 | 68 | App | GENUS_STATION | 201 | 27/233 | 2026-08-10 11:30 UTC |  |

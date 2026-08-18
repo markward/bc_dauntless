@@ -327,14 +327,21 @@ class _TopWindow:
         if getattr(cine, "_handlers_initialized", False):
             return
         cine._handlers_initialized = True
+        # Two separate try blocks, deliberately: the steps fail independently
+        # and a shared block would both misattribute the failure and let step
+        # one's failure silently cost us step two.
         try:
-            import App
             import CinematicInterfaceHandlers
             CinematicInterfaceHandlers.Initialize(cine)
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            print("[cinematic] CinematicInterfaceHandlers.Initialize failed:", exc)
+        try:
+            import App
             cine.AddPythonFuncHandlerForInstance(
                 App.ET_KEYBOARD, "CinematicInterfaceHandlers.HandleKeyboard")
         except Exception as exc:  # noqa: BLE001 - see docstring
-            print("[cinematic] CinematicInterfaceHandlers.Initialize failed:", exc)
+            print("[cinematic] registering CinematicInterfaceHandlers."
+                  "HandleKeyboard for ET_KEYBOARD failed:", exc)
 
     def is_cinematic_active(self) -> bool:
         """True while the cinematic main window holds focus. Derived rather
