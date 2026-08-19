@@ -11,6 +11,7 @@
 
 #include <renderer/asset_path.h>
 #include <renderer/particle_pass.h>
+#include <renderer/hit_vfx_pass.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
 #include <renderer/frame.h>
@@ -268,3 +269,209 @@ TEST_F(ParticlePassTest, SdkTexturePathLoadsRealAsset) {
 }
 
 }  // namespace
+
+// ── Atlas mip clamp ─────────────────────────────────────────────────────────
+// ExplosionA/B are 256x256 8x8 sheets. LOD is computed from the whole texture,
+// so past ~8 screen px the sampler reaches mips where a cell is a couple of
+// texels, neighbours bleed in, and by mip 5 the sheet averages to a flat wash —
+// the puff degenerates into a uniform translucent square. The pass must clamp
+// GL_TEXTURE_MAX_LEVEL per emitter at bind time, and a later non-atlas emitter
+// on the same texture must restore GL's default.
+//
+// texture_for() is private, so assert on observable GL state: count live
+// textures carrying the expected clamp.
+namespace {
+int count_textures_at_max_level(int wanted) {
+    int found = 0;
+    for (GLuint id = 1; id <= 512; ++id) {
+        if (!glIsTexture(id)) continue;
+        glBindTexture(GL_TEXTURE_2D, id);
+        GLint level = 0;
+        glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, &level);
+        if (level == wanted) ++found;
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    while (glGetError() != GL_NO_ERROR) {}
+    return found;
+}
+}  // namespace
+
+TEST_F(ParticlePassTest, AtlasEmitterClampsMipChainAndPlainEmitterRestoresIt) {
+    namespace fs = std::filesystem;
+    const fs::path tex_path = project_root()
+        / "game" / "data" / "Textures" / "Effects" / "ExplosionB.tga";
+    if (!fs::is_regular_file(tex_path)) {
+        GTEST_SKIP() << "BC asset absent: " << tex_path;
+    }
+
+    renderer::ParticlePass pass;
+    scenegraph::World world;
+    scenegraph::Camera camera;
+    camera.eye    = {0.0f, 0.0f, 100.0f};
+    camera.target = {0.0f, 0.0f,   0.0f};
+    camera.up     = {0.0f, 1.0f,   0.0f};
+    camera.aspect = 1.0f;
+    while (glGetError() != GL_NO_ERROR) {}
+
+    renderer::ParticleEmitterDescriptor e;
+    e.texture_path    = tex_path.string();
+    e.emit_dir        = {0.0f, 1.0f, 0.0f};
+    e.inherit         = 0.0f;
+    e.emit_life       = 1.0f;
+    e.emit_frequency  = 0.5f;
+    e.effect_age      = 0.1f;
+    e.num_size_keys   = 1; e.size_keys[0]  = renderer::ParticleKey{0.0f, 1.0f};
+    e.num_alpha_keys  = 1; e.alpha_keys[0] = renderer::ParticleKey{0.0f, 1.0f};
+
+    const int before = count_textures_at_max_level(3);
+
+    e.atlas_cols = 8;
+    e.atlas_rows = 8;
+    std::vector<renderer::ParticleEmitterDescriptor> atlas{e};
+    pass.render(atlas, world, camera, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_EQ(count_textures_at_max_level(3), before + 1)
+        << "an 8x8 sheet at 256x256 must clamp GL_TEXTURE_MAX_LEVEL to 3";
+
+    // Same texture, non-atlas emitter: the clamp must not persist.
+    e.atlas_cols = 1;
+    e.atlas_rows = 1;
+    std::vector<renderer::ParticleEmitterDescriptor> plain{e};
+    pass.render(plain, world, camera, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_EQ(count_textures_at_max_level(3), before)
+        << "a 1x1 emitter must restore the default chain, not inherit the clamp";
+}
+
+// ── Per-particle billboard roll ─────────────────────────────────────────────
+TEST_F(ParticlePassTest, RollUniformExistsInSharedProgram) {
+    // Also guards the build trap: embed_shader() in the renderer CMakeLists
+    // reads hit_vfx.vert with file(READ) at CONFIGURE time and has no
+    // CONFIGURE_DEPENDS, so a shader edit without a cmake re-run silently
+    // compiles the stale source and the uniform is simply absent.
+    const GLint loc = glGetUniformLocation(
+        pipeline->hit_vfx_shader().program(), "u_roll");
+    EXPECT_GE(loc, 0) << "u_roll missing from hit_vfx.vert (stale embedded shader?)";
+}
+
+// HitVfxPass and ParticlePass share one GL program, and uniform values are
+// program state that survives use(). HitVfx renders FIRST each frame
+// (host_bindings.cc), so without an explicit reset it inherits the previous
+// frame's last particle roll and every impact flash spins.
+TEST_F(ParticlePassTest, HitVfxPassResetsRollLeftByParticlePass) {
+    namespace fs = std::filesystem;
+    const fs::path tex_path = project_root()
+        / "game" / "data" / "Textures" / "Effects" / "ExplosionB.tga";
+    if (!fs::is_regular_file(tex_path)) {
+        GTEST_SKIP() << "BC asset absent: " << tex_path;
+    }
+
+    renderer::ParticlePass pass;
+    renderer::HitVfxPass   hit_pass;
+    scenegraph::World world;
+    scenegraph::Camera camera;
+    camera.eye    = {0.0f, 0.0f, 100.0f};
+    camera.target = {0.0f, 0.0f,   0.0f};
+    camera.up     = {0.0f, 1.0f,   0.0f};
+    camera.aspect = 1.0f;
+    while (glGetError() != GL_NO_ERROR) {}
+
+    renderer::ParticleEmitterDescriptor e;
+    e.texture_path   = tex_path.string();
+    e.emit_dir       = {0.0f, 1.0f, 0.0f};
+    e.inherit        = 0.0f;
+    e.emit_life      = 1.0f;
+    e.emit_frequency = 0.5f;
+    e.effect_age     = 0.1f;
+    e.roll_rate      = 2.0f;
+    e.num_size_keys  = 1; e.size_keys[0]  = renderer::ParticleKey{0.0f, 1.0f};
+    e.num_alpha_keys = 1; e.alpha_keys[0] = renderer::ParticleKey{0.0f, 1.0f};
+
+    std::vector<renderer::ParticleEmitterDescriptor> emitters{e};
+    pass.render(emitters, world, camera, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "rolling/tumbling emitter must render clean";
+
+    const GLuint prog = pipeline->hit_vfx_shader().program();
+    const GLint  loc  = glGetUniformLocation(prog, "u_roll");
+    ASSERT_GE(loc, 0);
+    GLfloat left_behind = 0.0f;
+    glGetUniformfv(prog, loc, &left_behind);
+    ASSERT_NE(left_behind, 0.0f) << "precondition: the particle pass must have "
+                                    "left a non-zero roll to inherit";
+
+    // HitVfxPass opens its sprites by CWD-relative path (the renderer runs from
+    // the project root), and bails before touching any uniform if they fail to
+    // load — so emulate that CWD, as hit_vfx_pass_test.cc does.
+    if (!fs::is_regular_file(project_root() / "game" / "data" / "Textures"
+                             / "Tactical" / "TorpedoFlares.tga")) {
+        GTEST_SKIP() << "hit-VFX flash sprite absent";
+    }
+    renderer::HitVfxDescriptor hv;
+    hv.world_pos = {0.0f, 0.0f, 0.0f};
+    hv.age       = 0.0f;
+    std::vector<renderer::HitVfxDescriptor> hits{hv};
+    const fs::path prev_cwd = fs::current_path();
+    fs::current_path(project_root());
+    hit_pass.render(hits, world, camera, *pipeline);
+    fs::current_path(prev_cwd);
+
+    GLfloat after = -1.0f;
+    glGetUniformfv(prog, loc, &after);
+    EXPECT_FLOAT_EQ(after, 0.0f)
+        << "HitVfxPass must reset u_roll or impact flashes inherit a spin";
+}
+
+// The mip-clamp helper binds the texture, sets the parameter, and unbinds. Call
+// it AFTER glBindTexture and every subsequent draw samples an unbound
+// sampler2D, which returns (0,0,0,1) — particles render as solid BLACK quads,
+// invisible against space and wrong everywhere else.
+//
+// The state-level tests could not see this: glGetError stays clean and
+// GL_TEXTURE_MAX_LEVEL still reads back correctly. Only pixels show it.
+TEST_F(ParticlePassTest, ParticlesSampleTheirTextureAndAreNotBlack) {
+    namespace fs = std::filesystem;
+    const fs::path tex_path = project_root() / "game" / "data" / "rough.tga";
+    if (!fs::is_regular_file(tex_path)) {
+        GTEST_SKIP() << "BC asset absent: " << tex_path;
+    }
+
+    renderer::ParticlePass pass;
+    scenegraph::World world;
+    scenegraph::Camera camera;
+    camera.eye    = {0.0f, 0.0f, 5.0f};
+    camera.target = {0.0f, 0.0f, 0.0f};
+    camera.up     = {0.0f, 1.0f, 0.0f};
+    camera.aspect = 1.0f;
+
+    // rough.tga is flat-white RGB with a soft alpha, so a white-tinted particle
+    // over a black clear must come back bright.
+    renderer::ParticleEmitterDescriptor e;
+    e.texture_path    = tex_path.string();
+    e.emit_dir        = {0.0f, 1.0f, 0.0f};
+    e.inherit         = 0.0f;
+    e.emit_velocity   = 0.0f;      // stay on the camera axis
+    e.angle_variance  = 0.0f;
+    e.emit_life       = 1.0f;
+    e.emit_frequency  = 0.5f;
+    e.effect_age      = 0.1f;
+    e.blend_mode      = 0;         // alpha-over, so black really reads black
+    e.num_color_keys  = 1; e.color_keys[0] = renderer::ParticleKey{0.0f, 0.0f,
+                                                                   1.0f, 1.0f, 1.0f};
+    e.num_size_keys   = 1; e.size_keys[0]  = renderer::ParticleKey{0.0f, 2.0f};
+    e.num_alpha_keys  = 1; e.alpha_keys[0] = renderer::ParticleKey{0.0f, 1.0f};
+
+    glViewport(0, 0, 64, 64);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    while (glGetError() != GL_NO_ERROR) {}
+
+    std::vector<renderer::ParticleEmitterDescriptor> emitters{e};
+    pass.render(emitters, world, camera, *pipeline);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    unsigned char px[4] = {0, 0, 0, 0};
+    glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_GT(static_cast<int>(px[0]) + px[1] + px[2], 30)
+        << "centre pixel is black — the particle drew without its texture bound";
+}

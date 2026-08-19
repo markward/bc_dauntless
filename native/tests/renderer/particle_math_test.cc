@@ -96,3 +96,95 @@ TEST(ParticleMath, StreakQuadDegeneratesAndAligns) {
     glm::vec3 long_edge = st[2] - st[1];
     EXPECT_GT(std::abs(glm::dot(glm::normalize(long_edge), axis)), 0.9f);
 }
+
+// Sprite sheets are sampled through one LOD chain computed from the WHOLE
+// texture, so a shrinking puff eventually lands on mips where a single cell is
+// a couple of texels: neighbouring cells bleed in and the sheet averages to a
+// flat wash, turning the quad into a uniform translucent square. Clamp the
+// chain so a cell never falls below min_cell_texels.
+TEST(ParticleMath, AtlasMaxMipLevelClampsSheetsAndLeavesPlainTexturesAlone) {
+    // ExplosionA/B: 256x256 at 8x8 => 32-texel cells. Level 3 is a 4-texel
+    // cell; levels 4-7 (where the whole sheet washes out) become unsamplable.
+    EXPECT_EQ(atlas_max_mip_level(256, 256, 8, 8), 3);
+
+    // Non-atlas emitters must actively RESTORE the GL default, not inherit a
+    // clamp left on the texture object by an earlier atlas emitter.
+    EXPECT_EQ(atlas_max_mip_level(256, 256, 1, 1), 1000);
+    EXPECT_EQ(atlas_max_mip_level(256, 256, 0, 0), 1000);
+
+    // A cell already at the floor gets level 0, never a negative level.
+    EXPECT_EQ(atlas_max_mip_level(32, 32, 8, 8), 0);
+    EXPECT_EQ(atlas_max_mip_level(16, 16, 8, 8), 0);
+
+    // Non-square sheets take the smaller cell dimension: 256/8=32 vs 128/8=16.
+    EXPECT_EQ(atlas_max_mip_level(256, 128, 8, 8), 2);
+}
+
+// Every billboard is built from the same camera basis, so N copies of one
+// sprite sit in identical orientation and read as a repeating stamp. A
+// per-particle roll about the view axis breaks that up. These are the GL-free
+// oracle for hit_vfx.vert — keep the two in step.
+TEST(ParticleMath, BillboardRollRotatesTheBasisInPlane) {
+    const glm::vec3 cam_right{1, 0, 0};
+    const glm::vec3 cam_up{0, 1, 0};
+
+    glm::vec3 r = cam_right, u = cam_up;
+    billboard_roll_basis(r, u, 0.0f);
+    EXPECT_NEAR(glm::length(r - cam_right), 0.f, 1e-6f) << "roll 0 must be identity";
+    EXPECT_NEAR(glm::length(u - cam_up),    0.f, 1e-6f);
+
+    r = cam_right; u = cam_up;
+    billboard_roll_basis(r, u, 1.57079633f);   // +90 degrees
+    EXPECT_NEAR(glm::length(r - cam_up),     0.f, 1e-5f) << "right -> up";
+    EXPECT_NEAR(glm::length(u + cam_right),  0.f, 1e-5f) << "up -> -right";
+
+    // The quad must not shear, shrink, or flip: lengths, orthogonality and the
+    // view axis (right x up) all survive an arbitrary roll.
+    r = cam_right * 2.0f; u = cam_up * 2.0f;
+    billboard_roll_basis(r, u, 0.7f);
+    EXPECT_NEAR(glm::length(r), 2.f, 1e-5f);
+    EXPECT_NEAR(glm::length(u), 2.f, 1e-5f);
+    EXPECT_NEAR(glm::dot(r, u), 0.f, 1e-5f);
+    EXPECT_NEAR(glm::length(glm::cross(r, u) - glm::cross(cam_right * 2.0f,
+                                                          cam_up * 2.0f)),
+                0.f, 1e-5f);
+}
+
+TEST(ParticleMath, ParticleRollIsDeterministicAndBounded) {
+    const glm::vec2 h{0.25f, 0.9f};
+
+    // Deterministic: the pass re-derives every particle from its hash each
+    // frame, so the same input must give the same angle or sprites flicker.
+    EXPECT_FLOAT_EQ(particle_roll(h, 1.5f, 0.4f), particle_roll(h, 1.5f, 0.4f));
+
+    // rate 0 => a fixed random angle: independent of age, inside one turn.
+    const float fixed = particle_roll(h, 0.0f, 0.0f);
+    EXPECT_FLOAT_EQ(particle_roll(h, 0.0f, 9.0f), fixed);
+    EXPECT_GE(fixed, 0.0f);
+    EXPECT_LT(fixed, 6.2831854f);
+
+    // Spin magnitude is bounded by rate*tau...
+    EXPECT_LE(std::abs(particle_roll(h, 2.0f, 3.0f) - fixed), 2.0f * 3.0f + 1e-4f);
+
+    // ...and particles on opposite sides of the hash midpoint spin opposite
+    // ways, so a cloud tumbles rather than rotating as one rigid sheet.
+    const float cw  = particle_roll({0.25f, 0.9f}, 2.0f, 1.0f)
+                    - particle_roll({0.25f, 0.9f}, 0.0f, 0.0f);
+    const float ccw = particle_roll({0.25f, 0.1f}, 2.0f, 1.0f)
+                    - particle_roll({0.25f, 0.1f}, 0.0f, 0.0f);
+    EXPECT_LT(cw * ccw, 0.0f) << "h.y either side of 0.5 must give opposite spin";
+}
+
+// A streak's `up` IS its velocity axis; rolling it about the view vector would
+// slide sparks off their own trajectory. Encodes the decision so a future
+// refactor cannot quietly start rolling streaks.
+TEST(ParticleMath, StreakQuadIgnoresRoll) {
+    const glm::vec3 center{0, 0, 0}, axis{0, 1, 0};
+    const glm::vec3 cam_right{1, 0, 0}, cam_up{0, 0, 1};
+    auto unrolled = streak_quad(center, axis, 2.0f, 0.1f, cam_right, cam_up);
+    auto rolled   = streak_quad(center, axis, 2.0f, 0.1f, cam_right, cam_up, 1.0f);
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_NEAR(glm::length(rolled[i] - unrolled[i]), 0.f, 1e-6f)
+            << "corner " << i << " moved: roll must not touch the streak path";
+    }
+}

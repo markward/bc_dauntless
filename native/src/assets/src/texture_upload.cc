@@ -74,4 +74,11 @@ Texture upload_image(const Image& image, bool generate_mipmaps) {
     return Texture(handle.release(), image.width, image.height, mipmaps);
 }
 
+void set_texture_max_level(const Texture& tex, int max_level) {
+    if (tex.id() == 0) return;
+    glBindTexture(GL_TEXTURE_2D, tex.id());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, max_level);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
 }  // namespace assets

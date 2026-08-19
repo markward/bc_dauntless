@@ -93,6 +93,55 @@ inline float damped_travel(float v, float c, float tau) {
     return (c > 1e-6f) ? (v / c) * (1.0f - std::exp(-c * tau)) : v * tau;
 }
 
+/// GL_TEXTURE_MAX_LEVEL for a sprite-sheet texture, so that the smallest
+/// samplable mip still holds at least `min_cell_texels` per cell.
+///
+/// LOD is computed from the WHOLE texture, not from the cell the shader
+/// actually samples, so a shrinking atlas particle walks off the end of its
+/// cell: neighbouring cells bleed in and, a couple of levels further down, the
+/// entire sheet averages to a flat wash and the quad degenerates into a uniform
+/// translucent SQUARE. ExplosionA/B (256x256 at 8x8) hit that by mip 5.
+///
+/// Returns GL's default 1000 for a non-atlas grid, so a 1x1 emitter actively
+/// RESTORES the default rather than inheriting a clamp another emitter left on
+/// the shared texture object.
+inline int atlas_max_mip_level(unsigned tex_w, unsigned tex_h,
+                               int cols, int rows,
+                               int min_cell_texels = 4) {
+    if (cols <= 1 && rows <= 1) return 1000;
+    const unsigned c = static_cast<unsigned>(std::max(1, cols));
+    const unsigned r = static_cast<unsigned>(std::max(1, rows));
+    const unsigned cell = std::min(tex_w / c, tex_h / r);
+    if (cell <= static_cast<unsigned>(std::max(1, min_cell_texels))) return 0;
+    const float ratio = static_cast<float>(cell)
+                      / static_cast<float>(std::max(1, min_cell_texels));
+    return std::max(0, static_cast<int>(std::floor(std::log2(ratio))));
+}
+
+/// Rotate a billboard's (right, up) basis about the view axis by `roll`
+/// radians. Length-, orthogonality- and handedness-preserving, so the quad
+/// spins in place without shearing. Mirrored by hit_vfx.vert.
+inline void billboard_roll_basis(glm::vec3& right, glm::vec3& up, float roll) {
+    const float c = std::cos(roll);
+    const float s = std::sin(roll);
+    const glm::vec3 r = right * c + up * s;
+    const glm::vec3 u = up * c - right * s;
+    right = r;
+    up    = u;
+}
+
+/// Roll angle for one particle: a fixed random orientation plus, when
+/// `roll_rate` > 0, a tumble whose sign and magnitude vary per particle so a
+/// cloud spins every which way instead of rotating as one rigid sheet.
+///
+/// `h` is a 2-component hash in [0,1). `tau` is the particle's OWN age, never
+/// the emitter's effect_age — otherwise every particle's spin phase jumps when
+/// the emitter restarts. Collapses to a fixed angle when roll_rate == 0, the
+/// file's usual "zero => prior behaviour" convention.
+inline float particle_roll(glm::vec2 h, float roll_rate, float tau) {
+    return h.x * 6.2831853f + roll_rate * (h.y * 2.0f - 1.0f) * tau;
+}
+
 /// Four world-space corners of a particle quad. length<=0 => a camera-facing
 /// square of half-extent `half_width`. length>0 => long axis along `vel_axis`
 /// (length = streak length), short axis the camera-facing perpendicular
@@ -102,7 +151,8 @@ inline std::array<glm::vec3, 4> streak_quad(const glm::vec3& center,
                                             const glm::vec3& vel_axis,
                                             float length, float half_width,
                                             const glm::vec3& cam_right,
-                                            const glm::vec3& cam_up) {
+                                            const glm::vec3& cam_up,
+                                            float roll = 0.0f) {
     glm::vec3 right, up;
     if (length > 1e-6f && glm::length(vel_axis) > 1e-6f) {
         glm::vec3 axis = glm::normalize(vel_axis);
@@ -114,6 +164,9 @@ inline std::array<glm::vec3, 4> streak_quad(const glm::vec3& center,
     } else {
         right = cam_right * half_width;
         up    = cam_up * half_width;
+        // Camera-facing only. A streak's `up` IS its velocity axis; rolling it
+        // about the view vector would slide the sprite off its own trajectory.
+        billboard_roll_basis(right, up, roll);
     }
     return {
         center - right - up,   // (-1,-1)

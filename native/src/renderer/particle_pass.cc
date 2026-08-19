@@ -215,11 +215,25 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
         // Defensive default: emitters with tail_length==0 never hit the
         // per-particle branch below, so pre-zero the uniform once here.
         shader.set_float("u_streak_length", 0.0f);
+        shader.set_float("u_roll", 0.0f);
         // Texture-sheet grid (1x1 = whole texture). Per-particle cell set below.
         const int atlas_cols = std::max(1, e.atlas_cols);
         const int atlas_rows = std::max(1, e.atlas_rows);
         shader.set_vec2("u_atlas_grid",
                         glm::vec2(float(atlas_cols), float(atlas_rows)));
+        // Clamp the mip chain so a sheet cell never shrinks below a few texels.
+        // Set per emitter rather than at upload: the grid belongs to the
+        // emitter, not the file, and the same texture may be bound at different
+        // grids. atlas_max_mip_level returns GL's default for a 1x1 grid, so a
+        // non-atlas emitter actively restores it instead of inheriting a clamp.
+        //
+        // MUST come BEFORE the bind below: the helper leaves GL_TEXTURE_2D
+        // unbound, so calling it after would leave every draw in this emitter
+        // sampling an unbound sampler2D — which returns (0,0,0,1) and paints
+        // solid black quads.
+        assets::set_texture_max_level(
+            *tex, atlas_max_mip_level(tex->width(), tex->height(),
+                                      atlas_cols, atlas_rows));
         glBindTexture(GL_TEXTURE_2D, tex->id());
 
         for (int i = 0; i < n; ++i) {
@@ -274,6 +288,13 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
             shader.set_vec3 ("u_world_position", pos);
             shader.set_float("u_size",           size);
             shader.set_float("u_alpha",          alpha);
+            // Per-particle billboard roll: a fixed random orientation, plus a
+            // tumble when the emitter asks for one. Without it every quad
+            // shares the camera basis and N copies of one sprite read as a
+            // repeating stamp. Ignored by the streak branch of hit_vfx.vert.
+            shader.set_float("u_roll",
+                             particle_roll(hash3(hseed, i + 6151),
+                                           e.roll_rate, tau));
             // A3: streak uniforms. tail_length==0 => camera-facing billboard (A1/A2 path).
             if (e.tail_length > 0.0f) {
                 const float speed = e.emit_velocity * std::exp(-e.damping * tau);
