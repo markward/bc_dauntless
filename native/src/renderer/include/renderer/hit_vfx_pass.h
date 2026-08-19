@@ -13,6 +13,20 @@ namespace renderer {
 
 class Pipeline;
 
+/// Where a hit VFX sits right now, in world space.
+///
+/// With a hull anchor (`has_body_anchor`) and a live instance, that is
+/// `instance_world * body_point`, recomputed every frame so the impact rides
+/// the ship. Without one — no mesh normal, no instance, stale id — it falls
+/// back to the descriptor's frozen `world_pos`.
+///
+/// The flash billboard used `world_pos` unconditionally while the sparks in
+/// the SAME descriptor already tracked the instance matrix, so over the flash's
+/// 0.7 s life it slid ~4.4 GU at combat speed while the sparks stayed put.
+/// Both now go through here.
+glm::vec3 hit_vfx_anchor_point(const HitVfxDescriptor& v,
+                               const glm::mat4* instance_world);
+
 class HitVfxPass {
 public:
     HitVfxPass();

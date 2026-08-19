@@ -227,12 +227,19 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             absorbed_hull=absorbed_hull)
         body_point = body_normal = None
         instance_id = None
-        # Bail to flash-only (no sparks) when any of: no instance map, no
-        # surface normal (sphere-entry fallback), the world→body conversion
-        # fails (native absent / stale id), or the ship has no instance.
-        # Sparks need a hull anchor; the impact-flash billboard fires regardless.
-        if (spark_count > 0 and ship_instances is not None
-                and normal is not None):
+        # Resolve the hull anchor for EVERY hit that can have one, not just
+        # spark-bearing ones. The flash billboard needs it too: hit_vfx_pass
+        # drew the flash at a frozen world_pos while the sparks beside it
+        # tracked inst->world, so over the flash's 0.7 s life it slid ~4.4 GU at
+        # combat speed — further than a Galaxy is long. Gating the conversion on
+        # `spark_count > 0` meant a flash-only hit (every phaser tick) had no
+        # anchor available at all.
+        #
+        # Unavailable when: no instance map, no surface normal (sphere-entry
+        # fallback), no instance for this ship, or the conversion fails (native
+        # absent / stale id). The flash then falls back to its world position,
+        # which is the old behaviour.
+        if ship_instances is not None and normal is not None:
             instance_id = ship_instances.get(ship)
             if instance_id is not None:
                 conv = host_io.world_to_body(
@@ -242,7 +249,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                 if conv is not None:
                     body_point, body_normal = conv
                 else:
-                    instance_id = None  # stale id; render flash only, no sparks
+                    instance_id = None  # stale id; no anchor, no sparks
         # body_point is None unless the world->body conversion succeeded;
         # force spark_count=0 in every no-anchor path so the renderer never
         # anchors a burst at the default (0,0,0) body origin.

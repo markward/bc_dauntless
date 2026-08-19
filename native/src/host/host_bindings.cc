@@ -2465,6 +2465,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   if (d.contains("body_point") && !d["body_point"].is_none()) {
                       auto bp = d["body_point"].cast<std::tuple<float, float, float>>();
                       v.body_point = {std::get<0>(bp), std::get<1>(bp), std::get<2>(bp)};
+                      // Both the flash and the sparks ride this. body_point
+                      // defaults to the model origin, a legitimate value, so
+                      // presence is flagged rather than sniffed.
+                      v.has_body_anchor = true;
                   }
                   if (d.contains("body_normal") && !d["body_normal"].is_none()) {
                       auto bn = d["body_normal"].cast<std::tuple<float, float, float>>();
