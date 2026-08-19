@@ -80,7 +80,7 @@ class _Recorder:
     def __init__(self):
         self.points = []
 
-    def __call__(self, iid, point, rgba, intensity):
+    def __call__(self, iid, point, rgba, intensity, radius=0.0):
         self.points.append(point)
 
 

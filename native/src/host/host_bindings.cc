@@ -3192,7 +3192,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> point,
              std::tuple<float, float, float, float> rgba,
-             float intensity) {
+             float intensity,
+             float radius) {
               if (!g_shield_pass) return;
               const glm::vec3 p(std::get<0>(point),
                                  std::get<1>(point),
@@ -3210,13 +3211,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const auto* inst = g_world.get(id);
               if (inst == nullptr) return;
               const glm::vec3 body(glm::inverse(inst->world) * glm::vec4(p, 1.0f));
-              g_shield_pass->shield_hit(id, body, c, intensity, glfwGetTime());
+              g_shield_pass->shield_hit(id, body, c, intensity, glfwGetTime(),
+                                        radius);
           },
           py::arg("instance_id"), py::arg("point"),
           py::arg("rgba") = std::make_tuple(0.0f, 0.0f, 0.0f, 0.0f),
           py::arg("intensity") = 1.0f,
+          py::arg("radius") = 0.0f,
           "Push a shield-hit flash for the given ship at a world-space point. "
-          "rgba=(0,0,0,0) substitutes the ship's default ShieldGlowColor.");
+          "rgba=(0,0,0,0) substitutes the ship's default ShieldGlowColor. "
+          "radius is the weapon's DamageRadiusFactor in GU, which sizes the "
+          "procedural ripple; 0 clamps up to the renderer's reach floor.");
 
     m.def("ray_trace_mesh",
           [](scenegraph::InstanceId id,

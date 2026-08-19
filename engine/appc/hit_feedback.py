@@ -241,6 +241,11 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     (anchor.x, anchor.y, anchor.z),
                     (0.0, 0.0, 0.0, 0.0),
                     shield_impact_intensity(weapon_type),
+                    # The weapon's DamageRadiusFactor sizes the procedural
+                    # splash (renderer/shield_state.h shield_splash_reach).
+                    # Callers with no weapon — collisions, splash damage —
+                    # pass 0, which clamps up to the reach floor.
+                    float(radius),
                 )
 
     # 1b. Hull / critical impact — fires whenever damage got PAST the shields.

@@ -52,7 +52,8 @@ def test_apply_hit_shield_hit_routes_through_host_io(monkeypatch):
     (positional args), with the ship's renderer instance id and impact point."""
     calls = []
     monkeypatch.setattr(host_io, "shield_hit",
-                        lambda instance_id, point, rgba=(0, 0, 0, 0), intensity=1.0:
+                        lambda instance_id, point, rgba=(0, 0, 0, 0), intensity=1.0,
+                               radius=0.0:
                         calls.append((instance_id, point, rgba, intensity)))
     # Neutralize the sibling wrappers so nothing else reaches the real native.
     monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)

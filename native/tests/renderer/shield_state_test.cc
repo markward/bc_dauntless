@@ -256,36 +256,30 @@ namespace {
 constexpr glm::vec3 kGalaxyHalf{232.064f, 322.166f, 70.4982f};
 constexpr glm::vec3 kSovereignHalf{115.429f, 349.8808f, 41.3978f};
 
-// Mirror the UV half of splash_sample() from shaders/shield.frag so the tests
-// can reason about which part of the texture a bubble point samples. The
-// coverage half lives in production as shield_splash_coverage(). Both work in
-// the bubble's unit-sphere space — keep in sync with the shader.
-glm::vec2 splash_uv(glm::vec3 hit, glm::vec3 bubble_centre,
-                    glm::vec3 frag, glm::vec3 semi_axes) {
-    glm::vec3 n_hit = glm::normalize((hit - bubble_centre) / semi_axes);
-    glm::vec3 n_frag = glm::normalize((frag - bubble_centre) / semi_axes);
-    glm::vec3 ref = std::abs(n_hit.z) < 0.9f ? glm::vec3(0, 0, 1)
-                                              : glm::vec3(0, 1, 0);
-    glm::vec3 t1 = glm::normalize(glm::cross(n_hit, ref));
-    glm::vec3 t2 = glm::cross(n_hit, t1);
-    glm::vec3 offset = n_frag - n_hit;
-    return glm::vec2(glm::dot(offset, t1), glm::dot(offset, t2))
-           / (2.0f * kShieldSplashRadius) + 0.5f;
+// UNITS. `register_ship_shield` hands shield_pass.cc the RAW NIF half-extents
+// and shield_pass multiplies by `length(inst->world[0])` == BC_MODEL_SCALE ==
+// 0.01 before they reach the shader, so u_bubble_semi_axes arrives in GAME
+// UNITS -- the same units as v_world_pos and as the weapon's
+// DamageRadiusFactor. Anything that compares a distance against a reach must
+// therefore be in GU. (The bubble-fit tests above are pure ratios and are
+// unaffected by which of the two they use.)
+constexpr float kNifToWorld = 0.01f;   // engine/host_loop.py BC_MODEL_SCALE
+
+/// Galaxy / Sovereign bubble semi-axes as the SHADER sees them, in GU.
+/// Galaxy: 4.02 / 5.58 / 1.22.
+constexpr glm::vec3 kGalaxySemiGu =
+    kGalaxyHalf * kNifToWorld * kShieldEllipsoidAxisScale;
+constexpr glm::vec3 kSovereignSemiGu =
+    kSovereignHalf * kNifToWorld * kShieldEllipsoidAxisScale;
+
+/// Splash coverage at the moment of impact, which is when the core is hottest
+/// and every test below wants to measure. Keeps the arg list out of the way.
+float coverage_at_t0(const glm::vec3& frag, const glm::vec3& hit,
+                     const glm::vec3& centre, const glm::vec3& semi,
+                     float reach) {
+    return shield_splash_coverage(frag, hit, centre, semi, 0.0f, reach, 0.0f);
 }
 }  // namespace
-
-
-TEST(ShieldSplash, AntipodalBubblePointWouldGetTheTextureCentre) {
-    // Documents defect 1: without a hemisphere gate the far pole samples uv
-    // (0.5, 0.5). This is the geometry the gate below has to reject.
-    const glm::vec3 centre(0.0f);
-    const glm::vec3 semi = kGalaxyHalf * kShieldEllipsoidAxisScale;
-    const glm::vec3 hit(0.0f, 0.0f, -kGalaxyHalf.z);        // ventral hull hit
-    const glm::vec3 far_pole(0.0f, 0.0f, semi.z);           // DORSAL bubble point
-    const glm::vec2 uv = splash_uv(hit, centre, far_pole, semi);
-    EXPECT_NEAR(uv.x, 0.5f, 1e-4f);
-    EXPECT_NEAR(uv.y, 0.5f, 1e-4f);
-}
 
 TEST(ShieldSplash, GateRejectsTheFarHemisphereAndKeepsTheNearOne) {
     const glm::vec3 impact_dir(0.0f, 0.0f, -1.0f);   // hit came from below
@@ -300,152 +294,196 @@ TEST(ShieldSplash, GateRejectsTheFarHemisphereAndKeepsTheNearOne) {
     EXPECT_LT(mid, 1.0f);
 }
 
-// ── splash footprint must not depend on WHERE on the bubble it lands ───────
+// ── the splash is a WORLD-SPACE radius, not an angular cap ────────────────
 //
-// BC's bubbles are extreme ellipsoids (a Galaxy's semi-axes are 402 x 558 x
-// 121). Measuring the falloff as a world-space chord between two points at the
-// FRAGMENT's own radius makes the patch boundary the locus
-// `r(dir) * sin(theta/2) = radius/2` -- so the patch runs much further, in
-// angle, in whatever direction the bubble's radius SHRINKS. A bow or flank hit
-// smears into a long ribbon over the dorsal/ventral poles: measured 4.3x and
-// 5.7x elongation on a real Galaxy, which renders as an arc across the ship
-// rather than a localised impact patch.
+// This block replaces four tests that characterised the previous ANGULAR
+// design (FootprintIsIsotropicAcrossAnAnisotropicBubble,
+// FootprintIsTheSameSizeWhereverItLands, FootprintStaysWellClearOfTheTerminator
+// and FootprintIsInvariantUnderInstanceScale). They asserted that the splash
+// covers the same number of DEGREES wherever it lands, which the procedural
+// splash deliberately no longer does -- they are not regressions, they are the
+// old requirement.
 //
-// The fix measures in the ellipsoid's UNIT-SPHERE space (positions divided
-// component-wise by the semi-axes) -- the same space BC's own facing chooser
-// uses (ShipClass::TestHit, stbc_reference spec/ShieldFacingDamage.md 2.3
-// step 4). There the bubble IS a sphere, so the patch is isotropic by
-// construction.
+// Why the requirement changed: measuring in the bubble's unit-sphere space is
+// isotropic in angle, but a Galaxy's bubble is 4.02 x 5.58 x 1.22 GU, so a
+// fixed 18-degree cap spans 0.43 GU toward the dorsal and 1.74 GU toward the
+// bow -- a 4x difference in the size the player actually sees. The splash is
+// now a genuine sphere of world radius `reach` intersected with the bubble,
+// which is the same rule the hull-carve work settled on: a weapon makes the
+// same size of mark on any hull.
 namespace {
 
-/// Angular half-width of the splash, in degrees, walking from the impact
-/// direction toward `toward` across the bubble surface. 0 if nothing lit.
-float splash_half_width_deg(const glm::vec3& semi, const glm::vec3& impact_dir,
-                            const glm::vec3& toward) {
-    float last_lit = 0.0f;
-    for (int deg = 0; deg <= 180; ++deg) {
-        const float th = glm::radians(static_cast<float>(deg));
+/// World distance, in GU, from the epicentre out to where coverage falls to
+/// half its peak, walking across the bubble surface from `impact_dir` toward
+/// `toward`. Returns 0 if nothing is lit.
+float splash_half_extent_gu(const glm::vec3& semi, const glm::vec3& impact_dir,
+                            const glm::vec3& toward, float reach) {
+    const glm::vec3 hit = impact_dir * semi;
+    const float peak = coverage_at_t0(hit, hit, glm::vec3(0.0f), semi, reach);
+    if (peak <= 0.0f) return 0.0f;
+    for (int i = 0; i <= 4000; ++i) {
+        const float th = glm::radians(180.0f * static_cast<float>(i) / 4000.0f);
         const glm::vec3 dir =
             glm::normalize(std::cos(th) * impact_dir + std::sin(th) * toward);
-        const glm::vec3 frag = dir * semi;      // that direction, on the bubble
-        const glm::vec3 hit = impact_dir * semi;
-        if (shield_splash_coverage(frag, hit, glm::vec3(0.0f), semi) > 0.02f)
-            last_lit = static_cast<float>(deg);
+        const glm::vec3 frag = dir * semi;
+        if (coverage_at_t0(frag, hit, glm::vec3(0.0f), semi, reach)
+                < 0.5f * peak)
+            return glm::length(frag - hit);
     }
-    return last_lit;
+    return 0.0f;
 }
 
 }  // namespace
 
-TEST(ShieldSplash, FootprintIsIsotropicAcrossAnAnisotropicBubble) {
-    const glm::vec3 semi = kGalaxyHalf * kShieldEllipsoidAxisScale;
+TEST(ShieldSplash, HalfExtentIsTheSameWorldSizeWhereverItLands) {
+    // THE load-bearing test for the rebuild. A bow hit and a dorsal hit sit on
+    // parts of the bubble whose radii differ by 4.6x (5.58 GU vs 1.22 GU).
+    // Under the old angular measure the same splash therefore covered 4x more
+    // world distance on the bow than on the dorsal. It must not.
+    const float reach = 1.5f;
+    const float bow    = splash_half_extent_gu(kGalaxySemiGu, {0, 1, 0}, {1, 0, 0}, reach);
+    const float dorsal = splash_half_extent_gu(kGalaxySemiGu, {0, 0, 1}, {1, 0, 0}, reach);
+    const float flank  = splash_half_extent_gu(kGalaxySemiGu, {1, 0, 0}, {0, 1, 0}, reach);
+    ASSERT_GT(bow, 0.0f);
+    ASSERT_GT(dorsal, 0.0f);
+    ASSERT_GT(flank, 0.0f);
+    EXPECT_NEAR(bow, dorsal, 0.02f * bow) << "bow " << bow << " vs dorsal " << dorsal;
+    EXPECT_NEAR(bow, flank, 0.02f * bow) << "bow " << bow << " vs flank " << flank;
+}
 
+TEST(ShieldSplash, HalfExtentIsIsotropicAroundOneImpact) {
+    // And the patch is round: walking away from a single hit in two
+    // perpendicular directions covers the same world distance.
+    const float reach = 1.5f;
     const glm::vec3 axes[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
     for (int hit_axis = 0; hit_axis < 3; ++hit_axis) {
         float lo = 1e9f, hi = 0.0f;
         for (int k = 0; k < 3; ++k) {
             if (k == hit_axis) continue;
-            const float w = splash_half_width_deg(semi, axes[hit_axis],
-                                                   axes[k]);
+            const float w = splash_half_extent_gu(kGalaxySemiGu, axes[hit_axis],
+                                                   axes[k], reach);
             lo = std::min(lo, w);
             hi = std::max(hi, w);
         }
-        EXPECT_GT(lo, 0.0f) << "hit axis " << hit_axis << ": splash invisible";
-        // A patch is a patch: it may not be several times wider one way than
-        // the other purely because of where on the bubble it landed.
-        EXPECT_LT(hi / lo, 1.25f)
-            << "hit axis " << hit_axis << ": splash smeared into a ribbon ("
-            << lo << "deg vs " << hi << "deg)";
+        ASSERT_GT(lo, 0.0f) << "hit axis " << hit_axis << ": splash invisible";
+        EXPECT_LT(hi / lo, 1.05f)
+            << "hit axis " << hit_axis << ": splash is not round ("
+            << lo << " GU vs " << hi << " GU)";
     }
 }
 
-TEST(ShieldSplash, FootprintIsTheSameSizeWhereverItLands) {
-    // Stronger than isotropy per-hit: the patch must also be the same size
-    // between a bow hit and a dorsal hit.
-    const glm::vec3 semi = kGalaxyHalf * kShieldEllipsoidAxisScale;
-    const float bow = splash_half_width_deg(semi, {0, 1, 0}, {1, 0, 0});
-    const float dorsal = splash_half_width_deg(semi, {0, 0, 1}, {1, 0, 0});
-    EXPECT_NEAR(bow, dorsal, 0.25f * std::max(bow, dorsal));
+TEST(ShieldSplash, HalfExtentIsTheSameOnAnyHullAndAnyShipScale) {
+    // Replaces FootprintIsInvariantUnderInstanceScale, which asserted the same
+    // ANGULAR footprint on a rescaled ship. A world-space splash keeps the same
+    // GU size instead -- so on a 3x ship it covers 3x FEWER degrees, which is
+    // the intent: the weapon, not the target, sets the size of the mark.
+    const float reach = 1.5f;
+    const float galaxy = splash_half_extent_gu(kGalaxySemiGu, {0, 1, 0}, {1, 0, 0}, reach);
+    const float sovereign = splash_half_extent_gu(kSovereignSemiGu, {0, 1, 0}, {1, 0, 0}, reach);
+    const float big = splash_half_extent_gu(kGalaxySemiGu * 3.0f, {0, 1, 0}, {1, 0, 0}, reach);
+    ASSERT_GT(galaxy, 0.0f);
+    EXPECT_NEAR(galaxy, sovereign, 0.05f * galaxy);
+    EXPECT_NEAR(galaxy, big, 0.05f * galaxy);
 }
 
-TEST(ShieldSplash, FootprintStaysWellClearOfTheTerminator) {
-    // A localised impact patch, not a hemisphere wash. Nothing may still be
-    // lit near the 90-degree terminator, on any hull or any hit direction.
-    for (glm::vec3 half : {kGalaxyHalf, kSovereignHalf}) {
-        const glm::vec3 semi = half * kShieldEllipsoidAxisScale;
-        const glm::vec3 axes[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-        for (int i = 0; i < 3; ++i)
-            for (int k = 0; k < 3; ++k) {
-                if (i == k) continue;
-                EXPECT_LT(splash_half_width_deg(semi, axes[i], axes[k]),
-                          45.0f) << "hit axis " << i << " toward " << k;
-            }
-    }
+TEST(ShieldSplash, HalfExtentTracksTheWeaponReach) {
+    // The splash is "sized to the impact": a wider reach means a wider mark.
+    const float narrow = splash_half_extent_gu(kGalaxySemiGu, {0, 1, 0}, {1, 0, 0}, 0.6f);
+    const float wide   = splash_half_extent_gu(kGalaxySemiGu, {0, 1, 0}, {1, 0, 0}, 2.0f);
+    ASSERT_GT(narrow, 0.0f);
+    EXPECT_GT(wide, 2.0f * narrow);
 }
 
-TEST(ShieldSplash, FootprintIsInvariantUnderInstanceScale) {
-    // The measure is taken in the bubble's unit-sphere space, so a rescaled
-    // ship (DockWithStarbase, asteroid systems) keeps the same footprint rather
-    // than one that grows with the instance matrix. Replaces the old
-    // HitRadiusScalesWithTheInstanceMatrix, which asserted the opposite about a
-    // world-space radius that no longer exists.
-    const glm::vec3 semi1 = kGalaxyHalf * kShieldEllipsoidAxisScale;
-    const glm::vec3 semi2 = semi1 * 3.0f;
-    const glm::vec3 axes[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-    for (int i = 0; i < 3; ++i) {
-        const int k = (i + 1) % 3;
-        EXPECT_NEAR(splash_half_width_deg(semi1, axes[i], axes[k]),
-                    splash_half_width_deg(semi2, axes[i], axes[k]),
-                    0.5f) << "axis " << i;
+TEST(ShieldSplash, ThereIsNoDiscontinuityWhereTheOldTangentBasisFlipped) {
+    // Defect 3 of the old design: splash_sample() seeded its tangent basis from
+    // ref = |n_hit.z| < 0.9 ? (0,0,1) : (0,1,0), so the texture's rotation
+    // changed discontinuously as an impact tracked across |n.z| = 0.9 and the
+    // splash visibly POPPED. The procedural splash has no basis at all, so the
+    // defect has nowhere to live -- this pins that.
+    const float reach = 1.5f;
+    const glm::vec3 probe = glm::normalize(glm::vec3(0.3f, 0.2f, 0.93f)) * kGalaxySemiGu;
+    float prev = -1.0f, worst_step = 0.0f;
+    for (int i = 0; i <= 400; ++i) {
+        // Sweep the hit direction through |n.z| = 0.9 in unit-sphere space.
+        const float nz = 0.80f + 0.20f * static_cast<float>(i) / 400.0f;
+        const float nx = std::sqrt(std::max(0.0f, 1.0f - nz * nz));
+        const glm::vec3 hit = glm::vec3(nx, 0.0f, nz) * kGalaxySemiGu;
+        const float c = coverage_at_t0(probe, hit, glm::vec3(0.0f),
+                                        kGalaxySemiGu, reach);
+        if (prev >= 0.0f) worst_step = std::max(worst_step, std::abs(c - prev));
+        prev = c;
     }
+    // Neighbouring samples are 0.05% of the sweep apart; a basis flip would
+    // show up here as a step far larger than the smooth drift between them.
+    EXPECT_LT(worst_step, 0.05f) << "largest single-step jump " << worst_step;
 }
 
 TEST(ShieldSplash, AntipodeIsNeverLit) {
-    const glm::vec3 semi = kGalaxyHalf * kShieldEllipsoidAxisScale;
     for (int k = 0; k < 3; ++k) {
         glm::vec3 dir(0.0f);
         dir[k] = 1.0f;
-        const glm::vec3 hit = dir * semi;
-        const glm::vec3 antipode = -dir * semi;
+        const glm::vec3 hit = dir * kGalaxySemiGu;
+        const glm::vec3 antipode = -dir * kGalaxySemiGu;
         EXPECT_FLOAT_EQ(
-            shield_splash_coverage(antipode, hit, glm::vec3(0.0f), semi),
+            coverage_at_t0(antipode, hit, glm::vec3(0.0f), kGalaxySemiGu, 1.5f),
             0.0f) << "axis " << k;
     }
 }
 
-TEST(ShieldSplash, ImpactPointItselfIsFullyLit) {
-    const glm::vec3 semi = kGalaxyHalf * kShieldEllipsoidAxisScale;
+TEST(ShieldSplash, AntipodeIsNeverLitEvenWhenTheReachExceedsTheBubble) {
+    // This is why the hemisphere gate survives the rebuild. A world-space
+    // distance is a straight chord, so on a small hull whose bubble is thinner
+    // than the reach, the far side is within range and would light up.
+    const glm::vec3 tiny(0.9f, 1.2f, 0.25f);      // shuttle-scale bubble, GU
+    const glm::vec3 hit(0.0f, 0.0f, tiny.z);
+    const glm::vec3 antipode(0.0f, 0.0f, -tiny.z);
+    ASSERT_LT(glm::length(antipode - hit), kShieldSplashReachMax)
+        << "fixture no longer exercises the wrap case";
+    EXPECT_FLOAT_EQ(
+        coverage_at_t0(antipode, hit, glm::vec3(0.0f), tiny,
+                       kShieldSplashReachMax),
+        0.0f);
+}
+
+TEST(ShieldSplash, TheEpicentreIsTheBrightestPointAndItBlooms) {
+    // Replaces ImpactPointItselfIsFullyLit, which asserted coverage == 1.0
+    // exactly. Coverage is no longer capped at 1 -- the hot core is what drives
+    // the HDR bloom -- so the meaningful assertion is that the epicentre is the
+    // peak and that it clears 1.0.
+    const float reach = 1.5f;
     for (int k = 0; k < 3; ++k) {
         glm::vec3 dir(0.0f);
         dir[k] = 1.0f;
-        const glm::vec3 hit = dir * semi;
-        EXPECT_NEAR(
-            shield_splash_coverage(hit, hit, glm::vec3(0.0f), semi),
-            1.0f, 1e-4f) << "axis " << k;
+        const glm::vec3 hit = dir * kGalaxySemiGu;
+        const float at_hit = coverage_at_t0(hit, hit, glm::vec3(0.0f),
+                                             kGalaxySemiGu, reach);
+        EXPECT_GT(at_hit, 1.0f) << "axis " << k;
+        // Anywhere else on the bubble is dimmer.
+        const int other = (k + 1) % 3;
+        glm::vec3 off(0.0f);
+        off[k] = 0.9f;
+        off[other] = 0.436f;                        // still a unit direction
+        const glm::vec3 frag = glm::normalize(off) * kGalaxySemiGu;
+        EXPECT_LT(coverage_at_t0(frag, hit, glm::vec3(0.0f), kGalaxySemiGu, reach),
+                  at_hit) << "axis " << k;
     }
 }
 
-TEST(ShieldSplash, SplashLandsOnTheBubbleOnEveryAxis) {
-    // The bubble is sqrt(3)x the hull AABB, so a hull hit sits well INSIDE it
-    // -- 236 world-units in on a Galaxy's long axis. Measuring falloff from the
-    // hit point charges that gap against the splash radius and blanks bow and
-    // stern flashes entirely; projecting the impact direction onto the
-    // fragment's own radius puts the splash centre ON the bubble instead.
+TEST(ShieldSplash, AHullHitStillLightsTheBubbleAboveIt) {
+    // The bubble is sqrt(3)x the hull AABB, so a hull anchor sits well INSIDE
+    // it -- 2.36 GU in on a Galaxy's long axis, more than a whole reach.
+    // Measuring the falloff from the raw hull point would blank bow and stern
+    // flashes entirely; shield_splash_epicentre projects it out first.
     const glm::vec3 centre(0.0f);
-    const glm::vec3 semi = kGalaxyHalf * kShieldEllipsoidAxisScale;
+    const float reach = 1.5f;
     for (int k = 0; k < 3; ++k) {
         glm::vec3 hit(0.0f), pole(0.0f);
-        hit[k] = kGalaxyHalf[k];                                  // hull surface
-        pole[k] = semi[k];                                        // bubble surface
+        hit[k] = kGalaxyHalf[k] * kNifToWorld;      // hull surface
+        pole[k] = kGalaxySemiGu[k];                 // bubble surface above it
 
-        // The gap between the two is most of the splash budget on the long
-        // axes -- 236 units on Y -- so anything that measures from the hit
-        // point itself blanks the bow and stern flashes.
-        if (k != 2) EXPECT_GT(glm::length(pole - hit), 100.0f) << "axis " << k;
+        if (k != 2) EXPECT_GT(glm::length(pole - hit), reach) << "axis " << k;
 
-        // What actually matters: the bubble pole above a hull hit is lit at
-        // full strength, on every axis.
-        EXPECT_NEAR(shield_splash_coverage(pole, hit, centre, semi), 1.0f, 1e-4f)
+        EXPECT_GT(coverage_at_t0(pole, hit, centre, kGalaxySemiGu, reach), 1.0f)
             << "axis " << k;
     }
 }
@@ -484,4 +522,242 @@ TEST(ShieldSplash, FullCoverageAtFullIntensityIsTheOpacityCeiling) {
 TEST(ShieldSplash, NoCoverageEmitsNothing) {
     EXPECT_FLOAT_EQ(shield_splash_intensity(0.0f, 1.0f), 0.0f);
     EXPECT_FLOAT_EQ(shield_splash_intensity(1.0f, 0.0f), 0.0f);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROCEDURAL 3D SPLASH (spike/shield-procedural-splash)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The splash is being rebuilt as a purely radial function of WORLD distance
+// from the impact, replacing the tangent-plane texture projection. See the
+// block comment above shield_splash_shape() in renderer/shield_state.h.
+//
+TEST(ShieldSplashReach, ScalesWithTheWeaponDamageRadiusFactor) {
+    // `radius` is the weapon's DamageRadiusFactor, already plumbed to
+    // hit_feedback.dispatch: photon 0.13 GU, phaser 0.15 GU. Against a
+    // Galaxy's 1.22 GU thin axis those are far too small to see, so the
+    // reach is that radius times a multiplier.
+    const float photon = shield_splash_reach(0.13f);
+    const float phaser = shield_splash_reach(0.15f);
+    EXPECT_NEAR(photon, 0.13f * kShieldSplashReachPerRadius, 1e-5f);
+    EXPECT_NEAR(phaser, 0.15f * kShieldSplashReachPerRadius, 1e-5f);
+    // Bigger DamageRadiusFactor -> wider splash. (Phaser's IS bigger than
+    // photon's; a torpedo reads heavier through intensity, not size.)
+    EXPECT_GT(phaser, photon);
+}
+
+TEST(ShieldSplashReach, IsClampedAtBothEnds) {
+    // Callers with no ray (collisions, splash damage) pass radius 0, which
+    // must still produce a visible splash rather than nothing.
+    EXPECT_FLOAT_EQ(shield_splash_reach(0.0f), kShieldSplashReachMin);
+    EXPECT_FLOAT_EQ(shield_splash_reach(-1.0f), kShieldSplashReachMin);
+    // And a freak DamageRadiusFactor may not wrap the whole bubble.
+    EXPECT_FLOAT_EQ(shield_splash_reach(1000.0f), kShieldSplashReachMax);
+}
+
+// ── epicentre: the splash is anchored ON the bubble ────────────────────────
+//
+// hit_feedback passes `shield_point` (the bubble entry) when a ray exists and
+// the HULL impact point when one does not (collisions, splash damage). The
+// bubble stands sqrt(3) off the hull -- 2.36 GU on a Galaxy's long axis -- so
+// a raw hull point sits deep inside. Projecting whatever arrives onto the
+// ellipsoid surface normalises both callers to one anchor, and makes a world
+// distance from it meaningful.
+
+TEST(ShieldSplashEpicentre, LandsExactlyOnTheEllipsoidSurface) {
+    const glm::vec3 centre(0.0f);
+    for (int k = 0; k < 3; ++k) {
+        glm::vec3 hull(0.0f);
+        hull[k] = kGalaxyHalf[k] * kNifToWorld;      // hull surface, well inside
+        const glm::vec3 epi =
+            shield_splash_epicentre(hull, centre, kGalaxySemiGu);
+        // On the surface <=> unit length once divided by the semi-axes.
+        EXPECT_NEAR(glm::length((epi - centre) / kGalaxySemiGu), 1.0f, 1e-5f)
+            << "axis " << k;
+    }
+}
+
+TEST(ShieldSplashEpicentre, PreservesTheImpactDirection) {
+    const glm::vec3 centre(2.0f, -3.0f, 0.5f);       // off-origin bubble
+    const glm::vec3 hull = centre + glm::vec3(0.4f, 1.1f, -0.2f);
+    const glm::vec3 epi =
+        shield_splash_epicentre(hull, centre, kGalaxySemiGu);
+    const glm::vec3 a = glm::normalize((hull - centre) / kGalaxySemiGu);
+    const glm::vec3 b = glm::normalize((epi - centre) / kGalaxySemiGu);
+    EXPECT_NEAR(glm::dot(a, b), 1.0f, 1e-5f);
+}
+
+TEST(ShieldSplashEpicentre, PushesAHullHitOutByTheFullBubbleStandoff) {
+    // The gap this exists to close: on a Galaxy's long axis the hull point is
+    // 3.22 GU out and the bubble is 5.58 GU out, so anchoring on the hull puts
+    // the splash 2.36 GU -- more than a whole reach -- behind the surface the
+    // player is looking at.
+    const glm::vec3 centre(0.0f);
+    const glm::vec3 hull(0.0f, kGalaxyHalf.y * kNifToWorld, 0.0f);
+    const glm::vec3 epi = shield_splash_epicentre(hull, centre, kGalaxySemiGu);
+    EXPECT_GT(glm::length(epi - hull), 2.0f);
+    EXPECT_NEAR(epi.y, kGalaxySemiGu.y, 1e-4f);
+}
+
+TEST(ShieldSplashEpicentre, AHitAtTheBubbleCentreDoesNotProduceNaN) {
+    // Degenerate but reachable: a point-blank collision resolving to the
+    // ship's own AABB centre. Must not divide by zero and poison the frame --
+    // a NaN here reaches the HDR bloom amplifier.
+    const glm::vec3 centre(1.0f, 2.0f, 3.0f);
+    const glm::vec3 epi =
+        shield_splash_epicentre(centre, centre, kGalaxySemiGu);
+    EXPECT_TRUE(std::isfinite(epi.x) && std::isfinite(epi.y) &&
+                std::isfinite(epi.z));
+}
+
+// ── shape: rings over a filled disc, plus a hot core and a slow afterglow ──
+//
+// The whole splash is one scalar function of (world distance, age, reach).
+// No basis, no uv, no projection, no texture -- which is what makes it
+// radially symmetric by construction rather than by correction.
+namespace {
+
+/// Largest `d` at which the MOVING part of the splash still contributes.
+///
+/// Subtracting the value at `kShieldSplashRippleLife` removes the afterglow,
+/// which carries no age term (RippleGeometryIsFinishedButTheAfterglowIsNot
+/// proves that is all that is left there). Without the subtraction this
+/// measures the glow instead: the afterglow alone clears a 0.05 threshold out
+/// to 0.888x the reach at EVERY age, so the front never moves and the test
+/// fails against a perfectly good implementation. Measure the thing you mean.
+float ripple_extent_gu(float age, float reach, float thresh) {
+    float last = 0.0f;
+    for (int i = 0; i <= 2000; ++i) {
+        const float d = reach * 2.0f * static_cast<float>(i) / 2000.0f;
+        const float moving = shield_splash_shape(d, age, reach, 0.0f)
+                           - shield_splash_shape(d, kShieldSplashRippleLife,
+                                                 reach, 0.0f);
+        if (moving > thresh) last = d;
+    }
+    return last;
+}
+
+}  // namespace
+
+TEST(ShieldSplashShape, CoreIsHotEnoughToBloom) {
+    // The single biggest reason to go procedural: a texture sample is capped
+    // at 1.0 and can never drive the HDR bloom. The core must exceed it.
+    EXPECT_GT(shield_splash_shape(0.0f, 0.0f, 1.5f, 0.0f), 1.0f);
+}
+
+TEST(ShieldSplashShape, TheFrontExpandsWithAge) {
+    const float reach = 1.5f;
+    const float early = ripple_extent_gu(0.10f * kShieldSplashRippleLife, reach, 0.02f);
+    const float mid   = ripple_extent_gu(0.40f * kShieldSplashRippleLife, reach, 0.02f);
+    const float late  = ripple_extent_gu(0.80f * kShieldSplashRippleLife, reach, 0.02f);
+    EXPECT_GT(mid, early);
+    EXPECT_GT(late, mid);
+}
+
+TEST(ShieldSplashShape, NothingRipplesAheadOfTheLeadingFront) {
+    // The disc gates the rings, and the disc ends at the front. Beyond it the
+    // only term left is the afterglow, which carries no age dependence -- so
+    // the value there must be IDENTICAL at two different ages.
+    const float reach = 1.5f;
+    const float d = 0.80f * reach;          // ahead of the front at both ages
+    const float a = shield_splash_shape(d, 0.10f * kShieldSplashRippleLife, reach, 0.0f);
+    const float b = shield_splash_shape(d, 0.20f * kShieldSplashRippleLife, reach, 0.0f);
+    EXPECT_NEAR(a, b, 1e-6f);
+    EXPECT_GT(a, 0.0f) << "afterglow should still be present out here";
+}
+
+TEST(ShieldSplashShape, RippleGeometryIsFinishedButTheAfterglowIsNot) {
+    // This is the two-timescale decision made testable. Past the ripple life
+    // the moving parts are gone, so the shape stops changing with age -- what
+    // remains fades on the hit's own ~3.9s intensity decay, applied by the
+    // caller, not here.
+    const float reach = 1.5f;
+    for (float d : {0.0f, 0.3f, 0.9f, 1.4f}) {
+        const float at_life = shield_splash_shape(d, kShieldSplashRippleLife, reach, 0.0f);
+        const float much_later = shield_splash_shape(d, 10.0f * kShieldSplashRippleLife, reach, 0.0f);
+        EXPECT_NEAR(at_life, much_later, 1e-6f) << "d=" << d;
+    }
+    EXPECT_GT(shield_splash_shape(0.0f, kShieldSplashRippleLife, reach, 0.0f), 0.0f)
+        << "afterglow must survive the ripple";
+}
+
+TEST(ShieldSplashShape, TheCoreOutshinesTheAfterglowItLeavesBehind) {
+    const float reach = 1.5f;
+    const float peak = shield_splash_shape(0.0f, 0.0f, reach, 0.0f);
+    const float after = shield_splash_shape(0.0f, kShieldSplashRippleLife, reach, 0.0f);
+    EXPECT_GT(peak, 5.0f * after);
+}
+
+TEST(ShieldSplashShape, RingsProduceSeveralConcentricCrests) {
+    // "Rings over a filled disc": there must actually be more than one crest,
+    // or this is just a blob. Counted as local maxima in d at mid-life.
+    const float reach = 1.5f;
+    const float age = 0.5f * kShieldSplashRippleLife;
+    int crests = 0;
+    float prev = shield_splash_shape(0.0f, age, reach, 0.0f);
+    float cur = shield_splash_shape(0.002f, age, reach, 0.0f);
+    for (int i = 2; i <= 1500; ++i) {
+        const float d = 0.002f * static_cast<float>(i);
+        const float next = shield_splash_shape(d, age, reach, 0.0f);
+        if (cur > prev && cur >= next) ++crests;
+        prev = cur;
+        cur = next;
+    }
+    EXPECT_GE(crests, 2) << "expected concentric ring crests, found " << crests;
+}
+
+TEST(ShieldSplashShape, RingPhaseJitterVariesTheLookBetweenHits) {
+    // Replaces the four shieldhit0*.TGA variants: same shape, different ring
+    // phase per hit, so a burst does not look rubber-stamped.
+    const float reach = 1.5f;
+    const float age = 0.5f * kShieldSplashRippleLife;
+    const float d = 0.35f * reach;
+    EXPECT_NE(shield_splash_shape(d, age, reach, 0.0f),
+              shield_splash_shape(d, age, reach, 0.5f));
+}
+
+TEST(ShieldSplashShape, IsFiniteAndNonNegativeEverywhere) {
+    // A NaN or a negative here reaches the HDR bloom amplifier, which is
+    // exactly how the black-square bug got in.
+    for (float reach : {kShieldSplashReachMin, 1.5f, kShieldSplashReachMax}) {
+        for (int ai = 0; ai <= 40; ++ai) {
+            const float age = 0.1f * static_cast<float>(ai) - 0.5f;  // incl. negative
+            for (int di = 0; di <= 60; ++di) {
+                const float d = 0.1f * static_cast<float>(di);
+                const float v = shield_splash_shape(d, age, reach, 0.25f);
+                ASSERT_TRUE(std::isfinite(v))
+                    << "d=" << d << " age=" << age << " reach=" << reach;
+                ASSERT_GE(v, 0.0f)
+                    << "d=" << d << " age=" << age << " reach=" << reach;
+            }
+        }
+    }
+}
+
+TEST(ShieldState, PushHitStoresTheWeaponRadius) {
+    // The splash is "sized to the impact", so the weapon's DamageRadiusFactor
+    // has to survive the trip from hit_feedback.dispatch into the slot the
+    // shader reads. It was already plumbed as far as dispatch and stopped
+    // there, going only to the decal and hull-carve calls.
+    auto s = make_state();
+    s.push_hit({1.0f, 0.0f, 0.0f}, {0, 0, 0, 0}, 1.0f, 0.0, 1, /*radius_gu=*/0.13f);
+    int found = -1;
+    for (std::size_t i = 0; i < ShieldState::MaxHits; ++i)
+        if (s.slot(i).current_intensity > 0.0f) { found = static_cast<int>(i); break; }
+    ASSERT_NE(found, -1);
+    EXPECT_FLOAT_EQ(s.slot(found).radius_gu, 0.13f);
+}
+
+TEST(ShieldState, ARecycledSlotDoesNotInheritThePreviousWeaponRadius) {
+    // push_hit overwrites the dimmest slot when all 8 are full -- a phaser
+    // fills every slot at 60Hz -- so a stale radius would silently resize the
+    // next weapon's splash.
+    auto s = make_state();
+    for (std::size_t i = 0; i < ShieldState::MaxHits; ++i)
+        s.push_hit({1.0f, 0.0f, 0.0f}, {0, 0, 0, 0}, 1.0f, 0.0, 0, 2.0f);
+    s.push_hit({1.0f, 0.0f, 0.0f}, {0, 0, 0, 0}, 1.0f, 0.0, 0, 0.13f);
+    bool seen = false;
+    for (std::size_t i = 0; i < ShieldState::MaxHits; ++i)
+        if (s.slot(i).radius_gu == 0.13f) seen = true;
+    EXPECT_TRUE(seen) << "the new hit's radius never landed in a slot";
 }
