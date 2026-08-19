@@ -74,6 +74,9 @@ Texture upload_image(const Image& image, bool generate_mipmaps = true);
 /// bound at different atlas grids — and because upload_image's signature is
 /// load-bearing: model_build.cc binds its address through a TextureUploaderFn
 /// typedef. No-op on an empty texture.
+///
+/// Leaves GL_TEXTURE_2D UNBOUND — call it before you bind for drawing, never
+/// after, or your draws sample an unbound sampler2D and paint solid black.
 void set_texture_max_level(const Texture& tex, int max_level);
 
 }  // namespace assets

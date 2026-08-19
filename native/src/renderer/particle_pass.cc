@@ -221,15 +221,20 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
         const int atlas_rows = std::max(1, e.atlas_rows);
         shader.set_vec2("u_atlas_grid",
                         glm::vec2(float(atlas_cols), float(atlas_rows)));
-        glBindTexture(GL_TEXTURE_2D, tex->id());
         // Clamp the mip chain so a sheet cell never shrinks below a few texels.
         // Set per emitter rather than at upload: the grid belongs to the
         // emitter, not the file, and the same texture may be bound at different
         // grids. atlas_max_mip_level returns GL's default for a 1x1 grid, so a
         // non-atlas emitter actively restores it instead of inheriting a clamp.
+        //
+        // MUST come BEFORE the bind below: the helper leaves GL_TEXTURE_2D
+        // unbound, so calling it after would leave every draw in this emitter
+        // sampling an unbound sampler2D — which returns (0,0,0,1) and paints
+        // solid black quads.
         assets::set_texture_max_level(
             *tex, atlas_max_mip_level(tex->width(), tex->height(),
                                       atlas_cols, atlas_rows));
+        glBindTexture(GL_TEXTURE_2D, tex->id());
 
         for (int i = 0; i < n; ++i) {
             const float b   = slot_birth_age(e.effect_age, i, n, e.emit_frequency);

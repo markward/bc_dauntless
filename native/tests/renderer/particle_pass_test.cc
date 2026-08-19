@@ -420,3 +420,58 @@ TEST_F(ParticlePassTest, HitVfxPassResetsRollLeftByParticlePass) {
     EXPECT_FLOAT_EQ(after, 0.0f)
         << "HitVfxPass must reset u_roll or impact flashes inherit a spin";
 }
+
+// The mip-clamp helper binds the texture, sets the parameter, and unbinds. Call
+// it AFTER glBindTexture and every subsequent draw samples an unbound
+// sampler2D, which returns (0,0,0,1) — particles render as solid BLACK quads,
+// invisible against space and wrong everywhere else.
+//
+// The state-level tests could not see this: glGetError stays clean and
+// GL_TEXTURE_MAX_LEVEL still reads back correctly. Only pixels show it.
+TEST_F(ParticlePassTest, ParticlesSampleTheirTextureAndAreNotBlack) {
+    namespace fs = std::filesystem;
+    const fs::path tex_path = project_root() / "game" / "data" / "rough.tga";
+    if (!fs::is_regular_file(tex_path)) {
+        GTEST_SKIP() << "BC asset absent: " << tex_path;
+    }
+
+    renderer::ParticlePass pass;
+    scenegraph::World world;
+    scenegraph::Camera camera;
+    camera.eye    = {0.0f, 0.0f, 5.0f};
+    camera.target = {0.0f, 0.0f, 0.0f};
+    camera.up     = {0.0f, 1.0f, 0.0f};
+    camera.aspect = 1.0f;
+
+    // rough.tga is flat-white RGB with a soft alpha, so a white-tinted particle
+    // over a black clear must come back bright.
+    renderer::ParticleEmitterDescriptor e;
+    e.texture_path    = tex_path.string();
+    e.emit_dir        = {0.0f, 1.0f, 0.0f};
+    e.inherit         = 0.0f;
+    e.emit_velocity   = 0.0f;      // stay on the camera axis
+    e.angle_variance  = 0.0f;
+    e.emit_life       = 1.0f;
+    e.emit_frequency  = 0.5f;
+    e.effect_age      = 0.1f;
+    e.blend_mode      = 0;         // alpha-over, so black really reads black
+    e.num_color_keys  = 1; e.color_keys[0] = renderer::ParticleKey{0.0f, 0.0f,
+                                                                   1.0f, 1.0f, 1.0f};
+    e.num_size_keys   = 1; e.size_keys[0]  = renderer::ParticleKey{0.0f, 2.0f};
+    e.num_alpha_keys  = 1; e.alpha_keys[0] = renderer::ParticleKey{0.0f, 1.0f};
+
+    glViewport(0, 0, 64, 64);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    while (glGetError() != GL_NO_ERROR) {}
+
+    std::vector<renderer::ParticleEmitterDescriptor> emitters{e};
+    pass.render(emitters, world, camera, *pipeline);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    unsigned char px[4] = {0, 0, 0, 0};
+    glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_GT(static_cast<int>(px[0]) + px[1] + px[2], 30)
+        << "centre pixel is black — the particle drew without its texture bound";
+}
