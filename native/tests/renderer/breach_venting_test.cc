@@ -4,6 +4,9 @@
 #include <renderer/frame.h>    // ParticleEmitterDescriptor, ParticleKey
 #include <renderer/breach_venting.h>
 
+#include <filesystem>
+#include <string>
+
 TEST(BuildVentingDescriptors, NoEventsYieldsEmptyVector) {
     scenegraph::BreachEventRing ring;
     scenegraph::InstanceId id{1, 1};
@@ -118,4 +121,70 @@ TEST(BuildVentingDescriptors, SeedIsStable) {
     ASSERT_EQ(a.size(), 1u);
     EXPECT_FLOAT_EQ(a[0].seed, b[0].seed)
         << "seed must not change between calls with the same ring state";
+}
+
+// Sprite shape comes 100% from the texture's ALPHA channel — hit_vfx.frag has
+// no radial mask — so a sprite whose alpha runs to the border draws a hard
+// square. Noise3.tga (the viewscreen-static asset this emitter used to point
+// at) has alpha noise edge-to-edge: border mean 125.8 vs centre 122.2, i.e. no
+// falloff at all. Every vented particle was therefore a square of TV static.
+TEST(BuildVentingDescriptors, TextureIsASoftRadialSprite) {
+    scenegraph::BreachEventRing ring;
+    ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 1u);
+    scenegraph::InstanceId id{1, 1};
+    auto desc = renderer::build_venting_descriptors(ring, id, 0.f);
+    ASSERT_EQ(desc.size(), 1u);
+    EXPECT_EQ(desc[0].texture_path.find("Noise"), std::string::npos)
+        << "Noise*.tga is viewscreen static: alpha noise to the border, which "
+           "renders as a hard square. Got: " << desc[0].texture_path;
+    EXPECT_NE(desc[0].texture_path.find("rough.tga"), std::string::npos)
+        << "expected the soft border-faded sprite. Got: " << desc[0].texture_path;
+}
+
+// Regression for the historical "ExplosionNoise.tga" bug: the pass silently
+// skips emitters whose texture fails to load, so a typo'd path means venting
+// never draws at all and nothing complains. game/ is gitignored, so skip when
+// the BC install is absent rather than failing a clean checkout.
+TEST(BuildVentingDescriptors, TextureFileExistsOnDisk) {
+    namespace fs = std::filesystem;
+    const fs::path root = std::filesystem::path(__FILE__)
+        .parent_path().parent_path().parent_path().parent_path();
+    if (!fs::exists(root / "game")) {
+        GTEST_SKIP() << "no game/ install present";
+    }
+    scenegraph::BreachEventRing ring;
+    ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 1u);
+    scenegraph::InstanceId id{1, 1};
+    auto desc = renderer::build_venting_descriptors(ring, id, 0.f);
+    ASSERT_EQ(desc.size(), 1u);
+    EXPECT_TRUE(fs::exists(root / desc[0].texture_path))
+        << "venting texture does not exist: " << desc[0].texture_path;
+}
+
+// With zero colour keys curve_lerp1 returns 1.0 (particle_math.h), so the tint
+// was pure white — an additive white jet with no cooling. Match the molten rim,
+// which already cools over kRimLife: hot white-blue -> blue -> dim.
+TEST(BuildVentingDescriptors, ColorKeysCoolFromHotWhiteBlue) {
+    scenegraph::BreachEventRing ring;
+    ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 1u);
+    scenegraph::InstanceId id{1, 1};
+    auto desc = renderer::build_venting_descriptors(ring, id, 0.f);
+    ASSERT_EQ(desc.size(), 1u);
+    const auto& d = desc[0];
+    ASSERT_GE(d.num_color_keys, 2) << "venting must not fall back to white tint";
+
+    const auto& first = d.color_keys[0];
+    const auto& last  = d.color_keys[d.num_color_keys - 1];
+    EXPECT_GT(first.b, first.r)   << "plasma front must be blue-dominant";
+    EXPECT_GT(first.r + first.g + first.b, 3.f)
+        << "front must exceed unit brightness so the HDR chain blooms it";
+    EXPECT_LT(last.r + last.g + last.b, first.r + first.g + first.b)
+        << "the jet must cool, not brighten";
+
+    EXPECT_FLOAT_EQ(d.color_keys[0].t, 0.f);
+    EXPECT_FLOAT_EQ(last.t, 1.f);
+    for (int i = 1; i < d.num_color_keys; ++i) {
+        EXPECT_GT(d.color_keys[i].t, d.color_keys[i - 1].t)
+            << "colour key times must strictly increase (curve_lerp1 assumes it)";
+    }
 }

@@ -46,6 +46,19 @@ std::vector<ParticleEmitterDescriptor> build_venting_descriptors(
         d.alpha_keys[0] = ParticleKey{0.f,  1.f};
         d.alpha_keys[1] = ParticleKey{1.f,  0.f};
 
+        // Colour keys: escaping plasma cooling white-blue → blue → dark, on the
+        // same arc as the molten rim's blackbody ramp over kRimLife, so the whole
+        // breach cools as one event. WITHOUT these, num_color_keys stays 0 and
+        // curve_lerp1 returns 1.0 for n<=0 (particle_math.h) — a pure white tint,
+        // which is what made the jet a featureless additive flare. The front sits
+        // above 1.0 deliberately: the HDR chain blooms it. Tune-by-eye.
+        // NOTE ParticleKey's member order is {t, v, r, g, b} — the second
+        // initialiser is the unused `v` slot for a colour key.
+        d.num_color_keys = 3;
+        d.color_keys[0] = ParticleKey{0.00f, 0.f, 1.30f, 1.60f, 2.20f};
+        d.color_keys[1] = ParticleKey{0.35f, 0.f, 0.30f, 0.55f, 1.00f};
+        d.color_keys[2] = ParticleKey{1.00f, 0.f, 0.05f, 0.09f, 0.22f};
+
         // Size keys: grow then shrink (wispy). Sizes are billboard half-extents
         // in world units (GU); a breach is ~0.5-1 GU, so ~0.3 GU peak reads as
         // a visible jet without swamping the hull. Eyeball-tunable.
@@ -60,11 +73,20 @@ std::vector<ParticleEmitterDescriptor> build_venting_descriptors(
             (ev.seed ^ 0x517cc1b727220a95ull) >> 11)
             * (1.f / static_cast<float>(1ull << 53));
 
-        // Soft noise puff for the venting plasma (additive). MUST be an existing,
-        // non-atlas texture: the pass skips emitters whose texture fails to load,
-        // and an 8x8 atlas (ExplosionA/B) would draw the whole sheet per particle.
-        // (Prior value "ExplosionNoise.tga" did not exist → venting never drew.)
-        d.texture_path = "game/data/Textures/Effects/Noise3.tga";
+        // Soft puff for the venting plasma (additive). Three invariants, each
+        // learned from a real bug:
+        //  1. MUST exist — the pass silently skips emitters whose texture fails
+        //     to load, so a typo'd path means venting never draws and nothing
+        //     complains ("ExplosionNoise.tga" did exactly that).
+        //  2. MUST NOT be an atlas — an 8x8 sheet (ExplosionA/B) would billboard
+        //     the whole grid per particle.
+        //  3. MUST fade to alpha ~0 at its border. Sprite shape comes 100% from
+        //     the alpha channel (hit_vfx.frag has no radial mask), so a texture
+        //     whose alpha runs edge-to-edge draws a hard SQUARE. The prior value
+        //     Noise3.tga is the viewscreen-static asset: alpha noise with border
+        //     mean 125.8 vs centre 122.2 — no falloff, so every vent particle was
+        //     a square of TV static. rough.tga measures 0.6 border / 234.3 centre.
+        d.texture_path = "game/data/rough.tga";
 
         out.push_back(d);
     }
