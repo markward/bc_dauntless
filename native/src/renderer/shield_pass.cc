@@ -203,20 +203,17 @@ void ShieldPass::submit(const scenegraph::World& world,
         shader.set_vec4_array("u_hit_color_intensity", col, ShieldState::MaxHits);
         shader.set_int_array("u_hit_tex_index", tex_idx, ShieldState::MaxHits);
 
-        // aabb_half_extents is in NIF units; the ship's world matrix
-        // applies a uniform scale (SHIP_SCALE on the host side). Recover
-        // it from the column length so hit_radius lands in world units
-        // (matching v_world_pos and hit_point.xyz the shader compares
-        // against). Without this the radius is ~10× too large and the
-        // hex pattern bleeds across the entire ellipsoid.
+        // The shader measures the splash in the bubble's unit-sphere space, so
+        // it needs the semi-axes in the same WORLD units as v_world_pos and
+        // u_hit_points. aabb_half_extents is in NIF units, so recover the
+        // uniform NIF→world factor from the instance matrix's column length
+        // (the host applies SHIP_SCALE there). Clamped away from zero: a
+        // degenerate axis would divide by 0 in the shader.
         const float scale_factor = glm::length(glm::vec3(inst->world[0]));
-        // Keyed to the SMALLEST half-extent — see shield_hit_radius. The old
-        // largest-axis × 1.5 made the radius 2–4× the bubble's whole vertical
-        // size on BC's 4–8:1 hulls, so a single hit washed the entire bubble
-        // and the mirrored far-side splash was never culled.
-        shader.set_float("u_hit_radius",
-                         shield_hit_radius(state.aabb_half_extents,
-                                           scale_factor));
+        const glm::vec3 semi_axes =
+            glm::max(state.aabb_half_extents * kShieldEllipsoidAxisScale * scale_factor,
+                     glm::vec3(1e-4f));
+        shader.set_vec3("u_bubble_semi_axes", semi_axes);
 
         glBindVertexArray(mesh->vao());
         glDrawElements(GL_TRIANGLES,

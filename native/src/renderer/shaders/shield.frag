@@ -9,12 +9,16 @@ in vec3 v_ship_local_normal;
 uniform vec4  u_hit_points[MAX_HITS];          // xyz = world point, w unused
 uniform vec4  u_hit_color_intensity[MAX_HITS]; // rgb = color, a = current_intensity
 uniform int   u_hit_tex_index[MAX_HITS];       // 0..3
-uniform float u_hit_radius;
 uniform vec3  u_bubble_center;                 // world-space centre of the bubble
+uniform vec3  u_bubble_semi_axes;              // world-space semi-axes of the bubble
 
 // Smooth terminator width for the hemisphere gate, in cos(angle). MUST match
 // kShieldSplashGateFeather in renderer/shield_state.h.
 const float GATE_FEATHER = 0.25;
+
+// Splash size as a chord on the bubble's unit sphere (2·sin(θ/2)).
+// MUST match kShieldSplashRadius in renderer/shield_state.h.
+const float SPLASH_RADIUS = 0.35;
 
 uniform sampler2D u_shieldhit_0;
 uniform sampler2D u_shieldhit_1;
@@ -30,59 +34,67 @@ vec4 sample_tex(int idx, vec2 uv) {
     else               return texture(u_shieldhit_3, uv);
 }
 
-// One impact splash: a disc on the BUBBLE surface, centred where the impact
+// One impact splash: a patch on the BUBBLE surface, centred where the impact
 // direction pierces it. Returns rgb/a from the splash texture, already scaled
 // by falloff and the hemisphere gate; a==0 means "this hit does not touch this
 // fragment".
 //
-// Two things this has to get right, both of which it previously got wrong:
+// Everything is measured in the bubble's UNIT-SPHERE space — positions divided
+// component-wise by the semi-axes — which is the same space BC's own facing
+// chooser works in (ShipClass::TestHit, stbc_reference
+// spec/ShieldFacingDamage.md §2.3 step 4). Three things fall out of that, all
+// of which earlier revisions got wrong:
 //
-//  * The splash must be centred on the BUBBLE, not on the hit point. `hit_pos`
-//    is a point on the HULL, and the bubble is √3 ≈ 1.73× the hull AABB — so
-//    on a Galaxy a bow hit sits 236 world-units inside the bubble's nose.
-//    Measuring falloff straight from `hit_pos` charges that gap against the
-//    splash radius, which on the long axes is most of the budget. We project
-//    the impact direction onto the fragment's own radius instead, so the
-//    splash lands on the bubble at full brightness regardless of how deep the
-//    hull surface is, and the radius means the same thing on every axis.
+//  * The footprint is the same shape wherever it lands. Measuring the falloff
+//    as a WORLD chord to a splash centre recomputed at each fragment's own
+//    distance from the bubble centre made the patch boundary the locus
+//    r(dir)·sin(θ/2) = radius/2 — so walking from a bow hit toward the dorsal
+//    pole, where a Galaxy's radius collapses 558 → 121, the splash centre
+//    chased the fragment inward and the falloff never bit. Bow and flank hits
+//    smeared into ribbons 3.5× longer than they were wide, which renders as an
+//    arc draped over the ship. In unit space every surface point is at radius
+//    1, so the chord is a pure angular measure.
 //
-//  * The tangent-basis projection has no sign along impact_dir, so the point
-//    diametrically opposite the hit lands on uv (0.5, 0.5) — the texture's
-//    CENTRE. Ungated, that painted a second full-brightness splash on the
-//    OPPOSITE face of the bubble; with depth test on and the hull between
-//    them, the mirror is the one the player can see, so a ventral hit read as
-//    a dorsal one. The hemisphere gate fades the contribution out across the
-//    terminator. Keep in sync with shield_splash_gate() in
-//    renderer/shield_state.h.
-vec4 splash_sample(int hit_idx, vec3 hit_pos, vec3 frag_pos, float radius) {
-    vec3 impact_dir = hit_pos - u_bubble_center;
-    float impact_len = length(impact_dir);
-    if (impact_len < 1e-4) return vec4(0.0);
-    impact_dir /= impact_len;
+//  * A hull hit still lights the bubble above it. `hit_pos` is a point on the
+//    HULL and the bubble is √3 ≈ 1.73× the hull AABB, so on a Galaxy a bow hit
+//    sits 236 world-units inside the bubble's nose. Normalising discards that
+//    radial gap and keeps only the direction, so the patch lands at full
+//    brightness however deep the hull surface is.
+//
+//  * The tangent-basis projection has no sign along the impact direction, so
+//    the point diametrically opposite the hit lands on uv (0.5, 0.5) — the
+//    texture's CENTRE. Ungated, that painted a second full-brightness splash
+//    on the OPPOSITE face; with depth test on and the hull between them, the
+//    mirror is the one the player can see, so a ventral hit read as a dorsal
+//    one. The hemisphere gate fades it out across the terminator.
+//
+// MUST match shield_splash_coverage() in renderer/shield_state.h, which is the
+// CPU twin the tests characterise — keep in sync.
+vec4 splash_sample(int hit_idx, vec3 hit_pos, vec3 frag_pos) {
+    vec3 n_hit  = (hit_pos  - u_bubble_center) / u_bubble_semi_axes;
+    vec3 n_frag = (frag_pos - u_bubble_center) / u_bubble_semi_axes;
+    float lh = length(n_hit);
+    float lf = length(n_frag);
+    if (lh < 1e-4 || lf < 1e-4) return vec4(0.0);
+    n_hit  /= lh;
+    n_frag /= lf;
 
-    vec3 frag_dir = frag_pos - u_bubble_center;
-    float frag_len = length(frag_dir);
-    if (frag_len < 1e-4) return vec4(0.0);
-
-    float gate = smoothstep(0.0, GATE_FEATHER,
-                            dot(frag_dir / frag_len, impact_dir));
+    float gate = smoothstep(0.0, GATE_FEATHER, dot(n_frag, n_hit));
     if (gate <= 0.0) return vec4(0.0);
 
-    // Splash centre: the impact direction carried out to this fragment's own
-    // distance from the bubble centre.
-    vec3 splash_center = u_bubble_center + impact_dir * frag_len;
-    float falloff = 1.0 - smoothstep(0.0, radius, distance(frag_pos, splash_center));
+    // Chord between two unit vectors == 2·sin(θ/2).
+    float falloff = 1.0 - smoothstep(0.0, SPLASH_RADIUS, length(n_frag - n_hit));
     if (falloff <= 0.0) return vec4(0.0);
 
-    // Robust orthonormal basis perpendicular to impact_dir. Pick the
-    // world axis least aligned with impact_dir to seed the cross product.
-    vec3 ref = abs(impact_dir.z) < 0.9 ? vec3(0.0, 0.0, 1.0)
-                                        : vec3(0.0, 1.0, 0.0);
-    vec3 t1 = normalize(cross(impact_dir, ref));
-    vec3 t2 = cross(impact_dir, t1);
+    // Robust orthonormal basis perpendicular to the impact direction. Pick the
+    // axis least aligned with it to seed the cross product.
+    vec3 ref = abs(n_hit.z) < 0.9 ? vec3(0.0, 0.0, 1.0)
+                                   : vec3(0.0, 1.0, 0.0);
+    vec3 t1 = normalize(cross(n_hit, ref));
+    vec3 t2 = cross(n_hit, t1);
 
-    vec3 offset = frag_pos - splash_center;
-    vec2 uv = vec2(dot(offset, t1), dot(offset, t2)) / (2.0 * radius) + 0.5;
+    vec3 offset = n_frag - n_hit;
+    vec2 uv = vec2(dot(offset, t1), dot(offset, t2)) / (2.0 * SPLASH_RADIUS) + 0.5;
     return sample_tex(hit_idx, uv) * (gate * falloff);
 }
 
@@ -96,8 +108,7 @@ void main() {
 
         vec4 hex = splash_sample(u_hit_tex_index[i],
                                   u_hit_points[i].xyz,
-                                  v_world_pos,
-                                  u_hit_radius);
+                                  v_world_pos);
         if (hex.a <= 0.0) continue;
 
         color += u_hit_color_intensity[i].rgb * inten * hex.rgb;

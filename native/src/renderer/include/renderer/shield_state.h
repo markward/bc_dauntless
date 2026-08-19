@@ -32,27 +32,44 @@ enum class ShieldMode : std::uint8_t { Ellipsoid = 0, Skin = 1 };
 /// literal as the binary (0x3FDDB3D7).
 inline constexpr float kShieldEllipsoidAxisScale = 1.7320508f;
 
-/// Splash size, as a multiple of the hull's SMALLEST half-extent. Tune-by-eye;
-/// changing it needs a rebuild. Must stay below 2·√3 ≈ 3.46 or the splash
-/// reaches the opposite pole of the bubble on the thinnest axis.
-inline constexpr float kShieldHitRadiusScale = 2.0f;
+/// Splash size, as a CHORD on the bubble's unit-sphere space (positions
+/// divided component-wise by the semi-axes). Dimensionless and ship-independent
+/// — the splash is a fixed angular cap on every hull, which is what makes it
+/// the same shape wherever it lands. chord = 2·sin(θ/2), so 0.35 ≈ a 20°
+/// half-width. Tune-by-eye; changing it needs a rebuild.
+///
+/// It replaced a world-space radius keyed to the smallest half-extent. That
+/// measured the falloff as a world chord to a splash centre recomputed at each
+/// FRAGMENT's own distance from the bubble centre — so walking from a bow hit
+/// toward the dorsal pole, where a Galaxy's radius collapses 558 → 121, the
+/// splash centre chased the fragment inward and the falloff never bit. Bow and
+/// flank hits smeared into ribbons reaching 3.5× further toward the poles than
+/// across (measured on the real Galaxy AABB), which renders as an arc draped
+/// over the ship rather than an impact patch.
+inline constexpr float kShieldSplashRadius = 0.35f;
 
 /// Width of the smooth terminator on the hemisphere gate, in units of
 /// cos(angle) away from the terminator plane. Small enough to stay a localised
 /// splash, wide enough that the cutoff is not a hard seam.
 inline constexpr float kShieldSplashGateFeather = 0.25f;
 
-/// Falloff radius for one impact splash, in WORLD units.
+/// Coverage of one impact splash at a point on the bubble, in [0, 1] — the
+/// product of the hemisphere gate and the radial falloff, i.e. everything
+/// `splash_sample` in shaders/shield.frag scales the texture by.
 ///
-/// Keyed to the SMALLEST half-extent so the splash is a localised patch on
-/// every hull. It used to be keyed to the LARGEST, which on BC's 4–8:1 hulls
-/// made the radius 2–4× the entire vertical size of the bubble — the falloff
-/// could never isolate a face, and the mirrored far-side splash (see
-/// shield_splash_gate) was never culled by distance either.
+/// All vectors are WORLD space; `frag_world` is expected to lie on the bubble
+/// surface (the pass draws a unit sphere scaled to `bubble_semi_axes`). The
+/// measure itself is taken in the bubble's unit-sphere space — the same space
+/// BC's own facing chooser works in (`ShipClass::TestHit`, stbc_reference
+/// spec/ShieldFacingDamage.md §2.3 step 4) — so the footprint does not depend
+/// on where it lands.
 ///
-/// `instance_scale` is the uniform NIF→world factor recovered from the
-/// instance matrix, because `half_extents` are in NIF units.
-float shield_hit_radius(const glm::vec3& half_extents, float instance_scale);
+/// This is the shared source of truth for the splash footprint. MUST match
+/// splash_sample() in shaders/shield.frag — keep in sync.
+float shield_splash_coverage(const glm::vec3& frag_world,
+                             const glm::vec3& hit_world,
+                             const glm::vec3& bubble_centre,
+                             const glm::vec3& bubble_semi_axes);
 
 /// Near/far hemisphere gate for the impact splash: 1 on the hit-facing side of
 /// the bubble, 0 on the far side, with a smooth terminator between.
