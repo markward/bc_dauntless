@@ -145,7 +145,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              ship_instances=None,
              weapon_type: str | None = None, radius: float = 0.0,
              persist_decal: bool = True,
-             allow_hull_carve: bool = True) -> None:
+             allow_hull_carve: bool = True,
+             shield_point=None) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
     Severity is computed via classify(...). Exactly one visual fires per
@@ -185,12 +186,19 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
         if ship_instances is not None:
             iid = ship_instances.get(ship)
             if iid is not None:
+                # Anchor the splash on the BUBBLE where the shot entered, not on
+                # the hull impact — the bubble stands √3 off the hull (236 NIF
+                # units on a Galaxy's long axis), so the hull point puts the
+                # flash behind the beam's own tip. `shield_point` is None for
+                # callers with no ray (collisions, splash damage); those keep
+                # the hull point, as before.
+                anchor = shield_point if shield_point is not None else point
                 # rgba=(0,0,0,0) is the documented sentinel that tells the
                 # shield_pass to substitute the ship's registered
                 # ShieldGlowColor — see shield_register's default_color.
                 host_io.shield_hit(
                     iid,
-                    (point.x, point.y, point.z),
+                    (anchor.x, anchor.y, anchor.z),
                     (0.0, 0.0, 0.0, 0.0),
                     SHIELD_IMPACT_INTENSITY,
                 )

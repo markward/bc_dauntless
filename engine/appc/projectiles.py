@@ -35,7 +35,7 @@ class Torpedo(TGObject):
         "_target_ship",
         "_guidance_lifetime", "_guidance_initial", "_max_angular_accel",
         "_last_seen_target_pos", "_last_target_vel",
-        "_source_ship", "_id",
+        "_source_ship", "_id", "_bubble_entry",
         "_core_texture", "_core_color", "_core_size_a", "_core_size_b",
         "_glow_texture", "_glow_color", "_glow_size_a", "_glow_size_b", "_glow_size_c",
         "_flares_texture", "_flares_color", "_num_flares",
@@ -60,6 +60,11 @@ class Torpedo(TGObject):
         self._last_target_vel = None
         self._source_ship = None
         self._id = 0
+        # World point where this torpedo's segment crossed the target's
+        # shield bubble, resolved at impact by update_all; None when the
+        # bubble did not stop it. Read by host_loop as the shield-flash
+        # anchor -- see combat.shield_bubble_entry.
+        self._bubble_entry = None
         self._core_texture   = ""
         self._core_color     = None
         self._core_size_a    = 0.0
@@ -350,6 +355,14 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                     max_dist=ray_max,
                     fallback_point=t._position,
                 )
+                # Where the shot's own segment (prev -> current, exactly what
+                # BC's TestHit takes) crossed the shield bubble. Anchors the
+                # shield flash; None when no facing is up to stop it.
+                from engine.appc.combat import (shield_bubble_entry,
+                                                shields_block)
+                t._bubble_entry = (
+                    shield_bubble_entry(ship, prev_pos, aim_unit, ray_max)
+                    if (aim_unit is not None and shields_block(ship)) else None)
                 hits.append((t, ship, hit_point, hit_normal))
                 expired.append(t)
                 break
