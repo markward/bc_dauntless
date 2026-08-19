@@ -20,9 +20,13 @@ namespace renderer {
 using ModelLookup =
     std::function<const assets::Model*(scenegraph::ModelHandle)>;
 
-/// Per-frame additive shield-flash pass. Owns the per-instance
-/// ShieldRegistry, a shared ellipsoid sphere mesh, and the four
-/// shieldhit0N textures. Skin-mesh path lands in Tasks 14-15.
+/// Per-frame additive shield-flash pass. Owns the per-instance ShieldRegistry
+/// and a shared ellipsoid sphere mesh.
+///
+/// The splash it draws is procedural — see shield_splash_shape() in
+/// renderer/shield_state.h. It used to sample four shieldhit0N TGAs through a
+/// tangent-plane projection; those are gone, along with the three distortions
+/// that needing a 2D map forced.
 class ShieldPass {
 public:
     ShieldPass();
@@ -40,11 +44,14 @@ public:
     void unregister_ship(scenegraph::InstanceId id);
 
     /// Push a hit. Color (0,0,0,0) substitutes the ship's default color.
+    /// `radius_gu` is the weapon's DamageRadiusFactor, which sizes the
+    /// procedural ripple; 0 clamps up to kShieldSplashReachMin.
     void shield_hit(scenegraph::InstanceId id,
                     const glm::vec3& point_body,
                     const glm::vec4& rgba,
                     float intensity,
-                    double now_seconds);
+                    double now_seconds,
+                    float radius_gu = 0.0f);
 
     /// Draw all ships with active hits. Caller owns blend/depth state.
     /// `now_seconds` advances the decay clock. `model_lookup` is called per
@@ -59,8 +66,6 @@ public:
 private:
     ShieldRegistry registry_;
     std::unique_ptr<assets::Mesh> sphere_;        // shared ellipsoid mesh
-    std::unique_ptr<assets::Texture> tex_[4];     // shieldhit01..04.TGA
-    bool tex_loaded_ = false;
 
     // Per-ModelHandle skin-shield mesh cache. Built on first skin-mode
     // draw for that handle; all instances of the same ship share the GPU
@@ -72,7 +77,6 @@ private:
     assets::Mesh* ensure_skin_mesh(scenegraph::ModelHandle handle,
                                     const assets::Model& model,
                                     float inflate_distance);
-    void ensure_textures_loaded();
 };
 
 }  // namespace renderer

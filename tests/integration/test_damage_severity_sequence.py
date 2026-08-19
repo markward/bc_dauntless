@@ -76,12 +76,12 @@ class _Ship:
 
 class _ShieldHitSpy:
     """Captures only what mutual-exclusivity needs (instance_id + point).
-    Positional-arg signature matching host_io.shield_hit; rgba/intensity are
-    accepted but not stored — this test doesn't assert against them."""
+    Positional-arg signature matching host_io.shield_hit; rgba/intensity/
+    radius are accepted but not stored — this test doesn't assert on them."""
     def __init__(self):
         self.shield_hit_calls = []
     def __call__(self, instance_id, point, rgba=(0.0, 0.0, 0.0, 0.0),
-                 intensity=1.0):
+                 intensity=1.0, radius=0.0):
         self.shield_hit_calls.append({"point": point, "instance_id": instance_id})
 
 

@@ -6,7 +6,6 @@
 #include "sphere_mesh.h"
 
 #include <assets/model.h>
-#include <assets/texture.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/world.h>
 
@@ -15,7 +14,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <fstream>
 
 namespace renderer {
 
@@ -40,8 +38,9 @@ void ShieldPass::shield_hit(scenegraph::InstanceId id,
                              const glm::vec3& point_body,
                              const glm::vec4& rgba,
                              float intensity,
-                             double now_seconds) {
-    registry_.push_hit(id, point_body, rgba, intensity, now_seconds);
+                             double now_seconds,
+                             float radius_gu) {
+    registry_.push_hit(id, point_body, rgba, intensity, now_seconds, radius_gu);
 }
 
 assets::Mesh* ShieldPass::ensure_sphere() {
@@ -72,35 +71,6 @@ assets::Mesh* ShieldPass::ensure_skin_mesh(scenegraph::ModelHandle handle,
     return raw;
 }
 
-void ShieldPass::ensure_textures_loaded() {
-    if (tex_loaded_) return;
-    for (int i = 0; i < 4; ++i) {
-        char path[256];
-        std::snprintf(path, sizeof(path),
-                      "game/data/Textures/Tactical/shieldhit0%d.TGA", i + 1);
-        std::ifstream in(path, std::ios::binary);
-        if (!in) {
-            std::fprintf(stderr, "[shield] failed to open '%s'\n", path);
-            tex_[i] = std::make_unique<assets::Texture>();
-            continue;
-        }
-        in.seekg(0, std::ios::end);
-        auto size = static_cast<std::size_t>(in.tellg());
-        in.seekg(0, std::ios::beg);
-        std::vector<std::uint8_t> bytes(size);
-        in.read(reinterpret_cast<char*>(bytes.data()),
-                static_cast<std::streamsize>(size));
-        try {
-            assets::Image img = assets::decode_tga(bytes);
-            assets::Texture tex = assets::upload_image(img, /*generate_mipmaps=*/true);
-            tex_[i] = std::make_unique<assets::Texture>(std::move(tex));
-        } catch (const std::exception& e) {
-            std::fprintf(stderr, "[shield] failed to decode '%s': %s\n", path, e.what());
-            tex_[i] = std::make_unique<assets::Texture>();
-        }
-    }
-    tex_loaded_ = true;
-}
 
 void ShieldPass::submit(const scenegraph::World& world,
                          const scenegraph::Camera& camera,
@@ -117,7 +87,6 @@ void ShieldPass::submit(const scenegraph::World& world,
 
     assets::Mesh* sphere = ensure_sphere();
     if (!sphere) return;
-    ensure_textures_loaded();
 
     auto& shader = pipeline.shield_shader();
     shader.use();
@@ -139,14 +108,12 @@ void ShieldPass::submit(const scenegraph::World& world,
     // un-mirror; this pass needed no change.)
     glDisable(GL_CULL_FACE);
 
-    for (int i = 0; i < 4; ++i) {
-        glActiveTexture(GL_TEXTURE0 + i);
-        glBindTexture(GL_TEXTURE_2D, tex_[i] ? tex_[i]->id() : 0);
-    }
-    shader.set_int("u_shieldhit_0", 0);
-    shader.set_int("u_shieldhit_1", 1);
-    shader.set_int("u_shieldhit_2", 2);
-    shader.set_int("u_shieldhit_3", 3);
+    // No texture binds: the splash is procedural. The four shieldhit0*.TGA are
+    // a soft-edged transparent HOLE in an opaque field (measured: RGB is
+    // bit-identical to alpha, rising ~1 at centre to ~240 at the border), so
+    // they are brightest exactly where a centre-peaked falloff is weakest and
+    // their product capped around 7% however the blend was fixed. They also
+    // could never exceed 1.0 and so could never reach the HDR bloom.
 
     for (const auto& [id, state] : registry_) {
         if (state.active_count() == 0) continue;
@@ -184,12 +151,12 @@ void ShieldPass::submit(const scenegraph::World& world,
 
         shader.set_mat4("u_world", inst->world);
         shader.set_mat4("u_ship_local", ship_local);
-        // World-space centre OF THE BUBBLE for the impact-centred splash UV
-        // and the hemisphere gate. Must be the bubble's own centre, not the
-        // ship origin (inst->world[3]): the ellipsoid is translated to
-        // state.aabb_center, and on real hulls that differs from the model
-        // origin (Sovereign -6.98 in Z, Keldon +14.30). Using the origin
-        // skewed the splash tangent basis and the gate's terminator.
+        // World-space centre OF THE BUBBLE — the epicentre projection and the
+        // hemisphere gate both measure from it. Must be the bubble's own
+        // centre, not the ship origin (inst->world[3]): the ellipsoid is
+        // translated to state.aabb_center, and on real hulls that differs from
+        // the model origin (Sovereign -6.98 in Z, Keldon +14.30). Using the
+        // origin displaces the epicentre and skews the gate's terminator.
         // Skin mode leaves ship_local identity, but its verts are the hull's
         // own, so the hull AABB centre is still the right pivot.
         shader.set_vec3("u_bubble_center",
@@ -198,19 +165,29 @@ void ShieldPass::submit(const scenegraph::World& world,
 
         glm::vec4 pts[ShieldState::MaxHits];
         glm::vec4 col[ShieldState::MaxHits];
-        int       tex_idx[ShieldState::MaxHits];
+        glm::vec4 par[ShieldState::MaxHits];
         for (std::size_t i = 0; i < ShieldState::MaxHits; ++i) {
             const auto& h = state.slot(i);
             // Body -> world EVERY FRAME, so the splash rides the hull instead
             // of being left behind in world space. Same treatment
             // hit_vfx_pass.cc gives its body-anchored spark bursts.
-            pts[i]     = glm::vec4(shield_hit_world_point(h, inst->world), 0.0f);
-            col[i]     = glm::vec4(glm::vec3(h.color_rgba), h.current_intensity);
-            tex_idx[i] = h.texture_index;
+            pts[i] = glm::vec4(shield_hit_world_point(h, inst->world), 0.0f);
+            col[i] = glm::vec4(glm::vec3(h.color_rgba), h.current_intensity);
+            // The ripple needs AGE, which intensity alone cannot supply: the
+            // shader sees only the decayed value, not the seed it decayed
+            // from, and those differ 4x between a phaser and a torpedo.
+            par[i] = glm::vec4(
+                static_cast<float>(now_seconds - h.t0_seconds),
+                shield_splash_reach(h.radius_gu),
+                // texture_index survives as a ring-phase jitter — same "four
+                // variants for per-hit variety" intent the TGAs served, now
+                // procedural. /4 spreads the four slots across one period.
+                static_cast<float>(h.texture_index) * 0.25f,
+                0.0f);
         }
         shader.set_vec4_array("u_hit_points", pts, ShieldState::MaxHits);
         shader.set_vec4_array("u_hit_color_intensity", col, ShieldState::MaxHits);
-        shader.set_int_array("u_hit_tex_index", tex_idx, ShieldState::MaxHits);
+        shader.set_vec4_array("u_hit_params", par, ShieldState::MaxHits);
 
         // The shader measures the splash in the bubble's unit-sphere space, so
         // it needs the semi-axes in the same WORLD units as v_world_pos and

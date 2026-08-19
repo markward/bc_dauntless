@@ -33,26 +33,183 @@ enum class ShieldMode : std::uint8_t { Ellipsoid = 0, Skin = 1 };
 /// literal as the binary (0x3FDDB3D7).
 inline constexpr float kShieldEllipsoidAxisScale = 1.7320508f;
 
-/// Splash size, as a CHORD on the bubble's unit-sphere space (positions
-/// divided component-wise by the semi-axes). Dimensionless and ship-independent
-/// — the splash is a fixed angular cap on every hull, which is what makes it
-/// the same shape wherever it lands. chord = 2·sin(θ/2), so 0.35 ≈ a 20°
-/// half-width. Tune-by-eye; changing it needs a rebuild.
-///
-/// It replaced a world-space radius keyed to the smallest half-extent. That
-/// measured the falloff as a world chord to a splash centre recomputed at each
-/// FRAGMENT's own distance from the bubble centre — so walking from a bow hit
-/// toward the dorsal pole, where a Galaxy's radius collapses 558 → 121, the
-/// splash centre chased the fragment inward and the falloff never bit. Bow and
-/// flank hits smeared into ribbons reaching 3.5× further toward the poles than
-/// across (measured on the real Galaxy AABB), which renders as an arc draped
-/// over the ship rather than an impact patch.
-inline constexpr float kShieldSplashRadius = 0.35f;
-
 /// Overall opacity ceiling on the impact splash — the brightness a fragment at
 /// full coverage, from a hit at full intensity, contributes to the frame.
 /// MUST match the constant in shaders/shield.frag.
 inline constexpr float kShieldSplashOpacity = 0.75f;
+
+// ── procedural 3D splash: reach ────────────────────────────────────────────
+
+/// How far the ripple travels, per GU of the weapon's DamageRadiusFactor.
+/// That factor is already plumbed to hit_feedback.dispatch (photon 0.13 GU,
+/// phaser 0.15 GU) and is the natural "sized to the impact" basis, but against
+/// a Galaxy's 1.22 GU thin semi-axis a raw 0.13 GU splash is invisible — hence
+/// the multiplier.
+inline constexpr float kShieldSplashReachPerRadius = 10.0f;
+
+/// Floor on the reach, in GU. Callers with no ray — collisions, splash damage
+/// — pass radius 0 and must still get a visible splash.
+inline constexpr float kShieldSplashReachMin = 0.6f;
+
+/// Ceiling on the reach, in GU. Keeps a freak DamageRadiusFactor from wrapping
+/// the whole bubble.
+inline constexpr float kShieldSplashReachMax = 2.0f;
+
+/// Ripple reach in GU for a weapon whose DamageRadiusFactor is `radius_gu`.
+/// MUST match shaders/shield.frag — keep in sync.
+float shield_splash_reach(float radius_gu);
+
+/// Upper bound on the reach, as a multiple of the bubble's radius in the hit
+/// direction. The splash may not out-run the bubble it is drawn on.
+inline constexpr float kShieldSplashReachBubbleFrac = 1.0f;
+
+/// LOWER bound on the reach, as a multiple of the bubble's radius in the hit
+/// direction — so the splash stays proportionally visible on a big hull.
+///
+/// Set deliberately below every Galaxy bubble radius (the smallest it must not
+/// disturb is the 4.02 GU flank, and 0.25 × 4.02 = 1.01 < the 1.5 GU phaser
+/// reach), so the hull already signed off on is completely unaffected.
+///
+/// This is the one place the strict "the weapon sets the size, not the target"
+/// rule is traded away, and it was traded knowingly. A Warbird's bubble is
+/// twice a Galaxy's (8.38 / 10.89 / 3.00 GU vs 4.02 / 5.58 / 1.22), so an
+/// absolute reach covered 13.8% of its largest semi-axis against the Galaxy's
+/// 26.9% — half as prominent on a ship twice the size, which read in game as
+/// impacts simply not appearing.
+inline constexpr float kShieldSplashReachBubbleFloorFrac = 0.25f;
+
+/// Absolute cap on what the bubble FLOOR may raise the reach to, in GU. A
+/// starbase bubble is tens of GU across and scaling the floor with it forever
+/// would let one photon torpedo flash a huge fraction of the structure.
+inline constexpr float kShieldSplashReachHardMax = 4.0f;
+
+/// The reach actually used on a bubble whose radius in the hit direction is
+/// `bubble_radius_gu`.
+///
+/// This is a CLAMP, not a proportional law — it does not resurrect "bigger
+/// ships get bigger splashes", which is wrong and was rejected. On any hull
+/// large enough to hold the splash it changes nothing at all; it binds only
+/// when the splash would otherwise be bigger than the target.
+///
+/// Why it has to exist: the reach is absolute (0.6–2.0 GU) while the bubble
+/// scales with the hull, so on a small target the splash stayed bright all the
+/// way to the hemisphere gate's terminator. The terminator is a great circle,
+/// which projects to a straight line, so the gate cut the splash into a dome
+/// with a hard FLAT bottom — seen live on a small target. Measured brightness
+/// at the terminator, as a fraction of the splash peak:
+///
+///     reach/semi   0.46    0.77    1.15    1.65    3.30
+///     at terminator  0.0000  0.0014  0.0095  0.0209  0.0486
+///
+/// Capital ships were always fine; small targets were not. With the splash
+/// bounded to the bubble it fades to well under 1% by the terminator, so the
+/// gate has nothing left to cut and leaves no edge.
+float shield_splash_reach_on_bubble(float reach_gu, float bubble_radius_gu);
+
+// ── procedural 3D splash: epicentre ────────────────────────────────────────
+
+/// The stored anchor projected onto the bubble surface, in world space.
+///
+/// `hit_feedback` passes the bubble ENTRY point when the shot had a ray and
+/// the HULL impact point when it did not (collisions, splash damage). The
+/// bubble stands √3 off the hull — 2.36 GU on a Galaxy's long axis — so a raw
+/// hull anchor sits deep inside it. Projecting whatever arrives onto the
+/// ellipsoid normalises both callers to one anchor, which is what makes a
+/// world-space distance from it mean anything.
+///
+/// Returns `bubble_centre` unchanged for a degenerate hit at the centre; a NaN
+/// here would reach the HDR bloom amplifier. MUST match shaders/shield.frag.
+glm::vec3 shield_splash_epicentre(const glm::vec3& hit_world,
+                                  const glm::vec3& bubble_centre,
+                                  const glm::vec3& bubble_semi_axes);
+
+// ── procedural 3D splash: the ripple itself ────────────────────────────────
+
+/// How long the ripple geometry takes to run, in seconds. Deliberately much
+/// shorter than the hit's own ~3.9 s intensity decay: the rings are a fast
+/// water-splash event, the residual glow is the slow one. See
+/// shield_splash_shape().
+inline constexpr float kShieldSplashRippleLife = 0.70f;
+
+/// Ring wavelength as a fraction of the reach — 1/3 gives about three crests.
+inline constexpr float kShieldSplashRingLambda = 1.0f / 3.0f;
+
+/// How far the ring packet trails BEHIND the wavefront, as a fraction of the
+/// reach. The rings are a wave packet centred on the front, not on the impact.
+///
+/// They were originally enveloped by the filled disc, which is
+/// `1 - smoothstep(0, front, d)` and so exactly 0 at d == front — the crest
+/// riding the wavefront was multiplied by zero and the splash's brightest
+/// point never left the epicentre. It read live as a static flash rather than
+/// an expanding ripple.
+inline constexpr float kShieldSplashRingTrail = 0.35f;
+
+/// How far the packet leaks AHEAD of the wavefront, as a fraction of the
+/// reach. Much smaller than the trail: the leading edge should be crisp, but
+/// not a hard step, which would alias as the front sweeps across fragments.
+inline constexpr float kShieldSplashRingLead = 0.05f;
+/// Crest sharpness. Higher = thinner, harder-edged rings.
+inline constexpr float kShieldSplashRingSharp = 3.0f;
+/// How fast the filled disc dims outward, as a fraction of the reach.
+inline constexpr float kShieldSplashDiscDecay = 0.55f;
+/// Core radius as a fraction of the reach.
+inline constexpr float kShieldSplashCoreFrac = 0.18f;
+
+/// How long the hot core lasts, in seconds — its OWN timescale, much shorter
+/// than the ripple's.
+///
+/// The core originally decayed over kShieldSplashRippleLife, so at 4x the ring
+/// gain it stayed the brightest thing until ~65% through the ripple, and by
+/// the time the travelling crest won it was faint. The expanding ring was
+/// there and correct; the impact flash was sitting on top of it. Three
+/// timescales now, each a distinct visual event: this flash, the 0.7 s ripple,
+/// and the hit's own ~3.9 s intensity decay carrying the afterglow.
+inline constexpr float kShieldSplashCoreLife = 0.15f;
+
+/// Core temporal falloff exponent — how abruptly the hot centre dies.
+inline constexpr float kShieldSplashCorePow = 3.0f;
+/// Core peak gain. ABOVE 1 ON PURPOSE: this is the term that drives the HDR
+/// bloom, which a texture sample capped at 1.0 never could.
+inline constexpr float kShieldSplashCoreGain = 4.0f;
+/// Afterglow radius as a fraction of the reach.
+inline constexpr float kShieldSplashGlowFrac = 0.70f;
+/// Afterglow gain.
+inline constexpr float kShieldSplashGlowGain = 0.25f;
+/// Filled-disc gain.
+inline constexpr float kShieldSplashDiscGain = 0.45f;
+/// Ring gain.
+inline constexpr float kShieldSplashRingGain = 0.9f;
+
+/// The splash profile: brightness at world distance `d_gu` from the epicentre,
+/// `age_seconds` after the hit, for a ripple of `reach_gu`. `phase_jitter` in
+/// [0,1) offsets the ring phase so repeated hits don't look rubber-stamped.
+///
+/// This is the whole visual. It is a function of a SCALAR DISTANCE, which is
+/// the point: the previous implementation built a tangent basis at the impact
+/// and projected the 3D offset onto it to sample a 2D texture, and every one
+/// of its three distortions came from needing that 2D map —
+///
+///  * the tangent-plane projection itself;
+///  * measuring the footprint in the bubble's unit-sphere space, which is
+///    isotropic in ANGLE but maps back to wildly different world sizes on a
+///    4.02/5.58/1.22 GU bubble — the same 18° spanned 0.43 GU toward the
+///    dorsal and 1.74 GU toward the bow;
+///  * and a `ref` vector that flipped from (0,0,1) to (0,1,0) at |n.z| = 0.9,
+///    rotating the texture arbitrarily and POPPING as a hit tracked across.
+///
+/// A radially symmetric ripple needs none of it. Four additive terms:
+///
+///   core  hot Gaussian at the epicentre, dies within the ripple life
+///   disc  soft filled cap that grows out to the expanding front
+///   rings travelling wave crests, gated BY the disc so nothing rings ahead
+///         of the front
+///   glow  broad afterglow with NO age term — it fades on the hit's own
+///         intensity decay instead, which is what gives the two timescales
+///
+/// Output is NOT clamped to 1: see kShieldSplashCoreGain.
+/// MUST match splash_shape() in shaders/shield.frag — keep in sync.
+float shield_splash_shape(float d_gu, float age_seconds, float reach_gu,
+                          float phase_jitter);
 
 /// Brightness one splash contributes to the frame, given its `coverage`
 /// (shield_splash_coverage × the texture's alpha) and the hit's current
@@ -72,23 +229,33 @@ float shield_splash_intensity(float coverage, float hit_intensity);
 /// splash, wide enough that the cutoff is not a hard seam.
 inline constexpr float kShieldSplashGateFeather = 0.25f;
 
-/// Coverage of one impact splash at a point on the bubble, in [0, 1] — the
-/// product of the hemisphere gate and the radial falloff, i.e. everything
-/// `splash_sample` in shaders/shield.frag scales the texture by.
+/// Coverage of one impact splash at a point on the bubble — the hemisphere
+/// gate times the ripple profile at that point's WORLD distance from the
+/// epicentre.
 ///
-/// All vectors are WORLD space; `frag_world` is expected to lie on the bubble
-/// surface (the pass draws a unit sphere scaled to `bubble_semi_axes`). The
-/// measure itself is taken in the bubble's unit-sphere space — the same space
-/// BC's own facing chooser works in (`ShipClass::TestHit`, stbc_reference
-/// spec/ShieldFacingDamage.md §2.3 step 4) — so the footprint does not depend
-/// on where it lands.
+/// NOT capped at 1: the hot core exceeds it on purpose, which is how the
+/// splash reaches the HDR bloom. See kShieldSplashCoreGain.
 ///
-/// This is the shared source of truth for the splash footprint. MUST match
+/// All vectors are WORLD space, in GU; `frag_world` is expected to lie on the
+/// bubble surface (the pass draws a unit sphere scaled to `bubble_semi_axes`).
+/// `age_seconds` is measured from the hit, `reach_gu` comes from
+/// shield_splash_reach(), and `phase_jitter` in [0,1) varies the ring phase
+/// per hit.
+///
+/// The gate stays in the bubble's unit-sphere space because it is an
+/// orientation question, not a distance one. Everything else is a plain
+/// Euclidean distance, which is what makes the splash the same size wherever
+/// it lands — see the block comment on shield_splash_shape().
+///
+/// This is the shared source of truth for the splash. MUST match
 /// splash_sample() in shaders/shield.frag — keep in sync.
 float shield_splash_coverage(const glm::vec3& frag_world,
                              const glm::vec3& hit_world,
                              const glm::vec3& bubble_centre,
-                             const glm::vec3& bubble_semi_axes);
+                             const glm::vec3& bubble_semi_axes,
+                             float age_seconds,
+                             float reach_gu,
+                             float phase_jitter);
 
 /// Near/far hemisphere gate for the impact splash: 1 on the hit-facing side of
 /// the bubble, 0 on the far side, with a smooth terminator between.
@@ -122,6 +289,15 @@ struct Hit {
     float intensity_at_t0 = 0.0f;
     float current_intensity = 0.0f;
     double t0_seconds = 0.0;
+
+    /// The weapon's DamageRadiusFactor in GU (photon 0.13, phaser 0.15), which
+    /// sizes the splash via shield_splash_reach(). 0 for callers with no
+    /// weapon — collisions, splash damage — which clamps to the reach floor.
+    float radius_gu = 0.0f;
+
+    /// Was an index into the four shieldhit0*.TGA variants; those are gone and
+    /// it now seeds the ring-phase jitter, serving the same "per-hit variety"
+    /// purpose procedurally.
     int texture_index = 0;
 };
 
@@ -150,7 +326,8 @@ public:
                   const glm::vec4& rgba,
                   float intensity,
                   double now_seconds,
-                  int texture_index);
+                  int texture_index,
+                  float radius_gu = 0.0f);
 
     /// Recompute current_intensity for every slot at `now_seconds`.
     /// Slots that fall below the inactive threshold (0.01) are zeroed.
@@ -187,7 +364,8 @@ public:
                   const glm::vec3& point_body,
                   const glm::vec4& rgba,
                   float intensity,
-                  double now_seconds);
+                  double now_seconds,
+                  float radius_gu = 0.0f);
 
     /// Tick every registered state at `now_seconds`.
     void tick_all(double now_seconds);

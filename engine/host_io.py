@@ -226,10 +226,18 @@ def shield_hit(
     point: Tuple[float, float, float],
     rgba: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
     intensity: float = 1.0,
+    radius: float = 0.0,
 ) -> None:
+    """Flash the ship's shield bubble at a world point.
+
+    `radius` is the weapon's DamageRadiusFactor in GU (photon 0.13, phaser
+    0.15); the renderer turns it into the ripple's world-space reach. 0 —
+    the default, and what collisions and splash damage pass — clamps up to
+    the reach floor rather than producing no splash.
+    """
     if _h is None:
         return
-    _h.shield_hit(instance_id, point, rgba, intensity)
+    _h.shield_hit(instance_id, point, rgba, intensity, radius)
 
 
 def world_to_body(

@@ -81,7 +81,8 @@ def _run_tick(ships, dt, ship_instances, monkeypatch):
     from engine import host_loop
     calls = []
     monkeypatch.setattr(hit_feedback.host_io, "shield_hit",
-                        lambda iid, point, rgba, intensity: calls.append(point))
+                        lambda iid, point, rgba, intensity, radius=0.0:
+                            calls.append(point))
     # Everything else the frame pushes to the renderer is irrelevant here.
     for name in ("set_torpedoes", "set_dynamic_lights", "set_shockwaves",
                  "set_hit_vfx", "set_particle_emitters", "set_phaser_beams",

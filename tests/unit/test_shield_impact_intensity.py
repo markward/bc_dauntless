@@ -37,7 +37,8 @@ def _seed_pushed(monkeypatch, weapon_type):
     """The intensity handed to host_io.shield_hit for a fully-absorbed hit."""
     seen = []
     monkeypatch.setattr(hit_feedback.host_io, "shield_hit",
-                        lambda iid, point, rgba, intensity: seen.append(intensity))
+                        lambda iid, point, rgba, intensity, radius=0.0:
+                            seen.append(intensity))
     ship = _shielded_ship()
     hit_feedback.dispatch(
         ship=ship, source=None, point=TGPoint3(0.0, 10.0, 0.0), normal=None,
@@ -76,3 +77,97 @@ def test_seeds_stay_within_the_renderer_range():
     for wt in ("phaser", "torpedo", None):
         v = hit_feedback.shield_impact_intensity(wt)
         assert 0.0 < v <= 4.0, wt
+
+
+# ── the weapon's radius must reach the renderer ─────────────────────────────
+#
+# The procedural splash is "sized to the impact": shield_splash_reach() in
+# renderer/shield_state.h turns the weapon's DamageRadiusFactor into a
+# world-space ripple reach. `radius` was already an argument to dispatch(), but
+# it went only to the damage decal and the hull carve -- the shield path
+# dropped it, so every weapon splashed identically.
+
+def _radius_pushed(monkeypatch, radius):
+    """The radius handed to host_io.shield_hit for a fully-absorbed hit."""
+    seen = []
+    monkeypatch.setattr(hit_feedback.host_io, "shield_hit",
+                        lambda iid, point, rgba, intensity, radius=0.0:
+                            seen.append(radius))
+    ship = _shielded_ship()
+    hit_feedback.dispatch(
+        ship=ship, source=None, point=TGPoint3(0.0, 10.0, 0.0), normal=None,
+        damage=100.0, subsystem=None,
+        absorbed_shields=100.0, absorbed_subsystem=0.0, absorbed_hull=0.0,
+        sub_transition=None, ship_instances={ship: 3},
+        weapon_type="torpedo", radius=radius)
+    assert len(seen) == 1
+    return seen[0]
+
+
+def test_weapon_radius_reaches_the_shield_pass(monkeypatch):
+    assert _radius_pushed(monkeypatch, 0.13) == pytest.approx(0.13)
+    assert _radius_pushed(monkeypatch, 0.15) == pytest.approx(0.15)
+
+
+def test_a_hit_with_no_weapon_radius_still_pushes_a_splash(monkeypatch):
+    """Collisions and splash damage carry no DamageRadiusFactor. They must
+    still flash the shield -- the renderer clamps 0 up to its reach floor."""
+    assert _radius_pushed(monkeypatch, 0.0) == pytest.approx(0.0)
+
+
+# ── a drained facing must not flash like a full one ─────────────────────────
+#
+# Reported live: "shield impacts are still showing up when a particular shield
+# arc is fully drained -- they don't show up when shields are fully offline."
+#
+# A drained arc is never actually at zero. ShieldSubsystem.Update regenerates
+# every face every frame while the generator is on (subsystems.py:1699), so an
+# arc the HUD draws as empty regains charge_per_second * power * dt each frame.
+# A 60Hz phaser tick then absorbs that trickle, absorbed_shields comes out just
+# above zero, and the flash fires -- at FULL brightness, because the seed is a
+# constant per weapon type and never looked at how much the shields actually
+# took. Fully offline reads correctly only because regen and shields_block are
+# both gated off there, so absorbed_shields is exactly 0 forever.
+#
+# The seed is now scaled by the fraction of the hit the shields absorbed, and
+# suppressed entirely below a threshold -- otherwise trickle hits would also
+# keep evicting real flashes from the renderer's 8-slot ring.
+
+def _dispatch_absorbing(monkeypatch, damage, absorbed):
+    """Return the list of shield_hit intensities for one dispatch."""
+    seen = []
+    monkeypatch.setattr(hit_feedback.host_io, "shield_hit",
+                        lambda iid, point, rgba, intensity, radius=0.0:
+                            seen.append(intensity))
+    ship = _shielded_ship()
+    hit_feedback.dispatch(
+        ship=ship, source=None, point=TGPoint3(0.0, 10.0, 0.0), normal=None,
+        damage=damage, subsystem=None,
+        absorbed_shields=absorbed, absorbed_subsystem=0.0,
+        absorbed_hull=max(0.0, damage - absorbed),
+        sub_transition=None, ship_instances={ship: 3},
+        weapon_type="phaser", radius=0.15)
+    return seen
+
+
+def test_a_fully_absorbed_hit_flashes_at_the_full_seed(monkeypatch):
+    seen = _dispatch_absorbing(monkeypatch, damage=100.0, absorbed=100.0)
+    assert seen == [pytest.approx(hit_feedback.shield_impact_intensity("phaser"))]
+
+
+def test_a_half_absorbed_hit_flashes_at_half_brightness(monkeypatch):
+    seen = _dispatch_absorbing(monkeypatch, damage=100.0, absorbed=50.0)
+    assert seen == [pytest.approx(
+        0.5 * hit_feedback.shield_impact_intensity("phaser"))]
+
+
+def test_a_drained_arc_absorbing_only_its_regen_trickle_does_not_flash(monkeypatch):
+    """The reported bug. A Galaxy face regenerating even 50/s puts back 0.83
+    damage per 60Hz frame; against a 40-damage phaser tick that is 2% of the
+    hit reaching the shields and 98% reaching the hull. It must not paint the
+    same flash as a fully-absorbed hit."""
+    assert _dispatch_absorbing(monkeypatch, damage=40.0, absorbed=0.83) == []
+
+
+def test_an_arc_at_exactly_zero_still_does_not_flash(monkeypatch):
+    assert _dispatch_absorbing(monkeypatch, damage=40.0, absorbed=0.0) == []

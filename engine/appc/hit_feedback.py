@@ -54,6 +54,26 @@ SHIELD_IMPACT_INTENSITY = 0.5           # per phaser tick (and the default)
 SHIELD_IMPACT_INTENSITY_TORPEDO = 2.0   # one discrete impact
 
 
+# Smallest fraction of a hit the shields must actually absorb before the flash
+# is drawn at all.
+#
+# A "fully drained" arc is never at zero: ShieldSubsystem.Update regenerates
+# every face every frame while the generator is on (subsystems.py:1699), so an
+# arc the HUD draws as empty regains charge_per_second * power * dt each frame.
+# A 60 Hz phaser tick absorbs that trickle, and before this gate existed that
+# was enough to paint a FULL-brightness flash on an arc that had stopped
+# roughly 2% of the shot. Fully-offline shields looked right only because regen
+# and shields_block are both gated off there, so nothing is absorbed at all.
+#
+# The threshold also protects the renderer's 8-slot hit ring: trickle hits are
+# pushed at 60 Hz and would evict genuine flashes even when scaled to nearly
+# invisible.
+#
+# OUR DESIGN, not recovered BC behaviour — the clean-room spec describes how
+# much damage a draining facing passes through, not how bright the flash is.
+SHIELD_IMPACT_MIN_ABSORBED_FRACTION = 0.05
+
+
 def shield_impact_intensity(weapon_type: str | None) -> float:
     """Seed brightness for a shield flash from `weapon_type`.
 
@@ -222,7 +242,13 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     # flash entirely. Once a facing is worn down — the normal state in any
     # sustained exchange — torpedoes and phasers stopped flashing the shields
     # at all, which reads as "weapons aren't hitting the shields".
-    if absorbed_shields > 0.0:
+    # How much of the shot the shields actually stopped. A drained arc still
+    # absorbs its per-frame regen trickle, which is a real absorption but a
+    # negligible one, and it used to draw the same flash as a hit the shields
+    # stopped outright.
+    _absorbed_fraction = (absorbed_shields / float(damage)
+                          if float(damage) > 0.0 else 0.0)
+    if _absorbed_fraction >= SHIELD_IMPACT_MIN_ABSORBED_FRACTION:
         if ship_instances is not None:
             iid = ship_instances.get(ship)
             if iid is not None:
@@ -240,7 +266,14 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     iid,
                     (anchor.x, anchor.y, anchor.z),
                     (0.0, 0.0, 0.0, 0.0),
-                    shield_impact_intensity(weapon_type),
+                    # Scaled by how much the shields actually took, so a nearly
+                    # drained arc fades out instead of flashing like a full one.
+                    shield_impact_intensity(weapon_type) * _absorbed_fraction,
+                    # The weapon's DamageRadiusFactor sizes the procedural
+                    # splash (renderer/shield_state.h shield_splash_reach).
+                    # Callers with no weapon — collisions, splash damage —
+                    # pass 0, which clamps up to the reach floor.
+                    float(radius),
                 )
 
     # 1b. Hull / critical impact — fires whenever damage got PAST the shields.

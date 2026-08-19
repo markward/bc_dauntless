@@ -33,16 +33,16 @@ class _Ship:
 
 class _ShieldHitSpy:
     """Positional-arg capture matching host_io.shield_hit
-    (instance_id, point, rgba, intensity)."""
+    (instance_id, point, rgba, intensity, radius)."""
 
     def __init__(self):
         self.shield_hit_calls = []
 
     def __call__(self, instance_id, point, rgba=(0.0, 0.0, 0.0, 0.0),
-                 intensity=1.0):
+                 intensity=1.0, radius=0.0):
         self.shield_hit_calls.append({
             "instance_id": instance_id, "point": point,
-            "rgba": rgba, "intensity": intensity,
+            "rgba": rgba, "intensity": intensity, "radius": radius,
         })
 
 
