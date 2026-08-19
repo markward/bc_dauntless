@@ -52,6 +52,11 @@ std::vector<ParticleEmitterDescriptor> build_debris_descriptors(
             d.angle_variance        = 40.f;
             d.damping               = 0.6f;
             d.blend_mode = 0;  // alpha: solid chunks
+            // Tumble: square.tga is an irregular rock silhouette, so without a
+            // roll a spray of chunks reads as the same stamped shape repeated.
+            // ~1.2 rad/s gives each chunk up to ~2 turns over its 10 s life
+            // (the pass randomises sign and magnitude per particle).
+            d.roll_rate = 1.2f;
             d.num_size_keys = 3;
             d.size_keys[0] = ParticleKey{0.0f,  0.07f};
             d.size_keys[1] = ParticleKey{0.15f, 0.10f};

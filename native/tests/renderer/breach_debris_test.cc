@@ -141,3 +141,18 @@ TEST(BuildDebrisDescriptors, EventPastDebrisLifeYieldsEmpty) {
         ring, id, scenegraph::kDebrisLife + 0.01f);
     EXPECT_TRUE(desc.empty());
 }
+
+// Chunks are camera-facing billboards of an irregular rock silhouette, so a
+// static orientation makes a spray of them read as identical stamped shapes.
+// Sparks stay unrolled deliberately: spark.tga is radially symmetric, so
+// spinning it is a visual no-op that only costs uniform churn.
+TEST(BuildDebrisDescriptors, ChunksTumbleAndSparksDoNot) {
+    scenegraph::BreachEventRing ring;
+    ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 5u);
+    scenegraph::InstanceId id{1, 1};
+    auto desc = renderer::build_debris_descriptors(ring, id, 0.1f);
+    ASSERT_EQ(desc.size(), 2u);
+    EXPECT_GT(desc[0].roll_rate, 0.f) << "hull chunks must tumble";
+    EXPECT_FLOAT_EQ(desc[1].roll_rate, 0.f)
+        << "sparks are radially symmetric; rolling them buys nothing";
+}
