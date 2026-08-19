@@ -59,18 +59,37 @@ float shield_splash_shape(float d_gu, float age_seconds, float reach_gu,
     disc *= std::exp(-d / (reach_gu * kShieldSplashDiscDecay));
     disc *= (1.0f - a);
 
-    // Travelling crests, riding on the disc. Multiplying BY the disc is what
-    // keeps the rings from existing ahead of the front, and hands them the
-    // disc's own distance and age decay for free.
+    // Travelling crests, enveloped as a wave PACKET centred on the front.
+    //
+    // They used to be enveloped by `disc` instead, which is
+    // `1 - smoothstep(0, front, d)` and therefore exactly 0 at d == front: the
+    // crest riding the wavefront — the whole thing that reads as motion — was
+    // multiplied by zero, and the splash's peak never left the epicentre. It
+    // rendered as a static flash with some texture on it.
+    //
+    // The packet is ASYMMETRIC: a long trailing decay behind the front, and a
+    // very short one ahead, so the leading edge stays crisp without being a
+    // hard step that would alias.
+    const float behind = front - d;              // > 0 behind the front
+    const float width = (behind >= 0.0f) ? kShieldSplashRingTrail
+                                         : kShieldSplashRingLead;
+    const float bt = behind / (reach_gu * width);
+    const float band = std::exp(-bt * bt);
+
     const float phase = (front - d) / (reach_gu * kShieldSplashRingLambda)
                         + phase_jitter;
     const float crest = std::max(std::cos(6.2831853f * phase), 0.0f);
-    const float rings = std::pow(crest, kShieldSplashRingSharp) * disc;
+    const float rings =
+        std::pow(crest, kShieldSplashRingSharp) * band * (1.0f - a);
 
-    // Hot core. Exceeds 1 on purpose — this is what the bloom sees.
+    // Hot core. Exceeds 1 on purpose — this is what the bloom sees. Decays on
+    // its OWN short life, not the ripple's: sharing the ripple's clock left
+    // the flash brighter than the travelling crest for two thirds of the
+    // ripple, hiding the very motion the rings exist to convey.
+    const float ca = std::clamp(age_seconds / kShieldSplashCoreLife, 0.0f, 1.0f);
     const float cr = d / (reach_gu * kShieldSplashCoreFrac);
     const float core = std::exp(-cr * cr)
-                     * std::pow(1.0f - a, kShieldSplashCorePow)
+                     * std::pow(1.0f - ca, kShieldSplashCorePow)
                      * kShieldSplashCoreGain;
 
     // Afterglow. NO age term: it fades on the hit's own intensity decay, which

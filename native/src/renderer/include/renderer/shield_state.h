@@ -86,12 +86,39 @@ inline constexpr float kShieldSplashRippleLife = 0.70f;
 
 /// Ring wavelength as a fraction of the reach — 1/3 gives about three crests.
 inline constexpr float kShieldSplashRingLambda = 1.0f / 3.0f;
+
+/// How far the ring packet trails BEHIND the wavefront, as a fraction of the
+/// reach. The rings are a wave packet centred on the front, not on the impact.
+///
+/// They were originally enveloped by the filled disc, which is
+/// `1 - smoothstep(0, front, d)` and so exactly 0 at d == front — the crest
+/// riding the wavefront was multiplied by zero and the splash's brightest
+/// point never left the epicentre. It read live as a static flash rather than
+/// an expanding ripple.
+inline constexpr float kShieldSplashRingTrail = 0.35f;
+
+/// How far the packet leaks AHEAD of the wavefront, as a fraction of the
+/// reach. Much smaller than the trail: the leading edge should be crisp, but
+/// not a hard step, which would alias as the front sweeps across fragments.
+inline constexpr float kShieldSplashRingLead = 0.05f;
 /// Crest sharpness. Higher = thinner, harder-edged rings.
 inline constexpr float kShieldSplashRingSharp = 3.0f;
 /// How fast the filled disc dims outward, as a fraction of the reach.
 inline constexpr float kShieldSplashDiscDecay = 0.55f;
 /// Core radius as a fraction of the reach.
 inline constexpr float kShieldSplashCoreFrac = 0.18f;
+
+/// How long the hot core lasts, in seconds — its OWN timescale, much shorter
+/// than the ripple's.
+///
+/// The core originally decayed over kShieldSplashRippleLife, so at 4x the ring
+/// gain it stayed the brightest thing until ~65% through the ripple, and by
+/// the time the travelling crest won it was faint. The expanding ring was
+/// there and correct; the impact flash was sitting on top of it. Three
+/// timescales now, each a distinct visual event: this flash, the 0.7 s ripple,
+/// and the hit's own ~3.9 s intensity decay carrying the afterglow.
+inline constexpr float kShieldSplashCoreLife = 0.15f;
+
 /// Core temporal falloff exponent — how abruptly the hot centre dies.
 inline constexpr float kShieldSplashCorePow = 3.0f;
 /// Core peak gain. ABOVE 1 ON PURPOSE: this is the term that drives the HDR

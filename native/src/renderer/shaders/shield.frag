@@ -22,8 +22,11 @@ const float GATE_FEATHER = 0.25;   // kShieldSplashGateFeather
 const float RIPPLE_LIFE  = 0.70;   // kShieldSplashRippleLife
 const float RING_LAMBDA  = 1.0 / 3.0;
 const float RING_SHARP   = 3.0;
+const float RING_TRAIL   = 0.35;   // packet decay BEHIND the front
+const float RING_LEAD    = 0.05;   // and ahead of it — crisp, not a hard step
 const float DISC_DECAY   = 0.55;
 const float CORE_FRAC    = 0.18;
+const float CORE_LIFE    = 0.15;   // the flash has its OWN, much shorter clock
 const float CORE_POW     = 3.0;
 const float CORE_GAIN    = 4.0;    // > 1 ON PURPOSE — drives the HDR bloom
 const float GLOW_FRAC    = 0.70;
@@ -93,13 +96,25 @@ float splash_shape(float d_gu, float age, float reach, float jitter) {
     disc *= exp(-d / (reach * DISC_DECAY));
     disc *= (1.0 - a);
 
-    // Multiplying the crests BY the disc is what stops them existing ahead of
-    // the front, and hands them the disc's distance and age decay for free.
-    float phase = (front - d) / (reach * RING_LAMBDA) + jitter;
-    float rings = pow(max(cos(TAU * phase), 0.0), RING_SHARP) * disc;
+    // The crests are a wave PACKET centred on the front. They used to be
+    // enveloped by `disc`, which is 1 - smoothstep(0, front, d) and therefore
+    // exactly 0 at d == front — so the crest riding the wavefront, the whole
+    // thing that reads as motion, was multiplied by zero and the splash's
+    // brightest point never left the epicentre. Asymmetric: long trailing
+    // decay, short leading one, so the front stays crisp without aliasing.
+    float behind = front - d;
+    float bt = behind / (reach * (behind >= 0.0 ? RING_TRAIL : RING_LEAD));
+    float band = exp(-bt * bt);
 
+    float phase = (front - d) / (reach * RING_LAMBDA) + jitter;
+    float rings = pow(max(cos(TAU * phase), 0.0), RING_SHARP) * band * (1.0 - a);
+
+    // The core runs on its OWN short clock. Sharing the ripple's left the
+    // flash brighter than the travelling crest for two thirds of the ripple,
+    // hiding the motion the rings exist to convey.
+    float ca = clamp(age / CORE_LIFE, 0.0, 1.0);
     float cr = d / (reach * CORE_FRAC);
-    float core = exp(-cr * cr) * pow(1.0 - a, CORE_POW) * CORE_GAIN;
+    float core = exp(-cr * cr) * pow(1.0 - ca, CORE_POW) * CORE_GAIN;
 
     float gr = d / (reach * GLOW_FRAC);
     float glow = exp(-gr * gr);

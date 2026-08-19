@@ -761,3 +761,69 @@ TEST(ShieldState, ARecycledSlotDoesNotInheritThePreviousWeaponRadius) {
         if (s.slot(i).radius_gu == 0.13f) seen = true;
     EXPECT_TRUE(seen) << "the new hit's radius never landed in a slot";
 }
+
+// ── the crest has to RIDE the front ───────────────────────────────────────
+//
+// The defect this pins, reported live: "we've lost something of the ripples
+// moving out from the impact". The ripple WAS expanding -- the front and the
+// ring phase were both correct -- but the rings were enveloped by the filled
+// disc, `1 - smoothstep(0, front, d)`, which is exactly 0 at d == front. So
+// the crest riding the wavefront was multiplied by zero, and the brightest
+// part of the splash never left the epicentre. Measured before the fix, at a
+// reach of 1.5 GU:
+//
+//     age   front   peak_d   value_at_front
+//    0.20   0.671    0.000          0.00427
+//    0.40   0.949    0.000          0.00000
+//    0.80   1.342    0.333          0.00000
+//
+// The eye tracks the brightest thing, so it read as a static flash with some
+// texture rather than as an expanding wave.
+
+namespace {
+
+/// Distance at which the MOVING part of the splash peaks. Subtracting the
+/// value at the ripple life removes the age-independent afterglow.
+float ripple_peak_d_gu(float age, float reach) {
+    float best_d = 0.0f, best_v = -1.0f;
+    for (int i = 0; i <= 4000; ++i) {
+        const float d = 2.0f * reach * static_cast<float>(i) / 4000.0f;
+        const float v = shield_splash_shape(d, age, reach, 0.0f)
+                      - shield_splash_shape(d, kShieldSplashRippleLife, reach, 0.0f);
+        if (v > best_v) { best_v = v; best_d = d; }
+    }
+    return best_d;
+}
+
+}  // namespace
+
+TEST(ShieldSplashShape, TheBrightestRingRidesTheExpandingFront) {
+    const float reach = 1.5f;
+    // Skip the first instant, where the hot core legitimately owns the peak.
+    for (float frac : {0.35f, 0.50f, 0.70f, 0.90f}) {
+        const float front = reach * std::sqrt(frac);
+        const float peak = ripple_peak_d_gu(frac * kShieldSplashRippleLife, reach);
+        EXPECT_NEAR(peak, front, 0.25f * reach)
+            << "at age fraction " << frac << " the front is at " << front
+            << " GU but the splash still peaks at " << peak << " GU";
+    }
+}
+
+TEST(ShieldSplashShape, ThePeakMovesOutwardOverTheRippleLife) {
+    const float reach = 1.5f;
+    const float early = ripple_peak_d_gu(0.35f * kShieldSplashRippleLife, reach);
+    const float late  = ripple_peak_d_gu(0.90f * kShieldSplashRippleLife, reach);
+    EXPECT_GT(late, early + 0.2f * reach)
+        << "peak barely moved: " << early << " -> " << late << " GU";
+}
+
+TEST(ShieldSplashShape, TheWavefrontItselfIsLit) {
+    // The crest sitting exactly on the front is the thing that reads as motion.
+    // It must not be enveloped to zero there.
+    const float reach = 1.5f;
+    const float age = 0.5f * kShieldSplashRippleLife;
+    const float front = reach * std::sqrt(0.5f);
+    const float at_front = shield_splash_shape(front, age, reach, 0.0f)
+                         - shield_splash_shape(front, kShieldSplashRippleLife, reach, 0.0f);
+    EXPECT_GT(at_front, 0.1f) << "wavefront brightness " << at_front;
+}
