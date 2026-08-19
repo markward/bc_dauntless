@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <unordered_map>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "scenegraph/instance.h"
 
@@ -87,13 +88,31 @@ float shield_splash_gate(const glm::vec3& frag_dir_from_centre,
                          const glm::vec3& impact_dir);
 
 struct Hit {
-    glm::vec3 point_world{0.0f};
+    /// Impact point in the ship's BODY (model) frame. Stored in body space and
+    /// re-transformed by the live instance matrix every frame — the same thing
+    /// hit_vfx_pass.cc does for spark bursts — so the splash rides the hull.
+    ///
+    /// It was a WORLD point, handed to the shader verbatim while
+    /// u_bubble_center tracked the ship, so `hit - centre` swung as the ship
+    /// flew and eventually inverted: the splash slid across the bubble and
+    /// reappeared on the far face. On a Galaxy the hit sits ~1.83 GU from the
+    /// bubble centre, so at 6.3 GU/s the direction passed 90 degrees after
+    /// 0.29 s, while the splash lives 3.9 s (ShieldGlowDecay 1.0, seed
+    /// intensity 0.5, inactive at 0.01).
+    glm::vec3 point_body{0.0f};
     glm::vec4 color_rgba{0.0f};
     float intensity_at_t0 = 0.0f;
     float current_intensity = 0.0f;
     double t0_seconds = 0.0;
     int texture_index = 0;
 };
+
+/// Where a stored hit is right now, in world space: its body-frame point
+/// carried through the instance's live world matrix. The shader compares this
+/// against v_world_pos, so it must be recomputed every frame rather than
+/// cached at push time.
+glm::vec3 shield_hit_world_point(const Hit& hit,
+                                 const glm::mat4& instance_world);
 
 class ShieldState {
 public:
@@ -109,7 +128,7 @@ public:
     /// dimmest slot when full. If `rgba` is all-zero, substitutes
     /// `default_color`. `intensity` is preserved as `intensity_at_t0` and
     /// also seeds `current_intensity` so the slot is immediately active.
-    void push_hit(const glm::vec3& point_world,
+    void push_hit(const glm::vec3& point_body,
                   const glm::vec4& rgba,
                   float intensity,
                   double now_seconds,
@@ -147,7 +166,7 @@ public:
     /// Push a hit; silently drops if `id` was never registered.
     /// `texture_index` is picked from an internal stateless RNG.
     void push_hit(scenegraph::InstanceId id,
-                  const glm::vec3& point_world,
+                  const glm::vec3& point_body,
                   const glm::vec4& rgba,
                   float intensity,
                   double now_seconds);

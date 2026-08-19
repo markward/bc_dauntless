@@ -41,7 +41,7 @@ public:
 
     /// Push a hit. Color (0,0,0,0) substitutes the ship's default color.
     void shield_hit(scenegraph::InstanceId id,
-                    const glm::vec3& point_world,
+                    const glm::vec3& point_body,
                     const glm::vec4& rgba,
                     float intensity,
                     double now_seconds);

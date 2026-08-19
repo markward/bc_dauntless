@@ -149,10 +149,15 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              shield_point=None) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
-    Severity is computed via classify(...). Exactly one visual fires per
-    impact (shield_hit for SHIELD, hit_vfx.spawn for HULL/CRITICAL).
-    Audio fires for every severity. Camera shake fires only when
-    ship == Game_GetCurrentGame().GetPlayer().
+    The two visuals are INDEPENDENT, and a partially-absorbed shot shows both:
+    the shield flash fires whenever `absorbed_shields > 0`, and the hull/critical
+    impact whenever damage got past the shields (`severity != SHIELD`). They
+    were mutually exclusive on severity alone, which suppressed the flash the
+    moment a facing started leaking — see the comments at each site.
+
+    Severity (from classify) still drives audio tier, camera shake, the scorch
+    decal and the hull carve. Audio fires for every severity. Camera shake fires
+    only when ship == Game_GetCurrentGame().GetPlayer().
 
     Native hit/damage touches route through the engine.host_io façade,
     which no-ops when the native module is absent (headless): no `host`
@@ -181,8 +186,17 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
         hull=hull,
     )
 
-    # 1. Visual — mutually exclusive.
-    if severity == Severity.SHIELD:
+    # 1a. Shield flash — fires whenever a facing absorbed ANYTHING, not only
+    # when it absorbed everything. BC's impact loop runs two passes
+    # (stbc_reference spec/ShieldFacingDamage.md §3.1): pass 1 hits the facing
+    # and fires a shield-hit event, then the residual is RE-DISPATCHED against
+    # the hull in pass 2 — so an overdrawing shot produces both visuals.
+    #
+    # Gating this on `severity == SHIELD` meant any leak-through suppressed the
+    # flash entirely. Once a facing is worn down — the normal state in any
+    # sustained exchange — torpedoes and phasers stopped flashing the shields
+    # at all, which reads as "weapons aren't hitting the shields".
+    if absorbed_shields > 0.0:
         if ship_instances is not None:
             iid = ship_instances.get(ship)
             if iid is not None:
@@ -202,7 +216,10 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     (0.0, 0.0, 0.0, 0.0),
                     SHIELD_IMPACT_INTENSITY,
                 )
-    else:
+
+    # 1b. Hull / critical impact — fires whenever damage got PAST the shields.
+    # Independent of 1a: a partially-absorbed shot shows both.
+    if severity != Severity.SHIELD:
         # HULL or CRITICAL — hit_vfx.spawn handles both, filtered by severity.
         # Spark policy + hull anchor (sparks are independent of decals).
         spark_count, weapon_kind = spark_params(

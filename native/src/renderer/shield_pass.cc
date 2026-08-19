@@ -37,11 +37,11 @@ void ShieldPass::unregister_ship(scenegraph::InstanceId id) {
 }
 
 void ShieldPass::shield_hit(scenegraph::InstanceId id,
-                             const glm::vec3& point_world,
+                             const glm::vec3& point_body,
                              const glm::vec4& rgba,
                              float intensity,
                              double now_seconds) {
-    registry_.push_hit(id, point_world, rgba, intensity, now_seconds);
+    registry_.push_hit(id, point_body, rgba, intensity, now_seconds);
 }
 
 assets::Mesh* ShieldPass::ensure_sphere() {
@@ -195,7 +195,10 @@ void ShieldPass::submit(const scenegraph::World& world,
         int       tex_idx[ShieldState::MaxHits];
         for (std::size_t i = 0; i < ShieldState::MaxHits; ++i) {
             const auto& h = state.slot(i);
-            pts[i]     = glm::vec4(h.point_world, 0.0f);
+            // Body -> world EVERY FRAME, so the splash rides the hull instead
+            // of being left behind in world space. Same treatment
+            // hit_vfx_pass.cc gives its body-anchored spark bursts.
+            pts[i]     = glm::vec4(shield_hit_world_point(h, inst->world), 0.0f);
             col[i]     = glm::vec4(glm::vec3(h.color_rgba), h.current_intensity);
             tex_idx[i] = h.texture_index;
         }

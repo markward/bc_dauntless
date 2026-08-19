@@ -133,16 +133,24 @@ def setup(monkeypatch):
 
 def _severity_for_last_push(host_before_count, host, snapshot_before, snapshot_after):
     """Decide what severity this tick produced by looking at how the
-    captured state changed."""
+    captured state changed.
+
+    The two visuals are NOT mutually exclusive: the shield flash fires whenever
+    a facing absorbed anything and the hull impact whenever anything got past,
+    so a partially-absorbed shot pushes both (BC's two-pass impact loop —
+    stbc_reference spec/ShieldFacingDamage.md §3.1). The hull descriptor is
+    therefore the authoritative severity when one was spawned; a flash on its
+    own means the facing took the whole shot.
+
+    This used to assert exclusivity, which was the pre-fix behaviour: the flash
+    was gated on `severity == SHIELD`, so any leak-through suppressed it.
+    """
     new_shield_hit = len(host.shield_hit_calls) > host_before_count
     new_descriptor = len(snapshot_after) > len(snapshot_before)
-    # Mutual exclusivity invariant — exactly one fires per impact.
-    assert not (new_shield_hit and new_descriptor), \
-        "shield_hit and hit_vfx fired together — mutual exclusivity broken"
-    if new_shield_hit:
-        return Severity.SHIELD
     if new_descriptor:
         return Severity(snapshot_after[-1]["severity"])
+    if new_shield_hit:
+        return Severity.SHIELD
     raise AssertionError("neither shield_hit nor hit_vfx fired")
 
 

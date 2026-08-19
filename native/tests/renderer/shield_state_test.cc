@@ -17,7 +17,7 @@ ShieldState make_state(float decay = 1.0f) {
 }
 }
 
-TEST(ShieldState, PushHitStoresColorAndPoint) {
+TEST(ShieldState, PushHitStoresColorAndBodyPoint) {
     auto s = make_state();
     s.push_hit({1.0f, 2.0f, 3.0f}, {0.5f, 0.6f, 0.7f, 1.0f}, 1.0f, 0.0, 2);
     EXPECT_EQ(s.active_count(), 1u);
@@ -27,7 +27,7 @@ TEST(ShieldState, PushHitStoresColorAndPoint) {
         if (s.slot(i).current_intensity > 0.0f) { found = static_cast<int>(i); break; }
     }
     ASSERT_NE(found, -1);
-    EXPECT_EQ(s.slot(found).point_world, glm::vec3(1.0f, 2.0f, 3.0f));
+    EXPECT_EQ(s.slot(found).point_body, glm::vec3(1.0f, 2.0f, 3.0f));
     EXPECT_FLOAT_EQ(s.slot(found).color_rgba.r, 0.5f);
     EXPECT_EQ(s.slot(found).texture_index, 2);
 }
@@ -76,11 +76,73 @@ TEST(ShieldState, FullBufferEvictsDimmestHit) {
     bool found_zero = false, found_99 = false;
     for (std::size_t i = 0; i < ShieldState::MaxHits; ++i) {
         if (s.slot(i).current_intensity < 0.01f) continue;
-        if (s.slot(i).point_world.x == 0.0f)  found_zero = true;
-        if (s.slot(i).point_world.x == 99.0f) found_99 = true;
+        if (s.slot(i).point_body.x == 0.0f)  found_zero = true;
+        if (s.slot(i).point_body.x == 99.0f) found_99 = true;
     }
     EXPECT_FALSE(found_zero);
     EXPECT_TRUE(found_99);
+}
+
+// ── hits ride the ship ─────────────────────────────────────────────────────
+//
+// A splash was stored as a WORLD point and handed to the shader verbatim, while
+// u_bubble_center was recomputed from the live instance matrix every frame. As
+// the ship flew on, `hit - bubble_centre` swung and eventually inverted, so the
+// splash slid across the bubble and then reappeared on the far face.
+//
+// Magnitudes, on a Galaxy: ShieldGlowDecay is 1.0 s and the splash seeds at
+// intensity 0.5, so it stays above the 0.01 inactive threshold for ln(50) =
+// 3.9 s. At 6.3 GU/s that is 24.6 GU of travel against a 3.17 GU bubble
+// semi-axis -- and the offset from bubble centre to hull is only ~1.83 GU, so
+// the direction passes 90 degrees after just 0.29 s and the splash spends most
+// of its life pinned to the wrong face. Under sustained beam fire the 8-slot
+// ring refreshes every ~133 ms, which caps the visible error at ~0.84 GU; it is
+// an isolated hit -- a torpedo, or the last shot of a burst -- that shows the
+// full swing.
+//
+// Fix: store the hit in the ship's BODY frame and re-transform by the instance
+// matrix each frame, exactly as hit_vfx_pass.cc already does for spark bursts.
+
+TEST(ShieldState, HitWorldPointFollowsAShipThatTranslates) {
+    Hit h{};
+    h.point_body = glm::vec3(0.0f, 300.0f, 0.0f);
+
+    const glm::mat4 at_origin(1.0f);
+    const glm::mat4 moved =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1000.0f, 0.0f));
+
+    EXPECT_EQ(shield_hit_world_point(h, at_origin), glm::vec3(0, 300, 0));
+    EXPECT_EQ(shield_hit_world_point(h, moved), glm::vec3(0, 1300, 0));
+}
+
+TEST(ShieldState, HitWorldPointFollowsAShipThatRotates) {
+    Hit h{};
+    h.point_body = glm::vec3(0.0f, 300.0f, 0.0f);   // on the bow
+
+    // Yaw 90 degrees about Z: the bow swings onto -X.
+    const glm::mat4 yawed = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f),
+                                        glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::vec3 w = shield_hit_world_point(h, yawed);
+    EXPECT_NEAR(w.x, -300.0f, 1e-3f);
+    EXPECT_NEAR(w.y, 0.0f, 1e-3f);
+    // Still on the bow in the ship's own frame — that is the whole point.
+    EXPECT_NEAR(glm::length(w), 300.0f, 1e-3f);
+}
+
+TEST(ShieldState, HitStaysOnTheHitFacingAfterTheShipOutrunsIt) {
+    // The regression proper. Hit on the bow; ship then flies 24.6 GU forward
+    // (3.9 s at 6.3 GU/s, one splash lifetime) along its own +Y.
+    Hit h{};
+    h.point_body = glm::vec3(0.0f, 322.0f, 0.0f);
+
+    const glm::mat4 later =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 2460.0f, 0.0f));
+    const glm::vec3 bubble_centre(0.0f, 2460.0f, 0.0f);
+    const glm::vec3 w = shield_hit_world_point(h, later);
+
+    // Direction from the bubble centre still points at the BOW (+Y), not aft.
+    const glm::vec3 dir = glm::normalize(w - bubble_centre);
+    EXPECT_GT(dir.y, 0.99f);
 }
 
 TEST(ShieldRegistry, RegisterCreatesStateForInstance) {

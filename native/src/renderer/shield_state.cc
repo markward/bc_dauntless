@@ -55,7 +55,12 @@ float shield_splash_coverage(const glm::vec3& frag_world,
     return gate * falloff;
 }
 
-void ShieldState::push_hit(const glm::vec3& point_world,
+glm::vec3 shield_hit_world_point(const Hit& hit,
+                                 const glm::mat4& instance_world) {
+    return glm::vec3(instance_world * glm::vec4(hit.point_body, 1.0f));
+}
+
+void ShieldState::push_hit(const glm::vec3& point_body,
                            const glm::vec4& rgba,
                            float intensity,
                            double now_seconds,
@@ -78,7 +83,7 @@ void ShieldState::push_hit(const glm::vec3& point_world,
     (void)found_empty;
     glm::vec4 color = (rgba == kZero) ? default_color : rgba;
     hits_[target] = Hit{
-        .point_world = point_world,
+        .point_body = point_body,
         .color_rgba = color,
         .intensity_at_t0 = intensity,
         .current_intensity = intensity,
@@ -136,7 +141,7 @@ const ShieldState* ShieldRegistry::find(scenegraph::InstanceId id) const {
 }
 
 void ShieldRegistry::push_hit(scenegraph::InstanceId id,
-                               const glm::vec3& point_world,
+                               const glm::vec3& point_body,
                                const glm::vec4& rgba,
                                float intensity,
                                double now_seconds) {
@@ -147,7 +152,7 @@ void ShieldRegistry::push_hit(scenegraph::InstanceId id,
     static thread_local std::uint32_t rng = 0x12345678u;
     rng = rng * 1664525u + 1013904223u;
     int tex = static_cast<int>(rng >> 30);  // 0..3
-    s->push_hit(point_world, rgba, intensity, now_seconds, tex);
+    s->push_hit(point_body, rgba, intensity, now_seconds, tex);
 }
 
 void ShieldRegistry::tick_all(double now_seconds) {
