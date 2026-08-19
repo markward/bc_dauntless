@@ -313,59 +313,78 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
             expired.append(t)
             continue
         # 3. Collide.
+        from engine.appc.combat import shield_bubble_entry, shields_block
         for ship in all_ships:
             if ship is t._source_ship:
                 continue
             if ship.IsDead():
                 continue
-            if sphere_hit(t._position, ship.GetWorldLocation(), ship.GetRadius()):
-                # Build the per-tick ray and resolve the hit point through
-                # the three-tier fallback (mesh trace / sphere entry /
-                # post-advance position).
-                seg = t._position - prev_pos
-                seg_len = seg.Length()
-                # seg_len ~= 0 only if dt or velocity was zero this tick;
-                # _resolve_hit_point treats `ray_direction=None` as "degrade
-                # to fallback", which is what we want for a stationary tick.
-                aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
-                            if seg_len > 1e-9 else None)
-                # Cast from OUTSIDE the hull along the travel direction, long
-                # enough to cross it. A one-tick segment (prev_pos, seg_len) is
-                # too short and, once the torpedo has penetrated, starts inside
-                # the mesh — so ray_trace_mesh finds no entry surface and the
-                # normal comes back None (suppressing the scorch decal). Backing
-                # the origin up by the ship radius and spanning ~2x the radius
-                # mirrors how the phaser trace (firing-ship -> target) succeeds.
-                if aim_unit is not None:
-                    radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
-                    backoff = radius + seg_len
-                    ray_origin = TGPoint3(
-                        t._position.x - aim_unit.x * backoff,
-                        t._position.y - aim_unit.y * backoff,
-                        t._position.z - aim_unit.z * backoff,
-                    )
-                    ray_max = 2.0 * radius + seg_len
-                else:
-                    ray_origin = prev_pos
-                    ray_max = seg_len
-                hit_point, hit_normal = _resolve_hit_point(
-                    ship_instances=ship_instances, ship=ship,
-                    ray_origin=ray_origin,
-                    ray_direction=aim_unit,
-                    max_dist=ray_max,
-                    fallback_point=t._position,
+
+            seg = t._position - prev_pos
+            seg_len = seg.Length()
+            # seg_len ~= 0 only if dt or velocity was zero this tick;
+            # _resolve_hit_point treats `ray_direction=None` as "degrade
+            # to fallback", which is what we want for a stationary tick.
+            aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
+                        if seg_len > 1e-9 else None)
+
+            # The SHIELD BUBBLE is tested first, exactly as BC's projectile
+            # loop does: TestHit intersects the ellipsoid and only falls
+            # through to the hull when no live facing stops the shot
+            # (stbc_reference spec/ShieldFacingDamage.md §3.1, §2.3).
+            #
+            # It has to be its own broadphase, not a refinement of the sphere
+            # test, because the two disagree in BOTH directions. On a Galaxy
+            # the bounding sphere is 4.03 GU while the bubble semi-axes are
+            # 4.02 / 5.58 / 1.22: a bow shot crossed the bubble 1.55 GU before
+            # the sphere test noticed (so its whole segment was already inside
+            # and there was no entry point left to find), and a dorsal shot
+            # detonated 2.81 GU short of the shield, never reaching it at all.
+            bubble_entry = (
+                shield_bubble_entry(ship, prev_pos, aim_unit, seg_len)
+                if (aim_unit is not None and shields_block(ship)) else None)
+
+            if bubble_entry is None and not sphere_hit(
+                    t._position, ship.GetWorldLocation(), ship.GetRadius()):
+                continue
+
+            if bubble_entry is not None:
+                # Detonate ON the bubble — BC shortens the shot to the point
+                # TestHit returned. The hull point below is still resolved from
+                # the same ray, because damage that overdraws the facing has to
+                # land on real geometry for subsystem attribution.
+                t._position = bubble_entry
+            t._bubble_entry = bubble_entry
+
+            # Cast from OUTSIDE the hull along the travel direction, long
+            # enough to cross it. A one-tick segment (prev_pos, seg_len) is
+            # too short and, once the torpedo has penetrated, starts inside
+            # the mesh — so ray_trace_mesh finds no entry surface and the
+            # normal comes back None (suppressing the scorch decal). Backing
+            # the origin up by the ship radius and spanning ~2x the radius
+            # mirrors how the phaser trace (firing-ship -> target) succeeds.
+            if aim_unit is not None:
+                radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
+                backoff = radius + seg_len
+                ray_origin = TGPoint3(
+                    t._position.x - aim_unit.x * backoff,
+                    t._position.y - aim_unit.y * backoff,
+                    t._position.z - aim_unit.z * backoff,
                 )
-                # Where the shot's own segment (prev -> current, exactly what
-                # BC's TestHit takes) crossed the shield bubble. Anchors the
-                # shield flash; None when no facing is up to stop it.
-                from engine.appc.combat import (shield_bubble_entry,
-                                                shields_block)
-                t._bubble_entry = (
-                    shield_bubble_entry(ship, prev_pos, aim_unit, ray_max)
-                    if (aim_unit is not None and shields_block(ship)) else None)
-                hits.append((t, ship, hit_point, hit_normal))
-                expired.append(t)
-                break
+                ray_max = 2.0 * radius + seg_len
+            else:
+                ray_origin = prev_pos
+                ray_max = seg_len
+            hit_point, hit_normal = _resolve_hit_point(
+                ship_instances=ship_instances, ship=ship,
+                ray_origin=ray_origin,
+                ray_direction=aim_unit,
+                max_dist=ray_max,
+                fallback_point=t._position,
+            )
+            hits.append((t, ship, hit_point, hit_normal))
+            expired.append(t)
+            break
 
     for t in expired:
         expire(t)
