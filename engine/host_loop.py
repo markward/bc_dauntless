@@ -869,7 +869,11 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                   source=torpedo._source_ship,
                   normal=hit_normal, ship_instances=ship_instances,
                   weapon_type="torpedo",
-                  hardpoint_weapon=torpedo)
+                  hardpoint_weapon=torpedo,
+                  # Where the torpedo's own segment crossed the bubble, for the
+                  # shield flash. update_all resolved it while it still had the
+                  # pre-advance position; None when the bubble did not stop it.
+                  shield_point=torpedo._bubble_entry)
 
     hit_vfx.update_ages(dt)
     from engine.appc import shockwaves
@@ -967,6 +971,16 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                     max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
                     fallback_point=target_pos,
                 )
+                # Where the beam crossed the bubble — the same point
+                # _beam_endpoint stops the DRAWN beam at, so the flash lands on
+                # the beam's own tip instead of 236 NIF units behind it. None
+                # when no facing is up, which falls the flash back to the hull
+                # point inside dispatch.
+                bubble_entry = (
+                    combat.shield_bubble_entry(target, emitter_pos, aim_unit,
+                                               dist * 1.5)
+                    if (aim_unit is not None and combat.shields_block(target))
+                    else None)
                 # LIGHT (PP_LOW) phaser power is "disable, don't destroy":
                 # damage routes to subsystems only, the hull takes no condition
                 # damage and is not voxel-carved (verified by dev-console probe).
@@ -979,7 +993,8 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                           ship_instances=ship_instances,
                           weapon_type="phaser",
                           hardpoint_weapon=bank,
-                          damage_hull=damage_hull)
+                          damage_hull=damage_hull,
+                          shield_point=bubble_entry)
 
     # Tractor beams (hold/tow/pull/push/dock): the weapon tick above sustains
     # the held grab beam (TractorBeamSystem.update_weapons re-acquires while
@@ -1416,6 +1431,42 @@ _TORPEDO_LIGHT_RADIUS_SCALE = 50.0
 _TORPEDO_LIGHT_INTENSITY = 1.0
 
 
+def _beam_endpoint(*, target, emitter_pos, aim_unit, raw_length,
+                   ship_instances, fallback):
+    """Where the drawn beam stops.
+
+    While a facing is live the beam terminates on the shield BUBBLE, not the
+    hull — BC's `PhaserBank` tick asks `TestHit` (which returns a point on the
+    ellipsoid when the shield holds) and then "sets the current length to the
+    distance to that point" (stbc_reference spec/ShieldFacingDamage.md §12.2
+    step 4). Drawing to the hull instead punched the beam visibly through the
+    bubble, leaving the shield flash floating 236 NIF units (~1.34 GU on a
+    Galaxy) behind the beam's own tip.
+
+    Falls through to the hull mesh trace when the bubble does not stop the shot:
+    shields down/disabled/destroyed, the shooter already inside the bubble, no
+    cached hull box, or a miss. `combat.shields_block` is the same predicate
+    `apply_hit` gates absorption on, so the visible beam cannot contradict where
+    the damage went.
+    """
+    if raw_length > 1e-6 and combat.shields_block(target):
+        entry = combat.shield_bubble_entry(
+            target, emitter_pos, aim_unit, raw_length * 1.5)
+        if entry is not None:
+            return entry
+    if raw_length > 1e-6 and ship_instances is not None:
+        clipped, _normal = combat._resolve_hit_point(
+            ship_instances=ship_instances, ship=target,
+            ray_origin=emitter_pos,
+            ray_direction=aim_unit,
+            max_dist=raw_length * 1.5,
+            fallback_point=fallback,
+        )
+        if clipped is not None:
+            return clipped
+    return fallback
+
+
 def _beam_descriptor_pair(ship, bank, ship_instances):
     """Build the (outer-shell, inner-core) beam descriptor pair for one firing
     energy emitter — a phaser bank OR a tractor emitter.  Both inherit the same
@@ -1424,10 +1475,9 @@ def _beam_descriptor_pair(ship, bank, ship_instances):
     so the render build is identical; only the parent system differs (handled
     by the callers).  Returns [] when the bank has no target.
 
-    When `ship_instances` is supplied, the beam endpoint is clipped to the
-    mesh-trace surface point (via host_io.ray_trace_mesh inside
-    combat._resolve_hit_point) so the visible beam ends on the target's hull
-    rather than at its bounding-sphere centre.
+    The beam endpoint comes from _beam_endpoint: the shield bubble while a
+    facing is live, otherwise the mesh-trace hull surface (which needs
+    `ship_instances`), otherwise the target's centre.
     """
     target = bank._target
     if target is None:
@@ -1447,21 +1497,16 @@ def _beam_descriptor_pair(ship, bank, ship_instances):
     raw_length = (dx * dx + dy * dy + dz * dz) ** 0.5
     beam_length = raw_length
     beam_end = target_pos
-    if raw_length > 1e-6 and ship_instances is not None:
+    if raw_length > 1e-6:
         aim_unit = TGPoint3(dx / raw_length, dy / raw_length, dz / raw_length)
-        clipped, _clipped_normal = combat._resolve_hit_point(
-            ship_instances=ship_instances, ship=target,
-            ray_origin=emitter_pos,
-            ray_direction=aim_unit,
-            max_dist=raw_length * 1.5,
-            fallback_point=beam_end,
-        )
-        if clipped is not None:
-            beam_end = clipped
-            cdx = beam_end.x - emitter_pos.x
-            cdy = beam_end.y - emitter_pos.y
-            cdz = beam_end.z - emitter_pos.z
-            beam_length = (cdx * cdx + cdy * cdy + cdz * cdz) ** 0.5
+        beam_end = _beam_endpoint(
+            target=target, emitter_pos=emitter_pos, aim_unit=aim_unit,
+            raw_length=raw_length, ship_instances=ship_instances,
+            fallback=beam_end)
+        cdx = beam_end.x - emitter_pos.x
+        cdy = beam_end.y - emitter_pos.y
+        cdz = beam_end.z - emitter_pos.z
+        beam_length = (cdx * cdx + cdy * cdy + cdz * cdz) ** 0.5
     tile_per_unit = bank.GetLengthTextureTilePerUnit()
     u_tiles = max(1.0, beam_length * tile_per_unit) if tile_per_unit > 0 else 1.0
     # SDK four-channel-colour layout (galaxy.py phaser :418-431, tractor :869-877)

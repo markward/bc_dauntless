@@ -158,8 +158,13 @@ struct HitVfxDescriptor {
     glm::vec3 surface_normal{0.0f};   // (0,0,0) sentinel = no normal
     float     age      = 0.0f;
     int       severity = 1;           // 1=HULL, 2=CRITICAL; SHIELD never reaches here
-    // Spark burst (hull-anchored, detached). spark_count == 0 => no sparks.
-    scenegraph::InstanceId instance_id{};  // default {0,0}; only consulted when spark_count > 0
+    // Hull anchor. Both the flash billboard and the spark burst resolve
+    // against it (see hit_vfx_anchor_point) so the impact rides the hull
+    // instead of being left behind in world space. body_point defaults to the
+    // model origin, which is a legitimate value, so presence needs its own
+    // flag rather than a sentinel.
+    bool      has_body_anchor = false;
+    scenegraph::InstanceId instance_id{};  // default {0,0}
     glm::vec3 body_point{0.0f};       // impact in ship body frame (model units)
     glm::vec3 body_normal{0.0f};      // surface normal, body frame
     int       weapon_kind = 1;        // 0=phaser (cool/tight), 1=torpedo (hot/wide)

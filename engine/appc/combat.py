@@ -331,6 +331,148 @@ def _hull_box_for(ship):
             (hx * scale, hy * scale, hz * scale))
 
 
+def shields_block(ship) -> bool:
+    """True when ``ship``'s shield generator would absorb a weapon hit now.
+
+    The single predicate behind both halves of "the shot met the bubble":
+    :func:`apply_hit` uses it to decide whether the facing takes the damage,
+    and the beam renderer uses it to decide whether the drawn beam stops at
+    the bubble. Keeping one function means the visible beam can never
+    contradict where the damage went.
+
+    Covers generator presence, power (``IsOn``), disabled/destroyed, the
+    cloak-transition window, and the disable-NPC-shields dev cheat. It does NOT
+    cover the per-hit ``bypass_shields`` primitive (collisions, AddDamage,
+    explosions) — that is the caller's to apply — and it does not look at
+    per-facing charge, since a facing can be empty while the generator is up.
+    """
+    import engine.dev_combat_cheats as _cheats
+    import App
+
+    shields = ship.GetShields() if hasattr(ship, "GetShields") else None
+    if shields is None:
+        return False
+    # Unshielded hulls (asteroids, debris, most props) still get a
+    # ShieldSubsystem so SDK code can chain GetShields() without null-guarding
+    # — but every face declares MaxShields 0. Without this check they read as
+    # shielded now that the generator defaults on, and the beam renderer would
+    # stop the beam at a bubble the object does not have. Same predicate the
+    # target list uses to suppress the shield bar.
+    if not bool(getattr(shields, "HasShields", lambda: 1)()):
+        return False
+    if not bool(getattr(shields, "IsOn", lambda: 1)()):
+        return False
+    if bool(getattr(shields, "IsDisabled", lambda: 0)()):
+        return False
+    if bool(getattr(shields, "IsDestroyed", lambda: 0)()):
+        return False
+    if cloak_shields_suspended(ship):
+        return False
+    if _cheats.disable_npc_shields_active():
+        try:
+            game = App.Game_GetCurrentGame() if hasattr(App, "Game_GetCurrentGame") else None
+            player = game.GetPlayer() if game is not None and hasattr(game, "GetPlayer") else None
+        except Exception:
+            player = None
+        if player is None or ship is not player:
+            return False
+    return True
+
+
+SHIELD_ELLIPSOID_AXIS_SCALE = 3.0 ** 0.5
+"""Bubble semi-axis ÷ hull AABB half-extent.
+
+BC's ``ComputeShieldEllipsoid`` (``0x005ABAC0``) multiplies the model bound's
+half-extents by √3 — the minimal factor that puts every corner of the box on
+the ellipsoid, so the hull is inside by construction. Mirrors
+``kShieldEllipsoidAxisScale`` in ``native/src/renderer/include/renderer/
+shield_state.h``, which sizes the rendered bubble; keep the two in step or the
+beam will stop somewhere the splash is not.
+"""
+
+
+def shield_bubble_entry(ship, ray_origin, ray_direction, max_dist: float):
+    """World-space point where the segment enters ``ship``'s shield bubble, or
+    ``None``.
+
+    Mirrors ``ShipClass::TestHit`` (stbc_reference
+    ``spec/ShieldFacingDamage.md`` §2.3 steps 4-6): take the segment into the
+    ship's body frame, subtract the ellipsoid centre offset, divide
+    component-wise by the semi-axes — which maps the ellipsoid onto the unit
+    sphere — and intersect there. The near intersection is rescaled by the
+    semi-axes and rotated back out to world space.
+
+    ``None`` means "no bubble to stop this shot", and every caller degrades to
+    the hull path on it. Four ways to get it, all deliberate:
+
+    * the ship has no cached hull box (headless, not yet realized, test fakes);
+    * the segment misses the ellipsoid entirely;
+    * the segment is too short to reach it;
+    * the origin is already INSIDE the bubble — BC runs the hull test first in
+      that case (§2.3 step 5), and a point-blank shooter inside the bubble has
+      no entry point to report.
+
+    Does NOT consider shield charge. Callers that need "would a facing actually
+    stop this" pair it with :func:`shields_block`.
+    """
+    if ray_direction is None:
+        return None
+    box = _hull_box_for(ship)
+    if box is None:
+        return None
+    (cx, cy, cz), (hx, hy, hz) = box
+    ax = hx * SHIELD_ELLIPSOID_AXIS_SCALE
+    ay = hy * SHIELD_ELLIPSOID_AXIS_SCALE
+    az = hz * SHIELD_ELLIPSOID_AXIS_SCALE
+
+    # Body frame, relative to the ellipsoid centre, then onto the unit sphere.
+    ox, oy, oz = _body_frame_delta(ship, ray_origin)
+    o = ((ox - cx) / ax, (oy - cy) / ay, (oz - cz) / az)
+
+    # The direction transforms the same way, but the component-wise divide is
+    # anisotropic so it does not stay unit length. Renormalise, and carry the
+    # shrink factor into max_dist so the segment's reach is preserved.
+    if hasattr(ship, "GetWorldRotation"):
+        R = ship.GetWorldRotation()
+        col = (R.GetCol(0), R.GetCol(1), R.GetCol(2))
+        db = tuple(ray_direction.x * c.x + ray_direction.y * c.y
+                   + ray_direction.z * c.z for c in col)
+    else:
+        db = (ray_direction.x, ray_direction.y, ray_direction.z)
+    d = (db[0] / ax, db[1] / ay, db[2] / az)
+    d_len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) ** 0.5
+    if d_len < 1e-12:
+        return None
+    d = (d[0] / d_len, d[1] / d_len, d[2] / d_len)
+
+    # Unit sphere at the origin.
+    b = o[0] * d[0] + o[1] * d[1] + o[2] * d[2]
+    c = o[0] * o[0] + o[1] * o[1] + o[2] * o[2] - 1.0
+    if c <= 0.0:
+        return None                      # origin inside the bubble
+    if b >= 0.0:
+        return None                      # pointing away
+    disc = b * b - c
+    if disc < 0.0:
+        return None                      # misses
+    t = -b - disc ** 0.5
+    if t < 0.0 or t > float(max_dist) * d_len:
+        return None                      # behind, or beyond the segment
+
+    # Back out: unit sphere -> ellipsoid -> body -> world.
+    px = (o[0] + d[0] * t) * ax + cx
+    py = (o[1] + d[1] * t) * ay + cy
+    pz = (o[2] + d[2] * t) * az + cz
+    p = TGPoint3(px, py, pz)
+    if hasattr(ship, "GetWorldRotation"):
+        p.MultMatrixLeft(ship.GetWorldRotation())
+    ship_pos = ship.GetWorldLocation()
+    p.x += ship_pos.x
+    p.y += ship_pos.y
+    p.z += ship_pos.z
+    return p
+
+
 def _shield_face_from_hit_point(ship, hit_point) -> int:
     """Hull-box dominant-axis selection via :func:`_body_frame_delta`.
 
@@ -454,7 +596,8 @@ def apply_hit(ship, damage: float, hit_point, source, *,
               hardpoint_weapon=None, payload_template=None,
               splash_radius: float | None = None,
               damage_hull: bool = True,
-              bypass_shields: bool = False) -> None:
+              bypass_shields: bool = False,
+              shield_point=None) -> None:
     """Apply `damage` to `ship` per the spherical-splash attribution model.
 
     Flow:
@@ -500,6 +643,21 @@ def apply_hit(ship, damage: float, hit_point, source, *,
                               by dev-console probe (shields do not absorb a warp-
                               core breach or a ramming impact). Defaults False
                               (normal weapon fire cascades through shields).
+        shield_point        — world point on the shield BUBBLE where the shot
+                              entered, from combat.shield_bubble_entry. Used as
+                              the anchor for the shield-flash splash only; the
+                              damage, the subsystem splash attribution and the
+                              facing choice all keep using `hit_point` (the hull
+                              impact). None — collisions, splash damage, any
+                              caller without a ray — falls back to `hit_point`,
+                              which is the pre-existing behaviour.
+
+                              This matters because the bubble stands √3 off the
+                              hull: 236 NIF units (~1.34 GU) on a Galaxy's long
+                              axis. Anchoring the flash on the hull point put it
+                              behind the beam's own tip and, for an oblique
+                              shot, in a different direction from the bubble
+                              centre entirely.
     """
     from engine.appc.events import WeaponHitEvent
     from engine.appc import hit_feedback
@@ -547,25 +705,13 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     remaining = float(damage)
     absorbed_shields = 0.0
     shields = ship.GetShields() if hasattr(ship, "GetShields") else None
-    shields_on = bool(getattr(shields, "IsOn", lambda: 1)()) if shields is not None else False
-    shields_disabled = bool(getattr(shields, "IsDisabled", lambda: 0)()) if shields is not None else False
-    shields_destroyed = bool(getattr(shields, "IsDestroyed", lambda: 0)()) if shields is not None else False
-    shields_online = (shields is not None and shields_on
-                      and not shields_disabled and not shields_destroyed)
-    # Disable-NPC-shields cheat: every non-player ship's shields stop
-    # absorbing, so full damage reaches the hull/subsystems.
-    if _cheats.disable_npc_shields_active() and not _target_is_player:
-        shields_online = False
+    # Generator presence / power / disabled / destroyed / cloak-fade window /
+    # the disable-NPC-shields cheat all live in shields_block, shared with the
+    # beam renderer so the drawn beam can't stop somewhere the damage didn't.
+    shields_online = shields_block(ship)
     # Explosion / collision primitive (AddDamage): bypass the shield cascade
     # entirely — full damage reaches the hull/subsystems, shield faces untouched.
     if bypass_shields:
-        shields_online = False
-    # Cloak-transition vulnerability window: while a ship is fading in or out
-    # its shields are DOWN, so a hit reaches the hull — the brief window enemies
-    # get to attack a (de)cloaking ship. Charge is preserved (only blocking is
-    # suspended). Same predicate the target status panels use, so HUD and combat
-    # agree that the shields are down during the fade.
-    if cloak_shields_suspended(ship):
         shields_online = False
     if shields_online and hasattr(shields, "ApplyDamage"):
         face = _shield_face_from_hit_point(ship, hit_point)
@@ -653,6 +799,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             radius=r_hit,
             persist_decal=_commit,
             allow_hull_carve=damage_hull,
+            shield_point=shield_point,
         )
     except Exception as _e:
         dev_mode.log_swallowed("hit_feedback.dispatch", _e)

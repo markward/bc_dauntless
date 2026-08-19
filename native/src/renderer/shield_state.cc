@@ -18,10 +18,8 @@ float smoothstep01(float edge0, float edge1, float x) {
 }
 }  // namespace
 
-float shield_hit_radius(const glm::vec3& half_extents, float instance_scale) {
-    const float smallest =
-        std::min({half_extents.x, half_extents.y, half_extents.z});
-    return smallest * instance_scale * kShieldHitRadiusScale;
+float shield_splash_intensity(float coverage, float hit_intensity) {
+    return coverage * hit_intensity * kShieldSplashOpacity;
 }
 
 float shield_splash_gate(const glm::vec3& frag_dir_from_centre,
@@ -30,7 +28,43 @@ float shield_splash_gate(const glm::vec3& frag_dir_from_centre,
                         glm::dot(frag_dir_from_centre, impact_dir));
 }
 
-void ShieldState::push_hit(const glm::vec3& point_world,
+float shield_splash_coverage(const glm::vec3& frag_world,
+                             const glm::vec3& hit_world,
+                             const glm::vec3& bubble_centre,
+                             const glm::vec3& bubble_semi_axes) {
+    if (bubble_semi_axes.x <= 0.0f || bubble_semi_axes.y <= 0.0f ||
+        bubble_semi_axes.z <= 0.0f)
+        return 0.0f;
+
+    // Into the bubble's unit-sphere space. Only the DIRECTIONS matter after
+    // this, so a hull hit point (which sits 1/√3 of the way out) normalises to
+    // the same direction as the bubble point above it, and Skin mode — whose
+    // fragments are hull verts, not ellipsoid points — works unchanged.
+    glm::vec3 n_hit = (hit_world - bubble_centre) / bubble_semi_axes;
+    glm::vec3 n_frag = (frag_world - bubble_centre) / bubble_semi_axes;
+    const float lh = glm::length(n_hit);
+    const float lf = glm::length(n_frag);
+    if (lh < 1e-4f || lf < 1e-4f) return 0.0f;
+    n_hit /= lh;
+    n_frag /= lf;
+
+    const float gate = shield_splash_gate(n_frag, n_hit);
+    if (gate <= 0.0f) return 0.0f;
+
+    // Chord between two unit vectors — 2·sin(θ/2), a pure angular measure, so
+    // the footprint no longer depends on the bubble's local radius.
+    const float falloff =
+        1.0f - smoothstep01(0.0f, kShieldSplashRadius, glm::length(n_frag - n_hit));
+    if (falloff <= 0.0f) return 0.0f;
+    return gate * falloff;
+}
+
+glm::vec3 shield_hit_world_point(const Hit& hit,
+                                 const glm::mat4& instance_world) {
+    return glm::vec3(instance_world * glm::vec4(hit.point_body, 1.0f));
+}
+
+void ShieldState::push_hit(const glm::vec3& point_body,
                            const glm::vec4& rgba,
                            float intensity,
                            double now_seconds,
@@ -53,7 +87,7 @@ void ShieldState::push_hit(const glm::vec3& point_world,
     (void)found_empty;
     glm::vec4 color = (rgba == kZero) ? default_color : rgba;
     hits_[target] = Hit{
-        .point_world = point_world,
+        .point_body = point_body,
         .color_rgba = color,
         .intensity_at_t0 = intensity,
         .current_intensity = intensity,
@@ -111,7 +145,7 @@ const ShieldState* ShieldRegistry::find(scenegraph::InstanceId id) const {
 }
 
 void ShieldRegistry::push_hit(scenegraph::InstanceId id,
-                               const glm::vec3& point_world,
+                               const glm::vec3& point_body,
                                const glm::vec4& rgba,
                                float intensity,
                                double now_seconds) {
@@ -122,7 +156,7 @@ void ShieldRegistry::push_hit(scenegraph::InstanceId id,
     static thread_local std::uint32_t rng = 0x12345678u;
     rng = rng * 1664525u + 1013904223u;
     int tex = static_cast<int>(rng >> 30);  // 0..3
-    s->push_hit(point_world, rgba, intensity, now_seconds, tex);
+    s->push_hit(point_body, rgba, intensity, now_seconds, tex);
 }
 
 void ShieldRegistry::tick_all(double now_seconds) {

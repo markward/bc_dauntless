@@ -34,9 +34,35 @@ class Severity(IntEnum):
 # renderer only renders the count it is told.
 SPARK_HULL_THRESHOLD = 80.0   # game-units of hull damage in one hit (tune-by-eye)
 
-# Peak brightness of the shield impact flash (seed intensity handed to the
-# shield_pass; it decays exponentially from here). 1.0 was too hot (tune-by-eye).
-SHIELD_IMPACT_INTENSITY = 0.5
+# Peak brightness of the shield impact flash — the seed handed to the
+# shield_pass, which decays exponentially from there. Both are tune-by-eye and
+# both are pure Python: changing them needs no rebuild.
+#
+# The seed is per PUSH, and the two weapon families push at wildly different
+# rates. ShieldState keeps the 8 most recent hits and the shader SUMS them, so
+# a phaser — which applies damage every tick — holds all 8 slots full of
+# near-simultaneous, near-co-located splashes: at 60 Hz with ShieldGlowDecay
+# 1.0 that is a summed intensity of 3.78 from this 0.5 seed. A torpedo is a
+# single push. Sharing one seed left torpedo impacts 7.6x dimmer than phaser
+# ones, which is exactly how they read in game.
+#
+# BC draws the same asymmetry: a shield hit always shows the glow, and a
+# torpedo ADDITIONALLY fires Effects.TorpedoShieldHit subject to a magnitude
+# check, while no PhaserShieldHit handler exists at all (stbc_reference
+# spec/ShieldFacingDamage.md §4.3) — the same split _play_audio already makes.
+SHIELD_IMPACT_INTENSITY = 0.5           # per phaser tick (and the default)
+SHIELD_IMPACT_INTENSITY_TORPEDO = 2.0   # one discrete impact
+
+
+def shield_impact_intensity(weapon_type: str | None) -> float:
+    """Seed brightness for a shield flash from `weapon_type`.
+
+    Anything that is not a torpedo — phaser, tractor, collision, unknown —
+    takes the per-tick default. Torpedoes and the disruptor/pulse bolts that
+    share their payload path get the single-impact seed.
+    """
+    return (SHIELD_IMPACT_INTENSITY_TORPEDO if weapon_type == "torpedo"
+            else SHIELD_IMPACT_INTENSITY)
 
 SPARK_KIND_PHASER = 0    # cool white-blue, fewer, tight cone
 SPARK_KIND_TORPEDO = 1   # hot orange, more, wide cone (also disruptor/default)
@@ -145,13 +171,19 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              ship_instances=None,
              weapon_type: str | None = None, radius: float = 0.0,
              persist_decal: bool = True,
-             allow_hull_carve: bool = True) -> None:
+             allow_hull_carve: bool = True,
+             shield_point=None) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
-    Severity is computed via classify(...). Exactly one visual fires per
-    impact (shield_hit for SHIELD, hit_vfx.spawn for HULL/CRITICAL).
-    Audio fires for every severity. Camera shake fires only when
-    ship == Game_GetCurrentGame().GetPlayer().
+    The two visuals are INDEPENDENT, and a partially-absorbed shot shows both:
+    the shield flash fires whenever `absorbed_shields > 0`, and the hull/critical
+    impact whenever damage got past the shields (`severity != SHIELD`). They
+    were mutually exclusive on severity alone, which suppressed the flash the
+    moment a facing started leaking — see the comments at each site.
+
+    Severity (from classify) still drives audio tier, camera shake, the scorch
+    decal and the hull carve. Audio fires for every severity. Camera shake fires
+    only when ship == Game_GetCurrentGame().GetPlayer().
 
     Native hit/damage touches route through the engine.host_io façade,
     which no-ops when the native module is absent (headless): no `host`
@@ -180,21 +212,40 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
         hull=hull,
     )
 
-    # 1. Visual — mutually exclusive.
-    if severity == Severity.SHIELD:
+    # 1a. Shield flash — fires whenever a facing absorbed ANYTHING, not only
+    # when it absorbed everything. BC's impact loop runs two passes
+    # (stbc_reference spec/ShieldFacingDamage.md §3.1): pass 1 hits the facing
+    # and fires a shield-hit event, then the residual is RE-DISPATCHED against
+    # the hull in pass 2 — so an overdrawing shot produces both visuals.
+    #
+    # Gating this on `severity == SHIELD` meant any leak-through suppressed the
+    # flash entirely. Once a facing is worn down — the normal state in any
+    # sustained exchange — torpedoes and phasers stopped flashing the shields
+    # at all, which reads as "weapons aren't hitting the shields".
+    if absorbed_shields > 0.0:
         if ship_instances is not None:
             iid = ship_instances.get(ship)
             if iid is not None:
+                # Anchor the splash on the BUBBLE where the shot entered, not on
+                # the hull impact — the bubble stands √3 off the hull (236 NIF
+                # units on a Galaxy's long axis), so the hull point puts the
+                # flash behind the beam's own tip. `shield_point` is None for
+                # callers with no ray (collisions, splash damage); those keep
+                # the hull point, as before.
+                anchor = shield_point if shield_point is not None else point
                 # rgba=(0,0,0,0) is the documented sentinel that tells the
                 # shield_pass to substitute the ship's registered
                 # ShieldGlowColor — see shield_register's default_color.
                 host_io.shield_hit(
                     iid,
-                    (point.x, point.y, point.z),
+                    (anchor.x, anchor.y, anchor.z),
                     (0.0, 0.0, 0.0, 0.0),
-                    SHIELD_IMPACT_INTENSITY,
+                    shield_impact_intensity(weapon_type),
                 )
-    else:
+
+    # 1b. Hull / critical impact — fires whenever damage got PAST the shields.
+    # Independent of 1a: a partially-absorbed shot shows both.
+    if severity != Severity.SHIELD:
         # HULL or CRITICAL — hit_vfx.spawn handles both, filtered by severity.
         # Spark policy + hull anchor (sparks are independent of decals).
         spark_count, weapon_kind = spark_params(
@@ -202,12 +253,19 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             absorbed_hull=absorbed_hull)
         body_point = body_normal = None
         instance_id = None
-        # Bail to flash-only (no sparks) when any of: no instance map, no
-        # surface normal (sphere-entry fallback), the world→body conversion
-        # fails (native absent / stale id), or the ship has no instance.
-        # Sparks need a hull anchor; the impact-flash billboard fires regardless.
-        if (spark_count > 0 and ship_instances is not None
-                and normal is not None):
+        # Resolve the hull anchor for EVERY hit that can have one, not just
+        # spark-bearing ones. The flash billboard needs it too: hit_vfx_pass
+        # drew the flash at a frozen world_pos while the sparks beside it
+        # tracked inst->world, so over the flash's 0.7 s life it slid ~4.4 GU at
+        # combat speed — further than a Galaxy is long. Gating the conversion on
+        # `spark_count > 0` meant a flash-only hit (every phaser tick) had no
+        # anchor available at all.
+        #
+        # Unavailable when: no instance map, no surface normal (sphere-entry
+        # fallback), no instance for this ship, or the conversion fails (native
+        # absent / stale id). The flash then falls back to its world position,
+        # which is the old behaviour.
+        if ship_instances is not None and normal is not None:
             instance_id = ship_instances.get(ship)
             if instance_id is not None:
                 conv = host_io.world_to_body(
@@ -217,7 +275,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                 if conv is not None:
                     body_point, body_normal = conv
                 else:
-                    instance_id = None  # stale id; render flash only, no sparks
+                    instance_id = None  # stale id; no anchor, no sparks
         # body_point is None unless the world->body conversion succeeded;
         # force spark_count=0 in every no-anchor path so the renderer never
         # anchors a burst at the default (0,0,0) body origin.

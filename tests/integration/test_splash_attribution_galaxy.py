@@ -39,11 +39,17 @@ def _isolate():
 
 @pytest.fixture
 def galaxy_ship():
-    """Construct a Galaxy via the real SDK helper, headless.
+    """Construct a Galaxy via the real SDK helper, headless, shields DOWN.
 
-    Ship starts at GREEN alert with shields off (``_is_on = False``),
-    so ``apply_hit`` delivers the full damage directly to hull and
-    subsystems without any shield absorption.
+    These tests measure splash ATTRIBUTION — how post-shield damage is
+    divided between the hull and the subsystems inside the splash sphere.
+    Shield absorption is upstream scaffolding, so the fixture powers the
+    generator down explicitly to hand ``apply_hit`` the full damage.
+
+    This used to rely on ``_is_on`` defaulting False, which stopped being
+    true when shields became default-on (a fresh ship now absorbs its first
+    volley — see tests/unit/test_shields_default_on.py). Turning them off
+    here keeps the precondition owned by the test that depends on it.
     """
     import loadspacehelper
     pSet = App.SetClass_Create()
@@ -52,6 +58,9 @@ def galaxy_ship():
     ship = loadspacehelper.CreateShip("Galaxy", pSet, "Galaxy", None, 0, 0)
     assert ship is not None, "loadspacehelper.CreateShip returned None for Galaxy"
     ship.SetTranslateXYZ(0.0, 0.0, 0.0)
+    shields = ship.GetShields()
+    if shields is not None:
+        shields.TurnOff()
     return ship
 
 

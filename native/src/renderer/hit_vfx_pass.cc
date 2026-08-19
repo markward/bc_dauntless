@@ -19,6 +19,12 @@
 
 namespace renderer {
 
+glm::vec3 hit_vfx_anchor_point(const HitVfxDescriptor& v,
+                               const glm::mat4* instance_world) {
+    if (!v.has_body_anchor || instance_world == nullptr) return v.world_pos;
+    return glm::vec3(*instance_world * glm::vec4(v.body_point, 1.0f));
+}
+
 namespace {
 
 // Per-tier visual constants (spec §6.1).
@@ -239,7 +245,10 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
 
             glBindTexture(GL_TEXTURE_2D, texture_->id());
             shader.set_vec4 ("u_tint",           tier.tint);
-            shader.set_vec3 ("u_world_position", v.world_pos);
+            const scenegraph::Instance* flash_inst = world.get(v.instance_id);
+            shader.set_vec3 ("u_world_position",
+                             hit_vfx_anchor_point(
+                                 v, flash_inst ? &flash_inst->world : nullptr));
             shader.set_float("u_size",           size);
             shader.set_float("u_alpha",          alpha);
             // Flash is a camera-facing billboard — zero the streak so stale
@@ -253,8 +262,7 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
         if (v.spark_count > 0 && spark_texture_ && spark_texture_->id() != 0) {
             const scenegraph::Instance* inst = world.get(v.instance_id);
             if (inst != nullptr) {
-                const glm::vec3 origin =
-                    glm::vec3(inst->world * glm::vec4(v.body_point, 1.0f));
+                const glm::vec3 origin = hit_vfx_anchor_point(v, &inst->world);
                 glm::vec3 base = glm::mat3(inst->world) * v.body_normal;
                 float blen = glm::length(base);
                 base = (blen > 1e-6f) ? base / blen : cam_right;

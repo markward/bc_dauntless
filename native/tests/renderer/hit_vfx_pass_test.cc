@@ -64,3 +64,62 @@ TEST(HitVfxTextures, ConstantPathsResolveFromRendererCwd) {
         << "spark sprite did not open from project root: "
         << renderer::HitVfxPass::spark_texture_path();
 }
+
+// ── the flash rides the hull too ──────────────────────────────────────────
+//
+// The spark burst resolved against the live instance matrix while the flash
+// billboard in the SAME descriptor was drawn at a frozen world_pos. The flash
+// lives 0.7 s, so at 6.3 GU/s it slid ~4.4 GU -- further than a Galaxy is long
+// -- with the sparks sitting still beside it. Both now go through
+// hit_vfx_anchor_point.
+
+TEST(HitVfxAnchor, AnchoredDescriptorTracksTheInstanceMatrix) {
+    renderer::HitVfxDescriptor v;
+    v.world_pos = glm::vec3(0.0f);          // deliberately wrong, must be unused
+    v.body_point = glm::vec3(1.0f, 2.0f, 3.0f);
+    v.has_body_anchor = true;
+
+    glm::mat4 world(1.0f);
+    world[3] = glm::vec4(100.0f, 0.0f, 0.0f, 1.0f);
+    EXPECT_EQ(renderer::hit_vfx_anchor_point(v, &world),
+              glm::vec3(101.0f, 2.0f, 3.0f));
+
+    world[3] = glm::vec4(0.0f, 50.0f, 0.0f, 1.0f);   // ship moves; anchor follows
+    EXPECT_EQ(renderer::hit_vfx_anchor_point(v, &world),
+              glm::vec3(1.0f, 52.0f, 3.0f));
+}
+
+TEST(HitVfxAnchor, UnanchoredDescriptorKeepsItsWorldPosition) {
+    // No mesh normal / no instance: the old behaviour is the fallback.
+    renderer::HitVfxDescriptor v;
+    v.world_pos = glm::vec3(7.0f, 8.0f, 9.0f);
+    v.body_point = glm::vec3(1.0f, 2.0f, 3.0f);
+    v.has_body_anchor = false;
+
+    glm::mat4 world(1.0f);
+    world[3] = glm::vec4(100.0f, 0.0f, 0.0f, 1.0f);
+    EXPECT_EQ(renderer::hit_vfx_anchor_point(v, &world), v.world_pos);
+}
+
+TEST(HitVfxAnchor, MissingInstanceFallsBackToWorldPosition) {
+    // Anchored, but the instance is gone (destroyed ship, stale id).
+    renderer::HitVfxDescriptor v;
+    v.world_pos = glm::vec3(7.0f, 8.0f, 9.0f);
+    v.body_point = glm::vec3(1.0f, 2.0f, 3.0f);
+    v.has_body_anchor = true;
+    EXPECT_EQ(renderer::hit_vfx_anchor_point(v, nullptr), v.world_pos);
+}
+
+TEST(HitVfxAnchor, BodyOriginIsANormalAnchorNotASentinel) {
+    // A hit at the model origin has body_point (0,0,0); the flag, not the
+    // value, is what says whether an anchor exists.
+    renderer::HitVfxDescriptor v;
+    v.world_pos = glm::vec3(7.0f, 8.0f, 9.0f);
+    v.body_point = glm::vec3(0.0f);
+    v.has_body_anchor = true;
+
+    glm::mat4 world(1.0f);
+    world[3] = glm::vec4(100.0f, 0.0f, 0.0f, 1.0f);
+    EXPECT_EQ(renderer::hit_vfx_anchor_point(v, &world),
+              glm::vec3(100.0f, 0.0f, 0.0f));
+}

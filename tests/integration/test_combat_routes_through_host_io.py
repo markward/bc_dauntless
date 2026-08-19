@@ -72,8 +72,11 @@ def test_apply_hit_shield_hit_routes_through_host_io(monkeypatch):
     # (0,0,0,0) is the sentinel that tells the shield pass to use the ship's
     # registered ShieldGlowColor.
     assert rgba == (0.0, 0.0, 0.0, 0.0)
-    from engine.appc.hit_feedback import SHIELD_IMPACT_INTENSITY
-    assert intensity == SHIELD_IMPACT_INTENSITY
+    # Seed is weapon-dependent (a torpedo is one push; a phaser fills all 8
+    # ShieldState slots per second), so read it from the resolver rather than
+    # pinning the number.
+    from engine.appc.hit_feedback import shield_impact_intensity
+    assert intensity == shield_impact_intensity("torpedo")
 
 
 def test_apply_hit_shield_flash_skipped_without_instance(monkeypatch):

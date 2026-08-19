@@ -37,11 +37,11 @@ void ShieldPass::unregister_ship(scenegraph::InstanceId id) {
 }
 
 void ShieldPass::shield_hit(scenegraph::InstanceId id,
-                             const glm::vec3& point_world,
+                             const glm::vec3& point_body,
                              const glm::vec4& rgba,
                              float intensity,
                              double now_seconds) {
-    registry_.push_hit(id, point_world, rgba, intensity, now_seconds);
+    registry_.push_hit(id, point_body, rgba, intensity, now_seconds);
 }
 
 assets::Mesh* ShieldPass::ensure_sphere() {
@@ -125,7 +125,13 @@ void ShieldPass::submit(const scenegraph::World& world,
     shader.set_mat4("u_view", camera.view_matrix());
 
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    // PREMULTIPLIED additive: the shader has already applied coverage, hit
+    // intensity and the opacity ceiling to the colour. It used to be
+    // (GL_SRC_ALPHA, GL_ONE) against a shader that also folded those terms
+    // into the alpha, so the blend multiplied them in a second time and every
+    // term reached the frame squared — peak output 0.64% of full brightness.
+    // See shield_splash_intensity() in renderer/shield_state.h.
+    glBlendFunc(GL_ONE, GL_ONE);
     glDepthMask(GL_FALSE);
     // Culling is disabled for the additive bubble — both faces should be
     // visible through each other anyway, so the pass is winding-insensitive.
@@ -195,7 +201,10 @@ void ShieldPass::submit(const scenegraph::World& world,
         int       tex_idx[ShieldState::MaxHits];
         for (std::size_t i = 0; i < ShieldState::MaxHits; ++i) {
             const auto& h = state.slot(i);
-            pts[i]     = glm::vec4(h.point_world, 0.0f);
+            // Body -> world EVERY FRAME, so the splash rides the hull instead
+            // of being left behind in world space. Same treatment
+            // hit_vfx_pass.cc gives its body-anchored spark bursts.
+            pts[i]     = glm::vec4(shield_hit_world_point(h, inst->world), 0.0f);
             col[i]     = glm::vec4(glm::vec3(h.color_rgba), h.current_intensity);
             tex_idx[i] = h.texture_index;
         }
@@ -203,20 +212,17 @@ void ShieldPass::submit(const scenegraph::World& world,
         shader.set_vec4_array("u_hit_color_intensity", col, ShieldState::MaxHits);
         shader.set_int_array("u_hit_tex_index", tex_idx, ShieldState::MaxHits);
 
-        // aabb_half_extents is in NIF units; the ship's world matrix
-        // applies a uniform scale (SHIP_SCALE on the host side). Recover
-        // it from the column length so hit_radius lands in world units
-        // (matching v_world_pos and hit_point.xyz the shader compares
-        // against). Without this the radius is ~10× too large and the
-        // hex pattern bleeds across the entire ellipsoid.
+        // The shader measures the splash in the bubble's unit-sphere space, so
+        // it needs the semi-axes in the same WORLD units as v_world_pos and
+        // u_hit_points. aabb_half_extents is in NIF units, so recover the
+        // uniform NIF→world factor from the instance matrix's column length
+        // (the host applies SHIP_SCALE there). Clamped away from zero: a
+        // degenerate axis would divide by 0 in the shader.
         const float scale_factor = glm::length(glm::vec3(inst->world[0]));
-        // Keyed to the SMALLEST half-extent — see shield_hit_radius. The old
-        // largest-axis × 1.5 made the radius 2–4× the bubble's whole vertical
-        // size on BC's 4–8:1 hulls, so a single hit washed the entire bubble
-        // and the mirrored far-side splash was never culled.
-        shader.set_float("u_hit_radius",
-                         shield_hit_radius(state.aabb_half_extents,
-                                           scale_factor));
+        const glm::vec3 semi_axes =
+            glm::max(state.aabb_half_extents * kShieldEllipsoidAxisScale * scale_factor,
+                     glm::vec3(1e-4f));
+        shader.set_vec3("u_bubble_semi_axes", semi_axes);
 
         glBindVertexArray(mesh->vao());
         glDrawElements(GL_TRIANGLES,

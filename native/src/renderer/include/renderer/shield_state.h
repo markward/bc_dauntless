@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <unordered_map>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "scenegraph/instance.h"
 
@@ -32,27 +33,62 @@ enum class ShieldMode : std::uint8_t { Ellipsoid = 0, Skin = 1 };
 /// literal as the binary (0x3FDDB3D7).
 inline constexpr float kShieldEllipsoidAxisScale = 1.7320508f;
 
-/// Splash size, as a multiple of the hull's SMALLEST half-extent. Tune-by-eye;
-/// changing it needs a rebuild. Must stay below 2·√3 ≈ 3.46 or the splash
-/// reaches the opposite pole of the bubble on the thinnest axis.
-inline constexpr float kShieldHitRadiusScale = 2.0f;
+/// Splash size, as a CHORD on the bubble's unit-sphere space (positions
+/// divided component-wise by the semi-axes). Dimensionless and ship-independent
+/// — the splash is a fixed angular cap on every hull, which is what makes it
+/// the same shape wherever it lands. chord = 2·sin(θ/2), so 0.35 ≈ a 20°
+/// half-width. Tune-by-eye; changing it needs a rebuild.
+///
+/// It replaced a world-space radius keyed to the smallest half-extent. That
+/// measured the falloff as a world chord to a splash centre recomputed at each
+/// FRAGMENT's own distance from the bubble centre — so walking from a bow hit
+/// toward the dorsal pole, where a Galaxy's radius collapses 558 → 121, the
+/// splash centre chased the fragment inward and the falloff never bit. Bow and
+/// flank hits smeared into ribbons reaching 3.5× further toward the poles than
+/// across (measured on the real Galaxy AABB), which renders as an arc draped
+/// over the ship rather than an impact patch.
+inline constexpr float kShieldSplashRadius = 0.35f;
+
+/// Overall opacity ceiling on the impact splash — the brightness a fragment at
+/// full coverage, from a hit at full intensity, contributes to the frame.
+/// MUST match the constant in shaders/shield.frag.
+inline constexpr float kShieldSplashOpacity = 0.75f;
+
+/// Brightness one splash contributes to the frame, given its `coverage`
+/// (shield_splash_coverage × the texture's alpha) and the hit's current
+/// `intensity`. LINEAR in both — that is the whole point.
+///
+/// shield.frag used to fold coverage, intensity and the texture into BOTH the
+/// colour and the alpha, and shield_pass blended with
+/// glBlendFunc(GL_SRC_ALPHA, GL_ONE), which multiplies rgb by alpha — so every
+/// term reached the framebuffer SQUARED. Against the real shieldhit01.TGA
+/// radial profile that put peak output at 0.64% of full brightness, which read
+/// in game as "the impacts are there but very faint". Applied once it is 6.93%.
+/// The pass now blends GL_ONE, GL_ONE with a premultiplied colour.
+float shield_splash_intensity(float coverage, float hit_intensity);
 
 /// Width of the smooth terminator on the hemisphere gate, in units of
 /// cos(angle) away from the terminator plane. Small enough to stay a localised
 /// splash, wide enough that the cutoff is not a hard seam.
 inline constexpr float kShieldSplashGateFeather = 0.25f;
 
-/// Falloff radius for one impact splash, in WORLD units.
+/// Coverage of one impact splash at a point on the bubble, in [0, 1] — the
+/// product of the hemisphere gate and the radial falloff, i.e. everything
+/// `splash_sample` in shaders/shield.frag scales the texture by.
 ///
-/// Keyed to the SMALLEST half-extent so the splash is a localised patch on
-/// every hull. It used to be keyed to the LARGEST, which on BC's 4–8:1 hulls
-/// made the radius 2–4× the entire vertical size of the bubble — the falloff
-/// could never isolate a face, and the mirrored far-side splash (see
-/// shield_splash_gate) was never culled by distance either.
+/// All vectors are WORLD space; `frag_world` is expected to lie on the bubble
+/// surface (the pass draws a unit sphere scaled to `bubble_semi_axes`). The
+/// measure itself is taken in the bubble's unit-sphere space — the same space
+/// BC's own facing chooser works in (`ShipClass::TestHit`, stbc_reference
+/// spec/ShieldFacingDamage.md §2.3 step 4) — so the footprint does not depend
+/// on where it lands.
 ///
-/// `instance_scale` is the uniform NIF→world factor recovered from the
-/// instance matrix, because `half_extents` are in NIF units.
-float shield_hit_radius(const glm::vec3& half_extents, float instance_scale);
+/// This is the shared source of truth for the splash footprint. MUST match
+/// splash_sample() in shaders/shield.frag — keep in sync.
+float shield_splash_coverage(const glm::vec3& frag_world,
+                             const glm::vec3& hit_world,
+                             const glm::vec3& bubble_centre,
+                             const glm::vec3& bubble_semi_axes);
 
 /// Near/far hemisphere gate for the impact splash: 1 on the hit-facing side of
 /// the bubble, 0 on the far side, with a smooth terminator between.
@@ -70,13 +106,31 @@ float shield_splash_gate(const glm::vec3& frag_dir_from_centre,
                          const glm::vec3& impact_dir);
 
 struct Hit {
-    glm::vec3 point_world{0.0f};
+    /// Impact point in the ship's BODY (model) frame. Stored in body space and
+    /// re-transformed by the live instance matrix every frame — the same thing
+    /// hit_vfx_pass.cc does for spark bursts — so the splash rides the hull.
+    ///
+    /// It was a WORLD point, handed to the shader verbatim while
+    /// u_bubble_center tracked the ship, so `hit - centre` swung as the ship
+    /// flew and eventually inverted: the splash slid across the bubble and
+    /// reappeared on the far face. On a Galaxy the hit sits ~1.83 GU from the
+    /// bubble centre, so at 6.3 GU/s the direction passed 90 degrees after
+    /// 0.29 s, while the splash lives 3.9 s (ShieldGlowDecay 1.0, seed
+    /// intensity 0.5, inactive at 0.01).
+    glm::vec3 point_body{0.0f};
     glm::vec4 color_rgba{0.0f};
     float intensity_at_t0 = 0.0f;
     float current_intensity = 0.0f;
     double t0_seconds = 0.0;
     int texture_index = 0;
 };
+
+/// Where a stored hit is right now, in world space: its body-frame point
+/// carried through the instance's live world matrix. The shader compares this
+/// against v_world_pos, so it must be recomputed every frame rather than
+/// cached at push time.
+glm::vec3 shield_hit_world_point(const Hit& hit,
+                                 const glm::mat4& instance_world);
 
 class ShieldState {
 public:
@@ -92,7 +146,7 @@ public:
     /// dimmest slot when full. If `rgba` is all-zero, substitutes
     /// `default_color`. `intensity` is preserved as `intensity_at_t0` and
     /// also seeds `current_intensity` so the slot is immediately active.
-    void push_hit(const glm::vec3& point_world,
+    void push_hit(const glm::vec3& point_body,
                   const glm::vec4& rgba,
                   float intensity,
                   double now_seconds,
@@ -130,7 +184,7 @@ public:
     /// Push a hit; silently drops if `id` was never registered.
     /// `texture_index` is picked from an internal stateless RNG.
     void push_hit(scenegraph::InstanceId id,
-                  const glm::vec3& point_world,
+                  const glm::vec3& point_body,
                   const glm::vec4& rgba,
                   float intensity,
                   double now_seconds);

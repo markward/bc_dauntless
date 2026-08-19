@@ -2465,6 +2465,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   if (d.contains("body_point") && !d["body_point"].is_none()) {
                       auto bp = d["body_point"].cast<std::tuple<float, float, float>>();
                       v.body_point = {std::get<0>(bp), std::get<1>(bp), std::get<2>(bp)};
+                      // Both the flash and the sparks ride this. body_point
+                      // defaults to the model origin, a legitimate value, so
+                      // presence is flagged rather than sniffed.
+                      v.has_body_anchor = true;
                   }
                   if (d.contains("body_normal") && !d["body_normal"].is_none()) {
                       auto bn = d["body_normal"].cast<std::tuple<float, float, float>>();
@@ -3197,7 +3201,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<1>(rgba),
                                  std::get<2>(rgba),
                                  std::get<3>(rgba));
-              g_shield_pass->shield_hit(id, p, c, intensity, glfwGetTime());
+              // Callers pass a WORLD point (that is what combat resolves), but
+              // the state stores BODY so the splash rides the hull instead of
+              // being left behind as the ship flies on. Convert here, once, so
+              // the Python surface stays world-space like every other hit
+              // binding. An unknown instance drops the hit — the pass would
+              // drop it anyway.
+              const auto* inst = g_world.get(id);
+              if (inst == nullptr) return;
+              const glm::vec3 body(glm::inverse(inst->world) * glm::vec4(p, 1.0f));
+              g_shield_pass->shield_hit(id, body, c, intensity, glfwGetTime());
           },
           py::arg("instance_id"), py::arg("point"),
           py::arg("rgba") = std::make_tuple(0.0f, 0.0f, 0.0f, 0.0f),
