@@ -18,6 +18,10 @@ float smoothstep01(float edge0, float edge1, float x) {
 }
 }  // namespace
 
+float shield_splash_intensity(float coverage, float hit_intensity) {
+    return coverage * hit_intensity * kShieldSplashOpacity;
+}
+
 float shield_splash_gate(const glm::vec3& frag_dir_from_centre,
                          const glm::vec3& impact_dir) {
     return smoothstep01(0.0f, kShieldSplashGateFeather,

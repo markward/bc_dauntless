@@ -125,7 +125,13 @@ void ShieldPass::submit(const scenegraph::World& world,
     shader.set_mat4("u_view", camera.view_matrix());
 
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    // PREMULTIPLIED additive: the shader has already applied coverage, hit
+    // intensity and the opacity ceiling to the colour. It used to be
+    // (GL_SRC_ALPHA, GL_ONE) against a shader that also folded those terms
+    // into the alpha, so the blend multiplied them in a second time and every
+    // term reached the frame squared — peak output 0.64% of full brightness.
+    // See shield_splash_intensity() in renderer/shield_state.h.
+    glBlendFunc(GL_ONE, GL_ONE);
     glDepthMask(GL_FALSE);
     // Culling is disabled for the additive bubble — both faces should be
     // visible through each other anyway, so the pass is winding-insensitive.

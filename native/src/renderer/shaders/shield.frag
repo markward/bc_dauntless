@@ -98,9 +98,25 @@ vec4 splash_sample(int hit_idx, vec3 hit_pos, vec3 frag_pos) {
     return sample_tex(hit_idx, uv) * (gate * falloff);
 }
 
+// Overall opacity ceiling. MUST match kShieldSplashOpacity in
+// renderer/shield_state.h.
+const float SPLASH_OPACITY = 0.75;
+
+// The pass blends GL_ONE, GL_ONE and this writes a PREMULTIPLIED colour, so
+// every term — coverage, hit intensity, texture, tint — is applied exactly
+// once.
+//
+// It used to accumulate the texture and the falloff into the colour AND into
+// the alpha, under glBlendFunc(GL_SRC_ALPHA, GL_ONE), which multiplies rgb by
+// alpha. Each term therefore reached the framebuffer squared: against the real
+// shieldhit01.TGA radial profile that left peak output at 0.64% of full
+// brightness, which is why impacts registered but were barely visible. Applied
+// once, the same peak is 6.93%. Mirrored by shield_splash_intensity() in
+// renderer/shield_state.h, whose tests assert linearity in both coverage and
+// intensity — a quadratic result there means this got re-squared.
 void main() {
     vec3  color = vec3(0.0);
-    float alpha = 0.0;
+    float total = 0.0;
 
     for (int i = 0; i < MAX_HITS; ++i) {
         float inten = u_hit_color_intensity[i].a;
@@ -109,12 +125,16 @@ void main() {
         vec4 hex = splash_sample(u_hit_tex_index[i],
                                   u_hit_points[i].xyz,
                                   v_world_pos);
-        if (hex.a <= 0.0) continue;
+        // The splash textures are greyscale masks, so the alpha channel IS the
+        // coverage; sampling rgb as well would square the texture.
+        float coverage = hex.a;
+        if (coverage <= 0.0) continue;
 
-        color += u_hit_color_intensity[i].rgb * inten * hex.rgb;
-        alpha += hex.a * inten;
+        float b = coverage * inten * SPLASH_OPACITY;
+        color += u_hit_color_intensity[i].rgb * b;
+        total += b;
     }
 
-    if (alpha < 0.001) discard;
-    frag_color = vec4(color, alpha * 0.75);  // 25% opacity reduction for shield impacts
+    if (total < 0.001) discard;
+    frag_color = vec4(color, 1.0);
 }

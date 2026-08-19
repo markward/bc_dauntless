@@ -449,3 +449,39 @@ TEST(ShieldSplash, SplashLandsOnTheBubbleOnEveryAxis) {
             << "axis " << k;
     }
 }
+
+// ── splash brightness is applied ONCE ──────────────────────────────────────
+//
+// shield.frag accumulated `color += tint*inten*hex.rgb` AND
+// `alpha += hex.a*inten`, and shield_pass blended with
+// glBlendFunc(GL_SRC_ALPHA, GL_ONE) -- which multiplies rgb by alpha. So the
+// coverage, the hit intensity and the texture each landed in the framebuffer
+// SQUARED. Measured against the real shieldhit01.TGA radial profile, peak
+// output was 0.64% of full brightness; applied once it is 6.93%, 11x brighter.
+//
+// The invariant that keeps it fixed: output is LINEAR in both coverage and
+// intensity. Anything quadratic means a term is being applied on both the
+// colour and the alpha path again.
+
+TEST(ShieldSplash, BrightnessIsLinearInCoverage) {
+    const float i = 0.5f;
+    const float a = shield_splash_intensity(0.25f, i);
+    const float b = shield_splash_intensity(0.50f, i);
+    EXPECT_NEAR(b, 2.0f * a, 1e-6f);
+}
+
+TEST(ShieldSplash, BrightnessIsLinearInHitIntensity) {
+    const float c = 0.4f;
+    const float a = shield_splash_intensity(c, 0.25f);
+    const float b = shield_splash_intensity(c, 0.50f);
+    EXPECT_NEAR(b, 2.0f * a, 1e-6f);
+}
+
+TEST(ShieldSplash, FullCoverageAtFullIntensityIsTheOpacityCeiling) {
+    EXPECT_NEAR(shield_splash_intensity(1.0f, 1.0f), kShieldSplashOpacity, 1e-6f);
+}
+
+TEST(ShieldSplash, NoCoverageEmitsNothing) {
+    EXPECT_FLOAT_EQ(shield_splash_intensity(0.0f, 1.0f), 0.0f);
+    EXPECT_FLOAT_EQ(shield_splash_intensity(1.0f, 0.0f), 0.0f);
+}

@@ -49,6 +49,24 @@ inline constexpr float kShieldEllipsoidAxisScale = 1.7320508f;
 /// over the ship rather than an impact patch.
 inline constexpr float kShieldSplashRadius = 0.35f;
 
+/// Overall opacity ceiling on the impact splash — the brightness a fragment at
+/// full coverage, from a hit at full intensity, contributes to the frame.
+/// MUST match the constant in shaders/shield.frag.
+inline constexpr float kShieldSplashOpacity = 0.75f;
+
+/// Brightness one splash contributes to the frame, given its `coverage`
+/// (shield_splash_coverage × the texture's alpha) and the hit's current
+/// `intensity`. LINEAR in both — that is the whole point.
+///
+/// shield.frag used to fold coverage, intensity and the texture into BOTH the
+/// colour and the alpha, and shield_pass blended with
+/// glBlendFunc(GL_SRC_ALPHA, GL_ONE), which multiplies rgb by alpha — so every
+/// term reached the framebuffer SQUARED. Against the real shieldhit01.TGA
+/// radial profile that put peak output at 0.64% of full brightness, which read
+/// in game as "the impacts are there but very faint". Applied once it is 6.93%.
+/// The pass now blends GL_ONE, GL_ONE with a premultiplied colour.
+float shield_splash_intensity(float coverage, float hit_intensity);
+
 /// Width of the smooth terminator on the hemisphere gate, in units of
 /// cos(angle) away from the terminator plane. Small enough to stay a localised
 /// splash, wide enough that the cutoff is not a hard seam.
