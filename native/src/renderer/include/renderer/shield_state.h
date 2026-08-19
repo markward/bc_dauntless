@@ -59,6 +59,33 @@ inline constexpr float kShieldSplashReachMax = 2.0f;
 /// MUST match shaders/shield.frag — keep in sync.
 float shield_splash_reach(float radius_gu);
 
+/// Upper bound on the reach, as a multiple of the bubble's radius in the hit
+/// direction. The splash may not out-run the bubble it is drawn on.
+inline constexpr float kShieldSplashReachBubbleFrac = 1.0f;
+
+/// The reach actually used on a bubble whose radius in the hit direction is
+/// `bubble_radius_gu`.
+///
+/// This is a CLAMP, not a proportional law — it does not resurrect "bigger
+/// ships get bigger splashes", which is wrong and was rejected. On any hull
+/// large enough to hold the splash it changes nothing at all; it binds only
+/// when the splash would otherwise be bigger than the target.
+///
+/// Why it has to exist: the reach is absolute (0.6–2.0 GU) while the bubble
+/// scales with the hull, so on a small target the splash stayed bright all the
+/// way to the hemisphere gate's terminator. The terminator is a great circle,
+/// which projects to a straight line, so the gate cut the splash into a dome
+/// with a hard FLAT bottom — seen live on a small target. Measured brightness
+/// at the terminator, as a fraction of the splash peak:
+///
+///     reach/semi   0.46    0.77    1.15    1.65    3.30
+///     at terminator  0.0000  0.0014  0.0095  0.0209  0.0486
+///
+/// Capital ships were always fine; small targets were not. With the splash
+/// bounded to the bubble it fades to well under 1% by the terminator, so the
+/// gate has nothing left to cut and leaves no edge.
+float shield_splash_reach_on_bubble(float reach_gu, float bubble_radius_gu);
+
 // ── procedural 3D splash: epicentre ────────────────────────────────────────
 
 /// The stored anchor projected onto the bubble surface, in world space.

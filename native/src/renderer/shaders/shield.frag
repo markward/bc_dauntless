@@ -34,6 +34,7 @@ const float GLOW_GAIN    = 0.25;
 const float DISC_GAIN    = 0.45;
 const float RING_GAIN    = 0.9;
 const float SPLASH_OPACITY = 0.75; // kShieldSplashOpacity
+const float REACH_BUBBLE_FRAC = 1.0;  // kShieldSplashReachBubbleFrac
 
 out vec4 frag_color;
 
@@ -143,8 +144,19 @@ float splash_sample(vec3 hit_pos, vec3 frag_pos, float age, float reach,
     float gate = smoothstep(0.0, GATE_FEATHER, dot(n_frag, n_hit));
     if (gate <= 0.0) return 0.0;
 
-    float d = length(frag_pos - splash_epicentre(hit_pos));
-    return splash_shape(d, age, reach, jitter) * gate;
+    // Bound the reach to the bubble's radius in the hit direction. The reach is
+    // absolute (0.6-2.0 GU) but the bubble scales with the hull, so on a small
+    // target the splash stayed bright all the way to the gate's terminator —
+    // and a terminator is a great circle, which projects to a straight line.
+    // That cut the splash into a dome with a hard FLAT bottom, seen live.
+    // A CLAMP, not a proportional law: on any hull big enough to hold the
+    // splash it changes nothing. MUST match shield_splash_reach_on_bubble().
+    vec3 epi = splash_epicentre(hit_pos);
+    float bubble_r = length(epi - u_bubble_center);
+    float eff = bubble_r > 0.0 ? min(reach, REACH_BUBBLE_FRAC * bubble_r) : reach;
+
+    float d = length(frag_pos - epi);
+    return splash_shape(d, age, eff, jitter) * gate;
 }
 
 // The pass blends GL_ONE, GL_ONE and this writes a PREMULTIPLIED colour, so

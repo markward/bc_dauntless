@@ -27,6 +27,11 @@ float shield_splash_reach(float radius_gu) {
                       kShieldSplashReachMin, kShieldSplashReachMax);
 }
 
+float shield_splash_reach_on_bubble(float reach_gu, float bubble_radius_gu) {
+    if (bubble_radius_gu <= 0.0f) return reach_gu;
+    return std::min(reach_gu, kShieldSplashReachBubbleFrac * bubble_radius_gu);
+}
+
 glm::vec3 shield_splash_epicentre(const glm::vec3& hit_world,
                                   const glm::vec3& bubble_centre,
                                   const glm::vec3& bubble_semi_axes) {
@@ -141,8 +146,13 @@ float shield_splash_coverage(const glm::vec3& frag_world,
     // same size and shape wherever it lands.
     const glm::vec3 epi =
         shield_splash_epicentre(hit_world, bubble_centre, bubble_semi_axes);
+    // Bound the reach to the bubble's radius in the hit direction, so the
+    // splash always fades out before the gate's terminator and never gets cut
+    // into a hard-edged dome. Binds only on targets smaller than the splash.
+    const float reach =
+        shield_splash_reach_on_bubble(reach_gu, glm::length(epi - bubble_centre));
     const float d = glm::length(frag_world - epi);
-    return shield_splash_shape(d, age_seconds, reach_gu, phase_jitter) * gate;
+    return shield_splash_shape(d, age_seconds, reach, phase_jitter) * gate;
 }
 
 glm::vec3 shield_hit_world_point(const Hit& hit,

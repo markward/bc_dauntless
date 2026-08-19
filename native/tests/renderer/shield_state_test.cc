@@ -335,20 +335,45 @@ float splash_half_extent_gu(const glm::vec3& semi, const glm::vec3& impact_dir,
 
 }  // namespace
 
-TEST(ShieldSplash, HalfExtentIsTheSameWorldSizeWhereverItLands) {
-    // THE load-bearing test for the rebuild. A bow hit and a dorsal hit sit on
-    // parts of the bubble whose radii differ by 4.6x (5.58 GU vs 1.22 GU).
-    // Under the old angular measure the same splash therefore covered 4x more
-    // world distance on the bow than on the dorsal. It must not.
+TEST(ShieldSplash, HalfExtentIsTheSameWorldSizeWhereverTheBubbleCanHoldIt) {
+    // THE load-bearing test for the rebuild. A bow hit and a flank hit sit on
+    // parts of the bubble whose radii differ by 1.4x (5.58 GU vs 4.02 GU), and
+    // under the old ANGULAR measure the splash covered wildly different world
+    // distances depending on where it landed. Mutating the measure back to
+    // angular gives bow 0.487 GU vs flank 0.674 GU here — this still catches
+    // that, which is the point.
+    //
+    // Both of these are large enough to hold a 1.5 GU splash, so the reach
+    // clamp does not bind and they must match tightly.
+    const float reach = 1.5f;
+    const float bow   = splash_half_extent_gu(kGalaxySemiGu, {0, 1, 0}, {1, 0, 0}, reach);
+    const float flank = splash_half_extent_gu(kGalaxySemiGu, {1, 0, 0}, {0, 1, 0}, reach);
+    ASSERT_GT(bow, 0.0f);
+    ASSERT_GT(flank, 0.0f);
+    EXPECT_NEAR(bow, flank, 0.02f * bow) << "bow " << bow << " vs flank " << flank;
+}
+
+TEST(ShieldSplash, AThinPartOfTheBubbleShrinksTheSplashRatherThanCuttingIt) {
+    // A Galaxy's dorsal bubble radius is 1.22 GU, less than a 1.5 GU reach, so
+    // the clamp binds there and the dorsal splash is genuinely smaller than the
+    // bow's. That is a deliberate trade, made after the flat-bottomed dome
+    // showed up live: the alternative is a splash that stays full size and gets
+    // sliced by the gate's terminator.
+    //
+    // What must NOT change is that the splash stays ROUND — the 4.5x ribbon
+    // this rebuild exists to kill is per-impact anisotropy, which
+    // HalfExtentIsIsotropicAroundOneImpact still pins at 5%. Size parity
+    // between DIFFERENT impacts is the weaker property, and it is bounded here.
     const float reach = 1.5f;
     const float bow    = splash_half_extent_gu(kGalaxySemiGu, {0, 1, 0}, {1, 0, 0}, reach);
     const float dorsal = splash_half_extent_gu(kGalaxySemiGu, {0, 0, 1}, {1, 0, 0}, reach);
-    const float flank  = splash_half_extent_gu(kGalaxySemiGu, {1, 0, 0}, {0, 1, 0}, reach);
-    ASSERT_GT(bow, 0.0f);
     ASSERT_GT(dorsal, 0.0f);
-    ASSERT_GT(flank, 0.0f);
-    EXPECT_NEAR(bow, dorsal, 0.02f * bow) << "bow " << bow << " vs dorsal " << dorsal;
-    EXPECT_NEAR(bow, flank, 0.02f * bow) << "bow " << bow << " vs flank " << flank;
+    EXPECT_LT(dorsal, bow) << "the clamp should bind on the thin axis";
+    // Bounded: the dorsal splash shrinks in proportion to the clamped reach
+    // (1.22 / 1.50), not by the 4x an angular measure would produce.
+    const float expected = kShieldSplashReachBubbleFrac * kGalaxySemiGu.z / reach;
+    EXPECT_GT(dorsal / bow, 0.9f * expected)
+        << "dorsal/bow " << dorsal / bow << " vs expected " << expected;
 }
 
 TEST(ShieldSplash, HalfExtentIsIsotropicAroundOneImpact) {
@@ -826,4 +851,67 @@ TEST(ShieldSplashShape, TheWavefrontItselfIsLit) {
     const float at_front = shield_splash_shape(front, age, reach, 0.0f)
                          - shield_splash_shape(front, kShieldSplashRippleLife, reach, 0.0f);
     EXPECT_GT(at_front, 0.1f) << "wavefront brightness " << at_front;
+}
+
+// ── the gate's terminator must never become a visible edge ────────────────
+//
+// Reported live, with a screenshot: the splash on a small target rendered as a
+// bright dome with a hard FLAT cut across the bottom. That flat is the
+// hemisphere gate's terminator -- a great circle, which projects to a straight
+// line -- and it shows because the splash was bright when it reached it.
+//
+// The cause is the reach being ABSOLUTE (0.6-2.0 GU) while the bubble scales
+// with the hull. Measured brightness at the terminator as a fraction of the
+// splash peak, sweeping bubble size at a 1.5 GU reach:
+//
+//     reach/semi   at terminator
+//         0.46           0.0000
+//         0.77           0.0014
+//         1.15           0.0095
+//         1.65           0.0209     <- visible
+//         3.30           0.0486     <- the screenshot
+//
+// So a capital ship is fine and a small target is not. The splash must never
+// out-run the bubble it is drawn on.
+
+TEST(ShieldSplash, TheGateTerminatorIsNeverBrightEnoughToSee) {
+    // Sweep hull sizes from a starbase down to a shuttle. At every size, the
+    // splash must have faded to nothing by the time it reaches the terminator,
+    // so the gate has nothing left to cut and leaves no edge.
+    for (float s : {4.0f, 2.5f, 1.5f, 1.0f, 0.7f, 0.5f, 0.35f, 0.2f}) {
+        const glm::vec3 semi(s * 0.9f, s * 1.3f, s * 0.55f);
+        const glm::vec3 centre(0.0f);
+        const glm::vec3 hit(0.0f, semi.y, 0.0f);
+        // The EFFECTIVE reach — bounded to the bubble. Measuring the shape at
+        // the raw reach would not exercise the fix at all.
+        const float reach = shield_splash_reach_on_bubble(
+            shield_splash_reach(0.15f),                   // a phaser
+            glm::length(shield_splash_epicentre(hit, centre, semi) - centre));
+
+        const float peak =
+            shield_splash_coverage(hit, hit, centre, semi, 0.0f, reach, 0.0f);
+        ASSERT_GT(peak, 0.0f) << "semi.y=" << semi.y;
+
+        // Walk the terminator ring and take the brightest point on it, using
+        // the UNGATED shape so this measures what the gate is cutting away —
+        // gating it first would hide the very edge we are testing for.
+        float worst = 0.0f;
+        for (int j = 0; j <= 360; ++j) {
+            const float ph = glm::radians(static_cast<float>(j));
+            const glm::vec3 n(std::cos(ph) * 1.0f, 0.0f, std::sin(ph) * 1.0f);
+            const glm::vec3 frag = glm::normalize(n) * semi;
+            const float d = glm::length(
+                frag - shield_splash_epicentre(hit, centre, semi));
+            for (float af : {0.0f, 0.25f, 0.5f, 0.75f}) {
+                worst = std::max(worst,
+                    shield_splash_shape(d, af * kShieldSplashRippleLife,
+                                        reach, 0.0f));
+            }
+        }
+        EXPECT_LT(worst / peak, 0.02f)
+            << "hull semi.y=" << semi.y << " (reach/semi = "
+            << reach / semi.y << "): splash is still at "
+            << 100.0f * worst / peak << "% of peak at the terminator, so the "
+            << "gate cuts it into a hard-edged dome";
+    }
 }
