@@ -29,7 +29,16 @@ float shield_splash_reach(float radius_gu) {
 
 float shield_splash_reach_on_bubble(float reach_gu, float bubble_radius_gu) {
     if (bubble_radius_gu <= 0.0f) return reach_gu;
-    return std::min(reach_gu, kShieldSplashReachBubbleFrac * bubble_radius_gu);
+    // Floor first: keep the splash proportionally visible on a big hull, but
+    // never let that floor run away on a starbase-sized bubble.
+    const float floor_gu =
+        std::min(kShieldSplashReachBubbleFloorFrac * bubble_radius_gu,
+                 kShieldSplashReachHardMax);
+    // Ceiling last, so it always wins: it is what stops the hemisphere gate
+    // slicing the splash into a flat-bottomed dome on a small target, and the
+    // floor must not reintroduce that.
+    return std::min(std::max(reach_gu, floor_gu),
+                    kShieldSplashReachBubbleFrac * bubble_radius_gu);
 }
 
 glm::vec3 shield_splash_epicentre(const glm::vec3& hit_world,

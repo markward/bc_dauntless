@@ -63,6 +63,26 @@ float shield_splash_reach(float radius_gu);
 /// direction. The splash may not out-run the bubble it is drawn on.
 inline constexpr float kShieldSplashReachBubbleFrac = 1.0f;
 
+/// LOWER bound on the reach, as a multiple of the bubble's radius in the hit
+/// direction — so the splash stays proportionally visible on a big hull.
+///
+/// Set deliberately below every Galaxy bubble radius (the smallest it must not
+/// disturb is the 4.02 GU flank, and 0.25 × 4.02 = 1.01 < the 1.5 GU phaser
+/// reach), so the hull already signed off on is completely unaffected.
+///
+/// This is the one place the strict "the weapon sets the size, not the target"
+/// rule is traded away, and it was traded knowingly. A Warbird's bubble is
+/// twice a Galaxy's (8.38 / 10.89 / 3.00 GU vs 4.02 / 5.58 / 1.22), so an
+/// absolute reach covered 13.8% of its largest semi-axis against the Galaxy's
+/// 26.9% — half as prominent on a ship twice the size, which read in game as
+/// impacts simply not appearing.
+inline constexpr float kShieldSplashReachBubbleFloorFrac = 0.25f;
+
+/// Absolute cap on what the bubble FLOOR may raise the reach to, in GU. A
+/// starbase bubble is tens of GU across and scaling the floor with it forever
+/// would let one photon torpedo flash a huge fraction of the structure.
+inline constexpr float kShieldSplashReachHardMax = 4.0f;
+
 /// The reach actually used on a bubble whose radius in the hit direction is
 /// `bubble_radius_gu`.
 ///

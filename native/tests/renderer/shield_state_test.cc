@@ -397,26 +397,45 @@ TEST(ShieldSplash, HalfExtentIsIsotropicAroundOneImpact) {
     }
 }
 
-TEST(ShieldSplash, HalfExtentIsTheSameOnAnyHullAndAnyShipScale) {
+TEST(ShieldSplash, HalfExtentIsTheSameOnAnyHullTheWeaponReachStillGoverns) {
     // Replaces FootprintIsInvariantUnderInstanceScale, which asserted the same
     // ANGULAR footprint on a rescaled ship. A world-space splash keeps the same
-    // GU size instead -- so on a 3x ship it covers 3x FEWER degrees, which is
-    // the intent: the weapon, not the target, sets the size of the mark.
+    // GU size instead: the weapon, not the target, sets the size of the mark.
+    //
+    // That rule now holds only over the band where the weapon reach governs —
+    // between the bubble floor and the bubble ceiling. A Galaxy and a Sovereign
+    // are both inside it at a phaser's 1.5 GU, so they must still match.
     const float reach = 1.5f;
     const float galaxy = splash_half_extent_gu(kGalaxySemiGu, {0, 1, 0}, {1, 0, 0}, reach);
     const float sovereign = splash_half_extent_gu(kSovereignSemiGu, {0, 1, 0}, {1, 0, 0}, reach);
-    const float big = splash_half_extent_gu(kGalaxySemiGu * 3.0f, {0, 1, 0}, {1, 0, 0}, reach);
     ASSERT_GT(galaxy, 0.0f);
     EXPECT_NEAR(galaxy, sovereign, 0.05f * galaxy);
-    EXPECT_NEAR(galaxy, big, 0.05f * galaxy);
+}
+
+TEST(ShieldSplash, AHullTooLargeForTheWeaponGetsADeliberatelyBiggerSplash) {
+    // Outside that band the floor takes over, on purpose. A 3x Galaxy is far
+    // past it, so its splash is genuinely larger — this is the Warbird fix, and
+    // it is pinned here so it cannot be mistaken for a regression later.
+    const float reach = 1.5f;
+    const float galaxy = splash_half_extent_gu(kGalaxySemiGu, {0, 1, 0}, {1, 0, 0}, reach);
+    const float big = splash_half_extent_gu(kGalaxySemiGu * 3.0f, {0, 1, 0}, {1, 0, 0}, reach);
+    ASSERT_GT(galaxy, 0.0f);
+    EXPECT_GT(big, 1.5f * galaxy)
+        << "big-hull splash " << big << " vs Galaxy " << galaxy
+        << ": the floor is not lifting it";
 }
 
 TEST(ShieldSplash, HalfExtentTracksTheWeaponReach) {
     // The splash is "sized to the impact": a wider reach means a wider mark.
-    const float narrow = splash_half_extent_gu(kGalaxySemiGu, {0, 1, 0}, {1, 0, 0}, 0.6f);
-    const float wide   = splash_half_extent_gu(kGalaxySemiGu, {0, 1, 0}, {1, 0, 0}, 2.0f);
+    //
+    // Measured on the Galaxy FLANK, whose bubble floor is 0.25 x 4.02 = 1.00 GU
+    // and whose ceiling is 4.02 GU, with both reaches inside that band. The old
+    // 0.6 GU probe is now below the floor on every Galaxy axis, so it would
+    // measure the floor rather than the weapon.
+    const float narrow = splash_half_extent_gu(kGalaxySemiGu, {1, 0, 0}, {0, 1, 0}, 1.1f);
+    const float wide   = splash_half_extent_gu(kGalaxySemiGu, {1, 0, 0}, {0, 1, 0}, 2.0f);
     ASSERT_GT(narrow, 0.0f);
-    EXPECT_GT(wide, 2.0f * narrow);
+    EXPECT_GT(wide, 1.5f * narrow) << "narrow " << narrow << " wide " << wide;
 }
 
 TEST(ShieldSplash, ThereIsNoDiscontinuityWhereTheOldTangentBasisFlipped) {
@@ -952,5 +971,95 @@ TEST(ShieldSplash, SkinModeFragmentsOnTheHullAreStillLit) {
                   1.0f)
             << "axis " << k << ": the hull fragment the torpedo actually hit is "
             << "dark, so a skin-shielded ship (Akira, Sovereign) shows no splash";
+    }
+}
+
+// ── the splash must stay VISIBLE on a large hull ──────────────────────────
+//
+// Reported live on a Romulan Warbird: a torpedo hit near a nacelle and no
+// impact appeared. Measured, in GU:
+//
+//   Galaxy  bubble semi-axes  4.02 / 5.58 / 1.22
+//   Warbird bubble semi-axes  8.38 / 10.89 / 3.00      (~2x a Galaxy)
+//
+// The reach is absolute (0.6-2.0 GU) but the bubble scales with the hull, so
+// the splash covered 13.8% of a Warbird's largest semi-axis against 26.9% of a
+// Galaxy's -- half as prominent on a ship twice the size. The bubble also
+// stands up to 4.60 GU off a Warbird's hull, so an anchor taken from the hull
+// (collisions and splash damage, which carry no ray) projects out to an
+// epicentre 2.92 GU from where the shot actually landed, against a 1.30 GU
+// torpedo reach.
+//
+// So the reach gains a FLOOR keyed to the bubble, as well as the existing
+// ceiling. Mark authorised trading the strict "the weapon sets the size" rule
+// for this; the floor is set so it does not bind on a Galaxy at all.
+
+TEST(ShieldSplashReach, ALargeHullGetsAProportionallyVisibleSplash) {
+    const float phaser = shield_splash_reach(0.15f);      // 1.5 GU
+    const float photon = shield_splash_reach(0.13f);      // 1.3 GU
+
+    // A Warbird wing hit: bubble radius 7.51 GU in the hit direction.
+    const float warbird = shield_splash_reach_on_bubble(photon, 7.51f);
+    EXPECT_GT(warbird, photon) << "the floor should lift it";
+    EXPECT_GT(warbird / 7.51f, 0.20f)
+        << "splash is only " << 100.0f * warbird / 7.51f
+        << "% of the bubble radius -- too small to read on a big hull";
+    (void)phaser;
+}
+
+TEST(ShieldSplashReach, AGalaxyIsEssentiallyUnaffectedByTheFloor) {
+    // The Galaxy is the hull already signed off on live, so the floor is set
+    // low enough not to disturb it. "Essentially", measured, not "completely":
+    //
+    //   bubble radius   photon   phaser
+    //   flank    4.02     1.30     1.50    unchanged
+    //   bow      5.58     1.40     1.50    photon +7%
+    //
+    // The phaser is untouched on every axis; the photon moves by 7% on the
+    // longest one. Naming this test "CompletelyUnaffected" and only checking
+    // the phaser would have been a cherry-pick.
+    const float phaser = shield_splash_reach(0.15f);
+    const float photon = shield_splash_reach(0.13f);
+    for (float bubble_r : {kGalaxySemiGu.x, kGalaxySemiGu.y}) {
+        EXPECT_FLOAT_EQ(shield_splash_reach_on_bubble(phaser, bubble_r), phaser)
+            << "phaser, bubble radius " << bubble_r;
+        EXPECT_LT(shield_splash_reach_on_bubble(photon, bubble_r), 1.10f * photon)
+            << "photon, bubble radius " << bubble_r;
+    }
+    // The thin dorsal axis is governed by the CEILING, as before -- not the floor.
+    EXPECT_FLOAT_EQ(shield_splash_reach_on_bubble(phaser, kGalaxySemiGu.z),
+                    kShieldSplashReachBubbleFrac * kGalaxySemiGu.z);
+}
+
+TEST(ShieldSplashReach, OnABigHullTheFloorGovernsAndWeaponSizeStopsMattering) {
+    // The acknowledged cost of the trade, pinned so it cannot surprise anyone
+    // later: once the bubble is big enough for the floor to bind, every weapon
+    // splashes the same SIZE. They are still told apart by intensity —
+    // SHIELD_IMPACT_INTENSITY_TORPEDO 2.0 vs 0.5 for a phaser tick.
+    const float photon = shield_splash_reach(0.13f);
+    const float phaser = shield_splash_reach(0.15f);
+    EXPECT_FLOAT_EQ(shield_splash_reach_on_bubble(photon, 7.51f),
+                    shield_splash_reach_on_bubble(phaser, 7.51f));
+}
+
+TEST(ShieldSplashReach, AVeryLargeHullDoesNotGetAnUnboundedSplash) {
+    // A starbase bubble is tens of GU across. Scaling the floor with it
+    // forever would make one photon torpedo flash a huge fraction of the
+    // structure, so the floor itself is capped.
+    const float photon = shield_splash_reach(0.13f);
+    EXPECT_LE(shield_splash_reach_on_bubble(photon, 30.0f),
+              kShieldSplashReachHardMax);
+    EXPECT_LE(shield_splash_reach_on_bubble(photon, 200.0f),
+              kShieldSplashReachHardMax);
+}
+
+TEST(ShieldSplashReach, TheFloorNeverOverridesTheDomeCeiling) {
+    // The ceiling exists to stop the gate slicing the splash into a flat-
+    // bottomed dome. The floor must not reintroduce that on a small target.
+    const float photon = shield_splash_reach(0.13f);
+    for (float bubble_r : {0.09f, 0.21f, 0.5f, 1.0f}) {
+        EXPECT_LE(shield_splash_reach_on_bubble(photon, bubble_r),
+                  kShieldSplashReachBubbleFrac * bubble_r + 1e-6f)
+            << "bubble radius " << bubble_r;
     }
 }

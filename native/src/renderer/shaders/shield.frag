@@ -34,7 +34,9 @@ const float GLOW_GAIN    = 0.25;
 const float DISC_GAIN    = 0.45;
 const float RING_GAIN    = 0.9;
 const float SPLASH_OPACITY = 0.75; // kShieldSplashOpacity
-const float REACH_BUBBLE_FRAC = 1.0;  // kShieldSplashReachBubbleFrac
+const float REACH_BUBBLE_FRAC       = 1.0;   // kShieldSplashReachBubbleFrac
+const float REACH_BUBBLE_FLOOR_FRAC = 0.25;  // kShieldSplashReachBubbleFloorFrac
+const float REACH_HARD_MAX          = 4.0;   // kShieldSplashReachHardMax
 
 out vec4 frag_color;
 
@@ -160,8 +162,18 @@ float splash_sample(vec3 hit_pos, vec3 frag_pos, float age, float reach,
     // Ellipsoid mode the fragment is already on the surface and this is a no-op.
     vec3 epi = splash_epicentre(hit_pos);
     vec3 epi_frag = splash_epicentre(frag_pos);
+    // Reach is bounded BOTH ways by the bubble. The floor keeps the splash
+    // proportionally visible on a big hull — a Warbird's bubble is twice a
+    // Galaxy's, so an absolute reach covered half as much of it and impacts
+    // read as simply not appearing. The ceiling is applied last so it always
+    // wins: it is what stops the hemisphere gate slicing the splash into a
+    // flat-bottomed dome on a small target.
+    // MUST match shield_splash_reach_on_bubble().
     float bubble_r = length(epi - u_bubble_center);
-    float eff = bubble_r > 0.0 ? min(reach, REACH_BUBBLE_FRAC * bubble_r) : reach;
+    float floor_r = min(REACH_BUBBLE_FLOOR_FRAC * bubble_r, REACH_HARD_MAX);
+    float eff = bubble_r > 0.0
+              ? min(max(reach, floor_r), REACH_BUBBLE_FRAC * bubble_r)
+              : reach;
 
     float d = length(epi_frag - epi);
     return splash_shape(d, age, eff, jitter) * gate;
