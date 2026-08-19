@@ -1,7 +1,15 @@
 """combat.apply_hit must bypass shield absorption when the shield
-generator is not powered (IsOn() == 0). At green alert shields are down
-and damage flows straight to the picked subsystem / hull bleed; the
-shield-bubble flash and absorbed_shields readout stay at zero.
+generator is not powered (IsOn() == 0) — damage flows straight to the picked
+subsystem / hull bleed, and the shield-bubble flash and absorbed_shields
+readout stay at zero.
+
+Two ways a generator ends up unpowered, both covered here: an explicit
+TurnOff() (the engineering power slider at 0%) and a GREEN alert transition
+(which also drains the faces).
+
+NOT covered here, because it is no longer true: a ship that has simply never
+been sent to alert. Shields default ON — see
+tests/unit/test_shields_default_on.py.
 
 Companion to test_apply_hit_routing.py — those fakes don't implement
 IsOn() so they default to on; this file uses a real ShieldSubsystem so
@@ -30,16 +38,27 @@ def _ship_with_full_shields_and_hull(hull_max=2000.0, face_max=1000.0):
     return ship
 
 
-def test_green_alert_shields_do_not_absorb_damage():
-    """Default alert is GREEN → shields powered down → 500 damage hits
-    the hull directly. SetMaxShields seeds the faces to max on load
-    (mirrors loadspacehelper); IsOn=False keeps combat from touching
-    them, so they stay at the seeded value."""
+def test_generator_turned_off_directly_does_not_absorb_damage():
+    """The power-slider path: the engineering panel drives IsOn via
+    TurnOff() at 0% without touching alert level. Damage must reach the hull.
+
+    Covers the alert-independent half of the IsOn gate. The alert-driven
+    half is covered by the GREEN-transition tests below; a ship that has
+    simply never been sent to alert now keeps its shields UP (see
+    tests/unit/test_shields_default_on.py)."""
     ship = _ship_with_full_shields_and_hull(hull_max=2000.0, face_max=1000.0)
-    assert ship.GetAlertLevel() == ShipClass.GREEN_ALERT
+    shields = ship.GetShields()
+    assert shields.IsOn() == 1
+    shields.TurnOff()
+    # TurnOff drains the faces; re-seed so this isolates the IsOn gate rather
+    # than re-testing an empty face.
+    for f in range(ShieldSubsystem.NUM_SHIELDS):
+        shields.SetCurrentShields(f, 1000.0)
+
     apply_hit(ship, 500.0, TGPoint3(0, 10, 0), source=None)
-    # Shields untouched (generator never powered up).
-    assert ship.GetShields().GetCurrentShields(0) == 1000.0
+
+    # Shields untouched (generator powered down).
+    assert shields.GetCurrentShields(0) == 1000.0
     # Hull took the full damage.
     assert ship.GetHull().GetCondition() == 1500.0
 
@@ -131,10 +150,13 @@ def test_event_is_hull_hit_zero_when_shields_absorb():
 
 
 def test_event_is_hull_hit_one_when_face_down():
-    """Front face at zero → damage reaches the hull → IsHullHit()==1."""
+    """Front face at zero → damage reaches the hull → IsHullHit()==1.
+
+    Drains the front face explicitly. This used to lean on the default
+    alert leaving the whole generator unpowered, which tested the IsOn gate
+    under a name that promises a drained face."""
     ship = _ship_with_full_shields_and_hull(hull_max=2000.0, face_max=1000.0)
-    # Green alert keeps the generator powered down → shields never absorb.
-    assert ship.GetAlertLevel() == ShipClass.GREEN_ALERT
+    ship.GetShields().SetCurrentShields(ShieldSubsystem.FRONT_SHIELDS, 0.0)
     received, cleanup = _capture_weapon_hit_events()
     try:
         apply_hit(ship, 500.0, TGPoint3(0, 10, 0), source=None)

@@ -132,8 +132,11 @@ def test_update_skips_unshielded_face():
 
 
 def test_update_powered_down_skips_regen():
-    """Generator IsOn=False (default; ship at GREEN_ALERT) → no regen."""
+    """Generator explicitly powered down (TurnOff / alert GREEN / power
+    slider at 0%) → no regen. Shields default ON since the default-on fix,
+    so this drives TurnOff() rather than leaning on the constructor."""
     s = ShieldSubsystem("Shield Generator")
+    s.TurnOff()
     assert s.IsOn() == 0
     s.SetMaxShields(ShieldProperty.FRONT_SHIELDS, 100.0)
     s.SetCurShields(ShieldProperty.FRONT_SHIELDS, 50.0)

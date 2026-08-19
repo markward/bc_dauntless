@@ -20,12 +20,19 @@ def _ship_with_shields(front_max=1000.0):
     return ship
 
 
-def test_default_alert_leaves_shields_off():
-    """A freshly-created ship is at GREEN_ALERT — shields must not be
-    powered up. Mirrors stock BC: ships dock at green with shields down."""
+def test_default_alert_leaves_shields_up():
+    """A freshly-created ship sits at GREEN_ALERT but its generator is
+    already powered: BC's PoweredSubsystem constructor sets m_isOn = 1
+    (stbc_reference spec/PoweredSubsystem.md), and nothing raises alert for
+    an NPC. Shields come DOWN only when something explicitly drops them.
+
+    This assertion was inverted before the default-on fix, on an unsourced
+    "ships dock at green with shields down" reading; it is what made every
+    ship absorb nothing until the player hit Shift+3. See
+    tests/unit/test_shields_default_on.py."""
     ship = _ship_with_shields()
     assert ship.GetAlertLevel() == ShipClass.GREEN_ALERT
-    assert ship.GetShields().IsOn() == 0
+    assert ship.GetShields().IsOn() == 1
 
 
 def test_yellow_alert_turns_shields_on():

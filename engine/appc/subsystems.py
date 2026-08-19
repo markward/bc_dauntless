@@ -1086,9 +1086,18 @@ class PoweredSubsystem(ShipSubsystem):
         self._normal_power = 0.0
         self._current_power = 0.0
         # On/off state — TurnOn/TurnOff drive gating in WeaponSystem.StartFiring
-        # and the shield-raise pathway.  Default off matches the SDK; a fresh
-        # ship is unpowered until ShipClass.SetAlertLevel(RED) or a mission
-        # script explicitly turns systems on.
+        # and the shield-raise pathway.
+        #
+        # ⚠️ This default does NOT match BC: the original PoweredSubsystem
+        # constructor sets m_isOn = 1 (stbc_reference spec/PoweredSubsystem.md).
+        # We default OFF because cold phasers/torpedoes at spawn is the
+        # live-verified behaviour here (see the NeedPower work), and BC reaches
+        # that through the power grid rather than this flag. Subclasses whose
+        # BC-faithful state is "on" override it: Sensor, ImpulseEngine,
+        # WarpEngine, Repair, and Shield.
+        #
+        # Do NOT flip this to True to fix a "system X is dead at spawn" bug —
+        # that powers weapons up at spawn. Override in the subclass instead.
         self._is_on: bool = False
         self._power_percentage_wanted: float = 1.0   # BC spawns at 100%
         self._power_wanted: float = 0.0              # per-tick demand  (+0x8C)
@@ -1511,6 +1520,17 @@ class ShieldSubsystem(PoweredSubsystem):
 
     def __init__(self, name: str = ""):
         super().__init__(name)
+        # PoweredSubsystem defaults _is_on False, which is right for weapons
+        # (cold phasers/torpedoes at spawn are live-verified faithful) but
+        # wrong here: BC's PoweredSubsystem constructor sets m_isOn = 1
+        # (stbc_reference spec/PoweredSubsystem.md), and its damage path never
+        # reads the flag at all — ShipClass::TestHit gates on the facing's
+        # charge fraction (> 0.1), and an unpowered generator reaches that by
+        # having its charge drained on the 0.5 s tick. Defaulting off here meant
+        # every ship spawned at GREEN absorbed nothing until something called
+        # SetAlertLevel — which nothing does for NPCs — while the HUD drew a
+        # full bar off the seeded face charge.
+        self._is_on: bool = True
         self._max_shields:       list[float] = [0.0] * self.NUM_SHIELDS
         self._current_shields:   list[float] = [0.0] * self.NUM_SHIELDS
         self._charge_per_second: list[float] = [0.0] * self.NUM_SHIELDS
