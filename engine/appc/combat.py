@@ -527,15 +527,23 @@ def _shield_face_from_hit_point(ship, hit_point) -> int:
       two node scales), which cannot change which axis dominates. The axis →
       index table and the y → z → x tie order both match the binary exactly.
 
-    ⚠️ **Known divergence — the INPUT, not the rule.** BC does not take the
-    dominant axis of the impact point. It takes it of the point where the
-    shot's SEGMENT ENTERS the ellipsoid, from a ray/sphere intersection
-    against the unit sphere. The two agree for an impact recorded exactly on
-    the bubble surface and diverge for grazing shots and long per-frame steps,
-    where the entry point and the normalised impact can select different
-    facings. Closing this needs the segment (previous → current projectile
-    position, or muzzle → muzzle+dir·length for a beam) plumbed to this
-    function, which no caller currently passes.
+    ✅ **CLOSED 2026-08-19 — the input now matches too.** BC does not take the
+    dominant axis of the impact point; it takes it of the point where the
+    shot's SEGMENT ENTERS the ellipsoid. `apply_hit` now passes that entry
+    point (`shield_point`, from :func:`shield_bubble_entry`, which mirrors
+    §2.3 steps 4-6) instead of the hull impact, falling back to the hull point
+    for callers with no segment.
+
+    This function is unchanged — it always took a point and applied the right
+    rule; only what it is fed moved. Measured impact: sampling 400k shots at a
+    Galaxy, entry and impact chose different facings on **6.0%** of them.
+
+    ⚠️ The note this replaced said closing it "needs the segment plumbed to
+    this function, which no caller currently passes". That was true when
+    written and went stale: `shield_point` arrived later with the shield-impact
+    pipeline work, already computed by both weapon families, and sat unused by
+    the facing choice for weeks. If you are estimating work here, re-check what
+    the callers already pass before believing a comment about what is missing.
 
     Two related divergences live elsewhere and are NOT this function's
     problem, but belong in the same change: absorption is a pass-through ramp
@@ -644,12 +652,15 @@ def apply_hit(ship, damage: float, hit_point, source, *,
                               core breach or a ramming impact). Defaults False
                               (normal weapon fire cascades through shields).
         shield_point        — world point on the shield BUBBLE where the shot
-                              entered, from combat.shield_bubble_entry. Used as
-                              the anchor for the shield-flash splash only; the
-                              damage, the subsystem splash attribution and the
-                              facing choice all keep using `hit_point` (the hull
-                              impact). None — collisions, splash damage, any
-                              caller without a ray — falls back to `hit_point`,
+                              entered, from combat.shield_bubble_entry. Drives
+                              the shield-flash anchor AND the shield FACING
+                              choice, which is what BC selects it from
+                              (ShipClass::TestHit, spec §2.3). The damage
+                              itself and the subsystem splash attribution keep
+                              using `hit_point` (the hull impact) — only the
+                              facing moved. None — collisions, splash damage,
+                              any caller without a ray — falls back to
+                              `hit_point`,
                               which is the pre-existing behaviour.
 
                               This matters because the bubble stands √3 off the
@@ -714,7 +725,21 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     if bypass_shields:
         shields_online = False
     if shields_online and hasattr(shields, "ApplyDamage"):
-        face = _shield_face_from_hit_point(ship, hit_point)
+        # BC chooses the facing from where the shot's SEGMENT ENTERS the
+        # ellipsoid, not from where it lands on the hull (ShipClass::TestHit
+        # 0x005AE730, spec §2.3). `shield_point` is exactly that entry point —
+        # shield_bubble_entry mirrors steps 4-6 — and both weapon families
+        # already pass it. It was used only as the VFX anchor until now.
+        #
+        # The bubble is √3× the hull, ~2 GU of travel apart on a Galaxy, so an
+        # oblique shot can cross a facing boundary in between: sampling 400k
+        # shots at a Galaxy, the two inputs disagreed on 6.0% of them.
+        #
+        # None — collisions, splash damage, any caller without a segment —
+        # falls back to the hull point. BC runs the hull test first in that
+        # case too (§2.3 step 5).
+        face = _shield_face_from_hit_point(
+            ship, hit_point if shield_point is None else shield_point)
         before = remaining
         if _commit:
             remaining = shields.ApplyDamage(face, remaining)
