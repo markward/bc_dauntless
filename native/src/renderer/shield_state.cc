@@ -144,14 +144,29 @@ float shield_splash_coverage(const glm::vec3& frag_world,
     // Everything else is a plain world distance from the epicentre. No basis,
     // no uv, no projection — which is the whole reason the splash is now the
     // same size and shape wherever it lands.
-    const glm::vec3 epi =
+    // BOTH endpoints go onto the bubble before the distance is measured.
+    //
+    // Projecting only the hit assumes the fragment is already on the ellipsoid,
+    // which holds in Ellipsoid mode but NOT in Skin mode, where the fragments
+    // are the ship's own hull verts at roughly 1/√3 of the bubble's radius. On
+    // a Sovereign that left every hull fragment 2.56 GU from its own epicentre
+    // — beyond even the maximum reach — so skin-shielded ships (Akira,
+    // Sovereign) showed no splash at all. The old angular measure compared pure
+    // directions and never cared how far out the fragment was.
+    //
+    // In Ellipsoid mode the fragment is already on the surface, so projecting
+    // it is a no-op and the behaviour is unchanged.
+    const glm::vec3 epi_hit =
         shield_splash_epicentre(hit_world, bubble_centre, bubble_semi_axes);
+    const glm::vec3 epi_frag =
+        shield_splash_epicentre(frag_world, bubble_centre, bubble_semi_axes);
+
     // Bound the reach to the bubble's radius in the hit direction, so the
     // splash always fades out before the gate's terminator and never gets cut
     // into a hard-edged dome. Binds only on targets smaller than the splash.
-    const float reach =
-        shield_splash_reach_on_bubble(reach_gu, glm::length(epi - bubble_centre));
-    const float d = glm::length(frag_world - epi);
+    const float reach = shield_splash_reach_on_bubble(
+        reach_gu, glm::length(epi_hit - bubble_centre));
+    const float d = glm::length(epi_frag - epi_hit);
     return shield_splash_shape(d, age_seconds, reach, phase_jitter) * gate;
 }
 

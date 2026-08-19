@@ -151,11 +151,19 @@ float splash_sample(vec3 hit_pos, vec3 frag_pos, float age, float reach,
     // That cut the splash into a dome with a hard FLAT bottom, seen live.
     // A CLAMP, not a proportional law: on any hull big enough to hold the
     // splash it changes nothing. MUST match shield_splash_reach_on_bubble().
+    // BOTH endpoints go onto the bubble before the distance is measured.
+    // Projecting only the hit assumes the fragment is already on the ellipsoid,
+    // true in Ellipsoid mode but NOT in Skin mode, where fragments are the
+    // ship's own hull verts at ~1/sqrt(3) of the bubble radius. On a Sovereign
+    // that put every hull fragment 2.56 GU from its own epicentre, past the
+    // maximum reach, so skin-shielded ships showed no splash at all. In
+    // Ellipsoid mode the fragment is already on the surface and this is a no-op.
     vec3 epi = splash_epicentre(hit_pos);
+    vec3 epi_frag = splash_epicentre(frag_pos);
     float bubble_r = length(epi - u_bubble_center);
     float eff = bubble_r > 0.0 ? min(reach, REACH_BUBBLE_FRAC * bubble_r) : reach;
 
-    float d = length(frag_pos - epi);
+    float d = length(epi_frag - epi);
     return splash_shape(d, age, eff, jitter) * gate;
 }
 

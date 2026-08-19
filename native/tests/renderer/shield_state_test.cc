@@ -915,3 +915,42 @@ TEST(ShieldSplash, TheGateTerminatorIsNeverBrightEnoughToSee) {
             << "gate cuts it into a hard-edged dome";
     }
 }
+
+// ── Skin mode: fragments are HULL verts, not ellipsoid points ─────────────
+//
+// ShieldMode::Skin draws the ship's own hull mesh (slightly inflated) instead
+// of the ellipsoid, and engine/appc/hardpoint_overrides.py turns it on for the
+// Akira and the Sovereign. Those fragments sit at roughly 1/sqrt(3) of the
+// bubble's radius, because the bubble is sized so the hull AABB's CORNERS land
+// on it.
+//
+// The old angular measure compared pure DIRECTIONS, so it did not care how far
+// out the fragment was and skin mode worked unchanged. Measuring a world
+// distance to an epicentre projected onto the ELLIPSOID does care: on a
+// Sovereign the bow hull sits 3.50 GU out and the bubble 6.06 GU out, so every
+// hull fragment is 2.56 GU from its own epicentre — beyond even the maximum
+// 2.0 GU reach. The splash vanishes entirely.
+
+TEST(ShieldSplash, SkinModeFragmentsOnTheHullAreStillLit) {
+    const glm::vec3 centre(0.0f);
+    const glm::vec3 semi = kSovereignSemiGu;
+    const glm::vec3 hull_half = semi / kShieldEllipsoidAxisScale;
+
+    for (int k = 0; k < 3; ++k) {
+        // Hit and fragment are the SAME point on the hull — the fragment the
+        // impact landed on. It must be the brightest point of the splash.
+        glm::vec3 p(0.0f);
+        p[k] = hull_half[k];
+        const float reach = shield_splash_reach(0.13f);   // a photon torpedo
+
+        // The gap the projection introduces, which must not blank the splash.
+        const glm::vec3 epi = shield_splash_epicentre(p, centre, semi);
+        if (k == 1) EXPECT_GT(glm::length(epi - p), reach)
+            << "fixture no longer exercises the standoff";
+
+        EXPECT_GT(shield_splash_coverage(p, p, centre, semi, 0.0f, reach, 0.0f),
+                  1.0f)
+            << "axis " << k << ": the hull fragment the torpedo actually hit is "
+            << "dark, so a skin-shielded ship (Akira, Sovereign) shows no splash";
+    }
+}
