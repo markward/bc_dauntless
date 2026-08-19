@@ -34,9 +34,35 @@ class Severity(IntEnum):
 # renderer only renders the count it is told.
 SPARK_HULL_THRESHOLD = 80.0   # game-units of hull damage in one hit (tune-by-eye)
 
-# Peak brightness of the shield impact flash (seed intensity handed to the
-# shield_pass; it decays exponentially from here). 1.0 was too hot (tune-by-eye).
-SHIELD_IMPACT_INTENSITY = 0.5
+# Peak brightness of the shield impact flash — the seed handed to the
+# shield_pass, which decays exponentially from there. Both are tune-by-eye and
+# both are pure Python: changing them needs no rebuild.
+#
+# The seed is per PUSH, and the two weapon families push at wildly different
+# rates. ShieldState keeps the 8 most recent hits and the shader SUMS them, so
+# a phaser — which applies damage every tick — holds all 8 slots full of
+# near-simultaneous, near-co-located splashes: at 60 Hz with ShieldGlowDecay
+# 1.0 that is a summed intensity of 3.78 from this 0.5 seed. A torpedo is a
+# single push. Sharing one seed left torpedo impacts 7.6x dimmer than phaser
+# ones, which is exactly how they read in game.
+#
+# BC draws the same asymmetry: a shield hit always shows the glow, and a
+# torpedo ADDITIONALLY fires Effects.TorpedoShieldHit subject to a magnitude
+# check, while no PhaserShieldHit handler exists at all (stbc_reference
+# spec/ShieldFacingDamage.md §4.3) — the same split _play_audio already makes.
+SHIELD_IMPACT_INTENSITY = 0.5           # per phaser tick (and the default)
+SHIELD_IMPACT_INTENSITY_TORPEDO = 2.0   # one discrete impact
+
+
+def shield_impact_intensity(weapon_type: str | None) -> float:
+    """Seed brightness for a shield flash from `weapon_type`.
+
+    Anything that is not a torpedo — phaser, tractor, collision, unknown —
+    takes the per-tick default. Torpedoes and the disruptor/pulse bolts that
+    share their payload path get the single-impact seed.
+    """
+    return (SHIELD_IMPACT_INTENSITY_TORPEDO if weapon_type == "torpedo"
+            else SHIELD_IMPACT_INTENSITY)
 
 SPARK_KIND_PHASER = 0    # cool white-blue, fewer, tight cone
 SPARK_KIND_TORPEDO = 1   # hot orange, more, wide cone (also disruptor/default)
@@ -214,7 +240,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     iid,
                     (anchor.x, anchor.y, anchor.z),
                     (0.0, 0.0, 0.0, 0.0),
-                    SHIELD_IMPACT_INTENSITY,
+                    shield_impact_intensity(weapon_type),
                 )
 
     # 1b. Hull / critical impact — fires whenever damage got PAST the shields.
