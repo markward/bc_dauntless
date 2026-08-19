@@ -95,8 +95,16 @@ def test_quickbattle_cascade_completes_without_raising(monkeypatch):
 
 def test_quickbattle_player_only_defaults(monkeypatch):
     """After the cascade the player-only default state is injected: Galaxy
-    player ship + GalaxyBridge, QuickBattleRegion selected, empty enemy/friend
-    lists."""
+    player ship + GalaxyBridge, no region change requested, empty enemy/friend
+    lists.
+
+    g_sSelectedRegion is "" — BC's own "no region change requested" value
+    (InitGlobals sets it there). Naming the boot region explicitly would break
+    once g_pSet follows the player into another system: ChangeRegion's
+    `g_sSelectedRegion == g_pSet.GetName()` early-return would stop matching and
+    it would fall through to __import__("Systems.QuickBattleRegio.…") — the
+    [:-1] strip that assumes a trailing region digit.
+    """
     hl, controller = _fresh_quickbattle_loader(monkeypatch)
 
     controller.loader.load_quickbattle()
@@ -104,7 +112,7 @@ def test_quickbattle_player_only_defaults(monkeypatch):
     import QuickBattle.QuickBattle as QB
     assert QB.g_sPlayerType == "Galaxy"
     assert QB.g_sBridgeType == "GalaxyBridge"
-    assert QB.g_sSelectedRegion == "QuickBattleRegion"
+    assert QB.g_sSelectedRegion == ""
     assert QB.g_kEnemyList == []
     assert QB.g_kFriendList == []
 
@@ -295,6 +303,65 @@ def test_end_combat_removes_simulated_ships(monkeypatch):
     hl._process_object_deletions()           # host removes flagged objects
 
     assert _non_player_ships() == []         # simulated targets gone
+
+
+def _warp_player_to_new_set(set_name):
+    """Put the player in a brand-new set the way a warp arrival does, and return
+    it. Drives the real warp arrival action (engine.appc.warp._PlacePlayerAction)
+    so this precondition can't drift from how the player actually changes system."""
+    import App
+    from engine.appc import warp
+    from engine.core.game import Game_GetCurrentGame
+
+    dest = App.SetClass_Create()
+    App.g_kSetManager.AddSet(dest, set_name)
+    player = Game_GetCurrentGame().GetPlayer()
+    warp._PlacePlayerAction(player, set_name, "Player Start")._do_play()
+    assert player.GetContainingSet() is dest      # precondition, not the assertion
+    return dest
+
+
+def test_ships_spawn_in_the_players_current_system_after_a_warp(monkeypatch):
+    """Enemies/friendlies generate into whichever set the player is in NOW, not
+    the QuickBattleRegion the mission booted into.
+
+    QuickBattle.g_pSet is assigned once at mission init and only ever reassigned
+    by the SDK's Change Combat Region menu — which our CEF setup panel doesn't
+    expose. Warping moves the player but leaves that global stale, so
+    GenerateShips' CreateShip(sShipType, g_pSet, …) dropped every spawned ship
+    back into the boot region, invisible (the renderer scopes to the active set).
+    """
+    import App
+    import QuickBattle.QuickBattle as QB
+
+    hl, controller = _fresh_quickbattle_loader(monkeypatch)
+    controller.loader.load_quickbattle()
+
+    dest = _warp_player_to_new_set("TestSystem1")
+
+    QB.g_kEnemyList = [
+        ("Galaxy", "Galaxy", "msg", "QuickBattle.QuickBattleAI", "Enemy", 0.5),
+    ]
+    controller.loader.start_quickbattle()
+    App.g_kTimerManager.tick(3.0)          # past the 2s preload sequence
+    hl._fire_pending_preload_done()        # -> StartSimulation2 -> GenerateShips
+
+    assert QB.g_kShips, "no ship was generated"
+
+    spawned = [App.ShipClass_Cast(App.TGObject_GetTGObjectPtr(i)) for i in QB.g_kShips]
+    assert all(s is not None for s in spawned)
+    for ship in spawned:
+        assert ship.GetContainingSet() is dest, (
+            f"{ship.GetName()} spawned in "
+            f"{ship.GetContainingSetName()!r}, not the player's system"
+        )
+        # StartSimulation2 assigns AI only AFTER ChangeRegion(), so this is what
+        # proves it ran to completion. bInSimulation would not: it is set near
+        # the top, before ChangeRegion. And a ChangeRegion raise is invisible —
+        # StartSimulation2 runs as a broadcast handler, whose guard logs and
+        # swallows handler-body exceptions, so the AI assignment, red alert and
+        # tactical switch would just silently never happen.
+        assert ship.GetAI() is not None, f"{ship.GetName()} was never given an AI"
 
 
 def test_player_ship_reverts_to_original_on_end_combat(monkeypatch):

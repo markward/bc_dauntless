@@ -4823,20 +4823,60 @@ class _MissionLoader:
         """Set the player-only QuickBattle defaults and post the faithful
         ET_START_SIMULATION through the SDK's own globals/handlers.
 
-        Galaxy player ship + GalaxyBridge, the QuickBattleRegion as the
-        selected region, and empty enemy/friend lists (a player-only battle).
-        The event is targeted at QuickBattle.g_pXO (the SDK BuildDialog
-        registered StartSimulation there) and posted via g_kEventManager so the
-        SDK handler runs unchanged.
+        Galaxy player ship + GalaxyBridge, no pending region change, and empty
+        enemy/friend lists (a player-only battle). The event is targeted at
+        QuickBattle.g_pXO (the SDK BuildDialog registered StartSimulation there)
+        and posted via g_kEventManager so the SDK handler runs unchanged.
+
+        g_sSelectedRegion stays "" — BC's own "no region change requested" value
+        (what InitGlobals sets, QuickBattle.py:933), set only when the player
+        picks from the Change Combat Region menu. Naming the boot region here
+        instead was equivalent while g_pSet was pinned to QuickBattleRegion, but
+        breaks once g_pSet follows the player into another system
+        (_sync_quickbattle_spawn_set): ChangeRegion's
+        `g_sSelectedRegion == g_pSet.GetName()` early-return stops matching and
+        it falls through to __import__("Systems." + g_sSelectedRegion[:-1] + …),
+        a strip that assumes the name ends in a region digit —
+        "Systems.QuickBattleRegio.QuickBattleRegion", ImportError.
         """
         import App
         import QuickBattle.QuickBattle as QB
 
         QB.g_sPlayerType = "Galaxy"
         QB.g_sBridgeType = "GalaxyBridge"
-        QB.g_sSelectedRegion = "QuickBattleRegion"
+        QB.g_sSelectedRegion = ""
         QB.g_kEnemyList = []
         QB.g_kFriendList = []
+
+    @staticmethod
+    def _sync_quickbattle_spawn_set() -> None:
+        """Point QuickBattle.g_pSet at the set the player is in RIGHT NOW.
+
+        g_pSet is the set every simulated ship is spawned into
+        (GenerateShips -> CreateShip(sShipType, g_pSet, …), QuickBattle.py:2785),
+        cleaned out of (EndSimulation, :3210) and proximity-updated against
+        (RecreatePlayer, :2913). The SDK assigns it once at mission init and only
+        ever reassigns it from the Change Combat Region menu — which our CEF
+        setup panel doesn't expose. Warping (Set Course -> Helm Warp) moves the
+        player into the destination set but leaves the global stale, so ships
+        spawned after a warp landed back in the boot region, near the player's
+        coordinates but in the wrong set — invisible, since the renderer scopes
+        to the active set.
+
+        Called from start_quickbattle, the one entry point to the whole
+        simulation (the setup panel's Start is wired to it). No-op when there is
+        no player or it isn't in a set yet.
+        """
+        import QuickBattle.QuickBattle as QB
+        from engine.core.game import Game_GetCurrentGame
+
+        game = Game_GetCurrentGame()
+        player = game.GetPlayer() if game is not None else None
+        if player is None:
+            return
+        player_set = player.GetContainingSet()
+        if player_set is not None:
+            QB.g_pSet = player_set
 
     def start_quickbattle(self) -> None:
         """Post ET_START_SIMULATION to g_pXO via the SDK event manager.
@@ -4848,6 +4888,9 @@ class _MissionLoader:
         """
         import App
         import QuickBattle.QuickBattle as QB
+
+        # Spawn into the player's current system, not the booted-into one.
+        self._sync_quickbattle_spawn_set()
 
         evt = App.TGEvent_Create()
         evt.SetEventType(QB.ET_START_SIMULATION)
