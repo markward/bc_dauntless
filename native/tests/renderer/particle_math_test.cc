@@ -96,3 +96,26 @@ TEST(ParticleMath, StreakQuadDegeneratesAndAligns) {
     glm::vec3 long_edge = st[2] - st[1];
     EXPECT_GT(std::abs(glm::dot(glm::normalize(long_edge), axis)), 0.9f);
 }
+
+// Sprite sheets are sampled through one LOD chain computed from the WHOLE
+// texture, so a shrinking puff eventually lands on mips where a single cell is
+// a couple of texels: neighbouring cells bleed in and the sheet averages to a
+// flat wash, turning the quad into a uniform translucent square. Clamp the
+// chain so a cell never falls below min_cell_texels.
+TEST(ParticleMath, AtlasMaxMipLevelClampsSheetsAndLeavesPlainTexturesAlone) {
+    // ExplosionA/B: 256x256 at 8x8 => 32-texel cells. Level 3 is a 4-texel
+    // cell; levels 4-7 (where the whole sheet washes out) become unsamplable.
+    EXPECT_EQ(atlas_max_mip_level(256, 256, 8, 8), 3);
+
+    // Non-atlas emitters must actively RESTORE the GL default, not inherit a
+    // clamp left on the texture object by an earlier atlas emitter.
+    EXPECT_EQ(atlas_max_mip_level(256, 256, 1, 1), 1000);
+    EXPECT_EQ(atlas_max_mip_level(256, 256, 0, 0), 1000);
+
+    // A cell already at the floor gets level 0, never a negative level.
+    EXPECT_EQ(atlas_max_mip_level(32, 32, 8, 8), 0);
+    EXPECT_EQ(atlas_max_mip_level(16, 16, 8, 8), 0);
+
+    // Non-square sheets take the smaller cell dimension: 256/8=32 vs 128/8=16.
+    EXPECT_EQ(atlas_max_mip_level(256, 128, 8, 8), 2);
+}

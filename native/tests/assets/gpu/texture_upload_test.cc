@@ -52,3 +52,39 @@ TEST_F(TextureUploadTest, Rgb8Uploads) {
     EXPECT_TRUE(glIsTexture(tex.id()));
     EXPECT_FALSE(tex.has_mipmaps());  // dimensions <= 4
 }
+
+// The atlas mip clamp is applied per-emitter at BIND time, not at upload time:
+// the grid is a property of the emitter, not of the texture file, and
+// upload_image's signature is load-bearing (model_build.cc binds its address
+// through a TextureUploaderFn typedef). So the clamp has to be settable, and
+// resettable, on an already-uploaded texture.
+TEST_F(TextureUploadTest, MaxLevelIsSettableAndRestorableAfterUpload) {
+    assets::Image img;
+    img.width = 256;
+    img.height = 256;
+    img.format = assets::Image::Format::RGBA8;
+    img.pixels.assign(256 * 256 * 4, 0x80);
+    auto tex = assets::upload_image(img, /*generate_mipmaps=*/true);
+    ASSERT_NE(tex.id(), 0u);
+
+    assets::set_texture_max_level(tex, 3);
+    GLint level = 0;
+    glBindTexture(GL_TEXTURE_2D, tex.id());
+    glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, &level);
+    EXPECT_EQ(level, 3);
+
+    // 1000 is the GL default: a later 1x1 emitter on the same texture must be
+    // able to undo an earlier atlas emitter's clamp.
+    assets::set_texture_max_level(tex, 1000);
+    glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, &level);
+    EXPECT_EQ(level, 1000);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+TEST_F(TextureUploadTest, MaxLevelOnEmptyTextureIsANoOp) {
+    assets::Texture empty;
+    ASSERT_EQ(empty.id(), 0u);
+    assets::set_texture_max_level(empty, 3);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}

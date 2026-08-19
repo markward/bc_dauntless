@@ -68,6 +68,14 @@ private:
 Image decode_tga(std::span<const std::uint8_t> bytes);
 Texture upload_image(const Image& image, bool generate_mipmaps = true);
 
+/// Set GL_TEXTURE_MAX_LEVEL on an already-uploaded texture. 1000 is GL's
+/// default (the full chain). Applied after upload rather than during it because
+/// the sensible clamp depends on how a texture is USED — the same sheet can be
+/// bound at different atlas grids — and because upload_image's signature is
+/// load-bearing: model_build.cc binds its address through a TextureUploaderFn
+/// typedef. No-op on an empty texture.
+void set_texture_max_level(const Texture& tex, int max_level);
+
 }  // namespace assets
 
 namespace nif { struct NiRawImageData; }

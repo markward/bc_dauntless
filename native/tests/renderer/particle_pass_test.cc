@@ -268,3 +268,76 @@ TEST_F(ParticlePassTest, SdkTexturePathLoadsRealAsset) {
 }
 
 }  // namespace
+
+// ── Atlas mip clamp ─────────────────────────────────────────────────────────
+// ExplosionA/B are 256x256 8x8 sheets. LOD is computed from the whole texture,
+// so past ~8 screen px the sampler reaches mips where a cell is a couple of
+// texels, neighbours bleed in, and by mip 5 the sheet averages to a flat wash —
+// the puff degenerates into a uniform translucent square. The pass must clamp
+// GL_TEXTURE_MAX_LEVEL per emitter at bind time, and a later non-atlas emitter
+// on the same texture must restore GL's default.
+//
+// texture_for() is private, so assert on observable GL state: count live
+// textures carrying the expected clamp.
+namespace {
+int count_textures_at_max_level(int wanted) {
+    int found = 0;
+    for (GLuint id = 1; id <= 512; ++id) {
+        if (!glIsTexture(id)) continue;
+        glBindTexture(GL_TEXTURE_2D, id);
+        GLint level = 0;
+        glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, &level);
+        if (level == wanted) ++found;
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    while (glGetError() != GL_NO_ERROR) {}
+    return found;
+}
+}  // namespace
+
+TEST_F(ParticlePassTest, AtlasEmitterClampsMipChainAndPlainEmitterRestoresIt) {
+    namespace fs = std::filesystem;
+    const fs::path tex_path = project_root()
+        / "game" / "data" / "Textures" / "Effects" / "ExplosionB.tga";
+    if (!fs::is_regular_file(tex_path)) {
+        GTEST_SKIP() << "BC asset absent: " << tex_path;
+    }
+
+    renderer::ParticlePass pass;
+    scenegraph::World world;
+    scenegraph::Camera camera;
+    camera.eye    = {0.0f, 0.0f, 100.0f};
+    camera.target = {0.0f, 0.0f,   0.0f};
+    camera.up     = {0.0f, 1.0f,   0.0f};
+    camera.aspect = 1.0f;
+    while (glGetError() != GL_NO_ERROR) {}
+
+    renderer::ParticleEmitterDescriptor e;
+    e.texture_path    = tex_path.string();
+    e.emit_dir        = {0.0f, 1.0f, 0.0f};
+    e.inherit         = 0.0f;
+    e.emit_life       = 1.0f;
+    e.emit_frequency  = 0.5f;
+    e.effect_age      = 0.1f;
+    e.num_size_keys   = 1; e.size_keys[0]  = renderer::ParticleKey{0.0f, 1.0f};
+    e.num_alpha_keys  = 1; e.alpha_keys[0] = renderer::ParticleKey{0.0f, 1.0f};
+
+    const int before = count_textures_at_max_level(3);
+
+    e.atlas_cols = 8;
+    e.atlas_rows = 8;
+    std::vector<renderer::ParticleEmitterDescriptor> atlas{e};
+    pass.render(atlas, world, camera, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_EQ(count_textures_at_max_level(3), before + 1)
+        << "an 8x8 sheet at 256x256 must clamp GL_TEXTURE_MAX_LEVEL to 3";
+
+    // Same texture, non-atlas emitter: the clamp must not persist.
+    e.atlas_cols = 1;
+    e.atlas_rows = 1;
+    std::vector<renderer::ParticleEmitterDescriptor> plain{e};
+    pass.render(plain, world, camera, *pipeline);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_EQ(count_textures_at_max_level(3), before)
+        << "a 1x1 emitter must restore the default chain, not inherit the clamp";
+}

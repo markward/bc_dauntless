@@ -93,6 +93,31 @@ inline float damped_travel(float v, float c, float tau) {
     return (c > 1e-6f) ? (v / c) * (1.0f - std::exp(-c * tau)) : v * tau;
 }
 
+/// GL_TEXTURE_MAX_LEVEL for a sprite-sheet texture, so that the smallest
+/// samplable mip still holds at least `min_cell_texels` per cell.
+///
+/// LOD is computed from the WHOLE texture, not from the cell the shader
+/// actually samples, so a shrinking atlas particle walks off the end of its
+/// cell: neighbouring cells bleed in and, a couple of levels further down, the
+/// entire sheet averages to a flat wash and the quad degenerates into a uniform
+/// translucent SQUARE. ExplosionA/B (256x256 at 8x8) hit that by mip 5.
+///
+/// Returns GL's default 1000 for a non-atlas grid, so a 1x1 emitter actively
+/// RESTORES the default rather than inheriting a clamp another emitter left on
+/// the shared texture object.
+inline int atlas_max_mip_level(unsigned tex_w, unsigned tex_h,
+                               int cols, int rows,
+                               int min_cell_texels = 4) {
+    if (cols <= 1 && rows <= 1) return 1000;
+    const unsigned c = static_cast<unsigned>(std::max(1, cols));
+    const unsigned r = static_cast<unsigned>(std::max(1, rows));
+    const unsigned cell = std::min(tex_w / c, tex_h / r);
+    if (cell <= static_cast<unsigned>(std::max(1, min_cell_texels))) return 0;
+    const float ratio = static_cast<float>(cell)
+                      / static_cast<float>(std::max(1, min_cell_texels));
+    return std::max(0, static_cast<int>(std::floor(std::log2(ratio))));
+}
+
 /// Four world-space corners of a particle quad. length<=0 => a camera-facing
 /// square of half-extent `half_width`. length>0 => long axis along `vel_axis`
 /// (length = streak length), short axis the camera-facing perpendicular
