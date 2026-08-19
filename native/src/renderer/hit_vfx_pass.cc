@@ -211,6 +211,11 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
     // (the two passes share hit_vfx_shader).
     shader.set_vec2("u_atlas_grid", glm::vec2(1.0f, 1.0f));
     shader.set_vec2("u_atlas_cell", glm::vec2(0.0f, 0.0f));
+    // Same reason, and this one is load-bearing: uniform values are program
+    // state that survives use(), and this pass renders BEFORE the particle pass
+    // each frame, so without the reset every impact flash inherits the previous
+    // frame's last particle roll and visibly spins.
+    shader.set_float("u_roll", 0.0f);
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);

@@ -119,3 +119,72 @@ TEST(ParticleMath, AtlasMaxMipLevelClampsSheetsAndLeavesPlainTexturesAlone) {
     // Non-square sheets take the smaller cell dimension: 256/8=32 vs 128/8=16.
     EXPECT_EQ(atlas_max_mip_level(256, 128, 8, 8), 2);
 }
+
+// Every billboard is built from the same camera basis, so N copies of one
+// sprite sit in identical orientation and read as a repeating stamp. A
+// per-particle roll about the view axis breaks that up. These are the GL-free
+// oracle for hit_vfx.vert — keep the two in step.
+TEST(ParticleMath, BillboardRollRotatesTheBasisInPlane) {
+    const glm::vec3 cam_right{1, 0, 0};
+    const glm::vec3 cam_up{0, 1, 0};
+
+    glm::vec3 r = cam_right, u = cam_up;
+    billboard_roll_basis(r, u, 0.0f);
+    EXPECT_NEAR(glm::length(r - cam_right), 0.f, 1e-6f) << "roll 0 must be identity";
+    EXPECT_NEAR(glm::length(u - cam_up),    0.f, 1e-6f);
+
+    r = cam_right; u = cam_up;
+    billboard_roll_basis(r, u, 1.57079633f);   // +90 degrees
+    EXPECT_NEAR(glm::length(r - cam_up),     0.f, 1e-5f) << "right -> up";
+    EXPECT_NEAR(glm::length(u + cam_right),  0.f, 1e-5f) << "up -> -right";
+
+    // The quad must not shear, shrink, or flip: lengths, orthogonality and the
+    // view axis (right x up) all survive an arbitrary roll.
+    r = cam_right * 2.0f; u = cam_up * 2.0f;
+    billboard_roll_basis(r, u, 0.7f);
+    EXPECT_NEAR(glm::length(r), 2.f, 1e-5f);
+    EXPECT_NEAR(glm::length(u), 2.f, 1e-5f);
+    EXPECT_NEAR(glm::dot(r, u), 0.f, 1e-5f);
+    EXPECT_NEAR(glm::length(glm::cross(r, u) - glm::cross(cam_right * 2.0f,
+                                                          cam_up * 2.0f)),
+                0.f, 1e-5f);
+}
+
+TEST(ParticleMath, ParticleRollIsDeterministicAndBounded) {
+    const glm::vec2 h{0.25f, 0.9f};
+
+    // Deterministic: the pass re-derives every particle from its hash each
+    // frame, so the same input must give the same angle or sprites flicker.
+    EXPECT_FLOAT_EQ(particle_roll(h, 1.5f, 0.4f), particle_roll(h, 1.5f, 0.4f));
+
+    // rate 0 => a fixed random angle: independent of age, inside one turn.
+    const float fixed = particle_roll(h, 0.0f, 0.0f);
+    EXPECT_FLOAT_EQ(particle_roll(h, 0.0f, 9.0f), fixed);
+    EXPECT_GE(fixed, 0.0f);
+    EXPECT_LT(fixed, 6.2831854f);
+
+    // Spin magnitude is bounded by rate*tau...
+    EXPECT_LE(std::abs(particle_roll(h, 2.0f, 3.0f) - fixed), 2.0f * 3.0f + 1e-4f);
+
+    // ...and particles on opposite sides of the hash midpoint spin opposite
+    // ways, so a cloud tumbles rather than rotating as one rigid sheet.
+    const float cw  = particle_roll({0.25f, 0.9f}, 2.0f, 1.0f)
+                    - particle_roll({0.25f, 0.9f}, 0.0f, 0.0f);
+    const float ccw = particle_roll({0.25f, 0.1f}, 2.0f, 1.0f)
+                    - particle_roll({0.25f, 0.1f}, 0.0f, 0.0f);
+    EXPECT_LT(cw * ccw, 0.0f) << "h.y either side of 0.5 must give opposite spin";
+}
+
+// A streak's `up` IS its velocity axis; rolling it about the view vector would
+// slide sparks off their own trajectory. Encodes the decision so a future
+// refactor cannot quietly start rolling streaks.
+TEST(ParticleMath, StreakQuadIgnoresRoll) {
+    const glm::vec3 center{0, 0, 0}, axis{0, 1, 0};
+    const glm::vec3 cam_right{1, 0, 0}, cam_up{0, 0, 1};
+    auto unrolled = streak_quad(center, axis, 2.0f, 0.1f, cam_right, cam_up);
+    auto rolled   = streak_quad(center, axis, 2.0f, 0.1f, cam_right, cam_up, 1.0f);
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_NEAR(glm::length(rolled[i] - unrolled[i]), 0.f, 1e-6f)
+            << "corner " << i << " moved: roll must not touch the streak path";
+    }
+}
