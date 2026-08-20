@@ -540,17 +540,21 @@ size_t differing_texels(const std::vector<unsigned char>& a,
 
 template <class Lut>
 void render_ship(scenegraph::World& world, renderer::Pipeline& pipeline,
-                 Lut&& lut, float eye_z) {
+                 Lut&& lut, float eye_z,
+                 const renderer::Lighting& lighting = renderer::Lighting(),
+                 const std::vector<renderer::DynamicLightDescriptor>*
+                     dyn_lights = nullptr) {
     scenegraph::Camera cam;
     cam.eye = glm::vec3(0, 0, eye_z); cam.target = glm::vec3(0);
     cam.aspect = 1.0f;
     renderer::FrameSubmitter submitter;
-    renderer::Lighting lighting;
     glViewport(0, 0, 256, 256);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     submitter.submit_opaque_in_pass(world, cam, pipeline, lut, lighting,
-                                    scenegraph::Pass::Space, 0.0f);
+                                    scenegraph::Pass::Space, 0.0f,
+                                    /*carve_cache=*/nullptr,
+                                    /*ambient_scale=*/1.0f, dyn_lights);
 }
 
 TEST_F(FrameTest, NormalMapChangesShadingAndZeroStrengthMatchesDisabled) {
@@ -602,6 +606,98 @@ TEST_F(FrameTest, NormalMapChangesShadingAndZeroStrengthMatchesDisabled) {
         << "strength 0 must collapse to the geometric normal, matching disabled";
     EXPECT_GT(differing_texels(frame_zero, frame_on), 0u)
         << "strength 1 must perturb shading somewhere on the bottom wing";
+}
+
+
+
+// The test above only exercises the DIRECTIONAL-light sites (opaque.frag
+// n_shade at :548/:554) because the default Lighting carries a directional
+// light and no dynamic lights are passed, so u_dyn_light_count == 0 and the
+// dynamic-lights loop (diffuse :590, specular :639) never runs. Commit
+// e6744d0c fixed exactly that dead zone -- the dynamic specular term was
+// still reading the geometric normal, a regression invisible to a test with
+// no dynamic lights. This test isolates the dynamic-light path: ambient and
+// the directional light are zeroed, so every visible texel's shading comes
+// solely from the u_dyn_light_* loop, exercising both the diffuse (:590) and
+// specular (:639) reads of n_shade for the first time in this suite.
+//
+// NOTE on what this test can and cannot prove (see the fix report for the
+// measurements behind this): an attempt was made to isolate the SPECULAR
+// site's own dependency on n_shade specifically -- toggling the global
+// dauntless_specular gate to compare "diffuse alone" against "diffuse +
+// specular" -- but it does not work on this asset/camera combination. With
+// this material's specular_power (48-1536, glossiness_to_specular_power),
+// pow(dot(n_shade, H), power) is a near-step function: across dozens of
+// light positions/intensities tried, the specular contribution's OWN
+// dependence on the strength-0-vs-1 perturbation was consistently either
+// fully saturated (clipped, masking the strength delta) or exactly zero
+// texels different from the diffuse-only baseline -- even though toggling
+// specular fully on/off at a FIXED strength moves tens of thousands of
+// texels. A full-frame statistical diff cannot reliably land on the razor-
+// thin dot(n_shade,H) band where a sub-degree bump perturbation crosses the
+// pow() threshold; that would need per-pixel picking at a hand-tuned UV, out
+// of scope here. So this test proves the dynamic-lights CODE PATH runs (both
+// reads execute, no GL error) and produces a real shading change -- matching
+// exactly what the directional test above asserts -- but, like that test, it
+// cannot attribute the difference to diffuse vs. specular individually.
+TEST_F(FrameTest, DynamicLightNormalMapChangesShadingOnDynamicLightPath) {
+    if (!std::filesystem::is_regular_file(kWarbirdNif))
+        GTEST_SKIP() << "asset missing: " << kWarbirdNif;
+    if (!std::filesystem::is_regular_file(
+            kWarbirdTex / "WarBirdBottomWing_normal.tga"))
+        GTEST_SKIP() << "test normal map not installed";
+
+    auto model_h = cache->load(kWarbirdNif, kWarbirdTex);
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    scenegraph::World world;
+    auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    const float kEyeZ = 2500.0f;
+
+    renderer::Lighting dark;
+    dark.ambient = glm::vec3(0.0f);
+    dark.directional_count = 0;
+
+    // A headlamp-style dynamic light co-located with the camera: L is then
+    // ~parallel to V for every front-facing (visible) triangle, so it lights
+    // whatever part of the hull is on screen without needing the bottom
+    // wing's exact model-space position.
+    std::vector<renderer::DynamicLightDescriptor> lights(1);
+    lights[0].pos_a = glm::vec3(0.0f, 0.0f, kEyeZ);
+    lights[0].pos_b = lights[0].pos_a;
+    lights[0].color = glm::vec3(1.0f);
+    lights[0].radius = kEyeZ * 2.0f;
+    lights[0].intensity = 4.0f;
+
+    dauntless_normal_map::set_enabled(true);
+    dauntless_normal_map::set_strength(0.0f);
+    render_ship(world, *p, lut, kEyeZ, dark, &lights);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto frame_zero = read_frame();
+
+    dauntless_normal_map::set_strength(1.0f);
+    render_ship(world, *p, lut, kEyeZ, dark, &lights);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto frame_on = read_frame();
+
+    dauntless_normal_map::set_strength(1.0f);   // leave at defaults
+    dauntless_normal_map::set_enabled(true);
+
+    // Sanity: the dynamic-only light must actually put something on screen,
+    // or the comparison below is two black frames.
+    size_t lit = 0;
+    for (size_t i = 0; i + 3 < frame_on.size(); i += 4)
+        if (frame_on[i] || frame_on[i+1] || frame_on[i+2]) ++lit;
+    ASSERT_GT(lit, 500u)
+        << "Warbird not lit by the dynamic-only light at eye_z=" << kEyeZ;
+
+    EXPECT_GT(differing_texels(frame_zero, frame_on), 0u)
+        << "dynamic-light shading must track n_shade (the perturbed normal), "
+           "not the geometric normal -- see commit e6744d0c";
 }
 
 // Count "direction changes" (sign flips of consecutive deltas) in a sequence,

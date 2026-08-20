@@ -511,6 +511,56 @@ TEST_F(ModelBuildTest, ReplacementMatchIsCaseSensitive) {
     EXPECT_EQ(bridge_base, 1) << "lowercase-id 'bridge' texture must be UNTOUCHED";
 }
 
+// A sibling `_normal.tga` that exists but fails to decode (truncated/garbage
+// bytes) must be SKIPPED, not substituted with the checkerboard the BASE
+// texture path uses on failure: a checkerboard bound as a normal map is
+// violent garbage lighting, not a legible "missing texture" marker. The hull
+// itself must still render from its Base texture.
+TEST_F(ModelBuildTest, CorruptNormalSiblingIsSkippedNotCheckerboarded) {
+    write_tga("hull_ID.tga");
+    {
+        std::ofstream out(tmp_dir / "hull_ID_normal.tga", std::ios::binary);
+        const std::uint8_t garbage[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02};
+        out.write(reinterpret_cast<const char*>(garbage), sizeof(garbage));
+    }
+    auto f = file_with_textured_shape();
+    auto model = assets::detail::build_model(f, make_ctx());
+
+    ASSERT_EQ(model.materials.size(), 1u);
+    using S = assets::Material::StageSlot;
+    EXPECT_LT(model.materials[0]
+                  .stages[static_cast<std::size_t>(S::Bump)]
+                  .texture_index,
+              0)
+        << "corrupt normal map must be skipped, never bound as a checkerboard";
+    EXPECT_GE(base_texture_index(model), 0)
+        << "hull must still render from its Base texture";
+}
+
+// Self-sufficient counterpart to WarbirdBottomWingGetsBumpFromSiblingOnDisk
+// below: proves the full probe -> Bump path (load_all_textures' sibling
+// probe in model_build.cc + build_material's Bump routing in
+// material_build.cc) using only a synthetic NIF + a valid TGA written into
+// this fixture's own temp dir -- no BC install required. The Warbird test
+// stays, checked against a real 1024x1024 RLE map where the assets exist;
+// this is the floor beneath it that runs everywhere, including CI.
+TEST_F(ModelBuildTest, SyntheticHullWithNormalSiblingGetsBumpFromDisk) {
+    write_tga("hull_ID.tga");
+    write_tga("hull_ID_normal.tga");
+    auto f = file_with_textured_shape();
+    auto model = assets::detail::build_model(f, make_ctx());
+
+    ASSERT_EQ(model.materials.size(), 1u);
+    using S = assets::Material::StageSlot;
+    EXPECT_GE(model.materials[0]
+                  .stages[static_cast<std::size_t>(S::Bump)]
+                  .texture_index,
+              0)
+        << "sibling hull_ID_normal.tga on disk must bind to Bump";
+    EXPECT_GE(base_texture_index(model), 0)
+        << "hull must still render from its Base texture";
+}
+
 TEST(ModelBuildFilenames, NormalPredicateMatchesLongAndShortForms) {
     using assets::detail::filename_is_normal;
     EXPECT_TRUE (filename_is_normal("Hull_normal.tga"));

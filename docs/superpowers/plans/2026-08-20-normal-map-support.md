@@ -1113,6 +1113,18 @@ git commit -m "feat(dev): normal-map enable, green-flip, and strength tunables i
 
 A green suite cannot see whether the map actually reads on screen; the asset paths, the green convention, and the strength calibration are all things only a live run shows.
 
+**Asset-gated tests will SKIP on any machine without the hand-placed
+`game/data/Models/Ships/Warbird/High/WarBirdBottomWing_normal.tga`** —
+`ModelBuildNormalDiscovery.WarbirdBottomWingGetsBumpFromSiblingOnDisk`,
+`FrameTest.NormalMapChangesShadingAndZeroStrengthMatchesDisabled`, and
+`FrameTest.DynamicLightNormalMapChangesShadingOnDynamicLightPath`. That file
+is gitignored and untracked (`.gitignore:9` covers `game/`; no BC install
+ships it), so a `GTEST_SKIP` there is the **expected** result on a fresh
+checkout or CI, not a sign anything is broken. The zero-external-assets floor
+is `ModelBuildTest.SyntheticHullWithNormalSiblingGetsBumpFromDisk`
+(synthetic NIF + a valid TGA written into the fixture's own temp dir), which
+runs everywhere and proves the same probe -> Bump path without the asset.
+
 ```bash
 cmake -B build -S . && cmake --build build -j
 ./build/dauntless --developer
@@ -1148,7 +1160,7 @@ cmake -B build -S . && cmake --build build -j
 | Indexed/16bpp TGA handled | 3 (same catch — `decode_tga` throws `UnsupportedTga`) |
 | Unit tests for predicates | 1 |
 | Material-build Bump tests | 2 |
-| Probe-exclusion test | 3 (`ShipWithoutNormalSiblingsLeavesEveryBumpEmpty` covers the negative; the derived-map guard is exercised by the Warbird test, whose `_specular` sibling must not produce a `_specular_normal` probe) |
+| Probe-exclusion test | 3 (`ShipWithoutNormalSiblingsLeavesEveryBumpEmpty` covers the negative). The derived-map guard itself (never probing a `_specular` or `_normal` source for its own `_normal` sibling) is implemented in `load_all_textures`'s `is_derived_map` check but is **not directly tested** — the Warbird test only asserts `bumped > 0`, so a stray unwanted probe for `WarBirdBottomWing_specular_normal.tga` would simply miss and leave that assertion unaffected. Fixed 2026-08-20: this row previously claimed the Warbird test exercised the guard; it does not. |
 | Frame test: unmapped unchanged, mapped differs, strength 0 == unmapped | 4 |
 
 **Placeholder scan:** no TBD/TODO; every code step carries the actual code. Two steps name a tolerance the implementer must confirm empirically (`kEyeZ` framing, and the `nif::parse` spelling) — both are stated as explicit verification steps with the failure symptom described, not as unspecified work.
