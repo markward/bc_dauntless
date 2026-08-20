@@ -275,3 +275,55 @@ def test_quickbattle_anchors_on_deep_space_with_a_here_reticle():
     here = [b for b in scene["brackets"] if b["mark"] == sm.MARK_HERE]
     assert len(here) == 1
     assert here[0]["id"] == "deepspace"
+
+
+# --- one system, several states -------------------------------------------
+
+def _one_system_marks(**kw):
+    """The mark a single system ends up with when several states collide."""
+    model = {"systems": [{"id": "vesuvi", "position": [0.0, 0.0, 0.0],
+                          "module": "m"}],
+             "nebulae": [], "starclouds": []}
+    brackets = sm.build_scene(model=model, **kw)["brackets"]
+    assert len(brackets) <= 1
+    return brackets[0]["mark"] if brackets else None
+
+
+def test_mark_precedence_is_course_then_mission_then_here():
+    """A system can hold several states at once — you can set a course inside
+    the system you are already in, and most systems have several regions — but
+    it gets one bracket. COURSE > MISSION > HERE.
+
+    Every pair is pinned, not just the end result: the precedence lives in the
+    ORDER three lines are applied, which a later edit could reshuffle without
+    changing anything else.
+    """
+    HERE, COURSE, MISSION = sm.MARK_HERE, sm.MARK_COURSE, sm.MARK_MISSION
+
+    # Singles.
+    assert _one_system_marks(here_id="vesuvi") == HERE
+    assert _one_system_marks(course_id="vesuvi") == COURSE
+    assert _one_system_marks(mission_ids=("vesuvi",)) == MISSION
+
+    # Pairs.
+    assert _one_system_marks(here_id="vesuvi",
+                             mission_ids=("vesuvi",)) == MISSION
+    assert _one_system_marks(here_id="vesuvi", course_id="vesuvi") == COURSE
+    assert _one_system_marks(course_id="vesuvi",
+                             mission_ids=("vesuvi",)) == COURSE
+
+    # All three.
+    assert _one_system_marks(here_id="vesuvi", course_id="vesuvi",
+                             mission_ids=("vesuvi",)) == COURSE
+
+
+def test_colliding_states_still_produce_exactly_one_drop_line():
+    """The drop-line follows the bracket, so a system holding several states
+    must not stack three of them."""
+    model = {"systems": [{"id": "vesuvi", "position": [0.0, 0.0, 0.0],
+                          "module": "m"}],
+             "nebulae": [], "starclouds": []}
+    scene = sm.build_scene(model=model, here_id="vesuvi", course_id="vesuvi",
+                           mission_ids=("vesuvi",))
+    drops = [ln for ln in scene["lines"] if ln["kind"] == "drop"]
+    assert len(drops) == 1

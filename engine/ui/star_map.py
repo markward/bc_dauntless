@@ -196,13 +196,22 @@ def build_scene(*, model=None, here_id=None, course_id=None,
                   for gx in model.get("starclouds", [])]
 
     # --- lines: faint grid, drop-lines for reticled systems, course ---
+    # One system can hold several states at once — you can set a course
+    # within the system you are already in, and most systems have more than
+    # one region — but it gets exactly ONE bracket. Precedence is
+    # COURSE > MISSION > HERE (Mark, 2026-08-20).
+    #
+    # Applied WEAKEST FIRST so a stronger mark overwrites a weaker one. The
+    # order of these three lines IS the precedence, which is why it is stated
+    # above rather than left to be inferred: it was previously incidental —
+    # course beat here only by being the second assignment, and mission lost
+    # to both through a `setdefault` — and nothing tested any collision.
     reticled = {}
-    if here_id in by_id:
-        reticled[here_id] = MARK_HERE
-    if course_id in by_id:
-        reticled[course_id] = MARK_COURSE
-    for m in mission:
-        reticled.setdefault(m, MARK_MISSION)
+    for sid, mark in ([(here_id, MARK_HERE)]
+                      + [(m, MARK_MISSION) for m in mission]
+                      + [(course_id, MARK_COURSE)]):
+        if sid in by_id:
+            reticled[sid] = mark
 
     lines = _grid_lines()
     for sid in reticled:
