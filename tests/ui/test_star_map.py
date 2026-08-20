@@ -355,3 +355,70 @@ def test_the_bracket_encloses_the_star_it_marks():
     # anything — it then blocked a size Mark had chosen on the screen. How
     # much air looks right is a live judgement; that the reticle encloses what
     # it marks is the part code can hold.
+
+
+# --- the reference plane sits under the chart ------------------------------
+
+def test_the_grid_is_framed_on_the_systems_not_the_world_origin():
+    """The sector layout comes from a force-directed relaxation with no reason
+    to settle on the origin, and it did not: the real systems centre near
+    (150, 32). A plane fixed at (0, 0) sat off to one side of the chart.
+    """
+    model = {
+        "systems": [
+            {"id": "a", "position": [1000.0, 500.0, 10.0], "module": "m"},
+            {"id": "b", "position": [1100.0, 700.0, 30.0], "module": "m"},
+        ],
+        "nebulae": [], "starclouds": [],
+    }
+    cx, cy, half, _z = sm.grid_bounds(sm._real_systems(model))
+    assert (cx, cy) == (1050.0, 600.0)          # bbox centre, not the origin
+    # Every system inside the plane, with margin.
+    assert cx - half <= 1000.0 and 1100.0 <= cx + half
+    assert cy - half <= 500.0 and 700.0 <= cy + half
+
+
+def test_grid_cells_stay_square():
+    """One half-extent drives both axes. Fitting each axis separately would
+    stretch the cells into rectangles and misread as perspective."""
+    model = {
+        "systems": [
+            {"id": "a", "position": [0.0, 0.0, 0.0], "module": "m"},
+            {"id": "b", "position": [10.0, 400.0, 0.0], "module": "m"},
+        ],
+        "nebulae": [], "starclouds": [],
+    }
+    lines = sm._grid_lines(sm._real_systems(model))
+    spans = {round(abs(l["a"][0] - l["b"][0]) + abs(l["a"][1] - l["b"][1]), 6)
+             for l in lines}
+    assert len(spans) == 1, "grid lines differ in length between axes"
+
+
+def test_the_grid_floor_is_below_every_system():
+    """Drop-lines fall from a star to the plane, so the plane must be under
+    all of them. At a fixed z=0 the real model left systems down to z=-61
+    hanging below the floor their own drop-lines fell to."""
+    model = {
+        "systems": [
+            {"id": "a", "position": [0.0, 0.0, -61.0], "module": "m"},
+            {"id": "b", "position": [10.0, 10.0, 148.0], "module": "m"},
+        ],
+        "nebulae": [], "starclouds": [],
+    }
+    systems = sm._real_systems(model)
+    floor = sm.grid_bounds(systems)[3]
+    assert floor < -61.0
+
+    # ...and the drop-line lands ON that plane, not on a stale constant.
+    scene = sm.build_scene(model=model, here_id="a")
+    drop = next(l for l in scene["lines"] if l["kind"] == "drop")
+    assert drop["b"][2] == floor
+    assert drop["a"][2] == -61.0          # from the star, down to the floor
+
+
+def test_grid_survives_a_model_with_no_systems():
+    """The empty model must not divide by zero on its way to a degenerate
+    grid."""
+    scene = sm.build_scene(model={"systems": [], "nebulae": [],
+                                  "starclouds": []})
+    assert [l for l in scene["lines"] if l["kind"] == "grid"]

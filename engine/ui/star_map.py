@@ -67,7 +67,18 @@ STARCLOUD_COLOR = NEBULA_COLOR
 STARCLOUD_SIZE_PX = 32.0
 STARCLOUD_OPACITY = 0.85
 
-# Faint ground grid; drop-lines fall to this plane.
+# Faint reference plane; drop-lines fall to it.
+#
+# DERIVED from where the systems actually are, not fixed around the world
+# origin. The sector layout comes from the POC's force-directed relaxation,
+# which had no reason to settle on the origin and did not: the charted systems
+# centre near (150, 32) and span ~180 x ~290, so a plane centred on (0, 0) at
+# +/-400 sat off to one side and was several times too large.
+GRID_DIVISIONS = 16       # lines per axis; the step follows the extent
+GRID_MARGIN = 1.15        # reach a little past the outermost system
+GRID_FLOOR_DROP = 20.0    # sit this far below the LOWEST system, so every
+                          # drop-line falls downward onto the plane
+# Fallbacks for an empty model only — never the normal path.
 GRID_Z = 0.0
 GRID_HALF_EXTENT = 400.0
 GRID_STEP = 50.0
@@ -153,17 +164,41 @@ def resolve_anchor(set_name, model=None) -> Tuple[Optional[str], Vec3]:
     return (None, _centroid(systems))
 
 
-def _grid_lines() -> list:
+def grid_bounds(systems) -> tuple:
+    """(centre_x, centre_y, half_extent, floor_z) for the reference plane.
+
+    Framed on the BOUNDING BOX rather than the centroid: the centroid drifts
+    toward whichever region is densest, which would leave the sparse side of
+    the chart hanging off the plane.
+
+    The floor sits below the lowest system rather than at z=0. Systems range
+    roughly -61..+148, so a plane at zero left some of them underneath the
+    floor their own drop-lines fall to.
+    """
+    if not systems:
+        return (0.0, 0.0, GRID_HALF_EXTENT, GRID_Z)
+    xs = [s["position"][0] for s in systems]
+    ys = [s["position"][1] for s in systems]
+    zs = [s["position"][2] for s in systems]
+    cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+    # One half-extent for both axes keeps the cells square; an axis-wise fit
+    # would stretch them into rectangles.
+    half = max(max(xs) - min(xs), max(ys) - min(ys)) / 2.0 * GRID_MARGIN
+    return (cx, cy, half or GRID_HALF_EXTENT, min(zs) - GRID_FLOOR_DROP)
+
+
+def _grid_lines(systems) -> list:
+    cx, cy, half, z = grid_bounds(systems)
+    step = (half * 2.0) / GRID_DIVISIONS
     out = []
-    n = int(GRID_HALF_EXTENT / GRID_STEP)
-    for i in range(-n, n + 1):
-        t = i * GRID_STEP
+    for i in range(GRID_DIVISIONS + 1):
+        t = -half + i * step
         out.append({"kind": "grid", "id": None, "color": GRID_COLOR,
-                    "a": (-GRID_HALF_EXTENT, t, GRID_Z),
-                    "b": (GRID_HALF_EXTENT, t, GRID_Z)})
+                    "a": (cx - half, cy + t, z),
+                    "b": (cx + half, cy + t, z)})
         out.append({"kind": "grid", "id": None, "color": GRID_COLOR,
-                    "a": (t, -GRID_HALF_EXTENT, GRID_Z),
-                    "b": (t, GRID_HALF_EXTENT, GRID_Z)})
+                    "a": (cx + t, cy - half, z),
+                    "b": (cx + t, cy + half, z)})
     return out
 
 
@@ -223,11 +258,12 @@ def build_scene(*, model=None, here_id=None, course_id=None,
         if sid in by_id:
             reticled[sid] = mark
 
-    lines = _grid_lines()
+    _floor_z = grid_bounds(systems)[3]
+    lines = _grid_lines(systems)
     for sid in reticled:
         p = by_id[sid]
         lines.append({"kind": "drop", "id": sid, "color": DROP_COLOR,
-                      "a": p, "b": (p[0], p[1], GRID_Z)})
+                      "a": p, "b": (p[0], p[1], _floor_z)})
     if here_id in by_id and course_id in by_id and here_id != course_id:
         lines.append({"kind": "course", "id": course_id, "color": COURSE_COLOR,
                       "a": by_id[here_id], "b": by_id[course_id]})
