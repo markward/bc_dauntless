@@ -845,6 +845,7 @@
   ],
   "nebulae": [
     {
+      "name": "Belaruz Nebula",
       "position": [
         123.15,
         67.72,
@@ -858,6 +859,7 @@
       ]
     },
     {
+      "name": "MRegion5 Nebula",
       "position": [
         180.25,
         97.07,
@@ -871,6 +873,7 @@
       ]
     },
     {
+      "name": "MRegion5 Nebula",
       "position": [
         182.27,
         99.57,
@@ -884,6 +887,7 @@
       ]
     },
     {
+      "name": "MRegion6 Nebula",
       "position": [
         157.89,
         110.91,
@@ -897,6 +901,7 @@
       ]
     },
     {
+      "name": "Vesuvi Nebula",
       "position": [
         200.75,
         121.62,
@@ -910,6 +915,7 @@
       ]
     },
     {
+      "name": "The Draconis Veil",
       "position": [
         125.16,
         22.23,
@@ -923,6 +929,7 @@
       ]
     },
     {
+      "name": "Vermilion Shroud",
       "position": [
         158.2,
         87.18,
@@ -936,6 +943,7 @@
       ]
     },
     {
+      "name": "Auric Remnant",
       "position": [
         234.72,
         16.18,

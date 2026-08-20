@@ -70,7 +70,8 @@ def build_sector_model(map_data):
         entry.update(existing.get(s["id"], {}))
         systems.append(entry)
     sys_pos = {s["id"]: s["position"] for s in map_data.get("systems", [])}
-    nebulae = [{"position": n["position"],
+    nebulae = [{"name": n.get("name"),
+                "position": n["position"],
                 "radius": _home_envelop_radius(n, n["radius"], sys_pos),
                 "color": hex_to_rgb01(n["color"])}
                for n in map_data.get("nebulae", [])]

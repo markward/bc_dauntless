@@ -78,3 +78,24 @@ def test_build_sector_model_shapes():
 def test_galaxy_missing_swatch_uses_default():
     out = build_sector_model({"galaxies": [{"position": [0, 0, 0], "size": 1.0, "appearance": {}}]})
     assert out["starclouds"][0]["color"] == [120 / 255, 120 / 255, 140 / 255]
+
+
+def test_baked_nebulae_carry_a_display_name():
+    """The star map labels nebulae, so every baked nebula needs a name.
+
+    Guards the additive contract: adding `name` must not drop the fields the
+    sky projection and Set Course catalog already read.
+    """
+    import json
+    from pathlib import Path
+
+    model = json.loads(
+        (Path(__file__).resolve().parents[2]
+         / "engine" / "appc" / "sector_model.json").read_text()
+    )
+    nebulae = model["nebulae"]
+    assert nebulae, "sector model has no nebulae"
+    for neb in nebulae:
+        assert isinstance(neb.get("name"), str) and neb["name"], neb
+        # additive: the pre-existing keys must survive the re-bake
+        assert "position" in neb and "radius" in neb and "color" in neb, neb
