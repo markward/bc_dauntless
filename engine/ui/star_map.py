@@ -13,6 +13,7 @@ import math
 from typing import Iterable, Optional, Tuple
 
 from engine.appc import sector_model as sm
+from engine.ui.ship_property_viewer import OrbitCamera, project
 
 Vec3 = Tuple[float, float, float]
 
@@ -145,3 +146,83 @@ def build_scene(*, model=None, here_id=None, course_id=None,
 
 def _distance(a: Vec3, b: Vec3) -> float:
     return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2)
+
+
+# ---------------------------------------------------------------------------
+# Camera — FIXED anchor. Orbit and zoom only.
+# ---------------------------------------------------------------------------
+
+PICK_RADIUS_PT = 12.0
+MIN_DISTANCE = 40.0
+MAX_DISTANCE = 2000.0
+DEFAULT_DISTANCE = 600.0
+ZOOM_STEP = 1.12
+_MAX_PITCH = math.radians(89.0)
+
+
+class StarMapCamera:
+    """Orbits the player's current system. The anchor NEVER moves.
+
+    Clicking a star selects it; it does not re-centre the view. With a fixed
+    anchor every on-screen position is read relative to the player, which is
+    the whole job of a nav map — re-centring destroys that, because after one
+    click the centre no longer means anything. There is deliberately no
+    set_anchor/focus/look_at: anchor-moving is absent, not deferred.
+    """
+
+    def __init__(self, anchor: Vec3, distance: float = DEFAULT_DISTANCE):
+        self._anchor = tuple(float(c) for c in anchor)
+        self.camera = OrbitCamera(target=self._anchor, distance=distance,
+                                  yaw=0.0, pitch=math.radians(25.0))
+
+    @property
+    def anchor(self) -> Vec3:
+        return self._anchor
+
+    def orbit(self, dyaw: float, dpitch: float) -> None:
+        self.camera.yaw += dyaw
+        self.camera.pitch = max(-_MAX_PITCH,
+                                min(_MAX_PITCH, self.camera.pitch + dpitch))
+
+    def zoom(self, steps: float) -> None:
+        d = self.camera.distance * (ZOOM_STEP ** steps)
+        self.camera.distance = max(MIN_DISTANCE, min(MAX_DISTANCE, d))
+
+
+def project_points(scene: dict, cam: StarMapCamera, rect) -> list:
+    """Project system dots to RECT-LOCAL pixels (top-left origin).
+
+    Rect-local, not screen-absolute: CEF positions the labels inside the map
+    element, so absolute coordinates would offset every label by the modal's
+    own position.
+    """
+    _x, _y, w, h = rect
+    out = []
+    for p in scene["points"]:
+        sx, sy, _depth, visible = project(p["position"], cam.camera, (w, h))
+        inside = visible and 0.0 <= sx <= w and 0.0 <= sy <= h
+        out.append({"id": p["id"], "label": p["label"],
+                    "x": sx, "y": sy, "visible": bool(inside)})
+    return out
+
+
+def pick_system(cursor_x: float, cursor_y: float, scene: dict,
+                cam: StarMapCamera, rect) -> Optional[str]:
+    """Nearest system within PICK_RADIUS_PT of the cursor, or None.
+
+    Cursor is in CEF-VIEW pixels; rect is the map's (x, y, w, h) in the same
+    space. Clicks outside the rect always miss, so chrome and the warp-point
+    list never select a star behind them.
+    """
+    rx, ry, w, h = rect
+    if not (rx <= cursor_x <= rx + w and ry <= cursor_y <= ry + h):
+        return None
+    local_x, local_y = cursor_x - rx, cursor_y - ry
+    best_id, best_d2 = None, PICK_RADIUS_PT ** 2
+    for p in project_points(scene, cam, rect):
+        if not p["visible"]:
+            continue
+        d2 = (p["x"] - local_x) ** 2 + (p["y"] - local_y) ** 2
+        if d2 <= best_d2:
+            best_id, best_d2 = p["id"], d2
+    return best_id
