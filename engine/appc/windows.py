@@ -549,12 +549,24 @@ class _STStylizedWindow(TGPane):
     sdk/Build/scripts/App.py:7604 — class STStylizedWindow(TGWindow) where
     TGWindow(TGPane) at line 1805.
 
-    _STStylizedWindow overrides all geometry, child-access, and visibility
-    methods from TGPane with its own implementations, so inheriting TGPane
-    is purely for IS-A correctness; no TGPane behaviour leaks through.
     Children are stored as bare objects (not (child, x, y) tuples) to match
     the original _STStylizedWindow contract; GetNthChild/GetFirstChild etc.
     are overridden accordingly.
+
+    ⚠️ That flat _children makes every INHERITED TGPane method that assumes
+    triples wrong here. This docstring used to claim "no TGPane behaviour
+    leaks through" — it was wrong, and the wrongness shipped a bug: the
+    PRIVATE recursion hook _layout_children() was left inherited, so a parent
+    pane's Layout() unpacked our bare children and raised, killing that whole
+    layout pass (QuickBattle.SelectShipType:2611). AddChild, KillChildren,
+    DeleteChild, InsertChild, _layout_children and the GetNthChild family are
+    all overridden below for this reason; GetChildren and GetNumChildren are
+    correct as inherited (list()/len() of a flat list).
+
+    When adding a method to TGPane that touches _children, either override it
+    here or confirm it cannot be reached on this class. Overriding the public
+    entry point alone is NOT sufficient — TGPane recurses through private
+    hooks, which is precisely how the layout bug survived a Layout() override.
     """
     _counter = 0  # class-level; reset by top_window.reset_for_tests()
 
@@ -576,6 +588,27 @@ class _STStylizedWindow(TGPane):
 
     def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
         self._children.append(child)
+
+    # DeleteChild/InsertChild below are the rest of the flat-_children family
+    # described in the class docstring. Neither is reached by SDK code today
+    # (the 63 DeleteChild/InsertChild call sites all have a cinematic/main
+    # window or an STMenu as the receiver, never a stylized window), but both
+    # are wrong the moment one is -- and they fail in DIFFERENT ways, so
+    # neither can be relied on to announce itself:
+    #   DeleteChild raises TypeError, like the layout crash;
+    #   InsertChild raises NOTHING and wedges a (child, x, y) triple into the
+    #   flat list, so the failure surfaces later and somewhere else.
+    # GetChildren is deliberately NOT overridden: `list(self._children)` is
+    # already a flat copy, i.e. correct here by construction.
+
+    def DeleteChild(self, child) -> None:
+        self._children = [c for c in self._children if c is not child]
+
+    def InsertChild(self, index, child, x: float = 0.0, y: float = 0.0,
+                    *_extra) -> None:
+        # x/y discarded, exactly as AddChild above discards them: this class
+        # positions nothing (Layout is a no-op; dauntless re-styles via CSS).
+        self._children.insert(int(index), child)
 
     def SetVisible(self, *_args) -> None:    self._visible = True
     def SetNotVisible(self, *_args) -> None: self._visible = False
@@ -634,6 +667,28 @@ class _STStylizedWindow(TGPane):
     def RepositionUI(self, *_args) -> None:  pass
     def Layout(self, *_args) -> None:        pass
     def ResizeToContents(self, *_args) -> None: pass
+
+    def _layout_children(self) -> None:
+        """No-op, mirroring Layout() above — and it MUST be overridden here.
+
+        TGPane._layout_children recurses into `child._layout_children()`, NOT
+        `child.Layout()`, for every isinstance(child, TGPane). Overriding only
+        the public Layout() therefore does not protect this class: a parent
+        pane's layout pass reaches straight past it into the inherited
+        implementation, which unpacks `(child, x, y)` triples against our FLAT
+        _children and raises
+
+            TypeError: cannot unpack non-iterable STRoundedButton object
+
+        killing the parent's whole pass (QuickBattle.SelectShipType:2611).
+
+        A no-op is the behaviour-preserving fix, not a shortcut: Layout() has
+        always been a no-op here, so a stylized window has never laid its
+        children out, and AddChild above never seeds resolver state
+        (_ensure_layout_state / _local_left) on them — there is nothing to
+        resolve. Dauntless re-styles these via slot CSS; see InteriorChangedSize.
+        """
+        pass
 
     def SetMaximumSize(self, w, h) -> None:
         # TacticalMenuHandlers / EngineerMenuHandlers use this to cap layout;
