@@ -113,6 +113,23 @@ bool initialize(int view_width, int view_height,
     std::filesystem::create_directories(cef_cache_dir, cef_cache_ec);
     CefString(&settings.root_cache_path) = cef_cache_dir.string();
 
+    // Silence Chromium's own logging. It reports internal failures we neither
+    // cause nor can fix -- notably the GCM driver's startup registration
+    // ("DEPRECATED_ENDPOINT"), which retries on a backoff and so reappears
+    // every ~20s in the game console.
+    //
+    // Two cheaper fixes were tried and MEASURED NOT TO WORK on this CEF build,
+    // so do not re-add them: the `disable-background-networking` command-line
+    // switch (reached the binary -- confirmed via `strings` -- errors still
+    // printed), and `settings.log_file` (no file was created and stderr was
+    // unchanged). Severity is the only lever that actually takes effect.
+    //
+    // Safe ONLY because DauntlessCefClient::OnConsoleMessage now prints panel
+    // console.log/warn/error itself and returns true. Before that change this
+    // line would have silently killed all CEF panel logging, since those
+    // messages reached the terminal through the very logger being disabled.
+    settings.log_severity = LOGSEVERITY_FATAL;
+
 #ifdef __APPLE__
     // No .app bundle: tell CEF where everything lives.
     const std::filesystem::path exec_path = g_saved_argc > 0

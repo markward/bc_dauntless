@@ -617,6 +617,15 @@ def _reset_leakable_engine_globals():
         App._next_event_type_id = 1200
     except Exception:
         pass
+    # Undefined-event-type ledger: module-global and reported from an atexit
+    # hook, so without this every pytest run ends with a summary block naming
+    # the deliberately-undefined ET_* names the hardening tests register.
+    try:
+        from engine.appc import events as _events
+        _events._undefined_event_types.clear()
+        _events._warned_event_types.clear()
+    except Exception:
+        pass
     # Music: g_kMusicManager is a process-lifetime singleton and host_loop
     # lazily installs a MusicPlayer backend into it on the first audio tick.
     # Both survive across tests, so a mission that loaded tracks leaves them
@@ -893,3 +902,18 @@ def _reset_leakable_engine_globals():
 def _isolate_engine_globals():
     _reset_leakable_engine_globals()
     yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _silence_undefined_event_summary_atexit():
+    """The undefined-event-type summary prints from an atexit hook, which fires
+    AFTER the last test -- so the per-test reset (which runs before each test)
+    cannot clear what the final test registered. Clear it at session teardown
+    so a pytest run does not end with a block naming ET_* names the hardening
+    tests defined as undefined on purpose."""
+    yield
+    try:
+        from engine.appc import events as _events
+        _events._undefined_event_types.clear()
+    except Exception:
+        pass

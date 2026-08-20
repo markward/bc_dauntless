@@ -123,6 +123,77 @@ def test_stub_event_type_registration_is_not_refused(monkeypatch):
     assert mgr._broadcast_handlers.get(key), "registration must not be refused"
 
 
+def test_undefined_event_type_registration_prints_nothing(monkeypatch, capsys):
+    """Registration must be SILENT -- the detail moves to an at-exit summary.
+
+    A per-registration warning put ~15 lines on stderr before the first frame
+    of every run, and every name in it reappears in the stub-telemetry table
+    at exit. Recording still happens; only the immediate print is gone.
+    """
+    monkeypatch.setattr(stub_telemetry, "ENABLED", False)
+    monkeypatch.setattr(events_mod, "_warned_event_types", set())
+    monkeypatch.setattr(events_mod, "_undefined_event_types", {})
+
+    mgr = TGEventManager()
+    mgr.AddBroadcastPythonFuncHandler(
+        App.ET_SILENT_AT_REGISTRATION, object(), "Some.Handler")
+
+    captured = capsys.readouterr()
+    assert captured.out == "", "registration must not print to stdout: %r" % captured.out
+    assert captured.err == "", "registration must not print to stderr: %r" % captured.err
+    # ...but the fact must still be recorded, or the summary has nothing to say.
+    assert "ET_SILENT_AT_REGISTRATION" in events_mod._undefined_event_types
+
+
+def test_undefined_event_type_summary_names_the_dead_handler(monkeypatch):
+    """The summary must carry what the stub-telemetry table cannot: WHICH
+    handler is dead. Telemetry records the event-type name only, so a bare
+    count would lose the one detail that makes the row actionable."""
+    monkeypatch.setattr(stub_telemetry, "ENABLED", False)
+    monkeypatch.setattr(events_mod, "_warned_event_types", set())
+    monkeypatch.setattr(events_mod, "_undefined_event_types", {})
+
+    mgr = TGEventManager()
+    mgr.AddBroadcastPythonFuncHandler(
+        App.ET_DEAD_TRACTOR, object(), "Bridge.PowerDisplay.HandleTractor")
+
+    lines = events_mod.undefined_event_type_summary_lines()
+
+    assert lines, "recorded undefined event types must produce a summary"
+    body = "\n".join(lines[1:])
+    assert "ET_DEAD_TRACTOR" in body
+    assert "Bridge.PowerDisplay.HandleTractor" in body, (
+        "summary must name the handler that will never fire: %r" % body
+    )
+
+
+def test_undefined_event_type_summary_is_empty_when_nothing_recorded(monkeypatch):
+    """No undefined types => no header. A clean run stays clean."""
+    monkeypatch.setattr(events_mod, "_undefined_event_types", {})
+    assert events_mod.undefined_event_type_summary_lines() == []
+
+
+def test_undefined_event_type_summary_collapses_repeat_registrations(monkeypatch):
+    """The same handler registering N times is ONE dead handler, not N."""
+    monkeypatch.setattr(stub_telemetry, "ENABLED", False)
+    monkeypatch.setattr(events_mod, "_warned_event_types", set())
+    monkeypatch.setattr(events_mod, "_undefined_event_types", {})
+
+    mgr = TGEventManager()
+    key = App.ET_REPEATED_UNDEFINED
+    for _ in range(4):
+        mgr.AddBroadcastPythonFuncHandler(key, object(), "Mod.SameHandler")
+
+    # `where` is the registration site, e.g.
+    # "AddBroadcastPythonFuncHandler(Mod.SameHandler)" -- it embeds the handler
+    # name rather than being it.
+    handlers = events_mod._undefined_event_types["ET_REPEATED_UNDEFINED"]
+    assert len(handlers) == 1, (
+        "repeat registrations of one handler must collapse: %r" % handlers
+    )
+    assert "Mod.SameHandler" in handlers[0]
+
+
 def test_remove_broadcast_handler_removes_the_correct_handler():
     """_Stub.__eq__ is TYPE-based, so any all-stub tuple == any other. With
     list.remove(), removing B's handler would delete A's."""

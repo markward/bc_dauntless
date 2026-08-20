@@ -1278,54 +1278,7 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters):
             except Exception as _e:
                 dev_mode.log_swallowed("emitter light produce", _e)
                 continue
-    _log_emitter_light_census(out, ship_instances, ship_emitters, now)
     return out
-
-
-# Dev-only census throttle: game-time of the last emitter-light summary print.
-_last_emitter_census_gt = -1.0
-EMITTER_CENSUS_PERIOD_S = 5.0
-
-
-def _log_emitter_light_census(lights, ship_instances, ship_emitters, now) -> None:
-    """Print what the emitter producer actually emitted (--developer only).
-
-    Answers the one question static analysis cannot: in a LIVE mission, do a
-    given ship's authored emitters reach the frame at all? Prints one line per
-    ship that owns emitters plus the frame total, every
-    `EMITTER_CENSUS_PERIOD_S` seconds of GAME time (so it stays quiet under
-    pause). Purely diagnostic — never raises, and never runs in production."""
-    global _last_emitter_census_gt
-    if not dev_mode.is_enabled():
-        return
-    try:
-        # `now` runs backwards across a mission swap (game time restarts), so
-        # treat that as "print again" rather than silently suppressing forever.
-        if (_last_emitter_census_gt >= 0.0
-                and 0.0 <= now - _last_emitter_census_gt < EMITTER_CENSUS_PERIOD_S):
-            return
-        _last_emitter_census_gt = now
-        rows = []
-        for ship, iid in ship_instances.items():
-            entries = ship_emitters.get(iid)
-            if not entries:
-                continue
-            try:
-                name = ship.GetName()
-            except Exception:
-                name = "<unnamed>"
-            rows.append(f"{name!r} iid={iid} cached={len(entries)}")
-        print(f"[emitter-lights] frame total={len(lights)} "
-              f"(cap {MAX_DYNAMIC_LIGHTS_PER_FRAME}); "
-              f"emitter-owning ships: {'; '.join(rows) or 'NONE'}", flush=True)
-    except Exception as _e:
-        dev_mode.log_swallowed("emitter light census", _e)
-
-
-# Native clamps set_dynamic_lights to this many entries per frame
-# (renderer::kMaxDynamicLightsPerFrame); excess is silently dropped, so the
-# census above reports the total for comparison.
-MAX_DYNAMIC_LIGHTS_PER_FRAME = 64
 
 
 def _build_hit_vfx_render_data():
@@ -3776,9 +3729,6 @@ _warp_turn_start_R = None
 # so visibility is restored on the frame the streak ends.
 _warp_hidden = False
 
-# Dev-mode warp diagnostics: per-warp peak flash/streak/turn, logged on warp end.
-_warp_diag: dict = {}
-
 # Nebula membership tracker — lazy-init on first sim tick so that importing
 # this module does NOT trigger `import App` at module-load time (nebula_runtime
 # has a top-level `import App`; importing it here would perturb sound-manager
@@ -5952,8 +5902,6 @@ def drive_viewscreen_static_and_brightness(r, controller, ramp, dt,
     r.set_viewscreen_brightness(ramp.update(signature, dt))
 
     # Static overlay (only when the SDK turned it on with a positive range).
-    static_on = False
-    intensity = 0.0
     if (vs is not None and vs.IsStaticOn()
             and getattr(vs, "_static_max", 0.0) > 0.0):
         paths = _vss.static_texture_paths(getattr(vs, "_static_icon_group", None))
@@ -5962,36 +5910,9 @@ def drive_viewscreen_static_and_brightness(r, controller, ramp, dt,
             controller._vs_static_paths_sent = paths
         fmin = getattr(vs, "_static_min", 0.0)
         fmax = getattr(vs, "_static_max", 0.0)
-        intensity = intensity_fn(fmin, fmax)
-        static_on = True
-        r.set_viewscreen_static(True, intensity)
+        r.set_viewscreen_static(True, intensity_fn(fmin, fmax))
     else:
-        fmin = fmax = 0.0
         r.set_viewscreen_static(False, 0.0)
-
-    # Dev-mode change log: emit once per state change; silent every frame
-    # when dev mode is off (is_enabled() is a single bool getattr, no I/O).
-    if dev_mode.is_enabled():
-        log_key = (signature, static_on)
-        if log_key != getattr(controller, "_vs_static_log_state", None):
-            controller._vs_static_log_state = log_key
-            if signature[0] == "off":
-                feed_str = "off"
-            elif signature[0] == "comm":
-                feed_str = "comm:%s" % (signature[1],)
-            else:
-                feed_str = "forward"
-            if static_on:
-                print(
-                    "[viewscreen] feed=%s static=on min=%.2f max=%.2f intensity=%.2f"
-                    % (feed_str, fmin, fmax, intensity),
-                    flush=True,
-                )
-            else:
-                print(
-                    "[viewscreen] feed=%s static=off" % (feed_str,),
-                    flush=True,
-                )
 
 
 def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> None:
@@ -8412,20 +8333,7 @@ def run(mission_name: Optional[str] = None,
                 if player is not None:
                     _nom, _wsp = _warp_phase_speeds(player)
                     player_control._warp_speed_override = _w.ship_speed(_nom, _wsp)
-                # Dev diagnostic: track the peaks so we can confirm live that the
-                # flash / streak / turn are actually driving (the visuals are
-                # exterior-view only; this works from any view).
-                global _warp_diag
-                _warp_diag["flash"] = max(_warp_diag.get("flash", 0.0), _w.flash_intensity())
-                _warp_diag["streak"] = max(_warp_diag.get("streak", 0.0), _w.streak_intensity())
-                _warp_diag["turn"] = max(_warp_diag.get("turn", 0.0), _w.turn_fraction())
             else:
-                if _warp_diag and dev_mode.is_enabled():
-                    print("[warp] peaks: flash=%.2f streak=%.2f turn=%.2f"
-                          % (_warp_diag.get("flash", 0.0),
-                             _warp_diag.get("streak", 0.0),
-                             _warp_diag.get("turn", 0.0)), flush=True)
-                _warp_diag = {}
                 r.set_warp_streak_intensity(0.0)
                 r.set_warp_flash_intensity(0.0)
                 _warp_clear_turn()

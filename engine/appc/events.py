@@ -382,9 +382,48 @@ def _resolve_handler(qualified_name: str):
     return getattr(mod, func_name, None)
 
 
-# Undefined event-type names already warned about, so a per-frame registration
+# Undefined event-type names already recorded, so a per-frame registration
 # cannot spam the log.
 _warned_event_types: set[str] = set()
+
+# {event-type name: [distinct qualified handler name, ...]}  (registration order)
+#
+# Reported once at exit rather than at registration. The per-registration
+# warning put ~15 lines on stderr before the first frame of every run, and
+# every name in it reappears in the stub-telemetry table at exit anyway. What
+# telemetry canNOT say is WHICH handler is dead -- record_attr keys on the
+# event-type name alone -- so that detail is what this summary carries.
+_undefined_event_types: dict[str, list[str]] = {}
+_undefined_atexit_registered = False
+
+
+def undefined_event_type_summary_lines() -> list[str]:
+    """At-exit summary of event types that resolved to a stub.
+
+    Empty when nothing was recorded, so a clean run prints nothing at all.
+    """
+    if not _undefined_event_types:
+        return []
+    lines = ["=== undefined event types (handlers may never fire) ==="]
+    width = max(len(n) for n in _undefined_event_types)
+    for name, handlers in sorted(_undefined_event_types.items()):
+        extra = "" if len(handlers) < 2 else "  (+%d more)" % (len(handlers) - 1,)
+        lines.append("  %-*s  %s%s" % (width, name, handlers[0], extra))
+    lines.append("  Define these in engine/appc/events.py.")
+    return lines
+
+
+def _register_undefined_atexit() -> None:
+    global _undefined_atexit_registered
+    if _undefined_atexit_registered:
+        return
+    _undefined_atexit_registered = True
+    import atexit
+
+    # print(), not logging: the embedded host installs no logging handler below
+    # WARNING, and dev_mode/stub_telemetry report the same way.
+    atexit.register(
+        lambda: [print(ln) for ln in undefined_event_type_summary_lines()])
 
 
 def _validate_event_type(event_type, where: str) -> bool:
@@ -396,8 +435,11 @@ def _validate_event_type(event_type, where: str) -> bool:
     names, so every access mints a FRESH key -- the handler becomes unreachable
     forever. 120 stub ET_ names across ~270 SDK sites are dead this way.
 
-    We RECORD (surfacing it in docs/stub_heatmap.md) and warn once per name. We
-    do NOT refuse: Tactical/Interface/CinematicInterfaceHandlers.py:15 keeps a
+    We RECORD (surfacing it in docs/stub_heatmap.md) and report once per name in
+    an at-exit summary -- see undefined_event_type_summary_lines(). We do NOT
+    warn at registration: that fired before the first frame of every run and
+    duplicated names the stub-telemetry table already prints. We also do NOT
+    refuse: Tactical/Interface/CinematicInterfaceHandlers.py:15 keeps a
     module-level stub as a LIVE same-object dispatch key (registered :229, fired
     :275 through that same global), so refusing would break it.
 
@@ -421,13 +463,12 @@ def _validate_event_type(event_type, where: str) -> bool:
     stub_telemetry.record_attr("EventType", name)
     if name not in _warned_event_types:
         _warned_event_types.add(name)
-        print(
-            "WARNING: %s registered on undefined event type %s -- this handler "
-            "may never fire unless the same object is reused as the dispatch "
-            "key. Define it in engine/appc/events.py."
-            % (where, name),
-            file=sys.stderr,
-        )
+        _register_undefined_atexit()
+    # Distinct handlers only: one handler re-registering every mission swap is
+    # still ONE dead handler, and the summary should not grow with swap count.
+    handlers = _undefined_event_types.setdefault(name, [])
+    if where not in handlers:
+        handlers.append(where)
     return False
 
 

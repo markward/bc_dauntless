@@ -123,7 +123,6 @@ assets::Texture* TorpedoPass::ensure_texture(const std::string& path) {
         texture_cache_.emplace(path, std::make_unique<assets::Texture>());
         return nullptr;
     }
-    std::fprintf(stderr, "[torpedo_pass] loaded '%s'\n", path.c_str());
     in.seekg(0, std::ios::end);
     auto size = static_cast<std::size_t>(in.tellg());
     in.seekg(0, std::ios::beg);

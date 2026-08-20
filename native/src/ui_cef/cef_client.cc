@@ -51,10 +51,7 @@ void DauntlessCefClient::OnPaint(CefRefPtr<CefBrowser> browser,
     std::memcpy(bitmap_.data(), buffer, bytes);
     bitmap_width_  = width;
     bitmap_height_ = height;
-    if (!ready_) {
-        ready_ = true;
-        std::printf("[cef] first OnPaint: %dx%d\n", width, height);
-    }
+    ready_ = true;
 }
 
 void DauntlessCefClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
@@ -74,14 +71,31 @@ void DauntlessCefClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
 }
 
 bool DauntlessCefClient::OnConsoleMessage(CefRefPtr<CefBrowser> /*browser*/,
-                                           cef_log_severity_t /*level*/,
+                                           cef_log_severity_t level,
                                            const CefString& message,
-                                           const CefString& /*source*/,
-                                           int /*line*/) {
+                                           const CefString& source,
+                                           int line) {
     const std::string msg = message.ToString();
     const size_t plen = std::strlen(kEventPrefix);
     if (msg.size() < plen || msg.compare(0, plen, kEventPrefix) != 0) {
-        return false;  // not ours — let CEF log normally
+        // Not one of our event messages: a real panel console.log/warn/error.
+        // We must PRINT IT OURSELVES rather than return false and let CEF log
+        // it. CefSettings.log_severity is LOGSEVERITY_FATAL (cef_lifecycle.cc)
+        // to stop Chromium's internal GCM/network chatter, and that setting
+        // would take panel console output down with it -- silently removing
+        // the primary way we debug CEF panels. Owning the print keeps panel
+        // logging while Chromium's internals stay quiet.
+        const char* tag = "log";
+        switch (level) {
+            case LOGSEVERITY_WARNING: tag = "warn";  break;
+            case LOGSEVERITY_ERROR:   tag = "error"; break;
+            case LOGSEVERITY_FATAL:   tag = "fatal"; break;
+            default: break;
+        }
+        std::printf("[cef-console:%s] %s (%s:%d)\n", tag, msg.c_str(),
+                    source.ToString().c_str(), line);
+        std::fflush(stdout);
+        return true;   // handled — do not also route it through CEF's logger
     }
     if (event_handler_) {
         event_handler_(msg.substr(plen));

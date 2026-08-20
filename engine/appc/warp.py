@@ -211,18 +211,6 @@ class _WarpVfxBeginAction(TGAction):
                 _vfx_start(*self._a)
             except Exception:
                 pass
-        try:
-            import engine.dev_mode as _dev
-            if _dev.is_enabled():
-                h, ta, tt, vv, dv = self._a
-                print("[warp] engaged: heading=(%.2f, %.2f, %.2f) "
-                      "align=%.1fs transit=%.1fs vantage=%s dst=%s"
-                      % (h[0], h[1], h[2], ta, tt,
-                         "none" if vv is None else "(%.0f,%.0f,%.0f)" % vv,
-                         "none" if dv is None else "(%.0f,%.0f,%.0f)" % dv),
-                      flush=True)
-        except Exception:
-            pass
 
 
 class _WarpVfxEndAction(TGAction):
