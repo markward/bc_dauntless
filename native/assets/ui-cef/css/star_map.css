@@ -86,10 +86,17 @@
 #star-map-viewport:active { cursor: grabbing; }
 
 #star-map-labels { position: absolute; inset: 0; pointer-events: none; }
+/* System names. Amber, uppercase, weight 700 with a soft black halo — the
+   POC's chart-display treatment, matching the amber star halo they label.
+   Keep the colours here in step with STAR_COLOR / MARK_*_COLOR in
+   engine/ui/star_map.py: those tint the GL markers, these tint their text. */
 .sm-label {
     position: absolute;
-    font-size: 10px; color: #b9c4de;
-    text-shadow: 0 0 3px #000;
+    font-size: 10px; color: #ffd9a8;          /* POC #ffd9a8 */
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    text-shadow: 0 0 4px #000, 0 0 8px #000;
     transform: translate(8px, -6px);
     white-space: nowrap;
 }
@@ -100,7 +107,7 @@
    on top where the two collide. */
 .sm-label--disc {
     font-size: 8px;
-    color: #6b7793;
+    color: #8fd0ff;                            /* POC nebLabel #8fd0ff */
     letter-spacing: 1.2px;
     text-transform: uppercase;
     font-weight: 400;
@@ -108,10 +115,12 @@
     transform: translate(6px, -4px);
 }
 
-.sm-label--here      { color: #eaf2ff; font-weight: 700; }
-.sm-label--course    { color: #8cd8ff; }
-.sm-label--mission   { color: #ffc46b; }
-.sm-label--selected  { color: #d9b8ff; font-style: italic; }
+/* The three reserved states and selection. Each matches the GL marker it
+   sits beside, so label and reticle read as one object. */
+.sm-label--here      { color: #bdf3ff; }       /* POC baseLabel, beside #56e6ff */
+.sm-label--course    { color: #bfffd9; }       /* POC realLabel, beside #79f2b0 */
+.sm-label--mission   { color: #ffd9a8; }       /* POC label, beside #ffb454 */
+.sm-label--selected  { color: #ffffff; }
 
 /* Reserves the 640px the fixed viewport occupies so the warp list never
    sits underneath it (see the .sm-body comment above). max-height is the

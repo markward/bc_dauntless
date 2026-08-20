@@ -23,26 +23,47 @@ MARK_HERE = 1       # you are here
 MARK_COURSE = 2     # course currently set
 MARK_MISSION = 3    # offered by the live SDK Set Course menu
 
-# Nebulae are scenery and must not compete with the stars.
-NEBULA_OPACITY = 0.5
-STARCLOUD_OPACITY = 0.5
+# --- palette -------------------------------------------------------------
+# Recovered from the stellar-cartography proof of concept (poc/, throwaway),
+# whose look was drawn from the Star Trek films' chart displays: warm amber
+# systems, deep-blue grid, and nebulae as CHARTED REGIONS — a faint flat fill
+# with a crisp bright border — rather than soft clouds.
+#
+# Every value here is a Python constant precisely so a live tuning pass costs
+# a page refresh, not a rebuild. The pass interprets none of them.
+STAR_COLOR = (1.000, 0.706, 0.329)      # POC #ffb454 — halo tint; core is white
+GRID_COLOR = (0.086, 0.204, 0.361)      # POC 0x16345c
+DROP_COLOR = (0.114, 0.227, 0.388)      # POC 0x1d3a63
+
+# Nebulae are scenery and must not compete with the stars. The POC got that
+# from CONSTRUCTION rather than opacity alone: a faint interior with a defined
+# edge reads as "a region is here" without drowning the stars inside it. The
+# fill is deliberately heavier than the POC's 0.22 — Mark's call, 2026-08-20;
+# trim it here if it crowds the stars.
+NEBULA_OPACITY = 0.5          # flat interior fill
+NEBULA_BORDER_OPACITY = 0.9   # crisp boundary stroke
+NEBULA_HATCH_OPACITY = 0.30   # diagonal bands inside the boundary
+
+# Star clouds are POC decoration: a small three-star glyph at a FIXED SCREEN
+# size, not a world-scaled volume. Drawn from the model's `size` they became
+# huge soft blobs that swallowed whole regions of the map.
+STARCLOUD_COLOR = (1.000, 0.894, 0.627)  # POC #ffe4a0
+STARCLOUD_SIZE_PX = 18.0
+STARCLOUD_OPACITY = 0.85
 
 # Faint ground grid; drop-lines fall to this plane.
 GRID_Z = 0.0
 GRID_HALF_EXTENT = 400.0
 GRID_STEP = 50.0
-GRID_COLOR = (0.18, 0.22, 0.34)
-DROP_COLOR = (0.30, 0.36, 0.52)
-COURSE_COLOR = (0.55, 0.85, 1.00)
-STAR_COLOR = (0.85, 0.88, 0.98)
+COURSE_COLOR = (0.475, 0.949, 0.690)    # POC #79f2b0
 
 # Bracket presentation. These live here, beside the MARK_* values they key off,
 # because this module OWNS the mark enum: if the pass chose colours from `mark`
 # itself, renumbering MARK_* here would silently recolour every reticle. The
 # pass now receives a colour per bracket and never interprets `mark` at all.
-MARK_HERE_COLOR    = (1.00, 0.88, 0.35)   # bright key
-MARK_COURSE_COLOR  = COURSE_COLOR         # same blue as the plotted course line
-MARK_MISSION_COLOR = (0.85, 0.52, 0.31)   # UI accent orange
+MARK_HERE_COLOR    = (0.337, 0.902, 1.000)  # POC #56e6ff — the brightest mark
+MARK_COURSE_COLOR  = COURSE_COLOR           # same green as the plotted course
+MARK_MISSION_COLOR = (1.000, 0.706, 0.329)  # POC #ffb454, its default bracket
 
 # Deliberately no `.get(mark, <grey>)` fallback anywhere: an unmapped mark must
 # raise here, in Python, next to the enum — not render as a plausible colour.
@@ -119,7 +140,9 @@ def build_scene(*, model=None, here_id=None, course_id=None,
     by_id = {s["id"]: tuple(float(c) for c in s["position"]) for s in systems}
     mission = {m for m in mission_ids if m in by_id}
 
-    # --- discs (nebulae + star clouds), back-to-front -----------------
+    # --- discs (nebula regions), back-to-front ------------------------
+    # Star clouds are NOT discs any more: they are screen-scaled glyphs, so
+    # they neither sort with these nor take a world radius.
     discs = []
     for neb in model.get("nebulae", []):
         pos = tuple(float(c) for c in neb["position"])
@@ -129,15 +152,17 @@ def build_scene(*, model=None, here_id=None, course_id=None,
         # map. An empty label is skipped by project_disc_labels.
         discs.append({"kind": "nebula", "label": neb.get("name") or "",
                       "position": pos, "radius": float(neb["radius"]),
-                      "color": tuple(neb["color"]), "opacity": NEBULA_OPACITY,
-                      "_camera_distance": _distance(pos, eye)})
-    for gx in model.get("starclouds", []):
-        pos = tuple(float(c) for c in gx["position"])
-        discs.append({"kind": "starcloud", "label": "",
-                      "position": pos, "radius": float(gx["size"]),
-                      "color": tuple(gx["color"]), "opacity": STARCLOUD_OPACITY,
+                      "color": tuple(neb["color"]),
+                      "opacity": NEBULA_OPACITY,
+                      "border_opacity": NEBULA_BORDER_OPACITY,
                       "_camera_distance": _distance(pos, eye)})
     discs.sort(key=lambda d: d["_camera_distance"], reverse=True)
+
+    # --- star clouds: fixed-size decoration, never selectable ---------
+    starclouds = [{"position": tuple(float(c) for c in gx["position"]),
+                   "color": STARCLOUD_COLOR, "size_px": STARCLOUD_SIZE_PX,
+                   "opacity": STARCLOUD_OPACITY}
+                  for gx in model.get("starclouds", [])]
 
     # --- lines: faint grid, drop-lines for reticled systems, course ---
     reticled = {}
@@ -173,7 +198,7 @@ def build_scene(*, model=None, here_id=None, course_id=None,
                 for sid, mark in reticled.items()]
 
     return {"discs": discs, "lines": lines, "points": points,
-            "brackets": brackets}
+            "brackets": brackets, "starclouds": starclouds}
 
 
 def _distance(a: Vec3, b: Vec3) -> float:

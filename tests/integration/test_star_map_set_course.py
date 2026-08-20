@@ -41,8 +41,8 @@ class _RecordingHost:
     def starmap_set_camera(self, eye, target, up, fov_y_rad, near, far):
         self.camera.append((eye, target, up, fov_y_rad, near, far))
 
-    def starmap_set_scene(self, discs, lines, points, brackets):
-        self.scene.append((discs, lines, points, brackets))
+    def starmap_set_scene(self, discs, lines, points, brackets, starclouds):
+        self.scene.append((discs, lines, points, brackets, starclouds))
 
 
 @pytest.fixture
@@ -138,9 +138,10 @@ def test_drive_star_map_disables_the_pass_when_the_map_is_closed(rec):
 
 
 def test_scene_buffers_match_the_binding_tuple_shapes(rec):
-    """discs ((x,y,z),(r,g,b),radius,opacity) / lines ((a),(b),(rgb)) /
+    """discs ((x,y,z),(r,g,b),radius,fill,border) / lines ((a),(b),(rgb)) /
     points ((x,y,z),(r,g,b),size_px,selected) / brackets ((x,y,z),mark,
-    (r,g,b),size_px) — exactly what host_bindings.cc unpacks."""
+    (r,g,b),size_px) / starclouds ((x,y,z),(r,g,b),size_px,opacity) —
+    exactly what host_bindings.cc unpacks."""
     from engine.host_loop import _drive_star_map
 
     panel = StarMapPanel()
@@ -148,17 +149,25 @@ def test_scene_buffers_match_the_binding_tuple_shapes(rec):
     panel.dispatch_event("select-system:vesuvi")
     _drive_star_map(panel, (1280, 720), 720)
 
-    discs, lines, points, brackets = rec.scene[0]
+    discs, lines, points, brackets, starclouds = rec.scene[0]
     scene = panel.scene
     assert len(discs) == len(scene["discs"])
     assert len(lines) == len(scene["lines"])
     assert len(points) == len(scene["points"])
     assert len(brackets) == len(scene["brackets"])
-    assert points and brackets and lines and discs
+    assert len(starclouds) == len(scene["starclouds"])
+    assert points and brackets and lines and discs and starclouds
 
-    for pos, color, radius, opacity in discs:
+    for pos, color, radius, fill, border in discs:
         assert len(pos) == 3 and len(color) == 3
-        assert isinstance(radius, float) and isinstance(opacity, float)
+        assert isinstance(radius, float) and isinstance(fill, float)
+        assert isinstance(border, float)
+    for pos, color, size_px, opacity in starclouds:
+        assert len(pos) == 3 and len(color) == 3
+        assert isinstance(size_px, float) and isinstance(opacity, float)
+        # Screen-scaled decoration: a fixed pixel size, never the model's
+        # world `size`, which produced region-swallowing blobs.
+        assert size_px == star_map.STARCLOUD_SIZE_PX
     for a, b, color in lines:
         assert len(a) == 3 and len(b) == 3 and len(color) == 3
     for pos, color, size_px, selected in points:

@@ -18,7 +18,8 @@ struct StarMapDisc {
     glm::vec3 position{0.0f};
     glm::vec3 color{1.0f};
     float     radius  = 1.0f;   // world units
-    float     opacity = 0.5f;
+    float     opacity = 0.5f;   // flat interior fill
+    float     border_opacity = 0.9f;  // crisp boundary stroke
 };
 
 /// A world-space line segment — grid, drop-lines, or the plotted course.
@@ -52,6 +53,16 @@ struct StarMapBracket {
     float     size_px = 20.0f;
 };
 
+/// A dense-star region, drawn as a small fixed-SCREEN-size glyph. Not a
+/// StarMapDisc: at their model `size` these became world-scaled volumes that
+/// swallowed whole regions of the map. Decoration only — never selectable.
+struct StarMapStarCloud {
+    glm::vec3 position{0.0f};
+    glm::vec3 color{1.0f};
+    float     size_px = 18.0f;
+    float     opacity = 0.85f;
+};
+
 struct StarMapScene {
     bool        enabled = false;
     glm::ivec4  viewport{0};   // x, y, w, h in FRAMEBUFFER pixels
@@ -59,6 +70,7 @@ struct StarMapScene {
     std::vector<StarMapLine>    lines;
     std::vector<StarMapPoint>   points;
     std::vector<StarMapBracket> brackets;
+    std::vector<StarMapStarCloud> starclouds;
 };
 
 /// Draws the sector map into a scissored sub-rect of the bound framebuffer.

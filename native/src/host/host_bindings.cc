@@ -3044,13 +3044,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "the gameplay camera keeps rendering the live scene around the modal.");
     m.def("starmap_set_scene",
           [](const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
-                                          float, float>>& discs,
+                                          float, float, float>>& discs,
              const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
                                           std::array<float,3>>>& lines,
              const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
                                           float, bool>>& points,
              const std::vector<std::tuple<std::array<float,3>, int,
-                                          std::array<float,3>, float>>& brackets) {
+                                          std::array<float,3>, float>>& brackets,
+             const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
+                                          float, float>>& starclouds) {
               g_starmap_scene.discs.clear();
               g_starmap_scene.discs.reserve(discs.size());
               for (const auto& t : discs) {
@@ -3061,6 +3063,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   d.color    = {c[0], c[1], c[2]};
                   d.radius   = std::get<2>(t);
                   d.opacity  = std::get<3>(t);
+                  d.border_opacity = std::get<4>(t);
                   g_starmap_scene.discs.push_back(d);
               }
               g_starmap_scene.lines.clear();
@@ -3099,14 +3102,32 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   br.size_px  = std::get<3>(t);
                   g_starmap_scene.brackets.push_back(br);
               }
+              g_starmap_scene.starclouds.clear();
+              g_starmap_scene.starclouds.reserve(starclouds.size());
+              for (const auto& t : starclouds) {
+                  renderer::StarMapStarCloud g;
+                  const auto& p = std::get<0>(t);
+                  const auto& c = std::get<1>(t);
+                  g.position = {p[0], p[1], p[2]};
+                  g.color    = {c[0], c[1], c[2]};
+                  g.size_px  = std::get<2>(t);
+                  g.opacity  = std::get<3>(t);
+                  g_starmap_scene.starclouds.push_back(g);
+              }
           },
           py::arg("discs"), py::arg("lines"), py::arg("points"), py::arg("brackets"),
+          py::arg("starclouds"),
           "Replace the star map scene. Tuple shapes:\n"
-          "  discs:    ((x,y,z), (r,g,b), radius_world, opacity)\n"
-          "  lines:    ((ax,ay,az), (bx,by,bz), (r,g,b))\n"
-          "  points:   ((x,y,z), (r,g,b), size_px, selected)\n"
-          "  brackets: ((x,y,z), mark, (r,g,b), size_px)\n"
-          "The four lists are drawn in THAT order with depth test off. Python "
+          "  discs:      ((x,y,z), (r,g,b), radius_world, fill_alpha, border_alpha)\n"
+          "  lines:      ((ax,ay,az), (bx,by,bz), (r,g,b))\n"
+          "  points:     ((x,y,z), (r,g,b), size_px, selected)\n"
+          "  brackets:   ((x,y,z), mark, (r,g,b), size_px)\n"
+          "  starclouds: ((x,y,z), (r,g,b), size_px, opacity)\n"
+          "Discs are nebula REGIONS -- a faint flat fill inside a crisp "
+          "boundary, not soft clouds -- and are world-scaled. Star clouds are "
+          "screen-scaled glyphs: drawn at their model `size` they became "
+          "volumes that swallowed whole regions of the map.\n"
+          "The five lists are drawn in THAT order with depth test off. Python "
           "owns every ordering decision (engine/ui/star_map.build_scene); the "
           "pass never sorts or reorders, which is what keeps star markers from "
           "being occluded by nebula scenery.\n"

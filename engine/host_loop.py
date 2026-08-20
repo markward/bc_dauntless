@@ -6250,26 +6250,30 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
 
 
 def _starmap_buffers(scene: dict) -> tuple:
-    """Flatten a star_map scene dict into the four tuple-lists the native
+    """Flatten a star_map scene dict into the five tuple-lists the native
     binding unpacks (see engine.host_io.starmap_set_scene):
 
-        discs:    ((x, y, z), (r, g, b), radius_world, opacity)
-        lines:    ((ax, ay, az), (bx, by, bz), (r, g, b))
-        points:   ((x, y, z), (r, g, b), size_px, selected)
-        brackets: ((x, y, z), mark, (r, g, b), size_px)
+        discs:      ((x, y, z), (r, g, b), radius_world, fill_alpha, border_alpha)
+        lines:      ((ax, ay, az), (bx, by, bz), (r, g, b))
+        points:     ((x, y, z), (r, g, b), size_px, selected)
+        brackets:   ((x, y, z), mark, (r, g, b), size_px)
+        starclouds: ((x, y, z), (r, g, b), size_px, opacity)
 
     Pure re-shaping — no ordering, colour or size decisions. All of those are
     made in engine.ui.star_map.build_scene (size_px arrives already
     selection-scaled; scaling it again here would double-apply).
     """
     return (
-        [(d["position"], d["color"], float(d["radius"]), float(d["opacity"]))
+        [(d["position"], d["color"], float(d["radius"]),
+          float(d["opacity"]), float(d["border_opacity"]))
          for d in scene["discs"]],
         [(ln["a"], ln["b"], ln["color"]) for ln in scene["lines"]],
         [(p["position"], p["color"], float(p["size_px"]), bool(p["selected"]))
          for p in scene["points"]],
         [(b["position"], int(b["mark"]), b["color"], float(b["size_px"]))
          for b in scene["brackets"]],
+        [(g["position"], g["color"], float(g["size_px"]), float(g["opacity"]))
+         for g in scene["starclouds"]],
     )
 
 

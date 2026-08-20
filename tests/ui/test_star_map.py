@@ -13,8 +13,17 @@ def _model():
             {"id": "multi1",  "position": [999.0, 999.0, 0.0], "module": "Systems.Multi.Multi1"},
         ],
         "nebulae": [
+            # TWO nebulae, at different camera distances. One is not enough:
+            # star clouds are no longer discs, so a single-element list would
+            # make the back-to-front sort assertion pass vacuously.
             {"name": "Belaruz Nebula", "position": [50.0, 0.0, 0.0],
              "radius": 26.0, "color": [0.4, 0.4, 0.6]},
+            # Deliberately UNNAMED and nearer than Belaruz: gives the
+            # back-to-front sort two elements to order (star clouds are no
+            # longer discs, so one would make it vacuous) while also
+            # exercising the empty-label skip in project_disc_labels.
+            {"name": "", "position": [20.0, 0.0, 0.0],
+             "radius": 14.0, "color": [0.6, 0.4, 0.4]},
         ],
         "starclouds": [
             {"position": [0.0, 0.0, 300.0], "size": 90.0, "color": [0.3, 0.3, 0.3]},
@@ -134,7 +143,33 @@ def test_discs_sort_back_to_front_by_camera_distance():
     """Ordering is decided here, not in C++ — so it is testable."""
     scene = sm.build_scene(model=_model(), eye=(0.0, 0.0, 0.0))
     dists = [d["_camera_distance"] for d in scene["discs"]]
+    assert len(dists) >= 2, "sort assertion is vacuous with fewer than 2 discs"
     assert dists == sorted(dists, reverse=True)
+    # Farthest first: the near nebula must not be drawn before the far one.
+    assert dists[0] > dists[-1]
+
+
+def test_star_clouds_are_screen_scaled_glyphs_not_discs():
+    """At their model `size` (up to ~92) star clouds were world-scaled blobs
+    that swallowed whole regions. They are decoration: a fixed pixel size,
+    carried in their own list so they never sort or scale with the nebulae."""
+    scene = sm.build_scene(model=_model())
+    assert all(d["kind"] == "nebula" for d in scene["discs"])
+    assert scene["starclouds"], "model has a star cloud"
+    for g in scene["starclouds"]:
+        assert g["size_px"] == sm.STARCLOUD_SIZE_PX
+        assert "radius" not in g
+
+
+def test_nebulae_carry_a_separate_border_opacity():
+    """A charted region is a faint fill inside a CRISP boundary — the fill
+    and the border are independent, and the border is the stronger of the
+    two. Collapsing them back to one alpha returns the soft-cloud look."""
+    scene = sm.build_scene(model=_model())
+    neb = scene["discs"][0]
+    assert neb["opacity"] == sm.NEBULA_OPACITY
+    assert neb["border_opacity"] == sm.NEBULA_BORDER_OPACITY
+    assert sm.NEBULA_BORDER_OPACITY > sm.NEBULA_OPACITY
 
 
 def test_points_carry_display_labels():

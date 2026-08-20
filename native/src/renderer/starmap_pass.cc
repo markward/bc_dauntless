@@ -13,11 +13,12 @@ namespace {
 
 // Shader `u_kind` selectors. The vertex stage only distinguishes disc (0),
 // line (1) and "screen-space" (anything else); the fragment stage splits the
-// screen-space case into point (2) and bracket (3).
+// screen-space case into point (2), bracket (3) and star cloud (4).
 constexpr int kKindDisc    = 0;
 constexpr int kKindLine    = 1;
 constexpr int kKindPoint   = 2;
 constexpr int kKindBracket = 3;
+constexpr int kKindStarCloud = 4;
 
 // Opaque map backdrop. "The game stays visible" means AROUND the modal, not
 // through it — a transparent map over a moving starfield is unreadable.
@@ -150,6 +151,7 @@ void StarMapPass::render(const StarMapScene& scene,
         shader.set_vec3 ("u_color",      d.color);
         shader.set_float("u_world_size", d.radius);
         shader.set_float("u_opacity",    d.opacity);
+        shader.set_float("u_border",      d.border_opacity);
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 
@@ -191,6 +193,19 @@ void StarMapPass::render(const StarMapScene& scene,
         shader.set_vec3("u_center",     b.position);
         shader.set_vec3("u_color",      b.color);
         shader.set_vec2("u_pixel_size", ndc_half(b.size_px));
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+
+    // 5. Star clouds — dense-star regions as a small fixed-size glyph, never
+    //    selectable. Screen-scaled like the points and brackets above, NOT
+    //    world-scaled like the nebula discs: drawn at their model `size` they
+    //    became volumes that swallowed whole regions of the map.
+    shader.set_int("u_kind", kKindStarCloud);
+    for (const auto& g : scene.starclouds) {
+        shader.set_vec3 ("u_center",     g.position);
+        shader.set_vec3 ("u_color",      g.color);
+        shader.set_float("u_opacity",    g.opacity);
+        shader.set_vec2 ("u_pixel_size", ndc_half(g.size_px));
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 

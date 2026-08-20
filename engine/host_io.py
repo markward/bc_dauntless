@@ -335,15 +335,20 @@ def starmap_set_camera(
         fn(eye, target, up, float(fov_y_rad), float(near), float(far))
 
 
-def starmap_set_scene(discs, lines, points, brackets) -> None:
+def starmap_set_scene(discs, lines, points, brackets, starclouds) -> None:
     """Replace the star map scene. Tuple shapes:
 
-        discs:    ((x, y, z), (r, g, b), radius_world, opacity)
-        lines:    ((ax, ay, az), (bx, by, bz), (r, g, b))
-        points:   ((x, y, z), (r, g, b), size_px, selected)
-        brackets: ((x, y, z), mark, (r, g, b), size_px)
+        discs:      ((x, y, z), (r, g, b), radius_world, fill_alpha, border_alpha)
+        lines:      ((ax, ay, az), (bx, by, bz), (r, g, b))
+        points:     ((x, y, z), (r, g, b), size_px, selected)
+        brackets:   ((x, y, z), mark, (r, g, b), size_px)
+        starclouds: ((x, y, z), (r, g, b), size_px, opacity)
 
-    The four lists are drawn in THAT order, depth test off. Ordering is
+    Discs are nebula REGIONS — a faint flat fill inside a crisp boundary, not
+    soft clouds — and are world-scaled. Star clouds are screen-scaled glyphs:
+    at their model `size` they became volumes that swallowed whole regions.
+
+    The five lists are drawn in THAT order, depth test off. Ordering is
     decided in engine.ui.star_map.build_scene; the pass never re-sorts.
 
     `mark` (1 here, 2 course, 3 mission) and `selected` ride along as
@@ -353,4 +358,4 @@ def starmap_set_scene(discs, lines, points, brackets) -> None:
     """
     fn = getattr(_h, "starmap_set_scene", None)
     if fn is not None:
-        fn(discs, lines, points, brackets)
+        fn(discs, lines, points, brackets, starclouds)
