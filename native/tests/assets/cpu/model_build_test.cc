@@ -585,6 +585,8 @@ TEST(ModelBuildNormalDiscovery, ShipWithoutNormalSiblingsLeavesEveryBumpEmpty) {
 
     auto model = assets::detail::build_model(f, ctx);
 
+    ASSERT_FALSE(model.materials.empty())
+        << "Galaxy.nif produced no materials; the loop below would assert nothing";
     using S = assets::Material::StageSlot;
     for (const auto& m : model.materials) {
         EXPECT_LT(m.stages[static_cast<std::size_t>(S::Bump)].texture_index, 0);
