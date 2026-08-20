@@ -62,10 +62,15 @@ function setStarMapPanel(state) {
     // from the selection itself — no second flag to fall out of step.
     // Warp: enabled only once a course is set. The label is the Helm menu's
     // own translated string, so the two buttons cannot drift apart.
-    const warpEl = document.getElementById('star-map-warp');
-    if (warpEl) {
-        warpEl.disabled = !state.warp_enabled;
-        if (state.warp_label) warpEl.textContent = String(state.warp_label);
+    // NB: warpBtnEl, not warpEl — `warpEl` below is the warp-POINT list
+    // (#star-map-warps). Two `const warpEl` in one function is a SyntaxError
+    // that kills the whole file: setStarMapPanel never defines and the
+    // DOMContentLoaded handlers never attach, so the panel loads with no
+    // chrome and ignores the mouse.
+    const warpBtnEl = document.getElementById('star-map-warp');
+    if (warpBtnEl) {
+        warpBtnEl.disabled = !state.warp_enabled;
+        if (state.warp_label) warpBtnEl.textContent = String(state.warp_label);
     }
 
     const targetsEl = document.getElementById('star-map-targets');
