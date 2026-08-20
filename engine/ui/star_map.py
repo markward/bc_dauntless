@@ -56,8 +56,15 @@ NEBULA_COLOR = (0.3922, 0.3882, 0.5725)  # Belaruz #646392
 # Star clouds are POC decoration: a small three-star glyph at a FIXED SCREEN
 # size, not a world-scaled volume. Drawn from the model's `size` they became
 # huge soft blobs that swallowed whole regions of the map.
-STARCLOUD_COLOR = (1.000, 0.894, 0.627)  # POC #ffe4a0
-STARCLOUD_SIZE_PX = 18.0
+# Deliberately the SAME constant as the nebulae, not a copy of its value: a
+# star cloud is terrain like a nebula is, and reads as part of the same layer
+# rather than as a third thing competing with the amber systems. Referencing
+# it means a future nebula retune carries the clusters with it instead of
+# silently leaving them behind. (Was the POC's amber #ffe4a0.)
+STARCLOUD_COLOR = NEBULA_COLOR
+# The glyph holds three sub-stars at 0.40/0.25/0.27 of its half-size, so at
+# the old 18 the largest was under 4px across and read as a smudge.
+STARCLOUD_SIZE_PX = 32.0
 STARCLOUD_OPACITY = 0.85
 
 # Faint ground grid; drop-lines fall to this plane.

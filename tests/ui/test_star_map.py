@@ -197,6 +197,19 @@ def test_every_nebula_takes_the_one_map_colour():
     assert all(d["color"] == sm.NEBULA_COLOR for d in scene["discs"])
 
 
+def test_star_clouds_share_the_nebula_colour():
+    """Star clouds are terrain, like nebulae — same layer, same colour, so
+    they do not read as a third thing competing with the amber systems.
+
+    Asserted against NEBULA_COLOR rather than a literal: the point is that
+    they track it, so retuning the nebulae must not silently leave the
+    clusters behind."""
+    scene = sm.build_scene(model=_model())
+    assert scene["starclouds"]
+    assert all(g["color"] == sm.NEBULA_COLOR for g in scene["starclouds"])
+    assert all(d["color"] == sm.NEBULA_COLOR for d in scene["discs"])
+
+
 def test_nebulae_carry_a_separate_border_opacity():
     """A charted region is a faint fill inside a CRISP boundary — the fill
     and the border are independent, and the border is the stronger of the
