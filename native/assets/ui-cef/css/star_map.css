@@ -120,7 +120,7 @@
 /* The three reserved states and selection. Each matches the GL marker it
    sits beside, so label and reticle read as one object. */
 .sm-label--here      { color: #d8c1a8; }       /* beside #b28452 */
-.sm-label--course    { color: #e0cbbf; }       /* beside #c19880 */
+.sm-label--course    { color: #ffce80; }       /* beside #ff9c00 */
 .sm-label--mission   { color: #99ccff; }       /* beside #3399ff */
 .sm-label--selected  { color: #ffffff; }
 
