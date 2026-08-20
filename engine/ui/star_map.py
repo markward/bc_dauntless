@@ -94,6 +94,22 @@ def _real_systems(model) -> list:
     return [s for s in model.get("systems", []) if sm.is_real_system(s["id"])]
 
 
+def _chart_nebulae(model) -> list:
+    """Nebulae worth charting: the MRegion* entries are multiplayer-map
+    scaffolding, the same family as the `multi*` systems `is_real_system`
+    already drops, and they are not places a player can set course to.
+
+    Filtered HERE rather than in sector_model because this is a chart
+    decision, not a fact about the data: the map-driven starsphere renders
+    from the same nebula records and does want them when the player is
+    actually standing in a multiplayer set. Matching on the name mirrors
+    `is_real_system`'s own prefix test — the baked records carry no
+    multiplayer flag to key off.
+    """
+    return [n for n in model.get("nebulae", [])
+            if not str(n.get("name") or "").lower().startswith("mregion")]
+
+
 def _centroid(systems) -> Vec3:
     if not systems:
         return (0.0, 0.0, 0.0)
@@ -153,7 +169,7 @@ def build_scene(*, model=None, here_id=None, course_id=None,
     # Star clouds are NOT discs any more: they are screen-scaled glyphs, so
     # they neither sort with these nor take a world radius.
     discs = []
-    for neb in model.get("nebulae", []):
+    for neb in _chart_nebulae(model):
         pos = tuple(float(c) for c in neb["position"])
         # `or ""` not `.get("name", "")`: the source map can carry an explicit
         # "name": null, which the default form passes straight through — and a

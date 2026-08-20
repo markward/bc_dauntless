@@ -161,6 +161,25 @@ def test_star_clouds_are_screen_scaled_glyphs_not_discs():
         assert "radius" not in g
 
 
+def test_multiplayer_scaffolding_nebulae_are_not_charted():
+    """MRegion* nebulae belong to the multiplayer maps, like the `multi*`
+    systems already dropped. They are not course destinations, so they do not
+    belong on the chart — and one of them was the saturated green that
+    dominated the map."""
+    model = _model()
+    model["nebulae"] = model["nebulae"] + [
+        {"name": "MRegion5 Nebula", "position": [10.0, 10.0, 0.0],
+         "radius": 30.0, "color": [0.12, 0.75, 0.12]},
+        {"name": "MRegion6 Nebula", "position": [-10.0, 10.0, 0.0],
+         "radius": 30.0, "color": [0.12, 0.12, 0.75]},
+    ]
+    scene = sm.build_scene(model=model)
+    labels = [d["label"] for d in scene["discs"]]
+    assert not any("mregion" in l.lower() for l in labels), labels
+    # The real ones survive — this must not filter everything.
+    assert "Belaruz Nebula" in labels
+
+
 def test_every_nebula_takes_the_one_map_colour():
     """The model's per-nebula tints are in-scene backdrop colours and several
     are saturated primaries, which read as alarm states on a chart. The map
