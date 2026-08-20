@@ -73,7 +73,9 @@ void apply_texture_property(
     const std::unordered_map<std::uint32_t, int>* image_to_texture,
     const std::unordered_set<std::uint32_t>* glow_image_links,
     const std::unordered_set<std::uint32_t>* specular_image_links,
-    const std::unordered_map<std::uint32_t, int>* sibling_specular_for_image)
+    const std::unordered_map<std::uint32_t, int>* sibling_specular_for_image,
+    const std::unordered_set<std::uint32_t>* normal_image_links,
+    const std::unordered_map<std::uint32_t, int>* sibling_normal_for_image)
 {
     // Single-texture v3.x property — usually populates the Base stage.
     //
@@ -115,6 +117,14 @@ void apply_texture_property(
         gloss.apply_mode    = 2;  // APPLY_MODULATE
         return;
     }
+    const bool is_normal = normal_image_links &&
+        normal_image_links->find(effective_image_link) != normal_image_links->end();
+    if (is_normal) {
+        auto& bump = m.stages[static_cast<std::size_t>(Material::StageSlot::Bump)];
+        bump.texture_index = tex_idx;
+        bump.apply_mode    = 2;  // APPLY_MODULATE
+        return;
+    }
     auto& base = m.stages[static_cast<std::size_t>(Material::StageSlot::Base)];
     base.texture_index = tex_idx;
     base.apply_mode    = 2;
@@ -135,6 +145,17 @@ void apply_texture_property(
             auto& gloss = m.stages[static_cast<std::size_t>(Material::StageSlot::Gloss)];
             gloss.texture_index = it->second;
             gloss.apply_mode    = 2;
+        }
+    }
+    // Sibling shim, mirroring the _specular block above: if the asset loader
+    // probed for a `_normal` texture next to this image and found one, bind it
+    // to the Bump slot. The hull texture stays in Base / Glow.
+    if (sibling_normal_for_image) {
+        auto it = sibling_normal_for_image->find(effective_image_link);
+        if (it != sibling_normal_for_image->end()) {
+            auto& bump = m.stages[static_cast<std::size_t>(Material::StageSlot::Bump)];
+            bump.texture_index = it->second;
+            bump.apply_mode    = 2;
         }
     }
 }
@@ -217,7 +238,9 @@ Material build_material(const MaterialInputs& in) {
     if (in.texture) apply_texture_property(m, *in.texture,
         in.texture_link_id, in.flip_image_override_for_prop,
         in.image_to_texture, in.glow_image_links, in.specular_image_links,
-        in.sibling_specular_for_image);
+        in.sibling_specular_for_image,
+        in.normal_image_links,
+        in.sibling_normal_for_image);
     if (in.multi_texture) apply_multi_texture_property(m, *in.multi_texture,
         in.image_to_texture, in.image_filename_for_link);
 

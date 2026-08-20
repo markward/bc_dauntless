@@ -315,3 +315,63 @@ TEST(MaterialBuild, LightmapPassFlagSetForUnderscoreLmFilename) {
     auto m = assets::detail::build_material(in);
     EXPECT_TRUE(m.lightmap_pass);
 }
+
+TEST(MaterialBuild, NormalImageBindsToBumpSlotOnly) {
+    // A directly-referenced _normal image is a standalone map: like
+    // _specular and unlike _glow, it must NOT dual-bind to Base.
+    nif::NiTextureProperty tex;
+    tex.image_link = 55;
+
+    std::unordered_map<std::uint32_t, int> img_to_tex = {{55, 9}};
+    std::unordered_set<std::uint32_t> normal_links = {55};
+
+    auto in = basic_inputs();
+    in.texture = &tex;
+    in.image_to_texture = &img_to_tex;
+    in.normal_image_links = &normal_links;
+
+    auto m = assets::detail::build_material(in);
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Bump)].texture_index, 9);
+    EXPECT_LT(m.stages[static_cast<std::size_t>(S::Base)].texture_index, 0)
+        << "_normal images must not dual-bind to Base";
+}
+
+TEST(MaterialBuild, SiblingNormalBindsToBumpAlongsideBase) {
+    // The hull texture keeps Base; the probed sibling fills Bump.
+    nif::NiTextureProperty tex;
+    tex.image_link = 70;
+
+    std::unordered_map<std::uint32_t, int> img_to_tex = {{70, 2}};
+    std::unordered_map<std::uint32_t, int> sibling_normal = {{70, 11}};
+
+    auto in = basic_inputs();
+    in.texture = &tex;
+    in.image_to_texture = &img_to_tex;
+    in.sibling_normal_for_image = &sibling_normal;
+
+    auto m = assets::detail::build_material(in);
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Base)].texture_index, 2);
+    EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Bump)].texture_index, 11);
+}
+
+TEST(MaterialBuild, NoNormalSiblingLeavesBumpUnpopulated) {
+    // The overwhelmingly common case: no _normal on disk. Bump stays -1 so
+    // frame.cc writes u_normal_enabled = 0 and the hull shades as it always has.
+    nif::NiTextureProperty tex;
+    tex.image_link = 80;
+
+    std::unordered_map<std::uint32_t, int> img_to_tex = {{80, 4}};
+    std::unordered_map<std::uint32_t, int> sibling_normal = {{79, 12}};  // different image
+
+    auto in = basic_inputs();
+    in.texture = &tex;
+    in.image_to_texture = &img_to_tex;
+    in.sibling_normal_for_image = &sibling_normal;
+
+    auto m = assets::detail::build_material(in);
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Base)].texture_index, 4);
+    EXPECT_LT(m.stages[static_cast<std::size_t>(S::Bump)].texture_index, 0);
+}
