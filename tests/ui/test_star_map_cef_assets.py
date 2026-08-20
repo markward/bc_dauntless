@@ -402,3 +402,25 @@ def test_course_and_selected_are_styled_from_different_state_keys():
     css = (ASSETS / "css" / "star_map.css").read_text()
     assert re.search(r"\.sm-label--course\s*\{", css)
     assert re.search(r"\.sm-label--selected\s*\{", css)
+
+
+def test_the_popup_dismiss_control_is_a_close_icon_on_the_right():
+    """A cross top-right, not a Back button top-left. The action is unchanged
+    (still star-map/back — it dismisses the popup, while the modal's own
+    Cancel closes Set Course); only the affordance moved."""
+    index = (ASSETS / "index.html").read_text()
+    head = re.search(r'<div id="star-map-targets-head">(.*?)</div>',
+                     index, re.S)
+    assert head, "no #star-map-targets-head block"
+    body = head.group(1)
+    # Title first, dismiss control second — source order IS visual order
+    # under the head's flex row.
+    assert body.index("star-map-targets-title") < body.index("star-map-back")
+    assert "&times;" in body, "dismiss control is not a cross glyph"
+    assert "dauntlessEvent('star-map/back')" in body
+
+    css = (ASSETS / "css" / "star_map.css").read_text()
+    head_rule = re.search(r"#star-map-targets-head\s*\{([^}]*)\}", css)
+    assert head_rule, "no #star-map-targets-head rule"
+    assert "space-between" in head_rule.group(1), (
+        "the head must push the close icon to the right edge")

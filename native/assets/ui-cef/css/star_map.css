@@ -152,17 +152,22 @@
 }
 #star-map-targets-head {
     display: flex; align-items: center; gap: 10px;
+    justify-content: space-between;   /* title left, close icon right */
     padding: 6px 10px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.12);
     background: rgba(255, 255, 255, 0.04);
 }
+/* Close icon. Borderless so it reads as an icon rather than a second
+   button competing with the modal's Cancel; the hit box is kept a
+   comfortable 20px square rather than shrinking to the glyph. */
 #star-map-back {
-    font-family: inherit; font-size: 11px;
+    font-family: inherit; font-size: 16px; line-height: 1;
+    width: 20px; height: 20px;
+    display: flex; align-items: center; justify-content: center;
     color: #ffd9a8; background: transparent;
-    border: 1px solid rgba(255, 217, 168, 0.4);
-    padding: 2px 8px; cursor: pointer;
+    border: none; padding: 0; cursor: pointer;
 }
-#star-map-back:hover { background: rgba(255, 217, 168, 0.15); }
+#star-map-back:hover { background: rgba(255, 217, 168, 0.18); color: #fff; }
 #star-map-targets-title {
     font-size: 12px; font-weight: 700; letter-spacing: 0.6px;
     text-transform: uppercase; color: #ffd9a8;

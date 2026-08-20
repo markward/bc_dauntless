@@ -237,7 +237,8 @@ def _distance(a: Vec3, b: Vec3) -> float:
 PICK_RADIUS_PT = 12.0
 MIN_DISTANCE = 40.0
 MAX_DISTANCE = 2000.0
-DEFAULT_DISTANCE = 600.0
+DEFAULT_DISTANCE = 400.0   # was 600: 1.5x magnification, so the
+                           # whole sector no longer fits on first open
 ZOOM_STEP = 1.12
 _MAX_PITCH = math.radians(89.0)
 

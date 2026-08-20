@@ -203,9 +203,12 @@
                  only way out and no click is ambiguous. -->
             <div id="star-map-targets" style="display:none">
               <div id="star-map-targets-head">
-                <button id="star-map-back"
-                        onclick="dauntlessEvent('star-map/back')">&lsaquo; Back</button>
                 <span id="star-map-targets-title"></span>
+                <!-- Dismisses the popup only; the modal's own Cancel (bottom
+                     right) closes Set Course. Still fires star-map/back — the
+                     action did not change, only its affordance. -->
+                <button id="star-map-back" title="Back to the map"
+                        onclick="dauntlessEvent('star-map/back')">&times;</button>
               </div>
               <ul id="star-map-warps"></ul>
             </div>
