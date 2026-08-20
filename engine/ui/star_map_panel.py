@@ -32,6 +32,10 @@ from engine.ui.panel import Panel
 # which is what makes that popup modal.
 _MAP_ACTIONS = frozenset({"orbit", "zoom", "pick"})
 
+# Only used when the TGL is unreachable (headless, or game/ absent). Never the
+# normal path: the label comes from the same database the Helm menu reads.
+_WARP_FALLBACK = "Warp"
+
 MODAL_W, MODAL_H = 880, 560
 MODAL_BORDER = 1
 HEADER_H = 28
@@ -77,9 +81,13 @@ MAP_RECT = rect_for_view(1280, 720)
 
 
 class StarMapPanel(Panel):
-    def __init__(self, on_course_set=None) -> None:
+    def __init__(self, on_course_set=None, on_warp_engage=None) -> None:
         super().__init__()
         self._on_course_set = on_course_set
+        # Same hook the Helm "Warp" button uses, so the in-modal button and
+        # the SDK one run one code path — gate, then execute_warp. The SDK
+        # button is untouched and still works on its own.
+        self._on_warp_engage = on_warp_engage
         self._visible = False
         self._course_menu = None
         self._selected_system: Optional[str] = None
@@ -96,6 +104,40 @@ class StarMapPanel(Panel):
 
     def is_open(self) -> bool:
         return self._visible
+
+    def _warp_destination(self):
+        """The set-module currently recorded on the SDK warp button, or None.
+
+        This is the SAME source the Helm "Warp" button reads, so the in-modal
+        button cannot disagree with it — including a course set before the map
+        was ever opened, or set from the old Set Course list.
+        """
+        try:
+            import App
+            btn = App.SortedRegionMenu_GetWarpButton()
+            dest = btn.GetDestination() if btn is not None else None
+            return dest or None
+        except Exception as e:
+            dev_mode.log_swallowed("star map warp destination", e)
+            return None
+
+    def _warp_enabled(self) -> bool:
+        return self._warp_destination() is not None
+
+    def _warp_label(self) -> str:
+        """The Helm menu's own translated string, not a hard-coded "Warp".
+
+        Bridge Menus.tgl is where HelmMenuHandlers gets it
+        (App.g_kLocalizationManager.Load(...).GetString("Warp")), so the two
+        buttons cannot drift apart or ship untranslated in one place.
+        """
+        try:
+            import App
+            db = App.g_kLocalizationManager.Load("data/TGL/Bridge Menus.tgl")
+            return str(db.GetString("Warp")) or _WARP_FALLBACK
+        except Exception as e:
+            dev_mode.log_swallowed("star map warp label", e)
+            return _WARP_FALLBACK
 
     def _targets_open(self) -> bool:
         """The target popup is shown exactly when a system is selected — no
@@ -212,6 +254,8 @@ class StarMapPanel(Panel):
             "visible": self._visible,
             "selected_system": self._selected_system,
             "targets_open": self._targets_open(),
+            "warp_enabled": self._warp_enabled(),
+            "warp_label": self._warp_label(),
             "targets_title": (sm.display_label(self._selected_system)
                               if self._targets_open() else ""),
             "here_system": self._here_system,
@@ -233,6 +277,16 @@ class StarMapPanel(Panel):
 
     def dispatch_event(self, action: str) -> bool:
         if action == "cancel":
+            self.close()
+            return True
+        if action == "warp":
+            # Guarded by the same condition that greys the button, so a stale
+            # payload or a synthetic event cannot warp without a course.
+            if not self._warp_enabled():
+                return False
+            if self._on_warp_engage is not None:
+                import App
+                self._on_warp_engage(App.SortedRegionMenu_GetWarpButton())
             self.close()
             return True
         if action == "back":
@@ -257,7 +311,11 @@ class StarMapPanel(Panel):
                 return False
             if self._on_course_set is not None:
                 self._on_course_set(module)
-            self.close()
+            # The modal stays OPEN: the player should see the course line
+            # they just plotted and then press Warp. Dismiss the target popup
+            # so the map is visible again.
+            self._selected_system = None
+            self._rebuild_scene()
             return True
         if action.startswith("orbit:"):
             try:

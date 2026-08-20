@@ -78,7 +78,7 @@ def test_selecting_a_system_does_not_move_the_camera():
     assert p.cam.anchor == before
 
 
-def test_set_course_calls_back_with_the_module_and_closes():
+def test_set_course_calls_back_with_the_module_and_stays_open():
     seen = []
     p = StarMapPanel(on_course_set=seen.append)
     p.open(set_name="Vesuvi6")
@@ -87,7 +87,11 @@ def test_set_course_calls_back_with_the_module_and_closes():
     wp = next(w for w in data["warp_points"] if w["available"])
     assert p.dispatch_event("set-course:" + wp["id"]) is True
     assert len(seen) == 1 and seen[0]
-    assert p.is_open() is False
+    # The modal STAYS OPEN so the player can see the course they plotted and
+    # then press Warp; only the target popup is dismissed.
+    assert p.is_open() is True
+    data = _payload(p.render_payload())
+    assert data["targets_open"] is False
 
 
 def test_unavailable_destination_does_not_fire_and_stays_open():
@@ -316,4 +320,90 @@ def test_set_course_still_works_from_the_popup():
               if w["available"])
     assert p.dispatch_event("set-course:" + wp["id"]) is True
     assert len(seen) == 1
+    assert p.is_open() is True          # stays open; Warp closes it
+
+
+# --- the in-modal Warp button ---------------------------------------------
+
+class _FakeWarpButton:
+    def __init__(self, dest=None):
+        self._dest = dest
+    def GetDestination(self):
+        return self._dest
+    def SetDestination(self, d):
+        self._dest = d
+
+
+def _with_warp_button(monkeypatch, dest=None):
+    """Point App.SortedRegionMenu_GetWarpButton at a stand-in."""
+    import App
+    btn = _FakeWarpButton(dest)
+    monkeypatch.setattr(App, "SortedRegionMenu_GetWarpButton",
+                        lambda: btn, raising=False)
+    return btn
+
+
+def test_warp_is_disabled_until_a_course_is_set(monkeypatch):
+    _with_warp_button(monkeypatch, dest=None)
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    assert _payload(p.render_payload())["warp_enabled"] is False
+
+
+def test_warp_enables_once_the_warp_button_holds_a_destination(monkeypatch):
+    """Read from the SDK warp button, not from a flag this panel sets — so a
+    course plotted before the map opened, or from the old Set Course list,
+    enables it too."""
+    _with_warp_button(monkeypatch, dest="Systems.Vesuvi.Vesuvi4")
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    assert _payload(p.render_payload())["warp_enabled"] is True
+
+
+def test_warp_engages_the_same_hook_as_the_helm_button_and_closes(monkeypatch):
+    btn = _with_warp_button(monkeypatch, dest="Systems.Vesuvi.Vesuvi4")
+    engaged = []
+    p = StarMapPanel(on_warp_engage=engaged.append)
+    p.open(set_name="Vesuvi6")
+
+    assert p.dispatch_event("warp") is True
+    assert engaged == [btn], "must hand the SDK warp button to the same hook"
     assert p.is_open() is False
+
+
+def test_warp_without_a_course_is_refused(monkeypatch):
+    """The greyed button is a hint, not the guard: dispatch re-checks, so a
+    stale payload or a synthetic event cannot warp with no destination."""
+    _with_warp_button(monkeypatch, dest=None)
+    engaged = []
+    p = StarMapPanel(on_warp_engage=engaged.append)
+    p.open(set_name="Vesuvi6")
+
+    assert p.dispatch_event("warp") is False
+    assert engaged == []
+    assert p.is_open() is True
+
+
+def test_warp_label_falls_back_without_the_tgl(monkeypatch):
+    """Headless (or game/ absent) must still render a usable button rather
+    than an empty one."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    assert _payload(p.render_payload())["warp_label"]
+
+
+def test_setting_a_course_enables_warp_in_the_same_payload(monkeypatch):
+    """End to end: pick a target, and the button the player must press next
+    is live without reopening anything."""
+    btn = _with_warp_button(monkeypatch, dest=None)
+    p = StarMapPanel(on_course_set=btn.SetDestination)
+    p.open(set_name="Vesuvi6")
+    p.dispatch_event("select-system:vesuvi")
+    wp = next(w for w in _payload(p.render_payload())["warp_points"]
+              if w["available"])
+    p.dispatch_event("set-course:" + wp["id"])
+
+    data = _payload(p.render_payload())
+    assert data["warp_enabled"] is True
+    assert data["targets_open"] is False
+    assert p.is_open() is True

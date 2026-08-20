@@ -60,6 +60,14 @@ function setStarMapPanel(state) {
     // Target popup: a centred card over the map, shown only while a system is
     // selected. Its visibility follows `targets_open`, which Python derives
     // from the selection itself — no second flag to fall out of step.
+    // Warp: enabled only once a course is set. The label is the Helm menu's
+    // own translated string, so the two buttons cannot drift apart.
+    const warpEl = document.getElementById('star-map-warp');
+    if (warpEl) {
+        warpEl.disabled = !state.warp_enabled;
+        if (state.warp_label) warpEl.textContent = String(state.warp_label);
+    }
+
     const targetsEl = document.getElementById('star-map-targets');
     if (targetsEl) targetsEl.style.display = state.targets_open ? 'flex' : 'none';
     const titleEl = document.getElementById('star-map-targets-title');

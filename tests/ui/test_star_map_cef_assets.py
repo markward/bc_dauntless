@@ -424,3 +424,37 @@ def test_the_popup_dismiss_control_is_a_close_icon_on_the_right():
     assert head_rule, "no #star-map-targets-head rule"
     assert "space-between" in head_rule.group(1), (
         "the head must push the close icon to the right edge")
+
+
+def test_the_warp_button_is_bottom_left_and_disabled_by_default():
+    """Warp bottom-LEFT, Cancel bottom-right, and disabled in the markup so
+    it can never render live for a frame before Python's first payload."""
+    index = (ASSETS / "index.html").read_text()
+    # Scope to THIS panel first: index.html holds several cp-* modals and an
+    # unscoped search finds the configuration panel's footer instead.
+    section = re.search(r'<section id="star-map-panel".*?</section>',
+                        index, re.S)
+    assert section, "no #star-map-panel section"
+    footer = re.search(r'<div class="cp-footer">(.*?)</div>',
+                       section.group(0), re.S)
+    assert footer, "no star map cp-footer block"
+    body = footer.group(1)
+    assert body.index("star-map/warp") < body.index("star-map/cancel"), (
+        "Warp must precede Cancel in source order — the footer is a flex row")
+    assert "disabled" in body
+    assert 'id="star-map-warp"' in body
+
+    css = (ASSETS / "css" / "star_map.css").read_text()
+    rule = re.search(r"#star-map-panel \.cp-footer\s*\{([^}]*)\}", css)
+    assert rule, "no star map footer rule"
+    assert "space-between" in rule.group(1), (
+        "the shared .cp-footer is flex-end; this modal must split its two "
+        "buttons to opposite ends")
+
+
+def test_the_warp_button_label_comes_from_the_payload():
+    """Not a hard-coded string in the JS: the label is the Helm menu's own
+    translated text, so the two buttons cannot ship differently."""
+    js = (ASSETS / "js" / "star_map.js").read_text()
+    assert "warp_label" in js
+    assert "warp_enabled" in js

@@ -51,6 +51,14 @@
     height: 54px;
     box-sizing: border-box;
     align-items: center;
+    /* Warp sits bottom-LEFT, Cancel stays bottom-right. The shared .cp-footer
+       is flex-end; overriding here rather than there keeps every other cp-*
+       modal's single right-aligned button where it is. */
+    justify-content: space-between;
+}
+#star-map-warp:disabled {
+    opacity: 0.4;
+    cursor: default;
 }
 
 /* .sm-body pairs with .cp-content (flex:1 fills the modal body below the

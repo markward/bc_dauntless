@@ -6960,7 +6960,8 @@ def run(mission_name: Optional[str] = None,
         # without it a bad first run leaves no way to set a course at all,
         # which makes warp unreachable and blocks everything downstream.
         from engine.ui.star_map_panel import StarMapPanel
-        star_map_panel = StarMapPanel(on_course_set=on_course_set)
+        star_map_panel = StarMapPanel(on_course_set=on_course_set,
+                                      on_warp_engage=on_warp_engage)
 
         def _open_star_map(course_menu=None):
             """Helm Set Course click -> open the map anchored on the player's

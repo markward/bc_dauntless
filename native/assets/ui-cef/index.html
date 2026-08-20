@@ -215,6 +215,12 @@
           </div>
         </div>
         <div class="cp-footer">
+          <!-- Label text is filled from Bridge Menus.tgl by setStarMapPanel,
+               the same string the Helm menu's own Warp button uses. Disabled
+               until a course is set; Python re-checks that on dispatch, so a
+               stale payload cannot warp without one. -->
+          <button id="star-map-warp" class="cp-done-button" disabled
+                  onclick="dauntlessEvent('star-map/warp')">Warp</button>
           <button class="cp-done-button"
                   onclick="dauntlessEvent('star-map/cancel')">Cancel</button>
         </div>

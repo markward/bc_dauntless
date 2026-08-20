@@ -74,7 +74,9 @@ def test_selection_reaches_the_course_set_callback_through_the_registry():
     assert registry.dispatch("star-map/set-course:" + wp["id"]) is True
     assert len(recorded) == 1
     assert recorded[0].startswith("Systems.")
-    assert not panel.is_open()
+    # The modal stays open after plotting: the player sees the course and
+    # then presses Warp, which is what closes it.
+    assert panel.is_open()
 
 
 # --- driving the native pass ---------------------------------------------
