@@ -189,16 +189,16 @@ def test_the_opaque_star_map_chrome_still_has_a_fill():
     carries its own fill."""
     index = (ASSETS / "index.html").read_text()
     chain = _ancestor_chain(index, "star-map-viewport")
-    warps = {"tag": "ul", "id": "star-map-warps", "classes": set()}
+    targets = {"tag": "div", "id": "star-map-targets", "classes": set()}
     footer = {"tag": "div", "id": "", "classes": {"cp-footer"}}
-    for el in (warps, footer):
+    for el in (targets, footer):
         bg = _effective_background(el, chain)
         assert bg is not None and not _is_transparent(bg), el
 
-    # ...and the warp column's fill must cover its whole box. A bare <ul>
-    # carries the UA `margin: 1em 0`, which would inset the fill by 16px top
-    # and bottom and re-open the hole either side of it. (#star-map-warps has
-    # no .sc-col class, so it gets no reset from configuration_panel.css.)
+    # ...and the popup's list must not re-open the hole inside the card. A
+    # bare <ul> carries the UA `margin: 1em 0`, which would inset it top and
+    # bottom. (#star-map-warps has no .sc-col class, so it gets no reset from
+    # configuration_panel.css.)
     css = (ASSETS / "css" / "star_map.css").read_text()
     block = re.search(r"#star-map-warps\s*\{([^}]*)\}", css)
     assert block, "no #star-map-warps rule"
@@ -248,15 +248,17 @@ def test_viewport_css_centring_matches_the_python_formula():
     assert (_px("width"), _px("height")) == (float(MAP_W), float(MAP_H))
     assert "position" in body and "fixed" in body
 
-    # #star-map-warps reserves the viewport's width with its own margin-left
-    # (the viewport is position:fixed and so out of .sm-body's flow) — that
-    # literal is another untested copy of the map width unless pinned here.
+    # The map fills the modal now, so MAP_W is MODAL_W and the CSS left
+    # offset doubles as the width pin. The right-hand column that used to
+    # reserve space with a hard-coded margin-left duplicating MAP_W is gone —
+    # the target list is a centred popup, which cannot drift out of step.
+    assert MAP_W == MODAL_W
     css = (ASSETS / "css" / "star_map.css").read_text()
     warps_block = re.search(r"#star-map-warps\s*\{([^}]*)\}", css)
     assert warps_block, "no #star-map-warps rule"
-    m = re.search(r"margin-left\s*:\s*(-?\d+(?:\.\d+)?)px", warps_block.group(1))
-    assert m, "missing margin-left in #star-map-warps"
-    assert float(m.group(1)) == float(MAP_W)
+    assert "margin-left" not in warps_block.group(1), (
+        "the target list is a centred popup — a margin-left here would "
+        "reintroduce the duplicated map width")
 
 
 def _rule_px(css, selector, prop):
@@ -295,8 +297,16 @@ def test_the_map_rect_fits_the_modal_body():
     assert _rule_px(sm, "#star-map-panel .cp-modal", "width") == MODAL_W
     assert _rule_px(sm, "#star-map-panel .cp-modal", "height") == MODAL_H
 
-    # The warp column shares the map's height: it is the modal body beside it.
-    assert _rule_px(sm, "#star-map-warps", "max-height") == MAP_H
+    # The target popup is a centred card INSIDE the map rect, not a column
+    # beside it, so it is sized in percentages of the viewport and shares no
+    # literal with MAP_H. What must hold is that it cannot escape the rect:
+    # #star-map-viewport clips it (overflow: hidden) and the card's own
+    # max-height is a fraction, never a pixel count that could exceed MAP_H.
+    targets = re.search(r"#star-map-targets\s*\{([^}]*)\}", sm)
+    assert targets, "no #star-map-targets rule"
+    mh = re.search(r"max-height\s*:\s*(\d+)%", targets.group(1))
+    assert mh and int(mh.group(1)) <= 100, targets.group(1)
+    assert "overflow" in _viewport_css_body() and "hidden" in _viewport_css_body()
 
 
 def test_python_rect_reproduces_the_css_rect_at_two_view_sizes():
@@ -313,7 +323,7 @@ def test_python_rect_reproduces_the_css_rect_at_two_view_sizes():
         # invisible. Assert agreement to that tolerance.
         return (view_w / 2 - left_off, view_h / 2 - top_off)
 
-    assert rect_for_view(1280, 720) == MAP_RECT == (200, 108, 640, 478)
+    assert rect_for_view(1280, 720) == MAP_RECT == (200, 108, 880, 478)
     for view_w, view_h in ((1280, 720), (1512, 983)):
         rx, ry, rw, rh = rect_for_view(view_w, view_h)
         cx, cy = _css_rect(view_w, view_h)

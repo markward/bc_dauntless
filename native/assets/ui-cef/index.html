@@ -193,8 +193,23 @@
       <div class="cp-modal">
         <div class="cp-header">Set Course</div>
         <div class="cp-content sm-body">
-          <div id="star-map-viewport"><div id="star-map-labels"></div></div>
-          <ul id="star-map-warps"></ul>
+          <div id="star-map-viewport">
+            <div id="star-map-labels"></div>
+            <!-- Target popup: a centred card OVER the map, shown only while a
+                 system is selected. Inside the viewport so it is clipped to
+                 the map rect; being opaque here is fine, it is meant to
+                 cover. While it is open the map is modal-frozen (orbit, zoom
+                 and picking are all ignored in dispatch_event) so Back is the
+                 only way out and no click is ambiguous. -->
+            <div id="star-map-targets" style="display:none">
+              <div id="star-map-targets-head">
+                <button id="star-map-back"
+                        onclick="dauntlessEvent('star-map/back')">&lsaquo; Back</button>
+                <span id="star-map-targets-title"></span>
+              </div>
+              <ul id="star-map-warps"></ul>
+            </div>
+          </div>
         </div>
         <div class="cp-footer">
           <button class="cp-done-button"

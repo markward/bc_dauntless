@@ -208,13 +208,22 @@ def test_rect_tracks_the_live_cef_view_size():
     from engine.ui.star_map_panel import MAP_RECT, rect_for_view
 
     p = StarMapPanel()
-    assert p.rect == MAP_RECT == (200, 108, 640, 478)
+    assert p.rect == MAP_RECT == (200, 108, 880, 478)
 
     p.set_view_size(1512, 983)
     assert p.rect == rect_for_view(1512, 983)
     # Centred against the modal chrome, not the pinned 1280x720 numbers.
     assert p.rect[:2] == (round(1512 / 2 - 440), round(983 / 2 - 252))
-    assert p.rect[2:] == (640, 478)
+    assert p.rect[2:] == (880, 478)
+
+
+def test_the_map_fills_the_modal_width():
+    """The target list used to be a right-hand column, reserved in CSS with a
+    hard-coded margin-left duplicating MAP_W. It is a centred popup now, so
+    the map spans the whole modal and that duplicate is gone."""
+    from engine.ui.star_map_panel import MAP_W, MODAL_W
+
+    assert MAP_W == MODAL_W
 
 
 def test_rect_origin_is_clamped_for_views_smaller_than_the_modal():
@@ -241,3 +250,70 @@ def test_picking_follows_the_resized_rect():
     hit = labels[0]
     assert p.dispatch_event("pick:%f,%f" % (rx + hit["x"], ry + hit["y"])) is True
     assert p._selected_system is not None
+
+
+# --- the target popup is modal over the map -------------------------------
+
+def test_selecting_a_system_opens_the_target_popup():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    assert _payload(p.render_payload())["targets_open"] is False
+    p.dispatch_event("select-system:vesuvi")
+    data = _payload(p.render_payload())
+    assert data["targets_open"] is True
+    assert data["targets_title"]          # the system's display label
+    assert data["warp_points"]
+
+
+def test_back_dismisses_the_popup_without_closing_the_modal():
+    """Back and Cancel are different: Back returns to the map, Cancel closes
+    Set Course entirely."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    p.dispatch_event("select-system:vesuvi")
+    assert p.dispatch_event("back") is True
+    data = _payload(p.render_payload())
+    assert data["targets_open"] is False
+    assert data["selected_system"] is None
+    assert p.is_open() is True            # the modal itself stays up
+
+
+def test_map_input_is_ignored_while_the_popup_is_open():
+    """Modal by decision: with the card over the centre of the map, a click
+    or drag near its edge would otherwise be ambiguous."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    p.dispatch_event("select-system:vesuvi")
+    anchor, dist, yaw = p.cam.anchor, p.cam.camera.distance, p.cam.camera.yaw
+
+    assert p.dispatch_event("orbit:0.5,0.2") is False
+    assert p.dispatch_event("zoom:-3") is False
+    assert p.dispatch_event("pick:520,368") is False
+
+    assert p.cam.anchor == anchor
+    assert p.cam.camera.distance == dist
+    assert p.cam.camera.yaw == yaw
+
+
+def test_map_input_resumes_after_back():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    p.dispatch_event("select-system:vesuvi")
+    p.dispatch_event("back")
+    before = p.cam.camera.yaw
+    assert p.dispatch_event("orbit:0.5,0.2") is True
+    assert p.cam.camera.yaw != before
+
+
+def test_set_course_still_works_from_the_popup():
+    """The popup gates MAP actions only — choosing a target must still reach
+    on_course_set, which is the whole point of the panel."""
+    seen = []
+    p = StarMapPanel(on_course_set=seen.append)
+    p.open(set_name="Vesuvi6")
+    p.dispatch_event("select-system:vesuvi")
+    wp = next(w for w in _payload(p.render_payload())["warp_points"]
+              if w["available"])
+    assert p.dispatch_event("set-course:" + wp["id"]) is True
+    assert len(seen) == 1
+    assert p.is_open() is False

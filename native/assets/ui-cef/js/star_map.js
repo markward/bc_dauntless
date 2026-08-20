@@ -57,6 +57,14 @@ function setStarMapPanel(state) {
                 + escapeHtmlSM(l.label) + '</div>';
         }).join('');
     }
+    // Target popup: a centred card over the map, shown only while a system is
+    // selected. Its visibility follows `targets_open`, which Python derives
+    // from the selection itself — no second flag to fall out of step.
+    const targetsEl = document.getElementById('star-map-targets');
+    if (targetsEl) targetsEl.style.display = state.targets_open ? 'flex' : 'none';
+    const titleEl = document.getElementById('star-map-targets-title');
+    if (titleEl) titleEl.textContent = String(state.targets_title || '');
+
     const warpEl = document.getElementById('star-map-warps');
     if (warpEl) {
         const note = state.warp_note
@@ -78,10 +86,19 @@ function setStarMapPanel(state) {
 // Orbit / zoom / pick. A drag orbits; a click without drag picks a star.
 (function () {
     let dragging = false, moved = false, lastX = 0, lastY = 0;
+    // The target popup is modal over the map. Python also drops orbit/zoom/
+    // pick while it is open — this is the near side of the same rule, and it
+    // stops the drag state machine latching on a press the map will never act
+    // on (which would otherwise orbit the moment Back was pressed).
+    function mapFrozen() {
+        const t = document.getElementById('star-map-targets');
+        return !!t && t.style.display !== 'none';
+    }
     document.addEventListener('DOMContentLoaded', function () {
         const vp = document.getElementById('star-map-viewport');
         if (!vp) return;
         vp.addEventListener('mousedown', function (e) {
+            if (mapFrozen()) return;
             dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY;
         });
         vp.addEventListener('mousemove', function (e) {
@@ -99,7 +116,9 @@ function setStarMapPanel(state) {
         });
         vp.addEventListener('mouseleave', function () { dragging = false; });
         vp.addEventListener('wheel', function (e) {
-            dauntlessEvent('star-map/zoom:' + (e.deltaY > 0 ? 1 : -1));
+            if (!mapFrozen()) {
+                dauntlessEvent('star-map/zoom:' + (e.deltaY > 0 ? 1 : -1));
+            }
             e.preventDefault();
         });
     });

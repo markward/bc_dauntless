@@ -54,11 +54,11 @@
 }
 
 /* .sm-body pairs with .cp-content (flex:1 fills the modal body below the
-   28px header, same as .sc-columns does for Setting Course). It only holds
-   the warp-point list in flow now that the viewport is position:fixed
-   (taken out of flow); the list reserves the viewport's width with
-   margin-left below, so it never sits underneath the (click-catching)
-   viewport rect. */
+   28px header). Nothing sits in flow inside it any more: the viewport is
+   position:fixed (out of flow) and now spans the WHOLE modal body, and the
+   target list moved inside it as a centred popup. It previously held the
+   list as a right-hand column, reserved with a hard-coded margin-left that
+   duplicated MAP_W — centring removes that duplication entirely. */
 .sm-body { display: flex; gap: 0; }
 
 /* The GL pass draws BENEATH this element — it MUST stay transparent, or the
@@ -74,11 +74,13 @@
 
    The 478px height is the modal BODY: MODAL_H 560 - HEADER_H 28 - FOOTER_H 54.
    It is not a free number — the GL backdrop is opaque and scissored to exactly
-   this rect, so any excess paints over the footer strip. */
+   this rect, so any excess paints over the footer strip. The 880px width is
+   likewise MODAL_W exactly: the map fills the modal, and the target list is
+   a centred popup over it rather than a column beside it. */
 #star-map-viewport {
     position: fixed;
     left: calc(50% - 440px); top: calc(50% - 252px);
-    width: 640px; height: 478px;
+    width: 880px; height: 478px;
     background: transparent;
     overflow: hidden;      /* clip labels to the map rect */
     cursor: grab;
@@ -132,12 +134,42 @@
    `margin: 1em 0`, which would inset this column's fill by 16px top and
    bottom and re-open the transparent hole either side of it — the live 3D
    scene showing through two strips of the modal. */
+/* Target popup — a centred card over the map, not a column beside it. The
+   map fills the modal now, so this is the only thing that covers it, and it
+   does so only while a system is selected. No margin-left pinning the map
+   width any more: the card is centred, so it cannot drift out of step with
+   MAP_W the way a hard-coded offset could. */
+#star-map-targets {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    min-width: 240px; max-width: 60%;
+    max-height: 70%;
+    display: flex; flex-direction: column;
+    background: rgb(20, 22, 28);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+}
+#star-map-targets-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+}
+#star-map-back {
+    font-family: inherit; font-size: 11px;
+    color: #ffd9a8; background: transparent;
+    border: 1px solid rgba(255, 217, 168, 0.4);
+    padding: 2px 8px; cursor: pointer;
+}
+#star-map-back:hover { background: rgba(255, 217, 168, 0.15); }
+#star-map-targets-title {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase; color: #ffd9a8;
+}
 #star-map-warps {
     list-style: none;
     margin: 0;
-    margin-left: 640px;
     padding: 6px 0;
-    flex: 1 1 auto; overflow-y: auto; max-height: 478px;
-    background: rgb(20, 22, 28);
-    border-left: 1px solid rgba(255, 255, 255, 0.12);
+    overflow-y: auto;
 }

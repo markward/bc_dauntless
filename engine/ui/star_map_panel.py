@@ -19,7 +19,7 @@ from engine.ui.panel import Panel
 
 # Modal + map geometry in CEF logical pixels. The modal (.cp-modal) is
 # 880x560 with a 1px border, a fixed 28px .cp-header and a fixed 54px
-# .cp-footer; the map fills the left MAP_W of the body BETWEEN them.
+# .cp-footer; the map fills the WHOLE body BETWEEN them.
 #
 # MAP_H is DERIVED, never asserted. It was a hardcoded 520 against a 478px
 # body, so the map's opaque GL backdrop overran the footer strip by 42px. The
@@ -28,11 +28,15 @@ from engine.ui.panel import Panel
 # in configuration_panel.css, .cp-footer's in star_map.css (the shared rule is
 # padding-sized, i.e. font-dependent, so the map gives it a fixed height to
 # divide by), and .cp-modal's own width/height literals.
+# Actions that drive the MAP itself. Ignored while the target popup is open,
+# which is what makes that popup modal.
+_MAP_ACTIONS = frozenset({"orbit", "zoom", "pick"})
+
 MODAL_W, MODAL_H = 880, 560
 MODAL_BORDER = 1
 HEADER_H = 28
 FOOTER_H = 54
-MAP_W = 640
+MAP_W = MODAL_W        # the map fills the modal; targets are a popup OVER it
 MAP_H = MODAL_H - HEADER_H - FOOTER_H
 
 
@@ -92,6 +96,11 @@ class StarMapPanel(Panel):
 
     def is_open(self) -> bool:
         return self._visible
+
+    def _targets_open(self) -> bool:
+        """The target popup is shown exactly when a system is selected — no
+        separate flag to fall out of step with the selection."""
+        return self._selected_system is not None
 
     def set_view_size(self, view_w, view_h) -> None:
         """Re-centre the map rect for the live CEF logical view size.
@@ -202,6 +211,9 @@ class StarMapPanel(Panel):
         payload = json.dumps({
             "visible": self._visible,
             "selected_system": self._selected_system,
+            "targets_open": self._targets_open(),
+            "targets_title": (sm.display_label(self._selected_system)
+                              if self._targets_open() else ""),
             "here_system": self._here_system,
             "course_system": self._course_system() if self._visible else None,
             "mission_systems": self._mission_systems() if self._visible else [],
@@ -223,6 +235,17 @@ class StarMapPanel(Panel):
         if action == "cancel":
             self.close()
             return True
+        if action == "back":
+            # Dismiss the target popup and return to the map. Deliberately
+            # separate from "cancel": that closes the whole modal.
+            self._selected_system = None
+            self._rebuild_scene()
+            return True
+        if self._targets_open() and action.split(":", 1)[0] in _MAP_ACTIONS:
+            # The target popup is MODAL over the map: orbit, zoom and picking
+            # are ignored while it is up, so Back is the only way out and a
+            # click near the card's edge can never be ambiguous.
+            return False
         if action.startswith("select-system:"):
             # Selects only — the camera anchor deliberately does not move.
             self._selected_system = action[len("select-system:"):]
