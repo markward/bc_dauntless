@@ -150,44 +150,30 @@
       </div>
     </section>
 
-    <!-- Setting Course overlay (production).
-         setSettingCoursePanel({visible, selected_system, systems, warp_points,
-         warp_note}) drives state. Two columns: systems (left) | the selected
-         system's warp points (right). System rows fire
-         dauntlessEvent('setting-course/select-system:<id>'); clicking a warp
-         row SETS THE COURSE via 'setting-course/set-course:<id>' and closes the
-         popup (the player then engages warp from the SDK Helm "Warp" button).
-         Cancel and ESC fire 'setting-course/cancel'. Reuses the cp-* modal CSS.
-         Spec: docs/superpowers/specs/2026-06-21-set-course-two-level-menu-design.md -->
-    <section id="setting-course-panel" style="display:none">
-      <div class="cp-modal">
-        <div class="cp-header" id="setting-course-header">Set Course</div>
-        <div class="cp-content sc-columns">
-          <ul id="setting-course-systems" class="sc-col"></ul>
-          <ul id="setting-course-warps" class="sc-col"></ul>
-        </div>
-        <div class="cp-footer">
-          <button class="cp-done-button"
-                  onclick="dauntlessEvent('setting-course/cancel')">Cancel</button>
-        </div>
-      </div>
-    </section>
+    <!-- Set Course (production). A 3D sector map drawn by a NATIVE GL pass
+         BENEATH #star-map-viewport — that element and every ancestor of it
+         MUST stay transparent, or the map is hidden behind an opaque CEF
+         rectangle (see css/star_map.css).
 
-    <!-- Star map overlay (production) — replaces the Setting Course panel's
-         system list with a 3D map, drawn by a NATIVE GL pass beneath
-         #star-map-viewport (that element MUST stay transparent — see
-         css/star_map.css). setStarMapPanel({visible, selected_system,
-         here_system, course_system, mission_systems, labels, warp_points,
-         warp_note}) drives state; #star-map-labels holds one absolutely
-         positioned label per projected system. The warp-point column is
-         unchanged from Setting Course: clicking a row SETS THE COURSE via
-         'star-map/set-course:<id>' and closes the popup (the player then
-         engages warp from the SDK Helm "Warp" button). Dragging the
-         viewport orbits ('star-map/orbit:<dx>,<dy>'); a click without drag
-         picks a star ('star-map/pick:<x>,<y>'); wheel zooms
-         ('star-map/zoom:<steps>'). Cancel and ESC fire 'star-map/cancel'.
-         Reuses the cp-* modal CSS; the old setting-course-panel above stays
-         as a working fallback until this map is verified live.
+         setStarMapPanel({visible, selected_system, here_system,
+         course_system, mission_systems, labels, warp_points, warp_note,
+         targets_open, targets_title, warp_enabled, warp_label}) drives
+         state; #star-map-labels holds one absolutely positioned label per
+         projected system.
+
+         Clicking a star opens #star-map-targets, a centred popup listing
+         that system's destinations. It is MODAL over the map: orbit, zoom
+         and picking are dropped while it is up. Choosing one SETS THE COURSE
+         ('star-map/set-course:<id>') and returns to the map — the modal
+         stays open so the plotted course is visible — and the footer's Warp
+         button then engages it and closes. Drag orbits
+         ('star-map/orbit:<dx>,<dy>'); a click without drag picks
+         ('star-map/pick:<x>,<y>'); wheel zooms ('star-map/zoom:<steps>');
+         the popup's close icon fires 'star-map/back'; Cancel and ESC fire
+         'star-map/cancel'.
+
+         Reuses the cp-* modal CSS. This replaced #setting-course-panel
+         outright, which was retired once the map was verified live.
          Spec: docs/superpowers/specs/2026-08-20-star-map-set-course-design.md -->
     <section id="star-map-panel" style="display:none">
       <div class="cp-modal">
@@ -924,7 +910,6 @@
     <script src="js/configuration_panel.js"></script>
     <script src="js/quick_battle_setup.js"></script>
     <script src="js/developer_options.js"></script>
-    <script src="js/setting_course_panel.js"></script>
     <script src="js/star_map.js"></script>
     <script src="js/ship_property_viewer.js"></script>
     <script src="js/ai_inspector.js"></script>

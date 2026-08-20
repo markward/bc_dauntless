@@ -212,12 +212,13 @@ def test_rect_tracks_the_live_cef_view_size():
     from engine.ui.star_map_panel import MAP_RECT, rect_for_view
 
     p = StarMapPanel()
-    assert p.rect == MAP_RECT == (200, 108, 880, 478)
+    assert p.rect == MAP_RECT == (256, 108, 880, 478)
 
     p.set_view_size(1512, 983)
     assert p.rect == rect_for_view(1512, 983)
     # Centred against the modal chrome, not the pinned 1280x720 numbers.
-    assert p.rect[:2] == (round(1512 / 2 - 440), round(983 / 2 - 252))
+    # 440 = MODAL_W/2, less the 56px offset that clears the Helm menu.
+    assert p.rect[:2] == (round(1512 / 2 - 440 + 56), round(983 / 2 - 252))
     assert p.rect[2:] == (880, 478)
 
 

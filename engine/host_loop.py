@@ -2843,7 +2843,6 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
 
 
 def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
-                                  setting_course_panel=None,
                                   quick_battle_setup_panel=None,
                                   star_map_panel=None) -> None:
     """Free the mouse cursor while a crew menu (F1-F5) is open on the
@@ -2886,9 +2885,8 @@ def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
     # centred modal too, and is unusable without a cursor — it is dragged and
     # clicked, not just clicked.
     modal_open = (
-        (setting_course_panel is not None and setting_course_panel.is_open())
-        or (quick_battle_setup_panel is not None
-            and quick_battle_setup_panel.is_open())
+        (quick_battle_setup_panel is not None
+         and quick_battle_setup_panel.is_open())
         or (star_map_panel is not None and star_map_panel.is_open())
     )
     target = (((view_mode.is_bridge and crew_menu_panel.has_open_menu())
@@ -6951,14 +6949,11 @@ def run(mission_name: Optional[str] = None,
         sdk_mirror = SDKMirrorPanel()
         registry.register(sdk_mirror)
         _letterbox_anim = LetterboxAnimator()
-        from engine.ui.setting_course_panel import SettingCoursePanel
-        setting_course_panel = SettingCoursePanel(on_course_set=on_course_set)
-        # The 3D star map replaces the list panel behind Helm -> Set Course.
-        # It satisfies the SAME on_course_set contract, so the warp button,
-        # the crew ack and the warp spine are untouched. SettingCoursePanel
-        # stays constructed and registered until the map is verified live —
-        # without it a bad first run leaves no way to set a course at all,
-        # which makes warp unreachable and blocks everything downstream.
+        # The 3D star map IS Helm -> Set Course. It satisfies the same
+        # on_course_set contract the old list panel did, so the warp button,
+        # the crew ack and the warp spine are untouched. That panel
+        # (SettingCoursePanel) was kept alongside as a fallback while the map
+        # was unproven, and retired once Mark verified it live.
         from engine.ui.star_map_panel import StarMapPanel
         star_map_panel = StarMapPanel(on_course_set=on_course_set,
                                       on_warp_engage=on_warp_engage)
@@ -6979,7 +6974,6 @@ def run(mission_name: Optional[str] = None,
             on_set_course=_open_star_map,
             on_warp_engage=on_warp_engage)
         registry.register(crew_menu_panel)
-        registry.register(setting_course_panel)
         registry.register(star_map_panel)
         try:
             from engine.ui import crew_menu_hotkeys
@@ -7157,8 +7151,8 @@ def run(mission_name: Optional[str] = None,
         # The star map is in that same bracket, for that same reason.
         _modal_blockers = [mission_picker, developer_options_panel,
                            ship_property_viewer, ai_inspector,
-                           configuration_panel, setting_course_panel,
-                           star_map_panel, quick_battle_setup_panel]
+                           configuration_panel, star_map_panel,
+                           quick_battle_setup_panel]
 
         while not r.should_close():
             # --- Track window resizes: re-lay-out the CEF overlay at the new
@@ -7210,7 +7204,6 @@ def run(mission_name: Optional[str] = None,
                 # on close. Runs every frame; idempotent + latched.
                 _apply_crew_menu_side_effects(
                     crew_menu_panel, view_mode, pause, _h,
-                    setting_course_panel,
                     controller.quick_battle_setup_panel,
                     star_map_panel)
                 if pause.is_open:
@@ -7436,7 +7429,6 @@ def run(mission_name: Optional[str] = None,
                     # open belongs to CEF (a button, a star, or the inert
                     # backdrop), never to phaser fire or the bridge view below.
                     _cursor_in_modal = _any_blocker_open((
-                        setting_course_panel,
                         star_map_panel,
                         controller.quick_battle_setup_panel,
                     ))

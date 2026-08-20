@@ -4,7 +4,8 @@ import re
 from pathlib import Path
 
 from engine.ui.star_map_panel import (FOOTER_H, HEADER_H, MAP_H, MAP_RECT,
-                                      MAP_W, MODAL_H, MODAL_W, rect_for_view)
+                                      MAP_W, MODAL_H, MODAL_OFFSET_X, MODAL_W,
+                                      rect_for_view)
 
 ASSETS = Path(__file__).resolve().parents[2] / "native" / "assets" / "ui-cef"
 
@@ -237,7 +238,7 @@ def test_viewport_css_centring_matches_the_python_formula():
 
     # 50% - MODAL_W/2 horizontally; 50% - (MODAL_H/2 - HEADER_H) vertically.
     # The 1px border cancels — see rect_for_view's docstring.
-    assert _calc_offset(body, "left") == MODAL_W / 2
+    assert _calc_offset(body, "left") == MODAL_W / 2 - MODAL_OFFSET_X
     assert _calc_offset(body, "top") == MODAL_H / 2 - HEADER_H
 
     def _px(prop):
@@ -323,7 +324,7 @@ def test_python_rect_reproduces_the_css_rect_at_two_view_sizes():
         # invisible. Assert agreement to that tolerance.
         return (view_w / 2 - left_off, view_h / 2 - top_off)
 
-    assert rect_for_view(1280, 720) == MAP_RECT == (200, 108, 880, 478)
+    assert rect_for_view(1280, 720) == MAP_RECT == (256, 108, 880, 478)
     for view_w, view_h in ((1280, 720), (1512, 983)):
         rx, ry, rw, rh = rect_for_view(view_w, view_h)
         cx, cy = _css_rect(view_w, view_h)
@@ -458,3 +459,27 @@ def test_the_warp_button_label_comes_from_the_payload():
     js = (ASSETS / "js" / "star_map.js").read_text()
     assert "warp_label" in js
     assert "warp_enabled" in js
+
+
+def test_the_modal_is_offset_clear_of_the_helm_menu():
+    """The modal sits RIGHT of centre so the Helm menu it is opened from stays
+    visible. #tactical-left-column is left:24 width:224 (x 24..248); a centred
+    880-wide modal starts at x 200 and covered the map's leftmost 48px.
+
+    Two numbers must agree — the modal's own `left` and the viewport's calc()
+    offset — so pin both against the Python constant. An offset applied to one
+    and not the other separates the map from its own frame, which is the exact
+    failure the centring rule was introduced to end.
+    """
+    css = (ASSETS / "css" / "star_map.css").read_text()
+    modal = re.search(r"#star-map-panel \.cp-modal\s*\{([^}]*)\}", css)
+    assert modal, "no #star-map-panel .cp-modal rule"
+    m = re.search(r"left\s*:\s*(-?\d+(?:\.\d+)?)px", modal.group(1))
+    assert m, "modal has no left offset"
+    assert float(m.group(1)) == float(MODAL_OFFSET_X)
+    assert "relative" in modal.group(1), (
+        "the offset must be relative, so it shifts the modal without "
+        "disturbing the flex centring the viewport calc() assumes")
+
+    # ...and the resulting rect actually clears the HUD column.
+    assert MAP_RECT[0] >= 248, MAP_RECT

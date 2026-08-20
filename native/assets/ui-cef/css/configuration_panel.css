@@ -16,16 +16,6 @@
 
 #configuration-panel,
 #developer-options-panel,
-#setting-course-panel {
-    display: none;
-    position: fixed;
-    inset: 0;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.55);
-    z-index: 50;
-    font-family: "Antonio", sans-serif;
-}
 
 .cp-modal {
     width: 640px;
@@ -208,13 +198,10 @@
     margin: 0 0 8px 2px;
 }
 
-/* Set Course two-column body (reuses cp-* chrome). */
-.sc-columns { display: flex; gap: 0; }
-.sc-col {
-    list-style: none; margin: 0; padding: 6px 0;
-    flex: 1 1 50%; overflow-y: auto; max-height: 320px;
-}
-.sc-col + .sc-col { border-left: 1px solid rgba(255, 255, 255, 0.12); }
+/* Retained after #setting-course-panel was retired: the star map's target
+   popup renders these same row classes (js/star_map.js). The panel's own
+   two-column .sc-columns/.sc-col layout went with it — the popup is a
+   centred card, not a column. */
 .sc-row {
     padding: 4px 14px; cursor: pointer; color: #cdd3dc;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

@@ -43,6 +43,14 @@ FOOTER_H = 54
 MAP_W = MODAL_W        # the map fills the modal; targets are a popup OVER it
 MAP_H = MODAL_H - HEADER_H - FOOTER_H
 
+# Shifted RIGHT of centre, deliberately. #tactical-left-column (the HUD, and
+# with it the open Helm menu) is left:24 width:224, i.e. x 24..248. A centred
+# 880-wide modal starts at x 200, so the menu covered the map's leftmost 48px
+# — and the menu has to stay visible, because Set Course is opened FROM it.
+# 56 clears 248 with 8px to spare. Mirrored by the CSS calc() offsets, which
+# the agreement test checks against this constant.
+MODAL_OFFSET_X = 56
+
 
 def rect_for_view(view_w, view_h) -> tuple:
     """Map viewport rect (x, y, w, h) for a CEF logical view of this size.
@@ -69,7 +77,7 @@ def rect_for_view(view_w, view_h) -> tuple:
     Clamped at 0 so a view smaller than the modal never yields a negative
     origin (which the GL scissor would reject and picking would mis-offset).
     """
-    return (max(0, round(view_w / 2 - MODAL_W / 2)),
+    return (max(0, round(view_w / 2 - MODAL_W / 2 + MODAL_OFFSET_X)),
             max(0, round(view_h / 2 - MODAL_H / 2 + HEADER_H)),
             MAP_W, MAP_H)
 

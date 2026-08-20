@@ -33,6 +33,14 @@
 /* .cp-modal's rgb(20, 22, 28) fill is overridden here, not merely resized:
    it is 880x560 and centred, i.e. directly over the map rect. */
 #star-map-panel .cp-modal {
+    /* Offset right of centre so the Helm menu (#tactical-left-column, x
+       24..248) does not cover the map's left edge. `position: relative` +
+       `left` shifts it visually without disturbing the flex centring, so the
+       one number below is the only place the offset lives on this side.
+       Must equal star_map_panel.MODAL_OFFSET_X — the agreement test checks
+       both calc() offsets against it. */
+    position: relative;
+    left: 56px;
     width: 880px; height: 560px;
     background: transparent;
 }
@@ -87,7 +95,7 @@
    a centred popup over it rather than a column beside it. */
 #star-map-viewport {
     position: fixed;
-    left: calc(50% - 440px); top: calc(50% - 252px);
+    left: calc(50% - 384px); top: calc(50% - 252px);
     width: 880px; height: 478px;
     background: transparent;
     overflow: hidden;      /* clip labels to the map rect */
