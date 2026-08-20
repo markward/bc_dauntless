@@ -327,3 +327,16 @@ def test_colliding_states_still_produce_exactly_one_drop_line():
                            mission_ids=("vesuvi",))
     drops = [ln for ln in scene["lines"] if ln["kind"] == "drop"]
     assert len(drops) == 1
+
+
+def test_the_bracket_encloses_the_star_it_marks():
+    """A reticle must surround its star, not sit on it. The two sizes are
+    tuned independently, so nothing else would notice them converging — at
+    one point both were 20.0 and the corners landed on the star's edge.
+
+    Compared against the SELECTED size, the largest a star ever draws.
+    """
+    assert sm.BRACKET_SIZE_PX > sm.STAR_SELECTED_SIZE_PX > sm.STAR_SIZE_PX
+    # ...and with enough margin to read as separate marks rather than as one
+    # crowded blob.
+    assert sm.BRACKET_SIZE_PX >= sm.STAR_SELECTED_SIZE_PX * 1.2

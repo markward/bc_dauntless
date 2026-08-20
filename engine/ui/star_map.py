@@ -88,7 +88,11 @@ _MARK_COLORS = {
 # On-screen marker sizes, in logical pixels before the renderer's
 # device-scale-factor. Here rather than as C++ literals so tuning them after a
 # live run costs an edit, not a rebuild.
-BRACKET_SIZE_PX       = 20.0
+# A reticle has to ENCLOSE the star it marks, with air between the legs and
+# the halo. At 20.0 it was the same width as the star dot after those grew 5x,
+# so the corners sat on the star's edge. 48 clears even the 36px selected
+# star. Size only — leg thickness is `thick` in starmap.frag.
+BRACKET_SIZE_PX       = 48.0
 # 5x the original 4.0 / 7.2 (Mark, 2026-08-20). Both scale together so the
 # selected star keeps its 1.8x emphasis — raising only the base would have
 # quietly flattened the difference to nothing.
