@@ -840,7 +840,20 @@
         143.08,
         60.1,
         17.06
-      ]
+      ],
+      "warp_points": [
+        {
+          "id": "dry-dock",
+          "label": "Dry Dock",
+          "module": "Systems.DryDock.DryDock"
+        },
+        {
+          "id": "starbase-12",
+          "label": "Starbase 12",
+          "module": "Systems.Starbase12.Starbase12"
+        }
+      ],
+      "module": null
     }
   ],
   "nebulae": [

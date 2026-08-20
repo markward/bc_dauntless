@@ -26,6 +26,14 @@ _MEMBER_TO_PARENT.update({
     "xi entrades": "xientrades",
     "deep space": "deepspace",
     "tau ceti": "tauceti",
+    # The SDK's own CreateSystemMenu labels for Tau Ceti's two members. The
+    # existing "drydock"/"starbase12" keys never matched these: the labels
+    # carry a space, and "starbase 12" would otherwise fall through to the
+    # strip-trailing-digits branch and become "starbase " — trailing space and
+    # all. Without these, Tau Ceti baked with no destinations at all, so the
+    # E1M1 objective "head to Starbase 12" had nowhere to set course to.
+    "dry dock": "tauceti",
+    "starbase 12": "tauceti",
     # QuickBattle builds its own set (Systems/QuickBattle/QuickBattleRegion),
     # which is not a charted Maelstrom system, so the stripped-digits fallback
     # yielded "quickbattleregion" and matched nothing. On the map that arena

@@ -76,19 +76,40 @@ def test_empty_system_offers_itself_with_a_note():
 
 
 def test_unavailable_empty_system_marks_row_and_blocks_course():
-    # Tau Ceti / Deep Space are galaxy backdrops with no set module: the
-    # self-row is shown but is NOT available, and setting course is a no-op.
+    # Deep Space is a galaxy backdrop with no set module: the self-row is
+    # shown but is NOT available, and setting course is a no-op.
+    #
+    # This used to be asserted against Tau Ceti, which was wrong — it was
+    # empty only because the catalog baker imported Systems/<Dir>/<Dir>.py
+    # and so never found CreateMenus for DryDock (DryDockSystem.py) or
+    # Starbase12 (Starbase.py), both of which fold into Tau Ceti. The test
+    # was pinning the bug. Tau Ceti now offers both, so a system that is
+    # genuinely empty is needed here instead.
+    p = SettingCoursePanel()
+    p.open(course_menu=_live_menu())
+    p.dispatch_event("select-system:deepspace")
+    data = _payload(p.render_payload())
+    row = data["warp_points"][0]
+    assert row["id"] == "deepspace"
+    assert row["available"] is False
+    assert data["warp_note"]
+    # Attempting to set course on it is a no-op (popup stays open).
+    assert p.dispatch_event("set-course:deepspace") is False
+    assert p.is_open() is True
+
+
+def test_tau_ceti_now_offers_its_two_real_destinations():
+    """The counterpart to the test above: Tau Ceti is NOT empty. Both its
+    members are selectable, which is what the E1M1 "head to Starbase 12"
+    objective needs."""
     p = SettingCoursePanel()
     p.open(course_menu=_live_menu())
     p.dispatch_event("select-system:tauceti")
     data = _payload(p.render_payload())
-    row = data["warp_points"][0]
-    assert row["id"] == "tauceti"
-    assert row["available"] is False
-    assert data["warp_note"]
-    # Attempting to set course on it is a no-op (popup stays open).
-    assert p.dispatch_event("set-course:tauceti") is False
-    assert p.is_open() is True
+    labels = {r["label"]: r for r in data["warp_points"]}
+    assert {"Dry Dock", "Starbase 12"} <= set(labels), sorted(labels)
+    assert labels["Starbase 12"]["available"] is True
+    assert data["warp_note"] is None
 
 
 def test_populated_system_has_no_note():
