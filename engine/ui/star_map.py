@@ -71,18 +71,17 @@ STARCLOUD_OPACITY = 0.85
 GRID_Z = 0.0
 GRID_HALF_EXTENT = 400.0
 GRID_STEP = 50.0
-COURSE_COLOR = (0.475, 0.949, 0.690)    # POC #79f2b0
+COURSE_COLOR = (0.757, 0.596, 0.502)    # #c19880
 
 # Bracket presentation. These live here, beside the MARK_* values they key off,
 # because this module OWNS the mark enum: if the pass chose colours from `mark`
 # itself, renumbering MARK_* here would silently recolour every reticle. The
 # pass now receives a colour per bracket and never interprets `mark` at all.
-MARK_HERE_COLOR    = (0.337, 0.902, 1.000)  # POC #56e6ff — the brightest mark
-MARK_COURSE_COLOR  = COURSE_COLOR           # same green as the plotted course
-# Yellow, and deliberately NOT the amber the stars and their labels use: this
-# is where the mission is sending you, so it has to separate from the field it
-# sits in rather than blend with it.
-MARK_MISSION_COLOR = (1.000, 0.851, 0.239)  # #ffd93d
+MARK_HERE_COLOR    = (0.698, 0.518, 0.322)  # #b28452
+MARK_COURSE_COLOR  = COURSE_COLOR           # #c19880, as the plotted course
+# Blue against three warm marks, because this is where the mission is sending
+# you: it has to separate from the field it sits in rather than blend with it.
+MARK_MISSION_COLOR = (0.200, 0.600, 1.000)  # #3399ff
 
 # Deliberately no `.get(mark, <grey>)` fallback anywhere: an unmapped mark must
 # raise here, in Python, next to the enum — not render as a plausible colour.

@@ -119,9 +119,9 @@
 
 /* The three reserved states and selection. Each matches the GL marker it
    sits beside, so label and reticle read as one object. */
-.sm-label--here      { color: #bdf3ff; }       /* POC baseLabel, beside #56e6ff */
-.sm-label--course    { color: #bfffd9; }       /* POC realLabel, beside #79f2b0 */
-.sm-label--mission   { color: #ffd9a8; }       /* POC label, beside #ffb454 */
+.sm-label--here      { color: #d8c1a8; }       /* beside #b28452 */
+.sm-label--course    { color: #e0cbbf; }       /* beside #c19880 */
+.sm-label--mission   { color: #99ccff; }       /* beside #3399ff */
 .sm-label--selected  { color: #ffffff; }
 
 /* Reserves the 640px the fixed viewport occupies so the warp list never
