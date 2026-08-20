@@ -129,6 +129,12 @@ struct TextureLoadResult {
     /// each one with a sibling spec map at load time. We replicate that
     /// here so the spec pass has something to bind on stock assets.
     std::unordered_map<std::uint32_t, int> sibling_specular_for_image;
+    /// Link IDs of external NiImages whose filename is itself a `_normal` /
+    /// `_norm` map.
+    std::unordered_set<std::uint32_t>      normal_image_links;
+    /// NIF link_id of a non-derived NiImage -> Model::textures index of a
+    /// sibling "<basename>_normal.tga" found on disk beside it.
+    std::unordered_map<std::uint32_t, int> sibling_normal_for_image;
     /// NIF link ID -> source filename (NiImage::file_name) for external
     /// images. Used by material_build's lightmap-pass predicate.
     std::unordered_map<std::uint32_t, std::string> image_filename_for_link;
@@ -203,6 +209,9 @@ TextureLoadResult load_all_textures(
         if (img->use_external != 0 && filename_is_specular(img->file_name)) {
             out.specular_image_links.insert(link_id);
         }
+        if (img->use_external != 0 && filename_is_normal(img->file_name)) {
+            out.normal_image_links.insert(link_id);
+        }
         model.textures.push_back(std::move(tex));
 
         // Phase 1 AddLOD-shim: BC's engine, given an AddLOD `_specular`
@@ -214,7 +223,12 @@ TextureLoadResult load_all_textures(
         // its sibling. Found ones are registered as additional textures
         // and matched back to the original image's link_id so
         // apply_texture_property can bind them to StageSlot::Gloss.
-        if (img->use_external != 0 && !filename_is_specular(img->file_name)) {
+        // Derived maps never get siblings probed for them. Without the
+        // filename_is_normal half, every _normal image would send the loader
+        // hunting for "<name>_normal_specular.tga" on each load.
+        const bool is_derived_map = filename_is_specular(img->file_name)
+                                 || filename_is_normal(img->file_name);
+        if (img->use_external != 0 && !is_derived_map) {
             const std::string sibling_name =
                 sibling_specular_filename(img->file_name);
             try {
@@ -231,6 +245,40 @@ TextureLoadResult load_all_textures(
                 // No sibling on disk — silently skip. Most ships don't
                 // ship spec masks. The spec contribution then falls
                 // through to black_fallback in the renderer.
+            }
+
+            // Sibling normal map. Split resolve from decode so a missing file
+            // (the common case) stays silent while a corrupt one is reported.
+            const std::string normal_name =
+                sibling_normal_filename(img->file_name);
+            std::filesystem::path normal_path;
+            bool normal_found = false;
+            try {
+                normal_path =
+                    ctx.resolver->resolve(normal_name, ctx.texture_search_paths);
+                normal_found = true;
+            } catch (const std::exception&) {
+                // No sibling on disk. Most ships have none.
+            }
+            if (normal_found) {
+                try {
+                    auto normal_bytes = read_file(normal_path);
+                    Image normal_decoded = decode_tga(normal_bytes);
+                    Texture normal_tex = upload(normal_decoded, true);
+                    const int normal_idx =
+                        static_cast<int>(model.textures.size());
+                    out.sibling_normal_for_image[link_id] = normal_idx;
+                    model.textures.push_back(std::move(normal_tex));
+                } catch (const std::exception& e) {
+                    // SKIP, do not substitute the checkerboard the base-texture
+                    // path uses: a checkerboard bound as a normal map is violent
+                    // garbage lighting, not a legible error. Bump stays empty and
+                    // the hull renders exactly as it does today.
+                    std::fprintf(stderr,
+                        "[model_build] normal map '%s': %s; skipping (hull "
+                        "renders unmapped)\n",
+                        normal_name.c_str(), e.what());
+                }
             }
         }
     }
@@ -337,6 +385,8 @@ MaterialInputs gather_material_inputs(
     const std::unordered_set<std::uint32_t>& glow_image_links,
     const std::unordered_set<std::uint32_t>& specular_image_links,
     const std::unordered_map<std::uint32_t, int>& sibling_specular_for_image,
+    const std::unordered_set<std::uint32_t>& normal_image_links,
+    const std::unordered_map<std::uint32_t, int>& sibling_normal_for_image,
     const LinkResolver& resolver)
 {
     MaterialInputs in;
@@ -344,6 +394,8 @@ MaterialInputs gather_material_inputs(
     in.glow_image_links = &glow_image_links;
     in.specular_image_links = &specular_image_links;
     in.sibling_specular_for_image = &sibling_specular_for_image;
+    in.normal_image_links = &normal_image_links;
+    in.sibling_normal_for_image = &sibling_normal_for_image;
 
     auto consider = [&](std::uint32_t link) {
         auto idx = resolver.resolve(link);
@@ -663,7 +715,9 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             f, /*shape_block_index=*/i, *shape, child_to_parent,
             tex_result.image_to_texture, tex_result.glow_image_links,
             tex_result.specular_image_links,
-            tex_result.sibling_specular_for_image, resolver);
+            tex_result.sibling_specular_for_image,
+            tex_result.normal_image_links,
+            tex_result.sibling_normal_for_image, resolver);
         mat_inputs.image_filename_for_link = &tex_result.image_filename_for_link;
         mat_inputs.flip_image_override_for_prop = &flip_image_override_for_prop;
         mat_inputs.geometry_uv_set_count = data->uv_sets.size();
