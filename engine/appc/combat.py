@@ -771,8 +771,31 @@ def apply_hit(ship, damage: float, hit_point, source, *,
                 ship.DamageSystem(hull, post_shield, source)
             absorbed_hull = post_shield
 
-        # 3. Each non-hull subsystem within the splash sphere takes a
-        #    weighted share independently. Total can exceed post_shield.
+        # 3. Each non-hull subsystem within the splash sphere is offered the
+        #    FULL post-shield damage, and the residuals sum. Total can exceed
+        #    post_shield — that is the model, not an accident.
+        #
+        #    It used to take a distance-weighted share. BC offers the full
+        #    damage to every overlapping subsystem
+        #    (docs/superpowers/specs/2026-08-16-shield-system-redesign-design.md
+        #    §12, where it is named as a real divergence and deferred).
+        #
+        #    ⚠️ Evidence: the BC side is a reviewed-not-tested binary reading,
+        #    and that same spec records our probe q05 data as NON-DISCRIMINATING
+        #    between the two models. What tips it is Mark's live report
+        #    (2026-08-20) that Dauntless shows less subsystem damage than it
+        #    should. Do not cite this as measured BC behaviour.
+        #
+        #    Scope, measured over 200k hull hits on the real Galaxy hardpoint
+        #    before changing anything: the weight was already clamped to 1.0 for
+        #    any hit inside a subsystem's own radius, so 62% of overlaps were
+        #    unaffected and this is a 1.26x increase overall. The reason
+        #    subsystem damage is scarce is that 58% of hull hits overlap NO
+        #    subsystem at all — the catchment (r_sub + r_hit ~ 0.4 GU) is tiny
+        #    against a 2.32 x 3.22 x 0.70 GU hull. That is a separate question.
+        #
+        #    `w` is still recorded in `allocations`: it ranks which subsystem
+        #    the impact VFX names as primary, which must stay distance-based.
         for sub in _iter_subsystems(ship):
             pos = sub.GetPosition() if hasattr(sub, "GetPosition") else None
             if pos is None:
@@ -789,7 +812,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             if w <= 0.0:
                 continue
             allocations.append((sub, w))
-            amount = post_shield * w
+            amount = post_shield
             # Per-subsystem invincibility (MissionLib.MakeSubsystemsInvincible
             # — e.g. a capture-mission warp core that must survive while the
             # rest of the ship is fought down). The hit still registers for

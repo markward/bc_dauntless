@@ -67,7 +67,11 @@ def test_override_radius_reaches_distant_subsystem():
     ship = _FakeShip(hull=hull, subsystems=[hull, far])
     apply_hit(ship, 100.0, TGPoint3(0, 0, 0), source=None, normal=None,
               splash_radius=1.3)
+    # The point of this test is REACH: the override radius pulls a subsystem
+    # into the splash that the weapon's own radius would not have touched.
     assert "Far" in _names(ship)
-    # weight = (0.1 + 1.3 - 0.5) / 1.3 = 0.9/1.3 ≈ 0.6923
+    # Once inside, it takes the FULL damage. This used to assert the weighted
+    # share, 100 * (0.9/1.3) ≈ 69.2 — BC offers every overlapping subsystem the
+    # full damage and sums the residuals. See test_subsystem_takes_full_residual.
     far_amount = next(a for n, a in ship.damage_log if n == "Far")
-    assert abs(far_amount - 100.0 * (0.9 / 1.3)) < 1e-6
+    assert abs(far_amount - 100.0) < 1e-6
