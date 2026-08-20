@@ -341,10 +341,15 @@ def starmap_set_scene(discs, lines, points, brackets) -> None:
         discs:    ((x, y, z), (r, g, b), radius_world, opacity)
         lines:    ((ax, ay, az), (bx, by, bz), (r, g, b))
         points:   ((x, y, z), (r, g, b), size_px, selected)
-        brackets: ((x, y, z), mark)      # 1 here, 2 course, 3 mission
+        brackets: ((x, y, z), mark, (r, g, b), size_px)
 
     The four lists are drawn in THAT order, depth test off. Ordering is
     decided in engine.ui.star_map.build_scene; the pass never re-sorts.
+
+    `mark` (1 here, 2 course, 3 mission) and `selected` ride along as
+    semantics only — the pass derives no colour or size from either.
+    engine.ui.star_map owns those enums and the palette, so presentation
+    crosses this boundary as values (see its MARK_*_COLOR / *_SIZE_PX).
     """
     fn = getattr(_h, "starmap_set_scene", None)
     if fn is not None:

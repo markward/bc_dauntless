@@ -36,6 +36,29 @@ DROP_COLOR = (0.30, 0.36, 0.52)
 COURSE_COLOR = (0.55, 0.85, 1.00)
 STAR_COLOR = (0.85, 0.88, 0.98)
 
+# Bracket presentation. These live here, beside the MARK_* values they key off,
+# because this module OWNS the mark enum: if the pass chose colours from `mark`
+# itself, renumbering MARK_* here would silently recolour every reticle. The
+# pass now receives a colour per bracket and never interprets `mark` at all.
+MARK_HERE_COLOR    = (1.00, 0.88, 0.35)   # bright key
+MARK_COURSE_COLOR  = COURSE_COLOR         # same blue as the plotted course line
+MARK_MISSION_COLOR = (0.85, 0.52, 0.31)   # UI accent orange
+
+# Deliberately no `.get(mark, <grey>)` fallback anywhere: an unmapped mark must
+# raise here, in Python, next to the enum — not render as a plausible colour.
+_MARK_COLORS = {
+    MARK_HERE:    MARK_HERE_COLOR,
+    MARK_COURSE:  MARK_COURSE_COLOR,
+    MARK_MISSION: MARK_MISSION_COLOR,
+}
+
+# On-screen marker sizes, in logical pixels before the renderer's
+# device-scale-factor. Here rather than as C++ literals so tuning them after a
+# live run costs an edit, not a rebuild.
+BRACKET_SIZE_PX       = 20.0
+STAR_SIZE_PX          = 4.0
+STAR_SELECTED_SIZE_PX = 7.2
+
 
 def _real_systems(model) -> list:
     return [s for s in model.get("systems", []) if sm.is_real_system(s["id"])]
@@ -131,13 +154,18 @@ def build_scene(*, model=None, here_id=None, course_id=None,
                       "a": by_id[here_id], "b": by_id[course_id]})
 
     # --- points: every real system as a bare dot ----------------------
+    # size_px is resolved HERE, not from `selected` in the pass, for the same
+    # reason bracket colour is: `selected` is this module's semantics.
     points = [{"id": s["id"], "position": by_id[s["id"]],
                "label": sm.display_label(s["id"]), "color": STAR_COLOR,
-               "selected": s["id"] == selected_id}
+               "selected": s["id"] == selected_id,
+               "size_px": (STAR_SELECTED_SIZE_PX if s["id"] == selected_id
+                           else STAR_SIZE_PX)}
               for s in systems]
 
     # --- brackets: ONLY live relationships ----------------------------
-    brackets = [{"id": sid, "position": by_id[sid], "mark": mark}
+    brackets = [{"id": sid, "position": by_id[sid], "mark": mark,
+                 "color": _MARK_COLORS[mark], "size_px": BRACKET_SIZE_PX}
                 for sid, mark in reticled.items()]
 
     return {"discs": discs, "lines": lines, "points": points,

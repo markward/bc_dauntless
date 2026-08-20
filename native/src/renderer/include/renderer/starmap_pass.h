@@ -28,7 +28,9 @@ struct StarMapLine {
     glm::vec3 color{1.0f};
 };
 
-/// A star dot.
+/// A star dot. `selected` is engine/ui/star_map.py's semantics and is carried
+/// across for readers/tools only — this pass derives NOTHING from it. The
+/// size a selection implies is resolved in Python and arrives as `size_px`.
 struct StarMapPoint {
     glm::vec3 position{0.0f};
     glm::vec3 color{1.0f};
@@ -38,9 +40,16 @@ struct StarMapPoint {
 
 /// A bracket reticle. `mark` mirrors engine/ui/star_map.py:
 ///   1 = you are here, 2 = course set, 3 = mission relevant.
+///
+/// Carried for semantics ONLY. This pass must never choose colour, size or
+/// anything else from `mark`: star_map.py owns that enum, so a renumber there
+/// would silently recolour every reticle if the mapping lived here too.
+/// Presentation crosses the boundary as values — `color` and `size_px`.
 struct StarMapBracket {
     glm::vec3 position{0.0f};
     int       mark = 0;
+    glm::vec3 color{1.0f};
+    float     size_px = 20.0f;
 };
 
 struct StarMapScene {

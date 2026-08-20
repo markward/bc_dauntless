@@ -3049,7 +3049,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                           std::array<float,3>>>& lines,
              const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
                                           float, bool>>& points,
-             const std::vector<std::tuple<std::array<float,3>, int>>& brackets) {
+             const std::vector<std::tuple<std::array<float,3>, int,
+                                          std::array<float,3>, float>>& brackets) {
               g_starmap_scene.discs.clear();
               g_starmap_scene.discs.reserve(discs.size());
               for (const auto& t : discs) {
@@ -3091,8 +3092,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (const auto& t : brackets) {
                   renderer::StarMapBracket br;
                   const auto& p = std::get<0>(t);
+                  const auto& c = std::get<2>(t);
                   br.position = {p[0], p[1], p[2]};
                   br.mark     = std::get<1>(t);
+                  br.color    = {c[0], c[1], c[2]};
+                  br.size_px  = std::get<3>(t);
                   g_starmap_scene.brackets.push_back(br);
               }
           },
@@ -3101,11 +3105,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "  discs:    ((x,y,z), (r,g,b), radius_world, opacity)\n"
           "  lines:    ((ax,ay,az), (bx,by,bz), (r,g,b))\n"
           "  points:   ((x,y,z), (r,g,b), size_px, selected)\n"
-          "  brackets: ((x,y,z), mark)   # 1 here, 2 course, 3 mission\n"
+          "  brackets: ((x,y,z), mark, (r,g,b), size_px)\n"
           "The four lists are drawn in THAT order with depth test off. Python "
           "owns every ordering decision (engine/ui/star_map.build_scene); the "
           "pass never sorts or reorders, which is what keeps star markers from "
-          "being occluded by nebula scenery.");
+          "being occluded by nebula scenery.\n"
+          "`mark` (1 here, 2 course, 3 mission) and `selected` are carried for "
+          "semantics only -- the pass derives NO colour or size from either. "
+          "star_map.py owns those enums and the palette, so every colour and "
+          "pixel size arrives as a value.");
 
     m.def("dust_set_enabled",
           [](bool enabled) {

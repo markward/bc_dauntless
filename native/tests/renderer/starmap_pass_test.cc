@@ -36,12 +36,19 @@ TEST(StarMapPass, SceneHoldsPrimitivesInGivenOrder) {
     EXPECT_TRUE(scene.points[1].selected);
 }
 
-// `mark` mirrors engine/ui/star_map.py's MARK_* constants, which are the
-// source of truth. Drifting them apart would recolour the reticles silently.
-TEST(StarMapPass, BracketDefaultsToNoMark) {
+// `mark` mirrors engine/ui/star_map.py's MARK_* constants, which are the sole
+// source of truth. The pass must never map `mark` to a colour or size itself:
+// a renumber in Python would then silently recolour every reticle. Colour and
+// pixel size therefore ride on the bracket as VALUES.
+TEST(StarMapPass, BracketCarriesItsOwnColourAndSize) {
     renderer::StarMapBracket b;
     EXPECT_EQ(b.mark, 0);
     EXPECT_EQ(b.position, glm::vec3(0.0f));
+
+    renderer::StarMapBracket here{{1.0f, 2.0f, 3.0f}, 1, {1.0f, 0.88f, 0.35f}, 20.0f};
+    EXPECT_EQ(here.mark, 1);
+    EXPECT_EQ(here.color, glm::vec3(1.0f, 0.88f, 0.35f));
+    EXPECT_FLOAT_EQ(here.size_px, 20.0f);
 }
 
 namespace {
@@ -70,8 +77,9 @@ protected:
         s.discs.push_back({{0.0f, 0.0f, 0.0f}, {0.4f, 0.3f, 0.8f}, 60.0f, 0.5f});
         s.lines.push_back({{-50.0f, 0.0f, 0.0f}, {50.0f, 0.0f, 0.0f},
                            {0.2f, 0.2f, 0.4f}});
-        s.points.push_back({{10.0f, 5.0f, 0.0f}, {0.85f, 0.88f, 0.98f}, 4.0f, true});
-        s.brackets.push_back({{10.0f, 5.0f, 0.0f}, 1});
+        s.points.push_back({{10.0f, 5.0f, 0.0f}, {0.85f, 0.88f, 0.98f}, 7.2f, true});
+        s.brackets.push_back({{10.0f, 5.0f, 0.0f}, 1,
+                              {1.0f, 0.88f, 0.35f}, 20.0f});
         return s;
     }
 
@@ -129,7 +137,7 @@ TEST_F(StarMapPassGLTest, LeavesScissorTestDisabledWhenItWasDisabled) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
-TEST_F(StarMapPassGLTest, RestoresDepthBlendAndClearColour) {
+TEST_F(StarMapPassGLTest, RestoresDepthCullAndClearColour) {
     glViewport(0, 0, 256, 256);
     glEnable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
@@ -148,6 +156,30 @@ TEST_F(StarMapPassGLTest, RestoresDepthBlendAndClearColour) {
     EXPECT_FLOAT_EQ(clear[0], 0.25f);
     EXPECT_FLOAT_EQ(clear[1], 0.5f);
     EXPECT_FLOAT_EQ(clear[2], 0.75f);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// The pass overwrites the blend func with SRC_ALPHA/ONE_MINUS_SRC_ALPHA to
+// draw. Asserting only that GL_BLEND is off again would miss a leaked FUNC
+// entirely -- and a wrong blend func silently miscomposites every later pass
+// rather than erroring. Set a distinctive non-default func and read all four
+// factors back. (cef_composite_pass.cc restores the same four.)
+TEST_F(StarMapPassGLTest, RestoresAllFourBlendFactors) {
+    glViewport(0, 0, 256, 256);
+    glBlendFuncSeparate(GL_ONE, GL_ZERO, GL_DST_COLOR, GL_SRC_COLOR);
+
+    renderer::StarMapPass pass;
+    pass.render(populated_scene(), map_camera(), *pipeline, 1.0f);
+
+    GLint src_rgb = 0, dst_rgb = 0, src_a = 0, dst_a = 0;
+    glGetIntegerv(GL_BLEND_SRC_RGB,   &src_rgb);
+    glGetIntegerv(GL_BLEND_DST_RGB,   &dst_rgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &src_a);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &dst_a);
+    EXPECT_EQ(src_rgb, GL_ONE);
+    EXPECT_EQ(dst_rgb, GL_ZERO);
+    EXPECT_EQ(src_a,   GL_DST_COLOR);
+    EXPECT_EQ(dst_a,   GL_SRC_COLOR);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 

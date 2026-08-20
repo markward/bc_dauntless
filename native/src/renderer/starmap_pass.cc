@@ -23,25 +23,12 @@ constexpr int kKindBracket = 3;
 // through it — a transparent map over a moving starfield is unreadable.
 constexpr glm::vec4 kBackdrop{0.02f, 0.03f, 0.06f, 1.0f};
 
-// Bracket reticle palette, keyed by StarMapBracket::mark. The mark values
-// themselves are owned by engine/ui/star_map.py (MARK_HERE / MARK_COURSE /
-// MARK_MISSION); this table only chooses their colours.
-constexpr glm::vec3 kMarkHereColor   {1.00f, 0.88f, 0.35f};  // bright key
-constexpr glm::vec3 kMarkCourseColor {0.55f, 0.85f, 1.00f};  // star_map.COURSE_COLOR
-constexpr glm::vec3 kMarkMissionColor{0.85f, 0.52f, 0.31f};  // UI accent orange
-constexpr glm::vec3 kMarkFallbackColor{0.70f, 0.74f, 0.85f};
-
-constexpr float kBracketSizePx     = 20.0f;  // on-screen bracket box size
-constexpr float kSelectedSizeScale = 1.8f;   // selected star dot grows
-
-glm::vec3 bracket_color(int mark) {
-    switch (mark) {
-        case 1:  return kMarkHereColor;
-        case 2:  return kMarkCourseColor;
-        case 3:  return kMarkMissionColor;
-        default: return kMarkFallbackColor;
-    }
-}
+// Deliberately NO mark->colour table and no marker-size literals here.
+// engine/ui/star_map.py owns the MARK_* enum and the whole map palette
+// (MARK_*_COLOR, BRACKET_SIZE_PX, STAR_SIZE_PX, STAR_SELECTED_SIZE_PX); a
+// second copy in C++ would let a Python renumber silently recolour reticles,
+// and would put every tuning tweak behind a rebuild. Colours and pixel sizes
+// arrive per primitive.
 
 }  // namespace
 
@@ -181,25 +168,29 @@ void StarMapPass::render(const StarMapScene& scene,
     }
 
     // 3. Points — one dot per system, constant pixel size at any zoom.
+    //    size_px arrives already resolved for selection; `selected` is not
+    //    read here (see StarMapPoint).
     shader.set_int  ("u_kind",       kKindPoint);
     shader.set_float("u_world_size", 0.0f);
     shader.set_float("u_opacity",    1.0f);
     for (const auto& p : scene.points) {
-        const float px = p.size_px * (p.selected ? kSelectedSizeScale : 1.0f);
         shader.set_vec3("u_center",     p.position);
         shader.set_vec3("u_color",      p.color);
-        shader.set_vec2("u_pixel_size", ndc_half(px));
+        shader.set_vec2("u_pixel_size", ndc_half(p.size_px));
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 
     // 4. Brackets — reticles for LIVE relationships only (here / course /
-    //    mission). Colour is chosen from `mark`, whose values are owned by
-    //    engine/ui/star_map.py.
-    shader.set_int ("u_kind",       kKindBracket);
-    shader.set_vec2("u_pixel_size", ndc_half(kBracketSizePx));
+    //    mission). Colour and size come from Python; `mark` is never
+    //    interpreted here. u_opacity is set explicitly rather than inherited
+    //    from the points block, so this block stands alone if the draw order
+    //    is ever guarded or rearranged.
+    shader.set_int  ("u_kind",    kKindBracket);
+    shader.set_float("u_opacity", 1.0f);
     for (const auto& b : scene.brackets) {
-        shader.set_vec3("u_center", b.position);
-        shader.set_vec3("u_color",  bracket_color(b.mark));
+        shader.set_vec3("u_center",     b.position);
+        shader.set_vec3("u_color",      b.color);
+        shader.set_vec2("u_pixel_size", ndc_half(b.size_px));
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 

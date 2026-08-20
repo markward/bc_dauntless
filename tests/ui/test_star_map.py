@@ -70,6 +70,37 @@ def test_no_brackets_when_nothing_is_live():
     assert scene["brackets"] == []
 
 
+def test_brackets_carry_their_own_colour_and_size():
+    """Presentation crosses the boundary as VALUES, not as a mark the pass
+    re-interprets. If the renderer chose colours from `mark`, renumbering
+    MARK_* here would silently recolour every reticle."""
+    scene = sm.build_scene(model=_model(), here_id="vesuvi",
+                           course_id="tevron", mission_ids=("albirea",))
+    colors = {b["id"]: b["color"] for b in scene["brackets"]}
+    assert colors == {"vesuvi": sm.MARK_HERE_COLOR,
+                      "tevron": sm.MARK_COURSE_COLOR,
+                      "albirea": sm.MARK_MISSION_COLOR}
+    assert all(b["size_px"] == sm.BRACKET_SIZE_PX for b in scene["brackets"])
+
+
+def test_every_mark_has_a_colour():
+    """A mark with no colour must fail loudly in build_scene, not render as a
+    plausible grey. Guards MARK_* and _MARK_COLORS against drifting apart."""
+    live = {sm.MARK_HERE, sm.MARK_COURSE, sm.MARK_MISSION}
+    assert set(sm._MARK_COLORS) == live
+    assert sm.MARK_NONE not in sm._MARK_COLORS   # never reticled
+
+
+def test_selected_point_is_bigger_and_sized_in_python():
+    """`selected` is this module's semantics; the pixel size it implies is
+    resolved here so the renderer never derives size from the flag."""
+    scene = sm.build_scene(model=_model(), selected_id="tevron")
+    by_id = {p["id"]: p for p in scene["points"]}
+    assert by_id["tevron"]["size_px"] == sm.STAR_SELECTED_SIZE_PX
+    assert by_id["vesuvi"]["size_px"] == sm.STAR_SIZE_PX
+    assert sm.STAR_SELECTED_SIZE_PX > sm.STAR_SIZE_PX
+
+
 def test_course_line_runs_from_here_to_destination():
     """Lines are reserved for the plotted course."""
     scene = sm.build_scene(model=_model(), here_id="vesuvi", course_id="tevron")
