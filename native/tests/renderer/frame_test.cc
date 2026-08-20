@@ -21,6 +21,7 @@
 
 #include <assets/cache.h>
 #include <assets/model.h>
+#include <assets/texture.h>
 
 #include <algorithm>
 #include <cstring>
@@ -698,6 +699,521 @@ TEST_F(FrameTest, DynamicLightNormalMapChangesShadingOnDynamicLightPath) {
     EXPECT_GT(differing_texels(frame_zero, frame_on), 0u)
         << "dynamic-light shading must track n_shade (the perturbed normal), "
            "not the geometric normal -- see commit e6744d0c";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Analytic tangent-basis rig — ASSET-FREE, geometry and UVs fully controlled
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Everything below renders ONE synthetic quad whose tangent frame is known
+// exactly, rather than a shipped hull whose authored UV layout would have to
+// be trusted (and which is precisely what a basis test must not assume).
+//
+// The quad lies in the world XY plane at z = 0, geometric normal +Z, facing a
+// camera on +Z. Its UVs are laid out so that
+//
+//     u increases along world +X        v increases along world +Y
+//
+// so the ONE correct tangent frame is, analytically:
+//
+//     T = +X        B = +Y        N = +Z        (right-handed: T x B = N)
+//
+// A tangent-space normal-map sample s = (sx, sy, sz) must therefore produce a
+// world normal tilted toward +X when sx > 0 and toward +Y when sy > 0. That is
+// the entire question, and it is answered by pointing a directional light down
+// +X (or +Y) and asking which of a +tilt / -tilt map pair renders brighter.
+//
+// The maps are UNIFORM (every texel identical), which deliberately removes the
+// texture from the experiment: which texel a UV lands on, the image row order,
+// wrap mode and filtering are all irrelevant to the result. Only the SIGN of
+// the decoded xy versus the world direction of the perturbed normal is tested.
+
+namespace tangent_probe {
+
+// Encoded tilt amplitudes. 220 and 35 are symmetric about the 127.5 midpoint,
+// so the +tilt and -tilt maps are exact mirrors: 220/255*2-1 = +0.72549 and
+// 35/255*2-1 = -0.72549. That is ~36 degrees off the surface normal, far
+// larger than any quantisation or interpolation noise.
+constexpr unsigned char kHi   = 220;
+constexpr unsigned char kLo   = 35;
+constexpr unsigned char kMid  = 128;   // the conventional "flat" encoding
+constexpr unsigned char kBlue = 255;
+
+// Quad half-size and camera distance. At the Camera default 60-degree vertical
+// FOV, z = 0 spans +/-1.732 world units at eye_z = 3, so a +/-1 quad covers the
+// central ~58% of a 256px viewport -- comfortably containing the 64x64 sample
+// block below with margin on every side.
+constexpr float kHalf  = 1.0f;
+constexpr float kEyeZ  = 3.0f;
+
+assets::Image uniform_rgba(unsigned char r, unsigned char g,
+                           unsigned char b, unsigned int side = 8) {
+    assets::Image img;
+    img.width  = side;
+    img.height = side;
+    img.format = assets::Image::Format::RGBA8;
+    img.pixels.assign(static_cast<size_t>(side) * side * 4, 0);
+    for (unsigned int i = 0; i < side * side; ++i) {
+        img.pixels[i * 4 + 0] = r;
+        img.pixels[i * 4 + 1] = g;
+        img.pixels[i * 4 + 2] = b;
+        img.pixels[i * 4 + 3] = 255;
+    }
+    return img;
+}
+
+// `nr`/`ng` are the normal map's red/green bytes. `specular_only` swaps the
+// material from pure-diffuse to pure-specular: with mat.diffuse == BLACK the
+// shader's `lit` term is identically zero (ambient included -- it is inside the
+// same product), so every non-zero texel is the SPECULAR term alone. That is
+// the isolation the earlier whole-hull differencing attempt lacked.
+std::unique_ptr<assets::Model> build_quad(unsigned char nr, unsigned char ng,
+                                          bool specular_only) {
+    auto model = std::make_unique<assets::Model>();
+
+    assets::MeshCpu cpu;
+    cpu.material_index = 0;
+    cpu.node_index     = 0;
+    auto push = [&cpu](float x, float y, float u, float v) {
+        assets::MeshCpu::Vertex vt;
+        vt.position = glm::vec3(x, y, 0.0f);
+        vt.normal   = glm::vec3(0.0f, 0.0f, 1.0f);
+        vt.uv       = glm::vec2(u, v);
+        cpu.vertices.push_back(vt);
+    };
+    push(-kHalf, -kHalf, 0.0f, 0.0f);
+    push( kHalf, -kHalf, 1.0f, 0.0f);
+    push( kHalf,  kHalf, 1.0f, 1.0f);
+    push(-kHalf,  kHalf, 0.0f, 1.0f);
+    // CCW as seen from +Z, i.e. front-facing under the pipeline's
+    // glFrontFace(GL_CCW) + glCullFace(GL_BACK).
+    cpu.indices = {0, 1, 2, 0, 2, 3};
+
+    assets::Mesh mesh = assets::upload_mesh(cpu);
+    mesh.set_cpu_data(cpu);
+    model->meshes.push_back(std::move(mesh));
+
+    // 0 = white base, 1 = the normal map under test, 2 = white specular mask.
+    model->textures.push_back(
+        assets::upload_image(uniform_rgba(255, 255, 255, 2), false));
+    model->textures.push_back(
+        assets::upload_image(uniform_rgba(nr, ng, kBlue), false));
+    model->textures.push_back(
+        assets::upload_image(uniform_rgba(255, 255, 255, 2), false));
+
+    using Slot = assets::Material::StageSlot;
+    assets::Material mat;
+    mat.diffuse    = specular_only ? glm::vec3(0.0f) : glm::vec3(1.0f);
+    mat.specular   = specular_only ? glm::vec3(1.0f) : glm::vec3(0.0f);
+    mat.emissive   = glm::vec3(0.0f);
+    mat.glossiness = 0.0f;   // -> glossiness_to_specular_power == 48
+    mat.stages[static_cast<size_t>(Slot::Base)].texture_index = 0;
+    mat.stages[static_cast<size_t>(Slot::Bump)].texture_index = 1;
+    // Gloss is the per-texel specular MASK; the shader multiplies the specular
+    // term by it, and the no-map fallback is black, so it must be bound for a
+    // specular-only draw and is irrelevant (specular colour is black) otherwise.
+    mat.stages[static_cast<size_t>(Slot::Gloss)].texture_index =
+        specular_only ? 2 : -1;
+    model->materials.push_back(mat);
+
+    assets::Node node;
+    node.name   = "probe_quad";
+    node.meshes = {0};
+    model->nodes.push_back(node);
+    model->root_node = 0;
+
+    return model;
+}
+
+void render(const assets::Model& model, renderer::Pipeline& pipeline,
+            const renderer::Lighting& lighting,
+            const std::vector<renderer::DynamicLightDescriptor>* dyn = nullptr) {
+    scenegraph::World world;
+    auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(&model));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, kEyeZ);
+    cam.target = glm::vec3(0.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // Each quad is a fresh heap allocation, so a recycled address could inherit
+    // a previous model's cached bounding radius and mis-cull the dynamic light.
+    renderer::reset_model_radius_cache();
+
+    renderer::FrameSubmitter submitter;
+    submitter.submit_opaque(world, cam, pipeline,
+        [&model](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, dyn);
+}
+
+// Mean channel-sum over a 64x64 block at the centre of the quad.
+double quad_mean() { return block_mean(96, 96, 64, 64); }
+
+// Direction TOWARD the light for the specular-only cases, chosen analytically
+// rather than by search. The map under test tilts the shaded normal
+// asin(0.72549 / |(0.72549, 0, 1)|) = 35.9 degrees off +Z, and for a head-on
+// viewer the Blinn-Phong half-vector of a light `a` degrees off +Z sits at a/2.
+// Putting the light at 72 degrees therefore lands H at ~36 degrees -- ON the
+// +U-tilted normal -- so the +U case sits at the PEAK of pow(dot(n, H), 48)
+// while the -U case is ~72 degrees off it, far below that exponent's floor.
+// The two cases straddle the highlight instead of both sitting on one side of
+// it, which is what the earlier whole-hull light sweep could not arrange.
+const glm::vec3 kSpecHighlightDir(0.9511f, 0.0f, 0.3090f);   // 72 deg off +Z
+
+// A single directional light shining from direction `d` (direction TOWARD the
+// light, matching Lighting::directional_dir_ws), zero ambient. Colour 0.8 keeps
+// the brightest diffuse case (cos 0 == 1) below the 8-bit ceiling.
+renderer::Lighting dir_light(const glm::vec3& d, float level = 0.8f) {
+    renderer::Lighting l;
+    l.ambient              = glm::vec3(0.0f);
+    l.directional_count    = 1;
+    l.directional_dir_ws[0] = glm::normalize(d);
+    l.directional_color[0]  = glm::vec3(level);
+    return l;
+}
+
+}  // namespace tangent_probe
+
+// ── The other half of the authoring convention: which image row is v == 0 ──
+// The tests below prove the shader's B axis follows +v. Turning that into an
+// instruction an artist can act on ("green bright means the surface leans
+// toward the TOP / BOTTOM of the image") needs the row order too, and it is
+// NOT free: stb_image normalises the TGA header's origin bit, so a file
+// authored bottom-left-origin and one authored top-left-origin decode to the
+// same buffer -- always TOP row first. upload_image hands that buffer straight
+// to glTexImage2D, so texture row 0 (v == 0) is the top of the image and +v
+// runs DOWNWARD. Pinned here because the documented normal-map convention is
+// only correct while it holds.
+TEST(TangentBasisConvention, TgaRowZeroIsTheTopOfTheImage) {
+    // 1x2 uncompressed 32-bit TGA, image descriptor 0x00 = origin BOTTOM-left,
+    // so the first data row is the visually BOTTOM row. Bottom red, top green.
+    const std::vector<std::uint8_t> tga = {
+        0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 0,                    // width  = 1
+        2, 0,                    // height = 2
+        32,                      // bits per pixel
+        0,                       // image descriptor: origin bottom-left
+        0x00, 0x00, 0xFF, 0xFF,  // first data row  (BOTTOM): BGRA red
+        0x00, 0xFF, 0x00, 0xFF,  // second data row (TOP)   : BGRA green
+    };
+    const auto img = assets::decode_tga(tga);
+    ASSERT_EQ(img.pixels.size(), 8u);
+    EXPECT_EQ(img.pixels[0], 0x00u);  // row 0 is GREEN == the image's top row
+    EXPECT_EQ(img.pixels[1], 0xFFu);
+    EXPECT_EQ(img.pixels[2], 0x00u);
+}
+
+// Deliberately NOT FrameTest: that fixture skips without game/data assets, and
+// the whole point of this rig is that it needs none. A GL context and the
+// shader pipeline are the only requirements.
+class TangentBasisTest : public ::testing::Test {
+protected:
+    std::unique_ptr<renderer::Window>   w;
+    std::unique_ptr<renderer::Pipeline> p;
+
+    void SetUp() override {
+        try {
+            w = std::make_unique<renderer::Window>(256, 256, "tangent-basis", false);
+        } catch (const std::runtime_error& e) {
+            GTEST_SKIP() << "no GL context: " << e.what();
+        }
+        p = std::make_unique<renderer::Pipeline>();
+        // Leave the shipped defaults in a known state for each case; every test
+        // that changes them restores them, but a crash in one must not poison
+        // the next when the whole binary runs in one process.
+        dauntless_normal_map::set_enabled(true);
+        dauntless_normal_map::set_strength(1.0f);
+        dauntless_normal_map::set_flip_green(false);
+    }
+
+    void TearDown() override {
+        dauntless_normal_map::set_enabled(true);
+        dauntless_normal_map::set_strength(1.0f);
+        dauntless_normal_map::set_flip_green(false);
+    }
+};
+
+// ── Rig sanity: a FLAT map must reproduce "normal mapping disabled" ────────
+// If this fails the rig is wrong and every verdict below it is meaningless, so
+// it is asserted before -- not after -- the sign tests.
+//
+// The tolerance is one 8-bit level, and it is not slack: the conventional flat
+// encoding is (128, 128, 255), and 128/255*2-1 = +0.00392, not exactly zero.
+// A perfectly neutral encoding would need the unrepresentable byte 127.5. That
+// residual 0.22-degree tilt is the entire budget; the sign tests below move the
+// same measurement by two orders of magnitude more.
+TEST_F(TangentBasisTest, SyntheticQuadFlatNormalMapMatchesNormalMappingDisabled) {
+    using namespace tangent_probe;
+    auto quad = build_quad(kMid, kMid, /*specular_only=*/false);
+    const auto lighting = dir_light(glm::vec3(1.0f, 0.0f, 1.0f));
+
+    dauntless_normal_map::set_enabled(false);
+    render(*quad, *p, lighting);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto frame_off = read_frame();
+    const double mean_off = quad_mean();
+
+    dauntless_normal_map::set_enabled(true);
+    dauntless_normal_map::set_strength(1.0f);
+    render(*quad, *p, lighting);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto frame_flat = read_frame();
+    const double mean_flat = quad_mean();
+
+    ASSERT_GT(mean_off, 30.0) << "quad not lit; the rig measured background";
+
+    int max_delta = 0;
+    for (size_t i = 0; i + 3 < frame_off.size(); i += 4)
+        for (int c = 0; c < 3; ++c)
+            max_delta = std::max(max_delta,
+                std::abs(static_cast<int>(frame_off[i + c]) -
+                         static_cast<int>(frame_flat[i + c])));
+
+    EXPECT_LE(max_delta, 1)
+        << "flat (128,128,255) normal map must reproduce the geometric normal; "
+        << "max per-channel delta " << max_delta
+        << " (mean off=" << mean_off << " flat=" << mean_flat << ")";
+}
+
+// ── The verdict: does a +U tilt bend the world normal toward +X? ───────────
+// The quad's u axis IS world +X by construction, so a map encoding R > 128 (a
+// tangent-space normal leaning toward +U) must render BRIGHTER under a light
+// on the +X side and DIMMER under a light on the -X side. If the opposite
+// holds, the shader's T is -X and the red channel is inverted.
+TEST_F(TangentBasisTest, SyntheticQuadPlusRedTiltsWorldNormalTowardPlusX) {
+    using namespace tangent_probe;
+    dauntless_normal_map::set_enabled(true);
+    dauntless_normal_map::set_strength(1.0f);
+    dauntless_normal_map::set_flip_green(false);
+
+    auto plus_u  = build_quad(kHi, kMid, /*specular_only=*/false);
+    auto minus_u = build_quad(kLo, kMid, /*specular_only=*/false);
+    auto flat    = build_quad(kMid, kMid, /*specular_only=*/false);
+
+    // Light 45 degrees off the surface normal, in the XZ plane, on the +X side.
+    const auto light_px = dir_light(glm::vec3(1.0f, 0.0f, 1.0f));
+
+    render(*flat, *p, light_px);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_flat = quad_mean();
+
+    render(*plus_u, *p, light_px);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_plus = quad_mean();
+
+    render(*minus_u, *p, light_px);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_minus = quad_mean();
+
+    ASSERT_GT(m_flat, 30.0) << "quad not lit; the rig measured background";
+
+    EXPECT_GT(m_plus, m_flat + 20.0)
+        << "R > 128 must tilt the shaded normal TOWARD the +X light. "
+        << "plus=" << m_plus << " flat=" << m_flat << " minus=" << m_minus;
+    EXPECT_LT(m_minus, m_flat - 20.0)
+        << "R < 128 must tilt the shaded normal AWAY from the +X light. "
+        << "plus=" << m_plus << " flat=" << m_flat << " minus=" << m_minus;
+}
+
+// ── The verdict, green half: does a +V tilt bend the normal toward +Y? ─────
+// Same construction on the other axis. With u_normal_flip_g OFF (the shipped
+// default) a map encoding G > 128 must lean toward +V, which is world +Y here.
+TEST_F(TangentBasisTest, SyntheticQuadPlusGreenTiltsWorldNormalTowardPlusY) {
+    using namespace tangent_probe;
+    dauntless_normal_map::set_enabled(true);
+    dauntless_normal_map::set_strength(1.0f);
+    dauntless_normal_map::set_flip_green(false);
+
+    auto plus_v  = build_quad(kMid, kHi, /*specular_only=*/false);
+    auto minus_v = build_quad(kMid, kLo, /*specular_only=*/false);
+    auto flat    = build_quad(kMid, kMid, /*specular_only=*/false);
+
+    const auto light_py = dir_light(glm::vec3(0.0f, 1.0f, 1.0f));
+
+    render(*flat, *p, light_py);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_flat = quad_mean();
+
+    render(*plus_v, *p, light_py);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_plus = quad_mean();
+
+    render(*minus_v, *p, light_py);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_minus = quad_mean();
+
+    ASSERT_GT(m_flat, 30.0) << "quad not lit; the rig measured background";
+
+    EXPECT_GT(m_plus, m_flat + 20.0)
+        << "G > 128 (flip_green off) must tilt the shaded normal TOWARD +Y. "
+        << "plus=" << m_plus << " flat=" << m_flat << " minus=" << m_minus;
+    EXPECT_LT(m_minus, m_flat - 20.0)
+        << "G < 128 (flip_green off) must tilt the shaded normal AWAY from +Y. "
+        << "plus=" << m_plus << " flat=" << m_flat << " minus=" << m_minus;
+}
+
+// ── u_normal_flip_g must invert exactly the green axis and nothing else ────
+TEST_F(TangentBasisTest, SyntheticQuadFlipGreenInvertsOnlyTheVAxis) {
+    using namespace tangent_probe;
+    dauntless_normal_map::set_enabled(true);
+    dauntless_normal_map::set_strength(1.0f);
+
+    auto plus_v  = build_quad(kMid, kHi, /*specular_only=*/false);
+    auto minus_v = build_quad(kMid, kLo, /*specular_only=*/false);
+    auto plus_u  = build_quad(kHi, kMid, /*specular_only=*/false);
+
+    const auto light_py = dir_light(glm::vec3(0.0f, 1.0f, 1.0f));
+    const auto light_px = dir_light(glm::vec3(1.0f, 0.0f, 1.0f));
+
+    dauntless_normal_map::set_flip_green(false);
+    render(*plus_v, *p, light_py);
+    const auto v_plain = read_frame();
+    render(*plus_u, *p, light_px);
+    const auto u_plain = read_frame();
+
+    dauntless_normal_map::set_flip_green(true);
+    render(*minus_v, *p, light_py);
+    const auto v_flipped = read_frame();
+    render(*plus_u, *p, light_px);
+    const auto u_flipped = read_frame();
+
+    dauntless_normal_map::set_flip_green(false);   // restore the default
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    EXPECT_EQ(differing_texels(v_plain, v_flipped), 0u)
+        << "flipping green must be exactly equivalent to mirroring G about 128";
+    EXPECT_EQ(differing_texels(u_plain, u_flipped), 0u)
+        << "flipping green must leave a red-only tilt untouched";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Specular-ONLY isolation: guards opaque.frag's n_shade reads at :554 / :639
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Commit e6744d0c exists because the dynamic-light SPECULAR site (:639) was
+// left reading the geometric normal while the diffuse site (:590) had been
+// moved to n_shade. A whole-hull image diff cannot see that: both terms scale
+// with the same light, and at specular_power 48-1536 Blinn-Phong is a near-step
+// function, so the specular delta hides inside (or vanishes beside) the diffuse
+// one. The earlier attempt tried ~25 light configurations and could not
+// separate them.
+//
+// The isolation it missed is to make the draw specular-only BY CONSTRUCTION.
+// The shader computes
+//
+//     lit = (u_ambient_light + lit_dir + lit_dyn) * u_diffuse_color * base.rgb
+//
+// so a material with diffuse == BLACK zeroes `lit` -- ambient and both diffuse
+// accumulators with it -- for every fragment, exactly, with no tuning. The only
+// surviving term is `spec`. A specular-only regression then cannot hide: the
+// frame either changes with the normal map or the site is not reading n_shade.
+
+
+// Directional specular (opaque.frag :554).
+TEST_F(TangentBasisTest, SpecularOnlyDirectionalTracksPerturbedNormal) {
+    using namespace tangent_probe;
+    dauntless_normal_map::set_enabled(true);
+    dauntless_normal_map::set_strength(1.0f);
+    dauntless_normal_map::set_flip_green(false);
+
+    auto plus_u  = build_quad(kHi, kMid, /*specular_only=*/true);
+    auto minus_u = build_quad(kLo, kMid, /*specular_only=*/true);
+
+    const auto light = dir_light(kSpecHighlightDir, 0.6f);
+
+    // Geometry guard, independent of the term under test: the SAME quad with a
+    // diffuse material must be on screen. Without this, a specular regression
+    // and "the rig drew nothing" are the same black frame.
+    auto diffuse_witness = build_quad(kMid, kMid, /*specular_only=*/false);
+    render(*diffuse_witness, *p, light);
+    ASSERT_GT(quad_mean(), 100.0)
+        << "the probe quad is not on screen; the specular result below would "
+           "be measuring background, not a shading term";
+
+    render(*plus_u, *p, light);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_plus = quad_mean();
+
+    render(*minus_u, *p, light);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_minus = quad_mean();
+
+    // Nothing but specular can be on screen: the diffuse colour is black, so
+    // `lit` (ambient + directional diffuse) is identically zero.
+    // Measured on the fixed shader: plus = 414.4, minus = 0.000 (of 765 max).
+    // With :554 reverted to the geometric normal both collapse to 0.000,
+    // because dot(+Z, H) = cos 36deg = 0.809 and 0.809^48 = 3.8e-5.
+    EXPECT_GT(m_plus, 100.0)
+        << "the DIRECTIONAL specular term (opaque.frag :554) must read n_shade: "
+        << "the +U tilt puts the half-vector ON the perturbed normal, which is "
+        << "a bright highlight, while the geometric normal renders ~0. plus="
+        << m_plus << " minus=" << m_minus;
+    EXPECT_LT(m_minus, 5.0)
+        << "the -U tilt points the perturbed normal away from the half-vector, "
+        << "so this must be black. plus=" << m_plus << " minus=" << m_minus;
+}
+
+// Dynamic-light specular (opaque.frag :639) -- the exact site e6744d0c fixed.
+TEST_F(TangentBasisTest, SpecularOnlyDynamicLightTracksPerturbedNormal) {
+    using namespace tangent_probe;
+    dauntless_normal_map::set_enabled(true);
+    dauntless_normal_map::set_strength(1.0f);
+    dauntless_normal_map::set_flip_green(false);
+
+    auto plus_u  = build_quad(kHi, kMid, /*specular_only=*/true);
+    auto minus_u = build_quad(kLo, kMid, /*specular_only=*/true);
+
+    // No ambient, no directional: lit_dir and spec_acc's directional half are
+    // both zero, so the ONLY contributor is the u_dyn_light_* loop -- and with
+    // diffuse black, the only surviving half of THAT is its specular term.
+    renderer::Lighting dark;
+    dark.ambient           = glm::vec3(0.0f);
+    dark.directional_count = 0;
+
+    // Same highlight geometry as the directional case, placed far enough away
+    // (30 units against a 2x2 quad) that L is near constant across the surface.
+    std::vector<renderer::DynamicLightDescriptor> lights(1);
+    lights[0].pos_a     = kSpecHighlightDir * 30.0f;
+    lights[0].pos_b     = lights[0].pos_a;
+    lights[0].color     = glm::vec3(1.0f);
+    lights[0].radius    = 200.0f;
+    lights[0].intensity = 1.0f;
+
+    // Geometry guard, independent of the term under test (see the directional
+    // case): a diffuse quad under the SAME dynamic light must be on screen.
+    auto diffuse_witness = build_quad(kMid, kMid, /*specular_only=*/false);
+    render(*diffuse_witness, *p, dark, &lights);
+    ASSERT_GT(quad_mean(), 100.0)
+        << "the probe quad is not lit by the dynamic light at all; the "
+           "specular result below would be measuring background";
+
+    render(*plus_u, *p, dark, &lights);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_plus = quad_mean();
+
+    render(*minus_u, *p, dark, &lights);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_minus = quad_mean();
+
+    // Measured on the fixed shader: plus = 494.3, minus = 0.000 (of 765 max).
+    // With :639 reverted to the geometric normal both collapse to 0.000 -- the
+    // exact regression e6744d0c fixed, and the one no whole-hull image diff
+    // could see.
+    EXPECT_GT(m_plus, 100.0)
+        << "the DYNAMIC-LIGHT specular term (opaque.frag :639) must read "
+        << "n_shade, not the geometric normal -- see commit e6744d0c. plus="
+        << m_plus << " minus=" << m_minus;
+    EXPECT_LT(m_minus, 5.0)
+        << "the -U tilt points the perturbed normal away from the half-vector, "
+        << "so this must be black. plus=" << m_plus << " minus=" << m_minus;
 }
 
 // Count "direction changes" (sign flips of consecutive deltas) in a sequence,
