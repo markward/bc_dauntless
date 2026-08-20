@@ -49,12 +49,21 @@ namespace {
 // no _normal maps at all, so "on" is inert on stock assets and the switch is a
 // tuning/AB-comparison aid rather than a fidelity control. strength scales the
 // tangent-space xy before renormalising, so 0 collapses to the geometric
-// normal exactly. flip_green handles DirectX-convention maps (-Y).
+// normal exactly.
+//
+// flip_green defaults to true. Measured
+// (TangentBasisConvention.TgaRowZeroIsTheTopOfTheImage): stb_image normalises
+// the TGA origin bit, so texture row 0 (v == 0) is always the image's TOP row
+// -- v runs DOWNWARD in image space. Flipping green internally is therefore
+// what makes a standard OpenGL-convention (+Y up) authored map read correctly
+// out of the box; leaving it false would silently require DirectX-convention
+// (-Y) maps, contradicting the documented authoring convention. Flip this
+// switch off only to accommodate a map that was itself authored -Y.
 namespace dauntless_normal_map {
 namespace {
     bool  g_enabled    = true;
     float g_strength   = 1.0f;
-    bool  g_flip_green = false;
+    bool  g_flip_green = true;
 }
     bool  enabled()    { return g_enabled; }
     void  set_enabled(bool v) { g_enabled = v; }

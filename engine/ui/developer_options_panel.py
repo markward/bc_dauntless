@@ -39,7 +39,11 @@ class DeveloperOptionsPanel(Panel):
         self._systems_damaged = light_preview.systems_damaged_active()
         self._systems_disabled = light_preview.systems_disabled_active()
         self._normal_maps = True
-        self._normal_flip_g = False
+        # Mirrors the native default in native/src/renderer/frame.cc
+        # (dauntless_normal_map::g_flip_green): v runs downward in image
+        # space, so flipping green is what makes a standard OpenGL-convention
+        # (+Y up) authored map render correctly out of the box.
+        self._normal_flip_g = True
         self._normal_strength = 1.0
         self._visible = False
         self._focused = -1

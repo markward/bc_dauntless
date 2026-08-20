@@ -455,7 +455,13 @@ def set_normal_map_strength(strength: float) -> None:
 
 
 def set_normal_map_flip_green(flip: bool) -> None:
-    """Flip green for DirectX-convention maps. Default: off (OpenGL, +Y up)."""
+    """Flip the normal map's green channel. Default: on.
+
+    Texture row 0 (v == 0) is always the image's TOP row, so v runs downward
+    in image space; flipping green is what makes a standard OpenGL-convention
+    (+Y up) authored map render correctly out of the box. Turn off only for a
+    map authored to the DirectX convention (-Y).
+    """
     _h.normal_map_set_flip_green(flip)
 
 

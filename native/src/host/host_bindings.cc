@@ -3177,8 +3177,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("normal_map_set_flip_green",
           [](bool flip) { dauntless_normal_map::set_flip_green(flip); },
           py::arg("flip"),
-          "Flip the normal map's green channel for DirectX-convention maps. "
-          "Default: off (OpenGL convention, +Y up).");
+          "Flip the normal map's green channel. Default: ON -- texture row 0 "
+          "(v == 0) is always the image's TOP row (stb_image normalises the "
+          "TGA origin bit), so v runs downward in image space, and flipping "
+          "green internally is what makes a standard OpenGL-convention "
+          "(+Y up) authored map render correctly. Turn this off only for a "
+          "map authored to the DirectX convention (-Y).");
     m.def("procedural_sky_set_enabled",
           [](bool enabled) { dauntless_procedural_sky::set_enabled(enabled); },
           py::arg("enabled"),

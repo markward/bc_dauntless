@@ -1134,7 +1134,7 @@ cmake -B build -S . && cmake --build build -j
 2. Get the ship's **underside** lit by the system's star — the bottom wing carries the only `_normal` map, and a normal map is invisible until light hits at a grazing angle.
 3. Pause → Developer Options → Lighting. Toggle **Normal Maps** off/on and watch the wing. Nothing visible means discovery failed (check stderr for a `[model_build] normal map ...` line) or the wing isn't lit.
 4. Cycle **Normal Map Strength** to 4× to exaggerate, confirm the greebles read as depth, then dial back — calibrate up, then down.
-5. If detail reads **inverted** (lighting appears to come from the wrong side), flip **Normal Map Green Flip**: the map was authored to the DirectX convention.
+5. `Normal Map Green Flip` defaults **on** (v runs downward in image space, so the engine expects OpenGL-convention, +Y-up, maps out of the box — see `docs/superpowers/specs/2026-08-20-normal-map-support-design.md`). If detail reads **inverted** (lighting appears to come from the wrong side), toggle it **off**: the map was authored to the DirectX convention.
 
 ---
 

@@ -83,18 +83,22 @@ namespace dauntless_normal_map {
 TEST(DauntlessNormalMapToggle, DefaultsOnWithUnitStrengthAndRoundTrips) {
     EXPECT_TRUE(dauntless_normal_map::enabled());
     EXPECT_FLOAT_EQ(dauntless_normal_map::strength(), 1.0f);
-    EXPECT_FALSE(dauntless_normal_map::flip_green());
+    // v runs downward in image space (TangentBasisConvention.
+    // TgaRowZeroIsTheTopOfTheImage), so flipping green is what makes a
+    // standard OpenGL-convention (+Y up) map render correctly -- the engine
+    // must default to that flip, not to DirectX convention.
+    EXPECT_TRUE(dauntless_normal_map::flip_green());
 
     dauntless_normal_map::set_enabled(false);
     EXPECT_FALSE(dauntless_normal_map::enabled());
     dauntless_normal_map::set_strength(2.5f);
     EXPECT_FLOAT_EQ(dauntless_normal_map::strength(), 2.5f);
-    dauntless_normal_map::set_flip_green(true);
-    EXPECT_TRUE(dauntless_normal_map::flip_green());
+    dauntless_normal_map::set_flip_green(false);
+    EXPECT_FALSE(dauntless_normal_map::flip_green());
 
     dauntless_normal_map::set_enabled(true);      // restore for other tests
     dauntless_normal_map::set_strength(1.0f);
-    dauntless_normal_map::set_flip_green(false);
+    dauntless_normal_map::set_flip_green(true);
 }
 
 namespace {
@@ -576,6 +580,13 @@ TEST_F(FrameTest, NormalMapChangesShadingAndZeroStrengthMatchesDisabled) {
 
     const float kEyeZ = 2500.0f;
 
+    // Pin flip_green explicitly rather than reading whatever the production
+    // default happens to be -- see the sibling dynamic-light test for why:
+    // this test only asserts THAT the real map perturbs shading, not which
+    // sign convention it decodes with, and riding on the production default
+    // would make its pass/fail an accident of that default.
+    dauntless_normal_map::set_flip_green(false);
+
     dauntless_normal_map::set_enabled(false);
     render_ship(world, *p, lut, kEyeZ);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
@@ -594,6 +605,7 @@ TEST_F(FrameTest, NormalMapChangesShadingAndZeroStrengthMatchesDisabled) {
 
     dauntless_normal_map::set_strength(1.0f);   // leave at defaults
     dauntless_normal_map::set_enabled(true);
+    dauntless_normal_map::set_flip_green(true);
 
     // Sanity: the ship must actually be on screen, or every comparison below
     // is comparing two black frames. If this fails, adjust kEyeZ until the
@@ -674,6 +686,14 @@ TEST_F(FrameTest, DynamicLightNormalMapChangesShadingOnDynamicLightPath) {
     lights[0].radius = kEyeZ * 2.0f;
     lights[0].intensity = 4.0f;
 
+    // Pin flip_green explicitly rather than reading whatever the production
+    // default happens to be: this test only asserts THAT the real map's
+    // bump perturbs shading somewhere, not which sign convention it decodes
+    // with, and under this saturating headlamp light the real Warbird map's
+    // shading delta is only ~1/255 either way -- a sign flip alone is enough
+    // to change which way that single level rounds. Riding on the production
+    // default would make this test's pass/fail an accident of that default.
+    dauntless_normal_map::set_flip_green(false);
     dauntless_normal_map::set_enabled(true);
     dauntless_normal_map::set_strength(0.0f);
     render_ship(world, *p, lut, kEyeZ, dark, &lights);
@@ -687,6 +707,7 @@ TEST_F(FrameTest, DynamicLightNormalMapChangesShadingOnDynamicLightPath) {
 
     dauntless_normal_map::set_strength(1.0f);   // leave at defaults
     dauntless_normal_map::set_enabled(true);
+    dauntless_normal_map::set_flip_green(true);
 
     // Sanity: the dynamic-only light must actually put something on screen,
     // or the comparison below is two black frames.
@@ -849,7 +870,7 @@ void render(const assets::Model& model, renderer::Pipeline& pipeline,
 
     renderer::FrameSubmitter submitter;
     submitter.submit_opaque(world, cam, pipeline,
-        [&model](scenegraph::ModelHandle h) -> const assets::Model* {
+        [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
         }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, dyn);
 }
@@ -926,9 +947,14 @@ protected:
             GTEST_SKIP() << "no GL context: " << e.what();
         }
         p = std::make_unique<renderer::Pipeline>();
-        // Leave the shipped defaults in a known state for each case; every test
-        // that changes them restores them, but a crash in one must not poison
-        // the next when the whole binary runs in one process.
+        // Pin a KNOWN state for each case, explicitly -- NOT read from whatever
+        // dauntless_normal_map::flip_green()'s production default happens to be.
+        // These measurements are the evidence for that default; if they instead
+        // rode on it, flipping the default would silently stop pinning anything.
+        // flip_green is pinned to false here because every test below documents
+        // and asserts its result in terms of "flip_green off" explicitly; every
+        // test that changes it restores it before returning, but a crash in one
+        // must not poison the next when the whole binary runs in one process.
         dauntless_normal_map::set_enabled(true);
         dauntless_normal_map::set_strength(1.0f);
         dauntless_normal_map::set_flip_green(false);
@@ -1024,8 +1050,9 @@ TEST_F(TangentBasisTest, SyntheticQuadPlusRedTiltsWorldNormalTowardPlusX) {
 }
 
 // ── The verdict, green half: does a +V tilt bend the normal toward +Y? ─────
-// Same construction on the other axis. With u_normal_flip_g OFF (the shipped
-// default) a map encoding G > 128 must lean toward +V, which is world +Y here.
+// Same construction on the other axis. With u_normal_flip_g pinned OFF (not
+// the shipped default -- see TangentBasisTest::SetUp) a map encoding G > 128
+// must lean toward +V, which is world +Y here.
 TEST_F(TangentBasisTest, SyntheticQuadPlusGreenTiltsWorldNormalTowardPlusY) {
     using namespace tangent_probe;
     dauntless_normal_map::set_enabled(true);
@@ -1085,7 +1112,7 @@ TEST_F(TangentBasisTest, SyntheticQuadFlipGreenInvertsOnlyTheVAxis) {
     render(*plus_u, *p, light_px);
     const auto u_flipped = read_frame();
 
-    dauntless_normal_map::set_flip_green(false);   // restore the default
+    dauntless_normal_map::set_flip_green(false);   // restore this fixture's pinned value
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
 
     EXPECT_EQ(differing_texels(v_plain, v_flipped), 0u)
