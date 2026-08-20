@@ -57,6 +57,8 @@ embed_shader(SHADER_SUBSYSTEM_PIN_VS shaders/subsystem_pin.vert subsystem_pin_vs
 embed_shader(SHADER_SUBSYSTEM_PIN_FS shaders/subsystem_pin.frag subsystem_pin_fs)
 embed_shader(SHADER_TARGET_RETICLE_VS shaders/target_reticle.vert target_reticle_vs)
 embed_shader(SHADER_TARGET_RETICLE_FS shaders/target_reticle.frag target_reticle_fs)
+embed_shader(SHADER_STARMAP_VS shaders/starmap.vert starmap_vs)
+embed_shader(SHADER_STARMAP_FS shaders/starmap.frag starmap_fs)
 embed_shader(SHADER_BRIDGE_VS shaders/bridge.vert bridge_vs)
 embed_shader(SHADER_BRIDGE_FS shaders/bridge.frag bridge_fs)
 embed_shader(SHADER_VS_STATIC_VS shaders/viewscreen_static.vert viewscreen_static_vs)
@@ -142,6 +144,7 @@ add_library(renderer STATIC
     debug_volume_pass.cc
     gizmo_pass.cc
     target_reticle_pass.cc
+    starmap_pass.cc
     letterbox_pass.cc
     bridge_pass.cc
     viewscreen_static_pass.cc

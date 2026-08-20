@@ -51,6 +51,7 @@
 #include <renderer/debug_volume_pass.h>
 #include <renderer/gizmo_pass.h>
 #include <renderer/target_reticle_pass.h>
+#include <renderer/starmap_pass.h>
 #include <renderer/letterbox_pass.h>
 #include <renderer/bridge_pass.h>
 #include <renderer/viewscreen_static_pass.h>
@@ -249,6 +250,15 @@ renderer::GizmoPass::Gizmo                   g_transform_gizmo;
 std::unique_ptr<renderer::GizmoPass>         g_gizmo_pass;
 renderer::TargetReticle                      g_target_reticle;
 std::unique_ptr<renderer::TargetReticlePass> g_target_reticle_pass;
+// Helm -> Set Course star map. Drawn into a scissored sub-rect of FBO 0 after
+// the post chain resolves and before ui_cef::composite(), so the map is not
+// tonemapped and the CEF modal chrome lands on top of it. It has its OWN
+// camera (an orbit rig anchored on the player's system, driven from
+// engine/ui/star_map.py) -- g_camera is the gameplay camera and is still
+// rendering the live scene around the modal.
+renderer::StarMapScene                       g_starmap_scene;
+scenegraph::Camera                           g_starmap_camera;
+std::unique_ptr<renderer::StarMapPass>       g_starmap_pass;
 // "Hologram-only" frame mode: when on (set by the Ship Property Viewer while
 // open), frame() clears to g_hologram_bg and skips both the space scene and the
 // bridge pass, drawing only the hologram + subsystem pins.
@@ -519,6 +529,7 @@ void init(int width, int height, const std::string& title) {
     g_gizmo_pass          = std::make_unique<renderer::GizmoPass>();
     g_transform_gizmo.length = 0.0f;   // hidden until Python calls set_transform_gizmo
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
+    g_starmap_pass        = std::make_unique<renderer::StarMapPass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
@@ -609,6 +620,8 @@ void shutdown() {
     g_gizmo_pass.reset();
     g_target_reticle = renderer::TargetReticle{};
     g_target_reticle_pass.reset();
+    g_starmap_scene = renderer::StarMapScene{};
+    g_starmap_pass.reset();
     g_bridge_pass.reset();
     g_viewscreen_static_pass.reset();
     g_bloom_pass.reset();
@@ -1188,6 +1201,24 @@ void frame() {
     // and that must keep working) -- viewer_mode isn't a view, it's a
     // separate full-frame override that pre-empts the space scene entirely.
     if (!viewer_mode) renderer::letterbox::draw(fw, fh);
+
+    // ── Helm -> Set Course star map ──────────────────────────────────────
+    // Slot matters: AFTER the post chain has resolved into FBO 0 (so the map
+    // is not tonemapped along with the scene) and BEFORE ui_cef::composite()
+    // (so the modal's chrome, labels and buttons land on top of it). It draws
+    // into a scissored sub-rect, leaving the live scene visible around the
+    // modal, and saves/restores viewport + scissor itself.
+    if (g_starmap_pass && g_starmap_scene.enabled) {
+        // Bind FBO 0 explicitly, as letterbox::draw does for itself: the post
+        // chain does land here, but viewer_mode skips the letterbox draw, so
+        // this slot must not inherit its framebuffer from a neighbour.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        int fb_w = 0, fb_h = 0, win_w = 0, win_h = 0;
+        g_window->framebuffer_size(&fb_w, &fb_h);
+        g_window->window_size(&win_w, &win_h);
+        const float dsf = (win_h > 0) ? static_cast<float>(fb_h) / static_cast<float>(win_h) : 1.0f;
+        g_starmap_pass->render(g_starmap_scene, g_starmap_camera, *g_pipeline, dsf);
+    }
 
     // Cache this exterior frame's view-projection for next frame's motion blur.
     // Non-exterior frames invalidate it so re-entering the exterior view skips
@@ -2977,6 +3008,104 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("clear_target_reticle",
           []() { g_target_reticle = renderer::TargetReticle{}; },
           "Hide the target reticle. Takes effect next frame().");
+
+    // ── Helm -> Set Course star map ──────────────────────────────────────
+    m.def("starmap_set_enabled",
+          [](bool enabled) { g_starmap_scene.enabled = enabled; },
+          py::arg("enabled"),
+          "Show/hide the star map. Off by default; the pass is skipped "
+          "entirely when off, so production frames are byte-identical.");
+    m.def("starmap_set_viewport",
+          [](int x, int y, int w, int h) {
+              g_starmap_scene.viewport = {x, y, w, h};
+          },
+          py::arg("x"), py::arg("y"), py::arg("w"), py::arg("h"),
+          "Set the map's sub-rect in FRAMEBUFFER pixels, GL convention "
+          "(origin bottom-left). A zero-area rect makes the pass a no-op.");
+    m.def("starmap_set_camera",
+          [](std::tuple<float,float,float> eye,
+             std::tuple<float,float,float> target,
+             std::tuple<float,float,float> up,
+             float fov_y_rad, float near, float far) {
+              g_starmap_camera.eye    = {std::get<0>(eye), std::get<1>(eye), std::get<2>(eye)};
+              g_starmap_camera.target = {std::get<0>(target), std::get<1>(target), std::get<2>(target)};
+              g_starmap_camera.up     = {std::get<0>(up), std::get<1>(up), std::get<2>(up)};
+              g_starmap_camera.fov_y_rad = fov_y_rad;
+              g_starmap_camera.near = near;
+              g_starmap_camera.far  = far;
+              // No aspect argument on purpose: the pass derives it from the
+              // map's own sub-rect, which is the same rect
+              // engine/ui/star_map.project_points uses for picking, so the
+              // drawn stars and the clickable stars agree by construction.
+          },
+          py::arg("eye"), py::arg("target"), py::arg("up"),
+          py::arg("fov_y_rad"), py::arg("near"), py::arg("far"),
+          "Set the star map's own orbit camera. Independent of set_camera() — "
+          "the gameplay camera keeps rendering the live scene around the modal.");
+    m.def("starmap_set_scene",
+          [](const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
+                                          float, float>>& discs,
+             const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
+                                          std::array<float,3>>>& lines,
+             const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
+                                          float, bool>>& points,
+             const std::vector<std::tuple<std::array<float,3>, int>>& brackets) {
+              g_starmap_scene.discs.clear();
+              g_starmap_scene.discs.reserve(discs.size());
+              for (const auto& t : discs) {
+                  renderer::StarMapDisc d;
+                  const auto& p = std::get<0>(t);
+                  const auto& c = std::get<1>(t);
+                  d.position = {p[0], p[1], p[2]};
+                  d.color    = {c[0], c[1], c[2]};
+                  d.radius   = std::get<2>(t);
+                  d.opacity  = std::get<3>(t);
+                  g_starmap_scene.discs.push_back(d);
+              }
+              g_starmap_scene.lines.clear();
+              g_starmap_scene.lines.reserve(lines.size());
+              for (const auto& t : lines) {
+                  renderer::StarMapLine l;
+                  const auto& a = std::get<0>(t);
+                  const auto& b = std::get<1>(t);
+                  const auto& c = std::get<2>(t);
+                  l.a     = {a[0], a[1], a[2]};
+                  l.b     = {b[0], b[1], b[2]};
+                  l.color = {c[0], c[1], c[2]};
+                  g_starmap_scene.lines.push_back(l);
+              }
+              g_starmap_scene.points.clear();
+              g_starmap_scene.points.reserve(points.size());
+              for (const auto& t : points) {
+                  renderer::StarMapPoint pt;
+                  const auto& p = std::get<0>(t);
+                  const auto& c = std::get<1>(t);
+                  pt.position = {p[0], p[1], p[2]};
+                  pt.color    = {c[0], c[1], c[2]};
+                  pt.size_px  = std::get<2>(t);
+                  pt.selected = std::get<3>(t);
+                  g_starmap_scene.points.push_back(pt);
+              }
+              g_starmap_scene.brackets.clear();
+              g_starmap_scene.brackets.reserve(brackets.size());
+              for (const auto& t : brackets) {
+                  renderer::StarMapBracket br;
+                  const auto& p = std::get<0>(t);
+                  br.position = {p[0], p[1], p[2]};
+                  br.mark     = std::get<1>(t);
+                  g_starmap_scene.brackets.push_back(br);
+              }
+          },
+          py::arg("discs"), py::arg("lines"), py::arg("points"), py::arg("brackets"),
+          "Replace the star map scene. Tuple shapes:\n"
+          "  discs:    ((x,y,z), (r,g,b), radius_world, opacity)\n"
+          "  lines:    ((ax,ay,az), (bx,by,bz), (r,g,b))\n"
+          "  points:   ((x,y,z), (r,g,b), size_px, selected)\n"
+          "  brackets: ((x,y,z), mark)   # 1 here, 2 course, 3 mission\n"
+          "The four lists are drawn in THAT order with depth test off. Python "
+          "owns every ordering decision (engine/ui/star_map.build_scene); the "
+          "pass never sorts or reorders, which is what keeps star markers from "
+          "being occluded by nebula scenery.");
 
     m.def("dust_set_enabled",
           [](bool enabled) {

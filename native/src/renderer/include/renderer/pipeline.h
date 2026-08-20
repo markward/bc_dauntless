@@ -34,6 +34,7 @@ public:
     Shader& breach_shader() noexcept          { return *breach_; }
     Shader& subsystem_pin_shader() noexcept   { return *subsystem_pin_; }
     Shader& target_reticle_shader() noexcept  { return *target_reticle_; }
+    Shader& starmap_shader() noexcept         { return *starmap_; }
     Shader& bridge_shader() noexcept          { return *bridge_; }
     Shader& skinned_bridge_shader() noexcept  { return *skinned_bridge_; }
     Shader& lightmap_shader() noexcept        { return *lightmap_; }
@@ -67,6 +68,7 @@ private:
     std::unique_ptr<Shader> breach_;
     std::unique_ptr<Shader> subsystem_pin_;
     std::unique_ptr<Shader> target_reticle_;
+    std::unique_ptr<Shader> starmap_;
     std::unique_ptr<Shader> bridge_;
     std::unique_ptr<Shader> skinned_bridge_;
     std::unique_ptr<Shader> lightmap_;

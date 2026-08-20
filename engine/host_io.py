@@ -50,8 +50,14 @@ _REQUIRED_BINDINGS = frozenset({
 })
 
 # OPTIONAL: soft-guarded (`getattr(_h, "NAME", None)` / `hasattr(_h, "NAME")`).
-# Empty for now — no non-render binding degrades to a warned no-op yet.
-_OPTIONAL_BINDINGS = frozenset()
+# A missing one degrades to a no-op (warned at boot under --developer) rather
+# than raising AttributeError mid-mission. The star map bindings are optional
+# because a stale .so must leave the Set Course modal usable-but-blank, not
+# crash the helm menu the moment the player opens it.
+_OPTIONAL_BINDINGS = frozenset({
+    "starmap_set_enabled", "starmap_set_viewport",
+    "starmap_set_camera", "starmap_set_scene",
+})
 
 
 def validate_bindings(*, strict: bool = False) -> List[str]:
@@ -290,3 +296,56 @@ def ray_trace_mesh(
     if _h is None:
         return None
     return _h.ray_trace_mesh(instance_id, origin, direction, max_dist)
+
+
+# ── Star map (Helm → Set Course) ─────────────────────────────────────────────
+# Soft-guarded: a stale native module leaves the map blank (warned at boot
+# under --developer) instead of raising AttributeError inside the helm menu.
+
+def starmap_set_enabled(enabled: bool) -> None:
+    """Show/hide the star map pass. Off by default."""
+    fn = getattr(_h, "starmap_set_enabled", None)
+    if fn is not None:
+        fn(bool(enabled))
+
+
+def starmap_set_viewport(x: int, y: int, w: int, h: int) -> None:
+    """Set the map's sub-rect in FRAMEBUFFER pixels, GL origin (bottom-left)."""
+    fn = getattr(_h, "starmap_set_viewport", None)
+    if fn is not None:
+        fn(int(x), int(y), int(w), int(h))
+
+
+def starmap_set_camera(
+    eye: Tuple[float, float, float],
+    target: Tuple[float, float, float],
+    up: Tuple[float, float, float],
+    fov_y_rad: float,
+    near: float,
+    far: float,
+) -> None:
+    """Set the map's own orbit camera — independent of the gameplay camera.
+
+    No aspect argument: the pass derives it from the map's sub-rect, the same
+    rect engine.ui.star_map.project_points uses, so drawn and clickable star
+    positions agree by construction.
+    """
+    fn = getattr(_h, "starmap_set_camera", None)
+    if fn is not None:
+        fn(eye, target, up, float(fov_y_rad), float(near), float(far))
+
+
+def starmap_set_scene(discs, lines, points, brackets) -> None:
+    """Replace the star map scene. Tuple shapes:
+
+        discs:    ((x, y, z), (r, g, b), radius_world, opacity)
+        lines:    ((ax, ay, az), (bx, by, bz), (r, g, b))
+        points:   ((x, y, z), (r, g, b), size_px, selected)
+        brackets: ((x, y, z), mark)      # 1 here, 2 course, 3 mission
+
+    The four lists are drawn in THAT order, depth test off. Ordering is
+    decided in engine.ui.star_map.build_scene; the pass never re-sorts.
+    """
+    fn = getattr(_h, "starmap_set_scene", None)
+    if fn is not None:
+        fn(discs, lines, points, brackets)
