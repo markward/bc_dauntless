@@ -149,6 +149,13 @@ def test_discs_sort_back_to_front_by_camera_distance():
     assert dists[0] > dists[-1]
 
 
+def test_the_selected_star_keeps_its_emphasis_over_the_base_size():
+    """Both star sizes are tuned by hand. Raising only the base would flatten
+    the selected star's emphasis to nothing without failing anything else, so
+    pin the RATIO rather than the two literals."""
+    assert sm.STAR_SELECTED_SIZE_PX / sm.STAR_SIZE_PX == pytest.approx(1.8)
+
+
 def test_star_clouds_are_screen_scaled_glyphs_not_discs():
     """At their model `size` (up to ~92) star clouds were world-scaled blobs
     that swallowed whole regions. They are decoration: a fixed pixel size,

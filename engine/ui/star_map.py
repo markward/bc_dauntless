@@ -86,8 +86,11 @@ _MARK_COLORS = {
 # device-scale-factor. Here rather than as C++ literals so tuning them after a
 # live run costs an edit, not a rebuild.
 BRACKET_SIZE_PX       = 20.0
-STAR_SIZE_PX          = 4.0
-STAR_SELECTED_SIZE_PX = 7.2
+# 5x the original 4.0 / 7.2 (Mark, 2026-08-20). Both scale together so the
+# selected star keeps its 1.8x emphasis — raising only the base would have
+# quietly flattened the difference to nothing.
+STAR_SIZE_PX          = 20.0
+STAR_SELECTED_SIZE_PX = 36.0
 
 
 def _real_systems(model) -> list:
