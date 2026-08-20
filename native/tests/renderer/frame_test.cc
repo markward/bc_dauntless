@@ -72,6 +72,30 @@ TEST(DauntlessFilmicToggle, AmbientScaleTracksToggle) {
     dauntless_filmic::set_enabled(true);           // restore for other tests
 }
 
+// dauntless_normal_map toggle is declared in frame.cc; forward-declare it here.
+namespace dauntless_normal_map {
+    bool enabled(); void set_enabled(bool);
+    float strength(); void set_strength(float);
+    bool flip_green(); void set_flip_green(bool);
+}
+
+TEST(DauntlessNormalMapToggle, DefaultsOnWithUnitStrengthAndRoundTrips) {
+    EXPECT_TRUE(dauntless_normal_map::enabled());
+    EXPECT_FLOAT_EQ(dauntless_normal_map::strength(), 1.0f);
+    EXPECT_FALSE(dauntless_normal_map::flip_green());
+
+    dauntless_normal_map::set_enabled(false);
+    EXPECT_FALSE(dauntless_normal_map::enabled());
+    dauntless_normal_map::set_strength(2.5f);
+    EXPECT_FLOAT_EQ(dauntless_normal_map::strength(), 2.5f);
+    dauntless_normal_map::set_flip_green(true);
+    EXPECT_TRUE(dauntless_normal_map::flip_green());
+
+    dauntless_normal_map::set_enabled(true);      // restore for other tests
+    dauntless_normal_map::set_strength(1.0f);
+    dauntless_normal_map::set_flip_green(false);
+}
+
 namespace {
 
 const std::filesystem::path kProjectRoot =
@@ -80,6 +104,10 @@ const std::filesystem::path kGalaxyNif =
     kProjectRoot / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif";
 const std::filesystem::path kGalaxyTex =
     kProjectRoot / "game" / "data" / "Models" / "SharedTextures" / "FedShips" / "High";
+const std::filesystem::path kWarbirdNif =
+    kProjectRoot / "game" / "data" / "Models" / "Ships" / "Warbird" / "Warbird.nif";
+const std::filesystem::path kWarbirdTex =
+    kProjectRoot / "game" / "data" / "Models" / "Ships" / "Warbird" / "High";
 class FrameTest : public ::testing::Test {
 protected:
     std::unique_ptr<renderer::Window> w;
@@ -493,6 +521,87 @@ double block_mean(int x0, int y0, int w, int h) {
     for (int i = 0; i < w * h; ++i)
         acc += buf[i*4] + buf[i*4+1] + buf[i*4+2];
     return acc / (w * h);
+}
+
+std::vector<unsigned char> read_frame(int w = 256, int h = 256) {
+    std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    return buf;
+}
+
+size_t differing_texels(const std::vector<unsigned char>& a,
+                        const std::vector<unsigned char>& b) {
+    size_t n = 0;
+    for (size_t i = 0; i + 3 < a.size() && i + 3 < b.size(); i += 4) {
+        if (a[i] != b[i] || a[i+1] != b[i+1] || a[i+2] != b[i+2]) ++n;
+    }
+    return n;
+}
+
+template <class Lut>
+void render_ship(scenegraph::World& world, renderer::Pipeline& pipeline,
+                 Lut&& lut, float eye_z) {
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0, 0, eye_z); cam.target = glm::vec3(0);
+    cam.aspect = 1.0f;
+    renderer::FrameSubmitter submitter;
+    renderer::Lighting lighting;
+    glViewport(0, 0, 256, 256);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    submitter.submit_opaque_in_pass(world, cam, pipeline, lut, lighting,
+                                    scenegraph::Pass::Space, 0.0f);
+}
+
+TEST_F(FrameTest, NormalMapChangesShadingAndZeroStrengthMatchesDisabled) {
+    if (!std::filesystem::is_regular_file(kWarbirdNif))
+        GTEST_SKIP() << "asset missing: " << kWarbirdNif;
+    if (!std::filesystem::is_regular_file(
+            kWarbirdTex / "WarBirdBottomWing_normal.tga"))
+        GTEST_SKIP() << "test normal map not installed";
+
+    auto model_h = cache->load(kWarbirdNif, kWarbirdTex);
+    auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h); };
+
+    scenegraph::World world;
+    auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    const float kEyeZ = 2500.0f;
+
+    dauntless_normal_map::set_enabled(false);
+    render_ship(world, *p, lut, kEyeZ);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto frame_off = read_frame();
+
+    dauntless_normal_map::set_enabled(true);
+    dauntless_normal_map::set_strength(0.0f);
+    render_ship(world, *p, lut, kEyeZ);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto frame_zero = read_frame();
+
+    dauntless_normal_map::set_strength(1.0f);
+    render_ship(world, *p, lut, kEyeZ);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto frame_on = read_frame();
+
+    dauntless_normal_map::set_strength(1.0f);   // leave at defaults
+    dauntless_normal_map::set_enabled(true);
+
+    // Sanity: the ship must actually be on screen, or every comparison below
+    // is comparing two black frames. If this fails, adjust kEyeZ until the
+    // Warbird fills a useful part of the 256x256 viewport.
+    size_t lit = 0;
+    for (size_t i = 0; i + 3 < frame_on.size(); i += 4)
+        if (frame_on[i] || frame_on[i+1] || frame_on[i+2]) ++lit;
+    ASSERT_GT(lit, 500u) << "Warbird not visible at eye_z=" << kEyeZ;
+
+    EXPECT_EQ(differing_texels(frame_off, frame_zero), 0u)
+        << "strength 0 must collapse to the geometric normal, matching disabled";
+    EXPECT_GT(differing_texels(frame_zero, frame_on), 0u)
+        << "strength 1 must perturb shading somewhere on the bottom wing";
 }
 
 // Count "direction changes" (sign flips of consecutive deltas) in a sequence,

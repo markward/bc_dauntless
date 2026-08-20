@@ -45,6 +45,25 @@ namespace {
     void set_enabled(bool v) { g_specular_enabled = v; }
 }
 
+// Normal mapping (opaque pass). Default on with unit strength: stock BC ships
+// no _normal maps at all, so "on" is inert on stock assets and the switch is a
+// tuning/AB-comparison aid rather than a fidelity control. strength scales the
+// tangent-space xy before renormalising, so 0 collapses to the geometric
+// normal exactly. flip_green handles DirectX-convention maps (-Y).
+namespace dauntless_normal_map {
+namespace {
+    bool  g_enabled    = true;
+    float g_strength   = 1.0f;
+    bool  g_flip_green = false;
+}
+    bool  enabled()    { return g_enabled; }
+    void  set_enabled(bool v) { g_enabled = v; }
+    float strength()   { return g_strength; }
+    void  set_strength(float v) { g_strength = v; }
+    bool  flip_green() { return g_flip_green; }
+    void  set_flip_green(bool v) { g_flip_green = v; }
+}
+
 // Developer diagnostic: makes opaque.frag report WHICH shading term went
 // non-finite, as a code in the alpha channel, for NonfiniteProbe to read back.
 // Off by default -- when off the shader writes the literal alpha 1.0 it always
@@ -565,6 +584,27 @@ void draw_model(const assets::Model& model,
             prog.set_int("u_nan_debug",
                            dauntless_nan_debug::enabled() ? 1 : 0);
             prog.set_float("u_rim_strength", rim_strength);
+
+            // Unit 4 = tangent-space normal map (0 base, 1 glow, 2 specular,
+            // 3 damage decal, 5 shadow). u_normal_enabled gates the sample, so
+            // the fallback bound when a material has no Bump texture is never
+            // read; black_fallback keeps the sampler valid regardless.
+            const int bump_tex = mat.stages[
+                static_cast<std::size_t>(assets::Material::StageSlot::Bump)
+            ].texture_index;
+            glActiveTexture(GL_TEXTURE4);
+            if (bump_tex >= 0) {
+                glBindTexture(GL_TEXTURE_2D, model.textures[bump_tex].id());
+            } else {
+                glBindTexture(GL_TEXTURE_2D, black_fallback);
+            }
+            glActiveTexture(GL_TEXTURE0);  // restore default active unit
+            prog.set_int  ("u_normal_map", 4);
+            prog.set_int  ("u_normal_enabled",
+                (bump_tex >= 0 && dauntless_normal_map::enabled()) ? 1 : 0);
+            prog.set_float("u_normal_strength", dauntless_normal_map::strength());
+            prog.set_int  ("u_normal_flip_g",
+                dauntless_normal_map::flip_green() ? 1 : 0);
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
