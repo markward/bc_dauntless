@@ -812,6 +812,7 @@ Then substitute `n_shade` for `n` in exactly these places, and nowhere else:
 1. The directional-light loop: `float nl = max(dot(n, L), 0.0);` → `dot(n_shade, L)`.
 2. The directional specular: `float s = pow(max(dot(n, H), 0.0), u_specular_power) * step(0.0, nl);` → `dot(n_shade, H)`.
 3. The N·L term inside the **dynamic-lights** loop (grep the loop body for `dot(n,` and swap that one occurrence).
+4. The specular term inside the **dynamic-lights** loop: `float s = pow(max(dot(n, H), 0.0), u_specular_power) * step(0.0, nl);` → `dot(n_shade, H)`. It mirrors the directional specular term (site 2) — the spec's "diffuse, specular, and the dynamic segment lights" always covered this; a torpedo's dynamic light must not perturb diffuse while leaving its specular highlight on flat geometry.
 
 **Leave these on the geometric `n`:**
 - `float sun_sf = sun_shadow_factor(v_position_ws, n);`

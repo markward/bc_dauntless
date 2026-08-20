@@ -456,16 +456,19 @@ vec3 perturb_normal(vec3 N, vec3 p, vec2 uv) {
     vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
 
     float maxlen = max(dot(T, T), dot(B, B));
-    if (maxlen <= 1e-20) return N;   // zero-area UV triangle
+    if (!(maxlen > 1e-20)) return N; // zero-area UV triangle (also catches NaN)
 
     vec3 s = texture(u_normal_map, uv).xyz * 2.0 - 1.0;
     if (u_normal_flip_g != 0) s.y = -s.y;
+    s.z = max(s.z, 0.0);             // malformed map (undershot/object-space/
+                                      // greyscale-misnamed blue) must not flip
+                                      // the normal to face-away at strength 0
     s.xy *= u_normal_strength;       // strength 0 => s == (0, 0, z) => N
 
     float invmax = inversesqrt(maxlen);
     vec3 n = mat3(T * invmax, B * invmax, N) * s;
     float len2 = dot(n, n);
-    if (len2 <= 1e-20) return N;     // sample or strength collapsed the vector
+    if (!(len2 > 1e-20)) return N;   // sample/strength collapsed the vector (also catches NaN)
     return n * inversesqrt(len2);
 }
 
@@ -633,7 +636,7 @@ void main() {
 
         if (u_specular_enabled != 0) {
             vec3 H = normalize(L + V);
-            float s = pow(max(dot(n, H), 0.0), u_specular_power) * step(0.0, nl);
+            float s = pow(max(dot(n_shade, H), 0.0), u_specular_power) * step(0.0, nl);
             spec_acc += att * s * u_dyn_light_color[i];
         }
     }
