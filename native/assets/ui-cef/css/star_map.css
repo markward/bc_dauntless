@@ -1,0 +1,59 @@
+/* Star map panel. Reuses cp-* chrome from configuration_panel.css.
+   NOTE: #star-map-viewport's geometry must stay in sync with MAP_RECT in
+   engine/ui/star_map_panel.py — Python projects labels and hit-tests clicks
+   against that rect, and the GL pass scissors to it. It is positioned
+   `fixed` at MAP_RECT's exact numbers rather than left to flow, because its
+   true screen rect must not depend on .cp-modal's padding/border — a drift
+   there would silently displace every label and mis-pick every click. */
+#star-map-panel {
+    display: none;
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 50;
+    font-family: "Antonio", sans-serif;
+}
+#star-map-panel .cp-modal { width: 880px; height: 560px; }
+
+/* .sm-body pairs with .cp-content (flex:1 fills the modal body below the
+   28px header, same as .sc-columns does for Setting Course). It only holds
+   the warp-point list in flow now that the viewport is position:fixed
+   (taken out of flow); the list reserves the viewport's width with
+   margin-left below, so it never sits underneath the (click-catching)
+   viewport rect. */
+.sm-body { display: flex; gap: 0; }
+
+/* The GL pass draws BENEATH this element — it MUST stay transparent, or the
+   native map is hidden behind an opaque CEF rectangle. Fixed at MAP_RECT's
+   numbers: left=200 top=108 width=640 height=520 (see the Python note). */
+#star-map-viewport {
+    position: fixed;
+    left: 200px; top: 108px; width: 640px; height: 520px;
+    background: transparent;
+    overflow: hidden;      /* clip labels to the map rect */
+    cursor: grab;
+}
+#star-map-viewport:active { cursor: grabbing; }
+
+#star-map-labels { position: absolute; inset: 0; pointer-events: none; }
+.sm-label {
+    position: absolute;
+    font-size: 10px; color: #b9c4de;
+    text-shadow: 0 0 3px #000;
+    transform: translate(8px, -6px);
+    white-space: nowrap;
+}
+.sm-label--here      { color: #eaf2ff; font-weight: 700; }
+.sm-label--course    { color: #8cd8ff; }
+.sm-label--mission   { color: #ffc46b; }
+.sm-label--selected  { color: #d9b8ff; font-style: italic; }
+
+/* Reserves the 640px the fixed viewport occupies so the warp list never
+   sits underneath it (see the .sm-body comment above). */
+#star-map-warps {
+    margin-left: 640px;
+    flex: 1 1 auto; overflow-y: auto; max-height: 520px;
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+}

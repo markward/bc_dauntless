@@ -18,9 +18,15 @@ from engine.ui import star_map
 from engine.ui.panel import Panel
 
 # Map viewport inside the modal, in CEF logical pixels. The modal is 880x560
-# centred in a 1280x720 view; the map occupies the left 640x520 of its body.
-# Kept in sync with css/star_map.css — see the note there.
-MAP_RECT = (204, 116, 640, 520)
+# (.cp-modal), centred in the 1280x720 view (host_loop.py:_CEF_VIEW_W/H) —
+# left = (1280-880)/2 = 200, top = (720-560)/2 = 80. .cp-header is a fixed
+# 28px (box-sizing: border-box), so the body starts at y = 80 + 28 = 108.
+# The map occupies the left 640x520 of that body: MAP_RECT = (200, 108, 640,
+# 520). #star-map-viewport is `position: fixed` at these exact numbers (not
+# left to flow) precisely so this constant is the only source of truth —
+# kept in sync with css/star_map.css, whose test parses the CSS rule back out
+# and asserts it against this tuple.
+MAP_RECT = (200, 108, 640, 520)
 
 
 class StarMapPanel(Panel):

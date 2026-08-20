@@ -19,6 +19,7 @@
     <link rel="stylesheet" href="css/info_box.css">
     <link rel="stylesheet" href="css/engineering_power.css">
     <link rel="stylesheet" href="css/character_tooltip.css">
+    <link rel="stylesheet" href="css/star_map.css">
 </head>
 <body>
     <!-- Target reticle text labels (name above box, range/speed below),
@@ -168,6 +169,36 @@
         <div class="cp-footer">
           <button class="cp-done-button"
                   onclick="dauntlessEvent('setting-course/cancel')">Cancel</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Star map overlay (production) — replaces the Setting Course panel's
+         system list with a 3D map, drawn by a NATIVE GL pass beneath
+         #star-map-viewport (that element MUST stay transparent — see
+         css/star_map.css). setStarMapPanel({visible, selected_system,
+         here_system, course_system, mission_systems, labels, warp_points,
+         warp_note}) drives state; #star-map-labels holds one absolutely
+         positioned label per projected system. The warp-point column is
+         unchanged from Setting Course: clicking a row SETS THE COURSE via
+         'star-map/set-course:<id>' and closes the popup (the player then
+         engages warp from the SDK Helm "Warp" button). Dragging the
+         viewport orbits ('star-map/orbit:<dx>,<dy>'); a click without drag
+         picks a star ('star-map/pick:<x>,<y>'); wheel zooms
+         ('star-map/zoom:<steps>'). Cancel and ESC fire 'star-map/cancel'.
+         Reuses the cp-* modal CSS; the old setting-course-panel above stays
+         as a working fallback until this map is verified live.
+         Spec: docs/superpowers/specs/2026-08-20-star-map-set-course-design.md -->
+    <section id="star-map-panel" style="display:none">
+      <div class="cp-modal">
+        <div class="cp-header">Set Course</div>
+        <div class="cp-content sm-body">
+          <div id="star-map-viewport"><div id="star-map-labels"></div></div>
+          <ul id="star-map-warps"></ul>
+        </div>
+        <div class="cp-footer">
+          <button class="cp-done-button"
+                  onclick="dauntlessEvent('star-map/cancel')">Cancel</button>
         </div>
       </div>
     </section>
@@ -870,6 +901,7 @@
     <script src="js/quick_battle_setup.js"></script>
     <script src="js/developer_options.js"></script>
     <script src="js/setting_course_panel.js"></script>
+    <script src="js/star_map.js"></script>
     <script src="js/ship_property_viewer.js"></script>
     <script src="js/ai_inspector.js"></script>
     <script src="js/info_box.js"></script>
