@@ -510,3 +510,29 @@ TEST_F(ModelBuildTest, ReplacementMatchIsCaseSensitive) {
     EXPECT_EQ(saucer_base, 2) << "uppercase-ID texture must be swapped";
     EXPECT_EQ(bridge_base, 1) << "lowercase-id 'bridge' texture must be UNTOUCHED";
 }
+
+TEST(ModelBuildFilenames, NormalPredicateMatchesLongAndShortForms) {
+    using assets::detail::filename_is_normal;
+    EXPECT_TRUE (filename_is_normal("Hull_normal.tga"));
+    EXPECT_TRUE (filename_is_normal("Hull_norm.tga"));
+    EXPECT_TRUE (filename_is_normal("HULL_NORMAL.TGA"));   // case-insensitive
+    EXPECT_TRUE (filename_is_normal("WarBirdBottomWing_normal.tga"));
+    EXPECT_FALSE(filename_is_normal("Hull.tga"));
+    EXPECT_FALSE(filename_is_normal("Hull_specular.tga"));
+    EXPECT_FALSE(filename_is_normal("Hull_glow.tga"));
+    EXPECT_FALSE(filename_is_normal("normal.tga"))
+        << "a bare 'normal' stem has no _normal suffix and must not match";
+}
+
+TEST(ModelBuildFilenames, SiblingNormalAppendsAndStripsGlow) {
+    using assets::detail::sibling_normal_filename;
+    EXPECT_EQ(sibling_normal_filename("Hull.tga"), "Hull_normal.tga");
+    EXPECT_EQ(sibling_normal_filename("WarBirdBottomWing.tga"),
+              "WarBirdBottomWing_normal.tga");
+    // A _glow map and its hull diffuse must resolve to the SAME normal map,
+    // exactly as sibling_specular_filename does for spec masks.
+    EXPECT_EQ(sibling_normal_filename("CardGalor01_glow.tga"),
+              "CardGalor01_normal.tga");
+    EXPECT_EQ(sibling_normal_filename("CardGalor01_GLOW.tga"),
+              "CardGalor01_normal.tga");
+}

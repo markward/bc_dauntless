@@ -494,6 +494,36 @@ void apply_texture_replacements(
 
 }  // namespace
 
+bool filename_is_normal(std::string_view fname) {
+    auto dot = fname.find_last_of('.');
+    auto stem = (dot == std::string_view::npos) ? fname : fname.substr(0, dot);
+    auto lower_ends_with = [](std::string_view s, std::string_view suffix) {
+        if (s.size() < suffix.size()) return false;
+        for (std::size_t i = 0; i < suffix.size(); ++i) {
+            char c = s[s.size() - suffix.size() + i];
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (c != suffix[i]) return false;
+        }
+        return true;
+    };
+    return lower_ends_with(stem, "_normal") || lower_ends_with(stem, "_norm");
+}
+
+std::string sibling_normal_filename(std::string_view fname) {
+    auto dot = fname.find_last_of('.');
+    std::string stem(dot == std::string_view::npos ? fname : fname.substr(0, dot));
+    std::string ext (dot == std::string_view::npos ? std::string{}
+                                                   : std::string(fname.substr(dot)));
+    // Strip trailing "_glow" (case-insensitive, length 5).
+    if (stem.size() >= 5) {
+        std::string tail = stem.substr(stem.size() - 5);
+        std::transform(tail.begin(), tail.end(), tail.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (tail == "_glow") stem.resize(stem.size() - 5);
+    }
+    return stem + "_normal" + ext;
+}
+
 Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     if (!ctx.resolver) throw ModelBuildError("ModelBuildContext::resolver is null");
 
