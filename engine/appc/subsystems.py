@@ -1609,37 +1609,58 @@ class ShieldSubsystem(PoweredSubsystem):
     # the logic here means the caller just calls TurnOff()/TurnOn() and the
     # face drain/raise follows automatically — no duplication in callers.
 
-    def TurnOff(self) -> None:
-        """Power down the shield generator and drain all faces to zero.
+    # Powering the generator down and back up PRESERVES every face's charge.
+    #
+    # These two overrides used to drain every face to zero on TurnOff and snap
+    # every face to max on TurnOn, both claiming to "mirror BC". Since
+    # ShipClass.SetAlertLevel calls them on every transition, that made
+    # green -> yellow a free, instant, unlimited shield recharge. Confirmed in
+    # play 2026-08-19.
+    #
+    # BC does the opposite: SaveToStream (0x56AB60) persists m_curShields[i]
+    # per facing through a power-down, so the charge survives. The off-state is
+    # expressed by short-circuiting the QUERIES — see GetSingleShieldPercentage
+    # — rather than by destroying the state.
+    #
+    # Regen is already gated on IsOn in Update(), so a powered-down generator
+    # holds its charge frozen rather than creeping back up.
 
-        Mirrors BC's behaviour when the XO drops shields: every face
-        reading goes to 0 immediately (not gradual) so the status widget
-        and combat path both see dead shields.
-        """
+    def TurnOff(self) -> None:
+        """Power down the generator. Face charge is PRESERVED, not drained —
+        every consumer sees "no shields" through the percentage queries."""
         super().TurnOff()
-        for f in range(self.NUM_SHIELDS):
-            self.SetCurrentShields(f, 0.0)
 
     def TurnOn(self) -> None:
-        """Power up the shield generator and snap all faces to max.
-
-        Mirrors BC's behaviour when the XO raises shields: every face is
-        immediately at full charge — Phase 1 simplification of BC's
-        gradual charge-up time.
-        """
+        """Power up the generator. Face charge is RESTORED as it was, not
+        snapped to max. Refilling is regen's job (Update), and waiting for it
+        is the only way to get shields back."""
         super().TurnOn()
-        for f in range(self.NUM_SHIELDS):
-            self.SetCurrentShields(f, self._max_shields[f])
 
     def GetSingleShieldPercentage(self, face: int) -> float:
         """current/max for the face; 0.0 when max==0 (unshielded face).
 
         SDK caller MissionLib.IsAnyShieldBreached treats anything <0.05 as
         a breach, so the max==0 case must return 0.0, not raise.
+
+        Returns 0.0 while the generator is OFF, whatever charge is stored.
+        This is the query short-circuit that expresses the off-state, now that
+        TurnOff preserves the charge instead of destroying it — every consumer
+        (the HUD arcs in ui/ship_display_panel, the target list in
+        ui/target_list_view, the SDK shield conditions) sees exactly what it
+        saw when the faces were zeroed.
+
+        The 0.0 is OUR choice, matching our own prior observable behaviour.
+        The clean-room note reads BC's GetShieldPercentage (0x56A540) as
+        returning 1.0 here, but it is graded reviewed-not-tested and a 1.0
+        would paint FULL shield bars on a ship whose shields are down — the
+        exact bug the shields-default-on work had to fix once already. Settle
+        it in-game before adopting it.
         """
         f = int(face)
         mx = self._max_shields[f]
         if mx == 0.0:
+            return 0.0
+        if not self.IsOn():
             return 0.0
         return self._current_shields[f] / mx
 
@@ -1651,6 +1672,13 @@ class ShieldSubsystem(PoweredSubsystem):
         total_max = sum(self._max_shields)
         if total_max <= 0:
             return 1.0
+        # Same off-state short-circuit as GetSingleShieldPercentage, and for
+        # the same reason: TurnOff now preserves the stored charge, so the
+        # query is what has to report "down". Kept BELOW the unshielded check
+        # so an asteroid still reads 1.0 ("shields not a factor") rather than
+        # 0.0 ("critically low"), which is what SelectTarget rates on.
+        if not self.IsOn():
+            return 0.0
         total_cur = sum(self._current_shields)
         return total_cur / total_max
 

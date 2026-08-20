@@ -63,13 +63,15 @@ def test_generator_turned_off_directly_does_not_absorb_damage():
     assert ship.GetHull().GetCondition() == 1500.0
 
 
-def test_explicit_green_after_red_drains_and_skips_absorption():
-    """RED→GREEN transition drains faces to 0 and powers the generator
-    down. Subsequent damage flows straight to hull."""
+def test_explicit_green_after_red_powers_down_and_skips_absorption():
+    """RED→GREEN powers the generator down; subsequent damage flows straight
+    to hull. The face charge is PRESERVED, not drained — destroying it made
+    cycling alert a free instant recharge (confirmed in play 2026-08-19)."""
     ship = _ship_with_full_shields_and_hull(hull_max=2000.0, face_max=1000.0)
     ship.SetAlertLevel(ShipClass.RED_ALERT)
     ship.SetAlertLevel(ShipClass.GREEN_ALERT)
-    assert ship.GetShields().GetCurrentShields(0) == 0.0
+    assert ship.GetShields().IsOn() == 0
+    assert ship.GetShields().GetSingleShieldPercentage(0) == 0.0
     apply_hit(ship, 500.0, TGPoint3(0, 10, 0), source=None)
     assert ship.GetHull().GetCondition() == 1500.0
 
@@ -102,8 +104,12 @@ def test_dropping_to_green_mid_combat_stops_absorbing():
     assert ship.GetShields().GetCurrentShields(0) == 800.0
 
     ship.SetAlertLevel(ShipClass.GREEN_ALERT)
-    # Shields drained on the green transition.
-    assert ship.GetShields().GetCurrentShields(0) == 0.0
+    # The generator is off, so absorption is skipped. The stored charge
+    # SURVIVES the power-down (BC persists m_curShields) — draining it made
+    # cycling alert a free recharge. What the consumers see is the query.
+    assert ship.GetShields().IsOn() == 0
+    assert ship.GetShields().GetSingleShieldPercentage(0) == 0.0
+    assert ship.GetShields().GetCurrentShields(0) == 800.0   # preserved
     apply_hit(ship, 500.0, TGPoint3(0, 10, 0), source=None)
     # Hull takes the second hit.
     assert ship.GetHull().GetCondition() == 1500.0

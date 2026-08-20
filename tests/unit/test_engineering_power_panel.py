@@ -510,11 +510,15 @@ def test_slider_nonzero_does_not_turn_off_when_already_on():
     assert shields.IsOn() == 1, "shields should still be on after non-zero pct"
 
 
-def test_slider_zero_shields_drains_all_faces_to_zero():
-    """engpower set:shields:0 on charged shields must set every face to 0.
+def test_slider_zero_shields_reads_as_down_without_destroying_the_charge():
+    """engpower set:shields:0 must make shields read as down — but must NOT
+    destroy the stored charge.
 
-    This is alert-drop parity: the status widget reads face charge, so
-    powered-down shields must visibly show 0%, not stuck at 100%.
+    This is alert-drop parity, and the engineering slider turned out to be a
+    SECOND route to the same exploit: set:shields:0 then set:shields:0.75
+    refilled every face for free, exactly as green->yellow did. Both go
+    through TurnOff/TurnOn, so both are fixed by preserving the charge there
+    and letting the percentage query report the off-state.
     """
     player = _fake_player()
     shields = player.GetShields()
@@ -527,26 +531,30 @@ def test_slider_zero_shields_drains_all_faces_to_zero():
     panel.dispatch_event("set:shields:0")
     assert shields.IsOn() == 0
     for f in range(shields.NUM_SHIELDS):
-        assert shields.GetCurShields(f) == 0.0, (
-            f"face {f} should be drained after slider→0; got {shields.GetCurShields(f)}"
+        # What every consumer reads: down.
+        assert shields.GetSingleShieldPercentage(f) == 0.0, (
+            f"face {f} should read 0% after slider→0"
         )
+        # What is stored: preserved, so raising cannot be a free refill.
+        assert shields.GetCurShields(f) == 1000.0
 
 
-def test_slider_raise_from_zero_snaps_faces_to_max():
-    """engpower set:shields:0.75 when shields are off must snap every face
-    to max — same raise semantics as the alert-level raise path."""
+def test_slider_raise_restores_charge_rather_than_refilling_it():
+    """engpower set:shields:0.75 powers the generator back up and gives back
+    exactly what was stored — same raise semantics as the alert path, which no
+    longer snaps to max. Snapping made the slider a free instant recharge."""
     player = _fake_player()
     shields = player.GetShields()
     for f in range(shields.NUM_SHIELDS):
         shields.SetMaxShields(f, 1000.0)
-        shields.SetCurrentShields(f, 0.0)
+        shields.SetCurrentShields(f, 300.0)
     shields.TurnOff()
     panel = _make_panel(player)
     panel.dispatch_event("set:shields:0.75")
     assert shields.IsOn() == 1
     for f in range(shields.NUM_SHIELDS):
-        assert shields.GetCurShields(f) == shields.GetMaxShields(f), (
-            f"face {f} should snap to max on raise; got {shields.GetCurShields(f)}"
+        assert shields.GetCurShields(f) == 300.0, (
+            f"face {f} should keep its charge on raise; got {shields.GetCurShields(f)}"
         )
 
 
