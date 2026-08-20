@@ -170,10 +170,11 @@ absent. If distant clusters prove hard to inspect, the likely fix is zoom range,
 and that should be decided from a live run.
 
 **Fallback.** The anchor needs the current system resolved from the player's
-set — `sector_model.system_id_for_set`, or `vantage_for_set`, which already
-performs this resolution for the sky projection and should be preferred if its
-semantics fit. Either can fail, and in Deep Space, a multiplayer set, or
-anything unmapped there may be no answer at all. When
+set via `sector_model.system_id_for_set(pSet.GetName())`. (Not `vantage_for_set`
+— it returns a *position* and discards the id, which the "you are here" reticle
+needs.) `system_id_for_set` falls back to a stripped-digits base name, so it can
+return an id absent from the model, and in Deep Space, a multiplayer set, or
+anything unmapped there may be no matching system at all. When
 unresolvable: anchor on the sector centroid and **omit the "you are here"
 reticle entirely**. A misplaced "you are here" on a nav map is worse than none.
 
