@@ -17,16 +17,49 @@ from engine.appc import sector_model as sm
 from engine.ui import star_map
 from engine.ui.panel import Panel
 
-# Map viewport inside the modal, in CEF logical pixels. The modal is 880x560
-# (.cp-modal), centred in the 1280x720 view (host_loop.py:_CEF_VIEW_W/H) —
-# left = (1280-880)/2 = 200, top = (720-560)/2 = 80. .cp-header is a fixed
-# 28px (box-sizing: border-box), so the body starts at y = 80 + 28 = 108.
-# The map occupies the left 640x520 of that body: MAP_RECT = (200, 108, 640,
-# 520). #star-map-viewport is `position: fixed` at these exact numbers (not
-# left to flow) precisely so this constant is the only source of truth —
-# kept in sync with css/star_map.css, whose test parses the CSS rule back out
-# and asserts it against this tuple.
-MAP_RECT = (200, 108, 640, 520)
+# Modal + map geometry in CEF logical pixels. The modal (.cp-modal) is
+# 880x560 with a 1px border and a fixed 28px .cp-header; the map occupies the
+# left 640x520 of the body below that header.
+MODAL_W, MODAL_H = 880, 560
+MODAL_BORDER = 1
+HEADER_H = 28
+MAP_W, MAP_H = 640, 520
+
+
+def rect_for_view(view_w, view_h) -> tuple:
+    """Map viewport rect (x, y, w, h) for a CEF logical view of this size.
+
+    The CEF view is NOT a constant: it tracks the host window's size in
+    points (host_loop._compute_cef_resize), and .cp-modal is flex-CENTRED in
+    it. Pinning the viewport at one view's numbers made the map coincide with
+    its own chrome only at 1280x720 — at 1512x982 the frame sat at (316, 211)
+    while the map drew at (200, 108), outside it. So the centring rule is
+    expressed here, once, and mirrored by exactly one CSS calc() per axis.
+
+    The 1px border cancels out of the centring: the modal's OUTER box is
+    MODAL_W + 2 wide (content-box), so the content's left edge is
+    (view - (MODAL_W + 2)) / 2 + 1 == view / 2 - MODAL_W / 2. Hence the CSS is
+    `calc(50% - 440px)` / `calc(50% - 252px)` with no border term, and
+    MODAL_BORDER exists to name why it is absent rather than to be used.
+
+    Chromium resolves `50%` in device pixels and may disagree with Python's
+    round() by <=1px on odd view dimensions, shifting the GL stars up to 1px
+    against the CEF labels. That is invisible, and it cannot separate the
+    labels from the hole: the labels live INSIDE #star-map-viewport, so they
+    move with the CSS rect whatever it resolves to.
+
+    Clamped at 0 so a view smaller than the modal never yields a negative
+    origin (which the GL scissor would reject and picking would mis-offset).
+    """
+    return (max(0, round(view_w / 2 - MODAL_W / 2)),
+            max(0, round(view_h / 2 - MODAL_H / 2 + HEADER_H)),
+            MAP_W, MAP_H)
+
+
+# The rect at the boot view size (host_loop.py:_CEF_VIEW_W/H start 1280x720).
+# Kept as a named constant because it is the panel's own starting rect and the
+# value the CSS-agreement test pins the formula against.
+MAP_RECT = rect_for_view(1280, 720)
 
 
 class StarMapPanel(Panel):
@@ -49,6 +82,15 @@ class StarMapPanel(Panel):
 
     def is_open(self) -> bool:
         return self._visible
+
+    def set_view_size(self, view_w, view_h) -> None:
+        """Re-centre the map rect for the live CEF logical view size.
+
+        The host loop calls this every frame, before rendering panels, so
+        label projection, click picking and the GL scissor all read the same
+        rect within a frame — they share self.rect, so they can only agree.
+        """
+        self.rect = rect_for_view(view_w, view_h)
 
     def open(self, course_menu=None, set_name=None) -> None:
         self._course_menu = course_menu

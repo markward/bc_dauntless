@@ -168,3 +168,46 @@ def test_course_system_resolves_from_the_sdk_warp_button(monkeypatch):
     p.open(set_name="Tevron1")
     data = _payload(p.render_payload())
     assert data["course_system"] == "vesuvi"
+
+
+def test_rect_tracks_the_live_cef_view_size():
+    """The CEF view tracks the host window's size in points and .cp-modal is
+    flex-centred in it, so a fixed rect only coincides with its own chrome at
+    1280x720. set_view_size moves labels, picks and the GL scissor together —
+    they all read self.rect."""
+    from engine.ui.star_map_panel import MAP_RECT, rect_for_view
+
+    p = StarMapPanel()
+    assert p.rect == MAP_RECT == (200, 108, 640, 520)
+
+    p.set_view_size(1512, 983)
+    assert p.rect == rect_for_view(1512, 983)
+    # Centred against the modal chrome, not the pinned 1280x720 numbers.
+    assert p.rect[:2] == (round(1512 / 2 - 440), round(983 / 2 - 252))
+    assert p.rect[2:] == (640, 520)
+
+
+def test_rect_origin_is_clamped_for_views_smaller_than_the_modal():
+    """A negative origin would be rejected by the GL scissor and would
+    mis-offset every pick."""
+    p = StarMapPanel()
+    p.set_view_size(640, 400)
+    assert p.rect[0] >= 0 and p.rect[1] >= 0
+
+
+def test_picking_follows_the_resized_rect():
+    """Picking hit-tests in CEF-view coordinates against self.rect, so a
+    click that lands on a star in the resized view must not be judged
+    against the old rect."""
+    from engine.ui import star_map
+
+    p = StarMapPanel()
+    p.set_view_size(1512, 983)
+    p.open(set_name="Vesuvi6")
+    rx, ry, _w, _h = p.rect
+    labels = [l for l in star_map.project_points(p.scene, p.cam, p.rect)
+              if l["visible"]]
+    assert labels, "no projected systems to pick"
+    hit = labels[0]
+    assert p.dispatch_event("pick:%f,%f" % (rx + hit["x"], ry + hit["y"])) is True
+    assert p._selected_system is not None

@@ -3,7 +3,8 @@ viewport transparent so the GL pass beneath shows through."""
 import re
 from pathlib import Path
 
-from engine.ui.star_map_panel import MAP_RECT
+from engine.ui.star_map_panel import (HEADER_H, MAP_H, MAP_RECT, MAP_W,
+                                      MODAL_H, MODAL_W, rect_for_view)
 
 ASSETS = Path(__file__).resolve().parents[2] / "native" / "assets" / "ui-cef"
 
@@ -30,36 +31,79 @@ def test_map_viewport_is_transparent():
     assert "transparent" in block.group(0)
 
 
-def test_viewport_css_geometry_matches_map_rect():
-    """Python projects labels and hit-tests clicks against MAP_RECT; the GL
-    pass scissors to it. If the CSS rect disagrees, every label is displaced
-    and every click mis-picks. #star-map-viewport is positioned `fixed` at
-    explicit left/top/width/height so its screen rect does not depend on
-    .cp-modal padding/border — parse those four numbers back out of the CSS
-    and require they equal MAP_RECT exactly."""
+def _viewport_css_body():
     css = (ASSETS / "css" / "star_map.css").read_text()
     block = re.search(r"#star-map-viewport\s*\{([^}]*)\}", css)
     assert block, "no #star-map-viewport rule"
-    body = block.group(1)
+    return block.group(1)
+
+
+def _calc_offset(body, prop):
+    """The Npx in `prop: calc(50% - Npx)` — the CSS half of the centring rule."""
+    m = re.search(prop + r"\s*:\s*calc\(\s*50%\s*-\s*(-?\d+(?:\.\d+)?)px\s*\)",
+                  body)
+    assert m, "missing " + prop + ": calc(50% - Npx) in #star-map-viewport"
+    return float(m.group(1))
+
+
+def test_viewport_css_centring_matches_the_python_formula():
+    """Python projects labels and hit-tests clicks against panel.rect; the GL
+    pass scissors to it. If the CSS rect disagrees, every label is displaced
+    and every click mis-picks.
+
+    The rect is NOT a constant — the CEF logical view tracks the host window
+    in points and .cp-modal is flex-centred in it, so both languages express
+    the SAME centring rule. Assert the CSS offsets are derived from the same
+    modal constants rather than pinning literals (which is exactly how the
+    two drifted: fixed CSS + a fixed MAP_RECT agreed only at 1280x720, and at
+    1512x982 the chrome sat at (316, 211) with the map at (200, 108))."""
+    body = _viewport_css_body()
+
+    # 50% - MODAL_W/2 horizontally; 50% - (MODAL_H/2 - HEADER_H) vertically.
+    # The 1px border cancels — see rect_for_view's docstring.
+    assert _calc_offset(body, "left") == MODAL_W / 2
+    assert _calc_offset(body, "top") == MODAL_H / 2 - HEADER_H
 
     def _px(prop):
         m = re.search(prop + r"\s*:\s*(-?\d+(?:\.\d+)?)px", body)
         assert m, "missing " + prop + " in #star-map-viewport"
         return float(m.group(1))
 
-    css_rect = (_px("left"), _px("top"), _px("width"), _px("height"))
-    assert css_rect == tuple(float(v) for v in MAP_RECT)
+    assert (_px("width"), _px("height")) == (float(MAP_W), float(MAP_H))
     assert "position" in body and "fixed" in body
 
     # #star-map-warps reserves the viewport's width with its own margin-left
     # (the viewport is position:fixed and so out of .sm-body's flow) — that
-    # literal is a fourth, untested copy of MAP_RECT's width unless pinned
-    # here too, alongside the viewport's own left/top/width/height.
+    # literal is another untested copy of the map width unless pinned here.
+    css = (ASSETS / "css" / "star_map.css").read_text()
     warps_block = re.search(r"#star-map-warps\s*\{([^}]*)\}", css)
     assert warps_block, "no #star-map-warps rule"
     m = re.search(r"margin-left\s*:\s*(-?\d+(?:\.\d+)?)px", warps_block.group(1))
     assert m, "missing margin-left in #star-map-warps"
-    assert float(m.group(1)) == float(MAP_RECT[2])
+    assert float(m.group(1)) == float(MAP_W)
+
+
+def test_python_rect_reproduces_the_css_rect_at_two_view_sizes():
+    """The two languages must agree on real numbers, not just on constants.
+    1280x720 is the boot view (and MAP_RECT's pinned value); 1512x983 is an
+    odd size that exercises the half-pixel rounding."""
+    body = _viewport_css_body()
+    left_off, top_off = _calc_offset(body, "left"), _calc_offset(body, "top")
+
+    def _css_rect(view_w, view_h):
+        # Chromium resolves 50% against the view; rect_for_view rounds. The
+        # two can differ by <=1px on odd sizes — the labels live INSIDE the
+        # CSS rect so they never separate from it, and a <=1px star offset is
+        # invisible. Assert agreement to that tolerance.
+        return (view_w / 2 - left_off, view_h / 2 - top_off)
+
+    assert rect_for_view(1280, 720) == MAP_RECT == (200, 108, 640, 520)
+    for view_w, view_h in ((1280, 720), (1512, 983)):
+        rx, ry, rw, rh = rect_for_view(view_w, view_h)
+        cx, cy = _css_rect(view_w, view_h)
+        assert abs(rx - cx) <= 1.0, (view_w, view_h, rx, cx)
+        assert abs(ry - cy) <= 1.0, (view_w, view_h, ry, cy)
+        assert (rw, rh) == (MAP_W, MAP_H)
 
 
 def test_render_fn_matches_the_python_payload_name():

@@ -14,7 +14,7 @@ import pytest
 from engine import host_io
 from engine.ui import star_map
 from engine.ui.panel_registry import PanelRegistry
-from engine.ui.star_map_panel import MAP_RECT, StarMapPanel
+from engine.ui.star_map_panel import MAP_RECT, StarMapPanel, rect_for_view
 
 
 def _payload(js):
@@ -98,8 +98,8 @@ def test_drive_star_map_pushes_viewport_camera_and_scene(rec):
 
 
 def test_drive_star_map_flips_y_into_gl_viewport_space(rec):
-    """MAP_RECT is CEF logical pixels, origin TOP-left; the GL viewport is
-    origin BOTTOM-left. Without the flip the map draws mirrored up the
+    """The panel rect is CEF logical pixels, origin TOP-left; the GL viewport
+    is origin BOTTOM-left. Without the flip the map draws mirrored up the
     screen."""
     from engine.host_loop import _drive_star_map
 
@@ -113,6 +113,17 @@ def test_drive_star_map_flips_y_into_gl_viewport_space(rec):
 
     _drive_star_map(panel, (2560, 1440), 720)         # Retina: scale 2
     assert rec.viewport[1] == (400, 1440 - (108 + 520) * 2, 1280, 1040)
+
+    # A logical view that is NOT 720 high — the variable that actually
+    # changes live (the CEF view tracks the window in points). The rect
+    # re-centres, and the flip is against the framebuffer height, not 720.
+    panel.set_view_size(1512, 983)
+    nx, ny, nw, nh = rect_for_view(1512, 983)
+    assert (nx, ny) != (rx, ry), "rect must track the view size"
+    _drive_star_map(panel, (1512, 983), 983)          # 1:1
+    assert rec.viewport[2] == (nx, 983 - (ny + nh), nw, nh)
+    _drive_star_map(panel, (3024, 1966), 983)         # Retina: scale 2
+    assert rec.viewport[3] == (nx * 2, 1966 - (ny + nh) * 2, nw * 2, nh * 2)
 
 
 def test_drive_star_map_disables_the_pass_when_the_map_is_closed(rec):

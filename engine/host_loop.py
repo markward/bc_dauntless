@@ -7323,6 +7323,14 @@ def run(mission_name: Optional[str] = None,
                 # preprocessor, so the lock would otherwise persist.
                 clear_undetectable_player_lock(_player)
 
+                # Re-centre the star map's rect on the LIVE CEF view size
+                # (which tracks the window in points — see
+                # _compute_cef_resize). Must run before render_all(): the
+                # panel projects its labels against this rect, and the GL
+                # scissor + click picking read the same one, so all three
+                # move together within the frame.
+                star_map_panel.set_view_size(_CEF_VIEW_W, _CEF_VIEW_H)
+
                 _scripts = registry.render_all()
                 for _panel_script in _scripts:
                     _h.cef_execute_javascript(_panel_script)

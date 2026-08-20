@@ -1,8 +1,8 @@
 /* Star map panel. Reuses cp-* chrome from configuration_panel.css.
-   NOTE: #star-map-viewport's geometry must stay in sync with MAP_RECT in
-   engine/ui/star_map_panel.py — Python projects labels and hit-tests clicks
-   against that rect, and the GL pass scissors to it. It is positioned
-   `fixed` at MAP_RECT's exact numbers rather than left to flow, because its
+   NOTE: #star-map-viewport's geometry must stay in sync with
+   star_map_panel.rect_for_view() — Python projects labels and hit-tests
+   clicks against that rect, and the GL pass scissors to it. It is positioned
+   `fixed` by the same centring formula rather than left to flow, because its
    true screen rect must not depend on .cp-modal's padding/border — a drift
    there would silently displace every label and mis-pick every click. */
 #star-map-panel {
@@ -26,11 +26,19 @@
 .sm-body { display: flex; gap: 0; }
 
 /* The GL pass draws BENEATH this element — it MUST stay transparent, or the
-   native map is hidden behind an opaque CEF rectangle. Fixed at MAP_RECT's
-   numbers: left=200 top=108 width=640 height=520 (see the Python note). */
+   native map is hidden behind an opaque CEF rectangle.
+
+   Positioned by the SAME centring rule as star_map_panel.rect_for_view(), so
+   the hole tracks the flex-centred .cp-modal at every window size instead of
+   only at 1280x720: 50% - MODAL_W/2 = 50% - 440px, and
+   50% - MODAL_H/2 + HEADER_H = 50% - 280px + 28px = 50% - 252px. The modal's
+   1px border cancels (its outer box is 882 wide, so content-left is
+   (view-882)/2 + 1). test_star_map_cef_assets parses these two offsets back
+   out and checks them against the Python constants. */
 #star-map-viewport {
     position: fixed;
-    left: 200px; top: 108px; width: 640px; height: 520px;
+    left: calc(50% - 440px); top: calc(50% - 252px);
+    width: 640px; height: 520px;
     background: transparent;
     overflow: hidden;      /* clip labels to the map rect */
     cursor: grab;
