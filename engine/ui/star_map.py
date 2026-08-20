@@ -44,6 +44,15 @@ NEBULA_OPACITY = 0.5          # flat interior fill
 NEBULA_BORDER_OPACITY = 0.9   # crisp boundary stroke
 NEBULA_HATCH_OPACITY = 0.30   # diagonal bands inside the boundary
 
+# ONE colour for every nebula, deliberately overriding the per-nebula tint in
+# sector_model.json. Those tints are the in-scene backdrop colours and several
+# are fully saturated primaries — the MRegion entries are #1fbf1f green,
+# #bfbf1f yellow and #1f1fbf blue — which on a chart read as alarm states
+# rather than as terrain. Belaruz's muted blue-violet is the one that sat
+# right, so it governs. The model keeps its own colours untouched: the
+# map-driven starsphere renders from the same file and does want them.
+NEBULA_COLOR = (0.3922, 0.3882, 0.5725)  # Belaruz #646392
+
 # Star clouds are POC decoration: a small three-star glyph at a FIXED SCREEN
 # size, not a world-scaled volume. Drawn from the model's `size` they became
 # huge soft blobs that swallowed whole regions of the map.
@@ -152,7 +161,7 @@ def build_scene(*, model=None, here_id=None, course_id=None,
         # map. An empty label is skipped by project_disc_labels.
         discs.append({"kind": "nebula", "label": neb.get("name") or "",
                       "position": pos, "radius": float(neb["radius"]),
-                      "color": tuple(neb["color"]),
+                      "color": NEBULA_COLOR,
                       "opacity": NEBULA_OPACITY,
                       "border_opacity": NEBULA_BORDER_OPACITY,
                       "_camera_distance": _distance(pos, eye)})

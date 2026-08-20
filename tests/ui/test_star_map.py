@@ -161,6 +161,16 @@ def test_star_clouds_are_screen_scaled_glyphs_not_discs():
         assert "radius" not in g
 
 
+def test_every_nebula_takes_the_one_map_colour():
+    """The model's per-nebula tints are in-scene backdrop colours and several
+    are saturated primaries, which read as alarm states on a chart. The map
+    overrides them all with one muted colour. The fixture's two nebulae carry
+    DIFFERENT model colours, so this fails if either is passed through."""
+    scene = sm.build_scene(model=_model())
+    assert len({d["color"] for d in scene["discs"]}) == 1
+    assert all(d["color"] == sm.NEBULA_COLOR for d in scene["discs"])
+
+
 def test_nebulae_carry_a_separate_border_opacity():
     """A charted region is a faint fill inside a CRISP boundary — the fill
     and the border are independent, and the border is the stronger of the
