@@ -543,6 +543,26 @@ size_t differing_texels(const std::vector<unsigned char>& a,
     return n;
 }
 
+// Float (HDR, un-tonemapped, linear-space) counterpart of differing_texels.
+// An 8-bit backbuffer read rounds every fragment to 1/255 at WRITE time (the
+// render target's own storage format, not the read call) -- for a real,
+// small-magnitude effect like a subtle authored normal map on one real
+// asset, that can crush the whole true delta into a single quantization
+// step, which is exactly the failure mode this helper exists to avoid (see
+// DynamicLightNormalMapChangesShadingOnDynamicLightPath). `eps` is a
+// summed-|channel-delta| floor well clear of float rounding noise; texels
+// at or below it don't count.
+size_t differing_texels_hdr(const std::vector<float>& a,
+                            const std::vector<float>& b, float eps) {
+    size_t n = 0;
+    for (size_t i = 0; i + 3 < a.size() && i + 3 < b.size(); i += 4) {
+        float d = std::abs(a[i] - b[i]) + std::abs(a[i + 1] - b[i + 1]) +
+                  std::abs(a[i + 2] - b[i + 2]);
+        if (d > eps) ++n;
+    }
+    return n;
+}
+
 template <class Lut>
 void render_ship(scenegraph::World& world, renderer::Pipeline& pipeline,
                  Lut&& lut, float eye_z,
@@ -653,6 +673,28 @@ TEST_F(FrameTest, NormalMapChangesShadingAndZeroStrengthMatchesDisabled) {
 // reads execute, no GL error) and produces a real shading change -- matching
 // exactly what the directional test above asserts -- but, like that test, it
 // cannot attribute the difference to diffuse vs. specular individually.
+//
+// MARGIN NOTE (2026-08-20, see lsb-test-report.md): this test used to read
+// the default 8-bit backbuffer, whose own storage format rounds every
+// fragment to 1/255 at WRITE time. Measured on this real asset/camera/light,
+// the true effect is genuinely small (this one authored map's bump is
+// subtle over the visible bottom-wing silhouette) -- around 1 LSB out of 255
+// -- so an 8-bit read landed the whole test on the quantization floor: a
+// completely unrelated change (a sign flip in an orthogonal default) once
+// flipped which way that single level rounded and silently inverted the
+// verdict. Repositioning/re-intensifying the light was tried first (per the
+// task's lever 1) and does NOT clear the floor -- the true per-pixel delta
+// stays within 1-4/255 across a wide intensity/position/exaggerated-strength
+// sweep, because the effect's magnitude is a property of this map's authored
+// content, not of how the light saturates. So this test instead renders into
+// the real HDR (RGBA16F, un-tonemapped, linear-space) target the engine
+// actually uses before its own tonemap/quantization, and reads that back as
+// float -- the same information the 8-bit path was silently discarding.
+// There the true delta measures ~6e-4 to ~1.4e-3 (summed |Δr|+|Δg|+|Δb|)
+// while two back-to-back renders of the IDENTICAL state (repeatability
+// check, see the report) differ by exactly 0.0 -- this GPU/driver pipeline
+// is bit-reproducible, so any nonzero float delta here is real signal, not
+// noise. kEpsDiff and kMinDiffTexels sit well inside that measured margin.
 TEST_F(FrameTest, DynamicLightNormalMapChangesShadingOnDynamicLightPath) {
     if (!std::filesystem::is_regular_file(kWarbirdNif))
         GTEST_SKIP() << "asset missing: " << kWarbirdNif;
@@ -686,24 +728,47 @@ TEST_F(FrameTest, DynamicLightNormalMapChangesShadingOnDynamicLightPath) {
     lights[0].radius = kEyeZ * 2.0f;
     lights[0].intensity = 4.0f;
 
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0, 0, kEyeZ); cam.target = glm::vec3(0);
+    cam.aspect = 1.0f;
+    renderer::FrameSubmitter submitter;
+
+    // Render into the real HDR target (RGBA16F, linear, un-tonemapped) --
+    // see the MARGIN NOTE above for why the default 8-bit backbuffer can't
+    // resolve this real asset's true (small) effect above its own rounding.
+    renderer::HdrTarget hdr;
+    hdr.resize(256, 256);
+    auto render_hdr = [&]() -> std::vector<float> {
+        hdr.bind();
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        submitter.submit_opaque_in_pass(world, cam, *p, lut, dark,
+                                        scenegraph::Pass::Space, 0.0f,
+                                        /*carve_cache=*/nullptr,
+                                        /*ambient_scale=*/1.0f, &lights);
+        std::vector<float> buf(256 * 256 * 4);
+        glReadPixels(0, 0, 256, 256, GL_RGBA, GL_FLOAT, buf.data());
+        // Contract: HdrTarget::bind() requires the caller restore the
+        // default framebuffer + window viewport before any backbuffer draw.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, 256, 256);
+        return buf;
+    };
+
     // Pin flip_green explicitly rather than reading whatever the production
     // default happens to be: this test only asserts THAT the real map's
     // bump perturbs shading somewhere, not which sign convention it decodes
-    // with, and under this saturating headlamp light the real Warbird map's
-    // shading delta is only ~1/255 either way -- a sign flip alone is enough
-    // to change which way that single level rounds. Riding on the production
-    // default would make this test's pass/fail an accident of that default.
+    // with. Riding on the production default would make this test's
+    // pass/fail an accident of that default.
     dauntless_normal_map::set_flip_green(false);
     dauntless_normal_map::set_enabled(true);
     dauntless_normal_map::set_strength(0.0f);
-    render_ship(world, *p, lut, kEyeZ, dark, &lights);
+    const auto frame_zero = render_hdr();
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    const auto frame_zero = read_frame();
 
     dauntless_normal_map::set_strength(1.0f);
-    render_ship(world, *p, lut, kEyeZ, dark, &lights);
+    const auto frame_on = render_hdr();
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    const auto frame_on = read_frame();
 
     dauntless_normal_map::set_strength(1.0f);   // leave at defaults
     dauntless_normal_map::set_enabled(true);
@@ -713,11 +778,25 @@ TEST_F(FrameTest, DynamicLightNormalMapChangesShadingOnDynamicLightPath) {
     // or the comparison below is two black frames.
     size_t lit = 0;
     for (size_t i = 0; i + 3 < frame_on.size(); i += 4)
-        if (frame_on[i] || frame_on[i+1] || frame_on[i+2]) ++lit;
+        if (frame_on[i] > 0.0f || frame_on[i+1] > 0.0f || frame_on[i+2] > 0.0f)
+            ++lit;
     ASSERT_GT(lit, 500u)
         << "Warbird not lit by the dynamic-only light at eye_z=" << kEyeZ;
 
-    EXPECT_GT(differing_texels(frame_zero, frame_on), 0u)
+    // kEpsDiff and kMinDiffTexels: measured on this asset (report,
+    // 2026-08-20) the real perturbation lands 16 texels at 6e-4..1.4e-3
+    // summed |Δr|+|Δg|+|Δb|, while two renders of IDENTICAL state (same
+    // strength both times) differ by exactly 0.0 -- this pipeline is
+    // bit-reproducible, so there is no rounding-noise floor to clear here
+    // beyond float epsilon. kEpsDiff sits an order of magnitude below the
+    // smallest observed real delta; kMinDiffTexels is half the observed
+    // count, leaving headroom for legitimate cross-platform float variance
+    // while still failing loudly if the dynamic-light path regresses to the
+    // geometric normal (which collapses the count to 0, not to "a bit
+    // fewer").
+    constexpr float kEpsDiff = 1.0e-4f;
+    constexpr size_t kMinDiffTexels = 8;
+    EXPECT_GE(differing_texels_hdr(frame_zero, frame_on, kEpsDiff), kMinDiffTexels)
         << "dynamic-light shading must track n_shade (the perturbed normal), "
            "not the geometric normal -- see commit e6744d0c";
 }
