@@ -18,12 +18,22 @@ from engine.ui import star_map
 from engine.ui.panel import Panel
 
 # Modal + map geometry in CEF logical pixels. The modal (.cp-modal) is
-# 880x560 with a 1px border and a fixed 28px .cp-header; the map occupies the
-# left 640x520 of the body below that header.
+# 880x560 with a 1px border, a fixed 28px .cp-header and a fixed 54px
+# .cp-footer; the map fills the left MAP_W of the body BETWEEN them.
+#
+# MAP_H is DERIVED, never asserted. It was a hardcoded 520 against a 478px
+# body, so the map's opaque GL backdrop overran the footer strip by 42px. The
+# three vertical terms must sum to MODAL_H, and every one of them is pinned to
+# the real CSS by test_the_map_rect_fits_the_modal_body — .cp-header's height
+# in configuration_panel.css, .cp-footer's in star_map.css (the shared rule is
+# padding-sized, i.e. font-dependent, so the map gives it a fixed height to
+# divide by), and .cp-modal's own width/height literals.
 MODAL_W, MODAL_H = 880, 560
 MODAL_BORDER = 1
 HEADER_H = 28
-MAP_W, MAP_H = 640, 520
+FOOTER_H = 54
+MAP_W = 640
+MAP_H = MODAL_H - HEADER_H - FOOTER_H
 
 
 def rect_for_view(view_w, view_h) -> tuple:
@@ -103,6 +113,12 @@ class StarMapPanel(Panel):
 
     def close(self) -> None:
         self._visible = False
+        # Drop the SDK menu handle. It belongs to the mission that opened the
+        # modal, and this panel outlives mission swaps — retaining it would
+        # keep a dead SortedRegionMenu (and everything it owns) alive across
+        # one. Nothing reads it while closed, and open() reassigns it, so this
+        # is a lifetime fix, not a behaviour change.
+        self._course_menu = None
 
     def handle_key_esc(self) -> None:
         if self._visible:
@@ -177,6 +193,12 @@ class StarMapPanel(Panel):
         warp_points, warp_note = self._warp_rows()
         labels = (star_map.project_points(self.scene, self.cam, self.rect)
                   if self._visible else [])
+        # Nebula names, rendered at deliberately lower emphasis than the
+        # system labels (see .sm-label--disc in star_map.css): they are
+        # scenery, and must never compete with the stars the map is for.
+        disc_labels = (star_map.project_disc_labels(self.scene, self.cam,
+                                                    self.rect)
+                       if self._visible else [])
         payload = json.dumps({
             "visible": self._visible,
             "selected_system": self._selected_system,
@@ -186,6 +208,9 @@ class StarMapPanel(Panel):
             "labels": [{"id": l["id"], "label": l["label"],
                         "x": round(l["x"], 1), "y": round(l["y"], 1),
                         "visible": l["visible"]} for l in labels],
+            "disc_labels": [{"label": d["label"],
+                             "x": round(d["x"], 1), "y": round(d["y"], 1),
+                             "visible": d["visible"]} for d in disc_labels],
             "warp_points": warp_points,
             "warp_note": warp_note,
         })

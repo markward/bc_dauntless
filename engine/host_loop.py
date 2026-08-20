@@ -2865,9 +2865,21 @@ def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
     don't normally coincide).
     """
     # The Set Course modal is a centred CEF overlay opened from the (bridge)
-    # Helm crew menu; it needs a real cursor too. Clicking Set Course clears
-    # the open crew menu, so has_open_menu() is False while the modal is up —
-    # key the cursor-free state off the modal as well.
+    # Helm crew menu; it needs a real cursor too. Clicking Set Course does NOT
+    # clear the crew menu: crew_menu_panel deliberately leaves _open_menu_id
+    # set so the Helm menu stays visible behind the popup (see the
+    # SortedRegionMenu branch in crew_menu_panel.dispatch_event), and
+    # has_open_menu() therefore stays True for as long as the modal is up.
+    #
+    # That retained menu state is load-bearing, not incidental: it is what
+    # keeps _bridge_freelook_suppressed(crew_menu_open=...) True, so dragging
+    # the star map does not also swing the bridge view.
+    #
+    # So the modal terms below are NOT cover for a menu that was cleared (the
+    # old premise). They are what makes the cursor-free state independent of
+    # the crew menu and of the view mode: each modal asserts its own need for
+    # a cursor, and stays covered if the menu behind it ever does close, or if
+    # a modal is opened from somewhere with no crew menu at all.
     # The Quick Battle Setup panel is the same kind of centred CEF modal and
     # also needs a real cursor while it is open.
     # The star map (which now opens from that same Set Course button) is a
@@ -6253,7 +6265,7 @@ def _starmap_buffers(scene: dict) -> tuple:
     return (
         [(d["position"], d["color"], float(d["radius"]), float(d["opacity"]))
          for d in scene["discs"]],
-        [(l["a"], l["b"], l["color"]) for l in scene["lines"]],
+        [(ln["a"], ln["b"], ln["color"]) for ln in scene["lines"]],
         [(p["position"], p["color"], float(p["size_px"]), bool(p["selected"]))
          for p in scene["points"]],
         [(b["position"], int(b["mark"]), b["color"], float(b["size_px"]))

@@ -123,7 +123,11 @@ def build_scene(*, model=None, here_id=None, course_id=None,
     discs = []
     for neb in model.get("nebulae", []):
         pos = tuple(float(c) for c in neb["position"])
-        discs.append({"kind": "nebula", "label": neb.get("name", ""),
+        # `or ""` not `.get("name", "")`: the source map can carry an explicit
+        # "name": null, which the default form passes straight through — and a
+        # None reaching the JS renders as the literal string "null" over the
+        # map. An empty label is skipped by project_disc_labels.
+        discs.append({"kind": "nebula", "label": neb.get("name") or "",
                       "position": pos, "radius": float(neb["radius"]),
                       "color": tuple(neb["color"]), "opacity": NEBULA_OPACITY,
                       "_camera_distance": _distance(pos, eye)})
@@ -231,6 +235,32 @@ def project_points(scene: dict, cam: StarMapCamera, rect) -> list:
         inside = visible and 0.0 <= sx <= w and 0.0 <= sy <= h
         out.append({"id": p["id"], "label": p["label"],
                     "x": sx, "y": sy, "visible": bool(inside)})
+    return out
+
+
+def project_disc_labels(scene: dict, cam: StarMapCamera, rect) -> list:
+    """Project labelled disc CENTRES to RECT-LOCAL pixels, as project_points.
+
+    Nebulae are the only labelled discs today (star clouds are baked without a
+    name), and they are SCENERY: the caller renders these at deliberately
+    lower emphasis than the system labels, which are what the map is for.
+
+    Discs with an empty label are skipped rather than emitted blank — an empty
+    label div is an invisible click-blocking rectangle over the map, and a
+    None would reach the JS as the string "null".
+
+    Deliberately no `id`: nothing picks a nebula, so handing the UI an id it
+    could hang a click on would misrepresent the interaction model.
+    """
+    _x, _y, w, h = rect
+    out = []
+    for d in scene["discs"]:
+        if not d.get("label"):
+            continue
+        sx, sy, _depth, visible = project(d["position"], cam.camera, (w, h))
+        inside = visible and 0.0 <= sx <= w and 0.0 <= sy <= h
+        out.append({"label": d["label"], "x": sx, "y": sy,
+                    "visible": bool(inside)})
     return out
 
 

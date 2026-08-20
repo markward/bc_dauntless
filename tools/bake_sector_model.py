@@ -70,7 +70,12 @@ def build_sector_model(map_data):
         entry.update(existing.get(s["id"], {}))
         systems.append(entry)
     sys_pos = {s["id"]: s["position"] for s in map_data.get("systems", [])}
-    nebulae = [{"name": n.get("name"),
+    # `or ""`, not .get("name", ""): the source map can carry an explicit
+    # "name": null, which the default form passes straight through. `name` is
+    # a star-map LABEL and travels Python -> JSON -> JS, where a null renders
+    # as the literal string "null". An empty name is skipped by
+    # star_map.project_disc_labels.
+    nebulae = [{"name": n.get("name") or "",
                 "position": n["position"],
                 "radius": _home_envelop_radius(n, n["radius"], sys_pos),
                 "color": hex_to_rgb01(n["color"])}

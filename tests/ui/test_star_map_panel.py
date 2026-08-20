@@ -117,6 +117,36 @@ def test_mission_systems_come_from_the_live_menu():
     assert "vesuvi" in data["mission_systems"]
 
 
+def test_close_releases_the_sdk_menu_handle():
+    """The panel outlives mission swaps; the SortedRegionMenu does not.
+    Holding it past close() keeps the outgoing mission's menu (and everything
+    it owns) alive — the failure shape this project has hit repeatedly."""
+    p = StarMapPanel()
+    menu = _FakeMenu("Set Course", [_FakeMenu("Vesuvi", [])])
+    p.open(set_name="Vesuvi6", course_menu=menu)
+    p.close()
+    assert p._course_menu is None
+
+
+def test_payload_carries_nebula_labels():
+    """The baked nebula `name` had no consumer: it reached disc["label"] and
+    stopped there. The payload must carry them so the JS can render them —
+    subordinate to the system labels, but present."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    data = _payload(p.render_payload())
+    assert data["disc_labels"], "no nebula labels in the payload"
+    assert any("Nebula" in d["label"] or "Veil" in d["label"]
+               for d in data["disc_labels"])
+    assert set(data["disc_labels"][0]) == {"label", "x", "y", "visible"}
+
+
+def test_disc_labels_are_empty_while_the_panel_is_closed():
+    """Same rule the system labels follow: a closed panel projects nothing."""
+    p = StarMapPanel()
+    assert _payload(p.render_payload())["disc_labels"] == []
+
+
 def test_here_marker_absent_when_the_set_is_unmapped():
     """A misplaced 'you are here' is worse than none (spec §5)."""
     p = StarMapPanel()
@@ -178,13 +208,13 @@ def test_rect_tracks_the_live_cef_view_size():
     from engine.ui.star_map_panel import MAP_RECT, rect_for_view
 
     p = StarMapPanel()
-    assert p.rect == MAP_RECT == (200, 108, 640, 520)
+    assert p.rect == MAP_RECT == (200, 108, 640, 478)
 
     p.set_view_size(1512, 983)
     assert p.rect == rect_for_view(1512, 983)
     # Centred against the modal chrome, not the pinned 1280x720 numbers.
     assert p.rect[:2] == (round(1512 / 2 - 440), round(983 / 2 - 252))
-    assert p.rect[2:] == (640, 520)
+    assert p.rect[2:] == (640, 478)
 
 
 def test_rect_origin_is_clamped_for_views_smaller_than_the_modal():

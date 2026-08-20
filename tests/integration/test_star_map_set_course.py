@@ -106,13 +106,14 @@ def test_drive_star_map_flips_y_into_gl_viewport_space(rec):
     panel = StarMapPanel()
     panel.open(set_name="Vesuvi6")
     rx, ry, rw, rh = MAP_RECT
-    assert (rx, ry, rw, rh) == (200, 108, 640, 520)
+    # 478 = MODAL_H 560 - HEADER_H 28 - FOOTER_H 54, i.e. the modal BODY.
+    assert (rx, ry, rw, rh) == (200, 108, 640, 478)
 
     _drive_star_map(panel, (1280, 720), 720)          # 1:1 framebuffer
-    assert rec.viewport == [(200, 720 - (108 + 520), 640, 520)]
+    assert rec.viewport == [(200, 720 - (108 + 478), 640, 478)]
 
     _drive_star_map(panel, (2560, 1440), 720)         # Retina: scale 2
-    assert rec.viewport[1] == (400, 1440 - (108 + 520) * 2, 1280, 1040)
+    assert rec.viewport[1] == (400, 1440 - (108 + 478) * 2, 1280, 478 * 2)
 
     # A logical view that is NOT 720 high — the variable that actually
     # changes live (the CEF view tracks the window in points). The rect

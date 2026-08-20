@@ -1,6 +1,7 @@
 // Star map render fn. Driven by Python:
 //   setStarMapPanel({visible, selected_system, here_system, course_system,
-//                    mission_systems, labels, warp_points, warp_note});
+//                    mission_systems, labels, disc_labels, warp_points,
+//                    warp_note});
 // The 3D map itself is drawn by the NATIVE starmap pass beneath
 // #star-map-viewport — this file draws only labels, the warp-point list and
 // chrome. Keep #star-map-viewport transparent so the GL shows through.
@@ -37,7 +38,18 @@ function setStarMapPanel(state) {
     }
     const labelEl = document.getElementById('star-map-labels');
     if (labelEl) {
-        labelEl.innerHTML = (state.labels || []).filter(function (l) {
+        // Nebula names FIRST, so the system labels that follow paint over
+        // them: nebulae are scenery and must stay subordinate to the stars
+        // (.sm-label--disc is smaller and dimmer — see star_map.css). Python
+        // omits nameless discs, so there is never a blank label here.
+        const discs = (state.disc_labels || []).filter(function (d) {
+            return d.visible;
+        }).map(function (d) {
+            return '<div class="sm-label sm-label--disc"'
+                + ' style="left:' + d.x + 'px;top:' + d.y + 'px">'
+                + escapeHtmlSM(d.label) + '</div>';
+        }).join('');
+        labelEl.innerHTML = discs + (state.labels || []).filter(function (l) {
             return l.visible;
         }).map(function (l) {
             return '<div class="sm-label' + _smLabelClass(l.id, state) + '"'

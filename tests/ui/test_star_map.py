@@ -141,3 +141,44 @@ def test_points_carry_display_labels():
     scene = sm.build_scene(model=_model())
     vesuvi = next(p for p in scene["points"] if p["id"] == "vesuvi")
     assert vesuvi["label"]  # display_label, never empty
+
+
+# --- disc labels ----------------------------------------------------------
+#
+# The baked `name` on every nebula existed with no consumer at all: build_scene
+# copied it to disc["label"], project_points iterated scene["points"] only, and
+# the payload's labels list was systems-only. A producer spanning four task
+# boundaries with nothing reading it.
+
+def test_disc_labels_are_projected_for_named_discs_only():
+    """Star clouds carry no name and must not emit an empty label div."""
+    scene = sm.build_scene(model=_model())
+    cam = sm.StarMapCamera(anchor=(0.0, 0.0, 0.0))
+    labels = sm.project_disc_labels(scene, cam, (0, 0, 640, 478))
+    assert [d["label"] for d in labels] == ["Belaruz Nebula"]
+
+
+def test_a_nameless_nebula_emits_no_label():
+    """`name` can be absent or null in the source map; the scene must skip it
+    rather than let the JS render the string 'null' over the map."""
+    model = _model()
+    model["nebulae"] = [{"name": None, "position": [10.0, 0.0, 0.0],
+                         "radius": 5.0, "color": [0.4, 0.4, 0.6]},
+                        {"position": [20.0, 0.0, 0.0],
+                         "radius": 5.0, "color": [0.4, 0.4, 0.6]}]
+    scene = sm.build_scene(model=model)
+    assert [d["label"] for d in scene["discs"] if d["kind"] == "nebula"] == ["", ""]
+    cam = sm.StarMapCamera(anchor=(0.0, 0.0, 0.0))
+    assert sm.project_disc_labels(scene, cam, (0, 0, 640, 478)) == []
+
+
+def test_disc_labels_use_the_same_rect_local_shape_as_system_labels():
+    """Both lists are positioned inside #star-map-viewport by the same CSS, so
+    they must be in the same rect-local coordinate space."""
+    scene = sm.build_scene(model=_model())
+    cam = sm.StarMapCamera(anchor=(0.0, 0.0, 0.0))
+    rect = (200, 108, 640, 478)
+    entry = sm.project_disc_labels(scene, cam, rect)[0]
+    assert set(entry) == {"label", "x", "y", "visible"}
+    assert 0.0 <= entry["x"] <= 640.0 and 0.0 <= entry["y"] <= 478.0
+    assert entry["visible"] is True

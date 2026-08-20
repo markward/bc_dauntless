@@ -26,11 +26,19 @@ void main() {
         frag_color = vec4(u_color, a * u_opacity);
         return;
     }
-    // Bracket: four corner L-shapes. Keep the corners, discard the middle.
+    // Bracket: four corner L-shapes. Keep the legs, discard the middle AND
+    // the hollow inside each corner.
+    //
+    // Leg length and leg thickness are SEPARATE knobs. They were not: `arm`
+    // sat beside a hardcoded 0.55, and because 1.0 - 0.45 == 0.55 the ||
+    // clause was subsumed by the && pair, collapsing the whole gate to
+    // `ad.x > 0.55 && ad.y > 0.55` — four filled squares, with `arm` dead.
+    // Keep the two independent, or the knob silently stops working again.
     vec2  ad = abs(d);
-    float arm = 0.45;
-    bool corner = (ad.x > 1.0 - arm || ad.y > 1.0 - arm)
-               && ad.x > 0.55 && ad.y > 0.55;
+    float arm   = 0.45;   // leg LENGTH, as a fraction of the marker half-size
+    float thick = 0.15;   // leg THICKNESS, same units
+    bool corner = (ad.x > 1.0 - thick || ad.y > 1.0 - thick)
+               && ad.x > 1.0 - arm && ad.y > 1.0 - arm;
     if (!corner) discard;
     frag_color = vec4(u_color, u_opacity);
 }

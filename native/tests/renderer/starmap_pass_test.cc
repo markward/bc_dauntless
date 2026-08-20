@@ -241,6 +241,51 @@ TEST_F(StarMapPassGLTest, EmptySceneStillDrawsTheBackdropWithoutError) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
+// The "you are here" reticle is the marker the map's whole design says the eye
+// should find instantly, and it is a BRACKET -- four corner L-shapes, not four
+// filled blobs. The first shader shipped `arm = 0.45` beside a hardcoded 0.55
+// pair; since 1.0 - 0.45 == 0.55 the `||` clause was fully subsumed and the
+// gate collapsed to `ad.x > 0.55 && ad.y > 0.55`: four solid squares, with
+// `arm` a completely dead knob (editing it, reconfiguring and rebuilding
+// changed nothing at all). Leg LENGTH and leg THICKNESS are now separate
+// knobs, so probe the hollow inside the corner -- the one pixel that tells an
+// L from a square.
+TEST_F(StarMapPassGLTest, BracketDrawsLShapedCornersNotFilledSquares) {
+    glViewport(0, 0, 256, 256);
+    glDisable(GL_SCISSOR_TEST);
+
+    // One bracket, at the camera target, so it projects to the exact centre
+    // of the 256x256 rect. size_px is the marker's FULL width (the vertex
+    // stage offsets +/- px/viewport per axis), so half-size is 50px.
+    renderer::StarMapScene scene;
+    scene.enabled  = true;
+    scene.viewport = glm::ivec4(0, 0, 256, 256);
+    scene.brackets.push_back({{0.0f, 0.0f, 0.0f}, 1, {1.0f, 1.0f, 1.0f}, 100.0f});
+
+    renderer::StarMapPass pass;
+    pass.render(scene, map_camera(), *pipeline, 1.0f);
+
+    auto red_at = [](int x, int y) {
+        unsigned char px[4] = {0};
+        glReadPixels(x, y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        return static_cast<int>(px[0]);
+    };
+
+    // Along a leg: |d| ~ (0.97, 0.71) -- outside the thickness band on x, so
+    // this is the horizontal leg of the top-right corner. Lit.
+    EXPECT_GT(red_at(176, 163), 200);
+    // The same corner's vertical leg, |d| ~ (0.71, 0.97).
+    EXPECT_GT(red_at(163, 176), 200);
+
+    // THE hollow: |d| ~ (0.71, 0.71). Inside the old filled square, inside no
+    // leg of the L. Must be the backdrop, not the bracket colour.
+    EXPECT_LT(red_at(163, 163), 128);
+    // ...and the middle of the reticle stays empty, as it always did.
+    EXPECT_LT(red_at(128, 128), 128);
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
 TEST_F(StarMapPassGLTest, ZeroSizedViewportIsANoOp) {
     glViewport(0, 0, 256, 256);
     renderer::StarMapScene scene = populated_scene();

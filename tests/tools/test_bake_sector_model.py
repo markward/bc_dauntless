@@ -80,6 +80,28 @@ def test_galaxy_missing_swatch_uses_default():
     assert out["starclouds"][0]["color"] == [120 / 255, 120 / 255, 140 / 255]
 
 
+def test_a_nameless_source_nebula_bakes_to_an_empty_name_never_null():
+    """`name` is a LABEL, and the label pipeline is Python -> JSON -> JS.
+
+    A None survives that trip as JSON null and renders as the literal string
+    "null" over the map. The bake must emit "" so the scene can skip it — the
+    default-argument form of .get() does NOT do this when the source carries
+    an explicit "name": null.
+    """
+    map_data = {
+        "systems": [],
+        "nebulae": [
+            {"id": "nameless0", "position": [0, 0, 0], "radius": 10.0,
+             "color": "#646392"},
+            {"id": "nulled0", "name": None, "position": [1, 0, 0],
+             "radius": 10.0, "color": "#646392"},
+        ],
+        "galaxies": [],
+    }
+    names = [n["name"] for n in build_sector_model(map_data)["nebulae"]]
+    assert names == ["", ""]
+
+
 def test_baked_nebulae_carry_a_display_name():
     """The star map labels nebulae, so every baked nebula needs a name.
 
