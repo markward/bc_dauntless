@@ -2844,7 +2844,8 @@ def _apply_pause_menu_side_effects(pause: "_PauseMenuController",
 
 def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
                                   setting_course_panel=None,
-                                  quick_battle_setup_panel=None) -> None:
+                                  quick_battle_setup_panel=None,
+                                  star_map_panel=None) -> None:
     """Free the mouse cursor while a crew menu (F1-F5) is open on the
     bridge, then re-lock on close.
 
@@ -2864,15 +2865,31 @@ def _apply_crew_menu_side_effects(crew_menu_panel, view_mode, pause, h,
     don't normally coincide).
     """
     # The Set Course modal is a centred CEF overlay opened from the (bridge)
-    # Helm crew menu; it needs a real cursor too. Clicking Set Course clears
-    # the open crew menu, so has_open_menu() is False while the modal is up —
-    # key the cursor-free state off the modal as well.
+    # Helm crew menu; it needs a real cursor too. Clicking Set Course does NOT
+    # clear the crew menu: crew_menu_panel deliberately leaves _open_menu_id
+    # set so the Helm menu stays visible behind the popup (see the
+    # SortedRegionMenu branch in crew_menu_panel.dispatch_event), and
+    # has_open_menu() therefore stays True for as long as the modal is up.
+    #
+    # That retained menu state is load-bearing, not incidental: it is what
+    # keeps _bridge_freelook_suppressed(crew_menu_open=...) True, so dragging
+    # the star map does not also swing the bridge view.
+    #
+    # So the modal terms below are NOT cover for a menu that was cleared (the
+    # old premise). They are what makes the cursor-free state independent of
+    # the crew menu and of the view mode: each modal asserts its own need for
+    # a cursor, and stays covered if the menu behind it ever does close, or if
+    # a modal is opened from somewhere with no crew menu at all.
     # The Quick Battle Setup panel is the same kind of centred CEF modal and
     # also needs a real cursor while it is open.
+    # The star map (which now opens from that same Set Course button) is a
+    # centred modal too, and is unusable without a cursor — it is dragged and
+    # clicked, not just clicked.
     modal_open = (
         (setting_course_panel is not None and setting_course_panel.is_open())
         or (quick_battle_setup_panel is not None
             and quick_battle_setup_panel.is_open())
+        or (star_map_panel is not None and star_map_panel.is_open())
     )
     target = (((view_mode.is_bridge and crew_menu_panel.has_open_menu())
                or modal_open)
@@ -6232,6 +6249,83 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
             r.set_visible(iid, not _warp_hide)
 
 
+def _starmap_buffers(scene: dict) -> tuple:
+    """Flatten a star_map scene dict into the five tuple-lists the native
+    binding unpacks (see engine.host_io.starmap_set_scene):
+
+        discs:      ((x, y, z), (r, g, b), radius_world, fill_alpha, border_alpha)
+        lines:      ((ax, ay, az), (bx, by, bz), (r, g, b))
+        points:     ((x, y, z), (r, g, b), size_px, selected)
+        brackets:   ((x, y, z), mark, (r, g, b), size_px)
+        starclouds: ((x, y, z), (r, g, b), size_px, opacity)
+
+    Pure re-shaping — no ordering, colour or size decisions. All of those are
+    made in engine.ui.star_map.build_scene (size_px arrives already
+    selection-scaled; scaling it again here would double-apply).
+    """
+    return (
+        [(d["position"], d["color"], float(d["radius"]),
+          float(d["opacity"]), float(d["border_opacity"]))
+         for d in scene["discs"]],
+        [(ln["a"], ln["b"], ln["color"]) for ln in scene["lines"]],
+        [(p["position"], p["color"], float(p["size_px"]), bool(p["selected"]))
+         for p in scene["points"]],
+        [(b["position"], int(b["mark"]), b["color"], float(b["size_px"]))
+         for b in scene["brackets"]],
+        [(g["position"], g["color"], float(g["size_px"]), float(g["opacity"]))
+         for g in scene["starclouds"]],
+    )
+
+
+def _player_set_name(player) -> Optional[str]:
+    """Name of the set the player is in, or None if it can't be resolved.
+
+    Feeds the star map's camera anchor. None is a legitimate answer (no
+    player yet, an unrealized set, a broken handle): star_map.resolve_anchor
+    then falls back to the sector centroid and omits the "you are here"
+    reticle — a misplaced reticle on a nav map is worse than none.
+    """
+    try:
+        pset = player.GetContainingSet() if player is not None else None
+        return (pset.GetName() or None) if pset is not None else None
+    except Exception as e:
+        dev_mode.log_swallowed("star map set name", e)
+        return None
+
+
+def _drive_star_map(star_map_panel, framebuffer_size, cef_view_h) -> None:
+    """Mirror the star map panel's state onto the native starmap pass.
+
+    Called every frame: the pass is disabled unless the panel is open, so a
+    closed map costs one boolean and leaves no scissor rect behind.
+
+    The panel's rect is in CEF logical pixels with a TOP-left origin; the GL
+    viewport the pass scissors to is BOTTOM-left. Flip Y here — getting it
+    wrong draws the map mirrored up the screen.
+
+    The logical->framebuffer scale is read off the height alone because the
+    CEF view is kept at the window size in POINTS with dsf = framebuffer /
+    window (see _compute_cef_resize), so both axes share one factor: the
+    device-scale-factor.
+    """
+    is_open = star_map_panel.is_open()
+    host_io.starmap_set_enabled(is_open)
+    if not is_open:
+        return
+    _fw, _fh = framebuffer_size
+    _scale = _fh / float(cef_view_h) if cef_view_h else 1.0
+    _rx, _ry, _rw, _rh = star_map_panel.rect
+    host_io.starmap_set_viewport(
+        int(_rx * _scale),
+        int(_fh - (_ry + _rh) * _scale),
+        int(_rw * _scale),
+        int(_rh * _scale))
+    _cam = star_map_panel.cam.camera
+    host_io.starmap_set_camera(_cam.eye(), _cam.target, _cam.up(),
+                               _cam.fov_y_rad, _cam.near, _cam.far)
+    host_io.starmap_set_scene(*_starmap_buffers(star_map_panel.scene))
+
+
 def run(mission_name: Optional[str] = None,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
@@ -6859,12 +6953,34 @@ def run(mission_name: Optional[str] = None,
         _letterbox_anim = LetterboxAnimator()
         from engine.ui.setting_course_panel import SettingCoursePanel
         setting_course_panel = SettingCoursePanel(on_course_set=on_course_set)
+        # The 3D star map replaces the list panel behind Helm -> Set Course.
+        # It satisfies the SAME on_course_set contract, so the warp button,
+        # the crew ack and the warp spine are untouched. SettingCoursePanel
+        # stays constructed and registered until the map is verified live —
+        # without it a bad first run leaves no way to set a course at all,
+        # which makes warp unreachable and blocks everything downstream.
+        from engine.ui.star_map_panel import StarMapPanel
+        star_map_panel = StarMapPanel(on_course_set=on_course_set,
+                                      on_warp_engage=on_warp_engage)
+
+        def _open_star_map(course_menu=None):
+            """Helm Set Course click -> open the map anchored on the player's
+            current system."""
+            # Same player accessor on_warp_engage uses — the player changes
+            # per mission, so it must be read at click time, not at boot.
+            _player = App.Game_GetCurrentPlayer()
+            if _player is None and controller.session is not None:
+                _player = controller.session.player
+            star_map_panel.open(course_menu=course_menu,
+                                set_name=_player_set_name(_player))
+
         from engine.ui.crew_menu_panel import CrewMenuPanel
         crew_menu_panel = CrewMenuPanel(
-            on_set_course=setting_course_panel.open,
+            on_set_course=_open_star_map,
             on_warp_engage=on_warp_engage)
         registry.register(crew_menu_panel)
         registry.register(setting_course_panel)
+        registry.register(star_map_panel)
         try:
             from engine.ui import crew_menu_hotkeys
             crew_menu_hotkeys.wire(
@@ -7038,10 +7154,11 @@ def run(mission_name: Optional[str] = None,
         # does: it is a centred modal opened from a crew menu, so it must
         # take ESC before the crew menu underneath it can (that ordering
         # bug closed the XO menu under the modal, leaving it un-closable).
+        # The star map is in that same bracket, for that same reason.
         _modal_blockers = [mission_picker, developer_options_panel,
                            ship_property_viewer, ai_inspector,
                            configuration_panel, setting_course_panel,
-                           quick_battle_setup_panel]
+                           star_map_panel, quick_battle_setup_panel]
 
         while not r.should_close():
             # --- Track window resizes: re-lay-out the CEF overlay at the new
@@ -7094,7 +7211,8 @@ def run(mission_name: Optional[str] = None,
                 _apply_crew_menu_side_effects(
                     crew_menu_panel, view_mode, pause, _h,
                     setting_course_panel,
-                    controller.quick_battle_setup_panel)
+                    controller.quick_battle_setup_panel,
+                    star_map_panel)
                 if pause.is_open:
                     # When a settings modal is open it consumes keyboard
                     # input — pause-menu navigation would otherwise activate
@@ -7222,6 +7340,14 @@ def run(mission_name: Optional[str] = None,
                 # preprocessor, so the lock would otherwise persist.
                 clear_undetectable_player_lock(_player)
 
+                # Re-centre the star map's rect on the LIVE CEF view size
+                # (which tracks the window in points — see
+                # _compute_cef_resize). Must run before render_all(): the
+                # panel projects its labels against this rect, and the GL
+                # scissor + click picking read the same one, so all three
+                # move together within the frame.
+                star_map_panel.set_view_size(_CEF_VIEW_W, _CEF_VIEW_H)
+
                 _scripts = registry.render_all()
                 for _panel_script in _scripts:
                     _h.cef_execute_javascript(_panel_script)
@@ -7305,14 +7431,15 @@ def run(mission_name: Optional[str] = None,
                         and _TR_X <= _mx < _TR_X + _TR_W
                         and _TR_Y <= _my < _TR_Y + _TR_H
                     )
-                    # The Set Course and Quick Battle Setup modals are
-                    # full-viewport cp-* backdrops: any click while one is open
-                    # belongs to CEF (a button or the inert backdrop), never to
-                    # phaser fire or the bridge view below.
-                    _cursor_in_modal = (
-                        setting_course_panel.is_open()
-                        or controller.quick_battle_setup_panel.is_open()
-                    )
+                    # The Set Course, star map and Quick Battle Setup modals
+                    # are full-viewport cp-* backdrops: any click while one is
+                    # open belongs to CEF (a button, a star, or the inert
+                    # backdrop), never to phaser fire or the bridge view below.
+                    _cursor_in_modal = _any_blocker_open((
+                        setting_course_panel,
+                        star_map_panel,
+                        controller.quick_battle_setup_panel,
+                    ))
                     # Orders/Maneuvers/Tactics row (#tactical-orders-host):
                     # position:fixed; top:24px; left:264px; right:24px (see
                     # tactical_orders.css). A top band just right of the
@@ -7395,6 +7522,12 @@ def run(mission_name: Optional[str] = None,
                     node_anim.reset(renderer=r)
                     lip_runtime.clear()
                     _letterbox_anim.reset()
+                    # A course plotted in the outgoing mission may name a set
+                    # the incoming one never loads, so the map must not
+                    # survive the swap. invalidate() forces the closed state
+                    # out to CEF on the next render_all().
+                    star_map_panel.close()
+                    star_map_panel.invalidate()
                 controller._drain_pending_swap()
                 if had_pending_swap:
                     director.snap()
@@ -8124,6 +8257,14 @@ def run(mission_name: Optional[str] = None,
                     r.clear_target_reticle()
                     r.clear_reticle_text()
             _spv_was_open = _spv_open
+
+            # --- Star map (Helm -> Set Course) ---
+            # Runs every frame: the pass is disabled unless the map is open,
+            # so a closed map costs one boolean and leaves no scissor rect
+            # behind. Drawn into the transparent hole the CEF modal leaves,
+            # at the same rect the panel projects its labels and picks into.
+            _drive_star_map(star_map_panel, host_io.framebuffer_size(),
+                            _CEF_VIEW_H)
 
             # Step 5c: drive the viewscreen RTT feed on/off from the realized
             # viewscreen object, and hide the player ship while in bridge view

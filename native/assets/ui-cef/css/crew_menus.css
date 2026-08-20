@@ -156,3 +156,25 @@
 @media (prefers-reduced-motion: reduce) {
   .crew-menu__row--attention { animation: none; }
 }
+
+/* Overlay suppression while a crew menu is open (class set by
+   setCrewMenus in js/crew_menus.js).
+
+   #sdk-stylized-stack (SDK officer status cards — "ENSIGN KISKA LOMAR,
+   HELM / Awaiting Orders") is positioned from SDK coordinates, and
+   #character-tooltip-host is centred at 5% height; both are absolutely
+   positioned and can land over the menu or over a modal opened from it.
+
+   `visibility` rather than `display: none`: both are overlays, so removing
+   them from layout buys nothing, and visibility leaves their boxes — and
+   the SDK-driven positions inside them — untouched.
+
+   This exists because the star map's map region is deliberately
+   transparent so the native GL pass beneath shows through. z-index cannot
+   make a transparent element occlude an opaque one, so any opaque CEF
+   element over that rect paints on top of the map whatever its stacking
+   order. Raising z-index here would do nothing. */
+body.crew-menu-open #sdk-stylized-stack,
+body.crew-menu-open #character-tooltip-host {
+  visibility: hidden;
+}

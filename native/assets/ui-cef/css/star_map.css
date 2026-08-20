@@ -1,0 +1,188 @@
+/* Star map panel. Reuses cp-* chrome from configuration_panel.css.
+   NOTE: #star-map-viewport's geometry must stay in sync with
+   star_map_panel.rect_for_view() — Python projects labels and hit-tests
+   clicks against that rect, and the GL pass scissors to it. It is positioned
+   `fixed` by the same centring formula rather than left to flow, because its
+   true screen rect must not depend on .cp-modal's padding/border — a drift
+   there would silently displace every label and mis-pick every click. */
+/* The transparent hole must go ALL THE WAY DOWN. #star-map-viewport is a
+   positioned descendant of .cp-modal, so it paints ABOVE its ancestors'
+   backgrounds — its own `background: transparent` reveals the GL map only if
+   every ancestor is transparent too. The CEF composite is premultiplied
+   (GL_ONE / GL_ONE_MINUS_SRC_ALPHA, cef_composite_pass.cc), so a CEF pixel at
+   alpha 1 discards the framebuffer entirely.
+   Hence, following #spv-root in ship_property_viewer.css: the root and the
+   modal are transparent, and each opaque chrome piece carries its own fill.
+   The sibling panels' full-viewport dim (rgba(0,0,0,0.55) on
+   #setting-course-panel et al) is deliberately ABSENT here — one full-viewport
+   fill is exactly what hides the map. If a dim is ever wanted back it must be
+   drawn as strips AROUND the map rect, never across it.
+   test_no_ancestor_of_the_map_viewport_paints_an_opaque_background walks the
+   real ancestor chain out of index.html and fails if any of them regains a
+   background. */
+#star-map-panel {
+    display: none;
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    z-index: 50;
+    font-family: "Antonio", sans-serif;
+}
+/* .cp-modal's rgb(20, 22, 28) fill is overridden here, not merely resized:
+   it is 880x560 and centred, i.e. directly over the map rect. */
+#star-map-panel .cp-modal {
+    width: 880px; height: 560px;
+    background: transparent;
+}
+/* Chrome fill, restored per element now the modal is transparent.
+   .cp-header already carries its own maroon->orange gradient; #star-map-warps
+   gets its own fill in its rule at the foot of this file. */
+/* The shared .cp-footer is also padding-sized (10px + button + 1px border),
+   i.e. its height depends on the button's font metrics. The map rect cannot
+   be derived from a number like that, so pin it: MODAL_H = HEADER_H + MAP_H +
+   FOOTER_H is the budget star_map_panel.MAP_H is computed from, and
+   test_the_map_rect_fits_the_modal_body reads this literal back as FOOTER_H.
+   align-items centres the Cancel button in the fixed box instead of
+   stretching it. */
+#star-map-panel .cp-footer {
+    background: rgb(20, 22, 28);
+    height: 54px;
+    box-sizing: border-box;
+    align-items: center;
+    /* Warp sits bottom-LEFT, Cancel stays bottom-right. The shared .cp-footer
+       is flex-end; overriding here rather than there keeps every other cp-*
+       modal's single right-aligned button where it is. */
+    justify-content: space-between;
+}
+#star-map-warp:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* .sm-body pairs with .cp-content (flex:1 fills the modal body below the
+   28px header). Nothing sits in flow inside it any more: the viewport is
+   position:fixed (out of flow) and now spans the WHOLE modal body, and the
+   target list moved inside it as a centred popup. It previously held the
+   list as a right-hand column, reserved with a hard-coded margin-left that
+   duplicated MAP_W — centring removes that duplication entirely. */
+.sm-body { display: flex; gap: 0; }
+
+/* The GL pass draws BENEATH this element — it MUST stay transparent, or the
+   native map is hidden behind an opaque CEF rectangle.
+
+   Positioned by the SAME centring rule as star_map_panel.rect_for_view(), so
+   the hole tracks the flex-centred .cp-modal at every window size instead of
+   only at 1280x720: 50% - MODAL_W/2 = 50% - 440px, and
+   50% - MODAL_H/2 + HEADER_H = 50% - 280px + 28px = 50% - 252px. The modal's
+   1px border cancels (its outer box is 882 wide, so content-left is
+   (view-882)/2 + 1). test_star_map_cef_assets parses these two offsets back
+   out and checks them against the Python constants.
+
+   The 478px height is the modal BODY: MODAL_H 560 - HEADER_H 28 - FOOTER_H 54.
+   It is not a free number — the GL backdrop is opaque and scissored to exactly
+   this rect, so any excess paints over the footer strip. The 880px width is
+   likewise MODAL_W exactly: the map fills the modal, and the target list is
+   a centred popup over it rather than a column beside it. */
+#star-map-viewport {
+    position: fixed;
+    left: calc(50% - 440px); top: calc(50% - 252px);
+    width: 880px; height: 478px;
+    background: transparent;
+    overflow: hidden;      /* clip labels to the map rect */
+    cursor: grab;
+}
+#star-map-viewport:active { cursor: grabbing; }
+
+#star-map-labels { position: absolute; inset: 0; pointer-events: none; }
+/* System names. Amber, uppercase, weight 700 with a soft black halo — the
+   POC's chart-display treatment, matching the amber star halo they label.
+   Keep the colours here in step with STAR_COLOR / MARK_*_COLOR in
+   engine/ui/star_map.py: those tint the GL markers, these tint their text. */
+.sm-label {
+    position: absolute;
+    font-size: 10px; color: #ffd9a8;          /* POC #ffd9a8 */
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    text-shadow: 0 0 4px #000, 0 0 8px #000;
+    transform: translate(8px, -6px);
+    white-space: nowrap;
+}
+/* Nebula names. SCENERY — deliberately subordinate to the system labels:
+   smaller, dimmer, letter-spaced and non-bold, so the eye reads them as a
+   backdrop annotation and never mistakes one for a star it can select
+   (nothing picks a nebula). Emitted before the system labels so those paint
+   on top where the two collide. */
+.sm-label--disc {
+    font-size: 8px;
+    color: #8fd0ff;                            /* POC nebLabel #8fd0ff */
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    font-weight: 400;
+    text-shadow: 0 0 2px #000;
+    transform: translate(6px, -4px);
+}
+
+/* The three reserved states and selection. Each matches the GL marker it
+   sits beside, so label and reticle read as one object. */
+.sm-label--here      { color: #d8c1a8; }       /* beside #b28452 */
+.sm-label--course    { color: #ffce80; }       /* beside #ff9c00 */
+.sm-label--mission   { color: #99ccff; }       /* beside #3399ff */
+.sm-label--selected  { color: #ffffff; }
+
+/* Reserves the 640px the fixed viewport occupies so the warp list never
+   sits underneath it (see the .sm-body comment above). max-height is the
+   modal body height, the same MAP_H the viewport uses. The background is this
+   column's own: .cp-modal is transparent so the GL map can show through.
+
+   The UA <ul> reset (list-style/margin/padding) matches .sc-col, which this
+   list is otherwise a copy of. It is NOT cosmetic here: a bare <ul> carries
+   `margin: 1em 0`, which would inset this column's fill by 16px top and
+   bottom and re-open the transparent hole either side of it — the live 3D
+   scene showing through two strips of the modal. */
+/* Target popup — a centred card over the map, not a column beside it. The
+   map fills the modal now, so this is the only thing that covers it, and it
+   does so only while a system is selected. No margin-left pinning the map
+   width any more: the card is centred, so it cannot drift out of step with
+   MAP_W the way a hard-coded offset could. */
+#star-map-targets {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    min-width: 240px; max-width: 60%;
+    max-height: 70%;
+    display: flex; flex-direction: column;
+    background: rgb(20, 22, 28);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+}
+#star-map-targets-head {
+    display: flex; align-items: center; gap: 10px;
+    justify-content: space-between;   /* title left, close icon right */
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+}
+/* Close icon. Borderless so it reads as an icon rather than a second
+   button competing with the modal's Cancel; the hit box is kept a
+   comfortable 20px square rather than shrinking to the glyph. */
+#star-map-back {
+    font-family: inherit; font-size: 16px; line-height: 1;
+    width: 20px; height: 20px;
+    display: flex; align-items: center; justify-content: center;
+    color: #ffd9a8; background: transparent;
+    border: none; padding: 0; cursor: pointer;
+}
+#star-map-back:hover { background: rgba(255, 217, 168, 0.18); color: #fff; }
+#star-map-targets-title {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase; color: #ffd9a8;
+}
+#star-map-warps {
+    list-style: none;
+    margin: 0;
+    padding: 6px 0;
+    overflow-y: auto;
+}

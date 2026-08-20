@@ -107,11 +107,49 @@ def test_manifest_matches_facade_references():
     )
 
 
-def test_optional_is_empty_for_now():
-    # get_camera_world_pos (the only past optional binding) has been deleted;
-    # there are no optional bindings yet. Lock that so a future addition is
-    # a deliberate manifest edit, not an accident.
-    assert host_io._OPTIONAL_BINDINGS == frozenset()
+def test_optional_holds_exactly_the_starmap_bindings():
+    # The star map pass is the only optional (soft-guarded) surface on this
+    # façade: a stale .so must leave the Set Course modal blank rather than
+    # raise AttributeError inside the helm menu. Lock the set so any future
+    # addition is a deliberate manifest edit, not an accident.
+    assert host_io._OPTIONAL_BINDINGS == frozenset({
+        "starmap_set_enabled", "starmap_set_viewport",
+        "starmap_set_camera", "starmap_set_scene",
+    })
+
+
+def test_starmap_wrappers_no_op_when_binding_absent(monkeypatch):
+    # The point of the soft guard: a native module without the star map
+    # bindings must degrade to silence, not AttributeError.
+    fake = types.SimpleNamespace()
+    for name in host_io._REQUIRED_BINDINGS:
+        setattr(fake, name, lambda *a, **k: None)
+    fake.keys = types.SimpleNamespace()
+    monkeypatch.setattr(host_io, "_h", fake)
+
+    host_io.starmap_set_enabled(True)
+    host_io.starmap_set_viewport(0, 0, 10, 10)
+    host_io.starmap_set_camera((0, 0, 1), (0, 0, 0), (0, 1, 0), 0.8, 0.1, 100.0)
+    host_io.starmap_set_scene([], [], [], [], [])
+
+
+def test_starmap_wrappers_forward_to_the_binding(monkeypatch):
+    calls = []
+    fake = _full_fake()
+    fake.starmap_set_enabled = lambda v: calls.append(("enabled", v))
+    fake.starmap_set_viewport = lambda *a: calls.append(("viewport", a))
+    fake.starmap_set_scene = lambda *a: calls.append(("scene", a))
+    monkeypatch.setattr(host_io, "_h", fake)
+
+    host_io.starmap_set_enabled(1)          # coerced to bool
+    host_io.starmap_set_viewport(1.0, 2.0, 3.0, 4.0)   # coerced to int
+    host_io.starmap_set_scene([("d",)], [("l",)], [("p",)], [("b",)],
+                              [("g",)])
+
+    assert calls[0] == ("enabled", True)
+    assert calls[1] == ("viewport", (1, 2, 3, 4))
+    assert calls[2] == ("scene", ([("d",)], [("l",)], [("p",)], [("b",)],
+                                  [("g",)]))
 
 
 def test_no_dynamic_h_access_in_wrappers():

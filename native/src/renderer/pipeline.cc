@@ -47,6 +47,8 @@
 #include "embedded_subsystem_pin_fs.h"
 #include "embedded_target_reticle_vs.h"
 #include "embedded_target_reticle_fs.h"
+#include "embedded_starmap_vs.h"
+#include "embedded_starmap_fs.h"
 #include "embedded_bridge_vs.h"
 #include "embedded_bridge_fs.h"
 #include "embedded_skinned_bridge_vs.h"
@@ -90,6 +92,7 @@ Pipeline::Pipeline() {
     breach_        = std::make_unique<Shader>(shader_src::breach_vs,        shader_src::breach_fs);
     subsystem_pin_ = std::make_unique<Shader>(shader_src::subsystem_pin_vs, shader_src::subsystem_pin_fs);
     target_reticle_ = std::make_unique<Shader>(shader_src::target_reticle_vs, shader_src::target_reticle_fs);
+    starmap_       = std::make_unique<Shader>(shader_src::starmap_vs,        shader_src::starmap_fs);
     bridge_        = std::make_unique<Shader>(shader_src::bridge_vs,        shader_src::bridge_fs);
     skinned_bridge_ = std::make_unique<Shader>(shader_src::skinned_bridge_vs, shader_src::bridge_fs);
     lightmap_   = std::make_unique<Shader>(shader_src::lightmap_vs,   shader_src::lightmap_fs);

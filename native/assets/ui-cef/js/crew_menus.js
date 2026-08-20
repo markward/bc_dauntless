@@ -14,10 +14,22 @@ function setCrewMenus(payload) {
   const host = document.getElementById("crew-menu-host");
   if (!host) return;
   host.innerHTML = "";
+  let anyOpen = false;
   for (const menu of payload.menus) {
     if (!menu.open) continue;
+    anyOpen = true;
     host.appendChild(renderCrewMenu(menu));
   }
+  // Character popups and SDK status windows are absolutely-positioned
+  // overlays that can land anywhere on screen, so they can cover the menu or
+  // a modal opened from it. The star map made this unmissable: its map
+  // region is deliberately transparent so the native GL beneath shows
+  // through, and z-index cannot make a transparent element occlude an opaque
+  // one — any opaque CEF element over the map rect wins regardless of
+  // stacking order. Suppression is CSS-only: the menu's Python state is
+  // untouched, which matters because crew_menu_panel.has_open_menu() staying
+  // true is what suppresses bridge free-look while the map is dragged.
+  document.body.classList.toggle("crew-menu-open", anyOpen);
 }
 
 function renderCrewMenu(menu) {

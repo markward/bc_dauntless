@@ -51,14 +51,32 @@ def build_catalog():
     import Bridge.HelmMenuHandlers as helm
     helm.CreateMenus()
 
-    names = sorted(d for d in os.listdir(SYS_DIR)
-                   if (SYS_DIR / d / (d + ".py")).is_file())
+    # CreateMenus is NOT always in Systems/<Dir>/<Dir>.py. Three systems keep
+    # it elsewhere — DryDock in DryDockSystem.py, Starbase12 in Starbase.py,
+    # QuickBattle in QuickBattleSystem.py — so importing only the canonical
+    # module silently skipped them. Two of those (DryDock, Starbase12) fold
+    # into Tau Ceti, which is why it baked with NO destinations and the E1M1
+    # objective "head to Starbase 12" had nowhere to set course to.
+    #
+    # Scan every module in the directory instead, and call CreateMenus on the
+    # first holder, preferring the canonical file. First-only, not all: a
+    # system defining it twice would otherwise register duplicate menu nodes.
+    names = sorted(d for d in os.listdir(SYS_DIR) if (SYS_DIR / d).is_dir())
     failed = {}
     for n in names:
+        holders = sorted(
+            (f.stem for f in (SYS_DIR / n).glob("*.py")
+             if f.stem != "__init__"
+             and re.search(r"^def CreateMenus", f.read_text(errors="ignore"),
+                           re.M)),
+            key=lambda stem: (stem != n, stem),   # canonical <Dir>.py first
+        )
+        if not holders:
+            continue
         try:
-            mod = __import__("Systems.%s.%s" % (n, n), fromlist=[n])
-            if hasattr(mod, "CreateMenus"):
-                mod.CreateMenus()
+            mod = __import__("Systems.%s.%s" % (n, holders[0]),
+                             fromlist=[holders[0]])
+            mod.CreateMenus()
         except Exception as exc:                       # noqa: BLE001
             failed[n] = "%s: %s" % (type(exc).__name__, str(exc)[:80])
 
@@ -78,13 +96,31 @@ def build_catalog():
                     "module": getattr(c, "GetRegionModule", lambda: None)()}
                    for c in getattr(node, "_children", [])]
             entry = catalog.setdefault(
-                sid, {"module": None, "warp_points": []})
+                sid, {"module": None, "warp_points": [], "_self_rows": []})
             entry["warp_points"].extend(wps)
-            # System node's own region (used by single-region systems like Riha
-            # whose self-row is the destination).
+            # A system node's own region. For a single-region system like Riha
+            # this is the system's self-row destination. But SEVERAL menu nodes
+            # can fold onto one model id — Tau Ceti gets both "Dry Dock" and
+            # "Starbase 12" — and keeping only the first silently lost the
+            # other. Collect them all and decide below.
             node_mod = getattr(node, "GetRegionModule", lambda: None)()
-            if node_mod is not None and entry["module"] is None:
-                entry["module"] = node_mod
+            if node_mod is not None:
+                entry["_self_rows"].append((node.GetLabel(), node_mod))
+
+    for sid, entry in catalog.items():
+        rows = entry.pop("_self_rows", [])
+        if len(rows) == 1:
+            # One menu node: its own region is the system's module, exactly as
+            # before. Single-region systems like Riha use it as their self-row
+            # destination; systems with sub-regions carry it harmlessly.
+            entry["module"] = rows[0][1]
+        elif len(rows) > 1:
+            # Multiple real destinations folded under one map system: each
+            # becomes a selectable warp point. `module` stays None so nothing
+            # downstream silently picks one of them as "the" destination.
+            entry["warp_points"].extend(
+                {"id": _slug(label), "label": label, "module": mod}
+                for label, mod in rows)
     _set_current_game(None)
     if failed:
         print("[catalog] %d systems failed: %s" % (len(failed), failed))

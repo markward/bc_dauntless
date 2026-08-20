@@ -47,3 +47,34 @@ def test_catalog_carries_destination_modules():
     assert "Systems.Vesuvi.Vesuvi4" in mods
     # Riha is a single-region system: its self-entry carries the system module.
     assert catalog["riha"]["module"] == "Systems.Riha.Riha1"
+
+
+def test_create_menus_is_found_outside_the_canonical_system_module():
+    """The baker used to import only Systems/<Dir>/<Dir>.py and call
+    CreateMenus if THAT module had it. Three systems keep it elsewhere —
+    DryDock in DryDockSystem.py, Starbase12 in Starbase.py, QuickBattle in
+    QuickBattleSystem.py — so they were silently skipped. Two of the three
+    fold into Tau Ceti, which is why it baked with no destinations at all.
+
+    Guard the scan, not the symptom: if this list ever grows, the baker must
+    still find them.
+    """
+    import re
+    from pathlib import Path
+
+    sys_dir = (Path(__file__).resolve().parents[2]
+               / "sdk" / "Build" / "scripts" / "Systems")
+    off_canonical = []
+    for d in sorted(p for p in sys_dir.iterdir() if p.is_dir()):
+        holders = [f.stem for f in d.glob("*.py")
+                   if re.search(r"^def CreateMenus",
+                                f.read_text(errors="ignore"), re.M)]
+        if holders and d.name not in holders:
+            off_canonical.append(d.name)
+
+    assert set(off_canonical) >= {"DryDock", "Starbase12"}, off_canonical
+    src = (Path(__file__).resolve().parents[2]
+           / "tools" / "bake_set_course_catalog.py").read_text()
+    assert 'glob("*.py")' in src, (
+        "the baker must scan every module in a system directory, not just "
+        "Systems/<Dir>/<Dir>.py")
