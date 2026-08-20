@@ -51,6 +51,16 @@ def test_viewport_css_geometry_matches_map_rect():
     assert css_rect == tuple(float(v) for v in MAP_RECT)
     assert "position" in body and "fixed" in body
 
+    # #star-map-warps reserves the viewport's width with its own margin-left
+    # (the viewport is position:fixed and so out of .sm-body's flow) — that
+    # literal is a fourth, untested copy of MAP_RECT's width unless pinned
+    # here too, alongside the viewport's own left/top/width/height.
+    warps_block = re.search(r"#star-map-warps\s*\{([^}]*)\}", css)
+    assert warps_block, "no #star-map-warps rule"
+    m = re.search(r"margin-left\s*:\s*(-?\d+(?:\.\d+)?)px", warps_block.group(1))
+    assert m, "missing margin-left in #star-map-warps"
+    assert float(m.group(1)) == float(MAP_RECT[2])
+
 
 def test_render_fn_matches_the_python_payload_name():
     js = (ASSETS / "js" / "star_map.js").read_text()
@@ -62,9 +72,27 @@ def test_events_use_the_panel_routing_prefix():
     # star-map/select-system is deliberately excluded: nothing in the JS
     # fires it (map selection goes through star-map/pick:<x>,<y>); the panel
     # still handles select-system: server-side (T4's tests cover it).
-    for evt in ("star-map/set-course", "star-map/cancel", "star-map/pick",
+    # star-map/cancel is deliberately excluded here too: it fires from the
+    # Cancel button's inline onclick in index.html, not from this file (it
+    # appears in star_map.js only in a comment) — see
+    # test_cancel_event_is_wired_from_the_cancel_button below, which asserts
+    # against the real firing site.
+    for evt in ("star-map/set-course", "star-map/pick",
                 "star-map/orbit", "star-map/zoom"):
         assert evt in js, evt
+
+
+def test_cancel_event_is_wired_from_the_cancel_button():
+    """star-map/cancel fires from the Cancel button's inline onclick in
+    index.html (matching the sibling #setting-course-panel convention), not
+    from star_map.js. Assert against that real firing site so removing the
+    onclick and leaving star_map.js's header-comment mention would fail
+    this test, rather than passing vacuously."""
+    index = (ASSETS / "index.html").read_text()
+    section = re.search(r'<section id="star-map-panel".*?</section>',
+                         index, re.DOTALL)
+    assert section, "no #star-map-panel section"
+    assert "onclick=\"dauntlessEvent('star-map/cancel')\"" in section.group(0)
 
 
 def test_labels_are_escaped():
