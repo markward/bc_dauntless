@@ -101,7 +101,7 @@ void main() {
     // Keep the two independent, or the knob silently stops working again.
     vec2  ad = abs(d);
     float arm   = 0.45;   // leg LENGTH, as a fraction of the marker half-size
-    float thick = 0.15;   // leg THICKNESS, same units
+    float thick = 0.30;   // leg THICKNESS, same units
     bool corner = (ad.x > 1.0 - thick || ad.y > 1.0 - thick)
                && ad.x > 1.0 - arm && ad.y > 1.0 - arm;
     if (!corner) discard;

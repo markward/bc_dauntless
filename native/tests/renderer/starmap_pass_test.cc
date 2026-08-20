@@ -271,15 +271,30 @@ TEST_F(StarMapPassGLTest, BracketDrawsLShapedCornersNotFilledSquares) {
         return static_cast<int>(px[0]);
     };
 
-    // Along a leg: |d| ~ (0.97, 0.71) -- outside the thickness band on x, so
-    // this is the horizontal leg of the top-right corner. Lit.
-    EXPECT_GT(red_at(176, 163), 200);
-    // The same corner's vertical leg, |d| ~ (0.71, 0.97).
-    EXPECT_GT(red_at(163, 176), 200);
+    // Probe pixels are DERIVED from the shader's two knobs rather than
+    // hard-coded, because they depend on both. When `thick` went 0.15 -> 0.30
+    // the old literals silently became wrong: the hollow probe at |d| ~ 0.71
+    // fell inside the now-thicker leg, so the test failed for a reason that
+    // had nothing to do with the L-shape it guards.
+    //
+    // These MIRROR starmap.frag. If they drift from it this test stops
+    // meaning anything, so changing the shader must change them too.
+    constexpr float kArm   = 0.45f;   // leg LENGTH  (fraction of half-size)
+    constexpr float kThick = 0.30f;   // leg THICKNESS
+    // A point on a leg lies beyond the thickness band on one axis; the hollow
+    // lies inside the arm on both axes but beyond the thickness band on
+    // neither. Midpoints keep both clear of the edges.
+    const float on_leg  = 1.0f - kThick * 0.5f;             // 0.85
+    const float in_arm  = 1.0f - (kArm + kThick) * 0.5f;    // 0.625
+    auto px = [](float d) { return 128 + static_cast<int>(d * 50.0f); };
 
-    // THE hollow: |d| ~ (0.71, 0.71). Inside the old filled square, inside no
-    // leg of the L. Must be the backdrop, not the bracket colour.
-    EXPECT_LT(red_at(163, 163), 128);
+    // The top-right corner's two legs.
+    EXPECT_GT(red_at(px(on_leg), px(in_arm)), 200);
+    EXPECT_GT(red_at(px(in_arm), px(on_leg)), 200);
+
+    // THE hollow, inside the corner but on neither leg. Inside the old filled
+    // square; must be the backdrop, not the bracket colour.
+    EXPECT_LT(red_at(px(in_arm), px(in_arm)), 128);
     // ...and the middle of the reticle stays empty, as it always did.
     EXPECT_LT(red_at(128, 128), 128);
 

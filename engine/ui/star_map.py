@@ -72,7 +72,10 @@ COURSE_COLOR = (0.475, 0.949, 0.690)    # POC #79f2b0
 # pass now receives a colour per bracket and never interprets `mark` at all.
 MARK_HERE_COLOR    = (0.337, 0.902, 1.000)  # POC #56e6ff — the brightest mark
 MARK_COURSE_COLOR  = COURSE_COLOR           # same green as the plotted course
-MARK_MISSION_COLOR = (1.000, 0.706, 0.329)  # POC #ffb454, its default bracket
+# Yellow, and deliberately NOT the amber the stars and their labels use: this
+# is where the mission is sending you, so it has to separate from the field it
+# sits in rather than blend with it.
+MARK_MISSION_COLOR = (1.000, 0.851, 0.239)  # #ffd93d
 
 # Deliberately no `.get(mark, <grey>)` fallback anywhere: an unmapped mark must
 # raise here, in Python, next to the enum — not render as a plausible colour.
