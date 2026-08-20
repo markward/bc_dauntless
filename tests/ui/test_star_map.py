@@ -337,6 +337,8 @@ def test_the_bracket_encloses_the_star_it_marks():
     Compared against the SELECTED size, the largest a star ever draws.
     """
     assert sm.BRACKET_SIZE_PX > sm.STAR_SELECTED_SIZE_PX > sm.STAR_SIZE_PX
-    # ...and with enough margin to read as separate marks rather than as one
-    # crowded blob.
-    assert sm.BRACKET_SIZE_PX >= sm.STAR_SELECTED_SIZE_PX * 1.2
+    # Deliberately no minimum margin beyond that. An earlier version demanded
+    # 1.2x, which was a number invented here rather than derived from
+    # anything — it then blocked a size Mark had chosen on the screen. How
+    # much air looks right is a live judgement; that the reticle encloses what
+    # it marks is the part code can hold.
