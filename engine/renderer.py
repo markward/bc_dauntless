@@ -48,6 +48,8 @@ _REQUIRED_BINDINGS = frozenset({
     "nebula_lightning_set_enabled",
     "nonfinite_probe_enabled", "nonfinite_probe_set_enabled",
     "nonfinite_probe_stats",
+    "normal_map_set_enabled", "normal_map_set_flip_green",
+    "normal_map_set_strength",
     "play_instance_gesture", "play_instance_idle",
     "play_instance_walk",
     "procedural_sky_enabled", "procedural_sky_set_enabled", "restore_rest_pose",
@@ -437,6 +439,30 @@ def set_specular_enabled(enabled: bool) -> None:
 def set_rim_enabled(enabled: bool) -> None:
     """Toggle the opaque-pass Fresnel rim term. Default: on after init()."""
     _h.rim_set_enabled(enabled)
+
+
+def set_normal_map_enabled(enabled: bool) -> None:
+    """Toggle tangent-space normal mapping on hulls. Default: on after init().
+
+    Inert on stock BC assets, which ship no `_normal` textures at all.
+    """
+    _h.normal_map_set_enabled(enabled)
+
+
+def set_normal_map_strength(strength: float) -> None:
+    """Scale the normal map's tangent-space xy. 0 == flat, 1 == as authored."""
+    _h.normal_map_set_strength(float(strength))
+
+
+def set_normal_map_flip_green(flip: bool) -> None:
+    """Flip the normal map's green channel. Default: on.
+
+    Texture row 0 (v == 0) is always the image's TOP row, so v runs downward
+    in image space; flipping green is what makes a standard OpenGL-convention
+    (+Y up) authored map render correctly out of the box. Turn off only for a
+    map authored to the DirectX convention (-Y).
+    """
+    _h.normal_map_set_flip_green(flip)
 
 
 def set_hdr_enabled(enabled: bool) -> None:

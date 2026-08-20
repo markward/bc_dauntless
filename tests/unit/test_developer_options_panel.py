@@ -123,6 +123,7 @@ def test_render_payload_shape(panel):
         "god_mode": False, "double_weapons": False, "no_npc_shields": False,
         "disable_collisions": False,
         "systems_damaged": False, "systems_disabled": False,
+        "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
     }
 
 
@@ -319,3 +320,43 @@ def test_enter_on_quick_repair_row_runs_the_repair(panel, monkeypatch):
     r.press(r.keys.KEY_ENTER); p.handle_input(r)
 
     assert sensors.GetCondition() == sensors.GetMaxCondition()
+
+
+# ---- Normal-map tunables (Lighting tab) -----------------------------------
+
+def test_lighting_tab_exposes_normal_map_rows(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    payload = _body(p.render_payload())["settings"]
+    assert "normal_maps" in payload
+    assert "normal_strength" in payload
+
+
+def test_normal_strength_cycles_through_presets(panel, monkeypatch):
+    """Starts from the shipped default (1.0, index 2 of (0, 0.5, 1, 2, 4)), so
+    five presses walk 1.0 -> 2.0 -> 4.0 -> wrap -> 0.0 -> 0.5 -> back to 1.0,
+    visiting every preset exactly once and confirming the wrap at both ends."""
+    p, _ = panel
+    seen = []
+    monkeypatch.setattr(
+        "engine.ui.developer_options_panel.renderer.set_normal_map_strength",
+        lambda v: seen.append(v))
+    p.open()
+    p.dispatch_event("tab:lighting")
+    for _ in range(5):
+        p.dispatch_event("action:normal_strength")
+    assert seen == [2.0, 4.0, 0.0, 0.5, 1.0], seen
+
+
+def test_normal_map_toggle_round_trips(panel, monkeypatch):
+    p, _ = panel
+    seen = []
+    monkeypatch.setattr(
+        "engine.ui.developer_options_panel.renderer.set_normal_map_enabled",
+        lambda v: seen.append(v))
+    p.open()
+    p.dispatch_event("tab:lighting")
+    p.dispatch_event("toggle:normal_maps")
+    p.dispatch_event("toggle:normal_maps")
+    assert seen == [False, True], seen

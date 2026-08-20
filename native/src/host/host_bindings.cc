@@ -1300,6 +1300,12 @@ namespace dauntless_rim {
 namespace dauntless_decals {
     void set_enabled(bool v);  // defined in frame.cc
 }
+// Normal mapping controls. Defined in frame.cc.
+namespace dauntless_normal_map {
+    void set_enabled(bool v);
+    void set_strength(float v);
+    void set_flip_green(bool v);
+}
 // Hull-breach renderer pass — always-on gate. Defined in frame.cc.
 namespace dauntless_hull_damage {
     bool enabled();            // defined in frame.cc
@@ -3158,6 +3164,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_rim::set_enabled(enabled); },
           py::arg("enabled"),
           "Toggle the opaque-pass Fresnel rim term. Default: on.");
+    m.def("normal_map_set_enabled",
+          [](bool enabled) { dauntless_normal_map::set_enabled(enabled); },
+          py::arg("enabled"),
+          "Toggle tangent-space normal mapping on ship hulls. Default: on "
+          "(inert on stock assets, which ship no _normal maps).");
+    m.def("normal_map_set_strength",
+          [](float strength) { dauntless_normal_map::set_strength(strength); },
+          py::arg("strength"),
+          "Scale the normal map's tangent-space xy. 0 = flat (identical to "
+          "disabled), 1 = as authored. Default: 1.0.");
+    m.def("normal_map_set_flip_green",
+          [](bool flip) { dauntless_normal_map::set_flip_green(flip); },
+          py::arg("flip"),
+          "Flip the normal map's green channel. Default: ON -- texture row 0 "
+          "(v == 0) is always the image's TOP row (stb_image normalises the "
+          "TGA origin bit), so v runs downward in image space, and flipping "
+          "green internally is what makes a standard OpenGL-convention "
+          "(+Y up) authored map render correctly. Turn this off only for a "
+          "map authored to the DirectX convention (-Y).");
     m.def("procedural_sky_set_enabled",
           [](bool enabled) { dauntless_procedural_sky::set_enabled(enabled); },
           py::arg("enabled"),

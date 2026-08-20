@@ -510,3 +510,135 @@ TEST_F(ModelBuildTest, ReplacementMatchIsCaseSensitive) {
     EXPECT_EQ(saucer_base, 2) << "uppercase-ID texture must be swapped";
     EXPECT_EQ(bridge_base, 1) << "lowercase-id 'bridge' texture must be UNTOUCHED";
 }
+
+// A sibling `_normal.tga` that exists but fails to decode (truncated/garbage
+// bytes) must be SKIPPED, not substituted with the checkerboard the BASE
+// texture path uses on failure: a checkerboard bound as a normal map is
+// violent garbage lighting, not a legible "missing texture" marker. The hull
+// itself must still render from its Base texture.
+TEST_F(ModelBuildTest, CorruptNormalSiblingIsSkippedNotCheckerboarded) {
+    write_tga("hull_ID.tga");
+    {
+        std::ofstream out(tmp_dir / "hull_ID_normal.tga", std::ios::binary);
+        const std::uint8_t garbage[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02};
+        out.write(reinterpret_cast<const char*>(garbage), sizeof(garbage));
+    }
+    auto f = file_with_textured_shape();
+    auto model = assets::detail::build_model(f, make_ctx());
+
+    ASSERT_EQ(model.materials.size(), 1u);
+    using S = assets::Material::StageSlot;
+    EXPECT_LT(model.materials[0]
+                  .stages[static_cast<std::size_t>(S::Bump)]
+                  .texture_index,
+              0)
+        << "corrupt normal map must be skipped, never bound as a checkerboard";
+    EXPECT_GE(base_texture_index(model), 0)
+        << "hull must still render from its Base texture";
+}
+
+// Self-sufficient counterpart to WarbirdBottomWingGetsBumpFromSiblingOnDisk
+// below: proves the full probe -> Bump path (load_all_textures' sibling
+// probe in model_build.cc + build_material's Bump routing in
+// material_build.cc) using only a synthetic NIF + a valid TGA written into
+// this fixture's own temp dir -- no BC install required. The Warbird test
+// stays, checked against a real 1024x1024 RLE map where the assets exist;
+// this is the floor beneath it that runs everywhere, including CI.
+TEST_F(ModelBuildTest, SyntheticHullWithNormalSiblingGetsBumpFromDisk) {
+    write_tga("hull_ID.tga");
+    write_tga("hull_ID_normal.tga");
+    auto f = file_with_textured_shape();
+    auto model = assets::detail::build_model(f, make_ctx());
+
+    ASSERT_EQ(model.materials.size(), 1u);
+    using S = assets::Material::StageSlot;
+    EXPECT_GE(model.materials[0]
+                  .stages[static_cast<std::size_t>(S::Bump)]
+                  .texture_index,
+              0)
+        << "sibling hull_ID_normal.tga on disk must bind to Bump";
+    EXPECT_GE(base_texture_index(model), 0)
+        << "hull must still render from its Base texture";
+}
+
+TEST(ModelBuildFilenames, NormalPredicateMatchesLongAndShortForms) {
+    using assets::detail::filename_is_normal;
+    EXPECT_TRUE (filename_is_normal("Hull_normal.tga"));
+    EXPECT_TRUE (filename_is_normal("Hull_norm.tga"));
+    EXPECT_TRUE (filename_is_normal("HULL_NORMAL.TGA"));   // case-insensitive
+    EXPECT_TRUE (filename_is_normal("WarBirdBottomWing_normal.tga"));
+    EXPECT_FALSE(filename_is_normal("Hull.tga"));
+    EXPECT_FALSE(filename_is_normal("Hull_specular.tga"));
+    EXPECT_FALSE(filename_is_normal("Hull_glow.tga"));
+    EXPECT_FALSE(filename_is_normal("normal.tga"))
+        << "a bare 'normal' stem has no _normal suffix and must not match";
+}
+
+TEST(ModelBuildFilenames, SiblingNormalAppendsAndStripsGlow) {
+    using assets::detail::sibling_normal_filename;
+    EXPECT_EQ(sibling_normal_filename("Hull.tga"), "Hull_normal.tga");
+    EXPECT_EQ(sibling_normal_filename("WarBirdBottomWing.tga"),
+              "WarBirdBottomWing_normal.tga");
+    // A _glow map and its hull diffuse must resolve to the SAME normal map,
+    // exactly as sibling_specular_filename does for spec masks.
+    EXPECT_EQ(sibling_normal_filename("CardGalor01_glow.tga"),
+              "CardGalor01_normal.tga");
+    EXPECT_EQ(sibling_normal_filename("CardGalor01_GLOW.tga"),
+              "CardGalor01_normal.tga");
+}
+
+TEST(ModelBuildNormalDiscovery, WarbirdBottomWingGetsBumpFromSiblingOnDisk) {
+    // game/ is gitignored; skip cleanly when the BC install is absent.
+    const fs::path root = fs::path(OPEN_STBC_PROJECT_ROOT);
+    const fs::path nif  = root / "game/data/Models/Ships/Warbird/Warbird.nif";
+    const fs::path tex  = root / "game/data/Models/Ships/Warbird/High";
+    const fs::path map  = tex / "WarBirdBottomWing_normal.tga";
+    if (!fs::is_regular_file(nif)) GTEST_SKIP() << "asset missing: " << nif;
+    if (!fs::is_regular_file(map)) GTEST_SKIP() << "asset missing: " << map;
+
+    nif::File f = nif::load(nif);
+
+    assets::PathResolver resolver;
+    assets::detail::ModelBuildContext ctx;
+    ctx.resolver = &resolver;
+    ctx.texture_search_paths = {tex, root / "game/data/Models/Ships/Warbird"};
+    ctx.texture_uploader = stub_texture;
+    ctx.mesh_uploader = stub_mesh;
+
+    auto model = assets::detail::build_model(f, ctx);
+
+    using S = assets::Material::StageSlot;
+    int bumped = 0;
+    for (const auto& m : model.materials) {
+        if (m.stages[static_cast<std::size_t>(S::Bump)].texture_index >= 0) ++bumped;
+    }
+    EXPECT_GT(bumped, 0)
+        << "no material picked up WarBirdBottomWing_normal.tga from disk";
+}
+
+TEST(ModelBuildNormalDiscovery, ShipWithoutNormalSiblingsLeavesEveryBumpEmpty) {
+    // The Galaxy ships no _normal maps. Every material must leave Bump at -1
+    // so frame.cc writes u_normal_enabled = 0 and shading is unchanged.
+    const fs::path root = fs::path(OPEN_STBC_PROJECT_ROOT);
+    const fs::path nif  = root / "game/data/Models/Ships/Galaxy/Galaxy.nif";
+    const fs::path tex  = root / "game/data/Models/SharedTextures/FedShips/High";
+    if (!fs::is_regular_file(nif)) GTEST_SKIP() << "asset missing: " << nif;
+
+    nif::File f = nif::load(nif);
+
+    assets::PathResolver resolver;
+    assets::detail::ModelBuildContext ctx;
+    ctx.resolver = &resolver;
+    ctx.texture_search_paths = {tex};
+    ctx.texture_uploader = stub_texture;
+    ctx.mesh_uploader = stub_mesh;
+
+    auto model = assets::detail::build_model(f, ctx);
+
+    ASSERT_FALSE(model.materials.empty())
+        << "Galaxy.nif produced no materials; the loop below would assert nothing";
+    using S = assets::Material::StageSlot;
+    for (const auto& m : model.materials) {
+        EXPECT_LT(m.stages[static_cast<std::size_t>(S::Bump)].texture_index, 0);
+    }
+}

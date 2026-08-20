@@ -8,6 +8,8 @@
 #include <filesystem>
 #include <functional>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace assets::detail {
@@ -31,6 +33,18 @@ class ModelBuildError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
 };
+
+/// True if `fname`'s extension-less basename ends in "_normal" or "_norm"
+/// (case-insensitive). BC authored no normal maps at all, so both forms are
+/// ours; the long form is primary. Declared here (unlike the file-local
+/// _glow / _specular predicates) so the filename rules are unit-testable.
+bool filename_is_normal(std::string_view fname);
+
+/// Given "Hull.tga" or "Hull_glow.tga", produce the sibling normal-map
+/// filename "Hull_normal.tga". Strips a trailing "_glow" (case-insensitive)
+/// from the stem before appending, so a hull's diffuse and its glow map
+/// resolve to the SAME normal map — matching sibling_specular_filename.
+std::string sibling_normal_filename(std::string_view fname);
 
 Model build_model(const nif::File& f, const ModelBuildContext& ctx);
 

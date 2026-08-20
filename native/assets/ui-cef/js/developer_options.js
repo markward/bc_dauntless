@@ -27,6 +27,9 @@ function _doFocusableList(state) {
     if (state.selected_tab === 'lighting') {
         out.push({kind: 'ctrl', target: 'systems_damaged'});
         out.push({kind: 'ctrl', target: 'systems_disabled'});
+        out.push({kind: 'ctrl', target: 'normal_maps'});
+        out.push({kind: 'ctrl', target: 'normal_flip_g'});
+        out.push({kind: 'ctrl', target: 'normal_strength'});
     }
     return out;
 }
@@ -74,6 +77,20 @@ function _doActionRow(label, key, buttonText, focused) {
          + '</div>';
 }
 
+// Value-cycling row: shows the current value on the button; clicking advances
+// it. Used for numeric tunables that don't warrant a slider widget.
+function _doValueRow(label, key, valueText, focused) {
+    return '<div class="cp-row' + (focused ? ' cp-focused' : '') + '">'
+         +   '<div class="cp-row__label">' + escapeHtmlDO(label) + '</div>'
+         +   '<div class="cp-row__control">'
+         +     '<button class="cp-toggle"'
+         +        ' onclick="dauntlessEvent(\'developer-options/action:' + key + '\')">'
+         +       escapeHtmlDO(valueText)
+         +     '</button>'
+         +   '</div>'
+         + '</div>';
+}
+
 function _doRenderCombatBody(state, focusables) {
     const focused = focusables[state.focused] || {};
     const isFoc = (target) => focused.kind === 'ctrl' && focused.target === target;
@@ -100,6 +117,13 @@ function _doRenderLightingBody(state, focusables) {
                          s.systems_damaged, isFoc('systems_damaged'));
     html += _doToggleRow('Set Systems Disabled', 'systems_disabled',
                          s.systems_disabled, isFoc('systems_disabled'));
+    html += _doToggleRow('Normal Maps', 'normal_maps',
+                         s.normal_maps, isFoc('normal_maps'));
+    html += _doToggleRow('Normal Map Green Flip', 'normal_flip_g',
+                         s.normal_flip_g, isFoc('normal_flip_g'));
+    html += _doValueRow('Normal Map Strength', 'normal_strength',
+                        Number(s.normal_strength).toFixed(1) + '×',
+                        isFoc('normal_strength'));
     return html;
 }
 

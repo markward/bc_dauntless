@@ -16,6 +16,15 @@ uniform vec3 u_specular_color;
 uniform float u_specular_power;
 uniform int u_specular_enabled;
 
+// ── Tangent-space normal map (unit 4) ────────────────────────────────────
+// BC NIFs carry no tangents and none are added, so the frame is rebuilt
+// per-pixel from screen-space derivatives (Mikkelsen). u_normal_enabled == 0
+// is the stock path: n_shade == the geometric normal, byte-identical output.
+uniform sampler2D u_normal_map;
+uniform int   u_normal_enabled;   // 1 only when the material has a Bump texture
+uniform float u_normal_strength;  // 0 = flat, 1 = as authored, >1 exaggerates
+uniform int   u_normal_flip_g;    // 1 flips green for DirectX-convention maps
+
 // Fresnel rim light. u_rim_strength == 0.0 disables the term (set per
 // draw by frame.cc: the global dauntless_rim toggle AND per-instance
 // rim_eligible AND material specular). Tinted by the accumulated
@@ -430,9 +439,50 @@ bool nf3(vec3 v) { return nf1(v.x) || nf1(v.y) || nf1(v.z); }
 
 out vec4 frag_color;
 
+// Cotangent frame from screen-space derivatives. Returns N unchanged whenever
+// the frame or the resulting normal degenerates -- a zero-length tangent would
+// divide to NaN, and a NaN normal poisons every downstream term and spreads
+// through the HDR bloom chain as hard-edged black rectangles (the same class of
+// bug the rim's clamp() above exists to prevent).
+vec3 perturb_normal(vec3 N, vec3 p, vec2 uv) {
+    vec3 dp1  = dFdx(p);
+    vec3 dp2  = dFdy(p);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+    float maxlen = max(dot(T, T), dot(B, B));
+    if (!(maxlen > 1e-20)) return N; // zero-area UV triangle (also catches NaN)
+
+    vec3 s = texture(u_normal_map, uv).xyz * 2.0 - 1.0;
+    if (u_normal_flip_g != 0) s.y = -s.y;
+    s.z = max(s.z, 0.0);             // malformed map (undershot/object-space/
+                                      // greyscale-misnamed blue) must not flip
+                                      // the normal to face-away at strength 0
+    s.xy *= u_normal_strength;       // strength 0 => s == (0, 0, z) => N
+
+    float invmax = inversesqrt(maxlen);
+    vec3 n = mat3(T * invmax, B * invmax, N) * s;
+    float len2 = dot(n, n);
+    if (!(len2 > 1e-20)) return N;   // sample/strength collapsed the vector (also catches NaN)
+    return n * inversesqrt(len2);
+}
+
 void main() {
     vec3 n = normalize(v_normal_ws);
     vec3 V = normalize(u_camera_pos_ws - v_position_ws);
+
+    // n stays GEOMETRIC: the shadow bias must offset along real geometry, and
+    // the Fresnel rim is a silhouette effect that crawls and sparkles across
+    // greeble detail if it tracks a perturbed normal. n_shade carries the
+    // normal-map perturbation for the lighting terms.
+    vec3 n_shade = (u_normal_enabled != 0)
+        ? perturb_normal(n, v_position_ws, v_uv)
+        : n;
 
     // Body-frame fragment position (object-space carve + decals).
     vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
@@ -495,13 +545,13 @@ void main() {
     vec3 spec_acc = vec3(0.0);
     for (int i = 0; i < u_dir_light_count; ++i) {
         vec3 L  = normalize(u_dir_light_dir_ws[i]);
-        float nl = max(dot(n, L), 0.0);
+        float nl = max(dot(n_shade, L), 0.0);
         float sf = (i == 0) ? sun_sf : 1.0;   // sun-only shadow
         lit_dir += sf * nl * u_dir_light_color[i];
 
         if (u_specular_enabled != 0) {
             vec3 H = normalize(L + V);
-            float s = pow(max(dot(n, H), 0.0), u_specular_power) * step(0.0, nl);
+            float s = pow(max(dot(n_shade, H), 0.0), u_specular_power) * step(0.0, nl);
             spec_acc += sf * s * u_dir_light_color[i];
         }
     }
@@ -537,7 +587,7 @@ void main() {
         float att = (w * w) / (dr * dr + 1.0);
 
         vec3  L  = (lp - v_position_ws) / max(d, 1e-6);
-        float nl = max(dot(n, L), 0.0);
+        float nl = max(dot(n_shade, L), 0.0);
 
         // Cone/spot gate: spot_tan_x < 0 => not a cone => spot == 1.0
         // (byte-identical to the pre-cone shader for point/strip lights).
@@ -586,7 +636,7 @@ void main() {
 
         if (u_specular_enabled != 0) {
             vec3 H = normalize(L + V);
-            float s = pow(max(dot(n, H), 0.0), u_specular_power) * step(0.0, nl);
+            float s = pow(max(dot(n_shade, H), 0.0), u_specular_power) * step(0.0, nl);
             spec_acc += att * s * u_dyn_light_color[i];
         }
     }
@@ -667,6 +717,7 @@ void main() {
     if (u_nan_debug != 0) {
         int code = 0;
         if      (nf3(n))              code = 1;   // normalize(v_normal_ws) — zero/degenerate normal
+        else if (nf3(n_shade))        code = 18;  // perturbed normal — degenerate tangent frame
         else if (nf3(V))              code = 2;   // view vector (camera at the fragment)
         else if (nf1(sun_sf))         code = 3;   // sun_shadow_factor
         else if (nf3(lit_dir))        code = 4;   // directional diffuse

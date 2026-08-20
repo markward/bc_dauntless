@@ -42,6 +42,19 @@ struct MaterialInputs {
     /// suffix arg until full AddLOD threading lands.
     const std::unordered_map<std::uint32_t, int>* sibling_specular_for_image = nullptr;
 
+    /// Link IDs of NiImages whose filename matches the `_normal` / `_norm`
+    /// suffix convention. Routed to StageSlot::Bump. Like specular and
+    /// unlike glow, these are standalone maps and do NOT dual-bind to Base.
+    const std::unordered_set<std::uint32_t>* normal_image_links = nullptr;
+
+    /// NIF link_id of a non-`_normal` NiImage -> Model::textures index of a
+    /// sibling `*_normal.tga` the asset loader probed for and found on disk.
+    /// Bound to StageSlot::Bump in addition to the hull texture's normal
+    /// Base/Glow binding. The slot's contract is "a texture in this
+    /// material's bump stage", not "a file found on disk" — a generated map
+    /// can be attached through the same field.
+    const std::unordered_map<std::uint32_t, int>* sibling_normal_for_image = nullptr;
+
     /// Maps NIF link ID of a NiImage → its source filename
     /// (NiImage::file_name). Used by build_material to apply BC's
     /// `_lm.tga` lightmap-pass filename predicate without having to

@@ -16,12 +16,17 @@ from typing import List, Optional, Tuple
 from engine.ui.panel import Panel
 from engine import dev_combat_cheats as cheats
 from engine import dev_light_preview as light_preview
+from engine import renderer
 
 
 class DeveloperOptionsPanel(Panel):
     # Controls that fire once instead of flipping a flag. They have no entry in
     # `settings` and dispatch under "action:" rather than "toggle:".
-    _ACTION_CONTROLS = frozenset({"quick_repair"})
+    _ACTION_CONTROLS = frozenset({"quick_repair", "normal_strength"})
+
+    # Presets cycled through by the "normal_strength" action row: 0 = flat
+    # (identical to disabled), 1 = as authored, 2/4 exaggerate for tuning.
+    _NORMAL_STRENGTHS = (0.0, 0.5, 1.0, 2.0, 4.0)
 
     def __init__(self) -> None:
         super().__init__()
@@ -33,6 +38,13 @@ class DeveloperOptionsPanel(Panel):
         self._disable_collisions = cheats.disable_collisions_active()
         self._systems_damaged = light_preview.systems_damaged_active()
         self._systems_disabled = light_preview.systems_disabled_active()
+        self._normal_maps = True
+        # Mirrors the native default in native/src/renderer/frame.cc
+        # (dauntless_normal_map::g_flip_green): v runs downward in image
+        # space, so flipping green is what makes a standard OpenGL-convention
+        # (+Y up) authored map render correctly out of the box.
+        self._normal_flip_g = True
+        self._normal_strength = 1.0
         self._visible = False
         self._focused = -1
         self._last_pushed: Optional[tuple] = None
@@ -65,6 +77,7 @@ class DeveloperOptionsPanel(Panel):
             self._focused, self._god_mode, self._double_weapons,
             self._no_npc_shields, self._disable_collisions,
             self._systems_damaged, self._systems_disabled,
+            self._normal_maps, self._normal_flip_g, self._normal_strength,
         )
         if snapshot == self._last_pushed:
             return None
@@ -83,6 +96,9 @@ class DeveloperOptionsPanel(Panel):
                 "disable_collisions": self._disable_collisions,
                 "systems_damaged": self._systems_damaged,
                 "systems_disabled": self._systems_disabled,
+                "normal_maps": self._normal_maps,
+                "normal_flip_g": self._normal_flip_g,
+                "normal_strength": self._normal_strength,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -124,6 +140,24 @@ class DeveloperOptionsPanel(Panel):
             self._systems_damaged = light_preview.systems_damaged_active()
             self._systems_disabled = light_preview.systems_disabled_active()
             return True
+        if action == "toggle:normal_maps":
+            renderer.set_normal_map_enabled(not self._normal_maps)
+            self._normal_maps = not self._normal_maps
+            return True
+        if action == "toggle:normal_flip_g":
+            renderer.set_normal_map_flip_green(not self._normal_flip_g)
+            self._normal_flip_g = not self._normal_flip_g
+            return True
+        if action == "action:normal_strength":
+            presets = self._NORMAL_STRENGTHS
+            try:
+                idx = presets.index(self._normal_strength)
+            except ValueError:
+                idx = presets.index(1.0)
+            nxt = presets[(idx + 1) % len(presets)]
+            renderer.set_normal_map_strength(nxt)
+            self._normal_strength = nxt
+            return True
         if action == "action:quick_repair":
             # One-shot ACTION, not a toggle: nothing to mirror in state, so
             # there is no local flag and no render_payload entry. Lived on the
@@ -156,7 +190,9 @@ class DeveloperOptionsPanel(Panel):
                     ("ctrl", "no_npc_shields"), ("ctrl", "disable_collisions"),
                     ("ctrl", "quick_repair")]
         if self._selected_tab == "lighting":
-            out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled")]
+            out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled"),
+                    ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
+                    ("ctrl", "normal_strength")]
         return out
 
     def handle_input(self, h) -> None:
