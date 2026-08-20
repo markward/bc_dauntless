@@ -57,28 +57,34 @@ def test_green_alert_turns_shields_off():
     assert ship.GetShields().GetPowerPercentageWanted() == 0.0
 
 
-def test_green_to_yellow_snaps_face_charge_to_max():
-    """Raising shields snaps face charge to max — Phase 1 simplification
-    of BC's gradual charge-up time."""
+def test_green_to_yellow_restores_charge_rather_than_refilling_it():
+    """Raising shields powers the generator up and gives back exactly what
+    was stored. It must NOT snap to max: that made green→yellow a free,
+    instant, unlimited recharge (confirmed in play 2026-08-19). Refilling is
+    regen's job, and waiting for it is the only route."""
     ship = _ship_with_shields(front_max=1000.0)
     ss = ship.GetShields()
-    # Pretend the ship spawned at green with faces drained.
     for f in range(ShieldSubsystem.NUM_SHIELDS):
-        ss.SetCurrentShields(f, 0.0)
+        ss.SetCurrentShields(f, 250.0)
     ship.SetAlertLevel(ShipClass.YELLOW_ALERT)
+    assert ss.IsOn() == 1
     for f in range(ShieldSubsystem.NUM_SHIELDS):
-        assert ss.GetCurrentShields(f) == ss.GetMaxShields(f)
+        assert ss.GetCurrentShields(f) == 250.0
 
 
-def test_yellow_to_green_drains_face_charge_to_zero():
-    """Dropping shields drains face charge — the UI should reflect that
-    shields are down, not stuck at 100%."""
+def test_yellow_to_green_reads_as_down_without_destroying_the_charge():
+    """Dropping shields must make the UI reflect that shields are down, not
+    stuck at 100% — that intent is unchanged. It is now served by the
+    percentage QUERY returning 0 while the generator is off, rather than by
+    zeroing the stored charge, which BC does not do (SaveToStream 0x56AB60
+    persists m_curShields) and which made alert-cycling a free recharge."""
     ship = _ship_with_shields(front_max=1000.0)
     ship.SetAlertLevel(ShipClass.YELLOW_ALERT)
     ship.SetAlertLevel(ShipClass.GREEN_ALERT)
     ss = ship.GetShields()
     for f in range(ShieldSubsystem.NUM_SHIELDS):
-        assert ss.GetCurrentShields(f) == 0.0
+        assert ss.GetSingleShieldPercentage(f) == 0.0   # what the UI reads
+        assert ss.GetCurrentShields(f) == ss.GetMaxShields(f)  # state kept
 
 
 def test_alert_change_no_op_when_shield_subsystem_missing():
