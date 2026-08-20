@@ -26,6 +26,14 @@ _MEMBER_TO_PARENT.update({
     "xi entrades": "xientrades",
     "deep space": "deepspace",
     "tau ceti": "tauceti",
+    # QuickBattle builds its own set (Systems/QuickBattle/QuickBattleRegion),
+    # which is not a charted Maelstrom system, so the stripped-digits fallback
+    # yielded "quickbattleregion" and matched nothing. On the map that arena
+    # IS Deep Space. Without this the star map anchors on the sector centroid
+    # and omits the "you are here" reticle for every QuickBattle session —
+    # correct behaviour for a genuinely unmapped set, but wrong here, because
+    # this one is mapped.
+    "quickbattleregion": "deepspace",
 })
 
 # Display-name overrides where title-casing the id is wrong.

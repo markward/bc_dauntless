@@ -43,3 +43,24 @@ def test_warp_points_carry_module():
 def test_system_module_for_riha():
     from engine.appc import sector_model as sm
     assert sm.system_module("riha") == "Systems.Riha.Riha1"
+
+
+def test_quickbattle_region_resolves_to_deep_space():
+    """QuickBattle builds its own set (Systems/QuickBattle/QuickBattleRegion),
+    which is not a charted system, so the stripped-digits fallback produced
+    "quickbattleregion" and matched nothing. On the map that arena is Deep
+    Space.
+
+    This is not cosmetic: an unresolved set makes the star map anchor its
+    orbit on the sector centroid AND omit the "you are here" reticle — by
+    design, since a misplaced one is worse than none. Every QuickBattle
+    session hit that path.
+    """
+    import engine.appc.sector_model as sm
+
+    assert sm.system_id_for_set("QuickBattleRegion") == "deepspace"
+    assert sm.system_id_for_set("quickbattleregion") == "deepspace"
+    # deepspace must actually exist in the model, or the mapping just moves
+    # the miss somewhere less obvious.
+    ids = {s["id"] for s in sm.load_sector_model()["systems"]}
+    assert "deepspace" in ids

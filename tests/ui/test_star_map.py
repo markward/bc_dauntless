@@ -246,3 +246,25 @@ def test_disc_labels_use_the_same_rect_local_shape_as_system_labels():
     assert set(entry) == {"label", "x", "y", "visible"}
     assert 0.0 <= entry["x"] <= 640.0 and 0.0 <= entry["y"] <= 478.0
     assert entry["visible"] is True
+
+
+def test_quickbattle_anchors_on_deep_space_with_a_here_reticle():
+    """The two symptoms Mark reported — orbit not centred on the player, and
+    no bracket on the current system — were ONE root cause: an unresolved set
+    returns (None, centroid), which anchors on the centroid and deliberately
+    omits the reticle. QuickBattle's set is Deep Space on the map."""
+    model = {
+        "systems": [
+            {"id": "deepspace", "position": [10.0, 20.0, 30.0], "module": "m"},
+            {"id": "vesuvi", "position": [-100.0, 0.0, 0.0], "module": "m"},
+        ],
+        "nebulae": [], "starclouds": [],
+    }
+    sid, pos = sm.resolve_anchor("QuickBattleRegion", model=model)
+    assert sid == "deepspace"
+    assert pos == (10.0, 20.0, 30.0)          # the system, not the centroid
+
+    scene = sm.build_scene(model=model, here_id=sid)
+    here = [b for b in scene["brackets"] if b["mark"] == sm.MARK_HERE]
+    assert len(here) == 1
+    assert here[0]["id"] == "deepspace"
