@@ -1,0 +1,147 @@
+"""Star map scene assembly, anchor resolution, camera and picking.
+
+Pure Python — no GL, no CEF. The native starmap pass draws the lists this
+module produces, in the order given, so every ordering decision (disc
+back-to-front sort, painter's order across primitive kinds) is made and
+tested here rather than in C++.
+
+Spec: docs/superpowers/specs/2026-08-20-star-map-set-course-design.md
+"""
+from __future__ import annotations
+
+import math
+from typing import Iterable, Optional, Tuple
+
+from engine.appc import sector_model as sm
+
+Vec3 = Tuple[float, float, float]
+
+# Bracket reticle marks — reserved for a LIVE relationship to the player.
+MARK_NONE = 0
+MARK_HERE = 1       # you are here
+MARK_COURSE = 2     # course currently set
+MARK_MISSION = 3    # offered by the live SDK Set Course menu
+
+# Nebulae are scenery and must not compete with the stars.
+NEBULA_OPACITY = 0.5
+STARCLOUD_OPACITY = 0.5
+
+# Faint ground grid; drop-lines fall to this plane.
+GRID_Z = 0.0
+GRID_HALF_EXTENT = 400.0
+GRID_STEP = 50.0
+GRID_COLOR = (0.18, 0.22, 0.34)
+DROP_COLOR = (0.30, 0.36, 0.52)
+COURSE_COLOR = (0.55, 0.85, 1.00)
+STAR_COLOR = (0.85, 0.88, 0.98)
+
+
+def _real_systems(model) -> list:
+    return [s for s in model.get("systems", []) if sm.is_real_system(s["id"])]
+
+
+def _centroid(systems) -> Vec3:
+    if not systems:
+        return (0.0, 0.0, 0.0)
+    n = float(len(systems))
+    return (sum(s["position"][0] for s in systems) / n,
+            sum(s["position"][1] for s in systems) / n,
+            sum(s["position"][2] for s in systems) / n)
+
+
+def resolve_anchor(set_name, model=None) -> Tuple[Optional[str], Vec3]:
+    """Resolve the camera anchor from the player's set name.
+
+    Returns (system_id, position). A None id means the set could not be
+    matched to a mapped system — Deep Space, a multiplayer set, or anything
+    unmapped. Callers must then omit the "you are here" reticle: a misplaced
+    one on a nav map is worse than none.
+    """
+    model = model if model is not None else sm.load_sector_model()
+    systems = _real_systems(model)
+    if set_name is not None:
+        sysid = sm.system_id_for_set(set_name)
+        for s in systems:
+            if s["id"] == sysid:
+                return (s["id"], tuple(float(c) for c in s["position"]))
+    return (None, _centroid(systems))
+
+
+def _grid_lines() -> list:
+    out = []
+    n = int(GRID_HALF_EXTENT / GRID_STEP)
+    for i in range(-n, n + 1):
+        t = i * GRID_STEP
+        out.append({"kind": "grid", "id": None, "color": GRID_COLOR,
+                    "a": (-GRID_HALF_EXTENT, t, GRID_Z),
+                    "b": (GRID_HALF_EXTENT, t, GRID_Z)})
+        out.append({"kind": "grid", "id": None, "color": GRID_COLOR,
+                    "a": (t, -GRID_HALF_EXTENT, GRID_Z),
+                    "b": (t, GRID_HALF_EXTENT, GRID_Z)})
+    return out
+
+
+def build_scene(*, model=None, here_id=None, course_id=None,
+                mission_ids: Iterable[str] = (), selected_id=None,
+                eye: Vec3 = (0.0, 0.0, 0.0)) -> dict:
+    """Assemble the draw-ordered scene.
+
+    Painter's order across kinds is discs -> lines -> points -> brackets, so
+    star markers are NEVER occluded by nebulae regardless of depth. The pass
+    draws with depth test off and honours this order literally.
+    """
+    model = model if model is not None else sm.load_sector_model()
+    systems = _real_systems(model)
+    by_id = {s["id"]: tuple(float(c) for c in s["position"]) for s in systems}
+    mission = {m for m in mission_ids if m in by_id}
+
+    # --- discs (nebulae + star clouds), back-to-front -----------------
+    discs = []
+    for neb in model.get("nebulae", []):
+        pos = tuple(float(c) for c in neb["position"])
+        discs.append({"kind": "nebula", "label": neb.get("name", ""),
+                      "position": pos, "radius": float(neb["radius"]),
+                      "color": tuple(neb["color"]), "opacity": NEBULA_OPACITY,
+                      "_camera_distance": _distance(pos, eye)})
+    for gx in model.get("starclouds", []):
+        pos = tuple(float(c) for c in gx["position"])
+        discs.append({"kind": "starcloud", "label": "",
+                      "position": pos, "radius": float(gx["size"]),
+                      "color": tuple(gx["color"]), "opacity": STARCLOUD_OPACITY,
+                      "_camera_distance": _distance(pos, eye)})
+    discs.sort(key=lambda d: d["_camera_distance"], reverse=True)
+
+    # --- lines: faint grid, drop-lines for reticled systems, course ---
+    reticled = {}
+    if here_id in by_id:
+        reticled[here_id] = MARK_HERE
+    if course_id in by_id:
+        reticled[course_id] = MARK_COURSE
+    for m in mission:
+        reticled.setdefault(m, MARK_MISSION)
+
+    lines = _grid_lines()
+    for sid in reticled:
+        p = by_id[sid]
+        lines.append({"kind": "drop", "id": sid, "color": DROP_COLOR,
+                      "a": p, "b": (p[0], p[1], GRID_Z)})
+    if here_id in by_id and course_id in by_id and here_id != course_id:
+        lines.append({"kind": "course", "id": course_id, "color": COURSE_COLOR,
+                      "a": by_id[here_id], "b": by_id[course_id]})
+
+    # --- points: every real system as a bare dot ----------------------
+    points = [{"id": s["id"], "position": by_id[s["id"]],
+               "label": sm.display_label(s["id"]), "color": STAR_COLOR,
+               "selected": s["id"] == selected_id}
+              for s in systems]
+
+    # --- brackets: ONLY live relationships ----------------------------
+    brackets = [{"id": sid, "position": by_id[sid], "mark": mark}
+                for sid, mark in reticled.items()]
+
+    return {"discs": discs, "lines": lines, "points": points,
+            "brackets": brackets}
+
+
+def _distance(a: Vec3, b: Vec3) -> float:
+    return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2)
