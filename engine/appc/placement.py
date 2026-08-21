@@ -44,7 +44,38 @@ class PlacementObject(ObjectClass):
         return self._is_static
 
     def SetNavPoint(self, nav) -> None:
-        self._is_nav_point = bool(nav)
+        """Flag/unflag this placement as a Helm nav point.
+
+        Broadcasts ET_NAV_POINT_CHANGED on an actual change, mirroring
+        ObjectClass.SetScannable / ET_HAILABLE_CHANGE: the Nav Points menu is
+        an imperatively-maintained button list (SetupNavPointsMenuFromSet
+        KillChildren()s and rebuilds it), so it needs a rebuild signal.
+        Bridge/HelmMenuHandlers.CreateMenus:978 registers the broadcast handler;
+        NavPointChanged:1258 rebuilds if the placement is in the player's set.
+        Without this, MissionLib.AddNavPoints/RemoveNavPoints flipped the flag
+        mid-mission and the open menu never noticed (E6M2:2221, E7M2).
+
+        The placement goes in the event's DESTINATION, not its source:
+        NavPointChanged does PlacementObject_Cast(pEvent.GetDestination()) and
+        bails on None. That is the opposite of SetScannable's convention, and
+        it is SDK ground truth. Broadcast handlers still fire — AddEvent
+        dispatches to the destination AND to every broadcast handler
+        (events.py:659-676).
+
+        Not wrapped in try/except, for the reason given at objects.py:196:
+        event *construction* errors should surface; handler-body exceptions are
+        already caught and logged by the broadcast path.
+        """
+        new_value = bool(nav)
+        if new_value == self._is_nav_point:
+            return
+        self._is_nav_point = new_value
+
+        import App
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_NAV_POINT_CHANGED)
+        evt.SetDestination(self)
+        App.g_kEventManager.AddEvent(evt)
 
     def IsNavPoint(self) -> bool:
         return self._is_nav_point

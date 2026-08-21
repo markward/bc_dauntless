@@ -485,3 +485,76 @@ def test_get_targetable_objects_excludes_waypoints_and_placements():
     s.AddObjectToSet(PlacementObject(), "placement1")
 
     assert s.GetTargetableObjects(None, 0) == [ship]
+
+
+# ── SetClass.GetNavPoints ────────────────────────────────────────────────────
+# Bridge/HelmMenuHandlers.SetupNavPointsMenuFromSet:1096 does
+#   lNavPoints = pSet.GetNavPoints()
+#   for pNavPoint in lNavPoints: ...AddChild(button); bOpenable = 1
+#   if bOpenable: SetOpenable(); SetEnabled()
+#   else:         SetNotOpenable(); SetDisabled()
+# so this list IS the Helm > Nav Points menu's enabled state. It used to be a
+# hardcoded `return []` from the era when the headless model had no nav-point
+# objects, which left the row permanently greyed and un-openable — the live
+# E1M1 defect: after warping to Starbase 12 the mission tells you to use a nav
+# point, and the menu will not open.
+
+
+def test_get_nav_points_returns_placements_flagged_as_nav_points():
+    """THE E1M1 repro. E1M1.py:654 runs E1M1_Starbase12_P.LoadPlacements, which
+    creates waypoint "Starbase Nav" with SetNavPoint(1) — the one flagged
+    placement in that set. It must come back out of the set."""
+    from engine.appc.placement import Waypoint
+
+    s = SetClass_Create()
+    nav = Waypoint()
+    nav.SetNavPoint(1)
+    s.AddObjectToSet(nav, "Starbase Nav")
+
+    assert s.GetNavPoints() == [nav]
+
+
+def test_get_nav_points_excludes_placements_not_flagged():
+    """E1M1_Starbase12_P.py creates five waypoints; four call SetNavPoint(0)
+    and only "Starbase Nav" calls SetNavPoint(1). Returning the cutscene
+    camera marks would put DockingCam in the player's Helm menu."""
+    from engine.appc.placement import Waypoint
+
+    s = SetClass_Create()
+    nav = Waypoint()
+    nav.SetNavPoint(1)
+    cam = Waypoint()
+    cam.SetNavPoint(0)
+    s.AddObjectToSet(cam, "DockingCam")
+    s.AddObjectToSet(nav, "Starbase Nav")
+
+    assert s.GetNavPoints() == [nav]
+
+
+def test_get_nav_points_excludes_ships():
+    """A ShipClass does not implement IsNavPoint, so TGObject.__getattr__ vends
+    a truthy _Stub for it — a hasattr/getattr filter would bill every ship in
+    the set as a nav point. Must be asked via engine.core.ids.implements."""
+    from engine.appc.placement import Waypoint
+
+    s = SetClass_Create()
+    ship = ShipClass_Create("Galaxy")
+    nav = Waypoint()
+    nav.SetNavPoint(1)
+    s.AddObjectToSet(ship, "Starbase 12")
+    s.AddObjectToSet(nav, "Starbase Nav")
+
+    assert s.GetNavPoints() == [nav]
+
+
+def test_get_nav_points_on_a_set_with_none_is_an_empty_iterable_list():
+    """Regression guard on the original defect this method was added for: the
+    SDK's `for pNavPoint in lNavPoints` must not meet a non-iterable
+    _RendererStub, and `if len(lNavPoints)` must be 0 so the menu is disabled
+    rather than opened empty."""
+    s = SetClass_Create()
+    s.AddObjectToSet(ShipClass_Create("Galaxy"), "ship")
+
+    assert s.GetNavPoints() == []
+    assert not s.GetNavPoints()
+    assert len(s.GetNavPoints()) == 0

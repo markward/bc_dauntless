@@ -1091,6 +1091,23 @@ ET_TRACTOR_TARGET_DOCKED       = 1079
 # Maelstrom/Episode6/E6M4's cloaked-Kessok reveal). 1080 is the next free
 # value in this block.
 ET_SCANNABLE_CHANGE            = 1080
+# Fired by PlacementObject.SetNavPoint on an actual change of the flag (same
+# shape as ET_SCANNABLE_CHANGE above). Bridge/HelmMenuHandlers.CreateMenus:978
+# registers a broadcast handler for it, and NavPointChanged:1258 rebuilds the
+# Helm > Nav Points menu when the flipped placement sits in the player's set —
+# which is how MissionLib.AddNavPoints/RemoveNavPoints refresh that menu
+# mid-mission (Maelstrom/Episode6/E6M2:2221, Episode7/E7M2). Undefined, it was
+# a truthy _NamedStub coercing to int()==0, so the registration landed on a
+# shared dead slot and the refresh never ran.
+#
+# NOTE the slot: NavPointChanged reads the placement from GetDestination(), not
+# GetSource() — the opposite of ET_SCANNABLE_CHANGE's convention. That is SDK
+# ground truth; the emitter matches it.
+#
+# 1108 is the next free value: the 1060-1090 band is full, 1091 is ET_MOUSE,
+# 1100/1101 are ET_MUSIC_*, and 1102-1107 are the cinematic camera keys. Still
+# below the 1200 Game_GetNextEventType allocator floor.
+ET_NAV_POINT_CHANGED           = 1108
 
 # ── Input events the SDK binds but the shim never defined ──────────────────────
 # DefaultUKKeyboardBinding binds all 11 of these (BridgeHandlers registers

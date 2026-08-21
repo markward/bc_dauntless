@@ -350,3 +350,63 @@ def test_placement_targetable_can_still_be_set():
     assert p.IsTargetable() == 1
     p.SetTargetable(0)
     assert p.IsTargetable() == 0
+
+
+# ── SetNavPoint broadcasts ET_NAV_POINT_CHANGED ───────────────────────────────
+# Bridge/HelmMenuHandlers.CreateMenus:978 registers a broadcast handler for
+# App.ET_NAV_POINT_CHANGED, and its NavPointChanged:1258 rebuilds the Helm >
+# Nav Points menu when the flipped placement is in the player's set. Without an
+# emitter, MissionLib.AddNavPoints/RemoveNavPoints change the flag mid-mission
+# and the menu never refreshes (E6M2:2221, E7M2). Mirrors ObjectClass's
+# ET_HAILABLE_CHANGE / ET_SCANNABLE_CHANGE pattern: fire only on a real change.
+#
+# NOTE the event slot: NavPointChanged reads the placement from
+# pEvent.GetDestination(), NOT GetSource(). That is SDK ground truth, and it is
+# the opposite of SetScannable's convention — so the emitter must set the
+# DESTINATION or the handler's PlacementObject_Cast returns None and bails.
+
+_nav_received: list = []
+
+
+def _on_nav_point_change(dest, event):
+    _nav_received.append(event.GetDestination())
+
+
+def _subscribe_nav():
+    _nav_received.clear()
+    App.g_kEventManager.AddBroadcastPythonFuncHandler(
+        App.ET_NAV_POINT_CHANGED, None, __name__ + "._on_nav_point_change")
+
+
+def test_nav_point_changed_event_constant_is_a_real_int():
+    """An undefined App.<NAME> is a truthy _NamedStub that coerces to
+    int()==0, which would register the handler under a shared dead slot."""
+    assert type(App.ET_NAV_POINT_CHANGED) is int
+    assert App.ET_NAV_POINT_CHANGED < 1200  # below the allocator floor
+
+
+def test_set_nav_point_broadcasts_with_the_placement_as_destination():
+    _subscribe_nav()
+    p = PlacementObject()
+    p.SetNavPoint(1)
+    assert _nav_received == [p]
+
+
+def test_clearing_nav_point_also_broadcasts():
+    """RemoveNavPoints must refresh the menu too — NavPointChanged handles the
+    'used to be a nav point, and it isn't now' half explicitly."""
+    p = PlacementObject()
+    p.SetNavPoint(1)
+    _subscribe_nav()  # subscribe after the set so we capture only the clear
+    p.SetNavPoint(0)
+    assert _nav_received == [p]
+
+
+def test_no_broadcast_when_nav_point_state_is_unchanged():
+    _subscribe_nav()
+    p = PlacementObject()
+    p.SetNavPoint(0)  # already False (default) -> no event
+    assert _nav_received == []
+    p.SetNavPoint(1)
+    p.SetNavPoint(1)  # redundant -> still just the one event
+    assert _nav_received == [p]
