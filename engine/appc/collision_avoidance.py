@@ -399,6 +399,7 @@ def _test_course_override(ship, previous_heading=None):
     blacklist = _dont_avoid_types()
 
     from engine.appc.collisions import _collision_disabled_ids
+    from engine.appc.hull_bounds import hull_spheres_world
 
     avoid_list = []
     for other in iter_set_objects(pSet):
@@ -436,10 +437,35 @@ def _test_course_override(ship, previous_heading=None):
         if (dx * dx + dy * dy + dz * dz) > (check_radius * check_radius):
             continue
         ob_vel = _world_velocity(other)
-        if _need_to_avoid(ship_loc, ship_vel, personal_space,
-                          ob_loc, ob_vel, ob_r):
-            avoid_list.append((TGPoint3(ob_loc.x, ob_loc.y, ob_loc.z),
-                               ob_vel, ob_r))
+        # Present the obstacle as the PIECES its hull is made of, not one
+        # sphere round the whole model. `avoid_list` already takes a list of
+        # (centre, velocity, radius), so each piece is simply its own obstacle
+        # and the avoidance maths below is untouched.
+        #
+        # This is what a model-wide bound cannot do: express CONCAVITY. A
+        # starbase's docking bay is a void BETWEEN pieces, so with one sphere a
+        # ship leaving the bay reads as inside the station and _need_to_avoid's
+        # "already inside => avoid" clause fires every tick. You cannot steer
+        # out of something you are inside, so the scorer picks an arbitrary
+        # heading and commands AVOID_SAFE_SPEED — measured live after undocking
+        # from Starbase 12: full impulse, heading swinging through every axis,
+        # and the ship briefly moving back toward the starbase.
+        #
+        # Falls back to the whole bound for anything with no cached pieces
+        # (unrealized model, headless, load failure). That fallback is load-
+        # bearing: without it, adding the hierarchy would quietly switch
+        # avoidance off for most of the game.
+        pieces = hull_spheres_world(other)
+        if not pieces:
+            pieces = [(ob_loc, ob_r)]
+        for piece_loc, piece_r in pieces:
+            if piece_r <= 0.0:
+                continue
+            if _need_to_avoid(ship_loc, ship_vel, personal_space,
+                              piece_loc, ob_vel, piece_r):
+                avoid_list.append((TGPoint3(piece_loc.x, piece_loc.y,
+                                            piece_loc.z),
+                                   ob_vel, piece_r))
 
     return _avoid_objects(ship, ship.GetWorldForwardTG(), avoid_list,
                           previous_heading=previous_heading)

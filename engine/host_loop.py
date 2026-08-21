@@ -4341,6 +4341,19 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
                 ship.SetRadius(extent * BC_MODEL_SCALE)
             except Exception as _e:
                 dev_mode.log_swallowed("realize ship.SetRadius fallback", _e)
+        # The hull's individual pieces, for shape-aware collision/avoidance.
+        # GetRadius() above is one sphere round the whole model and so cannot
+        # express a CONCAVE hull: a ship in a starbase's docking bay sits well
+        # inside it while touching no actual structure. hasattr-guarded so a
+        # stale binary without the binding degrades to the single-sphere path
+        # rather than failing to realize the ship at all.
+        try:
+            _get_bounds = getattr(r_, "model_bounds", None)
+            if callable(_get_bounds):
+                from engine.appc.hull_bounds import cache_hull_bound_spheres
+                cache_hull_bound_spheres(ship, _get_bounds(handle))
+        except Exception as _e:
+            dev_mode.log_swallowed("realize hull bound spheres", _e)
         iid = r_.create_instance(handle)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid

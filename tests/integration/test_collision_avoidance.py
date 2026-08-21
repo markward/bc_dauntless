@@ -430,3 +430,117 @@ def test_immobile_ship_with_ai_is_not_steered(monkeypatch):
 
     assert called == []                      # never evaluated
     assert ca.is_overriding(dock) is False    # no state recorded
+
+
+# ── Shape-aware obstacles: a hull is its PIECES, not one big sphere ──────────
+
+def test_ship_in_a_docking_bay_is_not_avoided():
+    """THE undock lurch, at the real geometry.
+
+    FinishedUndocking leaves the player ~125 GU from the starbase centre and
+    re-enables collisions with it — but the starbase's model-wide bound is
+    ~150 GU, so with a single sphere the ship reads as INSIDE the station for
+    the whole flight out. _need_to_avoid returns True unconditionally for
+    anything already within personal_space + radius, and you cannot steer out
+    of something you are inside, so the scorer picks an arbitrary heading and
+    commands AVOID_SAFE_SPEED. Measured live: the ship lurched to 3969 kph,
+    swung through every axis, and at one point moved back TOWARD the starbase.
+
+    A docking bay is a void BETWEEN hull pieces. Given the pieces, the ship in
+    the bay is inside none of them and nothing engages — no special case."""
+    from engine.appc import collision_avoidance
+    from engine.appc.hull_bounds import cache_hull_bound_spheres
+    collision_avoidance.reset_avoidance_state()
+
+    pSet = App.SetClass_Create(); pSet.SetName("S")
+    App.g_kSetManager._sets["S"] = pSet
+
+    ship = ShipClass_Create("Galaxy")
+    _load_galaxy(ship)
+    ship.SetWorldLocation(TGPoint3(0, 125, 0))     # in the bay
+    ship.SetRadius(4.03)
+    ship.SetAI(object())
+    pSet.AddObjectToSet(ship, "Ship")
+
+    starbase = _make_obstacle(pSet, 0, 0, 0, "Starbase 12", radius=150.0)
+    # Two hull masses either side of the bay the ship is sitting in. Raw model
+    # (NIF) units: cache_hull_bound_spheres applies the NIF->world factor.
+    inv = 1.0 / 0.01
+    cache_hull_bound_spheres(starbase, [
+        (0.0,  400.0 * inv, 0.0, 40.0 * inv),
+        (0.0, -400.0 * inv, 0.0, 40.0 * inv),
+    ])
+
+    ship.SetImpulse(2.0 / 9.0, TGPoint3(0, 1, 0),
+                    PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+
+    for _ in range(120):
+        tick_collision_avoidance()
+        tick_all_ship_motion(1.0 / 60.0)
+
+    assert collision_avoidance.is_overriding(ship) is False
+
+
+def test_a_real_hull_piece_in_the_way_is_still_avoided():
+    """The guard on the above: descending to pieces must not disable avoidance.
+    Same starbase, but now the ship is heading straight into one of its hull
+    masses rather than through the gap."""
+    from engine.appc import collision_avoidance
+    from engine.appc.hull_bounds import cache_hull_bound_spheres
+    collision_avoidance.reset_avoidance_state()
+
+    pSet = App.SetClass_Create(); pSet.SetName("S")
+    App.g_kSetManager._sets["S"] = pSet
+
+    ship = ShipClass_Create("Galaxy")
+    _load_galaxy(ship)
+    ship.SetWorldLocation(TGPoint3(0, 0, 0))
+    ship.SetRadius(20.0)
+    ship.SetAI(object())
+    pSet.AddObjectToSet(ship, "Ship")
+
+    starbase = _make_obstacle(pSet, 0, 150, 0, "Starbase 12", radius=20.0)
+    inv = 1.0 / 0.01
+    cache_hull_bound_spheres(starbase, [(0.0, 0.0, 0.0, 20.0 * inv)])
+
+    ship.SetImpulse(1.0, TGPoint3(0, 1, 0),
+                    PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+
+    for _ in range(600):
+        tick_collision_avoidance()
+        tick_all_ship_motion(1.0 / 60.0)
+        if collision_avoidance.is_overriding(ship):
+            break
+
+    assert collision_avoidance.is_overriding(ship) is True
+
+
+def test_an_obstacle_with_no_cached_pieces_still_uses_its_whole_bound():
+    """Fall back, don't fail open. Anything unrealized (headless, load failure)
+    has no pieces and must keep the single-sphere behaviour — otherwise adding
+    the hierarchy would silently switch avoidance off for most of the game."""
+    from engine.appc import collision_avoidance
+    collision_avoidance.reset_avoidance_state()
+
+    pSet = App.SetClass_Create(); pSet.SetName("S")
+    App.g_kSetManager._sets["S"] = pSet
+
+    ship = ShipClass_Create("Galaxy")
+    _load_galaxy(ship)
+    ship.SetWorldLocation(TGPoint3(0, 0, 0))
+    ship.SetRadius(20.0)
+    ship.SetAI(object())
+    pSet.AddObjectToSet(ship, "Ship")
+
+    _make_obstacle(pSet, 0, 150, 0, "Rock", radius=20.0)   # no pieces cached
+
+    ship.SetImpulse(1.0, TGPoint3(0, 1, 0),
+                    PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+
+    for _ in range(600):
+        tick_collision_avoidance()
+        tick_all_ship_motion(1.0 / 60.0)
+        if collision_avoidance.is_overriding(ship):
+            break
+
+    assert collision_avoidance.is_overriding(ship) is True

@@ -3335,6 +3335,28 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "union of every CPU-side mesh vertex position in the model. (0,0,0) "
           "tuples on invalid handle or model with no retained CPU data.");
 
+    m.def("model_bounds",
+          [](scenegraph::ModelHandle h)
+              -> std::vector<std::tuple<float, float, float, float>> {
+              std::vector<std::tuple<float, float, float, float>> out;
+              if (h == 0 || h > g_loaded_models.size()) return out;
+              const assets::Model* model = g_loaded_models[h - 1].handle.get();
+              if (!model) return out;
+
+              for (const auto& s : renderer::compute_model_bounds(*model)) {
+                  out.emplace_back(s.center.x, s.center.y, s.center.z, s.radius);
+              }
+              return out;
+          },
+          py::arg("model"),
+          "Returns [(cx, cy, cz, radius), ...] — the model's authored per-shape "
+          "bounding spheres, composed through the node hierarchy into model "
+          "space. This is the set of pieces the hull is made of; a single "
+          "model-wide bound cannot express a CONCAVE hull, which is why a ship "
+          "sitting in a starbase's docking bay reads as inside the station. "
+          "Empty list on an invalid handle, a model with no retained CPU data, "
+          "or one whose shapes carry no authored radius.");
+
     m.def("shield_register",
           [](scenegraph::InstanceId id,
              int mode,
