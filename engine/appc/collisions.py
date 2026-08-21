@@ -328,10 +328,10 @@ def _emit_object_collision(obj_a, obj_b, contact, force) -> None:
     destination and never fire for the other.
 
     `force` is the impulse magnitude (GetCollisionForce; the reference records
-    it as the magnitude of a vector). Points: our detection is a single sphere
-    pair, so there is exactly one contact today — the event applies BC's
-    two-most-separated reduction on whatever it is given, so this stays correct
-    once per-mesh bounds produce a real contact set.
+    it as the magnitude of a vector). Points: the narrow phase resolves a pair
+    down to one deepest contact, so there is exactly one point today — the
+    event applies BC's two-most-separated reduction on whatever it is given, so
+    this stays correct if that ever yields a real manifold.
 
     Raise-safe, like _emit_cloaked_collision above: a failure here must not
     abort collision response, which has already mutated positions and applied
@@ -339,34 +339,6 @@ def _emit_object_collision(obj_a, obj_b, contact, force) -> None:
     """
     import App
     from engine import dev_mode
-    # Dev-only: name both parties and the geometry, so "something invisible is
-    # hitting me" becomes a fact instead of a theory. Prints once per collision
-    # pair (not per event), and only under --developer, so production output is
-    # unchanged.
-    if dev_mode.is_enabled():
-        try:
-            _ra = float(obj_a.GetRadius())
-            _rb = float(obj_b.GetRadius())
-            _pa = obj_a.GetWorldLocation()
-            _pb = obj_b.GetWorldLocation()
-            _d = math.sqrt((_pb.x - _pa.x) ** 2 + (_pb.y - _pa.y) ** 2
-                           + (_pb.z - _pa.z) ** 2)
-            from engine.units import GU_TO_KM
-            from engine.appc.hull_bounds import hull_spheres_world
-            # Piece counts say whether the NARROW phase had anything to work
-            # with. "0/N" means one side realized no authored bounds, so the
-            # pair fell back to the model-wide spheres — which is the
-            # difference between a real contact and two generous bubbles
-            # touching.
-            _na = len(hull_spheres_world(obj_a))
-            _nb = len(hull_spheres_world(obj_b))
-            print("[collision] %s <-> %s | centres %.1f GU (%.2f km) | "
-                  "radii %.1f / %.1f | reach %.1f | pieces %d/%d | force %.1f"
-                  % (obj_a.GetName(), obj_b.GetName(), _d, _d * GU_TO_KM,
-                     _ra, _rb, (_ra + _rb) * COLLISION_RADIUS_SCALE,
-                     _na, _nb, force), flush=True)
-        except Exception as _e:
-            dev_mode.log_swallowed("collision debug print", _e)
     for dest, source in ((obj_a, obj_b), (obj_b, obj_a)):
         try:
             evt = App.CollisionEvent_Create()
