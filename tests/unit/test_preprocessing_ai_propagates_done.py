@@ -168,6 +168,56 @@ def test_finished_ai_is_released_from_the_ship():
     assert ship.GetAI() is None
 
 
+def test_releasing_a_finished_ai_must_not_clobber_its_replacement():
+    """A completion script may hand the ship its NEXT orders as its last act,
+    and the release must not destroy them.
+
+    That is a real, load-bearing SDK idiom, not a corner case:
+    AI/Compound/DockWithStarbase.FinishedUndocking ends with
+
+        # And set the ship to coast out at impulse 2, replacing this AI.
+        MissionLib.SetPlayerAI("Helm", AI.Player.FlyForward.CreateWithAvoid(...))
+
+    so by the time the DockingSequence reports US_DONE, the ship is already
+    carrying FlyForward. Clearing unconditionally wiped it -- live symptom
+    after undocking from Starbase 12: the AI Inspector shows the player with
+    "(no AI)", the ship never coasts clear of the starbase, and the mission
+    does not move on.
+
+    Nothing is left dangling by skipping the clear: ShipClass.SetAI already
+    deactivates the outgoing tree and announces it (ships.py:132-138), which is
+    also why this must not fire a second ET_AI_DONE."""
+    from engine.appc import ai_driver
+
+    received = []
+
+    def _on_done2(_dest, event):
+        received.append(event.GetInt())
+
+    globals()["_on_done2"] = _on_done2
+    App.g_kEventManager.AddBroadcastPythonFuncHandler(
+        App.ET_AI_DONE, None, __name__ + "._on_done2")
+
+    ship = ShipClass()
+    replacement = PlainAI_Create(ship, "FlyForward")
+
+    class _HandsOverLeaf(_Leaf):
+        def Update(self):
+            status = _Leaf.Update(self)
+            if status == US_DONE:
+                ship.SetAI(replacement)     # what FinishedUndocking does
+            return status
+
+    outer, _inner = _order(ship, _HandsOverLeaf(active_for=1))
+    ship.SetAI(outer)
+
+    _run_pump(ship)
+
+    assert ship.GetAI() is replacement, "the release destroyed the new orders"
+    # Exactly one announcement, from SetAI's own teardown of the old tree.
+    assert received == [outer.GetID()]
+
+
 def test_an_unfinished_ai_keeps_the_conn():
     """The guard on the above: an order still running must NOT be released, or
     every order would be cancelled on its first tick."""

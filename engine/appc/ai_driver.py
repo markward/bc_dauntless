@@ -1048,6 +1048,22 @@ def tick_all_ai(game_time: float) -> None:
             # SetSpeed indefinitely.
             if status == US_DONE and not getattr(ai, "_done_event_fired", False):
                 ai._done_event_fired = True
+                # Only release the tree if it is STILL the installed one. A
+                # completion script may hand the ship its next orders as its
+                # last act — AI/Compound/DockWithStarbase.FinishedUndocking
+                # ends with MissionLib.SetPlayerAI(..., FlyForward...),
+                # commented "replacing this AI" — so by the time the root
+                # reports US_DONE the ship can already be carrying something
+                # else. Clearing unconditionally destroyed that replacement.
+                #
+                # Nothing is left dangling in that case: ShipClass.SetAI has
+                # already deactivated the outgoing tree and announced it
+                # (ships.py:132-138), which is also why we must not announce
+                # again here.
+                get_ai = getattr(ship, "GetAI", None)
+                still_installed = (get_ai() is ai) if callable(get_ai) else True
+                if not still_installed:
+                    continue
                 clear = getattr(ship, "ClearAI", None)
                 if callable(clear):
                     clear()
