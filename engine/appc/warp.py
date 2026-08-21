@@ -636,6 +636,95 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     return seq
 
 
+def find_set_course_menu():
+    """The live Helm > Set Course menu, or None before the bridge builds it.
+
+    Same walk MissionLib.GetSystemOrRegionMenu:2582-2593 does, minus the bridge
+    character: straight off the TacticalControlWindow, so it works whether the
+    menus were built by HelmMenuHandlers.CreateMenus or by a test. Labels come
+    from Bridge Menus.tgl for the same reason the SDK loads it — they are
+    localized, and a hardcoded "Helm" would miss on a translated build.
+
+    None (never a truthy _Stub) when anything is missing: callers treat it as
+    "no mission override recorded" and fall back to BC's default placement.
+    """
+    import App
+    try:
+        tcw = App.TacticalControlWindow_GetTacticalControlWindow()
+        db = App.g_kLocalizationManager.Load("data/TGL/Bridge Menus.tgl")
+        try:
+            helm = tcw.FindMenu(db.GetString("Helm"))
+            if helm is None:
+                return None
+            return helm.GetSubmenuW(db.GetString("Set Course"))
+        finally:
+            App.g_kLocalizationManager.Unload(db)
+    except Exception as _e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("find Set Course menu", _e)
+        return None
+
+
+def set_course_placement(button, dest_module) -> None:
+    """Record on the warp button where `dest_module` should drop the player out.
+
+    Called when a course is plotted. In stock BC the SortedRegionMenu's own
+    course button carried this across; our CEF Set Course modal replaced those
+    buttons, so the engine performs the same carry here.
+
+    Always assigns — including the default — because one warp button serves
+    every course in the game. Plotting an un-overridden system after an
+    overridden one must not inherit the previous arrival point.
+    """
+    button.SetPlacementName(
+        placement_name_for_destination(dest_module, find_set_course_menu()))
+
+
+def placement_name_for_destination(dest_module, course_menu):
+    """The arrival placement a mission has linked to `dest_module`, or the
+    default when it has not linked one.
+
+    BC keeps this on the menu, not on the destination: MissionLib.
+    LinkMenuToPlacement resolves a system (or a region inside it) to its
+    SortedRegionMenu and calls SetPlacementName on it. So the lookup is
+    "find the region menu that offers this destination module, and ask it" —
+    a walk of the LIVE Set Course subtree, deliberately not a module->name
+    registry, because a registry outlives the mission that filled it and the
+    menu tree is rebuilt per mission (see the SDK's own ClearSetCourseMenu).
+
+    Recursive: a system menu can hold per-region submenus, and
+    GetSystemOrRegionMenu links either level.
+
+    Fail-soft. Every caller is on the warp path, where the sane degradation is
+    BC's own default arrival rather than an exception — the same reason
+    WarpSequence_Create's `placement` argument has a default at all.
+    """
+    from engine.appc.tg_ui.st_widgets import (
+        DEFAULT_ARRIVAL_PLACEMENT, SortedRegionMenu,
+    )
+    if not dest_module or course_menu is None:
+        return DEFAULT_ARRIVAL_PLACEMENT
+    target = str(dest_module)
+
+    def _walk(node):
+        if (isinstance(node, SortedRegionMenu)
+                and node.GetRegionModule() == target):
+            return node.GetPlacementName()
+        # __dict__ read, not getattr: TGObject.__getattr__ hands back a truthy
+        # _Stub for any missing name, and iterating a _Stub never terminates.
+        # STMenu stores children flat; TGPane stores (child, x, y) triples —
+        # the Set Course subtree is menus, but it hangs off panes, so accept
+        # both rather than depend on which one a caller hands us.
+        for entry in node.__dict__.get("_children", []):
+            child = entry[0] if isinstance(entry, tuple) else entry
+            found = _walk(child)
+            if found is not None:
+                return found
+        return None
+
+    return _walk(course_menu) or DEFAULT_ARRIVAL_PLACEMENT
+
+
 def execute_warp(button, event=None):
     """ET_WARP_BUTTON_PRESSED handler (registered second, after SDK WarpPressed)
     — builds and plays the warp spine for the button's destination."""
@@ -648,4 +737,10 @@ def execute_warp(button, event=None):
         player = _player_hook()
     if player is None:
         return
-    WarpSequence_Create(player, dest, button.GetWarpTime(), "Player Start").Play()
+    # The button carries the mission's arrival placement (set when the course
+    # was plotted). This used to be the hardcoded literal "Player Start", which
+    # silently discarded every MissionLib.LinkMenuToPlacement override — most
+    # visibly E1M1's, dropping the player 93 km from the Starbase 12 nav point
+    # instead of the scripted 312 km.
+    placement = button.GetPlacementName()
+    WarpSequence_Create(player, dest, button.GetWarpTime(), placement).Play()

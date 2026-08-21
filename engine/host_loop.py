@@ -6444,6 +6444,14 @@ def run(mission_name: Optional[str] = None,
             btn = App.SortedRegionMenu_GetWarpButton()
             if btn is not None:
                 btn.SetDestination(module)
+                # Carry the mission's arrival placement across with the
+                # destination. MissionLib.LinkMenuToPlacement records it on the
+                # Set Course menu at mission load (E1M1.py:673 moves the
+                # Starbase 12 arrival to "PlayerSpecialStart"); in stock BC the
+                # menu's own course button carried it to the warp button, which
+                # this modal replaced.
+                from engine.appc import warp as _warp
+                _warp.set_course_placement(btn, module)
             # Stock BC's SortedRegionMenu course buttons fired ET_SET_COURSE
             # at the Helm menu (Kiska's "ready to warp" ack); the CEF modal
             # replaced that menu, so fire it here.
