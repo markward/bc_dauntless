@@ -79,6 +79,53 @@ def hull_spheres_world(ship) -> list:
     return out
 
 
+def hull_spheres_near(ship, center, radius) -> list:
+    """`ship`'s hull pieces that reach within `radius` of world point `center`,
+    as ``[(TGPoint3 centre, radius), ...]``. Empty when it has no pieces, or
+    when none of them are near — callers that need to tell those two apart ask
+    `has_hull_bounds` first.
+
+    Same answer as filtering `hull_spheres_world`, arrived at cheaply. A hull
+    decomposes into up to `kMaxHullBoundLeaves` pieces (128; a FedStarbase uses
+    all of them), and the per-piece cost that matters is the matrix multiply
+    and TGPoint3 that put a piece in world space — not the compare that
+    follows. So the rejection happens FIRST, in the ship's own body frame: one
+    inverse transform of the query point, then plain arithmetic per piece, and
+    only survivors are transformed out.
+
+    The inverse is the transpose, which is exact because a ship's world
+    rotation is orthonormal (`AlignToVectors` builds an orthonormal basis).
+    Being a rigid transform it also preserves distance, so the body-frame
+    compare and the world-frame one accept exactly the same pieces.
+    """
+    cached = ship.__dict__.get(_ATTR)
+    if not cached:
+        return []
+    loc = ship.GetWorldLocation()
+    R = ship.GetWorldRotation()
+    scale = float(ship.GetScale())
+    m = R._m
+    # World -> body: R^T · (center - loc). Row-major, so R^T's rows are R's
+    # columns, and each component is a column dotted with the offset.
+    dx, dy, dz = center.x - loc.x, center.y - loc.y, center.z - loc.z
+    qx = m[0][0] * dx + m[1][0] * dy + m[2][0] * dz
+    qy = m[0][1] * dx + m[1][1] * dy + m[2][1] * dz
+    qz = m[0][2] * dx + m[1][2] * dy + m[2][2] * dz
+
+    out = []
+    for (cx, cy, cz), r in cached:
+        # Body-frame piece centre at the ship's live scale.
+        sx, sy, sz = cx * scale, cy * scale, cz * scale
+        ex, ey, ez = sx - qx, sy - qy, sz - qz
+        reach = radius + r * scale
+        if ex * ex + ey * ey + ez * ez > reach * reach:
+            continue
+        v = TGPoint3(sx, sy, sz)
+        v.MultMatrixLeft(R)                    # body -> world
+        out.append((TGPoint3(loc.x + v.x, loc.y + v.y, loc.z + v.z), r * scale))
+    return out
+
+
 def point_is_inside_hull(ship, point) -> bool:
     """Whether `point` (world space) lies inside any of `ship`'s hull pieces.
 

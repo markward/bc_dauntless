@@ -399,7 +399,7 @@ def _test_course_override(ship, previous_heading=None):
     blacklist = _dont_avoid_types()
 
     from engine.appc.collisions import _collision_disabled_ids
-    from engine.appc.hull_bounds import hull_spheres_world
+    from engine.appc.hull_bounds import has_hull_bounds, hull_spheres_near
 
     avoid_list = []
     for other in iter_set_objects(pSet):
@@ -455,8 +455,16 @@ def _test_course_override(ship, previous_heading=None):
         # (unrealized model, headless, load failure). That fallback is load-
         # bearing: without it, adding the hierarchy would quietly switch
         # avoidance off for most of the game.
-        pieces = hull_spheres_world(other)
-        if not pieces:
+        #
+        # Culled to the pieces in range before any of them is transformed into
+        # world space — a hull is up to 128 of them and this runs per obstacle
+        # per AI ship per tick. That makes an empty result ambiguous, so the
+        # fallback is chosen on has_hull_bounds and never on emptiness: an
+        # obstacle whose geometry is simply out of range must yield NOTHING,
+        # not the whole-model sphere the pieces exist to replace.
+        if has_hull_bounds(other):
+            pieces = hull_spheres_near(other, predicted, check_radius)
+        else:
             pieces = [(ob_loc, ob_r)]
         for piece_loc, piece_r in pieces:
             if piece_r <= 0.0:

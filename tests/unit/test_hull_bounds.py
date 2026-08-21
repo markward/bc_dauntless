@@ -136,3 +136,75 @@ def test_a_ship_with_no_cached_pieces_is_never_inside():
     inside a hull we know nothing about — that would resurrect the very
     false-positive this replaces."""
     assert point_is_inside_hull(ShipClass(), TGPoint3(0.0, 0.0, 0.0)) is False
+
+
+# ── Culling: a hull is up to kMaxHullBoundLeaves pieces ──────────────────────
+#
+# A FedStarbase decomposes into 128 of them, so the narrow phase is 128x128 and
+# collision_avoidance walks 128 per obstacle per tick. hull_spheres_world builds
+# a TGPoint3 and runs a matrix multiply for every one, which is the real cost —
+# not the arithmetic that follows. hull_spheres_near does the rejection first,
+# in the ship's own body frame where no per-piece transform is needed, and
+# transforms only the survivors.
+
+
+def _spread_ship():
+    """Pieces at 0, +1000 and +2000 along body +X, radius 100 each."""
+    return _ship_with_pieces([
+        ((0.0, 0.0, 0.0), 100.0),
+        ((100000.0, 0.0, 0.0), 10000.0),
+        ((200000.0, 0.0, 0.0), 10000.0),
+    ])
+
+
+def test_near_returns_only_pieces_within_reach_of_the_query():
+    from engine.appc.hull_bounds import hull_spheres_near
+
+    ship = _spread_ship()
+    near = hull_spheres_near(ship, TGPoint3(0.0, 0.0, 0.0), 50.0)
+
+    assert [round(c.x) for c, _r in near] == [0]
+
+
+def test_near_reaches_a_piece_whose_own_radius_spans_the_gap():
+    """The query radius and the PIECE radius both count — a piece 1000 out with
+    a 100 radius is touched by a query 950 out with a 50 radius."""
+    from engine.appc.hull_bounds import hull_spheres_near
+
+    ship = _spread_ship()
+    near = hull_spheres_near(ship, TGPoint3(950.0, 0.0, 0.0), 50.0)
+
+    assert [round(c.x) for c, _r in near] == [1000]
+
+
+def test_near_agrees_exactly_with_filtering_the_full_set():
+    """The cull is an optimisation, so it must be indistinguishable from doing
+    it the slow way. Checked on a ROTATED, SCALED, TRANSLATED ship because the
+    fast path skips the per-piece matrix multiply that the slow path does — the
+    one place the two could diverge."""
+    from engine.appc.hull_bounds import hull_spheres_near
+
+    ship = _spread_ship()
+    ship.SetTranslateXYZ(500.0, -300.0, 40.0)
+    ship.AlignToVectors(TGPoint3(-1.0, 0.0, 0.0), TGPoint3(0.0, 0.0, 1.0))
+    ship.SetScale(1.5)
+
+    query, radius = TGPoint3(500.0, 1200.0, 40.0), 400.0
+    expected = [
+        (c, r) for c, r in hull_spheres_world(ship)
+        if ((c.x - query.x) ** 2 + (c.y - query.y) ** 2
+            + (c.z - query.z) ** 2) <= (r + radius) ** 2
+    ]
+
+    got = hull_spheres_near(ship, query, radius)
+
+    assert len(got) == len(expected) and len(got) > 0
+    for (gc, gr), (ec, er) in zip(got, expected):
+        assert (gc.x, gc.y, gc.z) == pytest.approx((ec.x, ec.y, ec.z))
+        assert gr == pytest.approx(er)
+
+
+def test_near_yields_nothing_for_a_ship_with_no_pieces():
+    from engine.appc.hull_bounds import hull_spheres_near
+
+    assert hull_spheres_near(ShipClass(), TGPoint3(0.0, 0.0, 0.0), 1e9) == []

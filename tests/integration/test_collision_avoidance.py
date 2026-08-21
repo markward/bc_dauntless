@@ -515,6 +515,45 @@ def test_a_real_hull_piece_in_the_way_is_still_avoided():
     assert collision_avoidance.is_overriding(ship) is True
 
 
+def test_an_obstacle_whose_pieces_are_all_out_of_range_is_not_avoided():
+    """A hull is up to 128 pieces, so they are culled to the ones in range
+    before any of them is transformed into world space. That makes an empty
+    result ambiguous — "no pieces" and "no pieces NEARBY" look identical — and
+    resolving it the wrong way reinstates the whole-model sphere for exactly
+    the concave hulls the pieces exist to describe.
+
+    A shell-shaped station is the real case: its centre is close enough to
+    check, its geometry is nowhere near."""
+    from engine.appc import collision_avoidance
+    from engine.appc.hull_bounds import cache_hull_bound_spheres
+    collision_avoidance.reset_avoidance_state()
+
+    pSet = App.SetClass_Create(); pSet.SetName("S")
+    App.g_kSetManager._sets["S"] = pSet
+
+    ship = ShipClass_Create("Galaxy")
+    _load_galaxy(ship)
+    ship.SetWorldLocation(TGPoint3(0, 0, 0))
+    ship.SetRadius(20.0)
+    ship.SetAI(object())
+    pSet.AddObjectToSet(ship, "Ship")
+
+    station = _make_obstacle(pSet, 0, 30, 0, "Shell", radius=20.0)
+    inv = 1.0 / 0.01
+    cache_hull_bound_spheres(station, [        # all of it 5000 GU away
+        (0.0, 5000.0 * inv, 0.0, 10.0 * inv),
+        (0.0, -5000.0 * inv, 0.0, 10.0 * inv),
+    ])
+
+    ship.SetImpulse(1.0, TGPoint3(0, 1, 0),
+                    PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+
+    for _ in range(600):
+        tick_collision_avoidance()
+        tick_all_ship_motion(1.0 / 60.0)
+        assert collision_avoidance.is_overriding(ship) is False
+
+
 def test_an_obstacle_with_no_cached_pieces_still_uses_its_whole_bound():
     """Fall back, don't fail open. Anything unrealized (headless, load failure)
     has no pieces and must keep the single-sphere behaviour — otherwise adding

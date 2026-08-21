@@ -140,19 +140,33 @@ def _deepest_piece_overlap(obj_a, obj_b):
         phase. This is the fallback for planets, asteroids and anything whose
         model has not realized.
       * ``()``    — both sides have pieces and none of them overlap: NOT a
-        collision, however much the model-wide bounds intersect.
+        collision, however much the model-wide bounds intersect. This is also
+        what a cull that leaves one side empty means: pieces exist, none are
+        in range.
       * ``(centre_a, radius_a, centre_b, radius_b)`` — the most deeply
         overlapping pair, i.e. the one whose surfaces interpenetrate furthest.
         Deepest rather than first so the contact normal describes the dominant
         contact when several pieces meet at once.
     """
-    from engine.appc.hull_bounds import hull_spheres_world
-    pieces_a = hull_spheres_world(obj_a)
+    from engine.appc.hull_bounds import has_hull_bounds, hull_spheres_near
+    # "No pieces" and "no pieces NEAR" are different answers — the first falls
+    # back to the broad phase, the second is a definitive miss — so the
+    # has_hull_bounds check has to come before the cull, not be inferred from
+    # an empty result.
+    if not has_hull_bounds(obj_a) or not has_hull_bounds(obj_b):
+        return None
+    # Each side is culled against the other's model-wide bound before anything
+    # is transformed into world space. GetRadius is the AABB corner distance,
+    # comfortably larger than any real reach, so the cull cannot drop a pair
+    # the loop below would have found.
+    pieces_a = hull_spheres_near(obj_a, obj_b.GetWorldLocation(),
+                                 float(obj_b.GetRadius()))
     if not pieces_a:
-        return None
-    pieces_b = hull_spheres_world(obj_b)
+        return ()
+    pieces_b = hull_spheres_near(obj_b, obj_a.GetWorldLocation(),
+                                 float(obj_a.GetRadius()))
     if not pieces_b:
-        return None
+        return ()
 
     best = None
     best_pen = 0.0
