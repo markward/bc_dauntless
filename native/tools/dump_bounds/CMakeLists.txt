@@ -1,6 +1,6 @@
 add_executable(dump_bounds dump_bounds.cc)
 
-target_link_libraries(dump_bounds PRIVATE nif)
+target_link_libraries(dump_bounds PRIVATE nif renderer)
 
 # Block parsers self-register via static initializers in libnif.a; force the
 # whole archive in so every registration runs (same as scan_nifs).
