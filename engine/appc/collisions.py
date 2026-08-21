@@ -338,10 +338,19 @@ def _emit_object_collision(obj_a, obj_b, contact, force) -> None:
             _d = math.sqrt((_pb.x - _pa.x) ** 2 + (_pb.y - _pa.y) ** 2
                            + (_pb.z - _pa.z) ** 2)
             from engine.units import GU_TO_KM
+            from engine.appc.hull_bounds import hull_spheres_world
+            # Piece counts say whether the NARROW phase had anything to work
+            # with. "0/N" means one side realized no authored bounds, so the
+            # pair fell back to the model-wide spheres — which is the
+            # difference between a real contact and two generous bubbles
+            # touching.
+            _na = len(hull_spheres_world(obj_a))
+            _nb = len(hull_spheres_world(obj_b))
             print("[collision] %s <-> %s | centres %.1f GU (%.2f km) | "
-                  "radii %.1f / %.1f | force %.1f"
+                  "radii %.1f / %.1f | reach %.1f | pieces %d/%d | force %.1f"
                   % (obj_a.GetName(), obj_b.GetName(), _d, _d * GU_TO_KM,
-                     _ra, _rb, force), flush=True)
+                     _ra, _rb, (_ra + _rb) * COLLISION_RADIUS_SCALE,
+                     _na, _nb, force), flush=True)
         except Exception as _e:
             dev_mode.log_swallowed("collision debug print", _e)
     for dest, source in ((obj_a, obj_b), (obj_b, obj_a)):
