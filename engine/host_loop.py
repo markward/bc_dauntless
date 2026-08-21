@@ -4344,14 +4344,18 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
         # The hull's individual pieces, for shape-aware collision/avoidance.
         # GetRadius() above is one sphere round the whole model and so cannot
         # express a CONCAVE hull: a ship in a starbase's docking bay sits well
-        # inside it while touching no actual structure. hasattr-guarded so a
-        # stale binary without the binding degrades to the single-sphere path
-        # rather than failing to realize the ship at all.
+        # inside it while touching no actual structure.
+        #
+        # Called DIRECTLY, not through a getattr guard. model_bounds is in
+        # engine.renderer's _REQUIRED_BINDINGS, so validate_bindings() already
+        # fails loudly at boot if it is missing — and an hasattr guard on top of
+        # that converts the loud failure into a silent one. It did exactly that:
+        # the binding existed on _h but was absent from the façade's name table,
+        # so the guard skipped every ship and the whole feature shipped inert,
+        # indistinguishable from not being wired up.
         try:
-            _get_bounds = getattr(r_, "model_bounds", None)
-            if callable(_get_bounds):
-                from engine.appc.hull_bounds import cache_hull_bound_spheres
-                cache_hull_bound_spheres(ship, _get_bounds(handle))
+            from engine.appc.hull_bounds import cache_hull_bound_spheres
+            cache_hull_bound_spheres(ship, r_.model_bounds(handle))
         except Exception as _e:
             dev_mode.log_swallowed("realize hull bound spheres", _e)
         iid = r_.create_instance(handle)
