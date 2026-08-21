@@ -3,6 +3,7 @@ from engine.core import stub_telemetry
 from engine.appc.events import (
     TGEvent, TGEvent_Create,
     TGBoolEvent, TGBoolEvent_Create,
+    CollisionEvent, CollisionEvent_Create,
     TGKeyboardEvent, ET_KEYBOARD_EVENT, ET_KEYBOARD,
     WeaponHitEvent, ET_WEAPON_HIT, ET_WARP_BUTTON_PRESSED,
     ET_TORPEDO_RELOAD, ET_TORPEDO_FIRED,
@@ -1108,6 +1109,20 @@ ET_SCANNABLE_CHANGE            = 1080
 # 1100/1101 are ET_MUSIC_*, and 1102-1107 are the cinematic camera keys. Still
 # below the 1200 Game_GetNextEventType allocator floor.
 ET_NAV_POINT_CHANGED           = 1108
+# Object collision. BC posts TWO of these per collision, one per object with
+# source/destination swapped -- MissionLib.py:3906 says so outright: "Only need
+# to check either the source or the destination, since there's an event sent for
+# each", reading GetDestination() as the ship that collided and GetSource() as
+# what it hit. Consumers: Effects.CollisionEffect (an explosion at every contact
+# point + the collision sound), MissionLib.FriendlyFireCollisionHandler (ramming
+# a friendly is a game over), E7M2's ShipsCollided.
+#
+# Undefined, this was a truthy _NamedStub, so every one of those was dead. It is
+# in the heatmap TWICE: rank 118 (App, 65 hits over 62/233 runs) and rank 137
+# (EventType, 60 hits over 57/233) -- the EventType row being the engine logging
+# a real SDK handler registration made against the stub, i.e. the script side was
+# already wired and only the engine half was missing. 1109 is the next free value.
+ET_OBJECT_COLLISION            = 1109
 
 # ── Input events the SDK binds but the shim never defined ──────────────────────
 # DefaultUKKeyboardBinding binds all 11 of these (BridgeHandlers registers

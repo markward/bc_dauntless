@@ -231,7 +231,45 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None):
     # when something rams one (HelmMenuHandlers.CloakedCollision plays a line).
     _emit_cloaked_collision(a.obj, b.obj)
 
+    _emit_object_collision(a.obj, b.obj, contact, abs(j))
+
     return (a.obj, b.obj, contact, v_rel)
+
+
+def _emit_object_collision(obj_a, obj_b, contact, force) -> None:
+    """Post ET_OBJECT_COLLISION — one event per object, source/destination
+    swapped.
+
+    That pairing is SDK ground truth, not a guess: MissionLib.py:3906 states
+    "Only need to check either the source or the destination, since there's an
+    event sent for each", and FriendlyFireCollisionHandler reads
+    GetDestination() as the ship that collided and GetSource() as what it hit.
+    A single event would silently work for whichever object happened to be the
+    destination and never fire for the other.
+
+    `force` is the impulse magnitude (GetCollisionForce; the reference records
+    it as the magnitude of a vector). Points: our detection is a single sphere
+    pair, so there is exactly one contact today — the event applies BC's
+    two-most-separated reduction on whatever it is given, so this stays correct
+    once per-mesh bounds produce a real contact set.
+
+    Raise-safe, like _emit_cloaked_collision above: a failure here must not
+    abort collision response, which has already mutated positions and applied
+    damage by this point.
+    """
+    import App
+    from engine import dev_mode
+    for dest, source in ((obj_a, obj_b), (obj_b, obj_a)):
+        try:
+            evt = App.CollisionEvent_Create()
+            evt.SetEventType(App.ET_OBJECT_COLLISION)
+            evt.SetSource(source)
+            evt.SetDestination(dest)
+            evt.SetPoints([contact])
+            evt.SetCollisionForce(force)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("emit ET_OBJECT_COLLISION", _e)
 
 
 def _emit_cloaked_collision(obj_a, obj_b) -> None:
