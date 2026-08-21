@@ -837,6 +837,25 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     ai._status = US_ACTIVE
     if ai._contained_ai is not None:
         tick_ai(ai._contained_ai, game_time)
+        # Fold in the contained AI's completion — the same fold
+        # _tick_conditional does (see the comment there), and for the same
+        # reason: a wrapper that reports US_ACTIVE unconditionally masks a
+        # contained AI that has already finished, so the order never ends.
+        #
+        # This matters for EVERY player helm order, because they are all this
+        # shape: AI/Player/InterceptTarget.py:24-29 wraps `Intercept` in an
+        # `AvoidObstacles` PreprocessingAI, and OrbitPlanet/FollowObject/etc.
+        # follow suit. Without the fold, US_DONE stopped at the leaf: no
+        # ET_AI_DONE (so Helm never went back to "Waiting"), the AI was never
+        # released, and _tick_plain early-returns for a finished leaf — no
+        # further SetSpeed or TurnTowardLocation. The ship simply kept the last
+        # commanded velocity and flew straight through its destination.
+        #
+        # PS_NORMAL only: the two skip branches above return before this point
+        # deliberately, reproducing the preprocessor's last decision instead of
+        # dispatching, so there is no fresh contained status to fold there.
+        if ai._contained_ai._status == US_DONE:
+            ai._status = US_DONE
     return ai._status
 
 
@@ -1011,8 +1030,27 @@ def tick_all_ai(game_time: float) -> None:
         ai = ship.GetAI() if hasattr(ship, "GetAI") else None
         if ai is not None:
             status = tick_ai(ai, game_time)
-            # Root-tree completion fires ET_AI_DONE once (SDK: the engine
-            # announces an AI's end so orbit/helm state can react).
+            # Root-tree completion: announce the end (SDK: so orbit/helm state
+            # can react) AND release the conn.
+            #
+            # BC tears a finished AI down — US_DONE is what drives LostFocus ->
+            # SetInactive -> unlink + delete (see the binary note in
+            # _tick_preprocessing). ClearAI performs that teardown and announces
+            # ET_AI_DONE itself, so it REPLACES the bare fire_ai_done here
+            # rather than joining it; announcing twice would drop BC's Helm
+            # officer to "Waiting" twice and re-run every id-keyed handler.
+            #
+            # Leaving a finished tree attached is what made the ship fly through
+            # its destination: _PlayerControl.apply arbitrates ownership on
+            # `if ai is not None:` with no status check, so a done-but-attached
+            # AI kept the conn and the whole ship-motion path — throttle
+            # included — was skipped, leaving the ship on the AI's last
+            # SetSpeed indefinitely.
             if status == US_DONE and not getattr(ai, "_done_event_fired", False):
                 ai._done_event_fired = True
-                fire_ai_done(ship, ai)
+                clear = getattr(ship, "ClearAI", None)
+                if callable(clear):
+                    clear()
+                else:
+                    # Bare test doubles without the full ShipClass surface.
+                    fire_ai_done(ship, ai)
