@@ -132,6 +132,46 @@ def _ke_damage(inv_sum: float, v_rel: float) -> float:
     return COLLISION_DAMAGE_COEFF * 0.5 * mu * v_rel * v_rel
 
 
+def _deepest_piece_overlap(obj_a, obj_b):
+    """Narrow-phase the pair against their authored hull pieces.
+
+    Returns:
+      * ``None``  — at least one side has no pieces; caller keeps the broad
+        phase. This is the fallback for planets, asteroids and anything whose
+        model has not realized.
+      * ``()``    — both sides have pieces and none of them overlap: NOT a
+        collision, however much the model-wide bounds intersect.
+      * ``(centre_a, radius_a, centre_b, radius_b)`` — the most deeply
+        overlapping pair, i.e. the one whose surfaces interpenetrate furthest.
+        Deepest rather than first so the contact normal describes the dominant
+        contact when several pieces meet at once.
+    """
+    from engine.appc.hull_bounds import hull_spheres_world
+    pieces_a = hull_spheres_world(obj_a)
+    if not pieces_a:
+        return None
+    pieces_b = hull_spheres_world(obj_b)
+    if not pieces_b:
+        return None
+
+    best = None
+    best_pen = 0.0
+    for ca, ra in pieces_a:
+        for cb, rb in pieces_b:
+            ddx = cb.x - ca.x
+            ddy = cb.y - ca.y
+            ddz = cb.z - ca.z
+            d2 = ddx * ddx + ddy * ddy + ddz * ddz
+            reach = (ra + rb) * COLLISION_RADIUS_SCALE
+            if d2 >= reach * reach:
+                continue
+            pen = reach - math.sqrt(d2)
+            if best is None or pen > best_pen:
+                best_pen = pen
+                best = (ca, ra, cb, rb)
+    return best if best is not None else ()
+
+
 def _respond_pair(a: "_Body", b: "_Body", ship_instances=None):
     """Resolve one body pair. On an approaching overlap: inject a
     mass-weighted impulse into each movable body's overlay, de-penetrate
@@ -153,7 +193,33 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None):
     dist = math.sqrt(dist2)
     if dist < 1e-9:
         return None  # concentric: degenerate normal, skip
-    nx, ny, nz = dx / dist, dy / dist, dz / dist
+
+    # NARROW PHASE. Everything above is a broad phase against one sphere round
+    # each whole model, which for a BC hull is both generous (the AABB corner
+    # distance) and unable to express concavity — a starbase's docking bay is a
+    # void between structures. Responding on that alone made a ship that is
+    # visibly clear of a station register a hit: hull ticking down while parked,
+    # range readout at 0.00 km because the surface distance had gone negative.
+    #
+    # When BOTH sides carry authored per-shape bounds, re-run the test against
+    # the pieces and take the deepest-overlapping pair as the real contact. One
+    # side lacking them (planets, asteroids, anything unrealized) falls back to
+    # the broad-phase answer: we cannot descend a hierarchy only one side has,
+    # and failing open there would switch collisions off for most of the game.
+    narrowed = _deepest_piece_overlap(a.obj, b.obj)
+    if narrowed is not None:
+        if not narrowed:
+            return None  # pieces exist on both sides and none of them touch
+        pa, ra, pb, rb = narrowed
+        ndx, ndy, ndz = pb.x - pa.x, pb.y - pa.y, pb.z - pa.z
+        ndist = math.sqrt(ndx * ndx + ndy * ndy + ndz * ndz)
+        if ndist < 1e-9:
+            return None
+        dist = ndist
+        sum_r = ra + rb
+        nx, ny, nz = ndx / ndist, ndy / ndist, ndz / ndist
+    else:
+        nx, ny, nz = dx / dist, dy / dist, dz / dist
 
     # Closing speed along the normal (negative = approaching).
     rvx = b.velocity.x - a.velocity.x

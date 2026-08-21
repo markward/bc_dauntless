@@ -568,3 +568,100 @@ def test_warping_ship_is_excluded_from_pair_resolution():
 
     a.GetWarpEngineSubsystem().SetWarpState(WarpEngineSubsystem.WES_NOT_WARPING)
     assert resolve_collisions([a, b]) != []
+
+
+# ── Narrow phase: a hull is its PIECES, not one model-wide sphere ────────────
+# The root sphere is a broad phase only. A BC hull is concave — a starbase's
+# docking bay is a void between structures — and its model-wide bound is
+# generous besides (the AABB corner distance, up to sqrt(3)x the true radius for
+# a roughly spherical model). Responding on the root overlap alone means a ship
+# that is visibly clear of a station registers a hit: live symptom was hull
+# ticking down while parked, with the range readout showing 0.00 km because the
+# surface distance had already gone negative.
+#
+# When both objects carry authored per-shape bounds, the response must fire only
+# where actual pieces overlap.
+
+def _piece_ship(x, mass, vx, radius, pieces):
+    """`pieces` are (offset_x, radius) in WORLD units at scale 1; converted to
+    the raw model (NIF) units cache_hull_bound_spheres expects."""
+    from engine.appc.hull_bounds import cache_hull_bound_spheres
+    s = _ship(x, mass, vx, radius=radius)
+    inv = 1.0 / 0.01
+    cache_hull_bound_spheres(
+        s, [(off * inv, 0.0, 0.0, r * inv) for off, r in pieces])
+    return s
+
+
+def test_overlapping_root_spheres_with_no_overlapping_pieces_do_not_collide():
+    """THE false positive. Root spheres of radius 10 at 15 apart overlap, but
+    each hull's actual mass is a small piece at its own centre, 15 apart and
+    only 1 across — nowhere near touching."""
+    from engine.appc.collisions import _resolve_body, _respond_pair
+    a = _piece_ship(0.0, 1000.0, +10.0, radius=10.0, pieces=[(0.0, 1.0)])
+    b = _piece_ship(15.0, 1000.0, -10.0, radius=10.0, pieces=[(0.0, 1.0)])
+
+    hit = _respond_pair(_resolve_body(a), _resolve_body(b))
+
+    assert hit is None
+    assert a.__dict__.get("_collision_velocity") is None
+    assert b.__dict__.get("_collision_velocity") is None
+
+
+def test_overlapping_pieces_still_collide():
+    """The guard: descending to pieces must not switch collisions off. Same
+    root spheres, but now each hull's piece is big enough to actually meet.
+    Centres 15 apart, effective reach (10+10)*COLLISION_RADIUS_SCALE = 16."""
+    from engine.appc.collisions import _resolve_body, _respond_pair
+    a = _piece_ship(0.0, 1000.0, +10.0, radius=10.0, pieces=[(0.0, 10.0)])
+    b = _piece_ship(15.0, 1000.0, -10.0, radius=10.0, pieces=[(0.0, 10.0)])
+
+    hit = _respond_pair(_resolve_body(a), _resolve_body(b))
+
+    assert hit is not None
+    assert a._collision_velocity.x < 0.0
+    assert b._collision_velocity.x > 0.0
+
+
+def test_an_offset_piece_is_what_decides_contact():
+    """Pieces are positioned, not just sized: a hull whose mass sits off to one
+    side collides only on that side. Pins that the offset is honoured rather
+    than every piece being treated as centred.
+
+    Hull centres are 15 apart and closing. Facing pieces at world 5 and 10 are
+    5 apart with an effective reach of (4+4)*COLLISION_RADIUS_SCALE = 6.4, so
+    they meet. The only thing that changes below is A's offset.
+    """
+    from engine.appc.collisions import _resolve_body, _respond_pair
+    facing_b = [(-5.0, 4.0)]                       # B's mass toward A: world 10
+
+    near = _piece_ship(0.0, 1000.0, +10.0, radius=10.0, pieces=[(5.0, 4.0)])
+    b1 = _piece_ship(15.0, 1000.0, -10.0, radius=10.0, pieces=facing_b)
+    assert _respond_pair(_resolve_body(near), _resolve_body(b1)) is not None
+
+    # Same everything, but A's mass is on its FAR side: world -5 vs 10, 15
+    # apart against the same 6.4 reach -> nothing touches.
+    away = _piece_ship(0.0, 1000.0, +10.0, radius=10.0, pieces=[(-5.0, 4.0)])
+    b2 = _piece_ship(15.0, 1000.0, -10.0, radius=10.0, pieces=facing_b)
+    assert _respond_pair(_resolve_body(away), _resolve_body(b2)) is None
+
+
+def test_objects_without_pieces_keep_the_root_sphere_behaviour():
+    """Fall back, don't fail open. Planets, asteroids and anything unrealized
+    have no authored pieces and must still collide on their bounds."""
+    from engine.appc.collisions import _resolve_body, _respond_pair
+    a = _ship(0.0, 1000.0, +10.0, radius=10.0)
+    b = _ship(15.0, 1000.0, -10.0, radius=10.0)
+
+    assert _respond_pair(_resolve_body(a), _resolve_body(b)) is not None
+
+
+def test_one_sided_pieces_still_fall_back_to_the_root_sphere():
+    """A ship with pieces hitting a planet without them: we cannot descend a
+    hierarchy that only one side has, so the pair keeps the broad-phase
+    answer rather than silently never colliding."""
+    from engine.appc.collisions import _resolve_body, _respond_pair
+    a = _piece_ship(0.0, 1000.0, +10.0, radius=10.0, pieces=[(0.0, 1.0)])
+    b = _ship(15.0, 1000.0, -10.0, radius=10.0)
+
+    assert _respond_pair(_resolve_body(a), _resolve_body(b)) is not None
