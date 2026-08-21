@@ -3,6 +3,7 @@ from engine.core import stub_telemetry
 from engine.appc.events import (
     TGEvent, TGEvent_Create,
     TGBoolEvent, TGBoolEvent_Create,
+    CollisionEvent, CollisionEvent_Create,
     TGKeyboardEvent, ET_KEYBOARD_EVENT, ET_KEYBOARD,
     WeaponHitEvent, ET_WEAPON_HIT, ET_WARP_BUTTON_PRESSED,
     ET_TORPEDO_RELOAD, ET_TORPEDO_FIRED,
@@ -1091,6 +1092,37 @@ ET_TRACTOR_TARGET_DOCKED       = 1079
 # Maelstrom/Episode6/E6M4's cloaked-Kessok reveal). 1080 is the next free
 # value in this block.
 ET_SCANNABLE_CHANGE            = 1080
+# Fired by PlacementObject.SetNavPoint on an actual change of the flag (same
+# shape as ET_SCANNABLE_CHANGE above). Bridge/HelmMenuHandlers.CreateMenus:978
+# registers a broadcast handler for it, and NavPointChanged:1258 rebuilds the
+# Helm > Nav Points menu when the flipped placement sits in the player's set —
+# which is how MissionLib.AddNavPoints/RemoveNavPoints refresh that menu
+# mid-mission (Maelstrom/Episode6/E6M2:2221, Episode7/E7M2). Undefined, it was
+# a truthy _NamedStub coercing to int()==0, so the registration landed on a
+# shared dead slot and the refresh never ran.
+#
+# NOTE the slot: NavPointChanged reads the placement from GetDestination(), not
+# GetSource() — the opposite of ET_SCANNABLE_CHANGE's convention. That is SDK
+# ground truth; the emitter matches it.
+#
+# 1108 is the next free value: the 1060-1090 band is full, 1091 is ET_MOUSE,
+# 1100/1101 are ET_MUSIC_*, and 1102-1107 are the cinematic camera keys. Still
+# below the 1200 Game_GetNextEventType allocator floor.
+ET_NAV_POINT_CHANGED           = 1108
+# Object collision. BC posts TWO of these per collision, one per object with
+# source/destination swapped -- MissionLib.py:3906 says so outright: "Only need
+# to check either the source or the destination, since there's an event sent for
+# each", reading GetDestination() as the ship that collided and GetSource() as
+# what it hit. Consumers: Effects.CollisionEffect (an explosion at every contact
+# point + the collision sound), MissionLib.FriendlyFireCollisionHandler (ramming
+# a friendly is a game over), E7M2's ShipsCollided.
+#
+# Undefined, this was a truthy _NamedStub, so every one of those was dead. It is
+# in the heatmap TWICE: rank 118 (App, 65 hits over 62/233 runs) and rank 137
+# (EventType, 60 hits over 57/233) -- the EventType row being the engine logging
+# a real SDK handler registration made against the stub, i.e. the script side was
+# already wired and only the engine half was missing. 1109 is the next free value.
+ET_OBJECT_COLLISION            = 1109
 
 # ── Input events the SDK binds but the shim never defined ──────────────────────
 # DefaultUKKeyboardBinding binds all 11 of these (BridgeHandlers registers
@@ -1237,6 +1269,38 @@ Episode_GetNextEventType = Game_GetNextEventType
 # SDK App.py:10687 binds this to Appc.UtopiaModule_GetNextEventType — same
 # event-id allocator under the hood as the Game/Mission/Episode forms above.
 UtopiaModule_GetNextEventType = Game_GetNextEventType
+
+
+def UtopiaModule_ConvertGameUnitsToKilometers(fGameUnits) -> float:
+    """BC's single display-boundary unit conversion (SDK App.py:10662).
+
+    Everything spatial inside the engine is in game units; only the UI
+    converts. SDK callers: BridgeHandlers.py:1389 (the helm officer's
+    "<impulse> : <speed> kph" tooltip) and the range readouts.
+
+    Undefined, this resolved to a truthy App._NamedStub whose int() coerces to
+    0 — so the tooltip's `str(int(fVel))` printed 0 for EVERY speed, however
+    fast the ship was going. Silent by construction; heatmap rank 63, 256 hits
+    over 23/233 runs. It also cost diagnostic time: a "2 : 0 kph" reading while
+    undocking from Starbase 12 was taken as evidence the ship was stationary,
+    when only the readout was dead.
+
+    The factor is not a guess in the other direction either — engine/units.py
+    was DERIVED from this call site (a Galaxy's SetMaxSpeed(6.3) GU/s shows as
+    3969 kph in stock BC ⇒ 1 GU = 175 m), so both sides share one constant and
+    cannot drift.
+
+    ⚠️ The association order is deliberate and load-bearing, not style. The SDK
+    caller TRUNCATES (`str(int(fVel))`), so a last-bit rounding error one below
+    the true value costs a whole displayed km/h. `gu * 0.175` makes 6.3 GU/s
+    print as 3968, not BC's 3969, because 1.1025*3600 evaluates to
+    3968.9999999999995. Dividing first keeps all four checked speeds landing on
+    BC's integers; test_convert_game_units_to_kilometers.py pins them. If you
+    refactor this line, re-run that test rather than assuming the algebra is
+    equivalent — in floating point it is not.
+    """
+    from engine.units import GU_TO_M
+    return float(fGameUnits) / 1000.0 * GU_TO_M
 
 # ── Player hardpoint file (set by MissionLib.CreatePlayerShip) ─────────────────
 _player_hardpoint_filename: "str | None" = None

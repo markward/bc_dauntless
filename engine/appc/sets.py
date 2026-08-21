@@ -479,14 +479,45 @@ class SetClass(TGEventHandlerObject):
         return list(self._objects.values())
 
     def GetNavPoints(self):
-        """Nav points defined in this set (SDK SetClass_GetNavPoints), consumed
-        by HelmMenuHandlers.SetupNavPointsMenuFromSet. Headless models no
-        nav-point objects yet, so return an empty list — a real, ITERABLE
-        result. Must not fall through __getattr__ (which vends a non-iterable
-        _RendererStub and crashes the SDK's `for pNavPoint in lNavPoints` loop,
-        a path now reached once Game.SetPlayer fires ET_SET_PLAYER and the Helm
-        orbit/nav handlers repopulate)."""
-        return []
+        """Nav points defined in this set (SDK ``SetClass_GetNavPoints``), as a
+        real, ITERABLE list.
+
+        Consumed by ``Bridge/HelmMenuHandlers.SetupNavPointsMenuFromSet``:1096,
+        which turns each entry into an ``STButton`` under Helm > Nav Points and
+        then enables the row iff at least one came back::
+
+            if bOpenable: SetOpenable(); SetEnabled()
+            else:         SetNotOpenable(); SetDisabled()
+
+        So this list IS that menu's enabled state. It used to be a hardcoded
+        ``return []`` from the era when the headless model carried no
+        nav-point objects; that shipped a live E1M1 defect — after warping to
+        Starbase 12 the mission tells you to approach via a nav point, and the
+        row is permanently greyed and un-openable. The objects have existed for
+        a while: E1M1.py:654 calls ``E1M1_Starbase12_P.LoadPlacements``, which
+        creates waypoint "Starbase Nav" with ``SetNavPoint(1)``, and
+        ``Waypoint_Create`` adds it straight to the named set.
+
+        The flag is asked via ``engine.core.ids.implements`` rather than
+        hasattr/getattr-with-default, which cannot answer it on a ``TGObject``
+        (``__getattr__`` hands back a truthy ``_Stub`` for every unknown name,
+        so every ship in the set would read as a nav point). Unlike
+        ``GetTargetableObjects`` below, an object that does not implement
+        ``IsNavPoint`` is EXCLUDED, not kept: nav-pointness is opt-in state
+        that only a ``PlacementObject`` carries, and BC's own default is
+        ``SetNavPoint(0)`` — every generated ``*_P.py`` sets it explicitly.
+
+        Must not fall through ``__getattr__``: that vends a non-iterable
+        ``_RendererStub``, which crashes the SDK's ``for pNavPoint in
+        lNavPoints`` loop — the original reason this method exists.
+        """
+        from engine.core.ids import implements
+
+        return [
+            obj
+            for obj in self._objects.values()
+            if implements(obj, "IsNavPoint") and obj.IsNavPoint()
+        ]
 
     def GetTargetableObjects(self, pSkipObject=None, bMustBeAlive=0):
         """Objects in this set that may be targeted (SDK

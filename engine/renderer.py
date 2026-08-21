@@ -4,7 +4,7 @@ Re-exports the binding functions with type hints. Application code should
 import from here, not from _dauntless_host directly.
 """
 import logging
-from typing import Tuple
+from typing import List, Tuple
 
 import _dauntless_host as _h
 
@@ -43,7 +43,8 @@ _REQUIRED_BINDINGS = frozenset({
     "get_instance_head_center", "hdr_lens_flare_enabled",
     "hdr_lens_flare_set_enabled", "hdr_set_enabled", "init", "letterbox_set",
     "load_animation_clips",
-    "load_instance_clip", "load_model", "model_aabb", "motion_blur_enabled",
+    "load_instance_clip", "load_model", "model_aabb", "model_bounds",
+    "motion_blur_enabled",
     "motion_blur_set_enabled", "nebula_lightning_enabled",
     "nebula_lightning_set_enabled",
     "nonfinite_probe_enabled", "nonfinite_probe_set_enabled",
@@ -596,6 +597,25 @@ def model_aabb(model: int) -> Tuple[Tuple[float, float, float],
     """Return (center, half_extents) of a loaded model's CPU-side vertex
     union. Used by engine.shields to size the shield bubble."""
     return _h.model_aabb(model)
+
+
+def model_bounds(model: int) -> List[Tuple[float, float, float, float]]:
+    """Return [(cx, cy, cz, radius), ...] — the model's authored per-shape
+    bounding spheres, composed through the node hierarchy into model space.
+
+    The pieces a hull is actually made of. A single model-wide bound cannot
+    express a CONCAVE hull, which is why a ship sitting in a starbase's docking
+    bay reads as inside the station; engine.appc.hull_bounds caches these per
+    ship so collision and avoidance can descend them instead.
+
+    MUST be listed in the name table at the top of this module as well as
+    defined here. This façade only re-exports what it names, so a binding that
+    exists on _h but is missing from the list is invisible to callers -- and a
+    caller written to degrade gracefully when the binding is absent then
+    degrades silently and permanently, which is exactly how the per-shape
+    bounds shipped inert.
+    """
+    return _h.model_bounds(model)
 
 
 def shield_register(instance_id: InstanceId, mode: int, decay_seconds: float,

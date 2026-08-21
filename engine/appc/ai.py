@@ -1087,21 +1087,8 @@ class ProximityCheck(ObjectClass):
         # per-tick evaluator centers the radius on this object's
         # world location.
         self._anchor = None
-        # Per-tick inside-set tracker.  Stored as ids so we don't pin objects
-        # alive past their own lifecycle and so equality follows identity.
-        # Eager init: TGObject.__getattr__ returns a truthy _Stub for missing
-        # attrs (engine/core/ids.py:87), so `getattr(self, "_inside_set", None)`
-        # would silently mis-resolve — see TGPythonInstanceWrapper notes in
-        # engine/appc/events.py for the same hazard.
-        self._inside_set: set = set()
-        # Objects whose baseline inside/outside state has been sampled at
-        # least once. Edge detection needs a prior sample to detect a
-        # crossing, so the FIRST per-tick evaluation of an object only
-        # records the baseline and never fires — otherwise an object that
-        # is already in its trigger state when the check starts evaluating
-        # (e.g. the player docked inside the starbase proximity at mission
-        # load) would be mistaken for a fresh crossing.
-        self._baselined: set = set()
+        # NOTE: no inside/outside history is kept. This check is LEVEL-
+        # triggered (see _evaluate_one), so there is no edge to remember.
 
     def GetEventType(self) -> int:
         return self._event_type
@@ -1200,6 +1187,40 @@ class ProximityCheck(ObjectClass):
         # see a fresh event next CheckProximity call.
         self._evaluate_one(obj, force=True)
 
+    def _shares_set_with_anchor(self, obj) -> bool:
+        """Is `obj` in the same set as this check's anchor?
+
+        BC gets this for free and never has to ask: MissionLib.ProximityCheck
+        :199 registers the check with ``pSet.GetProximityManager()`` — the
+        manager is PER SET, so objects elsewhere in the galaxy are simply not
+        among the ones it considers. We evaluate from a world-space distance
+        instead, which without this gate compares coordinates across sets that
+        each have their own origin.
+
+        That was a live bug, not a hypothetical: E1M1.py:913-917 builds the
+        Starbase 12 proximity pair during mission setup, anchored on the
+        starbase in "Starbase12" and watching the player, who is still in
+        "DryDock". Both sit near their own set's origin, so the player read as
+        inside the 690 GU sphere and Graff's greeting fired at mission load,
+        over the opening Liu briefing. A first-evaluation baseline flag had
+        been standing in for this check — and it also suppressed the repeat
+        firing E1M1's dock gate needs, which is the bug this replaces it to fix.
+
+        Permissive when the answer is unknowable: an object (or anchor) with no
+        containing set is still evaluated, so synthetic checks and test doubles
+        that never join a set behave as before. Real mission objects always
+        have one.
+        """
+        get_anchor_set = getattr(self._anchor, "GetContainingSet", None)
+        get_obj_set = getattr(obj, "GetContainingSet", None)
+        if not callable(get_anchor_set) or not callable(get_obj_set):
+            return True
+        anchor_set = get_anchor_set()
+        obj_set = get_obj_set()
+        if anchor_set is None or obj_set is None:
+            return True
+        return anchor_set is obj_set
+
     def _evaluate_one(self, obj, force: bool = False) -> None:
         """Shared per-object logic for Evaluate() and CheckProximity().
 
@@ -1207,10 +1228,25 @@ class ProximityCheck(ObjectClass):
           TT_INSIDE  → fire when inside the radius
           TT_OUTSIDE → fire when outside the radius
 
-        Evaluate() is edge-triggered: only fires when the inside/outside
-        state changes from the last tick (so a stationary inside object
-        doesn't spam events every frame). CheckProximity() uses
-        force=True for immediate firing on initial setup.
+        LEVEL-triggered, matching BC: the check fires on EVERY evaluation for
+        as long as the object matches, not once per boundary crossing. Scripts
+        are responsible for disarming it, and BC's do — every one-shot handler
+        in the SDK calls RemoveAndDelete() or RemoveObjectFromCheckList() as
+        its first act (E1M2 x2, E3M1, E3M2 x3, E4M5, E4M6 x3), and
+        Conditions/ConditionInRange.ProximityEvent:296-297 re-arms the object
+        to the OPPOSITE trigger type the instant it fires ("Trigger again if
+        this goes outside"), which is only necessary if the stream would
+        otherwise continue.
+
+        E1M1's Helm > Dock gate depends on the repeat: the Graff cutscene runs
+        off the first firing of StarbaseInnerProximity and only sets
+        g_bGraffHailed at its end (EnableDockButton, E1M1.py:2934), while the
+        line that clears g_bDockDisabled and enables the button is back in
+        StarbaseInnerProximity (:1597) — needing a later firing, with the
+        player parked inside the 690 GU sphere and never leaving it.
+
+        `force` is retained for CheckProximity's explicit-immediate contract;
+        under level triggering it no longer has to bypass anything.
         """
         import App
         anchor_loc = (
@@ -1219,6 +1255,8 @@ class ProximityCheck(ObjectClass):
         )
         loc = obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation") else None
         if anchor_loc is None or loc is None:
+            return
+        if not self._shares_set_with_anchor(obj):
             return
         # Look up the per-object trigger type.
         trigger_type = None
@@ -1237,24 +1275,7 @@ class ProximityCheck(ObjectClass):
             (trigger_type == ProximityCheck.TT_INSIDE and is_inside) or
             (trigger_type == ProximityCheck.TT_OUTSIDE and not is_inside)
         )
-        # Edge detection: only fire on transition into the matching
-        # state, not every tick the object stays there. The
-        # _inside_set tracker remembers which objects were inside on
-        # the previous evaluation.
-        was_inside = id(obj) in self._inside_set
-        if is_inside:
-            self._inside_set.add(id(obj))
-        else:
-            self._inside_set.discard(id(obj))
-        # First per-tick sample only establishes the baseline; it never fires
-        # (the force=True CheckProximity path bypasses this for explicit
-        # immediate checks). This is what stops an already-inside object at
-        # mission load from being read as a fresh crossing.
-        first_eval = id(obj) not in self._baselined
-        self._baselined.add(id(obj))
         if not matches:
-            return
-        if not force and (first_eval or is_inside == was_inside):
             return
         evt = ProximityEvent()
         evt.SetEventType(self._event_type)
@@ -1302,8 +1323,6 @@ class ProximityCheck(ObjectClass):
         self._check_objects = []
         self._check_object_ids = []
         self._check_types = []
-        self._inside_set = set()
-        self._baselined = set()
         # Drop ourselves from the anchor-set's proximity manager so
         # evaluate_proximity_checks stops walking us.
         anchor = self._anchor

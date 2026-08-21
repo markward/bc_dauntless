@@ -132,6 +132,60 @@ def _ke_damage(inv_sum: float, v_rel: float) -> float:
     return COLLISION_DAMAGE_COEFF * 0.5 * mu * v_rel * v_rel
 
 
+def _deepest_piece_overlap(obj_a, obj_b):
+    """Narrow-phase the pair against their authored hull pieces.
+
+    Returns:
+      * ``None``  — at least one side has no pieces; caller keeps the broad
+        phase. This is the fallback for planets, asteroids and anything whose
+        model has not realized.
+      * ``()``    — both sides have pieces and none of them overlap: NOT a
+        collision, however much the model-wide bounds intersect. This is also
+        what a cull that leaves one side empty means: pieces exist, none are
+        in range.
+      * ``(centre_a, radius_a, centre_b, radius_b)`` — the most deeply
+        overlapping pair, i.e. the one whose surfaces interpenetrate furthest.
+        Deepest rather than first so the contact normal describes the dominant
+        contact when several pieces meet at once.
+    """
+    from engine.appc.hull_bounds import has_hull_bounds, hull_spheres_near
+    # "No pieces" and "no pieces NEAR" are different answers — the first falls
+    # back to the broad phase, the second is a definitive miss — so the
+    # has_hull_bounds check has to come before the cull, not be inferred from
+    # an empty result.
+    if not has_hull_bounds(obj_a) or not has_hull_bounds(obj_b):
+        return None
+    # Each side is culled against the other's model-wide bound before anything
+    # is transformed into world space. GetRadius is the AABB corner distance,
+    # comfortably larger than any real reach, so the cull cannot drop a pair
+    # the loop below would have found.
+    pieces_a = hull_spheres_near(obj_a, obj_b.GetWorldLocation(),
+                                 float(obj_b.GetRadius()))
+    if not pieces_a:
+        return ()
+    pieces_b = hull_spheres_near(obj_b, obj_a.GetWorldLocation(),
+                                 float(obj_a.GetRadius()))
+    if not pieces_b:
+        return ()
+
+    best = None
+    best_pen = 0.0
+    for ca, ra in pieces_a:
+        for cb, rb in pieces_b:
+            ddx = cb.x - ca.x
+            ddy = cb.y - ca.y
+            ddz = cb.z - ca.z
+            d2 = ddx * ddx + ddy * ddy + ddz * ddz
+            reach = (ra + rb) * COLLISION_RADIUS_SCALE
+            if d2 >= reach * reach:
+                continue
+            pen = reach - math.sqrt(d2)
+            if best is None or pen > best_pen:
+                best_pen = pen
+                best = (ca, ra, cb, rb)
+    return best if best is not None else ()
+
+
 def _respond_pair(a: "_Body", b: "_Body", ship_instances=None):
     """Resolve one body pair. On an approaching overlap: inject a
     mass-weighted impulse into each movable body's overlay, de-penetrate
@@ -153,7 +207,33 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None):
     dist = math.sqrt(dist2)
     if dist < 1e-9:
         return None  # concentric: degenerate normal, skip
-    nx, ny, nz = dx / dist, dy / dist, dz / dist
+
+    # NARROW PHASE. Everything above is a broad phase against one sphere round
+    # each whole model, which for a BC hull is both generous (the AABB corner
+    # distance) and unable to express concavity — a starbase's docking bay is a
+    # void between structures. Responding on that alone made a ship that is
+    # visibly clear of a station register a hit: hull ticking down while parked,
+    # range readout at 0.00 km because the surface distance had gone negative.
+    #
+    # When BOTH sides carry authored per-shape bounds, re-run the test against
+    # the pieces and take the deepest-overlapping pair as the real contact. One
+    # side lacking them (planets, asteroids, anything unrealized) falls back to
+    # the broad-phase answer: we cannot descend a hierarchy only one side has,
+    # and failing open there would switch collisions off for most of the game.
+    narrowed = _deepest_piece_overlap(a.obj, b.obj)
+    if narrowed is not None:
+        if not narrowed:
+            return None  # pieces exist on both sides and none of them touch
+        pa, ra, pb, rb = narrowed
+        ndx, ndy, ndz = pb.x - pa.x, pb.y - pa.y, pb.z - pa.z
+        ndist = math.sqrt(ndx * ndx + ndy * ndy + ndz * ndz)
+        if ndist < 1e-9:
+            return None
+        dist = ndist
+        sum_r = ra + rb
+        nx, ny, nz = ndx / ndist, ndy / ndist, ndz / ndist
+    else:
+        nx, ny, nz = dx / dist, dy / dist, dz / dist
 
     # Closing speed along the normal (negative = approaching).
     rvx = b.velocity.x - a.velocity.x
@@ -231,7 +311,45 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None):
     # when something rams one (HelmMenuHandlers.CloakedCollision plays a line).
     _emit_cloaked_collision(a.obj, b.obj)
 
+    _emit_object_collision(a.obj, b.obj, contact, abs(j))
+
     return (a.obj, b.obj, contact, v_rel)
+
+
+def _emit_object_collision(obj_a, obj_b, contact, force) -> None:
+    """Post ET_OBJECT_COLLISION — one event per object, source/destination
+    swapped.
+
+    That pairing is SDK ground truth, not a guess: MissionLib.py:3906 states
+    "Only need to check either the source or the destination, since there's an
+    event sent for each", and FriendlyFireCollisionHandler reads
+    GetDestination() as the ship that collided and GetSource() as what it hit.
+    A single event would silently work for whichever object happened to be the
+    destination and never fire for the other.
+
+    `force` is the impulse magnitude (GetCollisionForce; the reference records
+    it as the magnitude of a vector). Points: the narrow phase resolves a pair
+    down to one deepest contact, so there is exactly one point today — the
+    event applies BC's two-most-separated reduction on whatever it is given, so
+    this stays correct if that ever yields a real manifold.
+
+    Raise-safe, like _emit_cloaked_collision above: a failure here must not
+    abort collision response, which has already mutated positions and applied
+    damage by this point.
+    """
+    import App
+    from engine import dev_mode
+    for dest, source in ((obj_a, obj_b), (obj_b, obj_a)):
+        try:
+            evt = App.CollisionEvent_Create()
+            evt.SetEventType(App.ET_OBJECT_COLLISION)
+            evt.SetSource(source)
+            evt.SetDestination(dest)
+            evt.SetPoints([contact])
+            evt.SetCollisionForce(force)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("emit ET_OBJECT_COLLISION", _e)
 
 
 def _emit_cloaked_collision(obj_a, obj_b) -> None:

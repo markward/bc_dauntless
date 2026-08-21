@@ -836,6 +836,107 @@ def test_cinematic_window_interactive_state_round_trips():
     assert cine.IsInteractive() == 1
 
 
+# ── Forcing a view LEAVES cinematic mode ────────────────────────────────────
+# Live symptom (E1M1, undocking from Starbase 12): the ship undocks, the view
+# state is correct, but the picture stays on an exterior camera slowly orbiting
+# the ship. Pressing ESC and opening the pause menu snapped it back to the
+# bridge camera it had before the cutscene.
+#
+# The chain. AI/Compound/DockWithStarbase.SetupCutscene:36 enters cinematic mode
+# with ToggleCinematicWindow(), and NOTHING on the undock path toggles back:
+# FinishedUndocking calls MissionLib.EndCutscene (which forces a view) and
+# CutsceneCameraEnd. So once the authored "DockingCam" is deleted,
+# host_loop._cutscene_camera falls to its SECOND branch -- gated purely on
+# is_cinematic_active() -- and renders the player camera's resolved cinematic
+# mode, which is DropAndWatch: BC's orbiting flyby shot. Exactly what was on
+# screen, and it never ends because nothing clears the focus.
+#
+# BC's EndCutscene doesn't toggle the window either (MissionLib.py:775-806) --
+# it calls ForceBridgeVisible()/ForceTacticalVisible() and nothing else. Since
+# BC demonstrably returns to the bridge after a docking cutscene, those two
+# calls must leave cinematic mode in the real engine. Ours only flipped two
+# booleans.
+
+
+def _cinematic_tw():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    tw.ToggleCinematicWindow()
+    assert tw.is_cinematic_active() is True
+    return top_window, tw
+
+
+def test_force_bridge_visible_leaves_cinematic_mode():
+    """THE undock repro."""
+    top_window, tw = _cinematic_tw()
+    cine = tw.FindMainWindow(top_window.MWT_CINEMATIC)
+
+    tw.ForceBridgeVisible()
+
+    assert tw.is_cinematic_active() is False
+    assert tw.GetFocus() is None
+    assert cine.IsWindowActive() == 0
+    assert tw.IsBridgeVisible() is True
+
+
+def test_force_tactical_visible_leaves_cinematic_mode():
+    """The other exit MissionLib.EndCutscene can take — when the rendered set
+    is not the bridge it calls ForceTacticalVisible instead."""
+    top_window, tw = _cinematic_tw()
+
+    tw.ForceTacticalVisible()
+
+    assert tw.is_cinematic_active() is False
+    assert tw.GetFocus() is None
+    assert tw.IsTacticalVisible() is True
+
+
+def test_forcing_a_view_restores_the_space_player_camera():
+    """Leaving via the toggle switches the player camera back
+    (Camera.PlayerCameraAsSpace, top_window.py:319). Forcing a view is the
+    other way out of cinematic mode and must take the same seam, or the player
+    camera stays in its cinematic configuration."""
+    import Camera
+    top_window, tw = _cinematic_tw()
+
+    calls = []
+    saved = Camera.PlayerCameraAsSpace
+    Camera.PlayerCameraAsSpace = lambda *a, **k: calls.append(1)
+    try:
+        tw.ForceBridgeVisible()
+    finally:
+        Camera.PlayerCameraAsSpace = saved
+    assert calls == [1]
+
+
+def test_forcing_a_view_does_not_disturb_an_unrelated_focus():
+    """Only cinematic focus is cleared. QuickBattle's config pane holds focus
+    through ordinary view changes and must keep it."""
+    from engine.appc import top_window
+    from engine.appc.events import TGEventHandlerObject
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    pane = TGEventHandlerObject()
+    tw.SetFocus(pane)
+
+    tw.ForceBridgeVisible()
+
+    assert tw.GetFocus() is pane
+
+
+def test_forcing_a_view_with_no_focus_at_all_is_a_no_op():
+    from engine.appc import top_window
+    top_window.reset_for_tests()
+    tw = top_window.TopWindow_GetTopWindow()
+    assert tw.GetFocus() is None
+
+    tw.ForceBridgeVisible()
+
+    assert tw.GetFocus() is None
+    assert tw.IsBridgeVisible() is True
+
+
 def test_is_cinematic_active_false_when_another_child_holds_focus():
     """QuickBattle's OpenConfigDialog focuses a config pane. That must not read
     as cinematic mode."""

@@ -1,6 +1,7 @@
 // Internal-header include path is added via target_include_directories
 // pointing at native/src/assets/src.
 #include <gtest/gtest.h>
+#include <glm/gtc/matrix_transform.hpp>
 #include "mesh_build.h"
 
 TEST(MeshBuild, MinimalTriangle) {

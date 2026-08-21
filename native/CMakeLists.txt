@@ -144,6 +144,7 @@ enable_testing()
 
 # Diagnostic tools that consume the public library.
 add_subdirectory(tools/scan_nifs)
+add_subdirectory(tools/dump_bounds)
 add_subdirectory(tools/probe_shape_transforms)
 add_subdirectory(tools/probe_animation_keys)
 add_subdirectory(tools/probe_block_inventory)

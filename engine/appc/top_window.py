@@ -157,10 +157,48 @@ class _TopWindow:
     def ForceBridgeVisible(self) -> None:
         self._bridge_visible = True
         self._tactical_visible = False
+        self._leave_cinematic_for_view()
 
     def ForceTacticalVisible(self) -> None:
         self._bridge_visible = False
         self._tactical_visible = True
+        self._leave_cinematic_for_view()
+
+    def _leave_cinematic_for_view(self) -> None:
+        """Forcing bridge or tactical LEAVES cinematic mode.
+
+        BC's MissionLib.EndCutscene (MissionLib.py:775-806) never toggles the
+        cinematic window off — it calls ForceBridgeVisible()/
+        ForceTacticalVisible() and nothing else. Since BC demonstrably returns
+        to the bridge at the end of a docking cutscene, those calls must drop
+        the cinematic window's focus in the real engine; here they only flipped
+        two booleans.
+
+        The live cost of the gap (E1M1, undocking from Starbase 12):
+        DockWithStarbase.SetupCutscene:36 enters cinematic mode with
+        ToggleCinematicWindow() and nothing on the undock path toggles back, so
+        once FinishedUndocking deletes the authored "DockingCam"
+        host_loop._cutscene_camera fell through to its second branch — gated
+        purely on is_cinematic_active() — and rendered the player camera's
+        resolved cinematic mode, DropAndWatch, i.e. BC's orbiting flyby. The
+        picture sat there forever while the view STATE was already correct;
+        opening the pause menu snapped it back to the bridge camera.
+
+        Scoped to cinematic focus only: an unrelated focus holder (QuickBattle's
+        config pane) keeps it. Mirrors ToggleCinematicWindow's exit, including
+        the player-camera seam, so both ways out of cinematic mode behave alike.
+        """
+        cine = self._main_windows.get(MWT_CINEMATIC)
+        if cine is None or self._focus is not cine:
+            return
+        self._focus = None
+        # Same seam, and same guard rationale, as ToggleCinematicWindow: a
+        # Camera failure must not wedge the view change, but must not be silent.
+        try:
+            import Camera
+            Camera.PlayerCameraAsSpace()
+        except Exception as exc:  # noqa: BLE001 - see ToggleCinematicWindow
+            print("[cinematic] player-camera mode switch failed:", exc)
 
     def ToggleBridgeAndTactical(self) -> None:
         self._bridge_visible, self._tactical_visible = (

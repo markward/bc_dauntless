@@ -4341,6 +4341,23 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
                 ship.SetRadius(extent * BC_MODEL_SCALE)
             except Exception as _e:
                 dev_mode.log_swallowed("realize ship.SetRadius fallback", _e)
+        # The hull's individual pieces, for shape-aware collision/avoidance.
+        # GetRadius() above is one sphere round the whole model and so cannot
+        # express a CONCAVE hull: a ship in a starbase's docking bay sits well
+        # inside it while touching no actual structure.
+        #
+        # Called DIRECTLY, not through a getattr guard. model_bounds is in
+        # engine.renderer's _REQUIRED_BINDINGS, so validate_bindings() already
+        # fails loudly at boot if it is missing — and an hasattr guard on top of
+        # that converts the loud failure into a silent one. It did exactly that:
+        # the binding existed on _h but was absent from the façade's name table,
+        # so the guard skipped every ship and the whole feature shipped inert,
+        # indistinguishable from not being wired up.
+        try:
+            from engine.appc.hull_bounds import cache_hull_bound_spheres
+            cache_hull_bound_spheres(ship, r_.model_bounds(handle))
+        except Exception as _e:
+            dev_mode.log_swallowed("realize hull bound spheres", _e)
         iid = r_.create_instance(handle)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
@@ -6444,6 +6461,14 @@ def run(mission_name: Optional[str] = None,
             btn = App.SortedRegionMenu_GetWarpButton()
             if btn is not None:
                 btn.SetDestination(module)
+                # Carry the mission's arrival placement across with the
+                # destination. MissionLib.LinkMenuToPlacement records it on the
+                # Set Course menu at mission load (E1M1.py:673 moves the
+                # Starbase 12 arrival to "PlayerSpecialStart"); in stock BC the
+                # menu's own course button carried it to the warp button, which
+                # this modal replaced.
+                from engine.appc import warp as _warp
+                _warp.set_course_placement(btn, module)
             # Stock BC's SortedRegionMenu course buttons fired ET_SET_COURSE
             # at the Helm menu (Kiska's "ready to warp" ack); the CEF modal
             # replaced that menu, so fire it here.

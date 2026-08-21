@@ -94,6 +94,13 @@ class STToggle(STButton):
     def GetToggleState(self) -> int:        return self.IsToggled()
 
 
+# Where the player drops out of warp when a mission has not said otherwise.
+# BC names it in LinkMenuToPlacement's own docstring (MissionLib.py:2636):
+# "Links one of the helm menu buttons to a placement other than the default
+# 'Player Start'." Every Systems/*/<name>.py placement file defines one.
+DEFAULT_ARRIVAL_PLACEMENT = "Player Start"
+
+
 class STWarpButton(STButton):
     """Warp trigger button — stores config; warp execution is a follow-up."""
 
@@ -102,6 +109,7 @@ class STWarpButton(STButton):
         self._warp_time = 0.0
         self._course_menu = None
         self._destination = None
+        self._placement_name = DEFAULT_ARRIVAL_PLACEMENT
 
     def SetWarpTime(self, t) -> None:     self._warp_time = float(t)
     def GetWarpTime(self) -> float:       return self._warp_time
@@ -112,6 +120,17 @@ class STWarpButton(STButton):
     # real falsy default, never a truthy _Stub.
     def SetDestination(self, dest) -> None:  self._destination = dest
     def GetDestination(self):                return self._destination
+
+    # Where THIS course drops the player out of warp. Real published surface
+    # (sdk/.../App.py:8738 STWarpButton_SetPlacementName). The button is the
+    # carrier: the course menu owns the mission's choice, the button holds it
+    # from the moment a course is set until the warp actually runs.
+    def SetPlacementName(self, name) -> None:
+        self._placement_name = (str(name) if name
+                                else DEFAULT_ARRIVAL_PLACEMENT)
+
+    def GetPlacementName(self) -> str:
+        return self._placement_name
 
 
 class SortedRegionMenu(STMenu):
@@ -126,9 +145,24 @@ class SortedRegionMenu(STMenu):
         super().__init__(label)
         self._pause_sorting = 0
         self._region = str(region) if region is not None else None
+        self._placement_name = DEFAULT_ARRIVAL_PLACEMENT
 
     def GetRegionModule(self):
         return self._region
+
+    # A mission's override of where this destination drops the player out of
+    # warp. Real published surface (sdk/.../App.py:8763/:8769), and the sole
+    # target of MissionLib.LinkMenuToPlacement — which E1M1.py:673 uses to move
+    # the Starbase 12 arrival from "Player Start" (93 km from the mission's own
+    # nav point) out to "PlayerSpecialStart" (312 km), far enough that the
+    # scripted in-system-warp approach has somewhere to run. Unimplemented this
+    # was a silent _Stub: heatmap rank 144, 57 hits over 56/233 runs.
+    def SetPlacementName(self, name) -> None:
+        self._placement_name = (str(name) if name
+                                else DEFAULT_ARRIVAL_PLACEMENT)
+
+    def GetPlacementName(self) -> str:
+        return self._placement_name
 
     def ClearInfo(self, *args) -> None:
         # Region-info reset on set-course rebuild (Systems/Utils.py:70).
