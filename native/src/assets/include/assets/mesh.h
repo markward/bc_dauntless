@@ -30,6 +30,21 @@ struct MeshCpu {
     std::vector<std::vector<glm::vec2>> extra_uvs;
     int material_index = -1;
     int node_index = -1;
+
+    /// Authored bounding sphere for this shape, in the SAME space as
+    /// `vertices` (i.e. after the node-local bake build_mesh_cpu applies).
+    ///
+    /// Read unconditionally from every NiTriShapeData
+    /// (nif/src/blocks/ni_tri_shape.cc:84-85). This matters because it is the
+    /// ONLY structured bound data a BC model carries: the files hold no
+    /// separate collision mesh, and no BC model authors the optional
+    /// node-level bounding volume (nif/include/nif/block.h:37 -- our parser
+    /// throws if that flag is set, and BC's models load). So a shape-aware
+    /// collision test has exactly this to descend, which is consistent with
+    /// the original generating multiple contacts and reducing them to the two
+    /// most separated.
+    glm::vec3 bound_center{};
+    float bound_radius = 0.0f;
 };
 
 class Mesh {

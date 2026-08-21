@@ -83,3 +83,103 @@ TEST(ComputeModelAabb, SkipsMeshesWithoutCpuData) {
     EXPECT_EQ(box.center, glm::vec3(0.0f));
     EXPECT_EQ(box.half_extents, glm::vec3(0.0f));
 }
+
+// ── compute_model_bounds: the per-shape spheres a shape-aware test descends ──
+// BC ships no collision mesh and authors no node-level bounding volumes, so the
+// per-NiTriShapeData sphere is the only structured bound data in a model. This
+// hands back one sphere per mesh, composed through the node hierarchy exactly
+// as compute_model_aabb composes vertices -- so a caller gets the set of pieces
+// the hull is actually made of, rather than one sphere swallowing the concave
+// gaps between them (a starbase's docking bay being the case that matters).
+
+namespace {
+void add_bounded_mesh(assets::Model& m, glm::vec3 center, float radius) {
+    assets::MeshCpu cpu;
+    cpu.vertices.push_back({.position = center, .normal = glm::vec3(0, 0, 1)});
+    cpu.bound_center = center;
+    cpu.bound_radius = radius;
+    assets::Mesh mesh;
+    mesh.set_cpu_data(std::move(cpu));
+    m.meshes.push_back(std::move(mesh));
+}
+}
+
+TEST(ComputeModelBounds, ReturnsOneSpherePerMesh) {
+    assets::Model m;
+    m.root_node = 0;
+    m.nodes.push_back(assets::Node{
+        .name = "root", .parent_index = -1,
+        .local_transform = glm::mat4(1.0f),
+        .meshes = {0, 1},
+    });
+    add_bounded_mesh(m, {0, 0, 0}, 1.0f);
+    add_bounded_mesh(m, {10, 0, 0}, 2.0f);
+
+    auto spheres = renderer::compute_model_bounds(m);
+    ASSERT_EQ(spheres.size(), 2u);
+    EXPECT_FLOAT_EQ(spheres[0].radius, 1.0f);
+    EXPECT_FLOAT_EQ(spheres[1].center.x, 10.0f);
+    EXPECT_FLOAT_EQ(spheres[1].radius, 2.0f);
+}
+
+TEST(ComputeModelBounds, AppliesNodeLocalTransforms) {
+    // Same shape as the AABB hierarchy test: a child node offset by 10 must
+    // move its mesh's sphere with it, or every piece collapses onto the root.
+    assets::Model m;
+    m.root_node = 0;
+    m.nodes.push_back(assets::Node{
+        .name = "root", .parent_index = -1,
+        .local_transform = glm::mat4(1.0f),
+        .meshes = {0},
+    });
+    m.nodes.push_back(assets::Node{
+        .name = "child", .parent_index = 0,
+        .local_transform = glm::translate(glm::mat4(1.0f), glm::vec3(10, 0, 0)),
+        .meshes = {1},
+    });
+    add_bounded_mesh(m, {0, 0, 0}, 1.0f);
+    add_bounded_mesh(m, {0, 0, 0}, 1.0f);
+
+    auto spheres = renderer::compute_model_bounds(m);
+    ASSERT_EQ(spheres.size(), 2u);
+    EXPECT_FLOAT_EQ(spheres[0].center.x, 0.0f);
+    EXPECT_FLOAT_EQ(spheres[1].center.x, 10.0f);
+}
+
+TEST(ComputeModelBounds, ScalesRadiusByNodeScale) {
+    assets::Model m;
+    m.root_node = 0;
+    m.nodes.push_back(assets::Node{
+        .name = "root", .parent_index = -1,
+        .local_transform = glm::scale(glm::mat4(1.0f), glm::vec3(3.0f)),
+        .meshes = {0},
+    });
+    add_bounded_mesh(m, {0, 0, 0}, 2.0f);
+
+    auto spheres = renderer::compute_model_bounds(m);
+    ASSERT_EQ(spheres.size(), 1u);
+    EXPECT_FLOAT_EQ(spheres[0].radius, 6.0f);
+}
+
+TEST(ComputeModelBounds, SkipsMeshesWithoutCpuDataOrRadius) {
+    // A mesh with no cpu_data has no bound to offer; one with radius 0 is not
+    // a volume. Neither may appear as a phantom point-obstacle.
+    assets::Model m;
+    m.root_node = 0;
+    m.nodes.push_back(assets::Node{
+        .name = "root", .parent_index = -1,
+        .local_transform = glm::mat4(1.0f),
+        .meshes = {0, 1, 2},
+    });
+    add_bounded_mesh(m, {0, 0, 0}, 1.0f);
+    m.meshes.push_back(assets::Mesh{});          // no cpu_data
+    add_bounded_mesh(m, {5, 0, 0}, 0.0f);        // zero radius
+
+    auto spheres = renderer::compute_model_bounds(m);
+    EXPECT_EQ(spheres.size(), 1u);
+}
+
+TEST(ComputeModelBounds, EmptyModelReturnsNothing) {
+    assets::Model m;
+    EXPECT_TRUE(renderer::compute_model_bounds(m).empty());
+}

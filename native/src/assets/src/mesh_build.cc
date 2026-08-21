@@ -72,6 +72,18 @@ MeshCpu build_mesh_cpu(
         }
     }
 
+    // The authored bounding sphere travels the SAME path as the positions
+    // above, because it is expressed in the same pre-bake space. Miss this and
+    // the sphere silently describes a region somewhere else entirely -- on a
+    // shape whose node offsets it far from the origin (the Warbird halves at
+    // +/-470 noted above), catastrophically so. Scale is uniform per the NIF
+    // transform model, so the radius takes the same single factor.
+    {
+        const auto& bc = data.bound_center;
+        mesh.bound_center = apply_rotation(r, {bc.x * s, bc.y * s, bc.z * s}) + trans;
+        mesh.bound_radius = data.bound_radius * s;
+    }
+
     // SP2: for rigid character shapes the caller passes the parent node's
     // bind-world transform so verts move from node-local into BIND-MODEL space
     // (the space the GPU palette poses). Identity for everything else, so ships
@@ -82,6 +94,12 @@ MeshCpu build_mesh_cpu(
             v.position = glm::vec3(extra_model_transform * glm::vec4(v.position, 1.0f));
             v.normal   = glm::normalize(nm * v.normal);
         }
+        mesh.bound_center =
+            glm::vec3(extra_model_transform * glm::vec4(mesh.bound_center, 1.0f));
+        // Derive the factor rather than assuming 1: the comment above says BC's
+        // scale here is uniform, and reading it off a basis vector holds to that
+        // without depending on it being exactly identity.
+        mesh.bound_radius *= glm::length(nm[0]);
     }
     if (data.has_uv && !data.uv_sets.empty()) {
         const auto& primary = data.uv_sets[0];
