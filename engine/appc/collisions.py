@@ -325,6 +325,25 @@ def _emit_object_collision(obj_a, obj_b, contact, force) -> None:
     """
     import App
     from engine import dev_mode
+    # Dev-only: name both parties and the geometry, so "something invisible is
+    # hitting me" becomes a fact instead of a theory. Prints once per collision
+    # pair (not per event), and only under --developer, so production output is
+    # unchanged.
+    if dev_mode.is_enabled():
+        try:
+            _ra = float(obj_a.GetRadius())
+            _rb = float(obj_b.GetRadius())
+            _pa = obj_a.GetWorldLocation()
+            _pb = obj_b.GetWorldLocation()
+            _d = math.sqrt((_pb.x - _pa.x) ** 2 + (_pb.y - _pa.y) ** 2
+                           + (_pb.z - _pa.z) ** 2)
+            from engine.units import GU_TO_KM
+            print("[collision] %s <-> %s | centres %.1f GU (%.2f km) | "
+                  "radii %.1f / %.1f | force %.1f"
+                  % (obj_a.GetName(), obj_b.GetName(), _d, _d * GU_TO_KM,
+                     _ra, _rb, force), flush=True)
+        except Exception as _e:
+            dev_mode.log_swallowed("collision debug print", _e)
     for dest, source in ((obj_a, obj_b), (obj_b, obj_a)):
         try:
             evt = App.CollisionEvent_Create()
