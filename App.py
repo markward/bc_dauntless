@@ -1255,6 +1255,38 @@ Episode_GetNextEventType = Game_GetNextEventType
 # event-id allocator under the hood as the Game/Mission/Episode forms above.
 UtopiaModule_GetNextEventType = Game_GetNextEventType
 
+
+def UtopiaModule_ConvertGameUnitsToKilometers(fGameUnits) -> float:
+    """BC's single display-boundary unit conversion (SDK App.py:10662).
+
+    Everything spatial inside the engine is in game units; only the UI
+    converts. SDK callers: BridgeHandlers.py:1389 (the helm officer's
+    "<impulse> : <speed> kph" tooltip) and the range readouts.
+
+    Undefined, this resolved to a truthy App._NamedStub whose int() coerces to
+    0 — so the tooltip's `str(int(fVel))` printed 0 for EVERY speed, however
+    fast the ship was going. Silent by construction; heatmap rank 63, 256 hits
+    over 23/233 runs. It also cost diagnostic time: a "2 : 0 kph" reading while
+    undocking from Starbase 12 was taken as evidence the ship was stationary,
+    when only the readout was dead.
+
+    The factor is not a guess in the other direction either — engine/units.py
+    was DERIVED from this call site (a Galaxy's SetMaxSpeed(6.3) GU/s shows as
+    3969 kph in stock BC ⇒ 1 GU = 175 m), so both sides share one constant and
+    cannot drift.
+
+    ⚠️ The association order is deliberate and load-bearing, not style. The SDK
+    caller TRUNCATES (`str(int(fVel))`), so a last-bit rounding error one below
+    the true value costs a whole displayed km/h. `gu * 0.175` makes 6.3 GU/s
+    print as 3968, not BC's 3969, because 1.1025*3600 evaluates to
+    3968.9999999999995. Dividing first keeps all four checked speeds landing on
+    BC's integers; test_convert_game_units_to_kilometers.py pins them. If you
+    refactor this line, re-run that test rather than assuming the algebra is
+    equivalent — in floating point it is not.
+    """
+    from engine.units import GU_TO_M
+    return float(fGameUnits) / 1000.0 * GU_TO_M
+
 # ── Player hardpoint file (set by MissionLib.CreatePlayerShip) ─────────────────
 _player_hardpoint_filename: "str | None" = None
 
