@@ -84,6 +84,44 @@ VarManager scope across launches and delete the dev force (or keep it purely as
 a testing shortcut). Until then the feature is dev-only, and a production
 playthrough will not show the prompt on a replay the way BC does.
 
+## ✅ Fixed 2026-08-21: skipping left the officers stuck standing
+
+Skipping while Picard/Saffi were on their feet left them standing forever. BC's
+skip path does **not** walk anyone back to a chair — `UndockCutscene(TRUE)`
+appends `PutEveryoneInSeats` (`E1M1.py:2569`), which hard-teleports them:
+
+```python
+g_pSaffi.SetLocation("DBCommander")
+g_pPicard.SetLocation("DBGuest")
+```
+
+`CharacterClass.SetLocation` (`engine/appc/characters.py:978`) is a pure data
+write, and station placement reached the renderer exactly **once** per bridge
+load (`host_loop._realize_character_instance`, guarded by `_render_instance`).
+The only other runtime re-pose was the `AT_MOVE` walk controller. So the SDK
+considered them seated and the renderer never heard about it. Verified
+headlessly: `PutEveryoneInSeats` itself runs clean and the locations *do* change
+(`DBL1M` → `DBCommander`/`DBGuest`) — nothing turned that into a pose.
+
+Fixed with `host_loop._sync_bridge_character_station`, a per-frame pull sync
+alongside `_sync_bridge_character_visibility`: a realized bridge character whose
+`GetLocation()` differs from the `_placed_location` tag is re-captured through
+`capture_placement` and snapped onto that station's placement clip
+(`_restation_character` → `load_instance_clip` + `set_instance_rest_pose`), then
+re-breathed at the destination. It runs **before** the visibility sync, because
+a teleport into the turbolift (`SetLocation("DBL1M")`) hides via `SetPosition`'s
+`SetHidden(1)` and must take effect on the same frame.
+
+`_placed_location` is written by every path that poses a character — the realize
+path and `BridgeCharacterWalkController._settle` — so a just-settled walk (which
+holds its *own* clip's last frame, not the placement clip) is never re-snapped.
+That claim in `_settle` is load-bearing and pinned by
+`tests/unit/test_bridge_character_walk.py::test_settle_claims_the_destination_station`.
+
+This was never E1M1-specific: ~30 SDK sites re-station by bare `SetLocation`
+(`E7M1:2616`, `E4M4:953/1513`, `E3M2:1060`, `Ep2Cutscene:47`, …), mostly cutscene
+teleports into and out of the turbolift. All of them were inert; all are now live.
+
 ## Still open
 
 **`KeyboardBinding.FindKey`** (heatmap rank 56, same 342 hits as
