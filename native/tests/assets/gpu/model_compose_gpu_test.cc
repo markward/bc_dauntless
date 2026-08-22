@@ -7,7 +7,11 @@
 #include "gl_fixture.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <filesystem>
+#include <iterator>
+#include <set>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -271,4 +275,105 @@ TEST_F(ModelComposeGpuTest, FaceTextureHeadInfixFallback) {
     EXPECT_FALSE(composed.face_textures.count("bogus"));
 
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// A BC officer body NIF carries TWO texture slots, not one:
+//   'body.tga' -> the uniform    ('body:0', 429 verts / 22 bones)
+//   'head.tga' -> exposed SKIN   ('body:1', 106 verts / 10 bones, hand height)
+// Both ship as 8x8 placeholders; BC replaces both at runtime, which is what
+// CharacterClass.ReplaceBodyAndHead(bodyTex, headTex) is for. The officer's
+// "head" texture is really a skin SHEET — face on the top half, both hands on
+// the bottom — so the body's hand mesh must be repointed at headTex, exactly
+// like the grafted face. Overriding every body material with bodyTex instead
+// makes the hands sample the uniform (solid black on a Starfleet skin).
+TEST_F(ModelComposeGpuTest, HandsTakeTheHeadSkinSheetNotTheUniform) {
+    const fs::path root = OPEN_STBC_PROJECT_ROOT;
+    const fs::path body_dir = root / "game/data/Models/Characters/Bodies/BodyFemS";
+    const fs::path head_dir = root / "game/data/Models/Characters/Heads/HeadSaffi";
+    const fs::path body_nif = body_dir / "BodyFemS.NIF";
+    const fs::path head_nif = head_dir / "saffi_head.NIF";
+    const fs::path body_tex = body_dir / "FedFemRed_body.tga";
+    const fs::path head_tex = head_dir / "saffi_head.tga";
+
+    if (!fs::exists(body_nif) || !fs::exists(head_nif) ||
+        !fs::exists(body_tex) || !fs::exists(head_tex))
+        GTEST_SKIP() << "Saffi character assets not installed";
+
+    assets::Model m = assets::compose_officer_model(
+        body_nif, body_tex, head_nif, head_tex, "Bip01 Head");
+
+    ASSERT_GT(m.head_mesh_begin, 0) << "no head grafted";
+
+    const auto base = static_cast<std::size_t>(assets::Material::StageSlot::Base);
+    auto base_textures = [&](std::size_t lo, std::size_t hi) {
+        std::set<int> out;
+        for (std::size_t mi = lo; mi < hi; ++mi) {
+            const int mat = m.meshes[mi].material_index();
+            if (mat < 0 || mat >= static_cast<int>(m.materials.size())) continue;
+            const int t = m.materials[mat].stages[base].texture_index;
+            if (t >= 0) out.insert(t);
+        }
+        return out;
+    };
+
+    const std::set<int> body_side =
+        base_textures(0, static_cast<std::size_t>(m.head_mesh_begin));
+    const std::set<int> head_side =
+        base_textures(static_cast<std::size_t>(m.head_mesh_begin),
+                      m.meshes.size());
+    ASSERT_FALSE(body_side.empty());
+    ASSERT_FALSE(head_side.empty());
+
+    // The uniform and the hands are different slots, so the body's own meshes
+    // must NOT all collapse onto one texture.
+    EXPECT_GE(body_side.size(), 2u)
+        << "every body material was repointed at the same texture — the "
+           "'head.tga' (skin) slot was overwritten with the uniform";
+
+    // ...and the hands must share the grafted face's skin sheet, uploaded once.
+    std::vector<int> shared;
+    std::set_intersection(body_side.begin(), body_side.end(),
+                          head_side.begin(), head_side.end(),
+                          std::back_inserter(shared));
+    EXPECT_FALSE(shared.empty())
+        << "no body mesh shares the head skin sheet — the hands are not "
+           "textured from headTex";
+}
+
+// The other half of the slot rule: a material authored against any OTHER name
+// must keep its own texture. HeadKessok carries 'kessok_horns.tga' (a real
+// 256x256 skin) alongside the 'head.tga' placeholder, and Kessok's
+// ReplaceBodyAndHead only supplies a face sheet — so after composition the head
+// side must still show more than one distinct Base texture. Overriding every
+// grafted head material with headTex collapses the horns onto the face sheet.
+TEST_F(ModelComposeGpuTest, NonSlotHeadTexturesSurviveTheSkinOverride) {
+    const fs::path root = OPEN_STBC_PROJECT_ROOT;
+    const fs::path body_dir = root / "game/data/Models/Characters/Bodies/BodyKessok";
+    const fs::path head_dir = root / "game/data/Models/Characters/Heads/HeadKessok";
+    const fs::path body_nif = body_dir / "BodyKessok.NIF";
+    const fs::path head_nif = head_dir / "kessok_head.NIF";
+    const fs::path body_tex = body_dir / "kessok_body.tga";
+    const fs::path head_tex = head_dir / "kessok_head.tga";
+
+    if (!fs::exists(body_nif) || !fs::exists(head_nif) ||
+        !fs::exists(body_tex) || !fs::exists(head_tex))
+        GTEST_SKIP() << "Kessok character assets not installed";
+
+    assets::Model m = assets::compose_officer_model(
+        body_nif, body_tex, head_nif, head_tex, "Bip01 Head");
+    ASSERT_GT(m.head_mesh_begin, 0) << "no head grafted";
+
+    const auto base = static_cast<std::size_t>(assets::Material::StageSlot::Base);
+    std::set<int> head_side;
+    for (std::size_t mi = static_cast<std::size_t>(m.head_mesh_begin);
+         mi < m.meshes.size(); ++mi) {
+        const int mat = m.meshes[mi].material_index();
+        if (mat < 0 || mat >= static_cast<int>(m.materials.size())) continue;
+        const int t = m.materials[mat].stages[base].texture_index;
+        if (t >= 0) head_side.insert(t);
+    }
+
+    EXPECT_GE(head_side.size(), 2u)
+        << "every grafted head material was repointed at the face sheet — "
+           "'kessok_horns.tga' was overwritten";
 }

@@ -340,6 +340,31 @@ std::vector<int> graft_head(Model& body, Model& head,
     return grafted_mesh_indices;
 }
 
+std::vector<int> meshes_with_texture_source(
+    const Model& model, std::span<const int> mesh_indices,
+    std::span<const std::string> texture_sources, std::string_view basename) {
+    const auto base = static_cast<std::size_t>(Material::StageSlot::Base);
+    std::vector<int> out;
+    for (int mi : mesh_indices) {
+        if (mi < 0 || mi >= static_cast<int>(model.meshes.size())) continue;
+        const int mat = model.meshes[mi].material_index();
+        if (mat < 0 || mat >= static_cast<int>(model.materials.size())) continue;
+        const int tex = model.materials[mat].stages[base].texture_index;
+        if (tex < 0 || tex >= static_cast<int>(texture_sources.size())) continue;
+        // Case-insensitive: the NIFs spell these lowercase but the on-disk
+        // corpus is inconsistent about case elsewhere (BodyFemM.NIF vs
+        // DB_stand_T_L.NIF), and a miss here silently un-textures a body part.
+        const std::string& src = texture_sources[static_cast<std::size_t>(tex)];
+        if (src.size() != basename.size()) continue;
+        if (std::equal(src.begin(), src.end(), basename.begin(),
+                       [](unsigned char a, unsigned char b) {
+                           return std::tolower(a) == std::tolower(b);
+                       }))
+            out.push_back(mi);
+    }
+    return out;
+}
+
 bool set_base_texture(Model& model, std::span<const int> mesh_indices,
                       const fs::path& tga_path,
                       const TgaTextureLoaderFn& loader) {
@@ -396,17 +421,20 @@ Model compose_officer_model(
     // Each NIF's *default* (embedded-basename) textures resolve against the
     // NIF's own directory, exactly like the AssetCache path. Per-officer skin
     // selection happens afterwards via set_base_texture, not by search dir.
-    auto build = [&](const std::filesystem::path& nif) {
+    std::vector<std::string> body_tex_sources, head_tex_sources;
+    auto build = [&](const std::filesystem::path& nif,
+                     std::vector<std::string>* sources) {
         nif::File f = nif::load(nif);
         detail::ModelBuildContext ctx;
         ctx.resolver = &resolver;
         ctx.texture_search_paths = {nif.parent_path()};
         ctx.keep_cpu_data = true;  // empty uploaders -> upload_image/upload_mesh
+        ctx.out_texture_sources = sources;
         return detail::build_model(f, ctx);
     };
 
-    Model body = build(body_nif);
-    Model head = build(head_nif);
+    Model body = build(body_nif, &body_tex_sources);
+    Model head = build(head_nif, &head_tex_sources);
 
     // The body's own meshes are exactly those present before the graft; the
     // graft returns the indices of the appended head meshes. Capture the body
@@ -416,16 +444,45 @@ Model compose_officer_model(
     for (int i = 0; i < static_cast<int>(body.meshes.size()); ++i)
         body_mesh_indices.push_back(i);
 
+    // graft_head MOVES the head's textures onto the end of the body palette and
+    // offsets the grafted materials' stage indices by the pre-graft body count,
+    // so the two source lists concatenate in exactly that order.
+    const std::size_t head_tex_offset = body.textures.size();
+
     std::vector<int> head_mesh_indices =
         graft_head(body, head, attach_bone);  // empty (no-op) is tolerated:
                                               // caller still gets a renderable
                                               // body model.
 
+    std::vector<std::string> tex_sources = std::move(body_tex_sources);
+    tex_sources.resize(head_tex_offset);            // pad synthesized entries
+    tex_sources.insert(tex_sources.end(), head_tex_sources.begin(),
+                       head_tex_sources.end());
+
+    // BC's ReplaceBodyAndHead is keyed on the AUTHORED slot, not on "body model
+    // vs head model": a body NIF carries BOTH 'body.tga' (the uniform) and
+    // 'head.tga' (exposed skin — the HANDS mesh), each an 8x8 placeholder meant
+    // to be replaced at runtime. headTex is a skin SHEET (face on top, both
+    // hands on the bottom), so the body's hand mesh and the grafted face take
+    // the SAME override — applied in one call, so they also share one upload.
+    // Anything authored against another name (BodyKessok's 'kessok_body.tga',
+    // HeadKessok's 'kessok_horns.tga', the 'mouth.tga' interiors) is left on its
+    // own authored texture, which is what BC does.
+    std::vector<int> all_mesh_indices = body_mesh_indices;
+    all_mesh_indices.insert(all_mesh_indices.end(), head_mesh_indices.begin(),
+                            head_mesh_indices.end());
+    const std::vector<int> uniform_meshes =
+        meshes_with_texture_source(body, body_mesh_indices, tex_sources,
+                                   "body.tga");
+    const std::vector<int> skin_meshes =
+        meshes_with_texture_source(body, all_mesh_indices, tex_sources,
+                                   "head.tga");
+
     // Apply per-officer skin overrides to the loaded materials' Base stage.
     // Empty path -> NIF default kept; missing/unreadable -> warned, default
     // kept (set_base_texture is the no-crash guard).
-    set_base_texture(body, body_mesh_indices, body_tex);
-    set_base_texture(body, head_mesh_indices, head_tex);
+    set_base_texture(body, uniform_meshes, body_tex);
+    set_base_texture(body, skin_meshes, head_tex);
 
     // Lip-sync face sink: record the head-mesh range, then upload the
     // per-officer viseme/blink face textures into the model keyed by slot.

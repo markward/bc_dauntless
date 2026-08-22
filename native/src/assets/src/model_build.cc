@@ -599,6 +599,22 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     // 2. Textures.
     auto tex_result = load_all_textures(f, model, ctx, resolver);
 
+    // Optional: report each texture's authored source basename. Only external
+    // NiImages have one; synthesized siblings (_specular / _normal) and
+    // embedded raw images keep the empty default.
+    if (ctx.out_texture_sources) {
+        ctx.out_texture_sources->assign(model.textures.size(), std::string{});
+        for (const auto& [link_id, tex_idx] : tex_result.image_to_texture) {
+            auto it = tex_result.image_filename_for_link.find(link_id);
+            if (it == tex_result.image_filename_for_link.end()) continue;
+            if (tex_idx < 0 ||
+                tex_idx >= static_cast<int>(ctx.out_texture_sources->size()))
+                continue;
+            (*ctx.out_texture_sources)[tex_idx] =
+                std::filesystem::path(it->second).filename().string();
+        }
+    }
+
     // 3. Nodes.
     auto nodes = build_nodes(f, resolver);
     if (nodes.nodes.empty()) throw ModelBuildError("no NiNode root in NIF file");

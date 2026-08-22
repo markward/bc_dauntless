@@ -115,6 +115,21 @@ bool set_base_texture(Model& model, std::span<const int> mesh_indices,
                       const std::filesystem::path& tga_path,
                       const TgaTextureLoaderFn& loader = {});
 
+/// Select, from `mesh_indices`, those meshes whose material's Base stage points
+/// at a texture whose AUTHORED source basename equals `basename`
+/// (case-insensitive). `texture_sources` is indexed by Model::textures index —
+/// the loader's `ModelBuildContext::out_texture_sources`, with empty entries for
+/// textures it synthesized rather than read from a NiImage.
+///
+/// This is how a per-officer skin override targets the right SLOT: a BC body NIF
+/// carries both 'body.tga' (uniform) and 'head.tga' (exposed skin — the hands),
+/// so "every mesh on the body model" is the wrong grouping. Meshes whose source
+/// is unknown or differently named are simply not selected, which leaves their
+/// authored texture in place.
+std::vector<int> meshes_with_texture_source(
+    const Model& model, std::span<const int> mesh_indices,
+    std::span<const std::string> texture_sources, std::string_view basename);
+
 /// Candidate on-disk paths for an SDK-registered face-texture filename, in
 /// resolution order: the literal path first, then filename-spelling variants
 /// ("eyes_closed" -> "eyesclosed" / "eyes_close" — four SDK characters register
