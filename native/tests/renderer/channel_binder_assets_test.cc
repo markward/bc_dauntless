@@ -217,3 +217,44 @@ TEST_F(ChannelBinderAssets, WalkChannelsReproduceSamplePoseOnTrackedBones) {
         }
     }
 }
+
+TEST_F(ChannelBinderAssets, HitReactionKeepsOfficerAtStationNotBridgeOrigin) {
+    // The live bug: after a heavy hit the standing bridge crew appear in the
+    // middle of the floor. HitHardStanding plays _hit_hard_A.NIF, which carries
+    // a "Bip01" translation track pinned at (0,0,0) — authored to layer over
+    // BC's anim-node placement, not to replace it. Bound as a gesture
+    // (root_motion = false) the root-anchor must hold Bip01 at the station the
+    // placement clip put it at. DB_stand_T_L.NIF ends at Bip01 ≈
+    // (-14.8, -107.6, 41.1); the bug snapped it to (0, 0, 0).
+    int place  = load_clip("DB_stand_T_L.NIF");
+    int react  = load_clip("_hit_hard_A.NIF");
+    ASSERT_GE(place, 0); ASSERT_GE(react, 0);
+
+    const int bip = bone_index("Bip01");
+    ASSERT_GE(bip, 0);
+    // Precondition this test depends on: BC bodies nest the biped below the
+    // model root, so the anchor cannot be skeleton.root_bone_index.
+    ASSERT_NE(bip, model_.skeleton.root_bone_index)
+        << "fixture no longer reproduces BC's nested body hierarchy";
+    // Precondition: the reaction clip really does drive Bip01's translation.
+    bool drives_root = false;
+    for (const auto& tr : model_.animations[react].tracks)
+        if (tr.target_node_name == "Bip01" && !tr.translation.empty())
+            drives_root = true;
+    ASSERT_TRUE(drives_root) << "_hit_hard_A must carry a Bip01 translation track";
+
+    scenegraph::World w;
+    scenegraph::Instance& inst = *w.get(w.create_instance(1));
+    renderer::set_rest_pose(inst, model_, place, /*at_start=*/false);
+    const glm::vec3 station(inst.anim.rest_locals[bip][3]);
+    ASSERT_GT(glm::length(station), 1.0f) << "placement must offset Bip01";
+
+    ASSERT_GT(renderer::bind_clip(inst, model_, react, {}, 0.0), 0);
+    auto locals = renderer::eval_channels(inst, model_, 1.0);
+
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(
+        glm::vec3(locals[bip][3]), station, 1e-3f)))
+        << "officer left the station: got (" << locals[bip][3].x << ", "
+        << locals[bip][3].y << ", " << locals[bip][3].z << ") vs station ("
+        << station.x << ", " << station.y << ", " << station.z << ")";
+}

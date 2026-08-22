@@ -129,6 +129,15 @@ std::vector<glm::mat4> eval_channels(scenegraph::Instance& inst,
     std::vector<glm::mat4> locals(n);
     bool any_live = false;   // anything still animating or blending?
 
+    // The bone the gesture root-anchor applies to. MUST be the animation root
+    // ("Bip01"), not the skeleton root: BC bodies nest the biped under unnamed
+    // model-root NiNodes, which no clip track can name, so anchoring the
+    // skeleton root is a dead branch and every reaction clip carrying a Bip01
+    // translation track (_lean_*, _hit_hard_*) drags the officer off station.
+    const int anchor_bone = skel.anim_root_bone_index >= 0
+                                ? skel.anim_root_bone_index
+                                : skel.root_bone_index;
+
     for (std::size_t i = 0; i < n; ++i) {
         // Base local: the instance placement pose, else the bind local.
         const glm::mat4& inst_base =
@@ -187,7 +196,7 @@ std::vector<glm::mat4> eval_channels(scenegraph::Instance& inst,
 
         // BC's gesture root-anchor: keep the clip's root ROTATION but take the
         // root POSITION from the base unless this bind carries root motion.
-        if (static_cast<int>(i) == skel.root_bone_index && !ch->root_motion)
+        if (static_cast<int>(i) == anchor_bone && !ch->root_motion)
             s_t = base_t;
 
         // Blend window: ramp the bind-time seed toward the sampled value.

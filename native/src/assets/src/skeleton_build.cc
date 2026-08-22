@@ -111,6 +111,16 @@ SkeletonBuildResult build_skeleton(const nif::File& f) {
         }
     }
 
+    // The animation root: the bone clips actually drive for placement and root
+    // motion. On BC bodies that is "Bip01", buried under unnamed model roots —
+    // never out.skeleton.root_bone_index. Left at -1 for non-biped skeletons.
+    for (std::size_t i = 0; i < out.skeleton.bones.size(); ++i) {
+        if (out.skeleton.bones[i].name == "Bip01") {
+            out.skeleton.anim_root_bone_index = static_cast<int>(i);
+            break;
+        }
+    }
+
     compute_inverse_bind_poses(out.skeleton);
     return out;
 }
