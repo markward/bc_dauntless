@@ -137,6 +137,15 @@ class BridgeCharacterWalkController:
         character = mv.character
         iid = mv.iid
         self._complete(mv)          # -> the builder's AT_SET_LOCATION_NAME, synchronously
+        # The walk IS the re-station, and it settles on the walk clip's own last
+        # frame — not on the destination's placement clip. Claim the new location
+        # so host_loop._sync_bridge_character_station (which re-poses officers
+        # teleported by a bare SetLocation) does not immediately snap this
+        # just-settled officer onto the placement pose instead.
+        try:
+            character._placed_location = character.GetLocation()
+        except Exception:
+            pass
         try:
             # Freeze the rest pose at the walk clip's LAST frame -- the character is
             # now standing/seated at the destination -- so breathing layers over it.

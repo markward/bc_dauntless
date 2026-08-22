@@ -109,6 +109,27 @@ def test_move_settles_restations_and_completes(monkeypatch):
     assert done == [True]                        # completion fired exactly once
 
 
+def test_settle_claims_the_destination_station(monkeypatch):
+    """The walk settles on its OWN clip's last frame, not on the destination's
+    placement clip. It must therefore claim _placed_location, or
+    host_loop._sync_bridge_character_station (which re-poses officers teleported
+    by a bare SetLocation) would immediately re-snap the just-settled officer
+    onto the placement pose."""
+    import engine.bridge_character_walk as bcw
+    monkeypatch.setattr(bcw, "capture_breathing", lambda ch: None)
+    ctrl, _ = _controller_with_realize()
+    r = _FakeRenderer()
+    ch = _Char()
+    ch._placed_location = "DBL1M"
+
+    ctrl.request_move(ch, "db_L1toP_P.nif",
+                      on_complete=lambda: ch.SetLocation("DBGuest1"))
+    ctrl.update(0.0, renderer=r)
+    ctrl.update(2.5, renderer=r)                 # settle
+
+    assert ch._placed_location == "DBGuest1"
+
+
 def test_move_completes_inline_when_realize_fails():
     ctrl = BridgeCharacterWalkController(realize_fn=lambda ch: None)  # realize fails
     r = _FakeRenderer()

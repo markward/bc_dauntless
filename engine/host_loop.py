@@ -5585,6 +5585,83 @@ def _bridge_characters_for_sync(controller):
     return list(_iter_set_characters(s))
 
 
+def _sync_bridge_character_station(controller, r) -> None:
+    """Re-pose any realized bridge character whose SDK location changed since it
+    was last placed — the station analogue of _sync_bridge_character_visibility.
+
+    Station placement is otherwise applied to the renderer exactly ONCE per
+    bridge load (_realize_character_instance, guarded by _render_instance), and
+    the only other runtime re-pose is the AT_MOVE walk controller. But the SDK
+    also re-stations officers by hard teleport, with a bare SetLocation and no
+    walk — and CharacterClass.SetLocation is a pure data write. The motivating
+    case is E1M1's "press s to skip introduction":
+
+        E1M1.PutEveryoneInSeats (E1M1.py:2582/2584)
+            g_pSaffi.SetLocation("DBCommander")
+            g_pPicard.SetLocation("DBGuest")
+
+    Skip while those two are on their feet and, without this sync, they keep the
+    standing pose forever — the SDK thinks they are seated, the renderer does
+    not. ~30 further SDK sites do the same (E7M1:2616 pSaalek -> EBL1M,
+    E4M4:953/1513, E3M2:1060, Ep2Cutscene:47 …), most of them cutscene teleports
+    into or out of the turbolift.
+
+    Cheap: a handful of bridge characters, and the whole body is skipped unless
+    a location actually differs. _placed_location is the tag written by every
+    path that DOES pose a character (realize + walk settle), so a just-settled
+    walk is never re-snapped onto its placement clip.
+    """
+    from engine.appc.bridge_placement import capture_placement
+    _MISSING = object()
+    for ch in _bridge_characters_for_sync(controller):
+        try:
+            iid = getattr(ch, "_render_instance", None)
+            if iid is None:
+                # Not realized: the walk controller places it when it appears.
+                continue
+            location = ch.GetLocation()
+            if location == getattr(ch, "_placed_location", _MISSING):
+                continue
+            # Accept the change even when it turns out to be unplaceable, so an
+            # unknown location does not re-run the SDK's SetPosition every frame.
+            ch._placed_location = location
+            placement = capture_placement(ch)
+            if not placement:
+                continue
+            _restation_character(r, ch, placement)
+        except Exception as _e:
+            dev_mode.log_swallowed("bridge char station sync", _e)
+
+
+def _restation_character(r, character, placement) -> None:
+    """Snap an ALREADY-REALIZED character onto a placement clip's at-station pose
+    and resume breathing there.
+
+    The realize path bakes the placement clip into assemble_officer as clip 0;
+    here the instance already exists, so the clip is appended with
+    load_instance_clip and sampled by the same set_instance_rest_pose call (which
+    unbinds every channel, so a stale gesture cannot fight the new pose)."""
+    from engine.appc.bridge_placement import capture_breathing
+    iid = character._render_instance
+    path = str(PROJECT_ROOT / "game" / placement["clip_nif"])
+    idx = r.load_instance_clip(iid, path)
+    if idx is None or idx < 0:
+        return
+    r.set_instance_rest_pose(iid, idx, placement["sample_at_start"])
+    breathing = capture_breathing(character)
+    if not breathing:
+        return
+    bidx = r.load_instance_clip(iid, str(PROJECT_ROOT / "game"
+                                         / breathing["clip_nif"]))
+    if bidx is None or bidx < 0:
+        return
+    r.play_instance_idle(iid, bidx)
+    from engine.bridge_character_anim import get_controller
+    _ca = get_controller()
+    if _ca is not None:
+        _ca.set_idle(iid, bidx)
+
+
 def _sync_bridge_character_visibility(controller, r) -> None:
     """Drive each realized bridge character's instance visibility from its SDK
     IsHidden() flag — the bridge analogue of _sync_comm_character_visibility.
@@ -5709,6 +5786,10 @@ def _realize_character_instance(controller, r, character, set_name, is_bridge,
             dev_mode.log_swallowed("destroy officer instance (rollback)", _e)
         raise
     character._render_instance = iid
+    # The station this pose belongs to. _sync_bridge_character_station compares
+    # against it to spot a bare SetLocation teleport (E1M1's skip); every path
+    # that poses a character must keep it current or the sync re-snaps them.
+    character._placed_location = character.GetLocation()
     if start_hidden:
         try:
             r.set_visible(iid, False)
@@ -8219,6 +8300,10 @@ def run(mission_name: Optional[str] = None,
             # (MissionLib.ViewscreenOn un-hides the hailing one) before the RTT
             # renders the set.
             _sync_comm_character_visibility(controller, r)
+            # Before the visibility sync: an SDK teleport into the turbolift
+            # (SetLocation("DBL1M") -> SetPosition's SetHidden(1)) must take
+            # effect on the same frame it re-poses.
+            _sync_bridge_character_station(controller, r)
             _sync_bridge_character_visibility(controller, r)
             # Comm-set feed: if the viewscreen's remote cam belongs to a comm
             # set, render that set into the RTT from its maincamera; otherwise
