@@ -237,6 +237,17 @@ void reload() {
 
 void execute_javascript(const std::string& script) {
     if (!g_client || !g_client->browser()) return;
+    // CreateBrowser is asynchronous: the browser handle appears well before
+    // the document's <script> tags have run (measured ~340 ms on this
+    // machine). The host loop pushes UI state from frame 1, so without this
+    // gate every push in that window raised "<fn> is not defined" in the
+    // page — a real console error for each frame, most visibly from the
+    // per-frame reticle-text push, which is the only one that fires
+    // unconditionally at boot. Dropping is correct rather than merely quiet:
+    // these are per-frame state pushes that the next frame re-sends, and the
+    // load-end handler invalidates the panel snapshot caches so everything
+    // else re-emits once the page is ready.
+    if (!g_client->page_loaded()) return;
     auto frame = g_client->browser()->GetMainFrame();
     if (!frame) return;
     frame->ExecuteJavaScript(script, frame->GetURL(), 0);

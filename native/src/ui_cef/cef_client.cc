@@ -120,6 +120,18 @@ void DauntlessCefClient::set_load_end_handler(std::function<void()> handler) {
     load_end_handler_ = std::move(handler);
 }
 
+void DauntlessCefClient::OnLoadStart(CefRefPtr<CefBrowser> browser,
+                                     CefRefPtr<CefFrame> frame,
+                                     TransitionType /*transition_type*/) {
+    // Same DevTools-shares-this-client guard as OnLoadEnd: opening DevTools
+    // must not close the JS gate on the still-loaded overlay.
+    if (browser_ && !browser->IsSame(browser_)) return;
+    // Re-arm the gate for a reload (Cmd+R): between here and OnLoadEnd the
+    // document is being torn down and re-parsed, so its functions are gone
+    // again and pushes must not run.
+    if (frame && frame->IsMain()) page_loaded_ = false;
+}
+
 void DauntlessCefClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
                                    CefRefPtr<CefFrame> frame,
                                    int /*httpStatusCode*/) {
@@ -128,8 +140,11 @@ void DauntlessCefClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
     // the host treat the overlay as freshly reloaded (dropping every panel
     // snapshot cache and re-pushing the dev flag) on every F12.
     if (browser_ && !browser->IsSame(browser_)) return;
-    if (frame && frame->IsMain() && load_end_handler_) {
-        load_end_handler_();
+    if (frame && frame->IsMain()) {
+        // Open the gate BEFORE the handler runs: load_end_handler_ itself
+        // pushes JS (the dev flag), and that push must not be dropped.
+        page_loaded_ = true;
+        if (load_end_handler_) load_end_handler_();
     }
 }
 

@@ -84,10 +84,26 @@ public:
                           const CefString& source,
                           int line) override;
 
-    // CefLoadHandler — fired when the main frame finishes loading.
+    // CefLoadHandler — fired when the main frame starts/finishes loading.
+    void OnLoadStart(CefRefPtr<CefBrowser> browser,
+                     CefRefPtr<CefFrame> frame,
+                     TransitionType transition_type) override;
     void OnLoadEnd(CefRefPtr<CefBrowser> browser,
                    CefRefPtr<CefFrame> frame,
                    int httpStatusCode) override;
+
+    // False until the OSR overlay's main frame has finished loading (and
+    // again from the start of a reload until it completes). CreateBrowser is
+    // asynchronous and the host loop pushes UI state from frame 1, so
+    // execute_javascript() must drop scripts while this is false: the
+    // document's <script> tags have not run, and every call would raise
+    // "<fn> is not defined" in the page. Dropped pushes cost nothing today:
+    // they are per-frame state the next frame re-sends, and
+    // load_end_handler_ re-emits the rest by invalidating the panel
+    // snapshot caches. But a *one-shot* push issued before the page is
+    // ready IS lost, so anything that must survive belongs in the load-end
+    // handler, which runs with the gate already open.
+    bool page_loaded() const { return page_loaded_; }
 
     // Returns nullptr if no bitmap has arrived yet.
     const std::uint8_t* latest_bitmap(int* out_width, int* out_height) const;
@@ -116,6 +132,8 @@ private:
     bool ready_ = false;
 
     CefRefPtr<CefBrowser> browser_;
+
+    bool page_loaded_ = false;
 
     std::function<void(const std::string&)> event_handler_;
     std::function<void()> load_end_handler_;
