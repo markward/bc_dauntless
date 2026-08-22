@@ -49,9 +49,9 @@ def test_add_child_extra_args_accepted():
     w.AddChild(object(), 0.0, 0.0, "extra", 99)
 
 
-def test_get_obj_id_returns_python_id():
-    w = STStylizedWindow_CreateW("X")
-    assert w.GetObjID() == id(w)
+# NB: the old test_get_obj_id_returns_python_id pinned GetObjID() == id(w).
+# That WAS the bug -- see test_obj_id_round_trips_through_the_object_registry
+# at the end of this file. Uniqueness is covered there too.
 
 
 def test_snapshot_shape():
@@ -209,3 +209,24 @@ def test_get_children_returns_a_copy():
     got.append(object())
 
     assert w.GetNumChildren() == 1
+
+
+def test_obj_id_round_trips_through_the_object_registry():
+    """A window's GetObjID() must resolve back via TGObject_GetTGObjectPtr.
+
+    MissionLib's whole info-box registry is built on that round trip: it stores
+    pBox.GetObjID() in g_lInfoBoxes and every later Open/Close/ToggleInfoTarget
+    does TGObject_GetTGObjectPtr(idBox) -> STStylizedWindow_Cast -> SetVisible.
+    An id that cannot be looked up makes each of those a None dereference --
+    e.g. E1M1's Picard tutorial box, whose CloseInfoTarget rides on
+    ET_CHARACTER_MENU and so runs whenever his menu is raised."""
+    import App
+    w = STStylizedWindow_CreateW("Briefing")
+    assert App.TGObject_GetTGObjectPtr(w.GetObjID()) is w
+    assert App.STStylizedWindow_Cast(App.TGObject_GetTGObjectPtr(w.GetObjID())) is w
+
+
+def test_obj_ids_are_distinct_per_window():
+    a = STStylizedWindow_CreateW("A")
+    b = STStylizedWindow_CreateW("B")
+    assert a.GetObjID() != b.GetObjID()

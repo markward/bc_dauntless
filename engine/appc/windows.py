@@ -613,9 +613,16 @@ class _STStylizedWindow(TGPane):
     def SetVisible(self, *_args) -> None:    self._visible = True
     def SetNotVisible(self, *_args) -> None: self._visible = False
 
-    def GetObjID(self) -> int:
-        # SDK identity hook used in profile (3 missions × 108 calls).
-        return id(self)
+    # NO GetObjID override here. It used to return id(self) -- unique, and
+    # unresolvable: TGObject.GetObjID hands back the key this object is
+    # REGISTERED under (engine/core/ids.py), and TGObject_GetTGObjectPtr looks
+    # ids up in that registry. MissionLib's info-box registry is built entirely
+    # on the round trip (g_lInfoBoxes stores pBox.GetObjID(); every
+    # Open/Close/ToggleInfoTarget does TGObject_GetTGObjectPtr(idBox) ->
+    # STStylizedWindow_Cast -> SetVisible), so id(self) turned each of those
+    # into a None dereference -- including E1M1's Picard tutorial box, which
+    # closes on ET_CHARACTER_MENU and therefore fires whenever his menu is
+    # raised.
 
     def AddPythonFuncHandlerForInstance(self, event_type, qualified_name, *_extra) -> None:
         # Inherited from TGEventHandlerObject; SDK records per-instance
