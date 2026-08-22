@@ -20,6 +20,24 @@ def test_key_constants_exist_and_are_distinct():
     assert len(set(values)) == len(values), "key constants are not distinct"
 
 
+def test_whole_function_key_row_is_exported():
+    """F1-F12 must all be exported by name.
+
+    The host pollers read these with a default — `getattr(_keys, "KEY_F6", -1)`
+    in host_loop._poll_function_keys — so a missing export raises nothing: it
+    polls GLFW key -1 every frame, always reads "up", and the physical key is
+    silently dead. KEY_F6 was absent exactly that way, which left both of the
+    things bound to F6 unreachable: the guest crew menu
+    (ET_INPUT_TALK_TO_GUEST) and cinematic FreeOrbit. The unit-level pollers
+    cannot catch this — their fake `keys` objects declare every name.
+    """
+    import _dauntless_host
+    k = _dauntless_host.keys
+    missing = [name for name in (f"KEY_F{n}" for n in range(1, 13))
+               if not isinstance(getattr(k, name, None), int)]
+    assert missing == [], f"function keys not exported: {missing}"
+
+
 def test_key_state_false_when_no_window_focus():
     import os
     import _dauntless_host

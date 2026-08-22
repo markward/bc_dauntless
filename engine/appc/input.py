@@ -571,8 +571,8 @@ _bridge_menu_event_types = None
 
 
 def _bridge_menu_events():
-    """The bridge crew-menu ('talk to officer') event types — F1-F5. Built
-    lazily so App need not be imported at module load."""
+    """The bridge crew-menu ('talk to officer') event types — F1-F5 plus F6,
+    the guest. Built lazily so App need not be imported at module load."""
     global _bridge_menu_event_types
     if _bridge_menu_event_types is None:
         import App
@@ -583,6 +583,7 @@ def _bridge_menu_events():
                 getattr(App, "ET_INPUT_TALK_TO_XO", None),
                 getattr(App, "ET_INPUT_TALK_TO_SCIENCE", None),
                 getattr(App, "ET_INPUT_TALK_TO_ENGINEERING", None),
+                getattr(App, "ET_INPUT_TALK_TO_GUEST", None),
             ) if isinstance(t, int))
     return _bridge_menu_event_types
 
@@ -595,7 +596,7 @@ def _OnKeyboardEvent_Dispatch(obj, evt):
     calls TopWindow.AllowKeyboardInput(0) actually suppresses keyboard events
     instead of being a silent no-op.
 
-    EXCEPTION — the bridge crew-menu keys (F1-F5 -> ET_INPUT_TALK_TO_*) are
+    EXCEPTION — the bridge crew-menu keys (F1-F6 -> ET_INPUT_TALK_TO_*) are
     bridge UI, not ship control, and must still work while ship control is
     removed: E1M1's character-selection tutorial runs the whole beat with
     RemoveControl (AllowKeyboardInput(0)) in effect, and the player opens each

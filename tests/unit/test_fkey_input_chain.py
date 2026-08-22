@@ -96,6 +96,33 @@ def test_keyboard_lockout_still_allows_bridge_menu_keys():
     assert App.ET_INPUT_FIRE_PRIMARY not in _received, "ship key leaked through lockout"
 
 
+def test_keyboard_lockout_still_allows_the_guest_key():
+    """F6 (the guest) is a bridge menu key like F1-F5, so the same exception
+    applies. It matters in exactly the beat the exception was written for:
+    E1M1 runs its tutorial under RemoveControl, and the guest there is Picard
+    — the character whose menu the tutorial is about."""
+    import KeyConfig, DefaultKeyboardBinding
+    KeyConfig.MapScancodes()
+    DefaultKeyboardBinding.Initialize()
+    _received.clear()
+    TacticalControlWindow._instance = None
+    tcw = TacticalControlWindow.GetInstance()
+    App.g_kKeyboardBinding.SetDefaultDestination(tcw)
+    tcw.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_TALK_TO_GUEST, __name__ + "._record")
+
+    from engine.appc.top_window import TopWindow_GetTopWindow
+    tw = TopWindow_GetTopWindow()
+    tw.AllowKeyboardInput(0)                 # MissionLib.RemoveControl
+    try:
+        App.g_kInputManager.OnKeyDown(App.WC_F6)
+    finally:
+        tw.AllowKeyboardInput(1)
+
+    assert App.ET_INPUT_TALK_TO_GUEST in _received, \
+        "guest menu key blocked by lockout"
+
+
 def test_stock_mapping_bound_for_all_five():
     import KeyConfig, DefaultKeyboardBinding
     KeyConfig.MapScancodes()
