@@ -27,6 +27,13 @@ struct ModelBuildContext {
     /// Empty for the overwhelming majority of models; an empty list makes
     /// build_model byte-identical to the no-replacement path.
     std::vector<TextureReplacement>     texture_replacements;
+    /// Optional sink for each Model::textures entry's AUTHORED source basename
+    /// ("body.tga", "head.tga", …), sized to model.textures.size(). Entries the
+    /// loader synthesized rather than read from a NiImage (sibling _specular /
+    /// _normal maps, embedded raw images) are left EMPTY. The loader knows this
+    /// and otherwise discards it; compose_officer_model needs it to tell a
+    /// body's uniform slot from its skin slot. nullptr -> not recorded.
+    std::vector<std::string>*           out_texture_sources = nullptr;
 };
 
 class ModelBuildError : public std::runtime_error {
