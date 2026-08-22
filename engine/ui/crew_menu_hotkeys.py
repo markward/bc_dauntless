@@ -51,6 +51,39 @@ _KEY_TO_CHARACTER = {
     "Science": "Science", "Engineering": "Engineer",
 }
 
+# Guest characters, in BC's own hunt order (BridgeHandlers.TalkToGuest,
+# sdk/.../BridgeHandlers.py:933-937). A guest is a non-station bridge character
+# with a mission-made menu (Bridge/PicardMenuHandlers and its two siblings);
+# missions add at most one, so first-found wins.
+_GUEST_NAMES = ("Picard", "Data", "Saalek")
+
+
+def resolve_guest():
+    """The guest character aboard, or None. BC's TalkToGuest hunt.
+
+    Uses CharacterClass_GetObjectStrict, NOT CharacterClass_GetObject: the
+    latter auto-vivifies a character for whatever name it is asked about (a
+    headless convenience for mission scripts that chain GetMenu() unguarded),
+    which would report a phantom Picard aboard every ship and stamp him into
+    the bridge set as a side effect. BC's `if not (pCharacter)` fallthrough
+    needs a real null.
+
+    Imported from engine.appc.characters rather than read off App: the strict
+    variant is OURS, not Appc surface, so `App.CharacterClass_GetObjectStrict`
+    resolves through the module __getattr__ to a truthy _NamedStub — which
+    would make the very first name always "found".
+    """
+    import App
+    from engine.appc.characters import CharacterClass_GetObjectStrict
+    bridge = App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        return None
+    for name in _GUEST_NAMES:
+        guest = CharacterClass_GetObjectStrict(bridge, name)
+        if guest is not None:
+            return guest
+    return None
+
 
 def resolve_character(menu_label):
     """Map an opened top-level menu's label to its bridge CharacterClass, or
@@ -99,6 +132,13 @@ def wire(tcw, panel) -> None:
     for event_type in _event_map():
         tcw.AddPythonFuncHandlerForInstance(
             event_type, __name__ + "._on_talk_to")
+    # F6 -> the guest, if one is aboard. Separate from the five station events:
+    # a guest has no station and no fixed TGL menu label (their menu is titled
+    # from Names.tgl by Bridge/PicardMenuHandlers), so they are reached through
+    # the character, not through a label.
+    import App
+    tcw.AddPythonFuncHandlerForInstance(
+        App.ET_INPUT_TALK_TO_GUEST, __name__ + "._on_talk_to_guest")
 
 
 def get_panel():
@@ -145,6 +185,26 @@ def open_menu_for_label(panel, label) -> bool:
     return True
 
 
+def open_menu_for_character(panel, character) -> bool:
+    """Toggle `character`'s OWN menu (GetMenu()) via panel.toggle_menu.
+    Returns True if there was a menu to toggle.
+
+    The by-character twin of open_menu_for_label, for bridge characters that
+    hold a menu but have no station label to look up: guests, and mission
+    officers like E8M2's Liu. toggle_menu resolves the owner off the menu, so
+    the raise still goes through CharacterClass.MenuUp() — the turn, the
+    ET_CHARACTER_MENU signal and the acknowledgement all come with it."""
+    if panel is None or character is None:
+        return False
+    menu = character.GetMenu()
+    if not menu:
+        # An unattached character holds the falsy NULL-menu handle. Nothing to
+        # raise — BC's MenuUp() returns 0 here too.
+        return False
+    panel.toggle_menu(menu)
+    return True
+
+
 def _on_talk_to(dest, event) -> None:
     """Instance handler: toggle the menu matching the event type."""
     panel = _wired_panel
@@ -154,3 +214,20 @@ def _on_talk_to(dest, event) -> None:
     if label is None:
         return
     open_menu_for_label(panel, label)
+
+
+def _on_talk_to_guest(dest, event) -> None:
+    """Instance handler for ET_INPUT_TALK_TO_GUEST (F6).
+
+    BridgeHandlers.TalkToGuest without the parts that are ours already: it
+    hunts the same three names, and toggling through the panel covers BC's
+    IsMenuUp()/DropMenusTurnBack() branch (single-open lives in toggle_menu ->
+    MenuUp). Most missions carry no guest — then this is a no-op, and notably
+    NOT a menu-drop: BC drops the open menus there, but it does so from a
+    handler that also owns the tooltip/manual-fire teardown we do not run, and
+    stealing the player's open station menu on a dead key would be a worse
+    outcome than doing nothing."""
+    panel = _wired_panel
+    if panel is None:
+        return
+    open_menu_for_character(panel, resolve_guest())

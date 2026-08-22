@@ -312,8 +312,33 @@ class CrewMenuPanel(Panel):
         except Exception:
             return None
 
+    def _menu_owner(self, menu):
+        """The CharacterClass stamped on `menu` by CharacterClass.SetMenu, or
+        None. Label-free, so it resolves NON-STATION owners the TGL table cannot
+        see: guests (BridgeHandlers.TalkToGuest's Picard/Data/Saalek), E8M2's
+        Liu, E3M1's MacCray.
+
+        The `GetMenu() is menu` confirmation is not redundant paranoia — it is
+        the type guard. GetOwner() on a widget that never had an owner stamped
+        goes through the shim __getattr__ and hands back a truthy _Stub, whose
+        GetMenu() returns yet another stub; identity against `menu` is what
+        rejects it. Ownership is also the SDK's own invariant here: MenuUp()
+        raises the character's OWN GetMenu(), so an owner that no longer holds
+        this menu (DetachMenuFrom* ran) must not be treated as the owner."""
+        try:
+            owner = menu.GetOwner()
+            if owner is not None and owner.GetMenu() is menu:
+                return owner
+        except Exception:
+            _logger.debug("crew-menu: owner lookup failed", exc_info=True)
+        return None
+
     def _officer_for_menu(self, menu):
         """The CharacterClass OWNING `menu`, or None.
+
+        Ownership first (_menu_owner, the SetMenu-stamped reverse link), then
+        the legacy label path below for menus that predate the stamp or were
+        attached without it.
 
         Resolved by label (crew_menu_hotkeys), then confirmed by ownership: the
         SDK attaches a station menu to its officer with
@@ -329,6 +354,9 @@ class CrewMenuPanel(Panel):
         CharacterClass in `_unowned_label_officer` so toggle_menu's broken-attach
         warning can read WHY ownership failed without re-running
         _resolve_label_character for the same toggle."""
+        owner = self._menu_owner(menu)
+        if owner is not None:
+            return owner
         char = self._resolve_label_character(menu)
         if char is None or char.GetMenu() is not menu:
             self._unowned_label_officer = char
