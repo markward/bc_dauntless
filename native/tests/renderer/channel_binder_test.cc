@@ -403,3 +403,86 @@ TEST(BindClip, SeedComesFromRestLocalsWhenLastLocalsEmpty) {
         inst.anim.channels[1].seed_t, glm::vec3(0, 5, 0), 1e-5f)))
         << "seed must come from rest_locals when last_locals is empty";
 }
+
+// --- Real BC body hierarchy ------------------------------------------------
+//
+// Every BC character body NIF nests the biped THREE levels down:
+//   NiNode '' -> NiNode '' -> NiNode 'Scene Root' -> NiNode 'Bip01' -> ...
+// so skeleton.root_bone_index is the UNNAMED model root, and "Bip01" — the
+// bone that actually carries the station placement and all root motion — is
+// bone 3. The older three_bone_model() fixture collapsed the two (root ==
+// "Bip01"), which is why the gesture root-anchor could target the wrong bone
+// unnoticed. Verified against game/data/Models/Characters/Bodies/*/*.NIF.
+assets::Model bc_body_like_model() {
+    assets::Model m;
+    assets::Bone r0; r0.name = "";  r0.parent_index = -1;
+    assets::Bone r1; r1.name = "";  r1.parent_index = 0;
+    assets::Bone r2; r2.name = "Scene Root"; r2.parent_index = 1;
+    assets::Bone b;  b.name  = "Bip01"; b.parent_index = 2;
+    assets::Bone h;  h.name  = "Bip01 Head"; h.parent_index = 3;
+    h.local_transform = glm::translate(glm::mat4(1.0f), glm::vec3(0, 5, 0));
+    m.skeleton.bones = {r0, r1, r2, b, h};
+    m.skeleton.root_bone_index = 0;
+    m.skeleton.anim_root_bone_index = 3;   // "Bip01", as build_skeleton resolves it
+    for (auto& bone : m.skeleton.bones) bone.inverse_bind_pose = glm::mat4(1.0f);
+
+    // Placement clip (DB_stand_T_L): Bip01 translated to the tactical station.
+    assets::AnimationClip place; place.name = "place";
+    place.duration_seconds = 1.0f;
+    place.rest_locals["Bip01"] =
+        glm::translate(glm::mat4(1.0f), glm::vec3(-14.8f, -107.6f, 41.1f));
+    place.rest_locals["Bip01 Head"] = h.local_transform;
+
+    // Hit reaction (_hit_hard_A): a Bip01 translation track authored at the
+    // ORIGIN — it is meant to layer over the placement, not replace it.
+    assets::AnimationClip react; react.name = "react";
+    react.duration_seconds = 2.0f;
+    assets::AnimationClip::NodeTrack rt; rt.target_node_name = "Bip01";
+    rt.translation = {{0.0f, glm::vec3(0, 0, 0)}, {2.0f, glm::vec3(0, 0, 0)}};
+    rt.rotation = {{0.0f, glm::quat(1, 0, 0, 0)},
+                   {2.0f, glm::angleAxis(glm::radians(20.0f), glm::vec3(0, 0, 1))}};
+    react.tracks = {rt};
+
+    m.animations = {place, react};
+    return m;
+}
+
+TEST(EvalChannels, GestureAnchorsBip01NotTheUnnamedModelRoot) {
+    // A hit-reaction clip (_hit_hard_A / _lean_A) carries a Bip01 translation
+    // track pinned at (0,0,0). Bound as a gesture (root_motion = false) it must
+    // NOT move the officer: the anchor keeps Bip01's translation at the
+    // placement base. Anchoring the unnamed model root instead is a no-op —
+    // no clip ever targets an empty bone name — so the officer teleports to the
+    // bridge origin, which is the reported "crew standing in the middle of the
+    // floor after a heavy hit".
+    assets::Model m = bc_body_like_model();
+    scenegraph::World w;
+    scenegraph::Instance& inst = *w.get(w.create_instance(1));
+    renderer::set_rest_pose(inst, m, 0, /*at_start=*/false);
+
+    renderer::bind_clip(inst, m, 1, {}, /*now=*/0.0);
+    auto locals = renderer::eval_channels(inst, m, 1.0);
+
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(
+        glm::vec3(locals[3][3]), glm::vec3(-14.8f, -107.6f, 41.1f), 1e-3f)))
+        << "Bip01 must stay at the station; got ("
+        << locals[3][3].x << ", " << locals[3][3].y << ", " << locals[3][3].z << ")";
+}
+
+TEST(EvalChannels, RootMotionStillMovesBip01OnABcBodyHierarchy) {
+    // The anchor fix must not disarm real root motion (the walk path): with
+    // root_motion = true the clip's Bip01 translation is applied verbatim.
+    assets::Model m = bc_body_like_model();
+    m.animations[1].tracks[0].translation = {{0.0f, glm::vec3(0, 0, 0)},
+                                             {2.0f, glm::vec3(100, 0, 0)}};
+    scenegraph::World w;
+    scenegraph::Instance& inst = *w.get(w.create_instance(1));
+    renderer::set_rest_pose(inst, m, 0, /*at_start=*/false);
+
+    renderer::BindOptions walk; walk.root_motion = true;
+    renderer::bind_clip(inst, m, 1, walk, /*now=*/0.0);
+    auto locals = renderer::eval_channels(inst, m, 1.0);
+
+    EXPECT_TRUE(glm::all(glm::epsilonEqual(
+        glm::vec3(locals[3][3]), glm::vec3(50, 0, 0), 1e-3f)));
+}
