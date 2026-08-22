@@ -642,6 +642,18 @@ def _reset_leakable_engine_globals():
         _hl._music_player = None
     except Exception:
         pass
+    # Camera eye behind the dynamic-light distance gate: host_loop.run() writes
+    # it next to r.set_camera every frame, and it survives the run. A leaked eye
+    # from a host-loop test then measures a LATER, unrelated test's ships (which
+    # sit near the origin) against a camera thousands of GU away, so
+    # _build_emitter_light_render_data / _build_dynamic_light_render_data
+    # silently return [] and the test fails on a light count it never touched.
+    # Reset to None, which the gate reads as "no camera known" -> never dim.
+    try:
+        import engine.host_loop as _hl
+        _hl._last_camera_eye = None
+    except Exception:
+        pass
     # TopWindow singleton: _ViewModeController now reads bridge/tactical
     # visibility straight off this singleton (pull model), so a test that
     # calls ForceTacticalVisible/ToggleBridgeAndTactical would otherwise

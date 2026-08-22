@@ -78,6 +78,7 @@ from engine.appc import viewscreen_static as _vss
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
 from engine.appc.sensor_detection import can_detect, clear_undetectable_player_lock
+from engine import units as _units
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.ships import ShipClass
 from engine.appc.ship_death import _out_of_action as _oa
@@ -1132,11 +1133,15 @@ def _build_dynamic_light_render_data():
             t._glow_size_a, t._glow_size_b)
         if radius <= 0:
             continue
+        pos = (t._position.x, t._position.y, t._position.z)
+        fade = _camera_distance_fade(pos)
+        if fade is None:
+            continue        # beyond the cull distance — not built at all
         out.append({
-            "position":  (t._position.x, t._position.y, t._position.z),
+            "position":  pos,
             "color":     _color_tuple(t._glow_color)[:3],
             "radius":    radius,
-            "intensity": _TORPEDO_LIGHT_INTENSITY,
+            "intensity": _TORPEDO_LIGHT_INTENSITY * fade,
         })
     return out
 
@@ -1258,6 +1263,14 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters):
         except Exception as _e:
             dev_mode.log_swallowed("emitter light ship transform", _e)
             continue
+        # Camera-distance gate, per SHIP rather than per emitter: emitters sit
+        # within a couple of GU of hull centre, so hull-centre distance decides
+        # the whole ship's emitters at once — one test instead of N, and no
+        # chance of one nacelle fading a frame before the other. The early-out
+        # is the point: a gated-out ship skips every transform below.
+        fade = _camera_distance_fade((loc.x, loc.y, loc.z))
+        if fade is None:
+            continue
         for (sub, is_impulse, phase, spec) in entries:
             try:
                 inten = light_emitters.resolve_emitter_intensity(
@@ -1266,7 +1279,7 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters):
                 if inten is None:
                     continue
                 d = light_emitters.emitter_spec_to_struct(spec)
-                d["intensity"] = inten
+                d["intensity"] = inten * fade
                 d["position"] = _world_from_body(loc, R, d["position"])
                 if "position_b" in d:
                     d["position_b"] = _world_from_body(loc, R, d["position_b"])
@@ -1382,6 +1395,77 @@ _TORPEDO_LIGHT_RADIUS_SCALE = 50.0
 # curve and the old 20.0 read WAY over the top. Dialed to 1.0 (~5% of the
 # pre-falloff 20.0) after Mark's live pass. Tune live in QuickBattle.
 _TORPEDO_LIGHT_INTENSITY = 1.0
+
+
+# --- Camera-distance gate on dynamic lights ---------------------------------
+#
+# Authored in km for legibility, stored in GU (CLAUDE.md: engine-internal
+# distance is always *_gu). Inside the fade start a light is untouched; across
+# the band its intensity ramps 1 -> 0 on a smoothstep; at or beyond the cull
+# distance it is never built at all. Both thresholds sit outside the 60 GU
+# (10.5 km) phaser envelope, so nothing dims while it could matter tactically
+# — keep them there if you re-tune.
+#
+# What this saves is Python work: a gated-out ship skips its whole per-emitter
+# transform loop, and a gated-out light never reaches native's 64-light
+# per-frame clamp. What it costs visually is close to nothing — at 13 km+ the
+# cast light contributes far less on screen than the glow billboard, which
+# this does not touch.
+DYN_LIGHT_FADE_START_GU = 13.0 / _units.GU_TO_KM   # 74.29 GU
+DYN_LIGHT_CULL_GU       = 15.0 / _units.GU_TO_KM   # 85.71 GU
+
+# Last camera eye handed to the renderer, in world game units, or None before
+# the first frame solves one. Deliberately one frame stale: the light push
+# runs in _advance_combat, which is upstream of the camera solve, and a frame
+# of latency on a 13 km threshold is imperceptible. Only the main space camera
+# writes here — see _note_camera_eye.
+_last_camera_eye = None
+
+
+def _note_camera_eye(eye) -> None:
+    """Record the camera eye for this frame's dynamic-light distance gate.
+
+    Called next to the main `r.set_camera`. NOT called for the Ship Property
+    Viewer's orbit camera: the SPV takes over the frame in hologram-only mode
+    where no space scene (and so no dynamic light) is drawn, and its camera
+    sits in a completely different framing — letting it write here would gate
+    the next real frame's lights against a camera that was never looking at
+    the scene.
+    """
+    global _last_camera_eye
+    _last_camera_eye = tuple(eye) if eye is not None else None
+
+
+def _camera_distance_fade(position):
+    """Intensity scale for a dynamic light at world `position`.
+
+    Returns 1.0 inside DYN_LIGHT_FADE_START_GU, a smoothstep ramp down to 0
+    across the band, and None at or beyond DYN_LIGHT_CULL_GU — None being the
+    caller's signal to skip building the light entirely, which is where the
+    saving actually is.
+
+    Returns 1.0 when no camera eye is known yet (first frame of a mission, or
+    headless), so the gate can only ever dim lights it has a camera to judge
+    against — never blank a frame it cannot measure.
+
+    Compares squared distances first: the sqrt runs only for the handful of
+    lights actually inside the fade band, never for the common near or far
+    cases.
+    """
+    eye = _last_camera_eye
+    if eye is None:
+        return 1.0
+    dx = position[0] - eye[0]
+    dy = position[1] - eye[1]
+    dz = position[2] - eye[2]
+    d2 = dx * dx + dy * dy + dz * dz
+    if d2 >= DYN_LIGHT_CULL_GU * DYN_LIGHT_CULL_GU:
+        return None
+    if d2 <= DYN_LIGHT_FADE_START_GU * DYN_LIGHT_FADE_START_GU:
+        return 1.0
+    t = ((_math.sqrt(d2) - DYN_LIGHT_FADE_START_GU)
+         / (DYN_LIGHT_CULL_GU - DYN_LIGHT_FADE_START_GU))
+    return 1.0 - t * t * (3.0 - 2.0 * t)   # 1 - smoothstep(t)
 
 
 def _beam_endpoint(*, target, emitter_pos, aim_unit, raw_length,
@@ -4727,6 +4811,12 @@ class HostController:
         damage_eligibility.reset()
         hit_feedback._last_carve_time.clear()
         hit_feedback._pending_carve_strength.clear()
+        # The dynamic-light distance gate's camera eye belongs to the mission
+        # that solved it. The next mission's ships spawn wherever its sets put
+        # them, so a carried-over eye can cull their lights on the first frame,
+        # before the new camera solves. None reads as "no camera known" — the
+        # gate stays inert until the render path writes a real one.
+        _note_camera_eye(None)
         reset_sdk_globals()
         # A mission swap mid-warp would otherwise leak the WarpVFX manager
         # (reset_sdk_globals zeroes the timer manager, cancelling the pending
@@ -8253,6 +8343,9 @@ def run(mission_name: Optional[str] = None,
                 r.set_camera(eye=eye, target=target, up=up_vec,
                              fov_y_rad=director.fov_y_rad,
                              near=1.0, far=5000.0)
+                # Feed the dynamic-light distance gate. Read by next frame's
+                # _advance_combat, which runs upstream of this solve.
+                _note_camera_eye(eye)
                 # Reticle is an exterior-view HUD element; in bridge view it
                 # would draw over the bridge scene. Also hidden during a
                 # cutscene started with bHideReticle (BC's clean cinematic
