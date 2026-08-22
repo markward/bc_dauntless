@@ -14,8 +14,24 @@
        (the pause menu has no buttons of its own)
    Spec: docs/superpowers/specs/2026-06-05-configuration-panel-design.md */
 
+/* Overlay root: full-viewport backdrop that centres .cp-modal and lifts it
+   above the HUD (info_box.css paints at 40, sdk_mirror.css at 40-50).
+   Hidden until setConfigurationPanel / setDeveloperOptions flips display to
+   'flex'. #quick-battle-setup and #star-map-panel mirror this rule in their
+   own sheets; tests/ui/test_pause_modal_overlays.py holds all of them to it.
+   Do NOT fold this selector list into .cp-modal below — the root is the
+   backdrop, .cp-modal is the box inside it. */
 #configuration-panel,
-#developer-options-panel,
+#developer-options-panel {
+    display: none;
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 50;
+    font-family: "Antonio", sans-serif;
+}
 
 .cp-modal {
     width: 640px;
