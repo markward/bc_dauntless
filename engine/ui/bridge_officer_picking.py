@@ -1,9 +1,10 @@
 """Click a bridge officer in the 3D view to open their crew menu.
 
 In bridge (first-person) view the five station officers — Helm, Tactical,
-Commander/XO, Science, Engineering — sit at their stations. This module lets the
-player aim at an officer and left-click to open that officer's crew menu, the
-same effect as the F1-F5 hotkeys.
+Commander/XO, Science, Engineering — sit at their stations, and a mission may
+seat a guest (BC's Picard/Data/Saalek) among them. This module lets the player
+aim at any of them and left-click to open that character's crew menu, the same
+effect as the F1-F5 hotkeys and F6.
 
 On the bridge the cursor is LOCKED for mouse-look (GLFW_CURSOR_DISABLED — see
 _apply_view_mode_side_effects / set_cursor_locked), so there is no free pointer:
@@ -14,10 +15,12 @@ point the bridge zoom aims at) is projected to framebuffer pixels with the live
 bridge camera, and the officer nearest screen centre within a pixel radius wins.
 No ray-cast, no native code.
 
-Opening reuses ``crew_menu_hotkeys.open_menu_for_label`` so behaviour is
-identical to the hotkey path. The host loop (engine/host_loop.py) owns the
+Opening reuses ``crew_menu_hotkeys.open_menu_for_character`` so behaviour is
+identical to the hotkey path — and matches BC, whose bridge-character click seam
+(``BridgeHandlers.TalkToGeneric``) likewise raises the character's OWN menu
+rather than looking one up by name. The host loop (engine/host_loop.py) owns the
 mouse-edge handling and the open/switch / click-off-to-close semantics; this
-module only answers "which officer is under the cursor".
+module only answers "which character is under the cursor".
 
 Projection math mirrors engine/ui/ship_property_viewer.py's project()/pick_pin().
 """
@@ -107,10 +110,33 @@ def _mat_mul(a, b):
 
 # --- picking ----------------------------------------------------------------
 
+def _candidates(bridge):
+    """Every bridge character the player can aim at: the five station officers,
+    plus the guest if one is aboard.
+
+    The guest comes from crew_menu_hotkeys.resolve_guest() — BC's own
+    Picard/Data/Saalek hunt, the same one F6 uses — because a guest holds no
+    station and so can never appear in the five-station table."""
+    import App
+    out = []
+    for _key, char_name in crew_menu_hotkeys._KEY_TO_CHARACTER.items():
+        officer = App.CharacterClass_GetObject(bridge, char_name)
+        if officer is not None:
+            out.append(officer)
+    guest = crew_menu_hotkeys.resolve_guest()
+    if guest is not None:
+        out.append(guest)
+    return out
+
+
 def pick(h, r, bridge_camera) -> Optional[dict]:
-    """Return ``{"label": <station menu label>}`` for the officer the player is
-    aiming at (head projects within PICK_RADIUS_FRAC·height of centre), or None.
+    """Return ``{"officer": <CharacterClass>}`` for the bridge character the
+    player is aiming at (head projects within PICK_RADIUS_FRAC·height of
+    centre), or None.
     Pure: reads camera / instance state but never consumes any input edge.
+
+    The character, not a menu label: guests have no station label, and the
+    consumers (menu open, tooltip owner) both want the character anyway.
 
     `h` is the _dauntless_host module, `r` the renderer wrapper, `bridge_camera`
     the live _BridgeCamera (compute_camera() is pure)."""
@@ -132,37 +158,30 @@ def pick(h, r, bridge_camera) -> Optional[dict]:
     # mouse-look on the bridge).
     cx, cy = fb_w * 0.5, fb_h * 0.5
 
-    best_label: Optional[str] = None
+    best_officer = None
     radius_px = PICK_RADIUS_FRAC * fb_h
     best_d2 = radius_px * radius_px
-    db = App.g_kLocalizationManager.Load("data/TGL/Bridge Menus.tgl")
-    try:
-        for key, char_name in crew_menu_hotkeys._KEY_TO_CHARACTER.items():
-            off = App.CharacterClass_GetObject(bridge, char_name)
-            if off is None:
-                continue
-            iid = getattr(off, "_render_instance", None)
-            if iid is None:
-                continue
-            if hasattr(off, "IsHidden") and off.IsHidden():
-                continue
-            head = r.get_instance_head_center(iid)
-            if not head:
-                continue
-            sx, sy, in_front = _project(vp, (head[0], head[1], head[2]), fb_w, fb_h)
-            if not in_front:
-                continue
-            dx, dy = sx - cx, sy - cy
-            d2 = dx*dx + dy*dy
-            if d2 < best_d2:
-                best_d2 = d2
-                best_label = str(db.GetString(key))
-    finally:
-        App.g_kLocalizationManager.Unload(db)
+    for off in _candidates(bridge):
+        iid = getattr(off, "_render_instance", None)
+        if iid is None:
+            continue
+        if hasattr(off, "IsHidden") and off.IsHidden():
+            continue
+        head = r.get_instance_head_center(iid)
+        if not head:
+            continue
+        sx, sy, in_front = _project(vp, (head[0], head[1], head[2]), fb_w, fb_h)
+        if not in_front:
+            continue
+        dx, dy = sx - cx, sy - cy
+        d2 = dx*dx + dy*dy
+        if d2 < best_d2:
+            best_d2 = d2
+            best_officer = off
 
-    if best_label is None:
+    if best_officer is None:
         return None
-    return {"label": best_label}
+    return {"officer": best_officer}
 
 
 # --- click handling ---------------------------------------------------------
@@ -195,7 +214,8 @@ def handle_click(h, r, bridge_camera, crew_menu_panel, pick_active: bool) -> boo
         aimed = pick(h, r, bridge_camera)
         if aimed is not None and h.mouse_button_pressed(left):
             pick_active = True
-            crew_menu_hotkeys.open_menu_for_label(crew_menu_panel, aimed["label"])
+            crew_menu_hotkeys.open_menu_for_character(
+                crew_menu_panel, aimed["officer"])
     # Swallow the release matching an intercepted press. Gated on the latch so a
     # genuine phaser press/release pair is never split.
     if pick_active and h.mouse_button_released(left):

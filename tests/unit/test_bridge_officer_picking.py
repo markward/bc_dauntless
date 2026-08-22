@@ -69,11 +69,12 @@ def _install_fake_app(monkeypatch, officers):
 
 # --- pick() -----------------------------------------------------------------
 
-def test_centred_officer_returns_its_label(monkeypatch):
-    _install_fake_app(monkeypatch, {"Helm": _FakeOfficer(iid=7)})
+def test_centred_officer_returns_that_officer(monkeypatch):
+    officers = {"Helm": _FakeOfficer(iid=7)}
+    _install_fake_app(monkeypatch, officers)
     r = _FakeRenderer({7: (0.0, 5.0, 0.0)})       # straight ahead → screen centre
     out = bop.pick(_FakeHost(), r, _FakeCamera())
-    assert out == {"label": "Helm"}
+    assert out == {"officer": officers["Helm"]}
 
 
 def test_off_centre_officer_returns_none(monkeypatch):
@@ -90,12 +91,10 @@ def test_officer_behind_camera_returns_none(monkeypatch):
 
 def test_nearest_to_centre_wins(monkeypatch):
     # Helm straight ahead (screen centre); Tactical slightly off — Helm wins.
-    _install_fake_app(monkeypatch, {
-        "Helm": _FakeOfficer(iid=1),
-        "Tactical": _FakeOfficer(iid=2),
-    })
+    officers = {"Helm": _FakeOfficer(iid=1), "Tactical": _FakeOfficer(iid=2)}
+    _install_fake_app(monkeypatch, officers)
     r = _FakeRenderer({1: (0.0, 5.0, 0.0), 2: (0.3, 5.0, 0.2)})
-    assert bop.pick(_FakeHost(), r, _FakeCamera()) == {"label": "Helm"}
+    assert bop.pick(_FakeHost(), r, _FakeCamera()) == {"officer": officers["Helm"]}
 
 
 def test_hidden_officer_is_skipped(monkeypatch):
@@ -108,6 +107,40 @@ def test_officer_without_render_instance_is_skipped(monkeypatch):
     _install_fake_app(monkeypatch, {"Helm": _FakeOfficer(iid=None)})
     r = _FakeRenderer({})
     assert bop.pick(_FakeHost(), r, _FakeCamera()) is None
+
+
+def test_guest_is_pickable(monkeypatch):
+    """A guest (BC's Picard/Data/Saalek) sits on the bridge like any officer and
+    must be aimable. They hold no station, so the five-station table can never
+    produce them — they come from the same hunt F6 uses."""
+    _install_fake_app(monkeypatch, {})            # no station officers aboard
+    guest = _FakeOfficer(iid=42)
+    monkeypatch.setattr(crew_menu_hotkeys, "resolve_guest", lambda: guest)
+    r = _FakeRenderer({42: (0.0, 5.0, 0.0)})      # straight ahead
+
+    assert bop.pick(_FakeHost(), r, _FakeCamera()) == {"officer": guest}
+
+
+def test_guest_competes_with_stations_on_distance(monkeypatch):
+    """The guest is just another candidate: the officer nearest the reticle
+    wins, whoever it is."""
+    officers = {"Helm": _FakeOfficer(iid=1)}
+    _install_fake_app(monkeypatch, officers)
+    guest = _FakeOfficer(iid=42)
+    monkeypatch.setattr(crew_menu_hotkeys, "resolve_guest", lambda: guest)
+    # Helm dead centre, guest off to the side.
+    r = _FakeRenderer({1: (0.0, 5.0, 0.0), 42: (0.3, 5.0, 0.2)})
+
+    assert bop.pick(_FakeHost(), r, _FakeCamera()) == {"officer": officers["Helm"]}
+
+
+def test_no_guest_aboard_leaves_picking_to_the_stations(monkeypatch):
+    officers = {"Helm": _FakeOfficer(iid=1)}
+    _install_fake_app(monkeypatch, officers)
+    monkeypatch.setattr(crew_menu_hotkeys, "resolve_guest", lambda: None)
+    r = _FakeRenderer({1: (0.0, 5.0, 0.0)})
+
+    assert bop.pick(_FakeHost(), r, _FakeCamera()) == {"officer": officers["Helm"]}
 
 
 def test_no_bridge_set_returns_none(monkeypatch):
@@ -210,8 +243,8 @@ def _run_frame(host, panel, flag, aimed, monkeypatch):
     """One host-loop frame: handle_click (with pick stubbed to `aimed`) then
     the _poll_mouse_buttons fire poll. Returns the updated pick-active flag."""
     monkeypatch.setattr(bop, "pick", lambda h, r, cam: aimed)
-    monkeypatch.setattr(crew_menu_hotkeys, "open_menu_for_label",
-                        lambda p, label: setattr(p, "open_label", label) or True)
+    monkeypatch.setattr(crew_menu_hotkeys, "open_menu_for_character",
+                        lambda p, ch: setattr(p, "open_label", ch) or True)
     flag = bop.handle_click(host, None, None, panel, flag)
     host.poll()
     return flag
@@ -223,7 +256,7 @@ def test_click_sequence_open_close_open_again(monkeypatch):
     host = _EdgeHost()
     panel = _OpenClosePanel()
     flag = False
-    helm = {"label": "Helm"}
+    helm = {"officer": "Helm"}
 
     # Frame 1: press while aiming Helm (menu closed) -> opens Helm, no fire.
     host.set_down(0, True)

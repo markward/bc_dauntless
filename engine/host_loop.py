@@ -8109,14 +8109,15 @@ def run(mission_name: Optional[str] = None,
                             # over the letterbox bars. Drop any owner and skip.
                             CharacterClass_SetCurrentToolTipOwner(None)
                         else:
+                            # pick() hands back the CHARACTER, and the open
+                            # menu resolves its owner off the menu itself, so
+                            # both work for a guest -- who has no station label
+                            # for resolve_character to match.
                             _hover = None
                             _aimed = bridge_officer_picking.pick(_h, r, bridge_camera)
                             if _aimed is not None:
-                                _hover = crew_menu_hotkeys.resolve_character(_aimed["label"])
-                            _menu_off = None
-                            _mlabel = crew_menu_panel.open_menu_label()
-                            if _mlabel:
-                                _menu_off = crew_menu_hotkeys.resolve_character(_mlabel)
+                                _hover = _aimed["officer"]
+                            _menu_off = crew_menu_panel.open_officer()
                             _owner = tooltip_dispatch.select_owner(hover=_hover,
                                                                    open_menu=_menu_off)
                             CharacterClass_SetCurrentToolTipOwner(_owner)
