@@ -19,7 +19,7 @@ def load_runs(path: str) -> "tuple[list, int]":
     lines that don't parse to a dict with a dict-valued 'attr_hits' are
     skipped and counted."""
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             raw = f.read().splitlines()
     except FileNotFoundError:
         return [], 0
@@ -158,7 +158,7 @@ def parse_existing_annotations(path: str) -> "tuple[dict, int]":
     human typo) is also counted as skipped and excluded from the map, rather
     than being silently accepted and misclassified as 'open' downstream."""
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             lines = f.read().splitlines()
     except FileNotFoundError:
         return {}, 0
@@ -321,7 +321,7 @@ def main(argv=None) -> int:
     meta = {"M": merged["M"], "date_range": _date_range(runs),
             "line_skipped": line_skipped, "ann_skipped": ann_skipped}
     text = render(attr_rows, bool_rows, meta, coercion_rows)
-    with open(args.out, "w") as f:
+    with open(args.out, "w", encoding="utf-8") as f:
         f.write(text)
     n_reg = sum(1 for r in attr_rows if r["status"] == "regressed")
     print("wrote %s (%d runs, %d stubs, %d regressed)"

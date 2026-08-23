@@ -25,25 +25,25 @@ def test_date_typed_into_the_roadmap_resolves_the_stub_on_regen(tmp_path):
     sidecar = tmp_path / "hits.jsonl"
     out = tmp_path / "heatmap.md"
     # a stub hit at epoch 1000 (1970) -> lands in the open roadmap
-    with open(sidecar, "w") as f:
+    with open(sidecar, "w", encoding="utf-8") as f:
         f.write(json.dumps({"t": 1000.0, "attr_hits": {"Foo\tBar": 4},
                             "bool_sites": {}}) + "\n")
     assert stub_heatmap.main(["--sidecar", str(sidecar), "--out", str(out)]) == 0
-    assert "Open: 1, resolved: 0" in out.read_text()
+    assert "Open: 1, resolved: 0" in out.read_text(encoding="utf-8")
 
     # user implements it and types a date into the roadmap row's empty
     # trailing markedResolvedOn cell
-    assert "| Foo | Bar |" in out.read_text()
+    assert "| Foo | Bar |" in out.read_text(encoding="utf-8")
     lines = []
-    for line in out.read_text().splitlines():
+    for line in out.read_text(encoding="utf-8").splitlines():
         if line.startswith("|") and "| Foo | Bar |" in line and line.rstrip().endswith("|  |"):
             line = line.rstrip()[:-3] + "2026-07-12 |"
         lines.append(line)
-    out.write_text("\n".join(lines))
+    out.write_text("\n".join(lines), encoding="utf-8")
 
     # regenerate: the typed date is picked up and the stub moves to Resolved
     assert stub_heatmap.main(["--sidecar", str(sidecar), "--out", str(out)]) == 0
-    final = out.read_text()
+    final = out.read_text(encoding="utf-8")
     assert "Open: 0, resolved: 1" in final
     assert "Regressed" not in final  # last hit (1970) predates the fix
 
@@ -69,7 +69,7 @@ def test_parse_existing_annotations_reads_owner_attr_markedresolvedon(tmp_path):
         "| 1 | Open | Thing | 5 | 1/1 | 2026-07-10 22:00 UTC |",
     ])
     path = tmp_path / "heatmap.md"
-    path.write_text(md)
+    path.write_text(md, encoding="utf-8")
     m, skipped = stub_heatmap.parse_existing_annotations(str(path))
     # dotted attr preserved exactly; roadmap table (no markedResolvedOn col) ignored
     assert m[("ShipClass", "GetWarpCore.GetMaxPower")] == "2026-07-12"
@@ -101,7 +101,7 @@ def test_render_then_parse_round_trips_annotations(tmp_path):
     meta = {"M": 1, "date_range": (1.0, 1.0), "line_skipped": 0, "ann_skipped": 0}
     text = stub_heatmap.render(rows, [], meta)
     path = tmp_path / "heatmap.md"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     m, _ = stub_heatmap.parse_existing_annotations(str(path))
     # exact key with dots on BOTH owner and attr survives the round-trip
     assert m[("A.B", "C.D")] == "2026-07-12"
@@ -146,7 +146,7 @@ def test_parse_existing_annotations_skips_unparseable_resolved_date(tmp_path):
         "",
     ])
     path = tmp_path / "heatmap.md"
-    path.write_text(md)
+    path.write_text(md, encoding="utf-8")
     m, skipped = stub_heatmap.parse_existing_annotations(str(path))
     assert ("Bad", "Row") not in m
     assert m[("Good", "Row")] == "2026-07-11"
@@ -163,12 +163,12 @@ def test_main_end_to_end_resolved_survives_sidecar_reset(tmp_path):
         "| owner | attr | markedResolvedOn | lastSeenOn |\n"
         "|---|---|---|---|\n"
         "| Foo | Bar | 2026-07-01 |  |\n"
-    )
+    , encoding="utf-8")
     # The reset sidecar has no hits for Foo.Bar at all, only an unrelated stub.
-    with open(sidecar, "w") as f:
+    with open(sidecar, "w", encoding="utf-8") as f:
         f.write(json.dumps({"t": 10.0, "attr_hits": {"Other\tThing": 1}, "bool_sites": {}}) + "\n")
     assert stub_heatmap.main(["--sidecar", str(sidecar), "--out", str(out)]) == 0
-    final = out.read_text()
+    final = out.read_text(encoding="utf-8")
     assert "| Foo | Bar | 2026-07-01 |" in final
 
 
@@ -182,11 +182,11 @@ def test_main_end_to_end_regression_across_regen(tmp_path):
         "| owner | attr | markedResolvedOn | lastSeenOn |\n"
         "|---|---|---|---|\n"
         "| Foo | Bar | 1970-01-01 |  |\n"
-    )
+    , encoding="utf-8")
     # A new run hits Foo.Bar again, well after that resolved date.
-    with open(sidecar, "w") as f:
+    with open(sidecar, "w", encoding="utf-8") as f:
         f.write(json.dumps({"t": 5_000_000_000.0, "attr_hits": {"Foo\tBar": 1}, "bool_sites": {}}) + "\n")
     assert stub_heatmap.main(["--sidecar", str(sidecar), "--out", str(out)]) == 0
-    final = out.read_text()
+    final = out.read_text(encoding="utf-8")
     # annotation preserved from the prior file + a newer hit -> flagged
     assert "Regressed" in final and "regressed: 1" in final

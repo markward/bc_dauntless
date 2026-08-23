@@ -59,7 +59,7 @@ OVERLAY_ROOTS = (
 
 
 def _stylesheets_in_load_order():
-    index = (ASSETS / "index.html").read_text()
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
     return [ASSETS / href
             for href in re.findall(r'<link rel="stylesheet" href="([^"]+)"',
                                    index)]
@@ -90,7 +90,7 @@ def _declarations_for_root(root_id):
     """
     out = {}
     for path in _stylesheets_in_load_order():
-        for selector_list, body in _rules(path.read_text()):
+        for selector_list, body in _rules(path.read_text(encoding="utf-8")):
             if ("#" + root_id) not in _selectors(selector_list):
                 continue
             for prop, value in re.findall(r"([\w-]+)\s*:\s*([^;]+)", body):
@@ -136,7 +136,7 @@ def test_no_overlay_root_shares_a_selector_list_with_the_modal_box():
     while remaining, to every grep, still styled.
     """
     for path in _stylesheets_in_load_order():
-        for selector_list, _ in _rules(path.read_text()):
+        for selector_list, _ in _rules(path.read_text(encoding="utf-8")):
             selectors = _selectors(selector_list)
             roots = [s for s in selectors
                      if s.lstrip("#") in OVERLAY_ROOTS and s.startswith("#")]
@@ -154,7 +154,7 @@ def test_the_key_capture_overlay_is_contained_by_its_panel():
     panel root stops being positioned, the capture overlay escapes to the
     initial containing block and dims the entire screen instead of the panel —
     a second, quieter casualty of the same deleted rule."""
-    css = (ASSETS / "css" / "configuration_panel.css").read_text()
+    css = (ASSETS / "css" / "configuration_panel.css").read_text(encoding="utf-8")
     block = re.search(r"\.cp-capture-modal\s*\{([^}]*)\}", css)
     assert block, "no .cp-capture-modal rule"
     assert "absolute" in block.group(1)

@@ -28,11 +28,11 @@ SUPPRESSED = ("#sdk-stylized-stack", "#character-tooltip-host")
 
 
 def _js():
-    return (ASSETS / "js" / "crew_menus.js").read_text()
+    return (ASSETS / "js" / "crew_menus.js").read_text(encoding="utf-8")
 
 
 def _css():
-    return (ASSETS / "css" / "crew_menus.css").read_text()
+    return (ASSETS / "css" / "crew_menus.css").read_text(encoding="utf-8")
 
 
 def test_renderer_toggles_the_body_class_from_the_open_menu_state():
