@@ -12,12 +12,12 @@ import importlib
 import importlib.abc
 import importlib.machinery
 import re
-import signal
 import sys
 import types
 import warnings
 from collections import Counter
 from pathlib import Path
+import tools.timeout_guard as timeout_guard
 
 _MISSION_TIMEOUT = 15  # seconds per mission before declaring a hang
 
@@ -456,6 +456,28 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
 _BASELINE_MODULES: set[str] = set()
 
 
+def purge_run_modules():
+    """Drop every module imported during a harness run, parent attributes included.
+
+    setup_sdk() keeps the SDK package objects ("Bridge", "Actions", ...) in the
+    baseline, so they survive teardown -- but _SDKLoader also sets each freshly
+    imported submodule as an attribute of its parent package. Deleting only the
+    sys.modules entry left the parent still holding the module object, so the
+    next run's `import X` inside that package resolved through the stale
+    attribute to a module sys.modules no longer knew about. The SDK's
+    reload(X) then raised "module Bridge.X not in sys.modules" and the mission
+    failed to initialize -- second and subsequent runs only.
+    """
+    for key in [k for k in sys.modules if k not in _BASELINE_MODULES]:
+        del sys.modules[key]
+        parent, _, attr = key.rpartition(".")
+        if parent and parent in sys.modules:
+            try:
+                delattr(sys.modules[parent], attr)
+            except AttributeError:
+                pass  # never set, or already cleared
+
+
 def setup_sdk() -> None:
     """Install SDK finder and stub modules. Call once before run_mission()."""
     global _BASELINE_MODULES
@@ -620,23 +642,17 @@ def run_mission(module_name: str) -> tuple[str, Exception | None]:
     _waypoint_registry.clear()
     App._next_event_type_id = 200  # reset dynamic event IDs
 
-    def _alarm_handler(signum, frame):
-        raise TimeoutError(f"timed out after {_MISSION_TIMEOUT}s")
-
-    old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
-    signal.alarm(_MISSION_TIMEOUT)
-    try:
-        mod = importlib.import_module(module_name)
-        mod.Initialize(mission)
-        return ("pass", None)
-    except Exception as exc:
-        return ("fail", exc)
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
-        _set_current_game(None)
-        for key in [k for k in sys.modules if k not in _BASELINE_MODULES]:
-            del sys.modules[key]
+    with timeout_guard.raise_after(
+            _MISSION_TIMEOUT, f"timed out after {_MISSION_TIMEOUT}s"):
+        try:
+            mod = importlib.import_module(module_name)
+            mod.Initialize(mission)
+            return ("pass", None)
+        except Exception as exc:
+            return ("fail", exc)
+        finally:
+            _set_current_game(None)
+            purge_run_modules()
 
 
 def _error_key(exc: Exception) -> str:

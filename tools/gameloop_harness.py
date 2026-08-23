@@ -11,7 +11,6 @@ Usage:
 """
 import argparse
 import importlib
-import signal
 import sys
 from pathlib import Path
 
@@ -26,6 +25,7 @@ if _BUILD_PYTHON.is_dir() and str(_BUILD_PYTHON) not in sys.path:
 
 import tools.mission_harness as _mh
 import App as _App  # imported at module level so App is in _BASELINE_MODULES and persists across runs
+import tools.timeout_guard as timeout_guard
 
 _LOOP_TIMEOUT = 30  # seconds — longer than initialize-only (15 s)
 _DEFAULT_TICKS = 36000  # ~10 minutes at 60 Hz
@@ -87,9 +87,6 @@ def run_mission_with_loop(
 
     ticks_done = 0
 
-    def _alarm_handler(signum, frame):
-        raise TimeoutError(f"timed out after {_LOOP_TIMEOUT}s")
-
     def _capture_state():
         if not return_state:
             return None
@@ -100,39 +97,36 @@ def run_mission_with_loop(
             "set_manager": App.g_kSetManager,
         }
 
-    old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
-    signal.alarm(_LOOP_TIMEOUT)
-    try:
+    with timeout_guard.raise_after(
+            _LOOP_TIMEOUT, f"timed out after {_LOOP_TIMEOUT}s"):
         try:
-            mod = importlib.import_module(module_name)
-            mod.Initialize(mission)
+            try:
+                mod = importlib.import_module(module_name)
+                mod.Initialize(mission)
+            except Exception as exc:
+                return _return("init_fail", exc, 0, None, return_state)
+
+            # Fire ET_MISSION_START — episode is destination, broadcast handlers also fire
+            start_evt = TGEvent()
+            start_evt.SetEventType(App.ET_MISSION_START)
+            start_evt.SetDestination(episode)
+            App.g_kEventManager.AddEvent(start_evt)
+
+            from engine.core.loop import GameLoop
+            loop = GameLoop()
+            for i in range(n_ticks):
+                loop.tick()
+                ticks_done = i + 1
+
+            return _return("pass", None, ticks_done, _capture_state(), return_state)
         except Exception as exc:
-            return _return("init_fail", exc, 0, None, return_state)
-
-        # Fire ET_MISSION_START — episode is destination, broadcast handlers also fire
-        start_evt = TGEvent()
-        start_evt.SetEventType(App.ET_MISSION_START)
-        start_evt.SetDestination(episode)
-        App.g_kEventManager.AddEvent(start_evt)
-
-        from engine.core.loop import GameLoop
-        loop = GameLoop()
-        for i in range(n_ticks):
-            loop.tick()
-            ticks_done = i + 1
-
-        return _return("pass", None, ticks_done, _capture_state(), return_state)
-    except Exception as exc:
-        return _return("loop_fail", exc, ticks_done, _capture_state(), return_state)
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
-        if profile:
-            App._stub_tracker.reset_mission()
-            App._emission_recorder.reset_mission()
-        _set_current_game(None)
-        for key in [k for k in sys.modules if k not in _mh._BASELINE_MODULES]:
-            del sys.modules[key]
+            return _return("loop_fail", exc, ticks_done, _capture_state(), return_state)
+        finally:
+            if profile:
+                App._stub_tracker.reset_mission()
+                App._emission_recorder.reset_mission()
+            _set_current_game(None)
+            _mh.purge_run_modules()
 
 
 def _loop_error_key(exc: Exception) -> str:
