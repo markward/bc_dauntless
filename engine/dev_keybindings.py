@@ -188,3 +188,31 @@ def register_for_frame(_h, session, player) -> None:
         _h.keys.KEY_F11, _toggle_nonfinite_probe,
         "Toggle NaN/Inf HDR probe + frame dumps (dev) — F11",
     )
+
+    # ── Backtick: frame profiler ─────────────────────────────────────────
+    # Toggles BOTH halves at once (the Python phase timeline and the C++
+    # per-pass render timer) — a report pairing live numbers from one half
+    # with stale or absent numbers from the other is worse than no report.
+    # frame_profiler.set_enabled drives the native side through host_io.
+    #
+    # Backtick rather than an F-key because F1-F12 are all taken (F1-F5 crew
+    # menus, F6 guest menus, F7/F8/F10/F11 dev, F9 SDK, F12 DevTools). It is
+    # in the user-bindable key universe, but dev keybindings dispatch ahead of
+    # gameplay and only under --developer, exactly as the existing [ and ]
+    # dev bindings already do.
+    def _toggle_frame_profiler() -> None:
+        from engine.core import frame_profiler
+        on = not frame_profiler.is_enabled()
+        frame_profiler.set_enabled(on)
+        if on:
+            print("[profiler] ON — report every {0} frames. NOTE: vsync is on "
+                  "(glfwSwapInterval(1)), so `present` is the wait for the next "
+                  "refresh and the frame total is pinned to your refresh rate."
+                  .format(frame_profiler.REPORT_EVERY))
+        else:
+            print("[profiler] OFF")
+
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_GRAVE_ACCENT, _toggle_frame_profiler,
+        "Toggle per-pass frame profiler (dev) — `",
+    )

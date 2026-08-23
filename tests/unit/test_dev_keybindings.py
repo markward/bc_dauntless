@@ -31,6 +31,7 @@ class _Keys:
     KEY_F11 = 300
     KEY_LEFT_BRACKET = 91
     KEY_RIGHT_BRACKET = 93
+    KEY_GRAVE_ACCENT = 96
 
 
 class _FakeHost:

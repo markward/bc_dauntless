@@ -57,6 +57,8 @@ _REQUIRED_BINDINGS = frozenset({
 _OPTIONAL_BINDINGS = frozenset({
     "starmap_set_enabled", "starmap_set_viewport",
     "starmap_set_camera", "starmap_set_scene",
+    "profiler_set_enabled", "profiler_enabled",
+    "profiler_scopes", "profiler_frame",
 })
 
 
@@ -359,3 +361,51 @@ def starmap_set_scene(discs, lines, points, brackets, starclouds) -> None:
     fn = getattr(_h, "starmap_set_scene", None)
     if fn is not None:
         fn(discs, lines, points, brackets, starclouds)
+
+
+# ── Frame profiler ───────────────────────────────────────────────────────────
+# Per-pass render timings from renderer::FrameTimer. Optional bindings: a stale
+# .so must leave the profiler reporting "render half unavailable" rather than
+# crashing the dev keybinding that toggles it.
+
+def profiler_set_enabled(enabled: bool) -> None:
+    """Enable/disable per-pass render timing. Off by default.
+
+    Toggling either way clears the accumulated averages on the C++ side, so a
+    session never blends samples taken before and after a scene change.
+    """
+    fn = getattr(_h, "profiler_set_enabled", None)
+    if fn is not None:
+        fn(bool(enabled))
+
+
+def profiler_enabled() -> bool:
+    """True when the render half is recording. False when the binding is absent."""
+    fn = getattr(_h, "profiler_enabled", None)
+    return bool(fn()) if fn is not None else False
+
+
+def profiler_scopes() -> List[dict]:
+    """Per-pass render timings: [{name, cpu_ms, gpu_ms, calls, depth}, ...].
+
+    In pass order. `cpu_ms`/`gpu_ms` are EMA-smoothed; `calls` is the raw count
+    from the last resolved frame, so a pass that ran twice in one frame (the
+    exterior view AND the bridge viewscreen RTT both call render_space) reads
+    as calls=2 rather than being averaged into something that matches neither.
+    Empty when the binding is absent or nothing has resolved yet.
+    """
+    fn = getattr(_h, "profiler_scopes", None)
+    return list(fn()) if fn is not None else []
+
+
+def profiler_frame() -> dict:
+    """Whole-frame render totals: {cpu_ms, gpu_ms, frames, enabled}.
+
+    `gpu_ms` is measured first-timestamp-to-last, NOT as a sum of the scopes:
+    scopes nest, so summing them would double-count. Returns zeros with
+    enabled=False when the binding is absent.
+    """
+    fn = getattr(_h, "profiler_frame", None)
+    if fn is None:
+        return {"cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False}
+    return dict(fn())

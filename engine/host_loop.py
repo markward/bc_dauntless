@@ -22,6 +22,7 @@ from engine.appc.ship_iter import (
 )
 import engine.dev_keybindings as dev_keybindings
 import engine.dev_mode as dev_mode
+from engine.core import frame_profiler
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
@@ -7272,6 +7273,11 @@ def run(mission_name: Optional[str] = None,
                            quick_battle_setup_panel]
 
         while not r.should_close():
+            # Frame profiler: phase timeline for the Python half of the frame.
+            # No-op (one global read + branch) unless a developer enabled it
+            # with the ` key. See engine/core/frame_profiler.py.
+            frame_profiler.begin_frame()
+            frame_profiler.mark("cef_resize")
             # --- Track window resizes: re-lay-out the CEF overlay at the new
             # size so it reflows instead of being stretched. Guarded so
             # WasResized only fires when the logical size or DPR actually
@@ -7291,6 +7297,7 @@ def run(mission_name: Optional[str] = None,
                 except Exception as _e:
                     dev_mode.log_swallowed("CEF window-resize forward", _e)
 
+            frame_profiler.mark("input")
             # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
             # _apply_view_mode_side_effects mirrors the SPACE flag into
             # renderer state (bridge pass enable + cursor lock) and is
@@ -7581,6 +7588,7 @@ def run(mission_name: Optional[str] = None,
                         if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
 
+            frame_profiler.mark("sim")
             # --- Sim advance: fixed-timestep accumulator ---
             # frame_dt is the real wall-clock since the previous frame.
             # While frozen we force it to 0 so the accumulator cannot
@@ -8045,6 +8053,7 @@ def run(mission_name: Optional[str] = None,
                         player_control=player_control,
                         player_interp_pose=_player_interp_pose)
 
+            frame_profiler.mark("render_prep")
             # --- Render (always runs, including while paused) ---
             # Camera: orbit + zoom around the player ship (or origin fallback).
             # In-space cutscene camera on the EXPLICITLY-rendered set: when a
@@ -8233,6 +8242,7 @@ def run(mission_name: Optional[str] = None,
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
 
+            frame_profiler.mark("spv")
             # --- Ship Property Viewer override (dev-only) ---
             # When the viewer is open the world is already frozen (the
             # pause menu zeroes frame_dt → no sim ticks), so we just
@@ -8371,6 +8381,7 @@ def run(mission_name: Optional[str] = None,
                     r.clear_reticle_text()
             _spv_was_open = _spv_open
 
+            frame_profiler.mark("starmap")
             # --- Star map (Helm -> Set Course) ---
             # Runs every frame: the pass is disabled unless the map is open,
             # so a closed map costs one boolean and leaves no scissor rect
@@ -8616,7 +8627,14 @@ def run(mission_name: Optional[str] = None,
                 print(f"[host_loop] tick 0 lens flares: "
                       f"{len(lens_flares)} flare(s)", flush=True)
 
+            frame_profiler.mark("r.frame")
             r.frame()
+            # Close the frame timeline. Deliberately AFTER r.frame(), so the
+            # "r.frame" phase carries the whole render call and the loop total
+            # is the real wall-clock cost of one iteration.
+            frame_profiler.end_frame()
+            if frame_profiler.should_report():
+                frame_profiler.print_report()
             ticks += 1
             if max_ticks is not None and ticks >= max_ticks:
                 break
