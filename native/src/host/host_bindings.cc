@@ -25,6 +25,7 @@
 #include <renderer/animation_update.h>
 #include <renderer/channel_binder.h>
 #include <renderer/frame.h>
+#include <renderer/frame_timer.h>
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
 #include <renderer/dust_pass.h>
@@ -685,6 +686,14 @@ void frame() {
     if (!g_window || !g_pipeline || !g_submitter) {
         throw std::runtime_error("_dauntless_host: frame called before init");
     }
+    // Whole-frame scope. Everything below nests inside it, so the report's
+    // top row is the real per-frame cost and the children account for it.
+    // The RAII object outlives end_frame() below (both are at function scope);
+    // that is fine and intended — end_frame() force-closes any scope still
+    // open, and the trailing pop() on an already-ended frame is ignored.
+    renderer::frame_timer().begin_frame();
+    DAUNTLESS_FRAME_SCOPE("frame");
+
     int fw = 0, fh = 0;
     g_window->framebuffer_size(&fw, &fh);
 
@@ -700,12 +709,15 @@ void frame() {
     const float  dt  = static_cast<float>(now - g_prev_frame_time_seconds);
     g_prev_frame_time_seconds = now;
 
-    g_world.propagate();
-    // SP2: rebuild each animated instance's bone palette for this frame BEFORE
-    // anything consumes it (the space skinned draw and the bridge pass). Shares
-    // the `now` wall clock with draw_model / flip controllers.
-    renderer::update_animations(g_world, lookup, now);
-    update_bridge_node_anims(now);
+    {
+        DAUNTLESS_FRAME_SCOPE("anim");
+        g_world.propagate();
+        // SP2: rebuild each animated instance's bone palette for this frame BEFORE
+        // anything consumes it (the space skinned draw and the bridge pass). Shares
+        // the `now` wall clock with draw_model / flip controllers.
+        renderer::update_animations(g_world, lookup, now);
+        update_bridge_node_anims(now);
+    }
 
     const bool bridge_active = !viewer_mode && g_bridge_pass_enabled && g_bridge_pass;
     const bool viewscreen_on = bridge_active && g_viewscreen_enabled;
@@ -725,6 +737,7 @@ void frame() {
     bool sky_use_cubemap = false;
     if (sky_bakeable && g_backdrop_pass) {
         if (g_sky_dirty || !g_backdrop_pass->has_cubemap()) {
+            DAUNTLESS_FRAME_SCOPE("sky.bake");
             g_backdrop_pass->bake(g_backdrops, *g_pipeline,
                                   static_cast<float>(now));
             g_sky_dirty = false;
@@ -741,29 +754,46 @@ void frame() {
     // bridge viewscreen matches the exterior view.
     auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen,
                             renderer::HdrTarget& target, int vw, int vh) {
-        if (sky_use_cubemap)
-            g_backdrop_pass->render_cubemap(cam, *g_pipeline);
-        else
-            g_backdrop_pass->render(g_backdrops, cam, *g_pipeline,
-                                    dauntless_procedural_sky::enabled(),
-                                    static_cast<float>(now));
-        g_sun_pass->render(g_suns, cam, *g_pipeline, now);
+        {
+            DAUNTLESS_FRAME_SCOPE("space.backdrop");
+            if (sky_use_cubemap)
+                g_backdrop_pass->render_cubemap(cam, *g_pipeline);
+            else
+                g_backdrop_pass->render(g_backdrops, cam, *g_pipeline,
+                                        dauntless_procedural_sky::enabled(),
+                                        static_cast<float>(now));
+        }
+        {
+            DAUNTLESS_FRAME_SCOPE("space.suns");
+            g_sun_pass->render(g_suns, cam, *g_pipeline, now);
+        }
         // Filmic ambient dim: -20% when the toggle is on, 1.0 when off. The
         // viewscreen now matches the exterior view (no separate dim rule).
         const float ambient_scale = dauntless_filmic::ambient_scale();
-        g_submitter->submit_opaque_in_pass(
-            g_world, cam, *g_pipeline, lookup, g_lighting,
-            scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
-            ambient_scale, &g_dynamic_lights);
+        {
+            // The hull draw. No frustum or distance cull runs ahead of this —
+            // every visible Space instance is submitted — so this scope is the
+            // one to watch as ship counts grow.
+            DAUNTLESS_FRAME_SCOPE("space.opaque");
+            g_submitter->submit_opaque_in_pass(
+                g_world, cam, *g_pipeline, lookup, g_lighting,
+                scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
+                ambient_scale, &g_dynamic_lights);
+        }
         // Breach scoop pass: for each active carve sphere, draws the front-
         // face-culled sphere inner wall masked by the original hull fill
         // (triplanar Damage.tga). Runs right after the opaque hull
         // (depth-test/write on) so the scoop shows only through clip holes.
         // Gated on dauntless_hull_damage::enabled() inside the pass (no-op when off).
-        if (g_breach_pass && g_carve_cache)
+        if (g_breach_pass && g_carve_cache) {
+            DAUNTLESS_FRAME_SCOPE("space.breach");
             g_breach_pass->render(g_world, cam, *g_pipeline, lookup,
                                   *g_carve_cache, g_decal_game_time);
-        if (g_shield_pass) g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
+        }
+        if (g_shield_pass) {
+            DAUNTLESS_FRAME_SCOPE("space.shield");
+            g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
+        }
         // Dust is normally skipped on the viewscreen RTT (a camera-anchored
         // cockpit smear), but the WARP STREAK lives in this pass — so during
         // warp (streak > 0) we DO render it onto the viewscreen so the bridge
@@ -774,11 +804,14 @@ void frame() {
         // once per frame either way, and the viewscreen reuses g_camera's eye.
         const bool warp_streaking =
             dauntless_warp_vfx::streak_intensity() > 0.0f;
-        if (g_dust_pass && (!for_viewscreen || warp_streaking))
+        if (g_dust_pass && (!for_viewscreen || warp_streaking)) {
+            DAUNTLESS_FRAME_SCOPE("space.dust");
             g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets,
                                 dauntless_warp_vfx::streak_intensity(),
                                 dauntless_warp_vfx::travel_dir());
+        }
         if (!g_nebulae.empty()) {
+            DAUNTLESS_FRAME_SCOPE("space.nebula");
             if (dauntless_volumetric_nebulae::enabled() && g_nebula_volumetric_pass) {
                 // VOLUMETRIC (Modern VFX): raymarch the fbm field, blended
                 // into the HDR target, occluded by the scene depth texture.
@@ -802,12 +835,17 @@ void frame() {
                 && g_nebula_godray_pass && !g_nebula_godrays.empty())
             g_nebula_godray_pass->render(cam, *g_pipeline, g_nebula_godrays,
                                          target.color_texture());
-        if (g_lens_flare_pass)
+        if (g_lens_flare_pass) {
+            DAUNTLESS_FRAME_SCOPE("space.lens_flare");
             g_lens_flare_pass->render(g_lens_flares, cam, *g_pipeline, vw, vh, now);
-        if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
-        if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
-        if (g_phaser_pass)  g_phaser_pass ->render(g_tractor_beams, cam, *g_pipeline);
-        if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
+        }
+        {
+            DAUNTLESS_FRAME_SCOPE("space.weapons");
+            if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
+            if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
+            if (g_phaser_pass)  g_phaser_pass ->render(g_tractor_beams, cam, *g_pipeline);
+            if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
+        }
         if (dauntless_nebula_lightning::enabled()
                 && g_hull_discharge_pass && !g_hull_discharges.empty())
             g_hull_discharge_pass->render(cam, *g_pipeline, g_hull_discharges);
@@ -817,6 +855,7 @@ void frame() {
         // and append to a combined emitter list for the particle pass.
         // Never mutate g_particle_emitters in place (Python-owned).
         if (g_particle_pass) {
+            DAUNTLESS_FRAME_SCOPE("space.particles");
             std::vector<renderer::ParticleEmitterDescriptor> all_emitters = g_particle_emitters;
             // Venting jets are hull-breach VFX; skip descriptor build entirely
             // when the hull-breach toggle is off (Python-owned g_particle_emitters
@@ -841,9 +880,11 @@ void frame() {
         // Cloak refraction: bend + chromatically disperse the scene behind each
         // cloaking hull. Runs last (the target holds the fully lit scene and is
         // still bound). Now shared by both the main view and the viewscreen RTT.
-        if (g_cloak_pass && !g_cloak_ships.empty())
+        if (g_cloak_pass && !g_cloak_ships.empty()) {
+            DAUNTLESS_FRAME_SCOPE("space.cloak");
             g_cloak_pass->render(g_cloak_ships, g_world, cam, *g_pipeline, lookup,
                                  static_cast<float>(now), g_lighting, ambient_scale);
+        }
     };
 
     // ── Sun shadow map (depth-only pre-pass) ───────────────────────────────
@@ -885,6 +926,7 @@ void frame() {
             renderer::ShadowLight sl = renderer::compute_light_matrix(
                 glm::vec3(player->world[3]), player_radius_gu, light_dir, fp);
 
+            DAUNTLESS_FRAME_SCOPE("shadow");
             GLint prev_fbo = 0;
             glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
             g_shadow_target->bind();   // sets the 2048² viewport
@@ -905,6 +947,10 @@ void frame() {
     // mode — see host_loop._compute_camera) renders into an offscreen HDR
     // target, which the bridge pass samples onto the viewscreen instance.
     if (viewscreen_on) {
+        // The bridge viewscreen re-renders the whole space scene into an
+        // offscreen target. Its children appear in the report with calls=2
+        // whenever the exterior view is also drawing them.
+        DAUNTLESS_FRAME_SCOPE("viewscreen.rtt");
         g_viewscreen_hdr->resize(kViewscreenRttW, kViewscreenRttH);
         g_viewscreen_hdr->bind();
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -957,10 +1003,12 @@ void frame() {
     // bridge pass fills the screen either way). This also retires the old
     // "wasted space render in bridge mode".
     if (!viewer_mode && !bridge_active) {
+        DAUNTLESS_FRAME_SCOPE("space");
         render_space(g_camera, /*for_viewscreen=*/false, *g_hdr_target, fw, fh);
     }
 
     if (g_hologram_ship.active) {
+        DAUNTLESS_FRAME_SCOPE("hologram");
         if (g_spv_hull_mode && g_submitter) {
             // Hull-texture mode: draw just the inspected ship through the full
             // opaque path (real textures + system lighting) on the isolated
@@ -1016,6 +1064,7 @@ void frame() {
     // above); the forward space view instead renders into the viewscreen
     // RTT and the bridge pass samples it onto the viewscreen instance.
     if (bridge_active) {
+        DAUNTLESS_FRAME_SCOPE("bridge");
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
@@ -1039,6 +1088,7 @@ void frame() {
     // produce are exactly what we fixed. Watching the HDR target keeps the
     // SOURCE observable after its symptom is gone. See nonfinite_probe.h.
     if (g_nfprobe_enabled && g_nonfinite_probe) {
+        DAUNTLESS_FRAME_SCOPE("nfprobe");
         const auto& probe = g_nonfinite_probe->run(g_hdr_target->color_texture(),
                                                     fw, fh);
         ++g_nfprobe_frames;
@@ -1086,6 +1136,7 @@ void frame() {
     // off — the resolve's OFF branch never samples u_bloom.
     std::uint32_t bloom_tex = g_hdr_target->color_texture();
     if (dauntless_hdr::enabled()) {
+        DAUNTLESS_FRAME_SCOPE("bloom");
         bloom_tex = g_bloom_pass->render(g_hdr_target->color_texture(), fw, fh);
     }
 
@@ -1130,9 +1181,13 @@ void frame() {
     // doesn't white out. Exterior view keeps the full-screen flash.
     g_resolve_pass->set_warp_flash(
         bridge_active ? 0.0f : dauntless_warp_vfx::flash_intensity());
-    g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex, lens_flare_tex);
+    {
+        DAUNTLESS_FRAME_SCOPE("resolve");
+        g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex, lens_flare_tex);
+    }
 
     if (any_post) {
+        DAUNTLESS_FRAME_SCOPE("post");
         g_ldr_target2->resize(fw, fh);
 
         // Active optional passes as uniform (src_tex, dst_fbo) callables.
@@ -1200,7 +1255,10 @@ void frame() {
     // about bridge-vs-exterior view (BC letterboxes bridge cutscenes too,
     // and that must keep working) -- viewer_mode isn't a view, it's a
     // separate full-frame override that pre-empts the space scene entirely.
-    if (!viewer_mode) renderer::letterbox::draw(fw, fh);
+    if (!viewer_mode) {
+        DAUNTLESS_FRAME_SCOPE("letterbox");
+        renderer::letterbox::draw(fw, fh);
+    }
 
     // ── Helm -> Set Course star map ──────────────────────────────────────
     // Slot matters: AFTER the post chain has resolved into FBO 0 (so the map
@@ -1209,6 +1267,7 @@ void frame() {
     // into a scissored sub-rect, leaving the live scene visible around the
     // modal, and saves/restores viewport + scissor itself.
     if (g_starmap_pass && g_starmap_scene.enabled) {
+        DAUNTLESS_FRAME_SCOPE("starmap");
         // Bind FBO 0 explicitly, as letterbox::draw does for itself: the post
         // chain does land here, but viewer_mode skips the letterbox draw, so
         // this slot must not inherit its framebuffer from a neighbour.
@@ -1247,15 +1306,27 @@ void frame() {
     // first). Polling GLFW first guarantees the GL window's window owner
     // gets first crack at the OS event queue; CEF then drains whatever
     // it needs for its own internal work afterward.
-    g_window->poll_events();
+    {
+        DAUNTLESS_FRAME_SCOPE("poll_events");
+        g_window->poll_events();
+    }
 
 #ifdef DAUNTLESS_ENABLE_CEF
     // Pump CEF's message loop (may deliver OnPaint synchronously into
     // g_client), then composite the latest bitmap over the 3D scene with
     // premultiplied-alpha blend. Runs AFTER poll_events to avoid stealing
     // keyboard events from GLFW (see comment above poll_events).
-    dauntless::ui_cef::pump();
-    dauntless::ui_cef::composite();
+    {
+        DAUNTLESS_FRAME_SCOPE("cef.pump");
+        dauntless::ui_cef::pump();
+    }
+    {
+        // The composite uploads the ENTIRE CEF surface every frame — no
+        // dirty-rect, no PBO — so this scope carries that cost. At 2560x1440
+        // BGRA that is ~14.7 MB of synchronous glTexSubImage2D per frame.
+        DAUNTLESS_FRAME_SCOPE("cef.composite");
+        dauntless::ui_cef::composite();
+    }
 #endif
 
     // Serviced here, not at probe time: the artefact only exists once the
@@ -1280,7 +1351,15 @@ void frame() {
         }
     }
 
-    g_window->swap_buffers();
+    {
+        // Under vsync (glfwSwapInterval(1)) this scope IS the wait for the
+        // next refresh. A large `present` with small siblings means the frame
+        // finished early and blocked — not that presenting is slow.
+        DAUNTLESS_FRAME_SCOPE("present");
+        g_window->swap_buffers();
+    }
+
+    renderer::frame_timer().end_frame();
 }
 
 }  // namespace
@@ -3299,6 +3378,53 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_shadows::set_enabled(enabled); },
           py::arg("enabled"),
           "Toggle sun shadow maps. Default: on.");
+
+    // ── Frame profiler ────────────────────────────────────────────────────
+    // Per-pass CPU + GPU timings for the render half of the frame. Off by
+    // default; enabling allocates GL timer queries lazily on the next frame.
+    m.def("profiler_set_enabled",
+          [](bool enabled) { renderer::frame_timer().set_enabled(enabled); },
+          py::arg("enabled"),
+          "Enable/disable per-pass frame timing. Off by default. Toggling "
+          "either way clears the accumulated averages.");
+    m.def("profiler_enabled",
+          []() { return renderer::frame_timer().enabled(); },
+          "True when per-pass frame timing is recording.");
+    m.def("profiler_reset",
+          []() { renderer::frame_timer().reset(); },
+          "Drop all accumulated averages and the scope table.");
+    m.def("profiler_scopes",
+          []() {
+              // One list of dicts per resolved frame, in pass order. Values are
+              // EMA-smoothed milliseconds; `calls` is the raw count from the
+              // last resolved frame, so a pass that ran twice (exterior +
+              // viewscreen RTT) is visible as such rather than averaged away.
+              py::list out;
+              for (const auto& r : renderer::frame_timer().results()) {
+                  py::dict d;
+                  d["name"]   = r.name;
+                  d["cpu_ms"] = r.cpu_ms;
+                  d["gpu_ms"] = r.gpu_ms;
+                  d["calls"]  = r.calls;
+                  d["depth"]  = r.depth;
+                  out.append(std::move(d));
+              }
+              return out;
+          },
+          "Per-pass render timings from the last resolved frame.");
+    m.def("profiler_frame",
+          []() {
+              py::dict d;
+              const auto& t = renderer::frame_timer();
+              d["cpu_ms"] = t.frame_cpu_ms();
+              // Whole-frame GPU is first-timestamp-to-last, not the sum of the
+              // scopes: scopes nest, so a sum would double-count.
+              d["gpu_ms"] = t.frame_gpu_ms();
+              d["frames"] = t.frames_resolved();
+              d["enabled"] = t.enabled();
+              return d;
+          },
+          "Whole-frame CPU/GPU totals and the number of frames resolved.");
     m.def("decals_set_enabled",
           [](bool enabled) { dauntless_decals::set_enabled(enabled); },
           py::arg("enabled"),
@@ -3883,6 +4009,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_F12")          = GLFW_KEY_F12;
     keys.attr("KEY_LEFT_BRACKET")  = GLFW_KEY_LEFT_BRACKET;
     keys.attr("KEY_RIGHT_BRACKET") = GLFW_KEY_RIGHT_BRACKET;
+    keys.attr("KEY_GRAVE_ACCENT")  = GLFW_KEY_GRAVE_ACCENT;
     keys.attr("KEY_LEFT_SUPER")   = GLFW_KEY_LEFT_SUPER;
     keys.attr("KEY_LEFT_CONTROL") = GLFW_KEY_LEFT_CONTROL;
     keys.attr("KEY_SPACE") = GLFW_KEY_SPACE;
