@@ -19,9 +19,17 @@ inline constexpr char kBackslash = 0x5C;
 /// than an error naming the path.
 inline bool is_absolute_asset_path(const std::string& path) {
     if (path.empty()) return false;
-    if (path[0] == '/' || path[0] == kBackslash) return true;
-    return path.size() >= 3 && path[1] == ':'
+    if (path[0] == '/') return true;
+#ifdef _WIN32
+    // Windows-only, deliberately: on POSIX a backslash is an ordinary filename
+    // character and "C:" is a legal relative name, so applying these rules
+    // everywhere would reclassify legitimate relative paths as absolute.
+    if (path[0] == kBackslash) return true;               // root or UNC share
+    return path.size() >= 3 && path[1] == ':'             // drive-qualified
            && (path[2] == '/' || path[2] == kBackslash);
+#else
+    return false;
+#endif
 }
 
 /// Resolve an SDK/BC asset path (relative to the game install root, e.g.
