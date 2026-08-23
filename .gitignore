@@ -51,6 +51,7 @@ env/
 # Distribution / packaging
 dist/
 build/
+# Alternate build trees (e.g. build-cef/ for a CEF-enabled configure).
 build-*/
 *.egg-info/
 *.egg

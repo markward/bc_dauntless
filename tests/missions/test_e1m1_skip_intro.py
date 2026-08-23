@@ -11,6 +11,7 @@ import App
 from engine import dev_mode, dev_tutorial_flag, host_io, host_loop
 from engine.appc.input import WC_S, WC_ESCAPE
 from engine.input_map import InputMap
+from tests.helpers.bc_assets import require_game_asset
 
 
 @pytest.fixture
@@ -56,6 +57,7 @@ def _unregister(e1m1):
 
 
 def test_tgl_strings_are_the_ones_the_feature_depends_on():
+    require_game_asset("data/TGL/Maelstrom/Episode 1/E1M1.TGL")
     db = App.g_kLocalizationManager.Load(
         "data/TGL/Maelstrom/Episode 1/E1M1.TGL")
     assert str(db.GetString("SkipKey")) == "s"
@@ -64,6 +66,7 @@ def test_tgl_strings_are_the_ones_the_feature_depends_on():
 
 
 def test_pressing_s_reaches_the_sdk_skip_branch(skip_module):
+    require_game_asset("data/TGL/Maelstrom/Episode 1/E1M1.TGL")
     e1m1, calls = skip_module
     import KeyConfig
     KeyConfig.MapScancodes()
@@ -92,6 +95,7 @@ def test_skip_stops_inflight_intro_dialogue_from_restarting(skip_module):
     was already playing when 's' was pressed finishes on its own, and that
     completion must NOT resurrect the chain by starting the next line.
     """
+    require_game_asset("data/TGL/Maelstrom/Episode 1/E1M1.TGL")
     e1m1, calls = skip_module
     import KeyConfig
     from engine.appc import crew_speech
@@ -159,6 +163,7 @@ def test_pressing_s_on_the_host_reaches_the_sdk_skip_branch(skip_module,
     Nothing forwarded 's' from the host into g_kInputManager, so the prompt
     was dead in-game while the unit test passed.
     """
+    require_game_asset("data/TGL/Maelstrom/Episode 1/E1M1.TGL")
     e1m1, calls = skip_module
     import KeyConfig
     KeyConfig.MapScancodes()

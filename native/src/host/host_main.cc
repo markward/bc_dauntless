@@ -28,6 +28,25 @@ std::filesystem::path discover_project_root(const char* argv0) {
     return bin_path.parent_path().parent_path();
 }
 
+// PYTHONPATH is a PATH-style list, and its separator is platform-specific:
+// ';' on Windows, ':' everywhere else. Using ':' unconditionally turned
+// "C:/proj;C:/venv/..." into one unparseable entry starting with a drive
+// letter, so nothing after the first path was importable.
+#ifdef _WIN32
+constexpr char kPathListSep = ';';
+#else
+constexpr char kPathListSep = ':';
+#endif
+
+// setenv(3) is POSIX; the MSVC CRT spells it _putenv_s.
+void set_env_var(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, /*overwrite=*/1);
+#endif
+}
+
 // Set PYTHONPATH so the embedded interpreter can find engine/ (and the SDK
 // scripts via the project's existing sys.path-based finder). Honors an active
 // uv venv's site-packages via VIRTUAL_ENV when set.
@@ -41,17 +60,25 @@ void configure_python_path(const std::filesystem::path& project_root) {
         // and let Python resolve. If absent, embedding still works for the
         // engine/ source tree.
         std::filesystem::path venv_lib = std::filesystem::path(venv) / "lib";
-        if (std::filesystem::is_directory(venv_lib)) {
+        // Windows venvs put site-packages directly under <venv>/Lib; POSIX
+        // nests it one level deeper, under lib/pythonX.Y/. Check the flat
+        // layout first -- on a case-insensitive filesystem "lib" also matches
+        // "Lib", so the nested walk below finds nothing and silently drops the
+        // venv rather than failing.
+        std::filesystem::path flat = venv_lib / "site-packages";
+        if (std::filesystem::is_directory(flat)) {
+            pythonpath += kPathListSep + flat.string();
+        } else if (std::filesystem::is_directory(venv_lib)) {
             for (const auto& entry : std::filesystem::directory_iterator(venv_lib)) {
                 std::filesystem::path sp = entry.path() / "site-packages";
                 if (std::filesystem::is_directory(sp)) {
-                    pythonpath += ":" + sp.string();
+                    pythonpath += kPathListSep + sp.string();
                 }
             }
         }
     }
 
-    setenv("PYTHONPATH", pythonpath.c_str(), /*overwrite=*/1);
+    set_env_var("PYTHONPATH", pythonpath.c_str());
 }
 
 int call_banner() {

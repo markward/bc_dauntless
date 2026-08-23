@@ -24,7 +24,7 @@ import pytest
 
 import engine.host_io as host_io
 
-_SRC = pathlib.Path(host_io.__file__).read_text()
+_SRC = pathlib.Path(host_io.__file__).read_text(encoding="utf-8")
 
 # `keys` is a submodule of _dauntless_host, not a callable binding, so the
 # façade references `_h.keys` (attribute access) as infrastructure for
@@ -265,7 +265,7 @@ def test_run_boot_path_validates_host_io_facade():
     import pathlib as _pathlib
     from engine import host_loop
 
-    src = _pathlib.Path(host_loop.__file__).read_text()
+    src = _pathlib.Path(host_loop.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
 
     run_fn = next(

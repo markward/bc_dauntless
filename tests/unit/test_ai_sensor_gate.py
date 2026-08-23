@@ -203,7 +203,7 @@ def test_bootstrap_installs_sensor_gate(monkeypatch):
     import importlib
     import pathlib
 
-    src = pathlib.Path(host_loop.__file__).read_text()
+    src = pathlib.Path(host_loop.__file__).read_text(encoding="utf-8")
     targets = [n.module for n in ast.walk(ast.parse(src))
                if isinstance(n, ast.ImportFrom) and n.module
                and any(a.name == "install_ai_sensor_gate" for a in n.names)]

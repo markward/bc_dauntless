@@ -1,51 +1,40 @@
-# Embed shader sources as char arrays via configure_file. Each shader gets a
-# generated header with a constexpr string. This keeps shader text in *.vert /
+# Embed shader sources as string literals. Each shader gets a generated header
+# with a constexpr string, chunked to stay under MSVC's per-literal size cap. This keeps shader text in *.vert /
 # *.frag (so editors highlight them) without runtime file I/O.
-#
-# Two things this has to get right, neither of which it previously did:
-#
-# 1. MSVC caps a SINGLE string literal at 16,380 bytes and reports the overflow
-#    as C2026 "string too big, trailing characters truncated" -- an error, not a
-#    warning. opaque.frag is 41 KB and smaa_lib.glsl is 56 KB, so each is now
-#    emitted as a run of adjacent raw-string literals, which the compiler
-#    concatenates (the concatenated limit is 65,535 bytes -- every shader here
-#    is well under). A raw string has no escape sequences, so it can be split
-#    at any offset without understanding GLSL.
-#
-# 2. file(READ) runs at CONFIGURE time, so editing a .frag did NOT regenerate
-#    its header: CMake only re-configures when a CMakeLists.txt changes. The
-#    build stayed green while compiling a STALE copy of the shader, and the new
-#    text only landed whenever something unrelated forced a reconfigure -- which
-#    is how a 41 KB opaque.frag came to be compiled for the first time months
-#    after it was written. CMAKE_CONFIGURE_DEPENDS puts each shader into the
-#    reconfigure trigger set so an edit regenerates its header.
-set(SHADER_LITERAL_CHUNK 8000)
 
 function(embed_shader OUT_VAR INPUT_PATH SYMBOL_NAME)
     file(READ "${INPUT_PATH}" SRC)
+    # The read happens at CONFIGURE time, so without this a shader edit does not
+    # regenerate the header -- the build stays green and silently ships the old
+    # shader until someone re-runs cmake for an unrelated reason.
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                  "${CMAKE_CURRENT_SOURCE_DIR}/${INPUT_PATH}")
-
-    # Split into adjacent raw-string literals under MSVC's per-literal cap.
-    string(LENGTH "${SRC}" SRC_LEN)
-    set(LITERALS "")
-    set(OFFSET 0)
-    while(OFFSET LESS SRC_LEN)
-        math(EXPR REMAINING "${SRC_LEN} - ${OFFSET}")
-        if(REMAINING GREATER SHADER_LITERAL_CHUNK)
-            set(TAKE ${SHADER_LITERAL_CHUNK})
-        else()
-            set(TAKE ${REMAINING})
-        endif()
-        string(SUBSTRING "${SRC}" ${OFFSET} ${TAKE} PIECE)
-        string(APPEND LITERALS "R\"GLSL(${PIECE})GLSL\"\n")
-        math(EXPR OFFSET "${OFFSET} + ${TAKE}")
-    endwhile()
-
     set(GENERATED "${CMAKE_CURRENT_BINARY_DIR}/embedded_${SYMBOL_NAME}.h")
-    file(WRITE "${GENERATED}.in"
-"// Generated. Do not edit.\n#pragma once\nnamespace renderer::shader_src {\nconstexpr const char* ${SYMBOL_NAME} =\n@LITERALS@;\n}\n")
-    configure_file("${GENERATED}.in" "${GENERATED}" @ONLY)
+    # MSVC caps a single string literal at 16380 bytes (error C2026) and applies
+    # that limit per literal, *before* adjacent literals are concatenated -- so
+    # emit the source as a run of chunked raw literals rather than one big one.
+    # opaque.frag is already 41 KB and clang/gcc have no such limit, so without
+    # this the Windows build fails outright. The concatenated result is
+    # byte-identical on every compiler.
+    string(LENGTH "${SRC}" SRC_LEN)
+    set(SRC_LITERAL "")
+    set(CHUNK_POS 0)
+    while(CHUNK_POS LESS SRC_LEN)
+        math(EXPR CHUNK_REMAINING "${SRC_LEN} - ${CHUNK_POS}")
+        if(CHUNK_REMAINING GREATER 8000)
+            set(CHUNK_LEN 8000)
+        else()
+            set(CHUNK_LEN ${CHUNK_REMAINING})
+        endif()
+        string(SUBSTRING "${SRC}" ${CHUNK_POS} ${CHUNK_LEN} CHUNK)
+        string(APPEND SRC_LITERAL "R\"GLSL(${CHUNK})GLSL\"\n")
+        math(EXPR CHUNK_POS "${CHUNK_POS} + ${CHUNK_LEN}")
+    endwhile()
+    if(SRC_LEN EQUAL 0)
+        set(SRC_LITERAL "\"\"")
+    endif()
+    file(WRITE "${GENERATED}"
+"// Generated. Do not edit.\n#pragma once\nnamespace renderer::shader_src {\nconstexpr const char* ${SYMBOL_NAME} =\n${SRC_LITERAL};\n}\n")
     set(${OUT_VAR} "${GENERATED}" PARENT_SCOPE)
 endfunction()
 

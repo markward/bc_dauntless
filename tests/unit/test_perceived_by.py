@@ -261,7 +261,7 @@ def test_perception_does_not_reach_the_ui_layer():
 
     import engine.appc.perception as perception
 
-    src = pathlib.Path(perception.__file__).read_text()
+    src = pathlib.Path(perception.__file__).read_text(encoding="utf-8")
     imported = set()
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Import):

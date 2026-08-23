@@ -27,6 +27,7 @@ from engine.core.game import Game, Episode, Mission, _set_current_game
 from engine.sdk_ui.widgets.ship_display import (
     _reset_create_count as _reset_ship_display,
 )
+from tests.helpers.bc_assets import require_game_asset
 
 _HELM_HANDLERS = "Bridge.HelmCharacterHandlers"
 
@@ -250,6 +251,7 @@ def test_configure_registers_helm_handlers(bridge_world):
 
 
 def test_all_stop_click_speaks_kiska_yes(bridge_world, monkeypatch):
+    require_game_asset("data/TGL/Bridge Crew General.tgl")
     game, player, haven = bridge_world
     configure_bridge_officers(App.g_kSetManager.GetSet("bridge"), player)
     calls = _capture_speech(monkeypatch)
@@ -266,6 +268,7 @@ def test_report_click_speaks_engine_status(bridge_world, monkeypatch):
     the menu); the CommunicateToReport shim re-dispatches it as ET_REPORT so
     HelmCharacterHandlers.Report speaks — replacing, not preceding, the
     NothingToAdd fallback."""
+    require_game_asset("data/TGL/Bridge Crew General.tgl")
     game, player, haven = bridge_world
     configure_bridge_officers(App.g_kSetManager.GetSet("bridge"), player)
     calls = _capture_speech(monkeypatch)
@@ -284,6 +287,7 @@ def test_orbit_click_installs_ai_and_speaks_standard_orbit(bridge_world,
     OrbitPlanet (registered later, runs first, speaks "StandardOrbit") chains
     via CallNextHandler into HelmMenuHandlers.OrbitPlanet (installs the orbit
     AI and targets the planet)."""
+    require_game_asset("data/TGL/Bridge Crew General.tgl")
     game, player, haven = bridge_world
     configure_bridge_officers(App.g_kSetManager.GetSet("bridge"), player)
     calls = _capture_speech(monkeypatch)
@@ -304,6 +308,7 @@ def test_course_set_announcement_speaks_ready_to_warp(bridge_world,
     """The CEF Set Course modal dispatches no SDK event, so the host fires
     ET_SET_COURSE (non-intercept) at the Helm menu via announce_course_set —
     Kiska acks with gh075 (the SDK "ready to warp" line)."""
+    require_game_asset("data/TGL/Bridge Crew General.tgl")
     game, player, haven = bridge_world
     configure_bridge_officers(App.g_kSetManager.GetSet("bridge"), player)
     calls = _capture_speech(monkeypatch)
@@ -319,6 +324,7 @@ def test_quickbattle_late_player_wires_officers_via_set_player(monkeypatch):
     recreates it on every battle restart. The post-load hook therefore can't
     configure directly (no player yet) — it registers OnSetPlayer on the
     ET_SET_PLAYER broadcast, exactly as replicated here."""
+    require_game_asset("data/TGL/Bridge Crew General.tgl")
     game = _loaded_world(monkeypatch)
     try:
         # The exact post-load wiring host_loop runs: with no player yet this

@@ -67,21 +67,26 @@ if(DAUNTLESS_ENABLE_CEF)
 
     # Per-platform CEF tarball selection. Spotify's CDN hosts the Minimal
     # distribution. Version pinned: bumping is a deliberate, separate task.
-    # Only macosarm64's SHA256 is filled in — Windows/Linux SHA256s must be
-    # added when those platforms are first validated (see spec §11).
+    #
+    # CEF_URL_HASH carries the algorithm as well as the digest, because the
+    # authoritative source for these is cef-builds.spotifycdn.com/index.json,
+    # which publishes SHA1. windows64 was downloaded, checked against that
+    # SHA1, and its SHA256 computed from the verified bytes; linux64 is pinned
+    # to the index's SHA1 directly (nobody has built it yet, and an unpinned
+    # download is worse than a SHA1-pinned one).
     set(CEF_VERSION "144.0.25+g27ce504+chromium-144.0.7559.250")
     if(APPLE AND CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64")
         set(CEF_PLATFORM "macosarm64")
-        set(CEF_SHA256 "541a2e38234ef0c99e40e7f6fc8e895be6dde8293b84c7d0490897eb54062ece")
+        set(CEF_URL_HASH "SHA256=541a2e38234ef0c99e40e7f6fc8e895be6dde8293b84c7d0490897eb54062ece")
     elseif(APPLE)
         set(CEF_PLATFORM "macosx64")
-        set(CEF_SHA256 "")  # TODO(plan-followup): fill when validating on Intel macOS
+        set(CEF_URL_HASH "")  # TODO(plan-followup): fill when validating on Intel macOS
     elseif(WIN32)
         set(CEF_PLATFORM "windows64")
-        set(CEF_SHA256 "")  # TODO(plan-followup): fill when validating on Windows
+        set(CEF_URL_HASH "SHA256=c920a6bee3e9e14cabe8f2e0b541581cc1dedb3a82b0d3a69382903231c6a69d")
     elseif(UNIX)
         set(CEF_PLATFORM "linux64")
-        set(CEF_SHA256 "")  # TODO(plan-followup): fill when validating on Linux
+        set(CEF_URL_HASH "SHA1=9577dccdac9612c300029b3968ae87c537442b2f")
     else()
         message(FATAL_ERROR "DAUNTLESS_ENABLE_CEF: unsupported platform")
     endif()
@@ -91,14 +96,14 @@ if(DAUNTLESS_ENABLE_CEF)
     string(REPLACE "+" "%2B" CEF_VERSION_URL "${CEF_VERSION}")
     set(CEF_URL "https://cef-builds.spotifycdn.com/cef_binary_${CEF_VERSION_URL}_${CEF_PLATFORM}_minimal.tar.bz2")
 
-    if(CEF_SHA256)
+    if(CEF_URL_HASH)
         FetchContent_Declare(cef
             URL "${CEF_URL}"
-            URL_HASH SHA256=${CEF_SHA256}
+            URL_HASH ${CEF_URL_HASH}
             SOURCE_SUBDIR cmake  # skip the CEF SDK's sample-driver CMakeLists
         )
     else()
-        message(WARNING "DAUNTLESS_ENABLE_CEF: no SHA256 pinned for ${CEF_PLATFORM} — integrity check skipped")
+        message(WARNING "DAUNTLESS_ENABLE_CEF: no hash pinned for ${CEF_PLATFORM} — integrity check skipped")
         FetchContent_Declare(cef
             URL "${CEF_URL}"
             SOURCE_SUBDIR cmake
@@ -108,7 +113,36 @@ if(DAUNTLESS_ENABLE_CEF)
 
     set(CEF_ROOT "${cef_SOURCE_DIR}" CACHE INTERNAL "")
     list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
+    # CEF defaults libcef_dll_wrapper to the static CRT (/MT) on Windows. This
+    # project must use the dynamic CRT (/MD) -- _dauntless_host is a Python
+    # extension and has to share the interpreter's CRT -- and mixing the two in
+    # one image is an LNK2038 hard error, not a warning. Set before
+    # find_package(CEF): cef_variables.cmake bakes this into the flag lists at
+    # include time.
+    if(WIN32)
+        set(CEF_RUNTIME_LIBRARY_FLAG "/MD" CACHE STRING
+            "CRT flag for CEF's wrapper; must match the rest of the project" FORCE)
+    endif()
+
+    # CEF enables its sandbox by default on Windows, which selects the
+    # bootstrap app model: the application is built as a DLL launched by
+    # bootstrap.exe, and links cef_sandbox.lib. This host initializes CEF with
+    # no_sandbox = true (see ui_cef/cef_lifecycle.cc), so the sandbox model
+    # does not apply -- and leaving it on defines CEF_USE_BOOTSTRAP and
+    # rewrites how libcef is linked. Must precede find_package(CEF).
+    if(WIN32)
+        set(USE_SANDBOX OFF CACHE BOOL
+            "CEF sandbox; off because this host runs with no_sandbox" FORCE)
+    endif()
+
     find_package(CEF REQUIRED)
+
+    # libcef.lib is the import library for libcef.dll and provides the C API
+    # the wrapper calls into. macOS has no equivalent -- the framework is
+    # loaded dynamically -- which is why nothing linked it before.
+    if(WIN32 AND NOT TARGET libcef_lib)
+        ADD_LOGICAL_TARGET("libcef_lib" "${CEF_LIB_DEBUG}" "${CEF_LIB_RELEASE}")
+    endif()
 
     # CEF ships libcef_dll/ as source; consumers must compile it into their
     # project. Force STATIC: CEF's add_library() honors BUILD_SHARED_LIBS,
@@ -124,7 +158,12 @@ if(DAUNTLESS_ENABLE_CEF)
     # Project-wide -Wpedantic collides with CEF's -Werror inside
     # libcef_dll_wrapper (CEF's logging headers use GNU token-pasting via
     # `, ##__VA_ARGS__`). Suppress only that warning on the wrapper.
-    if(TARGET libcef_dll_wrapper)
+    #
+    # Gated on the same compilers that get -Wpedantic in the first place (see
+    # the top of this file): there is nothing to suppress under MSVC, and cl
+    # rejects the unknown -W option outright with D8021 -- a hard error, not a
+    # warning, so the whole CEF build fails on Windows without this guard.
+    if(TARGET libcef_dll_wrapper AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(libcef_dll_wrapper PRIVATE
             -Wno-gnu-zero-variadic-macro-arguments)
     endif()

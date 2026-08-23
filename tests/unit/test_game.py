@@ -26,13 +26,23 @@ def test_mission_is_event_handler():
     assert isinstance(mission, TGEventHandlerObject)
 
 
+_E1M1_TGL = "data/TGL/Maelstrom/Episode 1/E1M1.tgl"
+
+
 def test_mission_set_database_loads_tgl_and_returns_it():
+    # Maelstrom TGLs ship with the retail game, not the SDK (which carries only
+    # the Tutorial ones), so skip rather than fail in an assets-less checkout --
+    # the convention the rest of the suite follows for BC-asset dependencies.
+    from pathlib import Path as _Path
+    _root = _Path(__file__).resolve().parent.parent.parent
+    if not (_root / "game" / _E1M1_TGL).is_file():
+        pytest.skip("BC assets not available")
     # SDK: g_pMissionDatabase = pMission.SetDatabase("data/TGL/.../E1M1.tgl").
     # The returned DB must resolve the mission's lines (text + voice wav), and
     # GetDatabase() must return the same object so MissionLib.GetMissionDatabase
     # works. Without this, mission VO lines collapse to zero duration.
     mission = Mission()
-    db = mission.SetDatabase("data/TGL/Maelstrom/Episode 1/E1M1.tgl")
+    db = mission.SetDatabase(_E1M1_TGL)
     assert db is not None
     assert mission.GetDatabase() is db
     assert db.HasString("E1M1Briefing1")

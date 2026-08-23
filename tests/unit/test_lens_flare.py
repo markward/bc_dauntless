@@ -3,6 +3,7 @@ from pathlib import Path
 from engine.appc.sets import SetClass
 from engine.appc.lens_flare import LensFlare, LensFlare_Create, aggregate_lens_flares_for_renderer
 from engine.appc.planet import Sun
+from tests.helpers.bc_assets import require_game_asset
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -72,6 +73,7 @@ def _make_set_with_built_flare(elements):
 
 
 def test_aggregator_returns_descriptor_for_built_flare():
+    require_game_asset("data/textures/rays.tga")
     pSet, sun, _ = _make_set_with_built_flare([
         {"wedges": 8, "texture": "data/textures/rays.tga",
          "position": 0.0, "size": 0.3},
@@ -125,6 +127,7 @@ def test_aggregator_skips_flares_with_no_elements():
 
 
 def test_aggregator_drops_elements_whose_textures_do_not_resolve():
+    require_game_asset("data/textures/rays.tga")
     pSet, sun, _ = _make_set_with_built_flare([
         {"wedges": 8, "texture": "data/textures/rays.tga",
          "position": 0.0, "size": 0.3},
@@ -138,6 +141,7 @@ def test_aggregator_drops_elements_whose_textures_do_not_resolve():
 
 
 def test_aggregator_clamps_wedges_to_valid_range():
+    require_game_asset("data/textures/rays.tga")
     pSet, sun, _ = _make_set_with_built_flare([
         {"wedges": 2,  "texture": "data/textures/rays.tga", "position": 0.0, "size": 0.3},
         {"wedges": 99, "texture": "data/textures/rays.tga", "position": 0.0, "size": 0.3},
