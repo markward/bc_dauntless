@@ -36,7 +36,12 @@ def discover_tgl_files() -> list[Path]:
         if not root.is_dir():
             continue
         found.extend(
-            sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ".tgl")
+            # Sort on str(), not on Path: PureWindowsPath compares
+            # case-insensitively while PurePosixPath compares case-sensitively,
+            # so sorting Path objects yields a different order per platform for
+            # the same directory. str() keeps the listing identical everywhere.
+            sorted((p for p in root.rglob("*")
+                    if p.is_file() and p.suffix.lower() == ".tgl"), key=str)
         )
     return found
 
@@ -82,7 +87,11 @@ def format_line(path: Path, status: str, reason: tuple) -> str:
     """
     try:
         rel = path.relative_to(PROJECT_ROOT)
-        display = str(rel)
+        # as_posix(), not str(): a repo-relative path is report text compared
+        # across machines, and str() renders native separators (backslashes on
+        # Windows). The absolute fallback below stays native -- it names a
+        # location on this machine rather than a path within the repo.
+        display = rel.as_posix()
     except ValueError:
         display = str(path)
 

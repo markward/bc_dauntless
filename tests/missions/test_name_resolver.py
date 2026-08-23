@@ -14,9 +14,26 @@ from engine.missions.name_resolver import (
 
 
 @pytest.fixture
-def fake_tgl(monkeypatch):
-    """Make read_tgl return a constructed TGLFile per path."""
-    store: dict[str, TGLFile] = {}
+def fake_tgl(monkeypatch, tmp_path):
+    """Make read_tgl return a constructed TGLFile per path.
+
+    Registering a key also creates an empty file for it under a temporary TGL
+    root. _load_tgl() probes path.is_file() before it ever calls read_tgl, so
+    faking only the reader left every lookup falling through to the dir-name
+    fallback in a checkout without a retail game/ install -- the fake was only
+    reached on machines that happened to have the real file on disk.
+    """
+    root = tmp_path / "tgl_root"
+    root.mkdir()
+
+    class _Store(dict):
+        def __setitem__(self, key, value):
+            target = root / key
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.touch()
+            super().__setitem__(key, value)
+
+    store: dict[str, TGLFile] = _Store()
 
     def _fake(path):
         key = Path(path).as_posix()
@@ -30,6 +47,7 @@ def fake_tgl(monkeypatch):
     import engine.missions.name_resolver as nr
     nr._load_tgl.cache_clear()
     monkeypatch.setattr(nr, "read_tgl", _fake)
+    monkeypatch.setattr(nr, "TGL_ROOTS", (root,))
     return store
 
 
