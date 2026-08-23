@@ -5,9 +5,11 @@ import App
 from engine.host_loop import _aggregate_lens_flares
 from engine.appc.sets import SetClass
 from engine.appc.planet import Sun
+from tests.helpers.bc_assets import require_game_asset
 
 
 def test_aggregate_lens_flares_pulls_from_active_sets():
+    require_game_asset("data/textures/rays.tga")
     App.g_kSetManager._sets.clear()
     pSet = SetClass()
     sun = Sun(radius=4040.0, model_path="data/Textures/SunBase.tga")
