@@ -38,25 +38,3 @@
 # the test never builds. Tracked as a follow-up; delete this line once fixed.
 pytest:tests/unit/test_engineer_emitters.py::test_shield_level_change_announces
 
-# Backdrop pixel-readback baseline is unvalidated on Windows (first platform to
-# actually RUN these). _PIXEL_TESTS_RELIABLE is `sys.platform != "darwin"`, so
-# both tests skip on macOS -- the platform the project is developed on -- and
-# there is no CI, so their expected constants have very likely never been
-# executed since the filmic pass landed.
-#
-# Measured here (640x360 headless, empty backdrop list, MSVC build):
-#   * filmic pass ON (the default): the row is NOT uniform -- centre (12,16,22),
-#     corners (5,7,9) -- because filmic_pass applies grain + vignette +
-#     chromatic aberration. The grain also makes it vary frame to frame, so an
-#     exact-sum assertion cannot hold with it enabled at all.
-#   * filmic pass OFF (filmic_set_enabled(False)): perfectly uniform, every
-#     sampled pixel sums to 53, total 3392 -- against the test's expected 57/px
-#     and 3648.
-#
-# So there are two separate issues and only the first is clearly a test bug:
-# the tests assume no post-processing touches an empty frame. The residual
-# 53-vs-57 is a real rendering difference (tonemap/sRGB) that wants a renderer
-# owner's judgement, not a baseline rewritten to match whatever this machine
-# renders. Deliberately NOT "fixed" by changing 3648 to 3392.
-pytest:tests/host/test_backdrops_integration.py::test_backdrop_overpaints_clear_color
-pytest:tests/host/test_backdrops_integration.py::test_camera_rotation_changes_pixels_translation_does_not
