@@ -8,4 +8,7 @@ elseif(UNIX)
         "LINKER:--whole-archive"
         "$<TARGET_FILE:nif>"
         "LINKER:--no-whole-archive")
+elseif(MSVC)
+    target_link_options(probe_block_inventory PRIVATE
+        "/WHOLEARCHIVE:$<TARGET_FILE:nif>")
 endif()

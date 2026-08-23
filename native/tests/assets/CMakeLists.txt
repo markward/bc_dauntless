@@ -44,6 +44,9 @@ elseif(UNIX)
         "LINKER:--whole-archive"
         "$<TARGET_FILE:nif>"
         "LINKER:--no-whole-archive")
+elseif(MSVC)
+    target_link_options(assets_tests PRIVATE
+        "/WHOLEARCHIVE:$<TARGET_FILE:nif>")
 endif()
 
 target_include_directories(assets_tests

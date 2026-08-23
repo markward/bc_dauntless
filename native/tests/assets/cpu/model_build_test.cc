@@ -7,11 +7,25 @@
 #include <filesystem>
 #include <fstream>
 #include <vector>
+#ifdef _WIN32
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
 namespace {
+
+// Process id, used to keep concurrent test runs' temp dirs distinct.
+// POSIX spells it getpid() in <unistd.h>; MSVC _getpid() in <process.h>.
+inline int current_pid() {
+#ifdef _WIN32
+    return _getpid();
+#else
+    return ::getpid();
+#endif
+}
 
 // Stubs return zero IDs so destructors short-circuit (no GL context here).
 assets::Texture stub_texture(const assets::Image&, bool) {
@@ -33,7 +47,7 @@ protected:
         auto base = fs::temp_directory_path() / "assets-mb";
         for (int i = 0; ; ++i) {
             auto candidate = base;
-            candidate += "-" + std::to_string(::getpid()) + "-" + std::to_string(i);
+            candidate += "-" + std::to_string(current_pid()) + "-" + std::to_string(i);
             if (!fs::exists(candidate)) { tmp_dir = candidate; break; }
         }
         fs::create_directories(tmp_dir);
