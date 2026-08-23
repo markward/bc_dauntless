@@ -236,3 +236,38 @@ def test_marks_repeated_in_one_frame_sum_rather_than_replace():
     fp.end_frame()
     # Both "a" spans belong to the frame's total for "a".
     assert fp.phases()["a"] >= 3.0
+
+
+def test_report_is_ascii_only(monkeypatch):
+    """The report is written from inside the frame loop, and Windows consoles
+    default to cp1252. A box-drawing character in a printed line raises
+    UnicodeEncodeError there — the profiler taking down the game it measures.
+    This caught exactly that on the first live run."""
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [
+        {"name": "frame", "cpu_ms": 8.0, "gpu_ms": 5.0, "calls": 1, "depth": 0},
+        {"name": "present", "cpu_ms": 7.0, "gpu_ms": 0.0, "calls": 1, "depth": 1},
+    ])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 8.0, "gpu_ms": 5.0, "frames": 9, "enabled": True},
+    )
+    fp.set_enabled(True, native=False)
+    fp.begin_frame(); fp.mark("p"); fp.end_frame()
+
+    for line in fp.report_lines():
+        line.encode("cp1252")   # raises UnicodeEncodeError on failure
+
+
+def test_print_report_never_raises(monkeypatch):
+    """A dead or encoding-hostile stream must drop the report, not the frame."""
+    import sys
+
+    class _Hostile:
+        def write(self, _):
+            raise UnicodeEncodeError("cp1252", "x", 0, 1, "nope")
+
+    monkeypatch.setattr(sys, "stderr", _Hostile())
+    fp.set_enabled(True, native=False)
+    fp.begin_frame(); fp.mark("p"); fp.end_frame()
+    fp.print_report()     # must return normally

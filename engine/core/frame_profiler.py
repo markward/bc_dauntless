@@ -246,7 +246,12 @@ def report_lines() -> list[str]:
     native = host_io.profiler_frame()
     scopes = host_io.profiler_scopes()
 
-    lines.append("── frame profile ── (EMA over %d frames, alpha %.2f)"
+    # ASCII only, deliberately. Windows consoles default to cp1252, and a
+    # box-drawing character in a printed line raises UnicodeEncodeError from
+    # inside the frame loop -- the profiler would take down the game it is
+    # measuring. Comments and docstrings are free to use whatever; anything
+    # that reaches a stream must not.
+    lines.append("-- frame profile -- (EMA over %d frames, alpha %.2f)"
                  % (_frames, EMA_ALPHA))
 
     if _phases:
@@ -271,7 +276,7 @@ def report_lines() -> list[str]:
         lines.append("  render passes: enabled, nothing resolved yet")
     else:
         lines.append("  render passes: UNAVAILABLE "
-                     "(binding absent — rebuild the native module)")
+                     "(binding absent - rebuild the native module)")
 
     # The Python total already CONTAINS the render call: r.frame() is invoked
     # from inside the loop body, so these are nested, not additive. Saying so
@@ -285,7 +290,15 @@ def report_lines() -> list[str]:
 
 
 def print_report() -> None:
-    """Write the merged report to stderr (stdout is the game's own console)."""
+    """Write the merged report to stderr (stdout is the game's own console).
+
+    Never raises. This runs inside the frame loop, and a profiler that can
+    kill a frame is worse than no profiler -- so an encoding-hostile console
+    or a closed stream degrades to a dropped report, not an exception.
+    """
     import sys
-    for line in report_lines():
-        print(line, file=sys.stderr)
+    try:
+        for line in report_lines():
+            sys.stderr.write(line + "\n")
+    except Exception:
+        pass

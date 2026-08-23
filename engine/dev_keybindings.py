@@ -205,7 +205,8 @@ def register_for_frame(_h, session, player) -> None:
         on = not frame_profiler.is_enabled()
         frame_profiler.set_enabled(on)
         if on:
-            print("[profiler] ON — report every {0} frames. NOTE: vsync is on "
+            # ASCII only: this reaches a console that is cp1252 on Windows.
+            print("[profiler] ON - report every {0} frames. NOTE: vsync is on "
                   "(glfwSwapInterval(1)), so `present` is the wait for the next "
                   "refresh and the frame total is pinned to your refresh rate."
                   .format(frame_profiler.REPORT_EVERY))
