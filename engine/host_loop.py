@@ -7376,6 +7376,11 @@ def run(mission_name: Optional[str] = None,
                     view_mode.apply(_h)
                     _apply_view_mode_side_effects(view_mode, _h)
 
+            # Everything from here to the sim advance is UI work, not input:
+            # CEF panel render_all, the tactical HUD visibility gates, and
+            # _pump_contacts. Kept separate because folding it into "input"
+            # hid a multi-millisecond cost behind a name nobody would suspect.
+            frame_profiler.mark("ui_panels")
             # Pump all CEF panels (target list, etc.) every tick. The
             # registry returns only payloads whose state changed since
             # the last call, so this is cheap when nothing's moving.
