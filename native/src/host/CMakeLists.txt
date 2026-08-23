@@ -69,6 +69,14 @@ elseif(UNIX)
         "LINKER:--whole-archive"
         "$<TARGET_FILE:nif>"
         "LINKER:--no-whole-archive")
+elseif(MSVC)
+    # /WHOLEARCHIVE is the MSVC spelling. Without this arm the Windows build
+    # links clean and then fails at runtime on the first model load -- the
+    # exact "no NiNode root in NIF file" the comment above describes.
+    target_link_options(_dauntless_host PRIVATE
+        "/WHOLEARCHIVE:$<TARGET_FILE:nif>")
+    target_link_options(dauntless PRIVATE
+        "/WHOLEARCHIVE:$<TARGET_FILE:nif>")
 endif()
 
 if(DAUNTLESS_ENABLE_CEF)

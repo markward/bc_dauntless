@@ -25,3 +25,16 @@ def require_game_asset(relpath: str) -> Path:
     if not path.is_file():
         pytest.skip(f"BC assets not available: {relpath}")
     return path
+
+
+def require_game_dir(relpath: str) -> Path:
+    """Skip the calling test unless <game>/<relpath> is a directory.
+
+    For dependencies satisfied by a tree rather than one file -- ship models,
+    icon sets -- where naming the single file a test happens to reach would
+    be both brittle and misleading about what is actually required.
+    """
+    path = GAME_ROOT / relpath
+    if not path.is_dir():
+        pytest.skip(f"BC assets not available: {relpath}/")
+    return path
