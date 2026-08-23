@@ -4,6 +4,11 @@
 
 function(embed_shader OUT_VAR INPUT_PATH SYMBOL_NAME)
     file(READ "${INPUT_PATH}" SRC)
+    # The read happens at CONFIGURE time, so without this a shader edit does not
+    # regenerate the header -- the build stays green and silently ships the old
+    # shader until someone re-runs cmake for an unrelated reason.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${CMAKE_CURRENT_SOURCE_DIR}/${INPUT_PATH}")
     set(GENERATED "${CMAKE_CURRENT_BINARY_DIR}/embedded_${SYMBOL_NAME}.h")
     # MSVC caps a single string literal at 16380 bytes (error C2026) and applies
     # that limit per literal, *before* adjacent literals are concatenated -- so
