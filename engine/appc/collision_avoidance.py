@@ -482,6 +482,18 @@ def _test_course_override(ship, previous_heading=None):
         # obstacle whose geometry is simply out of range must yield NOTHING,
         # not the whole-model sphere the pieces exist to replace.
         if has_hull_bounds(other):
+            # MEASURED DEAD END, do not retry without new evidence. Passing the
+            # geometric bound here instead of check_radius (travel + ob_travel +
+            # personal_space, ~64 GU median vs the 225 GU floor) is tighter for
+            # 100% of pairs and still culls NOTHING: ships in a fight sit 20-40
+            # GU apart, so every piece of every obstacle is legitimately inside
+            # it. Three live runs at 33 ships moved gl.avoidance 14.1/19.6/21.3
+            # against a 16.2/21.9 baseline -- pure noise.
+            #
+            # The pieces are not wasted work; they are genuinely near. Making
+            # avoidance scale therefore means fewer pieces (a coarse hull for
+            # avoidance rather than the 128-leaf collision decomposition) or a
+            # cheaper cadence -- NOT a tighter cull.
             pieces = hull_spheres_near(other, predicted, check_radius)
         else:
             pieces = [(ob_loc, ob_r)]
