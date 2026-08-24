@@ -72,19 +72,33 @@ def _effective_motion(ship) -> "_EffectiveMotion":
     keep flying under (zeroed) real limits, not fall through to the
     FALLBACK_MAX_ACCEL snap semantics meant for ships with no engines at all.
     """
+    from engine.appc.subsystems import impulse_output_fraction
     getter = getattr(ship, "GetImpulseEngineSubsystem", None)
     ies = getter() if getter is not None else None
     if ies is None:
         return _EffectiveMotion(False, 0.0, 0.0, False, 0.0, 0.0)
     has_lin = ies.GetAuthoredMaxSpeed() > 0.0
     has_ang = ies.GetAuthoredMaxAngularVelocity() > 0.0
+
+    # The four derived getters are each `authored * impulse_output_fraction(self)`
+    # with the SAME argument, so calling all four recomputed that fraction four
+    # times per ship per tick -- and it is not cheap: it walks every child pod
+    # querying IsDisabled / GetConditionPercentage / GetMaxCondition. cProfile
+    # put it at 55% of the entire ship-motion cost (1.149 s of 2.083 s over 600
+    # ticks at 17 ships), called 3.76x per ship per tick.
+    #
+    # Computing it once and multiplying the authored values is BIT-EXACT: same
+    # operands, same single multiply, same order. Nothing between the four
+    # calls could have changed it -- they were consecutive reads of one
+    # subsystem's state.
+    f = impulse_output_fraction(ies)
     return _EffectiveMotion(
         has_linear=has_lin,
-        max_speed=ies.GetMaxSpeed() if has_lin else 0.0,
-        max_accel=ies.GetMaxAccel() if has_lin else 0.0,
+        max_speed=ies.GetAuthoredMaxSpeed() * f if has_lin else 0.0,
+        max_accel=ies.GetAuthoredMaxAccel() * f if has_lin else 0.0,
         has_angular=has_ang,
-        max_ang_vel=ies.GetMaxAngularVelocity() if has_ang else 0.0,
-        max_ang_accel=ies.GetMaxAngularAccel() if has_ang else 0.0,
+        max_ang_vel=ies.GetAuthoredMaxAngularVelocity() * f if has_ang else 0.0,
+        max_ang_accel=ies.GetAuthoredMaxAngularAccel() * f if has_ang else 0.0,
     )
 
 
