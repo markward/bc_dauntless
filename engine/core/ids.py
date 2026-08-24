@@ -123,7 +123,18 @@ def implements(obj, name: str) -> bool:
     for every engine method on every object (that is how TorpedoTube.UpdateCharge
     reached 4.9M no-op stub hits -- see docs/stub_heatmap.md).
     """
-    return any(name in klass.__dict__ for klass in type(obj).__mro__)
+    # A plain loop, not any(... for ...). This is one of the hottest
+    # primitives in the engine -- 254,400 calls in a 600-tick AI profile at 17
+    # ships, plus 48,600 more from the motion path -- and at that volume the
+    # generator expression is not free: it allocated a generator frame per
+    # call and drove it through any(), which cProfile attributed as 763,200
+    # <genexpr> calls and 254,400 any() calls, together roughly two thirds of
+    # this function's total cost. The loop is identical in meaning, including
+    # the short-circuit on the first match.
+    for klass in type(obj).__mro__:
+        if name in klass.__dict__:
+            return True
+    return False
 
 
 class TGObject:

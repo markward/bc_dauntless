@@ -24,6 +24,11 @@ from engine.appc.ai import (
     ConditionalAI, PreprocessingAI, BuilderAI, RandomAI,
 )
 from engine.appc.sensor_detection import is_hidden_by_cloak
+# Module level, not deferred inside _dispatch_ai. ship_death imports nothing
+# from here, so there is no cycle to break -- and _dispatch_ai runs ~12.5 times
+# per ship per tick, so the deferred form was 127,200 importlib._handle_fromlist
+# calls in a 600-tick profile at 17 ships.
+from engine.appc import ship_death
 
 US_ACTIVE = ArtificialIntelligence.US_ACTIVE
 US_DONE = ArtificialIntelligence.US_DONE
@@ -85,7 +90,6 @@ def _dispatch_ai(ai, game_time: float) -> int:
     if ai is None:
         return US_DONE
     # Inert-coast gate: a dying/dead ship issues no new orders.
-    from engine.appc import ship_death
     ship = ai.GetShip() if hasattr(ai, "GetShip") else None
     if ship is not None and ship_death._out_of_action(ship):
         return US_DONE
@@ -96,24 +100,50 @@ def _dispatch_ai(ai, game_time: float) -> int:
     # (e.g. re-entered via a looping SequenceAI) must only appear once, else
     # _reconcile_active's `reached` list — and the _active_nodes snapshot
     # derived from it — carries duplicates.
-    if id(ai) not in _reached_this_tick_all_ids:
-        _reached_this_tick_all_ids.add(id(ai))
+    node_id = id(ai)          # was computed twice per node visit
+    if node_id not in _reached_this_tick_all_ids:
+        _reached_this_tick_all_ids.add(node_id)
         _reached_this_tick_all.append(ai)
-    if isinstance(ai, BuilderAI):
-        return _tick_builder(ai, game_time)
-    if isinstance(ai, PreprocessingAI):
-        return _tick_preprocessing(ai, game_time)
-    if isinstance(ai, ConditionalAI):
-        return _tick_conditional(ai, game_time)
-    if isinstance(ai, PriorityListAI):
-        return _tick_priority_list(ai, game_time)
-    if isinstance(ai, SequenceAI):
-        return _tick_sequence(ai, game_time)
-    if isinstance(ai, RandomAI):
-        return _tick_random(ai, game_time)
-    if isinstance(ai, PlainAI):
-        return _tick_plain(ai, game_time)
-    return ai._status
+
+    handler = _DISPATCH_BY_TYPE.get(type(ai))
+    if handler is None:
+        handler = _resolve_dispatch(type(ai))
+        _DISPATCH_BY_TYPE[type(ai)] = handler
+    if handler is None:
+        return ai._status
+    return handler(ai, game_time)
+
+
+# Resolved handler per EXACT node type. The isinstance chain below runs once
+# per distinct class and is then a dict lookup -- it averaged 3.25 isinstance
+# calls per dispatch, 414,000 in a 600-tick profile at 17 ships.
+#
+# Keyed on the exact type, so inheritance is still honoured: the chain (which
+# is ORDER-SENSITIVE -- a class that is both a BuilderAI and a PreprocessingAI
+# must resolve to builder, as it did before) is what populates the cache, so
+# whatever it would have chosen is what gets stored.
+_DISPATCH_BY_TYPE: dict = {}
+
+
+def _resolve_dispatch(node_type):
+    """Run the ordered isinstance chain once for `node_type`.
+
+    Returns the handler, or None for a node type that matches nothing (the
+    caller then falls back to reading ai._status, as before).
+    """
+    probe = node_type
+    for cls, handler in (
+        (BuilderAI, _tick_builder),
+        (PreprocessingAI, _tick_preprocessing),
+        (ConditionalAI, _tick_conditional),
+        (PriorityListAI, _tick_priority_list),
+        (SequenceAI, _tick_sequence),
+        (RandomAI, _tick_random),
+        (PlainAI, _tick_plain),
+    ):
+        if issubclass(probe, cls):
+            return handler
+    return None
 
 
 def _reconcile_focus(root_ai, reached) -> None:
