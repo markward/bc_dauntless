@@ -50,6 +50,8 @@ void FrameTimer::reset() {
         rec.used = 0;
         rec.cpu_ns.clear();
         rec.calls.clear();
+        rec.order.clear();
+        rec.depth.clear();
         rec.frame_cpu_ns = 0.0;
         rec.pending = false;
     }
@@ -73,7 +75,6 @@ int FrameTimer::slot_for(const char* name) {
     }
     Slot s;
     s.name = name;
-    s.depth = static_cast<int>(open_.size());
     slots_.push_back(std::move(s));
     return static_cast<int>(slots_.size()) - 1;
 }
@@ -102,6 +103,8 @@ void FrameTimer::begin_frame() {
     current_->used = 0;
     current_->cpu_ns.assign(slots_.size(), 0.0);
     current_->calls.assign(slots_.size(), 0);
+    current_->depth.assign(slots_.size(), 0);
+    current_->order.clear();
     current_->frame_cpu_ns = 0.0;
     current_->pending = false;
 
@@ -130,6 +133,14 @@ void FrameTimer::push(const char* name) {
     if (current_->cpu_ns.size() < slots_.size()) {
         current_->cpu_ns.resize(slots_.size(), 0.0);
         current_->calls.resize(slots_.size(), 0);
+        current_->depth.resize(slots_.size(), 0);
+    }
+    // First entry this frame fixes this scope's position and depth in the
+    // report. Re-entries (a pass drawn for both the exterior view and the
+    // viewscreen RTT) accumulate into the same row rather than moving it.
+    if (current_->calls[slot] == 0) {
+        current_->order.push_back(slot);
+        current_->depth[slot] = static_cast<int>(open_.size());
     }
 
     Sample s;
@@ -198,15 +209,19 @@ void FrameTimer::resolve(Record& rec) {
     ema(frame_gpu_ms_, gpu_total_seeded_,
         last_ts >= first_ts ? static_cast<double>(last_ts - first_ts) / 1e6 : 0.0);
 
+    // Report exactly the scopes this frame entered, in this frame's order and
+    // at this frame's depth. See results() for why a first-sight tree is wrong.
     results_.clear();
-    results_.reserve(slots_.size());
-    for (std::size_t i = 0; i < slots_.size(); ++i) {
+    results_.reserve(rec.order.size());
+    for (int slot : rec.order) {
+        const auto i = static_cast<std::size_t>(slot);
+        if (i >= slots_.size()) continue;
         ScopeResult r;
         r.name = slots_[i].name;
         r.cpu_ms = slots_[i].cpu_ms;
         r.gpu_ms = slots_[i].gpu_ms;
         r.calls = (i < rec.calls.size() ? rec.calls[i] : 0);
-        r.depth = slots_[i].depth;
+        r.depth = (i < rec.depth.size() ? rec.depth[i] : 0);
         results_.push_back(std::move(r));
     }
     ++frames_resolved_;

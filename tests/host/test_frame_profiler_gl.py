@@ -152,3 +152,37 @@ def test_resolving_does_not_stall_on_the_gpu(host):
     assert on_s < off_s * 3.0 + 0.050, (
         "enabled frames took %.1f ms vs %.1f ms disabled — looks like a stall"
         % (on_s * 1000, off_s * 1000))
+
+
+def test_the_table_describes_the_frame_it_reports(host):
+    """Every reported scope ran in the last resolved frame, and its depth is
+    the depth it had THERE.
+
+    Not "every scope ever seen, at the depth it first had". Passes change
+    parent at runtime — render_space runs under `space` in the exterior view
+    and under `viewscreen.rtt` on the bridge — so a first-sight tree prints
+    this frame's children beneath a previous mission's parent: every row
+    individually correct, the tree collectively a lie.
+    """
+    host.profiler_set_enabled(True)
+    _run_frames(10)
+    scopes = host.profiler_scopes()
+
+    # Nothing inert is listed: a scope in the table ran.
+    assert all(s["calls"] >= 1 for s in scopes), \
+        [s for s in scopes if s["calls"] < 1]
+
+    # Depth is walkable: it starts at 0 and never jumps by more than one,
+    # which is only true if the depths come from one consistent frame.
+    depths = [s["depth"] for s in scopes]
+    assert depths[0] == 0
+    for prev, cur in zip(depths, depths[1:]):
+        assert cur <= prev + 1, (prev, cur, scopes)
+
+
+def test_a_scope_entered_twice_is_one_row_with_two_calls(host):
+    """Re-entry must accumulate into the existing row, not append a second."""
+    host.profiler_set_enabled(True)
+    _run_frames(10)
+    names = [s["name"] for s in host.profiler_scopes()]
+    assert len(names) == len(set(names)), names

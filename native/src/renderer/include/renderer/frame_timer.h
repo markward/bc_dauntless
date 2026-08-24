@@ -33,7 +33,7 @@ public:
         double cpu_ms = 0.0;      // EMA-smoothed
         double gpu_ms = 0.0;      // EMA-smoothed; 0 when the scope issues no GL
         int    calls  = 0;        // entries in the last resolved frame
-        int    depth  = 0;        // nesting depth, for indented reports
+        int    depth  = 0;        // nesting depth IN THAT FRAME (see below)
     };
 
     /// Frames of latency before a frame's queries are read back. 3 is enough
@@ -71,7 +71,16 @@ public:
     void push(const char* name);
     void pop();
 
-    /// Last resolved frame's table, in first-seen order (which is pass order).
+    /// The scopes entered in the last resolved frame, in entry order, each
+    /// with the depth it had IN THAT FRAME.
+    ///
+    /// Deliberately not "every scope ever seen, at the depth it first had".
+    /// Passes change parent at runtime -- render_space runs under `space` in
+    /// the exterior view and under `viewscreen.rtt` on the bridge -- so a
+    /// first-sight tree prints this frame's children beneath last mission's
+    /// parent. The table would be individually correct and collectively a lie.
+    /// A scope that stops running simply leaves the table; its average keeps
+    /// decaying internally in case it comes back.
     const std::vector<ScopeResult>& results() const { return results_; }
 
     /// Whole-frame totals, EMA-smoothed, in ms.
@@ -88,7 +97,6 @@ public:
 private:
     struct Slot {
         std::string name;
-        int    depth = 0;
         double cpu_ms = 0.0;      // EMA
         double gpu_ms = 0.0;      // EMA
         // First sample assigns rather than blends, so a scope's average never
@@ -110,6 +118,11 @@ private:
         std::size_t used = 0;                // queries handed out this frame
         std::vector<double> cpu_ns;          // per slot
         std::vector<int>    calls;           // per slot
+        // Slot indices in the order they were first entered THIS frame, and
+        // the depth each had when entered. Rebuilt every frame so the report's
+        // tree always describes the frame it is reporting.
+        std::vector<int>    order;
+        std::vector<int>    depth;           // per slot
         double frame_cpu_ns = 0.0;
         bool   pending = false;
     };

@@ -178,7 +178,7 @@ def test_report_says_so_when_the_render_half_is_missing(monkeypatch):
     assert "UNAVAILABLE" in text
 
 
-def test_report_flags_the_vsync_wait_next_to_present(monkeypatch):
+def _present_report(monkeypatch, swap_interval):
     from engine import host_io
     monkeypatch.setattr(host_io, "profiler_scopes", lambda: [
         {"name": "space", "cpu_ms": 1.0, "gpu_ms": 2.0, "calls": 1, "depth": 1},
@@ -186,14 +186,34 @@ def test_report_flags_the_vsync_wait_next_to_present(monkeypatch):
     ])
     monkeypatch.setattr(
         host_io, "profiler_frame",
-        lambda: {"cpu_ms": 12.0, "gpu_ms": 3.0, "frames": 10, "enabled": True},
+        lambda: {"cpu_ms": 12.0, "gpu_ms": 3.0, "frames": 10, "enabled": True,
+                 "swap_interval": swap_interval},
     )
     fp.set_enabled(True, native=False)
     fp.begin_frame(); fp.mark("p"); fp.end_frame()
+    return fp.report_lines()
 
-    lines = fp.report_lines()
+
+def test_report_flags_the_vsync_wait_when_the_interval_is_one(monkeypatch):
+    lines = _present_report(monkeypatch, 1)
+    assert "VSYNC ON" in lines[0]
     present = [ln for ln in lines if "present" in ln]
-    assert present and "vsync" in present[0]
+    assert present and "vsync wait" in present[0]
+
+
+def test_report_does_not_claim_a_vsync_wait_when_uncapped(monkeypatch):
+    """A hidden window defaults to interval 0. The old report hard-coded the
+    vsync note and so told every headless capture the opposite of the truth:
+    that a real, uncapped cost was a block it could ignore."""
+    lines = _present_report(monkeypatch, 0)
+    assert "uncapped" in lines[0]
+    present = [ln for ln in lines if "present" in ln]
+    assert present and "not a vsync wait" in present[0]
+
+
+def test_report_says_unknown_rather_than_guessing(monkeypatch):
+    lines = _present_report(monkeypatch, -1)
+    assert "unknown" in lines[0]
 
 
 def test_report_states_that_the_totals_nest(monkeypatch):

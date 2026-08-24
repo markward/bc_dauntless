@@ -59,6 +59,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "starmap_set_camera", "starmap_set_scene",
     "profiler_set_enabled", "profiler_enabled",
     "profiler_scopes", "profiler_frame",
+    "set_swap_interval", "swap_interval",
 })
 
 
@@ -407,5 +408,23 @@ def profiler_frame() -> dict:
     """
     fn = getattr(_h, "profiler_frame", None)
     if fn is None:
-        return {"cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False}
+        return {"cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False,
+                "swap_interval": -1}
     return dict(fn())
+
+
+def set_swap_interval(interval: int) -> None:
+    """1 = vsync, 0 = uncapped. Visible windows default to 1, hidden to 0.
+
+    Turn it off before a profiling capture: a vsync-capped frame measures the
+    monitor's refresh rate, not the renderer.
+    """
+    fn = getattr(_h, "set_swap_interval", None)
+    if fn is not None:
+        fn(int(interval))
+
+
+def swap_interval() -> int:
+    """The interval currently set; -1 when unknown (no window, or no binding)."""
+    fn = getattr(_h, "swap_interval", None)
+    return int(fn()) if fn is not None else -1

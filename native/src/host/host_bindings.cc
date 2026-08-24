@@ -3393,6 +3393,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("profiler_reset",
           []() { renderer::frame_timer().reset(); },
           "Drop all accumulated averages and the scope table.");
+    m.def("set_swap_interval",
+          [](int interval) {
+              if (!g_window) {
+                  throw std::runtime_error(
+                      "set_swap_interval: init must be called first");
+              }
+              g_window->set_swap_interval(interval);
+          },
+          py::arg("interval"),
+          "Buffer-swap interval: 1 = vsync, 0 = uncapped. A visible window "
+          "defaults to 1 and a hidden one to 0. Turn it off for a profiling "
+          "capture -- a vsync-capped frame measures the monitor.");
+    m.def("swap_interval",
+          []() { return g_window ? g_window->swap_interval() : -1; },
+          "The interval currently set, or -1 when there is no window. The "
+          "profiler reports this rather than assuming vsync.");
     m.def("profiler_scopes",
           []() {
               // One list of dicts per resolved frame, in pass order. Values are
@@ -3422,6 +3438,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["gpu_ms"] = t.frame_gpu_ms();
               d["frames"] = t.frames_resolved();
               d["enabled"] = t.enabled();
+              // Reported, not assumed: a hidden window already runs uncapped,
+              // so a report that hard-coded "present is the vsync wait" was
+              // telling every headless capture the opposite of the truth.
+              d["swap_interval"] = g_window ? g_window->swap_interval() : -1;
               return d;
           },
           "Whole-frame CPU/GPU totals and the number of frames resolved.");

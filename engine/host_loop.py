@@ -7272,6 +7272,30 @@ def run(mission_name: Optional[str] = None,
                            configuration_panel, star_map_panel,
                            quick_battle_setup_panel]
 
+        # --- Unattended profiling capture -------------------------------
+        # DAUNTLESS_PROFILE_FRAMES=N runs N frames with both halves of the
+        # profiler on and vsync off, then exits.
+        #
+        # This exists because the interesting capture cannot be taken any
+        # other way: CEF only initialises when the process was launched
+        # through dauntless.exe (its main() runs dispatch_subprocess before
+        # Python starts), so driving run() from a plain python.exe leaves
+        # cef.pump/cef.composite reading 0.000 ms -- absent, not free. Pair
+        # it with OPEN_STBC_HOST_HEADLESS=1 to capture without a window.
+        #
+        # Vsync off is not optional for a capture: a capped frame measures
+        # the monitor. A hidden window already defaults to interval 0; this
+        # sets it explicitly so a visible-window capture is uncapped too.
+        try:
+            _profile_frames = int(_os.environ.get('DAUNTLESS_PROFILE_FRAMES', '0'))
+        except ValueError:
+            _profile_frames = 0
+        if _profile_frames > 0:
+            frame_profiler.set_enabled(True)
+            host_io.set_swap_interval(0)
+            if max_ticks is None or max_ticks > _profile_frames:
+                max_ticks = _profile_frames
+
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
             # No-op (one global read + branch) unless a developer enabled it
@@ -8643,6 +8667,13 @@ def run(mission_name: Optional[str] = None,
             ticks += 1
             if max_ticks is not None and ticks >= max_ticks:
                 break
+
+        # Final report while the window (and therefore the GL context and the
+        # swap-interval reading) still exists -- the teardown below destroys
+        # it, and a report taken after that would say 'swap interval unknown'
+        # about a capture whose whole point was that it ran uncapped.
+        if frame_profiler.is_enabled():
+            frame_profiler.print_report()
 
         if controller.session is not None:
             controller.session.teardown(r)

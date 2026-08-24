@@ -77,8 +77,20 @@ public:
 
     GLFWwindow* native_handle() noexcept { return handle_; }
 
+    /// Set the buffer-swap interval: 1 = vsync (default for a visible window),
+    /// 0 = uncapped. Profiling a vsync-capped frame measures the monitor, not
+    /// the renderer, so a capture run needs to turn it off.
+    void set_swap_interval(int interval) noexcept;
+
+    /// The interval last set on this context. The frame profiler reports it
+    /// rather than assuming vsync: a hidden window already defaults to 0, so a
+    /// report that hard-coded "present is the vsync wait" was telling every
+    /// headless capture the opposite of the truth.
+    int swap_interval() const noexcept { return swap_interval_; }
+
 private:
     GLFWwindow* handle_ = nullptr;
+    int         swap_interval_ = 1;
     double      scroll_y_accum_ = 0.0;
     double      mouse_dx_accum_ = 0.0;
     double      mouse_dy_accum_ = 0.0;

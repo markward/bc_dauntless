@@ -11,6 +11,22 @@ Launch with `--developer` and press **`` ` ``** (backtick). One switch drives
 both halves; a report is written to stderr every `REPORT_EVERY` (120) frames.
 Press it again to stop.
 
+For an unattended capture:
+
+```bash
+OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_PROFILE_FRAMES=600 ./build-cef/dauntless.exe --developer
+```
+
+`DAUNTLESS_PROFILE_FRAMES=N` enables both halves, sets swap interval 0, runs N
+frames, prints one report and exits.
+
+**Run it through `dauntless.exe`, not `python -c "host_loop.run()"`.** CEF only
+initialises when the process was launched through the binary — its `main()`
+calls `dispatch_subprocess` before Python starts — so a Python-driven capture
+prints `cef.pump`/`cef.composite` as `0.000`, which reads as free and means
+absent. That mistake cost two capture rounds. Use a CEF-enabled build tree
+(`build-cef/`); the default `build/` is configured `-DDAUNTLESS_ENABLE_CEF=OFF`.
+
 ```
 -- frame profile -- (EMA over 397 frames, alpha 0.15)
   python loop phases            cpu ms
@@ -77,6 +93,38 @@ Report output is ASCII-only — Windows consoles default to cp1252, and a
 box-drawing character raised `UnicodeEncodeError` from inside the frame loop on
 the first live run.
 
+## First measured capture
+
+QuickBattle (boots to the bridge), headless, uncapped, CEF on, 600 frames:
+
+```
+  python loop phases            cpu ms      render passes         cpu ms   gpu ms
+    render_prep                 15.777        frame                7.644   27.238
+    r.frame                      7.696          anim               4.108    0.001
+    ui_panels                    1.628          cef.composite      1.886    1.308
+    sim                          1.379          bridge             1.103    0.404
+    starmap                      0.717          post               0.050    0.987
+    input                        0.041          present            0.075   24.014
+```
+
+E3M1 (exterior view), same conditions, redistributes sharply: `ui_panels`
+10.7 ms, `sim` 5.0 ms, `render_prep` 0.8 ms. **The two scenes have different
+bottlenecks** — profile the one you intend to fix.
+
+Reading notes for this capture:
+
+* `cef.composite` at 1.9 ms CPU is the full-surface overlay upload:
+  `glTexSubImage2D` of the entire CEF surface every frame, no dirty-rect and no
+  PBO, plus the `memcpy` in `OnPaint`. CEF hands us `dirtyRects` and the
+  parameter is currently named-out and discarded.
+* `anim` at 4.1 ms is bone-palette rebuilds for every animated instance with no
+  visibility or distance gate — the bridge has a full crew.
+* `starmap` costs 0.7–1.5 ms for a **closed** modal.
+* `present` holding most of the GPU time is the pipeline draining at the swap,
+  not presentation cost. With swap interval 0 it is not a vsync wait.
+* ⚠️ Taken on a hidden window; the GL device was not identified, so treat the
+  GPU column as indicative. The CPU column is trustworthy.
+
 ## Gotchas for whoever extends it
 
 * **Name phases for what they contain.** The first capture put 5.2 ms in a phase
@@ -88,6 +136,14 @@ the first live run.
   fail at its own `init()`.
 * `EMA_ALPHA` is duplicated in `frame_profiler.py` and `FrameTimer::kEmaAlpha`.
   Change both or the two halves of a report lag differently.
+* **The table describes the last resolved frame, not every scope ever seen.**
+  Passes change parent at runtime — `render_space` runs under `space` in the
+  exterior view and under `viewscreen.rtt` on the bridge — so depth and order
+  are recorded per frame. A first-sight tree printed this frame's children
+  beneath the previous view's parent: every row correct, the tree a lie.
+* **Never assume the swap interval.** A hidden window already defaults to 0, so
+  the original hard-coded "present is the vsync wait" note told every headless
+  capture the opposite of the truth. It is read from the context now.
 
 ## Tests
 

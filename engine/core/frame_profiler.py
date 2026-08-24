@@ -230,12 +230,15 @@ def report_lines() -> list[str]:
 
     Two things this states explicitly rather than leaving to the reader:
 
-    * Whether vsync is capping the frame. Under glfwSwapInterval(1) the
-      `present` scope IS the wait for the next refresh, so a large `present`
-      alongside small siblings means the frame finished EARLY and blocked --
-      the opposite of what "present is expensive" would suggest. Any conclusion
-      about headroom drawn from a vsync-capped capture is worthless, so the
-      report says so where the number is.
+    * Whether vsync is capping the frame -- READ from the context, never
+      assumed. Under swap interval 1 the `present` scope IS the wait for the
+      next refresh, so a large `present` alongside small siblings means the
+      frame finished EARLY and blocked, the opposite of what "present is
+      expensive" would suggest; any headroom conclusion from such a capture is
+      worthless. But a HIDDEN window already defaults to interval 0, so a
+      report that hard-coded the vsync note told every headless capture the
+      opposite of the truth. It now states the real value both in the header
+      and next to `present`.
     * Whether the render half is present at all. A stale extension module
       yields an empty scope list, and a report that silently omitted the render
       passes would read as "the render costs nothing".
@@ -251,8 +254,15 @@ def report_lines() -> list[str]:
     # inside the frame loop -- the profiler would take down the game it is
     # measuring. Comments and docstrings are free to use whatever; anything
     # that reaches a stream must not.
-    lines.append("-- frame profile -- (EMA over %d frames, alpha %.2f)"
-                 % (_frames, EMA_ALPHA))
+    interval = native.get("swap_interval", -1)
+    if interval == 1:
+        cap = "swap interval 1 (VSYNC ON - frame is capped to the refresh rate)"
+    elif interval == 0:
+        cap = "swap interval 0 (uncapped)"
+    else:
+        cap = "swap interval unknown"
+    lines.append("-- frame profile -- (EMA over %d frames, alpha %.2f, %s)"
+                 % (_frames, EMA_ALPHA, cap))
 
     if _phases:
         lines.append("  python loop phases            cpu ms")
@@ -268,7 +278,12 @@ def report_lines() -> list[str]:
             label = indent + str(s.get("name", "?"))
             note = ""
             if s.get("name") == "present":
-                note = "   <- vsync wait when swap interval is 1"
+                # Only a vsync wait when the interval actually is 1. At 0 this
+                # is the swap itself plus whatever GPU work was still queued,
+                # which is a real cost, not a block.
+                note = ("   <- vsync wait (frame finished early)"
+                        if interval == 1
+                        else "   <- swap + queued GPU drain (not a vsync wait)")
             lines.append("    %-26s %7.3f  %7.3f  %5d%s"
                          % (label[:26], s.get("cpu_ms", 0.0),
                             s.get("gpu_ms", 0.0), s.get("calls", 0), note))

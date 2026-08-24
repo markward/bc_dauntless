@@ -81,11 +81,17 @@ Window::Window(int width, int height, const std::string& title, bool visible) {
         throw std::runtime_error("renderer::Window: gladLoadGLLoader failed");
     }
 
-    if (visible) {
-        glfwSwapInterval(1);  // vsync gates the loop to monitor refresh.
-    } else {
-        glfwSwapInterval(0);
-    }
+    // Visible windows default to vsync; hidden (offscreen/test) ones run
+    // uncapped. Recorded, not just applied -- the frame profiler reports the
+    // real value so a reader is never told "present is the vsync wait" on a
+    // capture that was never capped.
+    set_swap_interval(visible ? 1 : 0);
+}
+
+void Window::set_swap_interval(int interval) noexcept {
+    if (!handle_) return;
+    glfwSwapInterval(interval);
+    swap_interval_ = interval;
 }
 
 Window::~Window() {
@@ -103,7 +109,8 @@ Window::Window(Window&& other) noexcept
       mouse_dy_accum_(other.mouse_dy_accum_),
       last_cursor_x_(other.last_cursor_x_),
       last_cursor_y_(other.last_cursor_y_),
-      cursor_seeded_(other.cursor_seeded_) {
+      cursor_seeded_(other.cursor_seeded_),
+      swap_interval_(other.swap_interval_) {
     other.handle_ = nullptr;
     other.scroll_y_accum_ = 0.0;
     other.mouse_dx_accum_ = 0.0;
@@ -125,6 +132,7 @@ Window& Window::operator=(Window&& other) noexcept {
         last_cursor_x_  = other.last_cursor_x_;
         last_cursor_y_  = other.last_cursor_y_;
         cursor_seeded_  = other.cursor_seeded_;
+        swap_interval_  = other.swap_interval_;
         other.handle_ = nullptr;
         other.scroll_y_accum_ = 0.0;
         other.mouse_dx_accum_ = 0.0;
