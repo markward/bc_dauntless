@@ -307,6 +307,24 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     hits: list[tuple] = []
     expired: list[Torpedo] = []
 
+    # Per-ship values resolved ONCE per call, not once per (torpedo, ship)
+    # pair. Position, the broadphase bound and liveness depend only on the
+    # ship, and nothing inside this function moves a ship or kills one --
+    # torpedoes move, and hits are returned for the CALLER to apply, so the
+    # world is static for the duration of the walk.
+    #
+    # This is the difference between O(ships) and O(torpedoes x ships) calls
+    # into the subsystem layer. At 100 ships a profile showed bubble_bound_radius
+    # at 1,057,500 calls and GetWorldLocation at 1,426,880 over 200 ticks --
+    # roughly 5,300 and 7,100 PER TICK, for ~101 distinct answers.
+    ship_cache = []
+    for ship in all_ships:
+        if ship.IsDead():
+            continue
+        pos = ship.GetWorldLocation()
+        ship_cache.append((ship, pos.x, pos.y, pos.z,
+                           _bubble_bound_radius(ship)))
+
     for t in list(_active):
         # 1. Steer if homing within guidance window.
         if t._target_ship is not None and t._age < t._guidance_lifetime:
@@ -332,10 +350,9 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
         aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
                     if seg_len > 1e-9 else None)
 
-        for ship in all_ships:
-            if ship is t._source_ship:
-                continue
-            if ship.IsDead():
+        source = t._source_ship
+        for ship, sx, sy, sz, bound in ship_cache:
+            if ship is source:
                 continue
 
             # Broadphase. Both narrow tests below are expensive -- the bubble
@@ -348,12 +365,12 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
             # are contained in sphere(ship_pos, bubble_bound_radius). So if the
             # centres are further apart than the sum, neither test can fire.
             # Conservative by construction: it rejects only pairs that would
-            # have missed, so hit behaviour is unchanged.
-            ship_pos = ship.GetWorldLocation()
-            ddx = ship_pos.x - prev_pos.x
-            ddy = ship_pos.y - prev_pos.y
-            ddz = ship_pos.z - prev_pos.z
-            reach = _bubble_bound_radius(ship) + seg_len
+            # have missed, so hit behaviour is unchanged. Pure arithmetic on
+            # values hoisted above -- no attribute or subsystem access.
+            ddx = sx - prev_pos.x
+            ddy = sy - prev_pos.y
+            ddz = sz - prev_pos.z
+            reach = bound + seg_len
             if (ddx * ddx + ddy * ddy + ddz * ddz) > reach * reach:
                 continue
 
