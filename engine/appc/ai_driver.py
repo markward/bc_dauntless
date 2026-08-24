@@ -90,6 +90,18 @@ def _dispatch_ai(ai, game_time: float) -> int:
     if ai is None:
         return US_DONE
     # Inert-coast gate: a dying/dead ship issues no new orders.
+    # MEASURED DEAD END, do not retry without new evidence. _out_of_action is
+    # re-asked on every node visit (264,800 times over a 200-tick profile at
+    # 101 ships, ~12.5 per ship per tick) and a per-root-tick memo keyed on
+    # id(ship) is correct -- nothing in a tree walk kills a ship. It removes
+    # ~327,000 calls and is UNMEASURABLE: 4 samples with it (32.2/32.5/31.2/
+    # 31.4 ms) against 2 without (31.9/31.6) at 101 ships.
+    #
+    # cProfile reported it as -1.5%, which is the trap: cProfile adds fixed
+    # overhead PER CALL, so it systematically overstates call-elimination wins.
+    # 327k calls at ~30 ns is 0.03 ms/tick, an order of magnitude under the
+    # noise floor. Confirm call-removal changes on the wall clock, never on
+    # cProfile totals alone.
     ship = ai.GetShip() if hasattr(ai, "GetShip") else None
     if ship is not None and ship_death._out_of_action(ship):
         return US_DONE
