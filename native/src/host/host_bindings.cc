@@ -510,6 +510,34 @@ void init(int width, int height, const std::string& title) {
     g_nebula_godrays.clear();
     g_nebulae.clear();
     g_nebula_wake.clear();
+
+    // Per-frame descriptor lists. init() already resets the world, the model
+    // cache, lighting, backdrops, suns and the nebula family -- these twelve
+    // were simply missed, and every one of them is consumed by frame().
+    //
+    // A list left populated across an init is stale content rendered into what
+    // the next caller believes is a fresh scene. It surfaced as a test-isolation
+    // failure (tests/host/test_backdrops_integration's empty-backdrop row is
+    // asserted FLAT; it read 53 with no preceding tests, 63 after 39, and 77-94
+    // after 636 -- monotonic in how much leftover VFX had piled up), but the
+    // bug is not confined to tests: anything that re-inits the host inherits
+    // the previous scene's beams, torpedoes, lights and debris.
+    g_torpedoes.clear();
+    g_phaser_beams.clear();
+    g_tractor_beams.clear();
+    g_hit_vfx.clear();
+    g_shockwaves.clear();
+    g_particle_emitters.clear();
+    g_dynamic_lights.clear();
+    g_lens_flares.clear();
+    g_hull_discharges.clear();
+    g_cloak_ships.clear();
+    g_subsystem_pins.clear();
+    g_debug_cylinders.clear();
+    g_debug_boxes.clear();
+    g_debug_spheres.clear();
+    g_debug_cones.clear();
+
     g_shockwave_pass = std::make_unique<renderer::ShockwavePass>();
     g_shield_pass = std::make_unique<renderer::ShieldPass>();
     g_lens_flare_pass = std::make_unique<renderer::LensFlarePass>();
