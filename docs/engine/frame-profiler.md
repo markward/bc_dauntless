@@ -93,7 +93,52 @@ Report output is ASCII-only — Windows consoles default to cp1252, and a
 box-drawing character raised `UnicodeEncodeError` from inside the frame loop on
 the first live run.
 
-## First measured capture
+## Combat load — the capture that matters
+
+⚠️ **The first captures taken with this profiler were all of an IDLE game.**
+QuickBattle boots with `g_kEnemyList = []` (a lone Galaxy on a bridge), and
+E3M1 / E2M1 / E8M1 each run 900 ticks with zero projectiles fired and zero hull
+damage. Conclusions drawn from them were conclusions about a game doing nothing.
+Use `engine/dev_missions/combat_stress.py`, and check the scene line before
+believing any number:
+
+```bash
+OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_MISSION=engine.dev_missions.combat_stress   DAUNTLESS_COMBAT_SHIPS=16 DAUNTLESS_PROFILE_FRAMES=1200   ./build-cef/dauntless.exe --developer
+```
+
+17 ships, ~70 projectiles in flight, uncapped, CEF on:
+
+```
+  ui_panels      ~17.0        sim            ~70       r.frame     ~15-24
+  render_prep    ~12.0          sim.combat   ~25-33
+                                sim.gameloop ~35
+                                  gl.ai       ~10-11
+                                  gl.subsystems ~7.6
+                                  gl.motion   ~5.6-6.1
+                                  gl.avoidance ~2.7
+                                  gl.proximity ~1.6
+```
+
+**Combat is 20-50x the idle sim cost.** Idle it is ~1.4 ms; here it is ~70 ms.
+Anything measured without a fight running tells you nothing about the frame.
+
+### Measured improvements so far
+
+| change | effect |
+|---|---|
+| projectile/ship broadphase | `sim` 166 → ~87 ms at matched load (~1.9x); `sim.combat` 81.7 → ~30 (~2.7x) |
+| impulse derating computed once per ship-tick | motion path −27% by cProfile; `gl.motion` 10.45 → ~5.6-6.1 ms live |
+| `TGMatrix3.MultMatrix` unrolled | 3.74x on the primitive, but only ~0.5 ms of `gl.motion` |
+
+### Run-to-run variance is large — check for contention
+
+The fight evolves differently each run, so projectile counts (and therefore
+every sim number) vary. Worse, external CPU load inflates everything at once.
+**The tell is correlation:** if `gl.ai`, `ui_panels` and `gl.motion` all move
+together by 2-3x, that is contention, not a regression. Compare runs at similar
+projectile counts, and discard runs where the untouched phases moved.
+
+## First measured capture (idle — kept for the render-pass breakdown)
 
 QuickBattle (boots to the bridge), headless, uncapped, CEF on, 600 frames:
 
@@ -141,6 +186,14 @@ Reading notes for this capture:
   exterior view and under `viewscreen.rtt` on the bridge — so depth and order
   are recorded per frame. A first-sight tree printed this frame's children
   beneath the previous view's parent: every row correct, the tree a lie.
+* **Check the scene line before believing anything.** Every early capture with
+  this profiler measured a game with no combat in it, and nothing in the output
+  said so. Combat is 20-50x the idle sim cost.
+* **Open the box before choosing the fix.** `gl.motion` looked like a matrix
+  problem from reading the code; unrolling the multiply (3.74x on the
+  primitive) moved it 10.45 → 9.9 ms. cProfile then showed `MultMatrix` was
+  2.5% of the path and `impulse_output_fraction` was 55%. Reasoning ahead of
+  measurement picked the wrong target three times in one session.
 * **Never assume the swap interval.** A hidden window already defaults to 0, so
   the original hard-coded "present is the vsync wait" note told every headless
   capture the opposite of the truth. It is read from the context now.
