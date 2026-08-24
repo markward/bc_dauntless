@@ -263,6 +263,7 @@ def report_lines() -> list[str]:
         cap = "swap interval unknown"
     lines.append("-- frame profile -- (EMA over %d frames, alpha %.2f, %s)"
                  % (_frames, EMA_ALPHA, cap))
+    lines.append(scene_summary())
 
     if _phases:
         lines.append("  python loop phases            cpu ms")
@@ -317,3 +318,54 @@ def print_report() -> None:
             sys.stderr.write(line + "\n")
     except Exception:
         pass
+
+
+# ── Scene load ───────────────────────────────────────────────────────────────
+# A capture that does not say what it measured is not reproducible, and worse,
+# it invites a confident conclusion about the wrong scene. The first captures
+# taken with this profiler were all of an IDLE game -- QuickBattle boots with
+# an empty enemy list, and E3M1/E2M1/E8M1 run 900 ticks with zero projectiles
+# fired and zero hull damage -- and nothing in the output said so. Every report
+# now carries its own load line.
+#
+# Computed lazily, only when a report is actually built (every REPORT_EVERY
+# frames), so it costs nothing per frame. Best-effort throughout: a profiler
+# must never be the thing that raises.
+
+def scene_summary() -> str:
+    """One line describing the load: ships, projectiles, damage taken.
+
+    Returns a short marker rather than raising if the world is not available
+    (headless import contexts, teardown, a mission mid-swap).
+    """
+    ships = projectiles = damaged = -1
+    try:
+        from engine.appc.ship_iter import iter_ships
+        live = list(iter_ships())
+        ships = len(live)
+        damaged = 0
+        for s in live:
+            try:
+                hull = s.GetHull()
+                if hull is not None and hull.GetCondition() < hull.GetMaxCondition():
+                    damaged += 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+    try:
+        from engine.appc import projectiles as _p
+        projectiles = len(_p._active)
+    except Exception:
+        pass
+
+    def _n(v):
+        return "?" if v < 0 else str(v)
+
+    line = ("  scene: %s ships, %s projectiles in flight, %s hull-damaged"
+            % (_n(ships), _n(projectiles), _n(damaged)))
+    # The whole point of the line: say plainly when nothing is happening, so a
+    # reader cannot mistake an idle capture for a representative one.
+    if projectiles == 0 and damaged == 0:
+        line += "   <- IDLE: no combat in this capture"
+    return line

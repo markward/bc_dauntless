@@ -6460,6 +6460,18 @@ def run(mission_name: Optional[str] = None,
     # test harness, dev mission picker, every existing mission) keeps the
     # single-mission path byte-for-byte. SHIP_GATE_MISSION stays available for
     # callers that want it explicitly.
+    # DAUNTLESS_MISSION picks the boot mission when the caller passed none.
+    # dauntless.exe's main() calls run() with no arguments, so without this
+    # there is no way to launch the binary into anything but QuickBattle --
+    # and QuickBattle boots with an empty enemy list, which is how a whole
+    # round of profiling captures came to measure an idle game. Pairs with
+    # DAUNTLESS_PROFILE_FRAMES for an unattended capture of a chosen scene.
+    # An explicit mission_name argument still wins.
+    if mission_name is None:
+        _env_mission = _os.environ.get('DAUNTLESS_MISSION', '').strip()
+        if _env_mission:
+            mission_name = _env_mission
+
     boot_quickbattle = mission_name is None
 
     _setup_sdk()
@@ -6930,6 +6942,10 @@ def run(mission_name: Optional[str] = None,
                                 module_name="engine.dev_missions.damage_preview",
                                 dir_name="Damage Preview",
                                 display_name="Damage Preview",
+                            ), MissionEntry(
+                                module_name="engine.dev_missions.combat_stress",
+                                dir_name="Combat Stress",
+                                display_name="Combat Stress",
                             )],
                         )],
                     ))
@@ -7647,7 +7663,12 @@ def run(mission_name: Optional[str] = None,
             if _sim_ticks_this_frame > 0:
                 _xform_buf.roll()
             for _ in range(_sim_ticks_this_frame):
-                loop.tick()
+                # GameLoop = timers, the TimeSliceProcess scheduler, the AI
+                # tree-walk, collision avoidance, motion integration and the
+                # per-ship shield/power/cloak/repair updates. Timed separately
+                # from the weapon/combat pumps below, which it does NOT drive.
+                with frame_profiler.scope("sim.gameloop"):
+                    loop.tick()
 
             # Only snap the camera when a sim tick actually fired —
             # no tick means no state change to follow.
@@ -7883,12 +7904,14 @@ def run(mission_name: Optional[str] = None,
                 # Materialize the ship list once per frame — both consumers
                 # re-walked every set independently before.
                 _ships_this_tick = list(_all_ships_for_tick())
-                _advance_weapons(_ships_this_tick, TICK_DT)
-                _advance_combat(
-                    _ships_this_tick, TICK_DT,
-                    ship_instances=(session.ship_instances if session is not None else None),
-                    ship_emitters=(session.ship_emitters if session is not None else None),
-                )
+                with frame_profiler.scope("sim.weapons"):
+                    _advance_weapons(_ships_this_tick, TICK_DT)
+                with frame_profiler.scope("sim.combat"):
+                    _advance_combat(
+                        _ships_this_tick, TICK_DT,
+                        ship_instances=(session.ship_instances if session is not None else None),
+                        ship_emitters=(session.ship_emitters if session is not None else None),
+                    )
 
                 # Sensor contact identification → drives the SDK bridge Hail /
                 # scan buttons + unlocks target-info panels (all gate on
@@ -8017,10 +8040,11 @@ def run(mission_name: Optional[str] = None,
                 _warp_state.tick_warp_states(_player_dt)
                 _warp_state.sync_flythrough(_wv_state.get().is_active())
 
-                collisions.tick_collisions(
-                    _player_dt,
-                    ship_instances=(session.ship_instances if session is not None else None),
-                )
+                with frame_profiler.scope("sim.collisions"):
+                    collisions.tick_collisions(
+                        _player_dt,
+                        ship_instances=(session.ship_instances if session is not None else None),
+                    )
 
                 # Sync transforms for known instances.
                 #

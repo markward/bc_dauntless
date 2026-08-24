@@ -291,3 +291,51 @@ def test_print_report_never_raises(monkeypatch):
     fp.set_enabled(True, native=False)
     fp.begin_frame(); fp.mark("p"); fp.end_frame()
     fp.print_report()     # must return normally
+
+
+def test_report_names_an_idle_capture_as_idle(monkeypatch):
+    """The failure this exists to prevent: every early capture with this
+    profiler measured a game with no combat in it (QuickBattle boots with an
+    empty enemy list; the Maelstrom missions fire nothing in 900 ticks), and
+    nothing in the output said so. Conclusions were drawn from an idle game."""
+    monkeypatch.setattr(fp, "scene_summary",
+                        lambda: "  scene: 9 ships, 0 projectiles in flight, "
+                                "0 hull-damaged   <- IDLE: no combat")
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 1.0, "gpu_ms": 1.0, "frames": 5, "enabled": True,
+                 "swap_interval": 0},
+    )
+    fp.set_enabled(True, native=False)
+    fp.begin_frame(); fp.mark("p"); fp.end_frame()
+    text = "\n".join(fp.report_lines())
+    assert "IDLE" in text
+
+
+def test_scene_summary_never_raises_without_a_world():
+    """Called at report time from inside the frame loop; there may be no
+    mission (teardown, a swap in progress, a headless import context)."""
+    line = fp.scene_summary()
+    assert "scene:" in line
+
+
+def test_scene_summary_flags_a_live_fight_as_not_idle(monkeypatch):
+    class _Hull:
+        def GetCondition(self): return 40.0
+        def GetMaxCondition(self): return 100.0
+
+    class _Ship:
+        def GetHull(self): return _Hull()
+
+    import engine.appc.ship_iter as si
+    import engine.appc.projectiles as pr
+    monkeypatch.setattr(si, "iter_ships", lambda: [_Ship(), _Ship()])
+    monkeypatch.setattr(pr, "_active", [object(), object(), object()])
+
+    line = fp.scene_summary()
+    assert "2 ships" in line
+    assert "3 projectiles" in line
+    assert "2 hull-damaged" in line
+    assert "IDLE" not in line
