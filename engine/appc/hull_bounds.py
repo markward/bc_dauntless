@@ -140,3 +140,40 @@ def point_is_inside_hull(ship, point) -> bool:
         if (dx * dx + dy * dy + dz * dz) <= radius * radius:
             return True
     return False
+
+
+_BOUND_R_ATTR = "_hull_bound_radius_unscaled"
+
+
+def bound_radius(ship) -> float:
+    """Radius about ``ship``'s origin that CONTAINS every cached hull piece,
+    at the ship's current scale. 0.0 when it has no pieces.
+
+    Exists so a caller can gate on the whole body before expanding it into
+    pieces. That gate is only sound if the radius really encloses them, and
+    ``GetRadius()`` does NOT: the host only calls ``SetRadius`` from the model
+    AABB ``if ship.GetRadius() <= 0.0`` (host_loop realize), so a ship whose
+    hardpoint script authored a radius keeps the AUTHORED one, which has no
+    guaranteed relationship to the model geometry the pieces come from. A
+    protruding nacelle outside an under-sized authored radius would be gated
+    away, and the ship would fly through it.
+
+    max(|centre| + r) over the pieces, which is exact rather than approximate.
+    Memoised unscaled on the instance (pieces never change after caching) and
+    multiplied by the live GetScale() per call, so a rescaled ship stays right.
+    """
+    cached = ship.__dict__.get(_ATTR)
+    if not cached:
+        return 0.0
+    r_unscaled = ship.__dict__.get(_BOUND_R_ATTR)
+    if r_unscaled is None:
+        r_unscaled = 0.0
+        for (cx, cy, cz), r in cached:
+            reach = (cx * cx + cy * cy + cz * cz) ** 0.5 + r
+            if reach > r_unscaled:
+                r_unscaled = reach
+        ship.__dict__[_BOUND_R_ATTR] = r_unscaled
+    try:
+        return r_unscaled * float(ship.GetScale())
+    except Exception:
+        return r_unscaled

@@ -399,7 +399,8 @@ def _test_course_override(ship, previous_heading=None):
     blacklist = _dont_avoid_types()
 
     from engine.appc.collisions import _collision_disabled_ids
-    from engine.appc.hull_bounds import has_hull_bounds, hull_spheres_near
+    from engine.appc.hull_bounds import (has_hull_bounds, hull_spheres_near,
+                                         bound_radius as hull_bound_radius)
 
     avoid_list = []
     # Loop-invariant: depends on `ship`, not on the obstacle, so it was being
@@ -481,6 +482,41 @@ def _test_course_override(ship, previous_heading=None):
         # fallback is chosen on has_hull_bounds and never on emptiness: an
         # obstacle whose geometry is simply out of range must yield NOTHING,
         # not the whole-model sphere the pieces exist to replace.
+        # ── Whole-body convergence gate ────────────────────────────────
+        # Test the obstacle's BOUNDING SPHERE before expanding it into pieces.
+        # Conservative: every piece lies inside the bounding sphere, so if the
+        # sphere is not on a collision course within the prediction window, no
+        # piece of it can be. Only converging obstacles pay for expansion.
+        #
+        # This is the filter the proximity query never was. Measured over
+        # 40,320 pair-samples at 64 ships:
+        #
+        #     within the 225 GU proximity query :  100.00%
+        #     actually converging (swept test)  :    0.00%
+        #
+        # AVOID_MINIMUM_RADIUS_GU is 225 GU (~40 km, the SDK's fMinimumRadius)
+        # while a battle happens within a few GU, so the distance prefilter
+        # above rejects nothing -- and the piece expansion behind it was
+        # unconditional: up to 128 leaves per obstacle, per AI ship, per
+        # evaluation. Proximity does not discriminate; convergence does.
+        #
+        # _need_to_avoid is ~20 float ops and its "already inside personal
+        # space" clause returns True regardless of velocity, so a body already
+        # overlapping is never gated out.
+        # ob_r is GetRadius(), which is NOT guaranteed to enclose the hull
+        # pieces -- the host only derives it from the model AABB when the SDK
+        # left it at 0, so an authored radius can be smaller than the geometry.
+        # hull_bounds.bound_radius is exact (max |centre| + r over the pieces),
+        # so the gate radius is the larger of the two and cannot cut a piece off.
+        gate_r = ob_r
+        if has_hull_bounds(other):
+            piece_bound = hull_bound_radius(other)
+            if piece_bound > gate_r:
+                gate_r = piece_bound
+        if not _need_to_avoid(ship_loc, ship_vel, personal_space,
+                              ob_loc, ob_vel, gate_r):
+            continue
+
         if has_hull_bounds(other):
             # MEASURED DEAD END, do not retry without new evidence. Passing the
             # geometric bound here instead of check_radius (travel + ob_travel +
