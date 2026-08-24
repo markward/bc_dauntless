@@ -1,6 +1,7 @@
 import App
 
 from engine.appc.ship_iter import iter_ships
+from engine.core import frame_profiler as _prof
 
 TICK_RATE = 60
 TICK_DELTA = 1.0 / TICK_RATE
@@ -32,9 +33,12 @@ class GameLoop:
         from engine.appc.defensive_cloak import tick_defensive_cloak
         game_time = App.g_kTimerManager.get_time()
         real_time = App.g_kRealtimeTimerManager.get_time()
-        g_kAIManager.tick(game_time=game_time, real_time=real_time)
-        tick_defensive_cloak(TICK_DELTA)
-        tick_all_ai(game_time=game_time)
+        with _prof.scope("gl.timeslice"):
+            g_kAIManager.tick(game_time=game_time, real_time=real_time)
+        with _prof.scope("gl.cloak"):
+            tick_defensive_cloak(TICK_DELTA)
+        with _prof.scope("gl.ai"):
+            tick_all_ai(game_time=game_time)
         # Drive each bridge officer's CharacterClass animation queue one step --
         # the headless equivalent of host_loop._pump_character_queues. A
         # re-pointed CharacterAction (turn / glance / gesture / breathe / menu)
@@ -44,36 +48,25 @@ class GameLoop:
         # gameloop_harness). No clip-player controller exists here, so
         # _anim_play_now leaves the record unplayed and ReleaseCurrentAnimation
         # fires on_complete on the next drain. AI/Python-first ordering.
-        _pump_bridge_character_queues()
+        with _prof.scope("gl.bridge_chars"):
+            _pump_bridge_character_queues()
         # Per-tick proximity evaluation.  SDK conditions like
         # ConditionInRange register ProximityChecks; the per-tick sweep
         # fires events when objects cross the radius boundary.
-        evaluate_proximity_checks()
+        with _prof.scope("gl.proximity"):
+            evaluate_proximity_checks()
         # Collision avoidance overrides the heading of any AI ship on an
         # imminent collision course, AFTER the AI has set its heading and
         # BEFORE motion integrates. Restores the original Appc autopilot's
         # obstacle avoidance (the SDK movement scripts only command a
         # heading; the C++ autopilot steered around obstacles).
-        tick_collision_avoidance()
-        tick_all_ship_motion(TICK_DELTA)
+        with _prof.scope("gl.avoidance"):
+            tick_collision_avoidance()
+        with _prof.scope("gl.motion"):
+            tick_all_ship_motion(TICK_DELTA)
 
-        for ship in iter_ships():
-            ss = ship.GetShieldSubsystem()
-            if ss is not None:
-                ss.Update(TICK_DELTA)
-            ps = ship.GetPowerSubsystem()
-            if ps is not None:
-                ps.Update(TICK_DELTA)
-            # Advance any in-progress cloak/decloak transition so it completes
-            # (CloakShip preprocessor sets the intent; the timer lives here).
-            cl = ship.GetCloakingSubsystem()
-            if cl is not None:
-                cl.Update(TICK_DELTA)
-            # Repair bay: advance the repair queue (RE tick — see
-            # RepairSubsystem.Update). AI ships repair themselves too.
-            rs = ship.GetRepairSubsystem()
-            if rs is not None:
-                rs.Update(TICK_DELTA)
+        with _prof.scope("gl.subsystems"):
+            _update_ship_subsystems()
 
     def advance(self, n: int) -> None:
         for _ in range(n):
@@ -82,6 +75,32 @@ class GameLoop:
     @property
     def game_time(self) -> float:
         return App.g_kTimerManager.get_time()
+
+
+def _update_ship_subsystems() -> None:
+    """Advance every live ship's shield / power / cloak / repair subsystem.
+
+    Extracted from GameLoop.tick so the profiler can scope it without
+    re-indenting the body (and so the scope covers the whole walk, including
+    iter_ships itself, rather than only the per-ship work).
+    """
+    for ship in iter_ships():
+        ss = ship.GetShieldSubsystem()
+        if ss is not None:
+            ss.Update(TICK_DELTA)
+        ps = ship.GetPowerSubsystem()
+        if ps is not None:
+            ps.Update(TICK_DELTA)
+        # Advance any in-progress cloak/decloak transition so it completes
+        # (CloakShip preprocessor sets the intent; the timer lives here).
+        cl = ship.GetCloakingSubsystem()
+        if cl is not None:
+            cl.Update(TICK_DELTA)
+        # Repair bay: advance the repair queue (RE tick — see
+        # RepairSubsystem.Update). AI ships repair themselves too.
+        rs = ship.GetRepairSubsystem()
+        if rs is not None:
+            rs.Update(TICK_DELTA)
 
 
 def _pump_bridge_character_queues() -> None:
