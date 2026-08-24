@@ -549,6 +549,19 @@ class _EnergyWeaponFireMixin:
                 # Route via StopFiring so the looped SFX handle is silenced.
                 self.StopFiring()
         else:
+            # HEADROOM FIRST. A fully-charged idle bank has nothing to do, and
+            # measured at 100 ships that is 89.7% of every UpdateCharge call --
+            # 709 of 790 per tick. Each of them used to pay GetParentSubsystem,
+            # IsOn, GetNormalPowerPercentage and GetConditionPercentage (the
+            # last two walk subsystem state) purely to arrive at a headroom of
+            # zero and do nothing.
+            #
+            # Exactly equivalent: every test this jumps ahead of is a getter
+            # with no side effects, and when headroom is zero the original
+            # reached the same end state -- `want` would have been min(rate, 0)
+            # and the += a no-op -- by either branch it could take.
+            if self._max_charge - self._charge_level <= 0.0:
+                return
             parent = self.GetParentSubsystem()
             if parent is None or parent.IsOn():
                 power_factor = max(0.0, parent.GetNormalPowerPercentage()
