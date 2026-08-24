@@ -402,26 +402,27 @@ def _test_course_override(ship, previous_heading=None):
     from engine.appc.hull_bounds import has_hull_bounds, hull_spheres_near
 
     avoid_list = []
+    # Loop-invariant: depends on `ship`, not on the obstacle, so it was being
+    # rebuilt once per PAIR for one answer per ship.
+    try:
+        ship_disabled = _collision_disabled_ids(ship)
+        ship_obj_id = ship.GetObjID()
+    except Exception:
+        ship_disabled, ship_obj_id = frozenset(), None
+
+    check_radius_sq = check_radius * check_radius
+    px, py, pz = predicted.x, predicted.y, predicted.z
+
     for other in iter_set_objects(pSet):
         if other is ship:
             continue
-        # Per-pair collision mask (DamageableObject.EnableCollisionsWith),
-        # honoured symmetrically exactly as collisions.resolve_collisions does:
-        # a ship docking with a starbase calls EnableCollisionsWith(pStarbase, 0)
-        # (AI.Compound.DockWithStarbase.SetupCutscene) precisely so it can fly
-        # right up to it — avoidance must not then evade the dock target and
-        # override the docking AI's steering (E6M2 fly-in flew off otherwise).
-        try:
-            if (other.GetObjID() in _collision_disabled_ids(ship)
-                    or ship.GetObjID() in _collision_disabled_ids(other)):
-                continue
-        except Exception:
-            pass
-        # Type filtering: skip blacklisted class types (SDK NeedToAvoid first
-        # check, via IsTypeOf against lDontAvoidTypes). We read the obstacle's
-        # type with isinstance against the engine's CT_* classes.
-        if isinstance(other, blacklist):
-            continue
+        # DISTANCE FIRST. Every test below it is a `continue`, so their order
+        # among themselves cannot change which obstacles end up in avoid_list --
+        # only how much work is done reaching that answer. The prefilter rejects
+        # the large majority of pairs in a fight, and it used to run FOURTH,
+        # after two _collision_disabled_ids() set lookups and an isinstance
+        # against a class tuple. This is an all-pairs loop over an all-AI-ships
+        # loop, so that ordering was the whole cost.
         try:
             ob_loc = other.GetWorldLocation()
             ob_r = float(other.GetRadius())
@@ -431,10 +432,28 @@ def _test_course_override(ship, previous_heading=None):
             continue
         # Prefilter: only objects within check_radius of the predicted
         # position (SDK GetNearObjects).
-        dx = ob_loc.x - predicted.x
-        dy = ob_loc.y - predicted.y
-        dz = ob_loc.z - predicted.z
-        if (dx * dx + dy * dy + dz * dz) > (check_radius * check_radius):
+        dx = ob_loc.x - px
+        dy = ob_loc.y - py
+        dz = ob_loc.z - pz
+        if (dx * dx + dy * dy + dz * dz) > check_radius_sq:
+            continue
+        # Per-pair collision mask (DamageableObject.EnableCollisionsWith),
+        # honoured symmetrically exactly as collisions.resolve_collisions does:
+        # a ship docking with a starbase calls EnableCollisionsWith(pStarbase, 0)
+        # (AI.Compound.DockWithStarbase.SetupCutscene) precisely so it can fly
+        # right up to it — avoidance must not then evade the dock target and
+        # override the docking AI's steering (E6M2 fly-in flew off otherwise).
+        try:
+            if (other.GetObjID() in ship_disabled
+                    or (ship_obj_id is not None
+                        and ship_obj_id in _collision_disabled_ids(other))):
+                continue
+        except Exception:
+            pass
+        # Type filtering: skip blacklisted class types (SDK NeedToAvoid first
+        # check, via IsTypeOf against lDontAvoidTypes). We read the obstacle's
+        # type with isinstance against the engine's CT_* classes.
+        if isinstance(other, blacklist):
             continue
         ob_vel = _world_velocity(other)
         # Present the obstacle as the PIECES its hull is made of, not one
