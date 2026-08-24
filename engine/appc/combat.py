@@ -868,3 +868,38 @@ def apply_hit(ship, damage: float, hit_point, source, *,
     if isinstance(ship, App.TGEventHandlerObject):
         evt.SetDestination(ship)
     App.g_kEventManager.AddEvent(evt)
+
+
+def bubble_bound_radius(ship) -> float:
+    """A radius around ``ship.GetWorldLocation()`` that CONTAINS both the hull
+    bounding sphere and the whole shield ellipsoid.
+
+    This is a broadphase bound, not geometry: it exists so a caller can reject
+    a candidate pair with one distance test instead of running the ellipsoid
+    intersection. It must never under-estimate, or a shot that would have hit
+    gets silently dropped — so it takes the ellipsoid centre offset into
+    account rather than assuming the bubble is centred on the ship origin (on
+    real hulls it is not; a Sovereign's model origin is 6.98 GU off in Z).
+
+    bubble ⊆ sphere(ship_pos, |centre| + max(semi-axis)), and the semi-axes are
+    the hull half-extents × SHIELD_ELLIPSOID_AXIS_SCALE. Without a cached box
+    (headless, not yet realized, test fakes) it falls back to a bound derived
+    from GetRadius(), which is conservative for the same reason: the AABB
+    half-extents are bounded by the bounding-sphere radius.
+    """
+    try:
+        radius = float(ship.GetRadius())
+    except Exception:
+        radius = 0.0
+
+    box = _hull_box_for(ship)
+    if box is None:
+        # No box => shield_bubble_entry returns None and only the hull sphere
+        # test can fire, but bound for the bubble anyway so that a box
+        # appearing later (realize order) cannot outgrow a cached bound.
+        return radius * (1.0 + SHIELD_ELLIPSOID_AXIS_SCALE)
+
+    (cx, cy, cz), (hx, hy, hz) = box
+    centre_len = (cx * cx + cy * cy + cz * cz) ** 0.5
+    max_semi = max(abs(hx), abs(hy), abs(hz)) * SHIELD_ELLIPSOID_AXIS_SCALE
+    return max(radius, centre_len + max_semi)

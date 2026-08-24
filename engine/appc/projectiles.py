@@ -295,7 +295,13 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     forward it to apply_hit so the persistent damage decal can render (a None
     normal suppresses the decal).
     """
-    from engine.appc.combat import (sphere_hit, _resolve_hit_point)
+    # All resolved ONCE per call. shield_bubble_entry/shields_block used to be
+    # imported inside the ship loop, i.e. re-resolved for every (torpedo, ship)
+    # pair -- a sys.modules lookup and two attribute fetches ~1,900 times a
+    # tick in a 17-ship fight.
+    from engine.appc.combat import (sphere_hit, _resolve_hit_point,
+                                    shield_bubble_entry, shields_block,
+                                    bubble_bound_radius as _bubble_bound_radius)
     from engine.appc.math import TGPoint3
 
     hits: list[tuple] = []
@@ -313,28 +319,51 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
             expired.append(t)
             continue
         # 3. Collide.
-        from engine.appc.combat import shield_bubble_entry, shields_block
+        # The segment, its length and the aim direction depend only on the
+        # TORPEDO, so they are computed once here rather than once per ship.
+        # They used to sit inside the ship loop, which rebuilt three vectors
+        # per (torpedo, ship) pair -- 1,900 rebuilds a tick in a 17-ship
+        # fight, for values that never varied across the loop.
+        seg = t._position - prev_pos
+        seg_len = seg.Length()
+        # seg_len ~= 0 only if dt or velocity was zero this tick;
+        # _resolve_hit_point treats `ray_direction=None` as "degrade
+        # to fallback", which is what we want for a stationary tick.
+        aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
+                    if seg_len > 1e-9 else None)
+
         for ship in all_ships:
             if ship is t._source_ship:
                 continue
             if ship.IsDead():
                 continue
 
-            seg = t._position - prev_pos
-            seg_len = seg.Length()
-            # seg_len ~= 0 only if dt or velocity was zero this tick;
-            # _resolve_hit_point treats `ray_direction=None` as "degrade
-            # to fallback", which is what we want for a stationary tick.
-            aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
-                        if seg_len > 1e-9 else None)
+            # Broadphase. Both narrow tests below are expensive -- the bubble
+            # test alone fetches the ship's rotation matrix and does three dot
+            # products to reach the body frame -- and BOTH used to run on every
+            # pair with no distance rejection at all, which is what made this
+            # loop the dominant cost of a fight.
+            #
+            # The whole segment lies within seg_len of prev_pos, and both tests
+            # are contained in sphere(ship_pos, bubble_bound_radius). So if the
+            # centres are further apart than the sum, neither test can fire.
+            # Conservative by construction: it rejects only pairs that would
+            # have missed, so hit behaviour is unchanged.
+            ship_pos = ship.GetWorldLocation()
+            ddx = ship_pos.x - prev_pos.x
+            ddy = ship_pos.y - prev_pos.y
+            ddz = ship_pos.z - prev_pos.z
+            reach = _bubble_bound_radius(ship) + seg_len
+            if (ddx * ddx + ddy * ddy + ddz * ddz) > reach * reach:
+                continue
 
             # The SHIELD BUBBLE is tested first, exactly as BC's projectile
             # loop does: TestHit intersects the ellipsoid and only falls
             # through to the hull when no live facing stops the shot
             # (stbc_reference spec/ShieldFacingDamage.md §3.1, §2.3).
             #
-            # It has to be its own broadphase, not a refinement of the sphere
-            # test, because the two disagree in BOTH directions. On a Galaxy
+            # It is its own NARROW test, not a refinement of the sphere test,
+            # because the two disagree in BOTH directions. On a Galaxy
             # the bounding sphere is 4.03 GU while the bubble semi-axes are
             # 4.02 / 5.58 / 1.22: a bow shot crossed the bubble 1.55 GU before
             # the sphere test noticed (so its whole segment was already inside
