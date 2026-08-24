@@ -518,6 +518,25 @@ def tick_collision_avoidance(dt: float = 1.0 / 60.0) -> None:
     collision course. Call once per tick after tick_all_ai, before
     tick_all_ship_motion.
 
+    ⚠️ SUPERSEDED — THIS IS A SECOND, DUPLICATE AVOIDANCE CONTROLLER.
+    Slated for deletion; see docs/engine/avoidance-duplication.md.
+
+    The premise below ("the SDK movement scripts only command a heading; the
+    C++ autopilot steered around obstacles") is WRONG. BC's avoidance is
+    ``AvoidObstacles``, a PREPROCESSOR in the AI tree (AI/Preprocessors.py:1621),
+    which the engine swaps for a native node at bind time via
+    ``PreprocessingAI::SetContainedAI`` -> ``GetOptimizedVersion`` (vtable +0x34,
+    0x0048E570 / 0x0048EB20). It was never a separate autopilot layer.
+
+    Measured on E3M1: the one AI ship carries an ``AvoidObstacles_NonLethal``
+    node in its tree AND is steered by this function. tick_all_ai runs first,
+    so the SDK preprocessor does a full obstacle scan and calls
+    TurnTowardDirection/SetImpulse -- and then THIS function overwrites the
+    result. Real missions pay for avoidance twice and discard the first answer.
+
+    (combat_stress uses BasicAttack, which installs no AvoidObstacles, so every
+    avoidance measurement taken against it is of this path alone.)
+
     Adaptive cadence (SDK Update/GetNextUpdateTime): when not actively
     evading, a ship is only re-evaluated every fMaximumUpdateDelay (0.25 s);
     while overriding, it re-evaluates every tick (fMinimumUpdateDelay = 0.0).
