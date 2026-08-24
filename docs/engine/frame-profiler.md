@@ -170,6 +170,52 @@ Reading notes for this capture:
 * ⚠️ Taken on a hidden window; the GL device was not identified, so treat the
   GPU column as indicative. The CPU column is trustworthy.
 
+## Scaling toward 100 ships
+
+Headless combat driver (GameLoop + weapons + combat — the plain GameLoop does
+not pump weapons, so a headless run fires nothing and profiles an idle game):
+
+| ships | sim tick |
+|---|---|
+| 9 | 2.4 ms |
+| 17 | 5.0 |
+| 33 | 11.2 |
+| 65 | 22.5 |
+| 101 | **35.7** |
+
+**Linear.** Ratios per doubling 2.02, 1.59 — there is no algorithmic wall
+between here and 100 ships in this path; it is a constant-factor problem. At
+101 ships the sim tick is ~2.1x a 16.67 ms frame budget on its own.
+
+⚠️ **The headless driver understates combat.** It produces far fewer
+projectiles than a live capture (87 at 101 ships, vs 240 at 33 ships live),
+because the AI's fire scripts depend on host-loop state. Use it for *shape*
+(complexity, call counts) and a live capture for *magnitude*.
+
+### What is still quadratic
+
+`gl.avoidance` — `tick_collision_avoidance` scans `iter_set_objects(pSet)` per
+ship, i.e. all-pairs, with per-pair collision-mask and hull-piece work. Per
+ship it costs 0.06 / 0.12 / 0.41 / 1.11 ms at 9 / 17 / 33 / 33-with-more-combat
+ships. It has an adaptive cadence (re-evaluate every 0.25 s when not evading)
+which is what has hidden it so far, but in a dense fight most ships ARE
+evading, so most re-evaluate every tick. **This is the thing that explodes
+first at 100 ships.** It needs the same treatment the projectile loop got: a
+spatial or distance broadphase before the per-pair work.
+
+### The shape of what remains
+
+After the wins below, a 100-ship profile is FLAT — the largest single entry is
+`_out_of_action` at 2.7% of total. The sim makes **~200,000 Python function
+calls per tick** at 100 ships (39.9 M over 200 ticks): 3.0 M isinstance,
+2.4 M hasattr, 1.4 M getattr, 1.0 M implements, 1.1 M TGPoint3 allocations.
+
+That changes what "optimising" means. There is no hot spot left to fix; the
+cost is the *number of operations*. The routes are (a) do less per tick —
+BC's own answer, `TimeSliceProcess`, is already present as `g_kAIManager` and
+is barely used (`gl.timeslice` is 0.03 ms); (b) sim LOD, updating distant
+ships at lower frequency; (c) move hot paths to C++.
+
 ## Gotchas for whoever extends it
 
 * **Name phases for what they contain.** The first capture put 5.2 ms in a phase
