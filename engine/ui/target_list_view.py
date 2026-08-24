@@ -177,6 +177,10 @@ def _next_living_sibling(sub):
     return None
 
 
+# How often the target list is polled. See TargetListView.poll_interval_s.
+TARGET_LIST_POLL_S = 0.5
+
+
 class TargetListView(Panel):
     @property
     def name(self) -> str:
@@ -490,6 +494,30 @@ class TargetListView(Panel):
         player.SetTargetSubsystem(sub)
         return True
 
+    @property
+    def poll_interval_s(self) -> float:
+        """Polled at 2 Hz, not per frame.
+
+        This panel's _snapshot walks every contact x every subsystem x every
+        child subsystem, querying condition on each, purely to compare against
+        last frame's tuple. Measured at 33 contacts it is 26.0 ms of a 26.7 ms
+        UI phase -- 97.5% of all panel cost, and every other panel returns in
+        ~10 us.
+
+        2 Hz is matched to the data, not just cheaper: the shield percentages
+        it displays only CHANGE at 2 Hz (BC's 0.5 s shield charge tick, see
+        subsystems.SHIELD_CHARGE_PERIOD_S), so polling at 60 Hz read the same
+        value thirty times over. Hull condition is event-driven and bursty, so
+        a row can lag a hit by up to half a second -- accepted, and the reason
+        this is a named constant rather than a magic number.
+
+        Interaction is unaffected: selection changes go through dispatch_event
+        and visibility flips through the visible setter, both of which mark the
+        panel due for the next frame.
+        """
+        return TARGET_LIST_POLL_S
+
     def invalidate(self) -> None:
         """Force the next render_payload to re-emit."""
+        super().invalidate()
         self._last_snapshot = None

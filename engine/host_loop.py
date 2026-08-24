@@ -7484,7 +7484,8 @@ def run(mission_name: Optional[str] = None,
                 _game = Game_GetCurrentGame()
                 _player = _game.GetPlayer() if _game is not None else None
                 if _menu is not None and _player is not None:
-                    _pump_contacts(_menu, _player)
+                    with frame_profiler.scope("ui.contacts"):
+                        _pump_contacts(_menu, _player)
 
                 # Surface 2 of weapons-config: reconcile the equipment-gated
                 # weapon/defense command rows on the F2 Tactical menu. Idempotent
@@ -7510,7 +7511,8 @@ def run(mission_name: Optional[str] = None,
                 # move together within the frame.
                 star_map_panel.set_view_size(_CEF_VIEW_W, _CEF_VIEW_H)
 
-                _scripts = registry.render_all()
+                with frame_profiler.scope("ui.render_all"):
+                    _scripts = registry.render_all()
                 for _panel_script in _scripts:
                     _h.cef_execute_javascript(_panel_script)
 
