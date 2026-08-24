@@ -89,6 +89,18 @@ def impulse_online_fraction(ies) -> float:
     return online / float(n)
 
 
+# BC's shield charge cadence: the tick accumulates elapsed time and only does
+# the per-facing charge work once the accumulator reaches this, then resets it.
+# Threshold constant at 0x008E529C; see stbc-reference
+# spec/ShieldFacingDamage.md section 6.1.
+#
+# NOTE the spec is graded reviewed-not-tested -- every routine on that path was
+# read from the binary, never executed -- so this is a faithful reading, not a
+# verified observation. It is adopted because it also matches the 0.5 s beam
+# damage pulse the same document describes.
+SHIELD_CHARGE_PERIOD_S = 0.5
+
+
 def impulse_output_fraction(ies) -> float:
     """The scalar BC multiplies an impulse engine's authored limits by.
 
@@ -1703,6 +1715,30 @@ class ShieldSubsystem(PoweredSubsystem):
         transition; this gate just prevents Update from leaking charge
         back in.
         """
+        # ── BC's 0.5 s charge cadence ────────────────────────────────────
+        # ShieldClass's tick (0x0056A230, vtable slot 25) accumulates elapsed
+        # time into +0x154 and, while that accumulator is BELOW 0.5 (threshold
+        # at 0x008E529C), delegates to the PoweredSubsystem update and returns.
+        # The per-facing charge work happens once per 0.5 s of accumulated
+        # time, NOT per frame -- stbc-reference spec/ShieldFacingDamage.md
+        # section 6.1. We were running the whole per-facing loop at 60 Hz, i.e.
+        # 30x more often than the original.
+        #
+        # The accumulator is reset unconditionally once the threshold is
+        # crossed (BC step 3, before the disabled/off branch at step 5), so a
+        # ship that is offline or powered down for a while cannot bank time and
+        # then apply it as a burst when it comes back.
+        #
+        # Charge RATE is unchanged: the same per-second maths runs against the
+        # accumulated dt, so the total charge over any interval is what it was.
+        # Only the granularity changes -- regen now steps every 0.5 s, which is
+        # what the original did.
+        self._charge_accum = getattr(self, "_charge_accum", 0.0) + float(dt)
+        if self._charge_accum < SHIELD_CHARGE_PERIOD_S:
+            return
+        dt = self._charge_accum
+        self._charge_accum = 0.0
+
         if _is_offline(self):
             return
         # Cloak-regen branch: while the ship is trying to cloak (CLOAKING or

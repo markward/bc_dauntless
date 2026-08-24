@@ -17,6 +17,7 @@ actually pushes the right quantity into its watcher each tick / on value
 change, so the registered crossing event fires.
 """
 from engine.appc.float_range_watcher import FloatRangeWatcher
+from engine.appc.subsystems import SHIELD_CHARGE_PERIOD_S
 from engine.appc.subsystems import HullSubsystem, PowerSubsystem, ShieldSubsystem
 from engine.appc.weapon_subsystems import PulseWeapon
 from engine.appc.properties import PowerProperty
@@ -221,7 +222,12 @@ def test_combined_shield_watcher_catches_up_on_update_after_apply_damage():
 
     sh.ApplyDamage(ShieldSubsystem.FRONT_SHIELDS, 100.0)
     assert w.GetWatchedVariable() == 1.0  # stale until Update, like per-face
+    # BC steps the watchers inside the 0.5 s charge block (spec
+    # ShieldFacingDamage.md section 6.1 step 4.3), so an Update that does not
+    # cross the accumulator threshold leaves the watcher stale by design.
     sh.Update(0.0)
+    assert w.GetWatchedVariable() == 1.0
+    sh.Update(SHIELD_CHARGE_PERIOD_S)
     assert w.GetWatchedVariable() == 0.5
 
 
