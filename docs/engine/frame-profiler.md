@@ -250,3 +250,50 @@ ships at lower frequency; (c) move hot paths to C++.
   wording, ASCII safety. No GL.
 * `tests/host/test_frame_profiler_gl.py` — the `GL_TIMESTAMP` path: resolution
   latency, non-negative/non-NaN GPU spans, per-frame `calls`, no pipeline stall.
+
+---
+
+# Building a headless sim harness: two traps
+
+Both of these silently skew a profile, and both cost real time this session.
+
+## 1. `_advance_weapons` / `_advance_combat` are PER FRAME, not per tick
+
+`host_loop.py:7667` — the fixed-timestep loop body is **only `loop.tick()`**:
+
+```python
+for _ in range(_sim_ticks_this_frame):
+    with frame_profiler.scope("sim.gameloop"):
+        loop.tick()
+# ...245 lines later, OUTSIDE the loop, once per frame:
+_advance_weapons(_ships_this_tick, TICK_DT)
+_advance_combat(...)
+```
+
+A harness that calls all three every iteration overweights the weapon and
+combat pumps by the ticks-per-frame factor — **~10–15× at 100 ships**, where
+the frame is slow enough that the accumulator runs 10–15 catch-up ticks. That
+inverts the priority order: combat looks like 31% of a "tick" when in the live
+mix it is a fraction of that, and everything inside `loop.tick()` (AI,
+avoidance, motion, subsystems) is correspondingly understated.
+
+Mirror the real cadence: N gameloop ticks, then the pumps once.
+
+## 2. The fight has to develop before you measure
+
+`combat_stress` starts with nothing in flight. Projectile count — and with it
+the cost of the whole combat path — climbs for a long time:
+
+| warmup ticks | projectiles | sim cost |
+|---|---|---|
+| 240 | 6 | 23.8 ms |
+| 1200 | 32 | 28.4 ms |
+| 3000 | 48 | 29.9 ms |
+
+A 240-tick warmup is ~4 s of game time; the live captures that show 150–290
+projectiles are 40–60 s in. Warm up for thousands of ticks, and **print the
+projectile count next to every number** — a profile taken at 6 projectiles is
+not a profile of a battle, and nothing in the output says so unless you make it.
+
+Combining both: at 100 ships, tpf=10 and a 3000-tick warmup gives 121
+projectiles and a 184 ms sim frame — 18.4 ms per gameloop tick.
