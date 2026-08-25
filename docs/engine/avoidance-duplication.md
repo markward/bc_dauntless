@@ -118,3 +118,77 @@ No shipped SDK script customises `fPredictionTime`, `fMinimumRadius` or
 `tick_collision_avoidance` still exists but is **no longer called by the engine**.
 It is retained as the driver for `tests/integration/test_collision_avoidance.py`,
 which exercises the same `_test_course_override` the preprocessor path uses.
+
+---
+
+# The shape-aware hull feature is INERT in the live game
+
+Found while trying to measure the convergence gate. Recorded here because it
+invalidates two commits' claims and because the obvious fix is a performance
+trap.
+
+## The bug
+
+`cache_hull_bound_spheres` is called from **one** place — `host_loop.py:4443`,
+inside `realize_set_objects`. The *other* realize path, the mission-loader one
+that actually runs at load, loads the model, seeds `GetRadius()`, creates the
+instance, and never caches hull bounds.
+
+So mission-loaded ships have no pieces, `has_hull_bounds` is False for every
+one of them, and both consumers silently take their whole-model-sphere
+fallback. Measured live at 100 ships with avoidance on: **13,000,000 avoidance
+pair-tests, `with_pieces=0`.**
+
+That makes these inert for real ships:
+
+* `4bf8d748` — "obstacles are their hull PIECES, not one model-wide sphere"
+* `57e7686a` — "narrow-phase against hull pieces, not the model-wide sphere"
+
+The integration tests pass because their fixtures cache bounds explicitly. The
+live game never does. This is the same failure mode the comment at the working
+call site already warns about ("the guard skipped every ship and the whole
+feature shipped inert"), reached by a different route: the call was added to one
+realize path and not the other.
+
+The machinery itself is fine — `model_bounds` returns 128 entries for a Galaxy
+and `cache_hull_bound_spheres` succeeds when called.
+
+## Why the one-line fix was reverted
+
+Adding the call to the loader path works, and it is unaffordable:
+
+| | gl.ai |
+|---|---|
+| 33 ships, no pieces | 34 ms |
+| **9 ships, pieces** | **94.5 ms** |
+
+Avoidance runs per (ship × obstacle) — O(N²) — and a hull is up to 128 leaves.
+`collisions.py` uses the same pieces and does **not** have this problem, because
+its narrow phase runs only between two objects already in contact.
+
+Moving avoidance to the whole-model sphere to dodge the cost is also not
+available: it fails `test_ship_in_a_docking_bay_is_not_avoided` and
+`test_an_obstacle_whose_pieces_are_all_out_of_range_is_not_avoided`. Concavity
+is the entire reason the pieces exist — a ship leaving a starbase's docking bay
+reads as *inside* the station under one sphere, and the already-inside-personal-
+space clause then fires every tick (E6M2's fly-in).
+
+## What actually fixes it
+
+A **coarse hull for avoidance** — 8–16 spheres, enough to express the void in a
+docking bay, instead of the 128-leaf collision decomposition. Then:
+
+1. cache the pieces on the loader path (the one-line fix), so collisions work;
+2. avoidance consumes the coarse hull, so it stays affordable;
+3. the convergence gate finally has something to protect — measured live it
+   rejects **91.3%** of pairs (13.0 M tested, 11.9 M rejected), which today
+   protects only a single cheap sphere test.
+
+The coarse hull must ENCLOSE the fine one, or avoidance starts missing
+obstacles — a conservative clustering, not a sample.
+
+## Current state
+
+Both changes reverted. Live behaviour is exactly as it was: no pieces for
+mission-loaded ships, avoidance on the whole-model sphere, collisions likewise.
+Nothing regressed; the feature is simply not yet doing what its commits say.

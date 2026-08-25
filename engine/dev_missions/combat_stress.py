@@ -61,6 +61,20 @@ _RING_RADIUS_GU = 20.0
 
 _DEFAULT_SHIPS = 8
 
+
+def avoidance_enabled() -> bool:
+    """DAUNTLESS_COMBAT_AVOID=1 wraps each ship's attack AI in an
+    AvoidObstacles preprocessor, the way the Fleet doctrines do.
+
+    Off by default because BasicAttack -- what this mission installs -- does
+    NOT install one, and that is faithful: since the engine node replaced the
+    duplicate GameLoop pass, avoidance is opt-in per doctrine rather than a
+    property of having an AI. The knob exists so avoidance can be profiled at
+    all: with it off this mission exercises no avoidance whatsoever, and a
+    capture taken against it says nothing about that code path.
+    """
+    return os.environ.get("DAUNTLESS_COMBAT_AVOID", "") == "1"
+
 # Alternating pairs so the two sides interleave around the ring and every ship
 # has an enemy nearby, rather than two clumps that must close first.
 _FRIEND_TYPES = ("Sovereign", "Akira", "Galaxy", "Nebula")
@@ -168,6 +182,17 @@ def Initialize(pMission):
             if pAI is None:
                 failures.append("CreateAI returned None")
                 continue
+            if avoidance_enabled():
+                # Exactly the Fleet doctrines' construction
+                # (AI/Fleet/DestroyTarget.py:24-32): a PreprocessingAI bound to
+                # an AvoidObstacles script instance, containing the attack tree.
+                import AI.Preprocessors
+                pScript = AI.Preprocessors.AvoidObstacles()
+                pAvoid = App.PreprocessingAI_Create(pShip, "AvoidObstacles")
+                pAvoid.SetInterruptable(1)
+                pAvoid.SetPreprocessingMethod(pScript, "Update")
+                pAvoid.SetContainedAI(pAI)
+                pAI = pAvoid
             pShip.SetAI(pAI, 0, 0)
             attached += 1
         except Exception as exc:
@@ -188,5 +213,6 @@ def Initialize(pMission):
         pass
 
     print("[combat_stress] %d AI ships (%d per side) + player on a %.0f GU "
-          "ring; AI attached to %d"
-          % (len(created), per_side, _RING_RADIUS_GU, attached))
+          "ring; AI attached to %d; avoidance=%s"
+          % (len(created), per_side, _RING_RADIUS_GU, attached,
+             "ON" if avoidance_enabled() else "off"))
