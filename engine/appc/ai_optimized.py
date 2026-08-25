@@ -113,6 +113,51 @@ class ManagePower:
         return App.PreprocessingAI.PS_NORMAL
 
 
+_ENGINE_AVOIDANCE_CLASSES: dict = {}
+
+
+def _engine_avoidance_class(base: type) -> type:
+    """Subclass of the non-lethal wrapper whose ``TestCourseOverride`` is ours.
+
+    A subclass of the NON-LETHAL class, not of the SDK class directly, so the
+    PS_DONE de-fanging still applies -- AvoidObstacles.Update returns PS_DONE
+    when it has no ship, and US_DONE is unrecoverable in our driver.
+
+    Overriding ONLY TestCourseOverride is deliberate. Everything else about the
+    node stays SDK code: the PS_SKIP_ACTIVE return, TurnTowardDirection /
+    SetImpulse, the fUpdateDelay cadence and GetNextUpdateTime (which the driver
+    already honours), the lDontAvoidTypes list and the pickle hooks. The scan is
+    the only slow part and the only part replaced.
+    """
+    cached = _ENGINE_AVOIDANCE_CLASSES.get(base)
+    if cached is not None:
+        return cached
+
+    def TestCourseOverride(self):
+        from engine.appc.collision_avoidance import course_override_for
+        return course_override_for(self)
+
+    cls = type("Engine" + base.__name__, (_non_lethal_class(base),),
+               {"TestCourseOverride": TestCourseOverride})
+    _ENGINE_AVOIDANCE_CLASSES[base] = cls
+    globals()[cls.__name__] = cls
+    return cls
+
+
+def _replace_avoid_obstacles(instance):
+    """Swap the SDK's AvoidObstacles scan for the engine-side one.
+
+    Shares the original's ``__dict__`` (as _wrap_non_lethal does), so every
+    parameter the SDK ctor set -- fPredictionTime, fMinimumRadius,
+    fPersonalSpace, the manoeuvre angles, lDontAvoidTypes -- and every field
+    Update mutates stay visible and live.
+    """
+    cls = _engine_avoidance_class(type(instance))
+    alias = cls.__new__(cls)
+    alias.__dict__ = instance.__dict__
+    return alias
+
+
 def _replace_manage_power(instance):
     """Swap the SDK's ManagePower stub for the engine-side class above."""
     # Carry the ctor arg across the swap, as the native ctor does by reading
@@ -204,7 +249,7 @@ def _wrap_non_lethal(instance):
 OPTIMIZED_PREPROCESSORS: dict = {
     "ManagePower": _replace_manage_power,     # real replacement (SDK body is a stub)
     "FireScript": _wrap_non_lethal,           # SDK body, PS_DONE de-fanged
-    "AvoidObstacles": _wrap_non_lethal,       # SDK body, PS_DONE de-fanged
+    "AvoidObstacles": _replace_avoid_obstacles,  # engine scan, SDK Update body
 }
 
 

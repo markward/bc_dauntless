@@ -554,11 +554,19 @@ def tick_collision_avoidance(dt: float = 1.0 / 60.0) -> None:
     collision course. Call once per tick after tick_all_ai, before
     tick_all_ship_motion.
 
-    ⚠️ SUPERSEDED — THIS IS A SECOND, DUPLICATE AVOIDANCE CONTROLLER.
-    Slated for deletion; see docs/engine/avoidance-duplication.md.
+    ⚠️ NO LONGER WIRED INTO THE ENGINE. GameLoop.tick does not call this.
+    Avoidance is the AvoidObstacles preprocessor, dispatched inside tick_all_ai
+    as part of each ship's AI tree; see docs/engine/avoidance-duplication.md.
 
-    The premise below ("the SDK movement scripts only command a heading; the
-    C++ autopilot steered around obstacles") is WRONG. BC's avoidance is
+    Retained because tests/integration/test_collision_avoidance.py drives the
+    steering behaviour through it, and it remains an honest way to exercise
+    avoidance over every AI ship at once. It shares _test_course_override with
+    the preprocessor path, so what those tests assert is still the live
+    implementation -- but it is a TEST DRIVER now, not a production phase.
+    Do not re-add a call to it from the game loop.
+
+    The premise it was built on ("the SDK movement scripts only command a
+    heading; the C++ autopilot steered around obstacles") was WRONG. BC's avoidance is
     ``AvoidObstacles``, a PREPROCESSOR in the AI tree (AI/Preprocessors.py:1621),
     which the engine swaps for a native node at bind time via
     ``PreprocessingAI::SetContainedAI`` -> ``GetOptimizedVersion`` (vtable +0x34,
@@ -635,3 +643,34 @@ def tick_collision_avoidance(dt: float = 1.0 / 60.0) -> None:
     # Drop state for ships that left play so the dict can't grow unbounded.
     for dead in [k for k in _ship_state if k not in live_ids]:
         del _ship_state[dead]
+
+
+def course_override_for(node):
+    """Engine-side ``AvoidObstacles.TestCourseOverride`` for a preprocessor node.
+
+    Returns ``(direction, speed)`` exactly as the SDK method does — ``direction``
+    is a TGPoint3 while overriding and None otherwise, which is what the SDK's
+    ``Update`` tests for truthiness before steering.
+
+    Overriding ONLY this method leaves the rest of the SDK node running
+    verbatim: the ``PS_SKIP_ACTIVE`` return, the ``TurnTowardDirection`` /
+    ``SetImpulse`` calls, the ``fUpdateDelay`` cadence, ``GetNextUpdateTime``
+    (which our driver already honours, so the 0.25 s idle / every-tick evading
+    cadence is preserved for free), and the pickle hooks. The only thing
+    replaced is the world SCAN, which is the only part that was slow.
+
+    ``vOverrideDirection`` carries the previous committed heading, which
+    ``_avoid_objects`` uses for hysteresis — the SDK stores it on the node for
+    exactly the same reason our per-ship state dict did.
+    """
+    ai = getattr(node, "pCodeAI", None)
+    if ai is None:
+        return None, 0.0
+    ship = ai.GetShip() if hasattr(ai, "GetShip") else None
+    if ship is None:
+        return None, 0.0
+    # __dict__, not getattr: an engine-backed node inherits TGObject's
+    # __getattr__, which vends a truthy _Stub for a missing name and would make
+    # "no previous override" read as a heading.
+    prev = node.__dict__.get("vOverrideDirection") or None
+    return _test_course_override(ship, previous_heading=prev)

@@ -40,7 +40,7 @@ the shipped game all four Python `Update` bodies are dead code.
 So avoidance was always a node in the AI tree. It was native, not Python, but it
 sat exactly where the SDK puts it.
 
-## The resolution (decided: the faithful model)
+## The resolution — IMPLEMENTED (the faithful model)
 
 Replace `ai_optimized.py`'s `"AvoidObstacles": _wrap_non_lethal` with a real
 engine-side node, and **delete `tick_collision_avoidance` as a GameLoop phase**.
@@ -95,3 +95,26 @@ is a different predicate; that is the whole distinction.
   remain *in* the broadphase; the swept test handles zero velocity naturally.
 * **The already-overlapping clause** — `_need_to_avoid` returns True on
   `dist < personal_space + rb` regardless of velocity — must survive.
+
+## Status
+
+**Implemented.** `ai_optimized.OPTIMIZED_PREPROCESSORS["AvoidObstacles"]` is now
+`_replace_avoid_obstacles`, and `GameLoop.tick` no longer calls
+`tick_collision_avoidance`.
+
+The replacement subclasses the **non-lethal** wrapper (so the `PS_DONE`-with-no-ship
+edge stays de-fanged) and overrides **only `TestCourseOverride`**. Everything else
+is still SDK code running on SDK state: the `PS_SKIP_ACTIVE` return, the
+`TurnTowardDirection` / `SetImpulse` calls, the `fUpdateDelay` cadence and
+`GetNextUpdateTime` — which the driver already honours, so BC's 0.25 s idle /
+every-tick-while-evading cadence is preserved without reimplementing it — the
+`lDontAvoidTypes` list, and the pickle hooks. The alias shares the original's
+`__dict__`, so every parameter the SDK constructor set stays live.
+
+No shipped SDK script customises `fPredictionTime`, `fMinimumRadius` or
+`fPersonalSpace`, so the engine scan reads module constants;
+`test_our_constants_match_the_sdk_defaults` guards that equivalence.
+
+`tick_collision_avoidance` still exists but is **no longer called by the engine**.
+It is retained as the driver for `tests/integration/test_collision_avoidance.py`,
+which exercises the same `_test_course_override` the preprocessor path uses.

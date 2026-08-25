@@ -28,7 +28,6 @@ class GameLoop:
         from engine.appc.time_slice import g_kAIManager
         from engine.appc.ai_driver import tick_all_ai
         from engine.appc.ship_motion import tick_all_ship_motion
-        from engine.appc.collision_avoidance import tick_collision_avoidance
         from engine.appc.planet import evaluate_proximity_checks
         from engine.appc.defensive_cloak import tick_defensive_cloak
         game_time = App.g_kTimerManager.get_time()
@@ -55,13 +54,17 @@ class GameLoop:
         # fires events when objects cross the radius boundary.
         with _prof.scope("gl.proximity"):
             evaluate_proximity_checks()
-        # Collision avoidance overrides the heading of any AI ship on an
-        # imminent collision course, AFTER the AI has set its heading and
-        # BEFORE motion integrates. Restores the original Appc autopilot's
-        # obstacle avoidance (the SDK movement scripts only command a
-        # heading; the C++ autopilot steered around obstacles).
-        with _prof.scope("gl.avoidance"):
-            tick_collision_avoidance()
+        # NO avoidance phase here, deliberately. Avoidance is BC's
+        # AvoidObstacles PREPROCESSOR, dispatched inside tick_all_ai above as
+        # part of each ship's AI tree -- see docs/engine/avoidance-duplication.md.
+        # A second pass here ran a full duplicate controller over every AI ship
+        # and overwrote whatever the preprocessor had just decided, so real
+        # missions paid for avoidance twice and discarded the first answer.
+        #
+        # Consequence, accepted deliberately: a ship whose doctrine does not
+        # install AvoidObstacles now does not avoid. That matches BC, where the
+        # behaviour is a node you opt into rather than a property of having an
+        # AI at all. BasicAttack is one such doctrine.
         with _prof.scope("gl.motion"):
             tick_all_ship_motion(TICK_DELTA)
 
