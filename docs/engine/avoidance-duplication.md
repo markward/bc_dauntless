@@ -58,22 +58,27 @@ ship and can only ask "what is near me", which is why it scans the world. An
 engine-side node has no such constraint: it can consult a threat index built
 once per tick for the whole world.
 
-That matters because the current query is badly posed for a battle. Measured
+That matters because the current query is poorly posed for a battle. Measured
 over 40,320 pair-samples at 64 ships:
 
 ```
-  within the 225 GU proximity query :  100.00%
-  actually converging (swept test)  :    0.00%
+  within the 225 GU proximity query :  47.7%
+  actually converging (swept test)  :   1.48%
 ```
 
-(Positive controls: a head-on pair returns True, a distant parallel pair
-returns False, ship speeds mean 2.20 / max 4.42 GU/s — so the 0% is real, not a
-vacuous test.)
+**Convergence is a ~32x tighter filter than proximity**, so it is the predicate
+worth spending on. `AVOID_MINIMUM_RADIUS_GU` is 225 GU (~40 km, the SDK's
+`fMinimumRadius`), which is coarse relative to the distances that matter.
 
-**Proximity does not discriminate; convergence does.** `AVOID_MINIMUM_RADIUS_GU`
-is 225 GU (~40 km, the SDK's `fMinimumRadius`) while combat happens within a few
-GU, so the filter that costs 216 ms at 100 ships rejects nothing, and the filter
-that costs ~20 float ops rejects everything.
+⚠️ **CORRECTED.** This section first reported 100.00% / 0.00%, measured on a
+scene where every ship had `GetRadius() == 0`: the headless harness has no
+realize step, so `SetRadius` never ran. A zero radius makes `personal_space`
+zero and trips `_test_course_override`'s `if ob_r <= 0.0: continue`, so headless
+avoidance processed NOTHING while appearing to run, and the swept test was being
+asked whether dimensionless points would collide. The positive controls passed
+because they fed hardcoded non-zero radii and so never touched the scene's real
+values — a control aimed at the wrong thing. `combat_stress` now seeds a
+nominal hull radius, and sizes its ring so hulls do not interpenetrate.
 
 The design: one shared broadphase per tick over ship bounding spheres running
 the swept relative-velocity test; only converging pairs reach narrowphase, and
@@ -182,7 +187,9 @@ docking bay, instead of the 128-leaf collision decomposition. Then:
 2. avoidance consumes the coarse hull, so it stays affordable;
 3. the convergence gate finally has something to protect — measured live it
    rejects **91.3%** of pairs (13.0 M tested, 11.9 M rejected), which today
-   protects only a single cheap sphere test.
+   protects only a single cheap sphere test. (That live figure was taken on the
+   old 20 GU ring but with real radii, since the live path does realize; it is
+   a different scene from the 47.7% / 1.48% above, and both support the gate.)
 
 The coarse hull must ENCLOSE the fine one, or avoidance starts missing
 obstacles — a conservative clustering, not a sample.
@@ -192,3 +199,31 @@ obstacles — a conservative clustering, not a sample.
 Both changes reverted. Live behaviour is exactly as it was: no pieces for
 mission-loaded ships, avoidance on the whole-model sphere, collisions likewise.
 Nothing regressed; the feature is simply not yet doing what its commits say.
+
+
+---
+
+# The test scene was not physical (corrected)
+
+`combat_stress` placed ships on a fixed 20 GU ring. That circumference is 126 GU
+and a hull is ~8 GU across, so it holds about 15 ships without overlap — and it
+was being asked to hold 100, at **1.26 GU spacing**. Every high-count
+measurement was of a pile-up resolving itself, not a battle.
+
+Worse, headless ships had **`GetRadius() == 0`** (no realize step without a
+renderer), which silently disabled avoidance entirely: `_test_course_override`
+skips any obstacle with `ob_r <= 0.0`, and `personal_space` is
+`radius * AVOID_PERSONAL_SPACE_MULT`.
+
+Both fixed. The ring is now sized from the ship count
+(`radius = N * hull_diameter * SPACING / 2*pi`, floored at 20 GU) and a nominal
+4 GU hull radius is seeded when a ship has none. At 100 ships that gives a 255 GU
+ring with 16 GU spacing (~2 hull diameters), median pair separation 360 GU.
+
+**Every measurement taken against this mission before this fix should be treated
+as suspect**, including the scaling curve to 100 ships and the avoidance
+figures. Live captures through `dauntless.exe` had real radii but still used the
+over-dense ring.
+
+100 ships on the corrected scene, avoidance ON: frame ~646 ms, `sim` 515 ms,
+`gl.ai` 209 ms (avoidance included), `gl.motion` 73 ms, `sim.combat` 136 ms.

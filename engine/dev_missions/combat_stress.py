@@ -55,9 +55,35 @@ _ATTACK_AI_MODULE = "AI.Compound.BasicAttack"
 # 0-3 in the SDK; 2 is QuickBattle's default "normal" opponent.
 _AI_DIFFICULTY = 2
 
-# Ring radius in game units. 1 GU = 175 m; BC phaser envelope is ~10.5 km
-# (60 GU), so 20 GU puts every ship inside everyone's firing range at t=0.
-_RING_RADIUS_GU = 20.0
+# Nominal hull radius seeded when a ship has none.
+#
+# The renderer's realize step sets GetRadius() from the model AABB, and a
+# headless run has no realize step -- so every ship reads back 0.0. That is not
+# cosmetic: _test_course_override skips any obstacle with `ob_r <= 0.0`, and
+# personal_space is `radius * AVOID_PERSONAL_SPACE_MULT`, so a zero radius
+# makes headless avoidance process NOTHING while looking like it ran. A
+# measurement taken that way reports whatever the caller hoped. ~4 GU is a
+# Galaxy's bounding sphere (stbc-reference spec/ShieldFacingDamage.md).
+_NOMINAL_HULL_RADIUS_GU = 4.0
+
+# Ships are placed on a ring sized so they do NOT interpenetrate.
+#
+# A fixed 20 GU ring was the original and it is wrong past ~15 ships: the
+# circumference is 126 GU, a hull is ~8 GU across, so 100 ships were being
+# spawned 1.26 GU apart -- deeply inside one another. Every measurement taken
+# on that scene was of a pile-up resolving itself, not a battle.
+#
+# radius = N * hull_diameter * SPACING / (2*pi) keeps neighbours SPACING hull
+# diameters apart at any N. The floor keeps small counts inside weapons range
+# (BC's phaser envelope is ~60 GU).
+_RING_SPACING_HULLS = 2.0
+_MIN_RING_RADIUS_GU = 20.0
+
+
+def ring_radius_gu(n_ships: int) -> float:
+    """Ring radius that keeps `n_ships` hulls from overlapping."""
+    circumference = max(1, n_ships) * (2.0 * _NOMINAL_HULL_RADIUS_GU) * _RING_SPACING_HULLS
+    return max(_MIN_RING_RADIUS_GU, circumference / (2.0 * math.pi))
 
 _DEFAULT_SHIPS = 8
 
@@ -109,11 +135,20 @@ def PreLoadAssets(pMission):
 
 
 def _place_on_ring(pShip, index: int, total: int) -> None:
+    radius = ring_radius_gu(total)
     angle = (2.0 * math.pi * index) / max(1, total)
-    pShip.SetTranslateXYZ(_RING_RADIUS_GU * math.cos(angle),
-                          _RING_RADIUS_GU * math.sin(angle),
+    pShip.SetTranslateXYZ(radius * math.cos(angle),
+                          radius * math.sin(angle),
                           0.0)
     pShip.UpdateNodeOnly()
+    # Seed a hull radius when the ship has none. See _NOMINAL_HULL_RADIUS_GU:
+    # headless has no realize step, and a zero radius silently disables
+    # avoidance entirely rather than failing.
+    try:
+        if pShip.GetRadius() <= 0.0:
+            pShip.SetRadius(_NOMINAL_HULL_RADIUS_GU)
+    except Exception:
+        pass
 
 
 def Initialize(pMission):
@@ -129,6 +164,13 @@ def Initialize(pMission):
     pPlayer = MissionLib.CreatePlayerShip("Sovereign", pSet, "Player", "")
     pPlayer.SetTranslateXYZ(0.0, 0.0, 0.0)
     pPlayer.UpdateNodeOnly()
+    # Same reason as the ring ships: headless has no realize step, and a zero
+    # radius removes the player from avoidance and collision entirely.
+    try:
+        if pPlayer.GetRadius() <= 0.0:
+            pPlayer.SetRadius(_NOMINAL_HULL_RADIUS_GU)
+    except Exception:
+        pass
 
     pFriendlies = pMission.GetFriendlyGroup()
     pEnemies = pMission.GetEnemyGroup()
@@ -212,7 +254,11 @@ def Initialize(pMission):
     except Exception:
         pass
 
-    print("[combat_stress] %d AI ships (%d per side) + player on a %.0f GU "
-          "ring; AI attached to %d; avoidance=%s"
-          % (len(created), per_side, _RING_RADIUS_GU, attached,
+    ring = ring_radius_gu(total)
+    spacing = (2.0 * math.pi * ring) / max(1, total)
+    print("[combat_stress] %d AI ships (%d per side) + player; ring %.0f GU, "
+          "neighbour spacing %.1f GU (~%.1f hull diameters); AI attached to %d; "
+          "avoidance=%s"
+          % (len(created), per_side, ring, spacing,
+             spacing / (2.0 * _NOMINAL_HULL_RADIUS_GU), attached,
              "ON" if avoidance_enabled() else "off"))
