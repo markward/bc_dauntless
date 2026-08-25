@@ -2106,10 +2106,15 @@ class PowerSubsystem(ShipSubsystem):
         consumers = getattr(ship, "_powered_consumers", None) if ship is not None else None
         if not consumers:
             return
-        self._power_wanted_total = 0.0
+        total = 0.0
         for consumer in consumers:
             consumer._update_power(dt, self)
-            self._power_wanted_total += consumer.GetPowerWanted()
+            # _power_wanted, not GetPowerWanted(): _update_power just wrote the
+            # attribute one line ago, and the getter is a bare `return
+            # self._power_wanted`. At 9.4 consumers x 101 ships x 15 ticks that
+            # accessor alone was ~14,000 calls per frame for no information.
+            total += consumer._power_wanted
+        self._power_wanted_total = total
 
     def _draw(self, amount: float, mode: int) -> float:
         """Depletes conduit budget AND battery to satisfy up to ``amount``,
@@ -2122,10 +2127,36 @@ class PowerSubsystem(ShipSubsystem):
         Accumulates into _power_dispensed for GetPowerDispensed()."""
         if amount <= 0.0:
             return 0.0
+        # Inlined _draw_main / _draw_backup. They remain as methods (public
+        # surface, and the unit tests drive them directly) but the hot path no
+        # longer pays two extra Python calls per drawing consumer -- ~6.3
+        # consumers x 101 ships x 15 ticks is ~19,000 calls a frame.
         got = 0.0
+        # `== PSM_MAIN_FIRST`, NOT `!= the other two`. PSM_DIRECT_MAIN (3) is a
+        # fourth mode and the original chain sent it to the final else, i.e.
+        # BACKUP-ONLY. Spelling this as a negative silently re-routed it to
+        # main-first -- a behaviour change smuggled in as an optimisation.
         if mode == PSM_MAIN_FIRST:
-            got += self._draw_main(amount)
-            got += self._draw_backup(amount - got)
+            take = amount
+            if take > self._main_conduit_current:
+                take = self._main_conduit_current
+            if take > self._main_battery_power:
+                take = self._main_battery_power
+            if take > 0.0:
+                self._main_conduit_current -= take
+                self._main_battery_power -= take
+                got = take
+            rest = amount - got
+            if rest > 0.0:
+                take = rest
+                if take > self._backup_conduit_current:
+                    take = self._backup_conduit_current
+                if take > self._backup_battery_power:
+                    take = self._backup_battery_power
+                if take > 0.0:
+                    self._backup_conduit_current -= take
+                    self._backup_battery_power -= take
+                    got += take
         elif mode == PSM_BACKUP_FIRST:
             got += self._draw_backup(amount)
             got += self._draw_main(amount - got)
@@ -2838,13 +2869,34 @@ def impulse_fractions(ies):
     if n == 0:
         online, cur = 1.0, 1.0
     else:
+        # _is_offline(pod) is three predicates: IsDisabled, IsDestroyed, and
+        # "parent ship out of action" -- and that third one costs an
+        # implements() MRO WALK plus GetParentShip plus a full _out_of_action,
+        # per pod, for an answer that is identical across every pod on the
+        # engine (they share one ship).
+        #
+        # It is not merely identical, it is already KNOWN: _is_offline(ies)
+        # above returned False, and that call tested this same ship. So past
+        # that early return the ship is established to be in action, and the
+        # per-pod ship check cannot fire. Only valid when `ies` itself carries
+        # GetParentShip -- otherwise _is_offline(ies) skipped the ship clause
+        # and never established anything, so that case keeps the full call.
+        #
+        # Also fuses the double IsDisabled(): the loop asked each pod twice,
+        # once inside _is_offline and once for the condition weighting.
+        _ship_known_good = implements(ies, "GetParentShip")
         online_n = 0
         contrib = 0.0
         for i in range(n):
             pod = ies.GetChildSubsystem(i)
-            if not _is_offline(pod):
+            disabled = bool(pod.IsDisabled())
+            if _ship_known_good:
+                offline = disabled or bool(pod.IsDestroyed())
+            else:
+                offline = _is_offline(pod)
+            if not offline:
                 online_n += 1
-            if not pod.IsDisabled():
+            if not disabled:
                 contrib += pod.GetConditionPercentage()
         online = online_n / float(n)
         cur = contrib / n
