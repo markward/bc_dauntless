@@ -22,6 +22,12 @@ class GameLoop:
     """
 
     def tick(self) -> None:
+        # Drop the avoidance obstacle snapshot: a new tick means the world has
+        # moved. Explicit rather than inferred from the clock -- see
+        # collision_avoidance.invalidate_obstacle_snapshot.
+        from engine.appc.collision_avoidance import invalidate_obstacle_snapshot
+        invalidate_obstacle_snapshot()
+
         App.g_kTimerManager.tick(TICK_DELTA)
         App.g_kRealtimeTimerManager.tick(TICK_DELTA)
 

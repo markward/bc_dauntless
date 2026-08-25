@@ -414,49 +414,55 @@ def _test_course_override(ship, previous_heading=None):
     check_radius_sq = check_radius * check_radius
     px, py, pz = predicted.x, predicted.y, predicted.z
 
-    for other in iter_set_objects(pSet):
+    # Everything observer-independent is resolved once per tick, not once per
+    # (observer, obstacle) pair. See obstacle_snapshot.
+    for (other, ox, oy, oz, ob_r, ob_vel, gate_r, ob_id,
+         ob_disabled) in obstacle_snapshot(pSet):
         if other is ship:
             continue
         # DISTANCE FIRST. Every test below it is a `continue`, so their order
         # among themselves cannot change which obstacles end up in avoid_list --
-        # only how much work is done reaching that answer. The prefilter rejects
-        # the large majority of pairs in a fight, and it used to run FOURTH,
-        # after two _collision_disabled_ids() set lookups and an isinstance
-        # against a class tuple. This is an all-pairs loop over an all-AI-ships
-        # loop, so that ordering was the whole cost.
-        try:
-            ob_loc = other.GetWorldLocation()
-            ob_r = float(other.GetRadius())
-        except Exception:
-            continue
-        if ob_r <= 0.0:
-            continue
-        # Prefilter: only objects within check_radius of the predicted
-        # position (SDK GetNearObjects).
-        dx = ob_loc.x - px
-        dy = ob_loc.y - py
-        dz = ob_loc.z - pz
+        # only how much work is done reaching that answer. This is an all-pairs
+        # loop nested inside a loop over all AI ships, so the ordering was the
+        # whole cost.
+        dx = ox - px
+        dy = oy - py
+        dz = oz - pz
         if (dx * dx + dy * dy + dz * dz) > check_radius_sq:
             continue
+
+        # ── Whole-body convergence gate ────────────────────────────────
+        # Test the obstacle's bounding sphere before expanding it into pieces.
+        # Conservative: every piece lies inside the sphere, so if the sphere is
+        # not on a collision course within the prediction window, no piece of it
+        # can be. Only converging obstacles pay for expansion.
+        #
+        # This is the filter the proximity query is not. Measured over 40,320
+        # pair-samples at 64 ships: 47.7% pass the 225 GU proximity query,
+        # 1.48% are actually converging -- a ~32x tighter predicate.
+        #
+        # gate_r is max(GetRadius(), the piece-derived bound), resolved in the
+        # snapshot: GetRadius() alone is unsound because host_loop only derives
+        # it from the model AABB when the SDK left it at 0, so an authored
+        # radius can be smaller than the geometry.
+        #
+        # _need_to_avoid's "already inside personal space" clause returns True
+        # regardless of velocity, so a body already overlapping is never gated
+        # out.
+        ob_loc = other.GetWorldLocation()
+        if not _need_to_avoid(ship_loc, ship_vel, personal_space,
+                              ob_loc, ob_vel, gate_r):
+            continue
+
         # Per-pair collision mask (DamageableObject.EnableCollisionsWith),
         # honoured symmetrically exactly as collisions.resolve_collisions does:
         # a ship docking with a starbase calls EnableCollisionsWith(pStarbase, 0)
         # (AI.Compound.DockWithStarbase.SetupCutscene) precisely so it can fly
         # right up to it — avoidance must not then evade the dock target and
         # override the docking AI's steering (E6M2 fly-in flew off otherwise).
-        try:
-            if (other.GetObjID() in ship_disabled
-                    or (ship_obj_id is not None
-                        and ship_obj_id in _collision_disabled_ids(other))):
-                continue
-        except Exception:
-            pass
-        # Type filtering: skip blacklisted class types (SDK NeedToAvoid first
-        # check, via IsTypeOf against lDontAvoidTypes). We read the obstacle's
-        # type with isinstance against the engine's CT_* classes.
-        if isinstance(other, blacklist):
+        if (ob_id in ship_disabled
+                or (ship_obj_id is not None and ship_obj_id in ob_disabled)):
             continue
-        ob_vel = _world_velocity(other)
         # Present the obstacle as the PIECES its hull is made of, not one
         # sphere round the whole model. `avoid_list` already takes a list of
         # (centre, velocity, radius), so each piece is simply its own obstacle
@@ -587,6 +593,9 @@ def tick_collision_avoidance(dt: float = 1.0 / 60.0) -> None:
     Between evaluations the cached decision is re-applied while overriding."""
     global _clock_s
     _clock_s += dt
+    # This is a per-tick entry point, so the world may have moved since the
+    # last call. See invalidate_obstacle_snapshot.
+    invalidate_obstacle_snapshot()
 
     from engine.appc.ships import ShipClass
     from engine.appc.collisions import iter_collidables
@@ -674,3 +683,114 @@ def course_override_for(node):
     # "no previous override" read as a heading.
     prev = node.__dict__.get("vOverrideDirection") or None
     return _test_course_override(ship, previous_heading=prev)
+
+
+# ── Per-tick obstacle snapshot ──────────────────────────────────────────────
+# Everything _test_course_override needs to know about an OBSTACLE is
+# independent of who is looking at it: world position, velocity, radius, the
+# piece-derived bound radius, its object id, its collision mask and whether its
+# type is blacklisted. Only the tests are observer-dependent.
+#
+# Resolved per observer, that is O(ships x obstacles) calls for O(obstacles)
+# distinct answers. Measured at 100 ships with avoidance running,
+# _world_velocity alone was 562,840 calls over 150 ticks -- 3,752 per tick for
+# ~101 real values -- and _test_course_override was 55% of the whole sim tick.
+#
+# Valid for exactly one tick and no longer. Avoidance runs inside tick_all_ai,
+# and tick_all_ship_motion integrates AFTER it, so no obstacle moves during the
+# walk: the AI writes setpoints, not positions. Stamped on the game clock so a
+# new tick rebuilds rather than reusing stale geometry.
+_snapshot_stamp = None
+_snapshot_by_set: dict = {}
+
+
+def _game_time():
+    """Current game time, or None when there is no usable clock.
+
+    None, not 0.0. A constant stamp makes the snapshot cache permanently valid
+    and hands every caller last-known geometry forever -- which is exactly what
+    happened when this read `GetGameTime()`: our TimerManager exposes
+    `get_time()`, so every call hit the except, every tick stamped 0.0, and
+    test_ai_ship_avoids_ship_charging_head_on failed because the charging ship
+    never appeared to move. Returning None instead makes an unusable clock
+    rebuild the snapshot every time -- slower, but never stale. For a system
+    that decides whether ships crash into each other, that is the right
+    direction to fail in.
+    """
+    try:
+        import App as _App
+        return float(_App.g_kTimerManager.get_time())
+    except Exception:
+        return None
+
+
+def _build_obstacle_snapshot(pSet, blacklist) -> list:
+    """One pass over the set, resolving every observer-independent quantity.
+
+    Entries are plain tuples rather than objects: this is read once per
+    observer per tick, so attribute access on a wrapper would give back what
+    the snapshot exists to save.
+    """
+    from engine.appc.ship_iter import iter_set_objects
+    from engine.appc.hull_bounds import has_hull_bounds, bound_radius
+    from engine.appc.collisions import _collision_disabled_ids
+
+    out = []
+    for other in iter_set_objects(pSet):
+        # Type filter and the zero-radius reject are properties of the
+        # obstacle, so they belong here rather than in every observer's loop.
+        if isinstance(other, blacklist):
+            continue
+        try:
+            loc = other.GetWorldLocation()
+            r = float(other.GetRadius())
+        except Exception:
+            continue
+        if r <= 0.0:
+            continue
+        gate_r = r
+        if has_hull_bounds(other):
+            piece_bound = bound_radius(other)
+            if piece_bound > gate_r:
+                gate_r = piece_bound
+        try:
+            obj_id = other.GetObjID()
+        except Exception:
+            obj_id = None
+        out.append((other, loc.x, loc.y, loc.z, r, _world_velocity(other),
+                    gate_r, obj_id, _collision_disabled_ids(other)))
+    return out
+
+
+def obstacle_snapshot(pSet) -> list:
+    """The current tick's snapshot for `pSet`, building it on first ask."""
+    global _snapshot_stamp, _snapshot_by_set
+    now = _game_time()
+    if now is None:
+        # No usable clock: never cache. See _game_time.
+        return _build_obstacle_snapshot(pSet, _dont_avoid_types())
+    if _snapshot_stamp != now:
+        _snapshot_stamp = now
+        _snapshot_by_set = {}
+    key = id(pSet)
+    snap = _snapshot_by_set.get(key)
+    if snap is None:
+        snap = _build_obstacle_snapshot(pSet, _dont_avoid_types())
+        _snapshot_by_set[key] = snap
+    return snap
+
+
+def invalidate_obstacle_snapshot() -> None:
+    """Drop the cache. Called at the top of every sim tick.
+
+    EXPLICIT invalidation is the primary mechanism, not the game-clock stamp.
+    Inferring "new tick" from a timestamp fails whenever a caller advances the
+    world without advancing the clock -- which the integration tests do (they
+    move a charging ship on rails and call the avoidance driver directly), and
+    which froze the snapshot at its first build so the charger never appeared
+    to move. The clock check is kept as a secondary net for anything that
+    invalidates the world without going through a tick entry point.
+    """
+    global _snapshot_stamp, _snapshot_by_set
+    _snapshot_stamp = None
+    _snapshot_by_set = {}
