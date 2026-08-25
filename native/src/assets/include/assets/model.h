@@ -78,6 +78,27 @@ struct Model {
     /// compose_officer_model from the character's facial images; empty for
     /// non-officer models. "neutral" is implicit (the head's own base texture).
     std::unordered_map<std::string, int> face_textures;
+
+    /// Lazily-built, purely DERIVED data for the ray tracer. Both are functions
+    /// of `nodes` + mesh vertices alone -- nothing instance-specific -- but
+    /// ray_trace_instance rebuilt them on EVERY call: the node-world chain
+    /// (a heap allocation per ray) and the model AABB (which walks and copies
+    /// every vertex in the model into a std::vector, unreserved).
+    ///
+    /// Measured at 100 ships: 1.81 ms of a 2.37 ms ray trace was this setup,
+    /// against 0.55 ms for the actual triangle loop over 3,376 triangles --
+    /// 77% of the cost was recomputing constants. At ~21 traces/frame that was
+    /// ~38 ms/frame.
+    ///
+    /// Held HERE rather than in a renderer-side cache keyed on `const Model*`
+    /// so it cannot outlive its model: a freed model whose address is reused
+    /// by a new allocation would otherwise be served the previous model's
+    /// geometry, which is a wrong-hit-point bug that would look like a physics
+    /// glitch. Mutable + lazy so const trace paths can fill it on first use.
+    mutable std::vector<glm::mat4> trace_node_world;
+    mutable glm::vec3             trace_aabb_center{0.0f};
+    mutable glm::vec3             trace_aabb_half_extents{0.0f};
+    mutable bool                  trace_cache_built = false;
 };
 
 }  // namespace assets
