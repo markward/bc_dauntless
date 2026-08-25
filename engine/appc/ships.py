@@ -501,7 +501,23 @@ class ShipClass(DamageableObject):
         # smooth terminal taper.
         ies = self.GetImpulseEngineSubsystem()
         total_angle = (av_x * av_x + av_y * av_y + av_z * av_z) ** 0.5
-        max_aa = ies.GetMaxAngularAccel() if ies is not None else 0.0
+        # Both live limits from ONE derating walk. GetMaxAngularAccel and
+        # GetMaxAngularVelocity are each `authored * impulse_output_fraction`,
+        # and that fraction walks every child pod querying IsDisabled /
+        # GetConditionPercentage. This path used to call the accel getter once
+        # and the velocity getter TWICE (guard, then assignment) -- three walks
+        # per call for one answer, 37,545 of them over 150 ticks at 100 ships.
+        #
+        # Bit-exact: same operands, same single multiply, and nothing between
+        # the reads can change the fraction.
+        if ies is not None:
+            from engine.appc.subsystems import impulse_output_fraction
+            _imp_f = impulse_output_fraction(ies)
+            max_aa = ies.GetAuthoredMaxAngularAccel() * _imp_f
+            max_av_live = ies.GetAuthoredMaxAngularVelocity() * _imp_f
+        else:
+            max_aa = 0.0
+            max_av_live = 0.0
         if max_aa and max_aa > 0.0 and total_angle > 1e-9:
             stop_cap = _math.sqrt(2.0 * max_aa * total_angle)
             if stop_cap < total_angle:
@@ -526,8 +542,8 @@ class ShipClass(DamageableObject):
 
         # 5. Clamp per-axis to MaxAngularVelocity. Uses the same
         # IES-populated guard as ship_motion._effective_motion.
-        if ies is not None and ies.GetMaxAngularVelocity() > 0.0:
-            max_av = ies.GetMaxAngularVelocity()
+        if max_av_live > 0.0:
+            max_av = max_av_live
         else:
             max_av = 1.0e9  # ship_motion.FALLBACK_MAX_ACCEL parallel
         def _clamp(v, m):

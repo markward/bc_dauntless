@@ -20,6 +20,7 @@ from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.core.ids import implements
 import engine.dev_mode as dev_mode
+from engine.appc import ship_death as _ship_death
 
 
 def subsystem_world_position(sub, ship=None):
@@ -60,9 +61,18 @@ def _is_offline(sub) -> bool:
         return False
     if bool(sub.IsDisabled()) or bool(sub.IsDestroyed()):
         return True
-    if hasattr(sub, "GetParentShip"):
-        from engine.appc import ship_death
-        if ship_death._out_of_action(sub.GetParentShip()):
+    # implements, NOT hasattr. TGObject.__getattr__ vends a truthy _Stub for
+    # any unknown name, so hasattr was vacuously True on every subsystem and
+    # the guard never guarded anything -- every call fell through to
+    # GetParentShip() and a full _out_of_action (two more MRO walks), including
+    # for subsystems that do not define the method at all.
+    #
+    # The `from engine.appc import ship_death` that used to live here ran on
+    # every call: 115,279 importlib lookups over 150 ticks at 100 ships. It is
+    # at module scope now -- ship_death imports nothing from this module, so
+    # there was never a cycle to break.
+    if implements(sub, "GetParentShip"):
+        if _ship_death._out_of_action(sub.GetParentShip()):
             return True
     return False
 
@@ -83,9 +93,13 @@ def impulse_online_fraction(ies) -> float:
     n = ies.GetNumChildSubsystems()
     if n == 0:
         return 1.0
-    online = sum(
-        1 for i in range(n) if not _is_offline(ies.GetChildSubsystem(i))
-    )
+    # Plain loop, not sum(genexpr): this walks every pod of every ship every
+    # tick, and at that volume the generator frame is not free -- the same
+    # change was worth 3x on ids.implements.
+    online = 0
+    for i in range(n):
+        if not _is_offline(ies.GetChildSubsystem(i)):
+            online += 1
     return online / float(n)
 
 
