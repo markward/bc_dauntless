@@ -35,6 +35,8 @@ import App
 import MissionLib
 import loadspacehelper
 
+from engine.units import GU_TO_KM
+
 # The SDK's own quick-battle combat AI — the same module QuickBattle attaches
 # to every enemy it spawns (g_dEnemyShipTypeToDetails, column 3). Using the
 # stock AI keeps the load representative rather than a bespoke firing loop.
@@ -79,11 +81,38 @@ _NOMINAL_HULL_RADIUS_GU = 4.0
 _RING_SPACING_HULLS = 2.0
 _MIN_RING_RADIUS_GU = 20.0
 
+# Hard cap on the formation's overall extent. A ring sized purely by spacing
+# reaches 90 km across at 100 ships, which is a thin necklace: neighbours sit
+# inside the ~10.5 km phaser envelope but nothing else does, so the fight
+# degenerates into independent local duels and both avoidance and combat cost
+# are understated. Capping the diameter keeps the engagement mutual.
+#
+# Everything spatial in BC is game units; this is expressed in km only because
+# that is the number a person reasons about. GU_TO_KM is the single conversion
+# (engine/units.py): 1 GU = 175 m.
+_MAX_RING_ACROSS_KM = 65.0
+
 
 def ring_radius_gu(n_ships: int) -> float:
-    """Ring radius that keeps `n_ships` hulls from overlapping."""
+    """Ring radius for `n_ships`, spaced apart but capped in overall extent.
+
+    Grows with the ship count to keep hulls from overlapping, then stops at
+    _MAX_RING_ACROSS_KM. Past that the ring packs tighter rather than wider,
+    which is the intent -- a denser formation is the harder case for the engine
+    and the more representative one for a fleet action.
+    """
     circumference = max(1, n_ships) * (2.0 * _NOMINAL_HULL_RADIUS_GU) * _RING_SPACING_HULLS
-    return max(_MIN_RING_RADIUS_GU, circumference / (2.0 * math.pi))
+    radius = max(_MIN_RING_RADIUS_GU, circumference / (2.0 * math.pi))
+    cap = (_MAX_RING_ACROSS_KM / GU_TO_KM) / 2.0
+    return min(radius, cap)
+
+
+def ring_gap_hulls(n_ships: int) -> float:
+    """Neighbour spacing in hull diameters at `n_ships`. Below 1.0 the hulls
+    overlap at spawn, which is the bug this whole sizing exists to prevent."""
+    radius = ring_radius_gu(n_ships)
+    gap = (2.0 * math.pi * radius) / max(1, n_ships)
+    return gap / (2.0 * _NOMINAL_HULL_RADIUS_GU)
 
 _DEFAULT_SHIPS = 8
 
@@ -255,10 +284,17 @@ def Initialize(pMission):
         pass
 
     ring = ring_radius_gu(total)
-    spacing = (2.0 * math.pi * ring) / max(1, total)
-    print("[combat_stress] %d AI ships (%d per side) + player; ring %.0f GU, "
-          "neighbour spacing %.1f GU (~%.1f hull diameters); AI attached to %d; "
-          "avoidance=%s"
-          % (len(created), per_side, ring, spacing,
-             spacing / (2.0 * _NOMINAL_HULL_RADIUS_GU), attached,
+    gap_hulls = ring_gap_hulls(total)
+    spacing_gu = (2.0 * math.pi * ring) / max(1, total)
+    print("[combat_stress] %d AI ships (%d per side) + player; ring %.1f km "
+          "across, neighbour spacing %.2f km (%.2f hull diameters); "
+          "AI attached to %d; avoidance=%s"
+          % (len(created), per_side, 2.0 * ring * GU_TO_KM,
+             spacing_gu * GU_TO_KM, gap_hulls, attached,
              "ON" if avoidance_enabled() else "off"))
+    if gap_hulls < 1.0:
+        # The exact failure this sizing exists to prevent: hulls spawned inside
+        # one another, so the capture measures a pile-up resolving itself.
+        print("[combat_stress] WARNING: hulls OVERLAP at spawn (%.2f diameters "
+              "apart). Raise _MAX_RING_ACROSS_KM or lower the ship count -- "
+              "measurements from this scene are not a battle." % gap_hulls)
