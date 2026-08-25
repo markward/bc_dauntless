@@ -113,7 +113,13 @@ function setTargetList(state) {
         // the name or bars. That's reasonable (there's nothing else to do
         // in that zone on a childless row) but wasn't true before this fix,
         // when the caret always intercepted its own clicks.
-        const hasSubsystems = Array.isArray(row.subsystems) && row.subsystems.length > 0;
+        // has_subsystems is authoritative: a COLLAPSED row ships an empty
+        // `subsystems` array (the tree is only built when it will be drawn),
+        // so its length says nothing about whether a caret is warranted.
+        // The length fallback keeps older payloads working.
+        const hasSubsystems = (row.has_subsystems !== undefined)
+            ? !!row.has_subsystems
+            : (Array.isArray(row.subsystems) && row.subsystems.length > 0);
         const caretGlyph = expanded ? '&#9662;' : '&#9656;';  // ▾ / ▸
         const caretHtml = hasSubsystems
             ? '<span class="target-list__caret"'

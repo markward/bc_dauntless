@@ -88,12 +88,15 @@ def test_cloaked_contact_inside_bubble_lists_ship_with_no_subsystems():
         _pump(menu, player)
 
         view = TargetListView()
+        view._expanded_ships.add("Enemy")
         script = view.render_payload()
         assert script is not None
         state = json.loads(script[len("setTargetList("):-2])
 
         row = _row_for(state, "Enemy")
         assert row["subsystems"] == []
+        # ...and the caret flag agrees, so a collapsed row is suppressed too.
+        assert row["has_subsystems"] is False
     finally:
         restore()
 
@@ -108,11 +111,13 @@ def test_uncloaked_contact_at_same_distance_still_carries_subsystems():
         _pump(menu, player)  # never cloaked
 
         view = TargetListView()
+        view._expanded_ships.add("Enemy")
         script = view.render_payload()
         state = json.loads(script[len("setTargetList("):-2])
 
         row = _row_for(state, "Enemy")
         assert len(row["subsystems"]) > 0
+        assert row["has_subsystems"] is True
     finally:
         restore()
 
@@ -260,6 +265,7 @@ def test_cached_subsystem_rows_survive_cloak_then_decloak_without_rebuild():
         assert cached_children_before  # sanity: real subsystem rows exist
 
         view = TargetListView()
+        view._expanded_ships.add("Enemy")
         state = json.loads(view.render_payload()[len("setTargetList("):-2])
         assert len(_row_for(state, "Enemy")["subsystems"]) > 0
 
@@ -272,6 +278,7 @@ def test_cached_subsystem_rows_survive_cloak_then_decloak_without_rebuild():
         view.invalidate()
         state = json.loads(view.render_payload()[len("setTargetList("):-2])
         assert _row_for(state, "Enemy")["subsystems"] == []
+        assert _row_for(state, "Enemy")["has_subsystems"] is False
         assert list(row._children) == cached_children_before  # still untouched
 
         # Decloak: subsystems reappear, still the SAME cached objects — no

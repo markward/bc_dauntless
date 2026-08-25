@@ -184,6 +184,10 @@ def test_view_payload_includes_subsystems_and_health():
         player.SetTargetSubsystem(first_sub_obj)
 
         view = TargetListView()
+        # Subsystem CONTENT is an expanded-row property now: a collapsed
+        # row ships an empty list because the tree is only built when it
+        # will be drawn. Expand so this asserts what it means to assert.
+        view._expanded_ships.add(ship.GetName())
         script = view.render_payload()
         body = script[len("setTargetList("):-2]
         state = json.loads(body)
@@ -558,6 +562,10 @@ def test_view_payload_subsystems_carry_condition_pct():
 
         target_menu.set_contacts(_listed(ship))
         view = TargetListView()
+        # Subsystem CONTENT is an expanded-row property now: a collapsed
+        # row ships an empty list because the tree is only built when it
+        # will be drawn. Expand so this asserts what it means to assert.
+        view._expanded_ships.add(ship.GetName())
         script = view.render_payload()
         body = script[len("setTargetList("):-2]
         state = json.loads(body)
@@ -635,6 +643,10 @@ def test_nested_children_and_expanded_reach_payload():
         target_menu.set_contacts(_listed(ship))
 
         view = TargetListView()
+        # Subsystem CONTENT is an expanded-row property now: a collapsed
+        # row ships an empty list because the tree is only built when it
+        # will be drawn. Expand so this asserts what it means to assert.
+        view._expanded_ships.add(ship.GetName())
         # Prime the snapshot cache before toggling.
         view.render_payload()
 
@@ -864,6 +876,10 @@ def test_destroyed_child_subsystem_removed_but_parent_kept():
         _resolve(ship, "Dorsal Phaser 1").SetCondition(0.0)  # destroyed
 
         view = TargetListView()
+        # Subsystem CONTENT is an expanded-row property now: a collapsed
+        # row ships an empty list because the tree is only built when it
+        # will be drawn. Expand so this asserts what it means to assert.
+        view._expanded_ships.add(ship.GetName())
         script = view.render_payload()
         state = json.loads(script[len("setTargetList("):-2])
         row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
@@ -986,5 +1002,80 @@ def test_last_child_destroyed_clears_lock_to_ship_level():
         assert player.GetTargetSubsystem() is None
     finally:
         App.g_kSetManager.DeleteSet("bridge")
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_collapsed_rows_ship_no_subsystem_tree_but_keep_the_caret_flag():
+    """A collapsed row must not pay to build a tree nobody will draw.
+
+    target_list.js emits subsystem child rows only inside `if (expanded)`, so
+    the only thing a collapsed row's tree decided was whether to show the
+    expand caret. Building it walked every contact x every subsystem x every
+    child, ~2-3 condition queries per grandchild, to produce a tuple that was
+    compared and discarded — 84 ms at 100 contacts, the largest non-sim item in
+    the frame.
+
+    has_subsystems now carries the caret, so the tree can be skipped. Both
+    halves matter: skipping the tree, AND still telling the UI a caret is due.
+    """
+    import json
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.ships import ShipClass_Create
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = ShipClass_Create("Galaxy")
+        ship.SetName("USS Galaxy")
+        target_menu.set_contacts(_listed(ship))
+
+        view = TargetListView()
+        state = json.loads(view.render_payload()[len("setTargetList("):-2])
+        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
+
+        assert row["expanded"] is False
+        assert row["subsystems"] == [], "collapsed row built a tree it cannot draw"
+        assert row["has_subsystems"] is True, (
+            "caret flag lost: the row has subsystems, the UI must still offer "
+            "the expand caret")
+
+        # Expanding must produce the real tree.
+        view._expanded_ships.add("USS Galaxy")
+        view.invalidate()
+        state = json.loads(view.render_payload()[len("setTargetList("):-2])
+        row = next(r for r in state["rows"] if r["name"] == "USS Galaxy")
+        assert row["expanded"] is True
+        assert len(row["subsystems"]) > 0
+        assert row["has_subsystems"] is True
+    finally:
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
+
+
+def test_a_ship_with_no_subsystems_reports_no_caret():
+    """has_subsystems must be able to say False, or the caret is drawn on rows
+    that cannot expand — which is what the length check used to prevent."""
+    import json
+    from engine.ui.target_list_view import TargetListView
+    from engine.appc.ships import ShipClass_Create
+
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    game, player, mission = _setup_game_with_player()
+    try:
+        ship = ShipClass_Create("Galaxy")
+        ship.SetName("Bare")
+        target_menu.set_contacts(_listed(ship))
+        for child in list(getattr(target_menu.GetFirstChild(), "_children", [])):
+            target_menu.GetFirstChild()._children.remove(child)
+
+        view = TargetListView()
+        state = json.loads(view.render_payload()[len("setTargetList("):-2])
+        row = next(r for r in state["rows"] if r["name"] == "Bare")
+        assert row["has_subsystems"] is False
+        assert row["subsystems"] == []
+    finally:
         from engine.core.game import _set_current_game
         _set_current_game(None)
