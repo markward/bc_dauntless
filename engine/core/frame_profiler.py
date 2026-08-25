@@ -51,6 +51,12 @@ _frame_ms: float = 0.0
 _frame_seeded = False
 _frames = 0
 
+# Fixed-timestep catch-up ticks in the last frame. Reported because the frame
+# cost is dominated by it whenever the sim cannot keep up, and reading a phase
+# total without it invites dividing by the wrong number: "sim = 500 ms" is ten
+# ticks of 50, not one tick of 500.
+_sim_ticks = 0
+
 
 def is_enabled() -> bool:
     return _enabled
@@ -202,6 +208,17 @@ def frames() -> int:
     return _frames
 
 
+def note_sim_ticks(n: int) -> None:
+    """Record how many fixed-timestep ticks the current frame ran."""
+    global _sim_ticks
+    if _enabled:
+        _sim_ticks = int(n)
+
+
+def sim_ticks() -> int:
+    return _sim_ticks
+
+
 # ── Reporting ────────────────────────────────────────────────────────────────
 # The report is printed to the console rather than drawn as a CEF overlay, and
 # that is deliberate: the CEF surface is uploaded to the GPU in full every frame
@@ -264,6 +281,9 @@ def report_lines() -> list[str]:
     lines.append("-- frame profile -- (EMA over %d frames, alpha %.2f, %s)"
                  % (_frames, EMA_ALPHA, cap))
     lines.append(scene_summary())
+    lines.append("  sim ticks this frame: %d  (catch-up; the frame runs one "
+                 "gameloop tick per 16.67 ms of accumulated game time, capped "
+                 "at 15)" % _sim_ticks)
 
     if _phases:
         lines.append("  python loop phases            cpu ms")

@@ -7652,6 +7652,7 @@ def run(mission_name: Optional[str] = None,
             _accumulator, _sim_ticks_this_frame = step_accumulator(
                 _accumulator, _frame_dt, TICK_DT, MAX_FRAME_DT
             )
+            frame_profiler.note_sim_ticks(_sim_ticks_this_frame)
             # Per-render-frame delta for the player input integrator.
             # _apply_input runs once per render frame, so its dt must
             # be the wall-clock delta since the last frame — not the
