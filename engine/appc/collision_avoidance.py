@@ -187,21 +187,36 @@ def _need_to_avoid(pa, va, personal_space, pb, vb, rb) -> bool:
 
     Direct port: already-inside-personal-space ⇒ avoid; otherwise solve the
     relative-velocity quadratic for the soonest non-negative hit time and
-    avoid if it falls within fPredictionTime."""
+    avoid if it falls within fPredictionTime.
+
+    Vector-argument wrapper over _need_to_avoid_xyz. Callers on the hot path
+    already hold the obstacle's components as scalars (the per-tick snapshot),
+    and should use the scalar form directly rather than fetching a TGPoint3
+    back out of the object -- GetWorldLocation was 671,586 calls over 150 ticks
+    purely to re-supply coordinates the snapshot had already resolved.
+    """
+    return _need_to_avoid_xyz(pa.x, pa.y, pa.z, va.x, va.y, va.z,
+                              personal_space,
+                              pb.x, pb.y, pb.z, vb.x, vb.y, vb.z, rb)
+
+
+def _need_to_avoid_xyz(pax, pay, paz, vax, vay, vaz, personal_space,
+                       pbx, pby, pbz, vbx, vby, vbz, rb) -> bool:
+    """Scalar core of _need_to_avoid. Identical maths, no vector objects."""
     # Already within personal space + their radius?
-    dx = pb.x - pa.x; dy = pb.y - pa.y; dz = pb.z - pa.z
+    dx = pbx - pax; dy = pby - pay; dz = pbz - paz
     dist = math.sqrt(dx * dx + dy * dy + dz * dz)
     if dist < (personal_space + rb):
         return True
 
     # Relative velocity (ours minus theirs) and the collision quadratic.
-    vdx = va.x - vb.x; vdy = va.y - vb.y; vdz = va.z - vb.z
+    vdx = vax - vbx; vdy = vay - vby; vdz = vaz - vbz
     a = vdx * vdx + vdy * vdy + vdz * vdz
     if a <= 0.0:
         return False  # no relative motion: already handled the overlap case
 
     # vPosDiff = ship - object  (note the sign vs dp above)
-    px = pa.x - pb.x; py = pa.y - pb.y; pz = pa.z - pb.z
+    px = pax - pbx; py = pay - pby; pz = paz - pbz
     b = 2.0 * (px * vdx + py * vdy + pz * vdz)
     radius_sum = personal_space + rb
     c = -(radius_sum * radius_sum) + (px * px + py * py + pz * pz)
@@ -234,7 +249,8 @@ def _calculate_direction_appeal(forward, test_dir, dir_info) -> float:
     where vDirection is the unit ship→obstacle direction.
     """
     overall = 0.0
-    for vDirection, vVelocity, blocked_dot, favorability in dir_info:
+    for (vDirection, vVelocity, blocked_dot, favorability,
+         vux, vuy, vuz, vel_significant, dpx, dpy, dpz) in dir_info:
         dot = (test_dir.x * vDirection.x + test_dir.y * vDirection.y
                + test_dir.z * vDirection.z)
 
@@ -255,25 +271,27 @@ def _calculate_direction_appeal(forward, test_dir, dir_info) -> float:
 
         overall += appeal * 2.0
 
-        # Similar calculations against the obstacle's velocity.
-        vel_dir, _ = _unitize(vVelocity)
-        if (vel_dir.x * vel_dir.x + vel_dir.y * vel_dir.y
-                + vel_dir.z * vel_dir.z) > 0.0625:
-            vdot = (vel_dir.x * test_dir.x + vel_dir.y * test_dir.y
-                    + vel_dir.z * test_dir.z)
+        # Similar calculations against the obstacle's velocity. The unitised
+        # velocity and the obstacle's own perpendicular component are hoisted
+        # into dir_info -- see _avoid_objects. Only test_dir varies here, so
+        # only its perpendicular component is computed, and in scalars.
+        if vel_significant:
+            vdot = vux * test_dir.x + vuy * test_dir.y + vuz * test_dir.z
             appeal = (abs(vdot) - 0.5) * 2.0 * favorability
             overall += appeal
 
             # Avoid moving in front of the obstacle: compare the perpendicular
             # components (the SDK's `if 1:` branch is always taken).
-            test_perp = _perpendicular_component(test_dir, vVelocity)
-            dir_perp = _perpendicular_component(vDirection, vVelocity)
-            test_perp, _ = _unitize(test_perp)
-            dir_perp, _ = _unitize(dir_perp)
-            pdot = (test_perp.x * dir_perp.x + test_perp.y * dir_perp.y
-                    + test_perp.z * dir_perp.z)
-            appeal = pdot * favorability
-            overall += appeal
+            tpx = test_dir.x - vdot * vux
+            tpy = test_dir.y - vdot * vuy
+            tpz = test_dir.z - vdot * vuz
+            tplen = math.sqrt(tpx * tpx + tpy * tpy + tpz * tpz)
+            if tplen >= 1e-12:
+                pdot = ((tpx / tplen) * dpx + (tpy / tplen) * dpy
+                        + (tpz / tplen) * dpz)
+            else:
+                pdot = 0.0
+            overall += pdot * favorability
 
         # A little goodness for staying near our forward vector.
         overall += (forward.x * vDirection.x + forward.y * vDirection.y
@@ -285,7 +303,8 @@ def _calculate_direction_appeal(forward, test_dir, dir_info) -> float:
 def _is_direction_safe(test_dir, dir_info) -> bool:
     """Whether test_dir points clear of every obstacle's blocked cone (SDK
     IsDirectionSafe)."""
-    for vDirection, _vVelocity, blocked_dot, _favorability in dir_info:
+    for entry in dir_info:
+        vDirection, blocked_dot = entry[0], entry[2]
         dot = (test_dir.x * vDirection.x + test_dir.y * vDirection.y
                + test_dir.z * vDirection.z)
         if dot >= blocked_dot:
@@ -323,8 +342,40 @@ def _avoid_objects(ship, forward, avoid_list, previous_heading=None):
         blocked_angle = math.atan((rb + ship_r) / distance)
         blocked_dot = math.cos(blocked_angle)
         favorability = -AVOID_MINIMUM_RADIUS_GU / distance
+        # Precompute everything about this obstacle that the per-candidate
+        # scorer would otherwise redo for EVERY test direction. _unitize(vel)
+        # and the perpendicular component of vDirection about vel depend only
+        # on the obstacle, and the scorer is called once per candidate
+        # direction with the same dir_info -- so they were being recomputed
+        # ~63 times each, allocating a TGPoint3 every time. TGPoint3.__init__
+        # was the single hottest line in the sim at 2.58 M calls / 150 ticks.
+        #
+        # Stored as bare floats, not vectors: the scorer needs components, and
+        # rebuilding a TGPoint3 to read .x/.y/.z back out is the allocation
+        # this exists to remove.
+        vux, vuy, vuz = 0.0, 0.0, 0.0
+        vel_significant = False
+        dpx, dpy, dpz = unit.x, unit.y, unit.z
+        vlen = math.sqrt(vb.x * vb.x + vb.y * vb.y + vb.z * vb.z)
+        if vlen >= 1e-12:
+            vux, vuy, vuz = vb.x / vlen, vb.y / vlen, vb.z / vlen
+            # The SDK gate: a unit vector's squared length is 1, so this is
+            # "the obstacle is actually moving" expressed as the port has it.
+            vel_significant = (vux * vux + vuy * vuy + vuz * vuz) > 0.0625
+            # Perpendicular component of vDirection about the velocity axis,
+            # then unitised -- both obstacle-constant.
+            d = unit.x * vux + unit.y * vuy + unit.z * vuz
+            dpx = unit.x - d * vux
+            dpy = unit.y - d * vuy
+            dpz = unit.z - d * vuz
+            dplen = math.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
+            if dplen >= 1e-12:
+                dpx, dpy, dpz = dpx / dplen, dpy / dplen, dpz / dplen
+            else:
+                dpx = dpy = dpz = 0.0
         dir_info.append((unit, TGPoint3(vb.x, vb.y, vb.z),
-                         blocked_dot, favorability))
+                         blocked_dot, favorability,
+                         vux, vuy, vuz, vel_significant, dpx, dpy, dpz))
 
     if not dir_info:
         return None, None
@@ -333,7 +384,8 @@ def _avoid_objects(ship, forward, avoid_list, previous_heading=None):
     flee_appeal = -1.0e20
 
     # First, test the opposite of each obstacle direction.
-    for vDirection, _vel, _bd, _fav in dir_info:
+    for entry in dir_info:
+        vDirection = entry[0]
         test = TGPoint3(-vDirection.x, -vDirection.y, -vDirection.z)
         appeal = _calculate_direction_appeal(forward, test, dir_info)
         if appeal > flee_appeal:
@@ -413,6 +465,10 @@ def _test_course_override(ship, previous_heading=None):
 
     check_radius_sq = check_radius * check_radius
     px, py, pz = predicted.x, predicted.y, predicted.z
+    # Scalar copies for the gate: the loop below runs once per obstacle and
+    # attribute access on the ship's vectors is not free at that volume.
+    slx, sly, slz = ship_loc.x, ship_loc.y, ship_loc.z
+    svx, svy, svz = ship_vel.x, ship_vel.y, ship_vel.z
 
     # Everything observer-independent is resolved once per tick, not once per
     # (observer, obstacle) pair. See obstacle_snapshot.
@@ -449,9 +505,9 @@ def _test_course_override(ship, previous_heading=None):
         # _need_to_avoid's "already inside personal space" clause returns True
         # regardless of velocity, so a body already overlapping is never gated
         # out.
-        ob_loc = other.GetWorldLocation()
-        if not _need_to_avoid(ship_loc, ship_vel, personal_space,
-                              ob_loc, ob_vel, gate_r):
+        if not _need_to_avoid_xyz(slx, sly, slz, svx, svy, svz,
+                                  personal_space, ox, oy, oz,
+                                  ob_vel.x, ob_vel.y, ob_vel.z, gate_r):
             continue
 
         # Per-pair collision mask (DamageableObject.EnableCollisionsWith),
@@ -463,65 +519,10 @@ def _test_course_override(ship, previous_heading=None):
         if (ob_id in ship_disabled
                 or (ship_obj_id is not None and ship_obj_id in ob_disabled)):
             continue
-        # Present the obstacle as the PIECES its hull is made of, not one
-        # sphere round the whole model. `avoid_list` already takes a list of
-        # (centre, velocity, radius), so each piece is simply its own obstacle
-        # and the avoidance maths below is untouched.
-        #
-        # This is what a model-wide bound cannot do: express CONCAVITY. A
-        # starbase's docking bay is a void BETWEEN pieces, so with one sphere a
-        # ship leaving the bay reads as inside the station and _need_to_avoid's
-        # "already inside => avoid" clause fires every tick. You cannot steer
-        # out of something you are inside, so the scorer picks an arbitrary
-        # heading and commands AVOID_SAFE_SPEED — measured live after undocking
-        # from Starbase 12: full impulse, heading swinging through every axis,
-        # and the ship briefly moving back toward the starbase.
-        #
-        # Falls back to the whole bound for anything with no cached pieces
-        # (unrealized model, headless, load failure). That fallback is load-
-        # bearing: without it, adding the hierarchy would quietly switch
-        # avoidance off for most of the game.
-        #
-        # Culled to the pieces in range before any of them is transformed into
-        # world space — a hull is up to 128 of them and this runs per obstacle
-        # per AI ship per tick. That makes an empty result ambiguous, so the
-        # fallback is chosen on has_hull_bounds and never on emptiness: an
-        # obstacle whose geometry is simply out of range must yield NOTHING,
-        # not the whole-model sphere the pieces exist to replace.
-        # ── Whole-body convergence gate ────────────────────────────────
-        # Test the obstacle's BOUNDING SPHERE before expanding it into pieces.
-        # Conservative: every piece lies inside the bounding sphere, so if the
-        # sphere is not on a collision course within the prediction window, no
-        # piece of it can be. Only converging obstacles pay for expansion.
-        #
-        # This is the filter the proximity query never was. Measured over
-        # 40,320 pair-samples at 64 ships:
-        #
-        #     within the 225 GU proximity query :  100.00%
-        #     actually converging (swept test)  :    0.00%
-        #
-        # AVOID_MINIMUM_RADIUS_GU is 225 GU (~40 km, the SDK's fMinimumRadius)
-        # while a battle happens within a few GU, so the distance prefilter
-        # above rejects nothing -- and the piece expansion behind it was
-        # unconditional: up to 128 leaves per obstacle, per AI ship, per
-        # evaluation. Proximity does not discriminate; convergence does.
-        #
-        # _need_to_avoid is ~20 float ops and its "already inside personal
-        # space" clause returns True regardless of velocity, so a body already
-        # overlapping is never gated out.
-        # ob_r is GetRadius(), which is NOT guaranteed to enclose the hull
-        # pieces -- the host only derives it from the model AABB when the SDK
-        # left it at 0, so an authored radius can be smaller than the geometry.
-        # hull_bounds.bound_radius is exact (max |centre| + r over the pieces),
-        # so the gate radius is the larger of the two and cannot cut a piece off.
-        gate_r = ob_r
-        if has_hull_bounds(other):
-            piece_bound = hull_bound_radius(other)
-            if piece_bound > gate_r:
-                gate_r = piece_bound
-        if not _need_to_avoid(ship_loc, ship_vel, personal_space,
-                              ob_loc, ob_vel, gate_r):
-            continue
+        # Past the gate. Only obstacles that could actually collide reach
+        # here, so building the vector the pieces path needs is now rare --
+        # it used to be a GetWorldLocation() on every pair.
+        ob_loc = TGPoint3(ox, oy, oz)
 
         if has_hull_bounds(other):
             # MEASURED DEAD END, do not retry without new evidence. Passing the
