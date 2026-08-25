@@ -62,7 +62,7 @@ class _EffectiveMotion:
     max_ang_accel: float
 
 
-def _effective_motion(ship) -> "_EffectiveMotion":
+def _effective_motion(ship, ies=None, imp_f=None) -> "_EffectiveMotion":
     """Resolve a ship's LIVE impulse limits.
 
     The four getters already carry BC's derating (damaged pods x power slider,
@@ -73,8 +73,12 @@ def _effective_motion(ship) -> "_EffectiveMotion":
     FALLBACK_MAX_ACCEL snap semantics meant for ships with no engines at all.
     """
     from engine.appc.subsystems import impulse_output_fraction
-    getter = getattr(ship, "GetImpulseEngineSubsystem", None)
-    ies = getter() if getter is not None else None
+    if ies is None:
+        # Callers on the per-ship path already hold the subsystem and the
+        # derating fraction; re-fetching both here is a second pod walk for an
+        # answer they just computed.
+        getter = getattr(ship, "GetImpulseEngineSubsystem", None)
+        ies = getter() if getter is not None else None
     if ies is None:
         return _EffectiveMotion(False, 0.0, 0.0, False, 0.0, 0.0)
     has_lin = ies.GetAuthoredMaxSpeed() > 0.0
@@ -91,7 +95,7 @@ def _effective_motion(ship) -> "_EffectiveMotion":
     # operands, same single multiply, same order. Nothing between the four
     # calls could have changed it -- they were consecutive reads of one
     # subsystem's state.
-    f = impulse_output_fraction(ies)
+    f = impulse_output_fraction(ies) if imp_f is None else imp_f
     return _EffectiveMotion(
         has_linear=has_lin,
         max_speed=ies.GetAuthoredMaxSpeed() * f if has_lin else 0.0,
@@ -188,10 +192,10 @@ def _step_ship_motion(ship, dt: float) -> None:
             world_dir = TGPoint3(direction.x, direction.y, direction.z)
         world_dir.Unitize()
 
-    from engine.appc.subsystems import impulse_online_fraction
+    from engine.appc.subsystems import impulse_fractions
     getter = getattr(ship, "GetImpulseEngineSubsystem", None)
     ies = getter() if getter is not None else None
-    f = impulse_online_fraction(ies)
+    f, _imp_out_f = impulse_fractions(ies)
 
     # -- Total loss -> inertial drift --
     if f <= 0.0:
@@ -217,7 +221,7 @@ def _step_ship_motion(ship, dt: float) -> None:
         ship._current_speed = drift.Length()
         ship._drift_velocity = None
 
-    em = _effective_motion(ship)
+    em = _effective_motion(ship, ies=ies, imp_f=_imp_out_f)
 
     # -- Linear ramp toward (capped) target --
     if em.has_linear:

@@ -2807,3 +2807,48 @@ def __getattr__(name):
 
 def __dir__():
     return sorted(list(globals().keys()) + list(_WEAPON_EXPORTS))
+
+
+def impulse_fractions(ies):
+    """``(online_fraction, output_fraction)`` from ONE walk over the pods.
+
+    ``impulse_online_fraction`` and ``impulse_output_fraction`` are both called
+    once per ship per tick from the motion path, and each iterates the same
+    child-pod list -- two walks, two sets of GetChildSubsystem calls, for facts
+    about the same objects. Together they were 0.81 s of ship motion's 1.57 s
+    over 150 ticks at 100 ships.
+
+    The two predicates genuinely differ and both are preserved verbatim:
+    ``online`` counts pods that are not ``_is_offline`` (disabled OR destroyed
+    OR parent out of action), while ``output`` weights by condition and treats
+    only ``IsDisabled`` as forfeiting the pod's whole share. So this fuses the
+    ITERATION, not the semantics.
+
+    Equivalent to calling both, with one ordering difference that cannot change
+    a result: ``impulse_output_fraction`` short-circuits on ``not IsOn()``
+    before touching the pods, whereas this walks them first because the online
+    fraction needs the walk regardless. Same values, in the switched-off case a
+    walk that the separate call would have skipped.
+    """
+    if ies is None:
+        return 1.0, 1.0
+    if _is_offline(ies):
+        return 0.0, 0.0
+    n = ies.GetNumChildSubsystems()
+    if n == 0:
+        online, cur = 1.0, 1.0
+    else:
+        online_n = 0
+        contrib = 0.0
+        for i in range(n):
+            pod = ies.GetChildSubsystem(i)
+            if not _is_offline(pod):
+                online_n += 1
+            if not pod.IsDisabled():
+                contrib += pod.GetConditionPercentage()
+        online = online_n / float(n)
+        cur = contrib / n
+    if not ies.IsOn():
+        return online, 0.0
+    cur = max(0.0, min(1.0, cur))
+    return online, cur * ies.GetPowerPercentageWanted()
