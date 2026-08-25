@@ -123,7 +123,56 @@ def _dispatch_ai(ai, game_time: float) -> int:
         _DISPATCH_BY_TYPE[type(ai)] = handler
     if handler is None:
         return ai._status
+    if _AI_BREAKDOWN is not None:
+        return _timed_dispatch(handler, ai, game_time)
     return handler(ai, game_time)
+
+
+# TEMPORARY INSTRUMENT (DAUNTLESS_AI_BREAKDOWN=1). Attributes SELF time to the
+# node's concrete class, so a parent that spends its tick in children shows the
+# children's cost under the children, not under itself.
+import os as _os
+import time as _time
+_AI_BREAKDOWN = {} if _os.environ.get("DAUNTLESS_AI_BREAKDOWN") else None
+_AI_CHILD_TIME = [0.0]
+_AI_TICKS = [0]
+
+
+def _timed_dispatch(handler, ai, game_time):
+    outer_child = _AI_CHILD_TIME[0]
+    _AI_CHILD_TIME[0] = 0.0
+    t0 = _time.perf_counter()
+    try:
+        return handler(ai, game_time)
+    finally:
+        total = _time.perf_counter() - t0
+        self_time = total - _AI_CHILD_TIME[0]
+        key = type(ai).__name__
+        _inst = ai.__dict__.get("_preprocessing_instance")
+        if _inst is not None:
+            key = "pp:" + type(_inst).__name__
+        rec = _AI_BREAKDOWN.get(key)
+        if rec is None:
+            _AI_BREAKDOWN[key] = [self_time, 1]
+        else:
+            rec[0] += self_time
+            rec[1] += 1
+        _AI_CHILD_TIME[0] = outer_child + total
+
+
+def ai_breakdown_report(ticks: int = 0) -> str:
+    ticks = ticks or _AI_TICKS[0]
+    if not _AI_BREAKDOWN:
+        return ""
+    rows = sorted(_AI_BREAKDOWN.items(), key=lambda kv: -kv[1][0])
+    from engine.appc.collision_avoidance import _SCAN_COUNT
+    out = ["  avoidance scans/tick %.1f  (of which overriding %.1f)"
+           % (_SCAN_COUNT[0] / max(ticks, 1), _SCAN_COUNT[1] / max(ticks, 1)),
+           "  ai node self-time         ms/tick    visits/tick"]
+    for name, (secs, calls) in rows:
+        out.append("    %-24s %7.3f %10.1f"
+                   % (name[:24], secs * 1000.0 / max(ticks, 1), calls / max(ticks, 1)))
+    return chr(10).join(out)
 
 
 # Resolved handler per EXACT node type. The isinstance chain below runs once
@@ -1064,6 +1113,8 @@ def tick_all_ai(game_time: float) -> None:
     """
     from engine.appc.ship_iter import iter_ships
     from engine.appc import defensive_cloak
+    if _AI_BREAKDOWN is not None:
+        _AI_TICKS[0] += 1
     for ship in iter_ships():
         # A ship hiding-to-repair is owned by the defensive-cloak controller;
         # suppress its SDK AI so the two cloak drivers never conflict.

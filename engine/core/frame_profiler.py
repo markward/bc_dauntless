@@ -285,6 +285,14 @@ def report_lines() -> list[str]:
                  "gameloop tick per 16.67 ms of accumulated game time, capped "
                  "at 15)" % _sim_ticks)
 
+    try:
+        from engine.appc.ai_driver import ai_breakdown_report
+        _ai = ai_breakdown_report()
+        if _ai:
+            lines.append(_ai)
+    except Exception:
+        pass
+
     if _phases:
         lines.append("  python loop phases            cpu ms")
         for name, ms in _phases.items():

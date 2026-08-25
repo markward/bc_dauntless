@@ -683,7 +683,14 @@ def course_override_for(node):
     # __getattr__, which vends a truthy _Stub for a missing name and would make
     # "no previous override" read as a heading.
     prev = node.__dict__.get("vOverrideDirection") or None
-    return _test_course_override(ship, previous_heading=prev)
+    _SCAN_COUNT[0] += 1
+    r = _test_course_override(ship, previous_heading=prev)
+    if r[0] is not None:
+        _SCAN_COUNT[1] += 1
+    return r
+
+
+_SCAN_COUNT = [0, 0]
 
 
 # ── Per-tick obstacle snapshot ──────────────────────────────────────────────
