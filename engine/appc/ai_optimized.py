@@ -81,6 +81,7 @@ PS_NORMAL.
 """
 
 import functools
+import os
 
 import App
 
@@ -112,6 +113,30 @@ class ManagePower:
         # PS_NORMAL: run the contained AI. NEVER PS_DONE — that is lethal.
         return App.PreprocessingAI.PS_NORMAL
 
+
+# Re-scan cadence for a ship that is ACTIVELY EVADING.
+#
+# AvoidObstacles.__init__ ships:
+#     self.fMinimumUpdateDelay = 0.0  # 0.25
+#     self.fMaximumUpdateDelay = 0.25 # 1.25
+# The commented values are BC's earlier, slower tuning; the live ones are what
+# they turned it down to. They could afford it -- AvoidObstacles is one of the
+# four preprocessors GetOptimizedVersion swaps for a NATIVE node, so in the
+# shipped game a 60 Hz re-scan is C++. Ours is the Python scan, and at 100
+# ships in a 65 km sphere ~44 of them are evading at any moment, each
+# re-scanning every tick: 6.5 ms of an 18.5 ms tick, 36% of the whole
+# gameloop, spent recomputing an answer that changes negligibly in 16 ms.
+#
+# Restoring their commented 0.25 is safe because a cadence-skipped tick does
+# NOT drop the evasion: _tick_preprocessing's else-branch reproduces the last
+# PS_SKIP_ACTIVE, so the contained AI stays suppressed and the ship holds the
+# TurnTowardDirection / SetImpulse setpoints already issued. The ship keeps
+# evading on the committed heading; only the re-decision waits. Against a 15 s
+# fPredictionTime lookahead, a 0.25 s stale decision is 1.7% of the horizon.
+#
+# Set to 0.0 to restore the SDK's every-tick behaviour exactly.
+AVOID_EVADING_UPDATE_DELAY_S = float(
+    os.environ.get("DAUNTLESS_AVOID_EVADE_DELAY_S", "0.25"))
 
 _ENGINE_AVOIDANCE_CLASSES: dict = {}
 
@@ -155,6 +180,8 @@ def _replace_avoid_obstacles(instance):
     cls = _engine_avoidance_class(type(instance))
     alias = cls.__new__(cls)
     alias.__dict__ = instance.__dict__
+    if AVOID_EVADING_UPDATE_DELAY_S > 0.0:
+        alias.__dict__["fMinimumUpdateDelay"] = AVOID_EVADING_UPDATE_DELAY_S
     return alias
 
 
