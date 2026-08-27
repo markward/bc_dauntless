@@ -342,6 +342,7 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     _reached_this_tick.append(ai)
     _dispatch_got_focus(ai)
 
+    _note_due(ai._next_update_time)
     if game_time < ai._next_update_time:
         return ai._status
     inst = ai.GetScriptInstance()
@@ -366,6 +367,7 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     next_update = next_update_fn() if callable(next_update_fn) else None
     interval = float(next_update) if next_update is not None else 0.0
     ai._next_update_time = game_time + interval
+    _note_due(ai._next_update_time)
     return ai._status
 
 
@@ -473,6 +475,7 @@ def _tick_priority_list(ai: PriorityListAI, game_time: float) -> int:
             # BuilderAI is a PreprocessingAI subclass — it builds once and is not
             # a dormant combat child, so this is harmless for it.
             if not (isinstance(child, PreprocessingAI)
+                    and _note_due_ret(child._next_update_time)
                     and game_time >= child._next_update_time):
                 continue
             # Probe it. If it reactivated it holds the list; if it stayed dormant
@@ -1004,6 +1007,7 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     # decision-making is gated. ForceUpdate() resets _next_update_time to 0.0
     # so an asynchronous event (e.g. a target cloaking) re-runs the
     # preprocessor on the very next tick instead of after its full cadence.
+    _note_due(ai._next_update_time)
     if game_time >= ai._next_update_time:
         bound = getattr(inst, method)
         if arity >= 1:
@@ -1029,6 +1033,7 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
         nxt = next_update_fn() if callable(next_update_fn) else None
         interval = float(nxt) if nxt is not None else 0.0
         ai._next_update_time = game_time + interval
+        _note_due(ai._next_update_time)
 
         if result == PS_SKIP_ACTIVE:
             ai._status = US_ACTIVE
@@ -1253,6 +1258,71 @@ def fire_ai_done(ship, ai) -> None:
         dev_mode.log_swallowed("fire ET_AI_DONE", _e)
 
 
+# ── Due-time tree walking ────────────────────────────────────────────────────
+#
+# MEASURED at 100 ships: 100 ship trees are walked per tick and 87% of them
+# execute NOTHING -- every node dispatched, every ConditionalAI refreshed, ~772
+# node visits, to rediscover that nothing was due. Only ~12 preprocessor
+# Updates run per tick across the whole scene, because GetNextUpdateTime gates
+# them hard (SelectTarget once per ship per ~3.5 s, AlertLevel once per 60 s).
+#
+# So a tree records, as it is walked, the EARLIEST _next_update_time it saw,
+# and is not walked again until then. Skipping happens only when nothing was
+# going to run anyway.
+#
+# A blanket every-N-ticks stride was tried first and REJECTED on measurement,
+# not on taste. It was faster (gl.ai 95-100 -> 52-59 ms at N=4) but it also
+# delayed nodes that WERE due -- PlainAI steering leaves run every tick by
+# design -- so ships steered coarsely, flew straighter and landed more hits:
+# projectiles in flight 146/169 -> 212/217 and hull-damaged ships 52 -> 67/78
+# over identical simulated game time. A performance change that makes combat
+# more lethal is a gameplay change wearing a disguise.
+#
+# THE SLEEP IS CAPPED, and that cap is the load-bearing part. A due time is
+# only trustworthy for the nodes the walk REACHED; a condition on an inactive
+# branch can change and make a lower-priority branch eligible without any
+# reached node knowing. Normally _refresh_conditional_status polls for exactly
+# that (see the M2Objects symptom in _tick_priority_list), and a sleeping tree
+# does not poll. There is no wake signal to lean on instead: TGCondition.
+# SetStatus notifies handlers only `if self._active`, and ConditionalAI
+# activates its conditions from the node's tree-activation lifecycle, so an
+# inactive branch's conditions are silent by design (ai-architecture.md Sec.6).
+#
+# Capping the sleep bounds that blindness to MAX_SLEEP_TICKS instead of
+# eliminating it. At 4 ticks a missed branch switch surfaces within 66 ms,
+# against BC's own 200 ms FireScript cadence -- an order of magnitude inside
+# the envelope the game was designed around. Raising this cap trades latency
+# for walks; removing it needs the wake signal built first.
+#
+# Set DAUNTLESS_AI_MAX_SLEEP=0 to restore per-tick walking exactly.
+AI_MAX_SLEEP_TICKS = max(0, int(
+    __import__("os").environ.get("DAUNTLESS_AI_MAX_SLEEP", "4")))
+
+# Earliest _next_update_time seen during the CURRENT root walk. inf means the
+# walk saw no cadence gate at all, which is capped like everything else.
+_TICK_SECONDS = 1.0 / 60.0   # GameLoop.TICK_DELTA; imported here would cycle
+_walk_min_due = [float("inf")]
+
+
+def _note_due_ret(when: float) -> bool:
+    """_note_due in expression position; always True so it can be AND-ed into
+    an existing condition without changing it."""
+    _note_due(when)
+    return True
+
+
+def _note_due(when: float) -> None:
+    """Record a node's next-update time during the walk in progress.
+
+    Called from every site that gates on game_time >= _next_update_time, so the
+    tree's sleep can never outlast the soonest thing it is waiting for. A site
+    that gates WITHOUT calling this would let its node oversleep -- which is
+    why this is a named function and not an inline min().
+    """
+    if when < _walk_min_due[0]:
+        _walk_min_due[0] = when
+
+
 def tick_all_ai(game_time: float) -> None:
     """Iterate every ship and tick its attached AI subtree.
 
@@ -1263,14 +1333,27 @@ def tick_all_ai(game_time: float) -> None:
     from engine.appc import defensive_cloak
     if _AI_BREAKDOWN is not None:
         _AI_TICKS[0] += 1
+    max_sleep = AI_MAX_SLEEP_TICKS
     for ship in iter_ships():
         # A ship hiding-to-repair is owned by the defensive-cloak controller;
         # suppress its SDK AI so the two cloak drivers never conflict.
         if defensive_cloak.is_defensive(ship):
             continue
+        if max_sleep:
+            due = ship.__dict__.get("_ai_next_walk_due")
+            if due is not None and game_time < due:
+                continue
         ai = ship.GetAI() if hasattr(ship, "GetAI") else None
         if ai is not None:
+            _walk_min_due[0] = float("inf")
             status = tick_ai(ai, game_time)
+            if max_sleep:
+                # Never sleep past the soonest gate this walk saw, and never
+                # past the cap -- see AI_MAX_SLEEP_TICKS on why the cap is the
+                # part holding this together.
+                ship.__dict__["_ai_next_walk_due"] = min(
+                    _walk_min_due[0],
+                    game_time + max_sleep * _TICK_SECONDS)
             # Root-tree completion: announce the end (SDK: so orbit/helm state
             # can react) AND release the conn.
             #
