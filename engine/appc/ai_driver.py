@@ -469,6 +469,44 @@ def _tick_priority_list(ai: PriorityListAI, game_time: float) -> int:
     return ai._status
 
 
+# MEASURED DEAD END -- memoising the EvalFunc. Do not rebuild without new
+# evidence; the numbers below are the evidence against it.
+#
+# This function is called ~350-400 times per tick at 100 ships (a priority list
+# refreshes every ConditionalAI child it scans, for each list on the active
+# path, every tick) -- ~5,500 per frame. It looks like an obvious memo target:
+# MEASURED, 99.9% of calls are handed condition statuses identical to the
+# previous tick, and 0.01% produce a different status.
+#
+# A memo keyed on (eval_fn, condition statuses) was built and it worked exactly
+# as designed: 99.9% hit rate in-game, 0.0% declined. It saved NOTHING
+# measurable -- gl.ai 98.2/103.2/112.6 ms against a 98.2-107.3 baseline. The
+# EvalFuncs are three-line boolean combinators, so building the key tuple and
+# probing the cache costs about what calling one costs.
+#
+# What is left is the part a memo cannot remove: you must READ the statuses to
+# know they are unchanged, and that read (a list comp over ~1.8 GetStatus
+# calls) is most of the cost.
+#
+# The way to skip the read is a dirty flag driven by the push that already
+# exists -- TGCondition.SetStatus calls h.ConditionChanged(self) on a real
+# change. That is BLOCKED, not merely unbuilt: the push is gated on
+# `if self._active`, so an inactive condition changes status silently and a
+# dirty flag would miss it. That silent drift is the exact bug this polling
+# refresh was added to fix (see the M2Objects symptom in _tick_priority_list).
+# Any dirty-flag attempt has to solve the inactive case first.
+#
+# Worth knowing if someone does try: of 458 evaluation functions across sdk/
+# and engine/, 450 are pure functions of their arguments. The 8 exceptions are
+# all AI/Compound/ChainFollow.py, whose EvalFuncs read a MODULE-LEVEL GLOBAL
+# `iIndex` that CreateAI assigns (`global iIndex; iIndex = kShips.index(...)`)
+# -- stable within a tick, but it moves whenever another ChainFollow AI is
+# built, which would strand any cache keyed only on condition statuses.
+#
+# Scale check before spending effort here at all: the whole refresh path is
+# ~13 ms of a ~330 ms frame at 100 ships. Removing it ENTIRELY buys ~4%.
+
+
 def _refresh_conditional_status(ai: ConditionalAI) -> None:
     """Re-run a ConditionalAI's EvalFunc against its conditions and
     cache the result on ``ai._status`` without dispatching contained
