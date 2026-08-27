@@ -193,10 +193,13 @@ def test_an_impure_evalfunc_is_re_run_every_time():
 
 def test_swapping_the_evaluation_function_invalidates_the_memo():
     c = _Cond(1)
-    ai = _conditional([c], lambda a: US_ACTIVE)
+    # Memoisable spellings, so the swap is tested against a LIVE cache entry.
+    ai = _conditional([c], lambda a, ACTIVE=US_ACTIVE: ACTIVE)
+    assert _memoisable_evalfunc(ai._evaluation_function)
     _refresh_conditional_status(ai)
+    _refresh_conditional_status(ai)   # settle, so there is a cache entry to invalidate
     assert ai._status == US_ACTIVE
-    ai.SetEvaluationFunction(lambda a: US_DORMANT)
+    ai.SetEvaluationFunction(lambda a, DORMANT=US_DORMANT: DORMANT)
     _refresh_conditional_status(ai)
     assert ai._status == US_DORMANT
 
@@ -210,10 +213,20 @@ def test_the_contained_done_fold_is_not_cached():
 
     child = _Child()
     c = _Cond(1)
-    ai = _conditional([c], lambda a: US_ACTIVE)
+    # MUST be memoisable, or this test is vacuous: a declined EvalFunc is
+    # recomputed every call, so a fold wrongly moved INSIDE the memo would
+    # still produce the right answer here and the test would pass. Verified by
+    # calibration -- with a plain `lambda a: US_ACTIVE` (declined, because
+    # US_ACTIVE is a module global of this file) moving the fold into
+    # _eval_conditional broke nothing across 208 tests.
+    ai = _conditional([c], lambda a, ACTIVE=US_ACTIVE: ACTIVE)
+    assert _memoisable_evalfunc(ai._evaluation_function), (
+        "the EvalFunc is declined, so the cached path is never taken and this "
+        "test cannot see the defect it exists to catch")
     ai._contained_ai = child
 
     _refresh_conditional_status(ai)
+    _refresh_conditional_status(ai)   # settle: the next call must be a memo HIT
     assert ai._status == US_ACTIVE
 
     child._status = US_DONE            # changes with no condition change at all

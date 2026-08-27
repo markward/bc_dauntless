@@ -553,9 +553,12 @@ def _memoisable_evalfunc(fn) -> bool:
 def _eval_conditional(ai, eval_fn, args):
     """Run (or reuse) `eval_fn` over `args`, returning the pre-fold status.
 
-    The cached value is the EvalFunc's own answer only. The contained-AI DONE
-    fold is deliberately NOT cached: _contained_ai._status changes for reasons
-    that are not in the key, so folding it must happen fresh on every call.
+    Returns the PRE-FOLD status, deliberately. The contained-AI DONE fold is
+    the caller's job and must not migrate in here: _contained_ai._status
+    changes for reasons no condition reflects, so it is not in the key, and
+    caching a folded value would hide a finished child for as long as the
+    conditions hold steady. Both callers carry the same warning at the fold
+    itself -- _refresh_conditional_status has the full version.
     """
     key = tuple(args)
     cache = ai.__dict__.get("_evalfn_cache")
@@ -594,6 +597,15 @@ def _refresh_conditional_status(ai: ConditionalAI) -> None:
         # Fold in the contained AI's completion (see _tick_conditional):
         # an EvalFunc that reports US_ACTIVE forever must not mask a
         # contained AI that has already finished.
+        #
+        # ⚠️ THIS FOLD MUST STAY OUTSIDE THE MEMO. _eval_conditional returns the
+        # EvalFunc's own PRE-fold answer, and _contained_ai._status is not part
+        # of its key -- it changes for reasons no condition reflects. Folding
+        # inside the helper, or caching the folded value here, would freeze a
+        # child's completion out of the answer for as long as the conditions
+        # hold steady. That is 99.9% of ticks, so a finished child would go
+        # permanently invisible and its parent PriorityList/Sequence would
+        # never complete. Covered by test_the_contained_done_fold_is_not_cached.
         if (ai._status == US_ACTIVE and ai._contained_ai is not None
                 and ai._contained_ai._status == US_DONE):
             ai._status = US_DONE
@@ -739,6 +751,14 @@ def _tick_conditional(ai: ConditionalAI, game_time: float) -> int:
             # contained AI's progress; without this, the ConditionalAI
             # never reflects that its contained AI actually finished, so
             # the parent PriorityList/Sequence never completes.
+            #
+            # ⚠️ MUST STAY OUTSIDE THE MEMO -- and note it also has to stay
+            # AFTER the tick_ai above, which is what moves the child to
+            # US_DONE in the first place. _eval_conditional returns the
+            # EvalFunc's PRE-fold answer; _contained_ai._status is not in its
+            # key, so caching the folded value would hide a finished child for
+            # as long as the conditions hold steady. Same invariant as in
+            # _refresh_conditional_status, which carries the longer note.
             if ai._contained_ai._status == US_DONE:
                 ai._status = US_DONE
         return ai._status
