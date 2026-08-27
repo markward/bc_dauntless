@@ -71,6 +71,10 @@ def tick_ai(ai, game_time: float) -> int:
     global _focus_depth, _reached_this_tick, _reached_this_tick_all, _reached_this_tick_all_ids
     is_root = _focus_depth == 0
     if is_root:
+        # The out-of-action slot is scoped to one root tick: a new root means a
+        # new ship, and a ship that died since the last root tick must be
+        # re-asked.
+        _ooa_cache[0] = None
         _reached_this_tick = []
         _reached_this_tick_all = []
         _reached_this_tick_all_ids = set()
@@ -90,21 +94,45 @@ def _dispatch_ai(ai, game_time: float) -> int:
     if ai is None:
         return US_DONE
     # Inert-coast gate: a dying/dead ship issues no new orders.
-    # MEASURED DEAD END, do not retry without new evidence. _out_of_action is
-    # re-asked on every node visit (264,800 times over a 200-tick profile at
-    # 101 ships, ~12.5 per ship per tick) and a per-root-tick memo keyed on
-    # id(ship) is correct -- nothing in a tree walk kills a ship. It removes
-    # ~327,000 calls and is UNMEASURABLE: 4 samples with it (32.2/32.5/31.2/
-    # 31.4 ms) against 2 without (31.9/31.6) at 101 ships.
+    # Inert-coast gate: a dying/dead ship issues no new orders.
     #
-    # cProfile reported it as -1.5%, which is the trap: cProfile adds fixed
-    # overhead PER CALL, so it systematically overstates call-elimination wins.
-    # 327k calls at ~30 ns is 0.03 ms/tick, an order of magnitude under the
-    # noise floor. Confirm call-removal changes on the wall clock, never on
-    # cProfile totals alone.
+    # This was previously marked a MEASURED DEAD END on the grounds that
+    # removing ~327,000 calls was unmeasurable on the wall clock. That
+    # observation was correct; the inference from it was not. It rested on
+    # "327k calls at ~30 ns is 0.03 ms/tick", and the per-call figure was the
+    # weak link -- _out_of_action is two implements() plus two engine method
+    # calls, not 30 ns of work.
+    #
+    # Measured directly, with the timer's own cost calibrated and subtracted:
+    # 0.632 us per call, 772 node visits/tick at 100 ships = 0.488 ms/tick,
+    # ~7.3 ms/frame, and 55% of _dispatch_ai's whole pre-handler preamble.
+    # Sixteen times the figure the old note reasoned from.
+    #
+    # Why the wall clock could not see it, then or now: the number of catch-up
+    # ticks per frame is derived from wall-clock frame time, so a momentarily
+    # faster machine runs more ticks and evolves the battle differently.
+    # combat_stress does not reproduce run to run, and its frame time carries
+    # +/-40 ms of scene noise -- roughly six times this effect. "Unmeasurable
+    # by that instrument" is a fact about the instrument.
+    #
+    # The cache is a single slot, not a dict: within one root tick every node
+    # in the tree belongs to the SAME ship, so identity against the last ship
+    # asked is both sufficient and cheaper than hashing. Reset at each root
+    # tick (see tick_ai). Nothing inside tick_all_ai can kill a ship -- the AI
+    # writes setpoints and queues fire; damage lands later in _advance_combat
+    # -- and a mismatch merely recomputes, so the failure mode is a lost
+    # saving, never a wrong answer.
     ship = ai.GetShip() if hasattr(ai, "GetShip") else None
-    if ship is not None and ship_death._out_of_action(ship):
-        return US_DONE
+    if ship is not None:
+        if _ooa_cache[0] is ship:
+            if _ooa_cache[1]:
+                return US_DONE
+        else:
+            _dead = ship_death._out_of_action(ship)
+            _ooa_cache[0] = ship
+            _ooa_cache[1] = _dead
+            if _dead:
+                return US_DONE
     # Record every node type reached on the active dispatch path this root
     # tick -- the single funnel every _tick_* function passes through, so
     # this is the one place that needs to record (see _reconcile_active).
@@ -183,6 +211,10 @@ def ai_breakdown_report(ticks: int = 0) -> str:
 # is ORDER-SENSITIVE -- a class that is both a BuilderAI and a PreprocessingAI
 # must resolve to builder, as it did before) is what populates the cache, so
 # whatever it would have chosen is what gets stored.
+# [ship, is_out_of_action] for the CURRENT root tick only; see _dispatch_ai.
+_ooa_cache: list = [None, False]
+
+
 _DISPATCH_BY_TYPE: dict = {}
 
 
