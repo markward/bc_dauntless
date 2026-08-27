@@ -469,42 +469,112 @@ def _tick_priority_list(ai: PriorityListAI, game_time: float) -> int:
     return ai._status
 
 
-# MEASURED DEAD END -- memoising the EvalFunc. Do not rebuild without new
-# evidence; the numbers below are the evidence against it.
+# ── ConditionalAI evaluation memo ────────────────────────────────────────────
 #
-# This function is called ~350-400 times per tick at 100 ships (a priority list
-# refreshes every ConditionalAI child it scans, for each list on the active
-# path, every tick) -- ~5,500 per frame. It looks like an obvious memo target:
-# MEASURED, 99.9% of calls are handed condition statuses identical to the
-# previous tick, and 0.01% produce a different status.
+# A priority list picks its winner by refreshing every ConditionalAI child it
+# scans, for each list on the active path, every tick. At 100 ships that is
+# ~350-400 refreshes per tick, ~5,500 per frame -- and MEASURED, 99.9% of them
+# are handed condition statuses identical to the previous tick, producing a
+# different status 0.01% of the time. The conditions are event-driven
+# (proximity sweeps, timers, damage), so between events there is nothing to
+# recompute.
 #
-# A memo keyed on (eval_fn, condition statuses) was built and it worked exactly
-# as designed: 99.9% hit rate in-game, 0.0% declined. It saved NOTHING
-# measurable -- gl.ai 98.2/103.2/112.6 ms against a 98.2-107.3 baseline. The
-# EvalFuncs are three-line boolean combinators, so building the key tuple and
-# probing the cache costs about what calling one costs.
+# The statuses are still READ every time -- that is how we know nothing changed,
+# and no memo can skip it. What this removes is the EvalFunc call behind them.
 #
-# What is left is the part a memo cannot remove: you must READ the statuses to
-# know they are unchanged, and that read (a list comp over ~1.8 GetStatus
-# calls) is most of the cost.
+# HONEST SIZING -- read this before quoting the change either way.
 #
-# The way to skip the read is a dirty flag driven by the push that already
-# exists -- TGCondition.SetStatus calls h.ConditionChanged(self) on a real
-# change. That is BLOCKED, not merely unbuilt: the push is gated on
-# `if self._active`, so an inactive condition changes status silently and a
-# dirty flag would miss it. That silent drift is the exact bug this polling
-# refresh was added to fix (see the M2Objects symptom in _tick_priority_list).
-# Any dirty-flag attempt has to solve the inactive case first.
+# In-game hit rate is 99.9% with 0.0% declined, so it does what it says. The
+# wall-clock effect, six ALTERNATING paired runs at 100 ships (gl.ai, memo on
+# minus memo off, in ms):
 #
-# Worth knowing if someone does try: of 458 evaluation functions across sdk/
-# and engine/, 450 are pure functions of their arguments. The 8 exceptions are
-# all AI/Compound/ChainFollow.py, whose EvalFuncs read a MODULE-LEVEL GLOBAL
-# `iIndex` that CreateAI assigns (`global iIndex; iIndex = kShips.index(...)`)
-# -- stable within a tick, but it moves whenever another ChainFollow AI is
-# built, which would strand any cache keyed only on condition statuses.
+#     +1.70  -7.49  -0.62  -14.03  +3.05  -10.61     mean -4.7
 #
-# Scale check before spending effort here at all: the whole refresh path is
-# ~13 ms of a ~330 ms frame at 100 ships. Removing it ENTIRELY buys ~4%.
+# Four of six favour it, but the paired standard deviation is ~7 ms against a
+# 4.7 ms effect (t ~ 1.6, p ~ 0.16). So: NOT a regression -- that much is
+# settled -- and probably a small gain, but not one this sample can claim.
+# Do not cite it as a measured win. Do not let a future profile blame it for a
+# loss either. If you need the real number, it needs ~20 pairs, and the whole
+# refresh path is only ~13 ms of a ~330 ms frame, so it is unlikely to be worth
+# the machine time.
+#
+# The reason the ceiling is low: the EvalFuncs are three-line boolean
+# combinators, so building the key costs about what calling one costs. The
+# memo is kept for being simpler and provably equivalent, not for speed.
+#
+# The read itself could only be skipped with a dirty flag, and that is BLOCKED,
+# not merely unbuilt: TGCondition.SetStatus already pushes ConditionChanged to
+# its handlers, but the push is gated on `if self._active`, so an inactive
+# condition changes status silently -- the exact drift this polling refresh
+# exists to fix (the M2Objects symptom in _tick_priority_list). Solve the
+# inactive case before attempting it.
+#
+# Soundness rests on the EvalFunc being a pure function of its arguments. That
+# was checked across the corpus rather than assumed: 458 evaluation functions
+# in sdk/ and engine/, of which 450 read only their parameters and App
+# constants. The 8 exceptions are all AI/Compound/ChainFollow.py, whose
+# EvalFuncs read a MODULE-LEVEL GLOBAL `iIndex` that CreateAI assigns
+# (`global iIndex; iIndex = kShips.index(...)`). It is stable within a tick but
+# moves whenever another ChainFollow AI is built, which would strand a memo.
+#
+# So the memo is gated per function, not taken on trust.
+
+
+def _memoisable_evalfunc(fn) -> bool:
+    """True when `fn` provably depends only on its arguments (and App).
+
+    co_names holds global reads AND attribute names indistinguishably, so the
+    test asks a narrower question that is decidable: does the name resolve to
+    something in the function's own module globals, and if so, is it App? An
+    attribute name like US_ACTIVE is not a module global, so it is ignored;
+    ChainFollow's `iIndex` IS one, so it is caught. Erring toward declining is
+    the safe direction -- a declined function just keeps the old behaviour.
+
+    Conservative in one way worth knowing: a function reading a US_* constant
+    imported directly into its module is declined too. Real SDK EvalFuncs reach
+    those through App.ArtificialIntelligence, an attribute chain, which is why
+    450 of 458 pass.
+    """
+    code = getattr(fn, "__code__", None)
+    if code is None:
+        return False                     # builtin / callable object: decline
+    if code.co_freevars:
+        return False                     # closes over something live
+    g = getattr(fn, "__globals__", None)
+    if g is None:
+        return False
+    app = g.get("App")
+    for name in code.co_names:
+        if name in g and g[name] is not app:
+            return False
+    return True
+
+
+def _eval_conditional(ai, eval_fn, args):
+    """Run (or reuse) `eval_fn` over `args`, returning the pre-fold status.
+
+    The cached value is the EvalFunc's own answer only. The contained-AI DONE
+    fold is deliberately NOT cached: _contained_ai._status changes for reasons
+    that are not in the key, so folding it must happen fresh on every call.
+    """
+    key = tuple(args)
+    cache = ai.__dict__.get("_evalfn_cache")
+    if cache is not None and cache[0] is eval_fn and cache[1] == key:
+        return cache[2]
+    try:
+        status = eval_fn(*args)
+    except Exception:
+        status = US_DORMANT
+    if status is None:
+        status = US_DORMANT
+    status = int(status)
+    memoisable = ai.__dict__.get("_evalfn_memoisable")
+    if memoisable is None or (cache is not None and cache[0] is not eval_fn):
+        memoisable = _memoisable_evalfunc(eval_fn)
+        ai.__dict__["_evalfn_memoisable"] = memoisable
+    if memoisable:
+        ai.__dict__["_evalfn_cache"] = (eval_fn, key, status)
+    return status
 
 
 def _refresh_conditional_status(ai: ConditionalAI) -> None:
@@ -520,13 +590,7 @@ def _refresh_conditional_status(ai: ConditionalAI) -> None:
     eval_fn = ai._evaluation_function
     if eval_fn is not None:
         args = [c.GetStatus() for c in ai._conditions]
-        try:
-            status = eval_fn(*args)
-        except Exception:
-            status = US_DORMANT
-        if status is None:
-            status = US_DORMANT
-        ai._status = int(status)
+        ai._status = _eval_conditional(ai, eval_fn, args)
         # Fold in the contained AI's completion (see _tick_conditional):
         # an EvalFunc that reports US_ACTIVE forever must not mask a
         # contained AI that has already finished.
@@ -666,13 +730,7 @@ def _tick_conditional(ai: ConditionalAI, game_time: float) -> int:
     eval_fn = ai._evaluation_function
     if eval_fn is not None:
         args = [c.GetStatus() for c in ai._conditions]
-        try:
-            status = eval_fn(*args)
-        except Exception:
-            status = US_DORMANT
-        if status is None:
-            status = US_DORMANT
-        ai._status = int(status)
+        ai._status = _eval_conditional(ai, eval_fn, args)
         if ai._status == US_ACTIVE and ai._contained_ai is not None:
             tick_ai(ai._contained_ai, game_time)
             # Fold in the contained AI's completion. Some EvalFuncs (SDK
