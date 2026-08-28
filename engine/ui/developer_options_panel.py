@@ -91,12 +91,19 @@ class DeveloperOptionsPanel(Panel):
         self._focused = -1
 
     def render_payload(self) -> Optional[str]:
+        # EVERY setting the payload reports must appear here. A setting left
+        # out toggles INVISIBLY: the flag flips and the underlying feature
+        # really does change, but the snapshot compares equal, render_payload
+        # returns None, and the button keeps showing its old state forever.
+        # _profiler shipped missing from this tuple and did exactly that.
+        # test_every_setting_is_in_the_render_snapshot now guards the whole set.
         snapshot = (
             self._visible, tuple(self._tabs), self._selected_tab,
             self._focused, self._god_mode, self._double_weapons,
             self._no_npc_shields, self._disable_collisions,
             self._systems_damaged, self._systems_disabled,
             self._normal_maps, self._normal_flip_g, self._normal_strength,
+            self._profiler,
         )
         if snapshot == self._last_pushed:
             return None

@@ -419,3 +419,61 @@ def test_the_diagnostics_tab_is_keyboard_reachable():
     panel.dispatch_event("tab:diagnostics")
     assert ("ctrl", "profiler") in panel._focusables(), (
         "diagnostics tab exposes no focusable profiler control")
+
+
+def test_toggling_the_profiler_re_emits_the_payload(monkeypatch):
+    """The row must actually REDRAW, not just change a field.
+
+    render_payload snapshot-diffs and returns None when nothing changed. A
+    setting absent from that snapshot tuple therefore toggles invisibly: the
+    flag flips, the profiler really does turn on, and the button keeps saying
+    "Off" forever because no new payload is ever pushed to CEF. Shipped exactly
+    that way — the state tests passed because they asserted the mirror rather
+    than the emission.
+    """
+    from engine.core import frame_profiler
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    monkeypatch.setattr(frame_profiler, "set_enabled",
+                        lambda v, native=True: frame_profiler.__dict__.__setitem__("_enabled", v))
+    frame_profiler.set_enabled(False)
+
+    panel = DeveloperOptionsPanel()
+    panel.open()
+    first = panel.render_payload()
+    assert first is not None
+    assert panel.render_payload() is None, "unchanged panel should not re-emit"
+
+    panel.dispatch_event("toggle:profiler")
+    after = panel.render_payload()
+    assert after is not None, (
+        "toggling the profiler emitted no payload — the button will keep "
+        "showing its old state; _profiler is missing from the snapshot tuple")
+    assert '"profiler": true' in after.replace(" ", " ")
+
+
+def test_every_setting_is_in_the_render_snapshot():
+    """Generic guard: whatever the payload reports, the snapshot must cover.
+
+    Otherwise the next setting added repeats this bug — the panel is correct
+    internally and simply never tells the UI.
+    """
+    import json
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    panel = DeveloperOptionsPanel()
+    panel.open()
+    payload = panel.render_payload()
+    body = json.loads(payload[len("setDeveloperOptions("):-2])
+
+    for key, value in body["settings"].items():
+        if not isinstance(value, bool):
+            continue                      # sliders are covered by their own tests
+        attr = "_" + key
+        assert hasattr(panel, attr), f"settings['{key}'] has no {attr} mirror"
+        setattr(panel, attr, not getattr(panel, attr))
+        assert panel.render_payload() is not None, (
+            f"flipping {attr} produced no new payload — '{key}' is missing "
+            "from render_payload's snapshot tuple, so the UI will never "
+            "show it change")
+        panel.render_payload()

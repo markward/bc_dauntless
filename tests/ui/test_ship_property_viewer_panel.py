@@ -1150,3 +1150,24 @@ def test_add_light_rejected_on_descriptor_without_light_region(monkeypatch):
     assert p.dispatch_event("add_light:0") is False
     assert p._has_light(0) is False
     assert 0 not in p._pending_light
+
+
+def test_every_boolean_setting_reaches_the_ui():
+    """See tests/helpers/panel_snapshot. A setting missing from
+    render_payload's snapshot tuple toggles invisibly — the flag flips, the
+    overlay really changes, and the control keeps showing its old state.
+    Shipped that way on Developer Options; this is the same guard here."""
+    from tests.helpers.panel_snapshot import assert_boolean_settings_redraw
+
+    p = ShipPropertyViewerPanel(ship_getter=lambda: None)
+    p.open()
+    assert_boolean_settings_redraw(
+        p,
+        lambda body: body,                     # SPV reports at the top level
+        # Derived from other state, not stored — flipping them is meaningless.
+        skip=("visible", "can_undo", "has_selection", "pipette_armed",
+              "close_overlays", "selected"),
+        aliases={"show_glow": "show_glow_regions",
+                 "show_arcs": "show_weapon_arcs",
+                 "show_hull": "show_hull_texture"},
+    )
