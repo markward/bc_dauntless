@@ -5,19 +5,39 @@ GL_TIMESTAMP queries) and read back through _dauntless_host.profiler_*. This
 module is the other half: the per-frame Python work in engine.host_loop, which
 is the larger body of code and was equally unmeasured.
 
-MODEL — a flat phase timeline, not nested scopes.
+MODEL — a flat timeline of mark() phases, with a nested scope() tree hanging
+off it.
 
-The host loop body is one long linear sequence (input -> sim advance -> render
-prep -> overlays -> r.frame()), so each phase is delimited by a single mark()
-call at the seam. That is a one-line insert per boundary instead of re-indenting
-a 1,300-line loop body into `with` blocks, and it cannot mis-nest: mark() closes
-whatever was open and opens the next. The C++ side keeps real nesting because
-its passes genuinely nest.
+The loop BODY is one long linear sequence (input -> sim advance -> render prep
+-> overlays -> r.frame()), so each top-level phase is delimited by a single
+mark() call at the seam: a one-line insert per boundary instead of re-indenting
+a 1,300-line loop body into `with` blocks, and it cannot mis-nest, because
+mark() closes whatever was open and opens the next.
+
+Inside those phases the breakdown IS a tree, and pretending otherwise is how
+the report came to print `gl.ai` above `sim` with nothing marking the relation:
+
+    sim                  (mark)
+      sim.gameloop       (scope, once per catch-up tick)
+        gl.ai gl.motion gl.subsystems ...
+      sim.combat         (scope, once per frame)
+        cb.projectiles cb.phasers ...
+    ui_panels            (mark)
+      ui.render_all
+        ui.<panel>
+
+So scope() records the scope (or mark phase) it opened inside, and the report
+indents each row under its parent. Children are INCLUDED in their parent's
+total; summing the column counts the frame about three times over.
 
 Timings are EMA-smoothed with the same weight the C++ timer uses, so the two
 halves of a merged report are comparable rather than differently-lagged.
 
 Disabled by default. When off, mark() is a module-global lookup and a branch.
+scope() is NOT free even when off: @contextmanager builds a generator and a
+_GeneratorContextManager per use, ~0.36 us measured, so it belongs at phase
+seams and around whole subsystems, never inside a per-ship or per-projectile
+loop. (The C++ half's push/pop really are just a branch when disabled.)
 """
 import time
 from contextlib import contextmanager
@@ -44,6 +64,22 @@ _seeded: set[str] = set()
 # equal to itself, so the average never moves and the second use is invisible.
 _frame_acc: dict[str, float] = {}
 
+# name -> the phase it ran INSIDE (None for a top-level mark() phase), and the
+# order names were first seen. The parent is re-recorded on every entry, so the
+# tree describes the most recent frame's nesting rather than freezing whatever
+# the first frame happened to look like -- a helper scope called from two
+# phases really does change parent, exactly as the C++ passes do.
+_parents: dict[str, Optional[str]] = {}
+_order: list[str] = []
+_scope_stack: list[str] = []
+
+# Entries per name in the CURRENT frame, and the snapshot of that from the last
+# completed frame. Printed because it is the generic answer to "is this row a
+# sum?": sim.gameloop and everything under it runs once per catch-up tick, its
+# siblings run once per frame, and the two used to print indistinguishably.
+_frame_calls: dict[str, int] = {}
+_calls: dict[str, int] = {}
+
 _open_name: Optional[str] = None
 _open_t0: float = 0.0
 _frame_t0: float = 0.0
@@ -56,7 +92,26 @@ _frame_open = False
 # cost is dominated by it whenever the sim cannot keep up, and reading a phase
 # total without it invites dividing by the wrong number: "sim = 500 ms" is ten
 # ticks of 50, not one tick of 500.
+#
+# Smoothed as well as raw: every cost beside it is an EMA, so printing only the
+# instantaneous count invites dividing an average by a single frame's tick
+# count. Both are printed, each labelled.
 _sim_ticks = 0
+_sim_ticks_avg = 0.0
+_sim_ticks_seeded = False
+
+# Rows that are summed over the frame's catch-up ticks rather than measured
+# once per frame. Only the ROOT is named: everything nested inside it inherits
+# the property, which the parent chain already knows. This is host_loop's
+#
+#     for _ in range(_sim_ticks_this_frame):
+#         with frame_profiler.scope("sim.gameloop"):
+#             loop.tick()
+#
+# and its siblings sim.weapons / sim.combat / sim.collisions deliberately sit
+# OUTSIDE that loop. If the scope is ever renamed, rename it here too -- the
+# per-frame `calls` column is the backstop that still tells the truth.
+PER_TICK_ROOTS = frozenset({"sim.gameloop"})
 
 
 def is_enabled() -> bool:
@@ -90,9 +145,15 @@ def set_enabled(value: bool, *, native: bool = True) -> None:
 def reset() -> None:
     global _open_name, _open_t0, _frame_t0, _frame_ms, _frame_seeded, _frames
     global _frame_open, _sim_ticks, _since_report
+    global _sim_ticks_avg, _sim_ticks_seeded
     _phases.clear()
     _seeded.clear()
     _frame_acc.clear()
+    _parents.clear()
+    _order.clear()
+    _scope_stack.clear()
+    _frame_calls.clear()
+    _calls.clear()
     _open_name = None
     _open_t0 = 0.0
     _frame_t0 = 0.0
@@ -105,6 +166,8 @@ def reset() -> None:
     # after re-enabling report immediately -- which is what turned a wrong
     # average into a visibly absurd headline number.
     _sim_ticks = 0
+    _sim_ticks_avg = 0.0
+    _sim_ticks_seeded = False
     _since_report = 0
 
 
@@ -115,6 +178,11 @@ def begin_frame() -> None:
         return
     _open_name = None
     _frame_acc.clear()
+    _frame_calls.clear()
+    # A scope() that was open when the profiler was switched on mid-frame never
+    # ran its `finally`, so the stack can be stale. Left standing it would make
+    # this frame's top-level scopes children of a phase that ended long ago.
+    _scope_stack.clear()
     _frame_t0 = _perf()
     _open_t0 = _frame_t0
     _frame_open = True
@@ -137,6 +205,9 @@ def mark(name: str) -> None:
     now = _perf()
     if _open_name is not None:
         _accumulate(_open_name, (now - _open_t0) * 1000.0)
+    # A mark phase is always a root of the report tree: marks delimit the loop
+    # body itself, so nothing in the loop contains them.
+    _note(name, None)
     _open_name = name
     _open_t0 = now
 
@@ -167,6 +238,10 @@ def end_frame() -> None:
     for name in list(_phases) + [n for n in _frame_acc if n not in _phases]:
         _fold(name, _frame_acc.get(name, 0.0))
     _frame_acc.clear()
+    # Raw, not smoothed, and for the frame just closed only -- the same rule
+    # the C++ timer's `calls` follows, so the two tables mean the same thing.
+    _calls.clear()
+    _calls.update(_frame_calls)
 
     total = (now - _frame_t0) * 1000.0
     if _frame_seeded:
@@ -181,23 +256,44 @@ def end_frame() -> None:
 def scope(name: str):
     """Time a nested block, accumulating into `name` for this frame.
 
-    For the odd measurement that does not fit the flat timeline (a helper
-    called from several phases). Costs a generator per use, so do not put one
-    in a per-ship loop.
+    The block is recorded as a CHILD of whatever scope (or mark phase) is open
+    around it, which is what lets the report print `gl.ai` underneath
+    `sim.gameloop` underneath `sim` rather than as three unrelated rows.
+
+    Costs a generator plus a _GeneratorContextManager per use -- ~0.36 us even
+    when the profiler is DISABLED, because the decorator work happens before
+    the `if not _enabled` ever runs. Fine at a phase seam or around a whole
+    subsystem; never inside a per-ship or per-projectile loop.
     """
     if not _enabled:
         yield
         return
+    # Nested inside another scope -> that scope is the parent. Otherwise the
+    # mark() phase currently open is, since marks delimit the loop body.
+    _note(name, _scope_stack[-1] if _scope_stack else _open_name)
+    _scope_stack.append(name)
     t0 = _perf()
     try:
         yield
     finally:
+        # Pop before accumulating: a raising block must not leave this scope on
+        # the stack, or every later scope in the frame becomes its child.
+        if _scope_stack:
+            _scope_stack.pop()
         _accumulate(name, (_perf() - t0) * 1000.0)
 
 
+def _note(name: str, parent: Optional[str]) -> None:
+    """Record where `name` ran, and its first-sight position in the report."""
+    if name not in _parents:
+        _order.append(name)
+    _parents[name] = parent
+
+
 def _accumulate(name: str, ms: float) -> None:
-    """Add raw milliseconds to the current frame's total for `name`."""
+    """Add raw milliseconds -- and one entry -- to this frame's total for `name`."""
     _frame_acc[name] = _frame_acc.get(name, 0.0) + ms
+    _frame_calls[name] = _frame_calls.get(name, 0) + 1
 
 
 def _fold(name: str, ms: float) -> None:
@@ -228,15 +324,44 @@ def frames() -> int:
     return _frames
 
 
+def calls() -> dict[str, int]:
+    """{phase name: entries in the last completed frame}.
+
+    Raw, not smoothed -- a row entered three times is a sum of three, and an
+    averaged count would match neither reading.
+    """
+    return dict(_calls)
+
+
+def parents() -> dict[str, Optional[str]]:
+    """{phase name: the phase it ran inside}, None for a top-level mark."""
+    return dict(_parents)
+
+
 def note_sim_ticks(n: int) -> None:
     """Record how many fixed-timestep ticks the current frame ran."""
-    global _sim_ticks
-    if _enabled:
-        _sim_ticks = int(n)
+    global _sim_ticks, _sim_ticks_avg, _sim_ticks_seeded
+    if not _enabled:
+        return
+    _sim_ticks = int(n)
+    # Seeded on the first sample for the same reason every other average here
+    # is: a count that had to climb out of zero would understate the divisor
+    # exactly when the sim is struggling and the divisor matters most.
+    if _sim_ticks_seeded:
+        _sim_ticks_avg += EMA_ALPHA * (_sim_ticks - _sim_ticks_avg)
+    else:
+        _sim_ticks_avg = float(_sim_ticks)
+        _sim_ticks_seeded = True
 
 
 def sim_ticks() -> int:
+    """The LAST frame's tick count. Instantaneous; see sim_ticks_avg()."""
     return _sim_ticks
+
+
+def sim_ticks_avg() -> float:
+    """Smoothed tick count, comparable with the smoothed costs beside it."""
+    return _sim_ticks_avg
 
 
 # ── Reporting ────────────────────────────────────────────────────────────────
@@ -249,6 +374,27 @@ def sim_ticks() -> int:
 REPORT_EVERY = 120          # ~2 s at 60 fps
 _since_report = 0
 
+# Label column width, and the marker that says a name did not fit. A silently
+# clipped name reads as a different, shorter phase -- `ui.tactical_left_column`
+# and `ui.tactical_left_co` are not obviously the same row to a reader who did
+# not write the code.
+LABEL_W = 30
+CLIP_MARK = "+"
+
+# Appended to rows that are summed over the frame's catch-up ticks. Everything
+# else in the table is a once-per-frame cost, and the tick count printed above
+# the table invites dividing all of them by it.
+PER_TICK_MARK = "*"
+
+# Resolved frames of an exactly-zero whole-frame GPU span before the report
+# calls the GPU column broken rather than fast. Apple's GL returns zeroed
+# GL_TIMESTAMP counters, and `gpu_ms` only ever accumulates when t1 >= t0, so a
+# dead driver produces a full column of 0.000 that is indistinguishable from a
+# free GPU -- the same misreading the "render passes: UNAVAILABLE" line exists
+# to prevent. One frame proves nothing (an idle frame can round to zero); a few
+# hundred cannot all be zero on a GPU that is drawing anything.
+GPU_ZERO_FRAMES = 30
+
 
 def should_report() -> bool:
     """True once every REPORT_EVERY frames while enabled. Advances the counter."""
@@ -260,6 +406,68 @@ def should_report() -> bool:
         return False
     _since_report = 0
     return True
+
+
+def _fit(label: str) -> str:
+    """Clip `label` to the column, MARKING that it was clipped."""
+    if len(label) <= LABEL_W:
+        return label
+    return label[:LABEL_W - len(CLIP_MARK)] + CLIP_MARK
+
+
+def _is_per_tick(name: str) -> bool:
+    """True when `name` is summed over the frame's catch-up ticks.
+
+    Walks up the parent chain rather than matching a name prefix: the property
+    belongs to everything INSIDE the per-tick scope, and `gl.` is a naming
+    convention that a new scope can forget. Bounded by a visited set because a
+    scope entered under two different parents in different frames could
+    otherwise leave a cycle in the recorded tree.
+    """
+    seen = set()
+    cur: Optional[str] = name
+    while cur is not None and cur not in seen:
+        if cur in PER_TICK_ROOTS:
+            return True
+        seen.add(cur)
+        cur = _parents.get(cur)
+    return False
+
+
+def _phase_tree() -> list[tuple[int, str]]:
+    """(depth, name) for every known phase, parents before their children.
+
+    Depth is what makes the containment readable: `gl.ai` is 10 ms OF the
+    35 ms `sim.gameloop` is OF the 70 ms `sim`, and printing all three flush
+    left made the column look like 115 ms of a 70 ms frame.
+    """
+    names = list(_order) + [n for n in _phases if n not in _parents]
+    known = set(names)
+    children: dict[Optional[str], list[str]] = {}
+    for name in names:
+        parent = _parents.get(name)
+        if parent not in known or parent == name:
+            parent = None      # orphan (or self-parented): print it as a root
+        children.setdefault(parent, []).append(name)
+
+    rows: list[tuple[int, str]] = []
+    emitted: set[str] = set()
+
+    def walk(parent: Optional[str], depth: int) -> None:
+        for name in children.get(parent, ()):
+            if name in emitted:
+                continue       # a cycle in the recorded tree; print it once
+            emitted.add(name)
+            rows.append((depth, name))
+            walk(name, depth + 1)
+
+    walk(None, 0)
+    # Anything the walk could not reach (only possible via a cycle) still gets
+    # printed: a phase missing from the report is worse than a mis-indented one.
+    for name in names:
+        if name not in emitted:
+            rows.append((0, name))
+    return rows
 
 
 def report_lines() -> list[str]:
@@ -301,9 +509,12 @@ def report_lines() -> list[str]:
     lines.append("-- frame profile -- (EMA over %d frames, alpha %.2f, %s)"
                  % (_frames, EMA_ALPHA, cap))
     lines.append(scene_summary())
-    lines.append("  sim ticks this frame: %d  (catch-up; the frame runs one "
-                 "gameloop tick per 16.67 ms of accumulated game time, capped "
-                 "at 15)" % _sim_ticks)
+    # Both numbers, each labelled: the costs beside them are EMA-smoothed, so
+    # dividing one of those by a single frame's raw tick count mixes an
+    # instantaneous value into an average.
+    lines.append("  sim ticks: %.1f avg, %d last frame  (catch-up; the frame "
+                 "runs one gameloop tick per 16.67 ms of accumulated game "
+                 "time, capped at 15)" % (_sim_ticks_avg, _sim_ticks))
 
     try:
         from engine.appc.ai_driver import ai_breakdown_report
@@ -314,14 +525,42 @@ def report_lines() -> list[str]:
         pass
 
     if _phases:
-        lines.append("  python loop phases            cpu ms")
-        for name, ms in _phases.items():
-            lines.append("    %-26s %7.3f" % (name, ms))
+        lines.append("  %-32s %7s %5s" % ("python loop phases", "cpu ms",
+                                          "calls"))
+        any_per_tick = False
+        for depth, name in _phase_tree():
+            per_tick = _is_per_tick(name)
+            any_per_tick = any_per_tick or per_tick
+            lines.append("    %-30s %7.3f %5d %s"
+                         % (_fit("  " * depth + name), _phases.get(name, 0.0),
+                            _calls.get(name, 0),
+                            PER_TICK_MARK if per_tick else " "))
+        # The two things an indented column of numbers still does not say.
+        lines.append("    (an indented row is included in its parent's total "
+                     "-- do not sum the column)")
+        if any_per_tick:
+            lines.append("    (%s = per tick: summed over this frame's "
+                         "catch-up ticks, so divide by the tick count above. "
+                         "Unmarked rows run once per frame.)" % PER_TICK_MARK)
     else:
         lines.append("  python loop phases: none recorded")
 
+    # A driver with dead GL_TIMESTAMP counters reports every span as zero, and
+    # zero reads as "free". Say so instead, for the same reason a missing
+    # binding says UNAVAILABLE rather than printing zeros.
+    gpu_dead = (native.get("gpu_ms", 0.0) == 0.0
+                and native.get("frames", 0) >= GPU_ZERO_FRAMES)
+    if gpu_dead:
+        lines.append("  GPU TIMING UNAVAILABLE: whole-frame GPU span was "
+                     "exactly 0 over %d resolved frames, so the driver is "
+                     "returning zeroed GL_TIMESTAMP counters (Apple's GL "
+                     "does). The gpu column below is NOT MEASURED - read it "
+                     "as absent, not as a free GPU."
+                     % native.get("frames", 0))
+
     if scopes:
-        lines.append("  render passes                 cpu ms   gpu ms  calls")
+        lines.append("  %-32s %7s %7s %5s" % ("render passes", "cpu ms",
+                                              "gpu ms", "calls"))
         for s in scopes:
             indent = "  " * int(s.get("depth", 0))
             label = indent + str(s.get("name", "?"))
@@ -333,9 +572,11 @@ def report_lines() -> list[str]:
                 note = ("   <- vsync wait (frame finished early)"
                         if interval == 1
                         else "   <- swap + queued GPU drain (not a vsync wait)")
-            lines.append("    %-26s %7.3f  %7.3f  %5d%s"
-                         % (label[:26], s.get("cpu_ms", 0.0),
-                            s.get("gpu_ms", 0.0), s.get("calls", 0), note))
+            gpu = ("      -" if gpu_dead
+                   else "%7.3f" % s.get("gpu_ms", 0.0))
+            lines.append("    %-30s %7.3f %s %5d%s"
+                         % (_fit(label), s.get("cpu_ms", 0.0), gpu,
+                            s.get("calls", 0), note))
     elif native.get("enabled"):
         lines.append("  render passes: enabled, nothing resolved yet")
     else:
@@ -347,9 +588,11 @@ def report_lines() -> list[str]:
     # here stops the two totals being summed into a number that is roughly
     # double the truth.
     lines.append("  totals: python loop %.3f ms (includes r.frame); "
-                 "render cpu %.3f ms, gpu %.3f ms over %d frames"
+                 "render cpu %.3f ms, gpu %s over %d frames"
                  % (_frame_ms, native.get("cpu_ms", 0.0),
-                    native.get("gpu_ms", 0.0), native.get("frames", 0)))
+                    "UNAVAILABLE" if gpu_dead
+                    else "%.3f ms" % native.get("gpu_ms", 0.0),
+                    native.get("frames", 0)))
     return lines
 
 

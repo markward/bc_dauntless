@@ -31,17 +31,25 @@ CLAUDE.md's build-layout rule is explicit that there is a single tree and that
 binaries elsewhere are to be treated as stale.
 
 ```
--- frame profile -- (EMA over 397 frames, alpha 0.15)
-  python loop phases            cpu ms
-    input                        0.034
-    ui_panels                   10.698
-    sim                          4.960
-    ...
-  render passes                 cpu ms   gpu ms  calls
-    frame                        2.611   20.621      1
-      anim                       0.171    0.001      1
-      space.opaque               0.165    0.473      1
-      present                    0.055   15.914      1   <- vsync wait ...
+-- frame profile -- (EMA over 397 frames, alpha 0.15, swap interval 0 (uncapped))
+  sim ticks: 4.0 avg, 4 last frame  (catch-up; ...)
+  python loop phases                cpu ms calls
+    input                            0.034     1
+    ui_panels                       10.698     1
+      ui.render_all                 10.410     1
+        ui.target_list               6.202     1
+    sim                              4.960     1
+      sim.gameloop                   3.042     4 *
+        gl.ai                        1.026     4 *
+      sim.combat                     1.870     1
+        cb.projectiles               0.901     1
+    (an indented row is included in its parent's total -- do not sum the column)
+    (* = per tick: summed over this frame's catch-up ticks ...)
+  render passes                     cpu ms  gpu ms calls
+    frame                            2.611  20.621     1
+      anim                           0.171   0.001     1
+      space.opaque                   0.165   0.473     1
+      present                        0.055  15.914     1   <- vsync wait ...
 ```
 
 ## The two halves
@@ -49,18 +57,45 @@ binaries elsewhere are to be treated as stale.
 | Half | Where | What it times |
 |---|---|---|
 | Render passes | `native/src/renderer/frame_timer.{h,cc}`, scopes in `host_bindings.cc:frame()` | CPU (`steady_clock`) **and** GPU (`GL_TIMESTAMP`) per pass, genuinely nested |
-| Python phases | `engine/core/frame_profiler.py`, marks in `host_loop.py` | CPU per loop phase, a flat timeline |
+| Python phases | `engine/core/frame_profiler.py`, marks + scopes in `host_loop.py` | CPU per loop phase: a flat timeline of `mark()` phases with a nested `scope()` tree under each |
 
-The Python half is a **flat phase timeline**, not nested scopes: the loop body
-is one long linear sequence, so each phase is delimited by a single `mark()` at
-the seam — a one-line insert per boundary instead of re-indenting 1,300 lines
-into `with` blocks, and it cannot mis-nest. The C++ half keeps real nesting
-because its passes genuinely nest.
+The Python half's **top level** is a flat timeline: the loop body is one long
+linear sequence, so each phase is delimited by a single `mark()` at the seam —
+a one-line insert per boundary instead of re-indenting 1,300 lines into `with`
+blocks, and it cannot mis-nest.
+
+**Underneath those phases it is a tree**, and has been since the `sim.gameloop`
+split: `sim` ⊃ `sim.gameloop` ⊃ `gl.*`, `sim` ⊃ `sim.combat` ⊃ `cb.*`,
+`ui_panels` ⊃ `ui.render_all` ⊃ `ui.<panel>`. `scope()` records the scope (or
+mark phase) it opened inside and the report indents by that depth. Printed flat
+— which it was — every child appeared *above* its parent with nothing marking
+the relation, and summing the column counted the frame about three times.
 
 ## Reading it correctly
 
-Four things the report states outright, because each is a way to read a correct
+Things the report states outright, because each is a way to read a correct
 number and reach a wrong conclusion:
+
+* **Indented rows are INCLUDED in their parent's total.** `gl.ai` is part of
+  `sim.gameloop` is part of `sim`. Do not sum the column.
+* **`*` marks per-tick rows.** `sim.gameloop` and everything inside it is a sum
+  over the frame's N catch-up ticks; its siblings `sim.weapons` / `sim.combat` /
+  `sim.collisions` and everything inside *them* run **once per frame**. With the
+  tick count printed above the table and nothing distinguishing the two, the
+  natural move — divide everything by N — is wrong for half the rows. The
+  `calls` column is the generic backstop: a row entered 4 times says `4`.
+* **The tick count is printed twice, `avg` and `last frame`.** Every cost beside
+  it is EMA-smoothed, so dividing one of those by a single frame's raw count
+  mixes an instantaneous value into an average.
+* **A GPU column of `0.000` may be a dead driver, not a free GPU.** `gpu_ms`
+  only accumulates when `t1 >= t0`, so every span is `>= 0` by construction and
+  a driver returning zeroed `GL_TIMESTAMP` counters (Apple's GL does exactly
+  this, on the machine this was written on) yields a full column of zeros that
+  reads as free. When the **whole-frame** span is exactly 0 across
+  `GPU_ZERO_FRAMES` resolved frames the report prints **GPU TIMING
+  UNAVAILABLE** and replaces the column with `-`.
+* **An over-long name is clipped with a trailing `+`.** A silently clipped name
+  reads as a different, shorter phase.
 
 * **`present` may be the vsync wait — read the swap interval the report prints,
   do not assume it.** When the interval is 1, a large `present` next to small
@@ -73,7 +108,10 @@ number and reach a wrong conclusion:
 * **The two totals nest, they do not add.** `r.frame()` runs inside the loop
   body, so the Python total already contains the render total.
 * **Whole-frame GPU is first-timestamp-to-last, not a sum of scopes.** Scopes
-  nest; summing them double-counts.
+  nest; summing them double-counts. "Last" means the last query **issued** —
+  the outermost scope's end, which `end_frame()` issues *after* `present`'s.
+  Taking the last sample *pushed* instead reported `present.end - frame.begin`
+  and disagreed with the `frame` row printed directly above it.
 * **A missing render half says UNAVAILABLE.** A stale extension module yields an
   empty scope list, and a report that silently omitted the render passes would
   read as "the render costs nothing".
@@ -84,13 +122,24 @@ that ran twice (the exterior view **and** the bridge viewscreen RTT both call
 
 ## Cost when off
 
-Off by default. `push`/`pop` and `mark` are a predicted branch; no GL object is
-created until it is enabled. The production render path is unchanged.
+Off by default. The C++ `push`/`pop` and the Python `mark()` are a predicted
+branch and nothing else; no GL object is created until it is enabled, so the
+production render path is unchanged.
+
+**`scope()` is the exception — it is not free when disabled.** It is a
+`@contextmanager`, so every use builds a generator and a
+`_GeneratorContextManager` *before* the `if not _enabled` inside it ever runs:
+**~0.36 µs measured**. That is nothing at a phase seam or around a whole
+subsystem, and it is real money inside a per-ship or per-projectile loop. Put
+scopes at seams, not in inner loops.
 
 Results are read back `kRingDepth` (3) frames late so resolving never blocks on
 the GPU — a profiler that calls `glGetQueryObjectui64v` on an unready query
 stalls the CPU on the GPU and measures its own stall, which presents as
 "rendering got slower". `test_resolving_does_not_stall_on_the_gpu` guards it.
+The availability check must therefore be on the last query **issued**
+(`Record::last_query`), which is the *outermost* scope's end query, not
+`samples.back()` — the last scope pushed, whose end query is issued earlier.
 
 The report prints to the console rather than a CEF overlay deliberately: the
 CEF surface is uploaded in full every frame (no dirty-rect, no PBO), so a DOM
@@ -111,6 +160,14 @@ believing any number:
 ```bash
 OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_MISSION=engine.dev_missions.combat_stress   DAUNTLESS_COMBAT_SHIPS=16 DAUNTLESS_PROFILE_FRAMES=1200   ./build/dauntless --developer
 ```
+
+⚠️ **The numbers below were captured with `combat_stress` avoidance OFF, which
+was the default at the time. It is now ON** — the mission imitates QuickBattle,
+and `QuickBattle/QuickBattleAI.py` does wrap its attack tree in an
+`AvoidObstacles` preprocessor, so off was never faithful to the scene being
+imitated. A capture run today therefore includes avoidance in `gl.ai` and will
+not reproduce these figures. Set `DAUNTLESS_COMBAT_AVOID=0` to match them, and
+read the scene line — it announces `avoidance=ON/off` for exactly this reason.
 
 17 ships, ~70 projectiles in flight, uncapped, CEF on:
 
@@ -259,10 +316,27 @@ ships at lower frequency; (c) move hot paths to C++.
 
 ## Tests
 
-* `tests/unit/test_frame_profiler.py` — attribution, smoothing, decay, report
-  wording, ASCII safety. No GL.
+* `tests/unit/test_frame_profiler.py` — attribution, smoothing, decay, tree
+  indentation, per-tick marks, report wording, ASCII safety. No GL.
 * `tests/host/test_frame_profiler_gl.py` — the `GL_TIMESTAMP` path: resolution
-  latency, non-negative/non-NaN GPU spans, per-frame `calls`, no pipeline stall.
+  latency, per-frame `calls`, whole-frame total vs the `frame` row, the
+  dead-GPU-column signal, no pipeline stall.
+
+Two gaps, both deliberate and both worth knowing about:
+
+* **The re-entry path in `FrameTimer::push()` is untested.** Reaching it needs a
+  pass that genuinely runs twice in one frame (the bridge viewscreen RTT
+  rendering the space scene alongside the exterior view), which an empty
+  headless `h.frame()` never produces — everything comes back `calls=1`. A test
+  that ran plain frames and asserted the names were *unique* used to sit here
+  claiming to cover it; it could not fail, and has been deleted. A gtest driving
+  `FrameTimer` directly (push/push/pop/pop the same name, read `results()`) is
+  where this belongs.
+* **`reset()` dropping the query pool is not covered either.** The failure it
+  prevents needs a `shutdown()` + `init()` cycle, and a second `init()` in one
+  process currently dies earlier for unrelated reasons (`GL error during
+  upload_mesh: 0x502` — static GL handles surviving the context, see the GL
+  context lifecycle notes).
 
 ---
 

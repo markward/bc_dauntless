@@ -82,20 +82,46 @@ def test_cpu_time_is_actually_measured(host):
     assert host.profiler_frame()["cpu_ms"] > 0.0
 
 
-def test_gpu_timestamps_resolve_to_a_nonnegative_span(host):
-    """GPU spans come from two GL_TIMESTAMP queries differenced. A negative
-    span means the pair was mismatched; a NaN means the readback was garbage.
+def test_a_dead_gpu_column_is_reported_as_unavailable_not_as_zeros(host):
+    """A GPU column of 0.000 must never be readable as "the GPU is free".
 
-    Not asserted > 0: an empty headless scene can legitimately finish a pass
-    inside the timer's resolution, and a driver that reports 0 there is not
-    wrong. The bug this guards against is a nonsense value, not a small one.
+    This replaces an assertion that could not fail. The old test checked
+    `gpu_ms >= 0.0` and `gpu_ms == gpu_ms`, both of which the C++ side
+    guarantees by construction: gpu_ns only accumulates when `t1 >= t0`, and a
+    uint64 difference divided by 1e6 cannot be NaN. It therefore passed on the
+    one real failure mode it was near — this machine's GL returns ZEROED
+    GL_TIMESTAMP counters, so every span is exactly 0.000 and the whole column
+    reads as free.
+
+    So assert the thing that can actually be wrong: either the driver measures
+    something, or the report says the column is not measured.
     """
+    from engine.core import frame_profiler as fp
+
     host.profiler_set_enabled(True)
-    _run_frames(10)
-    for s in host.profiler_scopes():
-        assert s["gpu_ms"] >= 0.0, s
-        assert s["gpu_ms"] == s["gpu_ms"], s      # NaN check
-        assert s["gpu_ms"] < 1000.0, s            # a pass is not a second long
+    _run_frames(max(40, fp.GPU_ZERO_FRAMES + 10))
+
+    scopes = host.profiler_scopes()
+    assert scopes, "nothing resolved"
+    # Whatever the driver does, the numbers must at least be readable ones.
+    for s in scopes:
+        assert 0.0 <= s["gpu_ms"] < 1000.0, s     # a pass is not a second long
+
+    frame = host.profiler_frame()
+    fp.set_enabled(True, native=False)
+    try:
+        fp.begin_frame(); fp.mark("p"); fp.end_frame()
+        text = "\n".join(fp.report_lines())
+    finally:
+        fp.set_enabled(False, native=False)
+
+    if frame["gpu_ms"] == 0.0:
+        assert "GPU TIMING UNAVAILABLE" in text, (
+            "the whole frame measured 0.000 ms of GPU time over %d frames and "
+            "the report printed it as a measurement:\n%s"
+            % (frame["frames"], text))
+    else:
+        assert "GPU TIMING UNAVAILABLE" not in text, text
 
 
 def test_call_counts_are_per_frame_not_cumulative(host):
@@ -180,9 +206,39 @@ def test_the_table_describes_the_frame_it_reports(host):
         assert cur <= prev + 1, (prev, cur, scopes)
 
 
-def test_a_scope_entered_twice_is_one_row_with_two_calls(host):
-    """Re-entry must accumulate into the existing row, not append a second."""
+# DELETED: test_a_scope_entered_twice_is_one_row_with_two_calls.
+#
+# It ran plain frames and asserted the reported names were UNIQUE — but nothing
+# in a headless empty scene is entered twice (every row comes back calls=1), so
+# no arrangement of this test could produce the duplicate it claimed to reject.
+# It could not fail.
+#
+# The path it named — push() folding a re-entry into the existing row instead of
+# appending a second one — is real and still untested. Reaching it needs a pass
+# that genuinely runs twice in one frame, which here means the bridge
+# viewscreen RTT rendering the space scene alongside the exterior view; that is
+# a full bridge set, not something h.frame() produces on an empty headless
+# scene. Covering it wants a gtest driving FrameTimer directly (push/push/pop/
+# pop the same name, then read results()), which is where it should go.
+
+
+def test_the_whole_frame_gpu_total_agrees_with_the_frame_row(host):
+    """The headline GPU total and the `frame` row's own gpu_ms are the same
+    span, so they must not disagree.
+
+    They used to: the total was taken from `samples.back().q_end`, which is the
+    last scope PUSHED (`present`), not the last one CLOSED (`frame`, which
+    end_frame closes after every child). That reported present.end -
+    frame.begin as the frame total, printed one line above a `frame` row
+    measuring frame.end - frame.begin.
+    """
     host.profiler_set_enabled(True)
-    _run_frames(10)
-    names = [s["name"] for s in host.profiler_scopes()]
-    assert len(names) == len(set(names)), names
+    _run_frames(20)
+    by_name = {s["name"]: s for s in host.profiler_scopes()}
+    assert "frame" in by_name, sorted(by_name)
+    total = host.profiler_frame()["gpu_ms"]
+    # Both are EMA-smoothed with the same alpha from the same frames, so on a
+    # driver that measures anything they track each other closely; on one that
+    # returns zeros they are both 0.
+    assert abs(total - by_name["frame"]["gpu_ms"]) <= 0.5 + 0.05 * total, (
+        total, by_name["frame"])

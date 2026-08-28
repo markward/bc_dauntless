@@ -405,6 +405,13 @@ def profiler_frame() -> dict:
     `gpu_ms` is measured first-timestamp-to-last, NOT as a sum of the scopes:
     scopes nest, so summing them would double-count. Returns zeros with
     enabled=False when the binding is absent.
+
+    A gpu_ms of exactly 0.0 across many resolved frames does NOT mean a free
+    GPU: a driver whose GL_TIMESTAMP counters read zero (Apple's GL) produces
+    that, and the timer cannot tell it apart from a fast frame because a span
+    is only accumulated when t1 >= t0. frame_profiler's report calls that case
+    out as GPU TIMING UNAVAILABLE for the same reason this module reports an
+    absent binding rather than inventing zeros for it.
     """
     fn = getattr(_h, "profiler_frame", None)
     if fn is None:

@@ -54,9 +54,9 @@ public:
     bool enabled() const { return enabled_; }
 
     /// Turning the timer on clears accumulated averages so the first report
-    /// is not a blend of old and new state. Turning it off leaves GL objects
-    /// allocated (deleting them needs a current context, which the caller may
-    /// not have) but stops all recording.
+    /// is not a blend of old and new state. Turning it off stops all
+    /// recording. Either way the query pool is dropped (see reset()), so the
+    /// next enable generates fresh queries in whatever context is current.
     void set_enabled(bool v);
 
     /// Frame boundary. begin_frame resolves the oldest pending record and
@@ -91,7 +91,13 @@ public:
     /// avoid printing an average built from one sample.
     std::uint64_t frames_resolved() const { return frames_resolved_; }
 
-    /// Drop all averages and slots. Safe without a GL context.
+    /// Drop all averages, slots, and the per-record query pool. Safe without a
+    /// GL context: the query NAMES are abandoned rather than deleted, because
+    /// this is reachable after the context that owned them is gone (a
+    /// shutdown()/init() cycle) and deleting a name in a different context
+    /// would destroy an unrelated object there. Keeping them was the bug: the
+    /// next enable issued glQueryCounter against dead names and every readback
+    /// reported unavailable, so nothing ever resolved again.
     void reset();
 
 private:
@@ -123,6 +129,13 @@ private:
         // tree always describes the frame it is reporting.
         std::vector<int>    order;
         std::vector<int>    depth;           // per slot
+        // The query whose glQueryCounter was issued LAST this frame, which is
+        // the outermost scope's q_end (end_frame force-closes it after every
+        // child has closed). NOT samples.back().q_end -- that is the last
+        // scope PUSHED, i.e. `present`, whose end query is issued BEFORE the
+        // enclosing `frame` scope's. resolve() needs the truly-last one for
+        // both its availability check and the whole-frame span; see there.
+        unsigned int last_query = 0;
         double frame_cpu_ns = 0.0;
         bool   pending = false;
     };

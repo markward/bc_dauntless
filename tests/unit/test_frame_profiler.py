@@ -258,6 +258,229 @@ def test_marks_repeated_in_one_frame_sum_rather_than_replace():
     assert fp.phases()["a"] >= 3.0
 
 
+def _nested_frame():
+    """One frame shaped like the real loop: two mark() phases, each with a
+    scope subtree under it, exactly as host_loop nests them.
+
+        sim                 <- mark
+          sim.gameloop      <- scope, once per catch-up tick
+            gl.ai           <- scope, inside the tick
+          sim.combat        <- scope, once per frame
+            cb.projectiles  <- scope, inside it
+    """
+    fp.begin_frame()
+    fp.mark("sim")
+    fp.note_sim_ticks(3)
+    for _ in range(3):
+        with fp.scope("sim.gameloop"):
+            with fp.scope("gl.ai"):
+                _busy(0.001)
+    with fp.scope("sim.combat"):
+        with fp.scope("cb.projectiles"):
+            _busy(0.001)
+    fp.end_frame()
+
+
+def _phase_rows(lines):
+    """The python-phase table's rows, keyed by the name they carry."""
+    rows = {}
+    for ln in lines:
+        stripped = ln.strip()
+        if not stripped:
+            continue
+        head = stripped.split()[0]
+        if head in ("sim", "sim.gameloop", "gl.ai", "sim.combat",
+                    "cb.projectiles"):
+            rows[head] = ln
+    return rows
+
+
+def _indent_of(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+def test_the_report_indents_children_under_their_parent(monkeypatch):
+    """The Python half nests now -- sim > sim.gameloop > gl.ai -- and printing
+    all of it at one indentation put children ABOVE their parents with nothing
+    marking the relation, so the column summed to ~3x the real frame."""
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False},
+    )
+    fp.set_enabled(True, native=False)
+    _nested_frame()
+
+    lines = fp.report_lines()
+    rows = _phase_rows(lines)
+    assert set(rows) == {"sim", "sim.gameloop", "gl.ai", "sim.combat",
+                         "cb.projectiles"}, sorted(rows)
+
+    # Parents print ABOVE their children...
+    order = [ln for ln in lines if ln in rows.values()]
+    assert order.index(rows["sim"]) < order.index(rows["sim.gameloop"])
+    assert order.index(rows["sim.gameloop"]) < order.index(rows["gl.ai"])
+    assert order.index(rows["sim.combat"]) < order.index(rows["cb.projectiles"])
+
+    # ...and deeper, so the containment is visible without reading the names.
+    assert _indent_of(rows["sim.gameloop"]) > _indent_of(rows["sim"])
+    assert _indent_of(rows["gl.ai"]) > _indent_of(rows["sim.gameloop"])
+    assert _indent_of(rows["cb.projectiles"]) > _indent_of(rows["sim.combat"])
+    assert _indent_of(rows["sim.combat"]) == _indent_of(rows["sim.gameloop"])
+
+
+def test_the_report_says_the_phase_column_must_not_be_summed(monkeypatch):
+    """Indentation alone still invites adding the column up. The nesting is
+    stated in words as well, because that sum is ~3x the real frame cost."""
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False},
+    )
+    fp.set_enabled(True, native=False)
+    _nested_frame()
+    text = "\n".join(fp.report_lines())
+    assert "included in" in text and "do not sum" in text.lower()
+
+
+def test_per_tick_rows_are_marked_apart_from_per_frame_ones(monkeypatch):
+    """`sim.gameloop` and everything under it is a SUM over the frame's N
+    catch-up ticks; `sim.combat` and everything under IT runs once per frame.
+    Printed adjacent with nothing distinguishing them, the tick count beside
+    the table invites dividing all of them by N -- wrong for half the rows."""
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False},
+    )
+    fp.set_enabled(True, native=False)
+    _nested_frame()
+    rows = _phase_rows(fp.report_lines())
+
+    marker = fp.PER_TICK_MARK
+    assert rows["sim.gameloop"].rstrip().endswith(marker), rows["sim.gameloop"]
+    assert rows["gl.ai"].rstrip().endswith(marker), rows["gl.ai"]
+    assert not rows["sim.combat"].rstrip().endswith(marker), rows["sim.combat"]
+    assert not rows["cb.projectiles"].rstrip().endswith(marker)
+    assert not rows["sim"].rstrip().endswith(marker)
+    # And the legend says what the mark means, so it is not a mystery glyph.
+    assert "per tick" in "\n".join(fp.report_lines())
+
+
+def test_the_phase_table_carries_per_frame_call_counts(monkeypatch):
+    """The generic backstop for the per-tick problem: a row entered 3 times in
+    one frame says so, so nobody has to guess which rows are sums."""
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False},
+    )
+    fp.set_enabled(True, native=False)
+    _nested_frame()
+    assert fp.calls() == {"sim": 1, "sim.gameloop": 3, "gl.ai": 3,
+                          "sim.combat": 1, "cb.projectiles": 1}
+    rows = _phase_rows(fp.report_lines())
+    # "<name> <cpu ms> <calls> [mark]"
+    assert rows["gl.ai"].split()[2] == "3", rows["gl.ai"]
+    assert rows["sim.combat"].split()[2] == "1", rows["sim.combat"]
+
+
+def test_sim_ticks_is_smoothed_like_every_other_number_beside_it(monkeypatch):
+    """The raw last-frame count was printed beside EMA-smoothed costs, so
+    dividing one by the other mixed an instantaneous value into an average."""
+    fp.set_enabled(True, native=False)
+    for n in (10, 10, 10, 10, 0):
+        fp.begin_frame()
+        fp.note_sim_ticks(n)
+        fp.end_frame()
+    assert fp.sim_ticks() == 0                 # instantaneous, unchanged
+    assert fp.sim_ticks_avg() > 1.0            # smoothed, still remembers the 10s
+
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False},
+    )
+    tick_line = [ln for ln in fp.report_lines() if "sim ticks" in ln]
+    assert tick_line, fp.report_lines()
+    assert "avg" in tick_line[0] and "last frame" in tick_line[0]
+
+
+def test_report_flags_a_dead_gpu_column_rather_than_printing_zeros(monkeypatch):
+    """A driver that returns zeroed GL_TIMESTAMP counters (Apple's GL does)
+    yields a full column of 0.000, which reads as 'the GPU is free' -- the
+    exact misreading the UNAVAILABLE line exists to prevent elsewhere."""
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [
+        {"name": "frame", "cpu_ms": 8.0, "gpu_ms": 0.0, "calls": 1, "depth": 0},
+        {"name": "present", "cpu_ms": 7.0, "gpu_ms": 0.0, "calls": 1, "depth": 1},
+    ])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 8.0, "gpu_ms": 0.0, "frames": 400, "enabled": True,
+                 "swap_interval": 0},
+    )
+    fp.set_enabled(True, native=False)
+    fp.begin_frame(); fp.mark("p"); fp.end_frame()
+    text = "\n".join(fp.report_lines())
+    assert "GPU TIMING UNAVAILABLE" in text
+    # And the column itself must not read as a measured zero.
+    frame_row = [ln for ln in fp.report_lines()
+                 if ln.strip().startswith("frame ")][0]
+    assert "0.000" not in frame_row, frame_row
+
+
+def test_a_working_gpu_column_is_not_flagged(monkeypatch):
+    """The flag must key on 'zero across many resolved frames', not on any
+    zero: a cheap pass legitimately measures 0.000."""
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [
+        {"name": "frame", "cpu_ms": 8.0, "gpu_ms": 5.0, "calls": 1, "depth": 0},
+        {"name": "anim", "cpu_ms": 1.0, "gpu_ms": 0.0, "calls": 1, "depth": 1},
+    ])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 8.0, "gpu_ms": 5.0, "frames": 400, "enabled": True,
+                 "swap_interval": 0},
+    )
+    fp.set_enabled(True, native=False)
+    fp.begin_frame(); fp.mark("p"); fp.end_frame()
+    text = "\n".join(fp.report_lines())
+    assert "GPU TIMING UNAVAILABLE" not in text
+
+
+def test_an_over_long_label_is_visibly_marked_not_silently_clipped(monkeypatch):
+    """A clipped name reads as a different, shorter phase -- and panel scopes
+    (`ui.<panel name>`, indented under ui.render_all) do overflow the column."""
+    from engine import host_io
+    long_name = "ui.a_panel_with_a_really_long_name_indeed"
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [
+        {"name": long_name, "cpu_ms": 1.0, "gpu_ms": 1.0, "calls": 1, "depth": 2},
+    ])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 1.0, "gpu_ms": 1.0, "frames": 10, "enabled": True,
+                 "swap_interval": 0},
+    )
+    fp.set_enabled(True, native=False)
+    fp.begin_frame()
+    fp.mark("ui_panels")
+    with fp.scope(long_name):
+        pass
+    fp.end_frame()
+
+    lines = fp.report_lines()
+    clipped = [ln for ln in lines if long_name[:20] in ln]
+    assert clipped, lines
+    for ln in clipped:
+        assert long_name in ln or fp.CLIP_MARK in ln, ln
+
+
 def test_report_is_ascii_only(monkeypatch):
     """The report is written from inside the frame loop, and Windows consoles
     default to cp1252. A box-drawing character in a printed line raises

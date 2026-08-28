@@ -48,6 +48,19 @@ void FrameTimer::reset() {
     for (auto& rec : ring_) {
         rec.samples.clear();
         rec.used = 0;
+        // Drop the query pool too. These names belong to whatever context was
+        // current when they were generated, and reset() is reachable across a
+        // shutdown()/init() cycle (the host tests do exactly that); reusing
+        // them afterwards issues glQueryCounter against a destroyed context's
+        // objects, and every readback then reports unavailable forever.
+        //
+        // Dropped, NOT deleted: glDeleteQueries here would either need a
+        // current context (reset() promises it works without one) or, worse,
+        // delete those numeric names in whatever context IS current -- which
+        // may be a live, unrelated object. Leaking a few dozen query names per
+        // toggle is the cheap side of that trade.
+        rec.queries.clear();
+        rec.last_query = 0;
         rec.cpu_ns.clear();
         rec.calls.clear();
         rec.order.clear();
@@ -106,6 +119,7 @@ void FrameTimer::begin_frame() {
     current_->depth.assign(slots_.size(), 0);
     current_->order.clear();
     current_->frame_cpu_ns = 0.0;
+    current_->last_query = 0;
     current_->pending = false;
 
     open_.clear();
@@ -165,7 +179,12 @@ void FrameTimer::pop() {
     open_t0_.pop_back();
     open_sample_.pop_back();
 
-    glQueryCounter(current_->samples[sample_idx].q_end, GL_TIMESTAMP);
+    const unsigned int q_end = current_->samples[sample_idx].q_end;
+    glQueryCounter(q_end, GL_TIMESTAMP);
+    // Every pop issues its end query after every query issued so far, so the
+    // last pop of the frame leaves the last-issued query here. resolve() reads
+    // it rather than guessing from the sample order.
+    current_->last_query = q_end;
     current_->cpu_ns[slot] += static_cast<double>(now_ns() - t0);
     current_->calls[slot] += 1;
 }
@@ -174,12 +193,20 @@ void FrameTimer::resolve(Record& rec) {
     rec.pending = false;
     if (rec.samples.empty()) return;
 
-    // Availability is checked on the LAST query issued: GL guarantees results
+    // Availability is checked on the LAST query ISSUED: GL guarantees results
     // become available in issue order, so if the last one is ready they all are.
     // If it is not ready we drop this record rather than block — a profiler
     // that calls glGetQueryObjectui64v on an unready query stalls the CPU on
     // the GPU, which is exactly the cost we are here to measure.
-    GLuint last = rec.samples.back().q_end;
+    //
+    // rec.last_query, NOT samples.back().q_end: samples are ordered by PUSH,
+    // and the outermost scope is pushed first but closed LAST (end_frame
+    // force-closes it after `present` has already closed). Checking
+    // samples.back() therefore left samples[0].q_end — the whole-frame scope —
+    // outside the guard, so the loop below could read an unready query and
+    // stall on exactly the thing the 3-frame ring exists to avoid.
+    GLuint last = rec.last_query;
+    if (last == 0) return;   // no scope ever closed: nothing to read back
     GLint available = 0;
     glGetQueryObjectiv(last, GL_QUERY_RESULT_AVAILABLE, &available);
     if (!available) return;
@@ -202,6 +229,10 @@ void FrameTimer::resolve(Record& rec) {
 
     // Whole-frame GPU time is the span from the first timestamp to the last,
     // not the sum of the scopes: scopes nest, so summing double-counts.
+    // `last` being the last-ISSUED query is what makes this the outermost
+    // scope's end. Taking `present`'s end instead reported
+    // present.end - frame.begin, a total that disagreed with the `frame` row's
+    // own gpu_ms printed directly above it.
     GLuint64 first_ts = 0, last_ts = 0;
     glGetQueryObjectui64v(rec.samples.front().q_begin, GL_QUERY_RESULT, &first_ts);
     glGetQueryObjectui64v(last, GL_QUERY_RESULT, &last_ts);
