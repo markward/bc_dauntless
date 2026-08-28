@@ -980,13 +980,13 @@ def _sync_fire_script_target_subsystem(inst) -> None:
     # transitions rather than every fire tick.
     if ship.GetTargetSubsystem() is not chosen:
         ship.SetTargetSubsystem(chosen)
-        if dev_mode.is_enabled():
-            ship_name = ship.GetName() if hasattr(ship, "GetName") else "<ship>"
-            sub_name = chosen.GetName() if chosen is not None else "hull centre"
-            # print(), not logging: the host configures no logging handler, so
-            # logging.info is swallowed and never reaches the terminal. Matches
-            # the [viewscreen]/[host_loop] dev-diagnostic convention.
-            print(f"[ai] {ship_name} -> targeting {sub_name}")
+        # NO dev log here. This used to print "[ai] <ship> -> targeting <sub>"
+        # under --developer on every change, on the theory that a change-only
+        # log is quiet. It is not: against a player ship every NPC re-picks a
+        # subsystem constantly, and the line buried every other diagnostic in
+        # the terminal. If you need this back, count transitions or sample it
+        # rather than printing every one -- the AI Inspector already reports
+        # target_subsystem per ship, which is the same information on demand.
 
 
 def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
