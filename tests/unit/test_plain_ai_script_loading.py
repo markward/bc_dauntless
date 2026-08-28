@@ -25,13 +25,18 @@ def test_script_instance_p_code_ai_points_back():
 
 def test_register_external_function_records_mapping():
     """BaseAI.SetExternalFunctions calls pCodeAI.RegisterExternalFunction(name, dict).
-    The PlainAI must store the mapping so introspection works."""
+    The PlainAI must store the mapping so introspection works.
+
+    Name -> LIST of mappings: one ConditionalAI can carry several conditions
+    that all register the same name (see
+    tests/unit/test_condition_external_functions.py), so a single-mapping slot
+    would drop all but the last."""
     pai = PlainAI_Create(ShipClass(), "X")
     pai.RegisterExternalFunction("SetTarget", {"Name": "MySetTarget"})
     pai.RegisterExternalFunction("Foo", {"CodeID": 42, "FunctionName": "Bar"})
     funcs = pai.GetExternalFunctions()
-    assert funcs["SetTarget"] == {"Name": "MySetTarget"}
-    assert funcs["Foo"] == {"CodeID": 42, "FunctionName": "Bar"}
+    assert funcs["SetTarget"] == [{"Name": "MySetTarget"}]
+    assert funcs["Foo"] == [{"CodeID": 42, "FunctionName": "Bar"}]
 
 
 def test_stay_get_next_update_time_is_five_seconds():

@@ -117,3 +117,91 @@ def test_two_ships_focus_isolated():
     tick_ai(pl2, 1.0)
     assert ia.lost == 1
     assert ib.lost == 0
+
+
+# ── PS_SKIP_ACTIVE must not read as focus loss ──────────────────────────────
+#
+# A preprocessor returning PS_SKIP_ACTIVE means "I am handling this tick, do
+# not run my child" (US_ACTIVE, child not run -- PreprocessingAI::Update's
+# switch at 0x48eab1). The child has NOT left the active dispatch path; its
+# parent is momentarily driving instead.
+#
+# Treating that as focus loss is what made restored collision avoidance switch
+# combat off. AvoidObstacles sits ABOVE the attack tree in BC's own QuickBattleAI
+# and returns PS_SKIP_ACTIVE for as long as a ship is evading. Measured in a
+# 12-ship fight: three ships evaded for 250+ of 300 consecutive ticks -- so for
+# five unbroken seconds their AlertLevel.LostFocus had restored the pre-combat
+# alert level (shields down) and their FireScript.LostFocus had called
+# StopFiring(). If BC dropped a ship's shields every time it dodged, dodging
+# would be suicide.
+#
+# Focus only. Tree activation (SetActive/SetInactive, _reconcile_active) asks a
+# different question -- "did dispatch reach this node" -- whose answer really is
+# no, and conditions are edge-guarded and re-arm when the skip ends.
+
+class _SkipActive:
+    """A preprocessor that suppresses its child the way AvoidObstacles does."""
+    def __init__(self):
+        self.result = PreprocessingAI.PS_NORMAL
+    def Update(self, dEndTime):
+        return self.result
+
+
+def _pp_containing(inst, name, child):
+    pp = PreprocessingAI(ShipClass(), name)
+    pp.SetPreprocessingMethod(inst, "Update")
+    pp.SetContainedAI(child)
+    return pp
+
+
+def test_skip_active_does_not_cost_the_child_its_focus():
+    guard = _SkipActive()
+    child_inst = _WithLostFocus()
+    child = _pp(child_inst, "Attack")
+    root = _pp_containing(guard, "AvoidObstacles", child)
+
+    tick_ai(root, 0.0)
+    assert child_inst.got == 1 and child_inst.lost == 0
+    assert child._has_focus is True
+
+    guard.result = PreprocessingAI.PS_SKIP_ACTIVE
+    tick_ai(root, 1.0)
+
+    assert child_inst.lost == 0, (
+        "a child suppressed for one tick by PS_SKIP_ACTIVE was told it had "
+        "lost focus; AlertLevel.LostFocus drops shields and "
+        "FireScript.LostFocus stops firing on that signal"
+    )
+    assert child._has_focus is True
+
+
+def test_focus_survives_a_sustained_skip_and_no_refocus_churn():
+    """The failure was a five-second run, not one tick -- and re-entry must not
+    fire GotFocus again either, or AlertLevel re-runs its combat-entry side
+    effects on every dodge."""
+    guard = _SkipActive()
+    child_inst = _WithLostFocus()
+    child = _pp(child_inst, "Attack")
+    root = _pp_containing(guard, "AvoidObstacles", child)
+
+    tick_ai(root, 0.0)
+    guard.result = PreprocessingAI.PS_SKIP_ACTIVE
+    for t in range(1, 40):
+        tick_ai(root, float(t))
+    guard.result = PS_NORMAL
+    tick_ai(root, 40.0)
+
+    assert child_inst.lost == 0
+    assert child_inst.got == 1
+
+
+def test_a_child_that_really_leaves_the_path_still_loses_focus():
+    """Guard against the fix becoming 'nobody ever loses focus'."""
+    ia, ib = _WithLostFocus(), _WithLostFocus()
+    a, b = _pp(ia, "A"), _pp(ib, "B")
+    pl = _list_with(a, b)
+    tick_ai(pl, 0.0)
+    assert ia.got == 1
+    ia.result = PS_SKIP_DORMANT
+    tick_ai(pl, 1.0)
+    assert ia.lost == 1

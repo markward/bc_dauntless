@@ -269,6 +269,30 @@ def _engine_avoidance_class(base: type) -> type:
         from engine.appc.collision_avoidance import course_override_for
         return course_override_for(self)
 
+    cls = type("Engine" + base.__name__, (_phased_avoidance_class(base),),
+               {"TestCourseOverride": TestCourseOverride})
+    _ENGINE_AVOIDANCE_CLASSES[base] = cls
+    globals()[cls.__name__] = cls
+    return cls
+
+
+_PHASED_AVOIDANCE_CLASSES: dict = {}
+
+
+def _phased_avoidance_class(base: type) -> type:
+    """Non-lethal `base` plus the one-off first-schedule phase offset.
+
+    Split out of _engine_avoidance_class so the SDK scan gets it too. The
+    offset and the evading cadence below were only ever applied to the ENGINE
+    scan, which is opt-in — so on the path that actually runs, every ship
+    re-scanned in lock-step and an evading ship re-scanned every tick. That went
+    unnoticed only because the scan was inert (ProximityManager.GetNextObject
+    was a hardcoded `return None`), so no ship ever reached the evading branch.
+    """
+    cached = _PHASED_AVOIDANCE_CLASSES.get(base)
+    if cached is not None:
+        return cached
+
     base_next_update = getattr(base, "GetNextUpdateTime", None)
 
     def GetNextUpdateTime(self):
@@ -279,12 +303,36 @@ def _engine_avoidance_class(base: type) -> type:
         state[_PHASE_ATTR] = True
         return delay * _phase_factor(self)
 
-    cls = type("Engine" + base.__name__, (_non_lethal_class(base),),
-               {"TestCourseOverride": TestCourseOverride,
-                "GetNextUpdateTime": GetNextUpdateTime})
-    _ENGINE_AVOIDANCE_CLASSES[base] = cls
+    cls = type("Phased" + base.__name__, (_non_lethal_class(base),),
+               {"GetNextUpdateTime": GetNextUpdateTime})
+    _PHASED_AVOIDANCE_CLASSES[base] = cls
     globals()[cls.__name__] = cls
     return cls
+
+
+def _apply_evading_cadence(alias):
+    """Restore BC's own commented-out `fMinimumUpdateDelay` (0.25).
+
+    `AI/Preprocessors.py:1624` reads `self.fMinimumUpdateDelay = 0.0 # 0.25`.
+    At 0.0 a ship that is evading re-runs the whole world scan EVERY tick, and
+    in a crowded fight most ships are evading most of the time: measured at 32
+    ships, ~14 scans per tick against the ~8 the 4 Hz cadence predicts, for
+    +3.4 ms of sim per tick. A cadence-skipped tick does not drop the evasion —
+    ai_driver._tick_preprocessing reproduces the last PS_SKIP_ACTIVE — so the
+    ship holds its committed heading and only the re-decision waits.
+    """
+    if AVOID_EVADING_UPDATE_DELAY_S > 0.0:
+        alias.__dict__["fMinimumUpdateDelay"] = AVOID_EVADING_UPDATE_DELAY_S
+    return alias
+
+
+def _wrap_avoid_obstacles(instance):
+    """The DEFAULT AvoidObstacles binding: SDK scan, PS_DONE de-fanged, plus
+    the phase offset and evading cadence."""
+    cls = _phased_avoidance_class(type(instance))
+    alias = cls.__new__(cls)
+    alias.__dict__ = instance.__dict__
+    return _apply_evading_cadence(alias)
 
 
 def _replace_avoid_obstacles(instance):
@@ -301,9 +349,7 @@ def _replace_avoid_obstacles(instance):
     cls = _engine_avoidance_class(type(instance))
     alias = cls.__new__(cls)
     alias.__dict__ = instance.__dict__
-    if AVOID_EVADING_UPDATE_DELAY_S > 0.0:
-        alias.__dict__["fMinimumUpdateDelay"] = AVOID_EVADING_UPDATE_DELAY_S
-    return alias
+    return _apply_evading_cadence(alias)
 
 
 def _replace_manage_power(instance):
@@ -397,12 +443,13 @@ def _wrap_non_lethal(instance):
 OPTIMIZED_PREPROCESSORS: dict = {
     "ManagePower": _replace_manage_power,     # real replacement (SDK body is a stub)
     "FireScript": _wrap_non_lethal,           # SDK body, PS_DONE de-fanged
-    # SDK scan, PS_DONE de-fanged. This entry has always done TWO jobs and only
-    # one of them was the problem: the engine scan (removed below, opt-in) and
-    # protection against AvoidObstacles' lethal PS_DONE path, which a shipless
-    # node hits. Dropping the whole entry would have taken the protection with
-    # it -- test_preprocess_done_is_lethal caught exactly that.
-    "AvoidObstacles": _wrap_non_lethal,
+    # SDK scan, PS_DONE de-fanged, plus the phase offset and evading cadence.
+    # This entry has always done TWO jobs and only one of them was the problem:
+    # the engine scan (removed below, opt-in) and protection against
+    # AvoidObstacles' lethal PS_DONE path, which a shipless node hits. Dropping
+    # the whole entry would have taken the protection with it --
+    # test_preprocess_done_is_lethal caught exactly that.
+    "AvoidObstacles": _wrap_avoid_obstacles,
 }
 
 # ── AvoidObstacles: OFF by default, and why ────────────────────────────────

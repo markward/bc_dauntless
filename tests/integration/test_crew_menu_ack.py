@@ -1,5 +1,17 @@
 """End-to-end: an F-key talk-to event opens a crew menu and the officer
-acknowledges (subtitle reaches the snapshot)."""
+acknowledges (subtitle reaches the snapshot).
+
+The speaker assertions read the OFFICER'S OWN NAME rather than the literal
+"Tactical". crew_speech.acknowledge speaks `character.GetCharacterName()`, and
+what that returns depends on whether a real bridge has been loaded in this
+process: with none, CharacterClass_GetObject manufactures a placeholder whose
+name is the station key ("Tactical"); once any earlier test has loaded one, the
+Tactical station is held by Felix and the name is "Felix". Hard-coding
+"Tactical" pinned the placeholder, so the test passed or failed purely on which
+integration tests ran before it -- measured: it passes alone and fails when
+preceded by any combat scene. The contract worth pinning is "the officer who
+owns the menu is the one who acks", which is name-independent.
+"""
 import App
 from engine.appc import top_window, crew_speech
 from engine.appc.characters import STTopLevelMenu
@@ -30,7 +42,9 @@ def test_fkey_talk_to_opens_menu_and_acknowledges():
     assert panel.has_open_menu() is True
     snap = _subtitle()._snapshot(now=0.0)
     assert snap is not None
-    assert snap["speaker"] == "Tactical"
+    tactical = crew_menu_hotkeys.resolve_character("Tactical")
+    assert tactical is not None
+    assert snap["speaker"] == tactical.GetCharacterName()
 
 
 def test_owned_menu_click_goes_through_menu_up():
@@ -53,7 +67,8 @@ def test_owned_menu_click_goes_through_menu_up():
 
         assert panel.has_open_menu() is True        # the PRIMITIVE opened the view
         assert officer.IsMenuUp() == 1
-        assert _subtitle()._snapshot(now=0.0)["speaker"] == "Tactical"   # ack (click path)
+        assert (_subtitle()._snapshot(now=0.0)["speaker"]
+                == officer.GetCharacterName())        # ack (click path)
 
         panel.toggle_menu(menu)                     # -> officer.MenuDown()
         assert panel.has_open_menu() is False

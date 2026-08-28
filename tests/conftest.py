@@ -164,6 +164,69 @@ class _FixDictKeysIter(ast.NodeTransformer):
         return node
 
 
+class _FixPy2Compare(ast.NodeTransformer):
+    """Restore Python 2's cross-type ordering for `<attribute> <op> <number>`.
+
+    Python 2 could order any two objects (numbers before non-numbers, then by
+    type name); Python 3 raises TypeError. AI/Compound/DockWithStarbase.py:94
+    relies on that by accident -- `if vDiff.SqrLength < 0.5:` compares a bound
+    METHOD to a float (the parens are missing), which Python 2 answered False
+    and Python 3 refuses. That line sits inside SetupDockPositions' proximity
+    walk, so it only became reachable when ProximityManager.GetNextObject
+    stopped being a hardcoded `return None`.
+
+    Deliberately narrow: only a bare attribute against a numeric literal, in
+    either order, single-operator. 35 SDK sites match that shape and 34 of them
+    compare genuine numbers, where engine.core.py2compat.py2_cmp is a
+    pass-through -- the Python 2 rule is applied only when the comparison would
+    otherwise have raised. The SDK's other ~6,760 comparisons are left alone
+    rather than paying a helper call on hot AI and combat paths, so this does
+    NOT make every cross-type comparison in the SDK py2-faithful; it covers the
+    one shape known to bite.
+    """
+
+    _OPS = {
+        ast.Lt: "<", ast.LtE: "<=", ast.Gt: ">", ast.GtE: ">=",
+        ast.Eq: "==", ast.NotEq: "!=",
+    }
+
+    @staticmethod
+    def _is_number(node):
+        return (isinstance(node, ast.Constant)
+                and isinstance(node.value, (int, float))
+                and not isinstance(node.value, bool))
+
+    def visit_Compare(self, node):
+        self.generic_visit(node)
+        if len(node.ops) != 1:
+            return node
+        op = self._OPS.get(type(node.ops[0]))
+        if op is None:
+            return node
+        left, right = node.left, node.comparators[0]
+        bare_attr = (isinstance(left, ast.Attribute)
+                     or isinstance(right, ast.Attribute))
+        if not bare_attr or not (self._is_number(left) or self._is_number(right)):
+            return node
+        return ast.Call(
+            func=ast.Attribute(
+                value=ast.Call(
+                    func=ast.Name(id="__import__", ctx=ast.Load()),
+                    args=[ast.Constant(value="engine.core.py2compat"),
+                          ast.Constant(value=None),
+                          ast.Constant(value=None),
+                          ast.Tuple(elts=[ast.Constant(value="py2_cmp")],
+                                    ctx=ast.Load())],
+                    keywords=[],
+                ),
+                attr="py2_cmp",
+                ctx=ast.Load(),
+            ),
+            args=[ast.Constant(value=op), left, right],
+            keywords=[],
+        )
+
+
 class _FixDottedImport(ast.NodeTransformer):
     """Rewrite bare __import__(x) → importlib.import_module(x).
 
@@ -346,6 +409,7 @@ class _SDKLoader(importlib.abc.Loader):
         tree = _FixDottedImport().visit(tree)
         tree = _FixPy2Sort().visit(tree)
         tree = _FixDictKeysIter().visit(tree)
+        tree = _FixPy2Compare().visit(tree)
         ast.fix_missing_locations(tree)
         code = compile(tree, self.path, "exec")
         module.__dict__.setdefault('apply', lambda f, a=(), kw={}: f(*a, **kw))
