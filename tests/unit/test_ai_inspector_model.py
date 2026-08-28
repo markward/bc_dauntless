@@ -67,7 +67,11 @@ def test_serialize_sequence_with_children():
     # ConditionalAI child carries conditions + contained AI.
     gate = d["children"][1]
     assert gate["type"] == "ConditionalAI"
-    assert gate["conditions"] == [{"name": "InRange", "status": 1}]
+    # `class` rides alongside `name`: real SDK conditions carry neither a
+    # GetName nor a _name, so name falls back to the class and an exported
+    # tree that used to read `?:1, ?:0, ?:0` now says WHICH gate is shut.
+    assert gate["conditions"] == [
+        {"name": "InRange", "class": "TGCondition", "status": 1}]
     assert gate["contained"]["name"] == "Inner"
 
 
