@@ -132,9 +132,26 @@ class ConditionScript(TGCondition):
     it with (self, *args). Fall back to a data-bag if anything fails;
     SDK call sites guard with `if pCondition.IsActive():` so a quiet
     fallback is safe.
+
+    Carries an object id. In BC that is inherited surface, not a bolt-on:
+    `TGCondition` derives from `TGObject` (sdk/.../App.py:2529) and
+    `TGObject.GetObjID` is bound at App.py:371. Ten shipped Condition scripts
+    call `self.pCodeCondition.GetObjID()` on the first line of their
+    `RegisterExternalFunctions`, and the resulting id is what
+    `CallExternalFunction` resolves back to this object to find the script
+    instance to call. Weakref registry, mirroring ArtificialIntelligence's --
+    a strong one would keep every condition alive past its AI tree and
+    ConditionInRange.__del__ (which deletes its proximity sphere) would never
+    run.
     """
+    _next_id: int = 1
+    _registry: dict = {}
+
     def __init__(self, module_name: str = "", class_name: str = "", *args):
         super().__init__()
+        self._obj_id = ConditionScript._next_id
+        ConditionScript._next_id += 1
+        ConditionScript._registry[self._obj_id] = weakref.ref(self)
         self._module_name = module_name
         self._class_name = class_name
         self._args = args
@@ -148,6 +165,33 @@ class ConditionScript(TGCondition):
             except Exception as e:
                 self._instance = None
                 self._init_error = (type(e).__name__, str(e))
+
+    def GetObjID(self) -> int:
+        return self._obj_id
+
+    def RegisterExternalFunctions(self, pAI) -> None:
+        """Forward to the wrapped script's own RegisterExternalFunctions.
+
+        Nothing in the SDK calls this -- grep the 1228 files and the only hit
+        outside the nine `def`s is a commented-out debug line -- so the engine
+        is what calls it, at the moment a condition is bound to an AI (see
+        ConditionalAI.AddCondition). Nine `def`s but TEN registrants:
+        ConditionWarpingToMission defines none and inherits
+        ConditionWarpingToSet's, so grepping for the definition undercounts.
+
+        Conditions that define no hook are the common case and must be left
+        alone; a hook that raises must not take
+        the AI tree down with it, the same way a condition whose __init__
+        raises is already tolerated above.
+        """
+        register = getattr(self._instance, "RegisterExternalFunctions", None) \
+            if self._instance is not None else None
+        if not callable(register):
+            return
+        try:
+            register(pAI)
+        except Exception as _e:
+            dev_mode.log_swallowed("condition RegisterExternalFunctions", _e)
 
     def GetModuleName(self) -> str:
         return self._module_name
@@ -189,6 +233,24 @@ def ConditionScript_Create(module_name: str, class_name: str, *args) -> Conditio
 
 def ConditionScript_Cast(obj):
     return obj if isinstance(obj, ConditionScript) else None
+
+
+def ConditionScript_GetByID(obj_id) -> "ConditionScript | None":
+    """Resolve the `CodeID` half of a condition's external-function mapping.
+
+    Conditions register `{"CodeID": <objid>, "FunctionName": <name>}` rather
+    than the `{"Name": <method>}` an AI script sends, because the method lives
+    on the *condition's* script instance, not the AI's. Dispatch therefore has
+    to come back through this lookup. Mirrors
+    ArtificialIntelligence_GetAIByID.
+    """
+    ref = ConditionScript._registry.get(obj_id)
+    if ref is None:
+        return None
+    cond = ref()
+    if cond is None:
+        ConditionScript._registry.pop(obj_id, None)
+    return cond
 
 
 # ── AI script-instance data bag ───────────────────────────────────────────────
@@ -417,30 +479,84 @@ class ArtificialIntelligence:
     def SetInterruptable(self, v) -> None: self._interruptable = bool(v)
     def IsInterruptable(self) -> int:     return 1 if self._interruptable else 0
 
-    # ── External-function dispatch (base no-op) ─────────────────────────────
+    # ── External-function dispatch ──────────────────────────────────────────
     # SDK SelectTarget.CallSetTargetFunctions iterates every AI in the tree
     # via GetAllAIsInTree() and unconditionally calls CallExternalFunction
-    # (sdk/.../AI/Preprocessors.py:1407). Only PlainAI registers SetTarget
-    # hooks, so interior nodes (PriorityListAI, SequenceAI, PreprocessingAI,
-    # ConditionalAI) need a tolerant no-op so the dispatch loop doesn't
-    # AttributeError on them.
+    # (sdk/.../AI/Preprocessors.py:1407); FireScript.Update does the same with
+    # "UsingWeaponType" (:290) and FelixReportStatus with "QueryAIStatus"
+    # (:2231). A node with nothing registered under that name is the common
+    # case and must be a tolerant no-op, not an AttributeError.
+    #
+    # THREE registration shapes reach this registry, and they differ in WHERE
+    # the method lives:
+    #
+    #   {"Name": <method>}           BaseAI.SetExternalFunctions  -> this node's
+    #   {"FunctionName": <method>}   FireScript.CodeAISet            own script
+    #                                                                instance
+    #   {"CodeID": <condition objid>, "FunctionName": <method>}
+    #                                the ten Conditions/*.py        -> the
+    #                                RegisterExternalFunctions          CONDITION's
+    #                                                                   instance
+    #
+    # Stored name -> LIST, not name -> mapping. Eleven ConditionalAIs in the
+    # shipped SDK attach two or more conditions that all register "SetTarget"
+    # (AI/Compound/FollowThroughWarp.py's pTargetExistsInWrongSet pairs a
+    # ConditionAnyInSameSet with a ConditionExists; E6M4_AI_Galor2.py's
+    # pPlayerNotInRange pairs one with a ConditionInRange), and a
+    # single-mapping registry silently drops all but the last -- leaving half
+    # the gate evaluating against a stale target.
     def CallExternalFunction(self, name: str, *args) -> None:
-        pass
+        for mapping in self._external_functions.get(name, ()):
+            fn_name = mapping.get("FunctionName") or mapping.get("Name")
+            if not fn_name:
+                continue
+            code_id = mapping.get("CodeID")
+            if code_id is not None:
+                cond = ConditionScript_GetByID(code_id)
+                inst = getattr(cond, "_instance", None) if cond is not None else None
+            else:
+                inst = self._external_function_instance()
+            if inst is None:
+                continue
+            method = getattr(inst, fn_name, None)
+            if method is None:
+                continue
+            method(*args)
+
+    def _external_function_instance(self):
+        """The script instance a non-CodeID mapping dispatches to.
+
+        None on the base: PriorityListAI, SequenceAI and ConditionalAI have no
+        script of their own, so only CodeID mappings (i.e. conditions) can
+        resolve on them. PlainAI and PreprocessingAI override.
+        """
+        return None
 
     def RegisterExternalFunction(self, name: str, mapping) -> None:
-        """Record name -> mapping in the AI's external-function registry.
+        """Record a mapping under `name` in the AI's external-function registry.
 
-        SDK FireScript.CodeAISet (AI/Preprocessors.py:137-145) calls this
-        on its wrapping ``pCodeAI`` (a PreprocessingAI) so SelectTarget's
-        ``CallExternalFunction("SetTarget", name)`` dispatch can reach the
-        FireScript preprocessor. PlainAI overrides ``CallExternalFunction``
-        to actually invoke registered methods; interior nodes just keep the
-        registration as data.
+        SDK FireScript.CodeAISet (AI/Preprocessors.py:137-145) calls this on
+        its wrapping ``pCodeAI`` (a PreprocessingAI); ConditionalAI.AddCondition
+        calls it (via the condition's own RegisterExternalFunctions) for every
+        condition that wants a callback.
+
+        Identical mappings are recorded once. ``CodeAISet`` runs again whenever
+        a script module is re-set, and a duplicate entry would fire the
+        callback twice per broadcast.
         """
-        self._external_functions[name] = mapping
+        entries = self._external_functions.setdefault(name, [])
+        key = (mapping.get("CodeID"),
+               mapping.get("FunctionName") or mapping.get("Name"))
+        for existing in entries:
+            if (existing.get("CodeID"),
+                    existing.get("FunctionName") or existing.get("Name")) == key:
+                return
+        entries.append(mapping)
 
     def GetExternalFunctions(self) -> dict:
-        return dict(self._external_functions)
+        """name -> list of registered mappings. Introspection only (this is
+        not published Appc surface; App.py binds no GetExternalFunctions)."""
+        return {k: list(v) for k, v in self._external_functions.items()}
 
     # ── Tree activation lifecycle ────────────────────────────────────────────
     # Mirrors BaseAI's SetActive/SetInactive (vtable +0x20/+0x24,
@@ -554,36 +670,13 @@ class PlainAI(ArtificialIntelligence):
             self._script_instance = _AIScriptInstance(self)
         return self._script_instance
 
-    # RegisterExternalFunction / GetExternalFunctions inherited from base.
-    # PlainAI overrides CallExternalFunction below to actually dispatch the
-    # registered mapping to a script-instance method.
-
-    def CallExternalFunction(self, name: str, *args) -> None:
-        """Invoke the script-instance method registered for `name`.
-
-        SDK pattern: BaseAI.SetExternalFunctions stores ``{"Name": method}``;
-        some scripts (e.g. ones built ad-hoc by mission code) use
-        ``{"FunctionName": method}`` instead. Both keys are recognized.
-
-        Called by SelectTarget.CallSetTargetFunctions to dispatch the
-        chosen target name onto every leaf AI that registered a
-        "SetTarget" hook. Silent no-op if the function isn't registered,
-        the lookup key is missing, or the named method doesn't exist on
-        the script instance — mirrors Appc's tolerant Python dispatch.
-        """
-        info = self._external_functions.get(name)
-        if not info:
-            return
-        fn_name = info.get("FunctionName") or info.get("Name")
-        if not fn_name:
-            return
-        inst = self.GetScriptInstance()
-        if inst is None:
-            return
-        method = getattr(inst, fn_name, None)
-        if method is None:
-            return
-        method(*args)
+    # RegisterExternalFunction / GetExternalFunctions / CallExternalFunction
+    # are inherited from the base; PlainAI only has to say WHICH instance a
+    # non-CodeID mapping ({"Name": ...} from BaseAI.SetExternalFunctions)
+    # dispatches to. Called by SelectTarget.CallSetTargetFunctions to push the
+    # chosen target onto every leaf AI that registered a "SetTarget" hook.
+    def _external_function_instance(self):
+        return self.GetScriptInstance()
 
     def StopCallingActivate(self) -> None:
         pass
@@ -842,35 +935,21 @@ class PreprocessingAI(ArtificialIntelligence):
     def ForceDormantStatus(self, *args) -> None:    pass
     def ForceStatusChange(self, *args) -> None:     pass
 
-    def CallExternalFunction(self, name: str, *args) -> None:
-        """Dispatch a registered external function to the preprocessing
-        instance — mirror of PlainAI.CallExternalFunction.
+    def _external_function_instance(self):
+        """Where a non-CodeID mapping dispatches on a PreprocessingAI.
 
         SDK FireScript.CodeAISet (AI/Preprocessors.py:137-145) registers
-        ``SetTarget`` on its wrapping ``pCodeAI`` (a PreprocessingAI), not
-        on a child PlainAI. SelectTarget.CallSetTargetFunctions
-        (AI/Preprocessors.py:1407) walks every AI in the tree and calls
-        ``pAI.CallExternalFunction("SetTarget", name)`` unconditionally,
-        so the wrapping PreprocessingAI must actually route the call to
-        ``self._preprocessing_instance.<method>`` rather than no-op.
-
-        Silent no-op if the function isn't registered, the lookup key is
-        missing, the instance is unset, or the named method doesn't exist —
-        mirrors PlainAI's tolerant dispatch.
+        ``SetTarget`` on its wrapping ``pCodeAI`` (a PreprocessingAI), not on a
+        child PlainAI, and UpdateAIStatus.CodeAISet (:2175) registers
+        ``QueryAIStatus`` the same way. SelectTarget.CallSetTargetFunctions
+        (:1407) walks every AI in the tree and calls
+        ``pAI.CallExternalFunction("SetTarget", name)`` unconditionally, so the
+        wrapping PreprocessingAI must route to ``self._preprocessing_instance``
+        rather than no-op. NOT GetPreprocessingInstance(): that manufactures an
+        empty data-bag on demand, and a node with no preprocessor should
+        resolve to nothing.
         """
-        info = self._external_functions.get(name)
-        if not info:
-            return
-        fn_name = info.get("FunctionName") or info.get("Name")
-        if not fn_name:
-            return
-        inst = self._preprocessing_instance
-        if inst is None:
-            return
-        method = getattr(inst, fn_name, None)
-        if method is None:
-            return
-        method(*args)
+        return self._preprocessing_instance
 
 
 def PreprocessingAI_Create(pShip=None, name: str = "") -> PreprocessingAI:
@@ -905,6 +984,21 @@ class ConditionalAI(ArtificialIntelligence, TGConditionHandler):
     def AddCondition(self, cond: TGCondition) -> None:
         self._conditions.append(cond)
         cond.AddHandler(self)
+        # Binding a condition to an AI is what wires its external-function
+        # callbacks. Ten shipped Condition scripts have a
+        # RegisterExternalFunctions(pAI) and nothing in the SDK ever calls it,
+        # so this is the engine's job -- and `pAI` is this node, because that
+        # is what the broadcasters reach: FireScript.Update and
+        # SelectTarget.CallSetTargetFunctions walk GetAllAIsInTree() and call
+        # CallExternalFunction on every node, ConditionalAIs included.
+        #
+        # Without this, ConditionUsingWeapon (set ONLY by its callback) was
+        # permanently false and NonFedAttack's / FedAttack's whole torpedo
+        # branch was unreachable; the nine SetTarget registrants kept
+        # evaluating against whichever target the tree was built with.
+        register = getattr(cond, "RegisterExternalFunctions", None)
+        if callable(register):
+            register(self)
         # Appc's ConditionalAI drives SetActive/SetInactive across its
         # condition list from the NODE's own tree-activation lifecycle (see
         # _on_activated/_on_deactivated below), not at wiring time. A
