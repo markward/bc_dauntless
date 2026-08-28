@@ -358,63 +358,9 @@ class TargetListView(Panel):
                 selected_subsystem = target_sub.GetName()
         return (self._visible, selected, selected_subsystem, tuple(rows))
 
-    def _reconcile_subsystem_lock(self) -> None:
-        """If the player's locked subsystem has been destroyed, hand the lock
-        off to the next surviving sibling in its group; when the whole group is
-        gone, clear the lock back to ship-level targeting. Runs every tick so a
-        subsystem dying from any cause triggers the handoff.
 
-        Also drops the lock outright — no handoff, straight to ship-level —
-        when the locked ship has cloaked (`Contact.subsystems_targetable`
-        False). A fuzzy sensor return has no subsystem to hand the lock off
-        to; the player keeps the ship-level target, only the subsystem pick
-        clears. Reads the pushed record rather than re-deriving cloak state,
-        same reasoning as `_snapshot`'s subsystem suppression.
-
-        And drops the lock when there is no ship-level target at all.
-        `sensor_detection.clear_undetectable_player_lock` (a ship cloaking
-        OUTSIDE its detection bubble is one way there) calls
-        `player.SetTarget(None)`, but `ShipClass.SetTarget` never touches
-        `_target_subsystem` — nothing does, there are only four clear sites
-        and none of them covers this. Left alone, the stale subsystem
-        reference survives with no ship attached and resurfaces as
-        `selected_subsystem` the moment the player targets a DIFFERENT ship,
-        since `GetTargetSubsystem()` answers unconditionally regardless of
-        the current ship-level target. Pre-existing gap; closed here because
-        this is the natural place, not because this branch introduced it."""
-        from engine.core.game import Game_GetCurrentGame
-        game = Game_GetCurrentGame()
-        player = game.GetPlayer() if game is not None else None
-        if player is None or not hasattr(player, "GetTargetSubsystem"):
-            return
-        locked = player.GetTargetSubsystem()
-        if locked is None:
-            return
-
-        target = player.GetTarget()
-        if target is None:
-            player.SetTargetSubsystem(None)
-            return
-
-        import App
-        target_menu = App.STTargetMenu_GetTargetMenu()
-        contact = target_menu.contact_for(target) if target_menu is not None else None
-        if contact is not None and not contact.subsystems_targetable:
-            player.SetTargetSubsystem(None)
-            return
-
-        if not hasattr(locked, "IsDestroyed"):
-            return
-        try:
-            destroyed = bool(locked.IsDestroyed())
-        except Exception:
-            return
-        if not destroyed:
-            return
-        player.SetTargetSubsystem(_next_living_sibling(locked))
 
     def render_payload(self) -> Optional[str]:
-        self._reconcile_subsystem_lock()
         snapshot = self._snapshot()
         if snapshot == self._last_snapshot:
             return None
@@ -509,9 +455,10 @@ class TargetListView(Panel):
         # if the ship finished cloaking in between, honouring the click
         # would set a subsystem lock the record no longer allows. Without
         # this the hole would self-heal one frame later via
-        # _reconcile_subsystem_lock (which runs first thing in the next
-        # render_payload), but there is no reason to let even a one-frame
-        # flicker through when the record to check is one call away.
+        # reconcile_subsystem_lock (which the HOST LOOP runs every frame --
+        # not this panel, which polls at 2 Hz), but there is no reason to let
+        # even a one-frame flicker through when the record to check is one
+        # call away.
         import App
         target_menu = App.STTargetMenu_GetTargetMenu()
         contact = target_menu.contact_for(target_ship) if target_menu is not None else None
@@ -559,3 +506,59 @@ class TargetListView(Panel):
         """Force the next render_payload to re-emit."""
         super().invalidate()
         self._last_snapshot = None
+
+
+def reconcile_subsystem_lock() -> None:
+    """If the player's locked subsystem has been destroyed, hand the lock
+    off to the next surviving sibling in its group; when the whole group is
+    gone, clear the lock back to ship-level targeting. Runs every tick so a
+    subsystem dying from any cause triggers the handoff.
+
+    Also drops the lock outright — no handoff, straight to ship-level —
+    when the locked ship has cloaked (`Contact.subsystems_targetable`
+    False). A fuzzy sensor return has no subsystem to hand the lock off
+    to; the player keeps the ship-level target, only the subsystem pick
+    clears. Reads the pushed record rather than re-deriving cloak state,
+    same reasoning as `_snapshot`'s subsystem suppression.
+
+    And drops the lock when there is no ship-level target at all.
+    `sensor_detection.clear_undetectable_player_lock` (a ship cloaking
+    OUTSIDE its detection bubble is one way there) calls
+    `player.SetTarget(None)`, but `ShipClass.SetTarget` never touches
+    `_target_subsystem` — nothing does, there are only four clear sites
+    and none of them covers this. Left alone, the stale subsystem
+    reference survives with no ship attached and resurfaces as
+    `selected_subsystem` the moment the player targets a DIFFERENT ship,
+    since `GetTargetSubsystem()` answers unconditionally regardless of
+    the current ship-level target. Pre-existing gap; closed here because
+    this is the natural place, not because this branch introduced it."""
+    from engine.core.game import Game_GetCurrentGame
+    game = Game_GetCurrentGame()
+    player = game.GetPlayer() if game is not None else None
+    if player is None or not hasattr(player, "GetTargetSubsystem"):
+        return
+    locked = player.GetTargetSubsystem()
+    if locked is None:
+        return
+
+    target = player.GetTarget()
+    if target is None:
+        player.SetTargetSubsystem(None)
+        return
+
+    import App
+    target_menu = App.STTargetMenu_GetTargetMenu()
+    contact = target_menu.contact_for(target) if target_menu is not None else None
+    if contact is not None and not contact.subsystems_targetable:
+        player.SetTargetSubsystem(None)
+        return
+
+    if not hasattr(locked, "IsDestroyed"):
+        return
+    try:
+        destroyed = bool(locked.IsDestroyed())
+    except Exception:
+        return
+    if not destroyed:
+        return
+    player.SetTargetSubsystem(_next_living_sibling(locked))
