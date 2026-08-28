@@ -33,7 +33,17 @@ def _inject(thread_id, exc_type):
 def raise_after(seconds, message):
     """Raise TimeoutError(message) in this thread if the block outlives `seconds`."""
     target = threading.get_ident()
-    fired = threading.Event()
+    fired = False   # the timer armed an exception
+    done = False    # control has left the guarded block
+    # Guards both flags AND the injections paired with them. Arming and disarming are
+    # two-step (set the flag, then call into the interpreter), and the steps
+    # must not interleave across threads: flag-set, block disarms, arming lands
+    # leaves a HarnessTimeout pending on a thread that has already left the
+    # guarded region, where it detonates in whatever ran next. Holding the lock
+    # across both steps makes each sequence atomic with respect to the other,
+    # so the exit either sees no fire and has nothing to clear, or sees a
+    # completed fire and clears it.
+    lock = threading.Lock()
 
     # SetAsyncExc instantiates the class with no arguments, so bake the message
     # into a per-call subclass rather than losing it.
@@ -44,8 +54,12 @@ def raise_after(seconds, message):
     )
 
     def _fire():
-        fired.set()
-        _inject(target, timeout_exc)
+        nonlocal fired
+        with lock:
+            if done:
+                return  # the block already exited; arming now would leak
+            fired = True
+            _inject(target, timeout_exc)
 
     timer = threading.Timer(seconds, _fire)
     timer.daemon = True
@@ -55,7 +69,11 @@ def raise_after(seconds, message):
     finally:
         timer.cancel()
         # The timer can fire in the window between the block finishing and the
-        # cancel landing. Clear any injection still pending so it cannot
-        # surface later, attributed to unrelated code.
-        if fired.is_set():
-            _inject(target, None)
+        # cancel landing. Close that window under the lock: mark the region
+        # left (so a still-stalled _fire returns without arming) and clear any
+        # injection that already landed, so neither can surface later
+        # attributed to unrelated code.
+        with lock:
+            done = True
+            if fired:
+                _inject(target, None)
