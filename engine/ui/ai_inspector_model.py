@@ -147,6 +147,8 @@ def serialize_ai_tree(ai) -> dict:
     # PreprocessingAI / BuilderAI: single contained AI + preprocessing method.
     if _has_attr_chain(ai, "_contained_ai") and hasattr(ai, "_preprocessing_method"):
         out["preprocessing_method"] = getattr(ai, "_preprocessing_method", "") or ""
+        out["preprocessor"] = _preprocessor_state(
+            ai.__dict__.get("_preprocessing_instance"))
         contained = getattr(ai, "_contained_ai", None)
         out["contained"] = serialize_ai_tree(contained) if contained is not None else None
         return out
@@ -209,6 +211,82 @@ def _has_attr_chain(obj, name: str) -> bool:
     return name in getattr(obj, "__dict__", {}) or hasattr(type(obj), name)
 
 
+def _preprocessor_state(inst) -> Optional[dict]:
+    """The preprocessor INSTANCE's own scalar state.
+
+    A PreprocessingAI can be ACTIVE, focused and updating on cadence while
+    doing nothing at all, because the decision lives in the script instance
+    rather than in the node. FireScript is the case in point: its Update
+    returns early and fires NOTHING when ``lWeapons`` is empty
+    (AI/Preprocessors.py), and ``bCallUsingWeaponTypeFunc`` is a one-shot latch
+    whose broadcast is the only thing that ever sets ConditionUsingWeapon. Node
+    status shows neither.
+
+    Deliberately generic -- scalars verbatim, containers as lengths, callables
+    and engine handles skipped -- so this reports whatever a preprocessor
+    happens to carry instead of hard-coding FireScript's fields and going
+    blind on the next one.
+    """
+    if inst is None:
+        return None
+    out = {"class": type(inst).__name__}
+    for key, val in list(getattr(inst, "__dict__", {}).items()):
+        if key.startswith("pCode") or callable(val):
+            continue
+        if isinstance(val, bool) or isinstance(val, (int, float, str)):
+            out[key] = val
+        elif isinstance(val, (list, tuple, dict, set)):
+            out[key + "__len"] = len(val)
+            # A weapon list is the field that matters; name what is in it.
+            if key.lower().startswith("lweapon"):
+                names = []
+                for w in list(val)[:12]:
+                    try:
+                        names.append(_name_of(w) or type(w).__name__)
+                    except Exception:
+                        names.append("?")
+                out[key + "__items"] = names
+        elif val is None:
+            out[key] = None
+    return out
+
+
+def _defence_report(ship) -> dict:
+    """Alert level and per-facing shield state.
+
+    Added for "AI ships randomly drop and raise shields in combat". Shields are
+    raised by ALERT LEVEL, which the AlertLevel preprocessor owns -- and its
+    LostFocus() restores the PREVIOUS level, so a node flickering on and off
+    the active path lowers and raises shields with it. A single snapshot cannot
+    show a flicker, but it can show WHICH of the two is moving: the alert level
+    (AlertLevel is doing it) or the shield charge alone (PowerManagement, or
+    the 0.5 s charge cadence, is).
+    """
+    out = {}
+    try:
+        out["alert_level"] = ship.GetAlertLevel()
+    except Exception:
+        out["alert_level"] = None
+    try:
+        shields = ship.GetShields()
+        out["shields_up"] = bool(shields.IsOn()) if shields is not None else None
+        if shields is not None:
+            facings = []
+            try:
+                n = int(shields.GetNumShields())
+            except Exception:
+                n = 0
+            for i in range(n):
+                try:
+                    facings.append(round(float(shields.GetSingleShieldPercentage(i)), 4))
+                except Exception:
+                    facings.append(None)
+            out["shield_percent_by_facing"] = facings
+    except Exception:
+        out["shields_up"] = None
+    return out
+
+
 def _weapon_report(ship) -> dict:
     """What the weapon-readiness CONDITIONS are actually reading.
 
@@ -220,7 +298,13 @@ def _weapon_report(ship) -> dict:
     """
     out = {"banks": [], "tubes": [], "ready_banks": 0, "ready_tubes": 0}
     try:
-        it = ship.StartGetSubsystemMatch(0)
+        import App
+        # CT_WEAPON_SYSTEM, not 0. Passing 0 matched nothing at all and the
+        # first capture reported ready_banks=0 for every ship INCLUDING the
+        # player -- which read as "all weapons dead" when it actually meant
+        # "this probe found no weapons". A measurement that fails silently in
+        # the direction of the hypothesis is worse than no measurement.
+        it = ship.StartGetSubsystemMatch(App.CT_WEAPON_SYSTEM)
         while True:
             sub = ship.GetNextSubsystemMatch(it)
             if sub is None:
@@ -312,5 +396,6 @@ def collect_all_ship_ai() -> List[dict]:
             if now is not None:
                 row["ai_walk_due_in"] = float(due) - now
         row["weapons"] = _weapon_report(ship)
+        row["defence"] = _defence_report(ship)
         out.append(row)
     return out
