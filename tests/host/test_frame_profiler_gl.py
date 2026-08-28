@@ -155,29 +155,48 @@ def test_toggling_off_and_on_clears_the_table(host):
 def test_resolving_does_not_stall_on_the_gpu(host):
     """The whole point of the 3-frame ring: reading results must not block.
 
-    Enabled frames should not cost dramatically more wall-clock than disabled
-    ones. A profiler that calls glGetQueryObjectui64v on an unready query
-    stalls the CPU on the GPU and measures its own stall — the failure this
-    catches would otherwise look like "rendering got slower".
+    A profiler that calls glGetQueryObjectui64v on an unready query stalls the
+    CPU on the GPU and measures its own stall — the failure this catches would
+    otherwise present as "rendering got slower".
+
+    MEASURED AS A MINIMUM OVER REPEATS, not a single timed run. The single-run
+    form failed intermittently in the full gate (never in isolation, never in
+    its own file, never across all of tests/host — only after several thousand
+    preceding tests) because it compares WALL CLOCK, and anything that perturbs
+    timing perturbs it: GC pressure, the RSS watchdog sampling twice a second,
+    thermal state.
+
+    The minimum is the right statistic for the property being defended. A real
+    pipeline stall blocks EVERY enabled frame, so it raises the floor and is
+    still caught. A load spike raises some batches and leaves the floor alone.
+    Taking a mean or a single sample conflates the two.
     """
     import time
 
+    def _best_of(batches, frames=60):
+        best = float("inf")
+        for _ in range(batches):
+            t0 = time.perf_counter()
+            _run_frames(frames)
+            best = min(best, time.perf_counter() - t0)
+        return best
+
     _run_frames(20)                      # warm, disabled
-    t0 = time.perf_counter()
-    _run_frames(60)
-    off_s = time.perf_counter() - t0
+    off_s = _best_of(5)
 
     host.profiler_set_enabled(True)
     _run_frames(20)                      # warm, enabled
-    t0 = time.perf_counter()
-    _run_frames(60)
-    on_s = time.perf_counter() - t0
+    on_s = _best_of(5)
 
-    # Generous bound: this is a smoke test for a pipeline stall (which shows
-    # up as a multiple), not a measurement of the profiler's overhead.
+    # MEASURED SENSITIVITY (injected a sleep into FrameTimer::end_frame on the
+    # enabled path and rebuilt): 400 us/frame passes, 2 ms/frame fails. That is
+    # the right order — a real glGetQueryObjectui64v block on an unready query
+    # waits for the GPU to catch up, which is milliseconds. Below ~1 ms/frame
+    # this is deliberately blind: that is overhead, not a stall, and chasing it
+    # here would make the test fail on load instead of on defects.
     assert on_s < off_s * 3.0 + 0.050, (
-        "enabled frames took %.1f ms vs %.1f ms disabled — looks like a stall"
-        % (on_s * 1000, off_s * 1000))
+        "enabled frames took %.1f ms vs %.1f ms disabled (best of 5 batches of "
+        "60) — looks like a stall" % (on_s * 1000, off_s * 1000))
 
 
 def test_the_table_describes_the_frame_it_reports(host):
