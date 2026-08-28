@@ -109,6 +109,29 @@ class TGPoint3:
             self.z /= n
         return n
 
+    def GetPerpendicularComponent(self, axis: "TGPoint3") -> "TGPoint3":
+        """The part of this vector at right angles to `axis`: ``v - (v·â)â``.
+
+        Real Appc surface (App.py:3402). Returns a NEW vector — SWIG marks the
+        result `thisown`, and BridgeHandlers.py:455 depends on it, Unitize()ing
+        the result while continuing to use the original camera forward.
+
+        The axis is used for its DIRECTION only, so its magnitude must not
+        change the answer: AvoidObstacles.CalculateDirectionAppeal
+        (AI/Preprocessors.py:1976) passes another ship's raw velocity in, and
+        scaling by that ship's speed would skew every escape-direction score. A
+        zero axis (a stationary obstacle, which that same call site hits
+        routinely) projects out nothing and returns a copy rather than dividing
+        by zero inside the AI tick.
+        """
+        n2 = axis.x * axis.x + axis.y * axis.y + axis.z * axis.z
+        if n2 <= 1e-24:
+            return TGPoint3(self.x, self.y, self.z)
+        k = (self.x * axis.x + self.y * axis.y + self.z * axis.z) / n2
+        return TGPoint3(self.x - k * axis.x,
+                        self.y - k * axis.y,
+                        self.z - k * axis.z)
+
     # ── Arithmetic ────────────────────────────────────────────────────────────
 
     def __add__(self, other: "TGPoint3") -> "TGPoint3":

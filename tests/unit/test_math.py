@@ -341,3 +341,63 @@ def test_tgpoint3_subtract_self_zeroes():
     other = TGPoint3(3.0, 4.0, 5.0)
     v.Subtract(other)
     assert (v.x, v.y, v.z) == (0.0, 0.0, 0.0)
+
+
+# ── GetPerpendicularComponent ──────────────────────────────────────────────
+#
+# Real published surface (App.py:3402, Appc.TGPoint3_GetPerpendicularComponent)
+# with three shipped call sites, and we had none:
+#
+#   AI/Preprocessors.py:1976-1977  AvoidObstacles.CalculateDirectionAppeal
+#   BridgeHandlers.py:455          flattening the camera forward against up
+#   Maelstrom/Episode5/E5M4.py:993
+#
+# TGPoint3 is a plain class, not a TGObject, so the miss RAISES rather than
+# degrading to a _Stub -- it was unreachable only because the AvoidObstacles
+# scan above it never got as far as scoring a direction.
+
+def test_get_perpendicular_component_strips_the_aligned_part():
+    v = TGPoint3(3.0, 4.0, 0.0)
+    out = v.GetPerpendicularComponent(TGPoint3(1.0, 0.0, 0.0))
+    assert (out.x, out.y, out.z) == (0.0, 4.0, 0.0)
+
+
+def test_get_perpendicular_component_does_not_mutate_self():
+    """SWIG returns a fresh TGPoint3 (App.py:3402 sets thisown on a new
+    object). BridgeHandlers relies on it: it Unitize()s the result and then
+    keeps using the original camera forward."""
+    v = TGPoint3(3.0, 4.0, 0.0)
+    out = v.GetPerpendicularComponent(TGPoint3(1.0, 0.0, 0.0))
+    assert (v.x, v.y, v.z) == (3.0, 4.0, 0.0)
+    assert out is not v
+
+
+def test_get_perpendicular_component_ignores_the_axis_magnitude():
+    """v - (v.â)â uses the axis DIRECTION only; a non-unit axis must give the
+    same answer or the AvoidObstacles appeal scoring is scaled by whatever
+    speed the other ship happened to be doing."""
+    v = TGPoint3(2.0, 5.0, -1.0)
+    a = v.GetPerpendicularComponent(TGPoint3(0.0, 0.0, 1.0))
+    b = v.GetPerpendicularComponent(TGPoint3(0.0, 0.0, 250.0))
+    assert (a.x, a.y, a.z) == pytest.approx((b.x, b.y, b.z))
+
+
+def test_get_perpendicular_component_of_a_parallel_vector_is_zero():
+    v = TGPoint3(0.0, 7.0, 0.0)
+    out = v.GetPerpendicularComponent(TGPoint3(0.0, 1.0, 0.0))
+    assert (out.x, out.y, out.z) == pytest.approx((0.0, 0.0, 0.0))
+
+
+def test_get_perpendicular_component_result_is_orthogonal_to_the_axis():
+    v = TGPoint3(1.0, 2.0, 3.0)
+    axis = TGPoint3(-4.0, 5.0, 6.0)
+    assert v.GetPerpendicularComponent(axis).Dot(axis) == pytest.approx(0.0)
+
+
+def test_get_perpendicular_component_of_a_zero_axis_returns_the_vector():
+    """A stationary obstacle has zero velocity, and AvoidObstacles passes that
+    velocity straight in as the axis. Projecting onto nothing removes nothing;
+    dividing by its length would be a ZeroDivisionError inside the AI tick."""
+    v = TGPoint3(1.0, 2.0, 3.0)
+    out = v.GetPerpendicularComponent(TGPoint3(0.0, 0.0, 0.0))
+    assert (out.x, out.y, out.z) == (1.0, 2.0, 3.0)

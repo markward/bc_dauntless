@@ -275,6 +275,52 @@ def _reconcile_focus(root_ai, reached) -> None:
     root_ai._focused_preprocessors = list(reached)
 
 
+def _retain_subtree_focus(ai) -> None:
+    """Carry a suppressed subtree's focus across a PS_SKIP_ACTIVE tick.
+
+    PS_SKIP_ACTIVE means "I am handling this tick, do not run my child" —
+    US_ACTIVE, child not run (PreprocessingAI::Update's switch at 0x48eab1).
+    The child has NOT left the active dispatch path; its parent is momentarily
+    driving instead. But the child is not ticked, so nothing records it in
+    `_reached_this_tick`, and `_reconcile_focus` would read the absence as a
+    departure and dispatch LostFocus down the whole subtree.
+
+    That is not a cosmetic distinction. `AvoidObstacles` sits ABOVE the attack
+    tree in BC's own QuickBattleAI and returns PS_SKIP_ACTIVE for as long as a
+    ship is evading — measured, three of twelve ships in a fight evaded for
+    250+ of 300 consecutive ticks. For those five seconds `AlertLevel.LostFocus`
+    had restored the pre-combat alert level (shields down) and
+    `FireScript.LostFocus` had called StopFiring(). Dodging would switch
+    fighting off.
+
+    Re-record exactly the nodes that already hold focus, so reconciliation sees
+    no change at all: no LostFocus on the way in, and no second GotFocus on the
+    way out (AlertLevel's GotFocus runs its combat-entry side effects).
+
+    PS_SKIP_ACTIVE only. PS_SKIP_DORMANT says the node IS dormant — a
+    targetless SelectTarget — and a dormant subtree really has left the path,
+    which is what test_lost_focus_when_node_drops_off_active_path pins.
+
+    Focus only, deliberately. Tree activation (_reconcile_active,
+    SetActive/SetInactive) answers a different question — "did dispatch reach
+    this node" — whose answer really is no; those calls are edge-guarded and
+    re-arm when the skip ends.
+    """
+    node = ai._contained_ai
+    if node is None:
+        return
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n.__dict__.get("_has_focus"):
+            _reached_this_tick.append(n)
+        child = n.__dict__.get("_contained_ai")
+        if child is not None:
+            stack.append(child)
+        for c in (n.__dict__.get("_ais") or ()):
+            stack.append(c[1] if isinstance(c, tuple) else c)
+
+
 def _reconcile_active(root_ai, reached) -> None:
     """Dispatch SetActive()/SetInactive() to every AI node as it enters/leaves
     the active dispatch path this root tick.
@@ -1145,6 +1191,7 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
 
         if result == PS_SKIP_ACTIVE:
             ai._status = US_ACTIVE
+            _retain_subtree_focus(ai)
             return ai._status
         if result == PS_SKIP_DORMANT:
             ai._status = US_DORMANT
@@ -1178,6 +1225,7 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
         last = ai._last_preprocess_status
         if last == PS_SKIP_ACTIVE:
             ai._status = US_ACTIVE
+            _retain_subtree_focus(ai)
             return ai._status
         if last == PS_SKIP_DORMANT:
             ai._status = US_DORMANT

@@ -205,8 +205,34 @@ def aggregate_suns_for_renderer(project_root, pSets):
 
 # ── ProximityManager ────────────────────────────────────────────────────────
 # SDK call sites (Maelstrom/.../E6M4.py): pSet.GetProximityManager().AddObject(pProbe)
-# Per-set proximity tracker — Phase 1 stores added objects so SDK chains
-# round-trip; the per-tick proximity evaluation is Phase 2.
+# Per-set proximity tracker.
+
+class _ProximityIteration(tuple):
+    """The handle returned by GetNearObjects, walked by GetNextObject.
+
+    Seven shipped SDK call sites use the same three-call contract — the handle
+    is opaque to them and the cursor lives with it, not with the manager
+    (FireScript's occlusion walk and AvoidObstacles' scan both run inside one
+    tick, and a manager-held cursor would let one consume the other's objects).
+
+    A tuple subclass, so a caller that treats the return value as the result
+    set — which is what our own code and tests did while GetNextObject was a
+    placeholder — keeps working unchanged.
+    """
+    # No __slots__: a tuple subclass cannot have a non-empty one (the base is
+    # variable-length), so the cursor lives in the instance __dict__.
+    def __new__(cls, items):
+        self = super().__new__(cls, items)
+        self._cursor = 0
+        return self
+
+    def next_object(self):
+        if self._cursor >= len(self):
+            return None
+        obj = self[self._cursor]
+        self._cursor += 1
+        return obj
+
 
 class ProximityManager:
     def __init__(self, pSet=None):
@@ -246,44 +272,96 @@ class ProximityManager:
     def GetNumObjects(self) -> int:
         return len(self._objects)
 
-    def GetNearObjects(self, point, radius, eType=None) -> tuple:
-        """Return objects within `radius` world-space units of `point`.
-        Used by SDK conditions (ConditionInRange) to gate on proximity.
+    def _candidates(self):
+        """Everything this manager can report: the containing set's objects,
+        plus anything hand-registered through AddObject.
+
+        BC's ProximityManager IS the set's spatial index — the SDK's own
+        ``lDontAvoidTypes`` filter (AvoidObstacles) exists precisely because
+        the walk hands back every class of object in the set, proximity checks
+        included. Ours only ever held what AddObject was called with, and
+        nothing registers ships, so a live QuickBattle scene had 5 ships in the
+        world and GetNumObjects() == 0.
+
+        Read through to the set each call rather than mirroring it into
+        ``_objects``: a private copy goes stale the moment a ship is destroyed,
+        and handing a dead ship back to AvoidObstacles makes it dodge a hole in
+        space. AddObject entries that are also set members are reported once
+        (E6M4 registers a probe that is in the set too), because the SDK loops
+        only skip the searching ship itself and would otherwise score one
+        object as two obstacles at the same point.
+        """
+        out = []
+        seen = set()
+        pSet = self._set
+        if pSet is not None:
+            try:
+                members = pSet.GetObjectList()
+            except Exception:
+                members = ()
+            for obj in members:
+                if id(obj) not in seen:
+                    seen.add(id(obj))
+                    out.append(obj)
+        for obj in self._objects:
+            if id(obj) not in seen:
+                seen.add(id(obj))
+                out.append(obj)
+        return out
+
+    def GetNearObjects(self, point, radius, eType=None):
+        """Objects within `radius` world-space units of `point`.
+
+        Returns an iteration handle (also a plain sequence — see
+        _ProximityIteration). SDK callers walk it with GetNextObject and
+        release it with EndObjectIteration; ConditionInRange and our own code
+        read it directly.
 
         SDK call sites pass an optional third arg (MissionLib.py:5035 passes
         ``1`` — a type filter / encompassing-volume flag in the real engine);
-        Phase 1 accepts and ignores it so SDK call sites round-trip."""
+        accepted and ignored so those call sites round-trip.
+        """
         r2 = float(radius) * float(radius)
+        px, py, pz = point.x, point.y, point.z
         result = []
-        for obj in self._objects:
+        for obj in self._candidates():
             loc = obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation") else None
             if loc is None:
                 continue
-            dx = loc.x - point.x
-            dy = loc.y - point.y
-            dz = loc.z - point.z
+            dx = loc.x - px
+            dy = loc.y - py
+            dz = loc.z - pz
             if dx * dx + dy * dy + dz * dz <= r2:
                 result.append(obj)
-        return tuple(result)
+        return _ProximityIteration(result)
 
     def GetLineIntersectObjects(self, *args) -> tuple:
         return ()
 
     def GetNextObject(self, iterator=None):
-        """Return the next object from a proximity iterator.
+        """Advance a proximity iteration handle; None when it is exhausted.
 
-        Phase 1 stub: GetLineIntersectObjects returns (), so the
-        iterator is always empty — this method returns None to terminate
-        SDK while-loops on the first call. Real iteration lands when
-        the proximity subsystem itself gets real work (planet/large-ship
-        avoidance for AI scripts like Intercept).
+        ⚠️ This was a hardcoded ``return None`` — a Phase-1 placeholder — which
+        meant every SDK ``while pObject != None:`` walk exited BEFORE its first
+        iteration. Seven shipped call sites were silent no-ops as a result, the
+        load-bearing one being AvoidObstacles.TestCourseOverride: it always
+        returned "nothing to avoid", so AI collision avoidance never ran for any
+        ship. A placeholder returning a real value leaves no attribute miss, so
+        docs/stub_heatmap.md could never have shown it.
+
+        Tolerant of a handle we did not issue (None, or a plain sequence from
+        older code): those simply report exhausted rather than raising, matching
+        how the rest of the SDK surface degrades.
         """
+        if isinstance(iterator, _ProximityIteration):
+            return iterator.next_object()
         return None
 
     def EndObjectIteration(self, iterator=None) -> None:
-        """Release a proximity iterator handle. Phase 1 stub: no-op
-        because GetLineIntersectObjects returns () and the iterator
-        handle is opaque."""
+        """Release a proximity iteration handle. Nothing to free — the handle
+        owns its own cursor — but SDK code calls this on paths where the handle
+        was never created (ConditionInLineOfSight bails early), so it must
+        accept anything."""
         pass
 
     def DumpCollisions(self) -> None:
