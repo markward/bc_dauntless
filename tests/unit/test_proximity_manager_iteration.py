@@ -187,3 +187,85 @@ def test_an_object_removed_from_the_set_stops_being_reported():
     pSet.RemoveObjectFromSet("A")
 
     assert _drain(pm, pm.GetNearObjects(TGPoint3(0, 0, 0), 100.0)) == []
+
+
+# ── what counts as a proximity participant ──────────────────────────────────
+#
+# A set holds authoring and rendering bookkeeping alongside real objects. The
+# QuickBattle region ships with a `Waypoint` ("Player Start"), two
+# `LightPlacement`s and a `GridClass` -- all at the origin, all radius 0. None
+# of them occupies space, and handing them to the SDK's proximity walks does
+# real damage:
+#
+#   * AvoidObstacles steered around them -- measured, ships dodging
+#     "LightPlacement(Ambient Light)" 166 times in 300 ticks.
+#   * DockWithStarbase divided by zero. Its walk subtracts the object's
+#     position from the docking entry's and unitizes; for an object sitting ON
+#     the entry that vector is zero, and `fMoveDistance / vDiff.Length()`
+#     raises. The SDK guards that case at line 94 -- and Python 2's cross-type
+#     comparison meant the guard never fired, so BC cannot have been returning
+#     zero-distance objects here either.
+#
+# The rule keeps physics objects unconditionally: a ship in a headless run
+# reports radius 0 until the renderer's realize step sets it, and excluding
+# those would make avoidance silently do nothing in exactly the environment the
+# tests run in. Non-physics objects have to actually occupy space, which keeps
+# planets and suns (real radii) and drops the markers.
+
+def test_placement_markers_are_not_proximity_participants():
+    from engine.appc.placement import PlacementObject
+
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    marker = PlacementObject()
+    marker.SetName("Docking Entry")
+    marker.SetTranslateXYZ(0.0, 0.0, 0.0)
+    pSet.AddObjectToSet(marker, "Docking Entry")
+
+    assert _drain(pm, pm.GetNearObjects(TGPoint3(0, 0, 0), 100.0)) == []
+
+
+def test_a_zero_radius_non_physics_object_is_not_a_participant():
+    """`GridClass` is a plain ObjectClass with radius 0 -- the set's reference
+    grid, not an obstacle."""
+    from engine.appc.objects import ObjectClass
+
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    grid = ObjectClass()
+    grid.SetName("grid")
+    grid.SetTranslateXYZ(0.0, 0.0, 0.0)
+    pSet.AddObjectToSet(grid, "grid")
+
+    assert _drain(pm, pm.GetNearObjects(TGPoint3(0, 0, 0), 100.0)) == []
+
+
+def test_a_physics_object_participates_even_with_no_radius_yet():
+    """Headless has no realize step, so GetRadius() reads 0 on a real ship.
+    Dropping those would make every proximity walk vacuous under test."""
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    ship = _ship_at("A", 10.0, 0.0, 0.0)
+    ship.SetRadius(0.0)
+    pSet.AddObjectToSet(ship, "A")
+
+    assert [id(o) for o in _drain(pm, pm.GetNearObjects(TGPoint3(0, 0, 0), 100.0))] \
+        == [id(ship)]
+
+
+def test_a_non_physics_object_that_occupies_space_participates():
+    """A planet is an ObjectClass, not a PhysicsObjectClass, and AvoidObstacles
+    is written to expect exactly that (it null-checks PhysicsObjectClass_Cast
+    and treats the miss as zero velocity)."""
+    from engine.appc.objects import ObjectClass
+
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    planet = ObjectClass()
+    planet.SetName("planet")
+    planet.SetTranslateXYZ(20.0, 0.0, 0.0)
+    planet.SetRadius(50.0)
+    pSet.AddObjectToSet(planet, "planet")
+
+    assert [id(o) for o in _drain(pm, pm.GetNearObjects(TGPoint3(0, 0, 0), 100.0))] \
+        == [id(planet)]

@@ -207,6 +207,40 @@ def aggregate_suns_for_renderer(project_root, pSets):
 # SDK call sites (Maelstrom/.../E6M4.py): pSet.GetProximityManager().AddObject(pProbe)
 # Per-set proximity tracker.
 
+def _is_proximity_participant(obj) -> bool:
+    """Whether `obj` belongs in the set's proximity index at all.
+
+    A SetClass holds authoring and rendering bookkeeping next to real objects:
+    the QuickBattle region ships a `Waypoint` ("Player Start"), two
+    `LightPlacement`s and a `GridClass`, all at the origin and all radius 0.
+    Handing those to the SDK's proximity walks does real damage — measured,
+    AvoidObstacles steered around "LightPlacement(Ambient Light)" 166 times in
+    300 ticks, and DockWithStarbase divided by zero on an object sitting
+    exactly on the docking-entry placement it measures from.
+
+    That last one is also the evidence for where BC drew this line: the SDK
+    guards the zero-distance case at DockWithStarbase.py:94, and Python 2's
+    cross-type comparison meant the guard never fired — so BC cannot have been
+    returning zero-distance markers there either.
+
+    Physics objects qualify unconditionally, NOT on radius: headless has no
+    renderer realize step, so a real ship reports GetRadius() == 0, and a
+    radius test would empty every proximity walk in exactly the environment the
+    tests run in. Everything else has to actually occupy space, which keeps
+    planets and suns (real radii, and AvoidObstacles is written to expect
+    non-physics objects — it null-checks PhysicsObjectClass_Cast) and drops the
+    markers.
+    """
+    from engine.appc.objects import PhysicsObjectClass
+
+    if isinstance(obj, PhysicsObjectClass):
+        return True
+    try:
+        return float(obj.GetRadius()) > 0.0
+    except Exception:
+        return False
+
+
 class _ProximityIteration(tuple):
     """The handle returned by GetNearObjects, walked by GetNextObject.
 
@@ -300,7 +334,7 @@ class ProximityManager:
             except Exception:
                 members = ()
             for obj in members:
-                if id(obj) not in seen:
+                if id(obj) not in seen and _is_proximity_participant(obj):
                     seen.add(id(obj))
                     out.append(obj)
         for obj in self._objects:
