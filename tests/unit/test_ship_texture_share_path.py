@@ -17,6 +17,7 @@ The Galor/Keldon NIFs reference ``CardGalor01_glow.tga``, which lives ONLY in
 
 import App
 from engine.appc.sets import SetClass_Create
+from tests.helpers.bc_assets import require_game_dir
 
 
 class _CaptureRenderer:
@@ -53,6 +54,7 @@ def _norm(paths):
 
 
 def test_cardassian_share_path_reaches_texture_search():
+    require_game_dir("data/Models/Ships")
     from engine import host_loop as hl
 
     # Reproduce the LIVE cold path: our engine loads NIFs itself and never calls

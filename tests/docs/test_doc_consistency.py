@@ -89,3 +89,66 @@ def test_heatmap_header_open_count_matches_table():
     assert declared == len(rows), (
         f"heatmap header declares {declared} open rows; table has {len(rows)}"
     )
+
+
+# --- README Windows build instructions vs the actual CEF pinning ----------
+#
+# The Windows build section and the CEF hash table drifted apart inside a single
+# branch: the section was written while CEF was unpinned off macOS and told
+# readers to build with -DDAUNTLESS_ENABLE_CEF=OFF, then two later commits on
+# that same branch pinned windows64 and taught every native target to link
+# under MSVC. The instructions survived, telling Windows users to switch off
+# the two things that had just been made to work.
+
+NATIVE_CMAKE = PROJECT_ROOT / "native" / "CMakeLists.txt"
+
+
+def pinned_cef_platforms() -> dict:
+    """CEF_PLATFORM -> whether native/CMakeLists.txt pins a hash for it."""
+    text = NATIVE_CMAKE.read_text(encoding="utf-8")
+    block = re.search(r'set\(CEF_VERSION.*?\n\s*else\(\)', text, re.DOTALL)
+    assert block, "CEF platform selection block not found in native/CMakeLists.txt"
+    out = {}
+    platform = None
+    for line in block.group(0).splitlines():
+        m = re.search(r'set\(CEF_PLATFORM "([^"]+)"\)', line)
+        if m:
+            platform = m.group(1)
+            continue
+        m = re.search(r'set\(CEF_URL_HASH "([^"]*)"', line)
+        if m and platform:
+            out[platform] = bool(m.group(1))
+            platform = None
+    return out
+
+
+def windows_build_section() -> str:
+    text = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    m = re.search(r"### Building on Windows\n(.*?)(?=\n## )", text, re.DOTALL)
+    assert m, "README has no '### Building on Windows' section"
+    return m.group(1)
+
+
+def test_readme_does_not_tell_windows_to_disable_a_pinned_cef():
+    if not pinned_cef_platforms().get("windows64"):
+        return  # unpinned again: recommending OFF would be correct
+    recipe = re.findall(r"```bat\n(.*?)```", windows_build_section(), re.DOTALL)
+    assert recipe, "Windows section has no ```bat recipe"
+    for block in recipe:
+        assert "DAUNTLESS_ENABLE_CEF=OFF" not in block, (
+            "windows64 has a pinned CEF hash, but the README's Windows recipe "
+            "still disables CEF — the instructions have drifted from the build")
+
+
+def test_readme_does_not_tell_windows_to_skip_native_tests_that_build():
+    """DAUNTLESS_BUILD_TESTS=OFF was advised because the native test targets
+    lacked an MSVC force-load arm. They have one now (/WHOLEARCHIVE), so the
+    advice is stale the moment those arms exist."""
+    msvc_arms = [p for p in (PROJECT_ROOT / "native" / "tests").rglob("CMakeLists.txt")
+                 if "WHOLEARCHIVE" in p.read_text(encoding="utf-8")]
+    if not msvc_arms:
+        return
+    for block in re.findall(r"```bat\n(.*?)```", windows_build_section(), re.DOTALL):
+        assert "DAUNTLESS_BUILD_TESTS=OFF" not in block, (
+            f"{len(msvc_arms)} native test target(s) carry an MSVC /WHOLEARCHIVE "
+            "arm, but the README still tells Windows users to skip building them")

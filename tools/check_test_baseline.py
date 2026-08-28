@@ -34,6 +34,9 @@ BUILD_DIR = os.path.join(ROOT, "build")
 CEILING_MB = os.environ.get("CEILING_MB", "4000")
 
 _PYTEST_FAILED = re.compile(r"^FAILED (\S+)")
+# pytest always prints a counts summary ("12 passed, 1 failed in 3.2s",
+# "no tests ran in 0.1s"). Its absence means the runner never got that far.
+_PYTEST_RAN = re.compile(r"(\d+ (passed|failed|error|skipped|xfailed|xpassed)|no tests ran)")
 # ctest summary block: "\t188 - FrameTest.Name (Failed)" / "(Subprocess aborted)" / "(Timeout)"
 _CTEST_FAILED = re.compile(r"^\s*\d+ - (\S+) \((?:Failed|Subprocess aborted|Timeout|Child aborted)\)")
 
@@ -75,6 +78,17 @@ def run_pytest():
     if proc.returncode not in (0, 1) and not failed:
         sys.stdout.write(out[-2000:])
         print("  !! pytest exited %d with no parseable failures" % proc.returncode, flush=True)
+        return failed, True
+    # Positive evidence the suite actually ran. rc==1 is pytest's "there were
+    # failures", but it is also what a crashed wrapper returns, so rc alone
+    # cannot tell "no failures" from "nothing ran" -- and the difference is a
+    # green gate over an unrun suite. The RSS watchdog used to die on import
+    # under Windows (os.setsid) and this reported "pytest: 0 failure(s)" with
+    # 3 tests failing underneath.
+    if not _PYTEST_RAN.search(out):
+        sys.stdout.write(out[-2000:])
+        print("  !! pytest produced no summary line - the suite did not run",
+              flush=True)
         return failed, True
     print("  pytest: %d failure(s)" % len(failed), flush=True)
     return failed, False

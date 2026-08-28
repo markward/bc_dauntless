@@ -1,6 +1,7 @@
 import json
 from engine.core import ids
 from engine.ui.tactical_orders_panel import TacticalOrdersPanel
+from tests.helpers.bc_assets import require_game_asset
 
 
 class _FakeButton:
@@ -98,6 +99,7 @@ def test_invisible_snapshot_emits_no_rows():
 # dependency) since the bug is about routing logic, not widget shape.
 
 def test_resolve_panes_reads_orders_status_ui_pane():
+    require_game_asset("data/TGL/Bridge Menus.tgl")
     import App
     import Bridge.TacticalMenuHandlers as T
 

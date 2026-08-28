@@ -69,6 +69,14 @@ elseif(UNIX)
         "LINKER:--whole-archive"
         "$<TARGET_FILE:nif>"
         "LINKER:--no-whole-archive")
+elseif(MSVC)
+    # /WHOLEARCHIVE is the MSVC spelling. Without this arm the Windows build
+    # links clean and then fails at runtime on the first model load -- the
+    # exact "no NiNode root in NIF file" the comment above describes.
+    target_link_options(_dauntless_host PRIVATE
+        "/WHOLEARCHIVE:$<TARGET_FILE:nif>")
+    target_link_options(dauntless PRIVATE
+        "/WHOLEARCHIVE:$<TARGET_FILE:nif>")
 endif()
 
 if(DAUNTLESS_ENABLE_CEF)
@@ -86,20 +94,31 @@ if(DAUNTLESS_ENABLE_CEF)
             VERBATIM
         )
     elseif(WIN32)
-        # Windows: CEF ships .dll files in Release/. Copy alongside the
-        # executable so LoadLibrary finds them at runtime.
+        # Windows: CEF splits its runtime in two. Release/ holds the binaries
+        # (libcef.dll et al) and Resources/ holds the data CEF loads at
+        # startup -- resources.pak, icudtl.dat, locales/. Copying only
+        # Release/ produces an executable that links and launches and then
+        # fails inside CefInitialize looking for its .pak files.
         add_custom_command(TARGET dauntless POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CEF_ROOT}/Release"
                 "${CMAKE_BINARY_DIR}"
-            COMMENT "Copying CEF runtime DLLs alongside dauntless.exe"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CEF_ROOT}/Resources"
+                "${CMAKE_BINARY_DIR}"
+            COMMENT "Copying CEF runtime DLLs and resources alongside dauntless.exe"
             VERBATIM
         )
     elseif(UNIX)
-        # Linux: CEF ships libcef.so + ICU + locale paks in Release/. Copy.
+        # Linux: same split as Windows -- libcef.so in Release/, the .pak and
+        # locale data in Resources/. Untested (nobody has built CEF here), but
+        # copying only Release/ is wrong on this platform for the same reason.
         add_custom_command(TARGET dauntless POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CEF_ROOT}/Release"
+                "${CMAKE_BINARY_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CEF_ROOT}/Resources"
                 "${CMAKE_BINARY_DIR}"
             COMMENT "Copying CEF runtime files alongside dauntless"
             VERBATIM

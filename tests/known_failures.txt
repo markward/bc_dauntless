@@ -37,3 +37,4 @@
 # capacity) AND stop PowerDisplay's headless Init/Update from crashing on widgets
 # the test never builds. Tracked as a follow-up; delete this line once fixed.
 pytest:tests/unit/test_engineer_emitters.py::test_shield_level_change_announces
+

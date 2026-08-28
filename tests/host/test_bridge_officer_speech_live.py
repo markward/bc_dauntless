@@ -19,6 +19,7 @@ import pytest
 pytest.importorskip("_dauntless_host")
 
 from tests.host.test_quickbattle_boot import _fresh_quickbattle_loader  # noqa: F401
+from tests.helpers.bc_assets import require_game_asset
 
 
 def _find(node, label):
@@ -54,6 +55,7 @@ def _click(panel, data, root_label, button_label):
 
 
 def test_quickbattle_helm_clicks_speak_through_live_path(monkeypatch):
+    require_game_asset("data/TGL/Bridge Crew General.tgl")
     import App
     hl, controller = _fresh_quickbattle_loader(monkeypatch)
     controller.loader.load_quickbattle()

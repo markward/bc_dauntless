@@ -24,6 +24,9 @@ elseif(UNIX)
         "LINKER:--whole-archive"
         "$<TARGET_FILE:nif>"
         "LINKER:--no-whole-archive")
+elseif(MSVC)
+    target_link_options(voxel_tests PRIVATE
+        "/WHOLEARCHIVE:$<TARGET_FILE:nif>")
 endif()
 
 gtest_discover_tests(voxel_tests)

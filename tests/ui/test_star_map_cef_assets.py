@@ -11,13 +11,13 @@ ASSETS = Path(__file__).resolve().parents[2] / "native" / "assets" / "ui-cef"
 
 
 def test_script_and_stylesheet_are_registered_in_index():
-    index = (ASSETS / "index.html").read_text()
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
     assert "js/star_map.js" in index
     assert "css/star_map.css" in index
 
 
 def test_panel_section_exists_with_the_required_ids():
-    index = (ASSETS / "index.html").read_text()
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
     for el in ("star-map-panel", "star-map-viewport",
                "star-map-labels", "star-map-warps"):
         assert 'id="' + el + '"' in index, el
@@ -26,7 +26,7 @@ def test_panel_section_exists_with_the_required_ids():
 def test_map_viewport_is_transparent():
     """The GL pass draws beneath. An opaque background here hides the map
     entirely — the single most likely way to ship a black rectangle."""
-    css = (ASSETS / "css" / "star_map.css").read_text()
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
     block = re.search(r"#star-map-viewport\s*\{[^}]*\}", css)
     assert block, "no #star-map-viewport rule"
     assert "transparent" in block.group(0)
@@ -80,7 +80,7 @@ def _ancestor_chain(html, target_id):
 
 
 def _stylesheets_in_load_order():
-    index = (ASSETS / "index.html").read_text()
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
     return [ASSETS / href
             for href in re.findall(r'<link rel="stylesheet" href="([^"]+)"',
                                    index)]
@@ -144,7 +144,7 @@ def _effective_background(element, chain):
     """
     best, best_key = None, None
     for order, path in enumerate(_stylesheets_in_load_order()):
-        for selectors, body in _rules(path.read_text()):
+        for selectors, body in _rules(path.read_text(encoding="utf-8")):
             decls = re.findall(r"background(?:-color)?\s*:\s*([^;]+)", body)
             if not decls:
                 continue
@@ -170,7 +170,7 @@ def _is_transparent(value):
 
 
 def test_no_ancestor_of_the_map_viewport_paints_an_opaque_background():
-    index = (ASSETS / "index.html").read_text()
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
     chain = _ancestor_chain(index, "star-map-viewport")
     assert any(el["id"] == "star-map-panel" for el in chain), chain
     assert any("cp-modal" in el["classes"] for el in chain), chain
@@ -188,7 +188,7 @@ def test_the_opaque_star_map_chrome_still_has_a_fill():
     the warp-point list and the footer painting transparently over the live
     scene. Each chrome piece that sits inside the (now transparent) modal
     carries its own fill."""
-    index = (ASSETS / "index.html").read_text()
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
     chain = _ancestor_chain(index, "star-map-viewport")
     targets = {"tag": "div", "id": "star-map-targets", "classes": set()}
     footer = {"tag": "div", "id": "", "classes": {"cp-footer"}}
@@ -200,7 +200,7 @@ def test_the_opaque_star_map_chrome_still_has_a_fill():
     # bare <ul> carries the UA `margin: 1em 0`, which would inset it top and
     # bottom. (#star-map-warps has no .sc-col class, so it gets no reset from
     # configuration_panel.css.)
-    css = (ASSETS / "css" / "star_map.css").read_text()
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
     block = re.search(r"#star-map-warps\s*\{([^}]*)\}", css)
     assert block, "no #star-map-warps rule"
     assert re.search(r"(?<!-)margin\s*:\s*0\b", block.group(1)), \
@@ -209,7 +209,7 @@ def test_the_opaque_star_map_chrome_still_has_a_fill():
 
 
 def _viewport_css_body():
-    css = (ASSETS / "css" / "star_map.css").read_text()
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
     block = re.search(r"#star-map-viewport\s*\{([^}]*)\}", css)
     assert block, "no #star-map-viewport rule"
     return block.group(1)
@@ -254,7 +254,7 @@ def test_viewport_css_centring_matches_the_python_formula():
     # reserve space with a hard-coded margin-left duplicating MAP_W is gone —
     # the target list is a centred popup, which cannot drift out of step.
     assert MAP_W == MODAL_W
-    css = (ASSETS / "css" / "star_map.css").read_text()
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
     warps_block = re.search(r"#star-map-warps\s*\{([^}]*)\}", css)
     assert warps_block, "no #star-map-warps rule"
     assert "margin-left" not in warps_block.group(1), (
@@ -285,8 +285,8 @@ def test_the_map_rect_fits_the_modal_body():
     rather than a Python-side assertion about it."""
     assert HEADER_H + MAP_H + FOOTER_H == MODAL_H
 
-    cp = (ASSETS / "css" / "configuration_panel.css").read_text()
-    sm = (ASSETS / "css" / "star_map.css").read_text()
+    cp = (ASSETS / "css" / "configuration_panel.css").read_text(encoding="utf-8")
+    sm = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
 
     # .cp-header is a fixed height in the shared chrome; .cp-footer is given
     # one here (it is otherwise padding-sized, i.e. font-dependent, which is
@@ -334,12 +334,12 @@ def test_python_rect_reproduces_the_css_rect_at_two_view_sizes():
 
 
 def test_render_fn_matches_the_python_payload_name():
-    js = (ASSETS / "js" / "star_map.js").read_text()
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
     assert "function setStarMapPanel(" in js
 
 
 def test_events_use_the_panel_routing_prefix():
-    js = (ASSETS / "js" / "star_map.js").read_text()
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
     # star-map/select-system is deliberately excluded: nothing in the JS
     # fires it (map selection goes through star-map/pick:<x>,<y>); the panel
     # still handles select-system: server-side (T4's tests cover it).
@@ -359,7 +359,7 @@ def test_cancel_event_is_wired_from_the_cancel_button():
     from star_map.js. Assert against that real firing site so removing the
     onclick and leaving star_map.js's header-comment mention would fail
     this test, rather than passing vacuously."""
-    index = (ASSETS / "index.html").read_text()
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
     section = re.search(r'<section id="star-map-panel".*?</section>',
                          index, re.DOTALL)
     assert section, "no #star-map-panel section"
@@ -371,11 +371,11 @@ def test_nebula_labels_render_subordinate_to_system_labels():
     producer with no consumer), and must read as scenery: a distinct class,
     smaller and dimmer than .sm-label, emitted BEFORE the system labels so
     those paint on top."""
-    js = (ASSETS / "js" / "star_map.js").read_text()
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
     assert "disc_labels" in js
     assert "sm-label--disc" in js
 
-    css = (ASSETS / "css" / "star_map.css").read_text()
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
 
     def _font_px(selector):
         block = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
@@ -388,19 +388,19 @@ def test_nebula_labels_render_subordinate_to_system_labels():
 
 
 def test_labels_are_escaped():
-    js = (ASSETS / "js" / "star_map.js").read_text()
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
     assert "escapeHtmlSM" in js
 
 
 def test_course_and_selected_are_styled_from_different_state_keys():
     """course_system and selected_system are different states (course-set
     vs merely-clicked) and must not share a CSS class."""
-    js = (ASSETS / "js" / "star_map.js").read_text()
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
     assert "state.course_system" in js
     assert "state.selected_system" in js
     assert "sm-label--course" in js
     assert "sm-label--selected" in js
-    css = (ASSETS / "css" / "star_map.css").read_text()
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
     assert re.search(r"\.sm-label--course\s*\{", css)
     assert re.search(r"\.sm-label--selected\s*\{", css)
 
@@ -409,7 +409,7 @@ def test_the_popup_dismiss_control_is_a_close_icon_on_the_right():
     """A cross top-right, not a Back button top-left. The action is unchanged
     (still star-map/back — it dismisses the popup, while the modal's own
     Cancel closes Set Course); only the affordance moved."""
-    index = (ASSETS / "index.html").read_text()
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
     head = re.search(r'<div id="star-map-targets-head">(.*?)</div>',
                      index, re.S)
     assert head, "no #star-map-targets-head block"
@@ -420,7 +420,7 @@ def test_the_popup_dismiss_control_is_a_close_icon_on_the_right():
     assert "&times;" in body, "dismiss control is not a cross glyph"
     assert "dauntlessEvent('star-map/back')" in body
 
-    css = (ASSETS / "css" / "star_map.css").read_text()
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
     head_rule = re.search(r"#star-map-targets-head\s*\{([^}]*)\}", css)
     assert head_rule, "no #star-map-targets-head rule"
     assert "space-between" in head_rule.group(1), (
@@ -430,7 +430,7 @@ def test_the_popup_dismiss_control_is_a_close_icon_on_the_right():
 def test_the_warp_button_is_bottom_left_and_disabled_by_default():
     """Warp bottom-LEFT, Cancel bottom-right, and disabled in the markup so
     it can never render live for a frame before Python's first payload."""
-    index = (ASSETS / "index.html").read_text()
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
     # Scope to THIS panel first: index.html holds several cp-* modals and an
     # unscoped search finds the configuration panel's footer instead.
     section = re.search(r'<section id="star-map-panel".*?</section>',
@@ -445,7 +445,7 @@ def test_the_warp_button_is_bottom_left_and_disabled_by_default():
     assert "disabled" in body
     assert 'id="star-map-warp"' in body
 
-    css = (ASSETS / "css" / "star_map.css").read_text()
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
     rule = re.search(r"#star-map-panel \.cp-footer\s*\{([^}]*)\}", css)
     assert rule, "no star map footer rule"
     assert "space-between" in rule.group(1), (
@@ -456,7 +456,7 @@ def test_the_warp_button_is_bottom_left_and_disabled_by_default():
 def test_the_warp_button_label_comes_from_the_payload():
     """Not a hard-coded string in the JS: the label is the Helm menu's own
     translated text, so the two buttons cannot ship differently."""
-    js = (ASSETS / "js" / "star_map.js").read_text()
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
     assert "warp_label" in js
     assert "warp_enabled" in js
 
@@ -471,7 +471,7 @@ def test_the_modal_is_offset_clear_of_the_helm_menu():
     and not the other separates the map from its own frame, which is the exact
     failure the centring rule was introduced to end.
     """
-    css = (ASSETS / "css" / "star_map.css").read_text()
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
     modal = re.search(r"#star-map-panel \.cp-modal\s*\{([^}]*)\}", css)
     assert modal, "no #star-map-panel .cp-modal rule"
     m = re.search(r"left\s*:\s*(-?\d+(?:\.\d+)?)px", modal.group(1))

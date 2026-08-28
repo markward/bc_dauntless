@@ -1,6 +1,7 @@
 """Tests for Sun data storage and aggregate_suns_for_renderer."""
 from pathlib import Path
 import pytest
+from tests.helpers.bc_assets import require_game_asset
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
@@ -52,6 +53,7 @@ def test_aggregate_set_with_no_suns_returns_empty():
 
 def test_aggregate_uses_default_texture_when_none_specified():
     """Sun_Create with no texture falls back to SunBase.tga (BC engine default)."""
+    require_game_asset("data/Textures/SunBase.tga")
     import App
     from engine.appc.planet import aggregate_suns_for_renderer, Sun_Create
     pSet = App.SetClass_Create()

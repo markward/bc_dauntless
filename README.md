@@ -17,7 +17,42 @@ uv sync
 uv run pytest
 ```
 
+Both are required, in different ways. The SDK (`sdk/Build/scripts`, plus
+`sdk/Build/Data` for the Tutorial TGLs) is **not optional**: the suite loads game
+logic through it, and without it pytest reports hundreds of failures and
+collection errors rather than skipping. A `game/` install is optional -- tests
+that need retail assets skip themselves via
+`tests/helpers/bc_assets.require_game_asset` -- but roughly 30 tests only
+exercise anything real when it is present.
+
 See `docs/project/gap_analysis.md` for the engine gap analysis and implementation phases.
+
+### Building on Windows
+
+`_dauntless_host` is a compiled extension, so a C++20 toolchain is required as on
+any other platform; Windows just does not ship one. With Visual Studio installed,
+build from its Developer Command Prompt and skip `win_env.bat` entirely.
+
+For a portable MSVC (unpacked into a user directory, no installer and no admin
+rights), point `DAUNTLESS_MSVC` at the directory holding `setup_x64.bat`:
+
+```bat
+set DAUNTLESS_MSVC=C:\path\to\msvc
+scripts\win_env.bat
+cmake -G Ninja -B build -S .
+cmake --build build -j
+uv run pytest
+```
+
+The full build works on Windows: CEF is fetched against a pinned SHA256, and the
+native test and tool targets carry the MSVC `/WHOLEARCHIVE` arm they need. To
+build only the Python extension -- enough to run pytest, and much faster -- pass
+`--target _dauntless_host` instead.
+
+`DAUNTLESS_ENABLE_CEF=OFF` remains available and is still required on Intel macOS,
+the one platform with no pinned CEF hash; a build there fetches CEF unverified and
+warns. Linux is pinned to the SHA1 that upstream publishes rather than a SHA256,
+because nobody has built CEF there yet to compute one from verified bytes.
 
 ## Running the renderer
 

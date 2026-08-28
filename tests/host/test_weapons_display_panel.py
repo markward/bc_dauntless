@@ -20,6 +20,7 @@ from engine.ui.weapons_display_panel import (
     _resolve_icon_descriptors,
     _speed_label_for,
 )
+from tests.helpers.bc_assets import require_game_dir
 
 
 class _FakePlayerControl:
@@ -76,6 +77,7 @@ def test_snapshot_empty_when_no_player():
 
 
 def test_snapshot_includes_silhouette_and_icons_for_galaxy():
+    require_game_dir("data/Icons/Ships")
     ship = _build_galaxy_as_player()
     panel = WeaponsDisplayPanel()
     snap = panel._snapshot()

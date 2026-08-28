@@ -48,6 +48,23 @@ std::string locales_dir(const std::string& exec_dir) {
 }
 #endif
 
+// CefMainArgs is one of the few CEF types whose constructor differs by
+// platform: (argc, argv) on POSIX, (HINSTANCE) on Windows, where the process
+// arguments come from GetCommandLine() instead.
+//
+// Inside the anonymous namespace with the rest of this file's helpers: it is
+// a translation-unit detail with no declaration in any header, and external
+// linkage would put a bare `make_main_args` in the link namespace.
+CefMainArgs make_main_args(int argc, char* argv[]) {
+#ifdef _WIN32
+    (void)argc;
+    (void)argv;
+    return CefMainArgs(::GetModuleHandle(nullptr));
+#else
+    return CefMainArgs(argc, argv);
+#endif
+}
+
 }  // namespace
 
 int dispatch_subprocess(int argc, char* argv[]) {
@@ -69,6 +86,37 @@ int dispatch_subprocess(int argc, char* argv[]) {
                      framework_lib.c_str());
         return 1;
     }
+#elif defined(_WIN32)
+    // Windows CEF has no LoadInMain(): libcef.dll is loaded from an explicit
+    // path in the main process, and from the command line in helper processes.
+    // The build copies CEF's Release/ next to the executable, so the DLL sits
+    // beside argv[0].
+    g_library_loader = std::make_unique<CefScopedLibraryLoader>();
+    bool is_subprocess = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]).rfind("--type=", 0) == 0) {
+            is_subprocess = true;
+            break;
+        }
+    }
+    if (is_subprocess) {
+        if (!g_library_loader->LoadInSubProcessAssert(nullptr)) {
+            std::fprintf(stderr, "dauntless: failed to load libcef.dll "
+                                 "in a helper process.\n");
+            return 1;
+        }
+    } else {
+        const std::filesystem::path exec_path =
+            std::filesystem::canonical(argv[0]);
+        const std::wstring dll_path =
+            (exec_path.parent_path() / "libcef.dll").wstring();
+        if (!g_library_loader->LoadInMainAssert(dll_path.c_str(), nullptr,
+                                                /*allow_unsigned=*/true,
+                                                nullptr)) {
+            std::fprintf(stderr, "dauntless: failed to load libcef.dll\n");
+            return 1;
+        }
+    }
 #else
     g_library_loader = std::make_unique<CefScopedLibraryLoader>();
     if (!g_library_loader->LoadInMain()) {
@@ -78,7 +126,7 @@ int dispatch_subprocess(int argc, char* argv[]) {
     }
 #endif
 
-    CefMainArgs main_args(argc, argv);
+    CefMainArgs main_args = make_main_args(argc, argv);
     g_app = new DauntlessCefApp();
     // CefExecuteProcess returns >= 0 for helper roles and -1 for the
     // main browser process. Callers exit with the returned code if it's
@@ -95,7 +143,7 @@ bool initialize(int view_width, int view_height,
         return false;
     }
 
-    CefMainArgs main_args(g_saved_argc, g_saved_argv);
+    CefMainArgs main_args = make_main_args(g_saved_argc, g_saved_argv);
 
     CefSettings settings;
     settings.no_sandbox                  = true;

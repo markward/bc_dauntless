@@ -1,13 +1,47 @@
-# Embed shader sources as char arrays via configure_file. Each shader gets a
-# generated header with a constexpr string. This keeps shader text in *.vert /
+# Embed shader sources as string literals. Each shader gets a generated header
+# with a constexpr string, chunked to stay under MSVC's per-literal size cap. This keeps shader text in *.vert /
 # *.frag (so editors highlight them) without runtime file I/O.
 
 function(embed_shader OUT_VAR INPUT_PATH SYMBOL_NAME)
     file(READ "${INPUT_PATH}" SRC)
+    # The read happens at CONFIGURE time, so without this a shader edit does not
+    # regenerate the header -- the build stays green and silently ships the old
+    # shader until someone re-runs cmake for an unrelated reason.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${CMAKE_CURRENT_SOURCE_DIR}/${INPUT_PATH}")
     set(GENERATED "${CMAKE_CURRENT_BINARY_DIR}/embedded_${SYMBOL_NAME}.h")
-    file(WRITE "${GENERATED}.in"
-"// Generated. Do not edit.\n#pragma once\nnamespace renderer::shader_src {\nconstexpr const char* ${SYMBOL_NAME} = R\"GLSL(@SRC@)GLSL\";\n}\n")
-    configure_file("${GENERATED}.in" "${GENERATED}" @ONLY)
+    # MSVC caps a single string literal at 16380 bytes (error C2026) and applies
+    # that limit per literal, *before* adjacent literals are concatenated -- so
+    # emit the source as a run of chunked raw literals rather than one big one.
+    # opaque.frag is already 41 KB and clang/gcc have no such limit, so without
+    # this the Windows build fails outright. The concatenated result is
+    # byte-identical on every compiler.
+    string(LENGTH "${SRC}" SRC_LEN)
+    set(SRC_LITERAL "")
+    set(CHUNK_POS 0)
+    while(CHUNK_POS LESS SRC_LEN)
+        math(EXPR CHUNK_REMAINING "${SRC_LEN} - ${CHUNK_POS}")
+        if(CHUNK_REMAINING GREATER 8000)
+            set(CHUNK_LEN 8000)
+        else()
+            set(CHUNK_LEN ${CHUNK_REMAINING})
+        endif()
+        string(SUBSTRING "${SRC}" ${CHUNK_POS} ${CHUNK_LEN} CHUNK)
+        string(APPEND SRC_LITERAL "R\"GLSL(${CHUNK})GLSL\"\n")
+        math(EXPR CHUNK_POS "${CHUNK_POS} + ${CHUNK_LEN}")
+    endwhile()
+    if(SRC_LEN EQUAL 0)
+        set(SRC_LITERAL "\"\"")
+    endif()
+    # Stage, then copy only on a real change. file(WRITE) rewrites
+    # unconditionally and so bumps the header's mtime on every configure,
+    # which rebuilds every translation unit that includes it -- and a
+    # reconfigure is triggered by editing any CMakeLists in the project.
+    # configure_file(COPYONLY) leaves the output untouched when the bytes
+    # match, so an unrelated reconfigure costs nothing.
+    file(WRITE "${GENERATED}.staged"
+"// Generated. Do not edit.\n#pragma once\nnamespace renderer::shader_src {\nconstexpr const char* ${SYMBOL_NAME} =\n${SRC_LITERAL};\n}\n")
+    configure_file("${GENERATED}.staged" "${GENERATED}" COPYONLY)
     set(${OUT_VAR} "${GENERATED}" PARENT_SCOPE)
 endfunction()
 

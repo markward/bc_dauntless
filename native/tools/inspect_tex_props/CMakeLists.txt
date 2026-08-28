@@ -6,4 +6,7 @@ if(APPLE)
 elseif(UNIX)
     target_link_options(inspect_tex_props PRIVATE
         "LINKER:--whole-archive" "$<TARGET_FILE:nif>" "LINKER:--no-whole-archive")
+elseif(MSVC)
+    target_link_options(inspect_tex_props PRIVATE
+        "/WHOLEARCHIVE:$<TARGET_FILE:nif>")
 endif()

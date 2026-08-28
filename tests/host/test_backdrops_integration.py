@@ -40,6 +40,11 @@ def _setup_for_pixel_test():
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
     import _dauntless_host
     _dauntless_host.init(640, 360, "test_backdrops_integration")
+    # These are backdrop-plumbing tests, not filmic tests. The filmic pass adds
+    # grain (frame-varying, so no exact pixel assertion can hold), a vignette
+    # (so an "empty" frame is not uniform) and chromatic aberration. Off, an
+    # empty frame is exactly flat and repeated renders are near-identical.
+    _dauntless_host.filmic_set_enabled(False)
     _dauntless_host.set_camera(
         eye=(0.0, 0.0, 1500.0),
         target=(0.0, 0.0, 0.0),
@@ -52,32 +57,60 @@ def _setup_for_pixel_test():
 @pytest.mark.skipif(not _PIXEL_TESTS_RELIABLE,
                     reason="macOS hidden GLFW windows do not present BACK→FRONT swaps")
 def test_backdrop_overpaints_clear_color():
-    """With the backdrop bound the rendered row must NOT match the
-    clear-color floor (64 px × 57 = 3648). The starfield is sparse
-    black-with-stars: most pixels are darker than the clear color
-    (texture sky is near-black) and stars push some pixels much
-    brighter — either way the row sum departs from the floor.
+    """With the backdrop bound the rendered row must NOT match the empty-frame
+    floor. The starfield is sparse black-with-stars drawn over a black clear,
+    so binding it changes the row either way.
 
-    Compares against the no-backdrop baseline: empty backdrop list
-    leaves the screen at clear color so its row sum is exactly 3648.
-    Setting a backdrop must change that sum."""
+    The floor is asserted to be FLAT rather than equal to a constant. The old
+    assertion demanded exactly 3648 (64 px x 57), which encoded two things that
+    are not properties of this feature: that 0.10 * 255 = 25.5 rounds up (this
+    GPU rounds it down, giving 56/px), and that no post-processing touches an
+    empty frame (the HDR pass does, giving 53/px). Flatness is the property
+    that actually means "nothing was drawn", and it holds on any driver.
+    """
     h = _setup_for_pixel_test()
     try:
         # Establish the no-backdrop baseline.
         h.set_backdrops([])
-        floor = _settle_and_sample_row(h, 32)
-        assert floor == 3648, (
-            f"empty-backdrop row should be exact clear-color sum 3648, "
-            f"got {floor}; clear-color or framebuffer setup changed?")
+        floor_row = _sample_row_values(h, 32)
+        assert len(set(floor_row)) == 1, (
+            f"empty-backdrop row should be a flat clear colour, got "
+            f"{sorted(set(floor_row))}")
+        floor = sum(floor_row)
 
         h.set_backdrops([_star_descriptor()])
-        with_stars = _settle_and_sample_row(h, 32)
-
+        with_stars = sum(_sample_row_values(h, 32))
         assert with_stars != floor, (
             f"row sum unchanged after binding starfield ({with_stars}); "
             f"backdrop did not render")
     finally:
         h.shutdown()
+
+
+def _sample_row_values(h, y: int) -> list:
+    """The per-pixel channel sums across a horizontal stripe."""
+    h.frame()
+    h.frame()
+    fw, _ = h.framebuffer_size()
+    return [sum(h.read_pixel(i * (fw // 64), y)[:3]) for i in range(64)]
+
+
+def _sample_grid(h, step: int = 8) -> list:
+    """Channel sums over a grid covering the whole framebuffer.
+
+    A single row is a poor sample of a sparse starfield: whether it happens to
+    cross a bright star is luck, and differs per machine. 3600 samples make the
+    measurement about the image rather than about one row's fortune.
+    """
+    h.frame()
+    h.frame()
+    fw, fh = h.framebuffer_size()
+    return [sum(h.read_pixel(x, y)[:3])
+            for y in range(0, fh, step) for x in range(0, fw, step)]
+
+
+def _changed_pixels(a: list, b: list) -> int:
+    return sum(1 for x, y in zip(a, b) if x != y)
 
 
 def _settle_and_sample_row(h, y: int) -> int:
@@ -101,50 +134,52 @@ def _settle_and_sample_row(h, y: int) -> int:
 @pytest.mark.skipif(not _PIXEL_TESTS_RELIABLE,
                     reason="macOS hidden GLFW windows do not present BACK→FRONT swaps")
 def test_camera_rotation_changes_pixels_translation_does_not():
-    """Rotation reference: rotating the camera 30° about the up axis
-    must change the rendered backdrop. Translation along the camera
-    forward must NOT change the same row (modulo float noise).
+    """Rotation reference: rotating the camera 30 degrees about the up axis
+    must change the rendered backdrop. Translation along the camera forward
+    must NOT change it -- the backdrop is at infinity.
 
-    Samples a 64-pixel horizontal stripe and sums the channels to make
-    the test robust against single-pixel sparse-starfield misses."""
+    Both are measured against a control: the same view rendered twice. That
+    self-calibrates the noise floor per machine instead of hard-coding one.
+    The previous absolute thresholds (>50 changed, <=10 unchanged) were tuned
+    to whichever machine wrote them, and summed a single 64-pixel row across a
+    sparse starfield -- a measurement dominated by whether that row happened to
+    cross a bright star.
+    """
     h = _setup_for_pixel_test()
     try:
         h.set_backdrops([_star_descriptor()])
 
-        baseline = _settle_and_sample_row(h, 32)
+        def look_at(eye, target):
+            h.set_camera(eye=eye, target=target, up=(0.0, 1.0, 0.0),
+                         fov_y_rad=1.0472, near=1.0, far=100000.0)
+
+        baseline_view = ((0.0, 0.0, 1500.0), (0.0, 0.0, -1000.0))
+
+        look_at(*baseline_view)
+        baseline = _sample_grid(h)
+
+        # Control: re-render the identical view. Anything that changes here is
+        # noise, not camera movement.
+        look_at(*baseline_view)
+        noise = _changed_pixels(baseline, _sample_grid(h))
 
         # Translate forward 1000 units (camera moves toward origin).
-        h.set_camera(
-            eye=(0.0, 0.0, 500.0),
-            target=(0.0, 0.0, -1000.0),
-            up=(0.0, 1.0, 0.0),
-            fov_y_rad=1.0472, near=1.0, far=100000.0,
-        )
-        translated = _settle_and_sample_row(h, 32)
+        look_at((0.0, 0.0, 500.0), (0.0, 0.0, -1000.0))
+        translated = _changed_pixels(baseline, _sample_grid(h))
 
-        # Rotation: 30° about up axis from baseline view.
+        # Rotation: 30 degrees about the up axis from the baseline view.
         import math
         a = math.radians(30)
-        new_target = (math.sin(a) * -1000.0, 0.0, math.cos(a) * -1000.0)
-        h.set_camera(
-            eye=(0.0, 0.0, 1500.0),
-            target=new_target,
-            up=(0.0, 1.0, 0.0),
-            fov_y_rad=1.0472, near=1.0, far=100000.0,
-        )
-        rotated = _settle_and_sample_row(h, 32)
+        look_at((0.0, 0.0, 1500.0),
+                (math.sin(a) * -1000.0, 0.0, math.cos(a) * -1000.0))
+        rotated = _changed_pixels(baseline, _sample_grid(h))
 
-        # Translation: same brightness sum within tolerance.
-        assert abs(translated - baseline) <= 10, (
-            f"translation should not change rendered stars: "
-            f"baseline={baseline}, translated={translated}")
-
-        # Rotation: brightness sum must differ from baseline. Stars are
-        # bright enough that a 30° rotation typically swings the sum by
-        # hundreds of channel-units.
-        assert abs(rotated - baseline) > 50, (
-            f"rotation should change rendered stars: "
-            f"baseline={baseline}, rotated={rotated}")
+        assert rotated > 10 * max(noise, 8), (
+            f"rotation should change the rendered starfield: {rotated} pixels "
+            f"changed, against a same-view control of {noise}")
+        assert translated <= max(4 * noise, 64), (
+            f"translation along forward should not change an infinite "
+            f"backdrop: {translated} pixels changed, control {noise}")
     finally:
         h.shutdown()
 
