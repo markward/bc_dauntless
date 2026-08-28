@@ -1,22 +1,33 @@
 """ProximityManager must actually be iterable, and must see the set's objects.
 
-THE GAP THIS PINS. Seven shipped SDK call sites walk near objects with the same
+THE GAP THIS PINS. Eight shipped SDK call sites walk objects with the same
 three-call contract:
 
-    pIter   = pProxManager.GetNearObjects(vPoint, fRadius)
+    pIter   = pProxManager.<producer>(...)
     pObject = pProxManager.GetNextObject(pIter)
     while pObject != None:
         ...
         pObject = pProxManager.GetNextObject(pIter)
     pProxManager.EndObjectIteration(pIter)
 
-    AI/Preprocessors.py:1749  AvoidObstacles.TestCourseOverride
-    AI/Preprocessors.py:390   FireScript's target-occlusion check
-    AI/Compound/DockWithStarbase.py:71
-    AI/PlainAI/Intercept.py:~285
-    Conditions/ConditionInLineOfSight.py:~130
-    Bridge/HelmMenuHandlers.py:2493
-    MissionLib.py:5035
+There are TWO producers, and this file only fixes one of them:
+
+    GetNearObjects -- fixed here, these four now walk real objects:
+        AI/Preprocessors.py:1749         AvoidObstacles.TestCourseOverride
+        AI/Compound/DockWithStarbase.py:71
+        Bridge/HelmMenuHandlers.py:2493  helm collision-alert voice lines
+        MissionLib.py:5035               GrabWarpEncompassingObstacles
+
+    GetLineIntersectObjects -- STILL a hardcoded `return ()` (planet.py), so
+    these four remain dead even with GetNextObject working:
+        AI/Preprocessors.py:373          FireScript target occlusion
+                                         (fails OPEN: bTargetVisible = 1)
+        AI/PlainAI/Intercept.py:269
+        Conditions/ConditionInLineOfSight.py:128
+        MissionLib.py:4930               GrabWarpObstacles
+
+⚠️ Do not read "the proximity walk works now" as "all eight work now". The
+second placeholder is a separate, still-open gap.
 
 Two independent breaks made every one of them a silent no-op:
 
