@@ -186,12 +186,17 @@ def test_set_class_proximity_manager_accumulates():
     assert pSet.GetProximityManager().GetNumObjects() == 1
 
 
-def test_get_next_object_returns_none_for_no_op_iteration():
+def test_get_next_object_terminates_an_empty_line_iteration():
     """SDK iterator pattern: while pObject: pObject = pProx.GetNextObject(pIter).
-    GetLineIntersectObjects returns () in the stub model, so GetNextObject
-    must return None on first call to terminate the loop without entering."""
+    With nothing on the line the walk must terminate on the first call rather
+    than entering the loop body.
+
+    Previously this passed (None, None) as the endpoints, because
+    GetLineIntersectObjects was a hardcoded `return ()` that never looked at
+    them. It reads them now, so the test states the real contract."""
+    from engine.appc.math import TGPoint3
     pm = ProximityManager()
-    it = pm.GetLineIntersectObjects(None, None, 1.0, 1)
+    it = pm.GetLineIntersectObjects(TGPoint3(0, 0, 0), TGPoint3(100, 0, 0), 1.0, 1)
     assert pm.GetNextObject(it) is None
 
 
@@ -205,11 +210,12 @@ def test_get_next_object_accepts_arbitrary_iterator_arg():
 
 
 def test_end_object_iteration_accepts_iterator_handle():
-    """SDK iterator protocol: pProx.EndObjectIteration(pIter). The
-    iterator handle is the value returned by GetLineIntersectObjects.
-    Phase 1 stub accepts it as a no-op."""
+    """SDK iterator protocol: pProx.EndObjectIteration(pIter), where the handle
+    is whatever GetLineIntersectObjects returned. Nothing to free — the handle
+    owns its own cursor — but it must accept one."""
+    from engine.appc.math import TGPoint3
     pm = ProximityManager()
-    it = pm.GetLineIntersectObjects(None, None, 1.0, 1)
+    it = pm.GetLineIntersectObjects(TGPoint3(0, 0, 0), TGPoint3(100, 0, 0), 1.0, 1)
     # Must not raise.
     pm.EndObjectIteration(it)
 

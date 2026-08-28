@@ -369,8 +369,57 @@ class ProximityManager:
                 result.append(obj)
         return _ProximityIteration(result)
 
-    def GetLineIntersectObjects(self, *args) -> tuple:
-        return ()
+    def GetLineIntersectObjects(self, start, end, radius=0.0, flag=None):
+        """Objects whose sphere intersects the capsule swept along start→end.
+
+        The second of the manager's two iteration producers; walked with
+        GetNextObject / EndObjectIteration exactly like GetNearObjects. Four SDK
+        call sites use it:
+
+            Conditions/ConditionInLineOfSight.py:128  (start, end, 0)
+            AI/Preprocessors.py:373        FireScript occlusion, radius 0.5
+            AI/PlainAI/Intercept.py:269    (start, dest, shipRadius*4, 1)
+            MissionLib.py:4930             warp-path obstacles
+
+        A SEGMENT, not an infinite line: Intercept and MissionLib are both
+        reasoning about a finite leg, and an infinite line would report
+        obstacles behind the ship. Endpoints are included — FireScript and
+        ConditionInLineOfSight pass object positions as the endpoints and filter
+        them out themselves by id / name.
+
+        ⚠️ This was a hardcoded ``return ()`` — a Phase-1 placeholder alongside
+        ``GetNextObject``'s ``return None``. Fixing GetNextObject alone left all
+        four of these dead, which is why an earlier commit message overstated
+        what it revived.
+
+        The trailing flag is accepted and ignored, as on GetNearObjects (a type
+        filter / encompassing-volume flag in the real engine).
+        """
+        r = float(radius)
+        ax, ay, az = start.x, start.y, start.z
+        dx, dy, dz = end.x - ax, end.y - ay, end.z - az
+        seg_len2 = dx * dx + dy * dy + dz * dz
+        result = []
+        for obj in self._candidates():
+            loc = obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation") else None
+            if loc is None:
+                continue
+            px, py, pz = loc.x - ax, loc.y - ay, loc.z - az
+            if seg_len2 <= 1e-12:
+                # Degenerate leg (Intercept can ask for one when it is already
+                # at its destination): a point query, not a division by zero.
+                t = 0.0
+            else:
+                t = (px * dx + py * dy + pz * dz) / seg_len2
+                t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+            cx, cy, cz = px - t * dx, py - t * dy, pz - t * dz
+            try:
+                reach = r + float(obj.GetRadius())
+            except Exception:
+                reach = r
+            if cx * cx + cy * cy + cz * cz <= reach * reach:
+                result.append(obj)
+        return _ProximityIteration(result)
 
     def GetNextObject(self, iterator=None):
         """Advance a proximity iteration handle; None when it is exhausted.

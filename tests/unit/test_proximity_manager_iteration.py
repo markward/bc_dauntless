@@ -18,16 +18,25 @@ There are TWO producers, and this file only fixes one of them:
         Bridge/HelmMenuHandlers.py:2493  helm collision-alert voice lines
         MissionLib.py:5035               GrabWarpEncompassingObstacles
 
-    GetLineIntersectObjects -- STILL a hardcoded `return ()` (planet.py), so
-    these four remain dead even with GetNextObject working:
-        AI/Preprocessors.py:373          FireScript target occlusion
-                                         (fails OPEN: bTargetVisible = 1)
-        AI/PlainAI/Intercept.py:269
+    GetLineIntersectObjects -- was a second hardcoded placeholder (`return ()`),
+    so these stayed dead even once GetNextObject worked. Implemented later in
+    this same file's history; THREE of the four are genuinely revived:
+        AI/PlainAI/Intercept.py:269      AdjustDestinationForLargeObstacles
         Conditions/ConditionInLineOfSight.py:128
-        MissionLib.py:4930               GrabWarpObstacles
+        MissionLib.py:4930               GrabWarpObstaclesFromSet
 
-⚠️ Do not read "the proximity walk works now" as "all eight work now". The
-second placeholder is a separate, still-open gap.
+    The fourth is NOT revived and must not be. AI/Preprocessors.py:373 sits
+    inside FireScript.TargetVisible, which the SDK authors disabled themselves:
+
+        def TargetVisible(self, pTarget):
+            # For now, skip this check.
+            self.bTargetVisible = 1
+            return self.bTargetVisible
+
+    Everything below that early return is unreachable in BC too -- which is how
+    the `for eType in ( App.CT_TORPEDO ):` typo two lines further down (a bare
+    class, or a SWIG int in BC; either way `TypeError` on iteration) could ship
+    at all. Do not "fix" either of them.
 
 Two independent breaks made every one of them a silent no-op:
 
@@ -269,3 +278,136 @@ def test_a_non_physics_object_that_occupies_space_participates():
 
     assert [id(o) for o in _drain(pm, pm.GetNearObjects(TGPoint3(0, 0, 0), 100.0))] \
         == [id(planet)]
+
+
+# ── GetLineIntersectObjects ─────────────────────────────────────────────────
+#
+# The second producer. Four SDK call sites walk it with the same three-call
+# contract as GetNearObjects:
+#
+#   Conditions/ConditionInLineOfSight.py:128  (start, end, 0)
+#   AI/Preprocessors.py:373                   (from, to, fObstructionRadius)
+#   AI/PlainAI/Intercept.py:269               (start, dest, shipRadius*4, 1)
+#   MissionLib.py:4930                        (start, end, shipRadius, 1)
+#
+# Semantics: every object whose sphere intersects the capsule of radius
+# `fRadius` swept along the segment, i.e. distance(centre, segment) <=
+# fRadius + object radius. The trailing flag is accepted and ignored, as on
+# GetNearObjects (a type filter / encompassing-volume flag in the real engine).
+#
+# Segment, not infinite line: Intercept re-filters for "in front of us" and
+# "before the destination" precisely because it is reasoning about a finite
+# leg, and MissionLib's warp path likewise. An infinite-line test would
+# report obstacles behind the ship.
+
+def _line(pm, a, b, radius=0.0, *rest):
+    return _drain(pm, pm.GetLineIntersectObjects(TGPoint3(*a), TGPoint3(*b),
+                                                 radius, *rest))
+
+
+def test_an_object_on_the_line_is_reported():
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    blocker = _ship_at("blocker", 50.0, 0.0, 0.0)
+    blocker.SetRadius(4.0)
+    pSet.AddObjectToSet(blocker, "blocker")
+
+    assert [id(o) for o in _line(pm, (0, 0, 0), (100, 0, 0))] == [id(blocker)]
+
+
+def test_an_object_off_to_one_side_is_not_reported():
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    aside = _ship_at("aside", 50.0, 500.0, 0.0)
+    aside.SetRadius(4.0)
+    pSet.AddObjectToSet(aside, "aside")
+
+    assert _line(pm, (0, 0, 0), (100, 0, 0)) == []
+
+
+def test_the_object_radius_widens_the_corridor():
+    """ConditionInLineOfSight passes radius 0, so the only thing that can make
+    the segment hit anything is the object's own extent."""
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    planet = _ship_at("planet", 50.0, 40.0, 0.0)
+    planet.SetRadius(50.0)
+    pSet.AddObjectToSet(planet, "planet")
+
+    assert [id(o) for o in _line(pm, (0, 0, 0), (100, 0, 0))] == [id(planet)]
+    planet.SetRadius(10.0)
+    assert _line(pm, (0, 0, 0), (100, 0, 0)) == []
+
+
+def test_the_query_radius_widens_the_corridor_too():
+    """Intercept sweeps shipRadius*4; FireScript sweeps 0.5."""
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    near_miss = _ship_at("near_miss", 50.0, 20.0, 0.0)
+    near_miss.SetRadius(4.0)
+    pSet.AddObjectToSet(near_miss, "near_miss")
+
+    assert _line(pm, (0, 0, 0), (100, 0, 0), 4.0) == []
+    assert [id(o) for o in _line(pm, (0, 0, 0), (100, 0, 0), 20.0)] == [id(near_miss)]
+
+
+def test_it_is_a_segment_not_an_infinite_line():
+    """An object behind the start, or beyond the end, is not on the leg."""
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    behind = _ship_at("behind", -200.0, 0.0, 0.0)
+    beyond = _ship_at("beyond", 300.0, 0.0, 0.0)
+    for o, n in ((behind, "behind"), (beyond, "beyond")):
+        o.SetRadius(4.0)
+        pSet.AddObjectToSet(o, n)
+
+    assert _line(pm, (0, 0, 0), (100, 0, 0)) == []
+
+
+def test_an_object_at_the_endpoints_is_reported():
+    """FireScript and ConditionInLineOfSight pass object positions AS the
+    endpoints and filter the endpoints out themselves by id/name, so the walk
+    must include them rather than silently dropping them."""
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    at_end = _ship_at("at_end", 100.0, 0.0, 0.0)
+    at_end.SetRadius(4.0)
+    pSet.AddObjectToSet(at_end, "at_end")
+
+    assert [id(o) for o in _line(pm, (0, 0, 0), (100, 0, 0))] == [id(at_end)]
+
+
+def test_a_degenerate_segment_behaves_like_a_point_query():
+    """Intercept can be asked for a leg of zero length when it is already at
+    its destination; that must not divide by zero."""
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    here = _ship_at("here", 1.0, 0.0, 0.0)
+    here.SetRadius(4.0)
+    pSet.AddObjectToSet(here, "here")
+
+    assert [id(o) for o in _line(pm, (0, 0, 0), (0, 0, 0), 0.0)] == [id(here)]
+
+
+def test_the_trailing_flag_is_accepted():
+    """Intercept and MissionLib both pass a 4th argument."""
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    blocker = _ship_at("blocker", 50.0, 0.0, 0.0)
+    blocker.SetRadius(4.0)
+    pSet.AddObjectToSet(blocker, "blocker")
+
+    assert [id(o) for o in _line(pm, (0, 0, 0), (100, 0, 0), 1.0, 1)] == [id(blocker)]
+
+
+def test_markers_are_excluded_here_too():
+    from engine.appc.placement import PlacementObject
+
+    pSet = SetClass()
+    pm = pSet.GetProximityManager()
+    marker = PlacementObject()
+    marker.SetName("Player Start")
+    marker.SetTranslateXYZ(50.0, 0.0, 0.0)
+    pSet.AddObjectToSet(marker, "Player Start")
+
+    assert _line(pm, (0, 0, 0), (100, 0, 0), 10.0) == []
