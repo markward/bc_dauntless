@@ -39,15 +39,20 @@ rights), point `DAUNTLESS_MSVC` at the directory holding `setup_x64.bat`:
 ```bat
 set DAUNTLESS_MSVC=C:\path\to\msvc
 scripts\win_env.bat
-cmake -G Ninja -B build -S . -DDAUNTLESS_ENABLE_CEF=OFF -DDAUNTLESS_BUILD_TESTS=OFF
-cmake --build build --target _dauntless_host -j
+cmake -G Ninja -B build -S .
+cmake --build build -j
 uv run pytest
 ```
 
-`-DDAUNTLESS_ENABLE_CEF=OFF` is currently necessary off macOS: only `macosarm64`
-has a pinned `CEF_SHA256`, so fetching CEF anywhere else runs unverified.
-`-DDAUNTLESS_BUILD_TESTS=OFF` likewise -- the native test and tool targets still
-lack an MSVC force-load arm and have never been built on Windows.
+The full build works on Windows: CEF is fetched against a pinned SHA256, and the
+native test and tool targets carry the MSVC `/WHOLEARCHIVE` arm they need. To
+build only the Python extension -- enough to run pytest, and much faster -- pass
+`--target _dauntless_host` instead.
+
+`DAUNTLESS_ENABLE_CEF=OFF` remains available and is still required on Intel macOS,
+the one platform with no pinned CEF hash; a build there fetches CEF unverified and
+warns. Linux is pinned to the SHA1 that upstream publishes rather than a SHA256,
+because nobody has built CEF there yet to compute one from verified bytes.
 
 ## Running the renderer
 
