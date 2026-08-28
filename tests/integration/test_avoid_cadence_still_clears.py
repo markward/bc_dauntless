@@ -27,6 +27,26 @@ from engine.appc.objects import PhysicsObjectClass
 from engine.appc import collision_avoidance as ca
 
 
+@pytest.fixture(autouse=True)
+def _engine_avoidance_enabled(monkeypatch):
+    """These tests are ABOUT the engine-side avoidance scan, which is opt-in.
+
+    It is off by default since it was found to return PS_SKIP_ACTIVE far more
+    often than the SDK's scan, which suppresses the whole attack subtree and
+    strips its focus -- dropping shields and stopping weapons fire (see
+    tests/integration/test_avoidance_does_not_suppress_combat.py). Registering
+    it here keeps this file testing the thing it was written to test, and keeps
+    that coverage alive for whoever picks the optimisation back up.
+
+    Registered directly rather than via DAUNTLESS_ENGINE_AVOIDANCE because the
+    env var is read at import time.
+    """
+    from engine.appc import ai_optimized
+    monkeypatch.setitem(ai_optimized.OPTIMIZED_PREPROCESSORS,
+                        "AvoidObstacles", ai_optimized._replace_avoid_obstacles)
+
+
+
 def _load_galaxy(ship):
     App.g_kModelPropertyManager.ClearLocalTemplates()
     mod_name = "ships.Hardpoints.galaxy"

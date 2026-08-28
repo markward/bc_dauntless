@@ -397,8 +397,53 @@ def _wrap_non_lethal(instance):
 OPTIMIZED_PREPROCESSORS: dict = {
     "ManagePower": _replace_manage_power,     # real replacement (SDK body is a stub)
     "FireScript": _wrap_non_lethal,           # SDK body, PS_DONE de-fanged
-    "AvoidObstacles": _replace_avoid_obstacles,  # engine scan, SDK Update body
+    # SDK scan, PS_DONE de-fanged. This entry has always done TWO jobs and only
+    # one of them was the problem: the engine scan (removed below, opt-in) and
+    # protection against AvoidObstacles' lethal PS_DONE path, which a shipless
+    # node hits. Dropping the whole entry would have taken the protection with
+    # it -- test_preprocess_done_is_lethal caught exactly that.
+    "AvoidObstacles": _wrap_non_lethal,
 }
+
+# ── AvoidObstacles: OFF by default, and why ────────────────────────────────
+#
+# The engine-side scan is opt-in via DAUNTLESS_ENGINE_AVOIDANCE=1. Default is
+# the SDK's own AvoidObstacles.
+#
+# It shipped enabled and caused a live gameplay regression: 3 Keldons vs the
+# player in QuickBattle flew around, fired an opening volley, then stopped
+# engaging, with shields visibly dropping and raising. The chain:
+#
+#   our scan calls "evading" far more often than the SDK's -- 47.7% of pairs
+#   pass the convergence gate while 1.48% are genuinely converging
+#     -> Update returns PS_SKIP_ACTIVE
+#     -> _tick_preprocessing honours that by returning WITHOUT ticking the
+#        contained AI, so the whole attack subtree goes unreached
+#     -> _reconcile_focus dispatches LostFocus across it
+#     -> AlertLevel.LostFocus restores the pre-combat alert level (SHIELDS DOWN)
+#        and FireScript.LostFocus calls StopFiring() (FIRING STOPS)
+#
+# Measured, 100 ships, combat_stress, median tick:
+#
+#   engine scan, as shipped        2.78 ms   <- attack subtree suppressed
+#   engine scan, not suppressing   4.13 ms
+#   SDK AvoidObstacles             2.91 ms
+#
+# So essentially the whole measured win was the suppression, not a cheaper
+# scan: stop it switching combat off and the engine scan is ~40% SLOWER than
+# the SDK's. Reverting costs ~5% of a median tick, and that 5% is the price of
+# ships actually fighting -- payable under any correct fix.
+#
+# The code is kept, not deleted, because the *idea* is sound and the follow-up
+# is well-defined: make the scan genuinely cheaper, and measure it against a
+# NON-SUPPRESSING baseline (the 4.13 ms row) rather than against the shipped
+# number, which measures the bug.
+#
+# tests/integration/test_avoidance_does_not_suppress_combat.py holds the line.
+if os.environ.get("DAUNTLESS_ENGINE_AVOIDANCE") == "1":
+    # Swaps the non-lethal wrapper above for the engine scan, which is itself
+    # non-lethal (_engine_avoidance_class maps PS_DONE -> PS_NORMAL too).
+    OPTIMIZED_PREPROCESSORS["AvoidObstacles"] = _replace_avoid_obstacles
 
 
 def optimized_version_of(instance):
