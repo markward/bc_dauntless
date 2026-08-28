@@ -104,3 +104,19 @@ def test_the_game_loop_no_longer_runs_a_second_controller():
     from engine.core import loop
     src = inspect.getsource(loop.GameLoop.tick)
     assert "tick_collision_avoidance" not in src
+
+
+def test_the_shipped_evading_cadence_is_pinned():
+    """Both cadence tests patch AVOID_EVADING_UPDATE_DELAY_S explicitly, so
+    nothing exercised the value that actually ships. Setting the default to
+    5.0 (20x) left the whole avoidance suite green.
+
+    0.25 s is BC's own fMaximumUpdateDelay: this change makes an EVADING ship
+    re-decide on the same cadence a non-evading one already used, rather than
+    every tick. Raising it further is a real behaviour change and should fail
+    here rather than pass quietly.
+    """
+    from engine.appc import ai_optimized
+    assert ai_optimized.AVOID_EVADING_UPDATE_DELAY_S == 0.25, (
+        "the shipped evading re-decision cadence changed; if that is "
+        "deliberate, re-run the separation probes before editing this number")

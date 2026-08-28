@@ -879,7 +879,10 @@ def bubble_bound_radius(ship) -> float:
     intersection. It must never under-estimate, or a shot that would have hit
     gets silently dropped — so it takes the ellipsoid centre offset into
     account rather than assuming the bubble is centred on the ship origin (on
-    real hulls it is not; a Sovereign's model origin is 6.98 GU off in Z).
+    real hulls it is not: a Sovereign's model origin is -6.98 NIF units off in
+    Z, and the box is stored as NIF x BC_MODEL_SCALE (0.01), so 0.0698 GU --
+    about 12 m. The centre term still earns its place: a Keldon's -81 NIF Y is
+    0.81 GU against a bound of roughly 4 GU.)
 
     bubble ⊆ sphere(ship_pos, |centre| + max(semi-axis)), and the semi-axes are
     the hull half-extents × SHIELD_ELLIPSOID_AXIS_SCALE. Without a cached box

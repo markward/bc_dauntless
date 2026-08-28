@@ -23,14 +23,36 @@ class _Pod:
     def GetConditionPercentage(self): return self._condition
 
 
+class _Ship:
+    """Minimal ship for _is_offline's _out_of_action check."""
+    def __init__(self, dying=False, dead=False):
+        self._dying, self._dead = dying, dead
+
+    def IsDying(self):  return self._dying
+    def IsDead(self):   return self._dead
+
+
 class _IES:
+    """Impulse engine set.
+
+    MUST define GetParentShip. impulse_fractions gates its fused fast path on
+    `implements(ies, "GetParentShip")`, and every real IES defines it
+    (subsystems.py) -- so on a live ship the fast path is what runs. A double
+    without it sends all cases down the fallback instead, and the branch that
+    actually ships is never executed: deleting the IsDestroyed() test from it
+    left the entire 5788-test suite green.
+
+    _IESNoShip below keeps the fallback branch covered too, so the coverage
+    is widened rather than merely moved.
+    """
     def __init__(self, pods=(), on=True, disabled=False, destroyed=False,
-                 power=1.0):
+                 power=1.0, ship=None):
         self._pods = list(pods)
         self._on = on
         self._disabled = disabled
         self._destroyed = destroyed
         self._power = power
+        self._ship = ship if ship is not None else _Ship()
 
     def IsDisabled(self):                 return self._disabled
     def IsDestroyed(self):                return self._destroyed
@@ -38,6 +60,17 @@ class _IES:
     def GetNumChildSubsystems(self):      return len(self._pods)
     def GetChildSubsystem(self, i):       return self._pods[i]
     def GetPowerPercentageWanted(self):   return self._power
+    def GetParentShip(self):              return self._ship
+
+
+class _IESNoShip(_IES):
+    """An IES that does NOT implement GetParentShip, so impulse_fractions
+    takes the _is_offline fallback. Keeps that branch exercised now that the
+    default double drives the fast path."""
+    GetParentShip = None                  # implements() -> False
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
 
 
 def _both(ies):

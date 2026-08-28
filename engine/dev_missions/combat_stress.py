@@ -163,6 +163,14 @@ def PreLoadAssets(pMission):
             pass
 
 
+def _headless() -> bool:
+    """True in a headless harness run, where nothing realizes a model and so
+    nothing derives a real hull radius. A live run through dauntless must be
+    left alone: it has real radii and this mission must not overwrite them."""
+    import os
+    return bool(os.environ.get("OPEN_STBC_HOST_HEADLESS"))
+
+
 def _place_on_ring(pShip, index: int, total: int) -> None:
     radius = ring_radius_gu(total)
     angle = (2.0 * math.pi * index) / max(1, total)
@@ -173,6 +181,16 @@ def _place_on_ring(pShip, index: int, total: int) -> None:
     # Seed a hull radius when the ship has none. See _NOMINAL_HULL_RADIUS_GU:
     # headless has no realize step, and a zero radius silently disables
     # avoidance entirely rather than failing.
+    #
+    # HEADLESS ONLY. Mission Initialize runs BEFORE _realize_session, and
+    # realize seeds its model-derived radius under the identical
+    # `if GetRadius() <= 0.0` guard -- so seeding unconditionally won every
+    # race and pinned a Bird-of-Prey, a Galor and a Sovereign to the same
+    # 4.0 GU in live captures. Radius feeds personal space, collision, splash
+    # and camera distance, so every live number taken that way was measured on
+    # uniformly-sized ships.
+    if not _headless():
+        return
     try:
         if pShip.GetRadius() <= 0.0:
             pShip.SetRadius(_NOMINAL_HULL_RADIUS_GU)
@@ -195,11 +213,12 @@ def Initialize(pMission):
     pPlayer.UpdateNodeOnly()
     # Same reason as the ring ships: headless has no realize step, and a zero
     # radius removes the player from avoidance and collision entirely.
-    try:
-        if pPlayer.GetRadius() <= 0.0:
-            pPlayer.SetRadius(_NOMINAL_HULL_RADIUS_GU)
-    except Exception:
-        pass
+    if _headless():                       # see _place_on_ring
+        try:
+            if pPlayer.GetRadius() <= 0.0:
+                pPlayer.SetRadius(_NOMINAL_HULL_RADIUS_GU)
+        except Exception:
+            pass
 
     pFriendlies = pMission.GetFriendlyGroup()
     pEnemies = pMission.GetEnemyGroup()

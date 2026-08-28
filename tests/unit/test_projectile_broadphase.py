@@ -39,15 +39,21 @@ def test_bound_contains_the_whole_ellipsoid(monkeypatch):
 
 
 def test_bound_accounts_for_an_off_centre_ellipsoid(monkeypatch):
-    """Real hulls are off-centre — a Sovereign's model origin is ~7 GU off in
-    Z. Ignoring the centre offset would under-bound by exactly that much and
-    drop shots at the far end of the ship."""
-    centre = (0.0, 0.0, 7.0)
+    """Real hulls are off-centre. A Sovereign's model origin is -6.98 NIF
+    units in Z; the cached box is NIF x BC_MODEL_SCALE (0.01), so the real
+    offset is 0.0698 GU. A Keldon's -81 NIF Y is the material one at 0.81 GU,
+    against half-extents of roughly 1-5 GU. Ignoring the centre offset
+    under-bounds by exactly that much and drops shots at the far end.
+
+    Uses realistic magnitudes: the 7.0 this once carried is 100x too large
+    (it read CLAUDE.md's NIF figure as GU) and made the case look far more
+    lopsided than any real hull is."""
+    centre = (0.0, 0.81, 0.0)
     half = (2.0, 2.0, 2.0)
     monkeypatch.setattr(combat, "_hull_box_for", lambda s: (centre, half))
     ship = _Ship(radius=1.0)
     bound = combat.bubble_bound_radius(ship)
-    assert bound >= 7.0 + 2.0 * SHIELD_ELLIPSOID_AXIS_SCALE - 1e-9
+    assert bound >= 0.81 + 2.0 * SHIELD_ELLIPSOID_AXIS_SCALE - 1e-9
 
 
 def test_bound_without_a_cached_box_is_still_conservative(monkeypatch):
