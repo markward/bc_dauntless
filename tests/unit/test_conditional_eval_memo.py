@@ -259,3 +259,55 @@ def test_none_return_is_dormant_and_reusable():
     _refresh_conditional_status(ai)
     assert ai._status == US_DORMANT
     assert len(EvalFunc.__defaults__[0]) == 1
+
+
+def test_a_global_read_hidden_in_a_nested_function_is_declined():
+    """The gate inspects fn.__code__.co_names -- but a lambda or nested def
+    inside the EvalFunc compiles to its OWN code object, so its LOAD_GLOBALs
+    never appear in the outer co_names. Such a function reads live module state
+    while presenting as pure, and the memo would then pin its first answer
+    forever: the ChainFollow-shaped stall the gate exists to prevent.
+
+    No shipped SDK EvalFunc nests a function today, which is exactly why this
+    needs a test -- the corpus cannot fail it for us.
+    """
+    src = (
+        "GLOB = 1\n"
+        "def outer(a, b):\n"
+        "    inner = lambda: GLOB\n"      # global read, hidden one level down
+        "    return 1 if inner() else 2\n"
+    )
+    ns = {}
+    exec(compile(src, "<nested>", "exec"), ns)          # noqa: S102
+    assert not _memoisable_evalfunc(ns["outer"]), (
+        "a global read inside a nested code object was not seen by the gate")
+
+
+def test_a_global_read_inside_a_nested_def_is_declined():
+    """Same hole, reached through `def` rather than `lambda`, and one level
+    deeper -- the walk has to recurse, not just look one level down."""
+    src = (
+        "GLOB = 1\n"
+        "def outer(a, b):\n"
+        "    def mid():\n"
+        "        def leaf():\n"
+        "            return GLOB\n"
+        "        return leaf()\n"
+        "    return 1 if mid() else 2\n"
+    )
+    ns = {}
+    exec(compile(src, "<nested>", "exec"), ns)          # noqa: S102
+    assert not _memoisable_evalfunc(ns["outer"])
+
+
+def test_a_nested_function_touching_nothing_global_is_still_admitted():
+    """The recursion must not decline everything it walks into -- a nested
+    helper that reads only its arguments leaves the function pure."""
+    src = (
+        "def outer(a, b):\n"
+        "    add = lambda x, y: x + y\n"
+        "    return add(a, b)\n"
+    )
+    ns = {}
+    exec(compile(src, "<nested>", "exec"), ns)          # noqa: S102
+    assert _memoisable_evalfunc(ns["outer"])

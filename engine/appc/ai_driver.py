@@ -573,15 +573,29 @@ def _memoisable_evalfunc(fn) -> bool:
     code = getattr(fn, "__code__", None)
     if code is None:
         return False                     # builtin / callable object: decline
-    if code.co_freevars:
-        return False                     # closes over something live
     g = getattr(fn, "__globals__", None)
     if g is None:
         return False
     app = g.get("App")
-    for name in code.co_names:
-        if name in g and g[name] is not app:
-            return False
+
+    # Walk nested code objects too. A lambda or nested def inside the EvalFunc
+    # compiles to its OWN code object stored in co_consts, so its LOAD_GLOBALs
+    # never reach the outer co_names -- without this the gate would admit a
+    # function that reads live module state through one level of indirection
+    # and the memo would pin its first answer forever. No shipped SDK EvalFunc
+    # nests a function today; the gate is the only thing standing between the
+    # memo and a stall, so it should be as strong as its docstring claims.
+    import types as _types
+    pending = [code]
+    while pending:
+        c = pending.pop()
+        if c.co_freevars:
+            return False                 # closes over something live
+        for name in c.co_names:
+            if name in g and g[name] is not app:
+                return False
+        pending.extend(k for k in c.co_consts
+                       if isinstance(k, _types.CodeType))
     return True
 
 
@@ -1341,7 +1355,17 @@ def tick_all_ai(game_time: float) -> None:
             continue
         if max_sleep:
             due = ship.__dict__.get("_ai_next_walk_due")
-            if due is not None and game_time < due:
+            # Bounded ABOVE as well as below. The stamp is an absolute game
+            # time and game time is zeroed on every mission (re)load
+            # (host_loop.reset_sdk_globals), so a ship object that survives a
+            # reload carries a stamp from the old epoch that `game_time < due`
+            # alone would honour forever -- the tree is never walked again and
+            # the ship silently stops reacting. Clamping here rather than at
+            # the write makes "no ship sleeps longer than the cap" an
+            # invariant of the scheduler instead of a rule every future write
+            # site has to remember.
+            if due is not None and (
+                    game_time < due <= game_time + max_sleep * _TICK_SECONDS):
                 continue
         ai = ship.GetAI() if hasattr(ship, "GetAI") else None
         if ai is not None:

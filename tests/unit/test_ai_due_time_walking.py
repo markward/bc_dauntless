@@ -165,3 +165,34 @@ def test_sleeping_actually_skips_walks(scene):
     node, _ = scene(interval=10.0, max_sleep=4)
     _run(40)
     assert node.walks < 40, "nothing slept; the scheduler is a no-op"
+
+
+def test_a_due_stamp_from_a_previous_mission_cannot_freeze_a_ship(scene):
+    """_ai_next_walk_due is an ABSOLUTE game time, and the engine zeroes game
+    time on mission (re)load -- host_loop.reset_sdk_globals sets
+    g_kTimerManager._time = 0.0.
+
+    A ship object surviving that reset carries a due stamp from the old epoch,
+    now unreachably far in the future. The gate is a bare `game_time < due`, so
+    the ship's entire AI tree is skipped forever: it stops steering, stops
+    firing, stops reacting, and nothing logs anything.
+
+    The clamp belongs on the READ rather than the write -- that makes "no ship
+    sleeps longer than the cap" an invariant of the scheduler itself instead of
+    something every future write site has to remember.
+    """
+    node, ship = scene(interval=0.1, max_sleep=4)
+
+    # Run out at a late epoch so a real due stamp is written.
+    _run(60, start=300.0)
+    stale = ship.__dict__.get("_ai_next_walk_due")
+    assert stale is not None and stale > 100.0, (
+        f"expected a due stamp in the old epoch, got {stale!r}")
+
+    # The mission reload: the clock restarts, this ship object survives.
+    walks_before = node.walks
+    _run(600, start=0.0)      # ten seconds of game time, far past any cap
+
+    assert node.walks > walks_before, (
+        "the AI tree was never walked again after the clock was zeroed "
+        f"(stale due={stale!r}); the ship is frozen for the rest of the session")
