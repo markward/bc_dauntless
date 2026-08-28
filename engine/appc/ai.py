@@ -485,8 +485,21 @@ class ArtificialIntelligence:
 
         Resetting ``_next_update_time`` to 0.0 (<= every real game_time) is
         sufficient — no parent/root propagation is needed. A node on the active
-        path is *reached* every tick; its own gate is all that stands between it
-        and re-running. A node that has gone US_DORMANT under a PriorityListAI is
+        path is *reached* on every tick the tree is walked; its own gate is all
+        that stands between it and re-running.
+
+        ⚠️ "The next driver tick that reaches it" is not "the next tick". The
+        driver sleeps a whole ship's tree while nothing in it is due
+        (``ai_driver.AI_MAX_SLEEP_TICKS``) and ForceUpdate sends no wake signal
+        — it opens this node's gate, but a sleeping tree is not walked, so
+        nothing consults the gate. The re-run therefore lands up to
+        AI_MAX_SLEEP_TICKS later, ~66 ms at the default cap. That is accepted:
+        it is an order of magnitude inside BC's own 200 ms FireScript cadence,
+        and it bounds every asynchronous reaction built on ForceUpdate — the
+        cloak/decloak re-target above included. Set ``DAUNTLESS_AI_MAX_SLEEP=0``
+        to get literal next-tick behaviour back.
+
+        A node that has gone US_DORMANT under a PriorityListAI is
         also revived by this: ``_tick_priority_list`` re-probes a dormant
         PreprocessingAI child once its cadence gate is due, and ForceUpdate opens
         that gate (this is what lets a ship re-acquire a decloaking target, or

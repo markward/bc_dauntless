@@ -234,10 +234,26 @@ def test_the_contained_done_fold_is_not_cached():
     assert ai._status == US_DONE, "the DONE fold was cached along with the eval"
 
 
-def test_a_raising_evalfunc_is_dormant_and_that_answer_is_reusable():
-    def EvalFunc(a, calls=[]):
+def test_a_raising_evalfunc_is_retried_rather_than_pinned_dormant():
+    """An EXCEPTION is not a pure function of the arguments, so it is the one
+    answer the memo must not keep.
+
+    The memo's whole soundness argument is "same arguments => same answer", and
+    that holds for what an EvalFunc RETURNS. It does not hold for what it
+    raises: a condition script whose target has just been destroyed, or whose
+    GetStatus momentarily hands back something unindexable, raises once and
+    works thereafter. Caching US_DORMANT for that would pin the branch dormant
+    for as long as the conditions hold steady -- 99.9% of ticks -- and the
+    pre-memo code retried every tick.
+
+    So the exception path deliberately does not write the cache. The cost is one
+    call per tick for a function that is failing anyway.
+    """
+    def EvalFunc(a, calls=[], ACTIVE=US_ACTIVE):
         calls.append(a)
-        raise RuntimeError("boom")
+        if len(calls) < 3:
+            raise RuntimeError("boom")     # transient, as a real one would be
+        return ACTIVE
 
     c = _Cond(1)
     ai = _conditional([c], EvalFunc)
@@ -245,11 +261,16 @@ def test_a_raising_evalfunc_is_dormant_and_that_answer_is_reusable():
     assert ai._status == US_DORMANT
     _refresh_conditional_status(ai)
     assert ai._status == US_DORMANT
-    n = len(EvalFunc.__defaults__[0])
-    assert n == 1, "a raising EvalFunc is re-entered every tick (%d times)" % n
+    _refresh_conditional_status(ai)
+    assert ai._status == US_ACTIVE, (
+        "the EvalFunc stopped raising but the memo kept serving its cached "
+        "failure; the branch is dormant forever")
+    assert len(EvalFunc.__defaults__[0]) == 3
 
 
 def test_none_return_is_dormant_and_reusable():
+    """None IS a return value, so purity applies to it and it is memoised --
+    unlike the raising case above, which deliberately is not."""
     def EvalFunc(a, calls=[]):
         calls.append(a)
         return None
@@ -259,6 +280,86 @@ def test_none_return_is_dormant_and_reusable():
     _refresh_conditional_status(ai)
     assert ai._status == US_DORMANT
     assert len(EvalFunc.__defaults__[0]) == 1
+
+
+def test_the_memoisable_verdict_is_re_taken_when_the_evalfunc_is_swapped():
+    """The verdict is per FUNCTION, and SetEvaluationFunction can change it.
+
+    A declined function leaves the cache empty, so a re-check condition written
+    as "the cached entry names a different function" can never fire -- there is
+    no cached entry. The node would then carry `_evalfn_memoisable = False`
+    forever and the replacement function, however pure, is never memoised.
+    Lost saving only, never a wrong answer, which is why nothing else here
+    would notice.
+    """
+    src = "iIndex = 0\ndef EvalFunc(a):\n    return 1 if iIndex else 2\n"
+    ns = {}
+    exec(compile(src, "<chainfollow-like>", "exec"), ns)      # noqa: S102
+    declined = ns["EvalFunc"]
+    assert _memoisable_evalfunc(declined) is False
+
+    ai = _conditional([_Cond(1)], declined)
+    _refresh_conditional_status(ai)
+    _refresh_conditional_status(ai)
+
+    def Pure(a, calls=[], ACTIVE=US_ACTIVE):
+        calls.append(a)
+        return ACTIVE
+
+    assert _memoisable_evalfunc(Pure) is True
+    ai.SetEvaluationFunction(Pure)
+    for _ in range(5):
+        _refresh_conditional_status(ai)
+    assert ai._status == US_ACTIVE
+    n = len(Pure.__defaults__[0])
+    assert n == 1, (
+        "the replacement EvalFunc ran %d times for one unchanging input -- the "
+        "memoisable verdict stayed stuck on the previous function's" % n)
+
+
+def test_a_stub_condition_status_is_never_written_into_the_memo_key():
+    """The key comparison is the one `==` among these caches, and _Stub.__eq__
+    (engine/core/ids.py) returns True for ANY other stub. So a condition whose
+    GetStatus fell through to TGObject.__getattr__ would make every later key
+    compare equal to the cached one and pin the memo permanently.
+
+    Theoretical today -- ConditionScript always returns a real int -- but it is
+    precisely the shape docs/stub_heatmap.md exists for, and the cheap fix is to
+    refuse to build a key out of anything but a scalar. That also retires the
+    general hazard: no object with a sloppy __eq__ can enter the key.
+    """
+    from engine.core.ids import _Stub
+
+    class _StubCond:
+        def GetStatus(self):
+            return _Stub("GetStatus", "ConditionScript")
+
+        def AddHandler(self, _owner):
+            pass
+
+    def EvalFunc(a, ACTIVE=US_ACTIVE):
+        return ACTIVE
+
+    assert _memoisable_evalfunc(EvalFunc)
+    ai = _conditional([_StubCond()], EvalFunc)
+    _refresh_conditional_status(ai)
+    _refresh_conditional_status(ai)
+    assert "_evalfn_cache" not in ai.__dict__, (
+        "a _Stub was written into the memo key; every later key will compare "
+        "equal to it and the node's status is frozen")
+
+
+def test_scalar_condition_statuses_still_reach_the_memo():
+    """Calibration for the guard above: it must not decline the real world.
+    Every ConditionScript returns a plain int, so the memo has to keep firing."""
+    def EvalFunc(a, b, calls=[], ACTIVE=US_ACTIVE):
+        calls.append((a, b))
+        return ACTIVE
+
+    ai = _conditional([_Cond(1), _Cond(0)], EvalFunc)
+    for _ in range(5):
+        _refresh_conditional_status(ai)
+    assert len(EvalFunc.__defaults__[0]) == 1, "the guard declined a plain int"
 
 
 def test_a_global_read_hidden_in_a_nested_function_is_declined():

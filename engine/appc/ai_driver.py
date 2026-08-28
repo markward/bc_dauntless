@@ -16,7 +16,9 @@ _next_update_time field; the driver consults it each tick. This keeps
 Step 3 testable independently of the TimeSliceProcess scheduler (Step 2).
 """
 import inspect
+import os
 import random
+import time as _time
 
 from engine import dev_mode
 from engine.appc.ai import (
@@ -94,7 +96,6 @@ def _dispatch_ai(ai, game_time: float) -> int:
     if ai is None:
         return US_DONE
     # Inert-coast gate: a dying/dead ship issues no new orders.
-    # Inert-coast gate: a dying/dead ship issues no new orders.
     #
     # This was previously marked a MEASURED DEAD END on the grounds that
     # removing ~327,000 calls was unmeasurable on the wall clock. That
@@ -145,10 +146,14 @@ def _dispatch_ai(ai, game_time: float) -> int:
         _reached_this_tick_all_ids.add(node_id)
         _reached_this_tick_all.append(ai)
 
-    handler = _DISPATCH_BY_TYPE.get(type(ai))
-    if handler is None:
-        handler = _resolve_dispatch(type(ai))
-        _DISPATCH_BY_TYPE[type(ai)] = handler
+    # A SENTINEL for "not yet resolved", not None. _resolve_dispatch legitimately
+    # answers None for a node type that matches nothing, and .get()'s None-for-
+    # absent conflates the two: such a type re-ran the whole 7-step issubclass
+    # chain on EVERY visit, which is the one case the cache exists to kill.
+    node_type = type(ai)                  # was evaluated three times on a miss
+    handler = _DISPATCH_BY_TYPE.get(node_type, _UNRESOLVED)
+    if handler is _UNRESOLVED:
+        handler = _DISPATCH_BY_TYPE[node_type] = _resolve_dispatch(node_type)
     if handler is None:
         return ai._status
     if _AI_BREAKDOWN is not None:
@@ -156,12 +161,19 @@ def _dispatch_ai(ai, game_time: float) -> int:
     return handler(ai, game_time)
 
 
-# TEMPORARY INSTRUMENT (DAUNTLESS_AI_BREAKDOWN=1). Attributes SELF time to the
-# node's concrete class, so a parent that spends its tick in children shows the
-# children's cost under the children, not under itself.
-import os as _os
-import time as _time
-_AI_BREAKDOWN = {} if _os.environ.get("DAUNTLESS_AI_BREAKDOWN") else None
+# AI cost breakdown, opt-in via DAUNTLESS_AI_BREAKDOWN=1. Attributes SELF time
+# to the node's concrete class, so a parent that spends its tick in children
+# shows the children's cost under the children, not under itself.
+#
+# KEEP -- decided deliberately, replacing an unqualified "TEMPORARY INSTRUMENT"
+# label that carried no removal plan and so was never going to be acted on.
+# This is the only tool that can say WHICH preprocessor a frame went into, and
+# every AI performance question so far has needed exactly that. It is off unless
+# the env var is set, and when off the entire cost is one `is not None` test per
+# dispatch (the same shape as the dev_mode gates elsewhere in the engine), so
+# there is nothing to reclaim by deleting it. Remove it only if the AI tick
+# stops being a place performance work happens.
+_AI_BREAKDOWN = {} if os.environ.get("DAUNTLESS_AI_BREAKDOWN") else None
 _AI_CHILD_TIME = [0.0]
 _AI_TICKS = [0]
 
@@ -193,6 +205,13 @@ def ai_breakdown_report(ticks: int = 0) -> str:
     if not _AI_BREAKDOWN:
         return ""
     rows = sorted(_AI_BREAKDOWN.items(), key=lambda kv: -kv[1][0])
+    # Reaching into collision_avoidance's private _SCAN_COUNT, knowingly: it is
+    # a raw [scans, overrides] counter pair with no public accessor, and the
+    # avoidance scan is the single biggest non-AI consumer of the AI tick, so a
+    # breakdown that omitted it would mis-attribute its cost. Deferred to call
+    # time (not module scope) so the report cannot add an import edge to the
+    # engine's startup path. If collision_avoidance ever grows a public counter,
+    # switch to it -- this is the only reader.
     from engine.appc.collision_avoidance import _SCAN_COUNT
     out = ["  avoidance scans/tick %.1f  (of which overriding %.1f)"
            % (_SCAN_COUNT[0] / max(ticks, 1), _SCAN_COUNT[1] / max(ticks, 1)),
@@ -217,14 +236,17 @@ _ooa_cache: list = [None, False]
 
 _DISPATCH_BY_TYPE: dict = {}
 
+# "Nothing stored for this type yet" -- distinct from the stored None that
+# _resolve_dispatch returns for a type matching no handler. See _dispatch_ai.
+_UNRESOLVED = object()
+
 
 def _resolve_dispatch(node_type):
     """Run the ordered isinstance chain once for `node_type`.
 
     Returns the handler, or None for a node type that matches nothing (the
-    caller then falls back to reading ai._status, as before).
+    caller stores that None and falls back to reading ai._status, as before).
     """
-    probe = node_type
     for cls, handler in (
         (BuilderAI, _tick_builder),
         (PreprocessingAI, _tick_preprocessing),
@@ -234,7 +256,7 @@ def _resolve_dispatch(node_type):
         (RandomAI, _tick_random),
         (PlainAI, _tick_plain),
     ):
-        if issubclass(probe, cls):
+        if issubclass(node_type, cls):
             return handler
     return None
 
@@ -342,8 +364,16 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     _reached_this_tick.append(ai)
     _dispatch_got_focus(ai)
 
-    _note_due(ai._next_update_time)
+    # Cadence gate. _note_due goes in the NOT-due arm only: on a tick the node
+    # actually executes, its old due time is already in the past, and recording
+    # a past time pinned _walk_min_due below game_time -- so the ship's sleep
+    # stamp landed in the past and the whole tree was walked again on the very
+    # next tick to rediscover nothing was due. Measured 287 walks for 96 runs at
+    # cap 4, where ~192 would do. The invariant is untouched: the not-due arm
+    # records what it is waiting for, and the executing arm records the FRESH
+    # due time below.
     if game_time < ai._next_update_time:
+        _note_due(ai._next_update_time)
         return ai._status
     inst = ai.GetScriptInstance()
     # Script-instance Update is the per-AI heartbeat. Leaves registered
@@ -354,6 +384,12 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     # everything-is-a-lambda fallback.
     update_fn = getattr(inst, "Update", None)
     if update_fn is None or not callable(update_fn):
+        # No _note_due here on purpose. This node has no Update to run at any
+        # cadence, so there is nothing for the walk to wait on -- recording its
+        # (already past) due time would force a walk every tick forever for a
+        # node that can never do anything. A PlainAI still waiting for
+        # SetScriptModule is the one transient case, and the cap picks it up
+        # within AI_MAX_SLEEP_TICKS.
         return ai._status
     status = update_fn()
     if status is None:
@@ -599,6 +635,23 @@ def _memoisable_evalfunc(fn) -> bool:
     return True
 
 
+# Types a memo key may be built from. The key comparison below is the one `==`
+# among the driver's caches (everything else compares with `is`), so what may
+# enter a key has to be restricted to things whose `==` means what it says.
+# _Stub.__eq__ (engine/core/ids.py) returns isinstance(o, _Stub), so ANY two
+# stubs compare equal: a condition whose GetStatus fell through to a stub would
+# make every later key equal to the cached one and freeze the node's status.
+# ConditionScript always returns a real int today, so this is prevention, not a
+# live bug -- but it is exactly the shape docs/stub_heatmap.md exists for, and
+# the guard also shuts out any future object with a sloppy __eq__.
+#
+# `type(a) in`, not isinstance: a subclass may override __eq__, which is the
+# whole hazard. Checked on the WRITE only -- a cached key therefore holds
+# nothing but scalars, and comparing a scalar against an incoming stub is
+# correctly False (int.__eq__ defers, _Stub.__eq__ answers isinstance -> False).
+_MEMO_KEY_TYPES = (bool, int, float, str, type(None))
+
+
 def _eval_conditional(ai, eval_fn, args):
     """Run (or reuse) `eval_fn` over `args`, returning the pre-fold status.
 
@@ -613,18 +666,38 @@ def _eval_conditional(ai, eval_fn, args):
     cache = ai.__dict__.get("_evalfn_cache")
     if cache is not None and cache[0] is eval_fn and cache[1] == key:
         return cache[2]
+    raised = False
     try:
         status = eval_fn(*args)
     except Exception:
+        raised = True
         status = US_DORMANT
     if status is None:
         status = US_DORMANT
     status = int(status)
-    memoisable = ai.__dict__.get("_evalfn_memoisable")
-    if memoisable is None or (cache is not None and cache[0] is not eval_fn):
-        memoisable = _memoisable_evalfunc(eval_fn)
-        ai.__dict__["_evalfn_memoisable"] = memoisable
-    if memoisable:
+
+    # The memoisable verdict is a property of the FUNCTION, so it is stored
+    # WITH the function it was taken for. It used to be a bare bool re-checked
+    # only when a live cache entry named a different function -- but a declined
+    # function writes no cache entry, so after one decline the re-check could
+    # never fire and a later, perfectly pure EvalFunc installed by
+    # SetEvaluationFunction was never memoised again. Lost saving only, never a
+    # wrong answer, which is why nothing noticed.
+    verdict = ai.__dict__.get("_evalfn_memoisable")
+    if verdict is None or verdict[0] is not eval_fn:
+        verdict = (eval_fn, _memoisable_evalfunc(eval_fn))
+        ai.__dict__["_evalfn_memoisable"] = verdict
+
+    # An EXCEPTION is not a pure function of the arguments, so it is the one
+    # answer that must not be cached. "Same arguments => same answer" holds for
+    # what an EvalFunc RETURNS (None included -- that is a return value); it
+    # does not hold for what it raises. Caching the US_DORMANT fallback pinned a
+    # transiently-failing branch dormant for as long as the conditions held
+    # steady, which is 99.9% of ticks; the pre-memo code retried every tick and
+    # that behaviour is restored here. Covered by
+    # test_a_raising_evalfunc_is_retried_rather_than_pinned_dormant.
+    if verdict[1] and not raised and all(
+            type(a) in _MEMO_KEY_TYPES for a in args):
         ai.__dict__["_evalfn_cache"] = (eval_fn, key, status)
     return status
 
@@ -1011,6 +1084,14 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
             and contained._status == US_ACTIVE
             and not contained.IsInterruptable()):
         ai._status = US_ACTIVE
+        # No _note_due for THIS node's due time — the one gating site that does
+        # not record, deliberately, and _note_due's docstring names the
+        # exception. While the bypass holds, the preprocessor's Update never
+        # runs, so _next_update_time is frozen (usually already in the past) and
+        # recording it would pin _walk_min_due below game_time and force an
+        # every-tick walk for a decision that cannot be taken. The contained
+        # subtree still records its own gates through the tick_ai below, so
+        # nothing that CAN run gets slept through.
         tick_ai(contained, game_time)
         return ai._status
 
@@ -1018,10 +1099,23 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     # (game_time >= _next_update_time), mirroring _tick_plain and BC's C++
     # dispatcher, which honours every node's GetNextUpdateTime. The contained
     # AI still dispatches every tick (below) — only the preprocessor's own
-    # decision-making is gated. ForceUpdate() resets _next_update_time to 0.0
-    # so an asynchronous event (e.g. a target cloaking) re-runs the
-    # preprocessor on the very next tick instead of after its full cadence.
-    _note_due(ai._next_update_time)
+    # decision-making is gated.
+    #
+    # ForceUpdate() resets _next_update_time to 0.0 so an asynchronous event
+    # (e.g. a target cloaking) re-runs the preprocessor at its next reached
+    # tick instead of after its full cadence. ⚠️ "Next reached tick" is NOT
+    # "next tick": with the sleep scheduler (AI_MAX_SLEEP_TICKS) a tree whose
+    # walk is asleep is not walked at all, and nothing wakes it — ForceUpdate
+    # opens this gate but sends no signal to tick_all_ai. So the re-run lands
+    # within the cap, up to ~66 ms later. That is an order of magnitude inside
+    # BC's own 200 ms FireScript cadence and is accepted; the cloak-reaction
+    # path (SelectTarget's ObjectDecloaked handler) leans on this sentence, so
+    # do not restore the old "on the very next tick" claim without also
+    # building the wake signal.
+    #
+    # _note_due sits in the not-due arm only — see the matching note in
+    # _tick_plain for why recording an already-past due time cost a whole extra
+    # walk of every tree after every execution.
     if game_time >= ai._next_update_time:
         bound = getattr(inst, method)
         if arity >= 1:
@@ -1074,6 +1168,7 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
             return ai._status
         # PS_NORMAL falls through to contained_ai dispatch below.
     else:
+        _note_due(ai._next_update_time)
         # Cadence-skipped tick: the preprocessor didn't run this tick, so
         # reproduce its last decision rather than blindly dispatching. A
         # targetless SelectTarget that reported PS_SKIP_DORMANT must stay
@@ -1309,12 +1404,35 @@ def fire_ai_done(ship, ai) -> None:
 # for walks; removing it needs the wake signal built first.
 #
 # Set DAUNTLESS_AI_MAX_SLEEP=0 to restore per-tick walking exactly.
-AI_MAX_SLEEP_TICKS = max(0, int(
-    __import__("os").environ.get("DAUNTLESS_AI_MAX_SLEEP", "4")))
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int from the environment, falling back on anything unparseable.
+
+    Parsed at IMPORT time, which is why this is not a bare int(): a typo like
+    DAUNTLESS_AI_MAX_SLEEP=4x would otherwise raise ValueError out of
+    `import engine.appc.ai_driver` and take the whole engine down before a
+    single line of logging exists — from a developer convenience knob.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+AI_MAX_SLEEP_TICKS = max(0, _env_int("DAUNTLESS_AI_MAX_SLEEP", 4))
 
 # Earliest _next_update_time seen during the CURRENT root walk. inf means the
 # walk saw no cadence gate at all, which is capped like everything else.
-_TICK_SECONDS = 1.0 / 60.0   # GameLoop.TICK_DELTA; imported here would cycle
+#
+# Kept as a local copy of GameLoop.TICK_DELTA because importing engine.core.loop
+# here would cycle (loop imports tick_all_ai). Pinned equal to it by
+# tests/unit/test_ai_scheduler_invariants.py so the copy cannot silently drift
+# if the tick rate ever changes.
+_TICK_SECONDS = 1.0 / 60.0
 _walk_min_due = [float("inf")]
 
 
@@ -1328,10 +1446,22 @@ def _note_due_ret(when: float) -> bool:
 def _note_due(when: float) -> None:
     """Record a node's next-update time during the walk in progress.
 
-    Called from every site that gates on game_time >= _next_update_time, so the
-    tree's sleep can never outlast the soonest thing it is waiting for. A site
-    that gates WITHOUT calling this would let its node oversleep -- which is
-    why this is a named function and not an inline min().
+    Called from every site that gates on game_time >= _next_update_time and can
+    still ACT on that gate, so the tree's sleep can never outlast the soonest
+    thing it is waiting for. A site that gates WITHOUT calling this would let
+    its node oversleep -- which is why this is a named function and not an
+    inline min(), and why tests/unit/test_ai_scheduler_invariants.py fails the
+    build if a new gate appears without one.
+
+    Two deliberate non-calls, both because there is nothing to wait FOR:
+
+      * the non-interruptable bypass in _tick_preprocessing, where the
+        preprocessor's Update cannot run at all while the bypass holds;
+      * a PlainAI whose script instance has no Update method.
+
+    In both cases the node's due time is frozen in the past, so recording it
+    would pin _walk_min_due below game_time and force an every-tick walk for
+    work that cannot happen. Each site carries the reasoning inline.
     """
     if when < _walk_min_due[0]:
         _walk_min_due[0] = when
