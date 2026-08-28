@@ -245,31 +245,31 @@ def test_real_firescript_choice_reaches_ship_target_subsystem():
     assert ours.GetTargetSubsystem() is warp_core
 
 
-# ── Dev-mode diagnostic visibility (regression: logging.info was swallowed) ──
-# The host configures no logging handler, so logging.info(...) is invisible in
-# the running game. Dev-mode diagnostics MUST print() to reach the terminal —
-# matching the [viewscreen]/[host_loop] convention. See systematic-debugging
-# session 2026-07-07: "not seeing ais targeting subsystems" was this bug.
+# ── The subsystem-target sync is SILENT ────────────────────────────────────
+# It used to print "[ai] <ship> -> targeting <sub>" under --developer on every
+# change. That was added after a 2026-07-07 session where logging.info(...) was
+# invisible (the host configures no logging handler, so dev diagnostics have to
+# print() to reach the terminal -- the [viewscreen]/[host_loop] convention).
+#
+# THE LOGGING LESSON STANDS; this particular diagnostic does not. "Only on
+# change" was assumed to make it quiet, and in a real fight it is not: against a
+# player ship every NPC re-picks a subsystem constantly and the line buries
+# every other diagnostic. The same information is available on demand from the
+# AI Inspector, which reports target_subsystem per ship.
+#
+# So: if you add a dev diagnostic here, print() it (logging is swallowed) -- but
+# do not print one per transition.
 
-def test_dev_mode_diagnostic_prints_to_stdout_on_change(monkeypatch, capsys):
-    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
-    ours, target, shield = _ship_with_target_and_subsystem()
-    inst = _FireScriptLike(shield.GetObjID())
-    _wire(inst, ours)
-    inst.idTargetedSubsystem = shield.GetObjID()
-    _sync_fire_script_target_subsystem(inst)
-    out = capsys.readouterr().out
-    assert "[ai]" in out
-    assert "targeting" in out
-    assert shield.GetName() in out
-
-
-def test_dev_mode_diagnostic_silent_when_dev_mode_off(monkeypatch, capsys):
-    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
-    ours, target, shield = _ship_with_target_and_subsystem()
-    inst = _FireScriptLike(shield.GetObjID())
-    _wire(inst, ours)
-    inst.idTargetedSubsystem = shield.GetObjID()
-    _sync_fire_script_target_subsystem(inst)
-    out = capsys.readouterr().out
-    assert "[ai]" not in out
+def test_the_subsystem_sync_prints_nothing(monkeypatch, capsys):
+    """Silent in BOTH dev-mode states. Asserting only the dev-off case would
+    pass just as well if the print came back, since it was always gated."""
+    for enabled in (True, False):
+        monkeypatch.setattr(dev_mode, "is_enabled", lambda e=enabled: e)
+        ours, target, shield = _ship_with_target_and_subsystem()
+        inst = _FireScriptLike(shield.GetObjID())
+        _wire(inst, ours)
+        inst.idTargetedSubsystem = shield.GetObjID()
+        _sync_fire_script_target_subsystem(inst)
+        out = capsys.readouterr().out
+        assert out == "", (
+            f"subsystem sync printed with dev_mode={enabled}: {out!r}")

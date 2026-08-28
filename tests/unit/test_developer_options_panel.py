@@ -116,6 +116,7 @@ def test_render_payload_shape(panel):
     assert body["tabs"] == [
         {"id": "combat", "label": "Combat"},
         {"id": "lighting", "label": "Lighting"},
+        {"id": "diagnostics", "label": "Diagnostics"},
     ]
     assert body["selected_tab"] == "combat"
     assert body["focused"] == -1  # nothing keyboard-focused on first paint
@@ -124,6 +125,7 @@ def test_render_payload_shape(panel):
         "disable_collisions": False,
         "systems_damaged": False, "systems_disabled": False,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
+        "profiler": False,
     }
 
 
@@ -194,6 +196,7 @@ def test_focusables_order(panel):
     assert p._focusables() == [
         ("tab", "combat"),
         ("tab", "lighting"),
+        ("tab", "diagnostics"),
         ("ctrl", "god_mode"),
         ("ctrl", "double_weapons"),
         ("ctrl", "no_npc_shields"),
@@ -360,3 +363,117 @@ def test_normal_map_toggle_round_trips(panel, monkeypatch):
     p.dispatch_event("toggle:normal_maps")
     p.dispatch_event("toggle:normal_maps")
     assert seen == [False, True], seen
+
+
+# ── Diagnostics tab: the frame profiler ─────────────────────────────────────
+# The profiler used to be reachable only by the backtick key. Backtick sits
+# next to Esc/1/Tab, there was no confirmation, and once on it printed a full
+# report every 120 frames (~2 s) indefinitely -- so a stray keypress buried
+# every other diagnostic in the terminal. Moving it here makes it a deliberate
+# act with visible state.
+
+def test_the_diagnostics_tab_exists():
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+    panel = DeveloperOptionsPanel()
+    assert "diagnostics" in [tid for tid, _ in panel._tabs]
+
+
+def test_the_profiler_toggle_drives_the_real_profiler(monkeypatch):
+    """The panel must move the actual profiler, not a local mirror -- the whole
+    point is that this replaces the key that drove it directly."""
+    from engine.core import frame_profiler
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    # native=False keeps the C++ timer (and a possibly-absent extension) out.
+    monkeypatch.setattr(frame_profiler, "set_enabled",
+                        lambda v, native=True: frame_profiler.__dict__.__setitem__("_enabled", v))
+    frame_profiler.set_enabled(False)
+
+    panel = DeveloperOptionsPanel()
+    panel.open()
+    assert panel.dispatch_event("toggle:profiler") is True
+    assert frame_profiler.is_enabled() is True
+    assert panel.dispatch_event("toggle:profiler") is True
+    assert frame_profiler.is_enabled() is False
+
+
+def test_reopening_shows_the_profilers_real_state(monkeypatch):
+    """State can change behind the panel -- DAUNTLESS_PROFILE_FRAMES enables the
+    profiler at startup. A cached mirror would show OFF while it was running."""
+    from engine.core import frame_profiler
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    panel = DeveloperOptionsPanel()
+    frame_profiler.__dict__["_enabled"] = True
+    try:
+        panel.open()
+        assert panel._profiler is True, "panel did not re-read the live state"
+    finally:
+        frame_profiler.__dict__["_enabled"] = False
+
+
+def test_the_diagnostics_tab_is_keyboard_reachable():
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+    panel = DeveloperOptionsPanel()
+    panel.open()
+    panel.dispatch_event("tab:diagnostics")
+    assert ("ctrl", "profiler") in panel._focusables(), (
+        "diagnostics tab exposes no focusable profiler control")
+
+
+def test_toggling_the_profiler_re_emits_the_payload(monkeypatch):
+    """The row must actually REDRAW, not just change a field.
+
+    render_payload snapshot-diffs and returns None when nothing changed. A
+    setting absent from that snapshot tuple therefore toggles invisibly: the
+    flag flips, the profiler really does turn on, and the button keeps saying
+    "Off" forever because no new payload is ever pushed to CEF. Shipped exactly
+    that way — the state tests passed because they asserted the mirror rather
+    than the emission.
+    """
+    from engine.core import frame_profiler
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    monkeypatch.setattr(frame_profiler, "set_enabled",
+                        lambda v, native=True: frame_profiler.__dict__.__setitem__("_enabled", v))
+    frame_profiler.set_enabled(False)
+
+    panel = DeveloperOptionsPanel()
+    panel.open()
+    first = panel.render_payload()
+    assert first is not None
+    assert panel.render_payload() is None, "unchanged panel should not re-emit"
+
+    panel.dispatch_event("toggle:profiler")
+    after = panel.render_payload()
+    assert after is not None, (
+        "toggling the profiler emitted no payload — the button will keep "
+        "showing its old state; _profiler is missing from the snapshot tuple")
+    assert '"profiler": true' in after.replace(" ", " ")
+
+
+def test_every_setting_is_in_the_render_snapshot():
+    """Generic guard: whatever the payload reports, the snapshot must cover.
+
+    Otherwise the next setting added repeats this bug — the panel is correct
+    internally and simply never tells the UI.
+    """
+    import json
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    panel = DeveloperOptionsPanel()
+    panel.open()
+    payload = panel.render_payload()
+    body = json.loads(payload[len("setDeveloperOptions("):-2])
+
+    for key, value in body["settings"].items():
+        if not isinstance(value, bool):
+            continue                      # sliders are covered by their own tests
+        attr = "_" + key
+        assert hasattr(panel, attr), f"settings['{key}'] has no {attr} mirror"
+        setattr(panel, attr, not getattr(panel, attr))
+        assert panel.render_payload() is not None, (
+            f"flipping {attr} produced no new payload — '{key}' is missing "
+            "from render_payload's snapshot tuple, so the UI will never "
+            "show it change")
+        panel.render_payload()

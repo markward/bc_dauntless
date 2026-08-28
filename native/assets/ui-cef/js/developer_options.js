@@ -24,6 +24,9 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'no_npc_shields'});
         out.push({kind: 'ctrl', target: 'disable_collisions'});
     }
+    if (state.selected_tab === 'diagnostics') {
+        out.push({kind: 'ctrl', target: 'profiler'});
+    }
     if (state.selected_tab === 'lighting') {
         out.push({kind: 'ctrl', target: 'systems_damaged'});
         out.push({kind: 'ctrl', target: 'systems_disabled'});
@@ -108,6 +111,23 @@ function _doRenderCombatBody(state, focusables) {
     return html;
 }
 
+function _doRenderDiagnosticsBody(state, focusables) {
+    const focused = focusables[state.focused] || {};
+    const isFoc = (target) => focused.kind === 'ctrl' && focused.target === target;
+    const s = state.settings;
+    let html = '';
+    html += _doToggleRow('Frame Profiler', 'profiler', s.profiler, isFoc('profiler'));
+    // Say what turning it on actually does. It reports to the TERMINAL, not
+    // here, and it reports repeatedly -- both are surprising if unstated, and
+    // the repetition is what made the old backtick binding so noisy.
+    html += '<div class="cp-row cp-capture-hint">Times both halves of the frame and prints a '
+          + 'report to the terminal every 120 frames (~2 s at 60 fps) until '
+          + 'switched off. See docs/engine/frame-profiler.md before drawing a '
+          + 'conclusion from it.</div>';
+    return html;
+}
+
+
 function _doRenderLightingBody(state, focusables) {
     const focused = focusables[state.focused] || {};
     const isFoc = (target) => focused.kind === 'ctrl' && focused.target === target;
@@ -142,6 +162,7 @@ function setDeveloperOptions(state) {
         body.innerHTML =
             (state.selected_tab === 'combat')   ? _doRenderCombatBody(state, focusables)
           : (state.selected_tab === 'lighting') ? _doRenderLightingBody(state, focusables)
+          : (state.selected_tab === 'diagnostics') ? _doRenderDiagnosticsBody(state, focusables)
           : '';
     }
     root.style.display = 'flex';

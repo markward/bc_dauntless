@@ -14,10 +14,18 @@ Modeled on the original BC AIActiveLogView.py socket monitor.
 from __future__ import annotations
 
 import json
+import sys
+import time
+from pathlib import Path
 from typing import Optional
 
 from engine.ui.panel import Panel
 from engine.ui.ai_inspector_model import collect_all_ship_ai
+
+# Fixed name, project root, overwritten every press. The debug loop is
+# fly -> observe -> export -> read the file in another window; a timestamped
+# file per press would turn that into a directory to sift through. Gitignored.
+EXPORT_PATH = Path(__file__).resolve().parents[2] / "ai_inspector_export.json"
 
 
 class AIInspectorPanel(Panel):
@@ -67,6 +75,9 @@ class AIInspectorPanel(Panel):
         if action == "cancel":
             self.close()
             return True
+        if action == "export":
+            self._export()
+            return True
         if action.startswith("expand:"):
             self._open_ids.add(action[len("expand:"):])
             return True
@@ -74,6 +85,36 @@ class AIInspectorPanel(Panel):
             self._open_ids.discard(action[len("collapse:"):])
             return True
         return False
+
+    def _export(self) -> None:
+        """Write the live AI state to EXPORT_PATH.
+
+        Goes through collect_all_ship_ai -- the panel's own model -- rather
+        than a parallel path, so enriching what the panel shows enriches the
+        file too. The file is the half that gets read later, away from the
+        running game, and is the easier of the two to leave behind.
+
+        Never raises. A read-only directory or a locked file must not take the
+        inspector down mid-fight: losing one export is better than losing the
+        instrument you were using when the bug appeared.
+        """
+        try:
+            payload = {
+                "captured_wall_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "ships": collect_all_ship_ai(),
+            }
+            try:
+                import App
+                payload["game_time"] = App.g_kUtopiaModule.GetGameTime()
+            except Exception:
+                payload["game_time"] = None      # headless, or no module yet
+            EXPORT_PATH.write_text(
+                json.dumps(payload, indent=2, default=str), encoding="utf-8")
+            n = len(payload["ships"])
+            sys.stderr.write(
+                f"[ai-inspector] exported {n} ship(s) to {EXPORT_PATH}\n")
+        except Exception as exc:                 # noqa: BLE001 - see docstring
+            sys.stderr.write(f"[ai-inspector] export FAILED: {exc!r}\n")
 
     def invalidate(self) -> None:
         self._last_pushed = None

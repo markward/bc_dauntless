@@ -295,11 +295,43 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     forward it to apply_hit so the persistent damage decal can render (a None
     normal suppresses the decal).
     """
-    from engine.appc.combat import (sphere_hit, _resolve_hit_point)
+    # All resolved ONCE per call. shield_bubble_entry/shields_block used to be
+    # imported inside the ship loop, i.e. re-resolved for every (torpedo, ship)
+    # pair -- a sys.modules lookup and two attribute fetches ~1,900 times a
+    # tick in a 17-ship fight.
+    from engine.appc.combat import (sphere_hit, _resolve_hit_point,
+                                    shield_bubble_entry, shields_block,
+                                    bubble_bound_radius as _bubble_bound_radius)
     from engine.appc.math import TGPoint3
 
     hits: list[tuple] = []
     expired: list[Torpedo] = []
+
+    # Nothing in flight => the per-ship cache below has no reader. Building it
+    # anyway costs N x (IsDead + GetWorldLocation + bubble_bound_radius, which
+    # itself reaches GetScale + GetRadius) -- roughly 500 calls a tick at 100
+    # ships, every tick of an idle scene, for a list nothing reads. Bail before
+    # the walk, not after it.
+    if not _active:
+        return hits
+
+    # Per-ship values resolved ONCE per call, not once per (torpedo, ship)
+    # pair. Position, the broadphase bound and liveness depend only on the
+    # ship, and nothing inside this function moves a ship or kills one --
+    # torpedoes move, and hits are returned for the CALLER to apply, so the
+    # world is static for the duration of the walk.
+    #
+    # This is the difference between O(ships) and O(torpedoes x ships) calls
+    # into the subsystem layer. At 100 ships a profile showed bubble_bound_radius
+    # at 1,057,500 calls and GetWorldLocation at 1,426,880 over 200 ticks --
+    # roughly 5,300 and 7,100 PER TICK, for ~101 distinct answers.
+    ship_cache = []
+    for ship in all_ships:
+        if ship.IsDead():
+            continue
+        pos = ship.GetWorldLocation()
+        ship_cache.append((ship, pos.x, pos.y, pos.z,
+                           _bubble_bound_radius(ship)))
 
     for t in list(_active):
         # 1. Steer if homing within guidance window.
@@ -313,28 +345,50 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
             expired.append(t)
             continue
         # 3. Collide.
-        from engine.appc.combat import shield_bubble_entry, shields_block
-        for ship in all_ships:
-            if ship is t._source_ship:
-                continue
-            if ship.IsDead():
+        # The segment, its length and the aim direction depend only on the
+        # TORPEDO, so they are computed once here rather than once per ship.
+        # They used to sit inside the ship loop, which rebuilt three vectors
+        # per (torpedo, ship) pair -- 1,900 rebuilds a tick in a 17-ship
+        # fight, for values that never varied across the loop.
+        seg = t._position - prev_pos
+        seg_len = seg.Length()
+        # seg_len ~= 0 only if dt or velocity was zero this tick;
+        # _resolve_hit_point treats `ray_direction=None` as "degrade
+        # to fallback", which is what we want for a stationary tick.
+        aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
+                    if seg_len > 1e-9 else None)
+
+        source = t._source_ship
+        for ship, sx, sy, sz, bound in ship_cache:
+            if ship is source:
                 continue
 
-            seg = t._position - prev_pos
-            seg_len = seg.Length()
-            # seg_len ~= 0 only if dt or velocity was zero this tick;
-            # _resolve_hit_point treats `ray_direction=None` as "degrade
-            # to fallback", which is what we want for a stationary tick.
-            aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
-                        if seg_len > 1e-9 else None)
+            # Broadphase. Both narrow tests below are expensive -- the bubble
+            # test alone fetches the ship's rotation matrix and does three dot
+            # products to reach the body frame -- and BOTH used to run on every
+            # pair with no distance rejection at all, which is what made this
+            # loop the dominant cost of a fight.
+            #
+            # The whole segment lies within seg_len of prev_pos, and both tests
+            # are contained in sphere(ship_pos, bubble_bound_radius). So if the
+            # centres are further apart than the sum, neither test can fire.
+            # Conservative by construction: it rejects only pairs that would
+            # have missed, so hit behaviour is unchanged. Pure arithmetic on
+            # values hoisted above -- no attribute or subsystem access.
+            ddx = sx - prev_pos.x
+            ddy = sy - prev_pos.y
+            ddz = sz - prev_pos.z
+            reach = bound + seg_len
+            if (ddx * ddx + ddy * ddy + ddz * ddz) > reach * reach:
+                continue
 
             # The SHIELD BUBBLE is tested first, exactly as BC's projectile
             # loop does: TestHit intersects the ellipsoid and only falls
             # through to the hull when no live facing stops the shot
             # (stbc_reference spec/ShieldFacingDamage.md §3.1, §2.3).
             #
-            # It has to be its own broadphase, not a refinement of the sphere
-            # test, because the two disagree in BOTH directions. On a Galaxy
+            # It is its own NARROW test, not a refinement of the sphere test,
+            # because the two disagree in BOTH directions. On a Galaxy
             # the bounding sphere is 4.03 GU while the bubble semi-axes are
             # 4.02 / 5.58 / 1.22: a bow shot crossed the bubble 1.55 GU before
             # the sphere test noticed (so its whole segment was already inside

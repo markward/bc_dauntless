@@ -16,7 +16,9 @@ _next_update_time field; the driver consults it each tick. This keeps
 Step 3 testable independently of the TimeSliceProcess scheduler (Step 2).
 """
 import inspect
+import os
 import random
+import time as _time
 
 from engine import dev_mode
 from engine.appc.ai import (
@@ -24,6 +26,11 @@ from engine.appc.ai import (
     ConditionalAI, PreprocessingAI, BuilderAI, RandomAI,
 )
 from engine.appc.sensor_detection import is_hidden_by_cloak
+# Module level, not deferred inside _dispatch_ai. ship_death imports nothing
+# from here, so there is no cycle to break -- and _dispatch_ai runs ~12.5 times
+# per ship per tick, so the deferred form was 127,200 importlib._handle_fromlist
+# calls in a 600-tick profile at 17 ships.
+from engine.appc import ship_death
 
 US_ACTIVE = ArtificialIntelligence.US_ACTIVE
 US_DONE = ArtificialIntelligence.US_DONE
@@ -66,6 +73,10 @@ def tick_ai(ai, game_time: float) -> int:
     global _focus_depth, _reached_this_tick, _reached_this_tick_all, _reached_this_tick_all_ids
     is_root = _focus_depth == 0
     if is_root:
+        # The out-of-action slot is scoped to one root tick: a new root means a
+        # new ship, and a ship that died since the last root tick must be
+        # re-asked.
+        _ooa_cache[0] = None
         _reached_this_tick = []
         _reached_this_tick_all = []
         _reached_this_tick_all_ids = set()
@@ -85,10 +96,44 @@ def _dispatch_ai(ai, game_time: float) -> int:
     if ai is None:
         return US_DONE
     # Inert-coast gate: a dying/dead ship issues no new orders.
-    from engine.appc import ship_death
+    #
+    # This was previously marked a MEASURED DEAD END on the grounds that
+    # removing ~327,000 calls was unmeasurable on the wall clock. That
+    # observation was correct; the inference from it was not. It rested on
+    # "327k calls at ~30 ns is 0.03 ms/tick", and the per-call figure was the
+    # weak link -- _out_of_action is two implements() plus two engine method
+    # calls, not 30 ns of work.
+    #
+    # Measured directly, with the timer's own cost calibrated and subtracted:
+    # 0.632 us per call, 772 node visits/tick at 100 ships = 0.488 ms/tick,
+    # ~7.3 ms/frame, and 55% of _dispatch_ai's whole pre-handler preamble.
+    # Sixteen times the figure the old note reasoned from.
+    #
+    # Why the wall clock could not see it, then or now: the number of catch-up
+    # ticks per frame is derived from wall-clock frame time, so a momentarily
+    # faster machine runs more ticks and evolves the battle differently.
+    # combat_stress does not reproduce run to run, and its frame time carries
+    # +/-40 ms of scene noise -- roughly six times this effect. "Unmeasurable
+    # by that instrument" is a fact about the instrument.
+    #
+    # The cache is a single slot, not a dict: within one root tick every node
+    # in the tree belongs to the SAME ship, so identity against the last ship
+    # asked is both sufficient and cheaper than hashing. Reset at each root
+    # tick (see tick_ai). Nothing inside tick_all_ai can kill a ship -- the AI
+    # writes setpoints and queues fire; damage lands later in _advance_combat
+    # -- and a mismatch merely recomputes, so the failure mode is a lost
+    # saving, never a wrong answer.
     ship = ai.GetShip() if hasattr(ai, "GetShip") else None
-    if ship is not None and ship_death._out_of_action(ship):
-        return US_DONE
+    if ship is not None:
+        if _ooa_cache[0] is ship:
+            if _ooa_cache[1]:
+                return US_DONE
+        else:
+            _dead = ship_death._out_of_action(ship)
+            _ooa_cache[0] = ship
+            _ooa_cache[1] = _dead
+            if _dead:
+                return US_DONE
     # Record every node type reached on the active dispatch path this root
     # tick -- the single funnel every _tick_* function passes through, so
     # this is the one place that needs to record (see _reconcile_active).
@@ -96,24 +141,124 @@ def _dispatch_ai(ai, game_time: float) -> int:
     # (e.g. re-entered via a looping SequenceAI) must only appear once, else
     # _reconcile_active's `reached` list — and the _active_nodes snapshot
     # derived from it — carries duplicates.
-    if id(ai) not in _reached_this_tick_all_ids:
-        _reached_this_tick_all_ids.add(id(ai))
+    node_id = id(ai)          # was computed twice per node visit
+    if node_id not in _reached_this_tick_all_ids:
+        _reached_this_tick_all_ids.add(node_id)
         _reached_this_tick_all.append(ai)
-    if isinstance(ai, BuilderAI):
-        return _tick_builder(ai, game_time)
-    if isinstance(ai, PreprocessingAI):
-        return _tick_preprocessing(ai, game_time)
-    if isinstance(ai, ConditionalAI):
-        return _tick_conditional(ai, game_time)
-    if isinstance(ai, PriorityListAI):
-        return _tick_priority_list(ai, game_time)
-    if isinstance(ai, SequenceAI):
-        return _tick_sequence(ai, game_time)
-    if isinstance(ai, RandomAI):
-        return _tick_random(ai, game_time)
-    if isinstance(ai, PlainAI):
-        return _tick_plain(ai, game_time)
-    return ai._status
+
+    # A SENTINEL for "not yet resolved", not None. _resolve_dispatch legitimately
+    # answers None for a node type that matches nothing, and .get()'s None-for-
+    # absent conflates the two: such a type re-ran the whole 7-step issubclass
+    # chain on EVERY visit, which is the one case the cache exists to kill.
+    node_type = type(ai)                  # was evaluated three times on a miss
+    handler = _DISPATCH_BY_TYPE.get(node_type, _UNRESOLVED)
+    if handler is _UNRESOLVED:
+        handler = _DISPATCH_BY_TYPE[node_type] = _resolve_dispatch(node_type)
+    if handler is None:
+        return ai._status
+    if _AI_BREAKDOWN is not None:
+        return _timed_dispatch(handler, ai, game_time)
+    return handler(ai, game_time)
+
+
+# AI cost breakdown, opt-in via DAUNTLESS_AI_BREAKDOWN=1. Attributes SELF time
+# to the node's concrete class, so a parent that spends its tick in children
+# shows the children's cost under the children, not under itself.
+#
+# KEEP -- decided deliberately, replacing an unqualified "TEMPORARY INSTRUMENT"
+# label that carried no removal plan and so was never going to be acted on.
+# This is the only tool that can say WHICH preprocessor a frame went into, and
+# every AI performance question so far has needed exactly that. It is off unless
+# the env var is set, and when off the entire cost is one `is not None` test per
+# dispatch (the same shape as the dev_mode gates elsewhere in the engine), so
+# there is nothing to reclaim by deleting it. Remove it only if the AI tick
+# stops being a place performance work happens.
+_AI_BREAKDOWN = {} if os.environ.get("DAUNTLESS_AI_BREAKDOWN") else None
+_AI_CHILD_TIME = [0.0]
+_AI_TICKS = [0]
+
+
+def _timed_dispatch(handler, ai, game_time):
+    outer_child = _AI_CHILD_TIME[0]
+    _AI_CHILD_TIME[0] = 0.0
+    t0 = _time.perf_counter()
+    try:
+        return handler(ai, game_time)
+    finally:
+        total = _time.perf_counter() - t0
+        self_time = total - _AI_CHILD_TIME[0]
+        key = type(ai).__name__
+        _inst = ai.__dict__.get("_preprocessing_instance")
+        if _inst is not None:
+            key = "pp:" + type(_inst).__name__
+        rec = _AI_BREAKDOWN.get(key)
+        if rec is None:
+            _AI_BREAKDOWN[key] = [self_time, 1]
+        else:
+            rec[0] += self_time
+            rec[1] += 1
+        _AI_CHILD_TIME[0] = outer_child + total
+
+
+def ai_breakdown_report(ticks: int = 0) -> str:
+    ticks = ticks or _AI_TICKS[0]
+    if not _AI_BREAKDOWN:
+        return ""
+    rows = sorted(_AI_BREAKDOWN.items(), key=lambda kv: -kv[1][0])
+    # Reaching into collision_avoidance's private _SCAN_COUNT, knowingly: it is
+    # a raw [scans, overrides] counter pair with no public accessor, and the
+    # avoidance scan is the single biggest non-AI consumer of the AI tick, so a
+    # breakdown that omitted it would mis-attribute its cost. Deferred to call
+    # time (not module scope) so the report cannot add an import edge to the
+    # engine's startup path. If collision_avoidance ever grows a public counter,
+    # switch to it -- this is the only reader.
+    from engine.appc.collision_avoidance import _SCAN_COUNT
+    out = ["  avoidance scans/tick %.1f  (of which overriding %.1f)"
+           % (_SCAN_COUNT[0] / max(ticks, 1), _SCAN_COUNT[1] / max(ticks, 1)),
+           "  ai node self-time         ms/tick    visits/tick"]
+    for name, (secs, calls) in rows:
+        out.append("    %-24s %7.3f %10.1f"
+                   % (name[:24], secs * 1000.0 / max(ticks, 1), calls / max(ticks, 1)))
+    return chr(10).join(out)
+
+
+# Resolved handler per EXACT node type. The isinstance chain below runs once
+# per distinct class and is then a dict lookup -- it averaged 3.25 isinstance
+# calls per dispatch, 414,000 in a 600-tick profile at 17 ships.
+#
+# Keyed on the exact type, so inheritance is still honoured: the chain (which
+# is ORDER-SENSITIVE -- a class that is both a BuilderAI and a PreprocessingAI
+# must resolve to builder, as it did before) is what populates the cache, so
+# whatever it would have chosen is what gets stored.
+# [ship, is_out_of_action] for the CURRENT root tick only; see _dispatch_ai.
+_ooa_cache: list = [None, False]
+
+
+_DISPATCH_BY_TYPE: dict = {}
+
+# "Nothing stored for this type yet" -- distinct from the stored None that
+# _resolve_dispatch returns for a type matching no handler. See _dispatch_ai.
+_UNRESOLVED = object()
+
+
+def _resolve_dispatch(node_type):
+    """Run the ordered isinstance chain once for `node_type`.
+
+    Returns the handler, or None for a node type that matches nothing (the
+    caller stores that None and falls back to reading ai._status, as before).
+    """
+    for cls, handler in (
+        (BuilderAI, _tick_builder),
+        (PreprocessingAI, _tick_preprocessing),
+        (ConditionalAI, _tick_conditional),
+        (PriorityListAI, _tick_priority_list),
+        (SequenceAI, _tick_sequence),
+        (RandomAI, _tick_random),
+        (PlainAI, _tick_plain),
+    ):
+        if issubclass(node_type, cls):
+            return handler
+    return None
 
 
 def _reconcile_focus(root_ai, reached) -> None:
@@ -219,7 +364,16 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     _reached_this_tick.append(ai)
     _dispatch_got_focus(ai)
 
+    # Cadence gate. _note_due goes in the NOT-due arm only: on a tick the node
+    # actually executes, its old due time is already in the past, and recording
+    # a past time pinned _walk_min_due below game_time -- so the ship's sleep
+    # stamp landed in the past and the whole tree was walked again on the very
+    # next tick to rediscover nothing was due. Measured 287 walks for 96 runs at
+    # cap 4, where ~192 would do. The invariant is untouched: the not-due arm
+    # records what it is waiting for, and the executing arm records the FRESH
+    # due time below.
     if game_time < ai._next_update_time:
+        _note_due(ai._next_update_time)
         return ai._status
     inst = ai.GetScriptInstance()
     # Script-instance Update is the per-AI heartbeat. Leaves registered
@@ -230,6 +384,12 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     # everything-is-a-lambda fallback.
     update_fn = getattr(inst, "Update", None)
     if update_fn is None or not callable(update_fn):
+        # No _note_due here on purpose. This node has no Update to run at any
+        # cadence, so there is nothing for the walk to wait on -- recording its
+        # (already past) due time would force a walk every tick forever for a
+        # node that can never do anything. A PlainAI still waiting for
+        # SetScriptModule is the one transient case, and the cap picks it up
+        # within AI_MAX_SLEEP_TICKS.
         return ai._status
     status = update_fn()
     if status is None:
@@ -243,6 +403,7 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     next_update = next_update_fn() if callable(next_update_fn) else None
     interval = float(next_update) if next_update is not None else 0.0
     ai._next_update_time = game_time + interval
+    _note_due(ai._next_update_time)
     return ai._status
 
 
@@ -350,6 +511,7 @@ def _tick_priority_list(ai: PriorityListAI, game_time: float) -> int:
             # BuilderAI is a PreprocessingAI subclass — it builds once and is not
             # a dormant combat child, so this is harmless for it.
             if not (isinstance(child, PreprocessingAI)
+                    and _note_due_ret(child._next_update_time)
                     and game_time >= child._next_update_time):
                 continue
             # Probe it. If it reactivated it holds the list; if it stayed dormant
@@ -378,6 +540,168 @@ def _tick_priority_list(ai: PriorityListAI, game_time: float) -> int:
     return ai._status
 
 
+# ── ConditionalAI evaluation memo ────────────────────────────────────────────
+#
+# A priority list picks its winner by refreshing every ConditionalAI child it
+# scans, for each list on the active path, every tick. At 100 ships that is
+# ~350-400 refreshes per tick, ~5,500 per frame -- and MEASURED, 99.9% of them
+# are handed condition statuses identical to the previous tick, producing a
+# different status 0.01% of the time. The conditions are event-driven
+# (proximity sweeps, timers, damage), so between events there is nothing to
+# recompute.
+#
+# The statuses are still READ every time -- that is how we know nothing changed,
+# and no memo can skip it. What this removes is the EvalFunc call behind them.
+#
+# HONEST SIZING -- read this before quoting the change either way.
+#
+# In-game hit rate is 99.9% with 0.0% declined, so it does what it says. The
+# wall-clock effect, six ALTERNATING paired runs at 100 ships (gl.ai, memo on
+# minus memo off, in ms):
+#
+#     +1.70  -7.49  -0.62  -14.03  +3.05  -10.61     mean -4.7
+#
+# Four of six favour it, but the paired standard deviation is ~7 ms against a
+# 4.7 ms effect (t ~ 1.6, p ~ 0.16). So: NOT a regression -- that much is
+# settled -- and probably a small gain, but not one this sample can claim.
+# Do not cite it as a measured win. Do not let a future profile blame it for a
+# loss either. If you need the real number, it needs ~20 pairs, and the whole
+# refresh path is only ~13 ms of a ~330 ms frame, so it is unlikely to be worth
+# the machine time.
+#
+# The reason the ceiling is low: the EvalFuncs are three-line boolean
+# combinators, so building the key costs about what calling one costs. The
+# memo is kept for being simpler and provably equivalent, not for speed.
+#
+# The read itself could only be skipped with a dirty flag, and that is BLOCKED,
+# not merely unbuilt: TGCondition.SetStatus already pushes ConditionChanged to
+# its handlers, but the push is gated on `if self._active`, so an inactive
+# condition changes status silently -- the exact drift this polling refresh
+# exists to fix (the M2Objects symptom in _tick_priority_list). Solve the
+# inactive case before attempting it.
+#
+# Soundness rests on the EvalFunc being a pure function of its arguments. That
+# was checked across the corpus rather than assumed: 458 evaluation functions
+# in sdk/ and engine/, of which 450 read only their parameters and App
+# constants. The 8 exceptions are all AI/Compound/ChainFollow.py, whose
+# EvalFuncs read a MODULE-LEVEL GLOBAL `iIndex` that CreateAI assigns
+# (`global iIndex; iIndex = kShips.index(...)`). It is stable within a tick but
+# moves whenever another ChainFollow AI is built, which would strand a memo.
+#
+# So the memo is gated per function, not taken on trust.
+
+
+def _memoisable_evalfunc(fn) -> bool:
+    """True when `fn` provably depends only on its arguments (and App).
+
+    co_names holds global reads AND attribute names indistinguishably, so the
+    test asks a narrower question that is decidable: does the name resolve to
+    something in the function's own module globals, and if so, is it App? An
+    attribute name like US_ACTIVE is not a module global, so it is ignored;
+    ChainFollow's `iIndex` IS one, so it is caught. Erring toward declining is
+    the safe direction -- a declined function just keeps the old behaviour.
+
+    Conservative in one way worth knowing: a function reading a US_* constant
+    imported directly into its module is declined too. Real SDK EvalFuncs reach
+    those through App.ArtificialIntelligence, an attribute chain, which is why
+    450 of 458 pass.
+    """
+    code = getattr(fn, "__code__", None)
+    if code is None:
+        return False                     # builtin / callable object: decline
+    g = getattr(fn, "__globals__", None)
+    if g is None:
+        return False
+    app = g.get("App")
+
+    # Walk nested code objects too. A lambda or nested def inside the EvalFunc
+    # compiles to its OWN code object stored in co_consts, so its LOAD_GLOBALs
+    # never reach the outer co_names -- without this the gate would admit a
+    # function that reads live module state through one level of indirection
+    # and the memo would pin its first answer forever. No shipped SDK EvalFunc
+    # nests a function today; the gate is the only thing standing between the
+    # memo and a stall, so it should be as strong as its docstring claims.
+    import types as _types
+    pending = [code]
+    while pending:
+        c = pending.pop()
+        if c.co_freevars:
+            return False                 # closes over something live
+        for name in c.co_names:
+            if name in g and g[name] is not app:
+                return False
+        pending.extend(k for k in c.co_consts
+                       if isinstance(k, _types.CodeType))
+    return True
+
+
+# Types a memo key may be built from. The key comparison below is the one `==`
+# among the driver's caches (everything else compares with `is`), so what may
+# enter a key has to be restricted to things whose `==` means what it says.
+# _Stub.__eq__ (engine/core/ids.py) returns isinstance(o, _Stub), so ANY two
+# stubs compare equal: a condition whose GetStatus fell through to a stub would
+# make every later key equal to the cached one and freeze the node's status.
+# ConditionScript always returns a real int today, so this is prevention, not a
+# live bug -- but it is exactly the shape docs/stub_heatmap.md exists for, and
+# the guard also shuts out any future object with a sloppy __eq__.
+#
+# `type(a) in`, not isinstance: a subclass may override __eq__, which is the
+# whole hazard. Checked on the WRITE only -- a cached key therefore holds
+# nothing but scalars, and comparing a scalar against an incoming stub is
+# correctly False (int.__eq__ defers, _Stub.__eq__ answers isinstance -> False).
+_MEMO_KEY_TYPES = (bool, int, float, str, type(None))
+
+
+def _eval_conditional(ai, eval_fn, args):
+    """Run (or reuse) `eval_fn` over `args`, returning the pre-fold status.
+
+    Returns the PRE-FOLD status, deliberately. The contained-AI DONE fold is
+    the caller's job and must not migrate in here: _contained_ai._status
+    changes for reasons no condition reflects, so it is not in the key, and
+    caching a folded value would hide a finished child for as long as the
+    conditions hold steady. Both callers carry the same warning at the fold
+    itself -- _refresh_conditional_status has the full version.
+    """
+    key = tuple(args)
+    cache = ai.__dict__.get("_evalfn_cache")
+    if cache is not None and cache[0] is eval_fn and cache[1] == key:
+        return cache[2]
+    raised = False
+    try:
+        status = eval_fn(*args)
+    except Exception:
+        raised = True
+        status = US_DORMANT
+    if status is None:
+        status = US_DORMANT
+    status = int(status)
+
+    # The memoisable verdict is a property of the FUNCTION, so it is stored
+    # WITH the function it was taken for. It used to be a bare bool re-checked
+    # only when a live cache entry named a different function -- but a declined
+    # function writes no cache entry, so after one decline the re-check could
+    # never fire and a later, perfectly pure EvalFunc installed by
+    # SetEvaluationFunction was never memoised again. Lost saving only, never a
+    # wrong answer, which is why nothing noticed.
+    verdict = ai.__dict__.get("_evalfn_memoisable")
+    if verdict is None or verdict[0] is not eval_fn:
+        verdict = (eval_fn, _memoisable_evalfunc(eval_fn))
+        ai.__dict__["_evalfn_memoisable"] = verdict
+
+    # An EXCEPTION is not a pure function of the arguments, so it is the one
+    # answer that must not be cached. "Same arguments => same answer" holds for
+    # what an EvalFunc RETURNS (None included -- that is a return value); it
+    # does not hold for what it raises. Caching the US_DORMANT fallback pinned a
+    # transiently-failing branch dormant for as long as the conditions held
+    # steady, which is 99.9% of ticks; the pre-memo code retried every tick and
+    # that behaviour is restored here. Covered by
+    # test_a_raising_evalfunc_is_retried_rather_than_pinned_dormant.
+    if verdict[1] and not raised and all(
+            type(a) in _MEMO_KEY_TYPES for a in args):
+        ai.__dict__["_evalfn_cache"] = (eval_fn, key, status)
+    return status
+
+
 def _refresh_conditional_status(ai: ConditionalAI) -> None:
     """Re-run a ConditionalAI's EvalFunc against its conditions and
     cache the result on ``ai._status`` without dispatching contained
@@ -391,16 +715,19 @@ def _refresh_conditional_status(ai: ConditionalAI) -> None:
     eval_fn = ai._evaluation_function
     if eval_fn is not None:
         args = [c.GetStatus() for c in ai._conditions]
-        try:
-            status = eval_fn(*args)
-        except Exception:
-            status = US_DORMANT
-        if status is None:
-            status = US_DORMANT
-        ai._status = int(status)
+        ai._status = _eval_conditional(ai, eval_fn, args)
         # Fold in the contained AI's completion (see _tick_conditional):
         # an EvalFunc that reports US_ACTIVE forever must not mask a
         # contained AI that has already finished.
+        #
+        # ⚠️ THIS FOLD MUST STAY OUTSIDE THE MEMO. _eval_conditional returns the
+        # EvalFunc's own PRE-fold answer, and _contained_ai._status is not part
+        # of its key -- it changes for reasons no condition reflects. Folding
+        # inside the helper, or caching the folded value here, would freeze a
+        # child's completion out of the answer for as long as the conditions
+        # hold steady. That is 99.9% of ticks, so a finished child would go
+        # permanently invisible and its parent PriorityList/Sequence would
+        # never complete. Covered by test_the_contained_done_fold_is_not_cached.
         if (ai._status == US_ACTIVE and ai._contained_ai is not None
                 and ai._contained_ai._status == US_DONE):
             ai._status = US_DONE
@@ -537,13 +864,7 @@ def _tick_conditional(ai: ConditionalAI, game_time: float) -> int:
     eval_fn = ai._evaluation_function
     if eval_fn is not None:
         args = [c.GetStatus() for c in ai._conditions]
-        try:
-            status = eval_fn(*args)
-        except Exception:
-            status = US_DORMANT
-        if status is None:
-            status = US_DORMANT
-        ai._status = int(status)
+        ai._status = _eval_conditional(ai, eval_fn, args)
         if ai._status == US_ACTIVE and ai._contained_ai is not None:
             tick_ai(ai._contained_ai, game_time)
             # Fold in the contained AI's completion. Some EvalFuncs (SDK
@@ -552,6 +873,14 @@ def _tick_conditional(ai: ConditionalAI, game_time: float) -> int:
             # contained AI's progress; without this, the ConditionalAI
             # never reflects that its contained AI actually finished, so
             # the parent PriorityList/Sequence never completes.
+            #
+            # ⚠️ MUST STAY OUTSIDE THE MEMO -- and note it also has to stay
+            # AFTER the tick_ai above, which is what moves the child to
+            # US_DONE in the first place. _eval_conditional returns the
+            # EvalFunc's PRE-fold answer; _contained_ai._status is not in its
+            # key, so caching the folded value would hide a finished child for
+            # as long as the conditions hold steady. Same invariant as in
+            # _refresh_conditional_status, which carries the longer note.
             if ai._contained_ai._status == US_DONE:
                 ai._status = US_DONE
         return ai._status
@@ -651,13 +980,13 @@ def _sync_fire_script_target_subsystem(inst) -> None:
     # transitions rather than every fire tick.
     if ship.GetTargetSubsystem() is not chosen:
         ship.SetTargetSubsystem(chosen)
-        if dev_mode.is_enabled():
-            ship_name = ship.GetName() if hasattr(ship, "GetName") else "<ship>"
-            sub_name = chosen.GetName() if chosen is not None else "hull centre"
-            # print(), not logging: the host configures no logging handler, so
-            # logging.info is swallowed and never reaches the terminal. Matches
-            # the [viewscreen]/[host_loop] dev-diagnostic convention.
-            print(f"[ai] {ship_name} -> targeting {sub_name}")
+        # NO dev log here. This used to print "[ai] <ship> -> targeting <sub>"
+        # under --developer on every change, on the theory that a change-only
+        # log is quiet. It is not: against a player ship every NPC re-picks a
+        # subsystem constantly, and the line buried every other diagnostic in
+        # the terminal. If you need this back, count transitions or sample it
+        # rather than printing every one -- the AI Inspector already reports
+        # target_subsystem per ship, which is the same information on demand.
 
 
 def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
@@ -755,6 +1084,14 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
             and contained._status == US_ACTIVE
             and not contained.IsInterruptable()):
         ai._status = US_ACTIVE
+        # No _note_due for THIS node's due time — the one gating site that does
+        # not record, deliberately, and _note_due's docstring names the
+        # exception. While the bypass holds, the preprocessor's Update never
+        # runs, so _next_update_time is frozen (usually already in the past) and
+        # recording it would pin _walk_min_due below game_time and force an
+        # every-tick walk for a decision that cannot be taken. The contained
+        # subtree still records its own gates through the tick_ai below, so
+        # nothing that CAN run gets slept through.
         tick_ai(contained, game_time)
         return ai._status
 
@@ -762,9 +1099,23 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     # (game_time >= _next_update_time), mirroring _tick_plain and BC's C++
     # dispatcher, which honours every node's GetNextUpdateTime. The contained
     # AI still dispatches every tick (below) — only the preprocessor's own
-    # decision-making is gated. ForceUpdate() resets _next_update_time to 0.0
-    # so an asynchronous event (e.g. a target cloaking) re-runs the
-    # preprocessor on the very next tick instead of after its full cadence.
+    # decision-making is gated.
+    #
+    # ForceUpdate() resets _next_update_time to 0.0 so an asynchronous event
+    # (e.g. a target cloaking) re-runs the preprocessor at its next reached
+    # tick instead of after its full cadence. ⚠️ "Next reached tick" is NOT
+    # "next tick": with the sleep scheduler (AI_MAX_SLEEP_TICKS) a tree whose
+    # walk is asleep is not walked at all, and nothing wakes it — ForceUpdate
+    # opens this gate but sends no signal to tick_all_ai. So the re-run lands
+    # within the cap, up to ~66 ms later. That is an order of magnitude inside
+    # BC's own 200 ms FireScript cadence and is accepted; the cloak-reaction
+    # path (SelectTarget's ObjectDecloaked handler) leans on this sentence, so
+    # do not restore the old "on the very next tick" claim without also
+    # building the wake signal.
+    #
+    # _note_due sits in the not-due arm only — see the matching note in
+    # _tick_plain for why recording an already-past due time cost a whole extra
+    # walk of every tree after every execution.
     if game_time >= ai._next_update_time:
         bound = getattr(inst, method)
         if arity >= 1:
@@ -790,6 +1141,7 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
         nxt = next_update_fn() if callable(next_update_fn) else None
         interval = float(nxt) if nxt is not None else 0.0
         ai._next_update_time = game_time + interval
+        _note_due(ai._next_update_time)
 
         if result == PS_SKIP_ACTIVE:
             ai._status = US_ACTIVE
@@ -816,6 +1168,7 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
             return ai._status
         # PS_NORMAL falls through to contained_ai dispatch below.
     else:
+        _note_due(ai._next_update_time)
         # Cadence-skipped tick: the preprocessor didn't run this tick, so
         # reproduce its last decision rather than blindly dispatching. A
         # targetless SelectTarget that reported PS_SKIP_DORMANT must stay
@@ -1014,6 +1367,106 @@ def fire_ai_done(ship, ai) -> None:
         dev_mode.log_swallowed("fire ET_AI_DONE", _e)
 
 
+# ── Due-time tree walking ────────────────────────────────────────────────────
+#
+# MEASURED at 100 ships: 100 ship trees are walked per tick and 87% of them
+# execute NOTHING -- every node dispatched, every ConditionalAI refreshed, ~772
+# node visits, to rediscover that nothing was due. Only ~12 preprocessor
+# Updates run per tick across the whole scene, because GetNextUpdateTime gates
+# them hard (SelectTarget once per ship per ~3.5 s, AlertLevel once per 60 s).
+#
+# So a tree records, as it is walked, the EARLIEST _next_update_time it saw,
+# and is not walked again until then. Skipping happens only when nothing was
+# going to run anyway.
+#
+# A blanket every-N-ticks stride was tried first and REJECTED on measurement,
+# not on taste. It was faster (gl.ai 95-100 -> 52-59 ms at N=4) but it also
+# delayed nodes that WERE due -- PlainAI steering leaves run every tick by
+# design -- so ships steered coarsely, flew straighter and landed more hits:
+# projectiles in flight 146/169 -> 212/217 and hull-damaged ships 52 -> 67/78
+# over identical simulated game time. A performance change that makes combat
+# more lethal is a gameplay change wearing a disguise.
+#
+# THE SLEEP IS CAPPED, and that cap is the load-bearing part. A due time is
+# only trustworthy for the nodes the walk REACHED; a condition on an inactive
+# branch can change and make a lower-priority branch eligible without any
+# reached node knowing. Normally _refresh_conditional_status polls for exactly
+# that (see the M2Objects symptom in _tick_priority_list), and a sleeping tree
+# does not poll. There is no wake signal to lean on instead: TGCondition.
+# SetStatus notifies handlers only `if self._active`, and ConditionalAI
+# activates its conditions from the node's tree-activation lifecycle, so an
+# inactive branch's conditions are silent by design (ai-architecture.md Sec.6).
+#
+# Capping the sleep bounds that blindness to MAX_SLEEP_TICKS instead of
+# eliminating it. At 4 ticks a missed branch switch surfaces within 66 ms,
+# against BC's own 200 ms FireScript cadence -- an order of magnitude inside
+# the envelope the game was designed around. Raising this cap trades latency
+# for walks; removing it needs the wake signal built first.
+#
+# Set DAUNTLESS_AI_MAX_SLEEP=0 to restore per-tick walking exactly.
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int from the environment, falling back on anything unparseable.
+
+    Parsed at IMPORT time, which is why this is not a bare int(): a typo like
+    DAUNTLESS_AI_MAX_SLEEP=4x would otherwise raise ValueError out of
+    `import engine.appc.ai_driver` and take the whole engine down before a
+    single line of logging exists — from a developer convenience knob.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+AI_MAX_SLEEP_TICKS = max(0, _env_int("DAUNTLESS_AI_MAX_SLEEP", 4))
+
+# Earliest _next_update_time seen during the CURRENT root walk. inf means the
+# walk saw no cadence gate at all, which is capped like everything else.
+#
+# Kept as a local copy of GameLoop.TICK_DELTA because importing engine.core.loop
+# here would cycle (loop imports tick_all_ai). Pinned equal to it by
+# tests/unit/test_ai_scheduler_invariants.py so the copy cannot silently drift
+# if the tick rate ever changes.
+_TICK_SECONDS = 1.0 / 60.0
+_walk_min_due = [float("inf")]
+
+
+def _note_due_ret(when: float) -> bool:
+    """_note_due in expression position; always True so it can be AND-ed into
+    an existing condition without changing it."""
+    _note_due(when)
+    return True
+
+
+def _note_due(when: float) -> None:
+    """Record a node's next-update time during the walk in progress.
+
+    Called from every site that gates on game_time >= _next_update_time and can
+    still ACT on that gate, so the tree's sleep can never outlast the soonest
+    thing it is waiting for. A site that gates WITHOUT calling this would let
+    its node oversleep -- which is why this is a named function and not an
+    inline min(), and why tests/unit/test_ai_scheduler_invariants.py fails the
+    build if a new gate appears without one.
+
+    Two deliberate non-calls, both because there is nothing to wait FOR:
+
+      * the non-interruptable bypass in _tick_preprocessing, where the
+        preprocessor's Update cannot run at all while the bypass holds;
+      * a PlainAI whose script instance has no Update method.
+
+    In both cases the node's due time is frozen in the past, so recording it
+    would pin _walk_min_due below game_time and force an every-tick walk for
+    work that cannot happen. Each site carries the reasoning inline.
+    """
+    if when < _walk_min_due[0]:
+        _walk_min_due[0] = when
+
+
 def tick_all_ai(game_time: float) -> None:
     """Iterate every ship and tick its attached AI subtree.
 
@@ -1022,14 +1475,39 @@ def tick_all_ai(game_time: float) -> None:
     """
     from engine.appc.ship_iter import iter_ships
     from engine.appc import defensive_cloak
+    if _AI_BREAKDOWN is not None:
+        _AI_TICKS[0] += 1
+    max_sleep = AI_MAX_SLEEP_TICKS
     for ship in iter_ships():
         # A ship hiding-to-repair is owned by the defensive-cloak controller;
         # suppress its SDK AI so the two cloak drivers never conflict.
         if defensive_cloak.is_defensive(ship):
             continue
+        if max_sleep:
+            due = ship.__dict__.get("_ai_next_walk_due")
+            # Bounded ABOVE as well as below. The stamp is an absolute game
+            # time and game time is zeroed on every mission (re)load
+            # (host_loop.reset_sdk_globals), so a ship object that survives a
+            # reload carries a stamp from the old epoch that `game_time < due`
+            # alone would honour forever -- the tree is never walked again and
+            # the ship silently stops reacting. Clamping here rather than at
+            # the write makes "no ship sleeps longer than the cap" an
+            # invariant of the scheduler instead of a rule every future write
+            # site has to remember.
+            if due is not None and (
+                    game_time < due <= game_time + max_sleep * _TICK_SECONDS):
+                continue
         ai = ship.GetAI() if hasattr(ship, "GetAI") else None
         if ai is not None:
+            _walk_min_due[0] = float("inf")
             status = tick_ai(ai, game_time)
+            if max_sleep:
+                # Never sleep past the soonest gate this walk saw, and never
+                # past the cap -- see AI_MAX_SLEEP_TICKS on why the cap is the
+                # part holding this together.
+                ship.__dict__["_ai_next_walk_due"] = min(
+                    _walk_min_due[0],
+                    game_time + max_sleep * _TICK_SECONDS)
             # Root-tree completion: announce the end (SDK: so orbit/helm state
             # can react) AND release the conn.
             #

@@ -22,6 +22,7 @@ from engine.appc.ship_iter import (
 )
 import engine.dev_keybindings as dev_keybindings
 import engine.dev_mode as dev_mode
+from engine.core import frame_profiler
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
@@ -859,12 +860,14 @@ def _advance_combat(ships, dt: float, ship_instances=None,
     # Refresh damage-carve eligibility for this tick before any hits are
     # processed: player always + capped nearest/largest ships.
     # See engine.appc.damage_eligibility.
-    damage_eligibility.update(ships_list)
+    with frame_profiler.scope("cb.eligibility"):
+        damage_eligibility.update(ships_list)
 
-    hits = projectiles.update_all(
-        dt, ships_list,
-        ship_instances=ship_instances,
-    )
+    with frame_profiler.scope("cb.projectiles"):
+        hits = projectiles.update_all(
+            dt, ships_list,
+            ship_instances=ship_instances,
+        )
     for torpedo, ship, hit_point, hit_normal in hits:
         combat.apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship,
@@ -876,152 +879,163 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                   # pre-advance position; None when the bubble did not stop it.
                   shield_point=torpedo._bubble_entry)
 
-    hit_vfx.update_ages(dt)
-    from engine.appc import shockwaves
-    shockwaves.advance(dt)
-    particles.advance(dt)
-    ship_death.advance(dt)
-    from engine.appc import object_lifetime
-    object_lifetime.advance(dt)
-    from engine.appc import subsystem_cascade, warp_core_breach
-    subsystem_cascade.advance(dt)
-    warp_core_breach.advance(dt, ship_instances=ship_instances)
-    from engine.appc import core_breach_carve
-    core_breach_carve.advance(dt, ship_instances=ship_instances)
-    from engine.appc import visible_damage
-    visible_damage.advance(dt, ship_instances=ship_instances)
-    camera_shake.update(dt)
+    with frame_profiler.scope("cb.vfx"):
+        hit_vfx.update_ages(dt)
+        from engine.appc import shockwaves
+        shockwaves.advance(dt)
+        particles.advance(dt)
+    with frame_profiler.scope("cb.death"):
+        ship_death.advance(dt)
+        from engine.appc import object_lifetime
+        object_lifetime.advance(dt)
+    with frame_profiler.scope("cb.damage_sys"):
+        from engine.appc import subsystem_cascade, warp_core_breach
+        subsystem_cascade.advance(dt)
+        warp_core_breach.advance(dt, ship_instances=ship_instances)
+        from engine.appc import core_breach_carve
+        core_breach_carve.advance(dt, ship_instances=ship_instances)
+        from engine.appc import visible_damage
+        visible_damage.advance(dt, ship_instances=ship_instances)
+        camera_shake.update(dt)
 
     # BC WeaponSystem tick: one update_weapons per armed system per frame.
-    _pump_held_weapons(ships_list, dt)
+    with frame_profiler.scope("cb.held_weapons"):
+        _pump_held_weapons(ships_list, dt)
 
     # Continuous phaser damage tick.  Each ship's PhaserSystem has banks
     # set firing by the weapon tick above; advance them here: re-check arc
     # (auto-stop drifters), compute distance falloff, and route damage through
     # apply_hit (which routes shields → subsystem → hull, calls
     # hit_feedback.dispatch, and broadcasts WeaponHitEvent).
-    for ship in ships_list:
-        sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
-        if sys_ is None:
-            continue
-        # Disabled-weapons gate: parent aggregates child IsDisabled. When
-        # the system flips disabled mid-tick (incoming hit during the
-        # previous frame's damage routing), stop any active banks and
-        # skip the damage loop for this ship. Spec §4.2.
-        # Power-off gate: a system turned off via the power slider (IsOn()==0)
-        # must also stop any already-firing banks immediately.  _is_offline
-        # only checks IsDisabled/IsDestroyed and does NOT cover the powered-
-        # down case, so we gate on IsOn() here as a separate check.
-        if _is_offline(sys_) or not sys_.IsOn():
-            sys_.StopFiring()
-            continue
-        for i in range(sys_.GetNumWeapons()):
-            bank = sys_.GetWeapon(i)
-            if bank is None or not bank.IsFiring():
+    with frame_profiler.scope("cb.phasers"):
+        for ship in ships_list:
+            sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
+            if sys_ is None:
                 continue
-            target = bank._target
-            if target is None or (hasattr(target, "IsDead") and target.IsDead()):
-                bank.StopFiring()
+            # Disabled-weapons gate: parent aggregates child IsDisabled. When
+            # the system flips disabled mid-tick (incoming hit during the
+            # previous frame's damage routing), stop any active banks and
+            # skip the damage loop for this ship. Spec §4.2.
+            # Power-off gate: a system turned off via the power slider (IsOn()==0)
+            # must also stop any already-firing banks immediately.  _is_offline
+            # only checks IsDisabled/IsDestroyed and does NOT cover the powered-
+            # down case, so we gate on IsOn() here as a separate check.
+            if _is_offline(sys_) or not sys_.IsOn():
+                sys_.StopFiring()
                 continue
-            # Sensor gate (authoritative): this is the per-tick chokepoint where
-            # continuous phaser damage is actually applied. A bank can be left
-            # IsFiring by an AI that stopped updating (e.g. the firing ship's
-            # own SelectTarget cleared its target once its sensors degraded, so
-            # FireScript bailed via PS_DONE without StopFiring), so gating only
-            # FireScript.TargetVisible isn't enough — stranded banks would keep
-            # dealing damage here. A ship that can't detect its target can't
-            # keep firing at it. See engine/appc/sensor_detection.can_detect.
-            if not can_detect(ship, target):
-                bank.StopFiring()
-                continue
-            target_sub = (ship.GetTargetSubsystem()
-                          if hasattr(ship, "GetTargetSubsystem") else None)
-            if target_sub is not None and hasattr(target_sub, "GetWorldLocation"):
-                target_pos = target_sub.GetWorldLocation()
-            else:
-                target_pos = target.GetWorldLocation()
-                target_sub = None
-            emitter_pos = bank._strip_emit_position(target_pos)
-            # Distance: emit point → target (drives damage falloff).
-            dx = target_pos.x - emitter_pos.x
-            dy = target_pos.y - emitter_pos.y
-            dz = target_pos.z - emitter_pos.z
-            dist = (dx * dx + dy * dy + dz * dz) ** 0.5
-            aim_unit = TGPoint3(dx / dist, dy / dist, dz / dist) if dist > 1e-6 else None
-            # Arc check: aim from bank Position → target (NOT emit_pos →
-            # target). The firing cone originates at the mount, not at
-            # the emit point. Mismatch between this site and StartFiring
-            # was Bug F — a bank could pass arc at fire-time and fail
-            # on the next tick because its emit point sat past the
-            # target on the strip. See research doc § Bug F.
-            arc_aim = _resolve_bank_aim_world(bank, target_sub or target)
-            if not _emitter_in_arc(bank, ship, arc_aim):
-                bank.StopFiring()
-                continue
-            damage = _phaser_damage_for_tick(
-                max_damage=bank.GetMaxDamage(),
-                max_damage_distance=bank.GetMaxDamageDistance(),
-                dist=dist,
-                dt=dt,
-            )
-            if damage > 0:
-                impact_point, impact_normal = combat._resolve_hit_point(
-                    ship_instances=ship_instances, ship=target,
-                    ray_origin=emitter_pos,
-                    ray_direction=(aim_unit if dist > 1e-6 else None),
-                    max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
-                    fallback_point=target_pos,
+            for i in range(sys_.GetNumWeapons()):
+                bank = sys_.GetWeapon(i)
+                if bank is None or not bank.IsFiring():
+                    continue
+                target = bank._target
+                if target is None or (hasattr(target, "IsDead") and target.IsDead()):
+                    bank.StopFiring()
+                    continue
+                # Sensor gate (authoritative): this is the per-tick chokepoint where
+                # continuous phaser damage is actually applied. A bank can be left
+                # IsFiring by an AI that stopped updating (e.g. the firing ship's
+                # own SelectTarget cleared its target once its sensors degraded, so
+                # FireScript bailed via PS_DONE without StopFiring), so gating only
+                # FireScript.TargetVisible isn't enough — stranded banks would keep
+                # dealing damage here. A ship that can't detect its target can't
+                # keep firing at it. See engine/appc/sensor_detection.can_detect.
+                if not can_detect(ship, target):
+                    bank.StopFiring()
+                    continue
+                target_sub = (ship.GetTargetSubsystem()
+                              if hasattr(ship, "GetTargetSubsystem") else None)
+                if target_sub is not None and hasattr(target_sub, "GetWorldLocation"):
+                    target_pos = target_sub.GetWorldLocation()
+                else:
+                    target_pos = target.GetWorldLocation()
+                    target_sub = None
+                emitter_pos = bank._strip_emit_position(target_pos)
+                # Distance: emit point → target (drives damage falloff).
+                dx = target_pos.x - emitter_pos.x
+                dy = target_pos.y - emitter_pos.y
+                dz = target_pos.z - emitter_pos.z
+                dist = (dx * dx + dy * dy + dz * dz) ** 0.5
+                aim_unit = TGPoint3(dx / dist, dy / dist, dz / dist) if dist > 1e-6 else None
+                # Arc check: aim from bank Position → target (NOT emit_pos →
+                # target). The firing cone originates at the mount, not at
+                # the emit point. Mismatch between this site and StartFiring
+                # was Bug F — a bank could pass arc at fire-time and fail
+                # on the next tick because its emit point sat past the
+                # target on the strip. See research doc § Bug F.
+                arc_aim = _resolve_bank_aim_world(bank, target_sub or target)
+                if not _emitter_in_arc(bank, ship, arc_aim):
+                    bank.StopFiring()
+                    continue
+                damage = _phaser_damage_for_tick(
+                    max_damage=bank.GetMaxDamage(),
+                    max_damage_distance=bank.GetMaxDamageDistance(),
+                    dist=dist,
+                    dt=dt,
                 )
-                # Where the beam crossed the bubble — the same point
-                # _beam_endpoint stops the DRAWN beam at, so the flash lands on
-                # the beam's own tip instead of 236 NIF units behind it. None
-                # when no facing is up, which falls the flash back to the hull
-                # point inside dispatch.
-                bubble_entry = (
-                    combat.shield_bubble_entry(target, emitter_pos, aim_unit,
-                                               dist * 1.5)
-                    if (aim_unit is not None and combat.shields_block(target))
-                    else None)
-                # LIGHT (PP_LOW) phaser power is "disable, don't destroy":
-                # damage routes to subsystems only, the hull takes no condition
-                # damage and is not voxel-carved (verified by dev-console probe).
-                # `sys_` is the firing PhaserSystem; read PP_LOW off it directly.
-                damage_hull = (sys_.GetPowerLevel() != sys_.PP_LOW
-                               if hasattr(sys_, "GetPowerLevel") else True)
-                combat.apply_hit(target, damage, impact_point,
-                          source=ship,
-                          normal=impact_normal,
-                          ship_instances=ship_instances,
-                          weapon_type="phaser",
-                          hardpoint_weapon=bank,
-                          damage_hull=damage_hull,
-                          shield_point=bubble_entry)
+                if damage > 0:
+                    impact_point, impact_normal = combat._resolve_hit_point(
+                        ship_instances=ship_instances, ship=target,
+                        ray_origin=emitter_pos,
+                        ray_direction=(aim_unit if dist > 1e-6 else None),
+                        max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
+                        fallback_point=target_pos,
+                    )
+                    # Where the beam crossed the bubble — the same point
+                    # _beam_endpoint stops the DRAWN beam at, so the flash lands on
+                    # the beam's own tip instead of 236 NIF units behind it. None
+                    # when no facing is up, which falls the flash back to the hull
+                    # point inside dispatch.
+                    bubble_entry = (
+                        combat.shield_bubble_entry(target, emitter_pos, aim_unit,
+                                                   dist * 1.5)
+                        if (aim_unit is not None and combat.shields_block(target))
+                        else None)
+                    # LIGHT (PP_LOW) phaser power is "disable, don't destroy":
+                    # damage routes to subsystems only, the hull takes no condition
+                    # damage and is not voxel-carved (verified by dev-console probe).
+                    # `sys_` is the firing PhaserSystem; read PP_LOW off it directly.
+                    damage_hull = (sys_.GetPowerLevel() != sys_.PP_LOW
+                                   if hasattr(sys_, "GetPowerLevel") else True)
+                    combat.apply_hit(target, damage, impact_point,
+                              source=ship,
+                              normal=impact_normal,
+                              ship_instances=ship_instances,
+                              weapon_type="phaser",
+                              hardpoint_weapon=bank,
+                              damage_hull=damage_hull,
+                              shield_point=bubble_entry)
 
     # Tractor beams (hold/tow/pull/push/dock): the weapon tick above sustains
     # the held grab beam (TractorBeamSystem.update_weapons re-acquires while
     # engaged); advance_tractors applies the mode's physics — it moves the
     # target (and reciprocally the source) via direct position displacement.
     # No-op for ships without a firing tractor (production stays identical).
-    from engine.appc import tractor as _tractor
-    _tractor.advance_tractors(ships_list, dt)
+    with frame_profiler.scope("cb.tractors"):
+        from engine.appc import tractor as _tractor
+        _tractor.advance_tractors(ships_list, dt)
 
     # Per-frame VFX descriptor lists route through the host_io façade, which
     # no-ops when the native module is absent (headless). The hit/damage
     # bindings (ray_trace_mesh, shield_hit, world_to_body, …) inside the
     # _build_* helpers and the combat/carve advances now route through
     # host_io too, so nothing below consumes the raw `host` module.
-    host_io.set_torpedoes(_build_torpedo_render_data())
-    host_io.set_dynamic_lights(
-        _build_dynamic_light_render_data() +
-        _build_emitter_light_render_data(ship_instances, ship_emitters))
-    from engine.appc import shockwaves as _shockwaves
-    host_io.set_shockwaves(_shockwaves.render_data())
-    host_io.set_hit_vfx(_build_hit_vfx_render_data())
-    host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
-    host_io.set_phaser_beams(_build_phaser_beam_render_data(
-        ships_list, ship_instances=ship_instances))
-    host_io.set_tractor_beams(_build_tractor_beam_render_data(
-        ships_list, ship_instances=ship_instances))
+    # Manual enter/exit rather than a `with`, to keep this block's indentation
+    # (and its blame) unchanged. try/finally so an exception in any _build_*
+    # still closes the scope -- a leaked scope corrupts every later phase in
+    # the report, which is worse than the exception itself.
+    with frame_profiler.scope("cb.render_data"):
+        host_io.set_torpedoes(_build_torpedo_render_data())
+        host_io.set_dynamic_lights(
+            _build_dynamic_light_render_data() +
+            _build_emitter_light_render_data(ship_instances, ship_emitters))
+        from engine.appc import shockwaves as _shockwaves
+        host_io.set_shockwaves(_shockwaves.render_data())
+        host_io.set_hit_vfx(_build_hit_vfx_render_data())
+        host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
+        host_io.set_phaser_beams(_build_phaser_beam_render_data(
+            ships_list, ship_instances=ship_instances))
+        host_io.set_tractor_beams(_build_tractor_beam_render_data(
+            ships_list, ship_instances=ship_instances))
 
 
 def _color_tuple(color):
@@ -6459,6 +6473,18 @@ def run(mission_name: Optional[str] = None,
     # test harness, dev mission picker, every existing mission) keeps the
     # single-mission path byte-for-byte. SHIP_GATE_MISSION stays available for
     # callers that want it explicitly.
+    # DAUNTLESS_MISSION picks the boot mission when the caller passed none.
+    # dauntless.exe's main() calls run() with no arguments, so without this
+    # there is no way to launch the binary into anything but QuickBattle --
+    # and QuickBattle boots with an empty enemy list, which is how a whole
+    # round of profiling captures came to measure an idle game. Pairs with
+    # DAUNTLESS_PROFILE_FRAMES for an unattended capture of a chosen scene.
+    # An explicit mission_name argument still wins.
+    if mission_name is None:
+        _env_mission = _os.environ.get('DAUNTLESS_MISSION', '').strip()
+        if _env_mission:
+            mission_name = _env_mission
+
     boot_quickbattle = mission_name is None
 
     _setup_sdk()
@@ -6800,7 +6826,8 @@ def run(mission_name: Optional[str] = None,
             director.tracking.set_ship_radius(_r)
         view_mode      = _ViewModeController()
         pause          = _PauseMenuController()
-        from engine.ui.target_list_view import TargetListView
+        from engine.ui.target_list_view import (
+            TargetListView, reconcile_subsystem_lock)
         from engine.ui.sensors_panel import SensorsPanel
         target_list_view = TargetListView()
         sensors_panel = SensorsPanel()
@@ -6929,6 +6956,10 @@ def run(mission_name: Optional[str] = None,
                                 module_name="engine.dev_missions.damage_preview",
                                 dir_name="Damage Preview",
                                 display_name="Damage Preview",
+                            ), MissionEntry(
+                                module_name="engine.dev_missions.combat_stress",
+                                dir_name="Combat Stress",
+                                display_name="Combat Stress",
                             )],
                         )],
                     ))
@@ -7061,6 +7092,10 @@ def run(mission_name: Optional[str] = None,
         registry._legacy = pause_menu.dispatch_event
         controller.panel_registry = registry  # expose to _drain_pending_swap
         registry.register(target_list_view)
+        # Last (target, subsystem) identity seen by the per-frame
+        # target-list invalidation below. A list so the loop body
+        # can rebind it without a global.
+        _last_target_key = [None]
         registry.register(sensors_panel)
         from engine.appc.sdk_mirror_panel import SDKMirrorPanel
         sdk_mirror = SDKMirrorPanel()
@@ -7271,7 +7306,36 @@ def run(mission_name: Optional[str] = None,
                            configuration_panel, star_map_panel,
                            quick_battle_setup_panel]
 
+        # --- Unattended profiling capture -------------------------------
+        # DAUNTLESS_PROFILE_FRAMES=N runs N frames with both halves of the
+        # profiler on and vsync off, then exits.
+        #
+        # This exists because the interesting capture cannot be taken any
+        # other way: CEF only initialises when the process was launched
+        # through dauntless.exe (its main() runs dispatch_subprocess before
+        # Python starts), so driving run() from a plain python.exe leaves
+        # cef.pump/cef.composite reading 0.000 ms -- absent, not free. Pair
+        # it with OPEN_STBC_HOST_HEADLESS=1 to capture without a window.
+        #
+        # Vsync off is not optional for a capture: a capped frame measures
+        # the monitor. A hidden window already defaults to interval 0; this
+        # sets it explicitly so a visible-window capture is uncapped too.
+        try:
+            _profile_frames = int(_os.environ.get('DAUNTLESS_PROFILE_FRAMES', '0'))
+        except ValueError:
+            _profile_frames = 0
+        if _profile_frames > 0:
+            frame_profiler.set_enabled(True)
+            host_io.set_swap_interval(0)
+            if max_ticks is None or max_ticks > _profile_frames:
+                max_ticks = _profile_frames
+
         while not r.should_close():
+            # Frame profiler: phase timeline for the Python half of the frame.
+            # No-op (one global read + branch) unless a developer enabled it
+            # with the ` key. See engine/core/frame_profiler.py.
+            frame_profiler.begin_frame()
+            frame_profiler.mark("cef_resize")
             # --- Track window resizes: re-lay-out the CEF overlay at the new
             # size so it reflows instead of being stretched. Guarded so
             # WasResized only fires when the logical size or DPR actually
@@ -7291,6 +7355,7 @@ def run(mission_name: Optional[str] = None,
                 except Exception as _e:
                     dev_mode.log_swallowed("CEF window-resize forward", _e)
 
+            frame_profiler.mark("input")
             # --- Input dispatch + modality (ESC always live; SPACE only when unpaused) ---
             # _apply_view_mode_side_effects mirrors the SPACE flag into
             # renderer state (bridge pass enable + cursor lock) and is
@@ -7369,6 +7434,11 @@ def run(mission_name: Optional[str] = None,
                     view_mode.apply(_h)
                     _apply_view_mode_side_effects(view_mode, _h)
 
+            # Everything from here to the sim advance is UI work, not input:
+            # CEF panel render_all, the tactical HUD visibility gates, and
+            # _pump_contacts. Kept separate because folding it into "input"
+            # hid a multi-millisecond cost behind a name nobody would suspect.
+            frame_profiler.mark("ui_panels")
             # Pump all CEF panels (target list, etc.) every tick. The
             # registry returns only payloads whose state changed since
             # the last call, so this is cheap when nothing's moving.
@@ -7432,7 +7502,8 @@ def run(mission_name: Optional[str] = None,
                 _game = Game_GetCurrentGame()
                 _player = _game.GetPlayer() if _game is not None else None
                 if _menu is not None and _player is not None:
-                    _pump_contacts(_menu, _player)
+                    with frame_profiler.scope("ui.contacts"):
+                        _pump_contacts(_menu, _player)
 
                 # Surface 2 of weapons-config: reconcile the equipment-gated
                 # weapon/defense command rows on the F2 Tactical menu. Idempotent
@@ -7450,6 +7521,40 @@ def run(mission_name: Optional[str] = None,
                 # preprocessor, so the lock would otherwise persist.
                 clear_undetectable_player_lock(_player)
 
+                # Hand the subsystem lock off to a living sibling when the
+                # locked one dies (and drop it when the target cloaks).
+                #
+                # Lives HERE, not in TargetListView.render_payload, even though
+                # the target list is what displays it. It is a combat rule --
+                # both weapon-aim paths read GetTargetSubsystem() -- and the
+                # panel is now polled at 2 Hz, which silently made the player's
+                # phasers keep aiming at a destroyed subsystem's world location
+                # for up to half a second. Its own docstring says "runs every
+                # tick"; that is only true from here, next to the other
+                # per-frame lock rule it belongs with.
+                reconcile_subsystem_lock()
+
+                # Force the target list to refresh when the ENGINE changes the
+                # player's target behind the panel's back. The panel is polled
+                # at 2 Hz and only marks itself due on its own events, so a
+                # target destroyed (ship_death), lost to sensors
+                # (sensor_detection), warped out (warp) or re-picked by the AI
+                # would otherwise stay drawn AND highlighted for up to 500 ms.
+                # An identity compare is cheaper than an event subscription and
+                # cannot miss a fourth mutation site the way a subscription
+                # would.
+                try:
+                    _tgt = _player.GetTarget() if _player is not None else None
+                    _tgt_sub = (_player.GetTargetSubsystem()
+                                if _player is not None else None)
+                except Exception:
+                    _tgt = _tgt_sub = None
+                _tgt_key = (id(_tgt) if _tgt is not None else None,
+                            id(_tgt_sub) if _tgt_sub is not None else None)
+                if _tgt_key != _last_target_key[0]:
+                    _last_target_key[0] = _tgt_key
+                    target_list_view.invalidate()
+
                 # Re-centre the star map's rect on the LIVE CEF view size
                 # (which tracks the window in points — see
                 # _compute_cef_resize). Must run before render_all(): the
@@ -7458,7 +7563,8 @@ def run(mission_name: Optional[str] = None,
                 # move together within the frame.
                 star_map_panel.set_view_size(_CEF_VIEW_W, _CEF_VIEW_H)
 
-                _scripts = registry.render_all()
+                with frame_profiler.scope("ui.render_all"):
+                    _scripts = registry.render_all()
                 for _panel_script in _scripts:
                     _h.cef_execute_javascript(_panel_script)
 
@@ -7581,6 +7687,7 @@ def run(mission_name: Optional[str] = None,
                         if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
                             _cef_send_mouse_click(_mx, _my, 0, False)
 
+            frame_profiler.mark("sim")
             # --- Sim advance: fixed-timestep accumulator ---
             # frame_dt is the real wall-clock since the previous frame.
             # While frozen we force it to 0 so the accumulator cannot
@@ -7597,6 +7704,7 @@ def run(mission_name: Optional[str] = None,
             _accumulator, _sim_ticks_this_frame = step_accumulator(
                 _accumulator, _frame_dt, TICK_DT, MAX_FRAME_DT
             )
+            frame_profiler.note_sim_ticks(_sim_ticks_this_frame)
             # Per-render-frame delta for the player input integrator.
             # _apply_input runs once per render frame, so its dt must
             # be the wall-clock delta since the last frame — not the
@@ -7610,7 +7718,12 @@ def run(mission_name: Optional[str] = None,
             if _sim_ticks_this_frame > 0:
                 _xform_buf.roll()
             for _ in range(_sim_ticks_this_frame):
-                loop.tick()
+                # GameLoop = timers, the TimeSliceProcess scheduler, the AI
+                # tree-walk, collision avoidance, motion integration and the
+                # per-ship shield/power/cloak/repair updates. Timed separately
+                # from the weapon/combat pumps below, which it does NOT drive.
+                with frame_profiler.scope("sim.gameloop"):
+                    loop.tick()
 
             # Only snap the camera when a sim tick actually fired —
             # no tick means no state change to follow.
@@ -7846,12 +7959,14 @@ def run(mission_name: Optional[str] = None,
                 # Materialize the ship list once per frame — both consumers
                 # re-walked every set independently before.
                 _ships_this_tick = list(_all_ships_for_tick())
-                _advance_weapons(_ships_this_tick, TICK_DT)
-                _advance_combat(
-                    _ships_this_tick, TICK_DT,
-                    ship_instances=(session.ship_instances if session is not None else None),
-                    ship_emitters=(session.ship_emitters if session is not None else None),
-                )
+                with frame_profiler.scope("sim.weapons"):
+                    _advance_weapons(_ships_this_tick, TICK_DT)
+                with frame_profiler.scope("sim.combat"):
+                    _advance_combat(
+                        _ships_this_tick, TICK_DT,
+                        ship_instances=(session.ship_instances if session is not None else None),
+                        ship_emitters=(session.ship_emitters if session is not None else None),
+                    )
 
                 # Sensor contact identification → drives the SDK bridge Hail /
                 # scan buttons + unlocks target-info panels (all gate on
@@ -7980,10 +8095,11 @@ def run(mission_name: Optional[str] = None,
                 _warp_state.tick_warp_states(_player_dt)
                 _warp_state.sync_flythrough(_wv_state.get().is_active())
 
-                collisions.tick_collisions(
-                    _player_dt,
-                    ship_instances=(session.ship_instances if session is not None else None),
-                )
+                with frame_profiler.scope("sim.collisions"):
+                    collisions.tick_collisions(
+                        _player_dt,
+                        ship_instances=(session.ship_instances if session is not None else None),
+                    )
 
                 # Sync transforms for known instances.
                 #
@@ -8045,6 +8161,7 @@ def run(mission_name: Optional[str] = None,
                         player_control=player_control,
                         player_interp_pose=_player_interp_pose)
 
+            frame_profiler.mark("render_prep")
             # --- Render (always runs, including while paused) ---
             # Camera: orbit + zoom around the player ship (or origin fallback).
             # In-space cutscene camera on the EXPLICITLY-rendered set: when a
@@ -8233,6 +8350,7 @@ def run(mission_name: Optional[str] = None,
                 target = (0.0, 0.0, 0.0)
                 up_vec = (0.0, 1.0, 0.0)
 
+            frame_profiler.mark("spv")
             # --- Ship Property Viewer override (dev-only) ---
             # When the viewer is open the world is already frozen (the
             # pause menu zeroes frame_dt → no sim ticks), so we just
@@ -8371,6 +8489,7 @@ def run(mission_name: Optional[str] = None,
                     r.clear_reticle_text()
             _spv_was_open = _spv_open
 
+            frame_profiler.mark("starmap")
             # --- Star map (Helm -> Set Course) ---
             # Runs every frame: the pass is disabled unless the map is open,
             # so a closed map costs one boolean and leaves no scissor rect
@@ -8378,6 +8497,14 @@ def run(mission_name: Optional[str] = None,
             # at the same rect the panel projects its labels and picks into.
             _drive_star_map(star_map_panel, host_io.framebuffer_size(),
                             _CEF_VIEW_H)
+
+            # Everything from here to r.frame() is scene aggregation and the
+            # push to the renderer -- lights, backdrops, suns, planets,
+            # nebulae, decals, warp VFX, letterbox. It is NOT the star map,
+            # and billing it to a phase named "starmap" produced a published
+            # claim that a CLOSED modal cost 0.7-1.5 ms. _drive_star_map
+            # early-returns when the map is shut; that number was this block.
+            frame_profiler.mark("scene_push")
 
             # Step 5c: drive the viewscreen RTT feed on/off from the realized
             # viewscreen object, and hide the player ship while in bridge view
@@ -8616,10 +8743,24 @@ def run(mission_name: Optional[str] = None,
                 print(f"[host_loop] tick 0 lens flares: "
                       f"{len(lens_flares)} flare(s)", flush=True)
 
+            frame_profiler.mark("r.frame")
             r.frame()
+            # Close the frame timeline. Deliberately AFTER r.frame(), so the
+            # "r.frame" phase carries the whole render call and the loop total
+            # is the real wall-clock cost of one iteration.
+            frame_profiler.end_frame()
+            if frame_profiler.should_report():
+                frame_profiler.print_report()
             ticks += 1
             if max_ticks is not None and ticks >= max_ticks:
                 break
+
+        # Final report while the window (and therefore the GL context and the
+        # swap-interval reading) still exists -- the teardown below destroys
+        # it, and a report taken after that would say 'swap interval unknown'
+        # about a capture whose whole point was that it ran uncapped.
+        if frame_profiler.is_enabled():
+            frame_profiler.print_report()
 
         if controller.session is not None:
             controller.session.teardown(r)

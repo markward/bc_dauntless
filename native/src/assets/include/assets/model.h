@@ -2,6 +2,7 @@
 #pragma once
 
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -78,6 +79,52 @@ struct Model {
     /// compose_officer_model from the character's facial images; empty for
     /// non-officer models. "neutral" is implicit (the head's own base texture).
     std::unordered_map<std::string, int> face_textures;
+
+    /// Lazily-built, purely DERIVED ray-trace acceleration: the model-space
+    /// triangle soup, a BVH over it, and the model AABB. All are functions of
+    /// `nodes` + mesh vertices alone -- nothing instance-specific -- but
+    /// ray_trace_instance used to rebuild the node-world chain and the AABB on
+    /// EVERY call and then test every triangle linearly.
+    ///
+    /// Measured at 100 ships, before caching: 1.81 ms of setup and 0.55 ms of
+    /// triangle loop per trace, over 3,376 triangles, ~21 traces/frame.
+    ///
+    /// Held HERE, not in a renderer-side map keyed on `const Model*`, so it
+    /// cannot outlive its model: a freed model whose address got reused by a
+    /// new allocation would otherwise be served the previous model's geometry
+    /// -- a wrong-hit-point bug that presents as a physics glitch, not a crash.
+    ///
+    /// INVALIDATION. There is no invalidation path, and the two inputs that
+    /// could need one are NOT node animation. Node animation leaves
+    /// `nodes[].local_transform` alone -- renderer/node_anim.cc only READS it
+    /// and publishes its results through a separate node_index -> transform
+    /// override map (renderer/bridge_node_anim_store.h), which this cache
+    /// never consults and which therefore cannot stale it. The two things that
+    /// do mutate the cache's actual inputs IN PLACE are:
+    ///   * assets::tessellate_model_in_place (assets/src/tessellate.cc) --
+    ///     rewrites every mesh's vertices and indices;
+    ///   * Mesh::set_cpu_data (assets/include/assets/mesh.h), called from
+    ///     tessellate.cc, model_build.cc and model_compose.cc -- replaces a
+    ///     mesh's CPU geometry wholesale.
+    /// Both run strictly during model CONSTRUCTION -- build_model
+    /// (model_build.cc) and compose_officer_model (model_compose.cc) -- i.e.
+    /// before the finished Model is published and before any trace can reach
+    /// it. That ordering, not any property of the geometry, is what makes the
+    /// cache sound. If either mutator ever runs on a live, already-published
+    /// model, THIS is what has to be reset (assign a null shared_ptr; the next
+    /// trace rebuilds).
+    ///
+    /// THREADING. `mutable` + lazy assignment from a `const` method means two
+    /// threads tracing the same model concurrently would both build and both
+    /// write this shared_ptr -- a data race. Tracing is single-threaded today;
+    /// making it parallel requires a call_once / atomic here first.
+    ///
+    /// Opaque (`void`) because the BVH layout is a renderer concern and assets
+    /// must not depend on renderer headers; renderer/ray_trace.cc owns the
+    /// concrete type and does the cast. shared_ptr, so the lifetime is the
+    /// model's with no manual teardown. Mutable + lazy so const trace paths
+    /// can fill it on first use.
+    mutable std::shared_ptr<void> trace_accel;
 };
 
 }  // namespace assets

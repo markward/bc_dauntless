@@ -67,9 +67,14 @@ def _declared_properties(block):
 def test_caret_is_gated_on_row_having_subsystems():
     text = _source(JS)
     # The caret markup is chosen by a hasSubsystems gate, not emitted
-    # unconditionally for every row.
+    # unconditionally for every row. The gate reads the payload's
+    # has_subsystems flag, which is authoritative: a COLLAPSED row ships an
+    # empty `subsystems` array (the tree is built only when it will be drawn),
+    # so its length says nothing about whether a caret is warranted -- which is
+    # why asserting on `row.subsystems.length` here was pinning the dead
+    # fallback rather than the live rule.
     assert "hasSubsystems" in text
-    assert "row.subsystems.length > 0" in text
+    assert "row.has_subsystems" in text
 
 
 def test_empty_caret_carries_no_toggle_and_no_glyph():

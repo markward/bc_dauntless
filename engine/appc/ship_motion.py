@@ -29,6 +29,12 @@ from dataclasses import dataclass
 
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import PhysicsObjectClass
+# Module scope, NOT a per-call `from ... import` inside the integrator: both
+# names are read once per ship per tick, and subsystems imports nothing from
+# this module (nor from ships), so there is no cycle to break. Same fix as the
+# one applied to subsystems._is_offline, which was costing 115,279 importlib
+# lookups over 150 ticks at 100 ships.
+from engine.appc.subsystems import impulse_fractions, impulse_output_fraction
 from engine.core.ids import implements
 
 # Match _PlayerControl.FALLBACK_MAX_ACCEL in engine/host_loop.py:613.
@@ -62,7 +68,7 @@ class _EffectiveMotion:
     max_ang_accel: float
 
 
-def _effective_motion(ship) -> "_EffectiveMotion":
+def _effective_motion(ship, ies=None, imp_f=None) -> "_EffectiveMotion":
     """Resolve a ship's LIVE impulse limits.
 
     The four getters already carry BC's derating (damaged pods x power slider,
@@ -72,19 +78,36 @@ def _effective_motion(ship) -> "_EffectiveMotion":
     keep flying under (zeroed) real limits, not fall through to the
     FALLBACK_MAX_ACCEL snap semantics meant for ships with no engines at all.
     """
-    getter = getattr(ship, "GetImpulseEngineSubsystem", None)
-    ies = getter() if getter is not None else None
+    if ies is None:
+        # Callers on the per-ship path already hold the subsystem and the
+        # derating fraction; re-fetching both here is a second pod walk for an
+        # answer they just computed.
+        getter = getattr(ship, "GetImpulseEngineSubsystem", None)
+        ies = getter() if getter is not None else None
     if ies is None:
         return _EffectiveMotion(False, 0.0, 0.0, False, 0.0, 0.0)
     has_lin = ies.GetAuthoredMaxSpeed() > 0.0
     has_ang = ies.GetAuthoredMaxAngularVelocity() > 0.0
+
+    # The four derived getters are each `authored * impulse_output_fraction(self)`
+    # with the SAME argument, so calling all four recomputed that fraction four
+    # times per ship per tick -- and it is not cheap: it walks every child pod
+    # querying IsDisabled / GetConditionPercentage / GetMaxCondition. cProfile
+    # put it at 55% of the entire ship-motion cost (1.149 s of 2.083 s over 600
+    # ticks at 17 ships), called 3.76x per ship per tick.
+    #
+    # Computing it once and multiplying the authored values is BIT-EXACT: same
+    # operands, same single multiply, same order. Nothing between the four
+    # calls could have changed it -- they were consecutive reads of one
+    # subsystem's state.
+    f = impulse_output_fraction(ies) if imp_f is None else imp_f
     return _EffectiveMotion(
         has_linear=has_lin,
-        max_speed=ies.GetMaxSpeed() if has_lin else 0.0,
-        max_accel=ies.GetMaxAccel() if has_lin else 0.0,
+        max_speed=ies.GetAuthoredMaxSpeed() * f if has_lin else 0.0,
+        max_accel=ies.GetAuthoredMaxAccel() * f if has_lin else 0.0,
         has_angular=has_ang,
-        max_ang_vel=ies.GetMaxAngularVelocity() if has_ang else 0.0,
-        max_ang_accel=ies.GetMaxAngularAccel() if has_ang else 0.0,
+        max_ang_vel=ies.GetAuthoredMaxAngularVelocity() * f if has_ang else 0.0,
+        max_ang_accel=ies.GetAuthoredMaxAngularAccel() * f if has_ang else 0.0,
     )
 
 
@@ -174,10 +197,9 @@ def _step_ship_motion(ship, dt: float) -> None:
             world_dir = TGPoint3(direction.x, direction.y, direction.z)
         world_dir.Unitize()
 
-    from engine.appc.subsystems import impulse_online_fraction
     getter = getattr(ship, "GetImpulseEngineSubsystem", None)
     ies = getter() if getter is not None else None
-    f = impulse_online_fraction(ies)
+    f, _imp_out_f = impulse_fractions(ies)
 
     # -- Total loss -> inertial drift --
     if f <= 0.0:
@@ -203,7 +225,7 @@ def _step_ship_motion(ship, dt: float) -> None:
         ship._current_speed = drift.Length()
         ship._drift_velocity = None
 
-    em = _effective_motion(ship)
+    em = _effective_motion(ship, ies=ies, imp_f=_imp_out_f)
 
     # -- Linear ramp toward (capped) target --
     if em.has_linear:

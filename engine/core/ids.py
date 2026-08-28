@@ -123,7 +123,61 @@ def implements(obj, name: str) -> bool:
     for every engine method on every object (that is how TorpedoTube.UpdateCharge
     reached 4.9M no-op stub hits -- see docs/stub_heatmap.md).
     """
-    return any(name in klass.__dict__ for klass in type(obj).__mro__)
+    # A plain loop, not any(... for ...). This is one of the hottest
+    # primitives in the engine -- 254,400 calls in a 600-tick AI profile at 17
+    # ships, plus 48,600 more from the motion path -- and at that volume the
+    # generator expression is not free: it allocated a generator frame per
+    # call and drove it through any(), which cProfile attributed as 763,200
+    # <genexpr> calls and 254,400 any() calls, together roughly two thirds of
+    # this function's total cost. The loop is identical in meaning, including
+    # the short-circuit on the first match.
+    #
+    # ...and the loop itself is now cached per (class, name), because the
+    # answer is a property of the CLASS and classes do not gain or lose methods
+    # while the game runs. Measured at 100 ships: 2,400 calls/tick, ~36,000 per
+    # frame, at only 2.2 MRO steps each -- a lot of calls through a very short
+    # loop, which is why the win was worth benchmarking rather than assuming.
+    # Micro-benchmarked before wiring it in: 315-430 ns walking vs ~127 ns
+    # cached, so ~230 ns x 36,000 = ~8 ms/frame.
+    #
+    # Two-level (class -> {name: bool}) rather than a single dict keyed on the
+    # tuple (class, name): building and hashing that tuple costs real time at
+    # this volume, and the two-level form measured ~30 ns/call faster.
+    #
+    # STALENESS: the only way to invalidate this is to add or remove a method
+    # on a class that has already been asked about. Nothing in the engine does
+    # that -- ai_optimized builds NEW classes with type(), which get their own
+    # entries -- but a test that monkey-patches a class would need
+    # clear_implements_cache(). It is exported for exactly that.
+    cls = type(obj)
+    names = _IMPLEMENTS_CACHE.get(cls)
+    if names is None:
+        names = _IMPLEMENTS_CACHE[cls] = {}
+    else:
+        hit = names.get(name)
+        if hit is not None:
+            return hit
+    hit = False
+    for klass in cls.__mro__:
+        if name in klass.__dict__:
+            hit = True
+            break
+    names[name] = hit
+    return hit
+
+
+# class -> {method name -> bool}. See implements() for the staleness argument.
+_IMPLEMENTS_CACHE: dict = {}
+
+
+def clear_implements_cache() -> None:
+    """Drop the implements() cache.
+
+    Needed only if a class gains or loses a method after something has already
+    asked implements() about it -- i.e. monkey-patching in a test. Production
+    code never mutates a class in place, so this is not on any hot path.
+    """
+    _IMPLEMENTS_CACHE.clear()
 
 
 class TGObject:

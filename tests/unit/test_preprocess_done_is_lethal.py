@@ -190,7 +190,13 @@ def test_the_registry_holds_the_three_classes_whose_python_bodies_can_be_lethal(
     AvoidObstacles (thin non-lethal wrappers around the real SDK bodies).
 
     SelectTarget is deliberately absent — its Python body cannot return PS_DONE
-    (pinned below), so it needs no protection."""
+    (pinned below), so it needs no protection.
+
+    AvoidObstacles' entry is the plain non-lethal wrapper by default. The
+    engine-side SCAN that used to occupy this slot is opt-in
+    (DAUNTLESS_ENGINE_AVOIDANCE=1) after it was found to suppress the attack
+    subtree via PS_SKIP_ACTIVE; the PS_DONE protection is orthogonal to that
+    and must survive the swap either way."""
     assert set(ai_optimized.OPTIMIZED_PREPROCESSORS) == {
         "ManagePower", "FireScript", "AvoidObstacles",
     }

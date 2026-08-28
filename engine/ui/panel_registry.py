@@ -11,15 +11,31 @@ optional legacy handler (used for the pre-framework pause menu).
 """
 from __future__ import annotations
 
+import time
 from typing import Callable, List, Optional
+from engine.core import frame_profiler as _prof
 
 from engine.ui.panel import Panel
 
 
 class PanelRegistry:
-    def __init__(self, legacy_handler: Optional[Callable[[str], None]] = None):
+    def __init__(self, legacy_handler: Optional[Callable[[str], None]] = None,
+                 clock: Optional[Callable[[], float]] = None):
         self._panels: List[Panel] = []
         self._legacy = legacy_handler
+        # WALL clock, not game time. A throttled panel should keep its cadence
+        # while the sim is paused or frozen (DevTools, pause menu) -- the UI is
+        # still interactive there. Injectable so tests can drive it.
+        #
+        # Consequence, accepted: TargetListView justifies its 0.5 s interval by
+        # matching subsystems.SHIELD_CHARGE_PERIOD_S, but that period is
+        # accumulated from GAME dt, so the two decouple under a time scale (Q3
+        # measured BC's game clock at 0.204x in slow motion -- see CLAUDE.md).
+        # The mismatch only ever runs one way in practice: a slowed sim ticks
+        # shields SLOWER than wall clock, so this over-polls rather than
+        # missing a change. Over-polling costs frame time and nothing else.
+        self._clock = clock if clock is not None else time.monotonic
+        self._next_poll: dict = {}
 
     def register(self, panel: Panel) -> None:
         if any(p.name == panel.name for p in self._panels):
@@ -27,9 +43,40 @@ class PanelRegistry:
         self._panels.append(panel)
 
     def render_all(self) -> List[str]:
+        """Poll every panel that is due and collect the JS each emits.
+
+        Three gates, in order:
+
+        * DUE -- marked by invalidate(), by a visibility flip, or by having
+          just handled an event. A due panel always renders on the next frame,
+          bypassing both gates below, so interaction never lags.
+        * HIDDEN -- a panel that is not visible is not polled at all. Safe by
+          construction: the flip TO hidden marks the panel due, so the payload
+          that tells JS to hide still goes out, and the flip back to visible
+          marks it due again. This is the bigger win of the two -- the target
+          list is off screen for the whole of bridge view, every cutscene, and
+          the whole time the Ship Property Viewer is open.
+        * INTERVAL -- poll_interval_s == 0 (the default) means every frame; a
+          positive value means at most that often.
+        """
+        now = self._clock()
         out: List[str] = []
         for p in self._panels:
-            payload = p.render_payload()
+            interval = p.poll_interval_s
+            if not p.consume_due():
+                if not p.visible:
+                    continue
+                if interval > 0.0 and now < self._next_poll.get(p.name, 0.0):
+                    continue
+            if interval > 0.0:
+                self._next_poll[p.name] = now + interval
+            # Per-panel scope: render_all is a thin loop, so a single timing
+            # around it says only "the UI is expensive". Each panel has to
+            # BUILD its snapshot before it can tell whether anything changed,
+            # so the cost lives here and is worth attributing by name. Inert
+            # unless the frame profiler is enabled.
+            with _prof.scope("ui." + (p.name or "?")):
+                payload = p.render_payload()
             if payload is not None:
                 out.append(payload)
         return out
@@ -45,7 +92,13 @@ class PanelRegistry:
             prefix, _, action = event_name.partition("/")
             for p in self._panels:
                 if p.name == prefix:
-                    return p.dispatch_event(action)
+                    handled = p.dispatch_event(action)
+                    # A click must show on the next frame, not at the next
+                    # poll -- a throttled panel would otherwise feel like it
+                    # ignored the input for up to its whole interval.
+                    if handled:
+                        p.mark_due()
+                    return handled
             return False
         if self._legacy is not None:
             self._legacy(event_name)
@@ -61,4 +114,9 @@ class PanelRegistry:
         state has changed since the last tick.
         """
         for p in self._panels:
+            # Mark due HERE rather than relying on the subclass calling
+            # super().invalidate(). Most overrides in this package do not, and
+            # marking here means neither the poll interval nor the hidden-panel
+            # skip can swallow an invalidate for a panel whose override forgot.
+            p.mark_due()
             p.invalidate()

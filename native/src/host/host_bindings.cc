@@ -25,6 +25,7 @@
 #include <renderer/animation_update.h>
 #include <renderer/channel_binder.h>
 #include <renderer/frame.h>
+#include <renderer/frame_timer.h>
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
 #include <renderer/dust_pass.h>
@@ -475,6 +476,89 @@ scenegraph::ModelHandle load_model_impl(
     return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
 }
 
+// Per-frame state that Python pushes and frame() consumes. Called from BOTH
+// init() and shutdown() so the two can never disagree about what a fresh
+// session looks like.
+//
+// THE INVARIANT: any global frame() reads, and that a Python binding can write
+// while the host is down, must be cleared by init() as well as shutdown(). The
+// _dauntless_host module object outlives an init/shutdown pair and none of the
+// setters check for a window, so anything pushed between sessions is stale
+// content rendered into what the next caller believes is a fresh scene.
+//
+// It first surfaced as a test-isolation failure (tests/host/
+// test_backdrops_integration's empty-backdrop row is asserted FLAT; it read 53
+// with no preceding tests, 63 after 39, and 77-94 after 636 -- monotonic in how
+// much leftover VFX had piled up), but the bug is not confined to tests:
+// anything that re-inits the host inherits the previous scene's beams,
+// torpedoes, lights, debris, hologram mode and reticle.
+//
+// Pinned by tests/host/test_init_resets_frame_state.py, which dirties every
+// reachable global and then diffs the source of the two functions so the NEXT
+// descriptor list cannot be added to one end only.
+//
+// NOT here, deliberately: g_world, g_loaded_models, the model-radius cache and
+// the pass objects. Those own GL handles or are rebuilt by init(), and their
+// ORDER relative to the GL-context teardown in shutdown() is load-bearing.
+void reset_frame_state() {
+    g_lighting = renderer::Lighting{};
+    g_bridge_lighting = renderer::Lighting{};
+    g_bridge_ambient_scale = 1.0f;
+    g_bridge_pass_enabled = false;
+    g_viewscreen_enabled = false;
+    g_backdrops.clear();
+    g_sky_dirty = true;
+    g_suns.clear();
+    g_dust_planets.clear();
+    g_nebula_godrays.clear();
+    g_nebulae.clear();
+    g_nebula_wake.clear();
+
+    // Fifteen per-frame descriptor lists: eleven VFX + four debug volumes.
+    g_torpedoes.clear();
+    g_phaser_beams.clear();
+    g_tractor_beams.clear();
+    g_hit_vfx.clear();
+    g_shockwaves.clear();
+    g_particle_emitters.clear();
+    g_dynamic_lights.clear();
+    g_lens_flares.clear();
+    g_hull_discharges.clear();
+    g_cloak_ships.clear();
+    g_subsystem_pins.clear();
+    g_debug_cylinders.clear();
+    g_debug_boxes.clear();
+    g_debug_spheres.clear();
+    g_debug_cones.clear();
+
+    // Ship Property Viewer state. g_hologram_only_mode is the worst of these
+    // to leak: it makes frame() skip the entire space scene and bridge pass.
+    g_spv_overlay_beams.clear();
+    g_hologram_ship = renderer::HologramShip{};
+    g_hologram_only_mode = false;
+    g_spv_hull_mode = false;
+    g_transform_gizmo.length = 0.0f;   // hidden until Python sets a gizmo
+
+    g_target_reticle = renderer::TargetReticle{};
+    g_starmap_scene = renderer::StarMapScene{};
+
+    // Motion blur reprojects against the previous exterior frame's viewproj.
+    // Left set, frame 1 of a new session smears against the OLD camera.
+    g_have_prev_viewproj = false;
+
+    // Rising/falling-edge maps: a stale entry reports a phantom key/button
+    // release on the first frame of the next session.
+    g_prev_key_state.clear();
+    g_prev_mouse_state.clear();
+
+    // g_covered (native/src/renderer/letterbox_pass.cc) is a TU-static, not
+    // owned by this file, and _pump_letterbox re-establishes it from Python
+    // state every frame before r.frame() runs -- but letterbox_set() is a
+    // binding like any other and can be called with the host down, so zero it
+    // here with the rest.
+    renderer::letterbox::set_covered(0.0f);
+}
+
 void init(int width, int height, const std::string& title) {
     if (g_window) {
         throw std::runtime_error("_dauntless_host: init called while host already initialized");
@@ -492,23 +576,14 @@ void init(int width, int height, const std::string& title) {
     renderer::reset_model_radius_cache();
     g_bridge_node_anims.clear();
     g_bridge_node_ids.clear();
-    g_lighting = renderer::Lighting{};
-    g_bridge_lighting = renderer::Lighting{};
-    g_bridge_ambient_scale = 1.0f;
-    g_bridge_pass_enabled = false;
-    g_backdrops.clear();
-    g_sky_dirty = true;
+    // Everything frame() consumes and Python can push: see reset_frame_state().
+    reset_frame_state();
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
-    g_suns.clear();
-    g_dust_planets.clear();
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_nebula_pass = std::make_unique<renderer::NebulaPass>();
     g_nebula_volumetric_pass = std::make_unique<renderer::NebulaVolumetricPass>();
     g_nebula_godray_pass = std::make_unique<renderer::NebulaGodrayPass>();
-    g_nebula_godrays.clear();
-    g_nebulae.clear();
-    g_nebula_wake.clear();
     g_shockwave_pass = std::make_unique<renderer::ShockwavePass>();
     g_shield_pass = std::make_unique<renderer::ShieldPass>();
     g_lens_flare_pass = std::make_unique<renderer::LensFlarePass>();
@@ -527,7 +602,6 @@ void init(int width, int height, const std::string& title) {
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
     g_debug_volume_pass   = std::make_unique<renderer::DebugVolumePass>();
     g_gizmo_pass          = std::make_unique<renderer::GizmoPass>();
-    g_transform_gizmo.length = 0.0f;   // hidden until Python calls set_transform_gizmo
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_starmap_pass        = std::make_unique<renderer::StarMapPass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
@@ -568,59 +642,30 @@ void shutdown() {
     g_bridge_node_ids.clear();
     g_cache.reset();
     g_world = scenegraph::World{};
-    g_backdrops.clear();
-    g_sky_dirty = true;
     g_backdrop_pass.reset();  // releases sphere + texture caches while the
                               // GL context is still alive.
-    g_suns.clear();
-    g_dust_planets.clear();
     g_sun_pass.reset();
     g_dust_pass.reset();
     g_nebula_pass.reset();
     g_nebula_volumetric_pass.reset();
     g_nebula_godray_pass.reset();
-    g_nebula_godrays.clear();
-    g_nebulae.clear();
-    g_nebula_wake.clear();
     g_shield_pass.reset();
-    g_lens_flares.clear();
     g_lens_flare_pass.reset();
-    g_torpedoes.clear();
     g_torpedo_pass.reset();
-    g_dynamic_lights.clear();
-    g_shockwaves.clear();
     g_shockwave_pass.reset();
-    g_hit_vfx.clear();
     g_hit_vfx_pass.reset();
-    g_hull_discharges.clear();
     g_hull_discharge_pass.reset();
     g_nebula_wake_pass.reset();
-    g_particle_emitters.clear();
     g_particle_pass.reset();
-    g_phaser_beams.clear();
-    g_tractor_beams.clear();
-    g_spv_overlay_beams.clear();
     g_phaser_pass.reset();
-    g_subsystem_pins.clear();
-    g_hologram_ship = renderer::HologramShip{};
-    g_hologram_only_mode = false;
-    g_spv_hull_mode = false;
     g_hologram_pass.reset();
-    g_cloak_ships.clear();
     g_cloak_pass.reset();
     g_breach_pass.reset();   // releases the sphere mesh + fill textures while the GL context lives
     g_carve_cache.reset();   // releases the carved-fill 3D textures (GL alive)
     g_subsystem_pin_pass.reset();
-    g_debug_cylinders.clear();
-    g_debug_boxes.clear();
-    g_debug_spheres.clear();
-    g_debug_cones.clear();
     g_debug_volume_pass.reset();
-    g_transform_gizmo.length = 0.0f;
     g_gizmo_pass.reset();
-    g_target_reticle = renderer::TargetReticle{};
     g_target_reticle_pass.reset();
-    g_starmap_scene = renderer::StarMapScene{};
     g_starmap_pass.reset();
     g_bridge_pass.reset();
     g_viewscreen_static_pass.reset();
@@ -628,7 +673,6 @@ void shutdown() {
     g_nonfinite_probe.reset();
     g_lens_flare_hdr_pass.reset();
     g_motion_blur_pass.reset();
-    g_have_prev_viewproj = false;
     g_smaa_pass.reset();
     g_filmic_pass.reset();
     g_ldr_target2.reset();
@@ -638,24 +682,10 @@ void shutdown() {
     g_viewscreen_hdr.reset();
     g_shadow_target.reset();
     g_window.reset();
-    g_prev_key_state.clear();
-    g_prev_mouse_state.clear();
-    // Mirror init()'s lighting reset for symmetry and defense-in-depth:
-    // any future code path that reads g_lighting between shutdown() and a
-    // subsequent init() will see the documented default, not stale state
-    // from the previous session.
-    g_lighting = renderer::Lighting{};
-    g_bridge_lighting = renderer::Lighting{};
-    g_bridge_ambient_scale = 1.0f;
-    g_bridge_pass_enabled = false;
-    g_viewscreen_enabled = false;
-    // g_covered (native/src/renderer/letterbox_pass.cc) is a TU-static, not
-    // owned by this file, but it is re-established from Python state every
-    // frame by _pump_letterbox before r.frame() runs (see the comment on
-    // g_covered itself) -- zero it defensively anyway for symmetry with the
-    // other flag resets above, in case a future caller ever reads
-    // renderer::letterbox::covered() between shutdown() and the next init().
-    renderer::letterbox::set_covered(0.0f);
+    // Every descriptor list, flag and cached matrix frame() consumes. Shared
+    // with init() so the two ends cannot drift -- see reset_frame_state(). It
+    // is pure CPU state, so it is safe here, after the GL context is gone.
+    reset_frame_state();
 }
 
 bool should_close() {
@@ -685,6 +715,14 @@ void frame() {
     if (!g_window || !g_pipeline || !g_submitter) {
         throw std::runtime_error("_dauntless_host: frame called before init");
     }
+    // Whole-frame scope. Everything below nests inside it, so the report's
+    // top row is the real per-frame cost and the children account for it.
+    // The RAII object outlives end_frame() below (both are at function scope);
+    // that is fine and intended — end_frame() force-closes any scope still
+    // open, and the trailing pop() on an already-ended frame is ignored.
+    renderer::frame_timer().begin_frame();
+    DAUNTLESS_FRAME_SCOPE("frame");
+
     int fw = 0, fh = 0;
     g_window->framebuffer_size(&fw, &fh);
 
@@ -700,12 +738,15 @@ void frame() {
     const float  dt  = static_cast<float>(now - g_prev_frame_time_seconds);
     g_prev_frame_time_seconds = now;
 
-    g_world.propagate();
-    // SP2: rebuild each animated instance's bone palette for this frame BEFORE
-    // anything consumes it (the space skinned draw and the bridge pass). Shares
-    // the `now` wall clock with draw_model / flip controllers.
-    renderer::update_animations(g_world, lookup, now);
-    update_bridge_node_anims(now);
+    {
+        DAUNTLESS_FRAME_SCOPE("anim");
+        g_world.propagate();
+        // SP2: rebuild each animated instance's bone palette for this frame BEFORE
+        // anything consumes it (the space skinned draw and the bridge pass). Shares
+        // the `now` wall clock with draw_model / flip controllers.
+        renderer::update_animations(g_world, lookup, now);
+        update_bridge_node_anims(now);
+    }
 
     const bool bridge_active = !viewer_mode && g_bridge_pass_enabled && g_bridge_pass;
     const bool viewscreen_on = bridge_active && g_viewscreen_enabled;
@@ -725,6 +766,7 @@ void frame() {
     bool sky_use_cubemap = false;
     if (sky_bakeable && g_backdrop_pass) {
         if (g_sky_dirty || !g_backdrop_pass->has_cubemap()) {
+            DAUNTLESS_FRAME_SCOPE("sky.bake");
             g_backdrop_pass->bake(g_backdrops, *g_pipeline,
                                   static_cast<float>(now));
             g_sky_dirty = false;
@@ -741,29 +783,46 @@ void frame() {
     // bridge viewscreen matches the exterior view.
     auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen,
                             renderer::HdrTarget& target, int vw, int vh) {
-        if (sky_use_cubemap)
-            g_backdrop_pass->render_cubemap(cam, *g_pipeline);
-        else
-            g_backdrop_pass->render(g_backdrops, cam, *g_pipeline,
-                                    dauntless_procedural_sky::enabled(),
-                                    static_cast<float>(now));
-        g_sun_pass->render(g_suns, cam, *g_pipeline, now);
+        {
+            DAUNTLESS_FRAME_SCOPE("space.backdrop");
+            if (sky_use_cubemap)
+                g_backdrop_pass->render_cubemap(cam, *g_pipeline);
+            else
+                g_backdrop_pass->render(g_backdrops, cam, *g_pipeline,
+                                        dauntless_procedural_sky::enabled(),
+                                        static_cast<float>(now));
+        }
+        {
+            DAUNTLESS_FRAME_SCOPE("space.suns");
+            g_sun_pass->render(g_suns, cam, *g_pipeline, now);
+        }
         // Filmic ambient dim: -20% when the toggle is on, 1.0 when off. The
         // viewscreen now matches the exterior view (no separate dim rule).
         const float ambient_scale = dauntless_filmic::ambient_scale();
-        g_submitter->submit_opaque_in_pass(
-            g_world, cam, *g_pipeline, lookup, g_lighting,
-            scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
-            ambient_scale, &g_dynamic_lights);
+        {
+            // The hull draw. No frustum or distance cull runs ahead of this —
+            // every visible Space instance is submitted — so this scope is the
+            // one to watch as ship counts grow.
+            DAUNTLESS_FRAME_SCOPE("space.opaque");
+            g_submitter->submit_opaque_in_pass(
+                g_world, cam, *g_pipeline, lookup, g_lighting,
+                scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
+                ambient_scale, &g_dynamic_lights);
+        }
         // Breach scoop pass: for each active carve sphere, draws the front-
         // face-culled sphere inner wall masked by the original hull fill
         // (triplanar Damage.tga). Runs right after the opaque hull
         // (depth-test/write on) so the scoop shows only through clip holes.
         // Gated on dauntless_hull_damage::enabled() inside the pass (no-op when off).
-        if (g_breach_pass && g_carve_cache)
+        if (g_breach_pass && g_carve_cache) {
+            DAUNTLESS_FRAME_SCOPE("space.breach");
             g_breach_pass->render(g_world, cam, *g_pipeline, lookup,
                                   *g_carve_cache, g_decal_game_time);
-        if (g_shield_pass) g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
+        }
+        if (g_shield_pass) {
+            DAUNTLESS_FRAME_SCOPE("space.shield");
+            g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
+        }
         // Dust is normally skipped on the viewscreen RTT (a camera-anchored
         // cockpit smear), but the WARP STREAK lives in this pass — so during
         // warp (streak > 0) we DO render it onto the viewscreen so the bridge
@@ -774,11 +833,14 @@ void frame() {
         // once per frame either way, and the viewscreen reuses g_camera's eye.
         const bool warp_streaking =
             dauntless_warp_vfx::streak_intensity() > 0.0f;
-        if (g_dust_pass && (!for_viewscreen || warp_streaking))
+        if (g_dust_pass && (!for_viewscreen || warp_streaking)) {
+            DAUNTLESS_FRAME_SCOPE("space.dust");
             g_dust_pass->render(cam, dt, *g_pipeline, g_suns, g_dust_planets,
                                 dauntless_warp_vfx::streak_intensity(),
                                 dauntless_warp_vfx::travel_dir());
+        }
         if (!g_nebulae.empty()) {
+            DAUNTLESS_FRAME_SCOPE("space.nebula");
             if (dauntless_volumetric_nebulae::enabled() && g_nebula_volumetric_pass) {
                 // VOLUMETRIC (Modern VFX): raymarch the fbm field, blended
                 // into the HDR target, occluded by the scene depth texture.
@@ -802,12 +864,17 @@ void frame() {
                 && g_nebula_godray_pass && !g_nebula_godrays.empty())
             g_nebula_godray_pass->render(cam, *g_pipeline, g_nebula_godrays,
                                          target.color_texture());
-        if (g_lens_flare_pass)
+        if (g_lens_flare_pass) {
+            DAUNTLESS_FRAME_SCOPE("space.lens_flare");
             g_lens_flare_pass->render(g_lens_flares, cam, *g_pipeline, vw, vh, now);
-        if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
-        if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
-        if (g_phaser_pass)  g_phaser_pass ->render(g_tractor_beams, cam, *g_pipeline);
-        if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
+        }
+        {
+            DAUNTLESS_FRAME_SCOPE("space.weapons");
+            if (g_torpedo_pass) g_torpedo_pass->render(g_torpedoes,    cam, *g_pipeline);
+            if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
+            if (g_phaser_pass)  g_phaser_pass ->render(g_tractor_beams, cam, *g_pipeline);
+            if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
+        }
         if (dauntless_nebula_lightning::enabled()
                 && g_hull_discharge_pass && !g_hull_discharges.empty())
             g_hull_discharge_pass->render(cam, *g_pipeline, g_hull_discharges);
@@ -817,6 +884,7 @@ void frame() {
         // and append to a combined emitter list for the particle pass.
         // Never mutate g_particle_emitters in place (Python-owned).
         if (g_particle_pass) {
+            DAUNTLESS_FRAME_SCOPE("space.particles");
             std::vector<renderer::ParticleEmitterDescriptor> all_emitters = g_particle_emitters;
             // Venting jets are hull-breach VFX; skip descriptor build entirely
             // when the hull-breach toggle is off (Python-owned g_particle_emitters
@@ -841,9 +909,11 @@ void frame() {
         // Cloak refraction: bend + chromatically disperse the scene behind each
         // cloaking hull. Runs last (the target holds the fully lit scene and is
         // still bound). Now shared by both the main view and the viewscreen RTT.
-        if (g_cloak_pass && !g_cloak_ships.empty())
+        if (g_cloak_pass && !g_cloak_ships.empty()) {
+            DAUNTLESS_FRAME_SCOPE("space.cloak");
             g_cloak_pass->render(g_cloak_ships, g_world, cam, *g_pipeline, lookup,
                                  static_cast<float>(now), g_lighting, ambient_scale);
+        }
     };
 
     // ── Sun shadow map (depth-only pre-pass) ───────────────────────────────
@@ -885,6 +955,7 @@ void frame() {
             renderer::ShadowLight sl = renderer::compute_light_matrix(
                 glm::vec3(player->world[3]), player_radius_gu, light_dir, fp);
 
+            DAUNTLESS_FRAME_SCOPE("shadow");
             GLint prev_fbo = 0;
             glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
             g_shadow_target->bind();   // sets the 2048² viewport
@@ -905,6 +976,10 @@ void frame() {
     // mode — see host_loop._compute_camera) renders into an offscreen HDR
     // target, which the bridge pass samples onto the viewscreen instance.
     if (viewscreen_on) {
+        // The bridge viewscreen re-renders the whole space scene into an
+        // offscreen target. Its children appear in the report with calls=2
+        // whenever the exterior view is also drawing them.
+        DAUNTLESS_FRAME_SCOPE("viewscreen.rtt");
         g_viewscreen_hdr->resize(kViewscreenRttW, kViewscreenRttH);
         g_viewscreen_hdr->bind();
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -957,10 +1032,12 @@ void frame() {
     // bridge pass fills the screen either way). This also retires the old
     // "wasted space render in bridge mode".
     if (!viewer_mode && !bridge_active) {
+        DAUNTLESS_FRAME_SCOPE("space");
         render_space(g_camera, /*for_viewscreen=*/false, *g_hdr_target, fw, fh);
     }
 
     if (g_hologram_ship.active) {
+        DAUNTLESS_FRAME_SCOPE("hologram");
         if (g_spv_hull_mode && g_submitter) {
             // Hull-texture mode: draw just the inspected ship through the full
             // opaque path (real textures + system lighting) on the isolated
@@ -1016,6 +1093,7 @@ void frame() {
     // above); the forward space view instead renders into the viewscreen
     // RTT and the bridge pass samples it onto the viewscreen instance.
     if (bridge_active) {
+        DAUNTLESS_FRAME_SCOPE("bridge");
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
@@ -1039,6 +1117,7 @@ void frame() {
     // produce are exactly what we fixed. Watching the HDR target keeps the
     // SOURCE observable after its symptom is gone. See nonfinite_probe.h.
     if (g_nfprobe_enabled && g_nonfinite_probe) {
+        DAUNTLESS_FRAME_SCOPE("nfprobe");
         const auto& probe = g_nonfinite_probe->run(g_hdr_target->color_texture(),
                                                     fw, fh);
         ++g_nfprobe_frames;
@@ -1086,6 +1165,7 @@ void frame() {
     // off — the resolve's OFF branch never samples u_bloom.
     std::uint32_t bloom_tex = g_hdr_target->color_texture();
     if (dauntless_hdr::enabled()) {
+        DAUNTLESS_FRAME_SCOPE("bloom");
         bloom_tex = g_bloom_pass->render(g_hdr_target->color_texture(), fw, fh);
     }
 
@@ -1130,9 +1210,13 @@ void frame() {
     // doesn't white out. Exterior view keeps the full-screen flash.
     g_resolve_pass->set_warp_flash(
         bridge_active ? 0.0f : dauntless_warp_vfx::flash_intensity());
-    g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex, lens_flare_tex);
+    {
+        DAUNTLESS_FRAME_SCOPE("resolve");
+        g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex, lens_flare_tex);
+    }
 
     if (any_post) {
+        DAUNTLESS_FRAME_SCOPE("post");
         g_ldr_target2->resize(fw, fh);
 
         // Active optional passes as uniform (src_tex, dst_fbo) callables.
@@ -1200,7 +1284,10 @@ void frame() {
     // about bridge-vs-exterior view (BC letterboxes bridge cutscenes too,
     // and that must keep working) -- viewer_mode isn't a view, it's a
     // separate full-frame override that pre-empts the space scene entirely.
-    if (!viewer_mode) renderer::letterbox::draw(fw, fh);
+    if (!viewer_mode) {
+        DAUNTLESS_FRAME_SCOPE("letterbox");
+        renderer::letterbox::draw(fw, fh);
+    }
 
     // ── Helm -> Set Course star map ──────────────────────────────────────
     // Slot matters: AFTER the post chain has resolved into FBO 0 (so the map
@@ -1209,6 +1296,7 @@ void frame() {
     // into a scissored sub-rect, leaving the live scene visible around the
     // modal, and saves/restores viewport + scissor itself.
     if (g_starmap_pass && g_starmap_scene.enabled) {
+        DAUNTLESS_FRAME_SCOPE("starmap");
         // Bind FBO 0 explicitly, as letterbox::draw does for itself: the post
         // chain does land here, but viewer_mode skips the letterbox draw, so
         // this slot must not inherit its framebuffer from a neighbour.
@@ -1247,15 +1335,27 @@ void frame() {
     // first). Polling GLFW first guarantees the GL window's window owner
     // gets first crack at the OS event queue; CEF then drains whatever
     // it needs for its own internal work afterward.
-    g_window->poll_events();
+    {
+        DAUNTLESS_FRAME_SCOPE("poll_events");
+        g_window->poll_events();
+    }
 
 #ifdef DAUNTLESS_ENABLE_CEF
     // Pump CEF's message loop (may deliver OnPaint synchronously into
     // g_client), then composite the latest bitmap over the 3D scene with
     // premultiplied-alpha blend. Runs AFTER poll_events to avoid stealing
     // keyboard events from GLFW (see comment above poll_events).
-    dauntless::ui_cef::pump();
-    dauntless::ui_cef::composite();
+    {
+        DAUNTLESS_FRAME_SCOPE("cef.pump");
+        dauntless::ui_cef::pump();
+    }
+    {
+        // The composite uploads the ENTIRE CEF surface every frame — no
+        // dirty-rect, no PBO — so this scope carries that cost. At 2560x1440
+        // BGRA that is ~14.7 MB of synchronous glTexSubImage2D per frame.
+        DAUNTLESS_FRAME_SCOPE("cef.composite");
+        dauntless::ui_cef::composite();
+    }
 #endif
 
     // Serviced here, not at probe time: the artefact only exists once the
@@ -1280,7 +1380,15 @@ void frame() {
         }
     }
 
-    g_window->swap_buffers();
+    {
+        // Under vsync (glfwSwapInterval(1)) this scope IS the wait for the
+        // next refresh. A large `present` with small siblings means the frame
+        // finished early and blocked — not that presenting is slow.
+        DAUNTLESS_FRAME_SCOPE("present");
+        g_window->swap_buffers();
+    }
+
+    renderer::frame_timer().end_frame();
 }
 
 }  // namespace
@@ -1372,6 +1480,54 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("width"), py::arg("height"), py::arg("title"),
           "Open a window and initialise the renderer.");
     m.def("shutdown", &shutdown);
+
+    // Introspection for tests/host/test_init_resets_frame_state.py: everything
+    // reset_frame_state() clears, reduced to a count or a flag. Deliberately
+    // read-only and deliberately covering EVERY member of that function -- the
+    // test asserts the key set, so dropping one here fails loudly rather than
+    // quietly shrinking the coverage. Safe with the host down; touches no GL.
+    m.def("frame_state_debug",
+          []() {
+              py::dict d;
+              d["phaser_beams"]       = g_phaser_beams.size();
+              d["tractor_beams"]      = g_tractor_beams.size();
+              d["spv_overlay_beams"]  = g_spv_overlay_beams.size();
+              d["torpedoes"]          = g_torpedoes.size();
+              d["hit_vfx"]            = g_hit_vfx.size();
+              d["shockwaves"]         = g_shockwaves.size();
+              d["particle_emitters"]  = g_particle_emitters.size();
+              d["dynamic_lights"]     = g_dynamic_lights.size();
+              d["lens_flares"]        = g_lens_flares.size();
+              d["hull_discharges"]    = g_hull_discharges.size();
+              d["cloak_ships"]        = g_cloak_ships.size();
+              d["subsystem_pins"]     = g_subsystem_pins.size();
+              d["debug_cylinders"]    = g_debug_cylinders.size();
+              d["debug_boxes"]        = g_debug_boxes.size();
+              d["debug_spheres"]      = g_debug_spheres.size();
+              d["debug_cones"]        = g_debug_cones.size();
+              d["backdrops"]          = g_backdrops.size();
+              d["suns"]               = g_suns.size();
+              d["dust_planets"]       = g_dust_planets.size();
+              d["nebulae"]            = g_nebulae.size();
+              d["nebula_wake"]        = g_nebula_wake.size();
+              d["nebula_godrays"]     = g_nebula_godrays.size();
+              d["hologram_ship_active"]   = g_hologram_ship.active;
+              d["hologram_only_mode"]     = g_hologram_only_mode;
+              d["spv_hull_mode"]          = g_spv_hull_mode;
+              d["target_reticle_visible"] = g_target_reticle.visible;
+              d["starmap_enabled"]        = g_starmap_scene.enabled;
+              d["viewscreen_enabled"]     = g_viewscreen_enabled;
+              d["bridge_pass_enabled"]    = g_bridge_pass_enabled;
+              d["transform_gizmo_length"] = g_transform_gizmo.length;
+              d["have_prev_viewproj"]     = g_have_prev_viewproj;
+              d["letterbox_covered"]      = renderer::letterbox::covered();
+              d["sky_dirty"]              = g_sky_dirty;
+              d["prev_input_edges"]       = g_prev_key_state.size()
+                                          + g_prev_mouse_state.size();
+              return d;
+          },
+          "Test-only snapshot of the per-frame state reset_frame_state() owns: "
+          "list lengths and flag values. Never call this from game code.");
     m.def("should_close", &should_close);
     m.def("frame", &frame);
     m.def("load_model", &load_model_impl,
@@ -3299,6 +3455,73 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { dauntless_shadows::set_enabled(enabled); },
           py::arg("enabled"),
           "Toggle sun shadow maps. Default: on.");
+
+    // ── Frame profiler ────────────────────────────────────────────────────
+    // Per-pass CPU + GPU timings for the render half of the frame. Off by
+    // default; enabling allocates GL timer queries lazily on the next frame.
+    m.def("profiler_set_enabled",
+          [](bool enabled) { renderer::frame_timer().set_enabled(enabled); },
+          py::arg("enabled"),
+          "Enable/disable per-pass frame timing. Off by default. Toggling "
+          "either way clears the accumulated averages.");
+    m.def("profiler_enabled",
+          []() { return renderer::frame_timer().enabled(); },
+          "True when per-pass frame timing is recording.");
+    m.def("profiler_reset",
+          []() { renderer::frame_timer().reset(); },
+          "Drop all accumulated averages and the scope table.");
+    m.def("set_swap_interval",
+          [](int interval) {
+              if (!g_window) {
+                  throw std::runtime_error(
+                      "set_swap_interval: init must be called first");
+              }
+              g_window->set_swap_interval(interval);
+          },
+          py::arg("interval"),
+          "Buffer-swap interval: 1 = vsync, 0 = uncapped. A visible window "
+          "defaults to 1 and a hidden one to 0. Turn it off for a profiling "
+          "capture -- a vsync-capped frame measures the monitor.");
+    m.def("swap_interval",
+          []() { return g_window ? g_window->swap_interval() : -1; },
+          "The interval currently set, or -1 when there is no window. The "
+          "profiler reports this rather than assuming vsync.");
+    m.def("profiler_scopes",
+          []() {
+              // One list of dicts per resolved frame, in pass order. Values are
+              // EMA-smoothed milliseconds; `calls` is the raw count from the
+              // last resolved frame, so a pass that ran twice (exterior +
+              // viewscreen RTT) is visible as such rather than averaged away.
+              py::list out;
+              for (const auto& r : renderer::frame_timer().results()) {
+                  py::dict d;
+                  d["name"]   = r.name;
+                  d["cpu_ms"] = r.cpu_ms;
+                  d["gpu_ms"] = r.gpu_ms;
+                  d["calls"]  = r.calls;
+                  d["depth"]  = r.depth;
+                  out.append(std::move(d));
+              }
+              return out;
+          },
+          "Per-pass render timings from the last resolved frame.");
+    m.def("profiler_frame",
+          []() {
+              py::dict d;
+              const auto& t = renderer::frame_timer();
+              d["cpu_ms"] = t.frame_cpu_ms();
+              // Whole-frame GPU is first-timestamp-to-last, not the sum of the
+              // scopes: scopes nest, so a sum would double-count.
+              d["gpu_ms"] = t.frame_gpu_ms();
+              d["frames"] = t.frames_resolved();
+              d["enabled"] = t.enabled();
+              // Reported, not assumed: a hidden window already runs uncapped,
+              // so a report that hard-coded "present is the vsync wait" was
+              // telling every headless capture the opposite of the truth.
+              d["swap_interval"] = g_window ? g_window->swap_interval() : -1;
+              return d;
+          },
+          "Whole-frame CPU/GPU totals and the number of frames resolved.");
     m.def("decals_set_enabled",
           [](bool enabled) { dauntless_decals::set_enabled(enabled); },
           py::arg("enabled"),
@@ -3883,6 +4106,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_F12")          = GLFW_KEY_F12;
     keys.attr("KEY_LEFT_BRACKET")  = GLFW_KEY_LEFT_BRACKET;
     keys.attr("KEY_RIGHT_BRACKET") = GLFW_KEY_RIGHT_BRACKET;
+    keys.attr("KEY_GRAVE_ACCENT")  = GLFW_KEY_GRAVE_ACCENT;
     keys.attr("KEY_LEFT_SUPER")   = GLFW_KEY_LEFT_SUPER;
     keys.attr("KEY_LEFT_CONTROL") = GLFW_KEY_LEFT_CONTROL;
     keys.attr("KEY_SPACE") = GLFW_KEY_SPACE;

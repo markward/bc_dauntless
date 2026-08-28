@@ -63,6 +63,17 @@ def _name_of(node, attr: str = "_name") -> str:
     return str(getattr(node, attr, ""))
 
 
+def _condition_label(cond) -> str:
+    """A condition's identity is its CLASS -- ConditionTorpedoReady and friends
+    carry no name and no _name, so _name_of returns "" for every one of them.
+
+    That is not cosmetic. An exported tree showing `conds=?:1, ?:0, ?:0, ?:0`
+    tells you a gate is shut and nothing about WHICH input shut it, which is
+    exactly the question when an AI has stopped engaging.
+    """
+    return _name_of(cond) or type(cond).__name__
+
+
 def _condition_status(cond) -> int:
     getter = getattr(cond, "GetStatus", None)
     if callable(getter):
@@ -94,12 +105,39 @@ def serialize_ai_tree(ai) -> dict:
         "focus": _has_focus(ai),
     }
 
+    # --- Cadence + bypass diagnostics -------------------------------------
+    # Why these: a node can read ACTIVE and FOCUSED while its own Update has
+    # not run for a long time, and the static status cannot show the
+    # difference. Two mechanisms stop an Update without changing any status:
+    #
+    #  * the cadence gate -- game_time < _next_update_time
+    #  * the non-interruptable bypass in _tick_preprocessing, which runs the
+    #    CONTAINED ai and returns before the preprocessor's own Update
+    #
+    # Both present as "the tree looks fine but nothing is happening", which is
+    # unfalsifiable without these numbers.
+    nut = ai.__dict__.get("_next_update_time")
+    if isinstance(nut, (int, float)):
+        out["next_update_time"] = float(nut)
+        try:
+            import App
+            now = float(App.g_kUtopiaModule.GetGameTime())
+            out["due_in"] = float(nut) - now
+            out["overdue"] = (float(nut) <= now)
+        except Exception:
+            pass
+    interruptable = getattr(ai, "_interruptable", None)
+    if interruptable is not None:
+        out["interruptable"] = bool(interruptable)
+
     # ConditionalAI: conditions + single contained AI. Checked before the
     # generic _contained_ai branch so its conditions are captured.
     conditions = getattr(ai, "_conditions", None)
     if isinstance(conditions, list) and _has_attr_chain(ai, "_contained_ai"):
         out["conditions"] = [
-            {"name": _name_of(c), "status": _condition_status(c)}
+            {"name": _condition_label(c),
+             "class": type(c).__name__,
+             "status": _condition_status(c)}
             for c in conditions
         ]
         contained = getattr(ai, "_contained_ai", None)
@@ -109,6 +147,8 @@ def serialize_ai_tree(ai) -> dict:
     # PreprocessingAI / BuilderAI: single contained AI + preprocessing method.
     if _has_attr_chain(ai, "_contained_ai") and hasattr(ai, "_preprocessing_method"):
         out["preprocessing_method"] = getattr(ai, "_preprocessing_method", "") or ""
+        out["preprocessor"] = _preprocessor_state(
+            ai.__dict__.get("_preprocessing_instance"))
         contained = getattr(ai, "_contained_ai", None)
         out["contained"] = serialize_ai_tree(contained) if contained is not None else None
         return out
@@ -171,12 +211,151 @@ def _has_attr_chain(obj, name: str) -> bool:
     return name in getattr(obj, "__dict__", {}) or hasattr(type(obj), name)
 
 
+def _preprocessor_state(inst) -> Optional[dict]:
+    """The preprocessor INSTANCE's own scalar state.
+
+    A PreprocessingAI can be ACTIVE, focused and updating on cadence while
+    doing nothing at all, because the decision lives in the script instance
+    rather than in the node. FireScript is the case in point: its Update
+    returns early and fires NOTHING when ``lWeapons`` is empty
+    (AI/Preprocessors.py), and ``bCallUsingWeaponTypeFunc`` is a one-shot latch
+    whose broadcast is the only thing that ever sets ConditionUsingWeapon. Node
+    status shows neither.
+
+    Deliberately generic -- scalars verbatim, containers as lengths, callables
+    and engine handles skipped -- so this reports whatever a preprocessor
+    happens to carry instead of hard-coding FireScript's fields and going
+    blind on the next one.
+    """
+    if inst is None:
+        return None
+    out = {"class": type(inst).__name__}
+    for key, val in list(getattr(inst, "__dict__", {}).items()):
+        if key.startswith("pCode") or callable(val):
+            continue
+        if isinstance(val, bool) or isinstance(val, (int, float, str)):
+            out[key] = val
+        elif isinstance(val, (list, tuple, dict, set)):
+            out[key + "__len"] = len(val)
+            # A weapon list is the field that matters; name what is in it.
+            if key.lower().startswith("lweapon"):
+                names = []
+                for w in list(val)[:12]:
+                    try:
+                        names.append(_name_of(w) or type(w).__name__)
+                    except Exception:
+                        names.append("?")
+                out[key + "__items"] = names
+        elif val is None:
+            out[key] = None
+    return out
+
+
+def _defence_report(ship) -> dict:
+    """Alert level and per-facing shield state.
+
+    Added for "AI ships randomly drop and raise shields in combat". Shields are
+    raised by ALERT LEVEL, which the AlertLevel preprocessor owns -- and its
+    LostFocus() restores the PREVIOUS level, so a node flickering on and off
+    the active path lowers and raises shields with it. A single snapshot cannot
+    show a flicker, but it can show WHICH of the two is moving: the alert level
+    (AlertLevel is doing it) or the shield charge alone (PowerManagement, or
+    the 0.5 s charge cadence, is).
+    """
+    out = {}
+    try:
+        out["alert_level"] = ship.GetAlertLevel()
+    except Exception:
+        out["alert_level"] = None
+    try:
+        shields = ship.GetShields()
+        out["shields_up"] = bool(shields.IsOn()) if shields is not None else None
+        if shields is not None:
+            facings = []
+            try:
+                n = int(shields.GetNumShields())
+            except Exception:
+                n = 0
+            for i in range(n):
+                try:
+                    facings.append(round(float(shields.GetSingleShieldPercentage(i)), 4))
+                except Exception:
+                    facings.append(None)
+            out["shield_percent_by_facing"] = facings
+    except Exception:
+        out["shields_up"] = None
+    return out
+
+
+def _weapon_report(ship) -> dict:
+    """What the weapon-readiness CONDITIONS are actually reading.
+
+    An exported tree can show every fire gate DORMANT and give no hint why.
+    The gates ask whether a bank is charged and whether a tube has ammo, so
+    report those directly: "the AI will not fire" and "the weapons say they
+    are not ready" are different findings with different fixes, and the tree
+    alone cannot tell them apart.
+    """
+    out = {"banks": [], "tubes": [], "ready_banks": 0, "ready_tubes": 0}
+    try:
+        import App
+        # CT_WEAPON_SYSTEM, not 0. Passing 0 matched nothing at all and the
+        # first capture reported ready_banks=0 for every ship INCLUDING the
+        # player -- which read as "all weapons dead" when it actually meant
+        # "this probe found no weapons". A measurement that fails silently in
+        # the direction of the hypothesis is worse than no measurement.
+        it = ship.StartGetSubsystemMatch(App.CT_WEAPON_SYSTEM)
+        while True:
+            sub = ship.GetNextSubsystemMatch(it)
+            if sub is None:
+                break
+            kind = type(sub).__name__
+            try:
+                if hasattr(sub, "_charge_level") and hasattr(sub, "_max_charge"):
+                    lvl = float(getattr(sub, "_charge_level", 0.0) or 0.0)
+                    mx = float(getattr(sub, "_max_charge", 0.0) or 0.0)
+                    can = bool(sub.CanFire()) if callable(getattr(sub, "CanFire", None)) else None
+                    out["banks"].append(
+                        {"name": _name_of(sub), "type": kind, "charge": lvl,
+                         "max_charge": mx, "can_fire": can})
+                    if can:
+                        out["ready_banks"] += 1
+                elif "Torpedo" in kind or hasattr(sub, "GetAmmo"):
+                    ammo = None
+                    for attr in ("GetAmmo", "GetNumTorpedoes", "_ammo"):
+                        g = getattr(sub, attr, None)
+                        try:
+                            ammo = int(g()) if callable(g) else (int(g) if g is not None else None)
+                        except Exception:
+                            ammo = None
+                        if ammo is not None:
+                            break
+                    can = bool(sub.CanFire()) if callable(getattr(sub, "CanFire", None)) else None
+                    out["tubes"].append(
+                        {"name": _name_of(sub), "type": kind,
+                         "ammo": ammo, "can_fire": can})
+                    if can:
+                        out["ready_tubes"] += 1
+            except Exception:
+                continue
+        ship.EndGetSubsystemMatch(it)
+    except Exception:
+        pass
+    return out
+
+
 def collect_all_ship_ai() -> List[dict]:
     """Walk every live ship and return ``[{ship_name, tree|None}, ...]``.
 
     ``tree`` is None when the ship has no AI (or no GetAI surface). Every
     per-ship access is guarded so one malformed ship can't abort the walk."""
     from engine.appc.ship_iter import iter_ships
+
+    try:
+        import App
+        now = float(App.g_kUtopiaModule.GetGameTime())
+    except Exception:
+        now = None
 
     out: List[dict] = []
     for ship in iter_ships():
@@ -193,5 +372,30 @@ def collect_all_ship_ai() -> List[dict]:
                     tree = serialize_ai_tree(ai)
                 except Exception:
                     tree = None
-        out.append({"ship_name": name, "tree": tree})
+        # Ship-level facts the tree cannot show. Chasing "NPCs stop engaging
+        # after the first volley" stalled on exactly these: the tree said the
+        # fire branch was ACTIVE and FOCUSED while every readiness gate read 0,
+        # and nothing recorded whether the ship still had a target, whether its
+        # AI tree was still being walked, or what the weapons themselves said.
+        row = {"ship_name": name, "tree": tree}
+        try:
+            tgt = ship.GetTarget()
+            row["target"] = _name_of(tgt) if tgt is not None else None
+        except Exception:
+            row["target"] = None
+        try:
+            sub = ship.GetTargetSubsystem()
+            row["target_subsystem"] = _name_of(sub) if sub is not None else None
+        except Exception:
+            row["target_subsystem"] = None
+        # The sleep scheduler's stamp: if this sits far ahead of game time the
+        # whole tree is being skipped, which no per-node status reveals.
+        due = ship.__dict__.get("_ai_next_walk_due")
+        if isinstance(due, (int, float)):
+            row["ai_next_walk_due"] = float(due)
+            if now is not None:
+                row["ai_walk_due_in"] = float(due) - now
+        row["weapons"] = _weapon_report(ship)
+        row["defence"] = _defence_report(ship)
+        out.append(row)
     return out

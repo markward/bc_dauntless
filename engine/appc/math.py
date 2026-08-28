@@ -225,12 +225,53 @@ class TGMatrix3:
         return result
 
     def MultMatrix(self, other: "TGMatrix3") -> "TGMatrix3":
+        """self . other (column-vector convention).
+
+        Unrolled. The triple `range(3)` loop this replaces ran 27 iterations,
+        each doing five nested list-index operations, and allocated a matrix
+        via MakeZero() only to overwrite every element — for a 3x3 multiply
+        that is ~135 index ops and 27 interpreter loop steps.
+
+        It is on the hot path: _integrate_rotation composes four of these per
+        turning ship per tick (R_pitch . R_yaw . R_roll, then R . delta), which
+        at 17 ships was the bulk of gl.motion's 10.4 ms.
+
+        BIT-EXACT with the loop form, including the accumulation order (k
+        ascending). Pinned by tests/unit/test_matrix_multiply_exact.py rather
+        than argued: the only divergence the analysis admits is a signed zero,
+        and a test is cheaper than being sure.
+        """
+        a = self._m
+        b = other._m
+        a0, a1, a2 = a[0], a[1], a[2]
+        b0, b1, b2 = b[0], b[1], b[2]
+        a00, a01, a02 = a0[0], a0[1], a0[2]
+        a10, a11, a12 = a1[0], a1[1], a1[2]
+        a20, a21, a22 = a2[0], a2[1], a2[2]
+        b00, b01, b02 = b0[0], b0[1], b0[2]
+        b10, b11, b12 = b1[0], b1[1], b1[2]
+        b20, b21, b22 = b2[0], b2[1], b2[2]
+
+        # The leading `0.0 +` is LOAD-BEARING, not noise. The loop form
+        # accumulated into a MakeZero() element, i.e. ((0.0 + p0) + p1) + p2.
+        # Dropping it gives (p0 + p1) + p2, which is identical for every input
+        # except one: when all three products are -0.0, the accumulator yields
+        # +0.0 and the bare sum yields -0.0. test_negative_zero_elements caught
+        # exactly that on the first run. Nine extra adds is a trivial price for
+        # not having to reason about whether a signed zero can reach a
+        # rotation matrix.
         result = TGMatrix3()
-        result.MakeZero()
-        for i in range(3):
-            for j in range(3):
-                for k in range(3):
-                    result._m[i][j] += self._m[i][k] * other._m[k][j]
+        result._m = [
+            [0.0 + a00 * b00 + a01 * b10 + a02 * b20,
+             0.0 + a00 * b01 + a01 * b11 + a02 * b21,
+             0.0 + a00 * b02 + a01 * b12 + a02 * b22],
+            [0.0 + a10 * b00 + a11 * b10 + a12 * b20,
+             0.0 + a10 * b01 + a11 * b11 + a12 * b21,
+             0.0 + a10 * b02 + a11 * b12 + a12 * b22],
+            [0.0 + a20 * b00 + a21 * b10 + a22 * b20,
+             0.0 + a20 * b01 + a21 * b11 + a22 * b21,
+             0.0 + a20 * b02 + a21 * b12 + a22 * b22],
+        ]
         return result
 
     def MultMatrixLeft(self, other: "TGMatrix3") -> "TGMatrix3":

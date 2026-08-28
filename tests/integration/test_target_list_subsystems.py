@@ -48,8 +48,17 @@ def test_full_pipeline_real_sdk_real_ship_real_subsystems():
         assert row.GetAffiliation() == "ENEMY"
         assert len(row._children) > 0  # subsystems populated
 
-        # Render the view payload and verify the shape.
+        # Render the view payload and verify the shape.  The subsystem tree is
+        # an EXPANDED-row property now -- a collapsed row ships only the caret
+        # flag, because target_list.js draws child rows only when expanded.
         view = TargetListView()
+        collapsed = json.loads(view.render_payload()[len("setTargetList("):-2])
+        collapsed_row = next(r for r in collapsed["rows"] if r["name"] == "Kor")
+        assert collapsed_row["subsystems"] == []
+        assert collapsed_row["has_subsystems"] is True
+
+        view._expanded_ships.add("Kor")
+        view.invalidate()
         script = view.render_payload()
         body = script[len("setTargetList("):-2]
         state = json.loads(body)

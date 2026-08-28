@@ -20,6 +20,7 @@ from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.core.ids import implements
 import engine.dev_mode as dev_mode
+from engine.appc import ship_death as _ship_death
 
 
 def subsystem_world_position(sub, ship=None):
@@ -60,9 +61,18 @@ def _is_offline(sub) -> bool:
         return False
     if bool(sub.IsDisabled()) or bool(sub.IsDestroyed()):
         return True
-    if hasattr(sub, "GetParentShip"):
-        from engine.appc import ship_death
-        if ship_death._out_of_action(sub.GetParentShip()):
+    # implements, NOT hasattr. TGObject.__getattr__ vends a truthy _Stub for
+    # any unknown name, so hasattr was vacuously True on every subsystem and
+    # the guard never guarded anything -- every call fell through to
+    # GetParentShip() and a full _out_of_action (two more MRO walks), including
+    # for subsystems that do not define the method at all.
+    #
+    # The `from engine.appc import ship_death` that used to live here ran on
+    # every call: 115,279 importlib lookups over 150 ticks at 100 ships. It is
+    # at module scope now -- ship_death imports nothing from this module, so
+    # there was never a cycle to break.
+    if implements(sub, "GetParentShip"):
+        if _ship_death._out_of_action(sub.GetParentShip()):
             return True
     return False
 
@@ -83,10 +93,26 @@ def impulse_online_fraction(ies) -> float:
     n = ies.GetNumChildSubsystems()
     if n == 0:
         return 1.0
-    online = sum(
-        1 for i in range(n) if not _is_offline(ies.GetChildSubsystem(i))
-    )
+    # Plain loop, not sum(genexpr): this walks every pod of every ship every
+    # tick, and at that volume the generator frame is not free -- the same
+    # change was worth 3x on ids.implements.
+    online = 0
+    for i in range(n):
+        if not _is_offline(ies.GetChildSubsystem(i)):
+            online += 1
     return online / float(n)
+
+
+# BC's shield charge cadence: the tick accumulates elapsed time and only does
+# the per-facing charge work once the accumulator reaches this, then resets it.
+# Threshold constant at 0x008E529C; see stbc-reference
+# spec/ShieldFacingDamage.md section 6.1.
+#
+# NOTE the spec is graded reviewed-not-tested -- every routine on that path was
+# read from the binary, never executed -- so this is a faithful reading, not a
+# verified observation. It is adopted because it also matches the 0.5 s beam
+# damage pulse the same document describes.
+SHIELD_CHARGE_PERIOD_S = 0.5
 
 
 def impulse_output_fraction(ies) -> float:
@@ -1223,6 +1249,12 @@ class PoweredSubsystem(ShipSubsystem):
             dev_mode.log_swallowed("subsystem event broadcast", _e)
 
 
+# The one getter whose body PowerSubsystem._pump_consumers is allowed to inline
+# as a raw `_power_wanted` read. Anything that overrides GetPowerWanted (as
+# PowerSubsystem itself does) fails the identity test there and gets called.
+_BASE_GET_POWER_WANTED = PoweredSubsystem.GetPowerWanted
+
+
 class HullSubsystem(ShipSubsystem):
     """Live hull state.  Hull isn't a powered subsystem — it just tracks
     condition (max + current) so damage logic can read GetMaxCondition().
@@ -1544,6 +1576,12 @@ class ShieldSubsystem(PoweredSubsystem):
         self._shield_watchers: list = [
             FloatRangeWatcher() for _ in range(self.NUM_SHIELDS + 1)
         ]
+        # Carry for BC's 0.5 s charge cadence (see Update). Declared HERE, not
+        # conjured by a `getattr(self, ..., 0.0)` default in Update: an
+        # attribute that is absent from a fresh instance's __dict__ is
+        # invisible to anything that serialises by walking it, and 39 SDK
+        # classes round-trip through __getstate__/__setstate__.
+        self._charge_accum: float = 0.0
 
     def GetShieldWatcher(self, face: int):
         """FloatRangeWatcher on a face's FRACTION for faces 0..5
@@ -1703,6 +1741,30 @@ class ShieldSubsystem(PoweredSubsystem):
         transition; this gate just prevents Update from leaking charge
         back in.
         """
+        # ── BC's 0.5 s charge cadence ────────────────────────────────────
+        # ShieldClass's tick (0x0056A230, vtable slot 25) accumulates elapsed
+        # time into +0x154 and, while that accumulator is BELOW 0.5 (threshold
+        # at 0x008E529C), delegates to the PoweredSubsystem update and returns.
+        # The per-facing charge work happens once per 0.5 s of accumulated
+        # time, NOT per frame -- stbc-reference spec/ShieldFacingDamage.md
+        # section 6.1. We were running the whole per-facing loop at 60 Hz, i.e.
+        # 30x more often than the original.
+        #
+        # The accumulator is reset unconditionally once the threshold is
+        # crossed (BC step 3, before the disabled/off branch at step 5), so a
+        # ship that is offline or powered down for a while cannot bank time and
+        # then apply it as a burst when it comes back.
+        #
+        # Charge RATE is unchanged: the same per-second maths runs against the
+        # accumulated dt, so the total charge over any interval is what it was.
+        # Only the granularity changes -- regen now steps every 0.5 s, which is
+        # what the original did.
+        self._charge_accum = self._charge_accum + float(dt)
+        if self._charge_accum < SHIELD_CHARGE_PERIOD_S:
+            return
+        dt = self._charge_accum
+        self._charge_accum = 0.0
+
         if _is_offline(self):
             return
         # Cloak-regen branch: while the ship is trying to cloak (CLOAKING or
@@ -2056,10 +2118,36 @@ class PowerSubsystem(ShipSubsystem):
         consumers = getattr(ship, "_powered_consumers", None) if ship is not None else None
         if not consumers:
             return
-        self._power_wanted_total = 0.0
+        total = 0.0
         for consumer in consumers:
             consumer._update_power(dt, self)
-            self._power_wanted_total += consumer.GetPowerWanted()
+            # _power_wanted, not GetPowerWanted(): _update_power just wrote the
+            # attribute one line ago, and PoweredSubsystem's getter is a bare
+            # `return self._power_wanted`. At 9.4 consumers x 101 ships x 15
+            # ticks that accessor alone was ~14,000 calls per frame for no
+            # information.
+            #
+            # But "the getter is that bare return" is a property of ONE class,
+            # not of the interface: PowerSubsystem.GetPowerWanted returns
+            # _power_wanted_total, an entirely different field. It cannot reach
+            # this list today (PowerSubsystem derives from ShipSubsystem, so
+            # ShipClass.AddPoweredConsumer's isinstance(PoweredSubsystem) gate
+            # rejects it), but an unguarded inline turns any future
+            # getter-overriding consumer from a working case into a silently
+            # wrong total.
+            #
+            # Measured, not asserted (2M-iteration timeit, this interpreter):
+            # bare field 20 ns, guard + field 47 ns, method call 53 ns. So the
+            # guard is still cheaper than the call it avoids, and its 27 ns
+            # premium over the naked read is 6.7% of the 404 ns _update_power
+            # that shares the loop body -- about 26 us/frame at 9.4 consumers
+            # x 101 ships. That buys back correctness for every future
+            # consumer shape at a cost the profile cannot see.
+            if type(consumer).GetPowerWanted is _BASE_GET_POWER_WANTED:
+                total += consumer._power_wanted
+            else:
+                total += consumer.GetPowerWanted()
+        self._power_wanted_total = total
 
     def _draw(self, amount: float, mode: int) -> float:
         """Depletes conduit budget AND battery to satisfy up to ``amount``,
@@ -2072,10 +2160,36 @@ class PowerSubsystem(ShipSubsystem):
         Accumulates into _power_dispensed for GetPowerDispensed()."""
         if amount <= 0.0:
             return 0.0
+        # Inlined _draw_main / _draw_backup. They remain as methods (public
+        # surface, and the unit tests drive them directly) but the hot path no
+        # longer pays two extra Python calls per drawing consumer -- ~6.3
+        # consumers x 101 ships x 15 ticks is ~19,000 calls a frame.
         got = 0.0
+        # `== PSM_MAIN_FIRST`, NOT `!= the other two`. PSM_DIRECT_MAIN (3) is a
+        # fourth mode and the original chain sent it to the final else, i.e.
+        # BACKUP-ONLY. Spelling this as a negative silently re-routed it to
+        # main-first -- a behaviour change smuggled in as an optimisation.
         if mode == PSM_MAIN_FIRST:
-            got += self._draw_main(amount)
-            got += self._draw_backup(amount - got)
+            take = amount
+            if take > self._main_conduit_current:
+                take = self._main_conduit_current
+            if take > self._main_battery_power:
+                take = self._main_battery_power
+            if take > 0.0:
+                self._main_conduit_current -= take
+                self._main_battery_power -= take
+                got = take
+            rest = amount - got
+            if rest > 0.0:
+                take = rest
+                if take > self._backup_conduit_current:
+                    take = self._backup_conduit_current
+                if take > self._backup_battery_power:
+                    take = self._backup_battery_power
+                if take > 0.0:
+                    self._backup_conduit_current -= take
+                    self._backup_battery_power -= take
+                    got += take
         elif mode == PSM_BACKUP_FIRST:
             got += self._draw_backup(amount)
             got += self._draw_main(amount - got)
@@ -2757,3 +2871,69 @@ def __getattr__(name):
 
 def __dir__():
     return sorted(list(globals().keys()) + list(_WEAPON_EXPORTS))
+
+
+def impulse_fractions(ies):
+    """``(online_fraction, output_fraction)`` from ONE walk over the pods.
+
+    ``impulse_online_fraction`` and ``impulse_output_fraction`` are both called
+    once per ship per tick from the motion path, and each iterates the same
+    child-pod list -- two walks, two sets of GetChildSubsystem calls, for facts
+    about the same objects. Together they were 0.81 s of ship motion's 1.57 s
+    over 150 ticks at 100 ships.
+
+    The two predicates genuinely differ and both are preserved verbatim:
+    ``online`` counts pods that are not ``_is_offline`` (disabled OR destroyed
+    OR parent out of action), while ``output`` weights by condition and treats
+    only ``IsDisabled`` as forfeiting the pod's whole share. So this fuses the
+    ITERATION, not the semantics.
+
+    Equivalent to calling both, with one ordering difference that cannot change
+    a result: ``impulse_output_fraction`` short-circuits on ``not IsOn()``
+    before touching the pods, whereas this walks them first because the online
+    fraction needs the walk regardless. Same values, in the switched-off case a
+    walk that the separate call would have skipped.
+    """
+    if ies is None:
+        return 1.0, 1.0
+    if _is_offline(ies):
+        return 0.0, 0.0
+    n = ies.GetNumChildSubsystems()
+    if n == 0:
+        online, cur = 1.0, 1.0
+    else:
+        # _is_offline(pod) is three predicates: IsDisabled, IsDestroyed, and
+        # "parent ship out of action" -- and that third one costs an
+        # implements() MRO WALK plus GetParentShip plus a full _out_of_action,
+        # per pod, for an answer that is identical across every pod on the
+        # engine (they share one ship).
+        #
+        # It is not merely identical, it is already KNOWN: _is_offline(ies)
+        # above returned False, and that call tested this same ship. So past
+        # that early return the ship is established to be in action, and the
+        # per-pod ship check cannot fire. Only valid when `ies` itself carries
+        # GetParentShip -- otherwise _is_offline(ies) skipped the ship clause
+        # and never established anything, so that case keeps the full call.
+        #
+        # Also fuses the double IsDisabled(): the loop asked each pod twice,
+        # once inside _is_offline and once for the condition weighting.
+        _ship_known_good = implements(ies, "GetParentShip")
+        online_n = 0
+        contrib = 0.0
+        for i in range(n):
+            pod = ies.GetChildSubsystem(i)
+            disabled = bool(pod.IsDisabled())
+            if _ship_known_good:
+                offline = disabled or bool(pod.IsDestroyed())
+            else:
+                offline = _is_offline(pod)
+            if not offline:
+                online_n += 1
+            if not disabled:
+                contrib += pod.GetConditionPercentage()
+        online = online_n / float(n)
+        cur = contrib / n
+    if not ies.IsOn():
+        return online, 0.0
+    cur = max(0.0, min(1.0, cur))
+    return online, cur * ies.GetPowerPercentageWanted()

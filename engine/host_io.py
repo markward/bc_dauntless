@@ -57,6 +57,9 @@ _REQUIRED_BINDINGS = frozenset({
 _OPTIONAL_BINDINGS = frozenset({
     "starmap_set_enabled", "starmap_set_viewport",
     "starmap_set_camera", "starmap_set_scene",
+    "profiler_set_enabled", "profiler_enabled",
+    "profiler_scopes", "profiler_frame",
+    "set_swap_interval", "swap_interval",
 })
 
 
@@ -359,3 +362,76 @@ def starmap_set_scene(discs, lines, points, brackets, starclouds) -> None:
     fn = getattr(_h, "starmap_set_scene", None)
     if fn is not None:
         fn(discs, lines, points, brackets, starclouds)
+
+
+# ── Frame profiler ───────────────────────────────────────────────────────────
+# Per-pass render timings from renderer::FrameTimer. Optional bindings: a stale
+# .so must leave the profiler reporting "render half unavailable" rather than
+# crashing the dev keybinding that toggles it.
+
+def profiler_set_enabled(enabled: bool) -> None:
+    """Enable/disable per-pass render timing. Off by default.
+
+    Toggling either way clears the accumulated averages on the C++ side, so a
+    session never blends samples taken before and after a scene change.
+    """
+    fn = getattr(_h, "profiler_set_enabled", None)
+    if fn is not None:
+        fn(bool(enabled))
+
+
+def profiler_enabled() -> bool:
+    """True when the render half is recording. False when the binding is absent."""
+    fn = getattr(_h, "profiler_enabled", None)
+    return bool(fn()) if fn is not None else False
+
+
+def profiler_scopes() -> List[dict]:
+    """Per-pass render timings: [{name, cpu_ms, gpu_ms, calls, depth}, ...].
+
+    In pass order. `cpu_ms`/`gpu_ms` are EMA-smoothed; `calls` is the raw count
+    from the last resolved frame, so a pass that ran twice in one frame (the
+    exterior view AND the bridge viewscreen RTT both call render_space) reads
+    as calls=2 rather than being averaged into something that matches neither.
+    Empty when the binding is absent or nothing has resolved yet.
+    """
+    fn = getattr(_h, "profiler_scopes", None)
+    return list(fn()) if fn is not None else []
+
+
+def profiler_frame() -> dict:
+    """Whole-frame render totals: {cpu_ms, gpu_ms, frames, enabled}.
+
+    `gpu_ms` is measured first-timestamp-to-last, NOT as a sum of the scopes:
+    scopes nest, so summing them would double-count. Returns zeros with
+    enabled=False when the binding is absent.
+
+    A gpu_ms of exactly 0.0 across many resolved frames does NOT mean a free
+    GPU: a driver whose GL_TIMESTAMP counters read zero (Apple's GL) produces
+    that, and the timer cannot tell it apart from a fast frame because a span
+    is only accumulated when t1 >= t0. frame_profiler's report calls that case
+    out as GPU TIMING UNAVAILABLE for the same reason this module reports an
+    absent binding rather than inventing zeros for it.
+    """
+    fn = getattr(_h, "profiler_frame", None)
+    if fn is None:
+        return {"cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False,
+                "swap_interval": -1}
+    return dict(fn())
+
+
+def set_swap_interval(interval: int) -> None:
+    """1 = vsync, 0 = uncapped. Visible windows default to 1, hidden to 0.
+
+    Turn it off before a profiling capture: a vsync-capped frame measures the
+    monitor's refresh rate, not the renderer.
+    """
+    fn = getattr(_h, "set_swap_interval", None)
+    if fn is not None:
+        fn(int(interval))
+
+
+def swap_interval() -> int:
+    """The interval currently set; -1 when unknown (no window, or no binding)."""
+    fn = getattr(_h, "swap_interval", None)
+    return int(fn()) if fn is not None else -1

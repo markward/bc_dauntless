@@ -19,6 +19,14 @@ from engine import dev_light_preview as light_preview
 from engine import renderer
 
 
+def _frame_profiler():
+    """Imported lazily. engine.core.frame_profiler reaches the native timer
+    through host_io, and this panel is constructed in tests that never build
+    the extension module."""
+    from engine.core import frame_profiler
+    return frame_profiler
+
+
 class DeveloperOptionsPanel(Panel):
     # Controls that fire once instead of flipping a flag. They have no entry in
     # `settings` and dispatch under "action:" rather than "toggle:".
@@ -30,7 +38,9 @@ class DeveloperOptionsPanel(Panel):
 
     def __init__(self) -> None:
         super().__init__()
-        self._tabs: List[Tuple[str, str]] = [("combat", "Combat"), ("lighting", "Lighting")]
+        self._tabs: List[Tuple[str, str]] = [("combat", "Combat"),
+                                             ("lighting", "Lighting"),
+                                             ("diagnostics", "Diagnostics")]
         self._selected_tab = "combat"
         self._god_mode = cheats.god_mode_active()
         self._double_weapons = cheats.double_player_weapons_active()
@@ -38,6 +48,7 @@ class DeveloperOptionsPanel(Panel):
         self._disable_collisions = cheats.disable_collisions_active()
         self._systems_damaged = light_preview.systems_damaged_active()
         self._systems_disabled = light_preview.systems_disabled_active()
+        self._profiler = _frame_profiler().is_enabled()
         self._normal_maps = True
         # Mirrors the native default in native/src/renderer/frame.cc
         # (dauntless_normal_map::g_flip_green): v runs downward in image
@@ -45,6 +56,10 @@ class DeveloperOptionsPanel(Panel):
         # (+Y up) authored map render correctly out of the box.
         self._normal_flip_g = True
         self._normal_strength = 1.0
+        # Read live, never assumed off: DAUNTLESS_PROFILE_FRAMES enables the
+        # profiler at startup, so a hard-coded False would show OFF while it
+        # was running.
+        self._profiler = _frame_profiler().is_enabled()
         self._visible = False
         self._focused = -1
         self._last_pushed: Optional[tuple] = None
@@ -65,6 +80,10 @@ class DeveloperOptionsPanel(Panel):
         self._disable_collisions = cheats.disable_collisions_active()
         self._systems_damaged = light_preview.systems_damaged_active()
         self._systems_disabled = light_preview.systems_disabled_active()
+        # The profiler can be enabled behind the panel's back by
+        # DAUNTLESS_PROFILE_FRAMES at startup, so re-read rather than trust
+        # the mirror -- otherwise the row shows OFF while it is reporting.
+        self._profiler = _frame_profiler().is_enabled()
         self._visible = True
 
     def close(self) -> None:
@@ -72,12 +91,19 @@ class DeveloperOptionsPanel(Panel):
         self._focused = -1
 
     def render_payload(self) -> Optional[str]:
+        # EVERY setting the payload reports must appear here. A setting left
+        # out toggles INVISIBLY: the flag flips and the underlying feature
+        # really does change, but the snapshot compares equal, render_payload
+        # returns None, and the button keeps showing its old state forever.
+        # _profiler shipped missing from this tuple and did exactly that.
+        # test_every_setting_is_in_the_render_snapshot now guards the whole set.
         snapshot = (
             self._visible, tuple(self._tabs), self._selected_tab,
             self._focused, self._god_mode, self._double_weapons,
             self._no_npc_shields, self._disable_collisions,
             self._systems_damaged, self._systems_disabled,
             self._normal_maps, self._normal_flip_g, self._normal_strength,
+            self._profiler,
         )
         if snapshot == self._last_pushed:
             return None
@@ -99,6 +125,7 @@ class DeveloperOptionsPanel(Panel):
                 "normal_maps": self._normal_maps,
                 "normal_flip_g": self._normal_flip_g,
                 "normal_strength": self._normal_strength,
+                "profiler": self._profiler,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -124,6 +151,16 @@ class DeveloperOptionsPanel(Panel):
             new_val = not self._no_npc_shields
             cheats.set_disable_npc_shields(new_val)
             self._no_npc_shields = new_val
+            return True
+        if action == "toggle:profiler":
+            # Drives the REAL profiler (both halves — set_enabled fans out to
+            # the native timer through host_io), not a local mirror. This
+            # replaced the backtick keybinding: backtick sits next to Esc and
+            # once on the profiler printed a full report every ~2 s forever,
+            # so a stray keypress buried every other diagnostic.
+            new_val = not self._profiler
+            _frame_profiler().set_enabled(new_val)
+            self._profiler = new_val
             return True
         if action == "toggle:disable_collisions":
             new_val = not self._disable_collisions
@@ -193,6 +230,8 @@ class DeveloperOptionsPanel(Panel):
             out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled"),
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
                     ("ctrl", "normal_strength")]
+        if self._selected_tab == "diagnostics":
+            out += [("ctrl", "profiler")]
         return out
 
     def handle_input(self, h) -> None:

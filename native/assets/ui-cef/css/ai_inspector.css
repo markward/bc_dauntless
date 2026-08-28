@@ -9,8 +9,26 @@
 
 #ai-inspector-panel {
     /* Hidden until setAIInspector({visible:true}) sets display:flex. The
-       .dev-only class keeps it out of production builds entirely. */
+       .dev-only class keeps it out of production builds entirely.
+
+       The rest MIRRORS #configuration-panel / #developer-options-panel in
+       configuration_panel.css, the same way #quick-battle-setup and
+       #star-map-panel mirror it in their own sheets. This block used to be
+       `display: none` alone, and the panel wore the .cp-modal chrome without
+       the layout that chrome assumes: it fell out of the fixed/centred layer
+       into static flow (top-right), painted no backdrop, took no stacking
+       context — so crew menus, which paint at 40-50, covered it — and missed
+       the "Antonio" family the header is designed around.
+
+       tests/ui/test_pause_modal_overlays.py holds every modal root to this. */
     display: none;
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 50;
+    font-family: "Antonio", sans-serif;
 }
 
 #ai-inspector-panel .cp-modal {

@@ -1,7 +1,7 @@
 """A cloaked contact is targetable at ship level only — its subsystem tree is
 suppressed. This is `Contact.subsystems_targetable`, set by
 `perception.perceived_by`, consumed by `target_list_view._snapshot` (empty
-`subsystems` tuple) and `_reconcile_subsystem_lock` (drops a live subsystem
+`subsystems` tuple) and `reconcile_subsystem_lock` (drops a live subsystem
 lock back to ship level when its ship cloaks).
 
 Named for the effect (subsystems_targetable), not the cause (cloak), because
@@ -80,7 +80,8 @@ def _row_for(state, ship_name):
 def test_cloaked_contact_inside_bubble_lists_ship_with_no_subsystems():
     """Ship-level row is present — you can still shoot at it — but its
     subsystem tree is empty, so there is nothing to expand or click."""
-    from engine.ui.target_list_view import TargetListView
+    from engine.ui.target_list_view import (
+        TargetListView, reconcile_subsystem_lock)
     pSet, player, enemy, menu = _scene()
     restore = _with_current_game(player)
     try:
@@ -88,12 +89,15 @@ def test_cloaked_contact_inside_bubble_lists_ship_with_no_subsystems():
         _pump(menu, player)
 
         view = TargetListView()
+        view._expanded_ships.add("Enemy")
         script = view.render_payload()
         assert script is not None
         state = json.loads(script[len("setTargetList("):-2])
 
         row = _row_for(state, "Enemy")
         assert row["subsystems"] == []
+        # ...and the caret flag agrees, so a collapsed row is suppressed too.
+        assert row["has_subsystems"] is False
     finally:
         restore()
 
@@ -101,18 +105,21 @@ def test_cloaked_contact_inside_bubble_lists_ship_with_no_subsystems():
 def test_uncloaked_contact_at_same_distance_still_carries_subsystems():
     """Control: identical 50 GU separation, no cloak. Subsystems must still
     be present — proving the gate is cloak-driven, not distance-driven."""
-    from engine.ui.target_list_view import TargetListView
+    from engine.ui.target_list_view import (
+        TargetListView, reconcile_subsystem_lock)
     pSet, player, enemy, menu = _scene()
     restore = _with_current_game(player)
     try:
         _pump(menu, player)  # never cloaked
 
         view = TargetListView()
+        view._expanded_ships.add("Enemy")
         script = view.render_payload()
         state = json.loads(script[len("setTargetList("):-2])
 
         row = _row_for(state, "Enemy")
         assert len(row["subsystems"]) > 0
+        assert row["has_subsystems"] is True
     finally:
         restore()
 
@@ -120,7 +127,8 @@ def test_uncloaked_contact_at_same_distance_still_carries_subsystems():
 def test_subsystem_lock_drops_to_ship_level_when_target_cloaks():
     """A held subsystem lock clears back to ship-level targeting the moment
     its ship cloaks; the ship-level target itself survives."""
-    from engine.ui.target_list_view import TargetListView
+    from engine.ui.target_list_view import (
+        TargetListView, reconcile_subsystem_lock)
     pSet, player, enemy, menu = _scene()
     restore = _with_current_game(player)
     try:
@@ -136,8 +144,9 @@ def test_subsystem_lock_drops_to_ship_level_when_target_cloaks():
         enemy.GetCloakingSubsystem().InstantCloak()
         _pump(menu, player)
 
-        view = TargetListView()
-        view._reconcile_subsystem_lock()
+        # Module-level and host-loop-driven: it is a combat rule the weapon
+        # aim path reads, so it must not sit behind the panel's 2 Hz poll.
+        reconcile_subsystem_lock()
 
         assert player.GetTargetSubsystem() is None
         assert player.GetTarget() is enemy  # ship-level lock intact
@@ -150,10 +159,11 @@ def test_subsystem_lock_drops_when_target_cloaks_outside_the_bubble():
     sensor_detection.clear_undetectable_player_lock drops the ship-level
     target via SetTarget(None) — but ShipClass.SetTarget never touches
     _target_subsystem, so nothing else clears the stale subsystem lock
-    either. _reconcile_subsystem_lock must catch the target=None case, and
+    either. reconcile_subsystem_lock must catch the target=None case, and
     that clearing must not leak onto whatever the player targets next.
     """
-    from engine.ui.target_list_view import TargetListView
+    from engine.ui.target_list_view import (
+        TargetListView, reconcile_subsystem_lock)
     from engine.appc.sensor_detection import clear_undetectable_player_lock
     pSet, player, enemy, menu = _scene()
     other = ShipClass_Create("Other")
@@ -179,8 +189,9 @@ def test_subsystem_lock_drops_when_target_cloaks_outside_the_bubble():
         assert player.GetTarget() is None
         assert player.GetTargetSubsystem() is sub  # still dangling, pre-fix
 
-        view = TargetListView()
-        view._reconcile_subsystem_lock()
+        # Module-level and host-loop-driven: it is a combat rule the weapon
+        # aim path reads, so it must not sit behind the panel's 2 Hz poll.
+        reconcile_subsystem_lock()
         assert player.GetTargetSubsystem() is None
 
         # The stale subsystem must not resurface on a DIFFERENT ship.
@@ -194,7 +205,8 @@ def test_dispatch_event_subsystem_click_rechecks_cloak_flag():
     """A click's action string is built from a payload rendered on a PRIOR
     frame. If the ship finished cloaking since, honouring the click must not
     set a subsystem lock the current record disallows."""
-    from engine.ui.target_list_view import TargetListView
+    from engine.ui.target_list_view import (
+        TargetListView, reconcile_subsystem_lock)
     pSet, player, enemy, menu = _scene()
     restore = _with_current_game(player)
     try:
@@ -228,7 +240,8 @@ def test_enhanced_sensor_contest_off_cloaked_ship_undetected_untouched(monkeypat
     configuration."""
     import engine.appc.sensor_detection as sd
     monkeypatch.setattr(sd, "ENHANCED_SENSOR_CONTEST", False)
-    from engine.ui.target_list_view import TargetListView
+    from engine.ui.target_list_view import (
+        TargetListView, reconcile_subsystem_lock)
     pSet, player, enemy, menu = _scene()
     restore = _with_current_game(player)
     try:
@@ -249,7 +262,8 @@ def test_cached_subsystem_rows_survive_cloak_then_decloak_without_rebuild():
     the STSubsystemMenu row's cached subsystem children are the SAME objects
     before cloaking, while cloaked (merely hidden from the payload), and
     after decloaking — nothing ever rebuilds them."""
-    from engine.ui.target_list_view import TargetListView
+    from engine.ui.target_list_view import (
+        TargetListView, reconcile_subsystem_lock)
     pSet, player, enemy, menu = _scene()
     restore = _with_current_game(player)
     try:
@@ -260,6 +274,7 @@ def test_cached_subsystem_rows_survive_cloak_then_decloak_without_rebuild():
         assert cached_children_before  # sanity: real subsystem rows exist
 
         view = TargetListView()
+        view._expanded_ships.add("Enemy")
         state = json.loads(view.render_payload()[len("setTargetList("):-2])
         assert len(_row_for(state, "Enemy")["subsystems"]) > 0
 
@@ -272,6 +287,7 @@ def test_cached_subsystem_rows_survive_cloak_then_decloak_without_rebuild():
         view.invalidate()
         state = json.loads(view.render_payload()[len("setTargetList("):-2])
         assert _row_for(state, "Enemy")["subsystems"] == []
+        assert _row_for(state, "Enemy")["has_subsystems"] is False
         assert list(row._children) == cached_children_before  # still untouched
 
         # Decloak: subsystems reappear, still the SAME cached objects — no

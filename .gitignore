@@ -331,6 +331,8 @@ cache/
 /BCTickLog.cfg
 /Keybindings.cfg
 /stub_hits.jsonl
+# AI Inspector's Export button (dev-only); fixed name, overwritten per press.
+/ai_inspector_export.json
 
 # EXCEPTIONS — force-include these even if caught by rules above
 # =============================================================================

@@ -177,6 +177,10 @@ def _next_living_sibling(sub):
     return None
 
 
+# How often the target list is polled. See TargetListView.poll_interval_s.
+TARGET_LIST_POLL_S = 0.5
+
+
 class TargetListView(Panel):
     @property
     def name(self) -> str:
@@ -276,12 +280,45 @@ class TargetListView(Panel):
                     contact = target_menu.contact_for(ship)
                     subsystems_targetable = (
                         contact is None or contact.subsystems_targetable)
-                    subsystems = tuple(
-                        _sub_entry(sub_child)
-                        for sub_child in child._children
-                        if _keep(sub_child)
-                    ) if subsystems_targetable else ()
                     name = ship.GetName()
+                    row_expanded = name in self._expanded_ships
+                    # COLLAPSED ROWS DO NOT BUILD THEIR SUBSYSTEM TREE.
+                    #
+                    # The tree is only ever DISPLAYED for an expanded row (see
+                    # target_list.js: child rows are emitted inside
+                    # `if (expanded)`). All a collapsed row needs is whether the
+                    # list is non-empty, which decides the expand caret.
+                    #
+                    # Building it anyway walked every contact x every subsystem
+                    # x every child subsystem, ~2-3 condition queries per
+                    # grandchild, purely to produce a tuple that was compared
+                    # and thrown away. At 100 contacts that made ui.target
+                    # 84 ms -- the largest single non-sim item in the frame,
+                    # bigger than any sim phase.
+                    #
+                    # `any(...)` short-circuits on the first surviving group, so
+                    # a collapsed row costs one _keep instead of all of them.
+                    #
+                    # Dropping the conditions from a collapsed row's snapshot
+                    # also makes change detection LESS twitchy in the right
+                    # direction: damage to a subsystem nobody has expanded no
+                    # longer forces a redraw of the whole list. A change that IS
+                    # visible -- the last subsystem dying, so the caret goes --
+                    # still flips has_subsystems and redraws.
+                    if not subsystems_targetable:
+                        subsystems = ()
+                        has_subsystems = False
+                    elif row_expanded:
+                        subsystems = tuple(
+                            _sub_entry(sub_child)
+                            for sub_child in child._children
+                            if _keep(sub_child)
+                        )
+                        has_subsystems = bool(subsystems)
+                    else:
+                        subsystems = ()
+                        has_subsystems = any(
+                            _keep(sub_child) for sub_child in child._children)
                     # NO `IsVisible()` HERE, DELIBERATELY — do not re-add it.
                     # VISIBILITY IS PUMP-OWNED: `STTargetMenu.set_contacts`
                     # asserts `SetVisible()` on every listed row
@@ -305,7 +342,8 @@ class TargetListView(Panel):
                         shield_pct,
                         has_shields,
                         subsystems,
-                        name in self._expanded_ships,
+                        row_expanded,
+                        has_subsystems,
                     ))
             child = target_menu.GetNextChild(child)
 
@@ -320,63 +358,9 @@ class TargetListView(Panel):
                 selected_subsystem = target_sub.GetName()
         return (self._visible, selected, selected_subsystem, tuple(rows))
 
-    def _reconcile_subsystem_lock(self) -> None:
-        """If the player's locked subsystem has been destroyed, hand the lock
-        off to the next surviving sibling in its group; when the whole group is
-        gone, clear the lock back to ship-level targeting. Runs every tick so a
-        subsystem dying from any cause triggers the handoff.
 
-        Also drops the lock outright — no handoff, straight to ship-level —
-        when the locked ship has cloaked (`Contact.subsystems_targetable`
-        False). A fuzzy sensor return has no subsystem to hand the lock off
-        to; the player keeps the ship-level target, only the subsystem pick
-        clears. Reads the pushed record rather than re-deriving cloak state,
-        same reasoning as `_snapshot`'s subsystem suppression.
-
-        And drops the lock when there is no ship-level target at all.
-        `sensor_detection.clear_undetectable_player_lock` (a ship cloaking
-        OUTSIDE its detection bubble is one way there) calls
-        `player.SetTarget(None)`, but `ShipClass.SetTarget` never touches
-        `_target_subsystem` — nothing does, there are only four clear sites
-        and none of them covers this. Left alone, the stale subsystem
-        reference survives with no ship attached and resurfaces as
-        `selected_subsystem` the moment the player targets a DIFFERENT ship,
-        since `GetTargetSubsystem()` answers unconditionally regardless of
-        the current ship-level target. Pre-existing gap; closed here because
-        this is the natural place, not because this branch introduced it."""
-        from engine.core.game import Game_GetCurrentGame
-        game = Game_GetCurrentGame()
-        player = game.GetPlayer() if game is not None else None
-        if player is None or not hasattr(player, "GetTargetSubsystem"):
-            return
-        locked = player.GetTargetSubsystem()
-        if locked is None:
-            return
-
-        target = player.GetTarget()
-        if target is None:
-            player.SetTargetSubsystem(None)
-            return
-
-        import App
-        target_menu = App.STTargetMenu_GetTargetMenu()
-        contact = target_menu.contact_for(target) if target_menu is not None else None
-        if contact is not None and not contact.subsystems_targetable:
-            player.SetTargetSubsystem(None)
-            return
-
-        if not hasattr(locked, "IsDestroyed"):
-            return
-        try:
-            destroyed = bool(locked.IsDestroyed())
-        except Exception:
-            return
-        if not destroyed:
-            return
-        player.SetTargetSubsystem(_next_living_sibling(locked))
 
     def render_payload(self) -> Optional[str]:
-        self._reconcile_subsystem_lock()
         snapshot = self._snapshot()
         if snapshot == self._last_snapshot:
             return None
@@ -401,8 +385,12 @@ class TargetListView(Panel):
                         for (s_name, s_cond, s_kids, s_expanded) in subs
                     ],
                     "expanded": expanded,
+                    # Collapsed rows ship an empty `subsystems`, so the caret
+                    # cannot be derived from its length any more.
+                    "has_subsystems": has_subs,
                 }
-                for (name, aff, hull, shields, has_shields, subs, expanded) in rows
+                for (name, aff, hull, shields, has_shields, subs, expanded,
+                     has_subs) in rows
             ],
         }
         return "setTargetList(" + json.dumps(payload) + ");"
@@ -467,9 +455,10 @@ class TargetListView(Panel):
         # if the ship finished cloaking in between, honouring the click
         # would set a subsystem lock the record no longer allows. Without
         # this the hole would self-heal one frame later via
-        # _reconcile_subsystem_lock (which runs first thing in the next
-        # render_payload), but there is no reason to let even a one-frame
-        # flicker through when the record to check is one call away.
+        # reconcile_subsystem_lock (which the HOST LOOP runs every frame --
+        # not this panel, which polls at 2 Hz), but there is no reason to let
+        # even a one-frame flicker through when the record to check is one
+        # call away.
         import App
         target_menu = App.STTargetMenu_GetTargetMenu()
         contact = target_menu.contact_for(target_ship) if target_menu is not None else None
@@ -490,6 +479,86 @@ class TargetListView(Panel):
         player.SetTargetSubsystem(sub)
         return True
 
+    @property
+    def poll_interval_s(self) -> float:
+        """Polled at 2 Hz, not per frame.
+
+        This panel's _snapshot walks every contact x every subsystem x every
+        child subsystem, querying condition on each, purely to compare against
+        last frame's tuple. Measured at 33 contacts it is 26.0 ms of a 26.7 ms
+        UI phase -- 97.5% of all panel cost, and every other panel returns in
+        ~10 us.
+
+        2 Hz is matched to the data, not just cheaper: the shield percentages
+        it displays only CHANGE at 2 Hz (BC's 0.5 s shield charge tick, see
+        subsystems.SHIELD_CHARGE_PERIOD_S), so polling at 60 Hz read the same
+        value thirty times over. Hull condition is event-driven and bursty, so
+        a row can lag a hit by up to half a second -- accepted, and the reason
+        this is a named constant rather than a magic number.
+
+        Interaction is unaffected: selection changes go through dispatch_event
+        and visibility flips through the visible setter, both of which mark the
+        panel due for the next frame.
+        """
+        return TARGET_LIST_POLL_S
+
     def invalidate(self) -> None:
         """Force the next render_payload to re-emit."""
+        super().invalidate()
         self._last_snapshot = None
+
+
+def reconcile_subsystem_lock() -> None:
+    """If the player's locked subsystem has been destroyed, hand the lock
+    off to the next surviving sibling in its group; when the whole group is
+    gone, clear the lock back to ship-level targeting. Runs every tick so a
+    subsystem dying from any cause triggers the handoff.
+
+    Also drops the lock outright — no handoff, straight to ship-level —
+    when the locked ship has cloaked (`Contact.subsystems_targetable`
+    False). A fuzzy sensor return has no subsystem to hand the lock off
+    to; the player keeps the ship-level target, only the subsystem pick
+    clears. Reads the pushed record rather than re-deriving cloak state,
+    same reasoning as `_snapshot`'s subsystem suppression.
+
+    And drops the lock when there is no ship-level target at all.
+    `sensor_detection.clear_undetectable_player_lock` (a ship cloaking
+    OUTSIDE its detection bubble is one way there) calls
+    `player.SetTarget(None)`, but `ShipClass.SetTarget` never touches
+    `_target_subsystem` — nothing does, there are only four clear sites
+    and none of them covers this. Left alone, the stale subsystem
+    reference survives with no ship attached and resurfaces as
+    `selected_subsystem` the moment the player targets a DIFFERENT ship,
+    since `GetTargetSubsystem()` answers unconditionally regardless of
+    the current ship-level target. Pre-existing gap; closed here because
+    this is the natural place, not because this branch introduced it."""
+    from engine.core.game import Game_GetCurrentGame
+    game = Game_GetCurrentGame()
+    player = game.GetPlayer() if game is not None else None
+    if player is None or not hasattr(player, "GetTargetSubsystem"):
+        return
+    locked = player.GetTargetSubsystem()
+    if locked is None:
+        return
+
+    target = player.GetTarget()
+    if target is None:
+        player.SetTargetSubsystem(None)
+        return
+
+    import App
+    target_menu = App.STTargetMenu_GetTargetMenu()
+    contact = target_menu.contact_for(target) if target_menu is not None else None
+    if contact is not None and not contact.subsystems_targetable:
+        player.SetTargetSubsystem(None)
+        return
+
+    if not hasattr(locked, "IsDestroyed"):
+        return
+    try:
+        destroyed = bool(locked.IsDestroyed())
+    except Exception:
+        return
+    if not destroyed:
+        return
+    player.SetTargetSubsystem(_next_living_sibling(locked))

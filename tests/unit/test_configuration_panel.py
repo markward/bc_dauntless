@@ -735,3 +735,14 @@ def test_ai_difficulty_is_a_gameplay_focusable():
     p.dispatch_event("tab:gameplay")
     focusables = p._focusables()
     assert ("ctrl", "ai_difficulty") in focusables
+
+
+def test_every_boolean_setting_reaches_the_ui():
+    """See tests/helpers/panel_snapshot: a setting missing from render_payload's
+    snapshot tuple toggles invisibly — the flag flips, the feature changes, and
+    the control keeps showing its old state. Shipped that way on Developer
+    Options; this is the same guard applied here."""
+    from tests.helpers.panel_snapshot import assert_boolean_settings_redraw
+    panel, _ = _make()
+    panel.open()
+    assert_boolean_settings_redraw(panel, lambda body: body.get("settings", {}))

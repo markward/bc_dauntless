@@ -793,6 +793,30 @@ def _reset_leakable_engine_globals():
         _ids._registry.clear()
     except Exception:
         pass
+    # implements() answers from a process-lifetime {class: {name: bool}} cache
+    # (engine.core.ids._IMPLEMENTS_CACHE). Its staleness argument is "classes do
+    # not gain or lose methods while the game runs" — true in production, false
+    # in a test suite, where monkeypatching a CLASS method is routine. Without
+    # this, the first test to ask implements() about a patched class pins that
+    # answer for every LATER test in the process, order-dependently and
+    # silently. clear_implements_cache() exists for exactly this.
+    try:
+        from engine.core.ids import clear_implements_cache
+        clear_implements_cache()
+    except Exception:
+        pass
+    # Same leak class, same key (a class): ai_driver._DISPATCH_BY_TYPE caches
+    # the resolved AI handler per node type for the whole process. Two AI test
+    # modules install a stand-in handler for their own node class, and a third
+    # (test_ai_scheduler_invariants) wraps the real _tick_plain to count walks —
+    # any of those surviving into an unrelated later test silently replaces the
+    # driver's dispatch. Production repopulates it lazily on the next visit, so
+    # clearing costs one isinstance chain per node type.
+    try:
+        from engine.appc import ai_driver as _ai_driver
+        _ai_driver._DISPATCH_BY_TYPE.clear()
+    except Exception:
+        pass
     # Pending timers on the game-time and wall-clock timer managers. A test that
     # loads a mission and plays a TGSequence (e.g. E1M2's ScanComplete dialogue,
     # which schedules deferred EnableScanMenu / clear-flag actions) leaves live

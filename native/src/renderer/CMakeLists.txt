@@ -136,6 +136,7 @@ add_library(renderer STATIC
     animation_update.cc
     pipeline.cc
     frame.cc
+    frame_timer.cc
     hdr_target.cc
     cubemap_target.cc
     ldr_target.cc

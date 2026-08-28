@@ -46,10 +46,18 @@ from pathlib import Path
 ASSETS = Path(__file__).resolve().parents[2] / "native" / "assets" / "ui-cef"
 
 # The centred, full-viewport modal roots reachable from the pause menu.
-# Deliberately excluded: #engpower-root and #ai-inspector-panel (docked HUD
-# panels, not centred modals) and #spv-root (its own chrome, and it owns the
-# whole frame rather than overlaying the HUD).
+# Deliberately excluded: #engpower-root (a docked HUD panel, not a centred
+# modal) and #spv-root (its own chrome, and it owns the whole frame rather
+# than overlaying the HUD).
+#
+# #ai-inspector-panel was on that excluded list, described as a docked HUD
+# panel -- but its markup uses the .cp-modal/.cp-header/.cp-footer chrome,
+# which is the modal language. Half-inheriting showed: with no rule of its own
+# it fell out of the fixed/centred layout into static flow (top-right), took no
+# backdrop, no z-index (so the crew menus, which paint at 40-50, covered it)
+# and not even the "Antonio" family the chrome is designed around.
 OVERLAY_ROOTS = (
+    "ai-inspector-panel",
     "configuration-panel",
     "developer-options-panel",
     "mission-picker",

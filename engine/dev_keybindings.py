@@ -188,3 +188,15 @@ def register_for_frame(_h, session, player) -> None:
         _h.keys.KEY_F11, _toggle_nonfinite_probe,
         "Toggle NaN/Inf HDR probe + frame dumps (dev) — F11",
     )
+
+    # ── Frame profiler: NO keybinding, deliberately ──────────────────────
+    # It lived on backtick. Backtick sits next to Esc/1/Tab, the toggle took no
+    # modifier and asked for no confirmation, and once on the profiler printed a
+    # full report every 120 frames (~2 s) for the rest of the session -- so one
+    # stray keypress buried every other diagnostic in the terminal, with no
+    # obvious way back for anyone who had not read this file.
+    #
+    # It now lives in Developer Options -> Diagnostics, where the state is
+    # visible, toggling it is deliberate, and the row says what it will do.
+    # Unattended captures are unaffected: DAUNTLESS_PROFILE_FRAMES=N still
+    # enables both halves at startup (engine/host_loop.py).

@@ -107,14 +107,19 @@ def test_manifest_matches_facade_references():
     )
 
 
-def test_optional_holds_exactly_the_starmap_bindings():
-    # The star map pass is the only optional (soft-guarded) surface on this
-    # façade: a stale .so must leave the Set Course modal blank rather than
-    # raise AttributeError inside the helm menu. Lock the set so any future
-    # addition is a deliberate manifest edit, not an accident.
+def test_optional_holds_exactly_the_starmap_profiler_and_vsync_bindings():
+    # Two soft-guarded surfaces, both for the same reason: a stale .so must
+    # degrade rather than raise. The star map must leave the Set Course modal
+    # blank instead of raising AttributeError inside the helm menu; the frame
+    # profiler must report "render half unavailable" instead of crashing the
+    # dev keybinding that toggles it. Lock the set so any future addition is a
+    # deliberate manifest edit, not an accident.
     assert host_io._OPTIONAL_BINDINGS == frozenset({
         "starmap_set_enabled", "starmap_set_viewport",
         "starmap_set_camera", "starmap_set_scene",
+        "profiler_set_enabled", "profiler_enabled",
+        "profiler_scopes", "profiler_frame",
+        "set_swap_interval", "swap_interval",
     })
 
 
@@ -301,3 +306,26 @@ def test_run_boot_path_validates_host_io_facade():
     r_idx = calls.index(("r", "validate_bindings"))
     assert calls[r_idx + 1] == ("host_io", "validate_bindings")
     assert calls[r_idx + 2] == ("host_io", "verify_keys")
+
+
+def test_profiler_wrappers_degrade_when_binding_absent(monkeypatch):
+    # A native module without the profiler bindings must yield "off / empty /
+    # zeros", never AttributeError. The report reads that state as UNAVAILABLE
+    # rather than printing zeros that look like a free render.
+    fake = types.SimpleNamespace()
+    for name in host_io._REQUIRED_BINDINGS:
+        setattr(fake, name, lambda *a, **k: None)
+    fake.keys = types.SimpleNamespace()
+    monkeypatch.setattr(host_io, "_h", fake)
+
+    host_io.profiler_set_enabled(True)          # must not raise
+    assert host_io.profiler_enabled() is False
+    assert host_io.profiler_scopes() == []
+    assert host_io.profiler_frame() == {
+        "cpu_ms": 0.0, "gpu_ms": 0.0, "frames": 0, "enabled": False,
+        # -1, not 0: "no idea" and "vsync off" must not be the same value, or
+        # the report would confidently call an unknown capture uncapped.
+        "swap_interval": -1,
+    }
+    host_io.set_swap_interval(0)                # must not raise
+    assert host_io.swap_interval() == -1
