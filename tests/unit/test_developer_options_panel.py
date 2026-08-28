@@ -116,6 +116,7 @@ def test_render_payload_shape(panel):
     assert body["tabs"] == [
         {"id": "combat", "label": "Combat"},
         {"id": "lighting", "label": "Lighting"},
+        {"id": "diagnostics", "label": "Diagnostics"},
     ]
     assert body["selected_tab"] == "combat"
     assert body["focused"] == -1  # nothing keyboard-focused on first paint
@@ -124,6 +125,7 @@ def test_render_payload_shape(panel):
         "disable_collisions": False,
         "systems_damaged": False, "systems_disabled": False,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
+        "profiler": False,
     }
 
 
@@ -194,6 +196,7 @@ def test_focusables_order(panel):
     assert p._focusables() == [
         ("tab", "combat"),
         ("tab", "lighting"),
+        ("tab", "diagnostics"),
         ("ctrl", "god_mode"),
         ("ctrl", "double_weapons"),
         ("ctrl", "no_npc_shields"),
@@ -360,3 +363,59 @@ def test_normal_map_toggle_round_trips(panel, monkeypatch):
     p.dispatch_event("toggle:normal_maps")
     p.dispatch_event("toggle:normal_maps")
     assert seen == [False, True], seen
+
+
+# ── Diagnostics tab: the frame profiler ─────────────────────────────────────
+# The profiler used to be reachable only by the backtick key. Backtick sits
+# next to Esc/1/Tab, there was no confirmation, and once on it printed a full
+# report every 120 frames (~2 s) indefinitely -- so a stray keypress buried
+# every other diagnostic in the terminal. Moving it here makes it a deliberate
+# act with visible state.
+
+def test_the_diagnostics_tab_exists():
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+    panel = DeveloperOptionsPanel()
+    assert "diagnostics" in [tid for tid, _ in panel._tabs]
+
+
+def test_the_profiler_toggle_drives_the_real_profiler(monkeypatch):
+    """The panel must move the actual profiler, not a local mirror -- the whole
+    point is that this replaces the key that drove it directly."""
+    from engine.core import frame_profiler
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    # native=False keeps the C++ timer (and a possibly-absent extension) out.
+    monkeypatch.setattr(frame_profiler, "set_enabled",
+                        lambda v, native=True: frame_profiler.__dict__.__setitem__("_enabled", v))
+    frame_profiler.set_enabled(False)
+
+    panel = DeveloperOptionsPanel()
+    panel.open()
+    assert panel.dispatch_event("toggle:profiler") is True
+    assert frame_profiler.is_enabled() is True
+    assert panel.dispatch_event("toggle:profiler") is True
+    assert frame_profiler.is_enabled() is False
+
+
+def test_reopening_shows_the_profilers_real_state(monkeypatch):
+    """State can change behind the panel -- DAUNTLESS_PROFILE_FRAMES enables the
+    profiler at startup. A cached mirror would show OFF while it was running."""
+    from engine.core import frame_profiler
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    panel = DeveloperOptionsPanel()
+    frame_profiler.__dict__["_enabled"] = True
+    try:
+        panel.open()
+        assert panel._profiler is True, "panel did not re-read the live state"
+    finally:
+        frame_profiler.__dict__["_enabled"] = False
+
+
+def test_the_diagnostics_tab_is_keyboard_reachable():
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+    panel = DeveloperOptionsPanel()
+    panel.open()
+    panel.dispatch_event("tab:diagnostics")
+    assert ("ctrl", "profiler") in panel._focusables(), (
+        "diagnostics tab exposes no focusable profiler control")

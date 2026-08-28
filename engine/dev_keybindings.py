@@ -189,31 +189,14 @@ def register_for_frame(_h, session, player) -> None:
         "Toggle NaN/Inf HDR probe + frame dumps (dev) — F11",
     )
 
-    # ── Backtick: frame profiler ─────────────────────────────────────────
-    # Toggles BOTH halves at once (the Python phase timeline and the C++
-    # per-pass render timer) — a report pairing live numbers from one half
-    # with stale or absent numbers from the other is worse than no report.
-    # frame_profiler.set_enabled drives the native side through host_io.
+    # ── Frame profiler: NO keybinding, deliberately ──────────────────────
+    # It lived on backtick. Backtick sits next to Esc/1/Tab, the toggle took no
+    # modifier and asked for no confirmation, and once on the profiler printed a
+    # full report every 120 frames (~2 s) for the rest of the session -- so one
+    # stray keypress buried every other diagnostic in the terminal, with no
+    # obvious way back for anyone who had not read this file.
     #
-    # Backtick rather than an F-key because F1-F12 are all taken (F1-F5 crew
-    # menus, F6 guest menus, F7/F8/F10/F11 dev, F9 SDK, F12 DevTools). It is
-    # in the user-bindable key universe, but dev keybindings dispatch ahead of
-    # gameplay and only under --developer, exactly as the existing [ and ]
-    # dev bindings already do.
-    def _toggle_frame_profiler() -> None:
-        from engine.core import frame_profiler
-        on = not frame_profiler.is_enabled()
-        frame_profiler.set_enabled(on)
-        if on:
-            # ASCII only: this reaches a console that is cp1252 on Windows.
-            print("[profiler] ON - report every {0} frames. NOTE: vsync is on "
-                  "(glfwSwapInterval(1)), so `present` is the wait for the next "
-                  "refresh and the frame total is pinned to your refresh rate."
-                  .format(frame_profiler.REPORT_EVERY))
-        else:
-            print("[profiler] OFF")
-
-    dev_mode.register_dev_keybinding(
-        _h.keys.KEY_GRAVE_ACCENT, _toggle_frame_profiler,
-        "Toggle per-pass frame profiler (dev) — `",
-    )
+    # It now lives in Developer Options -> Diagnostics, where the state is
+    # visible, toggling it is deliberate, and the row says what it will do.
+    # Unattended captures are unaffected: DAUNTLESS_PROFILE_FRAMES=N still
+    # enables both halves at startup (engine/host_loop.py).
