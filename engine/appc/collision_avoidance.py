@@ -31,6 +31,33 @@ observable/testable; not overriding == ``PS_NORMAL``.
 Gating: only ships with an attached AI (``GetAI()`` is not None) are steered.
 The player ship is driven by _PlayerControl with ``GetAI() == None``, so it
 is never auto-avoided.
+
+⚠️ NOTHING INVALIDATES A HELD DECISION — the worst case, stated plainly
+-----------------------------------------------------------------------
+To a NEW threat, reaction latency is 0.25 s (BC's ``fMaximumUpdateDelay``) and
+always was. What changed when ``ai_optimized.AVOID_EVADING_UPDATE_DELAY_S``
+restored BC's commented ``fMinimumUpdateDelay = 0.25`` is RE-decision *while
+already evading*: 16.7 ms -> 250 ms.
+
+There is no ``ForceUpdate()`` caller for avoidance anywhere in the tree. The
+driver's only early-run hook is ``ArtificialIntelligence.ForceUpdate``, which
+resets ``_next_update_time`` to 0.0, and nothing calls it on an AvoidObstacles
+node. So for up to 250 ms after an override is issued, the ship flies the
+committed heading through:
+
+* a second obstacle appearing IN the escape path (the escape was chosen against
+  the obstacle set as it stood, and is not re-scored until the cadence fires);
+* the avoided obstacle dying, warping out or otherwise ceasing to exist (the
+  ship keeps dodging a hole in space);
+* a collision impulse or tractor beam knocking it off the commanded heading
+  (``TurnTowardDirection`` is re-issued only on a re-decision, so the recovery
+  waits too).
+
+None of these produce an early re-scan. At a 15 s ``fPredictionTime`` horizon a
+250 ms stale decision is 1.7% of the lookahead, which is why this is tolerable
+rather than urgent -- but it is a real behavioural difference from the
+every-tick re-decision that shipped before, and the fix is an event-driven
+``ForceUpdate`` on those three edges, not a smaller cadence.
 """
 import math
 import random
@@ -93,11 +120,19 @@ _clock_s = 0.0
 
 def reset_avoidance_state() -> None:
     """Clear all per-ship state and reseed the RNG. Call between independent
-    runs/missions so cadence and sampled directions are reproducible."""
+    runs/missions so cadence and sampled directions are reproducible.
+
+    Drops the per-tick obstacle snapshot too. That cache is keyed by
+    ``id(pSet)``, so leaving it behind is worse than merely stale: a mission
+    swap frees the old set, CPython reuses addresses, and the next set to land
+    on the same id would be handed the DEAD one's geometry until the following
+    tick invalidated it.
+    """
     global _clock_s
     _ship_state.clear()
     _clock_s = 0.0
     _rng.seed(_AVOID_RNG_SEED)
+    invalidate_obstacle_snapshot()
 
 
 def is_overriding(ship) -> bool:
@@ -155,14 +190,10 @@ def _unitize(v: TGPoint3):
     return TGPoint3(v.x / n, v.y / n, v.z / n), n
 
 
-def _perpendicular_component(v: TGPoint3, axis: TGPoint3) -> TGPoint3:
-    """Component of v perpendicular to axis: v - (v·â)â (SDK
-    TGPoint3.GetPerpendicularComponent)."""
-    a, alen = _unitize(axis)
-    if alen == 0.0:
-        return TGPoint3(v.x, v.y, v.z)
-    d = v.x * a.x + v.y * a.y + v.z * a.z
-    return TGPoint3(v.x - d * a.x, v.y - d * a.y, v.z - d * a.z)
+# (The SDK's TGPoint3.GetPerpendicularComponent had a port here. It is gone:
+# both of its call sites were inlined into scalars when the obstacle-constant
+# terms were hoisted into dir_info -- see _avoid_objects and
+# _calculate_direction_appeal -- leaving a function referenced only by itself.)
 
 
 def _random_unit_vector() -> TGPoint3:
@@ -245,11 +276,18 @@ def _calculate_direction_appeal(forward, test_dir, dir_info) -> float:
     """Score a candidate flee direction against every obstacle's direction
     info. Direct port of CalculateDirectionAppeal.
 
-    dir_info entries: (vDirection, vVelocity, fBlockedDot, fFavorability),
-    where vDirection is the unit ship→obstacle direction.
+    dir_info entries: (vDirection, fBlockedDot, fFavorability, then the
+    hoisted obstacle-constant scalars), where vDirection is the unit
+    ship→obstacle direction.
+
+    The SDK's tuple also carries the obstacle's vVelocity. Ours does not: the
+    velocity reaches this function already unitised into (vux, vuy, vuz), and
+    neither this scorer nor _is_direction_safe ever read the raw vector — so
+    building a TGPoint3 per obstacle per tick to fill that slot was exactly the
+    allocation the hoist existed to remove.
     """
     overall = 0.0
-    for (vDirection, vVelocity, blocked_dot, favorability,
+    for (vDirection, blocked_dot, favorability,
          vux, vuy, vuz, vel_significant, dpx, dpy, dpz) in dir_info:
         dot = (test_dir.x * vDirection.x + test_dir.y * vDirection.y
                + test_dir.z * vDirection.z)
@@ -304,7 +342,7 @@ def _is_direction_safe(test_dir, dir_info) -> bool:
     """Whether test_dir points clear of every obstacle's blocked cone (SDK
     IsDirectionSafe)."""
     for entry in dir_info:
-        vDirection, blocked_dot = entry[0], entry[2]
+        vDirection, blocked_dot = entry[0], entry[1]
         dot = (test_dir.x * vDirection.x + test_dir.y * vDirection.y
                + test_dir.z * vDirection.z)
         if dot >= blocked_dot:
@@ -373,8 +411,7 @@ def _avoid_objects(ship, forward, avoid_list, previous_heading=None):
                 dpx, dpy, dpz = dpx / dplen, dpy / dplen, dpz / dplen
             else:
                 dpx = dpy = dpz = 0.0
-        dir_info.append((unit, TGPoint3(vb.x, vb.y, vb.z),
-                         blocked_dot, favorability,
+        dir_info.append((unit, blocked_dot, favorability,
                          vux, vuy, vuz, vel_significant, dpx, dpy, dpz))
 
     if not dir_info:
@@ -447,12 +484,11 @@ def _test_course_override(ship, previous_heading=None):
     if check_radius < AVOID_MINIMUM_RADIUS_GU:
         check_radius = AVOID_MINIMUM_RADIUS_GU
 
-    from engine.appc.ship_iter import iter_set_objects
-    blacklist = _dont_avoid_types()
-
+    # (The set walk, the type blacklist and the per-obstacle bound radius all
+    # moved into obstacle_snapshot -- they are observer-INDEPENDENT. The
+    # imports and the `blacklist` local for them stayed behind unused; removed.)
     from engine.appc.collisions import _collision_disabled_ids
-    from engine.appc.hull_bounds import (has_hull_bounds, hull_spheres_near,
-                                         bound_radius as hull_bound_radius)
+    from engine.appc.hull_bounds import has_hull_bounds, hull_spheres_near
 
     avoid_list = []
     # Loop-invariant: depends on `ship`, not on the obstacle, so it was being
@@ -519,28 +555,34 @@ def _test_course_override(ship, previous_heading=None):
         if (ob_id in ship_disabled
                 or (ship_obj_id is not None and ship_obj_id in ob_disabled)):
             continue
-        # Past the gate. Only obstacles that could actually collide reach
-        # here, so building the vector the pieces path needs is now rare --
-        # it used to be a GetWorldLocation() on every pair.
-        ob_loc = TGPoint3(ox, oy, oz)
+        # Past the gate. Only obstacles that could actually collide reach here.
+        if not has_hull_bounds(other):
+            # NO PIECES -- which docs/engine/avoidance-duplication.md measures
+            # as 100% of live ships, because the mission loader path never
+            # caches hull bounds. The gate immediately above just ran
+            # _need_to_avoid with EXACTLY these arguments and returned True:
+            # with no pieces the snapshot leaves gate_r == ob_r (it is only
+            # raised for a piece-bearing obstacle) and the single "piece" is
+            # the body itself at (ox, oy, oz). Re-testing it is the same call
+            # for the same answer, twice per pair, on the only path live ships
+            # take. ob_r > 0.0 is guaranteed by the snapshot's own reject.
+            avoid_list.append((TGPoint3(ox, oy, oz), ob_vel, ob_r))
+            continue
 
-        if has_hull_bounds(other):
-            # MEASURED DEAD END, do not retry without new evidence. Passing the
-            # geometric bound here instead of check_radius (travel + ob_travel +
-            # personal_space, ~64 GU median vs the 225 GU floor) is tighter for
-            # 100% of pairs and still culls NOTHING: ships in a fight sit 20-40
-            # GU apart, so every piece of every obstacle is legitimately inside
-            # it. Three live runs at 33 ships moved gl.avoidance 14.1/19.6/21.3
-            # against a 16.2/21.9 baseline -- pure noise.
-            #
-            # The pieces are not wasted work; they are genuinely near. Making
-            # avoidance scale therefore means fewer pieces (a coarse hull for
-            # avoidance rather than the 128-leaf collision decomposition) or a
-            # cheaper cadence -- NOT a tighter cull.
-            pieces = hull_spheres_near(other, predicted, check_radius)
-        else:
-            pieces = [(ob_loc, ob_r)]
-        for piece_loc, piece_r in pieces:
+        # MEASURED DEAD END, do not retry without new evidence. Passing the
+        # geometric bound here instead of check_radius (travel + ob_travel +
+        # personal_space, ~64 GU median vs the 225 GU floor) is tighter for
+        # 100% of pairs and still culls NOTHING: ships in a fight sit 20-40
+        # GU apart, so every piece of every obstacle is legitimately inside
+        # it. Three live runs at 33 ships moved gl.avoidance 14.1/19.6/21.3
+        # against a 16.2/21.9 baseline -- pure noise.
+        #
+        # The pieces are not wasted work; they are genuinely near. Making
+        # avoidance scale therefore means fewer pieces (a coarse hull for
+        # avoidance rather than the 128-leaf collision decomposition) or a
+        # cheaper cadence -- NOT a tighter cull.
+        for piece_loc, piece_r in hull_spheres_near(other, predicted,
+                                                    check_radius):
             if piece_r <= 0.0:
                 continue
             if _need_to_avoid(ship_loc, ship_vel, personal_space,
@@ -585,8 +627,11 @@ def tick_collision_avoidance(dt: float = 1.0 / 60.0) -> None:
     TurnTowardDirection/SetImpulse -- and then THIS function overwrites the
     result. Real missions pay for avoidance twice and discard the first answer.
 
-    (combat_stress uses BasicAttack, which installs no AvoidObstacles, so every
-    avoidance measurement taken against it is of this path alone.)
+    (That was measured while combat_stress attached bare BasicAttack, which
+    installs no AvoidObstacles, so avoidance measurements taken against it then
+    were of this path alone. combat_stress now wraps its tree the way
+    QuickBattleAI does -- see engine/dev_missions/combat_stress.py --
+    so a capture exercises the preprocessor path instead.)
 
     Adaptive cadence (SDK Update/GetNextUpdateTime): when not actively
     evading, a ship is only re-evaluated every fMaximumUpdateDelay (0.25 s);
@@ -662,23 +707,35 @@ def course_override_for(node):
     is a TGPoint3 while overriding and None otherwise, which is what the SDK's
     ``Update`` tests for truthiness before steering.
 
-    Overriding ONLY this method leaves the rest of the SDK node running
-    verbatim: the ``PS_SKIP_ACTIVE`` return, the ``TurnTowardDirection`` /
-    ``SetImpulse`` calls, the ``fUpdateDelay`` cadence, ``GetNextUpdateTime``
-    (which our driver already honours, so the 0.25 s idle / every-tick evading
-    cadence is preserved for free), and the pickle hooks. The only thing
-    replaced is the world SCAN, which is the only part that was slow.
+    Overriding this method leaves the rest of the SDK node running verbatim:
+    the ``PS_SKIP_ACTIVE`` return, the ``TurnTowardDirection`` / ``SetImpulse``
+    calls, the ``fUpdateDelay`` the SDK ``Update`` writes, and the pickle hooks.
+    The only thing replaced here is the world SCAN, which is the only part that
+    was slow. (``ai_optimized`` also raises ``fMinimumUpdateDelay`` to BC's own
+    commented 0.25 and adds a one-off phase offset in ``GetNextUpdateTime``;
+    both are documented there.)
+
+    ⚠️ The scan reads MODULE CONSTANTS, not the node's ``fPredictionTime`` /
+    ``fMinimumRadius`` / ``fPersonalSpace`` / ``lDontAvoidTypes``. Only the ship
+    and ``vOverrideDirection`` come off the node. See
+    ``ai_optimized._engine_avoidance_class`` for why that is inert for shipped
+    content and what it would cost a mod.
 
     ``vOverrideDirection`` carries the previous committed heading, which
     ``_avoid_objects`` uses for hysteresis — the SDK stores it on the node for
     exactly the same reason our per-ship state dict did.
     """
+    # (None, None), matching the SDK's own no-ship / no-set returns
+    # (Preprocessors.py:1713 `return (None, None)`). Update unpacks the pair
+    # into vOverrideDirection / fOverrideSpeed and only ever tests the
+    # direction, so the speed slot is free -- which is precisely why it should
+    # not differ from the surface this replaces.
     ai = getattr(node, "pCodeAI", None)
     if ai is None:
-        return None, 0.0
+        return None, None
     ship = ai.GetShip() if hasattr(ai, "GetShip") else None
     if ship is None:
-        return None, 0.0
+        return None, None
     # __dict__, not getattr: an engine-backed node inherits TGObject's
     # __getattr__, which vends a truthy _Stub for a missing name and would make
     # "no previous override" read as a heading.

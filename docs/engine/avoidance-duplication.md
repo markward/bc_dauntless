@@ -18,9 +18,19 @@ Measured (`scratchpad/dualavoid.py` pattern, E3M1): 1 ship with an AI, its tree
 contains `AvoidObstacles_NonLethal`, and B steers it — B steers *every* ship
 with an AI, unconditionally.
 
-⚠️ `combat_stress` uses `BasicAttack`, which installs **no** `AvoidObstacles`.
-Every avoidance measurement taken against that mission is therefore of path B
-alone, and understates real-mission cost.
+⚠️ `combat_stress` attaches `BasicAttack`, which installs **no**
+`AvoidObstacles`. Every avoidance measurement taken against that mission before
+2026-08-28 is therefore of path B alone, and understates real-mission cost.
+
+✅ **Fixed.** `combat_stress.avoidance_enabled()` now defaults **ON**, wrapping
+each ship's tree the way `QuickBattle/QuickBattleAI.py:83-92` wraps its own
+(BasicAttack inside a PriorityList inside an `AvoidObstacles` PreprocessingAI).
+The mission is a QuickBattle stand-in, so QuickBattleAI — not BasicAttack — is
+the right reference for what "faithful" means here. `DAUNTLESS_COMBAT_AVOID=0`
+turns it off to isolate non-avoidance cost, and the mission's scene line names
+the setting either way, so a capture always announces its configuration.
+⚠️ `docs/engine/frame-profiler.md`'s example command predates this flip; its
+numbers were taken with avoidance off.
 
 ## Why B exists, and why the reason is wrong
 
@@ -108,17 +118,81 @@ is a different predicate; that is the whole distinction.
 `tick_collision_avoidance`.
 
 The replacement subclasses the **non-lethal** wrapper (so the `PS_DONE`-with-no-ship
-edge stays de-fanged) and overrides **only `TestCourseOverride`**. Everything else
-is still SDK code running on SDK state: the `PS_SKIP_ACTIVE` return, the
-`TurnTowardDirection` / `SetImpulse` calls, the `fUpdateDelay` cadence and
-`GetNextUpdateTime` — which the driver already honours, so BC's 0.25 s idle /
-every-tick-while-evading cadence is preserved without reimplementing it — the
-`lDontAvoidTypes` list, and the pickle hooks. The alias shares the original's
-`__dict__`, so every parameter the SDK constructor set stays live.
+edge stays de-fanged) and overrides **`TestCourseOverride`** plus a one-off phase
+offset in `GetNextUpdateTime` (see *Thundering herd* below). Everything else is
+still SDK code running on SDK state: the `PS_SKIP_ACTIVE` return, the
+`TurnTowardDirection` / `SetImpulse` calls, the `fUpdateDelay` the SDK `Update`
+writes, and the pickle hooks. The alias shares the original's `__dict__`, so
+every parameter the SDK constructor set stays live.
 
-No shipped SDK script customises `fPredictionTime`, `fMinimumRadius` or
-`fPersonalSpace`, so the engine scan reads module constants;
-`test_our_constants_match_the_sdk_defaults` guards that equivalence.
+### What the engine scan does NOT read off the node
+
+`course_override_for` is handed only the node — for its ship and its
+`vOverrideDirection`. Everything else comes from `collision_avoidance` module
+constants:
+
+| SDK node field | what the engine scan actually uses |
+|---|---|
+| `fPredictionTime` | `AVOID_PREDICTION_TIME_S` |
+| `fMinimumRadius` | `AVOID_MINIMUM_RADIUS_GU` |
+| `fPersonalSpace` | `AVOID_PERSONAL_SPACE_MULT` |
+| `lDontAvoidTypes` | module-level `_dont_avoid_types()` |
+
+All four are still present on the instance and still read by the SDK `Update`;
+they simply no longer steer the scan. **`lDontAvoidTypes` belongs in this table,
+not in the "preserved" list above** — it was listed as preserved, and it is not.
+
+This is inert for shipped content: no stock SDK script customises any of the
+four, and `test_our_constants_match_the_sdk_defaults` /
+`test_our_dont_avoid_types_match_the_sdk_list` pin each against the real
+`AI.Preprocessors.AvoidObstacles` defaults (against the SDK class itself, not a
+hand-written double carrying the same literals — the earlier version of that
+test compared a copy to itself and could not fail). A mod that varied any of the
+four per-doctrine would be silently ignored; closing that means threading them
+off the node in `course_override_for`.
+
+### Thundering herd
+
+`AVOID_EVADING_UPDATE_DELAY_S` sets `fMinimumUpdateDelay` to
+`fMaximumUpdateDelay` (0.25 s), and `ai_driver._tick_preprocessing` reschedules
+as `game_time + interval`. That is a pure **period with no phase**: nodes that
+are ever due on the same tick stay due on the same tick forever, and ships
+spawned in the same frame start that way. Measured at 8 ships, scans per tick
+was `[8,0,0,…,0,8,0,…]` — the mean dropped 15x but the **per-tick peak did not
+move**, so the frame spike the cadence exists to flatten survived.
+
+Fixed by a one-off offset on the node's **first** reschedule
+(`ai_optimized._phase_factor`): deterministic (derived from the ship's object id
+— no `random` in sim code), and always a *fraction* of the interval, so it can
+only bring a re-scan forward, never past BC's own `fMaximumUpdateDelay`. Same
+scene after: **peak 8 → 2**, mean unchanged.
+
+The id is put through a full avalanche (multiply / xor-shift / multiply /
+xor-shift) before the modulo. Two weaker versions were tried and are recorded
+because both look reasonable:
+
+* plain `obj_id % buckets` — object ids come off one global counter shared with
+  every subsystem a ship allocates, so consecutive *ships* are strided, and any
+  stride that is a multiple of the bucket count puts every ship back in one
+  bucket;
+* one Knuth multiply, then a hand-picked bit window (`>> 20`) — bits 20-23 of
+  `id * 2654435761` barely move across small strided ids, which collapsed an
+  8-ship crowd onto 3 tick phases and pushed the measured peak **up** to 7.
+
+### ⚠️ Nothing invalidates a held decision
+
+To a **new** threat, reaction latency is 0.25 s both before and after this
+branch. What the cadence changed is re-decision **while already evading**:
+16.7 ms → 250 ms.
+
+There is **no `ForceUpdate()` caller for avoidance anywhere**. So for up to
+250 ms after an override is issued, the ship flies the committed heading
+through: an obstacle appearing *in* the escape path; the avoided obstacle dying
+or warping out; a collision impulse or tractor knocking it off the commanded
+heading. None of those produce an early re-scan. Against the 15 s
+`fPredictionTime` horizon a 250 ms stale decision is 1.7% of the lookahead,
+which is why this is tolerable rather than urgent — but the fix is an
+event-driven `ForceUpdate` on those edges, not a smaller cadence.
 
 `tick_collision_avoidance` still exists but is **no longer called by the engine**.
 It is retained as the driver for `tests/integration/test_collision_avoidance.py`,

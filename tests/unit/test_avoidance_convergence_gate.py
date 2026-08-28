@@ -2,9 +2,17 @@
 
 The gate tests an obstacle's bounding sphere before expanding it into hull
 pieces. It exists because proximity does not discriminate in a battle
-(AVOID_MINIMUM_RADIUS_GU is 225 GU ~ 40 km; combat happens within a few GU, so
-100% of pairs pass it) while convergence does (0% of 40,320 pair-samples at 64
-ships were actually on a collision course).
+(AVOID_MINIMUM_RADIUS_GU is 225 GU ~ 40 km, coarse next to the distances that
+matter) while convergence does. Measured over 40,320 pair-samples at 64 ships:
+47.7% pass the proximity query, 1.48% are actually on a collision course — a
+~32x tighter predicate.
+
+⚠️ Those figures are the CORRECTED ones. This docstring first said 100% / 0%,
+measured on a scene where every ship had `GetRadius() == 0` (the headless
+harness has no realize step, so `SetRadius` never ran) — which zeroes
+`personal_space`, trips `_test_course_override`'s `ob_r <= 0.0` reject, and
+asks the swept test whether dimensionless points collide. See
+docs/engine/avoidance-duplication.md.
 
 It is a SAFETY system, so the property under test is soundness, not speed: the
 gate may only drop obstacles the per-piece scan would have ignored anyway.

@@ -1,11 +1,24 @@
-"""Per-shape hull bounds — the pieces a hull is actually made of.
+"""Per-piece hull bounds — the pieces a hull is actually made of.
 
-A BC model carries exactly one kind of structured bound data: an authored
-bounding sphere per NiTriShape. There is no collision mesh in the files, and no
-BC model authors the optional node-level bounding volume. So these spheres are
-what a shape-aware collision test has to descend — which is consistent with the
-original generating several contacts per collision and reducing them to the two
-most separated (a single sphere pair could only ever produce one).
+The pieces are DERIVED, not authored. `compute_model_bounds`
+(native/src/renderer/aabb.cc:141) pools the triangles of the WHOLE model into
+one soup — deliberately not one soup per mesh, because "a BC mesh is a material
+group, not a spatial one" (three of FedStarbase's five shapes each span the
+entire station) — then median-splits it along the longest axis of the centroid
+spread into at most `kMaxHullBoundLeaves` (128) leaves, and bounds each leaf
+with a sphere about its AABB centre.
+
+So these are NOT "an authored bounding sphere per NiTriShape", which is what
+this docstring used to claim. BC models carry no collision mesh, and none of
+them authors the optional node-level bounding volume; the decomposition here is
+ours, computed from the triangle soup at load. That it is spatial rather than
+per-mesh is the whole point — a per-mesh split would leave the void under a
+starbase's mushroom cap claimed by geometry nowhere near it, which is exactly
+the concavity case below.
+
+Descending pieces is also consistent with the original generating several
+contacts per collision and reducing them to the two most separated (a single
+sphere pair could only ever produce one).
 
 Why it matters: **concavity**. A starbase's docking bay is a void BETWEEN hull
 pieces. Measured against the real geometry, `FinishedUndocking` leaves the ship
@@ -29,6 +42,11 @@ from engine.appc.math import TGPoint3
 # would sail past every "do we have bounds?" guard here.
 _ATTR = "_hull_bound_spheres"
 
+# Where bound_radius memoises its unscaled answer. Declared here, next to the
+# pieces it is derived from, because the two must be written and cleared
+# together — see cache_hull_bound_spheres.
+_BOUND_R_ATTR = "_hull_bound_radius_unscaled"
+
 
 def cache_hull_bound_spheres(ship, spheres) -> None:
     """Store `spheres` — an iterable of ``(cx, cy, cz, radius)`` in raw model
@@ -36,6 +54,10 @@ def cache_hull_bound_spheres(ship, spheres) -> None:
 
     Called once at realize time, alongside the shield hull box. Converted to
     world units at scale 1 here so readers never have to know about NIF units.
+
+    Drops `bound_radius`'s memo, which is derived from these pieces but lives
+    in a different slot: writing one without the other would answer a
+    soundness-critical question about geometry the ship no longer has.
     """
     from engine.host_loop import BC_MODEL_SCALE
     s = BC_MODEL_SCALE
@@ -44,6 +66,7 @@ def cache_hull_bound_spheres(ship, spheres) -> None:
         for cx, cy, cz, r in spheres
         if r > 0.0
     )
+    ship.__dict__.pop(_BOUND_R_ATTR, None)
 
 
 def has_hull_bounds(ship) -> bool:
@@ -140,9 +163,6 @@ def point_is_inside_hull(ship, point) -> bool:
         if (dx * dx + dy * dy + dz * dz) <= radius * radius:
             return True
     return False
-
-
-_BOUND_R_ATTR = "_hull_bound_radius_unscaled"
 
 
 def bound_radius(ship) -> float:

@@ -138,6 +138,94 @@ class ManagePower:
 AVOID_EVADING_UPDATE_DELAY_S = float(
     os.environ.get("DAUNTLESS_AVOID_EVADE_DELAY_S", "0.25"))
 
+# ── First-schedule phase spread (the thundering herd) ───────────────────────
+#
+# With fMinimumUpdateDelay == fMaximumUpdateDelay == 0.25 and the driver
+# rescheduling as `game_time + interval` (ai_driver._tick_preprocessing), the
+# cadence is a pure PERIOD with no phase: two nodes that are ever due on the
+# same tick are due on the same tick for the rest of the mission, and ships
+# spawned in the same frame start that way. Measured at 8 ships, scans per tick
+# was [8,0,0,...,0,8,0,...] -- the MEAN dropped 15x but the per-tick PEAK did
+# not move, so the frame-time spike the cadence was meant to flatten survived.
+#
+# One offset applied to the FIRST reschedule breaks the lock permanently: after
+# it the node runs at exactly BC's rate, merely out of step with its
+# neighbours. It is a phase shift, not a rate change.
+#
+# Deterministic by construction -- NO `random` in sim code. The offset is a
+# function of the ship's object id, so the same ship gets the same phase on
+# every run and across a save/restore. See _phase_factor for why the id is
+# avalanche-mixed rather than taken modulo directly.
+#
+# The offset only ever SHORTENS the first interval (factor in (0, 1]), so no
+# re-decision is ever pushed past BC's own fMaximumUpdateDelay. Avoidance is a
+# safety system; the acceptable direction to err in is "scans sooner".
+#
+# 16 buckets: the interval is 0.25 s and a tick is 1/60 s, so the schedule has
+# 15 distinguishable tick phases. More buckets than that buys nothing (two
+# offsets under a tick apart land on the same tick); fewer wastes phases.
+_PHASE_BUCKETS = 16
+_PHASE_ATTR = "_avoid_phase_applied"
+
+# Fallback ordinal for a node whose ship is not resolvable yet (pCodeAI is
+# bound after construction, and the driver can reach GetNextUpdateTime first).
+# Deterministic given deterministic construction order, which is what a mission
+# script provides.
+_PHASE_FALLBACK = [0]
+
+
+def _phase_key(node) -> int:
+    """A stable small integer identifying `node`'s ship, for phase bucketing."""
+    # __dict__, not getattr: an engine-backed node inherits TGObject.__getattr__
+    # and would hand back a truthy _Stub for a missing pCodeAI.
+    ai = node.__dict__.get("pCodeAI")
+    get_ship = getattr(ai, "GetShip", None) if ai is not None else None
+    if callable(get_ship):
+        try:
+            ship = get_ship()
+        except Exception:
+            ship = None
+        if ship is not None:
+            try:
+                obj_id = ship.GetObjID()
+            except Exception:
+                obj_id = None
+            # A _Stub floats/ints to 0 and would put every ship in one bucket,
+            # which is the state this exists to leave. Demand a real integer.
+            if isinstance(obj_id, int) and not isinstance(obj_id, bool):
+                return abs(obj_id)
+    _PHASE_FALLBACK[0] += 1
+    return _PHASE_FALLBACK[0]
+
+
+def _phase_factor(node) -> float:
+    """Fraction of the nominal interval this node's FIRST reschedule waits.
+
+    In ``(0, 1]`` -- never longer than the cadence it is offsetting.
+
+    A bare ``obj_id % _PHASE_BUCKETS`` is NOT sufficient and was the first
+    version of this. Object ids come off one global counter shared with every
+    subsystem, hardpoint and property a ship allocates, so consecutive SHIPS
+    are strided, not consecutive -- and any stride that is a multiple of the
+    bucket count (which a fixed per-ship allocation count easily is) maps every
+    ship to the same bucket, restoring the exact herd this removes.
+
+    So the id goes through a full avalanche (multiply / xor-shift / multiply /
+    xor-shift) before the modulo, and NOT through "one multiply, then read some
+    hand-picked bit window" -- which was the second version and was worse than
+    useless: bits 20-23 of ``id * 2654435761`` barely move across small strided
+    ids, so an 8-ship crowd collapsed onto 3 tick phases and the measured peak
+    went UP. Avalanche first, then take the low bits; measured 5-8 distinct
+    phases out of 8 ships at every stride tried (1, 8, 16, 37, 40, 64, 128,
+    256).
+    """
+    h = (_phase_key(node) * 2654435761) & 0xFFFFFFFF
+    h ^= h >> 15
+    h = (h * 2246822519) & 0xFFFFFFFF
+    h ^= h >> 13
+    return float((h % _PHASE_BUCKETS) + 1) / _PHASE_BUCKETS
+
+
 _ENGINE_AVOIDANCE_CLASSES: dict = {}
 
 
@@ -148,11 +236,30 @@ def _engine_avoidance_class(base: type) -> type:
     PS_DONE de-fanging still applies -- AvoidObstacles.Update returns PS_DONE
     when it has no ship, and US_DONE is unrecoverable in our driver.
 
-    Overriding ONLY TestCourseOverride is deliberate. Everything else about the
-    node stays SDK code: the PS_SKIP_ACTIVE return, TurnTowardDirection /
-    SetImpulse, the fUpdateDelay cadence and GetNextUpdateTime (which the driver
-    already honours), the lDontAvoidTypes list and the pickle hooks. The scan is
-    the only slow part and the only part replaced.
+    TWO methods are ours and no more: ``TestCourseOverride`` (the world scan --
+    the only slow part) and ``GetNextUpdateTime``, which adds the one-off
+    first-schedule phase offset described above and is otherwise the SDK value.
+    Everything else about the node stays SDK code operating on SDK state: the
+    PS_SKIP_ACTIVE return, TurnTowardDirection / SetImpulse, the ``fUpdateDelay``
+    the SDK ``Update`` writes, and the pickle hooks. The alias shares the
+    original's ``__dict__``, so every parameter the SDK ctor set stays live.
+
+    ⚠️ WHAT IS *NOT* PRESERVED -- the engine scan reads MODULE CONSTANTS, not
+    this node's fields. ``course_override_for`` passes only the node (for its
+    ship and its ``vOverrideDirection``); the scan then uses
+    ``collision_avoidance``'s ``AVOID_PREDICTION_TIME_S``,
+    ``AVOID_MINIMUM_RADIUS_GU``, ``AVOID_PERSONAL_SPACE_MULT`` and the
+    module-level ``_dont_avoid_types()`` in place of this instance's
+    ``fPredictionTime``, ``fMinimumRadius``, ``fPersonalSpace`` and
+    ``lDontAvoidTypes``. The fields are still there and still read by the SDK
+    ``Update``; they simply no longer steer the scan.
+
+    That is INERT for shipped content -- no stock SDK script customises any of
+    the four, and ``tests/unit/test_avoid_obstacles_engine_node.py`` pins each
+    against the real ``AI.Preprocessors.AvoidObstacles`` defaults -- but it is a
+    real divergence, and a mod that varied any of them per-doctrine would be
+    silently ignored. Closing it means threading the four off the node in
+    ``course_override_for``; see docs/engine/avoidance-duplication.md.
     """
     cached = _ENGINE_AVOIDANCE_CLASSES.get(base)
     if cached is not None:
@@ -162,8 +269,19 @@ def _engine_avoidance_class(base: type) -> type:
         from engine.appc.collision_avoidance import course_override_for
         return course_override_for(self)
 
+    base_next_update = getattr(base, "GetNextUpdateTime", None)
+
+    def GetNextUpdateTime(self):
+        delay = base_next_update(self) if base_next_update is not None else 0.0
+        state = self.__dict__
+        if state.get(_PHASE_ATTR):
+            return delay                       # SDK cadence, untouched
+        state[_PHASE_ATTR] = True
+        return delay * _phase_factor(self)
+
     cls = type("Engine" + base.__name__, (_non_lethal_class(base),),
-               {"TestCourseOverride": TestCourseOverride})
+               {"TestCourseOverride": TestCourseOverride,
+                "GetNextUpdateTime": GetNextUpdateTime})
     _ENGINE_AVOIDANCE_CLASSES[base] = cls
     globals()[cls.__name__] = cls
     return cls
@@ -176,6 +294,9 @@ def _replace_avoid_obstacles(instance):
     parameter the SDK ctor set -- fPredictionTime, fMinimumRadius,
     fPersonalSpace, the manoeuvre angles, lDontAvoidTypes -- and every field
     Update mutates stay visible and live.
+
+    "Visible and live" is not "consulted by the scan": see
+    _engine_avoidance_class for which of them the engine scan ignores.
     """
     cls = _engine_avoidance_class(type(instance))
     alias = cls.__new__(cls)

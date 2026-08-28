@@ -172,6 +172,54 @@ def _run_crowd(ships, ticks=900):
     return closest
 
 
+def _run_crowd_scan_profile(ships, ticks=300):
+    """Per-tick scan counts, so the PEAK is visible and not just the mean."""
+    dt = 1.0 / 60.0
+    t = 0.0
+    per_tick = []
+    for _ in range(ticks):
+        ca.invalidate_obstacle_snapshot()
+        t += dt
+        before = ca._SCAN_COUNT[0]
+        tick_all_ai(game_time=t)
+        tick_all_ship_motion(dt)
+        per_tick.append(ca._SCAN_COUNT[0] - before)
+    return per_tick
+
+
+def test_scans_do_not_all_land_on_the_same_tick():
+    """The thundering herd.
+
+    fMinimumUpdateDelay == fMaximumUpdateDelay == 0.25 and the driver
+    reschedules as `game_time + interval`, so the cadence is a pure PERIOD with
+    no phase: ships that are ever due together stay due together forever, and
+    ships spawned in the same frame start that way. Before the first-schedule
+    phase offset (ai_optimized._phase_factor) this scene measured
+    [8,0,0,...,0,8,0,...] -- the MEAN dropped 15x but the per-tick PEAK was
+    unchanged, so the frame-time spike the cadence exists to flatten survived
+    intact.
+
+    Ignores the first tick: everything is genuinely due at t=0 (that is the
+    node's initial schedule, not a herd), and the offset applies to the
+    reschedule that follows it.
+
+    Measured on this scene: peak 8 -> 2 scans per tick, mean unchanged (the
+    same total work, spread). The assertion stays at "not all of them" rather
+    than pinning 2, because the phase a ship lands in depends on its object id
+    and ids move whenever ship construction allocates a different number of
+    objects — the structural claim is what matters here.
+    """
+    App.g_kSetManager._sets.clear()
+    ca.reset_avoidance_state()
+    pSet, ships = _crowd(n=8)
+    per_tick = _run_crowd_scan_profile(ships, ticks=300)[1:]
+    assert sum(per_tick) > 0, "nothing re-scanned; the scene is not exercising the cadence"
+    assert max(per_tick) < len(ships), (
+        "every ship still re-scans on the same tick (peak %d of %d) -- the "
+        "first-schedule phase offset is not spreading them"
+        % (max(per_tick), len(ships)))
+
+
 def _measure(delay, ticks=900):
     from engine.appc import ai_optimized
     saved = ai_optimized.AVOID_EVADING_UPDATE_DELAY_S

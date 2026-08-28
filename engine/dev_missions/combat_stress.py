@@ -118,17 +118,29 @@ _DEFAULT_SHIPS = 8
 
 
 def avoidance_enabled() -> bool:
-    """DAUNTLESS_COMBAT_AVOID=1 wraps each ship's attack AI in an
-    AvoidObstacles preprocessor, the way the Fleet doctrines do.
+    """Whether each ship's attack AI is wrapped in an AvoidObstacles
+    preprocessor. ON by default; DAUNTLESS_COMBAT_AVOID=0 turns it off.
 
-    Off by default because BasicAttack -- what this mission installs -- does
-    NOT install one, and that is faithful: since the engine node replaced the
-    duplicate GameLoop pass, avoidance is opt-in per doctrine rather than a
-    property of having an AI. The knob exists so avoidance can be profiled at
-    all: with it off this mission exercises no avoidance whatsoever, and a
-    capture taken against it says nothing about that code path.
+    ON because that is what the scene this mission imitates does. It was off,
+    justified by "BasicAttack does NOT install one" -- true, but the wrong
+    reference: this is a QuickBattle stand-in (it reuses QuickBattleRegion and
+    the AI QuickBattle attaches), and QuickBattle's own
+    `QuickBattleAI.CreateAI` wraps its whole tree -- BasicAttack inside a
+    PriorityList -- in an AvoidObstacles PreprocessingAI
+    (sdk/Build/scripts/QuickBattle/QuickBattleAI.py:83-92). Every QuickBattle
+    enemy therefore runs avoidance, and a default capture that ran none
+    understated real-mission cost, which is exactly the complaint
+    docs/engine/avoidance-duplication.md records against this mission.
+
+    combat_stress attaches BasicAttack directly (QuickBattleAI itself cannot be
+    used from here -- see _ATTACK_AI_MODULE), so the wrapper has to be added
+    explicitly to reproduce the same tree shape.
+
+    Set DAUNTLESS_COMBAT_AVOID=0 to isolate non-avoidance cost. Either way the
+    scene line printed at Initialize names the setting, so a capture always
+    announces which configuration produced it.
     """
-    return os.environ.get("DAUNTLESS_COMBAT_AVOID", "") == "1"
+    return os.environ.get("DAUNTLESS_COMBAT_AVOID", "1").strip() not in ("0", "")
 
 # Alternating pairs so the two sides interleave around the ring and every ship
 # has an enemy nearby, rather than two clumps that must close first.
