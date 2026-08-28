@@ -339,3 +339,56 @@ def test_scene_summary_flags_a_live_fight_as_not_idle(monkeypatch):
     assert "3 projectiles" in line
     assert "2 hull-damaged" in line
     assert "IDLE" not in line
+
+
+def test_enabling_mid_frame_does_not_report_a_garbage_total():
+    """Toggling the profiler on is the DOCUMENTED primary workflow: the user
+    hits the key mid-frame, so that frame's begin_frame() already ran while
+    disabled and no-opped.
+
+    end_frame() then measured (now - _frame_t0) with _frame_t0 still 0.0 --
+    i.e. perf_counter() from its arbitrary epoch, hundreds of thousands of
+    seconds. Because reset() also cleared _frame_seeded, that value was
+    ASSIGNED rather than blended, so the headline "python loop" total started
+    at ~8.5e8 ms and decayed over the following reports, reading as though the
+    frame were getting faster.
+
+    A frame the profiler did not open must not be reported at all.
+    """
+    fp.set_enabled(True, native=False)
+    fp.reset()
+
+    # The frame that was already in flight when the profiler came on: no
+    # begin_frame(), because it ran before enabling.
+    fp.end_frame()
+    assert fp.frame_ms() == 0.0, (
+        f"a frame that was never opened was reported as {fp.frame_ms()} ms")
+
+    # A properly opened frame still reports.
+    fp.begin_frame()
+    fp.end_frame()
+    assert fp.frame_ms() > 0.0
+    assert fp.frame_ms() < 1000.0, (
+        f"frame total {fp.frame_ms()} ms is wall-clock-epoch garbage, "
+        "not a frame duration")
+
+
+def test_reset_clears_the_report_interval_and_tick_count():
+    """reset() left _since_report and _sim_ticks standing. A toggle-off /
+    toggle-on near the end of an interval therefore made the very next frame
+    report -- which is what turned the seeding bug above into an immediately
+    visible ~8.5e8 ms line rather than a quietly wrong average."""
+    fp.set_enabled(True, native=False)
+    fp.note_sim_ticks(17)
+    for _ in range(5):
+        fp.begin_frame()
+        fp.end_frame()
+
+    fp.reset()
+    assert fp.sim_ticks() == 0, "stale tick count survived a reset"
+    # A full interval must elapse from the reset, not from wherever the
+    # previous run happened to leave the counter.
+    for i in range(fp.REPORT_EVERY - 1):
+        assert not fp.should_report(), (
+            f"reported after {i + 1} frames; the interval survived the reset")
+    assert fp.should_report()

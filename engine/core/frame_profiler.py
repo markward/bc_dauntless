@@ -50,6 +50,7 @@ _frame_t0: float = 0.0
 _frame_ms: float = 0.0
 _frame_seeded = False
 _frames = 0
+_frame_open = False
 
 # Fixed-timestep catch-up ticks in the last frame. Reported because the frame
 # cost is dominated by it whenever the sim cannot keep up, and reading a phase
@@ -88,6 +89,7 @@ def set_enabled(value: bool, *, native: bool = True) -> None:
 
 def reset() -> None:
     global _open_name, _open_t0, _frame_t0, _frame_ms, _frame_seeded, _frames
+    global _frame_open, _sim_ticks, _since_report
     _phases.clear()
     _seeded.clear()
     _frame_acc.clear()
@@ -97,17 +99,25 @@ def reset() -> None:
     _frame_ms = 0.0
     _frame_seeded = False
     _frames = 0
+    _frame_open = False
+    # Both of these used to survive a reset. The stale tick count was printed
+    # beside freshly-seeded costs, and the stale interval made the first frame
+    # after re-enabling report immediately -- which is what turned a wrong
+    # average into a visibly absurd headline number.
+    _sim_ticks = 0
+    _since_report = 0
 
 
 def begin_frame() -> None:
     """Start a frame. Any phase left open by the previous frame is dropped."""
-    global _open_name, _open_t0, _frame_t0
+    global _open_name, _open_t0, _frame_t0, _frame_open
     if not _enabled:
         return
     _open_name = None
     _frame_acc.clear()
     _frame_t0 = _perf()
     _open_t0 = _frame_t0
+    _frame_open = True
 
 
 def mark(name: str) -> None:
@@ -133,9 +143,19 @@ def mark(name: str) -> None:
 
 def end_frame() -> None:
     """Close the open phase and fold the frame total into its average."""
-    global _open_name, _frame_ms, _frame_seeded, _frames
+    global _open_name, _frame_ms, _frame_seeded, _frames, _frame_open
     if not _enabled:
         return
+    # The profiler is toggled on mid-frame -- that is the documented workflow --
+    # so this frame's begin_frame() may have run while disabled and no-opped,
+    # leaving _frame_t0 at 0.0. Measuring against that yields perf_counter()'s
+    # raw epoch (hundreds of thousands of seconds), and since reset() also
+    # clears _frame_seeded it is ASSIGNED rather than blended: the headline
+    # total starts at ~8.5e8 ms and decays, reading as "the frame got faster".
+    # A frame this module did not open is not a frame it can time.
+    if not _frame_open:
+        return
+    _frame_open = False
     now = _perf()
     if _open_name is not None:
         _accumulate(_open_name, (now - _open_t0) * 1000.0)

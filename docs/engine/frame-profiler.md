@@ -14,7 +14,7 @@ Press it again to stop.
 For an unattended capture:
 
 ```bash
-OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_PROFILE_FRAMES=600 ./build-cef/dauntless.exe --developer
+OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_PROFILE_FRAMES=600 ./build/dauntless --developer
 ```
 
 `DAUNTLESS_PROFILE_FRAMES=N` enables both halves, sets swap interval 0, runs N
@@ -24,8 +24,11 @@ frames, prints one report and exits.
 initialises when the process was launched through the binary — its `main()`
 calls `dispatch_subprocess` before Python starts — so a Python-driven capture
 prints `cef.pump`/`cef.composite` as `0.000`, which reads as free and means
-absent. That mistake cost two capture rounds. Use a CEF-enabled build tree
-(`build-cef/`); the default `build/` is configured `-DDAUNTLESS_ENABLE_CEF=OFF`.
+absent. That mistake cost two capture rounds. The build must therefore be
+CEF-enabled: `cmake -B build -S . -DDAUNTLESS_ENABLE_CEF=ON`. Configure the one
+canonical `build/` tree that way rather than standing up a second one —
+CLAUDE.md's build-layout rule is explicit that there is a single tree and that
+binaries elsewhere are to be treated as stale.
 
 ```
 -- frame profile -- (EMA over 397 frames, alpha 0.15)
@@ -59,11 +62,14 @@ because its passes genuinely nest.
 Four things the report states outright, because each is a way to read a correct
 number and reach a wrong conclusion:
 
-* **`present` is the vsync wait.** `window.cc` sets `glfwSwapInterval(1)`, so a
-  large `present` next to small siblings means the frame finished **early** and
-  blocked — not that presenting is expensive. Any headroom conclusion drawn from
-  a vsync-capped capture is worthless. Capture with swap interval 0 to measure
-  real cost.
+* **`present` may be the vsync wait — read the swap interval the report prints,
+  do not assume it.** When the interval is 1, a large `present` next to small
+  siblings means the frame finished **early** and blocked, not that presenting
+  is expensive, and any headroom conclusion from that capture is worthless.
+  When it is 0, `present` is the pipeline draining. The report states the
+  interval (and prints `-1` when it could not be read, which is not `0`);
+  hard-coding `glfwSwapInterval(1)` here is what previously told every headless
+  reader the wrong thing.
 * **The two totals nest, they do not add.** `r.frame()` runs inside the loop
   body, so the Python total already contains the render total.
 * **Whole-frame GPU is first-timestamp-to-last, not a sum of scopes.** Scopes
@@ -103,7 +109,7 @@ Use `engine/dev_missions/combat_stress.py`, and check the scene line before
 believing any number:
 
 ```bash
-OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_MISSION=engine.dev_missions.combat_stress   DAUNTLESS_COMBAT_SHIPS=16 DAUNTLESS_PROFILE_FRAMES=1200   ./build-cef/dauntless.exe --developer
+OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_MISSION=engine.dev_missions.combat_stress   DAUNTLESS_COMBAT_SHIPS=16 DAUNTLESS_PROFILE_FRAMES=1200   ./build/dauntless --developer
 ```
 
 17 ships, ~70 projectiles in flight, uncapped, CEF on:
@@ -115,7 +121,6 @@ OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_MISSION=engine.dev_missions.combat_stress   
                                   gl.ai       ~10-11
                                   gl.subsystems ~7.6
                                   gl.motion   ~5.6-6.1
-                                  gl.avoidance ~2.7
                                   gl.proximity ~1.6
 ```
 
@@ -164,7 +169,11 @@ Reading notes for this capture:
   parameter is currently named-out and discarded.
 * `anim` at 4.1 ms is bone-palette rebuilds for every animated instance with no
   visibility or distance gate — the bridge has a full crew.
-* `starmap` costs 0.7–1.5 ms for a **closed** modal.
+* `scene_push` costs 0.7–1.5 ms. This number was originally reported as
+  `starmap` — a phase name that spanned 239 lines of lights, backdrops, suns,
+  planets, nebulae, decals and warp VFX, of which the star map was the first
+  three. `_drive_star_map` early-returns when the modal is shut, so the star
+  map was never the cost; the phase has been split.
 * `present` holding most of the GPU time is the pipeline draining at the swap,
   not presentation cost. With swap interval 0 it is not a vsync wait.
 * ⚠️ Taken on a hidden window; the GL device was not identified, so treat the
@@ -194,7 +203,11 @@ because the AI's fire scripts depend on host-loop state. Use it for *shape*
 
 ### What is still quadratic
 
-`gl.avoidance` — `tick_collision_avoidance` scans `iter_set_objects(pSet)` per
+`gl.ai` → `pp:EngineAvoidObstacles` — avoidance no longer has its own GameLoop
+phase. `tick_collision_avoidance` was removed from `GameLoop.tick` and the work
+now runs as an `AvoidObstacles` preprocessor INSIDE `gl.ai`, so there is no
+`gl.avoidance` row to look for. The scan is still all-pairs: it walks
+`iter_set_objects(pSet)` per
 ship, i.e. all-pairs, with per-pair collision-mask and hull-piece work. Per
 ship it costs 0.06 / 0.12 / 0.41 / 1.11 ms at 9 / 17 / 33 / 33-with-more-combat
 ships. It has an adaptive cadence (re-evaluate every 0.25 s when not evading)

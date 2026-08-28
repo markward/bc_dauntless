@@ -6826,7 +6826,8 @@ def run(mission_name: Optional[str] = None,
             director.tracking.set_ship_radius(_r)
         view_mode      = _ViewModeController()
         pause          = _PauseMenuController()
-        from engine.ui.target_list_view import TargetListView
+        from engine.ui.target_list_view import (
+            TargetListView, reconcile_subsystem_lock)
         from engine.ui.sensors_panel import SensorsPanel
         target_list_view = TargetListView()
         sensors_panel = SensorsPanel()
@@ -7091,6 +7092,10 @@ def run(mission_name: Optional[str] = None,
         registry._legacy = pause_menu.dispatch_event
         controller.panel_registry = registry  # expose to _drain_pending_swap
         registry.register(target_list_view)
+        # Last (target, subsystem) identity seen by the per-frame
+        # target-list invalidation below. A list so the loop body
+        # can rebind it without a global.
+        _last_target_key = [None]
         registry.register(sensors_panel)
         from engine.appc.sdk_mirror_panel import SDKMirrorPanel
         sdk_mirror = SDKMirrorPanel()
@@ -7515,6 +7520,40 @@ def run(mission_name: Optional[str] = None,
                 # re-select via SelectTarget; the player has no such
                 # preprocessor, so the lock would otherwise persist.
                 clear_undetectable_player_lock(_player)
+
+                # Hand the subsystem lock off to a living sibling when the
+                # locked one dies (and drop it when the target cloaks).
+                #
+                # Lives HERE, not in TargetListView.render_payload, even though
+                # the target list is what displays it. It is a combat rule --
+                # both weapon-aim paths read GetTargetSubsystem() -- and the
+                # panel is now polled at 2 Hz, which silently made the player's
+                # phasers keep aiming at a destroyed subsystem's world location
+                # for up to half a second. Its own docstring says "runs every
+                # tick"; that is only true from here, next to the other
+                # per-frame lock rule it belongs with.
+                reconcile_subsystem_lock()
+
+                # Force the target list to refresh when the ENGINE changes the
+                # player's target behind the panel's back. The panel is polled
+                # at 2 Hz and only marks itself due on its own events, so a
+                # target destroyed (ship_death), lost to sensors
+                # (sensor_detection), warped out (warp) or re-picked by the AI
+                # would otherwise stay drawn AND highlighted for up to 500 ms.
+                # An identity compare is cheaper than an event subscription and
+                # cannot miss a fourth mutation site the way a subscription
+                # would.
+                try:
+                    _tgt = _player.GetTarget() if _player is not None else None
+                    _tgt_sub = (_player.GetTargetSubsystem()
+                                if _player is not None else None)
+                except Exception:
+                    _tgt = _tgt_sub = None
+                _tgt_key = (id(_tgt) if _tgt is not None else None,
+                            id(_tgt_sub) if _tgt_sub is not None else None)
+                if _tgt_key != _last_target_key[0]:
+                    _last_target_key[0] = _tgt_key
+                    target_list_view.invalidate()
 
                 # Re-centre the star map's rect on the LIVE CEF view size
                 # (which tracks the window in points — see
@@ -8458,6 +8497,14 @@ def run(mission_name: Optional[str] = None,
             # at the same rect the panel projects its labels and picks into.
             _drive_star_map(star_map_panel, host_io.framebuffer_size(),
                             _CEF_VIEW_H)
+
+            # Everything from here to r.frame() is scene aggregation and the
+            # push to the renderer -- lights, backdrops, suns, planets,
+            # nebulae, decals, warp VFX, letterbox. It is NOT the star map,
+            # and billing it to a phase named "starmap" produced a published
+            # claim that a CLOSED modal cost 0.7-1.5 ms. _drive_star_map
+            # early-returns when the map is shut; that number was this block.
+            frame_profiler.mark("scene_push")
 
             # Step 5c: drive the viewscreen RTT feed on/off from the realized
             # viewscreen object, and hide the player ship while in bridge view
