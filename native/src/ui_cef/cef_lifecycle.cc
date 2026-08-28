@@ -48,11 +48,13 @@ std::string locales_dir(const std::string& exec_dir) {
 }
 #endif
 
-}  // namespace
-
 // CefMainArgs is one of the few CEF types whose constructor differs by
 // platform: (argc, argv) on POSIX, (HINSTANCE) on Windows, where the process
 // arguments come from GetCommandLine() instead.
+//
+// Inside the anonymous namespace with the rest of this file's helpers: it is
+// a translation-unit detail with no declaration in any header, and external
+// linkage would put a bare `make_main_args` in the link namespace.
 CefMainArgs make_main_args(int argc, char* argv[]) {
 #ifdef _WIN32
     (void)argc;
@@ -62,6 +64,8 @@ CefMainArgs make_main_args(int argc, char* argv[]) {
     return CefMainArgs(argc, argv);
 #endif
 }
+
+}  // namespace
 
 int dispatch_subprocess(int argc, char* argv[]) {
     g_saved_argc = argc;

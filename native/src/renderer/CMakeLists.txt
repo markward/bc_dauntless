@@ -33,8 +33,15 @@ function(embed_shader OUT_VAR INPUT_PATH SYMBOL_NAME)
     if(SRC_LEN EQUAL 0)
         set(SRC_LITERAL "\"\"")
     endif()
-    file(WRITE "${GENERATED}"
+    # Stage, then copy only on a real change. file(WRITE) rewrites
+    # unconditionally and so bumps the header's mtime on every configure,
+    # which rebuilds every translation unit that includes it -- and a
+    # reconfigure is triggered by editing any CMakeLists in the project.
+    # configure_file(COPYONLY) leaves the output untouched when the bytes
+    # match, so an unrelated reconfigure costs nothing.
+    file(WRITE "${GENERATED}.staged"
 "// Generated. Do not edit.\n#pragma once\nnamespace renderer::shader_src {\nconstexpr const char* ${SYMBOL_NAME} =\n${SRC_LITERAL};\n}\n")
+    configure_file("${GENERATED}.staged" "${GENERATED}" COPYONLY)
     set(${OUT_VAR} "${GENERATED}" PARENT_SCOPE)
 endfunction()
 
