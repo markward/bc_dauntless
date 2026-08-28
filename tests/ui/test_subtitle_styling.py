@@ -15,10 +15,10 @@ from pathlib import Path
 import pytest
 
 UI = Path(__file__).resolve().parents[2] / "native" / "assets" / "ui-cef"
-CSS = (UI / "css" / "sdk_mirror.css").read_text()
-JS = (UI / "js" / "sdk_mirror.js").read_text()
+CSS = (UI / "css" / "sdk_mirror.css").read_text(encoding="utf-8")
+JS = (UI / "js" / "sdk_mirror.js").read_text(encoding="utf-8")
 JS_PATH = UI / "js" / "sdk_mirror.js"
-HTML = (UI / "index.html").read_text()
+HTML = (UI / "index.html").read_text(encoding="utf-8")
 
 NODE = shutil.which("node")
 

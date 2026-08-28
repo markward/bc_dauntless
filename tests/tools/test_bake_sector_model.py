@@ -113,7 +113,7 @@ def test_baked_nebulae_carry_a_display_name():
 
     model = json.loads(
         (Path(__file__).resolve().parents[2]
-         / "engine" / "appc" / "sector_model.json").read_text()
+         / "engine" / "appc" / "sector_model.json").read_text(encoding="utf-8")
     )
     nebulae = model["nebulae"]
     assert nebulae, "sector model has no nebulae"

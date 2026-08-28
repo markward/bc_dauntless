@@ -17,6 +17,8 @@ endif()
 
 add_library(ui_cef STATIC ${UI_CEF_SOURCES})
 
+target_link_libraries(ui_cef PUBLIC platform)
+
 target_include_directories(ui_cef PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/..

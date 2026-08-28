@@ -56,7 +56,7 @@ _LABEL_OVERRIDES = {
 @lru_cache(maxsize=1)
 def load_sector_model():
     try:
-        return json.loads(_MODEL_PATH.read_text())
+        return json.loads(_MODEL_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {"systems": [], "nebulae": [], "starclouds": []}
 

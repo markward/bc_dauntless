@@ -6,6 +6,7 @@
 
 #include "developer_mode.h"
 #include "host_bindings.h"
+#include "platform/exe_path.h"
 
 #ifdef DAUNTLESS_ENABLE_CEF
 #include "ui_cef/cef_lifecycle.h"
@@ -20,11 +21,19 @@
 namespace {
 
 // Locate the project root from the running binary's path. The binary lives at
-// <root>/build/dauntless, so root is two parents up from the binary's
-// canonical path. This is a build-tree assumption — the binary is not yet
-// meant to be installed system-wide.
-std::filesystem::path discover_project_root(const char* argv0) {
-    std::filesystem::path bin_path = std::filesystem::canonical(argv0);
+// <root>/build/dauntless, so root is two parents up from the binary's own
+// path. This is a build-tree assumption — the binary is not yet meant to be
+// installed system-wide.
+//
+// Returns an empty path and fills `error` on failure. It used to call
+// std::filesystem::canonical(argv0) directly, which THROWS when argv[0] is a
+// bare name and the cwd is not the binary's directory (a launch through PATH);
+// with no handler and no /EHsc that killed the process with no output at all.
+std::filesystem::path discover_project_root(const char* argv0,
+                                            std::string& error) {
+    const std::filesystem::path bin_path =
+        dauntless::platform::executable_path(argv0, error);
+    if (bin_path.empty()) return {};
     return bin_path.parent_path().parent_path();
 }
 
@@ -138,7 +147,15 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    auto project_root = discover_project_root(argv[0]);
+    std::string root_error;
+    auto project_root = discover_project_root(argv[0], root_error);
+    if (project_root.empty()) {
+        std::fprintf(stderr,
+                     "dauntless: cannot locate the project root: %s\n"
+                     "dauntless: argv[0] was \"%s\"\n",
+                     root_error.c_str(), argv[0]);
+        return 1;
+    }
     configure_python_path(project_root);
 
     if (PyImport_AppendInittab("_dauntless_host", PyInit__dauntless_host) != 0) {

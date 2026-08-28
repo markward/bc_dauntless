@@ -176,7 +176,7 @@ def test_every_due_time_gate_in_the_driver_records_its_due_time():
     time, or its node can oversleep by up to AI_MAX_SLEEP_TICKS -- silently,
     because oversleeping raises nothing and fails no assertion.
     """
-    src = pathlib.Path(ai_driver.__file__).read_text()
+    src = pathlib.Path(ai_driver.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
 
     def _mentions(node, names):

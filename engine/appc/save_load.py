@@ -105,7 +105,7 @@ class SaveLoadManager:
             path = _normalize(filename)
             if not path.exists():
                 return 0
-            state = json.loads(path.read_text())
+            state = json.loads(path.read_text(encoding="utf-8"))
             self._apply_save_state(state)
             self._load_filename = str(filename)
             return 1
@@ -148,7 +148,7 @@ class SaveLoadManager:
                 path = _save_dir() / "missions" / f"{module_name}.json"
                 if not path.exists():
                     return 0
-                state = json.loads(path.read_text())
+                state = json.loads(path.read_text(encoding="utf-8"))
                 self._mission_states[module_name] = state
             self._apply_mission_state(state)
             return 1

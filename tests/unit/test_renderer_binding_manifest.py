@@ -22,7 +22,7 @@ import pytest
 
 import engine.renderer as renderer
 
-_SRC = pathlib.Path(renderer.__file__).read_text()
+_SRC = pathlib.Path(renderer.__file__).read_text(encoding="utf-8")
 
 
 def _collect_h_refs():

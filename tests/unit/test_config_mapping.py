@@ -109,7 +109,7 @@ def test_save_then_load_round_trip(config_under_tmp, fresh_config):
 def test_save_writes_ini_format(config_under_tmp, fresh_config):
     fresh_config.SetIntValue("Sound", "StreamVoices", 1)
     fresh_config.SaveConfigFile("Options.cfg")
-    raw = (config_under_tmp / "Options.cfg").read_text()
+    raw = (config_under_tmp / "Options.cfg").read_text(encoding="utf-8")
     assert "[Sound]" in raw
     assert "StreamVoices=1" in raw
 

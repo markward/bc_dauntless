@@ -22,6 +22,25 @@ _BUILD_PYTHON = PROJECT_ROOT / "build" / "python"
 if _BUILD_PYTHON.is_dir() and str(_BUILD_PYTHON) not in sys.path:
     sys.path.insert(0, str(_BUILD_PYTHON))
 
+# Windows: the extension's dependent DLLs (libcef.dll and the rest of CEF's
+# Release/) are copied next to dauntless.exe in build/, NOT beside the .pyd in
+# build/python/. Since Python 3.8 the loader no longer searches PATH for an
+# extension's dependencies, so without this a CEF-enabled build fails every
+# import with "DLL load failed while importing _dauntless_host" -- which
+# surfaces as hundreds of COLLECTION errors, not as skips.
+#
+# engine/__init__.py does the same thing, and is what covers subprocesses that
+# never load this file. This copy is for tests that import _dauntless_host
+# directly without importing engine.
+#
+# The handle must be kept alive: add_dll_directory removes the directory again
+# when the returned object is closed or garbage collected.
+_DLL_DIR_HANDLE = None
+if sys.platform == "win32":
+    _BUILD_DIR = PROJECT_ROOT / "build"
+    if _BUILD_DIR.is_dir():
+        _DLL_DIR_HANDLE = os.add_dll_directory(str(_BUILD_DIR))
+
 _PY2_OCTAL = re.compile(r'(?<![\w.])0([0-7]+)\b')
 _PY2_RAISE = re.compile(r'^(\s*raise\s+\w[\w.]*)\s*,\s*(.*)', re.MULTILINE)
 _PY2_PRINT_FILE = re.compile(r'^(\s*)print\s*>>\s*(\S+)\s*,\s*(.*?)\s*$', re.MULTILINE)

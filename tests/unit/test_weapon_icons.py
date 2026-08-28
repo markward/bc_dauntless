@@ -292,7 +292,7 @@ def test_tracer_writes_svg_to_cache(tmp_path):
     out_svg = tmp_path / "cache" / "999.svg"
     assert out_svg.exists()
     assert 999 in written
-    body = out_svg.read_text()
+    body = out_svg.read_text(encoding="utf-8")
     assert "<svg" in body
     assert 'fill="currentColor"' in body
 
