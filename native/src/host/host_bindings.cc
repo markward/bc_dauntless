@@ -476,6 +476,89 @@ scenegraph::ModelHandle load_model_impl(
     return static_cast<scenegraph::ModelHandle>(g_loaded_models.size());
 }
 
+// Per-frame state that Python pushes and frame() consumes. Called from BOTH
+// init() and shutdown() so the two can never disagree about what a fresh
+// session looks like.
+//
+// THE INVARIANT: any global frame() reads, and that a Python binding can write
+// while the host is down, must be cleared by init() as well as shutdown(). The
+// _dauntless_host module object outlives an init/shutdown pair and none of the
+// setters check for a window, so anything pushed between sessions is stale
+// content rendered into what the next caller believes is a fresh scene.
+//
+// It first surfaced as a test-isolation failure (tests/host/
+// test_backdrops_integration's empty-backdrop row is asserted FLAT; it read 53
+// with no preceding tests, 63 after 39, and 77-94 after 636 -- monotonic in how
+// much leftover VFX had piled up), but the bug is not confined to tests:
+// anything that re-inits the host inherits the previous scene's beams,
+// torpedoes, lights, debris, hologram mode and reticle.
+//
+// Pinned by tests/host/test_init_resets_frame_state.py, which dirties every
+// reachable global and then diffs the source of the two functions so the NEXT
+// descriptor list cannot be added to one end only.
+//
+// NOT here, deliberately: g_world, g_loaded_models, the model-radius cache and
+// the pass objects. Those own GL handles or are rebuilt by init(), and their
+// ORDER relative to the GL-context teardown in shutdown() is load-bearing.
+void reset_frame_state() {
+    g_lighting = renderer::Lighting{};
+    g_bridge_lighting = renderer::Lighting{};
+    g_bridge_ambient_scale = 1.0f;
+    g_bridge_pass_enabled = false;
+    g_viewscreen_enabled = false;
+    g_backdrops.clear();
+    g_sky_dirty = true;
+    g_suns.clear();
+    g_dust_planets.clear();
+    g_nebula_godrays.clear();
+    g_nebulae.clear();
+    g_nebula_wake.clear();
+
+    // Fifteen per-frame descriptor lists: eleven VFX + four debug volumes.
+    g_torpedoes.clear();
+    g_phaser_beams.clear();
+    g_tractor_beams.clear();
+    g_hit_vfx.clear();
+    g_shockwaves.clear();
+    g_particle_emitters.clear();
+    g_dynamic_lights.clear();
+    g_lens_flares.clear();
+    g_hull_discharges.clear();
+    g_cloak_ships.clear();
+    g_subsystem_pins.clear();
+    g_debug_cylinders.clear();
+    g_debug_boxes.clear();
+    g_debug_spheres.clear();
+    g_debug_cones.clear();
+
+    // Ship Property Viewer state. g_hologram_only_mode is the worst of these
+    // to leak: it makes frame() skip the entire space scene and bridge pass.
+    g_spv_overlay_beams.clear();
+    g_hologram_ship = renderer::HologramShip{};
+    g_hologram_only_mode = false;
+    g_spv_hull_mode = false;
+    g_transform_gizmo.length = 0.0f;   // hidden until Python sets a gizmo
+
+    g_target_reticle = renderer::TargetReticle{};
+    g_starmap_scene = renderer::StarMapScene{};
+
+    // Motion blur reprojects against the previous exterior frame's viewproj.
+    // Left set, frame 1 of a new session smears against the OLD camera.
+    g_have_prev_viewproj = false;
+
+    // Rising/falling-edge maps: a stale entry reports a phantom key/button
+    // release on the first frame of the next session.
+    g_prev_key_state.clear();
+    g_prev_mouse_state.clear();
+
+    // g_covered (native/src/renderer/letterbox_pass.cc) is a TU-static, not
+    // owned by this file, and _pump_letterbox re-establishes it from Python
+    // state every frame before r.frame() runs -- but letterbox_set() is a
+    // binding like any other and can be called with the host down, so zero it
+    // here with the rest.
+    renderer::letterbox::set_covered(0.0f);
+}
+
 void init(int width, int height, const std::string& title) {
     if (g_window) {
         throw std::runtime_error("_dauntless_host: init called while host already initialized");
@@ -493,51 +576,14 @@ void init(int width, int height, const std::string& title) {
     renderer::reset_model_radius_cache();
     g_bridge_node_anims.clear();
     g_bridge_node_ids.clear();
-    g_lighting = renderer::Lighting{};
-    g_bridge_lighting = renderer::Lighting{};
-    g_bridge_ambient_scale = 1.0f;
-    g_bridge_pass_enabled = false;
-    g_backdrops.clear();
-    g_sky_dirty = true;
+    // Everything frame() consumes and Python can push: see reset_frame_state().
+    reset_frame_state();
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
-    g_suns.clear();
-    g_dust_planets.clear();
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_nebula_pass = std::make_unique<renderer::NebulaPass>();
     g_nebula_volumetric_pass = std::make_unique<renderer::NebulaVolumetricPass>();
     g_nebula_godray_pass = std::make_unique<renderer::NebulaGodrayPass>();
-    g_nebula_godrays.clear();
-    g_nebulae.clear();
-    g_nebula_wake.clear();
-
-    // Per-frame descriptor lists. init() already resets the world, the model
-    // cache, lighting, backdrops, suns and the nebula family -- these twelve
-    // were simply missed, and every one of them is consumed by frame().
-    //
-    // A list left populated across an init is stale content rendered into what
-    // the next caller believes is a fresh scene. It surfaced as a test-isolation
-    // failure (tests/host/test_backdrops_integration's empty-backdrop row is
-    // asserted FLAT; it read 53 with no preceding tests, 63 after 39, and 77-94
-    // after 636 -- monotonic in how much leftover VFX had piled up), but the
-    // bug is not confined to tests: anything that re-inits the host inherits
-    // the previous scene's beams, torpedoes, lights and debris.
-    g_torpedoes.clear();
-    g_phaser_beams.clear();
-    g_tractor_beams.clear();
-    g_hit_vfx.clear();
-    g_shockwaves.clear();
-    g_particle_emitters.clear();
-    g_dynamic_lights.clear();
-    g_lens_flares.clear();
-    g_hull_discharges.clear();
-    g_cloak_ships.clear();
-    g_subsystem_pins.clear();
-    g_debug_cylinders.clear();
-    g_debug_boxes.clear();
-    g_debug_spheres.clear();
-    g_debug_cones.clear();
-
     g_shockwave_pass = std::make_unique<renderer::ShockwavePass>();
     g_shield_pass = std::make_unique<renderer::ShieldPass>();
     g_lens_flare_pass = std::make_unique<renderer::LensFlarePass>();
@@ -556,7 +602,6 @@ void init(int width, int height, const std::string& title) {
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
     g_debug_volume_pass   = std::make_unique<renderer::DebugVolumePass>();
     g_gizmo_pass          = std::make_unique<renderer::GizmoPass>();
-    g_transform_gizmo.length = 0.0f;   // hidden until Python calls set_transform_gizmo
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_starmap_pass        = std::make_unique<renderer::StarMapPass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
@@ -597,59 +642,30 @@ void shutdown() {
     g_bridge_node_ids.clear();
     g_cache.reset();
     g_world = scenegraph::World{};
-    g_backdrops.clear();
-    g_sky_dirty = true;
     g_backdrop_pass.reset();  // releases sphere + texture caches while the
                               // GL context is still alive.
-    g_suns.clear();
-    g_dust_planets.clear();
     g_sun_pass.reset();
     g_dust_pass.reset();
     g_nebula_pass.reset();
     g_nebula_volumetric_pass.reset();
     g_nebula_godray_pass.reset();
-    g_nebula_godrays.clear();
-    g_nebulae.clear();
-    g_nebula_wake.clear();
     g_shield_pass.reset();
-    g_lens_flares.clear();
     g_lens_flare_pass.reset();
-    g_torpedoes.clear();
     g_torpedo_pass.reset();
-    g_dynamic_lights.clear();
-    g_shockwaves.clear();
     g_shockwave_pass.reset();
-    g_hit_vfx.clear();
     g_hit_vfx_pass.reset();
-    g_hull_discharges.clear();
     g_hull_discharge_pass.reset();
     g_nebula_wake_pass.reset();
-    g_particle_emitters.clear();
     g_particle_pass.reset();
-    g_phaser_beams.clear();
-    g_tractor_beams.clear();
-    g_spv_overlay_beams.clear();
     g_phaser_pass.reset();
-    g_subsystem_pins.clear();
-    g_hologram_ship = renderer::HologramShip{};
-    g_hologram_only_mode = false;
-    g_spv_hull_mode = false;
     g_hologram_pass.reset();
-    g_cloak_ships.clear();
     g_cloak_pass.reset();
     g_breach_pass.reset();   // releases the sphere mesh + fill textures while the GL context lives
     g_carve_cache.reset();   // releases the carved-fill 3D textures (GL alive)
     g_subsystem_pin_pass.reset();
-    g_debug_cylinders.clear();
-    g_debug_boxes.clear();
-    g_debug_spheres.clear();
-    g_debug_cones.clear();
     g_debug_volume_pass.reset();
-    g_transform_gizmo.length = 0.0f;
     g_gizmo_pass.reset();
-    g_target_reticle = renderer::TargetReticle{};
     g_target_reticle_pass.reset();
-    g_starmap_scene = renderer::StarMapScene{};
     g_starmap_pass.reset();
     g_bridge_pass.reset();
     g_viewscreen_static_pass.reset();
@@ -657,7 +673,6 @@ void shutdown() {
     g_nonfinite_probe.reset();
     g_lens_flare_hdr_pass.reset();
     g_motion_blur_pass.reset();
-    g_have_prev_viewproj = false;
     g_smaa_pass.reset();
     g_filmic_pass.reset();
     g_ldr_target2.reset();
@@ -667,24 +682,10 @@ void shutdown() {
     g_viewscreen_hdr.reset();
     g_shadow_target.reset();
     g_window.reset();
-    g_prev_key_state.clear();
-    g_prev_mouse_state.clear();
-    // Mirror init()'s lighting reset for symmetry and defense-in-depth:
-    // any future code path that reads g_lighting between shutdown() and a
-    // subsequent init() will see the documented default, not stale state
-    // from the previous session.
-    g_lighting = renderer::Lighting{};
-    g_bridge_lighting = renderer::Lighting{};
-    g_bridge_ambient_scale = 1.0f;
-    g_bridge_pass_enabled = false;
-    g_viewscreen_enabled = false;
-    // g_covered (native/src/renderer/letterbox_pass.cc) is a TU-static, not
-    // owned by this file, but it is re-established from Python state every
-    // frame by _pump_letterbox before r.frame() runs (see the comment on
-    // g_covered itself) -- zero it defensively anyway for symmetry with the
-    // other flag resets above, in case a future caller ever reads
-    // renderer::letterbox::covered() between shutdown() and the next init().
-    renderer::letterbox::set_covered(0.0f);
+    // Every descriptor list, flag and cached matrix frame() consumes. Shared
+    // with init() so the two ends cannot drift -- see reset_frame_state(). It
+    // is pure CPU state, so it is safe here, after the GL context is gone.
+    reset_frame_state();
 }
 
 bool should_close() {
@@ -1479,6 +1480,54 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("width"), py::arg("height"), py::arg("title"),
           "Open a window and initialise the renderer.");
     m.def("shutdown", &shutdown);
+
+    // Introspection for tests/host/test_init_resets_frame_state.py: everything
+    // reset_frame_state() clears, reduced to a count or a flag. Deliberately
+    // read-only and deliberately covering EVERY member of that function -- the
+    // test asserts the key set, so dropping one here fails loudly rather than
+    // quietly shrinking the coverage. Safe with the host down; touches no GL.
+    m.def("frame_state_debug",
+          []() {
+              py::dict d;
+              d["phaser_beams"]       = g_phaser_beams.size();
+              d["tractor_beams"]      = g_tractor_beams.size();
+              d["spv_overlay_beams"]  = g_spv_overlay_beams.size();
+              d["torpedoes"]          = g_torpedoes.size();
+              d["hit_vfx"]            = g_hit_vfx.size();
+              d["shockwaves"]         = g_shockwaves.size();
+              d["particle_emitters"]  = g_particle_emitters.size();
+              d["dynamic_lights"]     = g_dynamic_lights.size();
+              d["lens_flares"]        = g_lens_flares.size();
+              d["hull_discharges"]    = g_hull_discharges.size();
+              d["cloak_ships"]        = g_cloak_ships.size();
+              d["subsystem_pins"]     = g_subsystem_pins.size();
+              d["debug_cylinders"]    = g_debug_cylinders.size();
+              d["debug_boxes"]        = g_debug_boxes.size();
+              d["debug_spheres"]      = g_debug_spheres.size();
+              d["debug_cones"]        = g_debug_cones.size();
+              d["backdrops"]          = g_backdrops.size();
+              d["suns"]               = g_suns.size();
+              d["dust_planets"]       = g_dust_planets.size();
+              d["nebulae"]            = g_nebulae.size();
+              d["nebula_wake"]        = g_nebula_wake.size();
+              d["nebula_godrays"]     = g_nebula_godrays.size();
+              d["hologram_ship_active"]   = g_hologram_ship.active;
+              d["hologram_only_mode"]     = g_hologram_only_mode;
+              d["spv_hull_mode"]          = g_spv_hull_mode;
+              d["target_reticle_visible"] = g_target_reticle.visible;
+              d["starmap_enabled"]        = g_starmap_scene.enabled;
+              d["viewscreen_enabled"]     = g_viewscreen_enabled;
+              d["bridge_pass_enabled"]    = g_bridge_pass_enabled;
+              d["transform_gizmo_length"] = g_transform_gizmo.length;
+              d["have_prev_viewproj"]     = g_have_prev_viewproj;
+              d["letterbox_covered"]      = renderer::letterbox::covered();
+              d["sky_dirty"]              = g_sky_dirty;
+              d["prev_input_edges"]       = g_prev_key_state.size()
+                                          + g_prev_mouse_state.size();
+              return d;
+          },
+          "Test-only snapshot of the per-frame state reset_frame_state() owns: "
+          "list lengths and flag values. Never call this from game code.");
     m.def("should_close", &should_close);
     m.def("frame", &frame);
     m.def("load_model", &load_model_impl,

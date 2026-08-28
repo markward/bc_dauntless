@@ -26,6 +26,14 @@ class PanelRegistry:
         # WALL clock, not game time. A throttled panel should keep its cadence
         # while the sim is paused or frozen (DevTools, pause menu) -- the UI is
         # still interactive there. Injectable so tests can drive it.
+        #
+        # Consequence, accepted: TargetListView justifies its 0.5 s interval by
+        # matching subsystems.SHIELD_CHARGE_PERIOD_S, but that period is
+        # accumulated from GAME dt, so the two decouple under a time scale (Q3
+        # measured BC's game clock at 0.204x in slow motion -- see CLAUDE.md).
+        # The mismatch only ever runs one way in practice: a slowed sim ticks
+        # shields SLOWER than wall clock, so this over-polls rather than
+        # missing a change. Over-polling costs frame time and nothing else.
         self._clock = clock if clock is not None else time.monotonic
         self._next_poll: dict = {}
 
@@ -37,21 +45,30 @@ class PanelRegistry:
     def render_all(self) -> List[str]:
         """Poll every panel that is due and collect the JS each emits.
 
-        A panel with poll_interval_s == 0 (the default) is polled every frame.
-        A panel with a positive interval is polled on that cadence UNLESS it is
-        marked due -- by invalidate(), by a visibility flip, or by having just
-        handled an event -- in which case it renders on the next frame so
-        interaction never lags behind the throttle.
+        Three gates, in order:
+
+        * DUE -- marked by invalidate(), by a visibility flip, or by having
+          just handled an event. A due panel always renders on the next frame,
+          bypassing both gates below, so interaction never lags.
+        * HIDDEN -- a panel that is not visible is not polled at all. Safe by
+          construction: the flip TO hidden marks the panel due, so the payload
+          that tells JS to hide still goes out, and the flip back to visible
+          marks it due again. This is the bigger win of the two -- the target
+          list is off screen for the whole of bridge view, every cutscene, and
+          the whole time the Ship Property Viewer is open.
+        * INTERVAL -- poll_interval_s == 0 (the default) means every frame; a
+          positive value means at most that often.
         """
         now = self._clock()
         out: List[str] = []
         for p in self._panels:
             interval = p.poll_interval_s
-            if interval > 0.0:
-                if p._render_due:
-                    p._render_due = False
-                elif now < self._next_poll.get(p.name, 0.0):
+            if not p.consume_due():
+                if not p.visible:
                     continue
+                if interval > 0.0 and now < self._next_poll.get(p.name, 0.0):
+                    continue
+            if interval > 0.0:
                 self._next_poll[p.name] = now + interval
             # Per-panel scope: render_all is a thin loop, so a single timing
             # around it says only "the UI is expensive". Each panel has to
@@ -80,7 +97,7 @@ class PanelRegistry:
                     # poll -- a throttled panel would otherwise feel like it
                     # ignored the input for up to its whole interval.
                     if handled:
-                        p._render_due = True
+                        p.mark_due()
                     return handled
             return False
         if self._legacy is not None:
@@ -97,11 +114,9 @@ class PanelRegistry:
         state has changed since the last tick.
         """
         for p in self._panels:
-            # Set the flag HERE rather than relying on the subclass calling
+            # Mark due HERE rather than relying on the subclass calling
             # super().invalidate(). Most overrides in this package do not, and
-            # they are correct not to today -- the flag is only consulted for a
-            # panel with a positive poll_interval_s. Setting it here means
-            # giving any existing panel an interval later cannot silently break
-            # its invalidate path.
-            p._render_due = True
+            # marking here means neither the poll interval nor the hidden-panel
+            # skip can swallow an invalidate for a panel whose override forgot.
+            p.mark_due()
             p.invalidate()

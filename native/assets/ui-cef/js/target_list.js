@@ -116,10 +116,11 @@ function setTargetList(state) {
         // has_subsystems is authoritative: a COLLAPSED row ships an empty
         // `subsystems` array (the tree is only built when it will be drawn),
         // so its length says nothing about whether a caret is warranted.
-        // The length fallback keeps older payloads working.
-        const hasSubsystems = (row.has_subsystems !== undefined)
-            ? !!row.has_subsystems
-            : (Array.isArray(row.subsystems) && row.subsystems.length > 0);
+        // No `subsystems.length` fallback: this file and the Python that
+        // builds the payload ship in the same binary, so a row without the key
+        // cannot exist (render_payload emits it unconditionally). A fallback
+        // here would be dead code that reads as version-skew defence.
+        const hasSubsystems = !!row.has_subsystems;
         const caretGlyph = expanded ? '&#9662;' : '&#9656;';  // ▾ / ▸
         const caretHtml = hasSubsystems
             ? '<span class="target-list__caret"'

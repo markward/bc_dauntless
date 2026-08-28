@@ -171,6 +171,147 @@ def test_throttling_one_panel_does_not_throttle_its_neighbours(clock):
 
 def test_the_target_list_is_the_panel_that_is_throttled():
     """Pins the intent: this exists for one measured panel, not as a blanket
-    policy. If another panel takes an interval, that should be deliberate."""
-    from engine.ui.target_list_view import TARGET_LIST_POLL_S
+    policy. If another panel takes an interval, that should be deliberate.
+
+    Asserts the INSTANCE property, which is what PanelRegistry.render_all
+    actually reads. Asserting only the module constant let the property be
+    rewritten to return a literal (or 0.0) with the test still green.
+    """
+    from engine.ui.target_list_view import TargetListView, TARGET_LIST_POLL_S
     assert TARGET_LIST_POLL_S == 0.5
+    assert TargetListView().poll_interval_s == 0.5
+
+
+# ── Hidden panels are not polled ────────────────────────────────────────────
+#
+# The throttle caps the target list at 2 Hz; this removes the poll entirely
+# while the panel is off screen (bridge view, cutscene, Ship Property Viewer),
+# which is the larger win. It is safe by construction: the `visible` setter
+# marks the panel due on a FLIP, so the hide itself still emits one payload
+# (the JS needs to be told to hide) and the un-hide renders on the next frame.
+
+
+def test_a_hidden_panel_is_not_polled(clock):
+    p = _CountingPanel("plain")               # interval 0: normally every frame
+    reg = _registry(clock, p)
+    reg.render_all()
+    assert p.polls == 1
+
+    p.visible = False
+    reg.render_all()
+    assert p.polls == 2, "the hide itself must emit — JS has to be told"
+
+    for _ in range(30):
+        clock.advance(1 / 60.0)
+        reg.render_all()
+    assert p.polls == 2, "a hidden panel was still polled"
+
+
+def test_a_hidden_throttled_panel_is_not_polled(clock):
+    p = _CountingPanel("slow", interval=0.5)
+    reg = _registry(clock, p)
+    reg.render_all()
+    p.visible = False
+    reg.render_all()
+    baseline = p.polls
+    for _ in range(180):                      # 3 s — six intervals
+        clock.advance(1 / 60.0)
+        reg.render_all()
+    assert p.polls == baseline, "a hidden panel kept paying its 2 Hz poll"
+
+
+def test_a_panel_renders_immediately_when_it_becomes_visible_again(clock):
+    p = _CountingPanel("slow", interval=0.5)
+    reg = _registry(clock, p)
+    reg.render_all()
+    p.visible = False
+    reg.render_all()
+    for _ in range(180):
+        clock.advance(1 / 60.0)
+        reg.render_all()
+    hidden_polls = p.polls
+
+    p.visible = True
+    reg.render_all()
+    assert p.polls == hidden_polls + 1, (
+        "un-hiding waited for the poll interval instead of the next frame")
+
+
+def test_mark_due_is_public_surface_and_forces_the_next_poll(clock):
+    """The host loop invalidates the target list on a target change. That has
+    to be a supported call, not a poke at Panel._render_due."""
+    p = _CountingPanel("slow", interval=0.5)
+    reg = _registry(clock, p)
+    reg.render_all()
+    clock.advance(1 / 60.0)
+    reg.render_all()
+    assert p.polls == 1
+
+    p.mark_due()
+    clock.advance(1 / 60.0)
+    reg.render_all()
+    assert p.polls == 2
+
+
+# ── The real panel, through the real registry ──────────────────────────────
+
+
+def _target_list_fixture():
+    """Minimal live game + target menu so a real TargetListView can render."""
+    import App
+    from engine.appc.ships import ShipClass
+    from engine.core.game import Game, Episode, Mission, _set_current_game
+
+    App._reset_target_menu_singleton()
+    App.STTargetMenu_CreateW("Targets")
+    mission = Mission()
+    episode = Episode()
+    episode.SetCurrentMission(mission)
+    game = Game()
+    game.SetCurrentEpisode(episode)
+    player = ShipClass()
+    player.SetName("Player")
+    game.SetPlayer(player)
+    _set_current_game(game)
+    return game, player
+
+
+def test_the_real_target_list_view_is_throttled_through_the_registry(clock):
+    """Every other target-list test calls render_payload() directly, so the
+    throttle was only ever exercised against a synthetic panel. Drive the real
+    class through the real registry."""
+    from engine.core.game import _set_current_game
+    from engine.ui.target_list_view import TargetListView
+
+    _target_list_fixture()
+    try:
+        view = TargetListView()
+        polls = []
+        inner = view.render_payload
+
+        def _counting():
+            polls.append(1)
+            return inner()
+
+        view.render_payload = _counting        # instance attr; class untouched
+
+        reg = PanelRegistry(clock=clock)
+        reg.register(view)
+
+        first = reg.render_all()
+        assert first and first[0].startswith("setTargetList(")
+        for _ in range(180):                   # 3 s at 60 fps
+            clock.advance(1 / 60.0)
+            reg.render_all()
+        assert 6 <= len(polls) <= 8, len(polls)
+
+        # ...and it stops entirely when the panel goes off screen.
+        view.visible = False
+        reg.render_all()
+        hidden = len(polls)
+        for _ in range(180):
+            clock.advance(1 / 60.0)
+            reg.render_all()
+        assert len(polls) == hidden
+    finally:
+        _set_current_game(None)

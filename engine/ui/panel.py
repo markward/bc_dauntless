@@ -48,7 +48,7 @@ class Panel(ABC):
         # the throttle would do nothing. Without this, switching from tactical
         # to bridge view would leave the HUD on screen for up to one interval.
         if value != self._visible:
-            self._render_due = True
+            self.mark_due()
         self._visible = value
 
     @property
@@ -75,13 +75,36 @@ class Panel(ABC):
     def dispatch_event(self, action: str) -> bool:
         """Handle a JS-originated event. Return True if handled."""
 
+    def mark_due(self) -> None:
+        """Force the next ``PanelRegistry.render_all`` to poll this panel.
+
+        The supported way to say "render me now" from outside: it bypasses
+        both the poll interval and the hidden-panel skip for exactly one
+        frame. Used by the registry (dispatched events, invalidate_all), by
+        the ``visible`` setter, and by any caller that mutates state the panel
+        reflects (the host loop invalidates the target list on a target
+        change). Prefer this over touching ``_render_due``.
+        """
+        self._render_due = True
+
+    def consume_due(self) -> bool:
+        """Return whether the panel is marked due, clearing the mark.
+
+        Registry-facing: exactly one caller may consume the mark per frame,
+        which is why this both reads and clears.
+        """
+        due = self._render_due
+        self._render_due = False
+        return due
+
     def invalidate(self) -> None:
         """Drop any cached state so the next render_payload re-emits.
 
         Subclasses with snapshot caches (e.g. TargetListView) override this
-        and MUST call ``super().invalidate()`` -- the base marks the panel due,
-        which is what lets a throttled panel bypass its interval. Wired by
+        and MUST call ``super().invalidate()`` -- the base marks the panel due
+        (see ``mark_due``), which is what lets a throttled panel bypass its
+        interval. Wired by
         PanelRegistry.invalidate_all, which the host loop calls when the CEF
         page finishes loading so the first post-load emit is guaranteed to land.
         """
-        self._render_due = True
+        self.mark_due()
