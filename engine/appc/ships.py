@@ -1,6 +1,6 @@
 from engine.appc.objects import DamageableObject
 from engine.appc.math import TGPoint3
-from engine.appc.subsystems import PoweredSubsystem
+from engine.appc.subsystems import PoweredSubsystem, impulse_output_fraction
 import engine.dev_mode as dev_mode
 
 
@@ -511,7 +511,12 @@ class ShipClass(DamageableObject):
         # Bit-exact: same operands, same single multiply, and nothing between
         # the reads can change the fraction.
         if ies is not None:
-            from engine.appc.subsystems import impulse_output_fraction
+            # impulse_output_fraction is imported at MODULE scope (line 3,
+            # alongside PoweredSubsystem -- subsystems imports nothing from
+            # here, so there is no cycle). A `from ... import` inside this
+            # branch was a sys.modules lookup plus an attribute fetch on every
+            # turning ship every AI tick, the same pattern this branch deleted
+            # from subsystems._is_offline.
             _imp_f = impulse_output_fraction(ies)
             max_aa = ies.GetAuthoredMaxAngularAccel() * _imp_f
             max_av_live = ies.GetAuthoredMaxAngularVelocity() * _imp_f

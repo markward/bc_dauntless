@@ -893,7 +893,13 @@ def bubble_bound_radius(ship) -> float:
     try:
         radius = float(ship.GetRadius())
     except Exception:
-        radius = 0.0
+        # INFINITY, not 0.0. This bound is only ever used to REJECT a pair, so
+        # the safe failure direction is "never reject". A 0.0 fallback culls
+        # this ship against every projectile in the scene, silently, without
+        # the narrow test ever being asked -- the exact under-estimate this
+        # function's contract forbids. Infinity degrades to the pre-broadphase
+        # behaviour (every pair goes to the narrow test) for that one ship.
+        radius = float("inf")
 
     box = _hull_box_for(ship)
     if box is None:

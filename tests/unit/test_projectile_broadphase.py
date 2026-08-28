@@ -66,10 +66,80 @@ def test_bound_without_a_cached_box_is_still_conservative(monkeypatch):
 
 
 def test_bound_survives_a_ship_that_cannot_report_a_radius(monkeypatch):
-    """Called inside a combat tick; a fake or half-built ship must not raise."""
+    """Called inside a combat tick; a fake or half-built ship must not raise.
+
+    And the fallback must be INFINITE, not zero. A bound is only ever used to
+    REJECT a pair, so the safe failure direction is "never reject": a zero
+    bound culls the ship against every torpedo in the scene, silently, with no
+    narrow test ever asked. `radius = 0.0` was the exactly-wrong default for a
+    quantity whose docstring says it must never under-estimate.
+    """
     class _Broken:
         def GetRadius(self):
             raise RuntimeError("no radius")
 
     monkeypatch.setattr(combat, "_hull_box_for", lambda s: None)
-    assert combat.bubble_bound_radius(_Broken()) >= 0.0
+    assert combat.bubble_bound_radius(_Broken()) == float("inf")
+
+
+def test_unreadable_radius_still_bounds_when_a_box_exists(monkeypatch):
+    """The box branch must not quietly re-introduce a finite bound: max() with
+    an infinite radius is still infinite, so the pair is never culled."""
+    class _Broken:
+        def GetRadius(self):
+            raise RuntimeError("no radius")
+
+    monkeypatch.setattr(combat, "_hull_box_for",
+                        lambda s: ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)))
+    assert combat.bubble_bound_radius(_Broken()) == float("inf")
+
+
+def test_an_infinite_bound_never_culls_in_the_broadphase():
+    """End-to-end on the arithmetic the broadphase actually runs: an infinite
+    bound makes `reach * reach` infinite, so no finite separation rejects."""
+    bound = float("inf")
+    seg_len = 3.0
+    reach = bound + seg_len
+    for d in (0.0, 1.0, 1e6, 1e30):
+        assert not (d * d > reach * reach)
+
+
+class _CountingShip:
+    """Records every query update_all makes of it."""
+
+    def __init__(self):
+        self.calls = []
+
+    def IsDead(self):
+        self.calls.append("IsDead")
+        return False
+
+    def GetWorldLocation(self):
+        self.calls.append("GetWorldLocation")
+        from engine.appc.math import TGPoint3
+        return TGPoint3(0.0, 0.0, 0.0)
+
+    def GetRadius(self):
+        self.calls.append("GetRadius")
+        return 1.0
+
+    def GetScale(self):
+        self.calls.append("GetScale")
+        return 1.0
+
+
+def test_idle_scene_does_not_build_the_per_ship_cache():
+    """With nothing in flight the per-ship cache has no reader, so building it
+    is pure waste — and it is not cheap: per ship it is IsDead +
+    GetWorldLocation + bubble_bound_radius (which itself reaches GetScale and
+    GetRadius). At 100 ships that is ~500 subsystem-layer calls a tick, every
+    tick, in an engine whose whole point here was to cut that number.
+    """
+    from engine.appc import projectiles
+
+    assert not projectiles._active, "test needs an empty in-flight registry"
+    ships = [_CountingShip() for _ in range(4)]
+    hits = projectiles.update_all(1.0 / 60.0, ships)
+
+    assert hits == []
+    assert all(s.calls == [] for s in ships), [s.calls for s in ships]

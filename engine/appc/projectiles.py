@@ -307,6 +307,14 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     hits: list[tuple] = []
     expired: list[Torpedo] = []
 
+    # Nothing in flight => the per-ship cache below has no reader. Building it
+    # anyway costs N x (IsDead + GetWorldLocation + bubble_bound_radius, which
+    # itself reaches GetScale + GetRadius) -- roughly 500 calls a tick at 100
+    # ships, every tick of an idle scene, for a list nothing reads. Bail before
+    # the walk, not after it.
+    if not _active:
+        return hits
+
     # Per-ship values resolved ONCE per call, not once per (torpedo, ship)
     # pair. Position, the broadphase bound and liveness depend only on the
     # ship, and nothing inside this function moves a ship or kills one --

@@ -64,3 +64,66 @@ def test_inlined_draw_matches_the_original_for_every_mode():
         n += 1
     print("compared", n, "cases")
     assert n == 5120, n
+
+
+# ── _pump_consumers: the _power_wanted inline vs a real getter override ──────
+#
+# _pump_consumers sums `consumer._power_wanted` rather than calling
+# GetPowerWanted(), on the reasoning that the getter is a bare
+# `return self._power_wanted` that _update_power wrote a line earlier. That is
+# true of PoweredSubsystem -- and NOT of PowerSubsystem, whose GetPowerWanted
+# returns _power_wanted_total, a different field entirely. PowerSubsystem
+# derives from ShipSubsystem, not PoweredSubsystem, so ships.AddPoweredConsumer
+# can never register one and the inline is safe TODAY. The hazard is that it
+# turns "a consumer that overrides the getter" from a working case into a
+# silently wrong total, with nothing in the code saying so.
+
+from engine.appc.subsystems import PoweredSubsystem, PowerSubsystem
+
+
+class _OverridingConsumer(PoweredSubsystem):
+    """A consumer whose published demand is NOT its own _power_wanted -- the
+    shape PowerSubsystem already has."""
+
+    def __init__(self, name=""):
+        super().__init__(name)
+        self._declared = 0.0
+
+    def GetPowerWanted(self):
+        return self._declared
+
+    def _update_power(self, dt, source):
+        self._power_wanted = 999.0      # the raw field: deliberately wrong
+        self._declared = 7.0            # what the getter publishes
+
+
+class _Ship:
+    def __init__(self, consumers):
+        self._powered_consumers = list(consumers)
+
+
+def test_pump_consumers_honours_a_getter_override():
+    p = PowerSubsystem("P")
+    c = _OverridingConsumer("C")
+    p.GetParentShip = lambda: _Ship([c])
+
+    p._pump_consumers(1.0 / 60.0)
+
+    assert p.GetPowerWanted() == 7.0
+
+
+def test_pump_consumers_still_uses_the_fast_field_for_plain_consumers():
+    """The guard must not cost the common case its inline: a stock
+    PoweredSubsystem does not define GetPowerWanted, so the field is read
+    directly and the total still matches."""
+    p = PowerSubsystem("P")
+    a = PoweredSubsystem("A")
+    b = PoweredSubsystem("B")
+    a.SetNormalPowerPerSecond(100.0); a.TurnOn()
+    b.SetNormalPowerPerSecond(50.0);  b.TurnOn()
+    p.GetParentShip = lambda: _Ship([a, b])
+
+    p._pump_consumers(1.0 / 60.0)
+
+    assert p.GetPowerWanted() == a._power_wanted + b._power_wanted
+    assert p.GetPowerWanted() > 0.0

@@ -212,10 +212,11 @@ TEST(RayTraceInstance, RayFromInsideHullHitsAndNormalFacesRay) {
 
 // ── the per-model trace cache ───────────────────────────────────────────────
 //
-// ray_trace_instance caches the node-world chain and the model AABB on the
-// Model (Model::trace_cache_built), because rebuilding them per ray was 1.81 ms
-// of a 2.37 ms trace. Both are functions of the model's own geometry, so the
-// cache is only sound if NOTHING instance-dependent leaks into it.
+// ray_trace_instance bakes the model-space triangle soup, a BVH over it, and
+// the model AABB onto the Model (Model::trace_accel, filled by
+// ensure_trace_accel), because rebuilding them per ray was 1.81 ms of a
+// 2.37 ms trace. All are functions of the model's own geometry, so the cache
+// is only sound if NOTHING instance-dependent leaks into it.
 //
 // Every test above builds a FRESH model, so none of them traces one model
 // twice -- the entire cache-reuse path was uncovered, and a cache poisoned
@@ -277,7 +278,7 @@ TEST(RayTraceInstanceCache, CachedBoundStillCullsAMissAfterAHit) {
 
 TEST(RayTraceInstanceCache, CachedNodeChainStillAppliesNodeLocalTransforms) {
     // A two-level hierarchy: the child's translate must survive caching. If
-    // ensure_trace_cache built the chain wrongly (e.g. identity), the hit
+    // ensure_trace_accel built the chain wrongly (e.g. identity), the hit
     // would land at z=0 instead of z=10 -- and it would do so consistently,
     // so a single-call test could not tell the difference.
     assets::Model m;

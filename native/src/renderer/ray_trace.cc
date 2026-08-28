@@ -2,6 +2,7 @@
 #include "renderer/ray_trace.h"
 
 #include <algorithm>
+#include <cassert>
 #include <limits>
 #include <memory>
 #include <vector>
@@ -69,7 +70,31 @@ struct TraceAccel {
 
 constexpr int kLeafTriangles = 8;   // below this a linear test beats another split
 constexpr int kMaxBvhDepth   = 40;  // hard stop; degenerate geometry must not recurse forever
-constexpr int kTraversalStack = 64; // >= 2 * kMaxBvhDepth, so a push can never overflow
+
+/// Traversal stack depth. The bound is NOT `2 * kMaxBvhDepth` (that was the
+/// old comment here, and it was arithmetically false: 2 * 40 = 80 > 64 -- the
+/// array was safe, but not for the stated reason, and anyone raising the depth
+/// while trusting that line would have smashed the stack with no bounds check
+/// in sight).
+///
+/// The real bound comes from the push-2/pop-1 shape of the loop below. Let
+/// `s` be the stack size immediately AFTER popping a node at depth `d`.
+/// Induction: the root is popped at s = 0 = d. Processing an internal node
+/// pushes 2 (s+2) and immediately pops its LEFT child, at depth d+1 with
+/// s+1 <= (d+1); its RIGHT child is popped later, once everything deeper has
+/// drained, at exactly s <= d <= d+1. So s <= d always, and peak occupancy is
+/// s + 2 <= d + 2. build_bvh only creates internal nodes at depth
+/// <= kMaxBvhDepth - 1 (it makes a leaf at kMaxBvhDepth), so the peak is
+/// kMaxBvhDepth + 1.
+///
+/// Static-asserted rather than merely written down, so raising kMaxBvhDepth
+/// past this array fails the build instead of corrupting the stack. (Real
+/// depth with the median split is ~12; the headroom is for pathological
+/// geometry.)
+constexpr int kTraversalStack = 64;
+static_assert(kTraversalStack >= kMaxBvhDepth + 1,
+              "traversal stack must hold peak occupancy kMaxBvhDepth + 1 "
+              "(push-2/pop-1 gives net +1 per level)");
 
 // Mirrors aabb.cc's node-world walk; keep in sync.
 std::vector<glm::mat4> build_node_world(const assets::Model& model) {
@@ -150,10 +175,14 @@ int build_bvh(std::vector<TraceTri>& tris, std::vector<BvhNode>& nodes,
 
 /// Build the model's acceleration structure on first use.
 ///
-/// Valid for the model's whole lifetime with no invalidation path, because
-/// there is no input that can change: node.local_transform is static asset
-/// data and the skinning path does not write it. If an animated node is ever
-/// introduced, THIS is the cache that has to learn to invalidate.
+/// Valid for the model's whole lifetime with no invalidation path. Node
+/// animation is NOT the risk: node_anim.cc only reads node.local_transform and
+/// publishes its results through a separate override map, so an animated node
+/// cannot stale this. The two in-place mutators of the real inputs are
+/// tessellate_model_in_place and Mesh::set_cpu_data, and both run only during
+/// model construction, before the Model is published to anything that could
+/// trace it. See assets/model.h (Model::trace_accel) for the full argument
+/// and the threading caveat.
 const TraceAccel& ensure_trace_accel(const assets::Model& model) {
     if (model.trace_accel) {
         return *static_cast<const TraceAccel*>(model.trace_accel.get());
@@ -231,12 +260,34 @@ bool segment_hits_sphere(glm::vec3 origin, glm::vec3 direction, float max_dist,
 /// Ray-vs-AABB slab test.
 ///
 /// inv_dir may hold infinities for an axis-aligned ray; the min/max ordering
-/// handles those. A 0*inf NaN can only arise when the origin lies exactly on a
-/// slab plane, and a NaN comparison here yields `false` -- a conservative
-/// MISS. That is the one direction that could drop a real hit, so the sphere
-/// test above (which has no such degeneracy) still runs first and the leaf
-/// triangles are still tested exactly; the window is a measure-zero ray that
-/// grazes a box plane, where the triangle test is the authority anyway.
+/// handles those. A 0*inf NaN arises only when the direction is EXACTLY
+/// axis-parallel on some axis `a` (inv_dir[a] = +/-inf) AND o[a] equals that
+/// box's lo[a] or hi[a] bit-for-bit, making one of t0[a] / t1[a] NaN.
+///
+/// What happens then is operand-order dependent, not "NaN propagates":
+/// glm::min(x, y) is `(y < x) ? y : x` and std::max(a, b) is `(a < b) ? b : a`,
+/// and every comparison against NaN is false.
+///   * a == y or a == z: the NaN lands in the DROPPED slot of the outer
+///     std::max / std::min, so that slab is simply ignored. Conservative --
+///     a false HIT, costing one extra subtree walk.
+///   * a == x: tsmall.x / tbig.x are the FIRST operands, so tmin and tmax both
+///     come back NaN and `tmin <= tmax` is false. That is a false MISS.
+///
+/// A false miss here is NOT covered by the whole-model sphere test above --
+/// that test gates the trace as a whole and says nothing about any individual
+/// box. If the NaN lands on an INTERIOR node, the node's entire subtree is
+/// skipped and its leaves are never handed to intersect_triangle at all. The
+/// real hit is genuinely dropped.
+///
+/// It is still acceptable, but on the input side rather than the algorithmic
+/// one: it needs an exactly axis-parallel local direction together with an
+/// origin whose x coordinate is bit-identical to a BVH box plane. Ship
+/// positions and aim directions are float quantities off a physics
+/// integrator, so neither condition holds in practice, and both must hold at
+/// once. If a future caller traces along a synthetic, exactly axis-aligned
+/// ray from a lattice origin (a test fixture, a grid probe), this is where to
+/// look -- the cure is an explicit isnan guard on tsmall.x / tbig.x, paid for
+/// in the hot loop.
 bool slab_hit(const BvhNode& n, const glm::vec3& o, const glm::vec3& inv_dir,
               float t_max) {
     const glm::vec3 t0 = (n.lo - o) * inv_dir;
@@ -307,9 +358,14 @@ std::optional<RayHit> ray_trace_instance(
                 best_tri = i;
             }
         } else {
-            // Net stack growth is +1 per level (push 2, pop 1), so depth is
-            // bounded by kMaxBvhDepth and kTraversalStack cannot overflow.
+            // Net stack growth is +1 per level (push 2, pop 1), so peak
+            // occupancy is kMaxBvhDepth + 1 -- see kTraversalStack for the
+            // induction. `stack` is a raw array with no bounds check, so the
+            // invariant is asserted at the two places that can violate it
+            // rather than only argued for in a comment.
+            assert(sp + 2 <= kTraversalStack && "BVH traversal stack overflow");
             stack[sp++] = n.right;
+            assert(sp < kTraversalStack && "BVH traversal stack overflow");
             stack[sp++] = ni + 1;
         }
     }

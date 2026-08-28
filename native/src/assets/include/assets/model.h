@@ -94,6 +94,31 @@ struct Model {
     /// new allocation would otherwise be served the previous model's geometry
     /// -- a wrong-hit-point bug that presents as a physics glitch, not a crash.
     ///
+    /// INVALIDATION. There is no invalidation path, and the two inputs that
+    /// could need one are NOT node animation. Node animation leaves
+    /// `nodes[].local_transform` alone -- renderer/node_anim.cc only READS it
+    /// and publishes its results through a separate node_index -> transform
+    /// override map (renderer/bridge_node_anim_store.h), which this cache
+    /// never consults and which therefore cannot stale it. The two things that
+    /// do mutate the cache's actual inputs IN PLACE are:
+    ///   * assets::tessellate_model_in_place (assets/src/tessellate.cc) --
+    ///     rewrites every mesh's vertices and indices;
+    ///   * Mesh::set_cpu_data (assets/include/assets/mesh.h), called from
+    ///     tessellate.cc, model_build.cc and model_compose.cc -- replaces a
+    ///     mesh's CPU geometry wholesale.
+    /// Both run strictly during model CONSTRUCTION -- build_model
+    /// (model_build.cc) and compose_officer_model (model_compose.cc) -- i.e.
+    /// before the finished Model is published and before any trace can reach
+    /// it. That ordering, not any property of the geometry, is what makes the
+    /// cache sound. If either mutator ever runs on a live, already-published
+    /// model, THIS is what has to be reset (assign a null shared_ptr; the next
+    /// trace rebuilds).
+    ///
+    /// THREADING. `mutable` + lazy assignment from a `const` method means two
+    /// threads tracing the same model concurrently would both build and both
+    /// write this shared_ptr -- a data race. Tracing is single-threaded today;
+    /// making it parallel requires a call_once / atomic here first.
+    ///
     /// Opaque (`void`) because the BVH layout is a renderer concern and assets
     /// must not depend on renderer headers; renderer/ray_trace.cc owns the
     /// concrete type and does the cast. shared_ptr, so the lifetime is the

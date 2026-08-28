@@ -29,6 +29,12 @@ from dataclasses import dataclass
 
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import PhysicsObjectClass
+# Module scope, NOT a per-call `from ... import` inside the integrator: both
+# names are read once per ship per tick, and subsystems imports nothing from
+# this module (nor from ships), so there is no cycle to break. Same fix as the
+# one applied to subsystems._is_offline, which was costing 115,279 importlib
+# lookups over 150 ticks at 100 ships.
+from engine.appc.subsystems import impulse_fractions, impulse_output_fraction
 from engine.core.ids import implements
 
 # Match _PlayerControl.FALLBACK_MAX_ACCEL in engine/host_loop.py:613.
@@ -72,7 +78,6 @@ def _effective_motion(ship, ies=None, imp_f=None) -> "_EffectiveMotion":
     keep flying under (zeroed) real limits, not fall through to the
     FALLBACK_MAX_ACCEL snap semantics meant for ships with no engines at all.
     """
-    from engine.appc.subsystems import impulse_output_fraction
     if ies is None:
         # Callers on the per-ship path already hold the subsystem and the
         # derating fraction; re-fetching both here is a second pod walk for an
@@ -192,7 +197,6 @@ def _step_ship_motion(ship, dt: float) -> None:
             world_dir = TGPoint3(direction.x, direction.y, direction.z)
         world_dir.Unitize()
 
-    from engine.appc.subsystems import impulse_fractions
     getter = getattr(ship, "GetImpulseEngineSubsystem", None)
     ies = getter() if getter is not None else None
     f, _imp_out_f = impulse_fractions(ies)
