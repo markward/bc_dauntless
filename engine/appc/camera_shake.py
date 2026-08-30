@@ -10,8 +10,8 @@ Waveform: sum of two incommensurate sinusoids per axis. Deterministic
 
 Tuning constants (spec §5.2):
     DAMAGE_PER_UNIT_ENERGY = 50.0     100 damage → 2.0 energy
-    MAX_KICK_ENERGY        = 4.0      single-hit ceiling
-    MAX_ENERGY             = 8.0      sustained-fire ceiling
+    MAX_KICK_ENERGY        = 0.5      single-hit ceiling
+    MAX_ENERGY             = 1.0      sustained-fire ceiling
     TAU                    = 0.15s    decay time constant
     ANGULAR_GAIN           = 0.013    rad per energy unit (~0.75°)
     LATERAL_GAIN           = 0.03     world units per energy unit
@@ -20,8 +20,13 @@ import math
 
 
 DAMAGE_PER_UNIT_ENERGY = 50.0
-MAX_KICK_ENERGY        = 4.0
-MAX_ENERGY             = 8.0
+# Ceilings cut to 1/8 of the original 2026-08-30 (three successive halvings,
+# tuned by feel). The gains below are unchanged; at a 0.5 kick cap, any hit
+# over 25 damage clamps, so in practice nearly every impact produces the same
+# amplitude and the damage→shake gradient is effectively flat. If the gradient
+# is wanted back, scale ANGULAR_GAIN/LATERAL_GAIN instead and restore these.
+MAX_KICK_ENERGY        = 0.5
+MAX_ENERGY             = 1.0
 TAU                    = 0.15
 ANGULAR_GAIN           = 0.013
 LATERAL_GAIN           = 0.03

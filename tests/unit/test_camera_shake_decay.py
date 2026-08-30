@@ -15,18 +15,20 @@ import pytest
 # ── energy decay ───────────────────────────────────────────────────────────
 
 def test_apply_kick_increases_energy():
+    """Sub-cap damage scales linearly. 10 damage is below MAX_KICK_ENERGY=0.5,
+    so this measures the DAMAGE_PER_UNIT_ENERGY ratio, not the clamp."""
     from engine.appc import camera_shake
     camera_shake.reset()
-    camera_shake.apply_kick(100.0)
-    assert camera_shake.get_energy() == pytest.approx(2.0)   # 100 / DAMAGE_PER_UNIT_ENERGY=50
+    camera_shake.apply_kick(10.0)
+    assert camera_shake.get_energy() == pytest.approx(0.2)   # 10 / DAMAGE_PER_UNIT_ENERGY=50
 
 
 def test_apply_kick_clamped_to_max_kick_energy():
-    """A single 10000-damage hit injects at most MAX_KICK_ENERGY = 4.0."""
+    """A single 10000-damage hit injects at most MAX_KICK_ENERGY = 0.5."""
     from engine.appc import camera_shake
     camera_shake.reset()
     camera_shake.apply_kick(10000.0)
-    assert camera_shake.get_energy() == pytest.approx(4.0)
+    assert camera_shake.get_energy() == pytest.approx(0.5)
 
 
 def test_zero_damage_apply_kick_is_noop():
@@ -69,8 +71,8 @@ def test_sustained_fire_clamped_to_max_energy():
     from engine.appc import camera_shake
     camera_shake.reset()
     for _ in range(100):
-        camera_shake.apply_kick(1000.0)   # each kick clamps to 4.0
-    assert camera_shake.get_energy() <= 8.0 + 1e-9   # MAX_ENERGY
+        camera_shake.apply_kick(1000.0)   # each kick clamps to 0.5
+    assert camera_shake.get_energy() <= 1.0 + 1e-9   # MAX_ENERGY
 
 
 # ── perturbation math ──────────────────────────────────────────────────────
@@ -100,7 +102,8 @@ def test_perturb_keeps_up_vector_unchanged():
 
 def test_perturb_peak_yaw_within_expected_range():
     """Peak yaw over a 30-tick window after a 100-damage kick is between
-    1.0° and 2.5° (calibration target from spec §3.5)."""
+    0.125° and 0.32° — spec §3.5's 1.0°–2.5° calibration band scaled by the
+    8x reduction of the energy ceilings (2026-08-30)."""
     from engine.appc import camera_shake
     camera_shake.reset()
     camera_shake.apply_kick(100.0)
@@ -118,7 +121,7 @@ def test_perturb_peak_yaw_within_expected_range():
         yaw_rad = math.atan2(vx, -vz)   # 0 when looking down -Z.
         peak_yaw_deg = max(peak_yaw_deg, abs(math.degrees(yaw_rad)))
         camera_shake.update(1.0 / 60.0)
-    assert 1.0 <= peak_yaw_deg <= 2.5
+    assert 0.125 <= peak_yaw_deg <= 0.32
 
 
 def test_perturb_is_deterministic_across_resets():
