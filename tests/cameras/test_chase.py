@@ -231,8 +231,10 @@ def test_spring_converges_to_live_after_long_settle():
     loc, ident = _make_ship_pose(0.0, 0.0, 0.0)
     cc.compute_camera(loc, ident, dt=1.0/60)   # seed at identity
     rolled = _roll_90_rot()
-    # 6 seconds → ≥ 12 × τ regardless of τ ≤ 0.5s → residual ≲ e^-12.
-    for _ in range(int(6.0 * 60)):
+    # Settle for 16 × τ → residual ≲ e^-16 ≈ 1e-7, comfortably under the 1e-4
+    # tolerance. Derived from the constant, not hardcoded seconds, so raising
+    # SPRING_TAU_S does not silently shorten the window in τ units.
+    for _ in range(int(16.0 * _CameraControl.SPRING_TAU_S * 60)):
         cc.compute_camera(loc, rolled, dt=1.0/60)
     _, _, up = cc.compute_camera(loc, rolled, dt=1.0/60)
     expected = rolled.GetCol(2)

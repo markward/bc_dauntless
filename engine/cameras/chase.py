@@ -33,7 +33,7 @@ class _ChaseCamera:
     PITCH_LIMIT_RAD        = _math.radians(85)                  # avoid pole flip
     DEFAULT_YAW_RAD        = 0.0
     DEFAULT_PITCH_RAD      = _math.atan2(CAM_UP_RADII, CAM_BACK_RADII)
-    SPRING_TAU_S           = 0.50                               # ~95% catch-up in 1.5s
+    SPRING_TAU_S           = 0.75                               # ~95% catch-up in 2.25s
     MOUSE_SENSITIVITY      = 0.005                              # radians per pixel
 
     def __init__(self):
