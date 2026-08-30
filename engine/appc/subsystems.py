@@ -1674,6 +1674,21 @@ class ShieldSubsystem(PoweredSubsystem):
         is the only way to get shields back."""
         super().TurnOn()
 
+    def GetNumShields(self) -> int:
+        """Facing count — a fixed 6, matching BC.
+
+        Real Appc surface: SWIG binds it at sdk/Build/scripts/App.py:6364
+        (`ShieldClass.GetNumShields`). No SDK script calls it, which is why it
+        went missing for so long, but our own consumers do.
+
+        It must exist rather than fall through to TGObject.__getattr__: the
+        _Stub that returned is TRUTHY and coerces to 0, so a caller writing
+        `range(int(shields.GetNumShields()))` iterates nothing and reports an
+        empty result with no error. That is what blanked the AI inspector's
+        `shield_percent_by_facing` for every ship.
+        """
+        return self.NUM_SHIELDS
+
     def GetSingleShieldPercentage(self, face: int) -> float:
         """current/max for the face; 0.0 when max==0 (unshielded face).
 
