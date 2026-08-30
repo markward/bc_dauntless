@@ -51,5 +51,5 @@ _default = None
 def default_phoneme_map() -> PhonemeMap:
     global _default
     if _default is None:
-        _default = PhonemeMap(json.loads(_PATH.read_text()))
+        _default = PhonemeMap(json.loads(_PATH.read_text(encoding="utf-8")))
     return _default

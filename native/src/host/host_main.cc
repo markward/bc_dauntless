@@ -6,6 +6,7 @@
 
 #include "developer_mode.h"
 #include "host_bindings.h"
+#include "platform/exe_path.h"
 
 #ifdef DAUNTLESS_ENABLE_CEF
 #include "ui_cef/cef_lifecycle.h"
@@ -20,11 +21,19 @@
 namespace {
 
 // Locate the project root from the running binary's path. The binary lives at
-// <root>/build/dauntless, so root is two parents up from the binary's
-// canonical path. This is a build-tree assumption — the binary is not yet
-// meant to be installed system-wide.
-std::filesystem::path discover_project_root(const char* argv0) {
-    std::filesystem::path bin_path = std::filesystem::canonical(argv0);
+// <root>/build/dauntless, so root is two parents up from the binary's own
+// path. This is a build-tree assumption — the binary is not yet meant to be
+// installed system-wide.
+//
+// Returns an empty path and fills `error` on failure. It used to call
+// std::filesystem::canonical(argv0) directly, which THROWS when argv[0] is a
+// bare name and the cwd is not the binary's directory (a launch through PATH);
+// with no handler and no /EHsc that killed the process with no output at all.
+std::filesystem::path discover_project_root(const char* argv0,
+                                            std::string& error) {
+    const std::filesystem::path bin_path =
+        dauntless::platform::executable_path(argv0, error);
+    if (bin_path.empty()) return {};
     return bin_path.parent_path().parent_path();
 }
 
@@ -138,8 +147,38 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    auto project_root = discover_project_root(argv[0]);
+    std::string root_error;
+    auto project_root = discover_project_root(argv[0], root_error);
+    if (project_root.empty()) {
+        std::fprintf(stderr,
+                     "dauntless: cannot locate the project root: %s\n"
+                     "dauntless: argv[0] was \"%s\"\n",
+                     root_error.c_str(), argv[0]);
+        return 1;
+    }
     configure_python_path(project_root);
+
+    // Enter the project root. Every renderer asset path is relative to it --
+    // renderer::resolve_asset_path prepends "game/", and 36 load sites across
+    // 11 files spell "game/data/..." literally -- and window.cc opts out of
+    // GLFW's macOS chdir specifically to keep this cwd intact.
+    //
+    // That invariant was never enforced, only habitual: it held because the
+    // binary was always launched from the root. Any other cwd left all 36
+    // paths dangling. It surfaced as "[breach] failed to open
+    // 'game/data/Damage1.tga'" on stderr and passes drawing untextured, not as
+    // a startup error -- measured 4 such failures launching from /tmp, 0 from
+    // the root. Latent until now only because argv[0] resolution aborted
+    // before reaching any of it; fixing that made every non-root launch
+    // reachable, so enforce the invariant here rather than at 36 call sites.
+    std::error_code cd_ec;
+    std::filesystem::current_path(project_root, cd_ec);
+    if (cd_ec) {
+        std::fprintf(stderr,
+                     "dauntless: cannot enter the project root \"%s\": %s\n",
+                     project_root.string().c_str(), cd_ec.message().c_str());
+        return 1;
+    }
 
     if (PyImport_AppendInittab("_dauntless_host", PyInit__dauntless_host) != 0) {
         std::fprintf(stderr, "open_stbc: PyImport_AppendInittab failed\n");

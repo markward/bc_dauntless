@@ -27,7 +27,7 @@ def test_fold_into_model_preserves_systems(tmp_path):
                                            "label": "Vesuvi 4",
                                            "module": "Systems.Vesuvi.Vesuvi4"}]}}
     baker.fold_into_model(catalog, p)
-    out = json.loads(p.read_text())
+    out = json.loads(p.read_text(encoding="utf-8"))
     v = out["systems"][0]
     assert v["position"] == [1, 2, 3]          # untouched
     assert v["module"] == "Systems.Vesuvi.Vesuvi4"
@@ -74,7 +74,7 @@ def test_create_menus_is_found_outside_the_canonical_system_module():
 
     assert set(off_canonical) >= {"DryDock", "Starbase12"}, off_canonical
     src = (Path(__file__).resolve().parents[2]
-           / "tools" / "bake_set_course_catalog.py").read_text()
+           / "tools" / "bake_set_course_catalog.py").read_text(encoding="utf-8")
     assert 'glob("*.py")' in src, (
         "the baker must scan every module in a system directory, not just "
         "Systems/<Dir>/<Dir>.py")

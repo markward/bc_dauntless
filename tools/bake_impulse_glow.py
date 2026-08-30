@@ -122,7 +122,7 @@ def main() -> int:
     from engine.appc.properties import EngineProperty, ImpulseEngineProperty
 
     mgr = App.g_kModelPropertyManager
-    text = OVERRIDES_PATH.read_text()
+    text = OVERRIDES_PATH.read_text(encoding="utf-8")
     present = existing_override_leaves(text)
 
     sections, skipped, no_impulse, failed = [], [], [], []

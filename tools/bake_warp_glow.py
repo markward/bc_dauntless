@@ -126,7 +126,7 @@ def main() -> int:
     from engine.appc.properties import EngineProperty, WarpEngineProperty
 
     mgr = App.g_kModelPropertyManager
-    text = OVERRIDES_PATH.read_text()
+    text = OVERRIDES_PATH.read_text(encoding="utf-8")
 
     merged, created, skipped, no_warp, failed = [], [], [], [], []
     for leaf in hardpoint_leaves():

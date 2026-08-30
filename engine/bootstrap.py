@@ -7,6 +7,7 @@ def banner() -> str:
 def smoke_check() -> dict:
     """Exercise the SDK shim machinery: import App (the project-root shim) and
     confirm a known attribute exists. Returns a small dict the host prints."""
+    import os
     import sys
     from pathlib import Path
 
@@ -23,4 +24,9 @@ def smoke_check() -> dict:
         "python_version": sys.version_info[:3],
         "app_module": App.__name__,
         "project_root": str(project_root),
+        # Reported so a launch from a foreign cwd is observable: every renderer
+        # asset path is relative to the project root, so the host chdir's there
+        # at startup. Without this the only symptom of that going wrong is
+        # untextured passes and "[breach] failed to open ..." on stderr.
+        "cwd": os.getcwd(),
     }

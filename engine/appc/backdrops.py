@@ -34,7 +34,7 @@ _APPEARANCE_PATH = _P(__file__).with_name("backdrop_appearance.json")
 @_lru_cache(maxsize=1)
 def _appearance_table():
     try:
-        return _json.loads(_APPEARANCE_PATH.read_text())
+        return _json.loads(_APPEARANCE_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 

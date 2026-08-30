@@ -11,7 +11,7 @@ set(HOST_BINDINGS_SOURCES
 # Python extension module (.so / .pyd / .dylib) for pytest.
 pybind11_add_module(_dauntless_host MODULE ${HOST_BINDINGS_SOURCES})
 target_compile_features(_dauntless_host PRIVATE cxx_std_20)
-target_link_libraries(_dauntless_host PRIVATE renderer scenegraph assets dauntless_audio)
+target_link_libraries(_dauntless_host PRIVATE renderer scenegraph assets dauntless_audio platform)
 set_target_properties(_dauntless_host PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python"
 )
@@ -33,6 +33,7 @@ target_link_libraries(dauntless
         scenegraph
         assets
         dauntless_audio
+        platform
 )
 
 if(DAUNTLESS_ENABLE_CEF)

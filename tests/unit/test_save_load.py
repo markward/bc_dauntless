@@ -189,7 +189,7 @@ def test_app_save_load_writes_real_json_file(saves_under_tmp, fresh_game):
     """Verify the on-disk format is JSON we can inspect."""
     App.g_kUtopiaModule.SetCaptainName("Riker")
     App.g_kUtopiaModule.SaveToFile("saves/JSONShape.BCS")
-    raw = (saves_under_tmp / "JSONShape.BCS").read_text()
+    raw = (saves_under_tmp / "JSONShape.BCS").read_text(encoding="utf-8")
     parsed = json.loads(raw)
     assert parsed["format_version"] == 1
     assert parsed["utopia"]["captain_name"] == "Riker"

@@ -42,12 +42,12 @@ def test_quickbattle_really_does_wrap_its_tree_in_avoid_obstacles():
     AvoidObstacles of its own; QuickBattleAI adds one around it."""
     from pathlib import Path
     root = Path(__file__).resolve().parents[2] / "sdk" / "Build" / "scripts"
-    qb = (root / "QuickBattle" / "QuickBattleAI.py").read_text()
+    qb = (root / "QuickBattle" / "QuickBattleAI.py").read_text(encoding="utf-8")
     assert "AI.Preprocessors.AvoidObstacles()" in qb
     assert 'PreprocessingAI_Create(pShip, "AvoidObstacles")' in qb
     assert "SetContainedAI(pPriorityList)" in qb
 
-    basic = (root / "AI" / "Compound" / "BasicAttack.py").read_text()
+    basic = (root / "AI" / "Compound" / "BasicAttack.py").read_text(encoding="utf-8")
     assert "AvoidObstacles" not in basic, (
         "BasicAttack now installs its own AvoidObstacles; combat_stress's "
         "explicit wrapper would double it")

@@ -173,6 +173,7 @@ if(DAUNTLESS_ENABLE_CEF)
 endif()
 
 # Public libraries.
+add_subdirectory(src/platform)
 add_subdirectory(src/nif)
 add_subdirectory(src/assets)
 add_subdirectory(src/audio)

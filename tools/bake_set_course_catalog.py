@@ -134,7 +134,7 @@ def build_catalog():
 
 
 def fold_into_model(catalog, out_path=OUT):
-    model = json.loads(Path(out_path).read_text())
+    model = json.loads(Path(out_path).read_text(encoding="utf-8"))
     for s in model.get("systems", []):
         entry = catalog.get(s["id"])
         if entry is not None:

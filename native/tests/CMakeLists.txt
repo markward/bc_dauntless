@@ -66,6 +66,7 @@ target_compile_definitions(nif_tests
 gtest_discover_tests(nif_tests)
 
 add_subdirectory(assets)
+add_subdirectory(platform)
 add_subdirectory(renderer)
 add_subdirectory(scenegraph)
 add_subdirectory(audio)

@@ -178,7 +178,7 @@ def test_init_resets_every_non_gl_global_that_shutdown_resets():
 
     Pure source analysis -- no GL, so it runs everywhere.
     """
-    src = HOST_BINDINGS.read_text()
+    src = HOST_BINDINGS.read_text(encoding="utf-8")
     shared = _function_body(src, "void reset_frame_state()")
     init = _function_body(src, "void init(int width, int height,")
     shutdown = _function_body(src, "void shutdown()")
