@@ -110,7 +110,11 @@
    engine/ui/star_map.py: those tint the GL markers, these tint their text. */
 .sm-label {
     position: absolute;
-    font-size: 10px; color: #ffd9a8;          /* POC #ffd9a8 */
+    /* 15px = the POC's 10px +50%. Fixed px, never depth-scaled: Python
+       discards the projected depth (star_map.project_points) and the JS sets
+       only left/top, so a label reads the same size however far the camera is
+       from the star it names. */
+    font-size: 15px; color: #ffd9a8;          /* POC #ffd9a8 */
     font-weight: 700;
     letter-spacing: 0.4px;
     text-transform: uppercase;
