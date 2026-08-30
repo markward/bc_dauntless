@@ -72,7 +72,7 @@ def test_build_cache_specs_of_overrides_property(fake_ship_two_subs):
         ship, specs_of=lambda sub: [new_spec] if sub is subA else [])
     # exactly one entry, for subA, carrying the supplied spec
     assert len(entries) == 1
-    sub, is_impulse, phase, spec = entries[0]
+    sub, is_impulse, is_warp, phase, spec = entries[0]
     assert sub is subA
     assert spec["position"] == (1.0, 2.0, 3.0)
 
@@ -87,13 +87,13 @@ def test_build_cache_default_reads_property(fake_ship_two_subs):
     assert isinstance(default_entries, list)
     assert len(default_entries) > 0
     # every entry's sub is one of the two, and specs come from baked_emitters
-    for sub, _imp, _ph, _spec in default_entries:
+    for sub, _imp, _warp, _ph, _spec in default_entries:
         assert sub in (subA, subB)
     # the baked positions round-trip through light_emitters.baked_emitters
     # (subA's emitter sits at the origin, subB's at (5, 0, 0)) — confirms
     # the default path actually reads sub.GetProperty(), not a placeholder.
     by_sub = {}
-    for sub, _imp, _ph, spec in default_entries:
+    for sub, _imp, _warp, _ph, spec in default_entries:
         by_sub.setdefault(sub, []).append(spec)
     assert by_sub[subA][0]["kind"] == "point"
     assert by_sub[subA][0]["position"] == (0.0, 0.0, 0.0)
@@ -146,7 +146,7 @@ def test_refresh_ship_emitters_success_rebuilds_iid_cache(fake_ship_two_subs):
     assert rebuilt != "stale-placeholder"
     assert isinstance(rebuilt, list)
     assert len(rebuilt) == 1
-    sub, _imp, _ph, spec = rebuilt[0]
+    sub, _imp, _warp, _ph, spec = rebuilt[0]
     assert sub is subA
     assert spec["position"] == (9.0, 8.0, 7.0)
 

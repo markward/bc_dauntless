@@ -838,7 +838,7 @@ def _pump_held_weapons(ships_list, dt: float) -> None:
 
 
 def _advance_combat(ships, dt: float, ship_instances=None,
-                     ship_emitters=None) -> None:
+                     ship_emitters=None, player=None) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
 
     Walks the active torpedo registry, advances motion, routes hits
@@ -855,6 +855,8 @@ def _advance_combat(ships, dt: float, ship_instances=None,
     `session.ship_emitters` (render instance id -> cached body-frame
     subsystem light-emitter list); combined with `ship_instances` to feed
     `_build_emitter_light_render_data` alongside the torpedo lights.
+    `player` is passed through to that same producer, which needs it to decide
+    whether the warp-nacelle brightening applies this frame (player-only).
     """
     ships_list = list(ships)
 
@@ -1028,7 +1030,8 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         host_io.set_torpedoes(_build_torpedo_render_data())
         host_io.set_dynamic_lights(
             _build_dynamic_light_render_data() +
-            _build_emitter_light_render_data(ship_instances, ship_emitters))
+            _build_emitter_light_render_data(ship_instances, ship_emitters,
+                                             player=player))
         from engine.appc import shockwaves as _shockwaves
         host_io.set_shockwaves(_shockwaves.render_data())
         host_io.set_hit_vfx(_build_hit_vfx_render_data())
@@ -1181,15 +1184,18 @@ def _rotate_body(R, v):
 def _build_ship_emitter_cache(ship, specs_of=None):
     """Body-frame light-emitter cache for one ship, built once at spawn.
 
-    Returns a list of `(sub, is_impulse, phase, spec)` tuples — one per baked
-    LightEmitter* entry found on any SPV-visible subsystem
+    Returns a list of `(sub, is_impulse, is_warp, phase, spec)` tuples — one
+    per baked LightEmitter* entry found on any SPV-visible subsystem
     (`ship_property_viewer._iter_subsystems`, the canonical walker: emitters
     can only be authored on subsystems the Ship Property Viewer can show).
     `is_impulse` marks membership in the ship's impulse-engine pod set
     (`subsystem_glow.impulse_engines`) so the per-frame producer can apply
-    the commanded-throttle brightening; `phase` (`j * 1.7 + subsystem_index`)
-    desyncs the disabled-state flicker between emitters. Best-effort by
-    construction (callers wrap in try/except); a subsystem with no
+    the commanded-throttle brightening; `is_warp` likewise marks the warp pods
+    (`subsystem_glow.warp_pods`) so a nacelle's cast light spools up and
+    bursts with its glow volume during a cross-system warp; `phase`
+    (`j * 1.7 + subsystem_index`) desyncs the disabled-state flicker between
+    emitters. Best-effort by construction (callers wrap in try/except); a
+    subsystem with no
     `GetProperty` or no baked emitters is simply skipped.
 
     `specs_of`, if given, is called as `specs_of(sub)` to obtain the spec
@@ -1199,7 +1205,7 @@ def _build_ship_emitter_cache(ship, specs_of=None):
     Default (`None`) reproduces the property-read path unchanged.
     """
     from engine.appc import light_emitters
-    from engine.appc.subsystem_glow import impulse_engines
+    from engine.appc.subsystem_glow import impulse_engines, warp_pods
     from engine.ui.ship_property_viewer import _iter_subsystems
 
     impulse_ids = set()
@@ -1211,6 +1217,15 @@ def _build_ship_emitter_cache(ship, specs_of=None):
     except Exception:
         pass   # impulse membership is a brightening nicety, not a hard need
 
+    warp_ids = set()
+    try:
+        wes = (ship.GetWarpEngineSubsystem()
+               if hasattr(ship, "GetWarpEngineSubsystem") else None)
+        for pod in warp_pods(wes):
+            warp_ids.add(id(pod))
+    except Exception:
+        pass   # ditto: no warp membership just means no warp brightening
+
     entries = []
     for si, sub in enumerate(_iter_subsystems(ship)):
         if specs_of is None:
@@ -1221,8 +1236,9 @@ def _build_ship_emitter_cache(ship, specs_of=None):
         if not specs:
             continue
         is_impulse = id(sub) in impulse_ids
+        is_warp = id(sub) in warp_ids
         for j, spec in enumerate(specs):
-            entries.append((sub, is_impulse, j * 1.7 + si, spec))
+            entries.append((sub, is_impulse, is_warp, j * 1.7 + si, spec))
     return entries
 
 
@@ -1243,7 +1259,33 @@ def refresh_ship_emitters(session, ship, specs_by_sub_id):
         dev_mode.log_swallowed("spv live emitter refresh", e)
 
 
-def _build_emitter_light_render_data(ship_instances, ship_emitters):
+def _warp_glow_envelope(ship):
+    """`(drive, burst)` warp-nacelle glow envelope for `ship`, else None.
+
+    Two conditions, and the second is the one that is easy to get wrong: the
+    warp animator must be running AND `ship` must be the ship registered as
+    flying that warp. `WarpVFX` is a singleton and `WarpSequence_Create` takes
+    the flythrough branch for ANY ship with no player check (see
+    engine/appc/warp_state.py), so "a warp is happening" is not "this ship is
+    warping" — without the registration test an NPC warping out would light up
+    the player's nacelles.
+
+    Read (not latched) by both consumers — the glow volumes via
+    `ShipGlowController.update` and the emitter lights via
+    `_build_emitter_light_render_data` — so the two always agree within a frame.
+    """
+    if ship is None:
+        return None
+    from engine import warp_vfx
+    from engine.appc import warp_state
+    w = warp_vfx.get()
+    if not w.is_active() or not warp_state.is_flythrough(ship):
+        return None
+    return w.engine_glow()
+
+
+def _build_emitter_light_render_data(ship_instances, ship_emitters,
+                                     player=None):
     """World-space dynamic lights from subsystem-attached light emitters.
 
     `ship_instances` is the ship->render-instance-id dict (same one passed to
@@ -1267,6 +1309,9 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters):
     from engine.appc.subsystem_glow import commanded_impulse_frac
 
     now = App.g_kUtopiaModule.GetGameTime()
+    # Warp-nacelle brightening is player-only and only during a cross-system
+    # warp; computed once per frame rather than per ship.
+    warp_glow = _warp_glow_envelope(player)
     for ship, iid in ship_instances.items():
         entries = ship_emitters.get(iid)
         if not entries:
@@ -1286,11 +1331,12 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters):
         fade = _camera_distance_fade((loc.x, loc.y, loc.z))
         if fade is None:
             continue
-        for (sub, is_impulse, phase, spec) in entries:
+        _wg = warp_glow if ship is player else None
+        for (sub, is_impulse, is_warp, phase, spec) in entries:
             try:
                 inten = light_emitters.resolve_emitter_intensity(
                     spec, sub, now, throttle_frac=frac, is_impulse=is_impulse,
-                    powered=True, phase=phase)
+                    powered=True, phase=phase, is_warp=is_warp, warp_glow=_wg)
                 if inten is None:
                     continue
                 d = light_emitters.emitter_spec_to_struct(spec)
@@ -6317,11 +6363,17 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     if player_control is not None:
         _lvl = getattr(player_control, "impulse_level", 0) or 0
         _player_throttle_frac = min(abs(int(_lvl)), 9) / 9.0
+    # Warp-nacelle glow envelope for the player, or None when it isn't flying a
+    # cross-system warp — which is every frame of normal play, and then the warp
+    # regions are never touched at all. Same read the emitter lights make, so
+    # volumes and cast light spool up and burst together.
+    _player_warp_glow = _warp_glow_envelope(player)
     for ship, iid in session.ship_instances.items():
         _wg = session.ship_glow_controllers.get(iid)
         if _wg is not None:
             _wg.update(game_time,
-                       _player_throttle_frac if ship is player else None)
+                       _player_throttle_frac if ship is player else None,
+                       _player_warp_glow if ship is player else None)
         # Destroyed (dying/dead) ships lose self-illumination —
         # a dark hulk in space. Hull stays lit by external light.
         if _oa(ship):
@@ -7978,6 +8030,7 @@ def run(mission_name: Optional[str] = None,
                         _ships_this_tick, TICK_DT,
                         ship_instances=(session.ship_instances if session is not None else None),
                         ship_emitters=(session.ship_emitters if session is not None else None),
+                        player=player,
                     )
 
                 # Sensor contact identification → drives the SDK bridge Hail /

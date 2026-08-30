@@ -98,3 +98,49 @@ def test_stop_resets():
     w = WarpVFX(); w.start((1, 0, 0), 2.0, 4.0, 0.0)
     w.stop()
     assert (w.is_active(), w.streak_intensity(), w.flash_intensity()) == (False, 0.0, 0.0)
+
+
+# --- warp-engine glow envelope -------------------------------------------
+# engine_glow() -> (drive, burst), both 0..1 SHAPES (not brightnesses): the
+# nacelle drive spools up across align, holds through transit and fades over
+# the exit decel; the burst is a one-shot spike at the jump. They are mapped
+# onto an actual shader gain by subsystem_glow.warp_gain.
+
+def test_engine_glow_is_zero_while_inactive():
+    w = WarpVFX()
+    assert w.engine_glow() == (0.0, 0.0)
+
+
+def test_engine_glow_drive_spools_up_across_align():
+    w = WarpVFX(); w.start((1, 0, 0), t_align=2.0, t_transit=4.0, now=0.0)
+    w.tick(0.0)
+    assert w.engine_glow()[0] == 0.0          # cold at align start
+    w.tick(1.0)
+    mid = w.engine_glow()[0]
+    assert 0.0 < mid < 1.0                    # spooling
+    w.tick(1.9)
+    assert w.engine_glow()[0] > mid           # monotonically building
+
+
+def test_engine_glow_bursts_at_the_jump_and_decays_quickly():
+    w = WarpVFX(); w.start((1, 0, 0), t_align=2.0, t_transit=4.0, now=0.0)
+    w.tick(2.0)                               # e == t_align: the jump
+    drive, burst = w.engine_glow()
+    assert drive == 1.0 and burst == 1.0
+    w.tick(2.2)                               # mid-decay
+    assert 0.0 < w.engine_glow()[1] < 1.0
+    w.tick(2.5)                               # past BURST_DECAY_S: spike is spent
+    assert w.engine_glow()[1] == 0.0
+    w.tick(4.0)                               # mid-transit: driven, no burst
+    assert w.engine_glow() == (1.0, 0.0)
+
+
+def test_engine_glow_fades_over_the_exit_decel():
+    w = WarpVFX(); w.start((1, 0, 0), t_align=2.0, t_transit=4.0, now=0.0)
+    w.tick(6.0)                               # transit end: still at full drive
+    assert w.engine_glow()[0] == 1.0
+    w.tick(7.0)                               # 1s into the 2s decel tail
+    mid = w.engine_glow()[0]
+    assert 0.0 < mid < 1.0
+    w.tick(8.0)                               # tail end: cold, and inactive
+    assert w.engine_glow() == (0.0, 0.0)

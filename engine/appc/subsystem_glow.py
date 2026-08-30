@@ -11,7 +11,8 @@ ALL glow volumes (warp, impulse, sensor) are driven by BAKED hardpoint data:
 each subsystem's property template carries indexed GlowRegion* fields
 (authored in hardpoint files or engine/appc/hardpoint_overrides.py — see
 README "Information for modders"). All state VFX (dim, flicker, impulse
-throttle gain) operate on whatever regions the hardpoint defines. The
+throttle gain, warp-sequence gain) operate on whatever regions the
+hardpoint defines. The
 hardpoint is the single source of truth: a subsystem that bakes nothing gets
 no glow VFX at all (the old runtime capsule fit / cylinder / sensor-sphere
 derivations are gone). Sensor volumes are currently baked only for the five
@@ -35,6 +36,11 @@ DESTROYED = "destroyed"
 # comes from the hardpoint's baked GlowRegion* fields (no in-engine default).
 IMPULSE_AFT_AXIS = (0.0, -1.0, 0.0)
 
+# Warp regions take no face gate: the whole nacelle lights up, not just its aft
+# cap. The shader reads a zero gate axis as "whole region" (opaque.frag's
+# `dot(gate, gate) > 1e-6` test), the same path the sensor volume uses.
+WARP_WHOLE_AXIS = (0.0, 0.0, 0.0)
+
 # Impulse-glow power/speed scaling (Mark's "sell the movement" pass). Driven by
 # the *commanded* impulse throttle (player notch / AI speed setpoint), NOT
 # measured velocity, so warp/collision/drift never brighten the engines. All
@@ -52,6 +58,15 @@ PULSE_AMP = 0.15     # peak pulse fraction at full throttle (scales with speed)
 # Time constant (s) for easing the commanded throttle, so stepping between
 # impulse notches ramps the glow smoothly instead of jumping. Larger = slower.
 IMPULSE_EASE_TAU = 0.35
+
+# Warp-engine glow (the nacelle analogue of the impulse boost above). Driven by
+# the cross-system warp sequence's own clock via WarpVFX.engine_glow(), NOT by
+# any speed or throttle — a ship that is not warping gets gain exactly 1.0 and
+# renders as it did before this existed. Tunable here with no rebuild.
+WARP_GAIN_MAX = 1.8       # sustained gain at full drive -> throbs 1.71..1.89
+WARP_BURST_GAIN = 10.0    # CEILING the jump reaches; the brightest it ever gets
+WARP_PULSE_FREQ_HZ = 0.8  # faster than the impulse throb — a drive spooling up
+WARP_PULSE_AMP = 0.05     # peak pulse fraction at full drive (scales with it)
 
 
 def _clamp01(x: float) -> float:
@@ -95,6 +110,25 @@ def impulse_gain(frac: float, now: float, powered: bool) -> float:
     amp = PULSE_AMP * frac
     pulse = 1.0 + amp * math.sin(2.0 * math.pi * PULSE_FREQ_HZ * now)
     return base * pulse
+
+
+def warp_gain(drive: float, burst: float, now: float) -> float:
+    """Glow brightness gain for a warp-nacelle region.
+
+    `drive` and `burst` are the 0..1 envelopes from `WarpVFX.engine_glow()`.
+    Base ramps 1.0..WARP_GAIN_MAX with drive, times a pulse whose amplitude
+    grows with drive (dead steady when cold). The burst then lerps that toward
+    WARP_BURST_GAIN, so burst=1 lands on exactly WARP_BURST_GAIN — a ceiling
+    the jump reaches rather than an amount piled on top.
+
+    drive=burst=0 returns exactly 1.0: not warping means not touched.
+    """
+    drive = _clamp01(drive)
+    burst = _clamp01(burst)
+    base = 1.0 + (WARP_GAIN_MAX - 1.0) * drive
+    amp = WARP_PULSE_AMP * drive
+    gain = base * (1.0 + amp * math.sin(2.0 * math.pi * WARP_PULSE_FREQ_HZ * now))
+    return gain + (WARP_BURST_GAIN - gain) * burst
 
 
 def glow_state(sub) -> str:
@@ -345,10 +379,11 @@ class ShipGlowController:
         # capsule fit / cylinder / sensor-sphere derivations are gone).
         # Impulse regions are boost regions — dim/flicker AND the throttle
         # gain drive the authored volume, with the shader gating gain to
-        # aft-facing faces (IMPULSE_AFT_AXIS). Warp/sensor regions
-        # dim/flicker only.
+        # aft-facing faces (IMPULSE_AFT_AXIS). Warp regions dim/flicker AND
+        # take the warp-sequence gain over the WHOLE volume (no face gate).
+        # Sensor regions dim/flicker only.
         for pod in warp_pods(ship.GetWarpEngineSubsystem()):
-            self._register_baked(pod, boost=False)
+            self._register_baked(pod, boost=False, warp=True)
 
         for pod in impulse_engines(ship.GetImpulseEngineSubsystem()):
             self._register_baked(pod, boost=True)
@@ -357,7 +392,7 @@ class ShipGlowController:
         if _sensor is not None:
             self._register_baked(_sensor, boost=False)
 
-    def _register_baked(self, pod, boost: bool) -> None:
+    def _register_baked(self, pod, boost: bool, warp: bool = False) -> None:
         """Register every baked glow region on `pod`'s hardpoint property."""
         pos = _position_tuple(pod)
         if pos is None:
@@ -381,13 +416,18 @@ class ShipGlowController:
                 continue
             self._regions.append(
                 {"sub": pod, "idx": idx, "prev": HEALTHY, "etime": -1.0,
-                 "boost": boost})
+                 "boost": boost, "warp": warp, "wgain": 1.0})
 
-    def update(self, now: float, throttle_frac=None) -> None:
+    def update(self, now: float, throttle_frac=None, warp_glow=None) -> None:
         """Push dim/edge/flicker each frame; brighten the impulse region by the
         (time-eased) commanded throttle + slow pulse. `throttle_frac` is the
         player's notch fraction from the host loop; None -> derive from the AI
-        speed setpoint."""
+        speed setpoint.
+
+        `warp_glow` is the `(drive, burst)` envelope from
+        `WarpVFX.engine_glow()`, supplied by the host loop ONLY for the ship
+        actually flying a cross-system warp. None (every other ship, every
+        other frame) leaves the warp regions alone entirely."""
         # Ease the commanded throttle so stepping between impulse notches ramps
         # the glow smoothly rather than jumping. "Powered up" = commanded
         # throttle, NOT the subsystem IsOn() (ImpulseEngineSubsystem never gets
@@ -419,3 +459,17 @@ class ShipGlowController:
                 gain = impulse_gain(frac, now, active)
                 self._r.set_glow_region_gain(self._iid, reg["idx"], gain,
                                              IMPULSE_AFT_AXIS)
+            elif reg["warp"]:
+                # Same health gate as the impulse boost: the dim state machine
+                # owns disabled/destroyed pods, so a blown nacelle never
+                # brightens. Push only when the gain actually differs from
+                # neutral, plus ONE trailing 1.0 to reset the region after the
+                # warp ends -- so a ship that never warps costs nothing and
+                # renders exactly as it did before this existed.
+                drive, burst = warp_glow if warp_glow else (0.0, 0.0)
+                gain = (warp_gain(drive, burst, now)
+                        if state == HEALTHY else 1.0)
+                if gain != 1.0 or reg["wgain"] != 1.0:
+                    self._r.set_glow_region_gain(self._iid, reg["idx"], gain,
+                                                 WARP_WHOLE_AXIS)
+                    reg["wgain"] = gain

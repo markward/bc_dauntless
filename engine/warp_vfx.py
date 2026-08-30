@@ -24,6 +24,11 @@ def _smooth(t):
 _T_ENTER_BOOST = 1.0
 _T_EXIT_DECEL = 2.0
 
+# Warp-engine glow burst: how long the one-shot spike at the jump takes to decay
+# back to nothing. Short on purpose — it reads as a flash of the drive lighting
+# off, not a sustained brightening (that's what `drive` is for).
+_BURST_DECAY_S = 0.4
+
 
 class WarpVFX:
     def __init__(self):
@@ -125,6 +130,34 @@ class WarpVFX:
             return 0.0
         f = _smooth((e - total) / _T_EXIT_DECEL)
         return warp_speed * (1.0 - f)
+
+    def engine_glow(self):
+        """(drive, burst) — the warp-nacelle glow envelope, both 0..1.
+
+        SHAPES, not brightnesses: `subsystem_glow.warp_gain` maps them onto the
+        shader gain applied to the warp pods' glow volumes and light emitters.
+
+          drive  spools 0->1 across align (peaking exactly at the jump), holds
+                 1 through transit, fades 1->0 over the exit decel so the
+                 nacelles cool down in step with the speed glide-down.
+          burst  one-shot spike: 1 at the jump (e == t_align), eased to 0 over
+                 _BURST_DECAY_S, and 0 everywhere else.
+
+        (0.0, 0.0) while inactive, so a ship that isn't warping is untouched.
+        """
+        if not self._active:
+            return (0.0, 0.0)
+        e = self._e
+        t_align = self._t_align
+        total = t_align + self._t_transit
+        if e < t_align:
+            return (_smooth(e / t_align), 0.0)
+        if e < total:
+            te = e - t_align
+            burst = _smooth(1.0 - te / _BURST_DECAY_S) if te < _BURST_DECAY_S \
+                else 0.0
+            return (1.0, burst)
+        return (1.0 - _smooth((e - total) / _T_EXIT_DECEL), 0.0)
 
     def sky_vantage(self, rate):
         """Galaxy-map vantage to project the procedural sky from THIS frame, or

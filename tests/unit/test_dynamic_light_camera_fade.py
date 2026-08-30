@@ -180,7 +180,8 @@ def _emitter_lights_for_ship_at(loc, intensity=2.0):
     sub = _Sub(prop)
     spec = light_emitters.baked_emitters(prop)[0]
     ship = _Ship(loc)
-    return _build_emitter_light_render_data({ship: 1}, {1: [(sub, False, 0.0, spec)]})
+    return _build_emitter_light_render_data(
+        {ship: 1}, {1: [(sub, False, False, 0.0, spec)]})
 
 
 def test_emitter_lights_survive_inside_the_fade_band():
@@ -214,8 +215,8 @@ def test_emitter_gate_is_per_ship_so_a_near_ship_is_unaffected():
 
     out = _build_emitter_light_render_data(
         {near_ship: 1, far_ship: 2},
-        {1: [(_Sub(near_prop), False, 0.0, near_spec)],
-         2: [(_Sub(far_prop), False, 0.0, far_spec)]})
+        {1: [(_Sub(near_prop), False, False, 0.0, near_spec)],
+         2: [(_Sub(far_prop), False, False, 0.0, far_spec)]})
 
     assert len(out) == 1
     assert out[0]["intensity"] == pytest.approx(2.0)

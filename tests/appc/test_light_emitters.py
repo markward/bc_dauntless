@@ -180,6 +180,46 @@ def test_impulse_emitter_scales_with_throttle():
     assert hi > lo
 
 
+def test_warp_emitter_is_untouched_when_not_warping():
+    # The warp glow must be inert outside a warp: no warp_glow envelope means
+    # the emitter reads exactly its authored intensity.
+    s = default_emitter_spec("point"); s["intensity"] = 2.0
+    assert resolve_emitter_intensity(s, _Sub(), now=0.0,
+                                     is_warp=True) == pytest.approx(2.0)
+
+
+def test_warp_emitter_brightens_with_the_warp_drive():
+    import engine.appc.subsystem_glow as sg
+    s = default_emitter_spec("point"); s["intensity"] = 2.0
+    # now=0 zeroes the pulse term, so this pins the sustained level exactly.
+    hot = resolve_emitter_intensity(s, _Sub(), now=0.0, is_warp=True,
+                                    warp_glow=(1.0, 0.0))
+    assert hot == pytest.approx(2.0 * sg.WARP_GAIN_MAX)
+    burst = resolve_emitter_intensity(s, _Sub(), now=0.0, is_warp=True,
+                                      warp_glow=(1.0, 1.0))
+    assert burst == pytest.approx(2.0 * sg.WARP_BURST_GAIN)
+
+
+def test_non_warp_emitter_ignores_the_warp_envelope():
+    # Only warp-pod emitters react; the sensor cone and everything else on a
+    # warping ship must stay at its authored intensity.
+    s = default_emitter_spec("point"); s["intensity"] = 2.0
+    assert resolve_emitter_intensity(s, _Sub(), now=0.0, is_warp=False,
+                                     warp_glow=(1.0, 1.0)) == pytest.approx(2.0)
+
+
+def test_disabled_warp_emitter_gets_no_warp_brightening():
+    # Mirrors the impulse rule (and ShipGlowController): a damaged nacelle
+    # flickers, it does not light up at warp. Same `now` for both so the
+    # flicker factor is identical and only the warp gain could differ.
+    s = default_emitter_spec("point"); s["intensity"] = 2.0
+    cold = resolve_emitter_intensity(s, _Sub(disabled=True), now=0.0,
+                                     is_warp=True, warp_glow=(0.0, 0.0))
+    hot = resolve_emitter_intensity(s, _Sub(disabled=True), now=0.0,
+                                    is_warp=True, warp_glow=(1.0, 1.0))
+    assert hot == pytest.approx(cold)
+
+
 def test_disabled_impulse_emitter_gets_no_throttle_brightening():
     # Faithfulness fix: ShipGlowController only throttle-brightens a HEALTHY
     # impulse region. A DISABLED impulse-pod emitter must NOT scale with
