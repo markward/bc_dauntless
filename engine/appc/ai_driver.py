@@ -54,10 +54,15 @@ PS_DONE = PreprocessingAI.PS_DONE
 # _tick_preprocessing, _tick_random, _tick_builder) dispatches AT MOST ONE
 # child per root tick, so a PreprocessingAI/PlainAI leaf cannot be reached
 # twice in the same root tick and a duplicate can't be constructed.
+#
+# _pending_got_focus holds the nodes that ARRIVED on the active path this root
+# tick, whose GotFocus() has not been dispatched yet. See
+# _flush_pending_got_focus for why arrival is deferred to the end of the tick.
 _focus_depth = 0
 _reached_this_tick: list = []
 _reached_this_tick_all: list = []
 _reached_this_tick_all_ids: set = set()
+_pending_got_focus: list = []
 
 
 def tick_ai(ai, game_time: float) -> int:
@@ -71,6 +76,7 @@ def tick_ai(ai, game_time: float) -> int:
     SetInactive() on every node as it enters/leaves the active dispatch path.
     Recursive calls into children just dispatch."""
     global _focus_depth, _reached_this_tick, _reached_this_tick_all, _reached_this_tick_all_ids
+    global _pending_got_focus
     is_root = _focus_depth == 0
     if is_root:
         # The out-of-action slot is scoped to one root tick: a new root means a
@@ -80,13 +86,17 @@ def tick_ai(ai, game_time: float) -> int:
         _reached_this_tick = []
         _reached_this_tick_all = []
         _reached_this_tick_all_ids = set()
+        _pending_got_focus = []
     _focus_depth += 1
     try:
         status = _dispatch_ai(ai, game_time)
     finally:
         _focus_depth -= 1
     if is_root and ai is not None:
+        # Departures first, arrivals second -- the two halves of one handover,
+        # in BC's order. _flush_pending_got_focus carries the reasoning.
         _reconcile_focus(ai, _reached_this_tick)
+        _flush_pending_got_focus()
         _reconcile_active(ai, _reached_this_tick_all)
     return status
 
@@ -373,26 +383,80 @@ def _dispatch_lost_focus(node) -> None:
     node.__dict__["_got_focus_called"] = False
 
 
-def _dispatch_got_focus(node) -> None:
-    """Call the node's script instance's GotFocus() once per activation.
+def _queue_got_focus(node) -> None:
+    """Record that `node` arrived on the active path, for GotFocus() at the end
+    of the root tick.
 
-    SDK leaves put real work here: StarbaseAttack.GotFocus starts firing
-    (AI/PlainAI/StarbaseAttack.py:54). Guarded by a sentinel in __dict__ so
-    repeat ticks don't re-fire; _dispatch_lost_focus clears it.
+    Deferred, not dispatched here, so that a handover fires the departing
+    node's LostFocus() FIRST -- see _flush_pending_got_focus.
 
-    A PlainAI ticked before SetScriptModule() lands has no instance yet
-    (inst is None) -- the latch must NOT be set on that tick, or the real
-    script's GotFocus would never fire once the module does land.
+    The script instance is resolved HERE, not at flush time, and a node with
+    none is dropped rather than queued. That keeps the "ticked before
+    SetScriptModule() landed" rule intact: _tick_plain calls
+    GetScriptInstance() further down, which MATERIALISES an _AIScriptInstance
+    lambda-fallback as a side effect, so by flush time every PlainAI has an
+    instance. Resolving late would fire GotFocus on that placeholder and latch
+    it, and the real script's GotFocus would never run once its module landed
+    (tests/unit/test_ai_driver_leaf_focus.py).
     """
     if node.__dict__.get("_got_focus_called", False):
         return
     inst = _focus_instance_of(node)
     if inst is None:
         return
-    got = getattr(inst, "GotFocus", None)
-    if callable(got):
-        got()
-    node.__dict__["_got_focus_called"] = True
+    for queued, _inst in _pending_got_focus:
+        if queued is node:
+            return
+    _pending_got_focus.append((node, inst))
+
+
+def _flush_pending_got_focus() -> None:
+    """Dispatch GotFocus() to every node that arrived this root tick, AFTER
+    _reconcile_focus has dispatched LostFocus() to the departing ones.
+
+    Why the order matters. The SDK's focus hooks are save/restore pairs:
+    AlertLevel.GotFocus snapshots the ship's current alert level and raises
+    it; AlertLevel.LostFocus puts the snapshot back
+    (AI/Preprocessors.py:2047). BC changes focus at the container, so a
+    handover is LostFocus-then-GotFocus by construction and the snapshots
+    nest correctly.
+
+    This driver instead discovers departures by set difference, which cannot
+    be computed until the traversal has finished. Dispatching GotFocus during
+    the traversal therefore inverted the pair on any handover, and the
+    arriving node snapshotted a value the departing node was about to undo.
+
+    Live case (AI-inspector export, Kessok Light in QuickBattle): both
+    branches of the ship's top PriorityList carry AlertLevel(2). Branch 2 was
+    on the path, holding eOldAlertLevel=0 with the ship at alert 2. Branch 1's
+    gate opened; branch 1's GotFocus read alert 2, saw 2 == 2 and did nothing;
+    branch 2's LostFocus then restored 0. The ship dropped its shields mid-
+    combat and never raised them again -- AlertLevel.Update is a no-op
+    returning PS_NORMAL, so the surviving node never re-asserts.
+
+    Deferring GotFocus past the node's own Update is safe against the whole
+    SDK: only three scripts define GotFocus, and two of them ARE their Update
+    (CloakShip.GotFocus and CloakShip.Update both call CheckCloak();
+    StarbaseAttack.GotFocus calls self.Update() outright). AlertLevel.Update
+    is the no-op above. None reads state its own GotFocus establishes.
+
+    Once per activation: the latch below is the same sentinel
+    _dispatch_lost_focus clears, so a node that stays on the path does not
+    re-fire. Nodes with no script instance never reach this queue at all --
+    _queue_got_focus drops them, and carries the reason.
+    """
+    if not _pending_got_focus:
+        return
+    # Snapshot and clear first: a GotFocus body may tick AI of its own.
+    pending = list(_pending_got_focus)
+    del _pending_got_focus[:]
+    for node, inst in pending:
+        if node.__dict__.get("_got_focus_called", False):
+            continue
+        got = getattr(inst, "GotFocus", None)
+        if callable(got):
+            got()
+        node.__dict__["_got_focus_called"] = True
 
 
 def _tick_plain(ai: PlainAI, game_time: float) -> int:
@@ -408,7 +472,7 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
     # in-system warp, StarbaseAttack.py:58 stops firing.
     ai._has_focus = True
     _reached_this_tick.append(ai)
-    _dispatch_got_focus(ai)
+    _queue_got_focus(ai)
 
     # Cadence gate. _note_due goes in the NOT-due arm only: on a tick the node
     # actually executes, its old due time is already in the past, and recording
@@ -465,12 +529,18 @@ def _dispatch_priority_child(child, game_time: float) -> int:
     holds focus. Returns the child's post-dispatch status."""
     focus_n = len(_reached_this_tick)
     all_n = len(_reached_this_tick_all)
+    # Arrivals queued while probing this child must roll back with the focus
+    # records they belong to, or a child that is probed and rejected fires
+    # GotFocus anyway -- an AlertLevel under a rejected branch would snapshot
+    # and raise the alert level on every probe.
+    pending_n = len(_pending_got_focus)
     had_focus = child._has_focus
     had_got = child.__dict__.get("_got_focus_called", False)
     tick_ai(child, game_time)
     if child._status != US_ACTIVE:
         del _reached_this_tick[focus_n:]
         del _reached_this_tick_all[all_n:]
+        del _pending_got_focus[pending_n:]
         _reached_this_tick_all_ids.clear()
         _reached_this_tick_all_ids.update(id(n) for n in _reached_this_tick_all)
         child._has_focus = had_focus
@@ -1089,7 +1159,11 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     # PreprocessingAI ticks". Guarded by a sentinel so subsequent
     # ticks don't re-fire. Duck-typed — no-op for preprocessors
     # without GotFocus.
-    _dispatch_got_focus(ai)
+    #
+    # QUEUED, not dispatched: it fires at the end of the root tick, after the
+    # departing nodes' LostFocus, so a handover cannot invert the SDK's
+    # save/restore pair. See _flush_pending_got_focus.
+    _queue_got_focus(ai)
 
     # Introspect once per PreprocessingAI instance whether the method
     # takes a positional dEndTime arg (SDK SelectTarget/FireScript) or
