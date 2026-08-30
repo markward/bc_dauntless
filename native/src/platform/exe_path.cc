@@ -13,6 +13,13 @@
 #include <vector>
 #endif
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+
+#include <cstdint>
+#include <cstring>
+#endif
+
 #include <system_error>
 
 namespace dauntless::platform {
@@ -38,6 +45,39 @@ std::filesystem::path executable_path(const char* argv0, std::string& error) {
         }
         buf.resize(buf.size() * 2);
     }
+#elif defined(__APPLE__)
+    (void)argv0;  // the OS knows the image path; argv[0] is only a hint
+    // The macOS counterpart of GetModuleFileNameW. Asking the kernel is what
+    // actually fixes a launch through PATH -- resolving argv[0] against the
+    // cwd cannot, because on that launch the name does not exist there at all.
+    //
+    // _NSGetExecutablePath reports the required size (including the NUL) via
+    // its in/out length argument when the buffer is too small, so probe with a
+    // one-byte buffer, then allocate and ask again. A nullptr buffer is not
+    // documented as accepted, so it is not used to probe.
+    std::uint32_t size = 1;
+    char probe = '\0';
+    if (_NSGetExecutablePath(&probe, &size) == 0) {
+        error = "_NSGetExecutablePath returned an empty image path";
+        return {};
+    }
+    std::string buf(size, '\0');
+    if (_NSGetExecutablePath(buf.data(), &size) != 0) {
+        error = "_NSGetExecutablePath failed for a buffer of its own "
+                "requested size (" + std::to_string(size) + " bytes)";
+        return {};
+    }
+    buf.resize(std::strlen(buf.c_str()));  // the reported size counts the NUL
+    const std::filesystem::path image_path(buf);
+
+    // The path is absolute but explicitly not guaranteed canonical: it can
+    // carry symlinks and "..". Resolve those so callers comparing it against,
+    // or hanging sibling paths off, the build directory get the real location.
+    // A failure here is not fatal -- the unresolved path is still a valid,
+    // absolute path to this binary, which beats refusing to start.
+    std::error_code ec;
+    std::filesystem::path resolved = std::filesystem::canonical(image_path, ec);
+    return ec ? image_path : resolved;
 #else
     if (argv0 == nullptr || *argv0 == '\0') {
         error = "argv[0] is empty, so the executable path cannot be resolved";

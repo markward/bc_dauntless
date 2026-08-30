@@ -77,7 +77,20 @@ int dispatch_subprocess(int argc, char* argv[]) {
     // On macOS the default LoadInMain() looks at <exec-dir>/../Frameworks/,
     // which assumes an .app bundle layout we don't use. Compute the
     // explicit path that matches Task 8's symlink at build/Frameworks/.
-    const std::filesystem::path exec_path = std::filesystem::canonical(argv[0]);
+    //
+    // Ask the OS for the image path rather than canonical(argv[0]): the latter
+    // resolves against the cwd, so it threw on a bare-name launch through PATH
+    // and, uncaught, aborted the process (measured exit 134, one libc++abi
+    // line, no smoke-check output).
+    std::string exec_error;
+    const std::filesystem::path exec_path =
+        dauntless::platform::executable_path(argv[0], exec_error);
+    if (exec_path.empty()) {
+        std::fprintf(stderr,
+                     "dauntless: cannot locate this executable to find the CEF "
+                     "framework: %s\n", exec_error.c_str());
+        return 1;
+    }
     const std::string framework_lib =
         exec_path.parent_path().string() +
         "/Frameworks/Chromium Embedded Framework.framework/"
@@ -192,10 +205,26 @@ bool initialize(int view_width, int view_height,
     settings.log_severity = LOGSEVERITY_FATAL;
 
 #ifdef __APPLE__
-    // No .app bundle: tell CEF where everything lives.
-    const std::filesystem::path exec_path = g_saved_argc > 0
-        ? std::filesystem::canonical(g_saved_argv[0])
-        : std::filesystem::current_path();
+    // No .app bundle: tell CEF where everything lives. Every path below hangs
+    // off this one, browser_subprocess_path included, so a wrong answer here
+    // shows up as CEF failing to start or helpers never spawning.
+    //
+    // Same reason as dispatch_subprocess for not calling canonical(argv[0]):
+    // it throws on a bare-name launch through PATH. The argc == 0 fallback is
+    // preserved -- an embedder can reach initialize() without ever handing us
+    // argv, and cwd is the only guess available then.
+    std::filesystem::path exec_path = std::filesystem::current_path();
+    if (g_saved_argc > 0) {
+        std::string exec_error;
+        exec_path =
+            dauntless::platform::executable_path(g_saved_argv[0], exec_error);
+        if (exec_path.empty()) {
+            std::fprintf(stderr,
+                         "ui_cef: cannot locate this executable to set the CEF "
+                         "framework paths: %s\n", exec_error.c_str());
+            return false;
+        }
+    }
     const std::string exec_dir = exec_path.parent_path().string();
 
     CefString(&settings.framework_dir_path)     = framework_dir(exec_dir);

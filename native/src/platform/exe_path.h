@@ -23,6 +23,12 @@ namespace dauntless::platform {
 /// original, and CEF's own check that libcef.dll was loaded from the expected
 /// path then aborted with "Found libcef.dll at unexpected path".
 ///
+/// macOS uses _NSGetExecutablePath for the same reason (measured: a bare-name
+/// launch through PATH aborted with an uncaught filesystem_error, exit 134).
+/// Other POSIX still resolves argv[0], which reports rather than throws but
+/// cannot answer a PATH launch -- no /proc/self/exe equivalent is used yet
+/// because nothing here has been built or run on Linux.
+///
 /// Returns an empty path on failure, with `error` set to a message naming what
 /// was tried.
 std::filesystem::path executable_path(const char* argv0, std::string& error);
