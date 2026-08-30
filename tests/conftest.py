@@ -709,6 +709,14 @@ def _reset_leakable_engine_globals():
         _events._warned_event_types.clear()
     except Exception:
         pass
+    # Hull-hit smoke beam throttle: keyed by (id(target), id(source)), and
+    # ids of short-lived test doubles get recycled, so a stale entry can
+    # silence a later test's first puff.
+    try:
+        from engine.appc import hull_hit_smoke as _hhs
+        _hhs.reset()
+    except Exception:
+        pass
     # Music: g_kMusicManager is a process-lifetime singleton and host_loop
     # lazily installs a MusicPlayer backend into it on the first audio tick.
     # Both survive across tests, so a mission that loaded tracks leaves them

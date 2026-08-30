@@ -324,8 +324,11 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
         # Stock-faithful hull-impact smoke (Effects.py TorpedoHullHit/
         # PhaserHullHit): a probabilistic, detail-gated puff at the impact
         # point. Deferred import mirrors the hit_vfx/camera_shake pattern above.
+        # `source` keys the beam throttle in there (per target+attacker pair);
+        # it is not otherwise used.
         from engine.appc import hull_hit_smoke
-        hull_hit_smoke.maybe_emit(ship, point, normal, weapon_type, ship_instances)
+        hull_hit_smoke.maybe_emit(ship, point, normal, weapon_type,
+                                  ship_instances, source=source)
 
     # 2. Audio — edge-triggered per (ship, severity). Plays once at
     # the start of a contiguous burst; subsequent ticks while the same

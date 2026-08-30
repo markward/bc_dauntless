@@ -18,14 +18,52 @@ from engine.appc import particles
 # Stock rolls (Effects.py): torpedo 20% (rand(10) < 2), phaser 30% (rand(10) < 3).
 _HULL_SMOKE_ROLL = {"torpedo": 2, "phaser": 3}
 
+# ── Beam throttle ──────────────────────────────────────────────────────────
+# Stock's PhaserHullHit is an ET_WEAPON_HIT handler, so it rolls once per
+# hull-hit EVENT. BC's beams apply damage in 0.5 s pulses (stbc_reference
+# spec/ShieldFacingDamage.md, graded reviewed-not-tested), giving ~2 rolls/s
+# per firing beam. Our beams apply damage — and therefore dispatch — every
+# tick (host_loop's per-frame weapon loop calls combat.apply_hit with
+# _phaser_damage_for_tick), so the same 30% roll ran 60x/s: 18 emitters/s
+# where stock gets 0.3. Each one lives 10.3 s emitting 30 concurrent puffs, so
+# ~210 emitters pile up and — being world-space (see _emit_smoke) — smear into
+# a permanent gas stream along the ship's flight path.
+#
+# Restore stock's EVENT rate by rolling at most once per interval per
+# (target, attacker) pair. Per-pair, not per-target: each attacker's beam is
+# its own pulse train in stock, so five ships beaming one hull must produce
+# five times the smoke.
+#
+# Torpedoes are NOT throttled — they already dispatch once per discrete
+# impact, which is exactly stock's event rate. Throttling them would eat
+# salvo hits that stock renders.
+SMOKE_EMIT_INTERVAL = 0.5   # game-time seconds between rolls per (target, source)
+_THROTTLED_WEAPONS = ("phaser",)
+_last_smoke_roll: dict = {}  # (id(ship), id(source)) -> last roll game-time
 
-def maybe_emit(ship, point, normal, weapon_type, ship_instances=None) -> None:
+
+def _now() -> float:
+    """Game-time seconds, shared with the decal/carve throttles so smoke
+    freezes under pause instead of accumulating on wall-clock."""
+    from engine.appc import damage_decals
+    return damage_decals.current_game_time()
+
+
+def reset() -> None:
+    """Drop the per-pair throttle state (mission swap / tests)."""
+    _last_smoke_roll.clear()
+
+
+def maybe_emit(ship, point, normal, weapon_type, ship_instances=None,
+               source=None) -> None:
     """Emit a stock-faithful hull-hit smoke puff, or do nothing.
 
     `point` / `normal` are world-space TGPoint3 (`.x/.y/.z`); `weapon_type` is
     "torpedo" / "phaser" / None; `ship_instances` maps ship -> renderer instance
-    id. No-op unless the weapon is a torpedo/phaser, the probability roll passes,
-    detail level >= MEDIUM, and the impact resolves to a body-frame hull anchor.
+    id; `source` is the firing ship, used only to key the beam throttle. No-op
+    unless the weapon is a torpedo/phaser, the beam throttle allows a roll, the
+    probability roll passes, detail level >= MEDIUM, and the impact resolves to
+    a body-frame hull anchor.
     """
     threshold = _HULL_SMOKE_ROLL.get(weapon_type)
     if threshold is None:
@@ -35,6 +73,16 @@ def maybe_emit(ship, point, normal, weapon_type, ship_instances=None) -> None:
         return
     if normal is None:
         return
+    # BEFORE the roll, deliberately: a throttled tick must not consume a draw.
+    # Rolling first and throttling after would emit on nearly every interval
+    # (60 ticks x 30% always produces a winner) instead of on 30% of them,
+    # which is a different — and much hotter — distribution than stock's.
+    if weapon_type in _THROTTLED_WEAPONS:
+        key = (id(ship), id(source))
+        now = _now()
+        if now - _last_smoke_roll.get(key, -1e9) < SMOKE_EMIT_INTERVAL:
+            return
+        _last_smoke_roll[key] = now
     if App.g_kSystemWrapper.GetRandomNumber(10) >= threshold:
         return
     iid = ship_instances.get(ship) if ship_instances is not None else None

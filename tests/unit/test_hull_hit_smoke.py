@@ -43,6 +43,16 @@ def captured(monkeypatch):
     return box
 
 
+@pytest.fixture(autouse=True)
+def _clear_throttle():
+    """The beam throttle is keyed by id(ship), and these tests reuse the
+    interned string "ship" as their ship — so without this the first test to
+    emit would silence every later one."""
+    hull_hit_smoke.reset()
+    yield
+    hull_hit_smoke.reset()
+
+
 def _emit(rng_values, weapon, monkeypatch, ship_instances=None):
     if ship_instances is None:
         ship_instances = {"ship": 7}
@@ -109,6 +119,110 @@ def test_ship_instances_none_skips(captured, monkeypatch):
     hull_hit_smoke.maybe_emit(
         "ship", TGPoint3(5.0, 6.0, 7.0), TGPoint3(0.0, 1.0, 0.0), "torpedo")
     assert "started" not in captured
+
+
+# ── Beam throttle ──────────────────────────────────────────────────────────
+# combat.apply_hit dispatches once per TICK for a continuous phaser, so
+# maybe_emit was rolling 60x/s where stock BC's PhaserHullHit handler sees one
+# hull-hit event per 0.5 s beam pulse. Each passing roll starts a 10.3 s
+# emitter, so the artefact compounds into a permanent smoke stream.
+
+
+class _Clock:
+    """Monkeypatchable game-time stand-in for hull_hit_smoke._now."""
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    c = _Clock()
+    monkeypatch.setattr(hull_hit_smoke, "_now", c)
+    return c
+
+
+def _beam(monkeypatch, ship="ship", source="attacker", weapon="phaser"):
+    """One weapon-impact tick. RNG always passes the roll, so the ONLY thing
+    that can suppress an emit is the throttle."""
+    monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", _RNG([], default=0))
+    hull_hit_smoke.maybe_emit(
+        ship, TGPoint3(5.0, 6.0, 7.0), TGPoint3(0.0, 1.0, 0.0),
+        weapon, ship_instances={ship: 7}, source=source)
+
+
+def test_sustained_beam_rolls_once_per_interval(captured, clock, monkeypatch):
+    """A 1 s beam at 60 Hz gets 3 rolls (t=0, 0.5, 1.0), not 61."""
+    emits = []
+    monkeypatch.setattr(hull_hit_smoke, "_emit_smoke",
+                        lambda *a: emits.append(a))
+    for tick in range(61):
+        clock.t = tick / 60.0
+        _beam(monkeypatch)
+    assert len(emits) == 3
+
+
+def test_beam_throttle_is_per_attacker(captured, clock, monkeypatch):
+    """Two ships beaming the same target each get their own pulse cadence —
+    being swarmed must look worse than being hit by one attacker."""
+    emits = []
+    monkeypatch.setattr(hull_hit_smoke, "_emit_smoke",
+                        lambda *a: emits.append(a))
+    _beam(monkeypatch, source="attacker_a")
+    _beam(monkeypatch, source="attacker_b")
+    assert len(emits) == 2
+
+
+def test_beam_throttle_is_per_target(captured, clock, monkeypatch):
+    emits = []
+    monkeypatch.setattr(hull_hit_smoke, "_emit_smoke",
+                        lambda *a: emits.append(a))
+    _beam(monkeypatch, ship="ship_a")
+    _beam(monkeypatch, ship="ship_b")
+    assert len(emits) == 2
+
+
+def test_torpedoes_are_not_throttled(captured, clock, monkeypatch):
+    """Torpedoes already arrive at stock's event rate — one dispatch per
+    discrete impact — so a salvo landing inside one interval must still puff
+    per hit. Only the per-tick beam path is the artefact."""
+    emits = []
+    monkeypatch.setattr(hull_hit_smoke, "_emit_smoke",
+                        lambda *a: emits.append(a))
+    for _ in range(5):
+        _beam(monkeypatch, weapon="torpedo")
+    assert len(emits) == 5
+
+
+def test_reset_clears_beam_throttle(captured, clock, monkeypatch):
+    emits = []
+    monkeypatch.setattr(hull_hit_smoke, "_emit_smoke",
+                        lambda *a: emits.append(a))
+    _beam(monkeypatch)
+    _beam(monkeypatch)
+    assert len(emits) == 1
+    hull_hit_smoke.reset()
+    _beam(monkeypatch)
+    assert len(emits) == 2
+
+
+def test_throttle_gates_before_the_roll(captured, clock, monkeypatch):
+    """The throttle must run BEFORE the probability roll, so a suppressed tick
+    does not consume an RNG draw. Rolling first and throttling after would emit
+    on ~every interval instead of ~30% of them."""
+    rng = _RNG([], default=0)
+    monkeypatch.setattr(hull_hit_smoke.App, "g_kSystemWrapper", rng)
+    monkeypatch.setattr(hull_hit_smoke, "_emit_smoke", lambda *a: None)
+    hull_hit_smoke.maybe_emit(
+        "ship", TGPoint3(5.0, 6.0, 7.0), TGPoint3(0.0, 1.0, 0.0),
+        "phaser", ship_instances={"ship": 7}, source="attacker")
+    draws_after_first = len(rng.calls)
+    hull_hit_smoke.maybe_emit(     # same interval -> throttled
+        "ship", TGPoint3(5.0, 6.0, 7.0), TGPoint3(0.0, 1.0, 0.0),
+        "phaser", ship_instances={"ship": 7}, source="attacker")
+    assert len(rng.calls) == draws_after_first
 
 
 def test_emitted_puff_lives_in_world_space(monkeypatch):

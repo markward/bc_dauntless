@@ -4825,6 +4825,8 @@ class HostController:
         damage_eligibility.reset()
         hit_feedback._last_carve_time.clear()
         hit_feedback._pending_carve_strength.clear()
+        from engine.appc import hull_hit_smoke
+        hull_hit_smoke.reset()
         # The dynamic-light distance gate's camera eye belongs to the mission
         # that solved it. The next mission's ships spawn wherever its sets put
         # them, so a carried-over eye can cull their lights on the first frame,
