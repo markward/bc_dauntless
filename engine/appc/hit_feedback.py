@@ -42,16 +42,20 @@ SPARK_HULL_THRESHOLD = 80.0   # game-units of hull damage in one hit (tune-by-ey
 # rates. ShieldState keeps the 8 most recent hits and the shader SUMS them, so
 # a phaser — which applies damage every tick — holds all 8 slots full of
 # near-simultaneous, near-co-located splashes: at 60 Hz with ShieldGlowDecay
-# 1.0 that is a summed intensity of 3.78 from this 0.5 seed. A torpedo is a
+# 1.0 that is a summed intensity of 2.46 from this 0.325 seed. A torpedo is a
 # single push. Sharing one seed left torpedo impacts 7.6x dimmer than phaser
 # ones, which is exactly how they read in game.
+#
+# Both seeds were cut 35% (0.5/2.0 -> 0.325/1.3) in the HDR brightness pass:
+# the flashes were blowing out against the rest of the tone-mapped scene. The
+# ratio between them is unchanged, so the phaser/torpedo split above still holds.
 #
 # BC draws the same asymmetry: a shield hit always shows the glow, and a
 # torpedo ADDITIONALLY fires Effects.TorpedoShieldHit subject to a magnitude
 # check, while no PhaserShieldHit handler exists at all (stbc_reference
 # spec/ShieldFacingDamage.md §4.3) — the same split _play_audio already makes.
-SHIELD_IMPACT_INTENSITY = 0.5           # per phaser tick (and the default)
-SHIELD_IMPACT_INTENSITY_TORPEDO = 2.0   # one discrete impact
+SHIELD_IMPACT_INTENSITY = 0.325         # per phaser tick (and the default)
+SHIELD_IMPACT_INTENSITY_TORPEDO = 1.3   # one discrete impact
 
 
 # Smallest fraction of a hit the shields must actually absorb before the flash

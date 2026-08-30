@@ -40,9 +40,15 @@ IMPULSE_AFT_AXIS = (0.0, -1.0, 0.0)
 # measured velocity, so warp/collision/drift never brighten the engines. All
 # tunable here with no rebuild; biased slightly strong (calibrate up then down).
 GAIN_IDLE = 1.0      # powered but stopped -> base glow (matches legacy brightness)
-GAIN_MAX = 2.0       # full throttle -> 2x brighter (feeds HDR bloom)
+GAIN_MAX = 3.0       # full throttle -> 3x brighter (feeds HDR bloom)
 PULSE_FREQ_HZ = 0.4  # slow throb rate
 PULSE_AMP = 0.15     # peak pulse fraction at full throttle (scales with speed)
+# GAIN_MAX raised 50% (2.0 -> 3.0) in the HDR brightness pass; 4.0 was tried
+# first and read as too hot in game. Only the CEILING
+# moved: the ramp is still anchored at GAIN_IDLE, so a stopped-but-powered ship
+# is unchanged and every throttle > 0 gets a proportionally larger boost. This
+# also feeds impulse-parented dynamic lights via
+# light_emitters.resolve_emitter_intensity.
 # Time constant (s) for easing the commanded throttle, so stepping between
 # impulse notches ramps the glow smoothly instead of jumping. Larger = slower.
 IMPULSE_EASE_TAU = 0.35
