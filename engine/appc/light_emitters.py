@@ -196,7 +196,8 @@ def emitter_flicker(now: float, phase: float) -> float:
 
 
 def resolve_emitter_intensity(spec, sub, now, throttle_frac=0.0,
-                              is_impulse=False, powered=True, phase=0.0):
+                              is_impulse=False, powered=True, phase=0.0,
+                              is_warp=False, warp_glow=None):
     """Per-frame emitter intensity scalar, or None when fully off.
 
     HEALTHY -> base intensity; DISABLED -> base * flicker(now); DESTROYED -> off.
@@ -204,6 +205,12 @@ def resolve_emitter_intensity(spec, sub, now, throttle_frac=0.0,
     so they brighten with commanded throttle exactly like the impulse glow —
     but only while the subsystem is HEALTHY, mirroring ShipGlowController
     (a disabled impulse pod gets flicker only, no throttle brightening).
+
+    Warp-pod emitters take the same treatment from the other side: while the
+    host supplies a `warp_glow` (drive, burst) envelope — only for the ship
+    actually flying a cross-system warp — they scale by
+    subsystem_glow.warp_gain, so a nacelle's cast light spools up and bursts
+    in lockstep with its glow volume. Health-gated identically.
     """
     base = float(spec["intensity"])
     state = subsystem_glow.glow_state(sub)
@@ -215,6 +222,8 @@ def resolve_emitter_intensity(spec, sub, now, throttle_frac=0.0,
     if is_impulse:
         out *= subsystem_glow.impulse_gain(
             throttle_frac, now, powered and (state == subsystem_glow.HEALTHY))
+    if is_warp and warp_glow and state == subsystem_glow.HEALTHY:
+        out *= subsystem_glow.warp_gain(warp_glow[0], warp_glow[1], now)
     if out <= 0.0:
         return None
     return out

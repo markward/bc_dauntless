@@ -1,3 +1,5 @@
+import pytest
+
 from engine.appc import subsystem_glow as sg
 
 
@@ -271,6 +273,46 @@ def test_impulse_gain_pulse_bounded_and_steady_at_rest():
         assert lo - 1e-9 <= g <= hi + 1e-9
 
 
+def test_warp_gain_is_exactly_one_when_not_warping():
+    # The whole effect must be inert outside a warp: a ship sitting in normal
+    # flight has to render byte-identically to before this feature existed.
+    for now in (0.0, 1.3, 7.7, 100.0):
+        assert sg.warp_gain(0.0, 0.0, now) == 1.0
+
+
+def test_warp_gain_ramps_to_max_with_drive():
+    # now=0 zeroes the pulse term, so this isolates the base ramp.
+    assert sg.warp_gain(0.0, 0.0, 0.0) == 1.0
+    mid = sg.warp_gain(0.5, 0.0, 0.0)
+    full = sg.warp_gain(1.0, 0.0, 0.0)
+    assert 1.0 < mid < full
+    assert full == pytest.approx(sg.WARP_GAIN_MAX)
+
+
+def test_warp_gain_burst_peaks_at_the_burst_ceiling():
+    # burst=1 pins the gain to WARP_BURST_GAIN exactly — it is a CEILING the
+    # jump reaches, not an amount added on top of the sustained level, so the
+    # brightest the nacelles ever get is exactly this constant.
+    assert sg.warp_gain(1.0, 1.0, 0.0) == pytest.approx(sg.WARP_BURST_GAIN)
+    # ...and it dominates even from a cold drive (the jump can't be dimmer).
+    assert sg.warp_gain(0.0, 1.0, 0.0) == pytest.approx(sg.WARP_BURST_GAIN)
+    # partway through the decay it sits between the sustained level and the peak
+    half = sg.warp_gain(1.0, 0.5, 0.0)
+    assert sg.WARP_GAIN_MAX < half < sg.WARP_BURST_GAIN
+
+
+def test_warp_gain_pulse_bounded_and_steady_when_cold():
+    # Pulse amplitude scales with drive: no throb at all when cold, bounded
+    # throb at full drive (so the nacelles never flicker to black or blow out).
+    cold = [sg.warp_gain(0.0, 0.0, t * 0.05) for t in range(60)]
+    assert set(cold) == {1.0}
+    hot = [sg.warp_gain(1.0, 0.0, t * 0.05) for t in range(60)]
+    lo = sg.WARP_GAIN_MAX * (1.0 - sg.WARP_PULSE_AMP)
+    hi = sg.WARP_GAIN_MAX * (1.0 + sg.WARP_PULSE_AMP)
+    assert all(lo - 1e-9 <= v <= hi + 1e-9 for v in hot)
+    assert len(set(round(v, 6) for v in hot)) > 1      # it really does throb
+
+
 def test_controller_pushes_gain_only_for_impulse_region():
     warp = _WarpAgg([_Pod(_Point(-3.0, 1.0, 0.0))])
     impulse = _ImpulseSub(_Point(0.0, -0.98, -0.45), on=True, max_speed=10.0)
@@ -288,6 +330,83 @@ def test_controller_pushes_gain_only_for_impulse_region():
     assert (iid, idx) == (7, 1)
     assert abs(gain - sg.GAIN_MAX) < 1e-9
     assert gate == sg.IMPULSE_AFT_AXIS
+
+
+def _warp_impulse_sensor_ship():
+    """Ship + renderer whose regions register as warp=0, impulse=1, sensor=2."""
+    warp = _WarpAgg([_Pod(_Point(-3.0, 1.0, 0.0), radius=1.2)])
+    impulse = _Pod(_Point(0.0, -0.98, -0.45), radius=0.25)
+    sensor = _Pod(_Point(0.0, -0.45, -0.5), radius=0.28)
+    ship = _Ship(warp, impulse, sensor)
+    return ship, _FakeRenderer(results=[0, 1, 2])
+
+
+def _gains_for(rend, idx):
+    return [c for c in rend.gain_calls if c[1] == idx]
+
+
+def test_controller_marks_warp_regions_as_warp_driven():
+    ship, rend = _warp_impulse_sensor_ship()
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    # warp pod is warp-driven; impulse pod is throttle-boosted; sensor neither
+    assert [r["warp"] for r in ctrl._regions] == [True, False, False]
+    assert [r["boost"] for r in ctrl._regions] == [False, True, False]
+
+
+def test_controller_pushes_no_warp_gain_while_not_warping():
+    # Byte-identical to pre-feature behaviour: a ship that isn't warping must
+    # not get a single gain push on its warp region.
+    ship, rend = _warp_impulse_sensor_ship()
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    ctrl.update(now=0.0)
+    ctrl.update(now=1.0)
+    assert _gains_for(rend, 0) == []          # warp region untouched
+    assert len(_gains_for(rend, 1)) == 2      # impulse region drives as always
+
+
+def test_controller_pushes_warp_gain_over_the_whole_volume():
+    # Warp gain is NOT aft-gated the way impulse is — the whole nacelle lights
+    # up, so the gate axis must be zero (the shader reads that as whole-region).
+    ship, rend = _warp_impulse_sensor_ship()
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    ctrl.update(now=0.0, warp_glow=(1.0, 0.0))
+    calls = _gains_for(rend, 0)
+    assert len(calls) == 1
+    iid, idx, gain, gate = calls[0]
+    assert (iid, idx) == (7, 0)
+    assert gate == (0.0, 0.0, 0.0)
+    assert gain == pytest.approx(sg.WARP_GAIN_MAX)
+
+
+def test_controller_warp_burst_reaches_the_burst_ceiling():
+    ship, rend = _warp_impulse_sensor_ship()
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    ctrl.update(now=0.0, warp_glow=(1.0, 1.0))
+    assert _gains_for(rend, 0)[0][2] == pytest.approx(sg.WARP_BURST_GAIN)
+
+
+def test_controller_resets_warp_gain_exactly_once_after_the_warp():
+    # The last frame of the warp leaves the region bright; without a trailing
+    # push it would stay bright forever. But it must reset ONCE, not re-push
+    # 1.0 every frame for the rest of the mission.
+    ship, rend = _warp_impulse_sensor_ship()
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    ctrl.update(now=0.0, warp_glow=(1.0, 0.0))
+    ctrl.update(now=1.0)                      # warp over
+    ctrl.update(now=2.0)
+    ctrl.update(now=3.0)
+    gains = [c[2] for c in _gains_for(rend, 0)]
+    assert gains == [pytest.approx(sg.WARP_GAIN_MAX), 1.0]
+
+
+def test_controller_no_warp_gain_when_the_pod_is_destroyed():
+    # Mirrors the impulse rule: the dim/flicker state machine owns disabled and
+    # destroyed pods, so a blown nacelle must not brighten at warp.
+    ship, rend = _warp_impulse_sensor_ship()
+    ship._warp._kids[0].destroyed = True
+    ctrl = sg.ShipGlowController(rend, instance_id=7, ship=ship)
+    ctrl.update(now=0.0, warp_glow=(1.0, 1.0))
+    assert _gains_for(rend, 0) == []
 
 
 def test_controller_boost_ignores_ison_flag():

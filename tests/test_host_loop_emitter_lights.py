@@ -90,7 +90,7 @@ def test_healthy_point_emitter_identity_pose_produces_one_light():
     spec = light_emitters.baked_emitters(prop)[0]
 
     ship_instances = {ship: 42}
-    ship_emitters = {42: [(sub, False, 0.0, spec)]}
+    ship_emitters = {42: [(sub, False, False, 0.0, spec)]}
 
     out = _build_emitter_light_render_data(ship_instances, ship_emitters)
 
@@ -109,7 +109,7 @@ def test_destroyed_parent_subsystem_emits_no_light():
     spec = light_emitters.baked_emitters(prop)[0]
 
     ship_instances = {ship: 7}
-    ship_emitters = {7: [(sub, False, 0.0, spec)]}
+    ship_emitters = {7: [(sub, False, False, 0.0, spec)]}
 
     out = _build_emitter_light_render_data(ship_instances, ship_emitters)
     assert out == []
@@ -126,7 +126,7 @@ def test_rotated_translated_ship_transforms_body_position_to_world():
     spec = light_emitters.baked_emitters(prop)[0]
 
     ship_instances = {ship: 3}
-    ship_emitters = {3: [(sub, False, 0.0, spec)]}
+    ship_emitters = {3: [(sub, False, False, 0.0, spec)]}
 
     out = _build_emitter_light_render_data(ship_instances, ship_emitters)
     assert len(out) == 1
@@ -168,8 +168,8 @@ def test_strip_and_cone_transform_correctly_on_rotated_translated_ship():
     cone_spec = light_emitters.baked_emitters(cone_prop)[0]
 
     ship_instances = {ship: 9}
-    ship_emitters = {9: [(strip_sub, False, 0.0, strip_spec),
-                          (cone_sub, False, 1.0, cone_spec)]}
+    ship_emitters = {9: [(strip_sub, False, False, 0.0, strip_spec),
+                          (cone_sub, False, False, 1.0, cone_spec)]}
 
     out = _build_emitter_light_render_data(ship_instances, ship_emitters)
     assert len(out) == 2
@@ -231,7 +231,7 @@ def test_elliptical_cone_up_transforms_with_direction_on_rotated_ship():
     spec = light_emitters.baked_emitters(prop)[0]
 
     ship_instances = {ship: 11}
-    ship_emitters = {11: [(sub, False, 0.0, spec)]}
+    ship_emitters = {11: [(sub, False, False, 0.0, spec)]}
 
     out = _build_emitter_light_render_data(ship_instances, ship_emitters)
     assert len(out) == 1
@@ -318,4 +318,4 @@ def test_cache_build_marks_impulse_membership_and_assigns_phase(monkeypatch):
     assert other_entry[0] is other_sub
     # phase = j * 1.7 + subsystem_index; both are index-0 emitters on their
     # subsystem (j=0), so phase == subsystem_index (0 then 1).
-    assert {round(e[2], 3) for e in entries} == {0.0, 1.0}
+    assert {round(e[3], 3) for e in entries} == {0.0, 1.0}
