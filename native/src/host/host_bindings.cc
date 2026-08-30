@@ -1013,7 +1013,9 @@ void frame() {
         }
         g_bridge_pass->set_viewscreen_texture(g_viewscreen_hdr->color_texture());
     } else if (g_bridge_pass) {
-        g_bridge_pass->set_viewscreen_texture(0);   // off -> step-5b blank panel
+        // Off -> the bridge pass falls back to the SDK's SetOffTexture image
+        // (the mission loading screen), or to the NIF material if none is set.
+        g_bridge_pass->set_viewscreen_texture(0);
     }
 
     // ── Main HDR target ────────────────────────────────────────────────────
@@ -2208,6 +2210,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Enable or disable the bridge render pass.");
     m.def("set_viewscreen_model",
           [](unsigned long long h) { if (g_bridge_pass) g_bridge_pass->set_viewscreen_model(h); });
+    m.def("set_viewscreen_off_texture",
+          [](const std::string& path) {
+              if (g_bridge_pass) g_bridge_pass->set_viewscreen_off_texture(path);
+          }, py::arg("path"));
     m.def("set_viewscreen_enabled",
           [](bool on) { g_viewscreen_enabled = on; });
     m.def("set_viewscreen_brightness",

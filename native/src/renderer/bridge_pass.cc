@@ -19,6 +19,10 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <utility>
 #include <vector>
 
 namespace renderer {
@@ -43,6 +47,28 @@ std::uint32_t BridgePass::ensure_white_texture() {
     glBindTexture(GL_TEXTURE_2D, 0);
     white_texture_ = t;
     return white_texture_;
+}
+
+void BridgePass::ensure_off_texture() {
+    if (off_tex_path_ == off_tex_loaded_) return;
+    off_tex_loaded_ = off_tex_path_;
+    off_tex_ = {};
+    if (off_tex_path_.empty()) return;
+    std::ifstream in(off_tex_path_, std::ios::binary);
+    if (!in) {
+        std::fprintf(stderr, "[bridge] viewscreen off texture: open '%s' failed\n",
+                     off_tex_path_.c_str());
+        return;
+    }
+    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                    std::istreambuf_iterator<char>());
+    try {
+        off_tex_ = assets::upload_image(assets::decode_tga(bytes),
+                                        /*generate_mipmaps=*/false);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[bridge] viewscreen off texture: decode '%s': %s\n",
+                     off_tex_path_.c_str(), e.what());
+    }
 }
 
 namespace {
@@ -90,6 +116,7 @@ void draw_mesh(const assets::Model& model,
                GLuint white_fallback,
                double wall_time,
                GLuint base_override,
+               bool override_flip_v = true,
                float vs_brightness = 1.0f,
                float vs_flash = 0.0f,
                bool face_blend = false,
@@ -128,9 +155,11 @@ void draw_mesh(const assets::Model& model,
         }
     }
     // Flip V only for the viewscreen RTT feed: its FBO colour attachment is
-    // bottom-up, the NIF screen UVs are top-down (see bridge.frag). Set every
-    // draw so it never sticks on for the surrounding bridge geometry.
-    shader.set_int("u_flip_v", base_override != 0 ? 1 : 0);
+    // bottom-up, the NIF screen UVs are top-down (see bridge.frag). The other
+    // override — the SDK off texture — is a .tga and must NOT be flipped. Set
+    // every draw so it never sticks on for the surrounding bridge geometry.
+    shader.set_int("u_flip_v",
+                   (base_override != 0 && override_flip_v) ? 1 : 0);
     // Brightness multiplier: only the viewscreen override path receives the
     // per-frame fade value; all other geometry gets 1.0 (byte-identical).
     shader.set_float("u_viewscreen_brightness",
@@ -220,15 +249,26 @@ void BridgePass::render(const scenegraph::World& world,
     // shapes now have their correct diffuse in Base.
     const GLuint white = ensure_white_texture();
     const double t = wall_time_;
+    ensure_off_texture();
+    // The viewscreen override: the live RTT feed when it is on, otherwise the
+    // SDK's off texture (the loading screen). Only the feed needs the V flip —
+    // it is an FBO colour attachment (bottom-up); the off texture is a .tga,
+    // authored top-down like every other NIF texture.
+    const GLuint off_tex = off_tex_.id();
+    auto viewscreen_override = [&](unsigned long long mh)
+        -> std::pair<GLuint, bool> {
+        if (viewscreen_model_handle_ == 0 || mh != viewscreen_model_handle_)
+            return {0u, false};
+        if (viewscreen_tex_ != 0) return {viewscreen_tex_, true};
+        return {off_tex, false};
+    };
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/false,
         pass, comm_set_id,
         [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w,
             unsigned long long mh) {
-            const GLuint ov = (viewscreen_model_handle_ != 0
-                               && mh == viewscreen_model_handle_)
-                              ? viewscreen_tex_ : 0u;
-            draw_mesh(m, mesh, mat, base_shader, w, white, t, ov,
+            const auto [ov, flip] = viewscreen_override(mh);
+            draw_mesh(m, mesh, mat, base_shader, w, white, t, ov, flip,
                       viewscreen_brightness_, viewscreen_flash_);
         });
     walk_bridge_meshes(world, lookup, /*want_lightmap_pass=*/true,
@@ -236,10 +276,8 @@ void BridgePass::render(const scenegraph::World& world,
         [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w,
             unsigned long long mh) {
-            const GLuint ov = (viewscreen_model_handle_ != 0
-                               && mh == viewscreen_model_handle_)
-                              ? viewscreen_tex_ : 0u;
-            draw_mesh(m, mesh, mat, base_shader, w, white, t, ov,
+            const auto [ov, flip] = viewscreen_override(mh);
+            draw_mesh(m, mesh, mat, base_shader, w, white, t, ov, flip,
                       viewscreen_brightness_, viewscreen_flash_);
         });
 
@@ -291,7 +329,8 @@ void BridgePass::render(const scenegraph::World& world,
                                          && mesh_idx >= m->head_mesh_begin;
                     const bool face = inst.face_active && is_head;
                     draw_mesh(*m, mesh, mat, skin_shader, inst.world, white, t, 0u,
-                              1.0f, 0.0f, face, inst.face_tex_a, inst.face_tex_b,
+                              /*override_flip_v=*/true, 1.0f, 0.0f,
+                              face, inst.face_tex_a, inst.face_tex_b,
                               inst.face_mix);
                 }
             }

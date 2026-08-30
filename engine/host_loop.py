@@ -76,6 +76,7 @@ from engine.appc import (
     render_instances,
 )
 from engine.appc import viewscreen_static as _vss
+from engine.appc import bridge_set as _bridge_set
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
 from engine.appc.sensor_detection import can_detect, clear_undetectable_player_lock
@@ -6117,6 +6118,15 @@ def drive_viewscreen_static_and_brightness(r, controller, ramp, dt,
         r.set_viewscreen_static(True, intensity_fn(fmin, fmax))
     else:
         r.set_viewscreen_static(False, 0.0)
+
+    # Off-screen texture (SDK SetOffTexture; MissionLib.ShowLoadingText points
+    # it at ViewscreenLoading.tga while a mission loads). Only consulted by the
+    # renderer when the RTT feed is off; pushed on change so the TGA is decoded
+    # once, not per frame.
+    off_path = _bridge_set.off_texture_abs_path(vs)
+    if off_path != getattr(controller, "_vs_off_texture_sent", None):
+        r.set_viewscreen_off_texture(off_path)
+        controller._vs_off_texture_sent = off_path
 
 
 def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open) -> None:

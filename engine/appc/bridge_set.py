@@ -96,6 +96,8 @@ class ViewScreenObject(_LoudStub):
         self._static_on = 0
         self._static_min = 0.0
         self._static_max = 0.0
+        # Game-relative path of the texture shown while IsOn() == 0.
+        self._off_texture = None
 
     def GetRemoteCam(self):
         return self._remote_cam
@@ -126,6 +128,31 @@ class ViewScreenObject(_LoudStub):
     def SetStaticVariation(self, fmin, fmax):
         self._static_min = float(fmin)
         self._static_max = float(fmax)
+
+    def SetOffTexture(self, path):
+        # BC's ViewScreenObject_SetOffTexture (App.py:4854): the texture the
+        # screen shows while the feed is off. MissionLib.ShowLoadingText points
+        # it at data/Icons/ViewscreenLoading.tga before every mission load
+        # (QuickBattle.py:3040). DBridgeViewScreen.nif carries NO
+        # NiTexturingProperty — BC always assigns the screen's texture at
+        # runtime — so while this fell through _LoudStub.__getattr__ as a no-op
+        # the off screen drew the renderer's 1x1 white fallback times bridge
+        # ambient: a flat grey panel where the loading art belongs.
+        self._off_texture = path
+
+    def GetOffTexture(self):
+        return self._off_texture
+
+
+def off_texture_abs_path(viewscreen) -> str:
+    """Absolute path to `viewscreen`'s SDK-set off texture, or "" if none.
+
+    SetOffTexture takes a game-relative path ("data/Icons/ViewscreenLoading.tga");
+    the renderer needs it resolved against the BC install."""
+    rel = getattr(viewscreen, "_off_texture", None) if viewscreen is not None else None
+    if not rel:
+        return ""
+    return str(_GAME_ROOT / rel)
 
 
 class ZoomCameraObjectClass(_LoudStub):

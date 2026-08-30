@@ -5,8 +5,11 @@
 
 #include <scenegraph/instance.h>  // scenegraph::Pass
 
+#include <assets/texture.h>
+
 #include <cstdint>
 #include <functional>
+#include <string>
 
 namespace scenegraph { class World; struct Camera; }
 
@@ -55,12 +58,23 @@ public:
     /// instance's model_handle matches the registered viewscreen handle and
     /// the texture is non-zero, the base sub-pass binds `tex` as u_base_color
     /// and forces full emissive (so the feed isn't dimmed by bridge ambient).
-    /// tex==0 (the default) restores the instance's authored NIF texture —
-    /// the step-5b blank panel.
+    /// tex==0 (the default) falls back to set_viewscreen_off_texture, and to the
+    /// instance's authored NIF texture if no off texture is set.
     void set_viewscreen_model(unsigned long long model_handle) {
         viewscreen_model_handle_ = model_handle;
     }
     void set_viewscreen_texture(unsigned int tex) { viewscreen_tex_ = tex; }
+
+    /// Texture drawn on the viewscreen while the RTT feed is off (BC's
+    /// ViewScreenObject::SetOffTexture — MissionLib.ShowLoadingText points it at
+    /// data/Icons/ViewscreenLoading.tga during a mission load). Absolute path;
+    /// "" clears it. Decoded lazily on the next render (the setter is called
+    /// from the host loop, which may run before the GL objects exist), and only
+    /// when the path changes. Without one the screen falls back to the NIF's own
+    /// material, which the viewscreen mesh does not have — a flat grey panel.
+    void set_viewscreen_off_texture(const std::string& path) {
+        off_tex_path_ = path;
+    }
     /// Set the feed brightness for ViewOn/ViewOff fade: 1.0 = full, 0.0 = black.
     /// Applies only to the viewscreen override path; all other bridge geometry
     /// receives u_viewscreen_brightness=1.0 (byte-identical output).
@@ -82,6 +96,13 @@ private:
     unsigned int       viewscreen_tex_ = 0;
     float              viewscreen_brightness_ = 1.0f;
     float              viewscreen_flash_ = 0.0f;
+
+    /// Off-screen texture: requested path, the path currently decoded into
+    /// `off_tex_`, and the texture itself. Reloaded only when the two differ.
+    std::string     off_tex_path_;
+    std::string     off_tex_loaded_;
+    assets::Texture off_tex_;
+    void ensure_off_texture();
 };
 
 }  // namespace renderer

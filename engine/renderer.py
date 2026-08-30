@@ -66,6 +66,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_subsystem_pins", "set_suns",
     "set_viewscreen_brightness", "set_viewscreen_comm_source",
     "set_viewscreen_enabled", "set_viewscreen_model",
+    "set_viewscreen_off_texture",
     "set_viewscreen_scene_source", "set_viewscreen_static",
     "set_viewscreen_static_source", "set_visible", "set_warp_flash_intensity",
     "set_warp_streak_intensity", "set_warp_travel_dir", "set_world_transform",
@@ -819,6 +820,13 @@ def set_viewscreen_model(handle: int) -> None:
     the bridge pass binds the RTT feed texture there. No-op until
     set_viewscreen_enabled(True)."""
     _h.set_viewscreen_model(handle)
+
+
+def set_viewscreen_off_texture(path: str) -> None:
+    """Set the texture drawn on the viewscreen while the RTT feed is off (BC's
+    ViewScreenObject.SetOffTexture — the mission loading screen). Absolute path;
+    "" clears it, leaving the panel on the NIF's own material."""
+    _h.set_viewscreen_off_texture(path)
 
 
 def set_viewscreen_enabled(on: bool) -> None:

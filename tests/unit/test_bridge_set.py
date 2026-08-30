@@ -1,5 +1,8 @@
 """Tests for bridge set state and control flow."""
-from engine.appc.bridge_set import ViewScreenObject, CameraObjectClass, _NiFrustum
+import os
+
+from engine.appc.bridge_set import (
+    ViewScreenObject, CameraObjectClass, _NiFrustum, off_texture_abs_path)
 from engine.appc.math import TGMatrix3
 
 
@@ -31,3 +34,22 @@ def test_set_remote_cam_initial_none_is_stored():
     vs = ViewScreenObject("x.nif")
     vs.SetRemoteCam(None)
     assert vs.GetRemoteCam() is None
+
+
+def test_set_off_texture_is_recorded_not_swallowed():
+    # SetOffTexture used to fall through _LoudStub.__getattr__ as a no-op, so
+    # MissionLib.ShowLoadingText's loading screen never reached the renderer.
+    vs = ViewScreenObject("x.nif")
+    assert vs.GetOffTexture() is None
+    vs.SetOffTexture("data/Icons/ViewscreenLoading.tga")
+    assert vs.GetOffTexture() == "data/Icons/ViewscreenLoading.tga"
+
+
+def test_off_texture_abs_path_resolves_against_game_root():
+    vs = ViewScreenObject("x.nif")
+    assert off_texture_abs_path(vs) == ""
+    assert off_texture_abs_path(None) == ""
+    vs.SetOffTexture("data/Icons/ViewscreenLoading.tga")
+    p = off_texture_abs_path(vs)
+    assert p.endswith("game/data/Icons/ViewscreenLoading.tga")
+    assert os.path.isabs(p)
