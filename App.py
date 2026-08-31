@@ -1,5 +1,8 @@
 import math
+import sys
 from engine.core import stub_telemetry
+from engine.appc.constants_generated import CLASS_CONSTANTS, MODULE_CONSTANTS
+from engine.appc.constants_apply import DEVIATIONS, apply_constants
 from engine.appc.events import (
     TGEvent, TGEvent_Create,
     TGBoolEvent, TGBoolEvent_Create,
@@ -2289,3 +2292,16 @@ def __getattr__(name):
     if stub_telemetry.ENABLED:
         stub_telemetry.record_attr("App", name)
     return _NamedStub(name)
+
+
+# ── Measured constant surface ─────────────────────────────────────────────
+# Every App constant q13 read out of the running original game.  Applied last
+# so the real classes defined above win over synthesized ones.  Additive for
+# now: `correct_existing` grows one audited family at a time (see
+# docs/superpowers/plans/2026-08-31-q13-constant-surface-sweep.md).
+CORRECT_EXISTING: frozenset[str] = frozenset()
+
+apply_constants(
+    sys.modules[__name__], MODULE_CONSTANTS, CLASS_CONSTANTS, DEVIATIONS,
+    correct_existing=CORRECT_EXISTING, named_stub_factory=_NamedStub,
+)

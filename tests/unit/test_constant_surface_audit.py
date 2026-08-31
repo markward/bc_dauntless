@@ -14,10 +14,22 @@ def test_load_partitions_every_usable_row():
     assert len(rows) == 3829, "usable rows excl. __name__/__file__"
     # Pin the four bucket sizes (not just their sum) to catch regressions
     # in WC_/KY_ memoization or classification logic.
-    assert len(ok) == 350, f"ok bucket: expected 350, got {len(ok)}"
+    #
+    # These were 350/584/1232/1663 before engine.appc.constants_apply started
+    # injecting the measured table into App.py (q13 sweep Task 3). `wrong`
+    # (584) is unchanged by design -- Task 3 is additive-only and, per ruling,
+    # deliberately does NOT inject WC_*/KY_* module names so App.py's existing
+    # __getattr__ memoization path (engine.appc.input) keeps resolving them;
+    # those 313 names (already "wrong" against this dump before Task 3) stay
+    # "wrong" after it. `ok` rose and `missing`/`noclass` fell because
+    # everything else that was absent is now really defined. The 106 that
+    # remain `missing` are WC_* codepoints (e.g. WC_POUND_SIGN) that
+    # engine.appc.input's table itself does not define -- a WC_/KY_-family
+    # fix, out of scope for Task 3.
+    assert len(ok) == 3139, f"ok bucket: expected 3139, got {len(ok)}"
     assert len(wrong) == 584, f"wrong bucket: expected 584, got {len(wrong)}"
-    assert len(missing) == 1232, f"missing bucket: expected 1232, got {len(missing)}"
-    assert len(noclass) == 1663, f"noclass bucket: expected 1663, got {len(noclass)}"
+    assert len(missing) == 106, f"missing bucket: expected 106, got {len(missing)}"
+    assert len(noclass) == 0, f"noclass bucket: expected 0, got {len(noclass)}"
     assert len(ok) + len(wrong) + len(missing) + len(noclass) == len(rows)
 
 
