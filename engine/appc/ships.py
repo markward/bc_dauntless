@@ -754,7 +754,40 @@ class ShipClass(DamageableObject):
         if cos_face < self.IN_SYSTEM_WARP_FACING_COS:
             return 0
         self._insystem_warp_transit = (target, float(distance))
+        self._post_in_system_warp(True)
         return 1
+
+    def _post_in_system_warp(self, active: bool) -> None:
+        """Announce an in-system-warp transition.
+
+        Bridge/ScienceMenuHandlers.py:515 (InSystemWarp) reads GetBool() and
+        disables/enables the Launch Probe button for the duration of the
+        transit; it casts GetDestination() to ShipClass.
+        See docs/engine/event-emitter-gaps.md #11.
+        """
+        import App
+        evt = App.TGBoolEvent_Create()
+        evt.SetEventType(App.ET_IN_SYSTEM_WARP)
+        evt.SetSource(self)
+        evt.SetDestination(self)
+        evt.SetBool(1 if active else 0)
+        App.g_kEventManager.AddEvent(evt)
+
+    def _end_in_system_warp(self) -> None:
+        """Clear an in-flight transit and announce the stop — at most once.
+
+        Guarded on a transit actually being active, because there are four
+        ways in and an unguarded post would lie: AI LostFocus calls
+        StopInSystemWarp unconditionally (usually cancelling nothing), and
+        _step_in_system_warp has three separate exits.
+
+        Callers own `_warp_consumed`: StopInSystemWarp drops it so a fresh
+        warp can fire, arrival sets it so boundary drift cannot re-warp.
+        """
+        if self._insystem_warp_transit is None:
+            return
+        self._insystem_warp_transit = None
+        self._post_in_system_warp(False)
 
     def IsDoingInSystemWarp(self) -> int:
         """Whether the ship is mid in-system-warp (the SDK
@@ -777,7 +810,7 @@ class ShipClass(DamageableObject):
         multi-tick warp animation. Ours drops both the in-flight transit
         and the lock, letting the next InSystemWarp call retrigger.
         """
-        self._insystem_warp_transit = None
+        self._end_in_system_warp()
         self.__dict__.pop("_warp_consumed", None)
 
     def SetNetType(self, net_type: int) -> None:
