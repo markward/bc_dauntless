@@ -35,18 +35,27 @@ def test_app_exposes_real_ints_with_stable_identity():
 
 
 def test_mission_critical_line_interrupts_idle_chatter():
-    """The behaviour the polarity protects: scripted narration must win."""
+    """The behaviour the polarity protects: scripted narration must win.
+
+    Uses CSP_SPONTANEOUS/CSP_MISSION_CRITICAL imported directly from
+    engine.appc.ai (the definition site), NOT App.CSP_* -- App.py's
+    apply_constants re-corrects those two names from the generated table
+    (they're in CORRECT_EXISTING), so App.CSP_* would stay right even if
+    ai.py's own literals regressed. Reading off ai.py is what makes this
+    test actually exercise the definition site."""
     bus = CrewSpeechBus()
-    assert bus.speak("Felix", "idle", None, App.CSP_SPONTANEOUS, now=0.0) > 0.0
-    assert bus.speak("Saffi", "critical", None, App.CSP_MISSION_CRITICAL,
+    assert bus.speak("Felix", "idle", None, CSP_SPONTANEOUS, now=0.0) > 0.0
+    assert bus.speak("Saffi", "critical", None, CSP_MISSION_CRITICAL,
                      now=0.1) > 0.0, "mission-critical must interrupt chatter"
 
 
 def test_idle_chatter_does_not_interrupt_a_mission_critical_line():
+    """See test_mission_critical_line_interrupts_idle_chatter's docstring for
+    why this reads CSP_* from engine.appc.ai rather than App."""
     bus = CrewSpeechBus()
-    assert bus.speak("Saffi", "critical", None, App.CSP_MISSION_CRITICAL,
+    assert bus.speak("Saffi", "critical", None, CSP_MISSION_CRITICAL,
                      now=0.0) > 0.0
-    assert bus.speak("Felix", "idle", None, App.CSP_SPONTANEOUS,
+    assert bus.speak("Felix", "idle", None, CSP_SPONTANEOUS,
                      now=0.1) == 0.0, "chatter must lose to mission-critical"
 
 

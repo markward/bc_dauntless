@@ -1970,7 +1970,14 @@ def __getattr__(name):
 # engine.appc.events) already bound.  Task 6 adds CSP_MISSION_CRITICAL and
 # CSP_SPONTANEOUS -- BC's polarity is the reverse of the invented values
 # (lower number = higher priority); CSP_NORMAL is already correct at 1 so
-# it does not need a correction entry.
+# it does not need a correction entry.  NOTE this CORRECT_EXISTING entry is
+# NOT what makes App.CSP_MISSION_CRITICAL/CSP_SPONTANEOUS correct day to
+# day -- App.py already imports both names directly from engine.appc.ai
+# above (the real definition site), so App.CSP_* tracks ai.py's literals
+# automatically. This entry is defensive/consistency only, for the case
+# where some other import path binds a stale value onto this module before
+# apply_constants runs. A test that wants to catch a value regression at
+# the definition site must read engine.appc.ai.CSP_*, not App.CSP_*.
 CORRECT_EXISTING: frozenset[str] = frozenset(
     [n for n in MODULE_CONSTANTS if n.startswith("ET_")]
     + ["CSP_MISSION_CRITICAL", "CSP_SPONTANEOUS"]
