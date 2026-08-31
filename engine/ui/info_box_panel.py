@@ -22,12 +22,32 @@ _logger = logging.getLogger(__name__)
 
 
 def _color_to_list(color):
-    """Best-effort RGBA list from a TGColorA/NiColorA; None when absent."""
+    """Best-effort RGBA list from a TGColorA/NiColorA; None when absent.
+
+    Gates on the component TYPE, never on hasattr.  An undefined `App` global is
+    a truthy `_NamedStub`, and a stub answers ``hasattr()`` for *every* name — so
+    a hasattr gate cannot reject one.  The previous version passed four stubs
+    straight into ``json.dumps`` and killed the frame with a fatal
+    ``TypeError``: E1M1's tactical-view help box builds its key glyphs with
+    ``App.g_kMainMenuButton2HighlightedColor``
+    (``sdk/.../Maelstrom/Episode1/E1M1/E1M1.py:3343``), which the shim does not
+    define.  It is not one constant — **40 of the 51 `g_k*Color` globals the SDK
+    references are undefined**.  They are Appc *instances*, not scalars, so the
+    q13 constant dump (scalars only) neither covered nor could fix them.
+
+    ``float(stub)`` returns ``0.0`` rather than raising, so a try/float guard
+    would silently paint every such colour black; ``isinstance`` is the only
+    reliable discriminator.  An unresolvable colour degrades to None — the glyph
+    renders in its default colour instead of the frame dying.  This stays silent
+    on purpose: the undefined name is already recorded by stub telemetry at the
+    `App.<NAME>` access itself (see ``docs/stub_heatmap.md``), which is the right
+    layer to observe it; logging here would fire every frame.
+    """
     if color is None:
         return None
-    if hasattr(color, "r") and hasattr(color, "g") \
-            and hasattr(color, "b") and hasattr(color, "a"):
-        return [color.r, color.g, color.b, color.a]
+    rgba = [getattr(color, component, None) for component in ("r", "g", "b", "a")]
+    if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in rgba):
+        return rgba
     return None
 
 
