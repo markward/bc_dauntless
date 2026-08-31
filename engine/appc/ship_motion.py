@@ -288,7 +288,7 @@ def _step_in_system_warp(ship, dt: float) -> None:
         if hasattr(target, "GetWorldLocation") else None
     )
     if target_loc is None:
-        ship._insystem_warp_transit = None
+        ship._end_in_system_warp()
         ship._warp_consumed = True
         return
     p = ship.GetTranslate()
@@ -297,7 +297,7 @@ def _step_in_system_warp(ship, dt: float) -> None:
     dz = target_loc.z - p.z
     d = (dx * dx + dy * dy + dz * dz) ** 0.5
     if d <= max(float(drop), 1e-9):
-        ship._insystem_warp_transit = None
+        ship._end_in_system_warp()
         ship._warp_consumed = True
         return
     ux, uy, uz = dx / d, dy / d, dz / d
@@ -321,7 +321,7 @@ def _step_in_system_warp(ship, dt: float) -> None:
             target_loc.y - uy * float(drop),
             target_loc.z - uz * float(drop),
         )
-        ship._insystem_warp_transit = None
+        ship._end_in_system_warp()
         ship._warp_consumed = True
         s = ship._current_speed
         ship.SetVelocity(TGPoint3(ux * s, uy * s, uz * s))

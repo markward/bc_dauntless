@@ -131,7 +131,32 @@ class ObjectClass(TGEventHandlerObject):
         return self._name
 
     def SetName(self, name: str) -> None:
+        """Set the object's name, announcing a genuine RENAME.
+
+        Bridge/ScienceMenuHandlers.py:272 (PropertyChange) is a broadcast
+        handler that casts GetSource() to ObjectClass and re-runs
+        ExitedSet/ShipIdentified bookkeeping so a renamed ship's target-list
+        row picks up the new name.
+
+        Guarded on the OLD name being non-empty, not merely on the name
+        differing: this is also the spawn-time setter — backdrops, planets,
+        asteroid fields, placements, lights, sets.py and ships.py all call it
+        at construction, as do 114 SDK files — so a bare `name != self._name`
+        guard would still fire for every object as it is built, running that
+        bookkeeping before the object is necessarily in a set.  In BC the
+        initial name is set inside Appc at construction rather than through a
+        broadcasting script call, so rename-only is the faithful reading as
+        well as the quiet one.  See docs/engine/event-emitter-gaps.md #3.
+        """
+        old = self._name
         self._name = name
+        if old and name != old:
+            import App
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_NAME_CHANGE)
+            evt.SetSource(self)
+            evt.SetDestination(self)
+            App.g_kEventManager.AddEvent(evt)
 
     def GetScript(self) -> str:
         return self._script

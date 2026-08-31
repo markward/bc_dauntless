@@ -1,4 +1,15 @@
-# Event emitter gaps — the 12 constants with no engine poster
+# Event emitter gaps — 9 of the original 12 still have no engine poster
+
+> **Status 2026-08-31 — Tier A closed (3 of 12).** `ET_SET_WARP_SEQUENCE` (#12),
+> `ET_NAME_CHANGE` (#3) and `ET_IN_SYSTEM_WARP` (#11) now have engine emitters;
+> each entry below is marked ✅ **DONE** with what landed. They were the tier
+> where *the post was the only missing piece* — no new state, no fidelity guess.
+> The remaining nine split into: **needs state built first** (#4/#5 target-list
+> membership diff, #8/#9 tractor edge-detect), **needs a fidelity decision we
+> cannot read off the code** (#1 `ET_CANT_FIRE`, #2 `ET_SET_TARGET`), and
+> **blocked on a larger prerequisite** (#6/#7 torpedoes never join a `SetClass`,
+> #10 persistent-target restore does not exist).
+>
 
 Q13's constant sweep (Tasks 1-9) made all 17 previously-dead-handler event
 types real ints. Five of them (`ET_FIRE`, `ET_OBJECTIVES`,
@@ -11,9 +22,14 @@ same real int). That fix is verified by
 
 The other twelve have a real int now too, which means
 `engine.appc.events.undefined_event_type_summary_lines()` no longer reports
-them — but that is a **reporting change, not a behaviour change**. Nothing in
-the engine posts these twelve; their SDK handlers are still unreachable. This
-document is the record so that silence is not mistaken for completeness.
+them — but for most of them that was a **reporting change, not a behaviour
+change**. This document is the record so that silence is not mistaken for
+completeness.
+
+Three of the twelve (#3, #11, #12) have since gained engine emitters and are
+marked ✅ **DONE** below — their handlers now run. **The remaining nine are
+still unreachable:** nothing in the engine posts them, and the quiet stub
+report does not mean otherwise.
 
 For each: the SDK handler waiting for the event, and either the engine call
 site that should post it, or an explicit statement that none could be
@@ -70,7 +86,7 @@ emitter risks introducing a wrong distinction.
 
 ---
 
-## 3. `ET_NAME_CHANGE` (0x800109)
+## 3. `ET_NAME_CHANGE` (0x800109) — ✅ DONE
 
 **SDK handler:** `Bridge/ScienceMenuHandlers.py:96` registers `PropertyChange`
 (defined `:272`) as a broadcast handler. It casts `pEvent.GetSource()` to
@@ -81,7 +97,18 @@ ship's target-list row picks up the new name.
 (`ObjectClass.SetName`) is the single base-class setter used by ships and
 every other object. Posting a broadcast `ET_NAME_CHANGE` from there, guarded
 on `name != self._name` (mirroring the change-guard in `ships.py`'s
-`SetTarget`), would cover every object type at once. Not implemented here.
+`SetTarget`), would cover every object type at once.
+
+**✅ Landed** in `engine/appc/objects.py` `ObjectClass.SetName`. Guarded on the
+OLD name being non-empty, **not** merely on the name differing: `SetName` is
+also the spawn-time setter (backdrops, planets, asteroid fields, placements,
+lights, `sets.py`, `ships.py`, plus 114 SDK files), so the bare guard suggested
+above would still have fired for every object as it was constructed, running
+`PropertyChange`'s bookkeeping before the object is necessarily in a set. In BC
+the initial name is set inside Appc at construction rather than through a
+broadcasting script call, so rename-only is the faithful reading. Pinned by
+`tests/unit/test_tier_a_event_emitters.py`, and the spawn guard is
+mutation-proved (dropping it turns `test_initial_naming_does_not_post` red).
 
 ---
 
@@ -209,7 +236,7 @@ one.
 
 ---
 
-## 11. `ET_IN_SYSTEM_WARP` (0x8000ef)
+## 11. `ET_IN_SYSTEM_WARP` (0x8000ef) — ✅ DONE
 
 **SDK handler:** `Bridge/ScienceMenuHandlers.py:95` registers `InSystemWarp`
 (defined `:515`) — reads `pEvent.GetBool()` and toggles the Launch Probe
@@ -231,9 +258,18 @@ no-op `StopInSystemWarp` (nothing was warping) doesn't post a spurious
 stop. `Destination` should be the ship per the SDK read
 (`App.ShipClass_Cast(pEvent.GetDestination())`).
 
+**✅ Landed.** `ShipClass._post_in_system_warp(active)` posts a `TGBoolEvent`
+with `Destination = self`; the engage site calls it with `True`. All four
+disengage sites now route through `ShipClass._end_in_system_warp()`, which
+clears the transit and posts `False` **only if one was active** — AI
+`LostFocus` calls `StopInSystemWarp` unconditionally and usually cancels
+nothing. Callers keep owning `_warp_consumed` (abort drops it, arrival sets
+it). Pinned by `tests/unit/test_tier_a_event_emitters.py`, including "exactly
+one stop per transit, not one per tick".
+
 ---
 
-## 12. `ET_SET_WARP_SEQUENCE` (0x8000ee)
+## 12. `ET_SET_WARP_SEQUENCE` (0x8000ee) — ✅ DONE
 
 Already tracked as a known gap in `CLAUDE.md`'s "AI surface & gaps" row
 (constant now real per this sweep; emitter still missing). Recorded here for
@@ -252,6 +288,12 @@ subsystem (the event carries no payload of its own — it is purely a
 This is the most precisely located of all twelve gaps: the handler needs no
 new decision logic, only the post itself.
 
+**✅ Landed** in `engine/appc/subsystems.py` `WarpEngineSubsystem.SetWarpSequence`,
+posted unguarded with `Destination = self`. `ConditionWarpingToSet` now
+re-evaluates when the sequence changes instead of only at construction —
+correct before, but never timely. This also closes the residual flagged in
+`CLAUDE.md`'s "AI surface & gaps" row.
+
 ---
 
 ## Summary table
@@ -260,7 +302,7 @@ new decision logic, only the post itself.
 |---|---|---|
 | `ET_CANT_FIRE` | `TacticalMenuHandlers.py:422/1990`, `TacticalCharacterHandlers.py:58/198` | `weapon_subsystems.py` `StartFiring` early-return gates (`:1001-1027`, `:1289-1301`, `:1796-1814`) |
 | `ET_SET_TARGET` | `ScienceMenuHandlers.py:134/472`, `HelmMenuHandlers.py:281/309` | `ships.py:1565-1571` (`SetTarget`) — same site as `ET_TARGET_WAS_CHANGED`; a doc comment in `target_list_view.py:7-9` wrongly claims this already happens |
-| `ET_NAME_CHANGE` | `ScienceMenuHandlers.py:96/272` | `objects.py:133` (`ObjectClass.SetName`) |
+| `ET_NAME_CHANGE` | `ScienceMenuHandlers.py:96/272` | ✅ **DONE** — `objects.py` `ObjectClass.SetName`, rename-only (old name non-empty) |
 | `ET_TARGET_LIST_OBJECT_ADDED` | `ScienceMenuHandlers.py:94/244`, `E3M2.py:906/1638`, `E2M1.py:718` | `target_menu.py:147-203` (`set_contacts`) — right module, no diff logic exists yet |
 | `ET_TARGET_LIST_OBJECT_REMOVED` | `ScienceMenuHandlers.py:93/205` | same as above |
 | `ET_TORPEDO_ENTERED_SET` | `E8M2.py:4511/1643`, `ConditionIncomingTorps.py:180/228` | **none** — torpedoes are never added to a `SetClass` (prerequisite mechanism absent, `projectiles.py:167-180`, `sets.py:260-289`) |
@@ -268,5 +310,5 @@ new decision logic, only the post itself.
 | `ET_TRACTOR_BEAM_STARTED_FIRING` | `PowerDisplay.py:337/1010`, `ConditionFiringTractorBeam.py:26`, `E7M2.py:341/708`, `E8M2.py:528` | `weapon_subsystems.py:1870-1904` (`_engage_beam`) — needs edge-detect not yet built |
 | `ET_TRACTOR_BEAM_STOPPED_FIRING` | `PowerDisplay.py:338/1010`, `ConditionFiringTractorBeam.py:27` | `weapon_subsystems.py:1906-1908` (`StopFiring`) / `:1856-1868` (re-acquire failure) — same missing edge-detect |
 | `ET_RESTORE_PERSISTENT_TARGET` | `TacticalMenuHandlers.py:407/958` | **could not determine** — no code sets or reads `target_menu.py`'s `_persistent_target_name` for anything but clearing it |
-| `ET_IN_SYSTEM_WARP` | `ScienceMenuHandlers.py:95/515` | `ships.py:756` (engage) / `:780` + `ship_motion.py:291,300,324` (disengage, 3 sites) |
-| `ET_SET_WARP_SEQUENCE` | `ConditionWarpingToSet.py:33/69` | `subsystems.py:1491` (`WarpEngineSubsystem.SetWarpSequence`) — already tracked in `CLAUDE.md` |
+| `ET_IN_SYSTEM_WARP` | `ScienceMenuHandlers.py:95/515` | ✅ **DONE** — `ships.py` engage + `_end_in_system_warp()` shared by all 4 disengage sites |
+| `ET_SET_WARP_SEQUENCE` | `ConditionWarpingToSet.py:33/69` | ✅ **DONE** — `subsystems.py` `WarpEngineSubsystem.SetWarpSequence`, unguarded ping |

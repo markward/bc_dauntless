@@ -1490,6 +1490,18 @@ class WarpEngineSubsystem(PoweredSubsystem):
 
     def SetWarpSequence(self, seq) -> None:
         self._warp_sequence = seq
+        # Conditions/ConditionWarpingToSet.py:69 (SequenceSet) casts
+        # GetDestination() to WarpEngineSubsystem and re-reads
+        # GetWarpSequence() off it — the event carries no payload, it is a
+        # "something changed, go re-check" ping, so it is posted unguarded.
+        # Without this the condition only ever evaluated at construction:
+        # correct, but never timely.  See docs/engine/event-emitter-gaps.md #12.
+        import App
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_SET_WARP_SEQUENCE)
+        evt.SetSource(self)
+        evt.SetDestination(self)
+        App.g_kEventManager.AddEvent(evt)
 
     def GetWarpEffectTime(self) -> float:
         return self._warp_effect_time
