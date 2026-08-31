@@ -16,10 +16,18 @@ from tools.constant_surface_audit import load
 #   585 at Task 4 -> 437 (T5 ET_ 148) -> 435 (T6 CSP_ 2)
 #       -> 88 (T7 keyboard 347) -> 41 (T8 UI 47) -> 4 (T9 CT_ 37)
 # 4 is the floor: the four PI-family deviations.
-REMAINING_WRONG = 435
+#
+# Task 7 corrected the 347 keyboard-family constants (WC_ 234, KY_ 104,
+# KBT_ 4, KS_ 3, GET_ 2), separating BC's WC_ (character codes) and KY_ (a
+# small, unrelated key-index enum) -- previously conflated as aliases of the
+# same invented Windows-VK value -- and restoring KBT_'s bitmask (1/2/4/8,
+# not sequential 0-3).
+REMAINING_WRONG = 88
 
-# Keyboard names deferred to Task 7, which drives this to 0.
-REMAINING_MISSING = 105
+# Task 7 also defined the 105 genuinely-missing keyboard names (101 WC_ +
+# 4 KY_ international/accented codepoints our table never covered), driving
+# this to its floor of 0.
+REMAINING_MISSING = 0
 
 
 def test_missing_constants_only_ever_shrink():

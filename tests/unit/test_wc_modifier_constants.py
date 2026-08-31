@@ -33,11 +33,21 @@ def test_all_family_constants_are_real_ints_on_App():
 
 
 def test_family_codes_distinct_and_disjoint_from_base_band():
+    """Pins the controller's pre-flight collision check (q13 sweep Task 7):
+    all 144 chords are unique, and none collides with any of the 48 real
+    base WC_ values they're keyed on.
+
+    Pre-correction this compared against a `value < 0x200` heuristic, which
+    only worked because our invented codes partitioned cleanly into a low
+    base band and a high chord band. BC's own measured values don't honour
+    that split (WC_CAPS_A is 65, well under 0x200), so the check now reads
+    the actual 48 base names directly rather than inferring "base" from
+    magnitude.
+    """
     codes = [getattr(appc_input, n) for n in _family_names()]
     assert len(set(codes)) == len(codes), "duplicate chord codes"
-    base_codes = {v for k, v in vars(appc_input).items()
-                  if k.startswith("WC_") and isinstance(v, int) and v < 0x200}
-    assert not (set(codes) & base_codes), "chord band collides with base band"
+    base_codes = {getattr(appc_input, "WC_" + b) for b in _BASES}
+    assert not (set(codes) & base_codes), "a chord collides with a base WC_ value"
 
 
 def test_every_wc_name_the_sdk_references_is_defined():
@@ -52,10 +62,26 @@ def test_every_wc_name_the_sdk_references_is_defined():
 
 
 def test_modifier_chords_export_shape():
+    """MODIFIER_BANDS still exists (it seeds the fallback for names BC's dump
+    omits, e.g. WC_CAPS_1..9/F1..F12), but MODIFIER_CHORDS' codes are no
+    longer required to equal band|base -- BC separately measured most
+    WC_ALT_*/WC_CTRL_*/WC_CAPS_* names, so each triple's code must match
+    the corrected WC_<mod>_<base> global, whatever its actual source."""
     assert appc_input.MODIFIER_BANDS == {"ALT": 0x200, "CTRL": 0x400, "CAPS": 0x800}
     assert len(appc_input.MODIFIER_CHORDS) == 3 * len(_BASES)
-    mod, base, code = appc_input.MODIFIER_CHORDS[0]
-    assert code == appc_input.MODIFIER_BANDS[mod] | getattr(appc_input, "WC_" + base)
+    for mod, base, code in appc_input.MODIFIER_CHORDS:
+        assert code == getattr(appc_input, "WC_%s_%s" % (mod, base))
+
+
+def test_modifier_chords_are_bc_measured_not_synthesized():
+    """BC separately measured these -- e.g. WC_ALT_A is 57393, not the
+    band|base formula's 0x200 | 97 == 609. WC_CAPS_A is BC's Shift+A
+    character code (65, uppercase ASCII), confirming CAPS_ means "capital
+    character", not a CapsLock modifier bit."""
+    import App
+    assert App.WC_ALT_A == 57393
+    assert App.WC_CTRL_A == 57441
+    assert App.WC_CAPS_A == 65
 
 
 _CHORD_TARGET_ET_NAMES = (

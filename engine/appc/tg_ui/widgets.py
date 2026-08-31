@@ -29,15 +29,17 @@ def ensure_widget_id(widget) -> int:
 
 # ── Wide-char (WC_*) constants ────────────────────────────────────────────────
 # SDK paragraph code points. BC's Appc exports a full table; the shim defines
-# only what scripts reference (faithful Unicode code points). WC_CURSOR marks an
-# inline child-widget insertion point — BC's real value is engine-internal and
-# never displayed, so a Unicode Private-Use-Area sentinel is used.
+# only what scripts reference. BACKSPACE/TAB/LINEFEED/RETURN/SPACE are BC's
+# real (q13-measured) ASCII control-code values. WC_CURSOR marks an inline
+# child-widget insertion point; 0xE098 is BC's own measured value (it lives in
+# BC's high function-key/mouse-button band, alongside WC_F1..WC_F12 and the
+# mouse buttons) rather than an invented Private-Use-Area sentinel.
 WC_BACKSPACE = 8
 WC_TAB = 9
 WC_LINEFEED = 10
 WC_RETURN = 13
 WC_SPACE = 32
-WC_CURSOR = 0xE000
+WC_CURSOR = 0xE098
 
 _WC_TO_STR = {
     WC_BACKSPACE: "",

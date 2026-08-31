@@ -1978,6 +1978,36 @@ def __getattr__(name):
 # where some other import path binds a stale value onto this module before
 # apply_constants runs. A test that wants to catch a value regression at
 # the definition site must read engine.appc.ai.CSP_*, not App.CSP_*.
+#
+# Task 7 (keyboard families): none of WC_/KY_/KBT_/GET_/KS_ are listed here,
+# for two DIFFERENT reasons discovered while building this task's mutation
+# proof (see tests/unit/test_keyboard_constant_table.py):
+#
+#   WC_*/KY_* -- engine.appc.constants_apply.apply_constants() unconditionally
+#   skips every module-scope WC_/KY_ name (its _KEYBOARD_PREFIXES check) no
+#   matter what correct_existing contains, because App.py's module
+#   __getattr__ already has its own dedicated WC_/KY_ resolution+memoization
+#   path straight into engine.appc.input (see __getattr__ below). Listing
+#   them here would be dead code.
+#
+#   KeyboardBinding.KBT_*/GET_* and TGKeyboardEvent.KS_* -- these ARE real
+#   classes, imported into App.py BY REFERENCE (App.KeyboardBinding IS
+#   engine.appc.input.KeyboardBinding, the same object, not a copy). Unlike
+#   CSP_ (a module-scope int, copied by value at import time, where the
+#   correct_existing entry is genuinely inert/defensive), adding a
+#   class-scope name here is NOT inert: apply_constants would setattr the
+#   measured value onto the shared class object whenever its current value
+#   disagrees, silently healing a definition-site mutation at every fresh App
+#   import -- which defeats the point of a mutation-tested regression guard.
+#   Verified directly: with "KeyboardBinding.KBT_MANY_TO_MANY" temporarily
+#   added here, reverting the literal in engine/appc/input.py's class body to
+#   its old sequential value did NOT turn the guard test red (apply_constants
+#   silently restored it on import) -- exactly the self-heal risk ruling
+#   PT6-2 warns about, just via a different mechanism (shared class identity
+#   rather than a copied module-scope value). The class bodies in
+#   engine/appc/input.py and engine/appc/events.py are therefore the sole
+#   source of truth for these four families, with no CORRECT_EXISTING
+#   backstop -- if one is ever wrong, only that class body needs fixing.
 CORRECT_EXISTING: frozenset[str] = frozenset(
     [n for n in MODULE_CONSTANTS if n.startswith("ET_")]
     + ["CSP_MISSION_CRITICAL", "CSP_SPONTANEOUS"]

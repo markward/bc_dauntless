@@ -44,9 +44,15 @@ def test_load_partitions_every_usable_row():
     # Task 6 corrected the 2 CSP_* constants (CSP_MISSION_CRITICAL,
     # CSP_SPONTANEOUS -- moved `wrong` -> `ok`): ok 3287 -> 3289,
     # wrong 437 -> 435.
-    assert len(ok) == 3289, f"ok bucket: expected 3289, got {len(ok)}"
-    assert len(wrong) == 435, f"wrong bucket: expected 435, got {len(wrong)}"
-    assert len(missing) == 105, f"missing bucket: expected 105, got {len(missing)}"
+    #
+    # Task 7 corrected the full keyboard family: 347 WC_/KY_/KBT_/KS_/GET_
+    # names moved `wrong` -> `ok`, and the 105 WC_*/KY_* codepoints/keys
+    # engine.appc.input never defined (mostly international/accented
+    # characters, plus KY_RCTRL/KY_RSHIFT/KY_EU_LEFT/KY_EU_RIGHT) moved
+    # `missing` -> `ok`: ok 3289 -> 3741, wrong 435 -> 88, missing 105 -> 0.
+    assert len(ok) == 3741, f"ok bucket: expected 3741, got {len(ok)}"
+    assert len(wrong) == 88, f"wrong bucket: expected 88, got {len(wrong)}"
+    assert len(missing) == 0, f"missing bucket: expected 0, got {len(missing)}"
     assert len(noclass) == 0, f"noclass bucket: expected 0, got {len(noclass)}"
     assert len(ok) + len(wrong) + len(missing) + len(noclass) == len(rows)
 

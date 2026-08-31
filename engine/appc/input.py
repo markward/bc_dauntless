@@ -6,6 +6,7 @@ g_kKeyboardBinding.BindKey(...) (e.g. DefaultKeyboardBinding.py) work
 unmodified once these classes are alive.
 """
 from engine.core.ids import TGObject
+from engine.appc.constants_generated import MODULE_CONSTANTS
 from engine.appc.events import (
     TGBoolEvent, TGEvent, TGEventManager, TGKeyboardEvent, ET_KEYBOARD_EVENT,
 )
@@ -19,21 +20,34 @@ from engine.appc.events import (
 # so every undefined key registers/binds under slot 0 (last-write-wins) and goes
 # dead — the bug class that once silenced Klingon disruptor fire (WC_G → 0).
 #
-# This table defines every BASE single key KeyConfig references so none can
-# collapse: real Windows VK codes where they exist, else a synthesized 0x100+
-# band (value is arbitrary-but-stable — only internal consistency matters, since
-# registration, binding, and polling all reference the same App.WC_<name>).
-# Distinctness holds by construction: letters 0x41-0x5A, digits 0x30-0x39, the
-# VK ranges below (all ≤ 0xFE), and the synth band (≥ 0x100) never overlap.
+# WC_ and KY_ are TWO DISTINCT BC NAMESPACES, not aliases of each other: WC_ is
+# a character code (BC: lowercase ASCII for letters, e.g. WC_F == 102, with
+# function keys/mouse buttons in a high 57000s band), KY_ is a small,
+# unrelated key-index enum (BC: WC_F's KY_F == 33). The block below still
+# defines every BASE single key with a PROVISIONAL fallback value (real
+# Windows VK codes where they exist, else a synthesized 0x100+ band) so that
+# no key can ever collapse to a shared/zero slot even before correction; the
+# "BC-measured corrections" pass further down then overwrites WC_<name> and
+# KY_<name> INDEPENDENTLY from MODULE_CONSTANTS for every name the q13 dump
+# actually measured (338 corrected + 105 newly defined, mostly international/
+# accented codepoints). A name the dump omits (e.g. WC_CAPS_1..9/F1..F12 —
+# BC's real WC_CAPS_ table covers only letters, not digits/F-keys) simply
+# keeps the provisional fallback value defined here.
 #
 # The CTRL_/ALT_/CAPS_ modifier families are modifier BANDS OR'd onto the
-# base code (base codes stay below 0x200, so the bands never collide with
-# them or each other).  KeyConfig.MapScancodes registers WC_CAPS_<letter>
-# with modifier=KY_SHIFT — CAPS_X means the *capital character* (Shift+X),
-# NOT CapsLock state.  App.py's module __getattr__ WC_/KY_ fallback
-# surfaces every name defined here.
+# base code as their own provisional fallback (base codes stay below 0x200,
+# so the bands never collide with them or each other) — but BC ALSO measured
+# real values for most of these names (WC_ALT_A, WC_CTRL_A, WC_CAPS_A, ...),
+# so they too are corrected by the pass below, and MODIFIER_CHORDS is rebuilt
+# from the corrected globals afterwards.  KeyConfig.MapScancodes registers
+# WC_CAPS_<letter> with modifier=KY_SHIFT — CAPS_X means the *capital
+# character* (Shift+X), NOT CapsLock state.  App.py's module __getattr__
+# WC_/KY_ fallback surfaces every name defined here.
 
 def _def_key(name: str, code: int) -> None:
+    """Provisional fallback: alias KY_<name> to WC_<name>'s code until (and
+    unless) the BC-measured correction pass below replaces one or both
+    independently. Never a claim that the two namespaces are the same."""
     globals()["WC_" + name] = code
     globals()["KY_" + name] = code
 
@@ -106,6 +120,32 @@ for _mod, _band in MODIFIER_BANDS.items():
         _code = _band | globals()["WC_" + _base]
         _def_key("%s_%s" % (_mod, _base), _code)
         MODIFIER_CHORDS.append((_mod, _base, _code))
+
+# ── BC-measured corrections ─────────────────────────────────────────────────
+# Every WC_/KY_ name the q13 dump read out of the real binary wins over the
+# provisional fallback above, defined independently per namespace (this is
+# what stops WC_ and KY_ being aliases of each other — e.g. WC_F becomes 102,
+# lowercase 'f', while KY_F becomes 33, BC's unrelated key-index value). A
+# name the dump does not carry (e.g. the CAPS_-digit/CAPS_-function-key
+# chords, which BC's own WC_CAPS_ table never defines) keeps its fallback.
+#
+# This is also the correction path for the modifier-chord families: BC
+# separately measured most WC_ALT_*/WC_CTRL_*/WC_CAPS_* names (they are NOT
+# simply band|base in the real binary), so MODIFIER_CHORDS is rebuilt from
+# the post-correction globals below rather than left holding the fallback
+# band|base codes computed above. The SDK only ever references these
+# symbolically (App.WC_ALT_T, never a literal number), so a chord's actual
+# numeric value is free to change here without touching any consumer.
+_KEYBOARD_PREFIXES = ("WC_", "KY_")
+for _kb_name, _kb_value in MODULE_CONSTANTS.items():
+    if _kb_name[:3] in _KEYBOARD_PREFIXES and isinstance(_kb_value, int):
+        globals()[_kb_name] = _kb_value
+
+MODIFIER_CHORDS = [
+    (_cmod, _cbase, globals()["WC_%s_%s" % (_cmod, _cbase)])
+    for _cmod in MODIFIER_BANDS
+    for _cbase in _MOD_BASE_NAMES
+]
 
 KS_KEYDOWN   = TGKeyboardEvent.KS_KEYDOWN
 KS_KEYUP     = TGKeyboardEvent.KS_KEYUP
@@ -410,17 +450,24 @@ class KeyboardBinding(TGObject):
     registered bindings.  Posts the resulting event to the event manager
     with destination = the default destination (TacticalControlWindow)."""
 
+    # q13-measured values (constants_generated.py CLASS_CONSTANTS
+    # ["KeyboardBinding"]).  GET_EVENT/GET_FLOAT_EVENT were already correct;
+    # GET_BOOL_EVENT and GET_INT_EVENT were swapped in our invented numbering.
     GET_EVENT       = 0
-    GET_BOOL_EVENT  = 1
-    GET_INT_EVENT   = 2
+    GET_BOOL_EVENT  = 2
+    GET_INT_EVENT   = 1
     GET_FLOAT_EVENT = 3
 
     # Binding type flags — DefaultKeyboardBinding.Initialize passes
-    # KBT_LOCKOUT_CHANGE as a 6th argument to some BindKey calls.
-    KBT_MANY_TO_MANY        = 0
-    KBT_SINGLE_EVENT_TO_KEY = 1
-    KBT_SINGLE_KEY_TO_EVENT = 2
-    KBT_LOCKOUT_CHANGE      = 3
+    # KBT_LOCKOUT_CHANGE as a 6th argument to some BindKey calls.  BC's KBT_
+    # are a BITMASK (1/2/4/8); our old 0/1/2/3 sequential numbering made any
+    # `&` test against them meaningless.  `kbt_type` is accepted by BindKey
+    # for call-signature fidelity but not otherwise consumed, so this
+    # renumbering changes no behaviour today.
+    KBT_MANY_TO_MANY        = 1
+    KBT_SINGLE_EVENT_TO_KEY = 2
+    KBT_SINGLE_KEY_TO_EVENT = 4
+    KBT_LOCKOUT_CHANGE      = 8
 
     def __init__(self, event_manager: TGEventManager):
         super().__init__()

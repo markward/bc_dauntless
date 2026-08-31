@@ -51,10 +51,14 @@ def test_additive_pass_changes_no_existing_value():
     correction round this sweep has landed.
 
     435 (post-Task 6): Task 6 corrected the 2 CSP_* speech-priority
-    constants (CSP_MISSION_CRITICAL, CSP_SPONTANEOUS)."""
+    constants (CSP_MISSION_CRITICAL, CSP_SPONTANEOUS).
+
+    88 (post-Task 7): Task 7 corrected the full keyboard family -- 347
+    WC_/KY_/KBT_/KS_/GET_ constants (WC_ and KY_ separated into BC's two
+    real, distinct namespaces; KBT_'s bitmask restored to 1/2/4/8)."""
     from tools.constant_surface_audit import load
     _, _, wrong, _, _ = load()
-    assert len(wrong) == 435, "wrong-value count drifted from Task 6's landed corrections"
+    assert len(wrong) == 88, "wrong-value count drifted from Task 7's landed corrections"
 
 
 def test_deviations_are_respected():
