@@ -30,7 +30,7 @@ def _of_type(posted, event_type):
 # Gap #2. Every SDK registration of ET_SET_TARGET (ScienceMenuHandlers.py:134,
 # HelmMenuHandlers.py:281) is paired with an ET_TARGET_WAS_CHANGED
 # registration on the same object to the same handler function. Nothing
-# listens to ET_SET_TARGET alone; seven sites listen to ET_TARGET_WAS_CHANGED
+# listens to ET_SET_TARGET alone; five sites listen to ET_TARGET_WAS_CHANGED
 # alone. So emitting it would add no reachable behaviour and would run
 # TargetChanged twice per change on the Science and Helm menus.
 
@@ -52,3 +52,69 @@ def test_the_two_target_events_are_distinct_constants():
     """The assertion above is only meaningful while the constants differ; if
     they ever collapsed to the same int it would pass vacuously."""
     assert App.ET_SET_TARGET != App.ET_TARGET_WAS_CHANGED
+
+
+# ── ET_CANT_FIRE ─────────────────────────────────────────────────────────────
+# Gap #1. TacticalMenuHandlers.py:1990 and TacticalCharacterHandlers.py:198
+# both read ONLY GetSource() and re-derive the reason from the system's own
+# state; both compute pPhasers/pTractors and then use neither. So the emitter
+# is torpedo-scoped and carries no reason payload.
+
+def _torpedo_system(available=0, unlimited=False):
+    """A TorpedoSystem whose current ammo type has `available` rounds.
+
+    The brief's original version called ``LoadAmmoType(0, available)``
+    before any slot existed and then poked ``_unlimited`` onto whatever
+    ``GetCurrentAmmoType()`` returned. ``LoadAmmoType`` is a no-op against
+    an absent slot (``GetAmmoType`` returns ``None`` -- see its docstring
+    on ``TorpedoSystem``), so ``_ammo_by_slot`` stayed empty,
+    ``GetCurrentAmmoType()`` returned ``None``, and the attribute-set
+    raised ``AttributeError``. ``tests/unit/test_app_torpedo_economy.py``
+    shows the real construction path: build a ``TorpedoAmmoType`` with the
+    desired ``max_torpedoes`` (``None`` = unlimited, matching
+    ``TorpedoAmmoType.__init__``) and ``AddAmmoType`` it -- the type
+    spawns fully loaded, so ``available`` IS ``max_torpedoes`` here."""
+    from engine.appc.weapon_subsystems import TorpedoAmmoType, TorpedoSystem
+
+    sys_ = TorpedoSystem("Torpedo System")
+    ammo = TorpedoAmmoType("Photon", max_torpedoes=None if unlimited else available)
+    sys_.AddAmmoType(ammo)
+    return sys_
+
+
+def test_firing_with_no_ammo_posts_cant_fire(posted):
+    sys_ = _torpedo_system(available=0)
+    sys_.StartFiring(target=None)
+
+    evts = _of_type(posted, App.ET_CANT_FIRE)
+    assert len(evts) == 1
+    assert evts[0].GetSource() is sys_, (
+        "both handlers cast GetSource() to TorpedoSystem to decide the line")
+
+
+def test_firing_with_ammo_does_not_post(posted):
+    sys_ = _torpedo_system(available=4)
+    sys_.StartFiring(target=None)
+
+    assert _of_type(posted, App.ET_CANT_FIRE) == []
+
+
+def test_unlimited_ammo_never_posts(posted):
+    """An undeclared/unlimited ammo type never gates, so it can never be the
+    'out of torpedoes' case the handlers speak to."""
+    sys_ = _torpedo_system(available=0, unlimited=True)
+    sys_.StartFiring(target=None)
+
+    assert _of_type(posted, App.ET_CANT_FIRE) == []
+
+
+def test_the_system_reports_its_own_ready_count():
+    """Both handlers branch on pTorps.GetNumReady() where pTorps is the
+    SYSTEM. GetNumReady was defined only on TorpedoTube, so on a system it
+    resolved through TGObject.__getattr__ to a truthy _Stub and the handlers
+    could not distinguish 'out of ammo' from 'not reloaded yet'."""
+    from engine.appc.weapon_subsystems import TorpedoSystem
+
+    sys_ = TorpedoSystem("Torpedo System")
+    assert isinstance(sys_.GetNumReady(), int)
+    assert sys_.GetNumReady() == 0, "no tubes -> nothing ready"

@@ -1298,8 +1298,34 @@ class TorpedoSystem(WeaponSystem):
         ammo = self.GetCurrentAmmoType()
         finite = ammo is not None and not getattr(ammo, "_unlimited", True)
         if finite and ammo.GetAvailable() <= 0:
+            self._post_cant_fire()
             return
         super().StartFiring(target, offset)
+
+    def _post_cant_fire(self) -> None:
+        """Announce a torpedo fire attempt that cannot produce a launch.
+
+        Gap #1 in docs/engine/event-emitter-gaps.md. The event carries no
+        reason: both SDK handlers (Bridge/TacticalMenuHandlers.py:1990,
+        Bridge/TacticalCharacterHandlers.py:198) re-derive it from this
+        system's own state via GetNumReady() / GetNumAvailableTorpsToType(),
+        and both self-guard -- they fall through silently when tubes are
+        ready, and they carry their own cooldowns (2 s global; 10 s since
+        Tactical last spoke). So an emitter here cannot spam a line even if
+        the player holds the trigger.
+
+        Scoped to torpedoes on purpose. Both handlers cast the source to
+        phaser and tractor systems as well and then use neither, so posting
+        from the phaser/tractor gates would be observationally inert today
+        while committing us to a reading of "can't fire" that no SDK code
+        exercises.
+        """
+        import App
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_CANT_FIRE)
+        evt.SetSource(self)
+        evt.SetDestination(self.GetParentShip())
+        App.g_kEventManager.AddEvent(evt)
 
     def GetNumAmmoTypes(self) -> int:
         return len(self._ammo_by_slot)
@@ -1348,6 +1374,24 @@ class TorpedoSystem(WeaponSystem):
         before = ammo.GetAvailable()
         ammo.AddAvailable(requested)
         return requested - (ammo.GetAvailable() - before)
+
+    def GetNumReady(self) -> int:
+        """Number of child tubes currently loaded and ready to launch.
+
+        BC's own handlers call this on the SYSTEM
+        (Bridge/TacticalMenuHandlers.py:2007,
+        Bridge/TacticalCharacterHandlers.py:223) to separate "out of
+        torpedoes" from "not reloaded yet". Ours defined GetNumReady only on
+        TorpedoTube (:2378), so a system-level call resolved through
+        TGObject.__getattr__ to a truthy _Stub and neither handler could take
+        the branch it wanted.
+        """
+        ready = 0
+        for i in range(self.GetNumWeapons()):
+            tube = self.GetWeapon(i)
+            if tube is not None and tube.GetNumReady():
+                ready += 1
+        return ready
 
     def GetNumAvailableTorpsToType(self, slot) -> int:
         """Rounds currently loaded for the type at ``slot`` (E3M1.py:2888,
