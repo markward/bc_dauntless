@@ -5,6 +5,9 @@ Conventions match engine/appc/characters.py STMenu/STButton: real classes,
 2026-06-03 mirror spec), lenient casts, no _NamedStub leakage.
 """
 from engine.appc.events import TGEventHandlerObject
+from engine.appc.input import (
+    WC_BACKSPACE, WC_TAB, WC_LINEFEED, WC_RETURN, WC_SPACE, WC_CURSOR,
+)
 
 # Monotonic per-process widget ids — used by CEF panels to address snapshot
 # nodes back to live widgets. Never persisted.
@@ -28,19 +31,14 @@ def ensure_widget_id(widget) -> int:
 
 
 # ── Wide-char (WC_*) constants ────────────────────────────────────────────────
-# SDK paragraph code points. BC's Appc exports a full table; the shim defines
-# only what scripts reference. BACKSPACE/TAB/LINEFEED/RETURN/SPACE are BC's
-# real (q13-measured) ASCII control-code values. WC_CURSOR marks an inline
-# child-widget insertion point; 0xE098 is BC's own measured value (it lives in
-# BC's high function-key/mouse-button band, alongside WC_F1..WC_F12 and the
-# mouse buttons) rather than an invented Private-Use-Area sentinel.
-WC_BACKSPACE = 8
-WC_TAB = 9
-WC_LINEFEED = 10
-WC_RETURN = 13
-WC_SPACE = 32
-WC_CURSOR = 0xE098
-
+# SDK paragraph code points. Re-exported (not redefined) from engine.appc.input,
+# which is the single source of truth: it carries every WC_/KY_ name BC's q13
+# dump measured, corrected in one place from constants_generated.MODULE_CONSTANTS.
+# Hand-typing these here a second time is exactly the trap that let WC_CURSOR
+# drift to an invented 0xE000 Private-Use-Area sentinel while
+# engine.appc.input.WC_CURSOR already carried BC's real measured 0xE098 --
+# App.py imports WC_CURSOR from THIS module (not engine.appc.input), so the
+# duplicate literal was silently the one that won.
 _WC_TO_STR = {
     WC_BACKSPACE: "",
     WC_TAB: "\t",

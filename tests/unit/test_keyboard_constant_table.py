@@ -20,6 +20,7 @@ codes and therefore identical (App.KY_F == App.WC_F == 70) -- that
 conflation is now closed; see test_ky_is_a_separate_namespace_from_wc below.
 """
 import App
+import engine.appc.input as appc_input
 from engine.appc.windows import TacticalControlWindow
 
 import string
@@ -106,20 +107,25 @@ def test_modifier_variants_are_real_codes():
 
 
 def test_wc_are_character_codes_not_vk_codes():
-    """BC's WC_ are LOWERCASE ASCII; ours were Windows VK codes."""
-    assert App.WC_F == 102 and App.WC_G == 103 and App.WC_X == 120
+    """BC's WC_ are LOWERCASE ASCII; ours were Windows VK codes.
+
+    Reads engine.appc.input directly, not App -- App's module __getattr__
+    would resolve/memoize the same value, but a test that wants to catch a
+    regression AT THE DEFINITION SITE must not go through that path."""
+    assert appc_input.WC_F == 102 and appc_input.WC_G == 103 and appc_input.WC_X == 120
 
 
 def test_wc_function_keys_live_in_bcs_high_band():
-    assert App.WC_F1 == 57365 and App.WC_F6 == 57370 and App.WC_F9 == 57373
-    assert App.WC_CURSOR == 57496
+    assert appc_input.WC_F1 == 57365 and appc_input.WC_F6 == 57370
+    assert appc_input.WC_F9 == 57373
+    assert appc_input.WC_CURSOR == 57496
 
 
 def test_ky_is_a_separate_namespace_from_wc():
     """KY_ is a small key-index enum, NOT an alias of WC_."""
-    assert App.KY_F == 33 and App.KY_F1 == 59 and App.KY_X == 45
-    assert App.KY_LBUTTON == 241 and App.KY_RBUTTON == 242
-    assert App.KY_F != App.WC_F, "the two namespaces must not be conflated"
+    assert appc_input.KY_F == 33 and appc_input.KY_F1 == 59 and appc_input.KY_X == 45
+    assert appc_input.KY_LBUTTON == 241 and appc_input.KY_RBUTTON == 242
+    assert appc_input.KY_F != appc_input.WC_F, "the two namespaces must not be conflated"
 
 
 def test_kbt_constants_are_a_bitmask():

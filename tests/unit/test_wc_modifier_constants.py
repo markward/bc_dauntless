@@ -34,20 +34,30 @@ def test_all_family_constants_are_real_ints_on_App():
 
 def test_family_codes_distinct_and_disjoint_from_base_band():
     """Pins the controller's pre-flight collision check (q13 sweep Task 7):
-    all 144 chords are unique, and none collides with any of the 48 real
-    base WC_ values they're keyed on.
+    all 144 chords are unique, and none collides with ANY of BC's ~350
+    measured WC_ values -- not just the 48 base keys they're keyed on.
 
     Pre-correction this compared against a `value < 0x200` heuristic, which
     only worked because our invented codes partitioned cleanly into a low
     base band and a high chord band. BC's own measured values don't honour
     that split (WC_CAPS_A is 65, well under 0x200), so the check now reads
-    the actual 48 base names directly rather than inferring "base" from
-    magnitude.
+    real measured values directly. Widened past just the 48 base names
+    (which only catches a collision with the SAME family a chord derives
+    from) to the full measured WC_ table, so a collision with an unrelated
+    name -- e.g. a punctuation or navigation key -- would also be caught.
     """
+    from engine.appc.constants_generated import MODULE_CONSTANTS
+    family = set(_family_names())
     codes = [getattr(appc_input, n) for n in _family_names()]
     assert len(set(codes)) == len(codes), "duplicate chord codes"
-    base_codes = {getattr(appc_input, "WC_" + b) for b in _BASES}
-    assert not (set(codes) & base_codes), "a chord collides with a base WC_ value"
+    # Every OTHER measured WC_ name -- excluding the 144 chords themselves,
+    # since e.g. WC_ALT_A is itself a measured name and would trivially
+    # "collide" with its own value.
+    other_measured_wc = {v for k, v in MODULE_CONSTANTS.items()
+                         if k.startswith("WC_") and k not in family
+                         and isinstance(v, int)}
+    assert not (set(codes) & other_measured_wc), (
+        "a chord collides with an unrelated measured WC_ value")
 
 
 def test_every_wc_name_the_sdk_references_is_defined():
@@ -77,11 +87,12 @@ def test_modifier_chords_are_bc_measured_not_synthesized():
     """BC separately measured these -- e.g. WC_ALT_A is 57393, not the
     band|base formula's 0x200 | 97 == 609. WC_CAPS_A is BC's Shift+A
     character code (65, uppercase ASCII), confirming CAPS_ means "capital
-    character", not a CapsLock modifier bit."""
-    import App
-    assert App.WC_ALT_A == 57393
-    assert App.WC_CTRL_A == 57441
-    assert App.WC_CAPS_A == 65
+    character", not a CapsLock modifier bit.
+
+    Reads engine.appc.input directly (the definition site), not App."""
+    assert appc_input.WC_ALT_A == 57393
+    assert appc_input.WC_CTRL_A == 57441
+    assert appc_input.WC_CAPS_A == 65
 
 
 _CHORD_TARGET_ET_NAMES = (
