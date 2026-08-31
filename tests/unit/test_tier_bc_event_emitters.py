@@ -92,6 +92,33 @@ def test_firing_with_no_ammo_posts_cant_fire(posted):
         "both handlers cast GetSource() to TorpedoSystem to decide the line")
 
 
+def test_cant_fire_is_addressed_to_the_ship(posted):
+    """The Destination is what makes this reach BC at all, and it is the one
+    part of the contract the other tests cannot see.
+
+    Both handlers are registered as INSTANCE handlers on the player ship
+    (`pPlayer.AddPythonFuncHandlerForInstance(App.ET_CANT_FIRE, ...)`), and
+    `events.AddEvent` only calls `dest.ProcessEvent(event)` when the event's
+    destination IS that object. So a missing or wrong destination would keep
+    every other test in this section green while the feature stayed as dead
+    in-game as it was before the emitter existed.
+    """
+    from engine.appc.ships import ShipClass
+
+    ship = ShipClass()
+    ship.SetName("Player")
+    sys_ = _torpedo_system(available=0)
+    ship.SetTorpedoSystem(sys_)
+    assert sys_.GetParentShip() is ship, (
+        "precondition: SetTorpedoSystem must route through _attach_subsystem")
+
+    sys_.StartFiring(target=None)
+
+    evts = _of_type(posted, App.ET_CANT_FIRE)
+    assert len(evts) == 1
+    assert evts[0].GetDestination() is ship
+
+
 def test_firing_with_ammo_does_not_post(posted):
     sys_ = _torpedo_system(available=4)
     sys_.StartFiring(target=None)

@@ -1319,6 +1319,18 @@ class TorpedoSystem(WeaponSystem):
         from the phaser/tractor gates would be observationally inert today
         while committing us to a reading of "can't fire" that no SDK code
         exercises.
+
+        DELIBERATELY UNGUARDED, unlike the other emitters in this file
+        (_post_weapon_fired, _broadcast_weapon_fire_failed,
+        _broadcast_ammo_consumed_if_player), which wrap AddEvent in
+        try/except + dev_mode.log_swallowed. Those fire on the hot per-shot
+        path for consumers that already work; this one's consumers have NEVER
+        ONCE RUN in this engine, because nothing posted the event until now.
+        Swallowing here would hide the first real signal of a bug in code
+        that has never executed -- the same reasoning, verbatim, that
+        ships.py:1599 gives for posting ET_TARGET_WAS_CHANGED unguarded, and
+        that events.py:AddEvent gives for leaving destination dispatch
+        unguarded in general. Revisit once these handlers are live-verified.
         """
         import App
         evt = App.TGEvent_Create()
