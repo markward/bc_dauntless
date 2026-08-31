@@ -1810,6 +1810,12 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         super().__init__(name)
         self._mode = self.TBS_HOLD
         self._engage_state = None
+        # Last observed IsFiring() value, for the ET_TRACTOR_BEAM_STARTED_/
+        # STOPPED_FIRING edge-detect. Not derived from _fire_held: the beam
+        # drops and re-acquires (range, shields, arc) while the ENGAGE intent
+        # is continuously held, and each crossing is a transition BC's
+        # PowerDisplay repaints for.
+        self._was_firing = False
 
     def _wants_power(self) -> bool:
         """The tractor siphons power only while a beam is actually held (a
@@ -1867,12 +1873,43 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         ship = self.GetParentShip()
         if self._can_engage(ship, target):
             self._engage_beam(target, offset, ship)
+        self._sync_firing_event()
 
     def IsFiring(self) -> int:
         """Instantaneous BEAM state only — deliberately NOT OR'd with
         `_fire_held` like the base: the engaged-but-not-gripping intent is
         surfaced separately via IsEngaged() (the HUD toggle reads that)."""
         return 1 if self._any_child_firing() else 0
+
+    def _sync_firing_event(self) -> None:
+        """Post ET_TRACTOR_BEAM_STARTED_/STOPPED_FIRING on a beam transition.
+
+        Gaps #8/#9 in docs/engine/event-emitter-gaps.md. Call after any
+        operation that could change IsFiring(); it is a no-op unless the
+        state actually crossed, so it is safe on the per-tick path.
+
+        Destination is the parent SHIP, not the system:
+        Bridge/PowerDisplay.py:1013 casts GetDestination() to ShipClass and
+        then walks the ship's own tractor system, and
+        Conditions/ConditionFiringTractorBeam.py:26-27 registers broadcast
+        METHOD handlers filtered to the watched ship -- that filter compares
+        against the event's destination. Neither event carries a payload:
+        both handlers re-read the live state themselves.
+        """
+        now = bool(self.IsFiring())
+        if now == self._was_firing:
+            return
+        self._was_firing = now
+        ship = self.GetParentShip()
+        if ship is None:
+            return
+        import App
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_TRACTOR_BEAM_STARTED_FIRING if now
+                         else App.ET_TRACTOR_BEAM_STOPPED_FIRING)
+        evt.SetSource(self)
+        evt.SetDestination(ship)
+        App.g_kEventManager.AddEvent(evt)
 
     def _can_engage(self, ship, target) -> bool:
         # Range gate AND shield gate: a tractor grips only targets whose shields
@@ -1915,13 +1952,17 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
             if (not engageable) or (not _emitter_in_arc(em, ship, aim)):
                 em.StopFiring()
         if not engageable:
+            self._sync_firing_event()
             return False
         # Re-dispatch one eligible in-arc emitter if none is currently firing.
         for i in range(self.GetNumWeapons()):
             em = self.GetWeapon(i)
             if em is not None and em.IsFiring():
+                self._sync_firing_event()
                 return False
-        return self._engage_beam(target, self._held_offset, ship)
+        fired = self._engage_beam(target, self._held_offset, ship)
+        self._sync_firing_event()
+        return fired
 
     def _engage_beam(self, target, offset, ship) -> bool:
         """Fire one eligible in-arc emitter (SingleFire round-robin via
@@ -1962,6 +2003,7 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     def StopFiring(self, *args) -> None:
         self._engage_state = None
         super().StopFiring(*args)
+        self._sync_firing_event()
 
 
 class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
