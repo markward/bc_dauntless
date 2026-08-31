@@ -57,11 +57,16 @@ the q13 doc. Reproduce with the script in Task 1.
 
 | Scope | rows | already correct | **wrong value** | **missing** | **owner class absent** |
 |---|---|---|---|---|---|
-| module | 1,317 | 30 | 218 | 1,069 | — |
+| module | 1,317 | 40 | 531 | 746 | — |
 | class | 2,512 | 310 | 53 | 486 | 1,663 (228 classes) |
-| **total** | **3,829** | **340** | **271** | **1,555** | **1,663** |
+| **total** | **3,829** | **350** | **584** | **1,232** | **1,663** |
 
-The 271 corrections are **not** uniformly mechanical. Seven families are coupled
+> These counts are only reproducible if the audit resolves `WC_*`/`KY_*` through
+> `App.__getattr__` before classifying. That fallback memoizes into `vars(App)`
+> on first access (`App.py:2284-2288`), so a dict-walk alone makes bucket
+> membership depend on what else touched `App` first. See ruling PT1-1.
+
+The 584 corrections are **not** uniformly mechanical. Seven families are coupled
 to consuming code and get their own task:
 
 1. **`CT_*` (37) — structural, not a renumbering.** Our `App.CT_NEBULA` is a
@@ -85,7 +90,7 @@ to consuming code and get their own task:
    KBT_LOCKOUT_CHANGE=8`; ours is `0,1,2,3`. Any `&` test against ours is
    meaningless today. `GET_BOOL_EVENT`/`GET_INT_EVENT` are also swapped (ours
    1/2, BC 2/1).
-4. **`WC_*` / `KY_*` (25) — two namespaces our shim conflated.** BC's `WC_` are
+4. **`WC_*` / `KY_*` (338) — two namespaces our shim conflated.** BC's `WC_` are
    **lowercase** ASCII character codes (`WC_F == 102`, `WC_X == 120`) with
    function keys in a high band (`WC_F1 == 57365`, `WC_CURSOR == 57496`); BC's
    `KY_` are a separate small key-index enum (`KY_F == 33`, `KY_F1 == 59`,
@@ -463,7 +468,7 @@ def test_additive_pass_changes_no_existing_value():
     """Task 3 is additive only -- corrections land in Tasks 5-11."""
     from tools.constant_surface_audit import load
     _, _, wrong, _, _ = load()
-    assert len(wrong) == 271, "additive pass must not correct anything yet"
+    assert len(wrong) == 584, "additive pass must not correct anything yet"
 
 
 def test_deviations_are_respected():
@@ -486,7 +491,7 @@ because `real_attr` reports `(False, None)` for `ET_CANT_FIRE`.
 """Apply the measured App constant table to the shim module.
 
 Additive by default: a name we already define keeps its value unless
-`correct_existing` names it.  That split exists because ~271 of our values are
+`correct_existing` names it.  That split exists because ~584 of our values are
 invented and some are COUPLED to consuming code (CT_ class dispatch, CSP_
 priority polarity, KBT_ bitmasks) -- those are corrected one audited family at
 a time, not in one sweep.
@@ -634,8 +639,8 @@ fails saying the number is too HIGH means someone re-invented a value.
 from engine.appc.constants_apply import DEVIATIONS
 from tools.constant_surface_audit import load
 
-# Lower me. Never raise me.  271 at Task 4; 0 after Task 11.
-REMAINING_WRONG = 271
+# Lower me. Never raise me.  584 at Task 4; 0 after Task 9.
+REMAINING_WRONG = 584
 
 
 def test_no_measured_constant_is_missing():
@@ -689,7 +694,7 @@ Safe symbolically — no arithmetic on `ET_` constants exists in the SDK or
 - Modify: `App.py` (the `CORRECT_EXISTING` set; delete the invented `ET_*`
   assignments at lines 893–1304 that the table now supplies)
 - Modify: `engine/appc/events.py` (`ET_WEAPON_FIRE_FAILED` alias comment)
-- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 271 → 123)
+- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 584 → 436)
 - Modify: `tests/unit/test_wc_modifier_constants.py:75-99` (drop the stale
   "pre-existing duplicate" caveat)
 
@@ -757,7 +762,7 @@ ET_WEAPON_FIRE_FAILED: int = 0x00800037  # == App.ET_CANT_FIRE
 uv run pytest tests/unit/test_constant_surface.py tests/unit/test_wc_modifier_constants.py -v
 scripts/check_tests.sh
 ```
-Expected: PASS. Lower `REMAINING_WRONG` to `123`.
+Expected: PASS. Lower `REMAINING_WRONG` to `436`.
 
 - [ ] **Step 5: Commit**
 
@@ -778,7 +783,7 @@ priority, so they land together.
 - Modify: `engine/appc/crew_speech.py:144-165`
 - Modify: `App.py` (`CORRECT_EXISTING`)
 - Modify: `tests/unit/test_crew_speech_priorities.py`
-- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 123 → 121)
+- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 436 → 434)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -866,7 +871,7 @@ CORRECT_EXISTING: frozenset[str] = frozenset(
 uv run pytest tests/unit/test_crew_speech_priorities.py tests/unit/test_ai_primitives.py tests/unit/test_constant_surface.py -v
 scripts/check_tests.sh
 ```
-Expected: PASS. Lower `REMAINING_WRONG` to `121`.
+Expected: PASS. Lower `REMAINING_WRONG` to `434`.
 
 - [ ] **Step 5: Commit**
 
@@ -879,15 +884,22 @@ git commit -m "fix(speech): adopt BC's CSP_ polarity and flip the arbitration te
 
 ### Task 7: Correct the keyboard families (`WC_`, `KY_`, `KS_`, `KBT_`)
 
-25 + 3 + 6 = 34 values across four coupled tables. This is the highest-risk
-non-`CT_` family: our shim conflated `WC_` (character codes) with `KY_` (key
-indices), and `KBT_` is a bitmask we numbered sequentially.
+**347 corrections** (338 `WC_`/`KY_` + 3 `KS_` + 6 `KBT_`) plus **105
+genuinely-missing** keyboard names, across four coupled tables. This is by far
+the largest correction task and the highest-risk non-`CT_` family: our shim
+conflated `WC_` (character codes) with `KY_` (key indices), and `KBT_` is a
+bitmask we numbered sequentially.
+
+Most `WC_`/`KY_` names are not literals in `App.py` at all — they resolve
+through `App.__getattr__`'s fallback into `engine/appc/input.py` and memoize on
+first access (`App.py:2284-2288`). Correcting them means correcting that table,
+not adding lines to `App.py`.
 
 **Files:**
 - Modify: `engine/appc/input.py` (the generated `WC_`/`KY_` table)
 - Modify: `App.py` (`CORRECT_EXISTING`)
 - Modify: `tests/unit/test_wc_constants.py`, `tests/unit/test_keyboard_constant_table.py`
-- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 121 → 87)
+- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 434 → 87)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1339,8 +1351,8 @@ git commit -m "docs(constants): close the q13 shim fix pass"
 
 **Spec coverage.** The q13 doc's deferred work is "226 wrong + ~1600 unique
 missing". Tasks 2–4 cover every missing constant (1,555 scalars + 1,663 on
-absent classes); Tasks 5–9 cover all 271 wrong values, partitioned so no family
-lands without its coupled consumers audited (`ET_` 148, `CSP_` 2, keyboard 34,
+absent classes); Tasks 5–9 cover all 584 wrong values, partitioned so no family
+lands without its coupled consumers audited (`ET_` 148, `CSP_` 2, keyboard 347,
 UI 50, `CT_` 37). Task 4's ratchet proves the partition is exhaustive — it fails
 unless `REMAINING_WRONG` reaches 0. Task 10 covers the question that started
 this work (the 17 dead handlers) and Task 11 the doc trail.
@@ -1356,7 +1368,7 @@ that way in Tasks 3, 4. `apply_constants` (Task 3) is called with the keyword
 arguments its signature declares. `MODULE_CONSTANTS` / `CLASS_CONSTANTS` keep
 one shape from Task 2 through Task 9. `class_for` / `tag_for` / `register`
 (Task 9) match their use in `sets.py`. `REMAINING_WRONG` steps
-271 → 123 → 121 → 87 → 37 → 0, summing to exactly 271.
+584 → 436 → 434 → 87 → 37 → 0, summing to exactly 584.
 
 **Known risk this plan does not remove.** Tasks 7, 8, 9 and 10 each carry a live
 check, because their failure modes — a dead key, a mislaid pane, an emptied
