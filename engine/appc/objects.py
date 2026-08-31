@@ -113,10 +113,16 @@ class ObjectClass(TGEventHandlerObject):
 
     def IsTypeOf(self, cls) -> int:
         # SDK runtime class check: pObject.IsTypeOf(CT_X). CT_ constants are
-        # classes (CT_PLANET=Planet, CT_SUN=Sun). `cls` may be a fall-through
-        # _NamedStub for an unmapped CT_, so guard with isinstance(cls, type).
+        # BC's int type tags; engine.appc.object_types maps one back to the
+        # class this isinstance test needs (CT_PLANET->Planet, CT_SUN->Sun).
+        # A class is still accepted directly for engine callers. `cls` may be
+        # a fall-through _NamedStub for an undefined CT_, or an int tag with
+        # no registered class — resolve_class returns None for both and the
+        # isinstance(..., type) guard turns that into 0.
         # Sun(Planet): a Sun IsTypeOf CT_PLANET and CT_SUN; a plain Planet
         # IsTypeOf CT_SUN is 0 — this is what filters suns out of the orbit menu.
+        from engine.appc import object_types
+        cls = object_types.resolve_class(cls)
         return 1 if isinstance(cls, type) and isinstance(self, cls) else 0
 
     def GetName(self) -> str:

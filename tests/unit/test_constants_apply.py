@@ -61,10 +61,15 @@ def test_additive_pass_changes_no_existing_value():
     across thirteen families (WeaponsDisplay, TGParagraph,
     TGUIObject.ALIGN_*, TGSound, EffectController, TGModelPropertyManager,
     FloatRangeWatcher, ObjectGroup(WithInfo), EngRepairPane.DIVIDER,
-    TGFrame, STBSF_SIZE_TO_TEXT, SPECIES_GALAXY/SPECIES_SOVEREIGN)."""
+    TGFrame, STBSF_SIZE_TO_TEXT, SPECIES_GALAXY/SPECIES_SOVEREIGN).
+
+    4 (post-Task 9): Task 9 corrected the 37 CT_* object type-tags -- the
+    only structurally-mismatched family in the sweep (class objects where BC
+    has ints), now ints with the tag->class map in
+    engine/appc/object_types.py. 4 is the floor: the PI-family DEVIATIONS."""
     from tools.constant_surface_audit import load
     _, _, wrong, _, _ = load()
-    assert len(wrong) == 41, "wrong-value count drifted from Task 8's landed corrections"
+    assert len(wrong) == 4, "wrong-value count drifted from Task 9's landed corrections"
 
 
 def test_deviations_are_respected():

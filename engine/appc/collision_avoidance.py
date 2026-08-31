@@ -144,10 +144,20 @@ def is_overriding(ship) -> bool:
 
 
 def _dont_avoid_types():
+    """The SDK's lDontAvoidTypes as engine classes, for the isinstance filter
+    in `_build_obstacle_snapshot`.
+
+    App.CT_* are BC's int type tags, so each name is resolved through
+    engine.appc.object_types. A name that fails to resolve drops out of the
+    tuple silently — which would put proximity checks, torpedoes and nebulae
+    back into the avoidance obstacle list — so the count is pinned by
+    tests/unit/test_object_types.py.
+    """
     import App
+    from engine.appc import object_types
     out = []
     for name in _DONT_AVOID_TYPE_NAMES:
-        cls = getattr(App, name, None)
+        cls = object_types.resolve_class(getattr(App, name, None))
         if isinstance(cls, type):
             out.append(cls)
     return tuple(out)

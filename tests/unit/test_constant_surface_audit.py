@@ -57,19 +57,28 @@ def test_load_partitions_every_usable_row():
     # ObjectGroup, ObjectGroupWithInfo, EngRepairPane.DIVIDER, TGFrame,
     # STBSF_SIZE_TO_TEXT, SPECIES_GALAXY/SPECIES_SOVEREIGN), all moved
     # `wrong` -> `ok`: ok 3741 -> 3788, wrong 88 -> 41.
-    assert len(ok) == 3788, f"ok bucket: expected 3788, got {len(ok)}"
-    assert len(wrong) == 41, f"wrong bucket: expected 41, got {len(wrong)}"
+    #
+    # Task 9 corrected the last 37 -- the CT_* object type-tags, the only
+    # STRUCTURAL mismatches in the whole sweep (class objects where BC has
+    # ints). They moved `wrong` -> `ok`: ok 3788 -> 3825, wrong 41 -> 4.
+    # 4 is the floor: the PI-family DEVIATIONS.
+    assert len(ok) == 3825, f"ok bucket: expected 3825, got {len(ok)}"
+    assert len(wrong) == 4, f"wrong bucket: expected 4, got {len(wrong)}"
     assert len(missing) == 0, f"missing bucket: expected 0, got {len(missing)}"
     assert len(noclass) == 0, f"noclass bucket: expected 0, got {len(noclass)}"
     assert len(ok) + len(wrong) + len(missing) + len(noclass) == len(rows)
 
 
-def test_ct_constants_are_the_only_structural_mismatches():
-    """Every non-numeric 'wrong' entry is a CT_ class object, not a number."""
+def test_no_structural_mismatches_remain():
+    """Task 9 flipped the 37 CT_* names from class objects to BC's int type
+    tags (behind the engine/appc/object_types registry), so nothing in the
+    `wrong` bucket is a non-number any more.  A class reappearing here means
+    someone re-bound a CT_ name to a type -- which would work, silently, for
+    the isinstance filters and be wrong everywhere the SDK round-trips the
+    value (GetObjType -> IsTypeOf, ConditionScript_Create)."""
     _, _, wrong, _, _ = load()
     structural = [r for r, _, have in wrong if not isinstance(have, (int, float))]
-    assert len(structural) == 37
-    assert all(r["name"].startswith("CT_") for r in structural)
+    assert structural == []
 
 
 def test_load_is_order_independent():

@@ -39,8 +39,11 @@ def test_symbols_are_real_not_stubs():
 
 
 def test_ct_sorted_region_menu_still_an_stmenu_subclass():
+    # App.CT_* are BC's int type tags (q13 sweep task 9); the class the
+    # isinstance filters use comes from the object_types registry.
     from engine.appc.characters import STMenu
-    assert issubclass(App.CT_SORTED_REGION_MENU, STMenu)
+    from engine.appc.object_types import class_for
+    assert issubclass(class_for(App.CT_SORTED_REGION_MENU), STMenu)
 
 
 def test_fonts_and_icons_registers_real_entries():

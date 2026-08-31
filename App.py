@@ -3,6 +3,9 @@ import sys
 from engine.core import stub_telemetry
 from engine.appc.constants_generated import CLASS_CONSTANTS, MODULE_CONSTANTS
 from engine.appc.constants_apply import DEVIATIONS, apply_constants
+# The CT_* int-tag -> class registry the isinstance-based type filters read.
+# Underscore-prefixed so it does not read as SDK-visible App surface.
+from engine.appc import object_types as _object_types
 from engine.appc.events import (
     TGEvent, TGEvent_Create,
     TGBoolEvent, TGBoolEvent_Create,
@@ -306,22 +309,26 @@ from engine.appc.particles import (
     EffectController_GetEffectLevel,
 )
 
-# ── App.CT_* class-type constants ─────────────────────────────────────────────
-# In the original BC engine these are integer enum tags. In the SDK they reach
-# three call sites:
-#   1. pPropSet.GetPropertiesByType(CT_X)   — isinstance() over property templates
+# ── App.CT_* object type-tag constants ────────────────────────────────────────
+# In the original BC engine these are integer enum tags, and since the q13
+# constant sweep they are ints here too (measured values, read out of the
+# generated table below — never hand-typed). In the SDK they reach five call
+# sites, all of which our shim answers with an isinstance() filter:
+#   1. pPropSet.GetPropertiesByType(CT_X)   — property templates by type
 #   2. pSet.GetClassObjectList(CT_X)        — set queries by object class
 #   3. pObject.IsTypeOf(CT_X)               — runtime type check
-# isinstance() requires a real type, so every CT_X must be a class. The
-# property-set call site is the one that crashes today; the others are
-# currently stubbed but kept correct here so future implementations of
-# GetClassObjectList / IsTypeOf get real classes for free.
+#   4. pShip.StartGetSubsystemMatch(CT_X)   — a ship's subsystems by type
+#   5. pSubsystem.IsTypeOf(CT_X) / GetObjType()
+# isinstance() needs a real class, so the tag -> class map that used to BE
+# these bindings now lives in engine.appc.object_types, registered just below.
+# Consumers call object_types.resolve_class(), which takes either an int tag or
+# a class, so engine code that still passes a class keeps working.
 #
 # Property-type and subsystem-type CT_* map to the matching *Property class —
 # property sets hold templates, not live subsystems. Object-type CT_* map to
 # their ObjectClass subclass. For object types not yet implemented in the
 # engine, a minimal placeholder class is defined inline; when a real
-# implementation lands the binding here updates to point at it.
+# implementation lands the mapping here updates to point at it.
 
 class Nebula(ObjectClass): pass
 class Torpedo(ObjectClass): pass
@@ -353,46 +360,65 @@ def GridClass_Create(): return GridClass()
 class Placement(ObjectClass): pass
 class MultiplayerGame: pass
 
-# Property / subsystem templates
-CT_SUBSYSTEM_PROPERTY            = SubsystemProperty
-CT_POSITION_ORIENTATION_PROPERTY = PositionOrientationProperty
-CT_OBJECT_EMITTER_PROPERTY       = ObjectEmitterProperty
-CT_HULL_SUBSYSTEM                = HullProperty
-CT_POWER_SUBSYSTEM               = PowerProperty
-CT_SHIELD_SUBSYSTEM              = ShieldProperty
-CT_SENSOR_SUBSYSTEM              = SensorProperty
-CT_REPAIR_SUBSYSTEM              = RepairSubsystemProperty
-CT_IMPULSE_ENGINE_SUBSYSTEM      = ImpulseEngineProperty
-CT_WARP_ENGINE_SUBSYSTEM         = WarpEngineProperty
-CT_CLOAKING_SUBSYSTEM            = CloakingSubsystemProperty
-CT_PHASER_SYSTEM                 = PhaserProperty
-CT_PULSE_WEAPON_SYSTEM           = PulseWeaponProperty
-CT_TORPEDO_SYSTEM                = TorpedoSystemProperty
-CT_TRACTOR_BEAM_SYSTEM           = TractorBeamProperty
-CT_WEAPON_SYSTEM                 = WeaponSystemProperty
-CT_WEAPON                        = WeaponProperty
-CT_ENERGY_WEAPON                 = EnergyWeaponProperty
-CT_SHIP                          = ShipProperty
-CT_SHIP_SUBSYSTEM                = ShipSubsystem
+# tag name -> the class our isinstance-based filters need for that tag. The
+# INT comes from MODULE_CONSTANTS (the generated q13 dump); only the class is
+# written here. Registering through this one loop means a name can never carry
+# a tag the registry does not know about, which is the shape of failure that
+# empties a query silently.
+#
+# NOTE these names are deliberately NOT in CORRECT_EXISTING at the bottom of
+# this module. They are already bound FROM the measured table, so a correction
+# pass would be a no-op — and adding them would make apply_constants silently
+# heal a future hand-typed regression here before the constant-surface audit
+# could see it (the same self-heal hazard tasks 7 and 8 document for the
+# shared-class families).
+_CT_CLASS_FOR_TAG = [
+    # Property / subsystem templates — property sets hold design-time
+    # templates, so these map to the *Property class, not the subsystem class.
+    ("CT_SUBSYSTEM_PROPERTY",            SubsystemProperty),
+    ("CT_POSITION_ORIENTATION_PROPERTY", PositionOrientationProperty),
+    ("CT_OBJECT_EMITTER_PROPERTY",       ObjectEmitterProperty),
+    ("CT_HULL_SUBSYSTEM",                HullProperty),
+    ("CT_POWER_SUBSYSTEM",               PowerProperty),
+    ("CT_SHIELD_SUBSYSTEM",              ShieldProperty),
+    ("CT_SENSOR_SUBSYSTEM",              SensorProperty),
+    ("CT_REPAIR_SUBSYSTEM",              RepairSubsystemProperty),
+    ("CT_IMPULSE_ENGINE_SUBSYSTEM",      ImpulseEngineProperty),
+    ("CT_WARP_ENGINE_SUBSYSTEM",         WarpEngineProperty),
+    ("CT_CLOAKING_SUBSYSTEM",            CloakingSubsystemProperty),
+    ("CT_PHASER_SYSTEM",                 PhaserProperty),
+    ("CT_PULSE_WEAPON_SYSTEM",           PulseWeaponProperty),
+    ("CT_TORPEDO_SYSTEM",                TorpedoSystemProperty),
+    ("CT_TRACTOR_BEAM_SYSTEM",           TractorBeamProperty),
+    ("CT_WEAPON_SYSTEM",                 WeaponSystemProperty),
+    ("CT_WEAPON",                        WeaponProperty),
+    ("CT_ENERGY_WEAPON",                 EnergyWeaponProperty),
+    ("CT_SHIP",                          ShipProperty),
+    ("CT_SHIP_SUBSYSTEM",                ShipSubsystem),
+    # Object classes (set / runtime type tags)
+    ("CT_OBJECT",                        ObjectClass),
+    ("CT_DAMAGEABLE_OBJECT",             DamageableObject),
+    ("CT_CHARACTER",                     CharacterClass),
+    ("CT_BACKDROP",                      Backdrop),
+    ("CT_PROXIMITY_CHECK",               ProximityCheck),
+    ("CT_PLANET",                        Planet),
+    ("CT_SUN",                           Sun),
+    ("CT_NEBULA",                        Nebula),
+    ("CT_TORPEDO",                       Torpedo),
+    ("CT_DEBRIS",                        Debris),
+    ("CT_ASTEROID_FIELD",                AsteroidField),
+    ("CT_ASTEROID_TILE",                 AsteroidTile),
+    ("CT_GRID",                          Grid),
+    ("CT_PLACEMENT",                     Placement),
+    ("CT_MULTIPLAYER_GAME",              MultiplayerGame),
+    ("CT_ST_MENU",                       STMenu),
+    ("CT_SORTED_REGION_MENU",            SortedRegionMenu),
+]
 
-# Object classes (set / runtime type tags)
-CT_OBJECT            = ObjectClass
-CT_DAMAGEABLE_OBJECT = DamageableObject
-CT_CHARACTER         = CharacterClass
-CT_BACKDROP          = Backdrop
-CT_PROXIMITY_CHECK   = ProximityCheck
-CT_PLANET            = Planet
-CT_SUN               = Sun
-CT_NEBULA            = Nebula
-CT_TORPEDO           = Torpedo
-CT_DEBRIS            = Debris
-CT_ASTEROID_FIELD    = AsteroidField
-CT_ASTEROID_TILE     = AsteroidTile
-CT_GRID              = Grid
-CT_PLACEMENT         = Placement
-CT_MULTIPLAYER_GAME  = MultiplayerGame
-CT_ST_MENU           = STMenu
-CT_SORTED_REGION_MENU = SortedRegionMenu
+for _ct_name, _ct_cls in _CT_CLASS_FOR_TAG:
+    globals()[_ct_name] = MODULE_CONSTANTS[_ct_name]
+    _object_types.register(MODULE_CONSTANTS[_ct_name], _ct_cls)
+del _ct_name, _ct_cls
 
 # MetaNebula factories — imported here (not at the top) so that the
 # `Nebula` base class and `CT_NEBULA` tag above are already bound when

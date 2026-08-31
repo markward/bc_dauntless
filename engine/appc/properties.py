@@ -1111,6 +1111,19 @@ class TGModelPropertySet:
         return _TGModelPropertyList([prop for _node, prop in self._entries])
 
     def GetPropertiesByType(self, type_cls):
+        # SDK callers pass a CT_* int type tag (CT_OBJECT_EMITTER_PROPERTY,
+        # CT_SUBSYSTEM_PROPERTY, CT_POSITION_ORIENTATION_PROPERTY); engine
+        # callers may pass the Property class directly. Resolve to the class
+        # this isinstance filter needs.
+        #
+        # Deliberately NOT guarded: an unresolvable argument becomes None and
+        # isinstance() raises TypeError, exactly as it did when a _NamedStub
+        # for an undefined CT_ was passed straight through. Swallowing that
+        # into an empty list would turn a loud failure into a silent one --
+        # the opposite of what this sweep is for. GetClassObjectList differs
+        # only because BC's own contract there is "no matches" (see sets.py).
+        from engine.appc import object_types
+        type_cls = object_types.resolve_class(type_cls)
         return _TGModelPropertyList(
             [prop for _node, prop in self._entries if isinstance(prop, type_cls)]
         )

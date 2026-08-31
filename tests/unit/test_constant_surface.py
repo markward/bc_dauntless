@@ -31,7 +31,19 @@ from tools.constant_surface_audit import load
 # CORRECT_EXISTING comment block for which of those thirteen families are
 # corrected there versus fixed directly at an engine/ definition site (the
 # TGUIObject.ALIGN_* / ANCHOR_FRACTIONS coupling in particular).
-REMAINING_WRONG = 41
+#
+# Task 9 corrected the last 37 -- the CT_* object type-tags, the only
+# structurally-mismatched family in the sweep. Every other correction was
+# number-to-number; these names were bound to CLASS objects because all of our
+# type dispatch filters with isinstance. They now carry BC's measured ints,
+# with engine/appc/object_types.py holding the int<->class registry the
+# filters resolve through. Like the CT_ names themselves, they are NOT in
+# CORRECT_EXISTING: App.py binds them straight out of MODULE_CONSTANTS, so a
+# correction pass would be a no-op AND would mask a future hand-typed
+# regression from this audit.
+#
+# 4 is now the floor -- see the module docstring.
+REMAINING_WRONG = 4
 
 # Task 7 also defined the 105 genuinely-missing keyboard names (101 WC_ +
 # 4 KY_ international/accented codepoints our table never covered), driving
