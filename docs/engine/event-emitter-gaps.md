@@ -13,7 +13,7 @@
 > edge-detect built from scratch). Each is marked ✅ **DONE** (or, for #2,
 > ✅ **Closed — deliberately NOT emitted**) below with what landed.
 >
-> **Three remain open**, both for reasons a code change here cannot close:
+> **Three remain open**, for reasons a code change here cannot close:
 > - **#6/#7** `ET_TORPEDO_ENTERED_SET`/`_EXITED_SET` — torpedoes are never
 >   added to a `SetClass` at all (they live only in `projectiles._active`);
 >   wiring that up changes what every `GetClassObjectList(CT_TORPEDO)` caller
@@ -86,6 +86,28 @@ unguarded (no try/except, no local cooldown) — both handlers self-cooldown (2 
 global, 10 s since Tactical last spoke), so a `StartFiring` call every tick
 while the trigger is held cannot spam the line. Pinned by
 `tests/unit/test_tier_bc_event_emitters.py`.
+
+⚠️ **ONE of the handlers' three arms is live, not all three.** Both handlers
+branch on `pTorps.GetNumReady() > 0` FIRST, and we post only from the
+empty-magazine gate, so:
+
+| Handler arm | Condition | Reachable? |
+|---|---|---|
+| "out of photons/quantums" + `UITorpsNoAmmo` | no rounds of the current type | ✅ yes — this is the gate we post from |
+| `gt037` + `UITorpsNotLoaded` | rounds remain, tubes still cold | ❌ no — nothing posts on a cold-tube trigger pull |
+| `gt030` "they're out of range" | tubes ready, target beyond 1000 | ❌ no — nothing posts on an out-of-range pull |
+
+The live arm is correct: ammo is debited at fire, not at reload, so
+`GetAvailable() == 0` implies `GetNumReady() == 0` and the handler takes the
+"out of torps" branch. The other two need posts from the cold-tube and
+range/arc rejection paths, which are NOT in `TorpedoSystem.StartFiring` — they
+live in the per-tick BC fire path. Closing them is follow-up work, not part of
+this gap's ✅.
+
+⚠️ Also note `ET_CANT_FIRE` shares its int (0x800037) with our
+`ET_WEAPON_FIRE_FAILED` alias, and `TorpedoTube._broadcast_weapon_fire_failed`
+posts that int with no Source and the TUBE as destination. It is inert (the
+handlers are player-instance handlers), deliberately so — see its docstring.
 
 ---
 
@@ -197,6 +219,43 @@ against the stale set and double-post (fixed in a follow-up review pass,
 ship still present on the next push would be silently skipped even though
 its row was destroyed and rebuilt. Pinned by
 `tests/unit/test_tier_bc_event_emitters.py`.
+
+
+### ⚠️ Cost: the emitter is free, the HANDLER is not (measured 2026-09-01)
+
+The diff itself is negligible: `_post_membership_changes` costs
+**0.4 / 0.7 / 1.1 us** at 8 / 17 / 32 contacts (~18% of `set_contacts`, itself
+2.4 / 3.8 / 5.8 us) — under 0.002 ms of a 16.67 ms frame. Do not go looking
+for the cost here.
+
+It is in what the event now REACHES. `Bridge/ScienceMenuHandlers` is not
+stubbed, and `CreateMenus:93-94` registers `ShipIdentified` / `ExitedSet` live.
+`ShipIdentified` performs TWO `g_kLocalizationManager.Load("data/TGL/Bridge
+Menus.tgl")` round trips at a measured **262 us each**, so:
+
+* **~0.52 ms per ADDED**, paid in full even when the button already exists —
+  both Loads precede `CreateScanButton`'s `GetButtonW` de-dupe.
+* **>=262 us per REMOVED** via `ExitedSet`.
+
+Two consequences worth knowing before reading a frame spike as a regression:
+
+1. **Load/warp burst.** 32 targetable contacts is **~17 ms in one frame** — an
+   entire 60 Hz frame. A warp pays it twice: mid-warp `perceived_by()` returns
+   `()` (the player sits alone in `_WarpTransit`), giving N REMOVED, then
+   arrival gives N ADDED. Nothing bounds this today.
+2. **No range hysteresis — this is the worse one.** `sensor_detection`'s
+   `HYSTERESIS` / `_latched` pair covers NEBULA concealment only; the RANGE
+   gate has none. `set_contacts` runs every frame, so a contact
+   station-keeping or moving tangentially at the sensor boundary flips
+   `targetable` every frame: ~0.5 ms/frame per flapping contact, and a Scan
+   Object button created and destroyed 60x/s. Measured with an oscillating
+   contact: 10 frames -> 10 events, undamped.
+
+Neither is caused by the membership diff — both are properties of the SDK
+handler and of `can_detect` that the diff made REACHABLE. Range hysteresis in
+`can_detect` is the obvious fix and is deliberately NOT done here: it changes
+what the radar, the target list and the AI all perceive, so it wants its own
+change and its own live check.
 
 ---
 

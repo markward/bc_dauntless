@@ -1336,6 +1336,14 @@ class TorpedoSystem(WeaponSystem):
         evt = App.TGEvent_Create()
         evt.SetEventType(App.ET_CANT_FIRE)
         evt.SetSource(self)
+        # Posts even when GetParentShip() is None, unlike
+        # TractorBeamSystem._sync_firing_event, which RETURNS on a null parent.
+        # The difference is deliberate, not drift: that one holds an EDGE
+        # (_was_firing), so posting-and-forgetting a parentless transition
+        # would consume the crossing and lose the event permanently. This one
+        # holds no state -- a can't-fire is a momentary fact, re-derivable on
+        # the next trigger pull -- so there is nothing to defer and nothing to
+        # lose.
         evt.SetDestination(self.GetParentShip())
         App.g_kEventManager.AddEvent(evt)
 
@@ -2691,9 +2699,25 @@ class TorpedoTube(Weapon):
 
     def _broadcast_weapon_fire_failed(self) -> None:
         """Post ET_WEAPON_FIRE_FAILED: Destination = the TUBE.  Posted when a
-        targeted fire fails the aim-point resolve or the +/-30 degree cone
-        (audited; no shipped SDK script listens — defined for fidelity +
-        mod surface)."""
+        targeted fire fails the aim-point resolve or the +/-30 degree cone.
+
+        ⚠️ ``ET_WEAPON_FIRE_FAILED`` IS ``ET_CANT_FIRE`` — both are 0x800037
+        (events.py:70-72 keeps the descriptive name as an alias so the two can
+        never drift).  The older claim here that "no shipped SDK script
+        listens" is FALSE and has been since the constant sweep made 0x800037
+        real: Bridge/TacticalMenuHandlers.py:422 and
+        Bridge/TacticalCharacterHandlers.py:58 both register ``PlayerCantFire``
+        for it.
+
+        Neither reaches this post, for two independent reasons, and BOTH are
+        load-bearing — do not "tidy" either away: they are registered on the
+        PLAYER instance while this addresses the TUBE, and this post sets no
+        Source at all, so a ``PlayerCantFire``-shaped consumer would evaluate
+        ``TorpedoSystem_Cast(None)``.  That divergence from the sibling
+        emitters (which all pair Source = the emitting object with Destination
+        = whatever the handler casts or filters on) is why this one is inert.
+        If this event ever needs a real consumer, give it a Source and decide
+        its destination deliberately rather than inheriting this shape."""
         import App
         from engine import dev_mode
         try:
