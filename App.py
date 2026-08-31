@@ -812,6 +812,7 @@ NULL_ID = 0
 PI = math.pi
 HALF_PI = math.pi / 2.0
 TWO_PI = math.pi * 2.0
+FOURTH_PI = math.pi / 4.0
 
 # ── Singletons ─────────────────────────────────────────────────────────────────
 g_kEventManager = TGEventManager()

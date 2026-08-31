@@ -22,13 +22,22 @@ def test_load_partitions_every_usable_row():
     # __getattr__ memoization path (engine.appc.input) keeps resolving them;
     # those 313 names (already "wrong" against this dump before Task 3) stay
     # "wrong" after it. `ok` rose and `missing`/`noclass` fell because
-    # everything else that was absent is now really defined. The 106 that
-    # remain `missing` are WC_* codepoints (e.g. WC_POUND_SIGN) that
-    # engine.appc.input's table itself does not define -- a WC_/KY_-family
-    # fix, out of scope for Task 3.
+    # everything else that was absent is now really defined.
+    #
+    # `wrong` is 585, not 584: fix-round-1 defined FOURTH_PI in App.py
+    # (alongside PI/HALF_PI/TWO_PI, its DEVIATIONS siblings) at double
+    # precision, deliberately differing from BC's float32-rounded measured
+    # value -- so it moved from `missing` straight to `wrong`, exactly like
+    # its three siblings did before this task ever ran. That is additive
+    # (a name that didn't exist now does, and legitimately still disagrees
+    # with the dump on purpose), not a correction of a pre-existing value.
+    #
+    # The 105 that remain `missing` are all WC_* codepoints (e.g.
+    # WC_POUND_SIGN) that engine.appc.input's table itself does not define
+    # -- a WC_/KY_-family fix, out of scope for Task 3.
     assert len(ok) == 3139, f"ok bucket: expected 3139, got {len(ok)}"
-    assert len(wrong) == 584, f"wrong bucket: expected 584, got {len(wrong)}"
-    assert len(missing) == 106, f"missing bucket: expected 106, got {len(missing)}"
+    assert len(wrong) == 585, f"wrong bucket: expected 585, got {len(wrong)}"
+    assert len(missing) == 105, f"missing bucket: expected 105, got {len(missing)}"
     assert len(noclass) == 0, f"noclass bucket: expected 0, got {len(noclass)}"
     assert len(ok) + len(wrong) + len(missing) + len(noclass) == len(rows)
 

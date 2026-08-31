@@ -11,9 +11,15 @@ a time, not in one sweep.
 DEVIATIONS: dict[str, str] = {
     "PI": "BC's is float32 (3.14159274101); ours is math.pi. Nothing compares "
           "these for equality and the extra precision matters to physics.",
-    "HALF_PI": "See PI.",
-    "TWO_PI": "See PI.",
-    "FOURTH_PI": "See PI.",
+    "HALF_PI": "BC's PI/2 is float32-rounded, losing precision our physics "
+               "code doesn't need to inherit; ours is math.pi / 2.0 at "
+               "double precision, and nothing compares it for equality.",
+    "TWO_PI": "BC's 2*PI is float32-rounded, losing precision our physics "
+              "code doesn't need to inherit; ours is math.pi * 2.0 at "
+              "double precision, and nothing compares it for equality.",
+    "FOURTH_PI": "BC's PI/4 is float32-rounded, losing precision our physics "
+                 "code doesn't need to inherit; ours is math.pi / 4.0 at "
+                 "double precision, and nothing compares it for equality.",
 }
 
 # Keyboard constants are NOT injected here. App.py's module __getattr__ has a

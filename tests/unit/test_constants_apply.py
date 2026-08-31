@@ -1,5 +1,8 @@
+import types
+
 import App
 from tools.constant_surface_audit import real_attr
+from engine.appc.constants_apply import apply_constants
 
 
 def test_previously_missing_constants_are_now_real_ints():
@@ -32,10 +35,18 @@ def test_injection_does_not_touch_classes_we_implement():
 
 
 def test_additive_pass_changes_no_existing_value():
-    """Task 3 is additive only -- corrections land in Tasks 5-11."""
+    """Task 3 is additive only -- corrections land in Tasks 5-11.
+
+    585, not 584: FOURTH_PI joined its PI/HALF_PI/TWO_PI siblings in the
+    "wrong" bucket once fix-round-1 defined it in App.py (see the DEVIATIONS
+    entry) -- it was "missing" before that fix, never a pre-existing "wrong"
+    value, so this is additive, not a correction. Its value (math.pi / 4.0,
+    kept deliberately at double precision) legitimately differs from BC's
+    float32-rounded measurement, exactly like its three siblings, all of
+    which were already "wrong" before this task ever ran."""
     from tools.constant_surface_audit import load
     _, _, wrong, _, _ = load()
-    assert len(wrong) == 584, "additive pass must not correct anything yet"
+    assert len(wrong) == 585, "additive pass must not correct anything yet"
 
 
 def test_deviations_are_respected():
@@ -43,3 +54,42 @@ def test_deviations_are_respected():
     from engine.appc.constants_apply import DEVIATIONS
     assert "PI" in DEVIATIONS
     assert App.PI == math.pi          # ours, not BC's float32
+
+
+def test_every_deviation_is_really_defined():
+    """A DEVIATIONS entry suppresses injection for that name -- if App.py
+    never defines it independently, the suppression itself creates a truthy
+    _NamedStub, exactly the bug class this sweep exists to eliminate.  Use
+    real_attr, not getattr: getattr can't distinguish 'defined' from
+    'stubbed'."""
+    from engine.appc.constants_apply import DEVIATIONS
+    for qualified in DEVIATIONS:
+        if "." in qualified:
+            cls_name, attr = qualified.split(".", 1)
+            has_cls, cls = real_attr(App, cls_name)
+            assert has_cls and isinstance(cls, type), (
+                "%s: owner class not really defined" % qualified)
+            defined, _ = real_attr(cls, attr)
+        else:
+            defined, _ = real_attr(App, qualified)
+        assert defined, "%s is in DEVIATIONS but not really defined on App" % qualified
+
+
+def test_shadow_guard_preserves_falsy_real_attributes():
+    """A real class attribute valued None or 0 must not read as 'absent' and
+    get overwritten by an injected constant -- that would silently corrupt
+    every implemented class whose real value happens to be falsy."""
+    class Foo:
+        BAR = None
+        BAZ = 0
+
+    fake_module = types.ModuleType("fake_constants_apply_target")
+    fake_module.Foo = Foo
+
+    apply_constants(
+        fake_module, {}, {"Foo": {"BAR": 99, "BAZ": 42}}, {},
+        correct_existing=frozenset(), named_stub_factory=lambda n: None,
+    )
+
+    assert Foo.BAR is None, "None-valued attribute must survive injection"
+    assert Foo.BAZ == 0, "0-valued attribute must survive injection"
