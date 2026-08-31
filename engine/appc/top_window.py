@@ -460,6 +460,53 @@ def _drop_open_crew_menu() -> None:
         dev_mode.log_swallowed("TopWindow.StartCutscene crew-menu drop", exc)
 
 
+def drop_menus_turn_back() -> None:
+    """BC's BridgeHandlers.DropMenusTurnBack (BridgeHandlers.py:1016-1041),
+    reimplemented at the engine hook.
+
+    Two arms: lower whatever top-level menu is open (shared with
+    `_drop_open_crew_menu` above), then turn back every character on the
+    bridge set that is currently turned to the captain (:1038-1041).
+
+    NOT reached by unstubbing BridgeHandlers. That was tried on 2026-07-12
+    (cc218371) and reverted the same day: the real DropMenusTurnBack body
+    calls DropOutOfManualFireMode -> Bridge.TacticalMenuHandlers.
+    ResetPickFireButton, which dereferences TacticalControlWindow.
+    GetTacticalMenu() with no None-guard and raises. The raise unwound out of
+    MissionLib.StartCutscene and was silently swallowed, killing E1M1's
+    ExplainWarp cutscene. The module stays stubbed in both stub lists; this
+    is the equivalent behaviour at the engine hook, per the project rule
+    against unstubbing a whole module to reach one function.
+
+    Scope: the turn-back arm is deliberately NOT added to
+    `_drop_open_crew_menu`, which cutscene start (:103) and the cinematic
+    toggle (:348) both call. Those are live, verified paths and BC's own
+    coupling there is inherited from MissionLib.StartCutscene rather than
+    established by test; widening them is a separate change with its own live
+    check. What is shared today is the drop primitive.
+
+    Also skipped: DropCharacterToolTips() (:1017) and the ViewScreenObject
+    owner arm (:1029-1031) — the latter for the same reason
+    `_drop_open_crew_menu` skips it (no SDK content exercises a
+    viewscreen-owned top-level menu here).
+
+    Best-effort throughout: this runs on the warp-engage path, where a raise
+    is swallowed and would silently drop the warp itself.
+    """
+    _drop_open_crew_menu()
+    try:
+        import App
+        kset = App.g_kSetManager.GetSet("bridge")
+        if kset is None:
+            return
+        for character in kset.GetClassObjectList(App.CT_CHARACTER):
+            if character.IsTurned():
+                character.TurnBack()
+    except Exception as exc:
+        from engine import dev_mode
+        dev_mode.log_swallowed("DropMenusTurnBack turn-back", exc)
+
+
 def _release_camera_watch() -> None:
     """Clear any AT_LOOK_AT_ME / AT_WATCH_ME camera-framing target when a cutscene
     ends. BC scopes that framing to StartCutscene..EndCutscene (the QB intro's

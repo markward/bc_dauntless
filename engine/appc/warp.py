@@ -174,6 +174,27 @@ class _ClearTargetsAction(TGAction):
         _clear_all_targets(self._ship)
 
 
+class _EnableHelmMenuAction(TGAction):
+    """Restore the Helm menu on arrival — the counterpart to the
+    `disable_helm_menu()` that `on_warp_engage` performs at engage time.
+
+    BC's equivalent is PostWarpEnableMenu (Bridge/HelmMenuHandlers.py:918),
+    which stock BC schedules into its own warp sequence at
+    WarpSequence.py:324. This sequence is ours, so the scheduling is explicit.
+
+    Added UNCONDITIONALLY on both branches, deliberately outside the
+    `_module_is_empty` guards: a falsy destination degrades the hard-cut path
+    to "nothing happened", but the menu was already disabled at engage time,
+    so a path that skips the re-enable leaves it dead for the session."""
+
+    def __init__(self):
+        super().__init__()
+
+    def _do_play(self):
+        from engine.bridge_officers import enable_helm_menu
+        enable_helm_menu()
+
+
 class _WarpVfxBeginAction(TGAction):
     """Align start: remove player control, slow the ship to a stop, and start
     the WarpVFX manager on the warp heading. Targets are cleared by the separate
@@ -620,6 +641,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # defensive stop just past that tail (the manager also self-deactivates).
         from engine.warp_vfx import _T_EXIT_DECEL
         seq.AppendAction(_WarpVfxEndAction(ship), _T_EXIT_DECEL + 0.5)
+        seq.AppendAction(_EnableHelmMenuAction())
         return seq
 
     # Falsy destination => no set change/placement/teardown: the whole warp
@@ -633,6 +655,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     if not _module_is_empty(dest_module):
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
+    seq.AppendAction(_EnableHelmMenuAction())
     return seq
 
 
