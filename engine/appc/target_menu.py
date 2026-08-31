@@ -131,6 +131,12 @@ class STTargetMenu(STTopLevelMenu):
         # is a property here whose getter reads these.
         self._row_cache: dict = {}
         self._contacts: tuple = ()
+        # Ships that were TARGETABLE on the previous push -- the membership
+        # this list actually shows (_rows() filters on Contact.targetable).
+        # The diff against it is what makes ET_TARGET_LIST_OBJECT_ADDED /
+        # _REMOVED possible: set_contacts is pushed every frame, so without a
+        # previous set there is no crossing to post on.
+        self._listed: frozenset = frozenset()
         super().__init__(label)
         # The last ship the player manually selected — the slot BC's
         # persistent-target hint would live in.
@@ -201,6 +207,46 @@ class STTargetMenu(STTopLevelMenu):
             if row is None:
                 continue
             row.SetVisible()
+        self._post_membership_changes()
+
+    def _post_membership_changes(self) -> None:
+        """Post ET_TARGET_LIST_OBJECT_ADDED / _REMOVED for this push's
+        crossings, then remember the new membership.
+
+        Gaps #4/#5 in docs/engine/event-emitter-gaps.md. Membership is the
+        TARGETABLE subset because that is what this list shows -- a contact
+        that is perceivable but not targetable has no row (`_rows`), so it is
+        not "on the target list" in the sense the SDK handlers mean.
+
+        Destination is the object itself:
+        Bridge/ScienceMenuHandlers.py:244 (ShipIdentified) and :205
+        (ExitedSet) both read pEvent.GetDestination(), and
+        Maelstrom/Episode3/E3M2/E3M2.py:906 registers ADDED as an INSTANCE
+        handler on the Berkeley -- instance dispatch only reaches the
+        destination, so a broadcast with some other destination would leave
+        that mission beat dead.
+
+        Row LIFETIME is deliberately unchanged: `_row_cache` still keeps one
+        row per ship for the life of the menu. This method reports membership;
+        it does not manage rows.
+        """
+        listed = frozenset(c.ship for c in self._contacts if c.targetable)
+        if listed == self._listed:
+            return
+        import App
+        for ship in listed - self._listed:
+            self._post_membership(App.ET_TARGET_LIST_OBJECT_ADDED, ship)
+        for ship in self._listed - listed:
+            self._post_membership(App.ET_TARGET_LIST_OBJECT_REMOVED, ship)
+        self._listed = listed
+
+    def _post_membership(self, event_type, ship) -> None:
+        import App
+        evt = App.TGEvent_Create()
+        evt.SetEventType(event_type)
+        evt.SetSource(self)
+        evt.SetDestination(ship)
+        App.g_kEventManager.AddEvent(evt)
 
     def contact_for(self, ship):
         """The pushed Contact record for ``ship``, or None if it is not a

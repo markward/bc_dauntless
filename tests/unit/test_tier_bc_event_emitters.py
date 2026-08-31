@@ -424,3 +424,126 @@ def test_swinging_out_of_arc_stops_and_syncs_even_though_still_engageable(posted
     stopped = _of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING)
     assert len(stopped) == 1
     assert stopped[0].GetDestination() is ship
+
+
+# ── ET_TARGET_LIST_OBJECT_ADDED / _REMOVED ──────────────────────────────────
+# Gaps #4/#5. ScienceMenuHandlers.ShipIdentified (:244) and ExitedSet (:205)
+# both read pEvent.GetDestination(); E3M2.py:906 registers ADDED as an
+# INSTANCE handler on the ship itself, so the ship must be the destination or
+# that mission beat never fires. Membership is the targetable subset -- that
+# is what _rows() lists.
+
+def _contact(ship, targetable=True):
+    from engine.appc.perception import Contact
+
+    return Contact(ship=ship, surface_gu=1.0, perceivable=True,
+                   targetable=targetable, subsystems_targetable=True)
+
+
+def _menu_and_ships(n=2):
+    from engine.appc.ships import ShipClass
+    from engine.appc.target_menu import STTargetMenu
+
+    menu = STTargetMenu("Targets")
+    ships = []
+    for i in range(n):
+        s = ShipClass()
+        s.SetName("Ship%d" % i)
+        ships.append(s)
+    return menu, ships
+
+
+def test_a_new_contact_posts_added_with_the_ship_as_destination(posted):
+    menu, (a, _b) = _menu_and_ships()
+    menu.set_contacts([_contact(a)])
+
+    added = _of_type(posted, App.ET_TARGET_LIST_OBJECT_ADDED)
+    assert len(added) == 1
+    assert added[0].GetDestination() is a, (
+        "E3M2 registers ADDED as an instance handler ON the ship")
+
+
+def test_a_contact_that_persists_does_not_repost(posted):
+    """set_contacts runs every frame. Only crossings are events."""
+    menu, (a, _b) = _menu_and_ships()
+    menu.set_contacts([_contact(a)])
+    posted.clear()
+
+    for _ in range(5):
+        menu.set_contacts([_contact(a)])
+
+    assert _of_type(posted, App.ET_TARGET_LIST_OBJECT_ADDED) == []
+    assert _of_type(posted, App.ET_TARGET_LIST_OBJECT_REMOVED) == []
+
+
+def test_a_contact_that_drops_posts_removed(posted):
+    menu, (a, b) = _menu_and_ships()
+    menu.set_contacts([_contact(a), _contact(b)])
+    posted.clear()
+
+    menu.set_contacts([_contact(a)])
+
+    removed = _of_type(posted, App.ET_TARGET_LIST_OBJECT_REMOVED)
+    assert len(removed) == 1
+    assert removed[0].GetDestination() is b
+
+
+def test_losing_targetability_counts_as_removal(posted):
+    """A contact that is still perceivable but no longer targetable is not on
+    the list -- _rows() filters on targetable -- so it left it."""
+    menu, (a, _b) = _menu_and_ships()
+    menu.set_contacts([_contact(a)])
+    posted.clear()
+
+    menu.set_contacts([_contact(a, targetable=False)])
+
+    removed = _of_type(posted, App.ET_TARGET_LIST_OBJECT_REMOVED)
+    assert len(removed) == 1
+    assert removed[0].GetDestination() is a
+
+
+def test_an_empty_push_removes_everything(posted):
+    """Mid-warp the player sits alone in _WarpTransit and perceived_by returns
+    (); every contact left the list."""
+    menu, (a, b) = _menu_and_ships()
+    menu.set_contacts([_contact(a), _contact(b)])
+    posted.clear()
+
+    menu.set_contacts([])
+
+    assert len(_of_type(posted, App.ET_TARGET_LIST_OBJECT_REMOVED)) == 2
+
+
+def test_the_row_cache_is_not_evicted_on_removal(posted):
+    """Deliberate scope limit: this task posts events, it does not change row
+    lifetime. Rows are reused for the life of the menu (see set_contacts'
+    docstring on state normalisation); evicting them is a separate change."""
+    menu, (a, _b) = _menu_and_ships()
+    menu.set_contacts([_contact(a)])
+    menu.set_contacts([])
+
+    assert a in menu._row_cache
+
+
+def test_a_swap_starts_from_empty_membership(posted):
+    """No explicit reset exists because none is needed: host_loop.py:3586
+    drops the singleton on swap and host_loop.py:6198 builds a fresh menu, so
+    _listed starts empty by construction. If the menu ever becomes reused
+    across swaps, this test goes red and _listed needs clearing wherever
+    _row_cache is."""
+    import App
+    from engine.appc.ships import ShipClass
+
+    old = ShipClass()
+    old.SetName("OldSystemShip")
+    menu = App.STTargetMenu_CreateW("Targets")
+    menu.set_contacts([_contact(old)])
+    posted.clear()
+
+    App._reset_target_menu_singleton()
+    fresh = App.STTargetMenu_CreateW("Targets")
+    fresh.set_contacts([])
+
+    assert _of_type(posted, App.ET_TARGET_LIST_OBJECT_REMOVED) == [], (
+        "the new system's first push must not report the old system's ships "
+        "as having left")
