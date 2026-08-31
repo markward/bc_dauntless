@@ -547,3 +547,41 @@ def test_a_swap_starts_from_empty_membership(posted):
     assert _of_type(posted, App.ET_TARGET_LIST_OBJECT_REMOVED) == [], (
         "the new system's first push must not report the old system's ships "
         "as having left")
+
+
+def test_clearing_the_list_lets_the_next_push_re_announce(posted):
+    """ClearTargetList destroys the rows; `_listed` must not outlive them.
+
+    Its only SDK caller (Multiplayer/MissionShared.py:353) deletes the ships
+    straight afterwards, so this is unreachable in single-player today. It is
+    pinned because it is the one method that can desynchronise `_listed` from
+    what the list actually shows: without the reset, a ship still present on
+    the next push is silently NOT re-added even though its row was rebuilt.
+    """
+    menu, (a, _b) = _menu_and_ships()
+    menu.set_contacts([_contact(a)])
+    menu.ClearTargetList()
+    posted.clear()
+
+    menu.set_contacts([_contact(a)])
+
+    added = _of_type(posted, App.ET_TARGET_LIST_OBJECT_ADDED)
+    assert [e.GetDestination() for e in added] == [a]
+
+
+def test_membership_is_recorded_before_handlers_run(posted, monkeypatch):
+    """A handler runs INSIDE the post loop (AddEvent dispatches synchronously
+    and destination dispatch is deliberately unguarded). By the time it does,
+    `_listed` must already describe the new membership, or a re-entrant
+    handler would diff against a stale set and double-post."""
+    menu, (a, _b) = _menu_and_ships()
+    seen = []
+
+    def spy(evt):
+        seen.append(frozenset(menu._listed))
+
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent", spy)
+    menu.set_contacts([_contact(a)])
+
+    assert seen == [frozenset({a})], (
+        "_listed must be updated before the events are posted, not after")
