@@ -159,6 +159,63 @@ def announce_course_set() -> None:
     App.g_kEventManager.AddEvent(evt)
 
 
+def _helm_menu():
+    """The Helm officer's menu, or None.
+
+    DEVIATION (deliberate): BC reaches this menu through the tactical control
+    window — `TacticalControlWindow_GetTacticalControlWindow().FindMenu(
+    Bridge Menus.tgl "Helm")` (HelmMenuHandlers.py:857-860, and again in
+    PostWarpEnableMenu at :928-931). We go through the officer instead, the
+    same path `announce_course_set`/`announce_warp_engaged` above already use.
+    Both reach the same object; the TGL route adds a failure mode (a missing
+    or renamed key resolves to None, or worse to the wrong menu) for no gain
+    here, since the officer lookup is already proven on this path.
+    """
+    import App
+    bridge = App.g_kSetManager.GetSet("bridge")
+    char = (App.CharacterClass_GetObject(bridge, "Helm")
+            if bridge is not None else None)
+    return char.GetMenu() if char is not None else None
+
+
+def disable_helm_menu() -> None:
+    """Grey out the Helm menu for the duration of a warp.
+
+    BC does this in WarpPressed (HelmMenuHandlers.py:862) right after the
+    gating passes. Our `on_warp_engage` bypasses WarpPressed, so nothing did:
+    live, the Helm menu stayed fully clickable while the warp played.
+
+    MUST be paired with `enable_helm_menu` — see its docstring. Best-effort:
+    this runs on a CEF click where a raise is swallowed, and losing the warp
+    would be a far worse failure than losing the disable.
+    """
+    menu = _helm_menu()
+    if menu is not None:
+        menu.SetDisabled()
+
+
+def enable_helm_menu() -> None:
+    """Restore the Helm menu once a warp finishes — the other half of
+    `disable_helm_menu`, and the half that must never be dropped.
+
+    BC pairs SetDisabled() with PostWarpEnableMenu (HelmMenuHandlers.py:918),
+    which it schedules INSIDE its own warp sequence
+    (WarpSequence.py:324). `engine/appc/warp.py:WarpSequence_Create` is ours,
+    not that one, so nothing scheduled it: it is scheduled explicitly on both
+    of our warp branches via `_EnableHelmMenuAction`. Without it the Helm menu
+    stays greyed out for the rest of the session — the same stuck-state class
+    as the "Ready to warp" status that motivated this work.
+
+    NOT reproducing PostWarpEnableMenu's other work (clearing the player's
+    target and the target menu's persistent target info, :938-945). That is
+    separate behaviour that deserves its own test and its own live check
+    rather than riding along with a menu fix.
+    """
+    menu = _helm_menu()
+    if menu is not None:
+        menu.SetEnabled()
+
+
 def _waiting_status():
     """CharacterStatus.tgl's "Waiting" string, or the bare key headless."""
     import App

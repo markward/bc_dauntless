@@ -6772,6 +6772,20 @@ def run(mission_name: Optional[str] = None,
                 announce_warp_engaged()
             except Exception as _e:
                 dev_mode.log_swallowed("announce warp engaged", _e)
+            # WarpPressed's other two menu side effects, in its order
+            # (HelmMenuHandlers.py:862-864): grey out the Helm menu for the
+            # duration of the warp, then drop any open bridge menu and turn
+            # its officers back. Both were missing -- verified live: the Helm
+            # menu stayed clickable mid-warp and an open menu stayed open.
+            # The matching re-enable is scheduled inside the warp sequence
+            # (_EnableHelmMenuAction); without it the menu never comes back.
+            try:
+                from engine.bridge_officers import disable_helm_menu
+                from engine.appc.top_window import drop_menus_turn_back
+                disable_helm_menu()
+                drop_menus_turn_back()
+            except Exception as _e:
+                dev_mode.log_swallowed("warp menu side effects", _e)
             _w.execute_warp(button)
 
         # Register the bridge cutscene controller BEFORE the initial mission
