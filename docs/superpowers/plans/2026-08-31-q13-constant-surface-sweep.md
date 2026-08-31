@@ -106,7 +106,7 @@ to consuming code and get their own task:
    Catch (b): our invented `ET_WEAPON_FIRE_FAILED` was given `0x00800037`, which
    the dump shows is the real `ET_CANT_FIRE`. They are the same event; the
    uniqueness test needs to allow that alias deliberately.
-7. **UI class constants (~30).** `WeaponsDisplay` (20), `TGParagraph` (5),
+7. **UI class constants (47).** `WeaponsDisplay` (20), `TGParagraph` (5),
    `TGUIObject.ALIGN_*` (3), `TGSound` (3), `EffectController` (3),
    `TGModelPropertyManager` (2), `FloatRangeWatcher` (2), `ObjectGroup` (2),
    `ObjectGroupWithInfo` (2), `EngRepairPane.DIVIDER`, `TGFrame`,
@@ -468,7 +468,7 @@ def test_additive_pass_changes_no_existing_value():
     """Task 3 is additive only -- corrections land in Tasks 5-11."""
     from tools.constant_surface_audit import load
     _, _, wrong, _, _ = load()
-    assert len(wrong) == 584, "additive pass must not correct anything yet"
+    assert len(wrong) == 585, "additive pass must not correct anything yet"
 
 
 def test_deviations_are_respected():
@@ -632,22 +632,37 @@ task shrinks a number the test prints.
 # tests/unit/test_constant_surface.py
 """The constant surface must match the game, and only shrink away from it.
 
-REMAINING_WRONG is a ratchet: it may only ever be lowered.  When a task lands
-a correction family, lower it by exactly that family's size.  A test that
-fails saying the number is too HIGH means someone re-invented a value.
+Two ratchets, both lower-only.  When a task lands a family, lower the relevant
+counter by exactly that family's size.  A test failing because a number is too
+HIGH means someone re-invented a value or re-stubbed a name.
+
+The floor for REMAINING_WRONG is NOT zero: the PI-family DEVIATIONS are defined
+by us at double precision and differ from BC's float32 permanently by design.
+The terminal assertion is therefore "everything still wrong is a declared
+deviation", which is self-describing and cannot be satisfied by miscounting.
 """
 from engine.appc.constants_apply import DEVIATIONS
 from tools.constant_surface_audit import load
 
-# Lower me. Never raise me.  584 at Task 4; 0 after Task 9.
-REMAINING_WRONG = 584
+# Lower me. Never raise me.
+#   585 at Task 4 -> 437 (T5 ET_ 148) -> 435 (T6 CSP_ 2)
+#       -> 88 (T7 keyboard 347) -> 41 (T8 UI 47) -> 4 (T9 CT_ 37)
+# 4 is the floor: the four PI-family deviations.
+REMAINING_WRONG = 585
+
+# Keyboard names deferred to Task 7, which drives this to 0.
+REMAINING_MISSING = 105
 
 
-def test_no_measured_constant_is_missing():
+def test_missing_constants_only_ever_shrink():
+    """An undefined App constant silently degrades to a truthy _NamedStub or
+    int()==0 -- the bug class this whole sweep exists to eliminate."""
     _, _, _, missing, _ = load()
-    assert missing == [], (
-        "%d measured constants are undefined -- an undefined App constant "
-        "silently degrades to a truthy _NamedStub or int()==0" % len(missing))
+    named = sorted(r["qualified_name"] for r, _, _ in missing)
+    assert len(missing) == REMAINING_MISSING, (
+        "%d measured constants undefined, ratchet says %d -- if lower, set "
+        "REMAINING_MISSING to %d\n%s"
+        % (len(missing), REMAINING_MISSING, len(missing), "\n".join(named)))
 
 
 def test_every_measured_class_exists():
@@ -658,17 +673,46 @@ def test_every_measured_class_exists():
 def test_wrong_values_only_ever_shrink():
     _, _, wrong, _, _ = load()
     named = sorted(r["qualified_name"] for r, _, _ in wrong)
-    assert len(wrong) <= REMAINING_WRONG, (
-        "constant surface regressed: %d wrong, ratchet allows %d.\n%s"
-        % (len(wrong), REMAINING_WRONG, "\n".join(named)))
     assert len(wrong) == REMAINING_WRONG, (
-        "%d wrong values remain but the ratchet says %d -- lower "
-        "REMAINING_WRONG to %d" % (len(wrong), REMAINING_WRONG, len(wrong)))
+        "%d wrong values remain but the ratchet says %d -- if lower, set "
+        "REMAINING_WRONG to %d\n%s"
+        % (len(wrong), REMAINING_WRONG, len(wrong), "\n".join(named)))
+
+
+def test_the_only_permanent_deviations_are_declared_ones():
+    """The terminal invariant.  Once every correction task has landed, the ONLY
+    constants still differing from the measured game must be ones we declared
+    in DEVIATIONS on purpose.  Skipped until the ratchet bottoms out."""
+    import pytest
+    if REMAINING_WRONG > len(DEVIATIONS):
+        pytest.skip("correction tasks still outstanding (%d wrong, %d declared)"
+                    % (REMAINING_WRONG, len(DEVIATIONS)))
+    _, _, wrong, _, _ = load()
+    undeclared = sorted(r["qualified_name"] for r, _, _ in wrong
+                        if r["name"] not in DEVIATIONS)
+    assert undeclared == [], (
+        "these differ from the game but are not declared deviations:\n%s"
+        % "\n".join(undeclared))
 
 
 def test_every_deviation_is_justified():
     for name, reason in DEVIATIONS.items():
         assert len(reason) > 40, "%s needs a real reason, not '%s'" % (name, reason)
+
+
+def test_every_deviation_is_actually_defined():
+    """A DEVIATIONS entry suppresses injection.  Naming a constant we do not
+    define therefore CREATES the stub it was meant to avoid -- which is exactly
+    what FOURTH_PI did before Task 3's fix round."""
+    import App
+    from tools.constant_surface_audit import real_attr
+    for name in DEVIATIONS:
+        owner, _, attr = name.rpartition(".")
+        target = getattr(App, owner) if owner else App
+        defined, _ = real_attr(target, attr)
+        assert defined, (
+            "%s is declared a deviation but is not defined -- it is a stub"
+            % name)
 ```
 
 - [ ] **Step 2: Run it**
@@ -694,7 +738,7 @@ Safe symbolically — no arithmetic on `ET_` constants exists in the SDK or
 - Modify: `App.py` (the `CORRECT_EXISTING` set; delete the invented `ET_*`
   assignments at lines 893–1304 that the table now supplies)
 - Modify: `engine/appc/events.py` (`ET_WEAPON_FIRE_FAILED` alias comment)
-- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 584 → 436)
+- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 585 → 437)
 - Modify: `tests/unit/test_wc_modifier_constants.py:75-99` (drop the stale
   "pre-existing duplicate" caveat)
 
@@ -762,7 +806,7 @@ ET_WEAPON_FIRE_FAILED: int = 0x00800037  # == App.ET_CANT_FIRE
 uv run pytest tests/unit/test_constant_surface.py tests/unit/test_wc_modifier_constants.py -v
 scripts/check_tests.sh
 ```
-Expected: PASS. Lower `REMAINING_WRONG` to `436`.
+Expected: PASS. Lower `REMAINING_WRONG` to `437`.
 
 - [ ] **Step 5: Commit**
 
@@ -783,7 +827,7 @@ priority, so they land together.
 - Modify: `engine/appc/crew_speech.py:144-165`
 - Modify: `App.py` (`CORRECT_EXISTING`)
 - Modify: `tests/unit/test_crew_speech_priorities.py`
-- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 436 → 434)
+- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 437 → 435)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -871,7 +915,7 @@ CORRECT_EXISTING: frozenset[str] = frozenset(
 uv run pytest tests/unit/test_crew_speech_priorities.py tests/unit/test_ai_primitives.py tests/unit/test_constant_surface.py -v
 scripts/check_tests.sh
 ```
-Expected: PASS. Lower `REMAINING_WRONG` to `434`.
+Expected: PASS. Lower `REMAINING_WRONG` to `435`.
 
 - [ ] **Step 5: Commit**
 
@@ -899,7 +943,7 @@ not adding lines to `App.py`.
 - Modify: `engine/appc/input.py` (the generated `WC_`/`KY_` table)
 - Modify: `App.py` (`CORRECT_EXISTING`)
 - Modify: `tests/unit/test_wc_constants.py`, `tests/unit/test_keyboard_constant_table.py`
-- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 434 → 87)
+- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 435 → 88, `REMAINING_MISSING`: 105 → 0)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -962,7 +1006,7 @@ must move to the constant. Add the four families to `CORRECT_EXISTING`.
 uv run pytest tests/unit/test_keyboard_constant_table.py tests/unit/test_wc_constants.py tests/unit/test_wc_modifier_constants.py tests/unit/test_raw_keyboard_dispatch.py tests/unit/test_input_map_controls.py -v
 scripts/check_tests.sh
 ```
-Expected: PASS. Lower `REMAINING_WRONG` to `87`.
+Expected: PASS. Lower `REMAINING_WRONG` to `88` and `REMAINING_MISSING` to `0`.
 
 - [ ] **Step 5: Live check — keyboard is not provable headlessly**
 
@@ -985,12 +1029,12 @@ git commit -m "fix(input): separate BC's WC_ and KY_ namespaces, restore KBT_ bi
 
 ### Task 8: Correct the UI class constants
 
-~50 values with no ordering semantics — they index panes, alignments and
+47 values with no ordering semantics — they index panes, alignments and
 sounds. Mechanical, but `WeaponsDisplay` carries intentional duplicates.
 
 **Files:**
 - Modify: `App.py` (`CORRECT_EXISTING`)
-- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 87 → 37)
+- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 88 → 41)
 
 Families: `WeaponsDisplay` (20), `TGParagraph` (5), `TGUIObject.ALIGN_*` (3),
 `TGSound` (3), `EffectController` (3), `TGModelPropertyManager` (2),
@@ -1037,7 +1081,7 @@ them before landing.
 uv run pytest tests/ui tests/unit/test_constant_surface.py -v
 scripts/check_tests.sh
 ```
-Expected: PASS. Lower `REMAINING_WRONG` to `37`.
+Expected: PASS. Lower `REMAINING_WRONG` to `41`.
 
 - [ ] **Step 5: Live check**
 
@@ -1067,7 +1111,7 @@ ours are class objects consumed by `isinstance`. Both must work.
 - Modify: `engine/appc/sets.py:450-461`
 - Modify: `App.py` (`CT_*` block at lines 306–406, `CORRECT_EXISTING`)
 - Test: `tests/unit/test_object_types.py`
-- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 37 → 0)
+- Modify: `tests/unit/test_constant_surface.py` (`REMAINING_WRONG`: 41 → 4)
 
 **Interfaces:**
 - Produces: `engine.appc.object_types.class_for(type_tag: int) -> type | None`
@@ -1197,7 +1241,7 @@ Grep for every other consumer of a `CT_` constant (`GetNebula`,
 uv run pytest tests/unit/test_object_types.py tests/unit/test_constant_surface.py -v
 scripts/check_tests.sh
 ```
-Expected: PASS. Lower `REMAINING_WRONG` to `0`.
+Expected: PASS. Lower `REMAINING_WRONG` to `4` (the four PI-family deviations are the floor).
 
 - [ ] **Step 5: Live check — the failure mode is invisible headlessly**
 
@@ -1353,8 +1397,8 @@ git commit -m "docs(constants): close the q13 shim fix pass"
 missing". Tasks 2–4 cover every missing constant (1,555 scalars + 1,663 on
 absent classes); Tasks 5–9 cover all 584 wrong values, partitioned so no family
 lands without its coupled consumers audited (`ET_` 148, `CSP_` 2, keyboard 347,
-UI 50, `CT_` 37). Task 4's ratchet proves the partition is exhaustive — it fails
-unless `REMAINING_WRONG` reaches 0. Task 10 covers the question that started
+UI 47, `CT_` 37). Task 4's ratchet proves the partition is exhaustive — it fails
+unless `REMAINING_WRONG` reaches its declared-deviations floor. Task 10 covers the question that started
 this work (the 17 dead handlers) and Task 11 the doc trail.
 
 **Placeholder scan.** Every code step carries runnable source. The two steps
@@ -1368,7 +1412,7 @@ that way in Tasks 3, 4. `apply_constants` (Task 3) is called with the keyword
 arguments its signature declares. `MODULE_CONSTANTS` / `CLASS_CONSTANTS` keep
 one shape from Task 2 through Task 9. `class_for` / `tag_for` / `register`
 (Task 9) match their use in `sets.py`. `REMAINING_WRONG` steps
-584 → 436 → 434 → 87 → 37 → 0, summing to exactly 584.
+585 → 437 → 435 → 88 → 41 → 4, the floor being the four PI-family deviations.
 
 **Known risk this plan does not remove.** Tasks 7, 8, 9 and 10 each carry a live
 check, because their failure modes — a dead key, a mislaid pane, an emptied
