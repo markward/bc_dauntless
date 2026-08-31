@@ -1,4 +1,6 @@
 """CharacterAction speak action-types route through the speech bus."""
+import sys
+
 from engine.appc import top_window, crew_speech
 from engine.appc.characters import CharacterClass
 from engine.appc.ai import CharacterAction, CharacterAction_Create, CSP_NORMAL
@@ -48,7 +50,7 @@ def test_non_speech_action_is_silent():
                                None, None, 0, None, CSP_NORMAL)
     a.Play()  # must not raise, must not speak
     assert _subtitle()._snapshot(now=0.0) is None
-    assert crew_speech.bus()._active_priority == -1  # channel untouched
+    assert crew_speech.bus()._active_priority == sys.maxsize  # channel untouched
 
 
 def test_create_by_name_uses_string_character_as_speaker():

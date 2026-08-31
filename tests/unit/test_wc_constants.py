@@ -9,7 +9,9 @@ def test_wc_constant_values():
     assert App.WC_LINEFEED == 10
     assert App.WC_RETURN == 13
     assert App.WC_SPACE == 32
-    assert App.WC_CURSOR == 0xE000
+    # BC's own measured value (0xE098) -- it lives in BC's high function-key/
+    # mouse-button band, not an invented Private-Use-Area sentinel.
+    assert App.WC_CURSOR == 0xE098
 
 
 def test_wc_to_str_control_codes():

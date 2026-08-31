@@ -6,10 +6,15 @@ as the system type. GetObjType was implemented nowhere, so the child got a
 _Stub, StartGetSubsystemMatch(stub) matched zero subsystems, and the
 composite watched nothing forever.
 
-The CT_* constants are Property classes, not subsystem classes, so a naive
-GetObjType/IsTypeOf can't just return/compare the subsystem's own class --
-it must go through the shared CT_ <-> subsystem-class table in
-engine.appc.subsystem_types (engine/appc/subsystem_types.py).
+The CT_* constants are BC's int type tags, and the class each one selects is a
+Property class, not a subsystem class, so a naive GetObjType/IsTypeOf can't
+just return/compare the subsystem's own class -- it must go through the shared
+CT_ <-> subsystem-class table in engine.appc.subsystem_types
+(engine/appc/subsystem_types.py).
+
+Comparisons here are `==`/`!=`, never `is`/`is not`: the tags are ints, and
+`x is not y` between two equal-valued int objects is True, which would make a
+"these must differ" assertion pass while the values were in fact identical.
 """
 import pytest
 
@@ -68,18 +73,18 @@ def test_get_obj_type_round_trips_through_start_get_subsystem_match():
 
 def test_get_obj_type_is_most_specific_for_phaser_system():
     phaser = PhaserSystem("Phasers")
-    assert phaser.GetObjType() is App.CT_PHASER_SYSTEM
-    assert phaser.GetObjType() is not App.CT_WEAPON_SYSTEM
+    assert phaser.GetObjType() == App.CT_PHASER_SYSTEM
+    assert phaser.GetObjType() != App.CT_WEAPON_SYSTEM
 
 
 def test_get_obj_type_is_most_specific_for_torpedo_system():
     torps = TorpedoSystem("Torpedoes")
-    assert torps.GetObjType() is App.CT_TORPEDO_SYSTEM
+    assert torps.GetObjType() == App.CT_TORPEDO_SYSTEM
 
 
 def test_get_obj_type_for_hull_and_shield():
-    assert HullSubsystem("Hull").GetObjType() is App.CT_HULL_SUBSYSTEM
-    assert ShieldSubsystem("Shields").GetObjType() is App.CT_SHIELD_SUBSYSTEM
+    assert HullSubsystem("Hull").GetObjType() == App.CT_HULL_SUBSYSTEM
+    assert ShieldSubsystem("Shields").GetObjType() == App.CT_SHIELD_SUBSYSTEM
 
 
 # ── 3. IsTypeOf for subsystems — the AI/Preprocessors.py:153 shape. ────────
@@ -165,10 +170,10 @@ def test_get_obj_type_for_leaf_weapon_emitters():
     constant, not the containing system's CT_WEAPON_SYSTEM (the bug this
     task fixes: all three leaf classes used to collapse onto one type)."""
     from engine.appc.weapon_subsystems import PulseWeapon, TractorBeam, TorpedoTube
-    assert PhaserBank("Dorsal Phaser 1").GetObjType() is App.CT_ENERGY_WEAPON
-    assert PulseWeapon("Pulse 1").GetObjType() is App.CT_ENERGY_WEAPON
-    assert TractorBeam("Tractor 1").GetObjType() is App.CT_ENERGY_WEAPON
-    assert TorpedoTube("Tube 1").GetObjType() is App.CT_WEAPON
+    assert PhaserBank("Dorsal Phaser 1").GetObjType() == App.CT_ENERGY_WEAPON
+    assert PulseWeapon("Pulse 1").GetObjType() == App.CT_ENERGY_WEAPON
+    assert TractorBeam("Tractor 1").GetObjType() == App.CT_ENERGY_WEAPON
+    assert TorpedoTube("Tube 1").GetObjType() == App.CT_WEAPON
 
 
 # ── 4. Non-regression: planet/sun IsTypeOf (ObjectClass.IsTypeOf) is

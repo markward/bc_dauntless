@@ -1617,22 +1617,25 @@ class ShipClass(DamageableObject):
     def StartGetSubsystemMatch(self, match_type=None):
         """Return an iterator over subsystems matching `match_type`.
 
-        `match_type` is one of the CT_* class constants from App.py
-        (e.g. CT_WEAPON_SYSTEM = WeaponSystemProperty). Match by
-        isinstance check against the subsystem's class hierarchy —
-        WeaponSystem and its subclasses (PhaserSystem, TorpedoSystem,
-        PulseWeaponSystem, TractorBeamSystem) match CT_WEAPON_SYSTEM.
+        `match_type` is one of BC's CT_* int type tags from App.py
+        (`CT_WEAPON_SYSTEM == 32797`; the class it is registered against in
+        engine.appc.object_types is `WeaponSystemProperty`, a design-time
+        template, NOT a subsystem class). Match is by isinstance check
+        against the subsystem's class hierarchy — WeaponSystem and its
+        subclasses (PhaserSystem, TorpedoSystem, PulseWeaponSystem,
+        TractorBeamSystem) match CT_WEAPON_SYSTEM.
 
-        The CT_* -> subsystem-class table lives in
+        The CT_* tag -> subsystem-class table lives in
         engine.appc.subsystem_types (shared with GetObjType/IsTypeOf — see
-        that module for why a shared table exists at all).
+        that module for why a shared table exists at all). A Property class
+        passed directly in the tag slot is still accepted; see
+        object_types.resolve_class for why that path cannot be deleted.
 
         Returns an opaque iterator handle. `None` filter terminates
         immediately (SDK pattern: callers expect either matches or a
         clean exit; mid-walk None is undefined)."""
         # Function-local import — App imports ships at module level, so a
-        # top-level import here would loop; subsystem_types itself imports
-        # App lazily for the same reason.
+        # top-level import here would loop.
         from engine.appc.subsystem_types import subsystem_class_for_ct
         if match_type is None:
             return iter(())
@@ -1644,7 +1647,7 @@ class ShipClass(DamageableObject):
             self._power_subsystem, self._repair_subsystem,
             self._cloaking_subsystem, self._hull,
         ]
-        # SDK CT_* constants → subsystem class. SDK callers commonly pass
+        # SDK CT_* int type tag → subsystem class. SDK callers commonly pass
         # one of CT_WEAPON_SYSTEM (FireScript), CT_SENSOR_SUBSYSTEM
         # (NoSensorsEvasive's ConditionSystemDisabled),
         # CT_WARP_ENGINE_SUBSYSTEM (WarpBeforeDeath), CT_HULL_SUBSYSTEM /

@@ -382,7 +382,12 @@ def test_nav_point_changed_event_constant_is_a_real_int():
     """An undefined App.<NAME> is a truthy _NamedStub that coerces to
     int()==0, which would register the handler under a shared dead slot."""
     assert type(App.ET_NAV_POINT_CHANGED) is int
-    assert App.ET_NAV_POINT_CHANGED < 1200  # below the allocator floor
+    # Task 5 (q13 constant-surface sweep) corrected this from an invented
+    # value below 1200 (our dynamic-allocator floor) to BC's real measured
+    # one, which lives in the much higher 0x800000+ band -- see
+    # test_bridge_event_constants.py for why that band can never collide
+    # with Game_GetNextEventType's sequential allocation starting at 1200.
+    assert App.ET_NAV_POINT_CHANGED < 1200 or App.ET_NAV_POINT_CHANGED >= 0x30000
 
 
 def test_set_nav_point_broadcasts_with_the_placement_as_destination():

@@ -391,12 +391,22 @@ These surfaced during verification. All are real; none belong in this project.
 3. **`sensor_detection.py:63`** calls `App.g_kTimerManager.GetGameTime()`, which does
    not exist (`TGTimerManager` exposes `get_time()`). Wrapped in `try/except` → it
    **silently returns 0.0 forever**.
-4. **89 stub `ET_` names / ~270 dead registrations**, incl. `ET_WEAPON_FIRED` and
-   `ET_CANT_FIRE` — the latter silently disables the out-of-ammo / not-loaded voice
-   lines and UI sounds in `TacticalMenuHandlers`. The friendly-fire chain
-   (`MissionLib.py:3583`) is dead the same way.
-5. **`ET_CLOAKED_COLLISION` and `ET_POWER_FRACTION_CHANGED` are both `1075`**
-   (`App.py:913`, `:941`) — with dict-keyed dispatch these cross-fire.
+4. **HISTORICAL, fixed by the q13 constant-surface sweep — was "89 stub `ET_`
+   names / ~270 dead registrations", incl. `ET_WEAPON_FIRED` and `ET_CANT_FIRE`**
+   (the latter silently disabled the out-of-ammo / not-loaded voice lines and
+   UI sounds in `TacticalMenuHandlers`; the friendly-fire chain in
+   `MissionLib.py:3583` was dead the same way). Zero stub `ET_` names remain —
+   the sweep gave every `ET_*` its measured value from the real binary
+   (`docs/superpowers/sdd/2026-08-31-q13-constant-surface-sweep/`). Kept as a
+   record, not a current defect — see item 5 directly below, updated for
+   exactly this reason.
+5. **HISTORICAL, fixed 2026-08-31 — `ET_CLOAKED_COLLISION` and `ET_POWER_FRACTION_CHANGED` were both `1075`**
+   (`App.py:913`, `:941`) — with dict-keyed dispatch these cross-fired. This
+   was an artifact of this project's own invented sequential `ET_*`
+   numbering; the q13 constant-surface sweep
+   (`docs/superpowers/sdd/2026-08-31-q13-constant-surface-sweep/`) replaced
+   every `ET_*` with its measured value from the real binary, so the two are
+   no longer equal. Kept as a record, not a current defect.
 6. **`MissionLib.py:4247`** — `if kOpenEvent == kCloseEvent:` is `True` for two
    *different* stub event types (type-based `_Stub.__eq__`).
 7. **RE the torpedo projectile path** — closes `ET_TORPEDO_FIRED` properly, and q12

@@ -113,10 +113,18 @@ class ObjectClass(TGEventHandlerObject):
 
     def IsTypeOf(self, cls) -> int:
         # SDK runtime class check: pObject.IsTypeOf(CT_X). CT_ constants are
-        # classes (CT_PLANET=Planet, CT_SUN=Sun). `cls` may be a fall-through
-        # _NamedStub for an unmapped CT_, so guard with isinstance(cls, type).
+        # BC's int type tags; engine.appc.object_types maps one back to the
+        # class this isinstance test needs (CT_PLANET->Planet, CT_SUN->Sun).
+        # A class is still accepted directly — for engine callers, and
+        # permanently for un-pickled pre-flip saves (see
+        # object_types.resolve_class). `cls` may be
+        # a fall-through _NamedStub for an undefined CT_, or an int tag with
+        # no registered class — resolve_class returns None for both and the
+        # isinstance(..., type) guard turns that into 0.
         # Sun(Planet): a Sun IsTypeOf CT_PLANET and CT_SUN; a plain Planet
         # IsTypeOf CT_SUN is 0 — this is what filters suns out of the orbit menu.
+        from engine.appc import object_types
+        cls = object_types.resolve_class(cls)
         return 1 if isinstance(cls, type) and isinstance(self, cls) else 0
 
     def GetName(self) -> str:
@@ -931,10 +939,15 @@ class DamageableObject(PhysicsObjectClass):
 
 
 class ObjectGroup(TGEventHandlerObject):
+    # Per-name event flags -- stored as SET MEMBERS (self._event_flags is a
+    # dict[str, set[int]]), never OR'd into a bitmask, so distinctness is all
+    # that matters. Values are BC's measured ones (q13 dump,
+    # CLASS_CONSTANTS["ObjectGroup"] in engine/appc/constants_generated.py).
+    # ObjectGroupWithInfo inherits these; it never defines its own copy.
     GROUP_CHANGED = 1
     ENTERED_SET = 2
-    EXITED_SET = 3
-    DESTROYED = 4
+    EXITED_SET = 4
+    DESTROYED = 8
 
     def __init__(self):
         super().__init__()

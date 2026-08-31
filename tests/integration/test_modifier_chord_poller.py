@@ -92,7 +92,10 @@ def test_base_keys_suppressed_while_alt_held():
     keys = _fake_keys()
     ks = _KeyState()
     downs, ups = [], []
-    keymap = ((keys.KEY_F, 0x46),)   # WC_F = 0x46
+    # 0x46 is an arbitrary self-contained fixture code for this poller test,
+    # not App.WC_F's real value -- _poll_key_table only needs internal
+    # consistency between the keymap and the assertions below.
+    keymap = ((keys.KEY_F, 0x46),)
     with patch.object(host_loop.host_io, "key_state", ks), \
          patch.object(App.g_kInputManager, "OnKeyDown",
                       side_effect=lambda wc: downs.append(wc)), \

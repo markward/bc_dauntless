@@ -196,30 +196,38 @@ def test_sdk_module_reload_is_real_importlib_reload():
 
 # ── Cycle E: end-to-end integration with loadspacehelper.CreateShip ───────────
 
-# ── Cycle F: App.CT_* property-type constants are real classes ───────────────
+# ── Cycle F: App.CT_* property-type tags resolve to real classes ─────────────
 # loadspacehelper.AdjustShipForDifficulty (and MissionLib) call
 # pSet.GetPropertiesByType(App.CT_SUBSYSTEM_PROPERTY) which goes through
 # isinstance(prop, type_cls).  isinstance requires a class; _NamedStub crashes.
+#
+# App.CT_* are BC's int type tags (q13 sweep task 9), so the class the filter
+# needs now comes from engine.appc.object_types rather than from the constant
+# itself.  These tests assert the same contract one indirection later: the tag
+# must land on the right class, or the property query silently returns nothing.
 
-def test_app_ct_subsystem_property_is_class():
+def test_app_ct_subsystem_property_resolves_to_the_class():
     import App
+    from engine.appc.object_types import class_for
     from engine.appc.properties import SubsystemProperty
-    assert App.CT_SUBSYSTEM_PROPERTY is SubsystemProperty
+    assert class_for(App.CT_SUBSYSTEM_PROPERTY) is SubsystemProperty
 
 
-def test_app_ct_position_orientation_property_is_class():
+def test_app_ct_position_orientation_property_resolves_to_the_class():
     import App
+    from engine.appc.object_types import class_for
     from engine.appc.properties import PositionOrientationProperty
-    assert App.CT_POSITION_ORIENTATION_PROPERTY is PositionOrientationProperty
+    assert class_for(App.CT_POSITION_ORIENTATION_PROPERTY) is PositionOrientationProperty
 
 
-def test_app_ct_hull_property_is_class():
+def test_app_ct_hull_property_resolves_to_the_class():
     """SDK MissionLib.py uses CT_HULL_PROPERTY in GetPropertiesByType filters."""
     import App
+    from engine.appc.object_types import class_for
     from engine.appc.properties import HullProperty
-    # SDK uses CT_HULL_SUBSYSTEM in the property-type slot — alias to HullProperty
-    # since hardpoint sets store properties (not subsystems).
-    assert App.CT_HULL_SUBSYSTEM is HullProperty
+    # SDK uses CT_HULL_SUBSYSTEM in the property-type slot — resolves to
+    # HullProperty since hardpoint sets store properties (not subsystems).
+    assert class_for(App.CT_HULL_SUBSYSTEM) is HullProperty
 
 
 def test_loadspacehelper_create_galaxy_populates_player_impulse_max_speed():

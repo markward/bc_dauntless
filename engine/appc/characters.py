@@ -49,7 +49,13 @@ class STButton(TGPane):
     """
     # SDK flag constant used in STButton_CreateW calls:
     #   App.STButton_CreateW(label, event, App.STBSF_SIZE_TO_TEXT)
-    STBSF_SIZE_TO_TEXT = 1
+    # NOTE: BC's STButton has no such class attribute — App.STBSF_SIZE_TO_TEXT
+    # is a module-scope int at its true definition site, App.py, read straight
+    # from the q13 measured table (MODULE_CONSTANTS). This class used to carry
+    # its own STBSF_SIZE_TO_TEXT = 1 copy, which App.py's CORRECT_EXISTING
+    # then had to paper over every import — the exact self-heal shape this
+    # sweep otherwise eliminated. `flags` below is stored opaquely; nothing
+    # ever inspects it.
 
     def __init__(self, label: str = "", event=None, flags: int = 0):
         super().__init__()

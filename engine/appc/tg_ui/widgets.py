@@ -5,6 +5,9 @@ Conventions match engine/appc/characters.py STMenu/STButton: real classes,
 2026-06-03 mirror spec), lenient casts, no _NamedStub leakage.
 """
 from engine.appc.events import TGEventHandlerObject
+from engine.appc.input import (
+    WC_BACKSPACE, WC_TAB, WC_LINEFEED, WC_RETURN, WC_SPACE, WC_CURSOR,
+)
 
 # Monotonic per-process widget ids — used by CEF panels to address snapshot
 # nodes back to live widgets. Never persisted.
@@ -28,17 +31,14 @@ def ensure_widget_id(widget) -> int:
 
 
 # ── Wide-char (WC_*) constants ────────────────────────────────────────────────
-# SDK paragraph code points. BC's Appc exports a full table; the shim defines
-# only what scripts reference (faithful Unicode code points). WC_CURSOR marks an
-# inline child-widget insertion point — BC's real value is engine-internal and
-# never displayed, so a Unicode Private-Use-Area sentinel is used.
-WC_BACKSPACE = 8
-WC_TAB = 9
-WC_LINEFEED = 10
-WC_RETURN = 13
-WC_SPACE = 32
-WC_CURSOR = 0xE000
-
+# SDK paragraph code points. Re-exported (not redefined) from engine.appc.input,
+# which is the single source of truth: it carries every WC_/KY_ name BC's q13
+# dump measured, corrected in one place from constants_generated.MODULE_CONSTANTS.
+# Hand-typing these here a second time is exactly the trap that let WC_CURSOR
+# drift to an invented 0xE000 Private-Use-Area sentinel while
+# engine.appc.input.WC_CURSOR already carried BC's real measured 0xE098 --
+# App.py imports WC_CURSOR from THIS module (not engine.appc.input), so the
+# duplicate literal was silently the one that won.
 _WC_TO_STR = {
     WC_BACKSPACE: "",
     WC_TAB: "\t",
@@ -322,13 +322,18 @@ class TGParagraph(TGPane):
 
     The SDK passes paragraph flags (read-only, word-wrap, …) OR'd together as
     the last arg to TGParagraph_Create/CreateW. They're opaque to us — never
-    decoded — so distinct bit values are all that's required."""
+    decoded — so distinct bit values are all that's required.
 
-    TGPF_READ_ONLY = 0x01
-    TGPF_INSERT_MODE = 0x02
-    TGPF_WORD_WRAP = 0x04
-    TGPF_RECALC_BOUNDS = 0x08
-    TGPF_FLAGS_MASK = 0x0F
+    Values are BC's measured ones (q13 dump, CLASS_CONSTANTS["TGParagraph"]
+    in engine/appc/constants_generated.py): the real flags occupy the top
+    nibble of a 32-bit int (bits 28-31), read as negative under Python's
+    signed-int display for the top two bits."""
+
+    TGPF_RECALC_BOUNDS = 0x10000000    # bit 28 (268435456)
+    TGPF_WORD_WRAP = 0x20000000        # bit 29 (536870912)
+    TGPF_INSERT_MODE = 0x40000000      # bit 30 (1073741824)
+    TGPF_READ_ONLY = -0x80000000       # bit 31 (-2147483648, signed)
+    TGPF_FLAGS_MASK = -0x10000000      # bits 28-31 (-268435456, signed)
 
     def __init__(self, text: str = "", scale: float = 1.0, color=None):
         super().__init__()
@@ -433,7 +438,7 @@ class _TGRect:
 
 class TGFrame(TGPane):
     """Bordered frame — records colour/stretch; geometry inert like TGPane."""
-    NO_STRETCH_LR = 1
+    NO_STRETCH_LR = 2  # BC measured (q13 dump); SetEdgeStretch stores it opaquely
 
     def __init__(self, group_name: str = "", icon_id: int = 0):
         super().__init__()

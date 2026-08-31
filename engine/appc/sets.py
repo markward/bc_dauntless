@@ -440,18 +440,28 @@ class SetClass(TGEventHandlerObject):
     # SDK pattern (AI/Preprocessors.SelectTarget.GetTargetRating, line ~1577):
     #   lpShips = pSet.GetClassObjectList(App.CT_SHIP)
     #   for pShip in lpShips: ...
-    # In the original engine, CT_SHIP is an enum tag and GetClassObjectList
-    # returns C++ ObjectClass pointers filtered by that tag. In Phase 1 we
-    # represent CT_* as Python classes (see App.py around line 224), but
-    # CT_SHIP is bound to ShipProperty (the property template, used for the
-    # property-set lookup path). The object-iteration path actually wants
-    # ShipClass instances. Map the property classes back to their object
-    # equivalents on the fly, then isinstance-filter _objects.
+    # In the original engine, CT_SHIP is an integer type tag and
+    # GetClassObjectList returns C++ ObjectClass pointers filtered by that
+    # tag. App.CT_* carries those measured ints; engine.appc.object_types maps
+    # a tag back to the class this isinstance filter needs. CT_SHIP maps to
+    # ShipProperty (the property template, used for the property-set lookup
+    # path) but the object-iteration path wants live ShipClass instances, so
+    # that one pair is translated on the fly before filtering _objects.
+    #
+    # The `return []` below is why this resolution is load-bearing: an
+    # unresolvable argument produces an EMPTY list, not an exception. Handing
+    # this an int tag without the registry would silently drop every nebula,
+    # planet and sun out of the renderer's scene push with nothing to notice.
     def GetClassObjectList(self, class_type):
         # Lazy import — engine.appc.sets is imported very early and we want
         # to avoid an import cycle through ships/properties at module load.
+        from engine.appc import object_types
         from engine.appc.properties import ShipProperty
         from engine.appc.ships import ShipClass
+        # BC passes an int CT_ tag; engine code may still pass a class, and
+        # so does any un-pickled pre-flip save (see
+        # object_types.resolve_class — that branch is not deletable).
+        class_type = object_types.resolve_class(class_type)
         # CT_SHIP maps to ShipProperty (the property template) but the SDK's
         # object-iteration sites want live ShipClass instances. Translate.
         if class_type is ShipProperty:

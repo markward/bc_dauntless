@@ -63,9 +63,10 @@ def test_effect_controller_high():
 
 
 def test_effect_controller_constants():
-    assert P.EffectController.LOW == 0
-    assert P.EffectController.MEDIUM == 1
-    assert P.EffectController.HIGH == 2
+    # Task 8: BC measured values (q13 dump), not the old sequential 0/1/2.
+    assert P.EffectController.LOW == 1
+    assert P.EffectController.MEDIUM == 2
+    assert P.EffectController.HIGH == 3
     assert P.EffectController.HIGH > P.EffectController.MEDIUM
     assert P.EffectController.MEDIUM > P.EffectController.LOW
 
@@ -73,7 +74,7 @@ def test_effect_controller_constants():
 def test_app_effect_controller_bindings():
     """App.EffectController and App.EffectController_GetEffectLevel must exist."""
     import App
-    assert App.EffectController.HIGH == 2
+    assert App.EffectController.HIGH == 3
     assert App.EffectController_GetEffectLevel() == App.EffectController.HIGH
 
 

@@ -249,10 +249,18 @@ def test_our_dont_avoid_types_match_the_sdk_list():
     """The engine scan resolves the blacklist from module-level names rather
     than reading ``lDontAvoidTypes`` off the node (see
     ``_engine_avoidance_class``'s docstring, which says so). That is only
-    harmless while the two agree — so check them against each other."""
+    harmless while the two agree — so check them against each other.
+
+    The SDK holds BC's int type tags; our scan holds the classes its
+    ``isinstance`` filter needs. Compare them in class space, via the same
+    registry ``ObjectClass.IsTypeOf`` uses to answer the SDK's own
+    ``pObject.IsTypeOf(eType)`` loop (Preprocessors.py:1771)."""
     import AI.Preprocessors
+    from engine.appc.object_types import resolve_class
     sdk = AI.Preprocessors.AvoidObstacles()
-    assert set(ca._dont_avoid_types()) == set(sdk.lDontAvoidTypes)
+    sdk_classes = {resolve_class(t) for t in sdk.lDontAvoidTypes}
+    assert None not in sdk_classes, "an SDK CT_ tag resolved to no class"
+    assert set(ca._dont_avoid_types()) == sdk_classes
 
 
 def test_the_game_loop_no_longer_runs_a_second_controller():

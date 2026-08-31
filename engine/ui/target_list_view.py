@@ -5,8 +5,10 @@ emits a `setTargetList({...})` JS call. Idempotent — only re-emits
 when the state snapshot changes from the previous call.
 
 Click events from JS (action = ship name) translate to
-``pPlayer.SetTarget(name)``, which fires ET_SET_TARGET and
-ET_TARGET_WAS_CHANGED via the engine's existing event machinery.
+``pPlayer.SetTarget(name)``, which posts only ET_TARGET_WAS_CHANGED
+(``engine/appc/ships.py:1565-1571``). ET_SET_TARGET has a real constant
+value now but no engine emitter -- it is one of the twelve dead-handler
+event types tracked in docs/engine/event-emitter-gaps.md (gap 2).
 
 Plan: docs/superpowers/plans/2026-05-25-target-list-shim.md
 """

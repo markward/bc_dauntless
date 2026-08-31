@@ -10,15 +10,25 @@ through App's module __getattr__ to the int()==0 _NamedStub stub."""
 # the root App.py shim, near the tg_ui.widgets import block) imports these
 # directly, so SDK comparisons against App.TGUIObject.ALIGN_* match by
 # construction — no duplicated/drifting int table.
-ALIGN_UL = 0   # (0.0, 0.0)
-ALIGN_UC = 1   # (0.5, 0.0)
-ALIGN_UR = 2   # (1.0, 0.0)
-ALIGN_CL = 3   # (0.0, 0.5)
-ALIGN_CC = 4   # (0.5, 0.5)
-ALIGN_CR = 5   # (1.0, 0.5)
-ALIGN_BL = 6   # (0.0, 1.0)
-ALIGN_BC = 7   # (0.5, 1.0)
-ALIGN_BR = 8   # (1.0, 1.0)
+#
+# BC's real TGUIObject enum only names four anchors — UL/UR/BL/BR — and the
+# q13 dump measured them as 0/1/2/3 (CLASS_CONSTANTS["TGUIObject"] in
+# engine/appc/constants_generated.py). Those four MUST use BC's numbers here:
+# App.TGUIObject.ALIGN_UR/ALIGN_BL/ALIGN_BR are plain int copies of these
+# constants, and Task 8 needed App's copies to read as BC's measured values.
+# UC/CL/CC/CR/BC are a Dauntless-only extension to a fuller 9-point compass
+# layout BC's real enum doesn't have — nothing in the SDK ever reaches them
+# through App.TGUIObject, so they were free to move to whatever non-colliding
+# slots keep every anchor distinct; they sit at 4-8.
+ALIGN_UL = 0   # (0.0, 0.0)     -- BC measured
+ALIGN_UR = 1   # (1.0, 0.0)     -- BC measured
+ALIGN_BL = 2   # (0.0, 1.0)     -- BC measured
+ALIGN_BR = 3   # (1.0, 1.0)     -- BC measured
+ALIGN_UC = 4   # (0.5, 0.0)     -- Dauntless-only, no BC anchor
+ALIGN_CL = 5   # (0.0, 0.5)     -- Dauntless-only, no BC anchor
+ALIGN_CC = 6   # (0.5, 0.5)     -- Dauntless-only, no BC anchor
+ALIGN_CR = 7   # (1.0, 0.5)     -- Dauntless-only, no BC anchor
+ALIGN_BC = 8   # (0.5, 1.0)     -- Dauntless-only, no BC anchor
 
 ANCHOR_FRACTIONS = {
     ALIGN_UL: (0.0, 0.0), ALIGN_UC: (0.5, 0.0), ALIGN_UR: (1.0, 0.0),

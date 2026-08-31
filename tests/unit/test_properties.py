@@ -140,8 +140,9 @@ def mgr():
 
 
 def test_scope_constants():
-    assert TGModelPropertyManager.LOCAL_TEMPLATES == 0
-    assert TGModelPropertyManager.GLOBAL_TEMPLATES == 1
+    # Task 8: BC measured values (swapped from the invented 0/1 pairing).
+    assert TGModelPropertyManager.GLOBAL_TEMPLATES == 0
+    assert TGModelPropertyManager.LOCAL_TEMPLATES == 1
 
 
 def test_register_local_then_find(mgr):

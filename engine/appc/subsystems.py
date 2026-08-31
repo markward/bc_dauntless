@@ -497,9 +497,10 @@ class ShipSubsystem(TGEventHandlerObject):
         """SDK class-id check — AI/Preprocessors.py:153:
         `pSystem.IsTypeOf(pExistingSystem.GetObjType())`.
 
-        `cls` is a `CT_*` Property-class constant (`CT_WEAPON_SYSTEM =
-        WeaponSystemProperty`, ...), NOT a subsystem class, so it must be
-        resolved through the shared engine.appc.subsystem_types table before
+        `cls` is a `CT_*` int type tag (whose registered class is a Property
+        class — `CT_WEAPON_SYSTEM` -> `WeaponSystemProperty`, ...), NOT a
+        subsystem class, so it must be resolved through the shared
+        engine.appc.subsystem_types table before
         testing — a `PhaserSystem`'s own `_property` is a
         `WeaponSystemProperty` template (see ships.py `SetupProperties`),
         never a `PhaserProperty`, so comparing `cls` against `_property`
@@ -516,8 +517,10 @@ class ShipSubsystem(TGEventHandlerObject):
         `IsTypeOf(CT_WEAPON_SYSTEM)`.
 
         `cls` may be a fall-through stub (e.g. App.CT_UNKNOWN_THING
-        returns an App._NamedStub instance), so guard with
-        isinstance(cls, type) before testing.
+        returns an App._NamedStub instance), or an int tag with no subsystem
+        class behind it; `subsystem_class_for_ct` returns None for both and
+        this method answers 0. It also still accepts a Property class passed
+        directly, for engine callers that have one to hand.
 
         No property-based fallback: this is a class-identity check,
         independent of whether SetProperty has ever run — see
@@ -525,8 +528,6 @@ class ShipSubsystem(TGEventHandlerObject):
         constant any real SDK caller passes to a ShipSubsystem.IsTypeOf
         (verified by grep across sdk/Build/scripts/ — task 3b fix).
         """
-        if not isinstance(cls, type):
-            return 0
         from engine.appc.subsystem_types import subsystem_class_for_ct
         target = subsystem_class_for_ct(cls)
         if target is None:
@@ -534,7 +535,11 @@ class ShipSubsystem(TGEventHandlerObject):
         return 1 if isinstance(self, target) else 0
 
     def GetObjType(self):
-        """The subsystem's own most-specific `CT_*` type constant.
+        """The subsystem's own most-specific `CT_*` int type tag.
+
+        Returns exactly what `IsTypeOf`/`StartGetSubsystemMatch` accept: the
+        SDK round-trips this value straight back into both
+        (AI/Preprocessors.py:153, ConditionCriticalSystemBelow.py:76).
 
         SDK consumers: Conditions/ConditionCriticalSystemBelow.py:76 (one
         child ConditionSystemBelow per critical subsystem, keyed by this) and

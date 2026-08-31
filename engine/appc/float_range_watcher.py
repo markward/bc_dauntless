@@ -39,13 +39,19 @@ class FloatRangeWatcher:
         ``< threshold`` (a downward crossing).
       * ``FRW_ABOVE`` — fires on the reverse (an upward crossing).
       * ``FRW_BOTH``  — fires on either crossing.
-    The SDK conditions only pass these constants opaquely, so the exact int
-    values are an internal choice; they are kept distinct and stable.
+    The SDK conditions only pass these constants opaquely, and ``_crossed``
+    below compares against this same class's own attributes, so the exact
+    int values are otherwise an internal choice; they are BC's measured
+    ones (q13 dump, CLASS_CONSTANTS["FloatRangeWatcher"] in
+    engine/appc/constants_generated.py). ``FRW_NONE`` is not defined here --
+    it is auto-added onto App.FloatRangeWatcher by
+    engine.appc.constants_apply.apply_constants, since this class never
+    defined it itself and nothing here consumes it.
     """
 
-    FRW_BELOW: int = 0
+    FRW_BELOW: int = 2
     FRW_ABOVE: int = 1
-    FRW_BOTH: int = 2
+    FRW_BOTH: int = 3
 
     def __init__(self, initial_value: float = 0.0, event_manager=None) -> None:
         self._value: float = float(initial_value)

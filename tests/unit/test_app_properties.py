@@ -15,7 +15,7 @@ def test_app_exposes_factories():
 
 
 def test_app_exposes_class_constants():
-    assert App.TGModelPropertyManager.LOCAL_TEMPLATES == 0
+    assert App.TGModelPropertyManager.LOCAL_TEMPLATES == 1  # Task 8: BC measured
     assert App.ShieldProperty.FRONT_SHIELDS == 0
     assert App.WeaponSystemProperty.WST_TORPEDO == 2
 

@@ -39,8 +39,17 @@ def test_symbols_are_real_not_stubs():
 
 
 def test_ct_sorted_region_menu_still_an_stmenu_subclass():
+    # App.CT_* are BC's int type tags (q13 sweep task 9); the class the
+    # isinstance filters use comes from the object_types registry.
     from engine.appc.characters import STMenu
-    assert issubclass(App.CT_SORTED_REGION_MENU, STMenu)
+    from engine.appc.object_types import class_for
+    # NOT proof this tag resolves at runtime: STMenu/STButton override
+    # IsTypeOf to a hardcoded `return 0` (engine/appc/characters.py:79,250),
+    # so the SDK's two menu call sites (BridgeHandlers.py:1357,
+    # MissionLib.py:4542) never consult the registry at all. Pre-existing,
+    # not a regression -- this asserts the registry ROW is correct, so the
+    # day IsTypeOf grows a real hierarchy it has something right to read.
+    assert issubclass(class_for(App.CT_SORTED_REGION_MENU), STMenu)
 
 
 def test_fonts_and_icons_registers_real_entries():

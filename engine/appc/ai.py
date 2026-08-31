@@ -2156,9 +2156,17 @@ def CharacterAction_CreateByName(name: str, *args) -> CharacterAction:
 # Top-level App constants used in BridgeHandlers.py:650 and every SpeakLine
 # call site. The SDK names are CSP_SPONTANEOUS/CSP_NORMAL/CSP_MISSION_CRITICAL;
 # CSP_LOW/CSP_HIGH are dauntless-era aliases kept for back-compat.
-CSP_SPONTANEOUS      = 0   # idle chatter (engineer reports, ge*)
+#
+# BC's measured values (q13 dump).  NOTE the polarity: LOWER number = HIGHER
+# priority, the opposite of the invented values this replaces.  CrewSpeechBus
+# .speak is written to match -- change one and you must change the other.
+CSP_MISSION_CRITICAL = 0   # scripted mission narration -- wins
 CSP_NORMAL           = 1   # acknowledgements; default
-CSP_MISSION_CRITICAL = 2   # scripted mission narration
+CSP_SPONTANEOUS      = 2   # idle chatter (engineer reports, ge*) -- loses
+# CSP_LOW/CSP_HIGH stay pointed at the same symbols under the new polarity:
+# "low priority" IS the spontaneous chatter, and under BC's convention low
+# priority carries the LARGER number. Do not "fix" these back to look like
+# CSP_LOW=0/CSP_HIGH=2 -- that would be wrong.
 CSP_LOW  = CSP_SPONTANEOUS      # back-compat alias
 CSP_HIGH = CSP_MISSION_CRITICAL # back-compat alias
 

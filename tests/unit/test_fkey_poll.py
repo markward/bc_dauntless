@@ -83,8 +83,10 @@ def test_f9_and_f6_are_exported(monkeypatch):
     re-export list was what stopped at F5, so App.WC_F9 was a _NamedStub and
     BC's BindKey(App.WC_F9, ...) could never register."""
     import App
-    assert App.__dict__.get("WC_F6") == 0x75
-    assert App.__dict__.get("WC_F9") == 0x78
+    # BC's measured values (q13 sweep Task 7) -- WC_F1..F12 live in BC's high
+    # function-key band, not the old invented Windows VK codes (0x75/0x78).
+    assert App.__dict__.get("WC_F6") == 57370
+    assert App.__dict__.get("WC_F9") == 57373
 
 
 def test_f9_and_f6_edges_are_forwarded(monkeypatch):

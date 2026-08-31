@@ -101,12 +101,13 @@ def test_preempting_line_stops_previous_voice():
 
 
 def test_dropped_line_does_not_stop_active_voice():
+    # BC's polarity is LOWER number = HIGHER priority (see ai.py CSP_*).
     bus = CrewSpeechBus()
     stopped = []
     handles = iter([_FakeHandle("hi", stopped)])
     bus._play_voice = lambda wav: (5.0, next(handles))
-    bus.speak("XO", None, "hi.mp3", 2, now=0.0)             # high priority, live
-    bus.speak("Helm", None, "low.mp3", 0, now=1.0)          # lower priority -> dropped
+    bus.speak("XO", None, "hi.mp3", 0, now=0.0)             # high priority, live
+    bus.speak("Helm", None, "low.mp3", 2, now=1.0)          # lower priority -> dropped
     assert stopped == []                                    # the live line keeps playing
 
 

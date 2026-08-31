@@ -84,3 +84,49 @@ def test_invalidate_forces_reemit():
     panel.render_payload()
     panel.invalidate()
     assert panel.render_payload() is not None
+
+
+# ── Undefined App colour globals must not kill the frame ─────────────────────
+# E1M1's tactical-view help box (E1M1.py:3343) passes
+# App.g_kMainMenuButton2HighlightedColor to TGParagraph_CreateW.  That name is
+# undefined, so it is a truthy _NamedStub -- and a stub answers hasattr() for
+# EVERY name, so _color_to_list's hasattr gate let four stubs through into
+# json.dumps and raised TypeError mid-frame, a fatal error in-game.
+#
+# 40 of the 51 g_k*Color globals the SDK references are undefined this way, so
+# this is a class of crash, not one constant.  They are INSTANCES, not scalars,
+# which is why the q13 constant sweep neither caused nor could have fixed it.
+#
+# Note float(stub) returns 0.0 rather than raising, so a try/float guard would
+# silently paint every such colour black.  The component TYPE is the only
+# reliable discriminator.
+
+def test_undefined_app_colour_global_serialises_as_no_colour():
+    import App
+    from engine.ui.info_box_panel import _color_to_list
+
+    stub = App.g_kMainMenuButton2HighlightedColor  # a real, still-undefined name
+    assert all(hasattr(stub, k) for k in "rgba"), (
+        "precondition: the stub answers hasattr for every component -- this is "
+        "why the old hasattr gate could not reject it")
+    assert _color_to_list(stub) is None
+
+
+def test_info_box_payload_with_a_stub_colour_is_json_serialisable():
+    import json
+    import App
+    from engine.ui.info_box_panel import _color_to_list
+
+    payload = {"entries": [{"color": _color_to_list(
+        App.g_kMainMenuButton2HighlightedColor)}]}
+    json.dumps(payload)  # must not raise
+
+
+def test_a_real_colour_still_serialises():
+    import json
+    from App import TGColorA
+    from engine.ui.info_box_panel import _color_to_list
+
+    rgba = _color_to_list(TGColorA(0.25, 0.5, 0.75, 1.0))
+    assert rgba == [0.25, 0.5, 0.75, 1.0]
+    json.dumps(rgba)
