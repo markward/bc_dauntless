@@ -43,6 +43,15 @@ def load():
     import App
 
     rows = [r for r in csv.DictReader(open(CSV_PATH)) if r["name"] not in SKIP]
+
+    # Force memoization of WC_/KY_ constants before classification.
+    # App.__getattr__ memoizes them into vars(App) on first access via getattr().
+    # Without this, real_attr() would report them as 'missing' until something
+    # accessed them, making the audit order-dependent and non-deterministic.
+    for row in rows:
+        if row["scope"] == "module" and row["name"][:3] in ("WC_", "KY_"):
+            getattr(App, row["name"], None)
+
     ok, wrong, missing, noclass = [], [], [], []
     for row in rows:
         want = parse(row)
