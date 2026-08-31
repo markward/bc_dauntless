@@ -22,7 +22,16 @@ from tools.constant_surface_audit import load
 # small, unrelated key-index enum) -- previously conflated as aliases of the
 # same invented Windows-VK value -- and restoring KBT_'s bitmask (1/2/4/8,
 # not sequential 0-3).
-REMAINING_WRONG = 88
+#
+# Task 8 corrected the 47 UI-class-constant values across thirteen families
+# (WeaponsDisplay 20, TGParagraph 5, TGUIObject.ALIGN_* 3, TGSound 3,
+# EffectController 3, TGModelPropertyManager 2, FloatRangeWatcher 2,
+# ObjectGroup 2, ObjectGroupWithInfo 2, EngRepairPane.DIVIDER 1, TGFrame 1,
+# STBSF_SIZE_TO_TEXT 1, SPECIES_GALAXY/SPECIES_SOVEREIGN 2). See App.py's
+# CORRECT_EXISTING comment block for which of those thirteen families are
+# corrected there versus fixed directly at an engine/ definition site (the
+# TGUIObject.ALIGN_* / ANCHOR_FRACTIONS coupling in particular).
+REMAINING_WRONG = 41
 
 # Task 7 also defined the 105 genuinely-missing keyboard names (101 WC_ +
 # 4 KY_ international/accented codepoints our table never covered), driving
@@ -139,3 +148,40 @@ def test_no_two_event_types_collide_except_the_known_aliases():
         0x80010C: {"ET_FIRST_INPUT_EVENT", "ET_INPUT_TOGGLE_MAP_MODE"},
         0x800067: {"ET_PLAYER_TORPEDO_COUNT_CHANGED", "ET_TORPEDO_AMMO_CONSUMED"},
     }
+
+
+def test_ui_class_constants_are_the_measured_values():
+    """Task 8: WeaponsDisplay/EngRepairPane/STBSF_SIZE_TO_TEXT/SPECIES_* are
+    corrected via App.py's CORRECT_EXISTING (they have no engine/ definition
+    site of their own); TGUIObject.ALIGN_* is corrected at its real numeric
+    source, engine/appc/tg_ui/layout.py (see App.py's CORRECT_EXISTING
+    comment for why -- ALIGN_* is NOT itself in CORRECT_EXISTING)."""
+    import App
+    assert App.TGUIObject.ALIGN_UR == 1 and App.TGUIObject.ALIGN_BL == 2
+    assert App.EngRepairPane.DIVIDER == 6
+    assert App.STBSF_SIZE_TO_TEXT == 0x40000000, "a flag bit, not 1"
+    assert App.SPECIES_GALAXY == 101 and App.SPECIES_SOVEREIGN == 102
+
+
+def test_weapons_display_keeps_bcs_intentional_duplicates():
+    """BC shares one class namespace between a border enum and a pane enum;
+    the repeated indices are real and must not be 'fixed'."""
+    import App
+    wd = App.WeaponsDisplay
+    assert wd.TORPEDO_PANE == wd.TOP_RIGHT_BORDER == 0
+    assert wd.GLASS == wd.LOWER_DISRUPTOR_INDICATOR_PANE == 8
+
+
+def test_species_constants_agree_with_the_icon_table_and_hardpoints():
+    """The whole point of correcting SPECIES_GALAXY/SPECIES_SOVEREIGN: before
+    this task App.SPECIES_GALAXY==0 and App.SPECIES_SOVEREIGN==2 silently
+    disagreed with both engine.ui.species_icons's stem table (keyed by BC's
+    real hardpoint SetSpecies() integers) and every symbolic SDK comparison
+    against them (e.g. MissionLib.py's `kSpecies == App.SPECIES_GALAXY`,
+    TacticalCharacterHandlers.py's `pShipProp.GetSpecies() == App.SPECIES_GALAXY`)
+    -- both always False, since a real ship's GetSpecies() returns 101/102,
+    never 0/2."""
+    import App
+    from engine.ui.species_icons import _SPECIES_TO_STEM
+    assert _SPECIES_TO_STEM[App.SPECIES_GALAXY] == "Galaxy"
+    assert _SPECIES_TO_STEM[App.SPECIES_SOVEREIGN] == "Sovereign"

@@ -931,10 +931,15 @@ class DamageableObject(PhysicsObjectClass):
 
 
 class ObjectGroup(TGEventHandlerObject):
+    # Per-name event flags -- stored as SET MEMBERS (self._event_flags is a
+    # dict[str, set[int]]), never OR'd into a bitmask, so distinctness is all
+    # that matters. Values are BC's measured ones (q13 dump,
+    # CLASS_CONSTANTS["ObjectGroup"] in engine/appc/constants_generated.py).
+    # ObjectGroupWithInfo inherits these; it never defines its own copy.
     GROUP_CHANGED = 1
     ENTERED_SET = 2
-    EXITED_SET = 3
-    DESTROYED = 4
+    EXITED_SET = 4
+    DESTROYED = 8
 
     def __init__(self):
         super().__init__()

@@ -1011,8 +1011,11 @@ def ObjectEmitterProperty_Cast(obj):
 # Phase 2 concerns; they fall through to App.py's _NamedStub via __getattr__.
 
 class TGModelPropertyManager:
-    LOCAL_TEMPLATES  = 0
-    GLOBAL_TEMPLATES = 1
+    # BC measured values (q13 dump, CLASS_CONSTANTS["TGModelPropertyManager"]
+    # in engine/appc/constants_generated.py) -- swapped from the invented
+    # 0/1 pairing.
+    GLOBAL_TEMPLATES = 0
+    LOCAL_TEMPLATES  = 1
 
     def __init__(self):
         self._local: dict = {}

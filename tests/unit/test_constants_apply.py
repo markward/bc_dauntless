@@ -55,10 +55,16 @@ def test_additive_pass_changes_no_existing_value():
 
     88 (post-Task 7): Task 7 corrected the full keyboard family -- 347
     WC_/KY_/KBT_/KS_/GET_ constants (WC_ and KY_ separated into BC's two
-    real, distinct namespaces; KBT_'s bitmask restored to 1/2/4/8)."""
+    real, distinct namespaces; KBT_'s bitmask restored to 1/2/4/8).
+
+    41 (post-Task 8): Task 8 corrected the 47 UI-class-constant values
+    across thirteen families (WeaponsDisplay, TGParagraph,
+    TGUIObject.ALIGN_*, TGSound, EffectController, TGModelPropertyManager,
+    FloatRangeWatcher, ObjectGroup(WithInfo), EngRepairPane.DIVIDER,
+    TGFrame, STBSF_SIZE_TO_TEXT, SPECIES_GALAXY/SPECIES_SOVEREIGN)."""
     from tools.constant_surface_audit import load
     _, _, wrong, _, _ = load()
-    assert len(wrong) == 88, "wrong-value count drifted from Task 7's landed corrections"
+    assert len(wrong) == 41, "wrong-value count drifted from Task 8's landed corrections"
 
 
 def test_deviations_are_respected():

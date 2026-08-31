@@ -139,10 +139,16 @@ class AnimTSParticleController:
 # ---- EffectController ------------------------------------------------------
 
 class EffectController:
-    """Mirror of App.EffectController: quality-level enum + getter."""
-    LOW    = 0
-    MEDIUM = 1
-    HIGH   = 2
+    """Mirror of App.EffectController: quality-level enum + getter.
+
+    BC measured values (q13 dump, CLASS_CONSTANTS["EffectController"] in
+    engine/appc/constants_generated.py). LOWEST=0/HIGHEST=4 are not defined
+    here -- they are auto-added onto App.EffectController by
+    engine.appc.constants_apply.apply_constants, since this class never
+    defined them itself."""
+    LOW    = 1
+    MEDIUM = 2
+    HIGH   = 3
 
 
 def EffectController_GetEffectLevel():

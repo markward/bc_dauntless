@@ -50,8 +50,15 @@ def test_load_partitions_every_usable_row():
     # engine.appc.input never defined (mostly international/accented
     # characters, plus KY_RCTRL/KY_RSHIFT/KY_EU_LEFT/KY_EU_RIGHT) moved
     # `missing` -> `ok`: ok 3289 -> 3741, wrong 435 -> 88, missing 105 -> 0.
-    assert len(ok) == 3741, f"ok bucket: expected 3741, got {len(ok)}"
-    assert len(wrong) == 88, f"wrong bucket: expected 88, got {len(wrong)}"
+    #
+    # Task 8 corrected the 47 UI-class-constant values across thirteen
+    # families (WeaponsDisplay, TGParagraph, TGUIObject.ALIGN_*, TGSound,
+    # EffectController, TGModelPropertyManager, FloatRangeWatcher,
+    # ObjectGroup, ObjectGroupWithInfo, EngRepairPane.DIVIDER, TGFrame,
+    # STBSF_SIZE_TO_TEXT, SPECIES_GALAXY/SPECIES_SOVEREIGN), all moved
+    # `wrong` -> `ok`: ok 3741 -> 3788, wrong 88 -> 41.
+    assert len(ok) == 3788, f"ok bucket: expected 3788, got {len(ok)}"
+    assert len(wrong) == 41, f"wrong bucket: expected 41, got {len(wrong)}"
     assert len(missing) == 0, f"missing bucket: expected 0, got {len(missing)}"
     assert len(noclass) == 0, f"noclass bucket: expected 0, got {len(noclass)}"
     assert len(ok) + len(wrong) + len(missing) + len(noclass) == len(rows)

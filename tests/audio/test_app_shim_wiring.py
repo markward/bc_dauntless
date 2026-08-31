@@ -17,7 +17,7 @@ def boot():
 def test_app_exposes_tgsound_and_manager(boot):
     import App
     assert hasattr(App, "TGSound")
-    assert App.TGSound.LS_3D == 0
+    assert App.TGSound.LS_3D == 1  # Task 8: BC measured value, not 0
     assert hasattr(App, "TGSoundManager")
     assert App.g_kSoundManager is not None
 

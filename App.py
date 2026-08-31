@@ -2008,9 +2008,94 @@ def __getattr__(name):
 #   engine/appc/input.py and engine/appc/events.py are therefore the sole
 #   source of truth for these four families, with no CORRECT_EXISTING
 #   backstop -- if one is ever wrong, only that class body needs fixing.
+#
+# Task 8 (UI class constants, 47 values across thirteen families) splits the
+# same way, by definition site:
+#
+#   WeaponsDisplay (20), EngRepairPane.DIVIDER (1), STBSF_SIZE_TO_TEXT (1),
+#   SPECIES_GALAXY/SPECIES_SOVEREIGN (2) -- 24 values, listed below. These
+#   classes/names exist ONLY in this module: WeaponsDisplay and EngRepairPane
+#   have no engine/ counterpart (their class bodies are right here), and
+#   STBSF_SIZE_TO_TEXT/SPECIES_* are plain module-scope ints with no engine
+#   module backing them either. App.py IS the definition site, so a
+#   CORRECT_EXISTING entry is both correct and the only place these CAN be
+#   corrected -- no self-heal risk, because there is no separate copy
+#   anywhere else that could independently regress out from under it.
+#
+#   TGParagraph.TGPF_*, TGSound.LS_*, EffectController.{LOW,MEDIUM,HIGH},
+#   TGModelPropertyManager.{LOCAL,GLOBAL}_TEMPLATES,
+#   FloatRangeWatcher.FRW_{BELOW,BOTH}, ObjectGroup.{EXITED_SET,DESTROYED},
+#   TGFrame.NO_STRETCH_LR -- 19 values -- are DELIBERATELY ABSENT from this
+#   frozenset (ObjectGroupWithInfo inherits EXITED_SET/DESTROYED from
+#   ObjectGroup and was never separately wrong, so it needed no edit at all).
+#   Every one of these classes is a REAL class defined in an engine/ module
+#   and imported into this module BY REFERENCE (e.g. App.TGSound IS
+#   engine.audio.tg_sound.TGSound, the same object) -- exactly Task 7's
+#   KBT_/GET_ shared-identity hazard: adding a class-scope name here would
+#   setattr the corrected value onto that SAME shared class object at every
+#   fresh App import, silently healing over a future regression in the class
+#   body's own literal before any guard test could see it. Their engine/
+#   class bodies (engine/appc/tg_ui/widgets.py, engine/audio/tg_sound.py,
+#   engine/appc/particles.py, engine/appc/properties.py,
+#   engine/appc/float_range_watcher.py, engine/appc/objects.py) are the sole
+#   source of truth; App.<Class>.<CONST> already reflects them by identity,
+#   with no CORRECT_EXISTING backstop needed or wanted.
+#
+#   TGUIObject.ALIGN_* (3 values) is ALSO deliberately absent, for a
+#   different and more serious reason found while building this task.
+#   App.TGUIObject.ALIGN_UR/ALIGN_BL/ALIGN_BR are plain int COPIES of
+#   engine.appc.tg_ui.layout's own ALIGN_* module constants (TGUIObject is
+#   defined right here, not a shared class), and that layout module's
+#   ANCHOR_FRACTIONS dict is keyed BY THOSE SAME INTEGERS to resolve every
+#   AlignTo() call in the widget layout resolver
+#   (engine/appc/tg_ui/widgets.py TGPane._resolve_child_rect). layout.py
+#   used a 9-point compass numbering (ALIGN_UL=0 .. ALIGN_BR=8) for a richer
+#   anchor set BC's real 4-anchor enum doesn't have. Naively setattr-ing
+#   BC's measured UR=1/BL=2/BR=3 onto TGUIObject here, while
+#   ANCHOR_FRACTIONS stayed keyed on layout.py's old 0..8 numbering, would
+#   have made ALIGN_UR collide with layout's own ALIGN_UC(1), ALIGN_BL
+#   collide with layout's old ALIGN_UR(2), and ALIGN_BR collide with
+#   layout's ALIGN_CL(3) -- silently resolving every "align bottom-left" SDK
+#   call (e.g. Tactical/Interface/TacticalControlWindow.py's
+#   AlignTo(pane, App.TGUIObject.ALIGN_BL, App.TGUIObject.ALIGN_UL, 0)) to a
+#   DIFFERENT anchor's fraction than the one requested -- a real, silent
+#   layout corruption across the whole UI, not merely a documentation risk.
+#   Fixed instead at the true numeric source, engine/appc/tg_ui/layout.py:
+#   BC's four measured anchors (UL/UR/BL/BR) now use BC's own 0/1/2/3, and
+#   the five anchors BC doesn't have (UC/CL/CC/CR/BC -- internal-only, no
+#   SDK caller ever reaches them through App.TGUIObject) were shifted to
+#   non-colliding slots 4-8. TGUIObject's `ALIGN_X = _tg_ui_layout.ALIGN_X`
+#   copies then pick up the corrected values automatically, with
+#   ANCHOR_FRACTIONS staying internally self-consistent by construction.
 CORRECT_EXISTING: frozenset[str] = frozenset(
     [n for n in MODULE_CONSTANTS if n.startswith("ET_")]
     + ["CSP_MISSION_CRITICAL", "CSP_SPONTANEOUS"]
+    + [
+        "WeaponsDisplay.GLASS",
+        "WeaponsDisplay.ICON_PANE",
+        "WeaponsDisplay.LEFT_BORDER",
+        "WeaponsDisplay.LEFT_BOTTOM_BORDER",
+        "WeaponsDisplay.LEFT_TOP_BORDER",
+        "WeaponsDisplay.LOWER_DISRUPTOR_INDICATOR_PANE",
+        "WeaponsDisplay.LOWER_DISRUPTOR_PANE",
+        "WeaponsDisplay.LOWER_PHASER_INDICATOR_PANE",
+        "WeaponsDisplay.LOWER_PHASER_PANE",
+        "WeaponsDisplay.RIGHT_BORDER",
+        "WeaponsDisplay.RIGHT_BOTTOM_BORDER",
+        "WeaponsDisplay.RIGHT_TOP_BORDER",
+        "WeaponsDisplay.SHIP_ICON",
+        "WeaponsDisplay.TOP_BORDER",
+        "WeaponsDisplay.TOP_RIGHT_BORDER",
+        "WeaponsDisplay.TORPEDO_PANE",
+        "WeaponsDisplay.UPPER_DISRUPTOR_INDICATOR_PANE",
+        "WeaponsDisplay.UPPER_DISRUPTOR_PANE",
+        "WeaponsDisplay.UPPER_PHASER_INDICATOR_PANE",
+        "WeaponsDisplay.UPPER_PHASER_PANE",
+        "EngRepairPane.DIVIDER",
+        "STBSF_SIZE_TO_TEXT",
+        "SPECIES_GALAXY",
+        "SPECIES_SOVEREIGN",
+    ]
 )
 
 apply_constants(

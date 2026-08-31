@@ -322,13 +322,18 @@ class TGParagraph(TGPane):
 
     The SDK passes paragraph flags (read-only, word-wrap, …) OR'd together as
     the last arg to TGParagraph_Create/CreateW. They're opaque to us — never
-    decoded — so distinct bit values are all that's required."""
+    decoded — so distinct bit values are all that's required.
 
-    TGPF_READ_ONLY = 0x01
-    TGPF_INSERT_MODE = 0x02
-    TGPF_WORD_WRAP = 0x04
-    TGPF_RECALC_BOUNDS = 0x08
-    TGPF_FLAGS_MASK = 0x0F
+    Values are BC's measured ones (q13 dump, CLASS_CONSTANTS["TGParagraph"]
+    in engine/appc/constants_generated.py): the real flags occupy the top
+    nibble of a 32-bit int (bits 28-31), read as negative under Python's
+    signed-int display for the top two bits."""
+
+    TGPF_RECALC_BOUNDS = 0x10000000    # bit 28 (268435456)
+    TGPF_WORD_WRAP = 0x20000000        # bit 29 (536870912)
+    TGPF_INSERT_MODE = 0x40000000      # bit 30 (1073741824)
+    TGPF_READ_ONLY = -0x80000000       # bit 31 (-2147483648, signed)
+    TGPF_FLAGS_MASK = -0x10000000      # bits 28-31 (-268435456, signed)
 
     def __init__(self, text: str = "", scale: float = 1.0, color=None):
         super().__init__()
@@ -433,7 +438,7 @@ class _TGRect:
 
 class TGFrame(TGPane):
     """Bordered frame — records colour/stretch; geometry inert like TGPane."""
-    NO_STRETCH_LR = 1
+    NO_STRETCH_LR = 2  # BC measured (q13 dump); SetEdgeStretch stores it opaquely
 
     def __init__(self, group_name: str = "", icon_id: int = 0):
         super().__init__()

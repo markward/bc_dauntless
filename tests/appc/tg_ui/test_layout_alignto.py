@@ -1,5 +1,5 @@
 from engine.appc.tg_ui.widgets import TGPane
-from engine.appc.tg_ui.layout import ALIGN_BL, ALIGN_UL
+from engine.appc.tg_ui.layout import ALIGN_BL, ALIGN_UL, ALIGN_UR, ALIGN_BR
 
 
 class _Pt:
@@ -39,4 +39,29 @@ def test_alignto_via_app_tguiobject_stacks_below():
     root.Layout()
     off = _Pt(); b.GetScreenOffset(off)
     assert abs(off.x - 0.05) < 1e-9        # same left as A
+    assert abs(off.y - 0.15) < 1e-9        # A.top(0.05) + A.height(0.1)
+
+
+def test_alignto_ur_to_br_via_app_tguiobject():
+    # Task 8: App.TGUIObject.ALIGN_UR/ALIGN_BR were corrected to BC's
+    # measured 1/3 (from layout.py's old internal 2/8). Before the fix at
+    # engine/appc/tg_ui/layout.py's numeric source, naively setattr-ing
+    # those measured values directly onto TGUIObject would have made
+    # ALIGN_UR(1) collide with layout's own ALIGN_UC and ALIGN_BR(3)
+    # collide with layout's own ALIGN_CL, so ANCHOR_FRACTIONS[my_anchor]
+    # would resolve to the WRONG anchor's fraction. This pins the correct
+    # geometry through the real SDK call shape.
+    #
+    # Child B's upper-right aligns to sibling A's bottom-right -> B sits
+    # directly below A, right edges flush.
+    import App
+
+    root = TGPane(1.0, 1.0)
+    a = TGPane(0.2, 0.1); b = TGPane(0.2, 0.1)
+    root.AddChild(a, 0.05, 0.05)
+    root.AddChild(b, 0.0, 0.0)
+    b.AlignTo(a, App.TGUIObject.ALIGN_UR, App.TGUIObject.ALIGN_BR, 0)
+    root.Layout()
+    off = _Pt(); b.GetScreenOffset(off)
+    assert abs(off.x - 0.05) < 1e-9        # right edge matches A's right edge
     assert abs(off.y - 0.15) < 1e-9        # A.top(0.05) + A.height(0.1)

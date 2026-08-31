@@ -87,10 +87,11 @@ class _PlayingSound:
 
 
 class TGSound:
-    # Loadspec constants (match App.py).
-    LS_3D = 0
-    LS_STREAMED = 1
-    LS_DELAY_LOADING = 2
+    # Loadspec constants -- BC measured values (q13 dump,
+    # CLASS_CONSTANTS["TGSound"] in engine/appc/constants_generated.py).
+    LS_3D = 1
+    LS_STREAMED = 2
+    LS_DELAY_LOADING = 4
     # Status (return values for GetStatus).
     SS_PLAYING = 0
     SS_STOPPED = 1
