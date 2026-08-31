@@ -311,3 +311,116 @@ def test_losing_the_grip_mid_hold_posts_stopped_then_started_on_reacquire(
     engageable["v"] = True                # back in range
     sys_.update_weapons(1.0 / 60.0)
     assert len(_of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING)) == 1
+
+
+# ── Fix round 1, finding 1: power-loss stop bypasses update_weapons ─────────
+# _FakeEmitter above can't reach this bug: it is not a TractorBeam, so
+# TractorBeam.UpdateCharge's parent-power gate (weapon_subsystems.py
+# :2278-2284, "power loss stops the beam") never runs against it. host_loop's
+# per-frame emitter pump calls UpdateCharge on every REAL TractorBeam every
+# tick regardless of the parent system's power state, so a real emitter can
+# stop itself between one update_weapons() call and the next. This exercises
+# that with the real TractorBeam + TractorBeamSystem pair (same construction
+# shape as test_tractor_beam_render_data.py's _ship_with_tractor).
+
+def _real_tractor_rig():
+    """A ship with a real TractorBeamSystem holding one real, fully-charged
+    TractorBeam emitter, plus an in-range, shield-free target — the geometry
+    needed for StartFiring to actually engage (not stubbed out)."""
+    from engine.appc.math import TGPoint3
+    from engine.appc.ships import ShipClass_Create
+    from engine.appc.weapon_subsystems import TractorBeam, TractorBeamSystem
+
+    ship = ShipClass_Create("Source")
+    ship.SetWorldLocation(TGPoint3(0, 0, 0))
+
+    emitter = TractorBeam("Aft Tractor")
+    emitter._max_charge = 5.0
+    emitter._min_firing_charge = 3.0
+    emitter._normal_discharge_rate = 1.0
+    emitter._recharge_rate = 0.5
+    emitter._charge_level = 5.0
+
+    sys_ = TractorBeamSystem("Tractors")
+    sys_.AddChildSubsystem(emitter)
+    ship.SetTractorBeamSystem(sys_)   # attaches + TurnOn()s (ships.py:981-988)
+
+    target = ShipClass_Create("Target")
+    target.SetWorldLocation(TGPoint3(0, 50, 0))   # dead ahead, in range, no shields
+    return ship, sys_, emitter, target
+
+
+def test_power_loss_stop_is_synced_on_the_very_next_update(posted):
+    """Before the fix: update_weapons's `if not self.IsOn(): return False`
+    bails without calling _sync_firing_event, so a beam the parent's own
+    TurnOff() has already silenced (via TractorBeam.UpdateCharge's
+    parent-power gate) leaves `_was_firing` stuck True forever -- the HUD
+    latches "on" and the STARTED event that follows re-power is swallowed
+    because the cache never saw the drop.
+    """
+    from unittest.mock import patch
+
+    ship, sys_, emitter, target = _real_tractor_rig()
+
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        sys_.StartFiring(target, None)
+    assert emitter.IsFiring() == 1, "precondition: the real beam must actually grip"
+    assert len(_of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING)) == 1
+    posted.clear()
+
+    sys_.TurnOff()   # e.g. the power slider dragged to 0 (engineering_power_panel.py:47)
+    emitter.UpdateCharge(1.0 / 60.0)   # host_loop's per-frame emitter pump
+    assert emitter.IsFiring() == 0, "precondition: UpdateCharge's power gate stopped it"
+
+    sys_.update_weapons(1.0 / 60.0)
+
+    stopped = _of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING)
+    assert len(stopped) == 1, (
+        "the beam already stopped behind update_weapons's back; the "
+        "not-self.IsOn() bail must still sync the transition")
+    assert stopped[0].GetDestination() is ship
+
+    # Confirms the cache didn't just happen to still read correctly: restore
+    # power and re-engage, and the STARTED event must be reachable again
+    # (a stuck _was_firing=True would swallow it).
+    posted.clear()
+    sys_.TurnOn()
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        sys_.update_weapons(1.0 / 60.0)
+    assert emitter.IsFiring() == 1, "precondition: beam re-acquires once powered"
+    assert len(_of_type(posted, App.ET_TRACTOR_BEAM_STARTED_FIRING)) == 1
+
+
+def test_swinging_out_of_arc_stops_and_syncs_even_though_still_engageable(posted):
+    """update_weapons's per-emitter arc re-check (:1959-1961, the only emitter
+    stop in this method that is NOT driven by the `engageable` range/shield
+    flag) is otherwise untested by every _FakeEmitter-based case above: the
+    fake has no GetDirection, so _emitter_in_arc short-circuits True for it
+    unconditionally (finding 2b). A real TractorBeam has a real default
+    Direction (0,1,0) and no authored arc bounds, so it falls back to BC's
+    bare 90-degree dot-product cone -- swinging the target behind the ship
+    swings it out of that cone while range and shields are untouched.
+    """
+    from unittest.mock import patch
+
+    from engine.appc.math import TGPoint3
+
+    ship, sys_, emitter, target = _real_tractor_rig()
+
+    with patch("engine.audio.tg_sound.TGSoundManager.instance"):
+        sys_.StartFiring(target, None)
+    assert emitter.IsFiring() == 1
+    posted.clear()
+
+    target.SetWorldLocation(TGPoint3(0, -50, 0))   # swung dead astern: still
+                                                    # in range, still no shields,
+                                                    # but behind the 90-degree cone
+
+    sys_.update_weapons(1.0 / 60.0)
+
+    assert emitter.IsFiring() == 0, (
+        "precondition: the arc re-check, not the engageable gate, must be "
+        "what stopped this emitter")
+    stopped = _of_type(posted, App.ET_TRACTOR_BEAM_STOPPED_FIRING)
+    assert len(stopped) == 1
+    assert stopped[0].GetDestination() is ship

@@ -1899,10 +1899,14 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         now = bool(self.IsFiring())
         if now == self._was_firing:
             return
-        self._was_firing = now
         ship = self.GetParentShip()
         if ship is None:
+            # Don't mark the transition consumed: a parentless system has
+            # nowhere to send the event, but the NEXT sync (once it has a
+            # parent) must still see the crossing rather than finding
+            # _was_firing already flipped and treating it as a non-event.
             return
+        self._was_firing = now
         import App
         evt = App.TGEvent_Create()
         evt.SetEventType(App.ET_TRACTOR_BEAM_STARTED_FIRING if now
@@ -1932,6 +1936,16 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         if not self._fire_held or self._held_target is None:
             return False
         if not self.IsOn():
+            # Power loss stops emitters BEHIND this method's back:
+            # TractorBeam.UpdateCharge (:2278-2284) calls StopFiring() on
+            # itself once its parent isn't on, and host_loop's per-frame
+            # emitter pump runs UpdateCharge on every emitter regardless of
+            # parent power -- so by the time we get here on the very next
+            # tick IsFiring() has already flipped to False without this
+            # method ever seeing the transition. Sync here or the beam stops
+            # for real while _was_firing stays stuck True, latching the HUD
+            # "on" and swallowing the STARTED event when power returns.
+            self._sync_firing_event()
             return False
         if _is_offline(self):
             self.StopFiring()           # system disabled — fully disengage
