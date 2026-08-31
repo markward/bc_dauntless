@@ -37,36 +37,47 @@ def test_load_is_order_independent():
     deterministic independent of what was already accessed.
     """
     import App
-    import importlib
 
-    # Helper to find bucket name for a constant by its name
+    # Helper to find bucket index for a constant by its name
     def find_bucket(constant_name, buckets):
-        """Return which bucket (ok/wrong/missing/noclass) contains constant_name."""
+        """Return which bucket (0=ok, 1=wrong, 2=missing, 3=noclass) contains constant_name."""
         for i, bucket in enumerate(buckets):
             if any(row["name"] == constant_name for row, _, _ in bucket):
-                return i  # 0=ok, 1=wrong, 2=missing, 3=noclass
+                return i
         return -1  # not found
 
-    # First load: baseline
-    rows1, ok1, wrong1, missing1, noclass1 = load()
-    buckets1 = (ok1, wrong1, missing1, noclass1)
-    ky_a_bucket1 = find_bucket("KY_A", buckets1)
+    # Save and remove the memoized entry if it exists, to simulate unmemoized state
+    saved_memoized = vars(App).pop("KY_A", None)
 
-    # Reload App to clear memoization from the first load
-    importlib.reload(App)
+    try:
+        # First load: KY_A is NOT memoized yet, but load() forces resolution
+        rows1, ok1, wrong1, missing1, noclass1 = load()
+        buckets1 = (ok1, wrong1, missing1, noclass1)
+        ky_a_bucket1 = find_bucket("KY_A", buckets1)
 
-    # Access KY_A before loading, triggering memoization
-    getattr(App, "KY_A", None)
+        # Now KY_A has been memoized by load()'s pre-resolution loop
+        assert "KY_A" in vars(App), "load() should have memoized KY_A"
 
-    # Second load: must produce same bucket membership as first
-    rows2, ok2, wrong2, missing2, noclass2 = load()
-    buckets2 = (ok2, wrong2, missing2, noclass2)
-    ky_a_bucket2 = find_bucket("KY_A", buckets2)
+        # Access KY_A explicitly (redundant since load() already memoized, but makes
+        # the test's intent clear: we're testing that prior touches don't break things)
+        getattr(App, "KY_A", None)
 
-    # Both accesses must land in the same bucket
-    bucket_names = ("ok", "wrong", "missing", "noclass")
-    assert ky_a_bucket1 == ky_a_bucket2, (
-        f"KY_A moved buckets: first={bucket_names[ky_a_bucket1]}, "
-        f"second={bucket_names[ky_a_bucket2]}. "
-        "This indicates load() results depend on prior access history."
-    )
+        # Second load: must produce same bucket membership as first
+        rows2, ok2, wrong2, missing2, noclass2 = load()
+        buckets2 = (ok2, wrong2, missing2, noclass2)
+        ky_a_bucket2 = find_bucket("KY_A", buckets2)
+
+        # Both accesses must land in the same bucket
+        bucket_names = ("ok", "wrong", "missing", "noclass")
+        assert ky_a_bucket1 == ky_a_bucket2, (
+            f"KY_A moved buckets: first={bucket_names[ky_a_bucket1]}, "
+            f"second={bucket_names[ky_a_bucket2]}. "
+            "This indicates load() results depend on prior access history."
+        )
+    finally:
+        # Restore vars(App) to its pre-test state
+        if saved_memoized is not None:
+            vars(App)["KY_A"] = saved_memoized
+        else:
+            # If it wasn't there before, remove it again (clean up memoization from the test)
+            vars(App).pop("KY_A", None)
