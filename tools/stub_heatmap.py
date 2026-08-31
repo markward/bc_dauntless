@@ -270,6 +270,17 @@ def render(attr_rows: "list", bool_rows: "list", meta: dict,
           " what it would take to plug these, why the two risk tables below are"
           " currently hard to action, and one confirmed live bug."
           " **Do not add prose to this file: regeneration deletes it.**", ""]
+    # Same reason as the scouting-notes pointer above: this has to be emitted
+    # by the generator, not hand-typed, or the next regeneration deletes it.
+    L += ["> **Constant-surface sweep closed 2026-08-31:** every `App.<NAME>` /"
+          " `App.<CLASS>.<CONST>` row the q13 sweep covers was applied and"
+          " moved to Resolved that day (marked `2026-08-31`, filter the"
+          " Resolved table below on that date to see the set). What is left"
+          " below is a DIFFERENT bug class — missing **methods**, missing"
+          " module-level **instances** (`g_k*` colours), and missing"
+          " **constructor/cast functions** — none of it is a constant-value"
+          " lookup, so this sweep cannot close any more of it. See"
+          " `docs/instrumented_experiments/2026-07-13-constant-dump-probe.md`.", ""]
     L += ["| rank | owner | attr | total hits | coverage | lastSeenOn | markedResolvedOn |",
           "|---|---|---|---|---|---|---|"]
     for i, r in enumerate(openr, 1):

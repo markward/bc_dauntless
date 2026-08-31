@@ -1520,7 +1520,12 @@ _max_charge. It has no _max_charge at all; the zero came from _Stub.__float__."
 3. **`ET_TORPEDO_FIRED`** — blocked on probe q12.
 4. **Ammo debit point** — BC debits the magazine in `ReloadTorpedo`; we debit at `Fire`. Documented divergence in Task 3.
 5. **`sensor_detection.py:63`** calls a non-existent `g_kTimerManager.GetGameTime()` and silently returns 0.0 forever.
-6. **`ET_CLOAKED_COLLISION` and `ET_POWER_FRACTION_CHANGED` are both `1075`** (`App.py:913`, `:941`).
+6. **HISTORICAL, fixed 2026-08-31 — `ET_CLOAKED_COLLISION` and `ET_POWER_FRACTION_CHANGED` were both `1075`** (`App.py:913`, `:941`). That was an artifact of this project's own invented sequential `ET_*` numbering, pre-dating the q13 constant-surface sweep
+   (`docs/superpowers/sdd/2026-08-31-q13-constant-surface-sweep/`); the sweep
+   replaced every `ET_*` with its measured value from the real binary
+   (distinct values in the `0x800000+` band), so the two are no longer equal.
+   Left here as a record of what the invented numbering used to get wrong,
+   not a current defect.
 
 ## Live sign-off (after q12 unblocks `ET_TORPEDO_FIRED`)
 

@@ -1,11 +1,19 @@
 # Engine constant dump — ground-truth values for every `App` constant
 
-Status: ANSWERED — menu + battle phases captured & analyzed 2026-07-13. Surface
-        confirmed state-invariant. Shim fix pass (226 wrong + ~1600 unique
-        missing) is the remaining follow-up work, tracked separately.
+Status: CLOSED — menu + battle phases captured & analyzed 2026-07-13. Surface
+        confirmed state-invariant. Shim fix pass executed and complete
+        2026-08-31 (`docs/superpowers/sdd/2026-08-31-q13-constant-surface-sweep/`,
+        Tasks 1-11): all 3,829 measured constants applied to
+        `engine/appc/constants_generated.py`. Final state —
+        `ok=3825 wrong=4 missing=0` — with the 4 remaining `wrong` being
+        declared deviations (`PI`, `HALF_PI`, `TWO_PI`, `FOURTH_PI`, which we
+        hold at Python double precision against BC's float32) rather than
+        unfixed defects. `tests/unit/test_constant_surface.py` ratchets this
+        floor; see `CLAUDE.md`'s "Measured constant surface" row for the
+        generator/deviation mechanics.
 Author: Claude session (q13 constant-surface probe plan)
 Created: 2026-07-13
-Closed:  2026-07-13
+Closed:  2026-07-13 (probe); shim fix pass closed 2026-08-31
 
 ## Goal
 

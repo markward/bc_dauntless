@@ -395,8 +395,13 @@ These surfaced during verification. All are real; none belong in this project.
    `ET_CANT_FIRE` — the latter silently disables the out-of-ammo / not-loaded voice
    lines and UI sounds in `TacticalMenuHandlers`. The friendly-fire chain
    (`MissionLib.py:3583`) is dead the same way.
-5. **`ET_CLOAKED_COLLISION` and `ET_POWER_FRACTION_CHANGED` are both `1075`**
-   (`App.py:913`, `:941`) — with dict-keyed dispatch these cross-fire.
+5. **HISTORICAL, fixed 2026-08-31 — `ET_CLOAKED_COLLISION` and `ET_POWER_FRACTION_CHANGED` were both `1075`**
+   (`App.py:913`, `:941`) — with dict-keyed dispatch these cross-fired. This
+   was an artifact of this project's own invented sequential `ET_*`
+   numbering; the q13 constant-surface sweep
+   (`docs/superpowers/sdd/2026-08-31-q13-constant-surface-sweep/`) replaced
+   every `ET_*` with its measured value from the real binary, so the two are
+   no longer equal. Kept as a record, not a current defect.
 6. **`MissionLib.py:4247`** — `if kOpenEvent == kCloseEvent:` is `True` for two
    *different* stub event types (type-based `_Stub.__eq__`).
 7. **RE the torpedo projectile path** — closes `ET_TORPEDO_FIRED` properly, and q12

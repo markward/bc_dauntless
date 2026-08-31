@@ -59,6 +59,12 @@ ET_TORPEDO_FIRED:  int = 0x00800066
 #                            for fidelity + mod surface.
 #   ET_TORPEDO_AMMO_CONSUMED 0x00800067, posted on torpedo fire ONLY when the
 #                            firing ship is the player ship (BC locality gate).
+#                            CONFIRMED 2026-08-31 by the q13 constant sweep:
+#                            this RE'd value equals BC's own published
+#                            App.ET_PLAYER_TORPEDO_COUNT_CHANGED (also
+#                            0x800067) -- independent corroboration that the
+#                            player-only gate above is the real behaviour;
+#                            only the NAME here was ours.
 ET_WEAPON_FIRED:           int = 0x0080007C
 # The q13 dump shows BC has no distinct "fire failed" event: 0x00800037 IS
 # ET_CANT_FIRE.  Keep the descriptive name as an alias rather than a second
