@@ -1967,9 +1967,13 @@ def __getattr__(name):
 # docs/superpowers/plans/2026-08-31-q13-constant-surface-sweep.md).
 # Task 5 lands the ET_ family: every ET_ name the dump supplies now wins
 # over whatever value this module (or an import it pulls in, e.g.
-# engine.appc.events) already bound.
+# engine.appc.events) already bound.  Task 6 adds CSP_MISSION_CRITICAL and
+# CSP_SPONTANEOUS -- BC's polarity is the reverse of the invented values
+# (lower number = higher priority); CSP_NORMAL is already correct at 1 so
+# it does not need a correction entry.
 CORRECT_EXISTING: frozenset[str] = frozenset(
-    n for n in MODULE_CONSTANTS if n.startswith("ET_")
+    [n for n in MODULE_CONSTANTS if n.startswith("ET_")]
+    + ["CSP_MISSION_CRITICAL", "CSP_SPONTANEOUS"]
 )
 
 apply_constants(

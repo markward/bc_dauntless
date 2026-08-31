@@ -16,7 +16,7 @@ from tools.constant_surface_audit import load
 #   585 at Task 4 -> 437 (T5 ET_ 148) -> 435 (T6 CSP_ 2)
 #       -> 88 (T7 keyboard 347) -> 41 (T8 UI 47) -> 4 (T9 CT_ 37)
 # 4 is the floor: the four PI-family deviations.
-REMAINING_WRONG = 437
+REMAINING_WRONG = 435
 
 # Keyboard names deferred to Task 7, which drives this to 0.
 REMAINING_MISSING = 105

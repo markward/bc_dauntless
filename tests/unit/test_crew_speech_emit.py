@@ -128,14 +128,16 @@ def test_skip_current_stops_voice_frees_channel_clears_subtitle(monkeypatch):
                    CSP_NORMAL, now=100.0) == 5.0
     assert _subtitle()._snapshot(now=0.0)["speech"] == "Shields holding"
     # Channel is held: a lower-priority line is dropped while the line lives.
-    assert b.speak("Helm", "Aye", None, CSP_NORMAL - 1, now=101.0) == 0.0
+    # BC's polarity is LOWER number = HIGHER priority (see ai.py CSP_*), so a
+    # lower-priority line has a LARGER number.
+    assert b.speak("Helm", "Aye", None, CSP_NORMAL + 1, now=101.0) == 0.0
 
     b.skip_current(now=101.0)
 
     assert handle.stopped                        # voice cut mid-line
     assert _subtitle()._snapshot(now=0.0) is None  # subtitle gone immediately
     # Channel freed: the same lower-priority line is accepted now.
-    assert b.speak("Helm", "Aye", None, CSP_NORMAL - 1, now=101.0) > 0.0
+    assert b.speak("Helm", "Aye", None, CSP_NORMAL + 1, now=101.0) > 0.0
 
 
 def test_skip_current_notifies_listeners_speech_ended(monkeypatch):

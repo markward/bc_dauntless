@@ -11,6 +11,7 @@ Spec: docs/superpowers/specs/2026-06-13-bridge-crew-speech-design.md
 """
 from __future__ import annotations
 
+import sys
 import time
 from typing import Optional
 
@@ -92,7 +93,7 @@ def _estimate_duration(text: Optional[str], wav: Optional[str]) -> float:
 
 class CrewSpeechBus:
     def __init__(self) -> None:
-        self._active_priority: int = -1
+        self._active_priority: int = sys.maxsize  # idle: any line outranks silence
         self._active_expiry: float = 0.0
         self._active_speaker: str = ""
         self._active_handle = None   # _PlayingSound of the line on the channel
@@ -103,7 +104,7 @@ class CrewSpeechBus:
 
     def reset(self) -> None:
         self._stop_active_voice()
-        self._active_priority = -1
+        self._active_priority = sys.maxsize  # idle: any line outranks silence
         self._active_expiry = 0.0
         self._active_speaker = ""
         self._last_talk.clear()
@@ -128,7 +129,7 @@ class CrewSpeechBus:
         line_live = now < self._active_expiry or self._active_handle is not None
         self._stop_active_voice()
         self._active_expiry = 0.0
-        self._active_priority = -1
+        self._active_priority = sys.maxsize  # idle: any line outranks silence
         self._active_speaker = ""
         if not line_live:
             return
@@ -152,7 +153,10 @@ class CrewSpeechBus:
             return 0.0  # nothing to say — don't occupy the channel
         priority = int(priority)
         line_live = now < self._active_expiry
-        if line_live and priority < self._active_priority:
+        # BC's priority polarity is LOWER = MORE important (CSP_MISSION_CRITICAL
+        # is 0), so a line is dropped when its number is GREATER than the one
+        # already talking.  See engine/appc/ai.py CSP_* .
+        if line_live and priority > self._active_priority:
             return 0.0  # a higher-priority line is still talking
         # If a line is still live, this one preempts it: stop the previous voice
         # so two lines never overlap audibly (BC plays one crew/comm voice at a

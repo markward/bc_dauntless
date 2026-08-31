@@ -48,10 +48,13 @@ def test_additive_pass_changes_no_existing_value():
 
     437 (post-Task 5): Task 5 corrected the 148 ET_* event-type constants
     (App.py's invented numbering -> the q13-measured values), the first
-    correction round this sweep has landed."""
+    correction round this sweep has landed.
+
+    435 (post-Task 6): Task 6 corrected the 2 CSP_* speech-priority
+    constants (CSP_MISSION_CRITICAL, CSP_SPONTANEOUS)."""
     from tools.constant_surface_audit import load
     _, _, wrong, _, _ = load()
-    assert len(wrong) == 437, "wrong-value count drifted from Task 5's landed corrections"
+    assert len(wrong) == 435, "wrong-value count drifted from Task 6's landed corrections"
 
 
 def test_deviations_are_respected():

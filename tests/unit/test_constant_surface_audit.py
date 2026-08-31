@@ -40,8 +40,12 @@ def test_load_partitions_every_usable_row():
     # `ok`; nothing else changes), so as of Task 5: ok 3139 -> 3287,
     # wrong 585 -> 437. missing/noclass are untouched -- ET_ names were all
     # already defined (just wrong), never missing.
-    assert len(ok) == 3287, f"ok bucket: expected 3287, got {len(ok)}"
-    assert len(wrong) == 437, f"wrong bucket: expected 437, got {len(wrong)}"
+    #
+    # Task 6 corrected the 2 CSP_* constants (CSP_MISSION_CRITICAL,
+    # CSP_SPONTANEOUS -- moved `wrong` -> `ok`): ok 3287 -> 3289,
+    # wrong 437 -> 435.
+    assert len(ok) == 3289, f"ok bucket: expected 3289, got {len(ok)}"
+    assert len(wrong) == 435, f"wrong bucket: expected 435, got {len(wrong)}"
     assert len(missing) == 105, f"missing bucket: expected 105, got {len(missing)}"
     assert len(noclass) == 0, f"noclass bucket: expected 0, got {len(noclass)}"
     assert len(ok) + len(wrong) + len(missing) + len(noclass) == len(rows)
