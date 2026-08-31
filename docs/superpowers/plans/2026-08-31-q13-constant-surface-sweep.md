@@ -1003,7 +1003,7 @@ must move to the constant. Add the four families to `CORRECT_EXISTING`.
 - [ ] **Step 4: Run the tests**
 
 ```bash
-uv run pytest tests/unit/test_keyboard_constant_table.py tests/unit/test_wc_constants.py tests/unit/test_wc_modifier_constants.py tests/unit/test_raw_keyboard_dispatch.py tests/unit/test_input_map_controls.py -v
+uv run pytest tests/unit/test_keyboard_constant_table.py tests/unit/test_wc_constants.py tests/unit/test_wc_modifier_constants.py tests/unit/test_raw_keyboard_dispatch.py tests/unit/test_input_map.py -v
 scripts/check_tests.sh
 ```
 Expected: PASS. Lower `REMAINING_WRONG` to `88` and `REMAINING_MISSING` to `0`.
@@ -1091,6 +1091,21 @@ Expected: PASS. Lower `REMAINING_WRONG` to `41`.
 Confirm the tactical weapons display, the engineering repair pane and the
 bridge menus still lay out correctly — `ALIGN_*` and the `WeaponsDisplay` pane
 indices are pure layout and no test can see them.
+
+**Undocumented audible change surfaced by the whole-branch review (post-merge
+fix round):** this task also corrected `TGSound.LS_3D` from `0` to `1`
+(`engine/audio/tg_sound.py`). `engine/audio/tg_sound.py:363` computes
+`positional = (loadspec == TGSound.LS_3D)`, so under the OLD (wrong) `LS_3D ==
+0`, four SDK call sites passing a bare literal `0` loaded as **positional**
+and now correctly load as **2D**: `LoadTacticalSounds.py:81` ("Warp Flash")
+and `Multiplayer/MultiplayerGame.py:46-48` (red/yellow/green alert). This is
+BC-correct — BC's `LS_*` are flags, `0` means no flags set therefore not 3D,
+and an alert klaxon should not pan with camera position — so it is a fix, not
+a regression, but it is an audible change and nothing on the branch mentioned
+it before this note. **Add to the live-check list above:** trigger a
+red/yellow/green alert and the warp flash and confirm those sounds play
+centered/non-positional (no left/right pan as the camera or ship moves),
+where before this fix they would have incorrectly panned like a 3D emitter.
 
 - [ ] **Step 6: Commit**
 

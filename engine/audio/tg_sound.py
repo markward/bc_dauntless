@@ -89,6 +89,18 @@ class _PlayingSound:
 class TGSound:
     # Loadspec constants -- BC measured values (q13 dump,
     # CLASS_CONSTANTS["TGSound"] in engine/appc/constants_generated.py).
+    #
+    # LS_3D moved 0 -> 1 in the q13 sweep. `positional = (loadspec ==
+    # TGSound.LS_3D)` below, so under the OLD (invented) LS_3D == 0, a bare
+    # literal `0` passed by an SDK call site loaded as POSITIONAL; under the
+    # corrected LS_3D == 1 the same literal `0` now loads as 2D. Four real
+    # call sites hit this: LoadTacticalSounds.py:81 ("Warp Flash") and
+    # Multiplayer/MultiplayerGame.py:46-48 (red/yellow/green alert) all pass
+    # a bare 0. This is BC-correct, not a regression -- BC's LS_* are flags,
+    # 0 means no flags set therefore not 3D, and an alert klaxon should not
+    # pan with camera position -- but it IS an audible behaviour change with
+    # no automated test able to hear it. See the live-check note in
+    # docs/superpowers/plans/2026-08-31-q13-constant-surface-sweep.md, Task 8.
     LS_3D = 1
     LS_STREAMED = 2
     LS_DELAY_LOADING = 4

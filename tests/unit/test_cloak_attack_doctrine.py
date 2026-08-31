@@ -74,7 +74,7 @@ def _cloak_ship(name, x, y):
     # cloak recursion disables UseCloaking, so it falls to the else branch and
     # reads pShip.GetShipProperty().GetSpecies() — which now returns the real
     # ShipProperty (a Romulan warbird), not a silent _Stub.
-    sp = App.ShipProperty_Create("Warbird"); sp.SetSpecies(App.SPECIES_ROMULAN_WARBIRD)
+    sp = App.ShipProperty_Create("Warbird"); sp.SetSpecies(App.SPECIES_WARBIRD)
     s.GetPropertySet().AddToSet("Scene Root", sp)
     s.SetupProperties()
     _equip(s)

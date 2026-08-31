@@ -98,6 +98,55 @@ def test_every_deviation_is_really_defined():
         assert defined, "%s is in DEVIATIONS but not really defined on App" % qualified
 
 
+def test_apply_constants_returns_accurate_counts():
+    """`apply_constants`'s `counts` dict has exactly one production caller
+    (App.py's `apply_constants(...)` call), and it discards the return value
+    entirely -- so this test is the ONLY thing that keeps the dict's shape
+    and semantics honest. In particular it pins the documented gap: a
+    constant that is ALREADY correct (module- or class-scope) increments
+    NOTHING -- there is no "already right" bucket, only added/corrected."""
+    class Foo:
+        EXISTING_RIGHT = 1
+        EXISTING_WRONG = 2
+
+    fake_module = types.ModuleType("fake_constants_apply_counts_target")
+    fake_module.Foo = Foo
+    fake_module.MODULE_ALREADY_RIGHT = 10
+    fake_module.MODULE_ALREADY_WRONG = 20
+
+    counts = apply_constants(
+        fake_module,
+        {
+            "MODULE_ALREADY_RIGHT": 10,     # matches -> no count at all
+            "MODULE_ALREADY_WRONG": 999,    # differs, in correct_existing -> corrected
+            "MODULE_NEW": 5,                # missing -> added
+            "MODULE_DEVIATION": 42,         # declared deviation -> skipped
+        },
+        {
+            "Foo": {
+                "EXISTING_RIGHT": 1,        # matches -> the documented gap: no count
+                "EXISTING_WRONG": 999,      # differs, in correct_existing -> corrected
+                "NEW_ATTR": 7,              # missing -> added
+            },
+            "Bar": {"X": 1},                # class doesn't exist yet -> synthesized
+        },
+        {"MODULE_DEVIATION": "test deviation, not a real DEVIATIONS entry"},
+        correct_existing=frozenset(["MODULE_ALREADY_WRONG", "Foo.EXISTING_WRONG"]),
+        named_stub_factory=lambda n: None,
+    )
+
+    assert counts == dict(
+        module_added=1, module_corrected=1, class_added=1, class_corrected=1,
+        classes_synthesized=1, skipped=1,
+    )
+    # The gap itself, made concrete: EXISTING_RIGHT already agreed, so it is
+    # invisible in every bucket -- neither added, corrected, nor skipped.
+    assert Foo.EXISTING_RIGHT == 1
+    assert Foo.EXISTING_WRONG == 999
+    assert fake_module.MODULE_NEW == 5
+    assert fake_module.Foo.NEW_ATTR == 7
+
+
 def test_shadow_guard_preserves_falsy_real_attributes():
     """A real class attribute valued None or 0 must not read as 'absent' and
     get overwritten by an injected constant -- that would silently corrupt

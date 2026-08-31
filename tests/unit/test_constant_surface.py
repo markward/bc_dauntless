@@ -27,10 +27,12 @@ from tools.constant_surface_audit import load
 # (WeaponsDisplay 20, TGParagraph 5, TGUIObject.ALIGN_* 3, TGSound 3,
 # EffectController 3, TGModelPropertyManager 2, FloatRangeWatcher 2,
 # ObjectGroup 2, ObjectGroupWithInfo 2, EngRepairPane.DIVIDER 1, TGFrame 1,
-# STBSF_SIZE_TO_TEXT 1, SPECIES_GALAXY/SPECIES_SOVEREIGN 2). See App.py's
-# CORRECT_EXISTING comment block for which of those thirteen families are
-# corrected there versus fixed directly at an engine/ definition site (the
-# TGUIObject.ALIGN_* / ANCHOR_FRACTIONS coupling in particular).
+# STBSF_SIZE_TO_TEXT 1, SPECIES_GALAXY/SPECIES_SOVEREIGN 2). None of Task 8's
+# thirteen families end up in CORRECT_EXISTING -- each is fixed directly at
+# its own definition site (App.py itself for WeaponsDisplay/EngRepairPane/
+# STBSF_SIZE_TO_TEXT/SPECIES_*, an engine/ module for everything else). See
+# App.py's CORRECT_EXISTING comment block for the reasoning, and the
+# TGUIObject.ALIGN_* / ANCHOR_FRACTIONS coupling in particular.
 #
 # Task 9 corrected the last 37 -- the CT_* object type-tags, the only
 # structurally-mismatched family in the sweep. Every other correction was
@@ -164,10 +166,13 @@ def test_no_two_event_types_collide_except_the_known_aliases():
 
 def test_ui_class_constants_are_the_measured_values():
     """Task 8: WeaponsDisplay/EngRepairPane/STBSF_SIZE_TO_TEXT/SPECIES_* are
-    corrected via App.py's CORRECT_EXISTING (they have no engine/ definition
-    site of their own); TGUIObject.ALIGN_* is corrected at its real numeric
-    source, engine/appc/tg_ui/layout.py (see App.py's CORRECT_EXISTING
-    comment for why -- ALIGN_* is NOT itself in CORRECT_EXISTING)."""
+    bound directly from CLASS_CONSTANTS/MODULE_CONSTANTS at their own
+    definition site in App.py -- NOT via CORRECT_EXISTING (a post-review fix
+    round found the original CORRECT_EXISTING approach left 24 stale,
+    hand-typed literals sitting dead in the class bodies underneath the
+    correction). TGUIObject.ALIGN_* is corrected at its real numeric source,
+    engine/appc/tg_ui/layout.py (see App.py's CORRECT_EXISTING comment for
+    why -- ALIGN_* is NOT itself in CORRECT_EXISTING either)."""
     import App
     assert App.TGUIObject.ALIGN_UR == 1 and App.TGUIObject.ALIGN_BL == 2
     assert App.EngRepairPane.DIVIDER == 6

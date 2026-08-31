@@ -59,14 +59,14 @@ sweep did not attempt to recover it from the reference.
 **Engine emitter candidate:** `engine/appc/ships.py:1565-1571`
 (`ShipClass.SetTarget`) already posts `ET_TARGET_WAS_CHANGED` on an actual
 target change. The same call site is the natural place to also post
-`ET_SET_TARGET` — but note `engine/ui/target_list_view.py:7-9` currently
-CLAIMS `pPlayer.SetTarget(name)` "fires ET_SET_TARGET and
-ET_TARGET_WAS_CHANGED via the engine's existing event machinery." That
-comment is wrong as of this audit: `SetTarget` posts only
-`ET_TARGET_WAS_CHANGED`. Flagging this here rather than silently fixing it —
-fixing the comment is not in this task's scope, and correcting behaviour
-without knowing what BC's actual ET_SET_TARGET/ET_TARGET_WAS_CHANGED split
-means risks introducing a wrong distinction.
+`ET_SET_TARGET` — `SetTarget` posts only `ET_TARGET_WAS_CHANGED` today.
+`engine/ui/target_list_view.py:7-9`'s comment used to claim
+`pPlayer.SetTarget(name)` "fires ET_SET_TARGET and ET_TARGET_WAS_CHANGED via
+the engine's existing event machinery"; that was wrong as of the original
+audit and was corrected in `cdc72fe2` to point back at this gap instead.
+Correcting the actual *behaviour* is still out of scope here — without
+knowing what BC's ET_SET_TARGET/ET_TARGET_WAS_CHANGED split means, adding an
+emitter risks introducing a wrong distinction.
 
 ---
 

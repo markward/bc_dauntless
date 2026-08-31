@@ -69,6 +69,86 @@ def test_registry_covers_every_previously_class_bound_constant():
     assert len(registered_tags()) == 37
 
 
+# Independent copy of App.py's `_CT_CLASS_FOR_TAG` table (App.py:384-425),
+# transcribed here on purpose rather than imported from App.py: importing it
+# would make this test blind to exactly the bug it exists to catch (a wrong
+# class typed into that table). `registered_tags()` above only proves every
+# tag resolves to SOME type, not the RIGHT one -- a wrong class on any one of
+# the 37 rows (e.g. CT_DEBRIS -> AsteroidTile) passed every test on the
+# branch before this one. Both sides are read off App itself (never
+# hand-typed classes/tags from a different source), so a rename on either
+# side shows up as an AttributeError here, not a silent pass.
+_EXPECTED_CT_CLASS_ATTR = {
+    "CT_SUBSYSTEM_PROPERTY":            "SubsystemProperty",
+    "CT_POSITION_ORIENTATION_PROPERTY": "PositionOrientationProperty",
+    "CT_OBJECT_EMITTER_PROPERTY":       "ObjectEmitterProperty",
+    "CT_HULL_SUBSYSTEM":                "HullProperty",
+    "CT_POWER_SUBSYSTEM":               "PowerProperty",
+    "CT_SHIELD_SUBSYSTEM":              "ShieldProperty",
+    "CT_SENSOR_SUBSYSTEM":              "SensorProperty",
+    "CT_REPAIR_SUBSYSTEM":              "RepairSubsystemProperty",
+    "CT_IMPULSE_ENGINE_SUBSYSTEM":      "ImpulseEngineProperty",
+    "CT_WARP_ENGINE_SUBSYSTEM":         "WarpEngineProperty",
+    "CT_CLOAKING_SUBSYSTEM":            "CloakingSubsystemProperty",
+    "CT_PHASER_SYSTEM":                 "PhaserProperty",
+    "CT_PULSE_WEAPON_SYSTEM":           "PulseWeaponProperty",
+    "CT_TORPEDO_SYSTEM":                "TorpedoSystemProperty",
+    "CT_TRACTOR_BEAM_SYSTEM":           "TractorBeamProperty",
+    "CT_WEAPON_SYSTEM":                 "WeaponSystemProperty",
+    "CT_WEAPON":                        "WeaponProperty",
+    "CT_ENERGY_WEAPON":                 "EnergyWeaponProperty",
+    "CT_SHIP":                          "ShipProperty",
+    "CT_SHIP_SUBSYSTEM":                "ShipSubsystem",
+    "CT_OBJECT":                        "ObjectClass",
+    "CT_DAMAGEABLE_OBJECT":             "DamageableObject",
+    "CT_CHARACTER":                     "CharacterClass",
+    "CT_BACKDROP":                      "Backdrop",
+    "CT_PROXIMITY_CHECK":               "ProximityCheck",
+    "CT_PLANET":                        "Planet",
+    "CT_SUN":                           "Sun",
+    "CT_NEBULA":                        "Nebula",
+    "CT_TORPEDO":                       "Torpedo",
+    "CT_DEBRIS":                        "Debris",
+    "CT_ASTEROID_FIELD":                "AsteroidField",
+    "CT_ASTEROID_TILE":                 "AsteroidTile",
+    "CT_GRID":                          "Grid",
+    "CT_PLACEMENT":                     "Placement",
+    "CT_MULTIPLAYER_GAME":              "MultiplayerGame",
+    "CT_ST_MENU":                       "STMenu",
+    "CT_SORTED_REGION_MENU":            "SortedRegionMenu",
+}
+
+
+# CT_ASTEROID_FIELD is the one deliberate exception to strict identity: the CT_
+# loop registers App.py's bare `class AsteroidField(ObjectClass): pass`, and
+# `App.AsteroidField` is THEN rebound (App.py:442-443, after the loop) to the
+# richer engine.appc.asteroid_field.AsteroidField subclass, specifically so
+# that `from App import AsteroidField` inside that module doesn't circular-
+# import -- see App.py's own comment there. isinstance (what every real
+# consumer uses) still matches because the subclass IS the registered base;
+# identity does not, by design, so this row is checked as a subclass
+# relationship instead of `is`.
+_SUBCLASS_NOT_IDENTITY = {"CT_ASTEROID_FIELD"}
+
+
+def test_every_ct_row_resolves_to_its_own_declared_class():
+    """Coverage hole closed by the whole-branch review: a wrong class typed
+    into any one of App.py's 37 `_CT_CLASS_FOR_TAG` rows would have passed
+    every other test on the branch (only the row count and two behavioural
+    pairs were pinned). Check `class_for(App.CT_X) is X` for all 37 (one
+    documented exception: see `_SUBCLASS_NOT_IDENTITY`)."""
+    import App
+    assert len(App._CT_CLASS_FOR_TAG) == 37
+    assert len(_EXPECTED_CT_CLASS_ATTR) == 37
+    for ct_name, cls_attr in _EXPECTED_CT_CLASS_ATTR.items():
+        registered = class_for(getattr(App, ct_name))
+        expected = getattr(App, cls_attr)
+        if ct_name in _SUBCLASS_NOT_IDENTITY:
+            assert issubclass(expected, registered), ct_name
+        else:
+            assert registered is expected, ct_name
+
+
 def test_class_for_returns_none_for_an_unknown_tag():
     assert class_for(0x7FFF) is None
 

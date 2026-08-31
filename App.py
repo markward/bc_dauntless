@@ -226,7 +226,9 @@ from engine.appc.characters import (
     STTopLevelMenu_GetOpenMenu,
 )
 # STButton size-to-text flag — TacticalMenuHandlers uses App.STBSF_SIZE_TO_TEXT.
-STBSF_SIZE_TO_TEXT = STButton.STBSF_SIZE_TO_TEXT
+# Read straight from the q13 measured table (App.py is the definition site;
+# STButton has no such class attribute of its own — see characters.py).
+STBSF_SIZE_TO_TEXT = MODULE_CONSTANTS["STBSF_SIZE_TO_TEXT"]
 from engine.appc.target_menu import (
     STSubsystemMenu, STSubsystemMenu_Cast,
     STComponentMenu, STComponentMenu_Cast,
@@ -1307,21 +1309,19 @@ g_kEngineeringCtrlBkgndLineColor = globals.g_kEngineeringCtrlBkgndLineColor
 g_kInterfaceBorderColor          = globals.g_kInterfaceBorderColor
 
 # ── Ship species constants ────────────────────────────────────────────────────
-# Used by WeaponsDisplay.SetShipIcon and other art routines.  Exact Appc values
-# are not available; we use unique sentinel integers — they are only ever passed
-# to TGIcon_Create("ShipIcons", SPECIES_*) where headless rendering ignores them.
-SPECIES_GALAXY          = 0
-SPECIES_DEFIANT         = 1
-SPECIES_SOVEREIGN       = 2
-SPECIES_KLINGON_BOK_RAT = 3
-SPECIES_KLINGON_KVORT   = 4
-SPECIES_KLINGON_NEGH_VAR= 5
-SPECIES_ROMULAN_WARBIRD = 6
-SPECIES_BORG_CUBE       = 7
-SPECIES_BORG_SPHERE     = 8
-SPECIES_CARDASSIAN      = 9
-SPECIES_FERENGI         = 10
-SPECIES_GENERIC         = 11
+# Used by WeaponsDisplay.SetShipIcon, other art routines, and symbolic
+# comparisons against ShipProperty.GetSpecies() (MissionLib.py's
+# `kSpecies == App.SPECIES_GALAXY`, TacticalCharacterHandlers.py, etc.).
+# Read straight from the q13 measured table — App.py is the definition site
+# for these two names (no engine/ module backs them). To look one up: grep
+# constants_generated.py for the quoted name, e.g.
+#     grep "'SPECIES_GALAXY'" engine/appc/constants_generated.py   -> 101
+# BC's real numbering is not a small dense 0..N enum: measured values run
+# 0..715 across federation/klingon/romulan/cardassian/ferengi/kessok/generic
+# blocks (see MODULE_CONSTANTS for the full SPECIES_* set) — only the two
+# names Dauntless actually compares against are bound here.
+SPECIES_GALAXY    = MODULE_CONSTANTS["SPECIES_GALAXY"]
+SPECIES_SOVEREIGN = MODULE_CONSTANTS["SPECIES_SOVEREIGN"]
 
 # ── Tactical / Engineering display widget factories ────────────────────────────
 # TacticalMenuHandlers and EngineerMenuHandlers create several purely-visual
@@ -1412,39 +1412,38 @@ class _DisplayWidget:
 class WeaponsDisplay:
     """Constants for child-pane slot indices (SDK App.WeaponsDisplay.*).
 
-    The exact Appc values are not available without running the DLL.  We use
-    unique sequential integers so that getattr accesses succeed and dict-keyed
-    lookups in GetNthChild don't alias.  The actual values don't matter because
-    our _BackRefPane.GetNthChild returns a fresh _SelfParentedPane for every
-    slot, and no SDK code treats the index as a magic number outside of
-    App.WeaponsDisplay.<NAME>.
+    Values are bound below straight from the q13 measured table — App.py is
+    the definition site for this class (no engine/ module backs it). To look
+    one up: engine.appc.constants_generated.CLASS_CONSTANTS["WeaponsDisplay"],
+    or at runtime `App.WeaponsDisplay.<NAME>` (grepping this file for e.g.
+    "TORPEDO_PANE =" finds nothing — see the loop right after this class).
+
+    IMPORTANT — measured BC data, not a bug: BC shares ONE class namespace
+    between what our reading treated as a separate border enum and pane enum,
+    so several of these DELIBERATELY ALIAS, e.g.
+    TORPEDO_PANE == TOP_RIGHT_BORDER == 0 and
+    GLASS == LOWER_DISRUPTOR_INDICATOR_PANE == 8. Do NOT "fix" these by
+    handing out unique sequential integers again — that was this class's
+    previous (wrong) state. See
+    test_weapons_display_keeps_bcs_intentional_duplicates.
     """
-    DISPLAY_PANE                    = 0
-    TORPEDO_PANE                    = 1
-    ICON_PANE                       = 2
-    TOP_RIGHT_BORDER                = 3
-    TOP_BORDER                      = 4
-    LEFT_TOP_BORDER                 = 5
-    LEFT_BORDER                     = 6
-    LEFT_BOTTOM_BORDER              = 7
-    RIGHT_TOP_BORDER                = 8
-    RIGHT_BORDER                    = 9
-    RIGHT_BOTTOM_BORDER             = 10
-    GLASS                           = 11
-    UPPER_PHASER_PANE               = 12
-    UPPER_PHASER_INDICATOR_PANE     = 13
-    UPPER_DISRUPTOR_PANE            = 14
-    UPPER_DISRUPTOR_INDICATOR_PANE  = 15
-    LOWER_PHASER_PANE               = 16
-    LOWER_PHASER_INDICATOR_PANE     = 17
-    LOWER_DISRUPTOR_PANE            = 18
-    LOWER_DISRUPTOR_INDICATOR_PANE  = 19
-    SHIP_ICON                       = 20
+
+
+for _wd_name, _wd_value in CLASS_CONSTANTS["WeaponsDisplay"].items():
+    setattr(WeaponsDisplay, _wd_name, _wd_value)
 
 
 class EngRepairPane:
-    """Constants for EngRepairPane child slots (SDK App.EngRepairPane.*)."""
-    DIVIDER = 0
+    """Constants for EngRepairPane child slots (SDK App.EngRepairPane.*).
+
+    Values are bound below straight from the q13 measured table
+    (CLASS_CONSTANTS["EngRepairPane"]) — App.py is the definition site for
+    this class, so there is nothing to hand-type.
+    """
+
+
+for _erp_name, _erp_value in CLASS_CONSTANTS["EngRepairPane"].items():
+    setattr(EngRepairPane, _erp_name, _erp_value)
 
 
 def WeaponsDisplay_Cast(obj) -> "_DisplayWidget | None":
@@ -2046,14 +2045,19 @@ def __getattr__(name):
 # same way, by definition site:
 #
 #   WeaponsDisplay (20), EngRepairPane.DIVIDER (1), STBSF_SIZE_TO_TEXT (1),
-#   SPECIES_GALAXY/SPECIES_SOVEREIGN (2) -- 24 values, listed below. These
-#   classes/names exist ONLY in this module: WeaponsDisplay and EngRepairPane
-#   have no engine/ counterpart (their class bodies are right here), and
-#   STBSF_SIZE_TO_TEXT/SPECIES_* are plain module-scope ints with no engine
-#   module backing them either. App.py IS the definition site, so a
-#   CORRECT_EXISTING entry is both correct and the only place these CAN be
-#   corrected -- no self-heal risk, because there is no separate copy
-#   anywhere else that could independently regress out from under it.
+#   SPECIES_GALAXY/SPECIES_SOVEREIGN (2) -- 24 values. App.py IS the
+#   definition site for all four names (WeaponsDisplay/EngRepairPane have no
+#   engine/ counterpart; STBSF_SIZE_TO_TEXT/SPECIES_* are plain module-scope
+#   ints with no engine module backing them). These are therefore bound the
+#   same way the CT_* object type-tags are (see the loop right after each
+#   class body, and the SPECIES_*/STBSF_SIZE_TO_TEXT module-scope assignments
+#   above) -- straight out of CLASS_CONSTANTS/MODULE_CONSTANTS, NOT listed
+#   here. A CORRECT_EXISTING entry for a name whose class body already reads
+#   the measured value at definition time would be dead code at best; the
+#   review round that landed this comment found it had also let 24 literal
+#   values in the WeaponsDisplay/EngRepairPane class bodies (and the
+#   STBSF_SIZE_TO_TEXT docstring) go stale and misleading for a full task
+#   cycle, papered over by the correction silently running underneath.
 #
 #   TGParagraph.TGPF_*, TGSound.LS_*, EffectController.{LOW,MEDIUM,HIGH},
 #   TGModelPropertyManager.{LOCAL,GLOBAL}_TEMPLATES,
@@ -2100,35 +2104,15 @@ def __getattr__(name):
 #   non-colliding slots 4-8. TGUIObject's `ALIGN_X = _tg_ui_layout.ALIGN_X`
 #   copies then pick up the corrected values automatically, with
 #   ANCHOR_FRACTIONS staying internally self-consistent by construction.
+# Only the two families with a genuine self-heal risk stay here: ET_* and
+# CSP_* are copied-by-value module-scope ints whose definition sites live
+# elsewhere (engine.appc.events / engine.appc.ai) and could independently
+# drift. Every other family this sweep corrected is bound directly from
+# CLASS_CONSTANTS/MODULE_CONSTANTS at its own definition site (see the Task
+# 8/9 comments above) and deliberately does NOT appear here.
 CORRECT_EXISTING: frozenset[str] = frozenset(
     [n for n in MODULE_CONSTANTS if n.startswith("ET_")]
     + ["CSP_MISSION_CRITICAL", "CSP_SPONTANEOUS"]
-    + [
-        "WeaponsDisplay.GLASS",
-        "WeaponsDisplay.ICON_PANE",
-        "WeaponsDisplay.LEFT_BORDER",
-        "WeaponsDisplay.LEFT_BOTTOM_BORDER",
-        "WeaponsDisplay.LEFT_TOP_BORDER",
-        "WeaponsDisplay.LOWER_DISRUPTOR_INDICATOR_PANE",
-        "WeaponsDisplay.LOWER_DISRUPTOR_PANE",
-        "WeaponsDisplay.LOWER_PHASER_INDICATOR_PANE",
-        "WeaponsDisplay.LOWER_PHASER_PANE",
-        "WeaponsDisplay.RIGHT_BORDER",
-        "WeaponsDisplay.RIGHT_BOTTOM_BORDER",
-        "WeaponsDisplay.RIGHT_TOP_BORDER",
-        "WeaponsDisplay.SHIP_ICON",
-        "WeaponsDisplay.TOP_BORDER",
-        "WeaponsDisplay.TOP_RIGHT_BORDER",
-        "WeaponsDisplay.TORPEDO_PANE",
-        "WeaponsDisplay.UPPER_DISRUPTOR_INDICATOR_PANE",
-        "WeaponsDisplay.UPPER_DISRUPTOR_PANE",
-        "WeaponsDisplay.UPPER_PHASER_INDICATOR_PANE",
-        "WeaponsDisplay.UPPER_PHASER_PANE",
-        "EngRepairPane.DIVIDER",
-        "STBSF_SIZE_TO_TEXT",
-        "SPECIES_GALAXY",
-        "SPECIES_SOVEREIGN",
-    ]
 )
 
 apply_constants(
