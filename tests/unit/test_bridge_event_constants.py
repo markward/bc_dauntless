@@ -19,11 +19,22 @@ def test_bridge_event_constants_are_distinct_ints():
     assert len(set(values)) == len(values)
 
 
-def test_bridge_event_constants_below_allocator_start():
-    # Game_GetNextEventType allocates from 1200 up; static constants must
-    # never collide with allocated ids.
+def test_bridge_event_constants_do_not_collide_with_the_dynamic_allocator():
+    """Game_GetNextEventType allocates sequential ids from 1200 up for
+    ephemeral per-instance event types; static constants must never fall in
+    a range that allocator could plausibly reach.
+
+    Before Task 5 (q13 constant-surface sweep) these were our own invented
+    numbers, kept below 1200 by construction. Task 5 replaced them with BC's
+    real measured values, which live in a completely different, much higher
+    band -- BC's smallest real ET_* constant is ET_KEYBOARD = 0x30002 (see
+    engine/appc/events.py) -- so the allocator starting at 1200 would need
+    hundreds of thousands of calls within a single process to reach it,
+    which does not happen in practice.
+    """
     for n in BRIDGE_ET_NAMES:
-        assert getattr(App, n) < 1200
+        v = getattr(App, n)
+        assert v < 1200 or v >= 0x30000, "%s (%r) collides with the dynamic allocator's plausible range" % (n, v)
 
 
 def test_character_est_constants():

@@ -35,8 +35,13 @@ def test_load_partitions_every_usable_row():
     # The 105 that remain `missing` are all WC_* codepoints (e.g.
     # WC_POUND_SIGN) that engine.appc.input's table itself does not define
     # -- a WC_/KY_-family fix, out of scope for Task 3.
-    assert len(ok) == 3139, f"ok bucket: expected 3139, got {len(ok)}"
-    assert len(wrong) == 585, f"wrong bucket: expected 585, got {len(wrong)}"
+    #
+    # Task 5 corrected the 148 ET_* event-type constants (moved `wrong` ->
+    # `ok`; nothing else changes), so as of Task 5: ok 3139 -> 3287,
+    # wrong 585 -> 437. missing/noclass are untouched -- ET_ names were all
+    # already defined (just wrong), never missing.
+    assert len(ok) == 3287, f"ok bucket: expected 3287, got {len(ok)}"
+    assert len(wrong) == 437, f"wrong bucket: expected 437, got {len(wrong)}"
     assert len(missing) == 105, f"missing bucket: expected 105, got {len(missing)}"
     assert len(noclass) == 0, f"noclass bucket: expected 0, got {len(noclass)}"
     assert len(ok) + len(wrong) + len(missing) + len(noclass) == len(rows)

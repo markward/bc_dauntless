@@ -35,18 +35,23 @@ def test_injection_does_not_touch_classes_we_implement():
 
 
 def test_additive_pass_changes_no_existing_value():
-    """Task 3 is additive only -- corrections land in Tasks 5-11.
+    """Task 3 was additive only; corrections land in Tasks 5-11, one family
+    at a time. This pins the running total, updated as each lands.
 
-    585, not 584: FOURTH_PI joined its PI/HALF_PI/TWO_PI siblings in the
-    "wrong" bucket once fix-round-1 defined it in App.py (see the DEVIATIONS
-    entry) -- it was "missing" before that fix, never a pre-existing "wrong"
-    value, so this is additive, not a correction. Its value (math.pi / 4.0,
-    kept deliberately at double precision) legitimately differs from BC's
-    float32-rounded measurement, exactly like its three siblings, all of
-    which were already "wrong" before this task ever ran."""
+    585 (Task 3/4 baseline), not 584: FOURTH_PI joined its PI/HALF_PI/TWO_PI
+    siblings in the "wrong" bucket once fix-round-1 defined it in App.py (see
+    the DEVIATIONS entry) -- it was "missing" before that fix, never a
+    pre-existing "wrong" value, so that step was additive, not a correction.
+    Its value (math.pi / 4.0, kept deliberately at double precision)
+    legitimately differs from BC's float32-rounded measurement, exactly like
+    its three siblings.
+
+    437 (post-Task 5): Task 5 corrected the 148 ET_* event-type constants
+    (App.py's invented numbering -> the q13-measured values), the first
+    correction round this sweep has landed."""
     from tools.constant_surface_audit import load
     _, _, wrong, _, _ = load()
-    assert len(wrong) == 585, "additive pass must not correct anything yet"
+    assert len(wrong) == 437, "wrong-value count drifted from Task 5's landed corrections"
 
 
 def test_deviations_are_respected():

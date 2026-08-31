@@ -80,10 +80,8 @@ def test_chord_target_event_constants_do_not_collide_with_any_other_et_value():
     ET_INPUT_SELF_DESTRUCT / ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL clash at
     1055, fixed by renumbering SELF_DESTRUCT to 1056).
 
-    Scoped to just the 11 chord targets, not a global uniqueness check:
-    App already carries at least one PRE-EXISTING duplicate unrelated to
-    this branch (ET_CLOAKED_COLLISION == ET_POWER_FRACTION_CHANGED == 1075),
-    which is out of scope here."""
+    Scoped to just the 11 chord targets, not a global uniqueness check.
+    """
     import App
     all_et = {}
     for name in dir(App):

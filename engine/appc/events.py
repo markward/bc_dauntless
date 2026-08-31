@@ -19,8 +19,17 @@ ET_KEYBOARD_EVENT: int = 0x1000
 #   tools/probes/results/ghidra_export/stbc_constants.csv:449
 #     App.ET_KEYBOARD,module,,ET_KEYBOARD,int,196610,0x30002,196610 (0x30002)
 ET_KEYBOARD: int = 0x30002
-ET_WEAPON_HIT:     int = 0x1100  # reserved range above input-event ids
-ET_WARP_BUTTON_PRESSED: int = 0x1200   # warp button activated (synthesized from CEF Set Course)
+# REAL BC values, measured, not invented -- q13 dump
+# (tools/probes/results/ghidra_export/stbc_constants.csv:653,648):
+#   App.ET_WEAPON_HIT,module,,ET_WEAPON_HIT,int,8388708,0x800064
+#   App.ET_WARP_BUTTON_PRESSED,module,,ET_WARP_BUTTON_PRESSED,int,8388807,0x8000c7
+# Corrected here (not just via App.py's CORRECT_EXISTING table) because
+# App.py imports these names FROM this module -- fixing only the App
+# namespace copy would leave App.ET_WEAPON_HIT != events.ET_WEAPON_HIT,
+# so a handler registered through one module would never receive an event
+# posted through the other. Previously invented as 0x1100 / 0x1200.
+ET_WEAPON_HIT:     int = 0x800064
+ET_WARP_BUTTON_PRESSED: int = 0x8000C7
 
 # ── Torpedo events — REAL BC values, measured, not invented ────────────────
 # Both were read out of the ORIGINAL GAME by probe q12
@@ -51,7 +60,10 @@ ET_TORPEDO_FIRED:  int = 0x00800066
 #   ET_TORPEDO_AMMO_CONSUMED 0x00800067, posted on torpedo fire ONLY when the
 #                            firing ship is the player ship (BC locality gate).
 ET_WEAPON_FIRED:           int = 0x0080007C
-ET_WEAPON_FIRE_FAILED:     int = 0x00800037
+# The q13 dump shows BC has no distinct "fire failed" event: 0x00800037 IS
+# ET_CANT_FIRE.  Keep the descriptive name as an alias rather than a second
+# constant, so the two can never drift apart.
+ET_WEAPON_FIRE_FAILED:     int = 0x00800037  # == App.ET_CANT_FIRE
 ET_TORPEDO_AMMO_CONSUMED:  int = 0x00800067
 
 # ── Player torpedo-type switch — REAL BC value from the q13 live constant dump
@@ -81,11 +93,19 @@ ET_FRIENDLY_FIRE_DAMAGE:    int = 0x00800104
 ET_FRIENDLY_FIRE_REPORT:    int = 0x00800105
 ET_FRIENDLY_FIRE_GAME_OVER: int = 0x00800107
 
-# SPACE-bar bridge/tactical toggle. Value must stay in sync with the SDK's
-# event id; App.py re-exports this name (missions reference it as
-# App.ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL when registering
+# SPACE-bar bridge/tactical toggle. App.py re-exports this name (missions
+# reference it as App.ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL when registering
 # TacticalToggleHandler — E1M1.py:858, E1M2.py:1155).
-ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL = 1055
+#
+# REAL BC value, measured, not invented -- q13 dump
+# (tools/probes/results/ghidra_export/stbc_constants.csv:425):
+#   App.ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL,module,,...,int,8389784,0x800498
+# The old comment here claimed "must stay in sync with the SDK" as if 1055
+# were that synced value -- it was invented and simply never collided with
+# anything else in this shim.  Corrected here (not just via App.py's
+# CORRECT_EXISTING table) for the same reason as ET_WEAPON_HIT above: App.py
+# imports this name FROM this module.
+ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL = 0x800498
 
 
 class TGEvent(TGObject):

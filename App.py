@@ -894,367 +894,32 @@ class _SystemWrapper:
 
 g_kSystemWrapper = _SystemWrapper()
 
-# ── Event-type constants (integers; values are arbitrary but stable) ───────────
-# Only the subset needed for Phase 1.  Add more as SDK scripts demand them.
-ET_AI_TIMER = 100
-ET_ACTION_COMPLETED = 101
-# Posted to g_kTGActionManager (ObjPtr = action) to skip an action outright —
-# MissionLib.py:4863/4871 uses it to drop queued dialogue when the player dies.
-ET_ACTION_SKIP = 111
-ET_MISSION_START = 102
-ET_EPISODE_START = 103
-ET_OBJECT_DELETED = 104
-ET_ENTERED_SET = 105
-# Fired when an object leaves a set (RemoveObjectFromSet/DeleteObjectFromSet, or
-# a warp moving a ship between sets). Carries the LEFT set's name as a CString
-# (TGStringEvent) because by dispatch time the object's containing-set may
-# already point elsewhere — SDK ExitSet handlers read pEvent.GetCString() for the
-# set name (E2M2.ExitSet, et al.). Not present in the original ET_* dump; value
-# picked to stay contiguous with this block and not collide.
-ET_EXITED_SET = 109
-ET_OBJECT_EXPLODING = 106
-ET_OBJECT_DESTROYED = 107
+# ── Event-type constants ────────────────────────────────────────────────────
+# Task 5 (q13 constant-surface sweep) deleted the invented assignments here:
+# the 145 event-type names this block used to hand-number are now applied
+# from the measured table (engine/appc/constants_generated.py) via
+# App.py's `apply_constants(..., correct_existing=CORRECT_EXISTING)` call
+# below, where CORRECT_EXISTING covers every ET_ name the q13 dump supplies.
+#
+# Two names below survive by hand because the dump does NOT carry them —
+# they are Dauntless-only events with no BC counterpart. Both values are
+# well under BC's measured ET_ band (BC's smallest real ET_ values start at
+# ET_KEYBOARD = 0x30002; every other real ET_ constant is 0x800000+), so
+# neither can ever collide with a future, more complete measurement.
+
 # Fired once the Game's pre-load (asset streaming) finishes. SDK Game.py binds
 # Game_SetPreLoadDoneEvent to store an event the engine posts when loading is
 # done; the QuickBattle boot chain (Game.LoadEpisode -> Episode.LoadMission)
-# uses it to drive the synchronous mission-start cascade.
+# uses it to drive the synchronous mission-start cascade. Not in the q13 dump.
 ET_PRELOAD_DONE = 108
-# Fired by Game.SetPlayer (engine/core/game.py) when the current player ship is
-# assigned. The SDK HelmMenuHandlers register broadcast handlers on it
-# (OrbitMenuPlayerChanged, SetPlayer, the fleet-command PlayerChanged handlers)
-# to (re)wire per-player state and repopulate the Orbit/Nav menus from the
-# player's set. Not present in the original ET_* dump; value picked to stay
-# contiguous with this block and not collide.
-ET_SET_PLAYER = 110
-
-# Fired by every SDK character-move builder's completed-event (PicardAnimations,
-# MediumAnimations, ...) carrying a CS_* state as its int. BC's native engine
-# consumes it and applies that state to the destination character — that is how an
-# officer HIDES after walking into the turbolift (CS_HIDDEN) and how a walk-on ends
-# STANDING / SEATED. Not present in the original ET_* dump; 100-111 are all taken
-# in this block (checked), so 112 is the next free contiguous value.
-ET_CHARACTER_ANIMATION_DONE = 112
-# Music events DynamicMusic.py waits on. MusicDone (DynamicMusic.py:121)
-# advances the queue off ET_MUSIC_DONE; without a real distinct int both
-# would collapse to int()==0 and silently compare equal.
-ET_MUSIC_DONE = 1100
-ET_MUSIC_CONDITION_CHANGED = 1101
-
-# Used by Conditions/Condition*.py — broadcast events the SDK conditions
-# subscribe to. Values arbitrary but stable; keep contiguous with the
-# existing ET_* block so future grep finds them all in one place.
-ET_DELETE_OBJECT_PUBLIC = 200
-ET_OBJECT_GROUP_OBJECT_ENTERED_SET = 201
-ET_OBJECT_GROUP_OBJECT_EXITED_SET = 202
-ET_CONDITION_ATK_FORGIVE = 203
-# Group membership changed (Add/Remove name on an ObjectGroup) — fires
-# the GROUP_CHANGED event the SDK uses to invalidate cached views of
-# the group's members. ConditionInRange subscribes to rebuild its
-# proximity sphere when its target list churns.
-ET_OBJECT_GROUP_CHANGED = 204
-# AI-internal proximity transition. SDK Conditions/ConditionInRange
-# fires a ProximityCheck with this event type so its ProximityEvent
-# method runs when watched ships cross the radius boundary.
-ET_AI_INTERNAL_PROX_EVENT = 205
-# Decloak event used by SelectTarget to re-rate targets when a hostile
-# uncloaks. Value picked outside the Slice A 200-203 range; 204/205 are
-# taken by ET_OBJECT_GROUP_CHANGED / ET_AI_INTERNAL_PROX_EVENT.
-ET_DECLOAK_BEGINNING = 206
-# Cloak-beginning sibling of ET_DECLOAK_BEGINNING. BC fires this at the START
-# of a cloak transition (the COMPLETED events fire at the end). Consumed by
-# Bridge/PowerDisplay.py:340 (cloak power readout) and missions E2M0/E2M1.
-ET_CLOAK_BEGINNING = 207
-# Fired by AI/Player/OrbitPlanet.StartingOrbit (source=player ship,
-# destination=planet) as soon as the orbit AI's sequence starts — NOT after a
-# stable orbit is achieved. Consumed by mission listeners (E1M2.OrbitingHaven
-# sets g_bPlayerInOrbit) and Conditions/ConditionPlayerOrbitting.
-ET_AI_ORBITTING = 208
-# Fired when a ship's installed AI ends: cleared (ClearAI), replaced
-# (SetAI over an existing tree), or the root tree completes (US_DONE).
-# TGIntEvent: GetInt() = the ended AI's GetID(), destination = the ship.
-# Consumed by Conditions/ConditionPlayerOrbitting.OrbitDone ("player left
-# orbit" → HelmMenuHandlers.Orbitting plays the KiskaLeaveOrbit line) and
-# Bridge/HelmCharacterHandlers.AIDone.
-ET_AI_DONE = 209
-# Fired by AI/PlainAI/FollowWaypoints.ReachedWaypoint (FollowWaypoints.py:278)
-# each time a ship crosses fCloseEnough of its current waypoint. WaypointEvent:
-# destination = the ship, GetPlacement() = the Waypoint reached. Consumed by
-# Conditions/ConditionReachedWaypoint (registered by AI/Setup.py:125) and the
-# mission handler at Maelstrom/Episode8/E8M2/E8M2.py:514. 200-209 are taken in
-# this block (checked), so 210 is the next free contiguous value.
-ET_AI_REACHED_WAYPOINT = 210
-
-# ── Input event types — used by DefaultKeyboardBinding + TacticalInterfaceHandlers
-# Values are stable arbitrary integers well above the Phase-1 event range.
-# The SDK allocates these via Appc.ET_*; we pick our own stable IDs since the
-# only requirement is consistency between BindKey registration and handler lookup.
-ET_INPUT_FIRE_PRIMARY           = 1001
-ET_INPUT_FIRE_SECONDARY         = 1002
-ET_INPUT_FIRE_TERTIARY          = 1003
-ET_INPUT_ZOOM                   = 1004
-ET_INPUT_TOGGLE_MAP_MODE        = 1005
-ET_INPUT_TOGGLE_CINEMATIC_MODE  = 1006
-ET_INPUT_CYCLE_CAMERA           = 1007
-ET_INPUT_CHASE_PLAYER           = 1008
-ET_INPUT_REVERSE_CHASE          = 1009
-ET_INPUT_ZOOM_TARGET            = 1010
-ET_INPUT_CLEAR_TARGET           = 1011
-ET_INPUT_TARGET_NEXT            = 1012
-ET_INPUT_TARGET_PREV            = 1013
-ET_INPUT_TARGET_NEAREST         = 1014
-ET_INPUT_TARGET_NEXT_ENEMY      = 1015
-ET_INPUT_TARGET_TARGETS_ATTACKER = 1016
-ET_INPUT_TARGET_NEXT_NAVPOINT   = 1017
-ET_INPUT_TARGET_NEXT_PLANET     = 1018
-ET_INPUT_ALLOW_CAMERA_ROTATION  = 1019
-ET_INPUT_SET_IMPULSE            = 1020
-ET_INPUT_INCREASE_SPEED         = 1021
-ET_INPUT_DECREASE_SPEED         = 1022
-ET_INPUT_TURN_LEFT              = 1023
-ET_INPUT_TURN_RIGHT             = 1024
-ET_INPUT_TURN_UP                = 1025
-ET_INPUT_TURN_DOWN              = 1026
-ET_INPUT_ROLL_LEFT              = 1027
-ET_INPUT_ROLL_RIGHT             = 1028
-ET_INPUT_SKIP_EVENTS            = 1029
-ET_INPUT_SELECT_X               = 1030
-ET_INPUT_SELECT_OPTION          = 1031
-ET_INPUT_PRE_SELECT_OPTION      = 1032
-ET_INPUT_CLOSE_MENU             = 1033
-ET_INPUT_INTERCEPT              = 1034
-ET_INPUT_TOGGLE_CONSOLE         = 1035
-ET_INPUT_TOGGLE_OPTIONS         = 1036
-ET_INPUT_DEBUG_KILL_TARGET      = 1037
-ET_INPUT_DEBUG_QUICK_REPAIR     = 1038
-ET_INPUT_DEBUG_GOD_MODE         = 1039
-ET_INPUT_DEBUG_LOAD_QUANTUMS    = 1040
-ET_INPUT_TALK_TO_TACTICAL       = 1041
-ET_INPUT_TALK_TO_HELM           = 1042
-ET_INPUT_TALK_TO_XO             = 1043
-ET_INPUT_TALK_TO_SCIENCE        = 1044
-ET_INPUT_TALK_TO_ENGINEERING    = 1045
-ET_INPUT_TALK_TO_GUEST          = 1046
-ET_INPUT_TOGGLE_SCORE_WINDOW    = 1047
-ET_INPUT_TOGGLE_CHAT_WINDOW     = 1048
-ET_OTHER_BEAM_TOGGLE_CLICKED    = 1049
-ET_OTHER_CLOAK_TOGGLE_CLICKED   = 1050
-ET_SET_ALERT_LEVEL              = 1051
-ET_QUICK_SAVE                   = 1052
-ET_QUICK_LOAD                   = 1053
-ET_INPUT_PRINT_SCREEN             = 1054
-# 1055 is ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL (engine/appc/events.py) — do
-# not reuse it here.
-ET_INPUT_SELF_DESTRUCT          = 1056
-
-# ── Bridge-interaction event types ─────────────────────────────────────────────
-# Spec: docs/superpowers/specs/2026-06-12-tg-widget-tree-crew-menus-design.md.
-# Static ints in 1060-1099 — above the input block (1001-1056, plus slack
-# 1057-1059 left for input-block growth), below the Game_GetNextEventType
-# allocator floor (1200).
-ET_ST_BUTTON_CLICKED        = 1060
-ET_COMMUNICATE              = 1061
-ET_HAIL                     = 1062
-ET_SCAN                     = 1063
-ET_SET_COURSE               = 1064
-ET_ALL_STOP                 = 1065
-ET_DOCK                     = 1066
-ET_MANAGE_POWER             = 1067
-ET_MANEUVER                 = 1068
-ET_HAILABLE_CHANGE          = 1069
-ET_SENSORS_SHIP_IDENTIFIED  = 1070
-ET_CLOAK_COMPLETED          = 1071
-ET_DECLOAK_COMPLETED        = 1072
-ET_CHARACTER_MENU           = 1073
-ET_CONTACT_STARFLEET        = 1074
-# Fired when something rams a cloaked ship (a cloaked hull is still physically
-# present). BC's HelmMenuHandlers.CloakedCollision plays a "collided with a
-# cloaked ship" line off this event.
-ET_CLOAKED_COLLISION        = 1075
-# Helm "Orbit Planet" button event. SetupOrbitMenuFromSet builds one STButton
-# per planet whose activation event is (type=ET_ORBIT_PLANET, source=planet,
-# dest=orbit menu); HelmMenuHandlers.OrbitPlanet handles it on the menu.
-ET_ORBIT_PLANET             = 1076
-# Helm "Report" button event — HelmCharacterHandlers.AttachMenuToHelm registers
-# Report/SetCourse/HelmDock/AllStop on the Helm top-level menu; Report is the
-# only one of the four without a pre-existing static int here. 1077 is the first
-# free value in this block (1075 is intentionally shared by ET_CLOAKED_COLLISION
-# and ET_POWER_FRACTION_CHANGED; everything else through 1076 is taken).
-ET_REPORT                   = 1077
-# Dock lifecycle notifications. Fired when the player completes a dock with a
-# starbase (ET_PLAYER_DOCKED_WITH_STARBASE) and when a tractored target finishes
-# docking (ET_TRACTOR_TARGET_DOCKED). Real distinct ints so any future handler
-# keyed on them dispatches; without this App.__getattr__ hands back a fresh
-# unstable _NamedStub (int()==0) per access. 1078/1079 are the next free values
-# in this block (1077 = ET_REPORT is the current high), below the 1200
-# Game_GetNextEventType allocator floor.
-ET_PLAYER_DOCKED_WITH_STARBASE = 1078
-ET_TRACTOR_TARGET_DOCKED       = 1079
-# Fired by ObjectClass.SetScannable on an actual change of the flag (mirrors
-# ET_HAILABLE_CHANGE above). Bridge/ScienceMenuHandlers.CreateMenus registers
-# a broadcast handler for it (PropertyChange) that refreshes the Scan Object
-# menu's per-ship button when a ship's scannability toggles at runtime (e.g.
-# Maelstrom/Episode6/E6M4's cloaked-Kessok reveal). 1080 is the next free
-# value in this block.
-ET_SCANNABLE_CHANGE            = 1080
-# Fired by PlacementObject.SetNavPoint on an actual change of the flag (same
-# shape as ET_SCANNABLE_CHANGE above). Bridge/HelmMenuHandlers.CreateMenus:978
-# registers a broadcast handler for it, and NavPointChanged:1258 rebuilds the
-# Helm > Nav Points menu when the flipped placement sits in the player's set —
-# which is how MissionLib.AddNavPoints/RemoveNavPoints refresh that menu
-# mid-mission (Maelstrom/Episode6/E6M2:2221, Episode7/E7M2). Undefined, it was
-# a truthy _NamedStub coercing to int()==0, so the registration landed on a
-# shared dead slot and the refresh never ran.
-#
-# NOTE the slot: NavPointChanged reads the placement from GetDestination(), not
-# GetSource() — the opposite of ET_SCANNABLE_CHANGE's convention. That is SDK
-# ground truth; the emitter matches it.
-#
-# 1108 is the next free value: the 1060-1090 band is full, 1091 is ET_MOUSE,
-# 1100/1101 are ET_MUSIC_*, and 1102-1107 are the cinematic camera keys. Still
-# below the 1200 Game_GetNextEventType allocator floor.
-ET_NAV_POINT_CHANGED           = 1108
-# Object collision. BC posts TWO of these per collision, one per object with
-# source/destination swapped -- MissionLib.py:3906 says so outright: "Only need
-# to check either the source or the destination, since there's an event sent for
-# each", reading GetDestination() as the ship that collided and GetSource() as
-# what it hit. Consumers: Effects.CollisionEffect (an explosion at every contact
-# point + the collision sound), MissionLib.FriendlyFireCollisionHandler (ramming
-# a friendly is a game over), E7M2's ShipsCollided.
-#
-# Undefined, this was a truthy _NamedStub, so every one of those was dead. It is
-# in the heatmap TWICE: rank 118 (App, 65 hits over 62/233 runs) and rank 137
-# (EventType, 60 hits over 57/233) -- the EventType row being the engine logging
-# a real SDK handler registration made against the stub, i.e. the script side was
-# already wired and only the engine half was missing. 1109 is the next free value.
-ET_OBJECT_COLLISION            = 1109
-
-# ── Input events the SDK binds but the shim never defined ──────────────────────
-# DefaultUKKeyboardBinding binds all 11 of these (BridgeHandlers registers
-# handlers for the 7 viewscreen ones); ET_MOUSE is a mouse-event type panes
-# register on. Undefined here, each resolved to App._NamedStub, and BindKey's
-# int(event_type) (engine/appc/input.py:214) collapsed the 10 keyboard bindings
-# to a shared dead slot 0 — see docs/stub_heatmap.md.
-#
-# HYGIENE ONLY: real distinct ints stop the collapse and clear the telemetry
-# rows, but make NO key functional — no poller forwards these physical keys
-# (host_loop routes camera/nav keys through bespoke input_map pollers, not the
-# SDK binding chain), and pick-fire's _mouse_pick_fire flag has no consumer.
-# Wiring the keys (viewscreen look, first-person, toggle-pick-fire) is deferred;
-# pick-fire in particular lands with a future cursor-aim implementation. Values
-# continue the 1060-1099 static band, below the 1200 allocator floor.
-ET_INPUT_VIEWSCREEN_TARGET    = 1081
-ET_INPUT_VIEWSCREEN_FORWARD   = 1082
-ET_INPUT_VIEWSCREEN_LEFT      = 1083
-ET_INPUT_VIEWSCREEN_RIGHT     = 1084
-ET_INPUT_VIEWSCREEN_BACKWARD  = 1085
-ET_INPUT_VIEWSCREEN_UP        = 1086
-ET_INPUT_VIEWSCREEN_DOWN      = 1087
-ET_INPUT_FIRSTPERSON          = 1088
-ET_INPUT_TAB_FOCUS_CHANGE     = 1089
-ET_INPUT_TOGGLE_PICK_FIRE     = 1090
-
-# Cinematic-mode camera keys. BC's CinematicInterfaceHandlers binds these to
-# F1-F6 while the cinematic window holds focus (CinematicInterfaceHandlers.py:
-# 154-159); F9 (ET_INPUT_TOGGLE_CINEMATIC_MODE, 1006) enters the mode. Defined
-# here so the six handler registrations get six DISTINCT event types — an
-# undefined App.<NAME> is a truthy _NamedStub that coerces to int()==0, which
-# would silently collapse all six onto one bogus type.
-#
-# NOTE the range: 1091 is NOT free — ET_MOUSE takes it (below), even though it
-# sits after ET_INPUT_TOGGLE_PICK_FIRE = 1090 and so looks like the next value.
-# 1100/1101 are ET_MUSIC_*. 1102+ is clear.
-ET_INPUT_CINEMATIC_DROPANDWATCH = 1102
-ET_INPUT_CINEMATIC_CHASE        = 1103
-ET_INPUT_CINEMATIC_TARGET       = 1104
-ET_INPUT_CINEMATIC_TORPCAM      = 1105
-ET_INPUT_CINEMATIC_WIDETARGET   = 1106
-ET_INPUT_CINEMATIC_FREEORBIT    = 1107
-ET_MOUSE                      = 1091
 
 # ── FloatRangeWatcher condition event ─────────────────────────────────────────
 # Crossing event broadcast by a power subsystem's battery watcher when the
 # main/backup battery fraction crosses a registered threshold. The SDK
 # allocates this via UtopiaModule_GetNextEventType (Conditions/
-# ConditionPowerBelow.py:21); Dauntless assigns its own stable ET_* int in
-# the 1060-1099 bridge/condition block, above the input range and below the
-# Game_GetNextEventType allocator floor (1200).
-ET_POWER_FRACTION_CHANGED   = 1075
-
-# ── Nebula + environmental event types ────────────────────────────────────────────
-# Private to the Phase-2 engine; values extend the engine/appc/events.py private
-# range (0x1000..0x1200) and do not collide with SDK Appc-side ids.
-ET_ENTERED_NEBULA = 0x1300
-ET_EXITED_NEBULA = 0x1301
-ET_ENVIRONMENT_DAMAGE = 0x1302
-
-# ── Engineer status-report event types ────────────────────────────────────────
-# Registered by Bridge/EngineerCharacterHandlers.AttachMenuToEngineer and
-# stamped onto FloatRangeWatcher range-check events by Brex.ConfigureForShip
-# (Bridge/Characters/Brex.py:107-142). These MUST be real distinct ints:
-# App's module-level __getattr__ returns a fresh _NamedStub per access, so a
-# handler registered under one access would never match an event fired under
-# another. Values continue the private 0x13xx block above.
-ET_TACTICAL_SHIELD_LEVEL_CHANGE   = 0x1310
-ET_TACTICAL_HULL_LEVEL_CHANGE     = 0x1311
-ET_TACTICAL_SHIELD_0_LEVEL_CHANGE = 0x1312
-ET_TACTICAL_SHIELD_1_LEVEL_CHANGE = 0x1313
-ET_TACTICAL_SHIELD_2_LEVEL_CHANGE = 0x1314
-ET_TACTICAL_SHIELD_3_LEVEL_CHANGE = 0x1315
-ET_TACTICAL_SHIELD_4_LEVEL_CHANGE = 0x1316
-ET_TACTICAL_SHIELD_5_LEVEL_CHANGE = 0x1317
-# Battery-fraction thresholds (stamped onto GetMain/BackupBatteryWatcher
-# range-check events) plus the subsystem/repair report ids the same
-# AttachMenuToEngineer call registers broadcast handlers under. The
-# subsystem/repair four have no engine-side emitter yet — defining them as
-# real ints gives those registrations a stable identity for when emission
-# lands. Names verbatim from EngineerCharacterHandlers.py.
-ET_MAIN_BATTERY_LEVEL_CHANGE      = 0x1318
-ET_BACKUP_BATTERY_LEVEL_CHANGE    = 0x1319
-ET_SUBSYSTEM_DISABLED             = 0x131A
-ET_SUBSYSTEM_DESTROYED            = 0x131B
-ET_REPAIR_COMPLETED               = 0x131C
-ET_REPAIR_CANNOT_BE_COMPLETED     = 0x131D
-# Posted by PoweredSubsystem.SetPowerPercentageWanted on every slider change.
-# BC FUN_00562430 broadcasts this so the power-display HUD and the engineer's
-# FloatRangeWatcher conditions can react to manual slider adjustments.
-ET_SUBSYSTEM_POWER_CHANGED        = 0x131E
-# Repaired back above the disabled threshold. Consumed by the AI Conditions
-# classes (ConditionSystemDisabled/ConditionTorpsReady/ConditionPulseReady
-# register broadcast handlers for it) as well as the engineer report path.
-ET_SUBSYSTEM_OPERATIONAL          = 0x131F
-# EngRepairPane click -> binary head/tail toggle on the repair queue.
-ET_REPAIR_INCREASE_PRIORITY       = 0x1320
-# A damaged subsystem entered the repair queue.
-ET_ADD_TO_REPAIR_LIST             = 0x1321
-# ── AI condition watcher event types ─────────────────────────────────────────
-# Stamped by the SDK conditions onto the TGFloatEvent they hand to a
-# FloatRangeWatcher, then fired back at them on a threshold crossing:
-#   Conditions/ConditionSystemBelow.py:88-97   (subsystem condition fraction)
-#   Conditions/ConditionSingleShieldBelow.py:36 (per-face shield fraction)
-# These MUST be real distinct ints. App's module-level __getattr__ returns a
-# fresh _NamedStub per access and _NamedStub hashes by id(), so a handler
-# registered under one access can never match an event fired under another —
-# which is exactly how the two most-used conditions in the AI (31 + 12 SDK
-# uses) silently never updated their status.
-ET_AI_SYSTEM_STATUS_WATCHER       = 0x1322
-ET_AI_SHIELD_WATCHER              = 0x1323
-# Broadcast by TGCondition.SetStatus on every status transition. Composite
-# conditions listen for it on their children (Conditions/
-# ConditionCriticalSystemBelow.py). Real int for the same reason as above.
-ET_AI_CONDITION_CHANGED           = 0x1324
-# Posted by ShipClass.SetTarget whenever the resolved target actually
-# changes (Appc-side: ShipClass::SetTarget). Consumers register with
-# AddPythonFuncHandlerForInstance ON THE SHIP (Camera.py:719 on the player,
-# Bridge/HelmMenuHandlers.py:280, Bridge/ScienceMenuHandlers.py:133,
-# Maelstrom/Episode1/E1M2/E1M2.py:1152) and AI/Preprocessors.py's
-# UseShipTarget.CodeAISet registers a broadcast method handler filtered to
-# the ship. Must be a real distinct int for the same reason as the AI
-# condition watchers above: App's module __getattr__ returns a fresh
-# id()-hashed _NamedStub per access, so a handler registered under one
-# access could never match an event fired under another -- which is exactly
-# how UseShipTarget stayed dead even after Task 9 made its CodeAISet hook
-# finally run.
-ET_TARGET_WAS_CHANGED             = 0x1325
+# ConditionPowerBelow.py:21); Dauntless assigns its own stable ET_* int. Not
+# in the q13 dump.
+ET_POWER_FRACTION_CHANGED = 1075
 
 _next_event_type_id = 1200
 
@@ -2300,7 +1965,12 @@ def __getattr__(name):
 # so the real classes defined above win over synthesized ones.  Additive for
 # now: `correct_existing` grows one audited family at a time (see
 # docs/superpowers/plans/2026-08-31-q13-constant-surface-sweep.md).
-CORRECT_EXISTING: frozenset[str] = frozenset()
+# Task 5 lands the ET_ family: every ET_ name the dump supplies now wins
+# over whatever value this module (or an import it pulls in, e.g.
+# engine.appc.events) already bound.
+CORRECT_EXISTING: frozenset[str] = frozenset(
+    n for n in MODULE_CONSTANTS if n.startswith("ET_")
+)
 
 apply_constants(
     sys.modules[__name__], MODULE_CONSTANTS, CLASS_CONSTANTS, DEVIATIONS,

@@ -47,7 +47,12 @@ def _pt(x, y=0.0, z=0.0):
 
 def test_event_type_is_a_real_distinct_int():
     assert type(App.ET_OBJECT_COLLISION) is int
-    assert App.ET_OBJECT_COLLISION < 1200        # below the allocator floor
+    # Task 5 (q13 constant-surface sweep) corrected this from an invented
+    # value below 1200 (our dynamic-allocator floor) to BC's real measured
+    # one, which lives in the much higher 0x800000+ band -- see
+    # test_bridge_event_constants.py for why that band can never collide
+    # with Game_GetNextEventType's sequential allocation starting at 1200.
+    assert App.ET_OBJECT_COLLISION < 1200 or App.ET_OBJECT_COLLISION >= 0x30000
     assert App.ET_OBJECT_COLLISION != App.ET_CLOAKED_COLLISION
 
 

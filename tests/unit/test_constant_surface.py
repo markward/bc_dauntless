@@ -16,7 +16,7 @@ from tools.constant_surface_audit import load
 #   585 at Task 4 -> 437 (T5 ET_ 148) -> 435 (T6 CSP_ 2)
 #       -> 88 (T7 keyboard 347) -> 41 (T8 UI 47) -> 4 (T9 CT_ 37)
 # 4 is the floor: the four PI-family deviations.
-REMAINING_WRONG = 585
+REMAINING_WRONG = 437
 
 # Keyboard names deferred to Task 7, which drives this to 0.
 REMAINING_MISSING = 105
@@ -81,3 +81,53 @@ def test_every_deviation_is_actually_defined():
         assert defined, (
             "%s is declared a deviation but is not defined -- it is a stub"
             % name)
+
+
+def test_event_types_are_the_measured_values():
+    """Task 5: the 148 ET_* names we already defined now carry BC's real
+    values instead of our invented ones."""
+    import App
+    assert App.ET_AI_TIMER == 0x800020
+    assert App.ET_OBJECT_DESTROYED == 0x80004F
+    assert App.ET_SET_TARGET == 0x8000E1
+    assert App.ET_TACTICAL_SHIELD_0_LEVEL_CHANGE == 0x800041
+
+
+def test_no_two_event_types_collide_except_the_known_aliases():
+    """ET_CLOAKED_COLLISION == ET_POWER_FRACTION_CHANGED == 1075 was a live
+    bug in our invented numbering: two unrelated events sharing a handler
+    chain. Task 5 corrects ET_CLOAKED_COLLISION to its real measured value,
+    which resolves that collision. Four pairs legitimately remain:
+
+      0x800037 -- ET_CANT_FIRE / ET_WEAPON_FIRE_FAILED: OUR deliberate alias
+                  (the dump shows BC has no distinct "fire failed" event --
+                  0x800037 IS ET_CANT_FIRE).
+      0x80110D -- ET_FIRST_APP_SCRIPT_EVENT / ET_FIRST_SCRIPT_EVENT: BC's OWN
+                  range marker, two names for one boundary value.
+      0x80010C -- ET_FIRST_INPUT_EVENT / ET_INPUT_TOGGLE_MAP_MODE: likewise
+                  BC's own range marker doubling as the first input event.
+      0x800067 -- ET_PLAYER_TORPEDO_COUNT_CHANGED / ET_TORPEDO_AMMO_CONSUMED:
+                  pre-existing, NOT touched by Task 5. ET_TORPEDO_AMMO_CONSUMED
+                  is Dauntless's own name (RE'd from the binary by probe q12,
+                  engine/appc/events.py) for the exact same event the later
+                  q13 dump independently measured and named
+                  ET_PLAYER_TORPEDO_COUNT_CHANGED (additively injected by
+                  Task 3, since App never defined that name itself). Same
+                  shape as the ET_CANT_FIRE alias above -- one real BC event,
+                  two names, neither invented -- but outside this task's
+                  scope (the 148 corrections are all names that were WRONG;
+                  this pair was already present and already agreeing on the
+                  value before Task 5 touched anything).
+    """
+    import App
+    by_value = {}
+    for name in dir(App):
+        if name.startswith("ET_") and isinstance(getattr(App, name), int):
+            by_value.setdefault(getattr(App, name), set()).add(name)
+    dupes = {v: n for v, n in by_value.items() if len(n) > 1}
+    assert dupes == {
+        0x800037: {"ET_CANT_FIRE", "ET_WEAPON_FIRE_FAILED"},
+        0x80110D: {"ET_FIRST_APP_SCRIPT_EVENT", "ET_FIRST_SCRIPT_EVENT"},
+        0x80010C: {"ET_FIRST_INPUT_EVENT", "ET_INPUT_TOGGLE_MAP_MODE"},
+        0x800067: {"ET_PLAYER_TORPEDO_COUNT_CHANGED", "ET_TORPEDO_AMMO_CONSUMED"},
+    }
