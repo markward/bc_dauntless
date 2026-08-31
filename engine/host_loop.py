@@ -6762,6 +6762,16 @@ def run(mission_name: Optional[str] = None,
                 if result.deny_line is not None:
                     _wg.speak_deny(player, result.deny_line)
                 return
+            # Clear Helm's "ReadyToWarp" the way SDK WarpPressed does
+            # (HelmMenuHandlers.py:871-872). announce_course_set above put it
+            # there; bypassing WarpPressed meant nothing ever took it away, so
+            # the Helm box advertised a pending warp for the rest of the
+            # session. Before execute_warp, matching BC's order.
+            try:
+                from engine.bridge_officers import announce_warp_engaged
+                announce_warp_engaged()
+            except Exception as _e:
+                dev_mode.log_swallowed("announce warp engaged", _e)
             _w.execute_warp(button)
 
         # Register the bridge cutscene controller BEFORE the initial mission

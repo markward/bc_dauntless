@@ -157,3 +157,53 @@ def announce_course_set() -> None:
     evt.SetInt(App.CharacterClass.EST_SET_COURSE_TO_MISSION_AREA)
     evt.SetDestination(menu)
     App.g_kEventManager.AddEvent(evt)
+
+
+def _waiting_status():
+    """CharacterStatus.tgl's "Waiting" string, or the bare key headless."""
+    import App
+    try:
+        db = App.g_kLocalizationManager.Load("data/TGL/CharacterStatus.tgl")
+        try:
+            return str(db.GetString("Waiting")) or "Waiting"
+        finally:
+            App.g_kLocalizationManager.Unload(db)
+    except Exception:
+        return "Waiting"
+
+
+def announce_warp_engaged() -> None:
+    """Return the Helm officer to "Waiting" once a warp actually engages.
+
+    The counterpart to `announce_course_set` above.  Picking a destination
+    routes through HelmCharacterHandlers.SetCourse, which sets the Helm status
+    to "ReadyToWarp"; stock BC clears it again in
+    Bridge/HelmMenuHandlers.py:WarpPressed (:871-872) when the warp button is
+    pressed.  Our CEF modal replaced BC's SortedRegionMenu and `on_warp_engage`
+    (host_loop.py:6749) deliberately bypasses WarpPressed — see the comment
+    there, which defers its camera/cinematic/control work to later stages.
+    `engine/appc/warp_gates.py` reproduces WarpPressed's *gating*; nothing
+    reproduced this side effect, so the Helm box advertised a pending warp for
+    the rest of the session (observed live at Starbase 12 after a completed
+    warp).
+
+    Deliberately NOT reproducing two other things WarpPressed does in the same
+    block:
+
+    * `pHelm.SetActive(1)` — BC clears that in HelmCharacterHandlers.AIDone,
+      which our warp path never reaches, so setting it would leave the officer
+      highlighted forever: the same stuck-state class this function removes.
+    * the `<Name>Yes<1-4>` acknowledgement line — a missing TGL key here kills
+      voice *and* subtitle, so it is worth landing separately and verifying on
+      its own rather than riding along with a status fix.
+
+    Safe to call with no bridge set: `on_warp_engage` runs on a CEF click and a
+    raise at that boundary is swallowed, which would silently drop the warp.
+    """
+    import App
+    bridge = App.g_kSetManager.GetSet("bridge")
+    char = (App.CharacterClass_GetObject(bridge, "Helm")
+            if bridge is not None else None)
+    if char is None:
+        return
+    char.SetStatus(_waiting_status())
