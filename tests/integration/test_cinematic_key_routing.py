@@ -152,7 +152,7 @@ def _arm_binding(wc, event_type):
     # test's world reset; re-arm it only if it is actually missing, because
     # registering twice would double-deliver every bound key.
     live = App.g_kEventManager._broadcast_handlers.get(ET_KEYBOARD_EVENT, [])
-    if not any(n.endswith("_OnKeyboardEvent_Dispatch") for _d, n in live):
+    if not any(n.endswith("_OnKeyboardEvent_Dispatch") for _d, n, _t in live):
         register_input_handlers(App.g_kEventManager)
 
     kb = App.g_kKeyboardBinding

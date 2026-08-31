@@ -706,8 +706,9 @@ class TGPythonInstanceWrapper(TGEventHandlerObject):
 class TGEventManager(TGObject):
     def __init__(self):
         super().__init__()
-        # {event_type: [(dest_obj, qualified_name), ...]}
-        self._broadcast_handlers: dict[int, list[tuple["TGEventHandlerObject", str]]] = {}
+        # {event_type: [(dest_obj, qualified_name, target), ...]}
+        self._broadcast_handlers: dict[
+            int, list[tuple["TGEventHandlerObject", str, object]]] = {}
         # {event_type: [(wrapper, method_name, target), ...]}; eager init —
         # see TGPythonInstanceWrapper note about TGObject.__getattr__ stubs.
         self._method_handlers: dict[
@@ -717,8 +718,21 @@ class TGEventManager(TGObject):
     def AddBroadcastPythonFuncHandler(
         self, event_type: int, dest: "TGEventHandlerObject", qualified_name: str, *extra
     ) -> None:
+        """Register a module-qualified broadcast handler.
+
+        `extra[0]`, when present, is BC's destination FILTER: dispatch is
+        restricted to events whose destination IS that object (identity, not
+        equality -- `_Stub.__eq__` is type-based, so == would match unrelated
+        stubs). 10 SDK sites pass one, including
+        Bridge/PowerDisplay.py:337-341, whose tractor and cloak HUD handlers
+        re-read state off `pEvent.GetDestination()` and therefore repaint the
+        PLAYER's indicator from whatever ship the event names. Dropping the
+        filter made every NPC's cloak/tractor repaint the player's HUD.
+        Mirrors AddBroadcastPythonMethodHandler, which has always filtered.
+        """
         _validate_event_type(event_type, "AddBroadcastPythonFuncHandler(%s)" % qualified_name)
-        self._broadcast_handlers.setdefault(event_type, []).append((dest, qualified_name))
+        self._broadcast_handlers.setdefault(event_type, []).append(
+            (dest, qualified_name, extra[0] if extra else None))
 
     def AddBroadcastPythonMethodHandler(
         self, event_type: int, wrapper: "TGPythonInstanceWrapper",
@@ -749,7 +763,7 @@ class TGEventManager(TGObject):
         # TYPE-based -- any all-stub tuple equals any other, so == would delete
         # the WRONG handler. Only the first element needs to be a stub.
         func_handlers = self._broadcast_handlers.get(event_type, [])
-        for i, (d, q) in enumerate(func_handlers):
+        for i, (d, q, _t) in enumerate(func_handlers):
             if d is dest_or_wrapper and q == qualified_name_or_method:
                 del func_handlers[i]
                 return
@@ -778,9 +792,11 @@ class TGEventManager(TGObject):
         # mutating the live list shifts later entries left, so the iterator
         # skips the next sibling (bridge_officers.OnSetPlayer — the QB
         # helm-wiring regression) and revisits the re-appended self instead.
-        for bd, name in list(
+        for bd, name, target in list(
             self._broadcast_handlers.get(event.GetEventType(), [])
         ):
+            if target is not None and event.GetDestination() is not target:
+                continue
             fn = _resolve_handler(name)
             if fn is not None:
                 try:

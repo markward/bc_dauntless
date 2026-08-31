@@ -219,7 +219,7 @@ def test_configure_wires_brex_without_error(bridge_world):
              ".BackupBatteryLevelChange")):
         et = getattr(App, et_name)
         registered = App.g_kEventManager._broadcast_handlers.get(et, [])
-        assert any(qn == eng + handler for _dest, qn in registered), et_name
+        assert any(qn == eng + handler for _dest, qn, _target in registered), et_name
         assert any(ev.GetEventType() == et
                    for _t, _d, ev in watcher._checks.values()), et_name
 
