@@ -142,6 +142,9 @@ def subsystem_class_for_ct(ct):
     `ct` is BC's integer type tag. A *Property* class is still accepted (that
     is what the tag resolves to in `engine.appc.object_types`, and engine
     callers and tests pass one directly) and is normalised to its tag first.
+    That class path is NOT deletable once the engine callers are cleaned up —
+    SDK Conditions pickle the tag, so a pre-flip save un-pickles a class
+    straight into this argument; see `object_types.resolve_class`.
 
     Returns `None` for `ct is None` and for any unknown/unmapped `ct`
     (including a `_NamedStub`/`_Stub` fall-through for an undefined CT_*

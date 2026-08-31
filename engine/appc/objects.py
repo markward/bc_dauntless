@@ -115,7 +115,9 @@ class ObjectClass(TGEventHandlerObject):
         # SDK runtime class check: pObject.IsTypeOf(CT_X). CT_ constants are
         # BC's int type tags; engine.appc.object_types maps one back to the
         # class this isinstance test needs (CT_PLANET->Planet, CT_SUN->Sun).
-        # A class is still accepted directly for engine callers. `cls` may be
+        # A class is still accepted directly — for engine callers, and
+        # permanently for un-pickled pre-flip saves (see
+        # object_types.resolve_class). `cls` may be
         # a fall-through _NamedStub for an undefined CT_, or an int tag with
         # no registered class — resolve_class returns None for both and the
         # isinstance(..., type) guard turns that into 0.

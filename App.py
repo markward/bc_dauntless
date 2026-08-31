@@ -364,7 +364,14 @@ class MultiplayerGame: pass
 # INT comes from MODULE_CONSTANTS (the generated q13 dump); only the class is
 # written here. Registering through this one loop means a name can never carry
 # a tag the registry does not know about, which is the shape of failure that
-# empties a query silently.
+# empties a query silently. The alternative shape — 37 `CT_X = <int>` lines
+# plus 37 `register(CT_X, Cls)` calls — buys back grep-ability at the price of
+# two lists that can drift, which is precisely the failure this guards.
+#
+# TO LOOK UP A VALUE (the loop binds these via globals(), so grepping this
+# file for `CT_NEBULA =` finds nothing):
+#     grep "'CT_NEBULA'" engine/appc/constants_generated.py     -> 0x800e
+# or at runtime:  python -c "import App; print(App.CT_NEBULA)"  -> 32782
 #
 # NOTE these names are deliberately NOT in CORRECT_EXISTING at the bottom of
 # this module. They are already bound FROM the measured table, so a correction

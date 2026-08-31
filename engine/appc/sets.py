@@ -458,7 +458,9 @@ class SetClass(TGEventHandlerObject):
         from engine.appc import object_types
         from engine.appc.properties import ShipProperty
         from engine.appc.ships import ShipClass
-        # BC passes an int CT_ tag; engine code may still pass a class.
+        # BC passes an int CT_ tag; engine code may still pass a class, and
+        # so does any un-pickled pre-flip save (see
+        # object_types.resolve_class — that branch is not deletable).
         class_type = object_types.resolve_class(class_type)
         # CT_SHIP maps to ShipProperty (the property template) but the SDK's
         # object-iteration sites want live ShipClass instances. Translate.

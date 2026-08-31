@@ -50,6 +50,17 @@ def _ensure_populated() -> None:
     A failing `import App` is deliberately allowed to propagate: an engine
     with no App module is catastrophically broken, and a loud ImportError
     beats every type query silently answering "no matches".
+
+    The `import App` SUCCEEDING is not enough, which is why the registry is
+    re-checked afterwards.  If `App` is present-but-partially-initialised in
+    `sys.modules` -- its CT_ block not yet reached -- the import statement
+    returns the half-built module without re-executing it, `_BY_TAG` stays
+    empty, and every caller would get `[]`/`0` with no exception at all: the
+    exact silent hole this module exists to close, reopened inside it.  The
+    `_populating` flag cannot cover that case; it only guards re-entry back
+    through this function, not re-entry through some other import path.  No
+    reachable caller does this today, so the RuntimeError is a tripwire for a
+    future one, not a live condition.
     """
     global _populating
     if _BY_TAG or _populating:
@@ -59,6 +70,10 @@ def _ensure_populated() -> None:
         import App  # noqa: F401  (import side effect: the CT_ block registers)
     finally:
         _populating = False
+    if not _BY_TAG:
+        raise RuntimeError(
+            "engine.appc.object_types queried before App.py's CT_ block ran; "
+            "a type query here would silently answer 'no matches'")
 
 
 def class_for(tag):
@@ -89,6 +104,14 @@ def resolve_class(value):
     for an undefined `App.CT_*`, and an integer tag with no registered class.
     Callers treat None as "matches nothing", which is what every SDK
     while-loop and list-comprehension consumer already expects.
+
+    The class branch is NOT merely back-compat for engine callers, and must
+    not be deleted when the last of those is cleaned up: SDK `Condition`
+    objects PICKLE the tag (`Conditions/ConditionSystemBelow.py`'s
+    `__getstate__` stores `self.eSystem`, likewise ConditionSystemDisabled /
+    ConditionSystemDestroyed), so any save written before the CT_ flip
+    un-pickles a CLASS straight back into the tag slot. That is a constraint
+    no refactor can remove.
     """
     if isinstance(value, type):
         return value

@@ -89,6 +89,44 @@ def test_bool_is_not_treated_as_a_tag():
     assert class_for(False) is None
 
 
+def test_an_empty_registry_raises_instead_of_answering_no_matches():
+    """`import App` SUCCEEDING is not proof the CT_ block ran.
+
+    A present-but-partially-initialised `App` in `sys.modules` is handed back
+    by the import statement without being re-executed, so the registry would
+    stay empty and every consumer would answer `[]`/`0` with no exception --
+    reopening, inside this module, the exact silent hole it exists to close.
+    `_populating` cannot catch that: it only guards re-entry back through
+    `_ensure_populated`, not re-entry via another import path.
+    """
+    import sys
+    import types
+    from engine.appc import object_types
+
+    saved_app = sys.modules.get("App")
+    saved_by_tag = dict(object_types._BY_TAG)
+    saved_by_class = dict(object_types._BY_CLASS)
+    try:
+        sys.modules["App"] = types.ModuleType("App")   # no CT_ block
+        object_types._BY_TAG.clear()
+        object_types._BY_CLASS.clear()
+        with pytest.raises(RuntimeError, match="before App.py's CT_ block ran"):
+            object_types.class_for(App.CT_NEBULA)
+    finally:
+        if saved_app is not None:
+            sys.modules["App"] = saved_app
+        else:                                           # pragma: no cover
+            sys.modules.pop("App", None)
+        object_types._BY_TAG.clear()
+        object_types._BY_TAG.update(saved_by_tag)
+        object_types._BY_CLASS.clear()
+        object_types._BY_CLASS.update(saved_by_class)
+    # No residue: the real registry is back and answering.
+    from engine.appc.nebula import Nebula
+    assert class_for(App.CT_NEBULA) is Nebula
+    assert sys.modules["App"] is App
+
+
 def test_register_binds_both_directions():
     """The registry is module-global, so this probe MUST clean up after
     itself -- tests run in random order here and
