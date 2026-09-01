@@ -19,15 +19,29 @@ hit_point, hit_normal) tuples for host_loop to route through combat.apply_hit.
 import math
 
 from engine.appc.math import TGPoint3
-from engine.core.ids import TGObject
+from engine.appc.objects import ObjectClass
 
 
-class Torpedo(TGObject):
+class Torpedo(ObjectClass):
     """Runtime projectile.  Torpedo-style visual fields populated by
     CreateTorpedoModel (textured core+glow+flares quads); disruptor-style
     bolts populated by CreateDisruptorModel (authentic procedural
     tapered-tube fields — a disruptor never touches the quad fields).
     Behaviour fields set by SetDamage/SetGuidanceLifetime/SetMaxAngularAccel.
+
+    Extends ObjectClass, NOT TGObject, since 2026-09-01 (emitter gaps #6/#7).
+    A torpedo is a real set member: BC's ConditionIncomingTorps.EnteredSet
+    opens with `App.ObjectClass_Cast(pEvent.GetDestination())` and bails on
+    None, and `SetClass.AddObjectToSet` needs SetName/_containing_set. The
+    transform survives the promotion untouched because both classes already
+    store it in `self._position` and both define GetWorldLocation.
+
+    `__slots__` below is now advisory rather than load-bearing: no class in
+    the ObjectClass chain declares slots, so every torpedo carries a __dict__
+    regardless. Kept because the named fields still bind to real descriptors
+    (cheaper than dict lookups on the hot motion path) and because the list
+    documents the projectile's own state. If torpedo count ever becomes a
+    memory problem, this is where it starts.
     """
     __slots__ = (
         "_position", "_velocity", "_age", "_ttl",
@@ -126,6 +140,35 @@ class Torpedo(TGObject):
         self._bolt_width      = float(width)
 
     def SetDamage(self, v) -> None:               self._damage = float(v)
+
+    def GetDamage(self) -> float:
+        """Payload damage. Read by `AI/Preprocessors.py:709` to total the
+        damage already inbound on a target before deciding to add to it.
+
+        Only reachable since torpedoes became set members (gaps #6/#7): that
+        loop starts from `GetClassObjectList(App.CT_TORPEDO)`, which was
+        permanently empty. Without this accessor the SDK would read a truthy
+        `_Stub` and `fIncomingDamage + _Stub` would raise inside a preprocessor.
+        """
+        return self._damage
+
+    def GetTargetID(self) -> int:
+        """Object id of the ship this torpedo is homing on, or `NULL_ID`.
+
+        `AI/Preprocessors.py:707` compares this against its candidate target's
+        id to decide which in-flight torpedoes already threaten it. A
+        dumbfire torpedo has no target and answers NULL_ID (0), which matches
+        no real object — so it correctly contributes nothing to the estimate.
+
+        Without this, the comparison read a truthy `_Stub`, `_Stub == id` was
+        always False, and the estimate silently stayed 0.0 — the failure being
+        invisible rather than loud is exactly why it survived.
+        """
+        target = self._target_ship
+        if target is None:
+            import App
+            return App.NULL_ID
+        return target.GetObjID()
     def SetDamageRadiusFactor(self, v) -> None:   self._damage_radius_factor = float(v)
     def GetDamageRadiusFactor(self) -> float:     return self._damage_radius_factor
     def SetGuidanceLifetime(self, v) -> None:
@@ -173,13 +216,81 @@ def register(torpedo: Torpedo) -> None:
     torpedo._id = _next_id
     _next_id += 1
     _active.append(torpedo)
+    _join_source_set(torpedo)
+
+
+def _join_source_set(torpedo: Torpedo) -> None:
+    """Add *torpedo* to its firing ship's set and post ET_TORPEDO_ENTERED_SET.
+
+    Emitter gaps #6/#7. Torpedoes used to live only in `_active`, so
+    `pSet.GetClassObjectList(App.CT_TORPEDO)` was permanently `[]` — which
+    silently zeroed `AI/Preprocessors.py:705`'s incoming-damage estimate and
+    left `ConditionIncomingTorps` (both its event path and its PeriodicCheck)
+    with nothing to see.
+
+    The name is assigned HERE and nowhere else. `SetClass._objects` is keyed
+    by name, so a shared name would make one torpedo silently replace another;
+    and `ObjectClass.SetName` posts ET_NAME_CHANGE on any rename with a
+    non-empty old name, so naming twice would broadcast once per torpedo per
+    spawn. `_id` is already unique and monotonic, so it is the key.
+
+    No source ship, or a source ship in no set (headless fixtures, and a ship
+    mid-warp in the transit set): the torpedo still flies — `_active` is what
+    drives motion — it simply joins no set and posts nothing. Posting an
+    "entered set" for a set it is not in would make ConditionIncomingTorps
+    track a torpedo its PeriodicCheck can never find.
+    """
+    source = torpedo._source_ship
+    # `implements`, not hasattr: on a TGObject __getattr__ hands back a truthy
+    # _Stub for any unknown name, so hasattr would be vacuously True and we
+    # would call a stub and get a _Stub "set" back. This also covers the
+    # legitimate case of a source that is not an ObjectClass at all — the
+    # projectile-motion fixtures fire from bare fakes, and BC-side a torpedo
+    # can outlive its shooter. Same degradation as "source is in no set".
+    from engine.core.ids import implements
+    if source is None or not implements(source, "GetContainingSet"):
+        return
+    kset = source.GetContainingSet()
+    if kset is None:
+        return
+    kset.AddObjectToSet(torpedo, "Torpedo %d" % torpedo._id)
+    _post_set_transition(torpedo, entered=True)
+
+
+def _post_set_transition(torpedo: Torpedo, *, entered: bool) -> None:
+    """Post the torpedo's own set-transition event.
+
+    Deliberately separate from `sets._broadcast_set_transition`, which keeps
+    its `ShipClass` filter: BC has distinct constants for torpedoes, and
+    `Conditions/ConditionIncomingTorps.py:180-183` registers for BOTH the
+    torpedo pair and the ship pair against the same two methods. Folding
+    torpedoes into the ship events would make it count every torpedo twice.
+
+    Destination is the torpedo — `EnteredSet`/`ExitedSet` both read
+    `pEvent.GetDestination()` and cast it.
+    """
+    import App
+    evt = App.TGEvent_Create()
+    evt.SetEventType(App.ET_TORPEDO_ENTERED_SET if entered
+                     else App.ET_TORPEDO_EXITED_SET)
+    evt.SetSource(torpedo)
+    evt.SetDestination(torpedo)
+    App.g_kEventManager.AddEvent(evt)
 
 
 def expire(torpedo: Torpedo) -> None:
     try:
         _active.remove(torpedo)
     except ValueError:
-        pass
+        # Already gone. Return WITHOUT touching the set or posting: `expire`
+        # is called defensively from several paths (collision, TTL, mission
+        # teardown) and a second call must not double-post the exit event.
+        return
+    kset = torpedo.GetContainingSet()
+    if kset is None:
+        return
+    kset.RemoveObjectFromSet(torpedo.GetName())
+    _post_set_transition(torpedo, entered=False)
 
 
 def get_by_id(obj_id):

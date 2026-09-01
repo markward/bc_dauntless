@@ -159,22 +159,54 @@ def test_get_xyz_probes_the_accessor_with_implements_not_hasattr():
     "found" GetTranslate, called the `_Stub`, and read .x/.y/.z off it as 0.0 —
     the origin, for an object that has a perfectly good position.
 
-    A Torpedo is the live example: a TGObject (not an ObjectClass) with a real
-    GetWorldLocation (projectiles.py:133) and no GetTranslate. Every
-    ObjectClass defines GetTranslate, which is why this never fired in
+    Every ObjectClass defines GetTranslate, which is why this never fired in
     production — but _get_xyz is the shared helper behind perception and
-    can_detect, and a positionless read there is silent."""
+    can_detect, and a positionless read there is silent.
+
+    ⚠️ This used the live `projectiles.Torpedo` until 2026-09-01, when
+    Torpedo was promoted from TGObject to ObjectClass so it could become a
+    real set member (emitter gaps #6/#7). It therefore has GetTranslate now,
+    and the premise no longer holds for it. A sweep of every TGObject subclass
+    in engine.appc found NO remaining production class with this shape, so the
+    subject below is a purpose-built double — deliberately minimal, mirroring
+    exactly the condition under test. If a real class ever regains this shape,
+    prefer it: a live subject cannot drift away from production the way a
+    double can."""
+    from engine.appc.subsystems import _get_xyz
+    from engine.core.ids import TGObject, implements
+
+    class _PositionedNonObjectClass(TGObject):
+        """A TGObject with a real GetWorldLocation and no real GetTranslate."""
+
+        def __init__(self, point):
+            super().__init__()
+            self._point = point
+
+        def GetWorldLocation(self):
+            return self._point
+
+    subject = _PositionedNonObjectClass(TGPoint3(0.0, 500.0, 0.0))
+
+    # The premise: no real GetTranslate, but a real GetWorldLocation.
+    assert not implements(subject, "GetTranslate")
+    assert implements(subject, "GetWorldLocation")
+    assert hasattr(subject, "GetTranslate")       # ...and hasattr says yes
+
+    assert _get_xyz(subject) == (0.0, 500.0, 0.0)
+
+
+def test_a_torpedo_still_reads_its_position_after_the_promotion():
+    """The promotion above must not have moved a torpedo's position read.
+
+    ObjectClass.GetTranslate and Torpedo's own GetWorldLocation both resolve
+    `self._position`, so _get_xyz now takes the FIRST accessor instead of the
+    second and must still land on the same coordinates. That equivalence is
+    the whole reason the base-class change was safe; pin it."""
     from engine.appc.projectiles import Torpedo
     from engine.appc.subsystems import _get_xyz
-    from engine.core.ids import implements
 
     torp = Torpedo()
     torp._position = TGPoint3(0.0, 500.0, 0.0)
-
-    # The premise: no real GetTranslate, but a real GetWorldLocation.
-    assert not implements(torp, "GetTranslate")
-    assert implements(torp, "GetWorldLocation")
-    assert hasattr(torp, "GetTranslate")          # ...and hasattr says yes
 
     assert _get_xyz(torp) == (0.0, 500.0, 0.0)
 
