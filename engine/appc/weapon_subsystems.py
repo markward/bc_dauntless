@@ -1298,8 +1298,54 @@ class TorpedoSystem(WeaponSystem):
         ammo = self.GetCurrentAmmoType()
         finite = ammo is not None and not getattr(ammo, "_unlimited", True)
         if finite and ammo.GetAvailable() <= 0:
+            self._post_cant_fire()
             return
         super().StartFiring(target, offset)
+
+    def _post_cant_fire(self) -> None:
+        """Announce a torpedo fire attempt that cannot produce a launch.
+
+        Gap #1 in docs/engine/event-emitter-gaps.md. The event carries no
+        reason: both SDK handlers (Bridge/TacticalMenuHandlers.py:1990,
+        Bridge/TacticalCharacterHandlers.py:198) re-derive it from this
+        system's own state via GetNumReady() / GetNumAvailableTorpsToType(),
+        and both self-guard -- they fall through silently when tubes are
+        ready, and they carry their own cooldowns (2 s global; 10 s since
+        Tactical last spoke). So an emitter here cannot spam a line even if
+        the player holds the trigger.
+
+        Scoped to torpedoes on purpose. Both handlers cast the source to
+        phaser and tractor systems as well and then use neither, so posting
+        from the phaser/tractor gates would be observationally inert today
+        while committing us to a reading of "can't fire" that no SDK code
+        exercises.
+
+        DELIBERATELY UNGUARDED, unlike the other emitters in this file
+        (_post_weapon_fired, _broadcast_weapon_fire_failed,
+        _broadcast_ammo_consumed_if_player), which wrap AddEvent in
+        try/except + dev_mode.log_swallowed. Those fire on the hot per-shot
+        path for consumers that already work; this one's consumers have NEVER
+        ONCE RUN in this engine, because nothing posted the event until now.
+        Swallowing here would hide the first real signal of a bug in code
+        that has never executed -- the same reasoning, verbatim, that
+        ships.py:1599 gives for posting ET_TARGET_WAS_CHANGED unguarded, and
+        that events.py:AddEvent gives for leaving destination dispatch
+        unguarded in general. Revisit once these handlers are live-verified.
+        """
+        import App
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_CANT_FIRE)
+        evt.SetSource(self)
+        # Posts even when GetParentShip() is None, unlike
+        # TractorBeamSystem._sync_firing_event, which RETURNS on a null parent.
+        # The difference is deliberate, not drift: that one holds an EDGE
+        # (_was_firing), so posting-and-forgetting a parentless transition
+        # would consume the crossing and lose the event permanently. This one
+        # holds no state -- a can't-fire is a momentary fact, re-derivable on
+        # the next trigger pull -- so there is nothing to defer and nothing to
+        # lose.
+        evt.SetDestination(self.GetParentShip())
+        App.g_kEventManager.AddEvent(evt)
 
     def GetNumAmmoTypes(self) -> int:
         return len(self._ammo_by_slot)
@@ -1348,6 +1394,24 @@ class TorpedoSystem(WeaponSystem):
         before = ammo.GetAvailable()
         ammo.AddAvailable(requested)
         return requested - (ammo.GetAvailable() - before)
+
+    def GetNumReady(self) -> int:
+        """Number of child tubes currently loaded and ready to launch.
+
+        BC's own handlers call this on the SYSTEM
+        (Bridge/TacticalMenuHandlers.py:2007,
+        Bridge/TacticalCharacterHandlers.py:223) to separate "out of
+        torpedoes" from "not reloaded yet". Ours defined GetNumReady only on
+        TorpedoTube (:2378), so a system-level call resolved through
+        TGObject.__getattr__ to a truthy _Stub and neither handler could take
+        the branch it wanted.
+        """
+        ready = 0
+        for i in range(self.GetNumWeapons()):
+            tube = self.GetWeapon(i)
+            if tube is not None and tube.GetNumReady():
+                ready += 1
+        return ready
 
     def GetNumAvailableTorpsToType(self, slot) -> int:
         """Rounds currently loaded for the type at ``slot`` (E3M1.py:2888,
@@ -1754,6 +1818,12 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         super().__init__(name)
         self._mode = self.TBS_HOLD
         self._engage_state = None
+        # Last observed IsFiring() value, for the ET_TRACTOR_BEAM_STARTED_/
+        # STOPPED_FIRING edge-detect. Not derived from _fire_held: the beam
+        # drops and re-acquires (range, shields, arc) while the ENGAGE intent
+        # is continuously held, and each crossing is a transition BC's
+        # PowerDisplay repaints for.
+        self._was_firing = False
 
     def _wants_power(self) -> bool:
         """The tractor siphons power only while a beam is actually held (a
@@ -1811,12 +1881,47 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         ship = self.GetParentShip()
         if self._can_engage(ship, target):
             self._engage_beam(target, offset, ship)
+        self._sync_firing_event()
 
     def IsFiring(self) -> int:
         """Instantaneous BEAM state only — deliberately NOT OR'd with
         `_fire_held` like the base: the engaged-but-not-gripping intent is
         surfaced separately via IsEngaged() (the HUD toggle reads that)."""
         return 1 if self._any_child_firing() else 0
+
+    def _sync_firing_event(self) -> None:
+        """Post ET_TRACTOR_BEAM_STARTED_/STOPPED_FIRING on a beam transition.
+
+        Gaps #8/#9 in docs/engine/event-emitter-gaps.md. Call after any
+        operation that could change IsFiring(); it is a no-op unless the
+        state actually crossed, so it is safe on the per-tick path.
+
+        Destination is the parent SHIP, not the system:
+        Bridge/PowerDisplay.py:1013 casts GetDestination() to ShipClass and
+        then walks the ship's own tractor system, and
+        Conditions/ConditionFiringTractorBeam.py:26-27 registers broadcast
+        METHOD handlers filtered to the watched ship -- that filter compares
+        against the event's destination. Neither event carries a payload:
+        both handlers re-read the live state themselves.
+        """
+        now = bool(self.IsFiring())
+        if now == self._was_firing:
+            return
+        ship = self.GetParentShip()
+        if ship is None:
+            # Don't mark the transition consumed: a parentless system has
+            # nowhere to send the event, but the NEXT sync (once it has a
+            # parent) must still see the crossing rather than finding
+            # _was_firing already flipped and treating it as a non-event.
+            return
+        self._was_firing = now
+        import App
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_TRACTOR_BEAM_STARTED_FIRING if now
+                         else App.ET_TRACTOR_BEAM_STOPPED_FIRING)
+        evt.SetSource(self)
+        evt.SetDestination(ship)
+        App.g_kEventManager.AddEvent(evt)
 
     def _can_engage(self, ship, target) -> bool:
         # Range gate AND shield gate: a tractor grips only targets whose shields
@@ -1839,6 +1944,16 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         if not self._fire_held or self._held_target is None:
             return False
         if not self.IsOn():
+            # Power loss stops emitters BEHIND this method's back:
+            # TractorBeam.UpdateCharge (:2278-2284) calls StopFiring() on
+            # itself once its parent isn't on, and host_loop's per-frame
+            # emitter pump runs UpdateCharge on every emitter regardless of
+            # parent power -- so by the time we get here on the very next
+            # tick IsFiring() has already flipped to False without this
+            # method ever seeing the transition. Sync here or the beam stops
+            # for real while _was_firing stays stuck True, latching the HUD
+            # "on" and swallowing the STARTED event when power returns.
+            self._sync_firing_event()
             return False
         if _is_offline(self):
             self.StopFiring()           # system disabled — fully disengage
@@ -1859,13 +1974,17 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
             if (not engageable) or (not _emitter_in_arc(em, ship, aim)):
                 em.StopFiring()
         if not engageable:
+            self._sync_firing_event()
             return False
         # Re-dispatch one eligible in-arc emitter if none is currently firing.
         for i in range(self.GetNumWeapons()):
             em = self.GetWeapon(i)
             if em is not None and em.IsFiring():
+                self._sync_firing_event()
                 return False
-        return self._engage_beam(target, self._held_offset, ship)
+        fired = self._engage_beam(target, self._held_offset, ship)
+        self._sync_firing_event()
+        return fired
 
     def _engage_beam(self, target, offset, ship) -> bool:
         """Fire one eligible in-arc emitter (SingleFire round-robin via
@@ -1906,6 +2025,7 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     def StopFiring(self, *args) -> None:
         self._engage_state = None
         super().StopFiring(*args)
+        self._sync_firing_event()
 
 
 class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
@@ -2579,9 +2699,25 @@ class TorpedoTube(Weapon):
 
     def _broadcast_weapon_fire_failed(self) -> None:
         """Post ET_WEAPON_FIRE_FAILED: Destination = the TUBE.  Posted when a
-        targeted fire fails the aim-point resolve or the +/-30 degree cone
-        (audited; no shipped SDK script listens — defined for fidelity +
-        mod surface)."""
+        targeted fire fails the aim-point resolve or the +/-30 degree cone.
+
+        ⚠️ ``ET_WEAPON_FIRE_FAILED`` IS ``ET_CANT_FIRE`` — both are 0x800037
+        (events.py:70-72 keeps the descriptive name as an alias so the two can
+        never drift).  The older claim here that "no shipped SDK script
+        listens" is FALSE and has been since the constant sweep made 0x800037
+        real: Bridge/TacticalMenuHandlers.py:422 and
+        Bridge/TacticalCharacterHandlers.py:58 both register ``PlayerCantFire``
+        for it.
+
+        Neither reaches this post, for two independent reasons, and BOTH are
+        load-bearing — do not "tidy" either away: they are registered on the
+        PLAYER instance while this addresses the TUBE, and this post sets no
+        Source at all, so a ``PlayerCantFire``-shaped consumer would evaluate
+        ``TorpedoSystem_Cast(None)``.  That divergence from the sibling
+        emitters (which all pair Source = the emitting object with Destination
+        = whatever the handler casts or filters on) is why this one is inert.
+        If this event ever needs a real consumer, give it a Source and decide
+        its destination deliberately rather than inheriting this shape."""
         import App
         from engine import dev_mode
         try:

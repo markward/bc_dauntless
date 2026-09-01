@@ -131,6 +131,12 @@ class STTargetMenu(STTopLevelMenu):
         # is a property here whose getter reads these.
         self._row_cache: dict = {}
         self._contacts: tuple = ()
+        # Ships that were TARGETABLE on the previous push -- the membership
+        # this list actually shows (_rows() filters on Contact.targetable).
+        # The diff against it is what makes ET_TARGET_LIST_OBJECT_ADDED /
+        # _REMOVED possible: set_contacts is pushed every frame, so without a
+        # previous set there is no crossing to post on.
+        self._listed: frozenset = frozenset()
         super().__init__(label)
         # The last ship the player manually selected — the slot BC's
         # persistent-target hint would live in.
@@ -201,6 +207,57 @@ class STTargetMenu(STTopLevelMenu):
             if row is None:
                 continue
             row.SetVisible()
+        self._post_membership_changes()
+
+    def _post_membership_changes(self) -> None:
+        """Post ET_TARGET_LIST_OBJECT_ADDED / _REMOVED for this push's
+        crossings, then remember the new membership.
+
+        Gaps #4/#5 in docs/engine/event-emitter-gaps.md. Membership is the
+        TARGETABLE subset because that is what this list shows -- a contact
+        that is perceivable but not targetable has no row (`_rows`), so it is
+        not "on the target list" in the sense the SDK handlers mean.
+
+        Destination is the object itself:
+        Bridge/ScienceMenuHandlers.py:244 (ShipIdentified) and :205
+        (ExitedSet) both read pEvent.GetDestination(), and
+        Maelstrom/Episode3/E3M2/E3M2.py:906 registers ADDED as an INSTANCE
+        handler on the Berkeley -- instance dispatch only reaches the
+        destination, so a broadcast with some other destination would leave
+        that mission beat dead.
+
+        Row LIFETIME is deliberately unchanged: `_row_cache` still keeps one
+        row per ship for the life of the menu. This method reports membership;
+        it does not manage rows.
+        """
+        listed = frozenset(c.ship for c in self._contacts if c.targetable)
+        if listed == self._listed:
+            return
+        # Record the NEW membership before posting, not after. AddEvent
+        # dispatches synchronously and destination dispatch is deliberately
+        # unguarded, so a handler runs inside these loops; one that re-entered
+        # set_contacts would otherwise diff against the stale set, double-post,
+        # and then have its own result overwritten when this frame resumed.
+        # No live re-entrant path exists today -- this is the same ordering
+        # ships.py:1592 adopts for ET_TARGET_WAS_CHANGED, and for the same
+        # reason. Both differences are computed first so the swap cannot
+        # disturb them.
+        import App
+        added = listed - self._listed
+        removed = self._listed - listed
+        self._listed = listed
+        for ship in added:
+            self._post_membership(App.ET_TARGET_LIST_OBJECT_ADDED, ship)
+        for ship in removed:
+            self._post_membership(App.ET_TARGET_LIST_OBJECT_REMOVED, ship)
+
+    def _post_membership(self, event_type, ship) -> None:
+        import App
+        evt = App.TGEvent_Create()
+        evt.SetEventType(event_type)
+        evt.SetSource(self)
+        evt.SetDestination(ship)
+        App.g_kEventManager.AddEvent(evt)
 
     def contact_for(self, ship):
         """The pushed Contact record for ``ship``, or None if it is not a
@@ -387,9 +444,17 @@ class STTargetMenu(STTopLevelMenu):
         come back on the next push if those ships are still present. That is
         correct for its real caller (MissionShared.ClearShips deletes the ships
         immediately afterwards, so the next push is empty anyway).
+
+        `_listed` is reset alongside, or it would outlive the rows it
+        describes: the next push would find those ships already "listed" and
+        skip their ET_TARGET_LIST_OBJECT_ADDED even though their rows were
+        destroyed and rebuilt. Resetting means the next push re-announces
+        whatever is still there, which is the honest reading -- this method
+        empties the list, and everything that comes back has re-entered it.
         """
         self._row_cache.clear()
         self._contacts = ()
+        self._listed = frozenset()
 
     def ClearPersistentTarget(self) -> None:
         """SDK: TacticalInterfaceHandlers.py:656, HelmMenuHandlers.py:947,
