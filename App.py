@@ -332,8 +332,15 @@ from engine.appc.particles import (
 # engine, a minimal placeholder class is defined inline; when a real
 # implementation lands the mapping here updates to point at it.
 
+# Torpedo is NO LONGER a placeholder (2026-09-01, emitter gaps #6/#7). It is
+# the live projectile class, so CT_TORPEDO now matches real in-flight
+# torpedoes and `pSet.GetClassObjectList(App.CT_TORPEDO)` finally answers —
+# which is what AI/Preprocessors.py:705's incoming-damage estimate and
+# ConditionIncomingTorps.PeriodicCheck have always been asking for. The old
+# `class Torpedo(ObjectClass): pass` stub matched nothing that ever flew.
+from engine.appc.projectiles import Torpedo
+
 class Nebula(ObjectClass): pass
-class Torpedo(ObjectClass): pass
 class Debris(ObjectClass): pass
 class AsteroidField(ObjectClass): pass
 class AsteroidTile(ObjectClass): pass

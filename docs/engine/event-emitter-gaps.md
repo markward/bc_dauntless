@@ -1,6 +1,6 @@
-# Event emitter gaps — 3 of the original 12 still have no engine poster
+# Event emitter gaps — 1 of the original 12 still has no engine poster
 
-> **Status 2026-08-31 — 9 of 12 closed.** Tier A closed three
+> **Status 2026-09-01 — 11 of 12 closed.** Tier A closed three
 > (`ET_SET_WARP_SEQUENCE` #12, `ET_NAME_CHANGE` #3, `ET_IN_SYSTEM_WARP` #11 —
 > the tier where *the post was the only missing piece*, no new state, no
 > fidelity guess). This branch closed six more: `ET_CANT_FIRE` (#1, needed a
@@ -13,11 +13,14 @@
 > edge-detect built from scratch). Each is marked ✅ **DONE** (or, for #2,
 > ✅ **Closed — deliberately NOT emitted**) below with what landed.
 >
-> **Three remain open**, for reasons a code change here cannot close:
-> - **#6/#7** `ET_TORPEDO_ENTERED_SET`/`_EXITED_SET` — torpedoes are never
->   added to a `SetClass` at all (they live only in `projectiles._active`);
->   wiring that up changes what every `GetClassObjectList(CT_TORPEDO)` caller
->   and the active-set render scoping see, which is its own plan.
+> **#6/#7 closed 2026-09-01** by promoting `Torpedo` from `TGObject` to
+> `ObjectClass` and giving it real set membership. The blast radius feared
+> here was wrong on both counts: `GetClassObjectList(CT_TORPEDO)` callers got
+> `[]` before, so they could only go from dead to live, and render scoping
+> goes through `iter_active_ships`, which filters to `ShipClass` and never
+> saw torpedoes. The real prerequisite was the base class.
+>
+> **One remains open:**
 > - **#10** `ET_RESTORE_PERSISTENT_TARGET` — BC's engine owns both the
 >   persistent-target storage and the restore trigger; nothing in the SDK ever
 >   *sets* a persistent target (only `ClearPersistentTarget` is published
@@ -39,11 +42,11 @@ them — but for most of them that was a **reporting change, not a behaviour
 change**. This document is the record so that silence is not mistaken for
 completeness.
 
-Nine of the twelve (#1, #2, #3, #4, #5, #8, #9, #11, #12) have since gained
-engine emitters, or — #2 only — been closed as a documented non-emission, and
-are marked ✅ below; their handlers now run (#2 excepted, by design). **The
-remaining three (#6, #7, #10) are still unreachable:** nothing in the engine
-posts them, and the quiet stub report does not mean otherwise.
+Eleven of the twelve (#1..#9, #11, #12) have since gained engine emitters,
+or — #2 only — been closed as a documented non-emission, and are marked ✅
+below; their handlers now run (#2 excepted, by design). **Only #10 is still
+unreachable:** nothing in the engine posts it, and the quiet stub report does
+not mean otherwise.
 
 For each: the SDK handler waiting for the event, and either the engine call
 site that should post it, or an explicit statement that none could be
@@ -274,7 +277,7 @@ reset).
 
 ---
 
-## 6. `ET_TORPEDO_ENTERED_SET` (0x80005c)
+## 6. `ET_TORPEDO_ENTERED_SET` (0x80005c) — ✅ DONE
 
 **SDK handler:** `Maelstrom/Episode8/E8M2/E8M2.py:4511` registers
 `TorpedoEnterSet` (defined `:1643`); `Conditions/ConditionIncomingTorps.py:180`
@@ -299,12 +302,45 @@ the active-set render scoping see), not a one-line addition.
 
 ---
 
-## 7. `ET_TORPEDO_EXITED_SET` (0x80005e)
+## 7. `ET_TORPEDO_EXITED_SET` (0x80005e) — ✅ DONE
 
 Same prerequisite gap as #6. **SDK handler:**
 `Maelstrom/Episode8/E8M2/E8M2.py:4513` registers `TorpedoExitSet` (defined
 `:1692`); `Conditions/ConditionIncomingTorps.py:182` registers the method
 `ExitedSet` (defined `:257`).
+
+**✅ Landed 2026-09-01.** `Torpedo` now extends `ObjectClass` rather than
+`TGObject`, and `projectiles.register()` / `expire()` join and leave the
+firing ship's set, posting the pair with the torpedo as destination.
+
+Three things the analysis above got wrong, worth keeping so the next
+"prerequisite gap" is not over-estimated the same way:
+
+* **The blast radius was smaller than feared.** `GetClassObjectList(CT_TORPEDO)`
+  callers returned `[]`, so they could only go from dead to live — no existing
+  answer changed. Render scoping goes through `iter_active_ships`, which
+  filters to `ShipClass`, so torpedoes were never visible there.
+  `contact_index.on_added` ignores non-ships, so they do not become contacts.
+* **The real prerequisite was the BASE CLASS**, not set plumbing.
+  `ConditionIncomingTorps.EnteredSet` opens with `ObjectClass_Cast`, which a
+  `TGObject` fails, and `AddObjectToSet` needs `SetName`/`_containing_set`.
+  The promotion was safe because `Torpedo` and `ObjectClass` already both
+  stored the transform in `self._position`.
+* **Two accessors were missing and would have read as truthy `_Stub`s** the
+  moment the loop went live: `GetDamage` (only `SetDamage` existed) and
+  `GetTargetID`. Without them `AI/Preprocessors.py:707`'s
+  `pTorp.GetTargetID() == idTarget` is always False and the incoming-damage
+  estimate silently stays 0.0.
+
+Beyond the two events this makes `AI/Preprocessors.py:705`'s estimate live —
+an AI now sees damage already inbound on a target before adding to it — and
+gives `ConditionIncomingTorps.PeriodicCheck` real torpedoes to find. Evasion's
+1 Hz polling path is unchanged and still works; the events are a faster gate
+alongside it, removing ~1 s of latency.
+
+Cost measured: **2.12 us -> 7.43 us per spawn+expire** (+5.3 us per torpedo).
+At an absurd 100 spawns per frame that is 0.53 ms; at real fire rates it is
+unmeasurable. Pinned by `tests/unit/test_torpedo_set_membership.py`.
 
 ---
 
@@ -462,8 +498,8 @@ correct before, but never timely. This also closes the residual flagged in
 | `ET_NAME_CHANGE` | `ScienceMenuHandlers.py:96/272` | ✅ **DONE** — `objects.py` `ObjectClass.SetName`, rename-only (old name non-empty) |
 | `ET_TARGET_LIST_OBJECT_ADDED` | `ScienceMenuHandlers.py:94/244`, `E3M2.py:906/1638`, `E2M1.py:718` | ✅ **DONE** — `target_menu.py` `STTargetMenu._post_membership_changes()`, a TARGETABLE-subset membership diff against `_listed` |
 | `ET_TARGET_LIST_OBJECT_REMOVED` | `ScienceMenuHandlers.py:93/205` | same as above |
-| `ET_TORPEDO_ENTERED_SET` | `E8M2.py:4511/1643`, `ConditionIncomingTorps.py:180/228` | **none** — torpedoes are never added to a `SetClass` (prerequisite mechanism absent, `projectiles.py:167-180`, `sets.py:260-289`) |
-| `ET_TORPEDO_EXITED_SET` | `E8M2.py:4513/1692`, `ConditionIncomingTorps.py:182/257` | same prerequisite gap |
+| `ET_TORPEDO_ENTERED_SET` | `E8M2.py:4511/1643`, `ConditionIncomingTorps.py:180/228` | ✅ **DONE** — `projectiles.register`/`expire`; Torpedo promoted to ObjectClass |
+| `ET_TORPEDO_EXITED_SET` | `E8M2.py:4513/1692`, `ConditionIncomingTorps.py:182/257` | ✅ **DONE** — same pair |
 | `ET_TRACTOR_BEAM_STARTED_FIRING` | `PowerDisplay.py:337/1010`, `ConditionFiringTractorBeam.py:26`, `E7M2.py:341/708`, `E8M2.py:528` | ✅ **DONE** — `weapon_subsystems.py` `TractorBeamSystem._sync_firing_event()`, edge-detect on `IsFiring()` cached in `_was_firing` |
 | `ET_TRACTOR_BEAM_STOPPED_FIRING` | `PowerDisplay.py:338/1010`, `ConditionFiringTractorBeam.py:27` | same as above, opposite transition — also covers the `not IsOn()` power-loss bail that latched the HUD before the review-pass fix |
 | `ET_RESTORE_PERSISTENT_TARGET` | `TacticalMenuHandlers.py:407/958` | **could not determine** — no code sets or reads `target_menu.py`'s `_persistent_target_name` for anything but clearing it |
