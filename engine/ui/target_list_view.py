@@ -83,10 +83,20 @@ def _query_shield_percentage(ship) -> int:
     if shields is None or not hasattr(shields, "GetShieldPercentage"):
         return 0
     try:
-        # Shields read down while the ship is fading in/out (they don't block —
-        # see combat.cloak_shields_suspended); the charge is preserved for after.
-        from engine.appc.combat import cloak_shields_suspended
-        if cloak_shields_suspended(ship):
+        # Same rule as the target-status panel's `_shields_tuple`: the readout
+        # must agree with whether shields actually BLOCK, because the shield
+        # bubble is gated on that same predicate. This used to special-case
+        # only the cloak-transition window; `shields_block` covers that plus a
+        # disabled or destroyed generator and the dev disable-NPC-shields
+        # cheat, each of which stops absorption while this still reported the
+        # stored charge.
+        #
+        # Fixed in the same change as `_shields_tuple` deliberately — the two
+        # readouts sit on screen together, so fixing one alone would have them
+        # contradict each other, which is worse than both being wrong.
+        # Preserves the charge; it is hidden, not drained.
+        from engine.appc.combat import shields_block
+        if not shields_block(ship):
             return 0
         return int(round(shields.GetShieldPercentage() * 100))
     except Exception:
