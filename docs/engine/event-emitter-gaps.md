@@ -1,6 +1,6 @@
-# Event emitter gaps — 1 of the original 12 still has no engine poster
+# Event emitter gaps — all 12 closed
 
-> **Status 2026-09-01 — 11 of 12 closed.** Tier A closed three
+> **Status 2026-09-02 — 12 of 12 closed.** Tier A closed three
 > (`ET_SET_WARP_SEQUENCE` #12, `ET_NAME_CHANGE` #3, `ET_IN_SYSTEM_WARP` #11 —
 > the tier where *the post was the only missing piece*, no new state, no
 > fidelity guess). This branch closed six more: `ET_CANT_FIRE` (#1, needed a
@@ -20,11 +20,11 @@
 > goes through `iter_active_ships`, which filters to `ShipClass` and never
 > saw torpedoes. The real prerequisite was the base class.
 >
-> **One remains open:**
-> - **#10** `ET_RESTORE_PERSISTENT_TARGET` — BC's engine owns both the
->   persistent-target storage and the restore trigger; nothing in the SDK ever
->   *sets* a persistent target (only `ClearPersistentTarget` is published
->   API), so naming a call site would mean inventing a mechanism.
+> **#10 closed 2026-09-02.** The reference server could not reach it (no
+> object model for `STTargetMenu`, no reconstructed body for
+> `ClearPersistentTarget`), so it went to the clean-room RE project, which
+> reconstructed the restore routine. See §10 — the recovered mechanism
+> contradicted our SDK-derived guess in a way that mattered.
 >
 
 Q13's constant sweep (Tasks 1-9) made all 17 previously-dead-handler event
@@ -42,11 +42,8 @@ them — but for most of them that was a **reporting change, not a behaviour
 change**. This document is the record so that silence is not mistaken for
 completeness.
 
-Eleven of the twelve (#1..#9, #11, #12) have since gained engine emitters,
-or — #2 only — been closed as a documented non-emission, and are marked ✅
-below; their handlers now run (#2 excepted, by design). **Only #10 is still
-unreachable:** nothing in the engine posts it, and the quiet stub report does
-not mean otherwise.
+All twelve are now closed: eleven have engine emitters and #2 is a documented
+non-emission. Every handler above is reachable (#2 excepted, by design).
 
 For each: the SDK handler waiting for the event, and either the engine call
 site that should post it, or an explicit statement that none could be
@@ -408,7 +405,7 @@ latch fix that this direction was the one actually missing.
 
 ---
 
-## 10. `ET_RESTORE_PERSISTENT_TARGET` (0x80005b)
+## 10. `ET_RESTORE_PERSISTENT_TARGET` (0x80005b) — ✅ DONE
 
 **SDK handler:** `Bridge/TacticalMenuHandlers.py:407` registers
 `PersistentTargetRestored` (defined `:958`) so restoring a remembered target
@@ -466,6 +463,69 @@ moment would silently change tactical behaviour.
 
 Re-open this only if the reference gains a `STTargetMenu` object model or a
 reconstructed body for `0x0062DED0`.
+
+
+**✅ Landed 2026-09-02 — mechanism RECOVERED by the clean-room RE project.**
+The reference server could not reach it, so the question went to the RE
+project, which reconstructed the restore routine. Their findings, and how each
+shaped the implementation:
+
+* **The restore is driven from the target menu's PERIODIC REFRESH**, not from
+  an object-entered-set event. Our SDK-derived hypothesis — hook
+  `ET_TARGET_LIST_OBJECT_ADDED` — was WRONG, and not harmlessly: an event hook
+  restores and clears at different moments than a poll does.
+* **The engine clears the memory in exactly one circumstance**: the remembered
+  object no longer resolves, or resolves to something dead (two callers of the
+  clear in the whole image — the SWIG wrapper, and the failure path inside the
+  restore routine itself). **A not-currently-targetable object does NOT clear
+  it — it skips the tick.** Invert that asymmetry and a ship that cloaks once
+  is forgotten forever, with nothing to notice.
+* **Nothing clears the memory after a successful restore.** It persists, so a
+  target that leaves and returns twice is restored twice.
+* **`0x80005B` is posted BEFORE the target changes**, and delivered first. The
+  original relies on a FIFO queue-append ordering. Ours dispatches
+  synchronously, which gives the invariant *more* strongly — the restore
+  handler runs to completion before `SetTarget` is called — so this is
+  deliberately NOT a queue. The invariant is what matters:
+  `TacticalMenuHandlers.PersistentTargetRestored` increments a counter that
+  the target-changed handler then consumes, and posted the other way round a
+  re-selection the player never made silently cancels Felix's "Target At Will".
+* **The restore carries the SUBSYSTEM, not a flag.** `spec/ShipClass.md 4.0`
+  documents `SetTargetHandle`'s second argument as an int `iFlag`; the RE
+  project corrected that — it is a `ShipSubsystem*`, proven by three
+  independent dereferences, and the restore path is the only one of eight call
+  sites that passes it non-null. So a restore re-targets the object *and* its
+  subsystem.
+* **Omitting the event parameter is safe.** Of six engine subscribers to
+  `0x800058`, five read only the ship, and the multiplayer serializer reads the
+  second field behind a null guard. Emitting an **integer** there would be the
+  one unsafe choice — which is what we would have done on the corpus's
+  mis-typing.
+
+Implemented in `engine/appc/target_menu.py`
+(`remember_player_target` / `attempt_persistent_restore`), driven per frame
+from the host loop after the contact push. `ClearPersistentTarget` now clears
+both halves of the pair. The liveness half of the clear reuses
+`perception`'s `alive_or_wreck`, matching the original, where the clear is
+gated on the same predicate the menu-membership scan uses.
+
+The three existing engine clear-sites map onto the recovered rules without
+new code: a dead target is cleared by the liveness guard; `warp._clear_all_targets`
+already called `ClearPersistentTarget` (mirroring `PostWarpEnableMenu`, whose
+comment describes exactly the behaviour BC's authors removed); and a cloaked or
+out-of-range target is the skip-the-tick case.
+
+⚠️ **TWO DEFAULTS ARE OURS, NOT RECOVERED** — both would be settled by one
+live check, and both are pinned by tests so a change is deliberate:
+1. **We restore only when the player has no current target.** Nothing
+   establishes whether the original overrides a live selection.
+2. **We resolve only within the player's current set.** The original uses a
+   world-context handle, which may resolve more broadly — relevant to the
+   "object follows you to the new set" case in the SDK comment.
+
+⚠️ Still unestablished upstream: the semantics of the `0x008E5C18` float
+threshold and the `+0x150` byte beyond "the same liveness test the
+menu-membership scan uses". We use our canonical predicate, as advised.
 
 ---
 
@@ -542,6 +602,6 @@ correct before, but never timely. This also closes the residual flagged in
 | `ET_TORPEDO_EXITED_SET` | `E8M2.py:4513/1692`, `ConditionIncomingTorps.py:182/257` | ✅ **DONE** — same pair |
 | `ET_TRACTOR_BEAM_STARTED_FIRING` | `PowerDisplay.py:337/1010`, `ConditionFiringTractorBeam.py:26`, `E7M2.py:341/708`, `E8M2.py:528` | ✅ **DONE** — `weapon_subsystems.py` `TractorBeamSystem._sync_firing_event()`, edge-detect on `IsFiring()` cached in `_was_firing` |
 | `ET_TRACTOR_BEAM_STOPPED_FIRING` | `PowerDisplay.py:338/1010`, `ConditionFiringTractorBeam.py:27` | same as above, opposite transition — also covers the `not IsOn()` power-loss bail that latched the HUD before the review-pass fix |
-| `ET_RESTORE_PERSISTENT_TARGET` | `TacticalMenuHandlers.py:407/958` | **could not determine** — no code sets or reads `target_menu.py`'s `_persistent_target_name` for anything but clearing it |
+| `ET_RESTORE_PERSISTENT_TARGET` | `TacticalMenuHandlers.py:407/958` | ✅ **DONE** — `target_menu.attempt_persistent_restore`, on the periodic refresh; mechanism recovered by the RE project |
 | `ET_IN_SYSTEM_WARP` | `ScienceMenuHandlers.py:95/515` | ✅ **DONE** — `ships.py` engage + `_end_in_system_warp()` shared by all 4 disengage sites |
 | `ET_SET_WARP_SEQUENCE` | `ConditionWarpingToSet.py:33/69` | ✅ **DONE** — `subsystems.py` `WarpEngineSubsystem.SetWarpSequence`, unguarded ping |
