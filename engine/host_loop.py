@@ -75,6 +75,7 @@ from engine.appc import (
     weapon_tactical_commands,
     render_instances,
 )
+from engine.appc import target_menu as _target_menu_mod
 from engine.appc import viewscreen_static as _vss
 from engine.appc import bridge_set as _bridge_set
 # combat is imported as a module (not `from combat import apply_hit`) so call
@@ -7592,6 +7593,23 @@ def run(mission_name: Optional[str] = None,
                 if _menu is not None and _player is not None:
                     with frame_profiler.scope("ui.contacts"):
                         _pump_contacts(_menu, _player)
+                        # Persistent target (emitter gap #10). Record the
+                        # player's current target+subsystem, then try to
+                        # restore a remembered one. Order matters: recording
+                        # first means a target set and dropped inside one
+                        # frame is still captured. Both run AFTER the contact
+                        # push, because the restore consults this frame's
+                        # `targetable` verdict to decide skip-vs-restore.
+                        #
+                        # This IS the original's "periodic refresh" hook -- it
+                        # is not driven by an object-entered-set event, which
+                        # was our own earlier guess and would restore and
+                        # clear at the wrong moments.
+                        try:
+                            _target_menu_mod.remember_player_target(_player)
+                            _target_menu_mod.attempt_persistent_restore(_player)
+                        except Exception as _e:
+                            dev_mode.log_swallowed("persistent target", _e)
 
                 # Surface 2 of weapons-config: reconcile the equipment-gated
                 # weapon/defense command rows on the F2 Tactical menu. Idempotent

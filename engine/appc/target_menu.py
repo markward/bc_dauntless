@@ -147,6 +147,12 @@ class STTargetMenu(STTopLevelMenu):
         # rather than left looking like a working hook. Build the writer and
         # its reader together if persistent-target restore is ever wanted.
         self._persistent_target_name: str | None = None
+        # ...and the subsystem that was locked on it. The original keeps the
+        # pair (`m_70`/`m_74`) and the restore re-selects BOTH — the object
+        # alone is not what it remembers. Held as the subsystem object rather
+        # than a name because a subsystem is only reachable through its ship,
+        # which the name half already identifies.
+        self._persistent_target_subsystem = None
 
     # ── Derived membership ───────────────────────────────────────────────────
 
@@ -458,8 +464,15 @@ class STTargetMenu(STTopLevelMenu):
 
     def ClearPersistentTarget(self) -> None:
         """SDK: TacticalInterfaceHandlers.py:656, HelmMenuHandlers.py:947,
-        MissionShared.py:354."""
+        MissionShared.py:354.
+
+        Clears BOTH halves of the pair. The original remembers an object AND
+        the subsystem that was targeted on it (`m_70`/`m_74`), and the restore
+        re-selects both — so clearing only the object would leave a subsystem
+        outliving the thing it belonged to.
+        """
         self._persistent_target_name = None
+        self._persistent_target_subsystem = None
 
     def RebuildShipMenu(self, ship) -> None:
         """Create or refresh the cached row for ``ship``. SDK callsites:
@@ -725,3 +738,145 @@ def resolve_affiliation(ship, mission) -> str:
     if mission.GetNeutralGroup().IsNameInGroup(name):
         return "NEUTRAL"
     return "UNKNOWN"
+
+
+# ── Persistent target: remember, and restore on the periodic refresh ────────
+# Emitter gap #10, the last of the twelve. The mechanism is RECOVERED from the
+# clean-room RE project's reconstruction of the restore routine, after the
+# reference server could not reach it (no object model for STTargetMenu, no
+# reconstructed body for ClearPersistentTarget).
+#
+# What was established, and what this code is built to:
+#
+#   * The restore is driven from the target menu's PERIODIC REFRESH, not from
+#     an object-entered-set event. An event hook was our own earlier guess and
+#     it was wrong: it would restore and clear at different moments.
+#   * The engine clears the memory in exactly ONE circumstance -- the
+#     remembered object no longer resolves, or resolves to something dead.
+#     A merely not-currently-targetable object SKIPS THE TICK and keeps the
+#     memory. Getting that asymmetry backwards means a ship that cloaks once
+#     is forgotten forever and the feature quietly stops working.
+#   * Nothing clears the memory after a successful restore.
+#   * The restore event is posted BEFORE the target changes.
+#   * The restore carries the SUBSYSTEM. In the original this is the second
+#     argument to SetTargetHandle, which the reference corpus documents as an
+#     int flag -- a mis-typing the RE project corrected: it is a
+#     ShipSubsystem*, and the restore is the only one of eight call sites that
+#     passes it non-null.
+#
+# TWO DEFAULTS ARE OURS, not recovered (see docs/engine/event-emitter-gaps.md):
+# we restore only when the player has no current target, and we resolve only
+# within the player's current set.
+
+
+def remember_player_target(player) -> None:
+    """Record the player's current target + subsystem as the persistent pair.
+
+    Called every frame from the host loop. The original maintains this
+    unconditionally on every player target/subsystem change; a per-frame
+    capture is the same thing for any target that exists for at least one
+    frame, without needing a hook on every mutation site.
+
+    Only ever records a REAL target. Losing the target must not erase the
+    memory -- outliving the drop is the entire feature.
+    """
+    if player is None:
+        return
+    menu = STTargetMenu_GetTargetMenu()
+    if menu is None:
+        return
+    target = player.GetTarget()
+    if target is None:
+        return
+    name = target.GetName()
+    if not name:
+        return
+    menu._persistent_target_name = name
+    menu._persistent_target_subsystem = player.GetTargetSubsystem()
+
+
+def attempt_persistent_restore(player) -> bool:
+    """Re-select the remembered target if it is available again.
+
+    Runs on the periodic target-list refresh. Returns True if a restore
+    happened. Guard order is load-bearing and is the RE project's, not ours:
+
+      1. nothing remembered            -> nothing to do
+      2. gone, or resolves but dead    -> CLEAR the memory
+      3. alive but not targetable      -> SKIP this tick, KEEP the memory
+      4. otherwise                     -> restore
+
+    Deliberately NOT called from `set_contacts`. That is a data push, and a
+    restore is a game-state mutation; the same separation `reconcile_subsystem_lock`
+    needed when it sat inside `render_payload` and the UI throttle silently
+    delayed it.
+    """
+    menu = STTargetMenu_GetTargetMenu()
+    if menu is None or player is None:
+        return False
+    name = menu._persistent_target_name
+    if not name:
+        return False
+
+    # OUR DEFAULT: never override a live selection.
+    if player.GetTarget() is not None:
+        return False
+
+    pSet = player.GetContainingSet()
+    remembered = pSet.GetObject(name) if pSet is not None else None
+    if remembered is None or not _persistent_target_alive(remembered):
+        menu.ClearPersistentTarget()
+        return False
+
+    contact = menu.contact_for(remembered)
+    if contact is None or not contact.targetable:
+        return False                      # skip the tick; memory survives
+
+    _post_restore_event(player, remembered)
+    player.SetTarget(remembered)
+    subsystem = menu._persistent_target_subsystem
+    if subsystem is not None:
+        player.SetTargetSubsystem(subsystem)
+    return True
+
+
+def _persistent_target_alive(obj) -> bool:
+    """The liveness half of the clear test.
+
+    The original gates its clear on the same pair its menu-membership scan
+    uses. Ours is `perception.perceived_by`'s `alive_or_wreck`, so this is
+    that same predicate rather than a second opinion — a targetable wreck is
+    still a legitimate thing to have remembered.
+    """
+    from engine.appc.ship_death import _out_of_action, is_targetable_wreck
+    try:
+        return (not _out_of_action(obj)) or is_targetable_wreck(obj)
+    except Exception:
+        return False
+
+
+def _post_restore_event(player, remembered) -> None:
+    """Post ET_RESTORE_PERSISTENT_TARGET, BEFORE the target actually changes.
+
+    `Bridge/TacticalMenuHandlers.py:958` increments a counter so the
+    target-changed handler that follows does not clear Felix's "Target At
+    Will". Posted after the change, the counter arrives too late and a
+    re-selection the player never made silently cancels their setting.
+
+    The original appends both events to a FIFO queue, relying on ordering
+    within it. Our AddEvent dispatches SYNCHRONOUSLY, which gives the same
+    invariant more strongly: this handler runs to completion before SetTarget
+    is even called. Do not "fix" this into a queue — the warning that
+    motivated the queue does not apply to an inline dispatch.
+
+    No integer parameter, deliberately. Of the six engine subscribers to the
+    target-changed event five read only the ship, and the multiplayer
+    serializer reads the second field behind a null guard: omitting it is
+    safe, and putting an int there is the one unsafe choice.
+    """
+    import App
+    evt = App.TGEvent_Create()
+    evt.SetEventType(App.ET_RESTORE_PERSISTENT_TARGET)
+    evt.SetSource(remembered)
+    evt.SetDestination(player)
+    App.g_kEventManager.AddEvent(evt)
