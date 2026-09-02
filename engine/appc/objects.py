@@ -402,9 +402,42 @@ class ObjectClass(TGEventHandlerObject):
     # ── Placement ─────────────────────────────────────────────────────────────
 
     def PlaceObjectByName(self, name: str) -> None:
-        """Copy position and rotation from a named waypoint in the global registry."""
-        from engine.appc.placement import _waypoint_registry
-        wp = _waypoint_registry.get(name)
+        """Copy position and rotation from a named waypoint — MY SET'S copy.
+
+        Marker names are not unique across sets, and are not remotely close to
+        unique: the SDK defines "Player Start" in 104 files, "Sun" in 85,
+        "Planet Location" in 57, and each of the 16 bridges defines its own
+        "View" / "Player Cam" / "Kiska Head". `placement._waypoint_registry` is
+        keyed by the BARE NAME, so every `LoadPlacements` overwrites the
+        previous set's entry and a global lookup answers "whichever set loaded
+        last", not "mine".
+
+        That shipped as a live bug: warping into E3M2's Vesuvi4 dropped the
+        player inside the dust cloud taking immediate hull damage, because the
+        marker resolved to another set's. Vesuvi4's real "Player Start" is
+        ~336 GU OUTSIDE that nebula (centre (0,1500,0), radius 1500), so
+        arriving inside it was proof the wrong marker won. E3M2 alone runs four
+        `LoadPlacements` calls before the player warps — including loading the
+        Vesuvi4 placements a second time into a DeepSpace temp set — and the
+        registry is only cleared on mission swap, never per set.
+
+        The set lookup TYPE-CHECKS: `SetClass._objects` is name-keyed too, so a
+        ship could legitimately share a marker's name, and placing an object
+        onto a ship would be the same bug wearing different clothes.
+
+        The global registry stays as a FALLBACK rather than being replaced: a
+        waypoint whose set did not exist at `Waypoint_Create` time was never
+        added to any set, and it is the only way to reach one.
+        """
+        from engine.appc.placement import _waypoint_registry, Waypoint
+        wp = None
+        pSet = self.GetContainingSet()
+        if pSet is not None:
+            candidate = pSet.GetObject(name)
+            if isinstance(candidate, Waypoint):
+                wp = candidate
+        if wp is None:
+            wp = _waypoint_registry.get(name)
         if wp is not None:
             self.SetTranslate(wp.GetWorldLocation())
             self.SetMatrixRotation(wp.GetWorldRotation())
