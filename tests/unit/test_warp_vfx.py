@@ -36,11 +36,20 @@ def test_ship_speed_profile():
     assert 5.0 < s_boost < 600.0
     # Transit: camera ~still (0) so the slow dust drift isn't washed out.
     w.tick(6.0); assert w.ship_speed(5.0, 600.0) == 0.0
-    # Exit decel tail: glides from warp speed down toward 0.
-    w.tick(8.5)            # 0.5s into the 2s decel
-    s_mid = w.ship_speed(5.0, 600.0)
-    assert 0.0 < s_mid < 600.0
-    w.tick(10.0); assert w.ship_speed(5.0, 600.0) == 0.0   # fully stopped at tail end
+    # Exit tail: the ship HAS ARRIVED and does not move.
+    #
+    # ⚠️ This assertion was INVERTED on 2026-09-02, and deliberately: it used
+    # to require `0.0 < s_mid < 600.0`, pinning a "glide-in" that was the bug.
+    # Transit speed is already 0 (line above), so the exit was not decelerating
+    # from anything -- it injected full in-system warp speed one frame AFTER
+    # the arrival placement had set the ship down and zeroed its velocity, then
+    # decayed it. Live in E3M2 that carried the player ~760 GU off the arrival
+    # marker into a nebula. See tests/unit/test_warp_arrives_at_rest.py for the
+    # full account. Changed to accommodate a behaviour fix, NOT relaxed to make
+    # a failure go away.
+    w.tick(8.5)            # 0.5s into the 2s tail
+    assert w.ship_speed(5.0, 600.0) == 0.0
+    w.tick(10.0); assert w.ship_speed(5.0, 600.0) == 0.0
 
 
 def test_flash_booms_at_burst_and_exit():

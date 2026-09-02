@@ -115,7 +115,7 @@ class WarpVFX:
           align cruise -> (last _T_ENTER_BOOST s) ramp up to warp_speed
           transit      -> 0 (camera ~still so the slow dust drift reads cleanly;
                           the transit is blacked out, so this is invisible)
-          exit         -> ramp warp_speed -> 0 over _T_EXIT_DECEL s (glide-in)
+          exit         -> 0. THE SHIP HAS ARRIVED; IT DOES NOT MOVE.
         """
         e = self._e
         t_align = self._t_align
@@ -126,10 +126,32 @@ class WarpVFX:
                 return nominal
             f = _smooth((e - boost_start) / _T_ENTER_BOOST)
             return nominal + (warp_speed - nominal) * f
-        if e < total:
-            return 0.0
-        f = _smooth((e - total) / _T_EXIT_DECEL)
-        return warp_speed * (1.0 - f)
+        # Transit AND exit are both zero. The exit used to return
+        # `warp_speed * (1 - smooth((e - total) / _T_EXIT_DECEL))`, described as
+        # a glide-in — but look one line up: transit speed is already 0, so
+        # there was never a speed to decelerate FROM. It injected full
+        # in-system warp speed out of nothing, one frame AFTER the arrival
+        # placement had put the ship on its marker and zeroed its velocity.
+        #
+        # Live consequence in E3M2 (Mark, 2026-09-02): warping into Vesuvi4
+        # landed correctly at (-1.7, -335.8, 0.2) — proven by a diagnostic —
+        # and was then carried ~760 GU into the dust cloud over the next two
+        # seconds. That one fault produced four symptoms: purple screen,
+        # continuous hull damage, the Berkeley reading 82.89 km instead of
+        # 49.77, and NO HAIL OPTION, because nebula concealment suppressed the
+        # sensor identification the hail button is created from. Flying
+        # "towards" the Berkeley to get the hail was really flying back out of
+        # the cloud.
+        #
+        # It also silently overrode BC's arrival behaviour, which
+        # `warp._PlacePlayerAction` already documents from the reference: the
+        # ship arrives AT REST (243 reads of that velocity vector, one write,
+        # all components zeroed).
+        #
+        # The exit PHASE stays — `_phase == "exit"` still runs and the
+        # engine-glow envelope still cools the nacelles down. Only the forward
+        # speed is zero, so the ship cools down where it arrived.
+        return 0.0
 
     def engine_glow(self):
         """(drive, burst) — the warp-nacelle glow envelope, both 0..1.
