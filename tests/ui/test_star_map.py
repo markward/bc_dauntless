@@ -422,3 +422,57 @@ def test_grid_survives_a_model_with_no_systems():
     scene = sm.build_scene(model={"systems": [], "nebulae": [],
                                   "starclouds": []})
     assert [l for l in scene["lines"] if l["kind"] == "grid"]
+
+
+# --- offered systems: the mission's actual reach ---------------------------
+# BC's Set Course menu lists only the systems the mission built (E3M2 creates
+# two of the 34 charted). The map keeps drawing the whole sector for context,
+# but must not present 32 stars that behave like destinations and aren't.
+
+def _offered_scene(offered):
+    return sm.build_scene(offered_ids=offered)
+
+
+def test_every_system_is_offered_when_no_menu_constrains_the_map():
+    """No Set Course menu (QuickBattle) means no constraint — not 'nothing
+    is reachable'. Passing None must leave the map exactly as it was."""
+    scene = sm.build_scene(offered_ids=None)
+    assert scene["points"]
+    assert all(p["offered"] for p in scene["points"])
+
+
+def test_a_system_outside_the_offer_is_dimmed():
+    scene = _offered_scene({"vesuvi"})
+    by_id = {p["id"]: p for p in scene["points"]}
+    assert by_id["vesuvi"]["offered"] is True
+    other = next(p for p in scene["points"] if p["id"] != "vesuvi")
+    assert other["offered"] is False
+    # Dimmed to half brightness. StarMapPoint carries no alpha channel, so
+    # 50% is expressed as colour against the map's dark backdrop rather than
+    # as true transparency — same result, no native change.
+    assert other["color"] == tuple(c * sm.INERT_DIM
+                                   for c in sm.STAR_COLOR)
+
+
+def test_an_unoffered_star_cannot_be_picked():
+    """The dimming is the cue; this is the behaviour behind it. Without this
+    a player learns the offer by clicking 32 dead stars."""
+    scene = _offered_scene({"vesuvi"})
+    cam = sm.StarMapCamera(anchor=(0.0, 0.0, 0.0))
+    rect = (0, 0, 880, 478)
+    target = next(p for p in sm.project_points(scene, cam, rect)
+                  if p["visible"] and p["id"] != "vesuvi")
+    assert sm.pick_system(target["x"], target["y"],
+                                scene, cam, rect) != target["id"]
+
+
+def test_a_system_you_are_in_is_never_dimmed_even_if_unoffered():
+    """You can be sitting in a system this mission plots no course back to.
+    Dimming the you-are-here star to say 'not a destination' costs the player
+    the one marker they always need — a live relationship outranks the offer.
+    """
+    scene = sm.build_scene(model=_model(), here_id="tevron",
+                           offered_ids={"vesuvi"})
+    by_id = {p["id"]: p for p in scene["points"]}
+    assert by_id["tevron"]["color"] == sm.STAR_COLOR
+    assert by_id["albirea"]["color"] != sm.STAR_COLOR   # genuinely inert

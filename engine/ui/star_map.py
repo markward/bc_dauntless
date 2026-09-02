@@ -94,6 +94,17 @@ MARK_COURSE_COLOR  = COURSE_COLOR           # #ff9c00, as the plotted course
 # you: it has to separate from the field it sits in rather than blend with it.
 MARK_MISSION_COLOR = (0.200, 0.600, 1.000)  # #3399ff
 
+# Brightness multiplier for a system the mission does not offer a course to.
+# BC's Set Course menu listed ONLY the systems the mission built (E3M2 creates
+# two of the 34 charted), so every entry the player saw was actionable. The map
+# keeps drawing the whole sector for spatial context, and says "not this one"
+# by dimming rather than by hiding.
+#
+# Expressed as colour, not alpha: StarMapPoint carries no alpha channel, and
+# against the map's dark backdrop half-brightness reads the same as half-opacity
+# without a native change and a rebuild.
+INERT_DIM = 0.5
+
 # Deliberately no `.get(mark, <grey>)` fallback anywhere: an unmapped mark must
 # raise here, in Python, next to the enum — not render as a plausible colour.
 _MARK_COLORS = {
@@ -204,7 +215,7 @@ def _grid_lines(systems) -> list:
 
 def build_scene(*, model=None, here_id=None, course_id=None,
                 mission_ids: Iterable[str] = (), selected_id=None,
-                eye: Vec3 = (0.0, 0.0, 0.0)) -> dict:
+                offered_ids=None, eye: Vec3 = (0.0, 0.0, 0.0)) -> dict:
     """Assemble the draw-ordered scene.
 
     Painter's order across kinds is discs -> lines -> points -> brackets, so
@@ -271,12 +282,27 @@ def build_scene(*, model=None, here_id=None, course_id=None,
     # --- points: every real system as a bare dot ----------------------
     # size_px is resolved HERE, not from `selected` in the pass, for the same
     # reason bracket colour is: `selected` is this module's semantics.
-    points = [{"id": s["id"], "position": by_id[s["id"]],
-               "label": sm.display_label(s["id"]), "color": STAR_COLOR,
-               "selected": s["id"] == selected_id,
-               "size_px": (STAR_SELECTED_SIZE_PX if s["id"] == selected_id
-                           else STAR_SIZE_PX)}
-              for s in systems]
+    # `offered` is which systems the mission will actually plot a course to.
+    # None means UNCONSTRAINED (no Set Course menu attached, e.g. QuickBattle)
+    # and must not be confused with an empty set, which means "the mission
+    # offers nothing" — the difference between a free map and a dead one.
+    #
+    # A system carrying a live relationship (here / course / mission) is NEVER
+    # dimmed, whatever the offer says: you can sit in a system this mission
+    # plots no course back to, and losing the you-are-here star to say "not a
+    # destination" costs more than it tells.
+    points = []
+    for s in systems:
+        sid = s["id"]
+        offered = (offered_ids is None or sid in offered_ids
+                   or sid in reticled)
+        color = (STAR_COLOR if offered
+                 else tuple(c * INERT_DIM for c in STAR_COLOR))
+        points.append({"id": sid, "position": by_id[sid],
+                       "label": sm.display_label(sid), "color": color,
+                       "selected": sid == selected_id, "offered": offered,
+                       "size_px": (STAR_SELECTED_SIZE_PX if sid == selected_id
+                                   else STAR_SIZE_PX)})
 
     # --- brackets: ONLY live relationships ----------------------------
     brackets = [{"id": sid, "position": by_id[sid], "mark": mark,
@@ -346,7 +372,8 @@ def project_points(scene: dict, cam: StarMapCamera, rect) -> list:
         sx, sy, _depth, visible = project(p["position"], cam.camera, (w, h))
         inside = visible and 0.0 <= sx <= w and 0.0 <= sy <= h
         out.append({"id": p["id"], "label": p["label"],
-                    "x": sx, "y": sy, "visible": bool(inside)})
+                    "x": sx, "y": sy, "visible": bool(inside),
+                    "offered": bool(p.get("offered", True))})
     return out
 
 
@@ -390,7 +417,9 @@ def pick_system(cursor_x: float, cursor_y: float, scene: dict,
     local_x, local_y = cursor_x - rx, cursor_y - ry
     best_id, best_d2 = None, PICK_RADIUS_PT ** 2
     for p in project_points(scene, cam, rect):
-        if not p["visible"]:
+        # A star the mission offers no course to is inert, not merely dim:
+        # otherwise the player learns the offer by clicking dead stars.
+        if not p["visible"] or not p.get("offered", True):
             continue
         d2 = (p["x"] - local_x) ** 2 + (p["y"] - local_y) ** 2
         if d2 <= best_d2:

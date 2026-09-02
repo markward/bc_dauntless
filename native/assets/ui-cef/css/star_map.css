@@ -144,6 +144,19 @@
 .sm-label--mission   { color: #99ccff; }       /* beside #3399ff */
 .sm-label--selected  { color: #ffffff; }
 
+/* A system this mission plots no course to. The GL dot is dimmed by
+   star_map.INERT_DIM; this must match it, or a bright name sits over a faded
+   star and still reads as somewhere you can go. Opacity, not a colour, so it
+   composes with whichever state class above already won. */
+.sm-label--inert     { opacity: 0.5; }
+
+/* The objective ROW inside the target popup, in the same hue the map uses
+   for the objective SYSTEM. The map can only point at Vesuvi; this is what
+   says WHICH region of it the mission meant. Kept here rather than beside
+   the other .sc-row rules in configuration_panel.css so it sits next to the
+   colour it must match — the two drifting apart is the failure mode. */
+.sc-row--mission     { color: #99ccff; }
+
 /* Reserves the 640px the fixed viewport occupies so the warp list never
    sits underneath it (see the .sm-body comment above). max-height is the
    modal body height, the same MAP_H the viewport uses. The background is this

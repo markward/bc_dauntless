@@ -11,11 +11,14 @@ from engine.ui.star_map_panel import StarMapPanel
 
 
 class _FakeMenu:
-    def __init__(self, label, children=None):
+    def __init__(self, label, children=None, mission_name=""):
         self._label = label
         self._children = children or []
+        self._mission_name = mission_name
     def GetLabel(self):
         return self._label
+    def GetMissionName(self):
+        return self._mission_name
 
 
 def _payload(js):
@@ -113,12 +116,181 @@ def test_cancel_closes_without_setting_a_course():
     assert p.is_open() is False
 
 
-def test_mission_systems_come_from_the_live_menu():
+def test_mission_systems_are_the_ones_a_mission_named():
+    """Was 'every system the menu offers', which tinted everything reachable
+    blue and so meant *reachable*, not *objective*. E3M2.py:258 names Vesuvi;
+    E3M2.py:254 explicitly clears Starbase 12."""
     p = StarMapPanel()
-    p.open(set_name="Tevron1",
-           course_menu=_FakeMenu("Set Course", [_FakeMenu("Vesuvi", [])]))
+    p.open(set_name="Tevron1", course_menu=_FakeMenu("Set Course", [
+        _FakeMenu("Vesuvi", [], mission_name="Maelstrom.Episode3.E3M2.E3M2"),
+        _FakeMenu("Starbase 12", []),
+    ]))
     data = _payload(p.render_payload())
-    assert "vesuvi" in data["mission_systems"]
+    assert data["mission_systems"] == ["vesuvi"]
+
+
+def test_no_mission_named_means_no_system_is_marked():
+    """QuickBattle names nothing. Nothing should read as an objective."""
+    p = StarMapPanel()
+    p.open(set_name="Tevron1", course_menu=_FakeMenu("Set Course", [
+        _FakeMenu("Vesuvi", []), _FakeMenu("Starbase 12", []),
+    ]))
+    assert _payload(p.render_payload())["mission_systems"] == []
+
+
+# --- the destination row inside a system ----------------------------------
+
+def _rows(payload):
+    return {r["id"]: r for r in payload["warp_points"]}
+
+
+def _e3m2_course_menu():
+    """A REAL SortedRegionMenu tree shaped like E3M2's.
+
+    Systems/Utils.CreateSystemMenuInternal builds one node per system the
+    mission called CreateMenus() for, each carrying its regions as children.
+    E3M2 creates exactly two (E3M2.py:249-260), which is the whole point:
+    BC's Set Course list is the mission's offer, not the galaxy.
+
+    Built from the real widget, not a double, so the panel is exercised
+    against the tree it actually receives.
+    """
+    from engine.appc.tg_ui.st_widgets import SortedRegionMenu_CreateW
+    sc = SortedRegionMenu_CreateW("Set Course")
+    vesuvi = SortedRegionMenu_CreateW("Vesuvi", "Systems.Vesuvi.Vesuvi6")
+    for label, mod in (("Vesuvi Dust Cloud", "Systems.Vesuvi.Vesuvi4"),
+                       ("Geki Colony", "Systems.Vesuvi.Vesuvi5"),
+                       ("Haven Colony", "Systems.Vesuvi.Vesuvi6")):
+        vesuvi.AddChild(SortedRegionMenu_CreateW(label, mod), 0, 0, 0)
+    sc.AddChild(vesuvi, 0, 0, 0)
+    # Single-region system: no children, its own module IS the destination.
+    sc.AddChild(SortedRegionMenu_CreateW("Starbase 12",
+                                         "Systems.Starbase12.Starbase12"),
+                0, 0, 0)
+    return sc
+
+
+def _menu_with_an_unbaked_region():
+    """A Set Course tree offering a region the OFFLINE BAKE never saw.
+
+    sector_model.json is baked from the stock SDK, so it cannot know about a
+    region added by a mod or built by a mission's own Systems module. This is
+    the case that separates "read the live menu" from "read the catalog and
+    hope" — and the reason the catalog must be a fallback, not the source.
+    """
+    from engine.appc.tg_ui.st_widgets import SortedRegionMenu_CreateW
+    sc = SortedRegionMenu_CreateW("Set Course")
+    vesuvi = SortedRegionMenu_CreateW("Vesuvi", "Systems.Vesuvi.Vesuvi6")
+    vesuvi.AddChild(SortedRegionMenu_CreateW("Vesuvi Deep Survey",
+                                             "Systems.Vesuvi.Vesuvi7"), 0, 0, 0)
+    sc.AddChild(vesuvi, 0, 0, 0)
+    return sc
+
+
+def test_rows_come_from_the_live_menu_when_one_is_attached():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6", course_menu=_e3m2_course_menu())
+    p.dispatch_event("select-system:vesuvi")
+    rows = _rows(_payload(p.render_payload()))
+    assert [r["label"] for r in rows.values()] == [
+        "Vesuvi Dust Cloud", "Geki Colony", "Haven Colony"]
+
+
+def test_a_region_absent_from_the_baked_catalog_still_lists():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6", course_menu=_menu_with_an_unbaked_region())
+    p.dispatch_event("select-system:vesuvi")
+    rows = list(_rows(_payload(p.render_payload())).values())
+    assert [r["label"] for r in rows] == ["Vesuvi Deep Survey"]
+
+
+def test_a_system_the_mission_does_not_offer_has_no_destinations():
+    """E3M2 offers Vesuvi and Starbase 12 only. Riha is charted on the map but
+    is not somewhere this mission lets you go, and must not present rows."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6", course_menu=_e3m2_course_menu())
+    p.dispatch_event("select-system:riha")
+    data = _payload(p.render_payload())
+    assert data["warp_points"] == []
+    assert data["warp_note"]
+
+
+def test_a_single_region_system_offers_its_own_module():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6", course_menu=_e3m2_course_menu())
+    p.dispatch_event("select-system:tauceti")     # "Starbase 12"
+    rows = list(_rows(_payload(p.render_payload())).values())
+    assert len(rows) == 1
+    assert rows[0]["label"] == "Starbase 12"
+
+
+def test_setting_course_from_a_live_row_yields_that_rows_module():
+    """Resolved through the menu node, not by looking the id up in the bake —
+    so a row the catalog has never heard of is still actionable."""
+    seen = []
+    p = StarMapPanel(on_course_set=seen.append)
+    p.open(set_name="Vesuvi6", course_menu=_menu_with_an_unbaked_region())
+    p.dispatch_event("select-system:vesuvi")
+    rid = _payload(p.render_payload())["warp_points"][0]["id"]
+    assert p.dispatch_event("set-course:" + rid) is True
+    assert seen == ["Systems.Vesuvi.Vesuvi7"]
+
+
+def test_falls_back_to_the_baked_catalog_with_no_menu_attached():
+    """QuickBattle attaches no Set Course menu. The map must still be usable,
+    so the baked catalog remains the fallback — never the primary source."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")                    # no course_menu
+    p.dispatch_event("select-system:vesuvi")
+    rows = _rows(_payload(p.render_payload()))
+    assert "vesuvi-dust-cloud" in rows
+
+
+def test_the_missions_own_destination_row_is_marked(monkeypatch):
+    """E3M2.py:2124 sets the warp button to Systems.Vesuvi.Vesuvi4, i.e.
+    Vesuvi Dust Cloud. Selecting Vesuvi must show WHICH region that is."""
+    _with_warp_button(monkeypatch, dest="Systems.Vesuvi.Vesuvi4")
+    p = StarMapPanel()
+    p.open(set_name="Tevron1")
+    p.dispatch_event("select-system:vesuvi")
+    rows = _rows(_payload(p.render_payload()))
+    assert rows["vesuvi-dust-cloud"]["mission"] is True
+
+
+def test_other_rows_in_the_same_system_are_not_marked(monkeypatch):
+    _with_warp_button(monkeypatch, dest="Systems.Vesuvi.Vesuvi4")
+    p = StarMapPanel()
+    p.open(set_name="Tevron1")
+    p.dispatch_event("select-system:vesuvi")
+    rows = _rows(_payload(p.render_payload()))
+    assert rows["geki-colony"]["mission"] is False
+    assert rows["haven-colony"]["mission"] is False
+
+
+def test_no_row_is_marked_when_no_mission_set_a_destination(monkeypatch):
+    _with_warp_button(monkeypatch, dest=None)
+    p = StarMapPanel()
+    p.open(set_name="Tevron1")
+    p.dispatch_event("select-system:vesuvi")
+    rows = _rows(_payload(p.render_payload()))
+    assert all(r["mission"] is False for r in rows.values())
+
+
+def test_browsing_to_another_row_keeps_the_mission_row_marked(monkeypatch):
+    """The player clicking Geki Colony overwrites the live destination. If
+    the mark were read from that, the mission's hint would be destroyed by
+    the first click — the reason the latch exists."""
+    import App
+    _with_warp_button(monkeypatch, dest="Systems.Vesuvi.Vesuvi4")
+    seen = []
+    p = StarMapPanel(on_course_set=seen.append)
+    p.open(set_name="Tevron1")
+    p.dispatch_event("select-system:vesuvi")
+    p.dispatch_event("set-course:geki-colony")
+    App.SortedRegionMenu_GetWarpButton().set_player_destination(seen[-1])
+    p.dispatch_event("select-system:vesuvi")     # player re-opens the system
+    rows = _rows(_payload(p.render_payload()))
+    assert rows["vesuvi-dust-cloud"]["mission"] is True
 
 
 def test_close_releases_the_sdk_menu_handle():
@@ -326,19 +498,19 @@ def test_set_course_still_works_from_the_popup():
 
 # --- the in-modal Warp button ---------------------------------------------
 
-class _FakeWarpButton:
-    def __init__(self, dest=None):
-        self._dest = dest
-    def GetDestination(self):
-        return self._dest
-    def SetDestination(self, d):
-        self._dest = d
-
-
 def _with_warp_button(monkeypatch, dest=None):
-    """Point App.SortedRegionMenu_GetWarpButton at a stand-in."""
+    """Point App.SortedRegionMenu_GetWarpButton at a REAL STWarpButton.
+
+    This was a two-method hand-rolled double. It could not see the mission
+    latch, and a double that lags the real widget is how this codebase has
+    hidden bugs before — so the panel is tested against the widget it
+    actually talks to.
+    """
     import App
-    btn = _FakeWarpButton(dest)
+    from engine.appc.tg_ui.st_widgets import STWarpButton
+    btn = STWarpButton()
+    if dest is not None:
+        btn.SetDestination(dest)
     monkeypatch.setattr(App, "SortedRegionMenu_GetWarpButton",
                         lambda: btn, raising=False)
     return btn
@@ -408,3 +580,13 @@ def test_setting_a_course_enables_warp_in_the_same_payload(monkeypatch):
     assert data["warp_enabled"] is True
     assert data["targets_open"] is False
     assert p.is_open() is True
+
+
+def test_labels_carry_whether_the_system_is_offered():
+    """The dot dims in GL; the label is CEF and must dim with it, or a bright
+    name sits over a dimmed star and still reads as a destination."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6", course_menu=_e3m2_course_menu())
+    labels = {l["id"]: l for l in _payload(p.render_payload())["labels"]}
+    assert labels["vesuvi"]["offered"] is True
+    assert any(l["offered"] is False for l in labels.values())

@@ -110,16 +110,58 @@ class STWarpButton(STButton):
         self._course_menu = None
         self._destination = None
         self._placement_name = DEFAULT_ARRIVAL_PLACEMENT
+        self._mission_name = ""
+        self._episode_name = ""
+        self._mission_destination = None
 
     def SetWarpTime(self, t) -> None:     self._warp_time = float(t)
     def GetWarpTime(self) -> float:       return self._warp_time
     def SetCourseMenu(self, m) -> None:   self._course_menu = m
     def GetCourseMenu(self):              return self._course_menu
+
     # Destination is read in SDK truth-branches and string comparisons
     # (BridgeHandlers.py:1409, E6M1/E6M5/E7M6 warp handlers) — must be a
     # real falsy default, never a truthy _Stub.
-    def SetDestination(self, dest) -> None:  self._destination = dest
+    #
+    # FOUR args, not one. E6M5.py:2666 and E7M6.py:996 pass the full form
+    # (module, mission, placement, episode); E7M1.py:2792 passes two. Against
+    # a one-arg signature all three raise TypeError *inside a broadcast
+    # handler*, which swallows the exception — so the episode transition
+    # half-ran with no visible error.
+    def SetDestination(self, dest, mission_name=None, placement_name=None,
+                       episode_name=None) -> None:
+        self._destination = dest
+        self._mission_name = str(mission_name) if mission_name else ""
+        self._episode_name = str(episode_name) if episode_name else ""
+        if placement_name:
+            self.SetPlacementName(placement_name)
+        # Latch (engine-only, see set_player_destination).
+        self._mission_destination = dest
+
     def GetDestination(self):                return self._destination
+
+    # --- engine-only, deliberately snake_case: NOT published SDK surface ---
+    # A mission names its own destination by calling SetDestination above
+    # (E3M2.py:2124 -> "Systems.Vesuvi.Vesuvi4"). Reading GetDestination() to
+    # find it would work only until the player clicked any other row in the
+    # star map, since that overwrites the same field. So the player's own
+    # selection comes in HERE and leaves the latch alone, and the mission's
+    # intent survives the player browsing.
+    #
+    # This split is OUR design, not recovered BC behaviour: the original
+    # engine had no star map to browse, so it never needed to tell the two
+    # writers apart.
+    def set_player_destination(self, dest) -> None:
+        self._destination = dest
+
+    def get_mission_destination(self):
+        return self._mission_destination
+
+    def get_mission_name(self) -> str:
+        return self._mission_name
+
+    def get_episode_name(self) -> str:
+        return self._episode_name
 
     # Where THIS course drops the player out of warp. Real published surface
     # (sdk/.../App.py:8738 STWarpButton_SetPlacementName). The button is the
@@ -146,9 +188,38 @@ class SortedRegionMenu(STMenu):
         self._pause_sorting = 0
         self._region = str(region) if region is not None else None
         self._placement_name = DEFAULT_ARRIVAL_PLACEMENT
+        self._mission_name = ""
+        self._episode_name = ""
 
     def GetRegionModule(self):
         return self._region
+
+    # BC's own "warping here starts mission X" marker, and the thing that
+    # makes the star map's blue reticle mean *objective* rather than merely
+    # *reachable*. Real published surface (sdk/.../App.py:8762/:8768).
+    # Missions set it on the SYSTEM node — E3M2.py:258 marks Vesuvi for the
+    # current mission — and CLEAR it by calling with no argument at all
+    # (E3M2.py:254, E4M4.py:2034, E3M4.py:258), so the no-arg form is load
+    # bearing, not a convenience.
+    #
+    # The default is a falsy "" for the usual reason: unimplemented, this was
+    # a truthy _Stub (heatmap rank 143, 6 hits), and a truthy mission name on
+    # every node reads as "every destination is an objective" — the exact
+    # inversion of what the marker is for.
+    def SetMissionName(self, name=None) -> None:
+        self._mission_name = str(name) if name else ""
+
+    def GetMissionName(self) -> str:
+        return self._mission_name
+
+    # Same shape, one SDK caller (Episode4.py:202). Implemented alongside
+    # GetMissionName rather than left as a truthy _Stub next to a real one,
+    # which is precisely the trap the stub heatmap exists to catch.
+    def SetEpisodeName(self, name=None) -> None:
+        self._episode_name = str(name) if name else ""
+
+    def GetEpisodeName(self) -> str:
+        return self._episode_name
 
     # A mission's override of where this destination drops the player out of
     # warp. Real published surface (sdk/.../App.py:8763/:8769), and the sole

@@ -6512,6 +6512,39 @@ def _drive_star_map(star_map_panel, framebuffer_size, cef_view_h) -> None:
     host_io.starmap_set_scene(*_starmap_buffers(star_map_panel.scene))
 
 
+def record_course_selection(module) -> None:
+    """The player picked a warp point in the star map: record the course.
+
+    Writes through set_player_destination, NOT SetDestination. The two differ
+    in one respect that matters: SetDestination is the SDK entry point, and a
+    mission calling it (E3M2.py:2124 -> "Systems.Vesuvi.Vesuvi4") latches that
+    module as the mission's own target so the star map can point at it. The
+    player browsing the map must move the course WITHOUT redefining where the
+    mission wanted them to go.
+
+    The player then engages the warp from the Helm "Warp" button.
+    """
+    import App
+    btn = App.SortedRegionMenu_GetWarpButton()
+    if btn is not None:
+        btn.set_player_destination(module)
+        # Carry the mission's arrival placement across with the destination.
+        # MissionLib.LinkMenuToPlacement records it on the Set Course menu at
+        # mission load (E1M1.py:673 moves the Starbase 12 arrival to
+        # "PlayerSpecialStart"); in stock BC the menu's own course button
+        # carried it to the warp button, which this modal replaced.
+        from engine.appc import warp as _warp
+        _warp.set_course_placement(btn, module)
+    # Stock BC's SortedRegionMenu course buttons fired ET_SET_COURSE at the
+    # Helm menu (Kiska's "ready to warp" ack); the CEF modal replaced that
+    # menu, so fire it here.
+    try:
+        from engine.bridge_officers import announce_course_set
+        announce_course_set()
+    except Exception as _e:
+        dev_mode.log_swallowed("announce course set", _e)
+
+
 def run(mission_name: Optional[str] = None,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
@@ -6715,30 +6748,10 @@ def run(mission_name: Optional[str] = None,
 
         _wg.configure_gate_hooks(ray_collide=_starbase_ray_collide)
 
-        # CEF Set Course popup: selecting a warp point SETS THE COURSE — record
-        # the destination set-module on the SDK warp button. The player then
-        # engages the warp from the Helm "Warp" button (on_warp_engage below).
-        def on_course_set(module):
-            import App
-            btn = App.SortedRegionMenu_GetWarpButton()
-            if btn is not None:
-                btn.SetDestination(module)
-                # Carry the mission's arrival placement across with the
-                # destination. MissionLib.LinkMenuToPlacement records it on the
-                # Set Course menu at mission load (E1M1.py:673 moves the
-                # Starbase 12 arrival to "PlayerSpecialStart"); in stock BC the
-                # menu's own course button carried it to the warp button, which
-                # this modal replaced.
-                from engine.appc import warp as _warp
-                _warp.set_course_placement(btn, module)
-            # Stock BC's SortedRegionMenu course buttons fired ET_SET_COURSE
-            # at the Helm menu (Kiska's "ready to warp" ack); the CEF modal
-            # replaced that menu, so fire it here.
-            try:
-                from engine.bridge_officers import announce_course_set
-                announce_course_set()
-            except Exception as _e:
-                dev_mode.log_swallowed("announce course set", _e)
+        # CEF Set Course popup: selecting a warp point SETS THE COURSE. Module
+        # scope (see record_course_selection) so it is reachable from a test;
+        # it captured nothing from here.
+        on_course_set = record_course_selection
 
         # Helm "Warp" button click -> engage the warp spine directly. Stage 1
         # deliberately bypasses the SDK ET_WARP_BUTTON_PRESSED / WarpPressed

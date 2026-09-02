@@ -52,8 +52,14 @@ function setStarMapPanel(state) {
         labelEl.innerHTML = discs + (state.labels || []).filter(function (l) {
             return l.visible;
         }).map(function (l) {
-            return '<div class="sm-label' + _smLabelClass(l.id, state) + '"'
-                + ' style="left:' + l.x + 'px;top:' + l.y + 'px">'
+            // Python already exempts here/course/mission systems from the
+            // offer test (star_map.build_scene), so `offered === false` here
+            // never collides with a state class — the dot and its name dim
+            // together or not at all.
+            const cls = _smLabelClass(l.id, state);
+            const inert = (l.offered === false) ? ' sm-label--inert' : '';
+            return '<div class="sm-label' + cls + inert
+                + '" style="left:' + l.x + 'px;top:' + l.y + 'px">'
                 + escapeHtmlSM(l.label) + '</div>';
         }).join('');
     }
@@ -85,7 +91,12 @@ function setStarMapPanel(state) {
             : '';
         warpEl.innerHTML = note + (state.warp_points || []).map(function (w) {
             const ok = (w.available !== false);
-            const cls = 'sc-row' + (ok ? '' : ' sc-row--disabled');
+            // `mission` is Python's call, not this file's: it owns the warp
+            // button the mission wrote its destination to. Disabled wins,
+            // because an unreachable row must not read as somewhere to go.
+            const cls = 'sc-row' + (ok
+                ? (w.mission ? ' sc-row--mission' : '')
+                : ' sc-row--disabled');
             const click = ok
                 ? ' onclick="dauntlessEvent(\'star-map/set-course:\' + this.getAttribute(\'data-id\'))"'
                 : '';

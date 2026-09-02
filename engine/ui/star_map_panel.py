@@ -197,7 +197,16 @@ class StarMapPanel(Panel):
         return None
 
     def _mission_systems(self) -> list:
-        """Systems the live SDK Set Course menu currently offers.
+        """Systems a mission has actually named as an objective.
+
+        This used to return every system the menu OFFERED, so the blue
+        reticle meant "reachable" and tinted most of the map. BC's own marker
+        is SortedRegionMenu.SetMissionName — E3M2.py:258 names Vesuvi, and
+        E3M2.py:254 clears Starbase 12 in the same breath, which only makes
+        sense if the mark is meant to single one out.
+
+        A system with no mission name is simply not marked; there is no
+        fallback to the old behaviour, because "mark everything" is the bug.
 
         Reconciliation can miss; log rather than swallow, so an absent
         mission reticle is diagnosable instead of mysterious.
@@ -205,9 +214,78 @@ class StarMapPanel(Panel):
         out = []
         for node in getattr(self._course_menu, "_children", []) or []:
             try:
+                if not node.GetMissionName():
+                    continue
                 out.append(sm.system_id_for_set(node.GetLabel()))
             except Exception as e:
                 dev_mode.log_swallowed("star map mission system", e)
+        return out
+
+    def _mission_destination(self) -> Optional[str]:
+        """Set-module the current mission plotted for itself, if any.
+
+        Latched on the warp button at the moment a mission script calls
+        SetDestination (E3M2.py:2124 -> "Systems.Vesuvi.Vesuvi4"), so it
+        survives the player browsing other rows in this map.
+        """
+        try:
+            import App
+            btn = App.SortedRegionMenu_GetWarpButton()
+            if btn is not None:
+                return btn.get_mission_destination()
+        except Exception as e:
+            dev_mode.log_swallowed("star map mission destination", e)
+        return None
+
+    def _offered_rows(self, sid) -> Optional[list]:
+        """Destinations the live SDK menu offers in system `sid`.
+
+        None when there is no menu at all (QuickBattle) — the caller then
+        falls back to the baked catalog. An EMPTY LIST is different and
+        meaningful: a menu exists and this system is not in it, i.e. the
+        mission does not let you go there.
+
+        Mirrors Systems/Utils.CreateSystemMenuInternal, which is what built
+        the tree: one node per system the mission called CreateMenus() for,
+        each carrying its regions as children. Several nodes can fold onto one
+        map system (Tau Ceti gets both "Dry Dock" and "Starbase 12"), so nodes
+        accumulate rather than the first one winning.
+        """
+        if self._course_menu is None:
+            return None
+        rows, seen = [], set()
+        for node in getattr(self._course_menu, "_children", []) or []:
+            try:
+                if sm.system_id_for_set(node.GetLabel()) != sid:
+                    continue
+                children = getattr(node, "_children", []) or []
+                # A node with regions offers those; a single-region system
+                # (Riha, Starbase 12) offers ITSELF, via its own module.
+                for child in children or [node]:
+                    mod = child.GetRegionModule()
+                    if mod is None or mod in seen:
+                        continue
+                    seen.add(mod)
+                    rows.append({"id": str(mod), "label": child.GetLabel(),
+                                 "module": mod})
+            except Exception as e:
+                dev_mode.log_swallowed("star map offered rows", e)
+        return rows
+
+    def _offered_systems(self):
+        """System ids the live Set Course menu offers, or None if no menu.
+
+        None is not the empty set: no menu means unconstrained (QuickBattle
+        has no Set Course), whereas an empty set would black out the map.
+        """
+        if self._course_menu is None:
+            return None
+        out = set()
+        for node in getattr(self._course_menu, "_children", []) or []:
+            try:
+                out.add(sm.system_id_for_set(node.GetLabel()))
+            except Exception as e:
+                dev_mode.log_swallowed("star map offered system", e)
         return out
 
     def _rebuild_scene(self) -> None:
@@ -216,6 +294,7 @@ class StarMapPanel(Panel):
             course_id=self._course_system(),
             mission_ids=self._mission_systems(),
             selected_id=self._selected_system,
+            offered_ids=self._offered_systems(),
             eye=self.cam.camera.eye(),
         )
 
@@ -224,21 +303,49 @@ class StarMapPanel(Panel):
         sid = self._selected_system
         if sid is None:
             return ([], None)
+        # Which row, if any, the mission itself asked for. The 3D map marks
+        # the SYSTEM; without this the player is told "Vesuvi" and then left
+        # to guess which of its regions was meant.
+        mission_dest = self._mission_destination()
+
+        def shaped(rows):
+            return [{"id": r["id"], "label": r["label"],
+                     "available": r.get("module") is not None,
+                     "mission": (mission_dest is not None
+                                 and r.get("module") == mission_dest)}
+                    for r in rows]
+
+        # The mission's own offer FIRST. BC's Set Course list is what the
+        # mission built (E3M2 creates two systems, not the galaxy); the baked
+        # catalog knows all 34 charted systems and every region in them, which
+        # is right for drawing the map and wrong for saying where you may go.
+        offered = self._offered_rows(sid)
+        if offered is not None:
+            if offered:
+                return (shaped(offered), None)
+            return ([], "This mission offers no course to this system.")
+
         catalog = sm.warp_points_for(sid)
         if catalog:
-            return ([{"id": wp["id"], "label": wp["label"],
-                      "available": wp.get("module") is not None}
-                     for wp in catalog], None)
+            return (shaped(catalog), None)
         mod = sm.system_module(sid)
         note = ("No separate destinations in this system — "
                 "set course to the system itself." if mod is not None
                 else "No course destination available for this system.")
-        return ([{"id": sid, "label": sm.display_label(sid),
-                  "available": mod is not None}], note)
+        return (shaped([{"id": sid, "label": sm.display_label(sid),
+                         "module": mod}]), note)
 
     def _module_for(self, warp_id) -> Optional[str]:
         sid = self._selected_system
         if sid is None:
+            return None
+        # Resolved from the same source the row was listed from, so a row the
+        # offline bake never saw is still actionable.
+        offered = self._offered_rows(sid)
+        if offered is not None:
+            for r in offered:
+                if r["id"] == warp_id:
+                    return r["module"]
             return None
         for wp in sm.warp_points_for(sid):
             if wp["id"] == warp_id:
@@ -271,7 +378,8 @@ class StarMapPanel(Panel):
             "mission_systems": self._mission_systems() if self._visible else [],
             "labels": [{"id": l["id"], "label": l["label"],
                         "x": round(l["x"], 1), "y": round(l["y"], 1),
-                        "visible": l["visible"]} for l in labels],
+                        "visible": l["visible"],
+                        "offered": l["offered"]} for l in labels],
             "disc_labels": [{"label": d["label"],
                              "x": round(d["x"], 1), "y": round(d["y"], 1),
                              "visible": d["visible"]} for d in disc_labels],

@@ -79,6 +79,28 @@ def test_selection_reaches_the_course_set_callback_through_the_registry():
     assert panel.is_open()
 
 
+def test_player_selection_does_not_erase_the_missions_own_destination():
+    """Entered at the REAL host hook, not a stand-in callback.
+
+    A mission plots its own destination on the warp button (E3M2.py:2124).
+    The player then browses the map and picks somewhere else to look at. If
+    that write went through SetDestination it would latch as the new mission
+    target and the objective hint would be gone for the rest of the mission.
+    """
+    import App
+    from engine import host_loop
+    from engine.appc.tg_ui.st_widgets import STWarpButton
+
+    btn = STWarpButton()
+    App.SortedRegionMenu_SetWarpButton(btn)
+    btn.SetDestination("Systems.Vesuvi.Vesuvi4")        # the mission's choice
+
+    host_loop.record_course_selection("Systems.Vesuvi.Vesuvi5")   # the player
+
+    assert btn.GetDestination() == "Systems.Vesuvi.Vesuvi5"
+    assert btn.get_mission_destination() == "Systems.Vesuvi.Vesuvi4"
+
+
 # --- driving the native pass ---------------------------------------------
 
 def test_drive_star_map_pushes_viewport_camera_and_scene(rec):

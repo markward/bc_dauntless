@@ -483,3 +483,49 @@ def test_the_modal_is_offset_clear_of_the_helm_menu():
 
     # ...and the resulting rect actually clears the HUD column.
     assert MAP_RECT[0] >= 248, MAP_RECT
+
+
+def _rule_color(css, selector):
+    block = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+    assert block, "no " + selector + " rule"
+    m = re.search(r"color\s*:\s*(#[0-9a-fA-F]{3,8})", block.group(1))
+    assert m, "missing color in " + selector
+    return m.group(1).lower()
+
+
+def test_the_mission_destination_row_shares_the_maps_mission_colour():
+    """Map and target list must teach the same colour once.
+
+    The 3D map marks the SYSTEM (.sm-label--mission, beside the GL reticle's
+    MARK_MISSION_COLOR); the target popup marks the ROW inside it. Different
+    hues here would read as two unrelated states rather than one objective
+    seen at two zoom levels."""
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+    assert _rule_color(css, ".sc-row--mission") == _rule_color(
+        css, ".sm-label--mission")
+
+
+def test_the_mission_row_class_is_driven_by_the_payload_flag():
+    """Python decides which row is the objective (it owns the warp button and
+    the catalog); the JS only paints it. Assert the class is actually keyed to
+    the payload's own flag, so renaming the flag cannot leave a class that is
+    never applied."""
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
+    assert "sc-row--mission" in js
+    assert re.search(r"\bw\.mission\b", js), (
+        "the mission row class must follow the payload's `mission` flag")
+
+
+def test_unoffered_system_labels_are_dimmed_to_match_the_star():
+    """star_map.py dims the GL dot by INERT_DIM; the CSS must dim the label by
+    the same fraction, or the two halves of one marker disagree."""
+    from engine.ui.star_map import INERT_DIM
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+    block = re.search(r"\.sm-label--inert\s*\{([^}]*)\}", css)
+    assert block, "no .sm-label--inert rule"
+    m = re.search(r"opacity\s*:\s*([0-9.]+)", block.group(1))
+    assert m, "no opacity on .sm-label--inert"
+    assert float(m.group(1)) == INERT_DIM
+
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
+    assert "sm-label--inert" in js
