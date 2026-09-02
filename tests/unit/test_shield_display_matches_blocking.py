@@ -185,3 +185,57 @@ def test_healthy_shields_still_deflect_the_tractor():
     from engine.appc.weapon_subsystems import _target_tractorable
 
     assert not _target_tractorable(_ship("NPC"))
+
+
+# ── the second HUD readout ──────────────────────────────────────────────────
+# The TARGETS list draws its own shield number from GetShieldPercentage. It had
+# the identical cloak-only special case, so it showed a full percentage for a
+# disabled/destroyed generator and under the cheat. Fixed in the same commit
+# because the two readouts sit on screen together -- but it went in without a
+# test at first, which is the exact untested-edit pattern this file exists to
+# prevent.
+
+def _tl_pct(ship):
+    from engine.ui.target_list_view import _query_shield_percentage
+    return _query_shield_percentage(ship)
+
+
+def test_the_targets_list_reads_full_for_healthy_shields():
+    assert _tl_pct(_ship("NPC")) == 100
+
+
+def test_the_targets_list_reads_zero_for_a_destroyed_generator():
+    ship = _ship("NPC")
+    ship.GetShieldSubsystem().SetDestroyed(1)
+
+    assert _tl_pct(ship) == 0
+
+
+def test_the_targets_list_reads_zero_for_a_disabled_generator():
+    ship = _ship("NPC")
+    ship.GetShieldSubsystem().SetCondition(0.0)
+
+    assert _tl_pct(ship) == 0
+
+
+def test_both_hud_readouts_agree(monkeypatch):
+    """The reason both were fixed in one change: they are drawn together, so a
+    disagreement between them is worse than both being wrong."""
+    import App
+    from engine import dev_mode, dev_combat_cheats as cheats
+
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    player, npc = _ship("Player"), _ship("NPC")
+    game = App.Game()
+    App._set_current_game(game)
+    game.SetPlayer(player)
+    try:
+        cheats.set_disable_npc_shields(True)
+
+        panel_shows = any(v > 0.0 for v in _shields_tuple(npc))
+        list_shows = _tl_pct(npc) > 0
+
+        assert panel_shows == list_shows == False
+    finally:
+        cheats.reset()
+        App._set_current_game(None)
