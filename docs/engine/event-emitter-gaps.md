@@ -427,6 +427,46 @@ site because the prerequisite decision logic (when does a target get
 restored) does not exist, and I would be inventing a mechanism if I named
 one.
 
+
+**⛔ Confirmed blocked 2026-09-02, by the clean-room reference — not by lack of
+effort.** The `stbc-reference` server was queried directly (four questions
+across the `layout`, `api`, `behaviour` and `constant` areas). What it
+established:
+
+* **The published `STTargetMenu` API is exactly nine entries** — `Cast`,
+  `ClearPersistentTarget`, `ClearTargetList`, `CreateW`, `GetObjectEntry`,
+  `GetTargetMenu`, `RebuildShipMenu`, `RebuildShipMenus`,
+  `ResetAffiliationColors`. **There is no setter and no restorer.** Graded
+  `faithful` and described as an identity fact: read from the original
+  program's own dispatch table, addresses included
+  (`ClearPersistentTarget` = `0x0062DED0`). This is the strongest evidence
+  tier the server issues.
+* **The corpus holds no object model for `STTargetMenu`** — outcome
+  `no-match`, a *measured* absence rather than a retrieval miss. So the field
+  the persistent target lives in cannot be recovered.
+* **`ClearPersistentTarget` has no reconstructed body.** Asking what the
+  routine does returned only the entry roster, graded `partial`.
+* The event constant itself scored **below the relevance floor** (0.35) in
+  two different areas. Per the server's own wording that is "not a statement
+  that the corpus is silent" — only that retrieval could not reach it.
+
+**What this changes.** The entry above said the call site "could not be
+determined". It is now stronger and better grounded: the restore mechanism is
+*provably* absent from the scripted surface, so it is necessarily
+engine-internal, and the engine internals for this class are unreconstructed.
+
+**What it does NOT change: still do not add an emitter.** Nothing here reveals
+when BC decides to restore a target, and `engine/appc/target_menu.py` still has
+no writer for `_persistent_target_name` — only `ClearPersistentTarget`, which
+matches the original's surface exactly. Inventing a trigger would be inventing
+a mechanism, and it would be worse than the current honest gap because the SDK
+handler (`TacticalMenuHandlers.PersistentTargetRestored`, :958) exists
+precisely to suppress Felix's "Target At Will" reset — firing it at the wrong
+moment would silently change tactical behaviour.
+
+Re-open this only if the reference gains a `STTargetMenu` object model or a
+reconstructed body for `0x0062DED0`.
+
 ---
 
 ## 11. `ET_IN_SYSTEM_WARP` (0x8000ef) — ✅ DONE
