@@ -3792,7 +3792,52 @@ def _init_mission(mission_module_name: str):
     start_evt.SetDestination(episode)
     App.g_kEventManager.AddEvent(start_evt)
 
+    _post_dev_player_arrival()
+
     return mission, episode, game, mod
+
+
+def _post_dev_player_arrival() -> None:
+    """Announce the player into its starting set, as arriving by warp would.
+
+    BC starts most missions by warping you in: the mission initializes, the
+    warp then places the player into the starting set, and THAT entry fires
+    the ET_ENTERED_SET handlers the mission registered moments earlier. 24
+    Maelstrom missions hang opening beats off it.
+
+    A direct load has no warp, and a mission cannot fire its own arrival: it
+    places the player before it starts listening. E3M2 calls CreateShips()
+    (:155) then SetupEventHandlers() (:157), so nothing is registered when
+    the placement broadcasts — its Warbird scene, and the SetCourseForDustCloud
+    that ends it, never run. The symptom is "the mission loads but its opening
+    never happens", which reads as a broken mission rather than a missing
+    arrival.
+
+    Posted AFTER ET_MISSION_START so the order matches a warp-in. Missions
+    guard these handlers with their own arrival flags (E3M2's
+    g_bVesuvi6Arrive), so a mission that did somehow already see the entry
+    takes this as a no-op rather than replaying its opening.
+
+    Developer builds only — this is compensation for the dev loader, in the
+    same spirit as the campaign/episode context above, and must never inject
+    an event into a normally-played campaign.
+    """
+    if not dev_mode.is_enabled():
+        return
+    try:
+        import App
+        player = App.Game_GetCurrentPlayer()
+        if player is None:
+            return
+        pSet = player.GetContainingSet()
+        if pSet is None:
+            return
+        evt = App.TGEvent_Create()
+        evt.SetEventType(App.ET_ENTERED_SET)
+        evt.SetDestination(player)
+        App.g_kEventManager.AddEvent(evt)
+    except Exception as e:
+        dev_mode.log_swallowed("dev player arrival", e)
 
 
 def _live_sets() -> list:
