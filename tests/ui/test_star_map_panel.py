@@ -590,3 +590,68 @@ def test_labels_carry_whether_the_system_is_offered():
     labels = {l["id"]: l for l in _payload(p.render_payload())["labels"]}
     assert labels["vesuvi"]["offered"] is True
     assert any(l["offered"] is False for l in labels.values())
+
+
+# --- BC's third marker: the pointer arrow ----------------------------------
+# E1M1 never calls SetMissionName on Starbase 12 and never pre-sets the warp
+# button. It says "go here" with MissionLib.ShowPointerArrow on the Set Course
+# submenu node (E1M1.py:3607-3613), which engine.ui.ui_attention records.
+
+@pytest.fixture
+def no_arrows():
+    from engine.ui import ui_attention
+    ui_attention.hide_pointer_arrows()
+    yield
+    ui_attention.hide_pointer_arrows()
+
+
+def _e1m1_course_menu():
+    """Tau Ceti as the SDK folds it: two sibling nodes, one map system.
+
+    Systems/Utils builds "Starbase 12" and "Dry Dock" as separate top-level
+    entries (E1M1.py:669-670) that both resolve to tauceti.
+    """
+    from engine.appc.tg_ui.st_widgets import SortedRegionMenu_CreateW
+    sc = SortedRegionMenu_CreateW("Set Course")
+    sb = SortedRegionMenu_CreateW("Starbase 12", "Systems.Starbase12.Starbase12")
+    dd = SortedRegionMenu_CreateW("Dry Dock", "Systems.DryDock.DryDock")
+    sc.AddChild(sb, 0, 0, 0)
+    sc.AddChild(dd, 0, 0, 0)
+    return sc, sb, dd
+
+
+def test_an_arrowed_system_is_marked_as_the_objective(no_arrows):
+    from engine.ui import ui_attention
+    menu, sb, _dd = _e1m1_course_menu()
+    ui_attention.show_pointer_arrow(None, sb)      # E1M1's "go to Starbase 12"
+    p = StarMapPanel()
+    p.open(set_name="Starbase12", course_menu=menu)
+    assert _payload(p.render_payload())["mission_systems"] == ["tauceti"]
+
+
+def test_the_arrowed_row_marks_and_its_sibling_does_not(no_arrows):
+    """Tau Ceti lists both folded nodes. Only the one BC pointed at is the
+    objective — this is the distinction the whole feature exists to draw."""
+    from engine.ui import ui_attention
+    menu, sb, _dd = _e1m1_course_menu()
+    ui_attention.show_pointer_arrow(None, sb)
+    p = StarMapPanel()
+    p.open(set_name="Starbase12", course_menu=menu)
+    p.dispatch_event("select-system:tauceti")
+    rows = {r["label"]: r for r in _payload(p.render_payload())["warp_points"]}
+    assert rows["Starbase 12"]["mission"] is True
+    assert rows["Dry Dock"]["mission"] is False
+
+
+def test_hiding_the_arrows_clears_the_mark(no_arrows):
+    """HidePointerArrows empties the set wholesale, so the objective mark must
+    go with it — the tutorial has moved on."""
+    from engine.ui import ui_attention
+    menu, sb, _dd = _e1m1_course_menu()
+    ui_attention.show_pointer_arrow(None, sb)
+    p = StarMapPanel()
+    p.open(set_name="Starbase12", course_menu=menu)
+    assert _payload(p.render_payload())["mission_systems"] == ["tauceti"]
+    ui_attention.hide_pointer_arrows()
+    p.invalidate()
+    assert _payload(p.render_payload())["mission_systems"] == []

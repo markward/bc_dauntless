@@ -196,6 +196,27 @@ class StarMapPanel(Panel):
             dev_mode.log_swallowed("star map course system", e)
         return None
 
+    def _is_pointed_at(self, node) -> bool:
+        """Has a mission aimed BC's pointer arrow at this menu node?
+
+        The third way a mission says "go here", and the only one E1M1 uses for
+        Starbase 12: it never names a mission on that node and never pre-sets
+        the warp button, it calls MissionLib.ShowPointerArrow on the Set Course
+        submenu (E1M1.py:3607-3613). engine.ui.ui_attention already records the
+        target's widget id for the crew menu's own highlight; this reads the
+        same record rather than inventing a second one.
+
+        Self-clearing: HidePointerArrows empties the set wholesale, so the mark
+        goes when the tutorial moves on, with no lifecycle of ours to leak.
+        """
+        try:
+            from engine.appc.tg_ui.widgets import ensure_widget_id
+            from engine.ui import ui_attention
+            return ensure_widget_id(node) in ui_attention.highlighted_ids()
+        except Exception as e:
+            dev_mode.log_swallowed("star map pointer arrow", e)
+            return False
+
     def _mission_systems(self) -> list:
         """Systems a mission has actually named as an objective.
 
@@ -214,9 +235,13 @@ class StarMapPanel(Panel):
         out = []
         for node in getattr(self._course_menu, "_children", []) or []:
             try:
-                if not node.GetMissionName():
+                if not (node.GetMissionName() or self._is_pointed_at(node)):
                     continue
-                out.append(sm.system_id_for_set(node.GetLabel()))
+                sid = sm.system_id_for_set(node.GetLabel())
+                # Several nodes fold onto one map system (Tau Ceti gets both
+                # "Dry Dock" and "Starbase 12"); one reticle, listed once.
+                if sid not in out:
+                    out.append(sid)
             except Exception as e:
                 dev_mode.log_swallowed("star map mission system", e)
         return out
@@ -266,8 +291,17 @@ class StarMapPanel(Panel):
                     if mod is None or mod in seen:
                         continue
                     seen.add(mod)
+                    # An arrow on the node that CONTRIBUTES this row. For a
+                    # system with regions that is the region node; for a
+                    # single-region system (and each half of the Tau Ceti
+                    # fold) it is the system node itself, which is what makes
+                    # E1M1's arrow on "Starbase 12" mark that row and not
+                    # "Dry Dock" beside it. An arrow on a system that HAS
+                    # regions marks the system only — it never said which
+                    # region, so neither do we.
                     rows.append({"id": str(mod), "label": child.GetLabel(),
-                                 "module": mod})
+                                 "module": mod,
+                                 "attention": self._is_pointed_at(child)})
             except Exception as e:
                 dev_mode.log_swallowed("star map offered rows", e)
         return rows
@@ -309,10 +343,15 @@ class StarMapPanel(Panel):
         mission_dest = self._mission_destination()
 
         def shaped(rows):
+            # Either of BC's two region-level "go here" signals marks the row:
+            # the destination the mission plotted for itself, or a pointer
+            # arrow aimed at the node. Missions use one or the other, never
+            # both — E3M2 plots Vesuvi4, E1M1 arrows Starbase 12.
             return [{"id": r["id"], "label": r["label"],
                      "available": r.get("module") is not None,
-                     "mission": (mission_dest is not None
-                                 and r.get("module") == mission_dest)}
+                     "mission": bool(r.get("attention")
+                                     or (mission_dest is not None
+                                         and r.get("module") == mission_dest))}
                     for r in rows]
 
         # The mission's own offer FIRST. BC's Set Course list is what the
