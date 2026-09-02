@@ -416,11 +416,28 @@ def _shields_tuple(ship) -> tuple[float, ...]:
         sh = ship.GetShieldSubsystem()
         if sh is None:
             return (0.0,) * 6
-        # A ship mid cloak-transition has its shields DOWN (they don't block —
-        # see combat.cloak_shields_suspended), so show them down rather than the
-        # preserved charge; they snap back once the fade completes.
-        from engine.appc.combat import cloak_shields_suspended
-        if cloak_shields_suspended(ship):
+        # THE BAR MUST AGREE WITH WHETHER SHIELDS ACTUALLY BLOCK. Drawing a
+        # full bar for shields that absorb nothing is the panel contradicting
+        # the shield bubble rendered beside it, which is gated on this same
+        # predicate (host_loop.py:1551) — as is the beam stop.
+        #
+        # This generalises a rule that used to be written here for ONE reason:
+        # a ship mid cloak-transition has its shields down, so the panel showed
+        # them down rather than the preserved charge. `shields_block` covers
+        # that case and every sibling — generator missing, powered off,
+        # disabled, destroyed, and the dev disable-NPC-shields cheat.
+        #
+        # Measured before changing, because two of those were live bugs and one
+        # was not: a DISABLED or DESTROYED generator drew its stored charge as
+        # a full bar (shoot out a ship's shield generator and the panel claimed
+        # it still had shields), while a merely powered-OFF one already read
+        # zero via GetSingleShieldPercentage's own short-circuit.
+        #
+        # Hides, does not drain: the stored charge is untouched and returns the
+        # moment the generator does — the same snap-back the cloak case relied
+        # on.
+        from engine.appc.combat import shields_block
+        if not shields_block(ship):
             return (0.0,) * sh.NUM_SHIELDS
         return tuple(sh.GetSingleShieldPercentage(f) for f in range(sh.NUM_SHIELDS))
     except Exception:

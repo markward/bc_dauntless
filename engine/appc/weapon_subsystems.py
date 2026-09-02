@@ -1647,10 +1647,19 @@ def _target_tractorable(target) -> bool:
     shields = getter()
     if shields is None:
         return True  # not equipped
-    if hasattr(shields, "IsDisabled") and shields.IsDisabled():
-        return True  # disabled (damaged out)
-    if hasattr(shields, "IsOn") and not shields.IsOn():
-        return True  # offline / lowered
+    # If the shields do not BLOCK, they cannot deflect a tractor beam either.
+    # This delegates to the one predicate the damage path, the beam stop, the
+    # shield bubble and both HUD readouts already share, instead of
+    # re-deriving a subset of it here.
+    #
+    # It used to test only `IsDisabled` and `IsOn`, which silently missed a
+    # DESTROYED generator, the cloak-transition window, and the dev
+    # disable-NPC-shields cheat — so "Disable NPC Shields" let weapons through
+    # but still refused to let the tractor grip, which reads as the cheat
+    # being broken. Reported live.
+    from engine.appc.combat import shields_block
+    if not shields_block(target):
+        return True
     # Online + undamaged: blocked only while the shields still hold charge.
     n = getattr(shields, "NUM_SHIELDS", 6)
     try:
