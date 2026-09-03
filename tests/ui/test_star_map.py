@@ -562,11 +562,11 @@ def no_overrides(monkeypatch):
     """Clear the per-system authoring for tests about the CLASS TABLE.
 
     The synthetic model reuses real charted ids, and "vesuvi" now carries BOTH
-    an authored colour and the solid-core treatment — so without this these
+    an authored colour and the dead-star treatment — so without this these
     read the authored star and say nothing about the sun-texture lookup they
     exist to check."""
     monkeypatch.setattr(sm, "STAR_OVERRIDES", {})
-    monkeypatch.setattr(sm, "SOLID_CORE_STARS", frozenset())
+    monkeypatch.setattr(sm, "DEAD_STARS", frozenset())
 
 
 def _starred_model():
@@ -700,19 +700,24 @@ def test_a_living_star_keeps_the_white_pinpoint_core():
     assert by_id["tevron"]["color"] == sm.STAR_COLORS["SunYellow"]
 
 
-def test_a_dead_star_puts_its_colour_in_the_core():
-    """A white pinpoint in a tinted halo puts the colour where the alpha is
-    lowest. That is right for 33 living stars and wrong for a burnt-out one:
-    Vesuvi's brown was there but invisible, so it read like any other star.
-    Swapping core and halo moves its colour into the opaque middle."""
+def test_a_dead_star_is_its_own_colour_throughout():
+    """No white anywhere — glow matches fill.
+
+    A living star is a white pinpoint inside a tinted halo, which puts the
+    colour where the alpha is lowest. For a burnt-out star that hid the very
+    thing that makes it distinct: Vesuvi's brown was present but unreadable.
+    Drawing it wholly in its own colour is what makes it read as dead rather
+    than as a star with an unusual tint."""
     scene = sm.build_scene()
     v = next(p for p in scene["points"] if p["id"] == "vesuvi")
-    assert v["core_color"] == sm.STAR_OVERRIDES["vesuvi"]
-    assert v["color"] == sm.WHITE
+    brown = sm.STAR_OVERRIDES["vesuvi"]
+    assert v["core_color"] == brown
+    assert v["color"] == brown, "the glow must match the fill"
+    assert sm.WHITE not in (v["color"], v["core_color"])
 
 
-def test_only_the_named_dead_stars_invert():
-    """The swap is per-star and must not leak: 33 systems keep the pinpoint."""
+def test_only_the_named_dead_stars_lose_their_pinpoint():
+    """Per-star and must not leak: 33 systems keep the white core."""
     scene = sm.build_scene()
     inverted = [p["id"] for p in scene["points"]
                 if p["core_color"] != sm.WHITE]
@@ -724,7 +729,7 @@ def test_dimming_a_dead_star_dims_both_of_its_colours():
     ends up MORE prominent than the live stars around it."""
     scene = sm.build_scene(offered_ids={"tauceti"})
     v = next(p for p in scene["points"] if p["id"] == "vesuvi")
+    dim_brown = tuple(c * sm.INERT_DIM for c in sm.STAR_OVERRIDES["vesuvi"])
     assert v["offered"] is False
-    assert v["core_color"] == tuple(
-        c * sm.INERT_DIM for c in sm.STAR_OVERRIDES["vesuvi"])
-    assert v["color"] == tuple(c * sm.INERT_DIM for c in sm.WHITE)
+    assert v["core_color"] == dim_brown
+    assert v["color"] == dim_brown

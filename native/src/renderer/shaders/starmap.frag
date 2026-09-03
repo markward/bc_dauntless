@@ -60,9 +60,9 @@ void main() {
         //
         // BOTH colours come from Python (engine/ui/star_map.build_scene), for
         // the same reason bracket colour does: this pass must not decide
-        // presentation. Swapping them is how a burnt-out star is drawn —
-        // colour in the opaque middle, white pushed out to the faint glow —
-        // and that decision belongs beside the palette, not here.
+        // presentation. A burnt-out star passes the SAME colour for both, so
+        // its glow matches its fill and nothing about it reads as lit — and
+        // that decision belongs beside the palette, not here.
         float core = 1.0 - smoothstep(0.20, 0.30, r);
         float halo = 1.0 - smoothstep(0.0, 1.0, r);
         halo *= halo;

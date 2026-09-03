@@ -41,15 +41,16 @@ TEST(StarMapPass, SceneHoldsPrimitivesInGivenOrder) {
     EXPECT_FLOAT_EQ(scene.points[0].core_color.g, 1.0f);
     EXPECT_FLOAT_EQ(scene.points[0].core_color.b, 1.0f);
 
-    // A burnt-out star carries its own hue in the core instead. Python
-    // decides this (engine/ui/star_map.SOLID_CORE_STARS); the struct just
-    // has to carry the two colours independently.
+    // A burnt-out star carries its own hue in BOTH — glow matching fill, no
+    // white anywhere. Python decides this (engine/ui/star_map.DEAD_STARS);
+    // the struct just has to carry the two colours independently, which is
+    // what lets them differ for a living star and agree for a dead one.
     renderer::StarMapPoint dead;
-    dead.color      = {1.0f, 1.0f, 1.0f};
+    dead.color      = {0.420f, 0.267f, 0.137f};
     dead.core_color = {0.420f, 0.267f, 0.137f};
     scene.points.push_back(dead);
     EXPECT_FLOAT_EQ(scene.points[2].core_color.r, 0.420f);
-    EXPECT_FLOAT_EQ(scene.points[2].color.r, 1.0f);
+    EXPECT_FLOAT_EQ(scene.points[2].color.r, 0.420f);
 }
 
 // `mark` mirrors engine/ui/star_map.py's MARK_* constants, which are the sole

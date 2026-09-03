@@ -85,19 +85,19 @@ STAR_OVERRIDES = {
 
 WHITE = (1.0, 1.0, 1.0)
 
-# Stars drawn with their own colour in the CORE and the white pushed out to
-# the glow — the inverse of the usual treatment.
+# Stars drawn WHOLLY in their own colour — glow matching fill, no white
+# anywhere.
 #
 # A white pinpoint inside a tinted halo is what makes a star read as a star,
-# and it is right for the 33 living ones. It is wrong for a burnt-out star:
-# it puts the colour exactly where the alpha is lowest, so Vesuvi's brown was
-# present but invisible and the system read like any other. Swapping them puts
-# the colour in the opaque middle.
+# and it is right for the 33 living ones. It is wrong for a burnt-out one: it
+# puts the colour exactly where the alpha is lowest, so Vesuvi's brown was
+# present but unreadable and the system looked like any other star. Moving the
+# colour to the core fixed the fill; leaving a white glow around it still read
+# as "lit". A dead star emits nothing, so nothing about it is white.
 #
-# Per-star, and deliberately not a global flip: inverting every star would
-# trade one legibility problem for another, since a white glow on all 34 would
-# wash the field out.
-SOLID_CORE_STARS = frozenset({"vesuvi"})
+# Per-star, and deliberately not a global change: the white pinpoint is what
+# distinguishes a star from a coloured dot, and 33 of them are still burning.
+DEAD_STARS = frozenset({"vesuvi"})
 GRID_COLOR = (0.086, 0.204, 0.361)      # POC 0x16345c
 DROP_COLOR = (0.114, 0.227, 0.388)      # POC 0x1d3a63
 
@@ -400,10 +400,11 @@ def build_scene(*, model=None, here_id=None, course_id=None,
         base = STAR_OVERRIDES.get(
             sid, STAR_COLORS.get(s.get("star"), STAR_COLOR))
         # Halo and core. Normally the star's colour surrounds a white
-        # pinpoint; a burnt-out star swaps them so its hue lands in the opaque
-        # middle. Resolved HERE, as values — the pass draws what it is given
-        # and decides nothing, exactly as it does for bracket colour.
-        halo_color, core_color = ((WHITE, base) if sid in SOLID_CORE_STARS
+        # pinpoint; a burnt-out star is its own colour throughout, so the glow
+        # matches the fill and nothing about it reads as lit. Resolved HERE,
+        # as values — the pass draws what it is given and decides nothing,
+        # exactly as it does for bracket colour.
+        halo_color, core_color = ((base, base) if sid in DEAD_STARS
                                   else (base, WHITE))
         # Dim the star's own colours, never a hardcoded amber: doing the
         # latter would repaint every unlisted system the same hue and undo

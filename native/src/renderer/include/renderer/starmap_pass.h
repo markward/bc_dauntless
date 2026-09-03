@@ -41,8 +41,8 @@ struct StarMapPoint {
     // initialisations that predate it still compile and still mean what they
     // meant: white core is the living star.
     //
-    // A burnt-out star swaps this with `color`, putting its own hue in the
-    // opaque middle where it can actually be read. Python decides both
+    // A burnt-out star passes its own hue for BOTH, so glow matches fill and
+    // no part of it is white. Python decides both
     // (engine/ui/star_map.build_scene) — this pass never picks either, for
     // the same reason it never derives a bracket's colour from `mark`.
     glm::vec3 core_color{1.0f};
