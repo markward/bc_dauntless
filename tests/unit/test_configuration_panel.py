@@ -21,11 +21,9 @@ def _make(**overrides):
     kwargs = dict(
         tabs=[("graphics", "Graphics")],
         initial_settings=SettingsSnapshot(
-            dust_on=True, specular_on=True,
             decals_on=True, fov_deg=70,
         ),
         set_dust=Mock(),
-        set_specular=Mock(),
         set_hdr=Mock(),
         set_rim=Mock(),
         set_decals=Mock(),
@@ -38,7 +36,6 @@ def _make(**overrides):
         set_procedural_sky=Mock(),
         set_filmic=Mock(),
         set_motion_blur=Mock(),
-        set_warp_flythrough=Mock(),
         set_volumetric_nebulae=Mock(),
         set_nebula_lightning=Mock(),
         set_hdr_lens_flare=Mock(),
@@ -68,18 +65,14 @@ def test_open_close_round_trip():
 
 def test_initial_settings_round_trip_to_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=False, specular_on=True,
         decals_on=False, fov_deg=62,
     ))
     p.open()
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
-        "dust_on": False, "specular_on": True,
         "decals_on": False, "smaa_on": True,
-        "subtitles_on": True, "procedural_sky_on": True,
-        "warp_flythrough_on": True,
-        "volumetric_nebulae_on": True,
+        "subtitles_on": True, "improved_space_on": True,
         "camera_realism_on": True, "realistic_lighting_on": True,
         "disable_annoying_dialogue_on": True,
         "ai_difficulty": 1,
@@ -94,44 +87,6 @@ def test_dispatch_cancel_closes():
     p.open()
     assert p.dispatch_event("cancel") is True
     assert p.is_open() is False
-
-
-def test_dispatch_toggle_dust_flips_and_calls_applier():
-    p, kw = _make()
-    p.open()
-    assert p.dispatch_event("toggle:dust") is True
-    kw["set_dust"].assert_called_once_with(False)
-    # Second toggle flips back.
-    assert p.dispatch_event("toggle:dust") is True
-    kw["set_dust"].assert_called_with(True)
-
-
-def test_dispatch_toggle_procedural_sky_flips_and_calls_applier():
-    p, kw = _make()
-    p.open()
-    assert p.dispatch_event("toggle:procedural_sky") is True
-    kw["set_procedural_sky"].assert_called_once_with(False)
-    # Second toggle flips back.
-    assert p.dispatch_event("toggle:procedural_sky") is True
-    kw["set_procedural_sky"].assert_called_with(True)
-
-
-def test_procedural_sky_on_in_render_payload():
-    p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True,
-        decals_on=True, fov_deg=70, procedural_sky_on=False,
-    ))
-    p.open()
-    payload = p.render_payload()
-    body = json.loads(payload[len("setConfigurationPanel("):-len(");")])
-    assert body["settings"]["procedural_sky_on"] is False
-
-
-def test_dispatch_toggle_specular_flips_and_calls_applier():
-    p, kw = _make()
-    p.open()
-    assert p.dispatch_event("toggle:specular") is True
-    kw["set_specular"].assert_called_once_with(False)
 
 
 def test_dispatch_fov_sets_and_applies_radians():
@@ -202,11 +157,11 @@ def test_render_payload_re_emits_after_change():
     p, _ = _make()
     p.open()
     p.render_payload()
-    p.dispatch_event("toggle:dust")
+    p.dispatch_event("toggle:improved_space")
     second = p.render_payload()
     assert second is not None
     body = json.loads(second[len("setConfigurationPanel("):-2])
-    assert body["settings"]["dust_on"] is False
+    assert body["settings"]["improved_space_on"] is False
 
 
 def test_render_payload_close_emits_hide_then_dedups():
@@ -267,7 +222,7 @@ def test_handle_input_when_closed_is_noop():
 
 def test_focus_first_down_lands_on_first_focusable():
     """Focusable order with one Graphics tab: [tab:graphics, ctrl:dust,
-    ctrl:specular, ctrl:fov]. First ↓ from unfocused lands on index 0
+    ctrl:fov]. First ↓ from unfocused lands on index 0
     (the tab row)."""
     p, _ = _make()
     p.open()
@@ -304,12 +259,12 @@ def test_focus_wraps_at_bottom():
     assert body["focused"] == 0
 
 
-def test_space_on_dust_row_toggles():
+def test_walking_focus_to_a_row_and_pressing_space_activates_it():
+    """Arrow-walk + activate in one path — the keyboard equivalent of a click.
+    Index is looked up rather than counted so row reordering can't retarget it."""
     p, kw = _make()
     p.open()
-    # Walk focus down to ctrl:dust. Index is looked up rather than counted so
-    # reordering the Graphics rows doesn't silently retarget this test.
-    steps = p._focusables().index(("ctrl", "dust")) + 1
+    steps = p._focusables().index(("ctrl", "improved_space")) + 1
     r = _FakeReader()
     for _ in range(steps):
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
@@ -319,7 +274,6 @@ def test_space_on_dust_row_toggles():
 
 def test_right_arrow_on_fov_row_increments():
     p, kw = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True,
         decals_on=True, fov_deg=30,
     ))
     p.open()
@@ -333,7 +287,6 @@ def test_right_arrow_on_fov_row_increments():
 
 def test_left_arrow_on_fov_row_decrements_and_clamps():
     p, kw = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True,
         decals_on=True, fov_deg=25,
     ))
     p.open()
@@ -502,7 +455,6 @@ def test_gameplay_tab_focusables_include_subtitles():
 
 def test_initial_subtitles_off_round_trips():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True,
         decals_on=True, fov_deg=70, subtitles_on=False,
     ))
     p.open()
@@ -544,34 +496,12 @@ def test_gameplay_tab_focusables_include_disable_annoying_dialogue():
 
 def test_initial_disable_annoying_dialogue_off_round_trips():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True,
         decals_on=True, fov_deg=70, disable_annoying_dialogue_on=False,
     ))
     p.open()
     payload = p.render_payload()
     data = json.loads(payload[len("setConfigurationPanel("):-len(");")])
     assert data["settings"]["disable_annoying_dialogue_on"] is False
-
-
-def test_dispatch_toggle_warp_flythrough_flips_and_calls_applier():
-    p, kw = _make()
-    p.open()
-    assert p.dispatch_event("toggle:warp_flythrough") is True
-    kw["set_warp_flythrough"].assert_called_once_with(False)
-    assert p.dispatch_event("toggle:warp_flythrough") is True
-    kw["set_warp_flythrough"].assert_called_with(True)
-
-
-def test_warp_flythrough_on_in_render_payload():
-    p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True,
-        decals_on=True, fov_deg=70,
-        procedural_sky_on=True, warp_flythrough_on=False,
-    ))
-    p.open()
-    payload = p.render_payload()
-    body = json.loads(payload[len("setConfigurationPanel("):-len(");")])
-    assert body["settings"]["warp_flythrough_on"] is False
 
 
 # ---- AI difficulty (Gameplay tab) ---------------------------------------
@@ -609,7 +539,6 @@ def test_dispatch_ai_difficulty_garbage_returns_false():
 
 def test_ai_difficulty_in_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True,
         decals_on=True, fov_deg=70, ai_difficulty=2,
     ))
     p.open()
@@ -620,7 +549,6 @@ def test_ai_difficulty_in_render_payload():
 
 def test_ai_difficulty_initial_clamped_in_constructor():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True,
         decals_on=True, fov_deg=70, ai_difficulty=99,
     ))
     assert p._settings.ai_difficulty == 2
@@ -661,21 +589,12 @@ def test_dispatch_toggle_camera_realism_twice_flips_back_on():
 
 def test_camera_realism_off_in_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, decals_on=True,
+        decals_on=True,
         fov_deg=70, camera_realism_on=False,
     ))
     p.open()
     body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
     assert body["settings"]["camera_realism_on"] is False
-
-
-def test_camera_realism_is_a_graphics_focusable_after_procedural_sky():
-    p, _ = _make()
-    f = p._focusables()
-    assert ("ctrl", "camera_realism") in f
-    assert (f.index(("ctrl", "procedural_sky"))
-            < f.index(("ctrl", "camera_realism"))
-            < f.index(("ctrl", "realistic_lighting")))
 
 
 def test_absorbed_sub_toggles_no_longer_dispatch_or_focus():
@@ -731,7 +650,7 @@ def test_dispatch_toggle_realistic_lighting_twice_flips_back_on():
 
 def test_realistic_lighting_off_in_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, decals_on=True, fov_deg=70,
+        decals_on=True, fov_deg=70,
         realistic_lighting_on=False,
     ))
     p.open()
@@ -767,6 +686,93 @@ def test_space_on_realistic_lighting_row_toggles():
     p.handle_input(r)
     for name in _REALISTIC_LIGHTING_APPLIERS:
         kw[name].assert_called_once_with(False)
+
+
+# ---- Improved Space Visuals (dust + volumetric nebulae + procedural sky) --
+
+_IMPROVED_SPACE_APPLIERS = ("set_dust", "set_procedural_sky",
+                            "set_volumetric_nebulae")
+
+
+def test_dispatch_toggle_improved_space_fans_out_to_every_applier():
+    p, kw = _make()
+    p.open()
+    assert p._settings.improved_space_on is True
+    assert p.dispatch_event("toggle:improved_space") is True
+    for name in _IMPROVED_SPACE_APPLIERS:
+        kw[name].assert_called_once_with(False)
+    assert p._settings.improved_space_on is False
+
+
+def test_dispatch_toggle_improved_space_twice_flips_back_on():
+    p, kw = _make()
+    p.open()
+    p.dispatch_event("toggle:improved_space")
+    assert p.dispatch_event("toggle:improved_space") is True
+    for name in _IMPROVED_SPACE_APPLIERS:
+        kw[name].assert_called_with(True)
+    assert p._settings.improved_space_on is True
+
+
+def test_improved_space_off_in_render_payload():
+    p, _ = _make(initial_settings=SettingsSnapshot(
+        decals_on=True, fov_deg=70, improved_space_on=False,
+    ))
+    p.open()
+    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert body["settings"]["improved_space_on"] is False
+
+
+def test_improved_space_leads_the_modern_vfx_masters():
+    p, _ = _make()
+    f = p._focusables()
+    assert (f.index(("ctrl", "improved_space"))
+            < f.index(("ctrl", "camera_realism"))
+            < f.index(("ctrl", "realistic_lighting")))
+
+
+def test_absorbed_space_sub_toggles_no_longer_dispatch_or_focus():
+    p, kw = _make()
+    p.open()
+    f = p._focusables()
+    for target in ("dust", "procedural_sky", "volumetric_nebulae"):
+        assert p.dispatch_event("toggle:" + target) is False
+        assert ("ctrl", target) not in f
+    for name in _IMPROVED_SPACE_APPLIERS:
+        kw[name].assert_not_called()
+
+
+def test_space_on_improved_space_row_toggles():
+    p, kw = _make()
+    p.open()
+    p._focused = p._focusables().index(("ctrl", "improved_space"))
+    r = _FakeReader()
+    r.press(r.keys.KEY_SPACE)
+    p.handle_input(r)
+    for name in _IMPROVED_SPACE_APPLIERS:
+        kw[name].assert_called_once_with(False)
+
+
+def test_specular_is_no_longer_a_setting():
+    """Specular highlights are permanently on — native g_specular_enabled
+    defaults true and nothing can now clear it."""
+    p, _ = _make()
+    p.open()
+    assert p.dispatch_event("toggle:specular") is False
+    assert ("ctrl", "specular") not in p._focusables()
+    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert "specular_on" not in body["settings"]
+
+
+def test_warp_flythrough_is_no_longer_a_setting():
+    """The set-to-set warp cinematic is core to how warp reads, not optional.
+    No row, no focusable, no action — and nothing left to dispatch at."""
+    p, _ = _make()
+    p.open()
+    assert p.dispatch_event("toggle:warp_flythrough") is False
+    assert ("ctrl", "warp_flythrough") not in p._focusables()
+    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert "warp_flythrough_on" not in body["settings"]
 
 
 def test_smaa_is_the_first_graphics_control():

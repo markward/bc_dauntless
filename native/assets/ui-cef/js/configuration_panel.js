@@ -20,15 +20,11 @@ function _cpFocusableList(state) {
     const out = state.tabs.map(t => ({kind: 'tab', target: t.id}));
     if (state.selected_tab === 'graphics') {
         out.push({kind: 'ctrl', target: 'smaa'});
-        out.push({kind: 'ctrl', target: 'dust'});
-        out.push({kind: 'ctrl', target: 'specular'});
         out.push({kind: 'ctrl', target: 'fov'});
-        out.push({kind: 'ctrl', target: 'procedural_sky'});
+        out.push({kind: 'ctrl', target: 'improved_space'});
         out.push({kind: 'ctrl', target: 'camera_realism'});
         out.push({kind: 'ctrl', target: 'realistic_lighting'});
         out.push({kind: 'ctrl', target: 'decals'});
-        out.push({kind: 'ctrl', target: 'warp_flythrough'});
-        out.push({kind: 'ctrl', target: 'volumetric_nebulae'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
         out.push({kind: 'ctrl', target: 'disable_annoying_dialogue'});
@@ -76,28 +72,6 @@ function _cpRenderGraphicsBody(state, focusables) {
           +   '</div>'
           + '</div>';
 
-    // Space Dust toggle
-    html += '<div class="cp-row' + (isFoc('dust') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Space Dust</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.dust_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:dust\')">'
-          +       (s.dust_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Specular Highlights toggle
-    html += '<div class="cp-row' + (isFoc('specular') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Specular Highlights</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.specular_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:specular\')">'
-          +       (s.specular_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
     // FOV slider — listen on 'change' (released), not 'input' (every
     // pixel), so dragging doesn't flood the CEF event channel.
     html += '<div class="cp-row' + (isFoc('fov') ? ' cp-focused' : '') + '">'
@@ -114,14 +88,15 @@ function _cpRenderGraphicsBody(state, focusables) {
     html += '<hr class="cp-divider">';
     html += '<div class="cp-group-header">Modern VFX</div>';
 
-    // Procedural Sky toggle — On = map-driven galaxy sky; Off = original
-    // STBC authored starbox (stock BC).
-    html += '<div class="cp-row' + (isFoc('procedural_sky') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Procedural Sky</div>'
+    // Improved Space Visuals toggle — one row over space dust, volumetric
+    // nebulae and the procedural sky. Off == stock BC space: the authored
+    // starbox, no dust, flat nebulae.
+    html += '<div class="cp-row' + (isFoc('improved_space') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Improved Space Visuals</div>'
           +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.procedural_sky_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:procedural_sky\')">'
-          +       (s.procedural_sky_on ? 'On' : 'Off')
+          +     '<button class="cp-toggle' + (s.improved_space_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:improved_space\')">'
+          +       (s.improved_space_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';
@@ -159,28 +134,6 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.decals_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:decals\')">'
           +       (s.decals_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Warp Flythrough toggle — procedural warp flythrough VFX (Modern VFX).
-    html += '<div class="cp-row' + (isFoc('warp_flythrough') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Warp Flythrough</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.warp_flythrough_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:warp_flythrough\')">'
-          +       (s.warp_flythrough_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Volumetric Nebulae toggle — volumetric nebula render pass (Modern VFX).
-    html += '<div class="cp-row' + (isFoc('volumetric_nebulae') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Volumetric Nebulae</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.volumetric_nebulae_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:volumetric_nebulae\')">'
-          +       (s.volumetric_nebulae_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';

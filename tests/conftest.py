@@ -709,6 +709,14 @@ def _reset_leakable_engine_globals():
         _events._warned_event_types.clear()
     except Exception:
         pass
+    # Warp-transit static starbox: host_loop remembers the last authored
+    # backdrops so a procedural-sky-off transit has something to draw. Module
+    # global, so one test's starbox would otherwise leak into another's transit.
+    try:
+        import engine.host_loop as _hl
+        _hl._note_static_backdrops([])
+    except Exception:
+        pass
     # Subsystem light emitters: the Realistic Lighting master toggle flips a
     # module global, so a test that turns it off would silently blank every
     # later test's emitter lights.

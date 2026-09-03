@@ -2005,13 +2005,41 @@ _WARP_LIGHT_AMBIENT: tuple = (0.05, 0.07, 0.13)
 _WARP_SKY_RATE: float = 15.0
 
 
+# Last authored starbox seen while NOT in warp transit, kept so a transit with
+# the procedural sky off has something to draw. The source set is deleted at
+# burst (warp._WarpDepartAction), so by transit time there is no set left to
+# aggregate authored backdrops from -- without this the transit renders black.
+# Reset by tests/conftest.py.
+_last_static_backdrops: list = []
+
+
+def _note_static_backdrops(backdrops) -> None:
+    """Remember the stock-BC starbox currently on screen (procedural sky off).
+
+    Called from the render tick on non-transit frames, where `backdrops` is
+    already `_authored_backdrops(active_set)` -- so this costs a list copy and
+    no extra aggregation."""
+    global _last_static_backdrops
+    _last_static_backdrops = list(backdrops)
+
+
 def _warp_transit_backdrops(wvfx):
-    """Procedural-sky backdrops projected from the warp manager's advancing
-    vantage, so the distant clusters/nebulae stream past during transit. Falls
-    back to a blacked-out sky ([]) when the source wasn't galaxy-mapped (no
-    vantage) or the procedural sky is off."""
+    """Sky to draw during a set-to-set warp transit.
+
+    Procedural sky ON -> project from the warp manager's advancing vantage, so
+    the distant clusters/nebulae stream past ("moving through the galaxy").
+    Procedural sky OFF -> hold the last authored starbox STATIC: stock BC has
+    no galaxy model to fly through, so the starfield stays put while the
+    streaks carry the sense of motion.
+
+    Blacked-out ([]) only when there is genuinely nothing to draw -- the source
+    was never galaxy-mapped (sky on), or the set had no authored backdrops at
+    all (sky off). The latter is the pre-existing behaviour for mission sets
+    that ship without a starbox, not a regression."""
+    if not r.procedural_sky_enabled():
+        return list(_last_static_backdrops)
     vantage = wvfx.sky_vantage(_WARP_SKY_RATE)
-    if vantage is None or not r.procedural_sky_enabled():
+    if vantage is None:
         return []
     from engine.appc import sky_projection as sp
     return sp.project_sky(vantage, sp.load_sector_model())
@@ -6791,7 +6819,13 @@ def run(mission_name: Optional[str] = None,
         from engine.appc import warp as _wp
 
         def _flythrough_enabled():
-            return bool(r.warp_flythrough_enabled()) and r.procedural_sky_enabled()
+            # The set-to-set warp cinematic is part of the game, not a setting.
+            # With the procedural sky off the transit holds the authored starbox
+            # static (_warp_transit_backdrops) rather than being skipped.
+            # The predicate itself stays as warp.py's injection seam: contexts
+            # that never call configure_warp_vfx (the headless harness, most
+            # tests) leave _vfx_enabled None and keep the instant swap.
+            return True
 
         def _vantage_of(key):
             # key is a live SetClass (the source) or a module string (the
@@ -7195,8 +7229,8 @@ def run(mission_name: Optional[str] = None,
         ai_inspector = _register_ai_inspector(registry)
 
         # Configuration panel — production-visible pause-menu modal
-        # exposing the Graphics tab (dust, specular, FOV). Settings
-        # apply live; no persistence in this iteration. Construction
+        # exposing the Graphics tab (SMAA, FOV, and the three master
+        # toggles). Settings apply live; no persistence. Construction
         # uses the live director FOV so opening the panel doesn't lie
         # about the current value.
         from engine.ui.configuration_panel import (
@@ -7208,16 +7242,14 @@ def run(mission_name: Optional[str] = None,
             tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay"),
                   ("controls", "Controls")],
             initial_settings=SettingsSnapshot(
-                dust_on=True,
-                specular_on=True,
                 decals_on=True,
                 smaa_on=True,
-                procedural_sky_on=r.procedural_sky_enabled(),
-                warp_flythrough_on=r.warp_flythrough_enabled(),
-                volumetric_nebulae_on=r.volumetric_nebulae_enabled(),
                 # One row over four effects. The renderer exposes no
                 # hdr_enabled() getter (HDR defaults on natively), so the
                 # master reads as on only when all three that do report on.
+                # Dust has no getter and defaults on, like rim and shadows.
+                improved_space_on=(r.procedural_sky_enabled()
+                                   and r.volumetric_nebulae_enabled()),
                 camera_realism_on=(r.filmic_enabled()
                                 and r.motion_blur_enabled()
                                 and r.hdr_lens_flare_enabled()),
@@ -7233,7 +7265,6 @@ def run(mission_name: Optional[str] = None,
                 ai_difficulty=App.Game_GetDifficulty(),
             ),
             set_dust=r.set_dust_enabled,
-            set_specular=r.set_specular_enabled,
             set_hdr=r.set_hdr_enabled,
             set_rim=r.set_rim_enabled,
             set_decals=r.set_decals_enabled,
@@ -7246,7 +7277,6 @@ def run(mission_name: Optional[str] = None,
             set_procedural_sky=r.set_procedural_sky_enabled,
             set_filmic=r.set_filmic_enabled,
             set_motion_blur=r.set_motion_blur_enabled,
-            set_warp_flythrough=r.set_warp_flythrough_enabled,
             set_volumetric_nebulae=r.set_volumetric_nebulae_enabled,
             set_nebula_lightning=r.set_nebula_lightning_enabled,
             set_hdr_lens_flare=r.set_hdr_lens_flare_enabled,
@@ -8885,6 +8915,11 @@ def run(mission_name: Optional[str] = None,
                 backdrops = _warp_transit_backdrops(_w)
             else:
                 backdrops = _aggregate_backdrops(active_set)
+                # Procedural sky off: `backdrops` IS the authored starbox, so
+                # remember it for the next transit to hold static. The source
+                # set is deleted at burst, so this is the last chance to see it.
+                if not r.procedural_sky_enabled():
+                    _note_static_backdrops(backdrops)
             r.set_backdrops(backdrops)
 
             suns = [] if _warp_streaking else _aggregate_suns()

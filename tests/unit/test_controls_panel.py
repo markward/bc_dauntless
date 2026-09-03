@@ -19,14 +19,13 @@ def _make(tmp_path):
     panel = ConfigurationPanel(
         tabs=[("graphics", "Graphics"), ("controls", "Controls")],
         initial_settings=SettingsSnapshot(
-            dust_on=True, specular_on=True,
             decals_on=True, fov_deg=70,
         ),
-        set_dust=Mock(), set_specular=Mock(), set_hdr=Mock(), set_rim=Mock(),
+        set_dust=Mock(), set_hdr=Mock(), set_rim=Mock(),
         set_decals=Mock(), set_smaa=Mock(), set_subtitles=Mock(),
         set_disable_annoying_dialogue=Mock(), set_ai_difficulty=Mock(),
         set_fov_rad=Mock(), set_shadows=Mock(), set_procedural_sky=Mock(),
-        set_filmic=Mock(), set_motion_blur=Mock(), set_warp_flythrough=Mock(),
+        set_filmic=Mock(), set_motion_blur=Mock(),
         set_volumetric_nebulae=Mock(), set_nebula_lightning=Mock(),
         set_hdr_lens_flare=Mock(),
         set_ship_light_emitters=Mock(),

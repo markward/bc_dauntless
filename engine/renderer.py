@@ -71,9 +71,8 @@ _REQUIRED_BINDINGS = frozenset({
     "set_viewscreen_static_source", "set_visible", "set_warp_flash_intensity",
     "set_warp_streak_intensity", "set_warp_travel_dir", "set_world_transform",
     "shadows_set_enabled", "shield_hit", "shield_register", "shield_unregister",
-    "should_close", "shutdown", "smaa_set_enabled", "specular_set_enabled",
+    "should_close", "shutdown", "smaa_set_enabled",
     "volumetric_nebulae_enabled", "volumetric_nebulae_set_enabled",
-    "warp_flythrough_enabled", "warp_flythrough_set_enabled",
 })
 
 # OPTIONAL: soft-guarded (`getattr(_h, "NAME", None)` / `hasattr(_h, "NAME")`).
@@ -334,16 +333,6 @@ def set_motion_blur_enabled(enabled: bool) -> None:
     _h.motion_blur_set_enabled(enabled)
 
 
-def warp_flythrough_enabled() -> bool:
-    """Read the Warp Flythrough toggle (Modern VFX). Default: on."""
-    return _h.warp_flythrough_enabled()
-
-
-def set_warp_flythrough_enabled(enabled: bool) -> None:
-    """Toggle the warp flythrough VFX (Modern VFX). Off = instant hard cut."""
-    _h.warp_flythrough_set_enabled(enabled)
-
-
 def set_warp_streak_intensity(intensity: float) -> None:
     """Set the 0..1 star-streak intensity for the warp flythrough."""
     _h.set_warp_streak_intensity(float(intensity))
@@ -432,10 +421,6 @@ def set_hull_discharges(discharges: list) -> None:
      "color": (r,g,b)}. Empty list = none."""
     _h.set_hull_discharges(discharges)
 
-
-def set_specular_enabled(enabled: bool) -> None:
-    """Toggle the opaque-pass specular term. Default: on after init()."""
-    _h.specular_set_enabled(enabled)
 
 
 def set_rim_enabled(enabled: bool) -> None:
