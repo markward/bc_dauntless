@@ -248,7 +248,26 @@ class StarMapPanel(Panel):
                     out.append(sid)
             except Exception as e:
                 dev_mode.log_swallowed("star map mission system", e)
-        return out
+        if out:
+            return out
+
+        # Nothing said it outright. If the mission offers exactly ONE system,
+        # that IS where it is sending you — there is nowhere else to go, so
+        # saying so cannot mislead, and it needs no new signal to infer from.
+        #
+        # This carries the openings BC leaves unmarked. E1M1 offers only Tau
+        # Ceti (its "Starbase 12" and "Dry Dock" nodes both fold onto it) and
+        # raises no objective signal until Picard's warp prod reaches tutorial
+        # state 2; E8M1 offers only Starbase 12 until its briefing creates
+        # Riha. Both previously showed a map with no objective at all.
+        #
+        # Deliberately a FALLBACK, never an override: a mission that names a
+        # system has said which one, and is believed over an inference drawn
+        # from the size of its menu.
+        offered = self._offered_systems()
+        if offered is not None and len(offered) == 1:
+            return list(offered)
+        return []
 
     def _mission_destination(self) -> Optional[str]:
         """Set-module the current mission plotted for itself, if any.

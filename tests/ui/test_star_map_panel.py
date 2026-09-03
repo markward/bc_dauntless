@@ -646,9 +646,16 @@ def test_the_arrowed_row_marks_and_its_sibling_does_not(no_arrows):
 
 def test_hiding_the_arrows_clears_the_mark(no_arrows):
     """HidePointerArrows empties the set wholesale, so the objective mark must
-    go with it — the tutorial has moved on."""
+    go with it — the tutorial has moved on.
+
+    A SECOND system is offered here on purpose: with only one, the mark would
+    survive by elimination and this would pass without the arrow ever being
+    consulted."""
+    from engine.appc.tg_ui.st_widgets import SortedRegionMenu_CreateW
     from engine.ui import ui_attention
     menu, sb, _dd = _e1m1_course_menu()
+    menu.AddChild(SortedRegionMenu_CreateW("Vesuvi", "Systems.Vesuvi.Vesuvi6"),
+                  0, 0, 0)
     ui_attention.show_pointer_arrow(None, sb)
     p = StarMapPanel()
     p.open(set_name="Starbase12", course_menu=menu)
@@ -745,3 +752,63 @@ def test_no_here_arrow_when_the_players_system_is_unknown():
     data = _payload(p.render_payload())
     assert data["here_system"] is None
     assert data["here_marker"] is None
+
+
+# --- objective by elimination ---------------------------------------------
+# When the Set Course menu offers exactly ONE system, that system is where the
+# mission is sending you: there is nowhere else to go, so saying so cannot
+# mislead. Covers E1M1's and E8M1's opening stretch, where BC raises no
+# objective signal of its own until a scripted beat fires.
+
+def _single_system_menu():
+    """E1M1's shape: two menu nodes, both folding onto Tau Ceti."""
+    from engine.appc.tg_ui.st_widgets import SortedRegionMenu_CreateW
+    sc = SortedRegionMenu_CreateW("Set Course")
+    sc.AddChild(SortedRegionMenu_CreateW("Starbase 12",
+                                         "Systems.Starbase12.Starbase12"),
+                0, 0, 0)
+    sc.AddChild(SortedRegionMenu_CreateW("Dry Dock",
+                                         "Systems.DryDock.DryDock"), 0, 0, 0)
+    return sc
+
+
+def test_a_sole_offered_system_is_the_objective():
+    p = StarMapPanel()
+    p.open(set_name="Starbase12", course_menu=_single_system_menu())
+    assert _payload(p.render_payload())["mission_systems"] == ["tauceti"]
+
+
+def test_elimination_needs_the_offer_to_be_unambiguous():
+    """E3M2 offers two systems and names one. With a choice available,
+    elimination must not guess — the real signal decides."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6", course_menu=_e3m2_course_menu())
+    assert _payload(p.render_payload())["mission_systems"] == []
+
+
+def test_a_named_system_still_wins_over_elimination():
+    from engine.appc.tg_ui.st_widgets import SortedRegionMenu_CreateW
+    menu = _e3m2_course_menu()
+    menu._children[0].SetMissionName("Maelstrom.Episode3.E3M2.E3M2")
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6", course_menu=menu)
+    assert _payload(p.render_payload())["mission_systems"] == ["vesuvi"]
+
+
+def test_no_menu_means_no_elimination():
+    """QuickBattle attaches no Set Course menu. 'Nothing offered' is not
+    'one thing offered' — nothing may be marked."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    assert _payload(p.render_payload())["mission_systems"] == []
+
+
+def test_elimination_marks_the_system_not_a_row():
+    """Tau Ceti lists Starbase 12 and Dry Dock. Elimination says WHICH SYSTEM
+    the mission means, never which region of it — same rule as a pointer arrow
+    aimed at a system that has regions."""
+    p = StarMapPanel()
+    p.open(set_name="Starbase12", course_menu=_single_system_menu())
+    p.dispatch_event("select-system:tauceti")
+    rows = _rows(_payload(p.render_payload()))
+    assert all(r["mission"] is False for r in rows.values())
