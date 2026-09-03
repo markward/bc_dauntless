@@ -315,3 +315,61 @@ def test_the_real_target_list_view_is_throttled_through_the_registry(clock):
         assert len(polls) == hidden
     finally:
         _set_current_game(None)
+
+
+# --- a visibility flip must be observed, however it was made ---------------
+# The hidden-panel skip is safe only if the flip TO hidden is noticed. That
+# used to rely on every panel routing through the Panel.visible SETTER — a
+# rule nothing enforced, and which six panels broke by assigning _visible
+# directly in close(). The result: ESC killed a panel's GL half and left its
+# CEF chrome on screen, because the payload carrying visible:false was never
+# polled for. Confirmed live on the star map and the QuickBattle setup panel.
+
+def test_a_direct_visibility_flip_still_gets_one_last_poll():
+    """The registry observes visibility itself rather than trusting panels to
+    announce it, so bypassing the setter cannot strand chrome on screen."""
+    clock = _Clock()
+    registry = PanelRegistry(clock=clock)
+    panel = _CountingPanel("p")
+    registry.register(panel)
+    registry.render_all()                    # drain the initial due
+    before = panel.polls
+
+    panel._visible = False                   # what close() does in six panels
+
+    registry.render_all()
+    assert panel.polls == before + 1, (
+        "a panel going hidden must be polled once more so CEF is told")
+
+
+def test_a_hidden_panel_is_not_polled_again_after_that():
+    """The counterweight: the extra poll is ONE frame, not a standing cost.
+    Without this, the fix would quietly undo the optimisation it protects."""
+    clock = _Clock()
+    registry = PanelRegistry(clock=clock)
+    panel = _CountingPanel("p")
+    registry.register(panel)
+    registry.render_all()
+    panel._visible = False
+    registry.render_all()                    # the one last poll
+    settled = panel.polls
+
+    for _ in range(5):
+        clock.advance(1.0)
+        registry.render_all()
+    assert panel.polls == settled
+
+
+def test_becoming_visible_again_resumes_polling():
+    clock = _Clock()
+    registry = PanelRegistry(clock=clock)
+    panel = _CountingPanel("p")
+    registry.register(panel)
+    registry.render_all()
+    panel._visible = False
+    registry.render_all()
+    settled = panel.polls
+
+    panel._visible = True
+    registry.render_all()
+    assert panel.polls == settled + 1

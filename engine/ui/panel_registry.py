@@ -36,6 +36,10 @@ class PanelRegistry:
         # missing a change. Over-polling costs frame time and nothing else.
         self._clock = clock if clock is not None else time.monotonic
         self._next_poll: dict = {}
+        # Last visibility seen per panel, so render_all can notice a flip the
+        # panel never announced. Defaults to the panel's CURRENT value on
+        # first sight, so registering a hidden panel is not itself a "flip".
+        self._last_visible: dict = {}
 
     def register(self, panel: Panel) -> None:
         if any(p.name == panel.name for p in self._panels):
@@ -50,12 +54,21 @@ class PanelRegistry:
         * DUE -- marked by invalidate(), by a visibility flip, or by having
           just handled an event. A due panel always renders on the next frame,
           bypassing both gates below, so interaction never lags.
-        * HIDDEN -- a panel that is not visible is not polled at all. Safe by
-          construction: the flip TO hidden marks the panel due, so the payload
-          that tells JS to hide still goes out, and the flip back to visible
-          marks it due again. This is the bigger win of the two -- the target
-          list is off screen for the whole of bridge view, every cutscene, and
-          the whole time the Ship Property Viewer is open.
+        * HIDDEN -- a panel that is not visible is not polled at all. Safe
+          because a CHANGE in visibility is observed here, below, and forces
+          one more poll: the payload that tells JS to hide still goes out, and
+          becoming visible again resumes polling. This is the bigger win of
+          the two -- the target list is off screen for the whole of bridge
+          view, every cutscene, and the whole time the Ship Property Viewer is
+          open.
+
+          This used to rely on panels routing through the ``Panel.visible``
+          SETTER, which is where the due-marking lived. Nothing enforced that,
+          and six panels assign ``_visible`` directly in ``close()``; those
+          panels' ESC path therefore killed their GL half and left their CEF
+          chrome drawn on screen, because the hiding payload was never polled
+          for. Observing the flag here instead makes the guarantee structural:
+          a panel cannot get it wrong, including one written later.
         * INTERVAL -- poll_interval_s == 0 (the default) means every frame; a
           positive value means at most that often.
         """
@@ -63,8 +76,13 @@ class PanelRegistry:
         out: List[str] = []
         for p in self._panels:
             interval = p.poll_interval_s
-            if not p.consume_due():
-                if not p.visible:
+            # Read once: `visible` is a property, and the flip test and the
+            # skip below must agree on the same value.
+            visible = p.visible
+            flipped = self._last_visible.get(p.name, visible) != visible
+            self._last_visible[p.name] = visible
+            if not p.consume_due() and not flipped:
+                if not visible:
                     continue
                 if interval > 0.0 and now < self._next_poll.get(p.name, 0.0):
                     continue
