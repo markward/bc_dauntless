@@ -354,8 +354,12 @@ def _distance(a: Vec3, b: Vec3) -> float:
 PICK_RADIUS_PT = 12.0
 MIN_DISTANCE = 40.0
 MAX_DISTANCE = 2000.0
-DEFAULT_DISTANCE = 400.0   # was 600: 1.5x magnification, so the
-                           # whole sector no longer fits on first open
+# Opening framing. 600 -> 400 (1.5x) -> 200 (2x again, Mark 2026-09-03), so
+# the map now opens well inside the sector rather than showing all of it: the
+# systems near the player are what the first look is for, and the rest is a
+# scroll away. Pinned by test_the_opening_view_is_pinned_and_leaves_room_to
+# _zoom_both_ways, which also keeps it clear of both zoom stops.
+DEFAULT_DISTANCE = 200.0
 ZOOM_STEP = 1.12
 _MAX_PITCH = math.radians(89.0)
 

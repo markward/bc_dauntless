@@ -528,3 +528,18 @@ def test_being_in_the_course_system_shows_both_marks():
     scene = sm.build_scene(model=_model(), here_id="vesuvi", course_id="vesuvi")
     marks = {b["id"]: b["mark"] for b in scene["brackets"]}
     assert marks == {"vesuvi": sm.MARK_COURSE}
+
+
+def test_the_opening_view_is_pinned_and_leaves_room_to_zoom_both_ways():
+    """DEFAULT_DISTANCE is hand-tuned and has moved twice (600 -> 400 -> 200,
+    each a magnification step). Pin it, or the next 'small' adjustment lands
+    with nothing recording what the opening framing is supposed to be.
+
+    The range assertion is the part that is not a tautology: an opening view
+    sitting AT either stop would silently take away half the zoom control,
+    which no other test would notice."""
+    assert sm.DEFAULT_DISTANCE == 200.0
+    assert sm.MIN_DISTANCE < sm.DEFAULT_DISTANCE < sm.MAX_DISTANCE
+    # Several steps of headroom each way, not a token margin.
+    assert sm.DEFAULT_DISTANCE >= sm.MIN_DISTANCE * sm.ZOOM_STEP ** 5
+    assert sm.DEFAULT_DISTANCE <= sm.MAX_DISTANCE / sm.ZOOM_STEP ** 5
