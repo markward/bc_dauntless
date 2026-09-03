@@ -82,6 +82,22 @@ STAR_COLORS = {
 STAR_OVERRIDES = {
     "vesuvi": (0.420, 0.267, 0.137),        # #6b4423 — dark brown, burnt out
 }
+
+WHITE = (1.0, 1.0, 1.0)
+
+# Stars drawn with their own colour in the CORE and the white pushed out to
+# the glow — the inverse of the usual treatment.
+#
+# A white pinpoint inside a tinted halo is what makes a star read as a star,
+# and it is right for the 33 living ones. It is wrong for a burnt-out star:
+# it puts the colour exactly where the alpha is lowest, so Vesuvi's brown was
+# present but invisible and the system read like any other. Swapping them puts
+# the colour in the opaque middle.
+#
+# Per-star, and deliberately not a global flip: inverting every star would
+# trade one legibility problem for another, since a white glow on all 34 would
+# wash the field out.
+SOLID_CORE_STARS = frozenset({"vesuvi"})
 GRID_COLOR = (0.086, 0.204, 0.361)      # POC 0x16345c
 DROP_COLOR = (0.114, 0.227, 0.388)      # POC 0x1d3a63
 
@@ -383,13 +399,24 @@ def build_scene(*, model=None, here_id=None, course_id=None,
         # default rather than kill the map.
         base = STAR_OVERRIDES.get(
             sid, STAR_COLORS.get(s.get("star"), STAR_COLOR))
-        # Dim the star's own colour, never a hardcoded amber: doing the latter
-        # would repaint every unlisted system the same hue and undo this
-        # feature exactly where most of the map lives.
-        color = (base if offered
-                 else tuple(c * INERT_DIM for c in base))
+        # Halo and core. Normally the star's colour surrounds a white
+        # pinpoint; a burnt-out star swaps them so its hue lands in the opaque
+        # middle. Resolved HERE, as values — the pass draws what it is given
+        # and decides nothing, exactly as it does for bracket colour.
+        halo_color, core_color = ((WHITE, base) if sid in SOLID_CORE_STARS
+                                  else (base, WHITE))
+        # Dim the star's own colours, never a hardcoded amber: doing the
+        # latter would repaint every unlisted system the same hue and undo
+        # this feature exactly where most of the map lives. BOTH are dimmed,
+        # or an unoffered dead star would keep a full-brightness white halo
+        # and end up more prominent than the live stars around it.
+        if not offered:
+            halo_color = tuple(c * INERT_DIM for c in halo_color)
+            core_color = tuple(c * INERT_DIM for c in core_color)
+        color = halo_color
         points.append({"id": sid, "position": by_id[sid],
                        "label": sm.display_label(sid), "color": color,
+                       "core_color": core_color,
                        "selected": sid == selected_id, "offered": offered,
                        "size_px": (STAR_SELECTED_SIZE_PX if sid == selected_id
                                    else STAR_SIZE_PX)})

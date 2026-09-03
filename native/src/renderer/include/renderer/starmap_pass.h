@@ -34,9 +34,18 @@ struct StarMapLine {
 /// size a selection implies is resolved in Python and arrives as `size_px`.
 struct StarMapPoint {
     glm::vec3 position{0.0f};
-    glm::vec3 color{1.0f};
+    glm::vec3 color{1.0f};       // halo
     float     size_px  = 4.0f;
     bool      selected = false;
+    // Star centre. LAST, and defaulted to white, so the four-field aggregate
+    // initialisations that predate it still compile and still mean what they
+    // meant: white core is the living star.
+    //
+    // A burnt-out star swaps this with `color`, putting its own hue in the
+    // opaque middle where it can actually be read. Python decides both
+    // (engine/ui/star_map.build_scene) — this pass never picks either, for
+    // the same reason it never derives a bracket's colour from `mark`.
+    glm::vec3 core_color{1.0f};
 };
 
 /// A bracket reticle. `mark` mirrors engine/ui/star_map.py:

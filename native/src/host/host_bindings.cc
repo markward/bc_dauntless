@@ -3216,7 +3216,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
              const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
                                           std::array<float,3>>>& lines,
              const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
-                                          float, bool>>& points,
+                                          float, bool,
+                                          std::array<float,3>>>& points,
              const std::vector<std::tuple<std::array<float,3>, int,
                                           std::array<float,3>, float>>& brackets,
              const std::vector<std::tuple<std::array<float,3>, std::array<float,3>,
@@ -3256,6 +3257,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   pt.color    = {c[0], c[1], c[2]};
                   pt.size_px  = std::get<2>(t);
                   pt.selected = std::get<3>(t);
+                  const auto& cc = std::get<4>(t);
+                  pt.core_color = {cc[0], cc[1], cc[2]};
                   g_starmap_scene.points.push_back(pt);
               }
               g_starmap_scene.brackets.clear();

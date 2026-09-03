@@ -163,7 +163,7 @@ def test_drive_star_map_disables_the_pass_when_the_map_is_closed(rec):
 
 def test_scene_buffers_match_the_binding_tuple_shapes(rec):
     """discs ((x,y,z),(r,g,b),radius,fill,border) / lines ((a),(b),(rgb)) /
-    points ((x,y,z),(r,g,b),size_px,selected) / brackets ((x,y,z),mark,
+    points ((x,y,z),(r,g,b),size_px,selected,(r,g,b) core) / brackets ((x,y,z),mark,
     (r,g,b),size_px) / starclouds ((x,y,z),(r,g,b),size_px,opacity) —
     exactly what host_bindings.cc unpacks."""
     from engine.host_loop import _drive_star_map
@@ -203,8 +203,8 @@ def test_scene_buffers_match_the_binding_tuple_shapes(rec):
         assert size_px == star_map.STARCLOUD_SIZE_PX
     for a, b, color in lines:
         assert len(a) == 3 and len(b) == 3 and len(color) == 3
-    for pos, color, size_px, selected in points:
-        assert len(pos) == 3 and len(color) == 3
+    for pos, color, size_px, selected, core_color in points:
+        assert len(pos) == 3 and len(color) == 3 and len(core_color) == 3
         assert isinstance(size_px, float) and isinstance(selected, bool)
     for pos, mark, color, size_px in brackets:
         assert len(pos) == 3 and len(color) == 3

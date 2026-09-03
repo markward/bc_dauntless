@@ -3,6 +3,7 @@ in vec2 v_uv;
 out vec4 frag_color;
 
 uniform vec3  u_color;
+uniform vec3  u_core_color;  // star centre (kind 2 only); white for a live star
 uniform float u_opacity;
 uniform float u_border;   // nebula boundary alpha (kind 0 only)
 uniform vec3  u_center;   // world position — also the nebula's shape seed
@@ -53,13 +54,19 @@ void main() {
     }
 
     if (u_kind == 2) {
-        // Star: white pinpoint core inside a tinted halo — white at the
-        // centre, u_color by 0.4, transparent at the rim. The white core is
-        // what makes a star read as a star rather than a coloured dot.
+        // Star: u_core_color at the centre inside a u_color halo, fading to
+        // transparent at the rim. For a normal star the core is white, which
+        // is what makes it read as a star rather than a coloured dot.
+        //
+        // BOTH colours come from Python (engine/ui/star_map.build_scene), for
+        // the same reason bracket colour does: this pass must not decide
+        // presentation. Swapping them is how a burnt-out star is drawn —
+        // colour in the opaque middle, white pushed out to the faint glow —
+        // and that decision belongs beside the palette, not here.
         float core = 1.0 - smoothstep(0.20, 0.30, r);
         float halo = 1.0 - smoothstep(0.0, 1.0, r);
         halo *= halo;
-        vec3  rgb   = mix(u_color, vec3(1.0), core);
+        vec3  rgb   = mix(u_color, u_core_color, core);
         float alpha = max(core, halo) * u_opacity;
         if (alpha <= 0.0) discard;
         frag_color = vec4(rgb, alpha);

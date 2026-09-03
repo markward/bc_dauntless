@@ -559,12 +559,14 @@ def test_the_opening_view_is_pinned_and_leaves_room_to_zoom_both_ways():
 
 @pytest.fixture
 def no_overrides(monkeypatch):
-    """Clear the authored overrides for tests about the CLASS TABLE.
+    """Clear the per-system authoring for tests about the CLASS TABLE.
 
-    The synthetic model reuses real charted ids, and "vesuvi" now carries an
-    authored colour — so without this these read the override and say nothing
-    about the sun-texture lookup they exist to check."""
+    The synthetic model reuses real charted ids, and "vesuvi" now carries BOTH
+    an authored colour and the solid-core treatment — so without this these
+    read the authored star and say nothing about the sun-texture lookup they
+    exist to check."""
     monkeypatch.setattr(sm, "STAR_OVERRIDES", {})
+    monkeypatch.setattr(sm, "SOLID_CORE_STARS", frozenset())
 
 
 def _starred_model():
@@ -671,9 +673,11 @@ def test_vesuvis_star_is_authored_dead_rather_than_defaulted():
         "a star class, this test is passing for the wrong reason")
 
     scene = sm.build_scene()
-    colour = next(p["color"] for p in scene["points"] if p["id"] == "vesuvi")
-    assert colour == sm.STAR_OVERRIDES["vesuvi"]
-    assert colour != sm.STAR_COLOR
+    v = next(p for p in scene["points"] if p["id"] == "vesuvi")
+    # In the CORE, not the halo — Vesuvi is drawn solid-core (see
+    # test_a_dead_star_puts_its_colour_in_the_core).
+    assert v["core_color"] == sm.STAR_OVERRIDES["vesuvi"]
+    assert v["core_color"] != sm.STAR_COLOR
 
 
 def test_an_authored_override_outranks_the_baked_sun_texture(monkeypatch):
@@ -685,3 +689,42 @@ def test_an_authored_override_outranks_the_baked_sun_texture(monkeypatch):
     scene = sm.build_scene(model=m)
     by_id = {p["id"]: p for p in scene["points"]}
     assert by_id["tevron"]["color"] == (0.1, 0.2, 0.3)
+
+
+# --- a burnt-out star inverts core and halo --------------------------------
+
+def test_a_living_star_keeps_the_white_pinpoint_core():
+    scene = sm.build_scene(model=_starred_model())
+    by_id = {p["id"]: p for p in scene["points"]}
+    assert by_id["tevron"]["core_color"] == sm.WHITE
+    assert by_id["tevron"]["color"] == sm.STAR_COLORS["SunYellow"]
+
+
+def test_a_dead_star_puts_its_colour_in_the_core():
+    """A white pinpoint in a tinted halo puts the colour where the alpha is
+    lowest. That is right for 33 living stars and wrong for a burnt-out one:
+    Vesuvi's brown was there but invisible, so it read like any other star.
+    Swapping core and halo moves its colour into the opaque middle."""
+    scene = sm.build_scene()
+    v = next(p for p in scene["points"] if p["id"] == "vesuvi")
+    assert v["core_color"] == sm.STAR_OVERRIDES["vesuvi"]
+    assert v["color"] == sm.WHITE
+
+
+def test_only_the_named_dead_stars_invert():
+    """The swap is per-star and must not leak: 33 systems keep the pinpoint."""
+    scene = sm.build_scene()
+    inverted = [p["id"] for p in scene["points"]
+                if p["core_color"] != sm.WHITE]
+    assert inverted == ["vesuvi"]
+
+
+def test_dimming_a_dead_star_dims_both_of_its_colours():
+    """Otherwise an unoffered dead star keeps a full-brightness white halo and
+    ends up MORE prominent than the live stars around it."""
+    scene = sm.build_scene(offered_ids={"tauceti"})
+    v = next(p for p in scene["points"] if p["id"] == "vesuvi")
+    assert v["offered"] is False
+    assert v["core_color"] == tuple(
+        c * sm.INERT_DIM for c in sm.STAR_OVERRIDES["vesuvi"])
+    assert v["color"] == tuple(c * sm.INERT_DIM for c in sm.WHITE)

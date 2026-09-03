@@ -178,6 +178,7 @@ void StarMapPass::render(const StarMapScene& scene,
     for (const auto& p : scene.points) {
         shader.set_vec3("u_center",     p.position);
         shader.set_vec3("u_color",      p.color);
+        shader.set_vec3("u_core_color", p.core_color);
         shader.set_vec2("u_pixel_size", ndc_half(p.size_px));
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }

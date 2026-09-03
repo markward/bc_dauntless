@@ -6486,7 +6486,7 @@ def _starmap_buffers(scene: dict) -> tuple:
 
         discs:      ((x, y, z), (r, g, b), radius_world, fill_alpha, border_alpha)
         lines:      ((ax, ay, az), (bx, by, bz), (r, g, b))
-        points:     ((x, y, z), (r, g, b), size_px, selected)
+        points:     ((x, y, z), (r, g, b), size_px, selected, (r, g, b) core)
         brackets:   ((x, y, z), mark, (r, g, b), size_px)
         starclouds: ((x, y, z), (r, g, b), size_px, opacity)
 
@@ -6499,7 +6499,8 @@ def _starmap_buffers(scene: dict) -> tuple:
           float(d["opacity"]), float(d["border_opacity"]))
          for d in scene["discs"]],
         [(ln["a"], ln["b"], ln["color"]) for ln in scene["lines"]],
-        [(p["position"], p["color"], float(p["size_px"]), bool(p["selected"]))
+        [(p["position"], p["color"], float(p["size_px"]), bool(p["selected"]),
+          p["core_color"])
          for p in scene["points"]],
         [(b["position"], int(b["mark"]), b["color"], float(b["size_px"]))
          for b in scene["brackets"]],
