@@ -14,16 +14,41 @@ function escapeHtmlCP(s) {
         .replace(/'/g, '&#39;');
 }
 
+// Master toggles: one row over several renderer effects. Mirrors
+// MASTER_TOGGLES in configuration_panel.py; the two orderings are pinned
+// together by test_js_graphics_focusables_match_python.
+const CP_MASTERS = [
+    ['improved_space',     'Improved Space Visuals'],
+    ['camera_realism',     'Camera Realism'],
+    ['realistic_lighting', 'Realistic Lighting'],
+];
+
+// Graphics-tab controls in rendered order: the standalone rows, then the
+// masters. Single source for both the focusable list and the rendered rows.
+const CP_GRAPHICS_STANDALONE = ['smaa', 'fov'];
+const CP_GRAPHICS_CTRLS =
+    CP_GRAPHICS_STANDALONE.concat(CP_MASTERS.map(m => m[0]));
+
+// One On/Off settings row. `key` names both the setting (`<key>_on`) and the
+// action (`toggle:<key>`), so a row cannot read one control and toggle another.
+function _cpToggleRow(label, key, on, isFoc) {
+    return '<div class="cp-row' + (isFoc(key) ? ' cp-focused' : '') + '">'
+         +   '<div class="cp-row__label">' + escapeHtmlCP(label) + '</div>'
+         +   '<div class="cp-row__control">'
+         +     '<button class="cp-toggle' + (on ? ' cp-toggle--on' : '') + '"'
+         +        ' onclick="dauntlessEvent(\'configuration/toggle:' + key + '\')">'
+         +       (on ? 'On' : 'Off')
+         +     '</button>'
+         +   '</div>'
+         + '</div>';
+}
+
 function _cpFocusableList(state) {
     // Mirror ConfigurationPanel._focusables on the Python side: tabs
     // first, then per-tab controls. Only Graphics ships in this pass.
     const out = state.tabs.map(t => ({kind: 'tab', target: t.id}));
     if (state.selected_tab === 'graphics') {
-        out.push({kind: 'ctrl', target: 'smaa'});
-        out.push({kind: 'ctrl', target: 'fov'});
-        out.push({kind: 'ctrl', target: 'improved_space'});
-        out.push({kind: 'ctrl', target: 'camera_realism'});
-        out.push({kind: 'ctrl', target: 'realistic_lighting'});
+        CP_GRAPHICS_CTRLS.forEach(t => out.push({kind: 'ctrl', target: t}));
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
         out.push({kind: 'ctrl', target: 'disable_annoying_dialogue'});
@@ -60,16 +85,7 @@ function _cpRenderGraphicsBody(state, focusables) {
     const s = state.settings;
     let html = '';
 
-    // SMAA toggle (post-process anti-aliasing)
-    html += '<div class="cp-row' + (isFoc('smaa') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Anti-Aliasing (SMAA)</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.smaa_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:smaa\')">'
-          +       (s.smaa_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
+    html += _cpToggleRow('Anti-Aliasing (SMAA)', 'smaa', s.smaa_on, isFoc);
 
     // FOV slider — listen on 'change' (released), not 'input' (every
     // pixel), so dragging doesn't flood the CEF event channel.
@@ -87,44 +103,11 @@ function _cpRenderGraphicsBody(state, focusables) {
     html += '<hr class="cp-divider">';
     html += '<div class="cp-group-header">Modern VFX</div>';
 
-    // Improved Space Visuals toggle — one row over space dust, volumetric
-    // nebulae and the procedural sky. Off == stock BC space: the authored
-    // starbox, no dust, flat nebulae.
-    html += '<div class="cp-row' + (isFoc('improved_space') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Improved Space Visuals</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.improved_space_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:improved_space\')">'
-          +       (s.improved_space_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Camera Realism toggle — one row over HDR (tonemap + bloom), the
-    // filmic filter, motion blur and modern lens flares. Off drops all four,
-    // so the exterior image flattens, not just the flares/grain/blur.
-    html += '<div class="cp-row' + (isFoc('camera_realism') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Camera Realism</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.camera_realism_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:camera_realism\')">'
-          +       (s.camera_realism_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Realistic Lighting toggle — one row over Fresnel rim light, dynamic
-    // shadows, nebula lightning and the subsystem light emitters (the ship
-    // running/impulse lights that cast onto nearby geometry).
-    html += '<div class="cp-row' + (isFoc('realistic_lighting') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Realistic Lighting</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.realistic_lighting_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:realistic_lighting\')">'
-          +       (s.realistic_lighting_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
+    // Master toggles, in CP_MASTERS order. Each drives several renderer
+    // effects; see MASTER_TOGGLES in configuration_panel.py for the members.
+    CP_MASTERS.forEach(function (m) {
+        html += _cpToggleRow(m[1], m[0], s[m[0] + '_on'], isFoc);
+    });
 
     return html;
 }

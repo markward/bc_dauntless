@@ -11,7 +11,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from engine.ui.configuration_panel import ConfigurationPanel, SettingsSnapshot
+from engine.ui.configuration_panel import (
+    MASTER_KEYS, MASTER_TOGGLES, ConfigurationPanel, SettingsSnapshot,
+)
 
 
 # ---- construction --------------------------------------------------------
@@ -521,194 +523,74 @@ def test_ai_difficulty_is_a_gameplay_focusable():
     assert ("ctrl", "ai_difficulty") in focusables
 
 
-# ---- Camera Realism (HDR + filmic + motion blur + lens flare) ------
+# ---- Master toggles --------------------------------------------------------
+# One parametrised suite over MASTER_TOGGLES, so adding or re-grouping a master
+# is covered without copying a test block. Members are the applier names, which
+# are also the actions the master absorbed.
 
-_CAMERA_REALISM_APPLIERS = ("set_hdr", "set_filmic", "set_motion_blur",
-                         "set_hdr_lens_flare")
+_MASTER_CASES = [pytest.param(k, a, id=k) for k, _label, a in MASTER_TOGGLES]
+_ABSORBED = [pytest.param(m, id=m)
+             for _k, _label, appliers in MASTER_TOGGLES for m in appliers]
 
 
-def test_dispatch_toggle_camera_realism_fans_out_to_every_applier():
+@pytest.mark.parametrize("key,appliers", _MASTER_CASES)
+def test_master_toggle_fans_out_to_every_applier(key, appliers):
     p, kw = _make()
     p.open()
-    assert p._settings.camera_realism_on is True
-    assert p.dispatch_event("toggle:camera_realism") is True
-    for name in _CAMERA_REALISM_APPLIERS:
-        kw[name].assert_called_once_with(False)
-    assert p._settings.camera_realism_on is False
+    assert getattr(p._settings, key + "_on") is True
+    assert p.dispatch_event("toggle:" + key) is True
+    for name in appliers:
+        kw["set_" + name].assert_called_once_with(False)
+    assert getattr(p._settings, key + "_on") is False
 
 
-def test_dispatch_toggle_camera_realism_twice_flips_back_on():
+@pytest.mark.parametrize("key,appliers", _MASTER_CASES)
+def test_master_toggle_twice_flips_back_on(key, appliers):
     p, kw = _make()
     p.open()
-    p.dispatch_event("toggle:camera_realism")
-    assert p.dispatch_event("toggle:camera_realism") is True
-    for name in _CAMERA_REALISM_APPLIERS:
-        kw[name].assert_called_with(True)
-    assert p._settings.camera_realism_on is True
+    p.dispatch_event("toggle:" + key)
+    assert p.dispatch_event("toggle:" + key) is True
+    for name in appliers:
+        kw["set_" + name].assert_called_with(True)
+    assert getattr(p._settings, key + "_on") is True
 
 
-def test_camera_realism_off_in_render_payload():
-    p, _ = _make(initial_settings=SettingsSnapshot(
-        fov_deg=70, camera_realism_on=False,
-    ))
+@pytest.mark.parametrize("key,appliers", _MASTER_CASES)
+def test_master_off_reaches_the_render_payload(key, appliers):
+    p, _ = _make(initial_settings=SettingsSnapshot(fov_deg=70, **{key + "_on": False}))
     p.open()
     body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
-    assert body["settings"]["camera_realism_on"] is False
+    assert body["settings"][key + "_on"] is False
 
 
-def test_absorbed_sub_toggles_no_longer_dispatch_or_focus():
-    """The four settings folded into Camera Realism must leave no
-    orphan row behind — a stale action would toggle one effect out of step
-    with the master and the panel would show neither."""
+@pytest.mark.parametrize("key,appliers", _MASTER_CASES)
+def test_space_on_a_master_row_toggles_it(key, appliers):
     p, kw = _make()
     p.open()
-    f = p._focusables()
-    for target in ("hdr", "filmic", "motion_blur", "hdr_lens_flare"):
-        assert p.dispatch_event("toggle:" + target) is False
-        assert ("ctrl", target) not in f
-    for name in _CAMERA_REALISM_APPLIERS:
-        kw[name].assert_not_called()
-
-
-def test_space_on_camera_realism_row_toggles():
-    p, kw = _make()
-    p.open()
-    p._focused = p._focusables().index(("ctrl", "camera_realism"))
+    p._focused = p._focusables().index(("ctrl", key))
     r = _FakeReader()
     r.press(r.keys.KEY_SPACE)
     p.handle_input(r)
-    for name in _CAMERA_REALISM_APPLIERS:
-        kw[name].assert_called_once_with(False)
+    for name in appliers:
+        kw["set_" + name].assert_called_once_with(False)
 
 
-# ---- Realistic Lighting (rim + shadows + nebula lightning + ship lights) --
-
-_REALISTIC_LIGHTING_APPLIERS = ("set_rim", "set_shadows", "set_nebula_lightning",
-                                "set_ship_light_emitters")
-
-
-def test_dispatch_toggle_realistic_lighting_fans_out_to_every_applier():
+@pytest.mark.parametrize("member", _ABSORBED)
+def test_absorbed_sub_toggle_no_longer_dispatches_or_focuses(member):
+    """Every effect folded into a master must leave no orphan row behind — a
+    stale action would toggle one effect out of step with its master, and the
+    panel would show neither."""
     p, kw = _make()
     p.open()
-    assert p._settings.realistic_lighting_on is True
-    assert p.dispatch_event("toggle:realistic_lighting") is True
-    for name in _REALISTIC_LIGHTING_APPLIERS:
-        kw[name].assert_called_once_with(False)
-    assert p._settings.realistic_lighting_on is False
+    assert p.dispatch_event("toggle:" + member) is False
+    assert ("ctrl", member) not in p._focusables()
+    kw["set_" + member].assert_not_called()
 
 
-def test_dispatch_toggle_realistic_lighting_twice_flips_back_on():
-    p, kw = _make()
-    p.open()
-    p.dispatch_event("toggle:realistic_lighting")
-    assert p.dispatch_event("toggle:realistic_lighting") is True
-    for name in _REALISTIC_LIGHTING_APPLIERS:
-        kw[name].assert_called_with(True)
-    assert p._settings.realistic_lighting_on is True
-
-
-def test_realistic_lighting_off_in_render_payload():
-    p, _ = _make(initial_settings=SettingsSnapshot(
-        fov_deg=70,
-        realistic_lighting_on=False,
-    ))
-    p.open()
-    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
-    assert body["settings"]["realistic_lighting_on"] is False
-
-
-def test_realistic_lighting_is_focusable_after_camera_realism():
+def test_graphics_control_order_is_standalones_then_masters():
     p, _ = _make()
-    f = p._focusables()
-    assert (f.index(("ctrl", "camera_realism"))
-            < f.index(("ctrl", "realistic_lighting")))
-
-
-def test_absorbed_lighting_sub_toggles_no_longer_dispatch_or_focus():
-    p, kw = _make()
-    p.open()
-    f = p._focusables()
-    for target in ("rim", "shadows", "nebula_lightning"):
-        assert p.dispatch_event("toggle:" + target) is False
-        assert ("ctrl", target) not in f
-    for name in _REALISTIC_LIGHTING_APPLIERS:
-        kw[name].assert_not_called()
-
-
-def test_space_on_realistic_lighting_row_toggles():
-    p, kw = _make()
-    p.open()
-    p._focused = p._focusables().index(("ctrl", "realistic_lighting"))
-    r = _FakeReader()
-    r.press(r.keys.KEY_SPACE)
-    p.handle_input(r)
-    for name in _REALISTIC_LIGHTING_APPLIERS:
-        kw[name].assert_called_once_with(False)
-
-
-# ---- Improved Space Visuals (dust + volumetric nebulae + procedural sky) --
-
-_IMPROVED_SPACE_APPLIERS = ("set_dust", "set_procedural_sky",
-                            "set_volumetric_nebulae")
-
-
-def test_dispatch_toggle_improved_space_fans_out_to_every_applier():
-    p, kw = _make()
-    p.open()
-    assert p._settings.improved_space_on is True
-    assert p.dispatch_event("toggle:improved_space") is True
-    for name in _IMPROVED_SPACE_APPLIERS:
-        kw[name].assert_called_once_with(False)
-    assert p._settings.improved_space_on is False
-
-
-def test_dispatch_toggle_improved_space_twice_flips_back_on():
-    p, kw = _make()
-    p.open()
-    p.dispatch_event("toggle:improved_space")
-    assert p.dispatch_event("toggle:improved_space") is True
-    for name in _IMPROVED_SPACE_APPLIERS:
-        kw[name].assert_called_with(True)
-    assert p._settings.improved_space_on is True
-
-
-def test_improved_space_off_in_render_payload():
-    p, _ = _make(initial_settings=SettingsSnapshot(
-        fov_deg=70, improved_space_on=False,
-    ))
-    p.open()
-    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
-    assert body["settings"]["improved_space_on"] is False
-
-
-def test_improved_space_leads_the_modern_vfx_masters():
-    p, _ = _make()
-    f = p._focusables()
-    assert (f.index(("ctrl", "improved_space"))
-            < f.index(("ctrl", "camera_realism"))
-            < f.index(("ctrl", "realistic_lighting")))
-
-
-def test_absorbed_space_sub_toggles_no_longer_dispatch_or_focus():
-    p, kw = _make()
-    p.open()
-    f = p._focusables()
-    for target in ("dust", "procedural_sky", "volumetric_nebulae"):
-        assert p.dispatch_event("toggle:" + target) is False
-        assert ("ctrl", target) not in f
-    for name in _IMPROVED_SPACE_APPLIERS:
-        kw[name].assert_not_called()
-
-
-def test_space_on_improved_space_row_toggles():
-    p, kw = _make()
-    p.open()
-    p._focused = p._focusables().index(("ctrl", "improved_space"))
-    r = _FakeReader()
-    r.press(r.keys.KEY_SPACE)
-    p.handle_input(r)
-    for name in _IMPROVED_SPACE_APPLIERS:
-        kw[name].assert_called_once_with(False)
+    ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
+    assert ctrls == ["smaa", "fov"] + list(MASTER_KEYS)
 
 
 def test_decals_is_no_longer_a_setting():
@@ -745,26 +627,45 @@ def test_warp_flythrough_is_no_longer_a_setting():
     assert "warp_flythrough_on" not in body["settings"]
 
 
-def test_smaa_is_the_first_graphics_control():
-    p, _ = _make()
-    ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
-    assert ctrls[0] == "smaa"
+def _js_source():
+    import pathlib
+    return (pathlib.Path(__file__).resolve().parents[2]
+            / "native/assets/ui-cef/js/configuration_panel.js").read_text()
+
+
+def _js_master_keys():
+    import re
+    block = re.search(r"const CP_MASTERS = \[(.*?)\n\];", _js_source(), re.S)
+    assert block, "CP_MASTERS table not found in configuration_panel.js"
+    return re.findall(r"\['(\w+)',", block.group(1))
 
 
 def test_js_graphics_focusables_match_python():
-    """configuration_panel.js mirrors _focusables() by hand. If the two lists
-    drift, keyboard focus highlights the wrong row and Space toggles a
-    different setting than the one the player sees selected."""
-    import pathlib
+    """configuration_panel.js composes its focusable list the same way Python
+    does — standalones then masters — but by hand. If the two drift, keyboard
+    focus highlights one row while Space toggles another."""
     import re
-    src = (pathlib.Path(__file__).resolve().parents[2]
-           / "native/assets/ui-cef/js/configuration_panel.js").read_text()
-    graphics = src.split("state.selected_tab === 'graphics'")[1] \
-                  .split("else if")[0]
-    js_targets = re.findall(r"kind:\s*'ctrl',\s*target:\s*'(\w+)'", graphics)
+    standalone = re.search(r"CP_GRAPHICS_STANDALONE = \[(.*?)\];", _js_source(), re.S)
+    assert standalone, "CP_GRAPHICS_STANDALONE not found"
+    js_targets = re.findall(r"'(\w+)'", standalone.group(1)) + _js_master_keys()
     p, _ = _make()
-    py_targets = [t for kind, t in p._focusables() if kind == "ctrl"]
-    assert js_targets == py_targets
+    assert js_targets == [t for kind, t in p._focusables() if kind == "ctrl"]
+
+
+def test_js_master_table_matches_python():
+    """Both sides now carry a master table. A key on one side only is a row
+    that renders but never dispatches, or dispatches but never renders."""
+    assert _js_master_keys() == list(MASTER_KEYS)
+
+
+def test_js_renders_a_row_for_every_master_label():
+    """The JS drives row labels off CP_MASTERS, so a master with no label
+    would render a blank row rather than fail loudly."""
+    import re
+    block = re.search(r"const CP_MASTERS = \[(.*?)\n\];", _js_source(), re.S)
+    labels = re.findall(r"\['\w+',\s*'([^']+)'\]", block.group(1))
+    assert len(labels) == len(MASTER_KEYS)
+    assert all(lbl.strip() for lbl in labels)
 
 
 def test_every_boolean_setting_reaches_the_ui():

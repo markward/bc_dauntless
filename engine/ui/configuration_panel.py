@@ -36,6 +36,25 @@ FOV_STEP = 5
 # AI difficulty index (0=Easy, 1=Medium, 2=Hard) — mirrors App.Game_GetDifficulty.
 AI_DIFFICULTY_LABELS = ("Easy", "Medium", "Hard")
 
+# ── Master toggles ───────────────────────────────────────────────────────────
+# One player-facing row over several renderer appliers. (key, label, appliers),
+# in rendered order. The key drives everything by construction: the settings
+# field `<key>_on`, the action `toggle:<key>`, the payload key, and the
+# focusable ('ctrl', key) — so adding or re-grouping a master is a single edit
+# here plus the matching row in configuration_panel.js.
+#
+# Applier names are the constructor's `set_<name>` parameters.
+MASTER_TOGGLES = (
+    ("improved_space", "Improved Space Visuals",
+     ("dust", "procedural_sky", "volumetric_nebulae")),
+    ("camera_realism", "Camera Realism",
+     ("hdr", "filmic", "motion_blur", "hdr_lens_flare")),
+    ("realistic_lighting", "Realistic Lighting",
+     ("rim", "shadows", "nebula_lightning", "ship_light_emitters")),
+)
+
+MASTER_KEYS = tuple(key for key, _label, _appliers in MASTER_TOGGLES)
+
 
 @dataclass
 class SettingsSnapshot:
@@ -89,22 +108,28 @@ class ConfigurationPanel(Panel):
             camera_realism_on=initial_settings.camera_realism_on,
             realistic_lighting_on=initial_settings.realistic_lighting_on,
         )
-        self._set_dust = set_dust
-        self._set_hdr = set_hdr
-        self._set_rim = set_rim
+        # Master-member appliers, addressed by the names in MASTER_TOGGLES.
+        # Kept as explicit constructor params (not **kwargs) so a missing one
+        # is a TypeError at construction rather than a silently dead toggle.
+        self._appliers = {
+            "dust": set_dust,
+            "hdr": set_hdr,
+            "rim": set_rim,
+            "shadows": set_shadows,
+            "procedural_sky": set_procedural_sky,
+            "filmic": set_filmic,
+            "motion_blur": set_motion_blur,
+            "volumetric_nebulae": set_volumetric_nebulae,
+            "nebula_lightning": set_nebula_lightning,
+            "hdr_lens_flare": set_hdr_lens_flare,
+            "ship_light_emitters": set_ship_light_emitters,
+        }
+        # Standalone rows keep their own attribute.
         self._set_smaa = set_smaa
         self._set_subtitles = set_subtitles
         self._set_disable_annoying_dialogue = set_disable_annoying_dialogue
         self._set_ai_difficulty = set_ai_difficulty
         self._set_fov_rad = set_fov_rad
-        self._set_shadows = set_shadows
-        self._set_procedural_sky = set_procedural_sky
-        self._set_filmic = set_filmic
-        self._set_motion_blur = set_motion_blur
-        self._set_volumetric_nebulae = set_volumetric_nebulae
-        self._set_nebula_lightning = set_nebula_lightning
-        self._set_hdr_lens_flare = set_hdr_lens_flare
-        self._set_ship_light_emitters = set_ship_light_emitters
         # Controls tab: action → physical-key remapping (engine.input_map.InputMap).
         # Optional so existing construction/tests without a controls tab still work.
         self._input_map = input_map
@@ -159,9 +184,7 @@ class ConfigurationPanel(Panel):
             self._settings.subtitles_on,
             self._settings.disable_annoying_dialogue_on,
             self._settings.ai_difficulty,
-            self._settings.improved_space_on,
-            self._settings.camera_realism_on,
-            self._settings.realistic_lighting_on,
+            tuple(getattr(self._settings, k + "_on") for k in MASTER_KEYS),
             self._settings.fov_deg,
         )
         if snapshot == self._last_pushed:
@@ -185,10 +208,9 @@ class ConfigurationPanel(Panel):
                 "subtitles_on": self._settings.subtitles_on,
                 "disable_annoying_dialogue_on": self._settings.disable_annoying_dialogue_on,
                 "ai_difficulty": self._settings.ai_difficulty,
-                "improved_space_on": self._settings.improved_space_on,
-                "camera_realism_on": self._settings.camera_realism_on,
-                "realistic_lighting_on": self._settings.realistic_lighting_on,
                 "fov_deg": self._settings.fov_deg,
+                **{k + "_on": getattr(self._settings, k + "_on")
+                   for k in MASTER_KEYS},
             },
         }
         return "setConfigurationPanel(" + json.dumps(payload) + ");"
@@ -244,38 +266,17 @@ class ConfigurationPanel(Panel):
             self._capturing_action = None
             self._controls_message = ""
             return True
-        if action == "toggle:improved_space":
-            # One row over the three renderer effects that separate our space
-            # from stock BC's. Same applier-before-write ordering as the other
-            # masters here.
-            new_val = not self._settings.improved_space_on
-            self._set_dust(new_val)
-            self._set_procedural_sky(new_val)
-            self._set_volumetric_nebulae(new_val)
-            self._settings.improved_space_on = new_val
-            return True
-        if action == "toggle:camera_realism":
-            # One row over four renderer effects. Appliers run before the
-            # local write, matching every other branch here; if one raises
-            # the earlier appliers have already fired and _settings stays on
-            # the old value, so the panel re-reads as the pre-toggle state.
-            new_val = not self._settings.camera_realism_on
-            self._set_hdr(new_val)
-            self._set_filmic(new_val)
-            self._set_motion_blur(new_val)
-            self._set_hdr_lens_flare(new_val)
-            self._settings.camera_realism_on = new_val
-            return True
-        if action == "toggle:realistic_lighting":
-            # One row over three renderer effects plus the Python-side
-            # subsystem light emitters. Same applier-before-write ordering as
-            # every other branch here.
-            new_val = not self._settings.realistic_lighting_on
-            self._set_rim(new_val)
-            self._set_shadows(new_val)
-            self._set_nebula_lightning(new_val)
-            self._set_ship_light_emitters(new_val)
-            self._settings.realistic_lighting_on = new_val
+        for key, _label, appliers in MASTER_TOGGLES:
+            if action != "toggle:" + key:
+                continue
+            # Appliers run before the local write, matching every other branch
+            # here: if one raises, the earlier ones have already fired and
+            # _settings stays on the old value, so the panel re-reads as the
+            # pre-toggle state.
+            new_val = not getattr(self._settings, key + "_on")
+            for name in appliers:
+                self._appliers[name](new_val)
+            setattr(self._settings, key + "_on", new_val)
             return True
         if action == "toggle:smaa":
             new_val = not self._settings.smaa_on
@@ -367,12 +368,8 @@ class ConfigurationPanel(Panel):
 
         activate = _pressed(k_space) or _pressed(k_enter)
 
-        if activate and kind == "ctrl" and target == "improved_space":
-            self.dispatch_event("toggle:improved_space")
-        elif activate and kind == "ctrl" and target == "camera_realism":
-            self.dispatch_event("toggle:camera_realism")
-        elif activate and kind == "ctrl" and target == "realistic_lighting":
-            self.dispatch_event("toggle:realistic_lighting")
+        if activate and kind == "ctrl" and target in MASTER_KEYS:
+            self.dispatch_event("toggle:" + target)
         elif activate and kind == "ctrl" and target == "smaa":
             self.dispatch_event("toggle:smaa")
         elif activate and kind == "ctrl" and target == "subtitles":
@@ -410,9 +407,8 @@ class ConfigurationPanel(Panel):
         together by test_js_graphics_focusables_match_python."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
-            out += [("ctrl", "smaa"), ("ctrl", "fov"),
-                    ("ctrl", "improved_space"), ("ctrl", "camera_realism"),
-                    ("ctrl", "realistic_lighting")]
+            out += [("ctrl", "smaa"), ("ctrl", "fov")]
+            out += [("ctrl", k) for k in MASTER_KEYS]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles"),
                     ("ctrl", "disable_annoying_dialogue"),
