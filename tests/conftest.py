@@ -709,6 +709,14 @@ def _reset_leakable_engine_globals():
         _events._warned_event_types.clear()
     except Exception:
         pass
+    # Subsystem light emitters: the Realistic Lighting master toggle flips a
+    # module global, so a test that turns it off would silently blank every
+    # later test's emitter lights.
+    try:
+        from engine.appc import light_emitters as _light_emitters
+        _light_emitters.set_enabled(True)
+    except Exception:
+        pass
     # Hull-hit smoke beam throttle: keyed by (id(target), id(source)), and
     # ids of short-lived test doubles get recycled, so a stale entry can
     # silence a later test's first puff.

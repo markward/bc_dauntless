@@ -19,21 +19,16 @@ function _cpFocusableList(state) {
     // first, then per-tab controls. Only Graphics ships in this pass.
     const out = state.tabs.map(t => ({kind: 'tab', target: t.id}));
     if (state.selected_tab === 'graphics') {
+        out.push({kind: 'ctrl', target: 'smaa'});
         out.push({kind: 'ctrl', target: 'dust'});
         out.push({kind: 'ctrl', target: 'specular'});
         out.push({kind: 'ctrl', target: 'fov'});
         out.push({kind: 'ctrl', target: 'procedural_sky'});
-        out.push({kind: 'ctrl', target: 'hdr'});
-        out.push({kind: 'ctrl', target: 'rim'});
-        out.push({kind: 'ctrl', target: 'shadows'});
+        out.push({kind: 'ctrl', target: 'camera_realism'});
+        out.push({kind: 'ctrl', target: 'realistic_lighting'});
         out.push({kind: 'ctrl', target: 'decals'});
-        out.push({kind: 'ctrl', target: 'smaa'});
-        out.push({kind: 'ctrl', target: 'filmic'});
-        out.push({kind: 'ctrl', target: 'motion_blur'});
         out.push({kind: 'ctrl', target: 'warp_flythrough'});
         out.push({kind: 'ctrl', target: 'volumetric_nebulae'});
-        out.push({kind: 'ctrl', target: 'nebula_lightning'});
-        out.push({kind: 'ctrl', target: 'hdr_lens_flare'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
         out.push({kind: 'ctrl', target: 'disable_annoying_dialogue'});
@@ -69,6 +64,17 @@ function _cpRenderGraphicsBody(state, focusables) {
     const isFoc = (target) => focused.kind === 'ctrl' && focused.target === target;
     const s = state.settings;
     let html = '';
+
+    // SMAA toggle (post-process anti-aliasing)
+    html += '<div class="cp-row' + (isFoc('smaa') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Anti-Aliasing (SMAA)</div>'
+          +   '<div class="cp-row__control">'
+          +     '<button class="cp-toggle' + (s.smaa_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:smaa\')">'
+          +       (s.smaa_on ? 'On' : 'Off')
+          +     '</button>'
+          +   '</div>'
+          + '</div>';
 
     // Space Dust toggle
     html += '<div class="cp-row' + (isFoc('dust') ? ' cp-focused' : '') + '">'
@@ -120,35 +126,28 @@ function _cpRenderGraphicsBody(state, focusables) {
           +   '</div>'
           + '</div>';
 
-    // HDR toggle
-    html += '<div class="cp-row' + (isFoc('hdr') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">HDR</div>'
+    // Camera Realism toggle — one row over HDR (tonemap + bloom), the
+    // filmic filter, motion blur and modern lens flares. Off drops all four,
+    // so the exterior image flattens, not just the flares/grain/blur.
+    html += '<div class="cp-row' + (isFoc('camera_realism') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Camera Realism</div>'
           +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.hdr_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:hdr\')">'
-          +       (s.hdr_on ? 'On' : 'Off')
+          +     '<button class="cp-toggle' + (s.camera_realism_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:camera_realism\')">'
+          +       (s.camera_realism_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';
 
-    // Fresnel Rim Light toggle
-    html += '<div class="cp-row' + (isFoc('rim') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Fresnel Rim Light</div>'
+    // Realistic Lighting toggle — one row over Fresnel rim light, dynamic
+    // shadows, nebula lightning and the subsystem light emitters (the ship
+    // running/impulse lights that cast onto nearby geometry).
+    html += '<div class="cp-row' + (isFoc('realistic_lighting') ? ' cp-focused' : '') + '">'
+          +   '<div class="cp-row__label">Realistic Lighting</div>'
           +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.rim_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:rim\')">'
-          +       (s.rim_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Dynamic Shadows toggle
-    html += '<div class="cp-row' + (isFoc('shadows') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Dynamic Shadows</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.shadows_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:shadows\')">'
-          +       (s.shadows_on ? 'On' : 'Off')
+          +     '<button class="cp-toggle' + (s.realistic_lighting_on ? ' cp-toggle--on' : '') + '"'
+          +        ' onclick="dauntlessEvent(\'configuration/toggle:realistic_lighting\')">'
+          +       (s.realistic_lighting_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';
@@ -160,40 +159,6 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.decals_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:decals\')">'
           +       (s.decals_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // SMAA toggle (post-process anti-aliasing)
-    html += '<div class="cp-row' + (isFoc('smaa') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Anti-Aliasing (SMAA)</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.smaa_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:smaa\')">'
-          +       (s.smaa_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Filmic Filter toggle — grain + vignette + chromatic aberration on the
-    // exterior view (Modern VFX).
-    html += '<div class="cp-row' + (isFoc('filmic') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Filmic Filter</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.filmic_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:filmic\')">'
-          +       (s.filmic_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Motion Blur toggle — camera motion blur on the exterior view (Modern VFX).
-    html += '<div class="cp-row' + (isFoc('motion_blur') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Motion Blur</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.motion_blur_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:motion_blur\')">'
-          +       (s.motion_blur_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';
@@ -216,29 +181,6 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.volumetric_nebulae_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:volumetric_nebulae\')">'
           +       (s.volumetric_nebulae_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Nebula Lightning toggle — lightning render pass (Modern VFX).
-    html += '<div class="cp-row' + (isFoc('nebula_lightning') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Nebula Lightning</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.nebula_lightning_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:nebula_lightning\')">'
-          +       (s.nebula_lightning_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Modern Lens Flares toggle — image-based screen-space lens flare (Modern
-    // VFX). When on, the classic per-sun billboard flares are suppressed.
-    html += '<div class="cp-row' + (isFoc('hdr_lens_flare') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Modern Lens Flares</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.hdr_lens_flare_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:hdr_lens_flare\')">'
-          +       (s.hdr_lens_flare_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';

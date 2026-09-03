@@ -1307,6 +1307,8 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
         return out
     import App
     from engine.appc import light_emitters
+    if not light_emitters.enabled():
+        return out          # Realistic Lighting off — cast no emitter lights.
     from engine.appc.subsystem_glow import commanded_impulse_frac
 
     now = App.g_kUtopiaModule.GetGameTime()
@@ -7201,24 +7203,28 @@ def run(mission_name: Optional[str] = None,
             ConfigurationPanel, SettingsSnapshot,
         )
         from engine.appc import crew_speech as _crew_speech
+        from engine.appc import light_emitters as _light_emitters
         configuration_panel = ConfigurationPanel(
             tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay"),
                   ("controls", "Controls")],
             initial_settings=SettingsSnapshot(
                 dust_on=True,
                 specular_on=True,
-                hdr_on=True,
-                rim_on=True,
                 decals_on=True,
                 smaa_on=True,
-                shadows_on=True,
                 procedural_sky_on=r.procedural_sky_enabled(),
-                filmic_on=r.filmic_enabled(),
-                motion_blur_on=r.motion_blur_enabled(),
                 warp_flythrough_on=r.warp_flythrough_enabled(),
                 volumetric_nebulae_on=r.volumetric_nebulae_enabled(),
-                nebula_lightning_on=r.nebula_lightning_enabled(),
-                hdr_lens_flare_on=r.hdr_lens_flare_enabled(),
+                # One row over four effects. The renderer exposes no
+                # hdr_enabled() getter (HDR defaults on natively), so the
+                # master reads as on only when all three that do report on.
+                camera_realism_on=(r.filmic_enabled()
+                                and r.motion_blur_enabled()
+                                and r.hdr_lens_flare_enabled()),
+                # Likewise rim and shadows have no getters and default on;
+                # nebula lightning and the emitters do report their state.
+                realistic_lighting_on=(r.nebula_lightning_enabled()
+                                       and _light_emitters.enabled()),
                 fov_deg=int(round(_math.degrees(
                     director.fov_y_rad
                 ))),
@@ -7244,6 +7250,7 @@ def run(mission_name: Optional[str] = None,
             set_volumetric_nebulae=r.set_volumetric_nebulae_enabled,
             set_nebula_lightning=r.set_nebula_lightning_enabled,
             set_hdr_lens_flare=r.set_hdr_lens_flare_enabled,
+            set_ship_light_emitters=_light_emitters.set_enabled,
             input_map=input_map,
         )
 

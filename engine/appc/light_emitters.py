@@ -16,6 +16,23 @@ from engine.appc.properties import read_indexed_setter_args
 
 _KINDS = ("point", "strip", "cone")
 
+# Player-facing on/off for the whole emitter family, driven by the
+# configuration panel's Realistic Lighting row. Unlike the renderer's other
+# graphics settings there is no native counterpart to delegate to: the
+# producer in engine/host_loop.py is pure Python, so the gate lives here and
+# the producer early-returns. Reset by tests/conftest.py.
+_ENABLED = True
+
+
+def enabled() -> bool:
+    """True when subsystem light emitters are cast into the scene."""
+    return _ENABLED
+
+
+def set_enabled(on: bool) -> None:
+    global _ENABLED
+    _ENABLED = bool(on)
+
 # Disabled-state flicker: a sputtering waveform in [0, 1], deterministic in
 # game time (no Math.random) with a per-emitter phase so neighbours desync.
 # Tunable like subsystem_glow.PULSE_AMP — not an authored field.

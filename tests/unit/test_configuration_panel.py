@@ -21,8 +21,8 @@ def _make(**overrides):
     kwargs = dict(
         tabs=[("graphics", "Graphics")],
         initial_settings=SettingsSnapshot(
-            dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
-            decals_on=True, fov_deg=70, shadows_on=True,
+            dust_on=True, specular_on=True,
+            decals_on=True, fov_deg=70,
         ),
         set_dust=Mock(),
         set_specular=Mock(),
@@ -42,6 +42,7 @@ def _make(**overrides):
         set_volumetric_nebulae=Mock(),
         set_nebula_lightning=Mock(),
         set_hdr_lens_flare=Mock(),
+        set_ship_light_emitters=Mock(),
     )
     kwargs.update(overrides)
     return ConfigurationPanel(**kwargs), kwargs
@@ -67,19 +68,19 @@ def test_open_close_round_trip():
 
 def test_initial_settings_round_trip_to_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=False, specular_on=True, hdr_on=True, rim_on=False,
+        dust_on=False, specular_on=True,
         decals_on=False, fov_deg=62,
     ))
     p.open()
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
-        "dust_on": False, "specular_on": True, "hdr_on": True, "rim_on": False,
+        "dust_on": False, "specular_on": True,
         "decals_on": False, "smaa_on": True,
-        "subtitles_on": True, "shadows_on": True, "procedural_sky_on": True,
-        "filmic_on": True, "motion_blur_on": True, "warp_flythrough_on": True,
-        "volumetric_nebulae_on": True, "nebula_lightning_on": True,
-        "hdr_lens_flare_on": True,
+        "subtitles_on": True, "procedural_sky_on": True,
+        "warp_flythrough_on": True,
+        "volumetric_nebulae_on": True,
+        "camera_realism_on": True, "realistic_lighting_on": True,
         "disable_annoying_dialogue_on": True,
         "ai_difficulty": 1,
         "fov_deg": 62,
@@ -117,8 +118,8 @@ def test_dispatch_toggle_procedural_sky_flips_and_calls_applier():
 
 def test_procedural_sky_on_in_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
-        decals_on=True, fov_deg=70, shadows_on=True, procedural_sky_on=False,
+        dust_on=True, specular_on=True,
+        decals_on=True, fov_deg=70, procedural_sky_on=False,
     ))
     p.open()
     payload = p.render_payload()
@@ -306,22 +307,24 @@ def test_focus_wraps_at_bottom():
 def test_space_on_dust_row_toggles():
     p, kw = _make()
     p.open()
-    # Walk focus to ctrl:dust (index 1).
+    # Walk focus down to ctrl:dust. Index is looked up rather than counted so
+    # reordering the Graphics rows doesn't silently retarget this test.
+    steps = p._focusables().index(("ctrl", "dust")) + 1
     r = _FakeReader()
-    r.press(r.keys.KEY_DOWN); p.handle_input(r)  # 0
-    r.press(r.keys.KEY_DOWN); p.handle_input(r)  # 1
+    for _ in range(steps):
+        r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_SPACE); p.handle_input(r)
     kw["set_dust"].assert_called_once_with(False)
 
 
 def test_right_arrow_on_fov_row_increments():
     p, kw = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
+        dust_on=True, specular_on=True,
         decals_on=True, fov_deg=30,
     ))
     p.open()
     r = _FakeReader()
-    for _ in range(4):  # focus → fov (index 3: tab, dust, specular, fov)
+    for _ in range(p._focusables().index(("ctrl", "fov")) + 1):
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_RIGHT); p.handle_input(r)
     (called_rad,), _ = kw["set_fov_rad"].call_args
@@ -330,12 +333,12 @@ def test_right_arrow_on_fov_row_increments():
 
 def test_left_arrow_on_fov_row_decrements_and_clamps():
     p, kw = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
+        dust_on=True, specular_on=True,
         decals_on=True, fov_deg=25,
     ))
     p.open()
     r = _FakeReader()
-    for _ in range(4):  # focus → fov (index 3: tab, dust, specular, fov)
+    for _ in range(p._focusables().index(("ctrl", "fov")) + 1):
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_LEFT); p.handle_input(r)
     # Still 25 (clamped at FOV_MIN), but applier still fires (consistency:
@@ -376,58 +379,6 @@ def test_handle_key_esc_when_closed_is_noop():
     p, _ = _make()
     p.handle_key_esc()
     assert p.is_open() is False
-
-
-# ---- rim toggle -----------------------------------------------------------
-
-def test_toggle_rim_fires_applier_and_flips_state():
-    p, kw = _make()
-    p.open()
-    assert p._settings.rim_on is True
-    handled = p.dispatch_event("toggle:rim")
-    assert handled is True
-    kw["set_rim"].assert_called_once_with(False)
-    assert p._settings.rim_on is False
-
-
-def test_render_payload_includes_rim_on():
-    p, _ = _make()
-    p.open()
-    js = p.render_payload()
-    assert js is not None
-    payload = json.loads(js[len("setConfigurationPanel("):-len(");")])
-    assert payload["settings"]["rim_on"] is True
-
-
-def test_rim_is_a_graphics_focusable():
-    p, _ = _make()
-    focusables = p._focusables()
-    assert ("ctrl", "rim") in focusables
-
-
-# ---- hdr toggle -----------------------------------------------------------
-
-def test_toggle_hdr_fires_applier_and_flips_state():
-    p, kw = _make()
-    p.open()
-    assert p._settings.hdr_on is True
-    assert p.dispatch_event("toggle:hdr") is True
-    kw["set_hdr"].assert_called_once_with(False)
-    assert p._settings.hdr_on is False
-
-
-def test_render_payload_includes_hdr_on():
-    p, _ = _make()
-    p.open()
-    payload = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
-    assert payload["settings"]["hdr_on"] is True
-
-
-def test_hdr_is_a_graphics_focusable_before_rim():
-    p, _ = _make()
-    f = p._focusables()
-    assert ("ctrl", "hdr") in f and ("ctrl", "rim") in f
-    assert f.index(("ctrl", "hdr")) < f.index(("ctrl", "rim"))
 
 
 # ---- damage decals toggle -------------------------------------------------
@@ -551,7 +502,7 @@ def test_gameplay_tab_focusables_include_subtitles():
 
 def test_initial_subtitles_off_round_trips():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
+        dust_on=True, specular_on=True,
         decals_on=True, fov_deg=70, subtitles_on=False,
     ))
     p.open()
@@ -593,67 +544,13 @@ def test_gameplay_tab_focusables_include_disable_annoying_dialogue():
 
 def test_initial_disable_annoying_dialogue_off_round_trips():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
+        dust_on=True, specular_on=True,
         decals_on=True, fov_deg=70, disable_annoying_dialogue_on=False,
     ))
     p.open()
     payload = p.render_payload()
     data = json.loads(payload[len("setConfigurationPanel("):-len(");")])
     assert data["settings"]["disable_annoying_dialogue_on"] is False
-
-
-# ---- dynamic shadows toggle -----------------------------------------------
-
-def test_dispatch_toggle_shadows_flips_and_calls_applier():
-    p, kw = _make()
-    p.open()
-    assert p.dispatch_event("toggle:shadows") is True
-    kw["set_shadows"].assert_called_once_with(False)
-    # Second toggle flips back.
-    assert p.dispatch_event("toggle:shadows") is True
-    kw["set_shadows"].assert_called_with(True)
-
-
-def test_dispatch_toggle_filmic_flips_and_calls_applier():
-    p, kw = _make()
-    p.open()
-    assert p.dispatch_event("toggle:filmic") is True
-    kw["set_filmic"].assert_called_once_with(False)
-    assert p.dispatch_event("toggle:filmic") is True
-    kw["set_filmic"].assert_called_with(True)
-
-
-def test_filmic_on_in_render_payload():
-    p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
-        decals_on=True, fov_deg=70, shadows_on=True,
-        procedural_sky_on=True, filmic_on=False,
-    ))
-    p.open()
-    payload = p.render_payload()
-    body = json.loads(payload[len("setConfigurationPanel("):-len(");")])
-    assert body["settings"]["filmic_on"] is False
-
-
-def test_dispatch_toggle_motion_blur_flips_and_calls_applier():
-    p, kw = _make()
-    p.open()
-    assert p.dispatch_event("toggle:motion_blur") is True
-    kw["set_motion_blur"].assert_called_once_with(False)
-    assert p.dispatch_event("toggle:motion_blur") is True
-    kw["set_motion_blur"].assert_called_with(True)
-
-
-def test_motion_blur_on_in_render_payload():
-    p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
-        decals_on=True, fov_deg=70, shadows_on=True,
-        procedural_sky_on=True, filmic_on=True, motion_blur_on=False,
-    ))
-    p.open()
-    payload = p.render_payload()
-    body = json.loads(payload[len("setConfigurationPanel("):-len(");")])
-    assert body["settings"]["motion_blur_on"] is False
 
 
 def test_dispatch_toggle_warp_flythrough_flips_and_calls_applier():
@@ -667,10 +564,9 @@ def test_dispatch_toggle_warp_flythrough_flips_and_calls_applier():
 
 def test_warp_flythrough_on_in_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
-        decals_on=True, fov_deg=70, shadows_on=True,
-        procedural_sky_on=True, filmic_on=True, motion_blur_on=True,
-        warp_flythrough_on=False,
+        dust_on=True, specular_on=True,
+        decals_on=True, fov_deg=70,
+        procedural_sky_on=True, warp_flythrough_on=False,
     ))
     p.open()
     payload = p.render_payload()
@@ -713,8 +609,8 @@ def test_dispatch_ai_difficulty_garbage_returns_false():
 
 def test_ai_difficulty_in_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
-        decals_on=True, fov_deg=70, shadows_on=True, ai_difficulty=2,
+        dust_on=True, specular_on=True,
+        decals_on=True, fov_deg=70, ai_difficulty=2,
     ))
     p.open()
     payload = p.render_payload()
@@ -724,8 +620,8 @@ def test_ai_difficulty_in_render_payload():
 
 def test_ai_difficulty_initial_clamped_in_constructor():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        dust_on=True, specular_on=True, hdr_on=True, rim_on=True,
-        decals_on=True, fov_deg=70, shadows_on=True, ai_difficulty=99,
+        dust_on=True, specular_on=True,
+        decals_on=True, fov_deg=70, ai_difficulty=99,
     ))
     assert p._settings.ai_difficulty == 2
 
@@ -735,6 +631,164 @@ def test_ai_difficulty_is_a_gameplay_focusable():
     p.dispatch_event("tab:gameplay")
     focusables = p._focusables()
     assert ("ctrl", "ai_difficulty") in focusables
+
+
+# ---- Camera Realism (HDR + filmic + motion blur + lens flare) ------
+
+_CAMERA_REALISM_APPLIERS = ("set_hdr", "set_filmic", "set_motion_blur",
+                         "set_hdr_lens_flare")
+
+
+def test_dispatch_toggle_camera_realism_fans_out_to_every_applier():
+    p, kw = _make()
+    p.open()
+    assert p._settings.camera_realism_on is True
+    assert p.dispatch_event("toggle:camera_realism") is True
+    for name in _CAMERA_REALISM_APPLIERS:
+        kw[name].assert_called_once_with(False)
+    assert p._settings.camera_realism_on is False
+
+
+def test_dispatch_toggle_camera_realism_twice_flips_back_on():
+    p, kw = _make()
+    p.open()
+    p.dispatch_event("toggle:camera_realism")
+    assert p.dispatch_event("toggle:camera_realism") is True
+    for name in _CAMERA_REALISM_APPLIERS:
+        kw[name].assert_called_with(True)
+    assert p._settings.camera_realism_on is True
+
+
+def test_camera_realism_off_in_render_payload():
+    p, _ = _make(initial_settings=SettingsSnapshot(
+        dust_on=True, specular_on=True, decals_on=True,
+        fov_deg=70, camera_realism_on=False,
+    ))
+    p.open()
+    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert body["settings"]["camera_realism_on"] is False
+
+
+def test_camera_realism_is_a_graphics_focusable_after_procedural_sky():
+    p, _ = _make()
+    f = p._focusables()
+    assert ("ctrl", "camera_realism") in f
+    assert (f.index(("ctrl", "procedural_sky"))
+            < f.index(("ctrl", "camera_realism"))
+            < f.index(("ctrl", "realistic_lighting")))
+
+
+def test_absorbed_sub_toggles_no_longer_dispatch_or_focus():
+    """The four settings folded into Camera Realism must leave no
+    orphan row behind — a stale action would toggle one effect out of step
+    with the master and the panel would show neither."""
+    p, kw = _make()
+    p.open()
+    f = p._focusables()
+    for target in ("hdr", "filmic", "motion_blur", "hdr_lens_flare"):
+        assert p.dispatch_event("toggle:" + target) is False
+        assert ("ctrl", target) not in f
+    for name in _CAMERA_REALISM_APPLIERS:
+        kw[name].assert_not_called()
+
+
+def test_space_on_camera_realism_row_toggles():
+    p, kw = _make()
+    p.open()
+    p._focused = p._focusables().index(("ctrl", "camera_realism"))
+    r = _FakeReader()
+    r.press(r.keys.KEY_SPACE)
+    p.handle_input(r)
+    for name in _CAMERA_REALISM_APPLIERS:
+        kw[name].assert_called_once_with(False)
+
+
+# ---- Realistic Lighting (rim + shadows + nebula lightning + ship lights) --
+
+_REALISTIC_LIGHTING_APPLIERS = ("set_rim", "set_shadows", "set_nebula_lightning",
+                                "set_ship_light_emitters")
+
+
+def test_dispatch_toggle_realistic_lighting_fans_out_to_every_applier():
+    p, kw = _make()
+    p.open()
+    assert p._settings.realistic_lighting_on is True
+    assert p.dispatch_event("toggle:realistic_lighting") is True
+    for name in _REALISTIC_LIGHTING_APPLIERS:
+        kw[name].assert_called_once_with(False)
+    assert p._settings.realistic_lighting_on is False
+
+
+def test_dispatch_toggle_realistic_lighting_twice_flips_back_on():
+    p, kw = _make()
+    p.open()
+    p.dispatch_event("toggle:realistic_lighting")
+    assert p.dispatch_event("toggle:realistic_lighting") is True
+    for name in _REALISTIC_LIGHTING_APPLIERS:
+        kw[name].assert_called_with(True)
+    assert p._settings.realistic_lighting_on is True
+
+
+def test_realistic_lighting_off_in_render_payload():
+    p, _ = _make(initial_settings=SettingsSnapshot(
+        dust_on=True, specular_on=True, decals_on=True, fov_deg=70,
+        realistic_lighting_on=False,
+    ))
+    p.open()
+    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert body["settings"]["realistic_lighting_on"] is False
+
+
+def test_realistic_lighting_is_focusable_between_camera_realism_and_decals():
+    p, _ = _make()
+    f = p._focusables()
+    assert (f.index(("ctrl", "camera_realism"))
+            < f.index(("ctrl", "realistic_lighting"))
+            < f.index(("ctrl", "decals")))
+
+
+def test_absorbed_lighting_sub_toggles_no_longer_dispatch_or_focus():
+    p, kw = _make()
+    p.open()
+    f = p._focusables()
+    for target in ("rim", "shadows", "nebula_lightning"):
+        assert p.dispatch_event("toggle:" + target) is False
+        assert ("ctrl", target) not in f
+    for name in _REALISTIC_LIGHTING_APPLIERS:
+        kw[name].assert_not_called()
+
+
+def test_space_on_realistic_lighting_row_toggles():
+    p, kw = _make()
+    p.open()
+    p._focused = p._focusables().index(("ctrl", "realistic_lighting"))
+    r = _FakeReader()
+    r.press(r.keys.KEY_SPACE)
+    p.handle_input(r)
+    for name in _REALISTIC_LIGHTING_APPLIERS:
+        kw[name].assert_called_once_with(False)
+
+
+def test_smaa_is_the_first_graphics_control():
+    p, _ = _make()
+    ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
+    assert ctrls[0] == "smaa"
+
+
+def test_js_graphics_focusables_match_python():
+    """configuration_panel.js mirrors _focusables() by hand. If the two lists
+    drift, keyboard focus highlights the wrong row and Space toggles a
+    different setting than the one the player sees selected."""
+    import pathlib
+    import re
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "native/assets/ui-cef/js/configuration_panel.js").read_text()
+    graphics = src.split("state.selected_tab === 'graphics'")[1] \
+                  .split("else if")[0]
+    js_targets = re.findall(r"kind:\s*'ctrl',\s*target:\s*'(\w+)'", graphics)
+    p, _ = _make()
+    py_targets = [t for kind, t in p._focusables() if kind == "ctrl"]
+    assert js_targets == py_targets
 
 
 def test_every_boolean_setting_reaches_the_ui():

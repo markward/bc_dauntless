@@ -1,10 +1,16 @@
 """Configuration panel — pause-menu modal with tabbed settings.
 
 Subclasses engine.ui.panel.Panel; pumped by PanelRegistry like the
-mission picker. Owns a SettingsSnapshot and five injected appliers
-(dust, specular, hdr, rim, fov). Every state mutation immediately fires
-the matching applier — there is no Apply/Cancel; closing the panel does
-not revert. Settings are not persisted across launches.
+mission picker. Owns a SettingsSnapshot and one injected applier per
+effect. Every state mutation immediately fires the matching applier —
+there is no Apply/Cancel; closing the panel does not revert. Settings
+are not persisted across launches.
+
+Two rows are masters over several appliers each: Camera Realism (HDR,
+filmic filter, motion blur, modern lens flares) and Realistic Lighting
+(Fresnel rim light, dynamic shadows, nebula lightning, subsystem light
+emitters). The appliers stay individually injected so the renderer
+surface is unchanged.
 
 Spec: docs/superpowers/specs/2026-06-05-configuration-panel-design.md
 """
@@ -30,22 +36,21 @@ AI_DIFFICULTY_LABELS = ("Easy", "Medium", "Hard")
 class SettingsSnapshot:
     dust_on: bool
     specular_on: bool
-    hdr_on: bool
-    rim_on: bool
     decals_on: bool
     fov_deg: int
     smaa_on: bool = True
     subtitles_on: bool = True
     disable_annoying_dialogue_on: bool = True
     ai_difficulty: int = 1
-    shadows_on: bool = True
     procedural_sky_on: bool = True
-    filmic_on: bool = True
-    motion_blur_on: bool = True
     warp_flythrough_on: bool = True
     volumetric_nebulae_on: bool = True
-    nebula_lightning_on: bool = True
-    hdr_lens_flare_on: bool = True
+    # One master toggle over HDR, the filmic filter, motion blur and modern
+    # lens flares — four settings the player used to set independently.
+    camera_realism_on: bool = True
+    # One master toggle over Fresnel rim light, dynamic shadows, nebula
+    # lightning and the subsystem light emitters.
+    realistic_lighting_on: bool = True
 
 
 class ConfigurationPanel(Panel):
@@ -70,6 +75,7 @@ class ConfigurationPanel(Panel):
                  set_volumetric_nebulae: Callable[[bool], None],
                  set_nebula_lightning: Callable[[bool], None],
                  set_hdr_lens_flare: Callable[[bool], None],
+                 set_ship_light_emitters: Callable[[bool], None],
                  input_map=None):
         super().__init__()
         self._tabs = list(tabs)
@@ -77,22 +83,17 @@ class ConfigurationPanel(Panel):
         self._settings = SettingsSnapshot(
             dust_on=initial_settings.dust_on,
             specular_on=initial_settings.specular_on,
-            hdr_on=initial_settings.hdr_on,
-            rim_on=initial_settings.rim_on,
             decals_on=initial_settings.decals_on,
             smaa_on=initial_settings.smaa_on,
             fov_deg=int(initial_settings.fov_deg),
             subtitles_on=initial_settings.subtitles_on,
             disable_annoying_dialogue_on=initial_settings.disable_annoying_dialogue_on,
             ai_difficulty=max(0, min(2, int(initial_settings.ai_difficulty))),
-            shadows_on=initial_settings.shadows_on,
             procedural_sky_on=initial_settings.procedural_sky_on,
-            filmic_on=initial_settings.filmic_on,
-            motion_blur_on=initial_settings.motion_blur_on,
             warp_flythrough_on=initial_settings.warp_flythrough_on,
             volumetric_nebulae_on=initial_settings.volumetric_nebulae_on,
-            nebula_lightning_on=initial_settings.nebula_lightning_on,
-            hdr_lens_flare_on=initial_settings.hdr_lens_flare_on,
+            camera_realism_on=initial_settings.camera_realism_on,
+            realistic_lighting_on=initial_settings.realistic_lighting_on,
         )
         self._set_dust = set_dust
         self._set_specular = set_specular
@@ -112,6 +113,7 @@ class ConfigurationPanel(Panel):
         self._set_volumetric_nebulae = set_volumetric_nebulae
         self._set_nebula_lightning = set_nebula_lightning
         self._set_hdr_lens_flare = set_hdr_lens_flare
+        self._set_ship_light_emitters = set_ship_light_emitters
         # Controls tab: action → physical-key remapping (engine.input_map.InputMap).
         # Optional so existing construction/tests without a controls tab still work.
         self._input_map = input_map
@@ -164,21 +166,16 @@ class ConfigurationPanel(Panel):
             self._controls_message,
             self._settings.dust_on,
             self._settings.specular_on,
-            self._settings.hdr_on,
-            self._settings.rim_on,
             self._settings.decals_on,
             self._settings.smaa_on,
             self._settings.subtitles_on,
             self._settings.disable_annoying_dialogue_on,
             self._settings.ai_difficulty,
-            self._settings.shadows_on,
             self._settings.procedural_sky_on,
-            self._settings.filmic_on,
-            self._settings.motion_blur_on,
             self._settings.warp_flythrough_on,
             self._settings.volumetric_nebulae_on,
-            self._settings.nebula_lightning_on,
-            self._settings.hdr_lens_flare_on,
+            self._settings.camera_realism_on,
+            self._settings.realistic_lighting_on,
             self._settings.fov_deg,
         )
         if snapshot == self._last_pushed:
@@ -200,21 +197,16 @@ class ConfigurationPanel(Panel):
             "settings": {
                 "dust_on": self._settings.dust_on,
                 "specular_on": self._settings.specular_on,
-                "hdr_on": self._settings.hdr_on,
-                "rim_on": self._settings.rim_on,
                 "decals_on": self._settings.decals_on,
                 "smaa_on": self._settings.smaa_on,
                 "subtitles_on": self._settings.subtitles_on,
                 "disable_annoying_dialogue_on": self._settings.disable_annoying_dialogue_on,
                 "ai_difficulty": self._settings.ai_difficulty,
-                "shadows_on": self._settings.shadows_on,
                 "procedural_sky_on": self._settings.procedural_sky_on,
-                "filmic_on": self._settings.filmic_on,
-                "motion_blur_on": self._settings.motion_blur_on,
                 "warp_flythrough_on": self._settings.warp_flythrough_on,
                 "volumetric_nebulae_on": self._settings.volumetric_nebulae_on,
-                "nebula_lightning_on": self._settings.nebula_lightning_on,
-                "hdr_lens_flare_on": self._settings.hdr_lens_flare_on,
+                "camera_realism_on": self._settings.camera_realism_on,
+                "realistic_lighting_on": self._settings.realistic_lighting_on,
                 "fov_deg": self._settings.fov_deg,
             },
         }
@@ -286,15 +278,17 @@ class ConfigurationPanel(Panel):
             self._set_procedural_sky(new_val)
             self._settings.procedural_sky_on = new_val
             return True
-        if action == "toggle:filmic":
-            new_val = not self._settings.filmic_on
+        if action == "toggle:camera_realism":
+            # One row over four renderer effects. Appliers run before the
+            # local write, matching every other branch here; if one raises
+            # the earlier appliers have already fired and _settings stays on
+            # the old value, so the panel re-reads as the pre-toggle state.
+            new_val = not self._settings.camera_realism_on
+            self._set_hdr(new_val)
             self._set_filmic(new_val)
-            self._settings.filmic_on = new_val
-            return True
-        if action == "toggle:motion_blur":
-            new_val = not self._settings.motion_blur_on
             self._set_motion_blur(new_val)
-            self._settings.motion_blur_on = new_val
+            self._set_hdr_lens_flare(new_val)
+            self._settings.camera_realism_on = new_val
             return True
         if action == "toggle:warp_flythrough":
             new_val = not self._settings.warp_flythrough_on
@@ -306,30 +300,16 @@ class ConfigurationPanel(Panel):
             self._set_volumetric_nebulae(new_val)
             self._settings.volumetric_nebulae_on = new_val
             return True
-        if action == "toggle:nebula_lightning":
-            new_val = not self._settings.nebula_lightning_on
-            self._set_nebula_lightning(new_val)
-            self._settings.nebula_lightning_on = new_val
-            return True
-        if action == "toggle:hdr_lens_flare":
-            new_val = not self._settings.hdr_lens_flare_on
-            self._set_hdr_lens_flare(new_val)
-            self._settings.hdr_lens_flare_on = new_val
-            return True
-        if action == "toggle:hdr":
-            new_val = not self._settings.hdr_on
-            self._set_hdr(new_val)
-            self._settings.hdr_on = new_val
-            return True
-        if action == "toggle:rim":
-            new_val = not self._settings.rim_on
+        if action == "toggle:realistic_lighting":
+            # One row over three renderer effects plus the Python-side
+            # subsystem light emitters. Same applier-before-write ordering as
+            # every other branch here.
+            new_val = not self._settings.realistic_lighting_on
             self._set_rim(new_val)
-            self._settings.rim_on = new_val
-            return True
-        if action == "toggle:shadows":
-            new_val = not self._settings.shadows_on
             self._set_shadows(new_val)
-            self._settings.shadows_on = new_val
+            self._set_nebula_lightning(new_val)
+            self._set_ship_light_emitters(new_val)
+            self._settings.realistic_lighting_on = new_val
             return True
         if action == "toggle:decals":
             new_val = not self._settings.decals_on
@@ -432,28 +412,18 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:specular")
         elif activate and kind == "ctrl" and target == "procedural_sky":
             self.dispatch_event("toggle:procedural_sky")
-        elif activate and kind == "ctrl" and target == "filmic":
-            self.dispatch_event("toggle:filmic")
-        elif activate and kind == "ctrl" and target == "motion_blur":
-            self.dispatch_event("toggle:motion_blur")
+        elif activate and kind == "ctrl" and target == "camera_realism":
+            self.dispatch_event("toggle:camera_realism")
         elif activate and kind == "ctrl" and target == "warp_flythrough":
             self.dispatch_event("toggle:warp_flythrough")
         elif activate and kind == "ctrl" and target == "volumetric_nebulae":
             self.dispatch_event("toggle:volumetric_nebulae")
-        elif activate and kind == "ctrl" and target == "nebula_lightning":
-            self.dispatch_event("toggle:nebula_lightning")
-        elif activate and kind == "ctrl" and target == "hdr_lens_flare":
-            self.dispatch_event("toggle:hdr_lens_flare")
-        elif activate and kind == "ctrl" and target == "hdr":
-            self.dispatch_event("toggle:hdr")
-        elif activate and kind == "ctrl" and target == "rim":
-            self.dispatch_event("toggle:rim")
+        elif activate and kind == "ctrl" and target == "realistic_lighting":
+            self.dispatch_event("toggle:realistic_lighting")
         elif activate and kind == "ctrl" and target == "decals":
             self.dispatch_event("toggle:decals")
         elif activate and kind == "ctrl" and target == "smaa":
             self.dispatch_event("toggle:smaa")
-        elif activate and kind == "ctrl" and target == "shadows":
-            self.dispatch_event("toggle:shadows")
         elif activate and kind == "ctrl" and target == "subtitles":
             self.dispatch_event("toggle:subtitles")
         elif activate and kind == "ctrl" and target == "disable_annoying_dialogue":
@@ -481,21 +451,21 @@ class ConfigurationPanel(Panel):
         """Ordered focusable list: tab rows then controls in the
         currently selected tab. Order mirrors the rendered rows — the
         general toggles, then the 'Modern VFX' group (procedural_sky leads
-        it): [('tab','graphics'), ('ctrl','dust'), ('ctrl','specular'),
-         ('ctrl','fov'), ('ctrl','procedural_sky'), ('ctrl','hdr'),
-         ('ctrl','rim'), ('ctrl','shadows'), ('ctrl','decals'),
-         ('ctrl','smaa'), ('ctrl','filmic'), ('ctrl','motion_blur'),
-         ('ctrl','warp_flythrough'), ('ctrl','volumetric_nebulae'),
-         ('ctrl','nebula_lightning')]."""
+        it): [('tab','graphics'), ('ctrl','smaa'), ('ctrl','dust'),
+         ('ctrl','specular'), ('ctrl','fov'), ('ctrl','procedural_sky'),
+         ('ctrl','camera_realism'), ('ctrl','realistic_lighting'),
+         ('ctrl','decals'), ('ctrl','warp_flythrough'),
+         ('ctrl','volumetric_nebulae')].
+
+        configuration_panel.js mirrors this list by hand; the two are pinned
+        together by test_js_graphics_focusables_match_python."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
-            out += [("ctrl", "dust"), ("ctrl", "specular"),
+            out += [("ctrl", "smaa"), ("ctrl", "dust"), ("ctrl", "specular"),
                     ("ctrl", "fov"), ("ctrl", "procedural_sky"),
-                    ("ctrl", "hdr"), ("ctrl", "rim"), ("ctrl", "shadows"),
-                    ("ctrl", "decals"), ("ctrl", "smaa"), ("ctrl", "filmic"),
-                    ("ctrl", "motion_blur"), ("ctrl", "warp_flythrough"),
-                    ("ctrl", "volumetric_nebulae"), ("ctrl", "nebula_lightning"),
-                    ("ctrl", "hdr_lens_flare")]
+                    ("ctrl", "camera_realism"), ("ctrl", "realistic_lighting"),
+                    ("ctrl", "decals"), ("ctrl", "warp_flythrough"),
+                    ("ctrl", "volumetric_nebulae")]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles"),
                     ("ctrl", "disable_annoying_dialogue"),

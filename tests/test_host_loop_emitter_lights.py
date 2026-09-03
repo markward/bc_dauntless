@@ -102,6 +102,30 @@ def test_healthy_point_emitter_identity_pose_produces_one_light():
     assert d["intensity"] == 1.5
 
 
+def test_disabling_ship_light_emitters_produces_no_lights():
+    """The Realistic Lighting master toggle gates this producer. Off must
+    drop every emitter light, not merely dim them."""
+    ship = _Ship()
+    prop = _point_prop((1.0, 2.0, 3.0))
+    spec = light_emitters.baked_emitters(prop)[0]
+    ship_instances = {ship: 42}
+    ship_emitters = {42: [(_Sub(prop), False, False, 0.0, spec)]}
+
+    assert _build_emitter_light_render_data(ship_instances, ship_emitters)
+
+    light_emitters.set_enabled(False)
+    try:
+        assert light_emitters.enabled() is False
+        assert _build_emitter_light_render_data(ship_instances, ship_emitters) == []
+    finally:
+        light_emitters.set_enabled(True)
+    assert _build_emitter_light_render_data(ship_instances, ship_emitters)
+
+
+def test_ship_light_emitters_enabled_by_default():
+    assert light_emitters.enabled() is True
+
+
 def test_destroyed_parent_subsystem_emits_no_light():
     ship = _Ship()
     prop = _point_prop((1.0, 0.0, 0.0))
