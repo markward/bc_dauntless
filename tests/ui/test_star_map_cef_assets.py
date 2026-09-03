@@ -427,21 +427,27 @@ def test_the_popup_dismiss_control_is_a_close_icon_on_the_right():
         "the head must push the close icon to the right edge")
 
 
-def test_the_warp_button_is_bottom_left_and_disabled_by_default():
-    """Warp bottom-LEFT, Cancel bottom-right, and disabled in the markup so
-    it can never render live for a frame before Python's first payload."""
+def test_the_warp_button_is_bottom_right_and_disabled_by_default():
+    """Cancel bottom-LEFT, Warp bottom-right, and Warp disabled in the markup
+    so it can never render live for a frame before Python's first payload.
+
+    The footer is space-between, so DOM order IS the placement. Warp moved to
+    the right to put the primary action where the eye ends up; the assertion
+    is on order rather than on CSS because that is what actually decides it.
+    """
     index = (ASSETS / "index.html").read_text(encoding="utf-8")
     # Scope to THIS panel first: index.html holds several cp-* modals and an
     # unscoped search finds the configuration panel's footer instead.
     section = re.search(r'<section id="star-map-panel".*?</section>',
                         index, re.S)
     assert section, "no #star-map-panel section"
-    footer = re.search(r'<div class="cp-footer">(.*?)</div>',
-                       section.group(0), re.S)
-    assert footer, "no star map cp-footer block"
-    body = footer.group(1)
-    assert body.index("star-map/warp") < body.index("star-map/cancel"), (
-        "Warp must precede Cancel in source order — the footer is a flex row")
+    # To the END of the section, not to the first </div>: the right-hand
+    # group is itself a div, so a non-greedy stop lands mid-footer.
+    start = section.group(0).find('<div class="cp-footer">')
+    assert start != -1, "no star map cp-footer block"
+    body = section.group(0)[start:]
+    assert body.index("star-map/cancel") < body.index("star-map/warp"), (
+        "Cancel must precede Warp in source order — the footer is a flex row")
     assert "disabled" in body
     assert 'id="star-map-warp"' in body
 
@@ -528,4 +534,19 @@ def test_unoffered_system_labels_are_dimmed_to_match_the_star():
     assert float(m.group(1)) == INERT_DIM
 
     js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
+    assert "sm-label--inert" in js
+
+
+def test_the_show_all_toggle_is_wired_and_lives_beside_warp():
+    index = (ASSETS / "index.html").read_text(encoding="utf-8")
+    assert "star-map/toggle-labels" in index
+    assert 'id="star-map-show-all"' in index
+
+
+def test_unoffered_labels_are_withheld_unless_show_all_is_on():
+    """Hidden, not merely dimmed — the point is a map that names only where
+    the mission will take you. .sm-label--inert survives for the show-all
+    case, where the extra names must not compete with the shortlist."""
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
+    assert "show_all_labels" in js
     assert "sm-label--inert" in js

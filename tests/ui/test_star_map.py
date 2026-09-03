@@ -454,16 +454,21 @@ def test_a_system_outside_the_offer_is_dimmed():
                                    for c in sm.STAR_COLOR)
 
 
-def test_an_unoffered_star_cannot_be_picked():
-    """The dimming is the cue; this is the behaviour behind it. Without this
-    a player learns the offer by clicking 32 dead stars."""
+def test_an_unoffered_star_is_still_pickable():
+    """The offer decides EMPHASIS, never access.
+
+    Making these inert was a step too far: the player may legitimately want to
+    warp somewhere the current mission has no opinion about, and a star that
+    silently ignores clicks is indistinguishable from a broken one. The label
+    is what's withheld; the destination stays reachable.
+    """
     scene = _offered_scene({"vesuvi"})
     cam = sm.StarMapCamera(anchor=(0.0, 0.0, 0.0))
     rect = (0, 0, 880, 478)
     target = next(p for p in sm.project_points(scene, cam, rect)
                   if p["visible"] and p["id"] != "vesuvi")
     assert sm.pick_system(target["x"], target["y"],
-                                scene, cam, rect) != target["id"]
+                          scene, cam, rect) == target["id"]
 
 
 def test_a_system_you_are_in_is_never_dimmed_even_if_unoffered():
@@ -476,3 +481,26 @@ def test_a_system_you_are_in_is_never_dimmed_even_if_unoffered():
     by_id = {p["id"]: p for p in scene["points"]}
     assert by_id["tevron"]["color"] == sm.STAR_COLOR
     assert by_id["albirea"]["color"] != sm.STAR_COLOR   # genuinely inert
+
+
+def test_an_empty_offer_hides_nothing():
+    """A menu that offers no system must not strip every name off the map.
+
+    Hiding is only meaningful as a CONTRAST — "these, not those". With no
+    "these" it degrades to a nameless star field, which is strictly worse
+    than the unfiltered map. So an empty offer reads as unconstrained.
+    """
+    scene = sm.build_scene(model=_model(), offered_ids=set())
+    assert scene["points"]
+    assert all(p["offered"] for p in scene["points"])
+
+
+def test_the_players_own_system_is_never_hidden():
+    """You must always be able to see where you are, whatever the mission
+    offers. Guarded explicitly rather than left to fall out of the reticle
+    exemption, because that is an implementation detail and this is a rule."""
+    scene = sm.build_scene(model=_model(), here_id="tevron",
+                           offered_ids={"vesuvi"})
+    by_id = {p["id"]: p for p in scene["points"]}
+    assert by_id["tevron"]["offered"] is True
+    assert by_id["albirea"]["offered"] is False    # the rule is not vacuous

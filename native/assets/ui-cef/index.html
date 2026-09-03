@@ -204,15 +204,28 @@
             </div>
           </div>
         </div>
+        <!-- .cp-footer is justify-content: space-between, so DOM order IS the
+             left/right placement: Cancel first (bottom-left), the Warp group
+             last (bottom-right) so the primary action sits where the eye
+             ends up. The right-hand pair is wrapped so the two stay together
+             under space-between. -->
         <div class="cp-footer">
-          <!-- Label text is filled from Bridge Menus.tgl by setStarMapPanel,
-               the same string the Helm menu's own Warp button uses. Disabled
-               until a course is set; Python re-checks that on dispatch, so a
-               stale payload cannot warp without one. -->
-          <button id="star-map-warp" class="cp-done-button" disabled
-                  onclick="dauntlessEvent('star-map/warp')">Warp</button>
           <button class="cp-done-button"
                   onclick="dauntlessEvent('star-map/cancel')">Cancel</button>
+          <div class="sm-footer-right">
+            <!-- Shown only while system names are actually being withheld
+                 (has_hidden_labels); setStarMapPanel owns both its visibility
+                 and its Yes/No text. -->
+            <button id="star-map-show-all" class="sm-toggle" style="display:none"
+                    title="Name every charted system, not just this mission's destinations"
+                    onclick="dauntlessEvent('star-map/toggle-labels')">Show all: No</button>
+            <!-- Label text is filled from Bridge Menus.tgl by setStarMapPanel,
+                 the same string the Helm menu's own Warp button uses. Disabled
+                 until a course is set; Python re-checks that on dispatch, so a
+                 stale payload cannot warp without one. -->
+            <button id="star-map-warp" class="cp-done-button" disabled
+                    onclick="dauntlessEvent('star-map/warp')">Warp</button>
+          </div>
         </div>
       </div>
     </section>

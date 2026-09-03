@@ -204,15 +204,16 @@ def test_a_region_absent_from_the_baked_catalog_still_lists():
     assert [r["label"] for r in rows] == ["Vesuvi Deep Survey"]
 
 
-def test_a_system_the_mission_does_not_offer_has_no_destinations():
-    """E3M2 offers Vesuvi and Starbase 12 only. Riha is charted on the map but
-    is not somewhere this mission lets you go, and must not present rows."""
+def test_a_system_the_mission_does_not_offer_still_lists_its_destinations():
+    """E3M2 offers Vesuvi and Starbase 12. Riha is charted but unmentioned —
+    and still warpable: the offer sets emphasis, not access. The baked catalog
+    supplies rows for systems the live menu says nothing about."""
     p = StarMapPanel()
     p.open(set_name="Vesuvi6", course_menu=_e3m2_course_menu())
     p.dispatch_event("select-system:riha")
-    data = _payload(p.render_payload())
-    assert data["warp_points"] == []
-    assert data["warp_note"]
+    rows = _rows(_payload(p.render_payload()))
+    assert rows, "an unoffered system must still be reachable"
+    assert all(r["mission"] is False for r in rows.values())
 
 
 def test_a_single_region_system_offers_its_own_module():
@@ -655,3 +656,67 @@ def test_hiding_the_arrows_clears_the_mark(no_arrows):
     ui_attention.hide_pointer_arrows()
     p.invalidate()
     assert _payload(p.render_payload())["mission_systems"] == []
+
+
+# --- hidden labels + the "show all" escape hatch ---------------------------
+# The offer decides which system NAMES are drawn. Unlisted stars keep their
+# dot (and stay clickable), they just don't shout. A toggle restores the rest
+# for a player who wants to navigate somewhere the mission has no opinion on.
+
+def test_labels_are_hidden_by_default_for_unoffered_systems():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6", course_menu=_e3m2_course_menu())
+    data = _payload(p.render_payload())
+    assert data["show_all_labels"] is False
+    labels = {l["id"]: l for l in data["labels"]}
+    assert labels["vesuvi"]["offered"] is True
+    assert any(l["offered"] is False for l in labels.values())
+
+
+def test_the_toggle_is_offered_only_when_something_is_hidden():
+    """No menu attached (QuickBattle) means nothing is withheld, so a
+    'show all' control would be a switch with nothing on the other side."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")                      # no course_menu
+    assert _payload(p.render_payload())["has_hidden_labels"] is False
+
+    q = StarMapPanel()
+    q.open(set_name="Vesuvi6", course_menu=_e3m2_course_menu())
+    assert _payload(q.render_payload())["has_hidden_labels"] is True
+
+
+def test_toggling_show_all_flips_the_flag():
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6", course_menu=_e3m2_course_menu())
+    assert p.dispatch_event("toggle-labels") is True
+    assert _payload(p.render_payload())["show_all_labels"] is True
+    assert p.dispatch_event("toggle-labels") is True
+    assert _payload(p.render_payload())["show_all_labels"] is False
+
+
+def test_show_all_resets_between_openings():
+    """It is a transient look-around, not a preference: re-opening Set Course
+    should present the mission's own shortlist again."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6", course_menu=_e3m2_course_menu())
+    p.dispatch_event("toggle-labels")
+    p.close()
+    p.open(set_name="Vesuvi6", course_menu=_e3m2_course_menu())
+    assert _payload(p.render_payload())["show_all_labels"] is False
+
+
+def test_a_menu_that_offers_nothing_leaves_the_map_fully_labelled():
+    from engine.appc.tg_ui.st_widgets import SortedRegionMenu_CreateW
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6",
+           course_menu=SortedRegionMenu_CreateW("Set Course"))   # no children
+    data = _payload(p.render_payload())
+    assert data["has_hidden_labels"] is False
+    assert all(l["offered"] for l in data["labels"])
+
+
+def test_the_system_you_are_in_keeps_its_label():
+    p = StarMapPanel()
+    p.open(set_name="Riha1", course_menu=_e3m2_course_menu())   # Riha unoffered
+    labels = {l["id"]: l for l in _payload(p.render_payload())["labels"]}
+    assert labels["riha"]["offered"] is True

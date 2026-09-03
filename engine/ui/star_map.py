@@ -291,10 +291,23 @@ def build_scene(*, model=None, here_id=None, course_id=None,
     # dimmed, whatever the offer says: you can sit in a system this mission
     # plots no course back to, and losing the you-are-here star to say "not a
     # destination" costs more than it tells.
+    #
+    # An EMPTY offer constrains nothing. Hiding names only means anything as a
+    # contrast — "these, not those" — and with no "these" it degrades to a
+    # nameless star field, strictly worse than the unfiltered map. So `None`
+    # (no menu) and an empty set (a menu offering nothing) agree here, even
+    # though _offered_systems keeps them distinct for its own purposes.
+    constrained = bool(offered_ids)
     points = []
     for s in systems:
         sid = s["id"]
-        offered = (offered_ids is None or sid in offered_ids
+        offered = (not constrained
+                   or sid in offered_ids
+                   # You must always be able to see where you are, whatever
+                   # the mission offers. Stated as its own clause: it also
+                   # falls out of `reticled` below, but that is an
+                   # implementation detail and this is a rule.
+                   or sid == here_id
                    or sid in reticled)
         color = (STAR_COLOR if offered
                  else tuple(c * INERT_DIM for c in STAR_COLOR))
@@ -417,9 +430,11 @@ def pick_system(cursor_x: float, cursor_y: float, scene: dict,
     local_x, local_y = cursor_x - rx, cursor_y - ry
     best_id, best_d2 = None, PICK_RADIUS_PT ** 2
     for p in project_points(scene, cam, rect):
-        # A star the mission offers no course to is inert, not merely dim:
-        # otherwise the player learns the offer by clicking dead stars.
-        if not p["visible"] or not p.get("offered", True):
+        # Every charted star stays pickable, offered or not. The offer decides
+        # EMPHASIS — whether the name is drawn — never access: the player may
+        # want somewhere the current mission has no opinion about, and a star
+        # that silently swallows clicks is indistinguishable from a broken one.
+        if not p["visible"]:
             continue
         d2 = (p["x"] - local_x) ** 2 + (p["y"] - local_y) ** 2
         if d2 <= best_d2:

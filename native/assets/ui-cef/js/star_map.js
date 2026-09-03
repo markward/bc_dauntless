@@ -36,6 +36,10 @@ function setStarMapPanel(state) {
         root.style.display = 'none';
         return;
     }
+    // Function scope, not inside the label block: the footer toggle below
+    // reads it too, and a block-scoped const there is a ReferenceError that
+    // takes setStarMapPanel — and with it the whole panel — down.
+    const showAll = state.show_all_labels === true;
     const labelEl = document.getElementById('star-map-labels');
     if (labelEl) {
         // Nebula names FIRST, so the system labels that follow paint over
@@ -49,8 +53,12 @@ function setStarMapPanel(state) {
                 + ' style="left:' + d.x + 'px;top:' + d.y + 'px">'
                 + escapeHtmlSM(d.label) + '</div>';
         }).join('');
+        // A system this mission offers no course to loses its NAME, not its
+        // star: the map then reads as "where this mission will take you" at a
+        // glance, while every dot stays pickable. `show_all_labels` restores
+        // the rest, dimmed, for a player navigating on their own.
         labelEl.innerHTML = discs + (state.labels || []).filter(function (l) {
-            return l.visible;
+            return l.visible && (showAll || l.offered !== false);
         }).map(function (l) {
             // Python already exempts here/course/mission systems from the
             // offer test (star_map.build_scene), so `offered === false` here
@@ -77,6 +85,16 @@ function setStarMapPanel(state) {
     if (warpBtnEl) {
         warpBtnEl.disabled = !state.warp_enabled;
         if (state.warp_label) warpBtnEl.textContent = String(state.warp_label);
+    }
+
+    // Offered only when something is actually withheld — a switch with
+    // nothing on the other side is worse than no switch. It stays offered
+    // while show-all is on, so the map can be put back.
+    const showAllEl = document.getElementById('star-map-show-all');
+    if (showAllEl) {
+        showAllEl.style.display = state.has_hidden_labels ? '' : 'none';
+        showAllEl.textContent = 'Show all: ' + (showAll ? 'Yes' : 'No');
+        showAllEl.classList.toggle('sm-toggle--on', showAll);
     }
 
     const targetsEl = document.getElementById('star-map-targets');

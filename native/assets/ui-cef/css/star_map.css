@@ -59,11 +59,36 @@
     height: 54px;
     box-sizing: border-box;
     align-items: center;
-    /* Warp sits bottom-LEFT, Cancel stays bottom-right. The shared .cp-footer
-       is flex-end; overriding here rather than there keeps every other cp-*
-       modal's single right-aligned button where it is. */
+    /* Cancel bottom-LEFT, the Warp group bottom-right — the primary action
+       where the eye ends up. The shared .cp-footer is flex-end; overriding
+       here rather than there keeps every other cp-* modal's single
+       right-aligned button where it is. DOM order in index.html is what
+       decides the sides under space-between. */
     justify-content: space-between;
 }
+
+/* Keeps the "show all" toggle and Warp together as the right-hand group,
+   so space-between pushes the pair right instead of spreading all three. */
+#star-map-panel .sm-footer-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Deliberately quieter than .cp-done-button: this is a view preference, not
+   an action, and it must not read as a third peer of Cancel/Warp. */
+.sm-toggle {
+    padding: 4px 10px;
+    font-size: 12px;
+    color: #8a93a3;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.sm-toggle:hover { color: #cdd3dc; border-color: rgba(255, 255, 255, 0.35); }
+.sm-toggle--on   { color: #cdd3dc; border-color: rgba(255, 255, 255, 0.45); }
 #star-map-warp:disabled {
     opacity: 0.4;
     cursor: default;

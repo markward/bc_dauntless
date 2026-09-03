@@ -101,6 +101,7 @@ class StarMapPanel(Panel):
         self._selected_system: Optional[str] = None
         self._here_system: Optional[str] = None
         self._last_pushed: Optional[str] = None
+        self._show_all_labels = False
         self.rect = MAP_RECT
         self.cam = star_map.StarMapCamera(anchor=(0.0, 0.0, 0.0))
         self.scene = star_map.build_scene(model={"systems": [], "nebulae": [],
@@ -165,6 +166,9 @@ class StarMapPanel(Panel):
         self._course_menu = course_menu
         self._selected_system = None
         self._visible = True
+        # A transient look-around, not a preference: every opening presents
+        # the mission's own shortlist first.
+        self._show_all_labels = False
         here, anchor = star_map.resolve_anchor(set_name)
         self._here_system = here
         self.cam = star_map.StarMapCamera(anchor=anchor)
@@ -354,15 +358,14 @@ class StarMapPanel(Panel):
                                          and r.get("module") == mission_dest))}
                     for r in rows]
 
-        # The mission's own offer FIRST. BC's Set Course list is what the
-        # mission built (E3M2 creates two systems, not the galaxy); the baked
-        # catalog knows all 34 charted systems and every region in them, which
-        # is right for drawing the map and wrong for saying where you may go.
+        # The mission's own offer FIRST: it is authoritative about labels and
+        # about regions the offline bake never saw. But it is NOT a gate — a
+        # system the mission never mentioned is still somewhere the player may
+        # choose to go, so an absent or empty offer falls through to the
+        # catalog rather than presenting a dead end.
         offered = self._offered_rows(sid)
-        if offered is not None:
-            if offered:
-                return (shaped(offered), None)
-            return ([], "This mission offers no course to this system.")
+        if offered:
+            return (shaped(offered), None)
 
         catalog = sm.warp_points_for(sid)
         if catalog:
@@ -379,13 +382,11 @@ class StarMapPanel(Panel):
         if sid is None:
             return None
         # Resolved from the same source the row was listed from, so a row the
-        # offline bake never saw is still actionable.
-        offered = self._offered_rows(sid)
-        if offered is not None:
-            for r in offered:
-                if r["id"] == warp_id:
-                    return r["module"]
-            return None
+        # offline bake never saw is still actionable — and so a catalog row
+        # for an unoffered system still resolves (see _warp_rows).
+        for r in self._offered_rows(sid) or ():
+            if r["id"] == warp_id:
+                return r["module"]
         for wp in sm.warp_points_for(sid):
             if wp["id"] == warp_id:
                 return wp.get("module")
@@ -412,6 +413,14 @@ class StarMapPanel(Panel):
             "warp_label": self._warp_label(),
             "targets_title": (sm.display_label(self._selected_system)
                               if self._targets_open() else ""),
+            # Unlisted systems keep their dot but lose their name, so the map
+            # reads as "where this mission will take you" at a glance. The
+            # toggle restores the rest; it is offered only when something is
+            # actually being withheld, and stays offered while show-all is on
+            # so the player can put the map back.
+            "show_all_labels": self._show_all_labels,
+            "has_hidden_labels": any(not p.get("offered", True)
+                                     for p in self.scene["points"]),
             "here_system": self._here_system,
             "course_system": self._course_system() if self._visible else None,
             "mission_systems": self._mission_systems() if self._visible else [],
@@ -443,6 +452,11 @@ class StarMapPanel(Panel):
                 import App
                 self._on_warp_engage(App.SortedRegionMenu_GetWarpButton())
             self.close()
+            return True
+        if action == "toggle-labels":
+            # Deliberately NOT in _MAP_ACTIONS: it is chrome, not a map
+            # gesture, so it keeps working while the target popup is up.
+            self._show_all_labels = not self._show_all_labels
             return True
         if action == "back":
             # Dismiss the target popup and return to the map. Deliberately
