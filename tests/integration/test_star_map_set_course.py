@@ -315,3 +315,47 @@ def test_esc_through_the_modal_dispatcher_closes_the_map():
     _dispatch_modal_esc([panel], _FakeCrewMenu(False),
                         _PauseMenuController(), _Host())
     assert panel.is_open() is False
+
+
+# --- closing must actually tell CEF to hide -------------------------------
+
+def _drain(registry):
+    registry.render_all()
+
+
+def test_esc_pushes_the_payload_that_hides_the_panel():
+    """ESC left the chrome on screen over a dead map.
+
+    PanelRegistry does not poll a panel that is not visible — safe only
+    because the FLIP to hidden marks it due, and that marking lives in the
+    Panel.visible SETTER. close() assigned self._visible directly, so the flip
+    was never observed, the panel was skipped from that frame on, and the
+    payload carrying visible:false never went out. The GL pass went dark
+    (it reads is_open() itself) while CEF kept drawing the labels and footer.
+    """
+    registry = PanelRegistry()
+    panel = StarMapPanel()
+    registry.register(panel)
+    panel.open(set_name="Vesuvi6")
+    _drain(registry)
+
+    panel.handle_key_esc()
+
+    out = registry.render_all()
+    assert any('"visible": false' in js for js in out), (
+        "closing must emit a payload that hides the panel in CEF")
+
+
+def test_cancel_pushes_the_hide_payload_too():
+    """The path that always worked — dispatch_event marks the panel due — so
+    a fix that only repaired ESC would still leave this passing."""
+    registry = PanelRegistry()
+    panel = StarMapPanel()
+    registry.register(panel)
+    panel.open(set_name="Vesuvi6")
+    _drain(registry)
+
+    registry.dispatch("star-map/cancel")
+
+    out = registry.render_all()
+    assert any('"visible": false' in js for js in out)

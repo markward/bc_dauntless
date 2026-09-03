@@ -165,7 +165,10 @@ class StarMapPanel(Panel):
     def open(self, course_menu=None, set_name=None) -> None:
         self._course_menu = course_menu
         self._selected_system = None
-        self._visible = True
+        # Through the SETTER, never self._visible: the setter is what marks
+        # the panel due on a flip, and PanelRegistry does not poll a panel
+        # that is not visible. See close().
+        self.visible = True
         # A transient look-around, not a preference: every opening presents
         # the mission's own shortlist first.
         self._show_all_labels = False
@@ -175,7 +178,15 @@ class StarMapPanel(Panel):
         self._rebuild_scene()
 
     def close(self) -> None:
-        self._visible = False
+        # Through the SETTER. PanelRegistry skips panels that are not visible,
+        # which is safe ONLY because the flip to hidden marks the panel due for
+        # one more frame — and that marking lives in the setter. Assigning
+        # self._visible directly skipped it, so the payload carrying
+        # visible:false never went out: ESC killed the GL map (which reads
+        # is_open() itself, every frame) and left the CEF labels and footer
+        # drawn over the bridge. Cancel escaped it only because dispatching an
+        # event marks the panel due as well.
+        self.visible = False
         # Drop the SDK menu handle. It belongs to the mission that opened the
         # modal, and this panel outlives mission swaps — retaining it would
         # keep a dead SortedRegionMenu (and everything it owns) alive across
