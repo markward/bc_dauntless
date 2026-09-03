@@ -453,8 +453,13 @@ def test_a_system_outside_the_offer_is_dimmed():
     # Dimmed to half brightness. StarMapPoint carries no alpha channel, so
     # 50% is expressed as colour against the map's dark backdrop rather than
     # as true transparency — same result, no native change.
-    assert other["color"] == tuple(c * sm.INERT_DIM
-                                   for c in sm.STAR_COLOR)
+    #
+    # Scaled from the star's OWN colour (its SDK sun texture), not from a
+    # single STAR_COLOR: this runs on the real sector model, where most
+    # systems now declare one.
+    full = sm.build_scene()
+    base = next(p["color"] for p in full["points"] if p["id"] == other["id"])
+    assert other["color"] == tuple(c * sm.INERT_DIM for c in base)
 
 
 def test_an_unoffered_star_is_still_pickable():
@@ -543,3 +548,97 @@ def test_the_opening_view_is_pinned_and_leaves_room_to_zoom_both_ways():
     # Several steps of headroom each way, not a token margin.
     assert sm.DEFAULT_DISTANCE >= sm.MIN_DISTANCE * sm.ZOOM_STEP ** 5
     assert sm.DEFAULT_DISTANCE <= sm.MAX_DISTANCE / sm.ZOOM_STEP ** 5
+
+
+# --- star colour from the SDK's own sun texture ----------------------------
+# Systems/<Name>/*_S.py calls App.Sun_Create(radius, atmosphere, damage,
+# baseTexture, flareTexture). The colour is carried by the TEXTURE NAME, not
+# a hex — four named textures plus an untextured default (SunBase). The class
+# is baked into sector_model.json; the palette lives here, because this file
+# keeps colours in Python so a tuning pass costs a refresh, not a re-bake.
+
+def _starred_model():
+    m = _model()
+    m["systems"][0]["star"] = "SunBlueWhite"     # vesuvi
+    m["systems"][1]["star"] = "SunYellow"        # tevron
+    # albirea deliberately has none — 7 charted systems call no Sun_Create.
+    return m
+
+
+def test_a_systems_star_takes_its_suns_colour():
+    scene = sm.build_scene(model=_starred_model())
+    by_id = {p["id"]: p for p in scene["points"]}
+    assert by_id["vesuvi"]["color"] == sm.STAR_COLORS["SunBlueWhite"]
+    assert by_id["tevron"]["color"] == sm.STAR_COLORS["SunYellow"]
+
+
+def test_a_system_with_no_sun_keeps_the_default_star_colour():
+    """Vesuvi and Belaruz among others define no Sun_Create at all. They must
+    look as they always have rather than fall to black or to an arbitrary
+    entry in the table."""
+    scene = sm.build_scene(model=_starred_model())
+    by_id = {p["id"]: p for p in scene["points"]}
+    assert by_id["albirea"]["color"] == sm.STAR_COLOR
+
+
+def test_an_unknown_texture_class_falls_back_rather_than_raising():
+    """The baker reads whatever the SDK says. A texture nobody has mapped yet
+    must degrade to the default colour, not kill the whole map."""
+    m = _model()
+    m["systems"][0]["star"] = "SunSomethingNew"
+    scene = sm.build_scene(model=m)
+    by_id = {p["id"]: p for p in scene["points"]}
+    assert by_id["vesuvi"]["color"] == sm.STAR_COLOR
+
+
+def test_an_unoffered_star_dims_its_OWN_colour():
+    """The offer dims by INERT_DIM. That must scale the star's real colour —
+    dimming a hardcoded amber would repaint every unlisted star the same hue
+    and quietly undo this feature wherever it matters most (the dim field)."""
+    scene = sm.build_scene(model=_starred_model(), offered_ids={"tevron"})
+    by_id = {p["id"]: p for p in scene["points"]}
+    expected = tuple(c * sm.INERT_DIM for c in sm.STAR_COLORS["SunBlueWhite"])
+    assert by_id["vesuvi"]["color"] == expected
+
+
+def test_the_default_class_stays_in_the_familiar_amber_family():
+    """SunBase is what the 7 untextured Sun_Create calls get, so those systems
+    should still read as the amber the map has always used.
+
+    #ffb56e against the existing #ffb454: red and green land within 0.004,
+    and BLUE is the one that moved — 0.10 (0x6e vs 0x54), i.e. the sampled
+    default is slightly paler. Pinned per-channel with the blue tolerance
+    stated separately rather than hidden behind one loose number, so a future
+    change that shifts the HUE fails even though this one does not."""
+    r, g, b = sm.STAR_COLORS["SunBase"]
+    dr, dg, db = sm.STAR_COLOR
+    assert abs(r - dr) < 0.01, "red must not move"
+    assert abs(g - dg) < 0.01, "green must not move"
+    assert abs(b - db) < 0.12, "paler is fine; a different hue is not"
+
+
+def test_every_baked_star_class_has_a_colour():
+    """The json is baked from the SDK, the palette is hand-written here. A
+    class appearing in one and not the other degrades silently to the default
+    amber — the star would simply look wrong, with nothing failing.
+
+    Re-run tools/bake_star_colors.py after an SDK change; if it introduces a
+    new texture, add it to STAR_COLORS."""
+    from engine.appc.sector_model import load_sector_model
+    baked = {s["star"] for s in load_sector_model().get("systems", [])
+             if s.get("star")}
+    assert baked, "no system carries a star class — did the bake run?"
+    missing = baked - set(sm.STAR_COLORS)
+    assert not missing, "baked classes with no colour: " + ", ".join(
+        sorted(missing))
+
+
+def test_the_real_sector_shows_more_than_one_star_colour():
+    """Guards the whole feature against a bake that silently produced one
+    class for everything (or nothing at all) — the map would look exactly as
+    it did before and every other test here would still pass, since they run
+    on a synthetic model."""
+    from engine.appc.sector_model import load_sector_model
+    scene = sm.build_scene(model=load_sector_model())
+    colours = {p["color"] for p in scene["points"]}
+    assert len(colours) >= 4, sorted(colours)

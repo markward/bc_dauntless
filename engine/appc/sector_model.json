@@ -24,7 +24,8 @@
           "module": "Systems.Albirea.Albirea3"
         }
       ],
-      "module": "Systems.Albirea.Albirea3"
+      "module": "Systems.Albirea.Albirea3",
+      "star": "SunRed"
     },
     {
       "id": "alioth",
@@ -75,7 +76,8 @@
           "module": "Systems.Alioth.Alioth8"
         }
       ],
-      "module": "Systems.Alioth.Alioth8"
+      "module": "Systems.Alioth.Alioth8",
+      "star": "SunYellow"
     },
     {
       "id": "artrus",
@@ -101,7 +103,8 @@
           "module": "Systems.Artrus.Artrus3"
         }
       ],
-      "module": "Systems.Artrus.Artrus3"
+      "module": "Systems.Artrus.Artrus3",
+      "star": "SunBlueWhite"
     },
     {
       "id": "ascella",
@@ -137,7 +140,8 @@
           "module": "Systems.Ascella.Ascella5"
         }
       ],
-      "module": "Systems.Ascella.Ascella5"
+      "module": "Systems.Ascella.Ascella5",
+      "star": "SunRedOrange"
     },
     {
       "id": "belaruz",
@@ -199,7 +203,8 @@
           "module": "Systems.Beol.Beol4"
         }
       ],
-      "module": "Systems.Beol.Beol4"
+      "module": "Systems.Beol.Beol4",
+      "star": "SunBlueWhite"
     },
     {
       "id": "biranu",
@@ -220,7 +225,8 @@
           "module": "Systems.Biranu.Biranu2"
         }
       ],
-      "module": "Systems.Biranu.Biranu2"
+      "module": "Systems.Biranu.Biranu2",
+      "star": "SunBase"
     },
     {
       "id": "cebalrai",
@@ -246,7 +252,8 @@
           "module": "Systems.Cebalrai.Cebalrai3"
         }
       ],
-      "module": "Systems.Cebalrai.Cebalrai3"
+      "module": "Systems.Cebalrai.Cebalrai3",
+      "star": "SunRed"
     },
     {
       "id": "chambana",
@@ -267,7 +274,8 @@
           "module": "Systems.Chambana.Chambana2"
         }
       ],
-      "module": "Systems.Chambana.Chambana2"
+      "module": "Systems.Chambana.Chambana2",
+      "star": "SunRedOrange"
     },
     {
       "id": "deepspace",
@@ -306,7 +314,8 @@
           "module": "Systems.Geble.Geble4"
         }
       ],
-      "module": "Systems.Geble.Geble4"
+      "module": "Systems.Geble.Geble4",
+      "star": "SunYellow"
     },
     {
       "id": "itari",
@@ -357,7 +366,8 @@
           "module": "Systems.Itari.Itari8"
         }
       ],
-      "module": "Systems.Itari.Itari8"
+      "module": "Systems.Itari.Itari8",
+      "star": "SunBase"
     },
     {
       "id": "multi1",
@@ -495,7 +505,8 @@
           "module": "Systems.Nepenthe.Nepenthe3"
         }
       ],
-      "module": "Systems.Nepenthe.Nepenthe3"
+      "module": "Systems.Nepenthe.Nepenthe3",
+      "star": "SunBase"
     },
     {
       "id": "omegadraconis",
@@ -531,7 +542,8 @@
           "module": "Systems.OmegaDraconis.OmegaDraconis5"
         }
       ],
-      "module": "Systems.OmegaDraconis.OmegaDraconis5"
+      "module": "Systems.OmegaDraconis.OmegaDraconis5",
+      "star": "SunYellow"
     },
     {
       "id": "ona",
@@ -557,7 +569,8 @@
           "module": "Systems.Ona.Ona3"
         }
       ],
-      "module": "Systems.Ona.Ona3"
+      "module": "Systems.Ona.Ona3",
+      "star": "SunRed"
     },
     {
       "id": "poseidon",
@@ -578,7 +591,8 @@
           "module": "Systems.Poseidon.Poseidon2"
         }
       ],
-      "module": "Systems.Poseidon.Poseidon2"
+      "module": "Systems.Poseidon.Poseidon2",
+      "star": "SunBase"
     },
     {
       "id": "prendel",
@@ -614,7 +628,8 @@
           "module": "Systems.Prendel.Prendel5"
         }
       ],
-      "module": "Systems.Prendel.Prendel5"
+      "module": "Systems.Prendel.Prendel5",
+      "star": "SunYellow"
     },
     {
       "id": "riha",
@@ -624,7 +639,8 @@
         9.67
       ],
       "warp_points": [],
-      "module": "Systems.Riha.Riha1"
+      "module": "Systems.Riha.Riha1",
+      "star": "SunBase"
     },
     {
       "id": "savoy",
@@ -650,7 +666,8 @@
           "module": "Systems.Savoy.Savoy3"
         }
       ],
-      "module": "Systems.Savoy.Savoy3"
+      "module": "Systems.Savoy.Savoy3",
+      "star": "SunYellow"
     },
     {
       "id": "serris",
@@ -676,7 +693,8 @@
           "module": "Systems.Serris.Serris3"
         }
       ],
-      "module": "Systems.Serris.Serris3"
+      "module": "Systems.Serris.Serris3",
+      "star": "SunRed"
     },
     {
       "id": "tevron",
@@ -697,7 +715,8 @@
           "module": "Systems.Tevron.Tevron2"
         }
       ],
-      "module": "Systems.Tevron.Tevron2"
+      "module": "Systems.Tevron.Tevron2",
+      "star": "SunYellow"
     },
     {
       "id": "tezle",
@@ -718,7 +737,8 @@
           "module": "Systems.Tezle.Tezle2"
         }
       ],
-      "module": "Systems.Tezle.Tezle2"
+      "module": "Systems.Tezle.Tezle2",
+      "star": "SunBlueWhite"
     },
     {
       "id": "vesuvi",
@@ -765,7 +785,8 @@
           "module": "Systems.Voltair.Voltair2"
         }
       ],
-      "module": "Systems.Voltair.Voltair2"
+      "module": "Systems.Voltair.Voltair2",
+      "star": "SunRed"
     },
     {
       "id": "xientrades",
@@ -801,7 +822,8 @@
           "module": "Systems.XiEntrades.XiEntrades5"
         }
       ],
-      "module": "Systems.XiEntrades.XiEntrades5"
+      "module": "Systems.XiEntrades.XiEntrades5",
+      "star": "SunRedOrange"
     },
     {
       "id": "yiles",
@@ -832,7 +854,8 @@
           "module": "Systems.Yiles.Yiles4"
         }
       ],
-      "module": "Systems.Yiles.Yiles4"
+      "module": "Systems.Yiles.Yiles4",
+      "star": "SunRedOrange"
     },
     {
       "id": "tauceti",
@@ -853,7 +876,8 @@
           "module": "Systems.Starbase12.Starbase12"
         }
       ],
-      "module": null
+      "module": null,
+      "star": "SunBlueWhite"
     }
   ],
   "nebulae": [

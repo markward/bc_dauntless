@@ -32,6 +32,39 @@ MARK_MISSION = 3    # offered by the live SDK Set Course menu
 # Every value here is a Python constant precisely so a live tuning pass costs
 # a page refresh, not a rebuild. The pass interprets none of them.
 STAR_COLOR = (1.000, 0.706, 0.329)      # POC #ffb454 — halo tint; core is white
+
+# Per-system star colour, keyed by the SDK's own sun TEXTURE. BC carries a
+# star's colour in the texture name, not as a value: Systems/<Name>/*_S.py
+# calls App.Sun_Create(radius, atmosphere, damage, baseTexture, flareTexture)
+# and passes one of four textures, or none at all (which is SunBase). The
+# class per system is baked into sector_model.json by tools/bake_star_colors.py;
+# the colours live HERE, with the rest of the palette, so a tuning pass costs a
+# refresh rather than a re-bake.
+#
+# Each value is derived from the real texture in game/data/Textures: the MEAN
+# of its pixels, max-normalised, then lifted 40% toward white. Three steps,
+# each earning its place —
+#   * the mean, not the bright core: every sun texture is near-white at the
+#     centre, so sampling the core returns roughly the same pale colour for
+#     all five and throws the distinction away;
+#   * max-normalised, because the raw means differ nearly 4x in brightness
+#     (SunYellow's is #848400) and a chart wants stars of comparable weight,
+#     not a dim olive dot beside a bright blue one;
+#   * lifted toward white, because a star is a light source — at full
+#     saturation these read as alarm colours rather than as suns.
+#
+# SunRed and SunRedOrange land almost on top of each other (#ff826d vs
+# #ff8568), and that is FAITHFUL, not a sampling artefact: their raw means are
+# #ea2c0c and #e42f04. BC's two textures differ in flare detail, not average
+# hue. Kept as sampled (Mark, 2026-09-03) rather than nudged apart, so the map
+# reports what the source data says.
+STAR_COLORS = {
+    "SunBase":      (1.000, 0.710, 0.431),   # #ffb56e — the untextured default
+    "SunYellow":    (1.000, 1.000, 0.400),   # #ffff66
+    "SunRedOrange": (1.000, 0.522, 0.408),   # #ff8568
+    "SunRed":       (1.000, 0.510, 0.427),   # #ff826d
+    "SunBlueWhite": (0.682, 0.682, 1.000),   # #aeaeff
+}
 GRID_COLOR = (0.086, 0.204, 0.361)      # POC 0x16345c
 DROP_COLOR = (0.114, 0.227, 0.388)      # POC 0x1d3a63
 
@@ -326,8 +359,16 @@ def build_scene(*, model=None, here_id=None, course_id=None,
                    # implementation detail and this is a rule.
                    or sid == here_id
                    or sid in reticled)
-        color = (STAR_COLOR if offered
-                 else tuple(c * INERT_DIM for c in STAR_COLOR))
+        # The star's OWN colour, from its SDK sun texture. `.get` twice: a
+        # system may declare no Sun_Create at all (7 charted ones do not), and
+        # the baker reports whatever texture the SDK names — an unmapped one
+        # must degrade to the default rather than kill the map.
+        base = STAR_COLORS.get(s.get("star"), STAR_COLOR)
+        # Dim the star's own colour, never a hardcoded amber: doing the latter
+        # would repaint every unlisted system the same hue and undo this
+        # feature exactly where most of the map lives.
+        color = (base if offered
+                 else tuple(c * INERT_DIM for c in base))
         points.append({"id": sid, "position": by_id[sid],
                        "label": sm.display_label(sid), "color": color,
                        "selected": sid == selected_id, "offered": offered,
