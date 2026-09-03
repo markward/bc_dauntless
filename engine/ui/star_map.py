@@ -65,6 +65,23 @@ STAR_COLORS = {
     "SunRed":       (1.000, 0.510, 0.427),   # #ff826d
     "SunBlueWhite": (0.682, 0.682, 1.000),   # #aeaeff
 }
+
+# AUTHORED colours, keyed by charted system id. These outrank the baked sun
+# texture and are deliberately NOT in sector_model.json: that file holds only
+# what tools/bake_star_colors.py extracted from the SDK, so an authored value
+# there would either misrepresent the extraction or be stripped by the next
+# bake.
+#
+# vesuvi — a dead ember rather than the default amber. The SDK gives Vesuvi no
+# Sun_Create in any of its regions, which reads as an omission until you
+# notice what the mission says about the place: E3M2's goal text has the crew
+# scanning "the stellar debris in the dust cloud to get a better idea of what
+# caused the solar pulse", and Liu's briefing calls the whole system a relief
+# operation. The dust cloud IS the star. Amber said "ordinary system"; this
+# says what happened there.
+STAR_OVERRIDES = {
+    "vesuvi": (0.420, 0.267, 0.137),        # #6b4423 — dark brown, burnt out
+}
 GRID_COLOR = (0.086, 0.204, 0.361)      # POC 0x16345c
 DROP_COLOR = (0.114, 0.227, 0.388)      # POC 0x1d3a63
 
@@ -359,11 +376,13 @@ def build_scene(*, model=None, here_id=None, course_id=None,
                    # implementation detail and this is a rule.
                    or sid == here_id
                    or sid in reticled)
-        # The star's OWN colour, from its SDK sun texture. `.get` twice: a
-        # system may declare no Sun_Create at all (7 charted ones do not), and
-        # the baker reports whatever texture the SDK names — an unmapped one
-        # must degrade to the default rather than kill the map.
-        base = STAR_COLORS.get(s.get("star"), STAR_COLOR)
+        # The star's OWN colour. Precedence: authored override > the SDK sun
+        # texture > the default amber. `.get` throughout: a system may declare
+        # no Sun_Create at all (10 charted ones do not), and the baker reports
+        # whatever texture the SDK names — an unmapped one must degrade to the
+        # default rather than kill the map.
+        base = STAR_OVERRIDES.get(
+            sid, STAR_COLORS.get(s.get("star"), STAR_COLOR))
         # Dim the star's own colour, never a hardcoded amber: doing the latter
         # would repaint every unlisted system the same hue and undo this
         # feature exactly where most of the map lives.

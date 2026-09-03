@@ -557,6 +557,16 @@ def test_the_opening_view_is_pinned_and_leaves_room_to_zoom_both_ways():
 # is baked into sector_model.json; the palette lives here, because this file
 # keeps colours in Python so a tuning pass costs a refresh, not a re-bake.
 
+@pytest.fixture
+def no_overrides(monkeypatch):
+    """Clear the authored overrides for tests about the CLASS TABLE.
+
+    The synthetic model reuses real charted ids, and "vesuvi" now carries an
+    authored colour — so without this these read the override and say nothing
+    about the sun-texture lookup they exist to check."""
+    monkeypatch.setattr(sm, "STAR_OVERRIDES", {})
+
+
 def _starred_model():
     m = _model()
     m["systems"][0]["star"] = "SunBlueWhite"     # vesuvi
@@ -565,14 +575,14 @@ def _starred_model():
     return m
 
 
-def test_a_systems_star_takes_its_suns_colour():
+def test_a_systems_star_takes_its_suns_colour(no_overrides):
     scene = sm.build_scene(model=_starred_model())
     by_id = {p["id"]: p for p in scene["points"]}
     assert by_id["vesuvi"]["color"] == sm.STAR_COLORS["SunBlueWhite"]
     assert by_id["tevron"]["color"] == sm.STAR_COLORS["SunYellow"]
 
 
-def test_a_system_with_no_sun_keeps_the_default_star_colour():
+def test_a_system_with_no_sun_keeps_the_default_star_colour(no_overrides):
     """Vesuvi and Belaruz among others define no Sun_Create at all. They must
     look as they always have rather than fall to black or to an arbitrary
     entry in the table."""
@@ -581,7 +591,7 @@ def test_a_system_with_no_sun_keeps_the_default_star_colour():
     assert by_id["albirea"]["color"] == sm.STAR_COLOR
 
 
-def test_an_unknown_texture_class_falls_back_rather_than_raising():
+def test_an_unknown_texture_class_falls_back_rather_than_raising(no_overrides):
     """The baker reads whatever the SDK says. A texture nobody has mapped yet
     must degrade to the default colour, not kill the whole map."""
     m = _model()
@@ -591,7 +601,7 @@ def test_an_unknown_texture_class_falls_back_rather_than_raising():
     assert by_id["vesuvi"]["color"] == sm.STAR_COLOR
 
 
-def test_an_unoffered_star_dims_its_OWN_colour():
+def test_an_unoffered_star_dims_its_OWN_colour(no_overrides):
     """The offer dims by INERT_DIM. That must scale the star's real colour —
     dimming a hardcoded amber would repaint every unlisted star the same hue
     and quietly undo this feature wherever it matters most (the dim field)."""
@@ -642,3 +652,36 @@ def test_the_real_sector_shows_more_than_one_star_colour():
     scene = sm.build_scene(model=load_sector_model())
     colours = {p["color"] for p in scene["points"]}
     assert len(colours) >= 4, sorted(colours)
+
+
+def test_vesuvis_star_is_authored_dead_rather_than_defaulted():
+    """Vesuvi declares no Sun_Create anywhere, so it fell to the default amber
+    like any unlisted system. But its star is not merely undocumented — E3M2's
+    own goal text has the crew scanning "the stellar debris in the dust cloud
+    to get a better idea of what caused the solar pulse". The dust cloud IS
+    the star. It renders as a dead ember.
+
+    An AUTHORED override, deliberately not baked: the SDK says nothing about
+    this star, so putting it in sector_model.json would either be a lie about
+    what was extracted or get stripped by the next bake."""
+    from engine.appc.sector_model import load_sector_model
+    baked = {s["id"]: s for s in load_sector_model().get("systems", [])}
+    assert baked["vesuvi"].get("star") is None, (
+        "the override must be what colours Vesuvi — if the bake ever gives it "
+        "a star class, this test is passing for the wrong reason")
+
+    scene = sm.build_scene()
+    colour = next(p["color"] for p in scene["points"] if p["id"] == "vesuvi")
+    assert colour == sm.STAR_OVERRIDES["vesuvi"]
+    assert colour != sm.STAR_COLOR
+
+
+def test_an_authored_override_outranks_the_baked_sun_texture(monkeypatch):
+    """Precedence: authored > SDK class > default. Without this the override
+    would be silently ignored the moment someone gave that system a sun."""
+    monkeypatch.setitem(sm.STAR_OVERRIDES, "tevron", (0.1, 0.2, 0.3))
+    m = _model()
+    m["systems"][1]["star"] = "SunYellow"        # tevron, baked
+    scene = sm.build_scene(model=m)
+    by_id = {p["id"]: p for p in scene["points"]}
+    assert by_id["tevron"]["color"] == (0.1, 0.2, 0.3)
