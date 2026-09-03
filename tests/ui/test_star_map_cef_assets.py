@@ -614,3 +614,36 @@ def test_the_here_arrow_is_rendered_from_the_payload():
     js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
     assert "here_marker" in js
     assert "sm-here-arrow" in js
+
+
+def _z_index(css, selector):
+    block = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+    assert block, "no " + selector + " rule"
+    m = re.search(r"z-index\s*:\s*(-?\d+)", block.group(1))
+    return int(m.group(1)) if m else None
+
+
+def test_the_label_layer_cannot_paint_over_the_target_popup():
+    """System names and the here-arrow must stay UNDER the target popup.
+
+    They carry z-index so names sit above nebula labels. Without a z-index on
+    #star-map-labels that container never forms a stacking context, so those
+    leaf values escape it and compete with the popup directly — which paints
+    at `auto` and therefore loses. That shipped: the Tau Ceti name and the
+    arrow drew straight through the open target card.
+
+    So the invariant is TWO things, and the first is the one that is easy to
+    delete by accident: the label layer must establish a stacking context of
+    its own, AND the popup must outrank it.
+    """
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+    labels_z = _z_index(css, "#star-map-labels")
+    assert labels_z is not None, (
+        "#star-map-labels needs a z-index to contain its children's stacking")
+    targets_z = _z_index(css, "#star-map-targets")
+    assert targets_z is not None, "#star-map-targets needs an explicit z-index"
+    assert targets_z > labels_z
+
+    # The leaf order INSIDE the layer is still the one the map needs.
+    assert (_z_index(css, ".sm-here-arrow") > _z_index(css, ".sm-label")
+            > _z_index(css, ".sm-label--disc"))

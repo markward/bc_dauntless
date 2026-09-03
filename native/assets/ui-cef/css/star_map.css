@@ -128,7 +128,16 @@
 }
 #star-map-viewport:active { cursor: grabbing; }
 
-#star-map-labels { position: absolute; inset: 0; pointer-events: none; }
+/* z-index is LOAD BEARING, not decoration: it makes this a stacking context,
+   which CONTAINS the z-index of the names and the here-arrow inside it. With
+   `position` alone the container stays at `z-index: auto` and forms no
+   context, so those leaf values escape and compete with #star-map-targets —
+   which paints at `auto` and therefore loses. That shipped once: the system
+   name and the arrow drew straight through the open target card. */
+#star-map-labels {
+    position: absolute; inset: 0; pointer-events: none;
+    z-index: 1;
+}
 /* System names. Amber, uppercase, weight 700 with a soft black halo — the
    POC's chart-display treatment, matching the amber star halo they label.
    Keep the colours here in step with STAR_COLOR / MARK_*_COLOR in
@@ -244,6 +253,10 @@
     background: rgb(20, 22, 28);
     border: 1px solid rgba(255, 255, 255, 0.18);
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+    /* Above the whole label layer (#star-map-labels is z-index 1). This popup
+       is modal over the map — orbit, zoom and picking are all ignored while
+       it is up — so nothing from the map beneath may paint across it. */
+    z-index: 2;
 }
 #star-map-targets-head {
     display: flex; align-items: center; gap: 10px;
