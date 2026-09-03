@@ -25,7 +25,7 @@ const CP_MASTERS = [
 
 // Graphics-tab controls in rendered order: the standalone rows, then the
 // masters. Single source for both the focusable list and the rendered rows.
-const CP_GRAPHICS_STANDALONE = ['smaa', 'fov'];
+const CP_GRAPHICS_STANDALONE = ['smaa', 'dust', 'fov'];
 const CP_GRAPHICS_CTRLS =
     CP_GRAPHICS_STANDALONE.concat(CP_MASTERS.map(m => m[0]));
 
@@ -86,6 +86,7 @@ function _cpRenderGraphicsBody(state, focusables) {
     let html = '';
 
     html += _cpToggleRow('Anti-Aliasing (SMAA)', 'smaa', s.smaa_on, isFoc);
+    html += _cpToggleRow('Space Dust', 'dust', s.dust_on, isFoc);
 
     // FOV slider — listen on 'change' (released), not 'input' (every
     // pixel), so dragging doesn't flood the CEF event channel.

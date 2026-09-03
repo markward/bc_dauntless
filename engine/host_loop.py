@@ -7243,12 +7243,14 @@ def run(mission_name: Optional[str] = None,
                   ("controls", "Controls")],
             initial_settings=SettingsSnapshot(
                 smaa_on=True,
+                # No dust_enabled() getter; defaults on natively, like rim
+                # and shadows.
+                dust_on=True,
+                improved_space_on=(r.procedural_sky_enabled()
+                                   and r.volumetric_nebulae_enabled()),
                 # One row over four effects. The renderer exposes no
                 # hdr_enabled() getter (HDR defaults on natively), so the
                 # master reads as on only when all three that do report on.
-                # Dust has no getter and defaults on, like rim and shadows.
-                improved_space_on=(r.procedural_sky_enabled()
-                                   and r.volumetric_nebulae_enabled()),
                 camera_realism_on=(r.filmic_enabled()
                                 and r.motion_blur_enabled()
                                 and r.hdr_lens_flare_enabled()),

@@ -72,7 +72,7 @@ def test_initial_settings_round_trip_to_render_payload():
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
-        "smaa_on": True,
+        "smaa_on": True, "dust_on": True,
         "subtitles_on": True, "improved_space_on": True,
         "camera_realism_on": True, "realistic_lighting_on": True,
         "disable_annoying_dialogue_on": True,
@@ -269,7 +269,7 @@ def test_walking_focus_to_a_row_and_pressing_space_activates_it():
     for _ in range(steps):
         r.press(r.keys.KEY_DOWN); p.handle_input(r)
     r.press(r.keys.KEY_SPACE); p.handle_input(r)
-    kw["set_dust"].assert_called_once_with(False)
+    kw["set_procedural_sky"].assert_called_once_with(False)
 
 
 def test_right_arrow_on_fov_row_increments():
@@ -590,7 +590,38 @@ def test_absorbed_sub_toggle_no_longer_dispatches_or_focuses(member):
 def test_graphics_control_order_is_standalones_then_masters():
     p, _ = _make()
     ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
-    assert ctrls == ["smaa", "fov"] + list(MASTER_KEYS)
+    assert ctrls == ["smaa", "dust", "fov"] + list(MASTER_KEYS)
+
+
+def test_space_dust_is_its_own_toggle_not_a_master_member():
+    """Dust was folded into Improved Space Visuals and pulled back out after a
+    live look: it reads as its own thing, not part of the sky."""
+    p, kw = _make()
+    p.open()
+    assert p.dispatch_event("toggle:dust") is True
+    kw["set_dust"].assert_called_once_with(False)
+    assert p._settings.dust_on is False
+    assert p.dispatch_event("toggle:dust") is True
+    kw["set_dust"].assert_called_with(True)
+    # ...and no master may still claim it.
+    assert all("dust" not in members for _k, _l, members in MASTER_TOGGLES)
+
+
+def test_space_dust_in_render_payload():
+    p, _ = _make(initial_settings=SettingsSnapshot(fov_deg=70, dust_on=False))
+    p.open()
+    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert body["settings"]["dust_on"] is False
+
+
+def test_space_on_dust_row_toggles():
+    p, kw = _make()
+    p.open()
+    p._focused = p._focusables().index(("ctrl", "dust"))
+    r = _FakeReader()
+    r.press(r.keys.KEY_SPACE)
+    p.handle_input(r)
+    kw["set_dust"].assert_called_once_with(False)
 
 
 def test_decals_is_no_longer_a_setting():
