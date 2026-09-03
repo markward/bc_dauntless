@@ -72,6 +72,11 @@ def test_click_on_warp_button_engages_warp_with_widget(monkeypatch):
     seen = []
     panel = CrewMenuPanel(on_warp_engage=lambda w: seen.append(w))
     btn = STWarpButton("Warp")
+    # A course MUST be set: STWarpButton.IsEnabled() is false without a
+    # destination (BC's "enable warp button if it has a destination"), and
+    # dispatch_event refuses disabled widgets — so a course-less button here
+    # would test the refusal path, not the warp path.
+    btn.SetDestination("Systems.Vesuvi.Vesuvi4")
     wid = ensure_widget_id(btn)
     panel._widgets_by_id[wid] = btn
     # The warp button must NOT take the generic STButton path (no SDK event).
@@ -90,3 +95,26 @@ def test_warp_button_none_callback_is_silent_noop():
     wid = ensure_widget_id(btn)
     panel._widgets_by_id[wid] = btn
     assert panel.dispatch_event("click:" + str(wid)) is True
+
+
+def test_a_course_less_warp_button_does_not_engage():
+    """The user-facing half of the lockout fix.
+
+    Clicking Warp with no course greyed the Helm menu (engage_warp does that
+    before execute_warp) while the warp itself no-opped for want of a
+    destination — and the re-enable lives inside the warp sequence, so the
+    menu never came back. BC kept the button disabled until a course was set;
+    dispatch_event already refuses disabled widgets, so the click must never
+    reach the callback at all.
+    """
+    seen = []
+    panel = CrewMenuPanel(on_warp_engage=lambda w: seen.append(w))
+    btn = STWarpButton("Warp")                 # no destination
+    wid = ensure_widget_id(btn)
+    panel._widgets_by_id[wid] = btn
+
+    assert not btn.IsEnabled()
+    handled = panel.dispatch_event("click:" + str(wid))
+
+    assert handled is True                     # consumed, not passed onward
+    assert seen == [], "a course-less Warp click must not engage the spine"

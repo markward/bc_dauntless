@@ -140,6 +140,22 @@ class STWarpButton(STButton):
 
     def GetDestination(self):                return self._destination
 
+    # "Enable warp button if it has a destination" — BC's own rule, stated in
+    # BridgeUtils.RestoreWarpButton. HelmMenuHandlers creates this button and
+    # never enables it, and the SDK only ever RESTORES it after a mission
+    # deliberately barred warp, so the engine is what held the invariant.
+    #
+    # Unimplemented, the button was live with no course plotted. Clicking it
+    # greyed the Helm menu (host_loop.engage_warp, matching WarpPressed) while
+    # execute_warp no-opped for want of a destination — and the re-enable is
+    # scheduled INSIDE the warp sequence, so the menu never came back.
+    #
+    # An explicit SetDisabled still wins: BridgeUtils.DisableWarpButton bars
+    # warp mid-mission with a course still plotted (E3M2:1163, inside the
+    # nebula), and that bar has to outrank merely having somewhere to go.
+    def IsEnabled(self) -> int:
+        return 1 if (self._enabled and self._destination) else 0
+
     # --- engine-only, deliberately snake_case: NOT published SDK surface ---
     # A mission names its own destination by calling SetDestination above
     # (E3M2.py:2124 -> "Systems.Vesuvi.Vesuvi4"). Reading GetDestination() to

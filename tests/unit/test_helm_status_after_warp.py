@@ -92,24 +92,33 @@ def test_warp_engage_does_not_activate_the_officer(helm):
     assert helm.IsActive() == 0
 
 
-def test_the_warp_engage_path_actually_calls_it():
-    """Guard against dead code: the fix only works if on_warp_engage invokes it.
+def test_the_warp_engage_path_actually_calls_it(monkeypatch):
+    """Guard against dead code: the fix only works if the engage path runs it.
 
-    on_warp_engage is a closure inside host_loop.run(), so it cannot be imported
-    and called directly; this asserts the call site exists next to execute_warp.
-    Crude, but it catches the specific failure of shipping a correct function
-    nothing ever runs -- which is exactly the shape of the bug being fixed
-    (warp_gates faithfully reproduced WarpPressed's gating while its side
-    effects were quietly dropped).
+    This used to scrape host_loop.py's source, because on_warp_engage was a
+    closure inside run() and could not be imported. It is module-scope now
+    (host_loop.engage_warp), so call it and assert the Helm status really is
+    cleared — before execute_warp, matching BC's order in WarpPressed.
     """
-    import pathlib
-    src = (pathlib.Path(__file__).resolve().parents[2]
-           / "engine/host_loop.py").read_text()
-    assert "announce_warp_engaged()" in src
-    engage = src[src.index("def on_warp_engage"):]
-    # Slice on the CALL, not the bare name: the explanatory comment above it
-    # also says "execute_warp", and matching that cut the slice too early.
-    engage = engage[:engage.index("_w.execute_warp(")]
-    assert "announce_warp_engaged()" in engage, (
-        "announce_warp_engaged must be called inside on_warp_engage, before "
-        "execute_warp -- matching BC's order in WarpPressed")
+    import App
+    from engine import bridge_officers, host_loop
+    from engine.appc import warp as _warp
+    from engine.appc import warp_gates as _wg
+
+    # The gate runs first and denies with no player; without this the call
+    # would return early and the test would pass while proving nothing.
+    monkeypatch.setattr(_wg, "warp_gate", lambda p: _wg.GateResult(True))
+
+    order = []
+    monkeypatch.setattr(bridge_officers, "announce_warp_engaged",
+                        lambda: order.append("announce"))
+    monkeypatch.setattr(_warp, "execute_warp",
+                        lambda b: order.append("execute_warp"))
+
+    btn = App.STWarpButton_CreateW("Warp")
+    btn.SetDestination("Systems.Vesuvi.Vesuvi4")
+    App.SortedRegionMenu_SetWarpButton(btn)
+
+    host_loop.engage_warp(btn, None)
+
+    assert order == ["announce", "execute_warp"]

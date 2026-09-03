@@ -81,3 +81,52 @@ def test_player_course_selection_does_not_overwrite_the_mission_target():
     b.set_player_destination("Systems.Vesuvi.Vesuvi5")
     assert b.GetDestination() == "Systems.Vesuvi.Vesuvi5"
     assert b.get_mission_destination() == "Systems.Vesuvi.Vesuvi4"
+
+
+# --- the Warp button is enabled only with a course set --------------------
+# BC states the rule in BridgeUtils.RestoreWarpButton: "Enable warp button if
+# it has a destination." The engine maintained it internally — HelmMenuHandlers
+# creates the button and never enables it, and the SDK only ever RESTORES it
+# after a mission deliberately disabled it. Unimplemented, the button was
+# clickable with no course: on_warp_engage greys the Helm menu and only the
+# warp sequence re-enables it, so a course-less click locked the menu out for
+# the rest of the session.
+
+def test_the_warp_button_is_disabled_until_a_course_is_set():
+    b = STWarpButton()
+    assert not b.IsEnabled()
+
+
+def test_setting_a_destination_enables_it():
+    b = STWarpButton()
+    b.SetDestination("Systems.Vesuvi.Vesuvi4")
+    assert b.IsEnabled()
+
+
+def test_a_player_selected_course_enables_it_too():
+    """The star map writes through set_player_destination, not SetDestination
+    (it must not latch the mission's target) — and must still arm the button."""
+    b = STWarpButton()
+    b.set_player_destination("Systems.Vesuvi.Vesuvi5")
+    assert b.IsEnabled()
+
+
+def test_a_mission_can_still_force_it_disabled_with_a_course_set():
+    """MissionLib/BridgeUtils.DisableWarpButton is used mid-mission (E3M2:1163
+    bars warp inside the nebula) while a course is still plotted. An explicit
+    SetDisabled must outrank having a destination, or that bar does nothing."""
+    b = STWarpButton()
+    b.SetDestination("Systems.Vesuvi.Vesuvi4")
+    b.SetDisabled()
+    assert not b.IsEnabled()
+
+
+def test_restoring_it_after_a_mission_bar_needs_the_destination():
+    """Mirrors RestoreWarpButton exactly: SetEnabled is only meaningful once a
+    destination exists."""
+    b = STWarpButton()
+    b.SetDisabled()
+    b.SetEnabled()
+    assert not b.IsEnabled(), "no destination -> still nothing to warp to"
+    b.SetDestination("Systems.Vesuvi.Vesuvi4")
+    assert b.IsEnabled()

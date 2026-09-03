@@ -62,3 +62,52 @@ def test_warp_engage_without_course_is_noop():
     assert App.g_kSetManager.GetSet("Src") is src
     assert App.g_kSetManager.GetSet("Dst") is None
     assert src.GetObject("player") is player
+
+
+# --- a course-less Warp click must not strand the Helm menu ---------------
+
+def test_engaging_without_a_course_leaves_the_helm_menu_alone(monkeypatch):
+    """The Helm "Warp" button was clickable with no course set. engage_warp
+    greys the Helm menu BEFORE execute_warp, and the matching re-enable is
+    scheduled INSIDE the warp sequence — which execute_warp never starts
+    without a destination. The menu stayed greyed for the rest of the session.
+
+    Asserted on the Helm menu, not on the warp: a fix that merely skipped the
+    warp would still leave the player locked out, which is the actual bug.
+    """
+    from engine import bridge_officers
+    from engine.host_loop import engage_warp
+
+    _setup_player_and_dest()
+    btn = App.STWarpButton_CreateW("Warp")          # no destination
+    App.SortedRegionMenu_SetWarpButton(btn)
+
+    greyed = []
+    monkeypatch.setattr(bridge_officers, "disable_helm_menu",
+                        lambda: greyed.append(1))
+
+    engage_warp(btn, None)
+
+    assert greyed == [], "the Helm menu must not be greyed with no course set"
+
+
+def test_engaging_with_a_course_still_greys_the_helm_menu(monkeypatch):
+    """The counterweight: the guard must not disarm the real warp path, which
+    depends on the menu being greyed for the duration (BC does the same in
+    WarpPressed, HelmMenuHandlers.py:862)."""
+    from engine import bridge_officers
+    from engine.host_loop import engage_warp
+
+    _setup_player_and_dest()
+    btn = App.STWarpButton_CreateW("Warp")
+    btn.SetDestination("FakeSys.Dst")
+    App.SortedRegionMenu_SetWarpButton(btn)
+
+    greyed = []
+    monkeypatch.setattr(bridge_officers, "disable_helm_menu",
+                        lambda: greyed.append(1))
+
+    engage_warp(btn, None)
+
+    assert greyed == [1]
+    assert App.g_kSetManager.GetRenderedSet().GetName() == "Dst"

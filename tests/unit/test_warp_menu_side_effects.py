@@ -171,15 +171,39 @@ def test_drop_menus_turn_back_is_safe_with_no_bridge_set():
 
 # ── the call site ──────────────────────────────────────────────────
 
-def test_the_warp_engage_path_calls_both():
+def test_the_warp_engage_path_calls_both(monkeypatch):
     """Guard against dead code: correct functions nothing ever runs is exactly
-    the shape of the bug being fixed. on_warp_engage is a closure inside
-    host_loop.run() and cannot be imported, so assert the call sites exist
-    before execute_warp -- matching BC's order in WarpPressed."""
-    import pathlib
-    src = (pathlib.Path(__file__).resolve().parents[2]
-           / "engine/host_loop.py").read_text()
-    engage = src[src.index("def on_warp_engage"):]
-    engage = engage[:engage.index("_w.execute_warp(")]
-    assert "disable_helm_menu()" in engage
-    assert "drop_menus_turn_back()" in engage
+    the shape of the bug being fixed.
+
+    This used to scrape host_loop.py's source, because on_warp_engage was a
+    closure inside run() and could not be imported. It is module-scope now
+    (host_loop.engage_warp), so assert the real calls in their real ORDER —
+    BC does both before execute_warp in WarpPressed (HelmMenuHandlers.py:862).
+    """
+    import App
+    from engine import bridge_officers, host_loop
+    from engine.appc import top_window, warp as _warp
+    from engine.appc import warp_gates as _wg
+
+    # The gate runs FIRST and denies with no player — correct BC order
+    # (WarpPressed gates before touching the menus), but it would make this
+    # test pass vacuously by never reaching the side effects at all.
+    monkeypatch.setattr(_wg, "warp_gate",
+                        lambda p: _wg.GateResult(True))
+
+    order = []
+    monkeypatch.setattr(bridge_officers, "disable_helm_menu",
+                        lambda: order.append("disable_helm_menu"))
+    monkeypatch.setattr(top_window, "drop_menus_turn_back",
+                        lambda *a: order.append("drop_menus_turn_back"))
+    monkeypatch.setattr(_warp, "execute_warp",
+                        lambda b: order.append("execute_warp"))
+
+    btn = App.STWarpButton_CreateW("Warp")
+    btn.SetDestination("Systems.Vesuvi.Vesuvi4")
+    App.SortedRegionMenu_SetWarpButton(btn)
+
+    host_loop.engage_warp(btn, None)
+
+    assert order == ["disable_helm_menu", "drop_menus_turn_back",
+                     "execute_warp"]
