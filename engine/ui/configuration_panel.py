@@ -134,10 +134,10 @@ class ConfigurationPanel(Panel):
         return self._capturing_action
 
     def open(self) -> None:
-        self._visible = True
+        self.visible = True
 
     def close(self) -> None:
-        self._visible = False
+        self.visible = False
         self._focused = -1
         self._capturing_action = None
         self._controls_message = ""

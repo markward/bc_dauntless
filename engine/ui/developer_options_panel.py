@@ -84,10 +84,10 @@ class DeveloperOptionsPanel(Panel):
         # DAUNTLESS_PROFILE_FRAMES at startup, so re-read rather than trust
         # the mirror -- otherwise the row shows OFF while it is reporting.
         self._profiler = _frame_profiler().is_enabled()
-        self._visible = True
+        self.visible = True
 
     def close(self) -> None:
-        self._visible = False
+        self.visible = False
         self._focused = -1
 
     def render_payload(self) -> Optional[str]:

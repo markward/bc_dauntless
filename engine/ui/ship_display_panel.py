@@ -127,11 +127,11 @@ class ShipDisplayPanel(Panel):
     # calls on pEnemyShipDisplay. Tracks a Python-side _visible flag
     # separate from CSS hidden so SDK queries get a sensible answer.
     def SetVisible(self, *args, **kwargs) -> None:
-        self._visible = True
+        self.visible = True
         self._last_snapshot = None
 
     def SetNotVisible(self, *args, **kwargs) -> None:
-        self._visible = False
+        self.visible = False
         self._last_snapshot = None
 
     def IsVisible(self) -> int:

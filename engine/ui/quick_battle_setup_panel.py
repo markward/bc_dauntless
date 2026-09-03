@@ -54,10 +54,10 @@ class QuickBattleSetupPanel(Panel):
         return self._visible
 
     def open(self) -> None:
-        self._visible = True
+        self.visible = True
 
     def close(self) -> None:
-        self._visible = False
+        self.visible = False
 
     # ── SDK widget reading ────────────────────────────────────────────────────
 

@@ -51,10 +51,10 @@ class AIInspectorPanel(Panel):
 
     def open(self) -> None:
         self._last_pushed = None
-        self._visible = True
+        self.visible = True
 
     def close(self) -> None:
-        self._visible = False
+        self.visible = False
 
     def render_payload(self) -> Optional[str]:
         if not self._visible:

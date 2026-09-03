@@ -284,7 +284,7 @@ class ShipPropertyViewerPanel(Panel):
         self._pipette_armed = False
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
-        self._visible = True
+        self.visible = True
 
     def _clear_saved_edits(self) -> None:
         """Drop the persisted-edit overlay. Called from open() when the authored
@@ -296,7 +296,7 @@ class ShipPropertyViewerPanel(Panel):
         self._saved_pos = {}
 
     def close(self) -> None:
-        self._visible = False
+        self.visible = False
         self._descriptors = []
         self.selected_index = None
         self._selected_light_index = None

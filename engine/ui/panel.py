@@ -23,6 +23,23 @@ from typing import Optional
 
 
 class Panel(ABC):
+    # ── Conventions every panel follows ─────────────────────────────────
+    #
+    # * Visibility is written through the ``visible`` SETTER everywhere
+    #   except ``__init__`` (pre-registration, nothing observing yet). The
+    #   registry now observes flips itself, so a direct ``_visible`` write is
+    #   no longer a bug — but for months it was: six panels' ESC paths left
+    #   their CEF chrome stranded on screen because the hide payload was
+    #   never polled for. One idiom, so the next reader never has to know
+    #   that history to write a correct panel.
+    #
+    # * ``handle_key_esc`` does exactly what the panel's own Cancel/Close
+    #   control does — NOT necessarily a bare ``close()``. QuickBattle must
+    #   route through its Close button's dispatch (a bare close() leaves
+    #   g_bDialogUp set and the panel reopens next tick); the Ship Property
+    #   Viewer closes an open overlay first and the panel only when none is.
+    #   Those differences are behaviour, not drift; the invariant is that
+    #   ESC and the on-screen control can never disagree.
     def __init__(self):
         self._visible: bool = True
         # True => the registry polls this panel on the next render_all
