@@ -151,7 +151,6 @@ namespace dauntless_motion_blur {
     void set_enabled(bool v);  // defined in frame.cc
 }
 namespace dauntless_warp_vfx {
-    bool enabled(); void set_enabled(bool);   // defined in frame.cc
     float streak_intensity(); float flash_intensity();
     glm::vec3 travel_dir();
     void set_streak(float); void set_flash(float); void set_travel(glm::vec3);
@@ -1395,21 +1394,11 @@ void frame() {
 
 }  // namespace
 
-// Toggle for the opaque-pass specular term.
-// Defined in frame.cc (librenderer), forward-declared here so
-// host_bindings can expose it to Python without a circular dependency.
-namespace dauntless_specular {
-    void set_enabled(bool v);  // defined in frame.cc
-}
 // Toggle for the opaque-pass Fresnel rim term. Defined in frame.cc.
 namespace dauntless_rim {
     void set_enabled(bool v);  // defined in frame.cc
 }
 // dauntless_shadows is forward-declared earlier (before frame()).
-// Toggle for the opaque-pass persistent damage decals. Defined in frame.cc.
-namespace dauntless_decals {
-    void set_enabled(bool v);  // defined in frame.cc
-}
 // Normal mapping controls. Defined in frame.cc.
 namespace dauntless_normal_map {
     void set_enabled(bool v);
@@ -3321,10 +3310,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "fCoveredArea; 0.125 => 6.25% per bar). Clamped to [0, 1]. The bars "
           "draw over the 3D scene and under the whole CEF overlay.");
 
-    m.def("specular_set_enabled",
-          [](bool enabled) { dauntless_specular::set_enabled(enabled); },
-          py::arg("enabled"),
-          "Toggle the opaque-pass specular term. Default: on.");
     m.def("rim_set_enabled",
           [](bool enabled) { dauntless_rim::set_enabled(enabled); },
           py::arg("enabled"),
@@ -3371,13 +3356,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("motion_blur_enabled",
           []() { return dauntless_motion_blur::enabled(); },
           "Read the Motion Blur toggle (Modern VFX). Default: on.");
-    m.def("warp_flythrough_set_enabled",
-          [](bool enabled) { dauntless_warp_vfx::set_enabled(enabled); },
-          py::arg("enabled"),
-          "Toggle the procedural warp flythrough VFX (Modern VFX). Default: on.");
-    m.def("warp_flythrough_enabled",
-          []() { return dauntless_warp_vfx::enabled(); },
-          "Read the Warp Flythrough toggle (Modern VFX). Default: on.");
     m.def("volumetric_nebulae_set_enabled",
           [](bool enabled) { dauntless_volumetric_nebulae::set_enabled(enabled); },
           py::arg("enabled"),
@@ -3531,10 +3509,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return d;
           },
           "Whole-frame CPU/GPU totals and the number of frames resolved.");
-    m.def("decals_set_enabled",
-          [](bool enabled) { dauntless_decals::set_enabled(enabled); },
-          py::arg("enabled"),
-          "Enable/disable persistent hull damage decals (default on).");
     m.def("smaa_set_enabled",
           [](bool enabled) { g_smaa_enabled = enabled; },
           py::arg("enabled"),

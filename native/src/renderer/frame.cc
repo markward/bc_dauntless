@@ -37,12 +37,11 @@
 // renders look identical until the user flips the Configuration row.
 // host_bindings.cc calls set_enabled(); frame.cc reads enabled() when
 // binding the opaque shader and writes u_specular_enabled.
+// Always on — specular is core shading, not a preference, so there is no
+// user-facing toggle (same call-site-uniformity reason as
+// dauntless_hull_damage below).
 namespace dauntless_specular {
-namespace {
-    bool g_specular_enabled = true;
-}
-    bool enabled() { return g_specular_enabled; }
-    void set_enabled(bool v) { g_specular_enabled = v; }
+    bool enabled() { return true; }
 }
 
 // Normal mapping (opaque pass). Default on with unit strength: stock BC ships
@@ -140,12 +139,10 @@ namespace {
 // so the "Modern VFX" group ships enabled. host_bindings.cc forward-declares
 // set_enabled; draw_model reads enabled() per instance and uploads
 // u_decal_count = 0 when off (stock-BC hull, no per-fragment decal cost).
+// Always on — persistent hull scorch is core damage feedback, switchable
+// no more than the hull breaches it accompanies (dauntless_hull_damage).
 namespace dauntless_decals {
-namespace {
-    bool g_decals_enabled = true;
-}
-    bool enabled() { return g_decals_enabled; }
-    void set_enabled(bool v) { g_decals_enabled = v; }
+    bool enabled() { return true; }
 }
 
 // Hull-breach renderer pass (carve emission + shader clip). Always on — the
@@ -198,15 +195,15 @@ namespace dauntless_motion_blur {
     void set_enabled(bool v) { g_motion_blur_enabled = v; }
 }
 
-// Per-frame state channel for the procedural warp flythrough (Modern VFX).
-// Plumbing only in Task 1 — frame() does not yet consume these values.
+// Per-frame state channel for the procedural warp flythrough. All three are
+// consumed: streak drives the dust pass, flash drives the resolve pass (and,
+// on the bridge, the viewscreen feed only), travel_dir orients the streaks.
+// There is no enable flag — the cinematic is part of how warp reads, and the
+// Python sequence builder decides whether a flythrough happens at all.
 namespace dauntless_warp_vfx {
-    bool      g_enabled = true;                  // Modern-VFX toggle (default on)
     float     g_streak  = 0.0f;                  // 0..1 star-streak intensity
     float     g_flash   = 0.0f;                  // 0..1 warp-flash intensity
     glm::vec3 g_travel(0.0f, 1.0f, 0.0f);        // world-space travel direction
-    bool      enabled()           { return g_enabled; }
-    void      set_enabled(bool v) { g_enabled = v; }
     float     streak_intensity()  { return g_streak; }
     float     flash_intensity()   { return g_flash; }
     glm::vec3 travel_dir()        { return g_travel; }

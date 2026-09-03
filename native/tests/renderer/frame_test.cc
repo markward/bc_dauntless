@@ -29,14 +29,14 @@
 
 #include <filesystem>
 
-// dauntless_decals toggle is declared in frame.cc; forward-declare both here.
-namespace dauntless_decals { bool enabled(); void set_enabled(bool); }
+// dauntless_decals gate is declared in frame.cc; forward-declare it here.
+namespace dauntless_decals { bool enabled(); }
 
-TEST(DauntlessDecalsToggle, DefaultsOnAndRoundTrips) {
-    EXPECT_TRUE(dauntless_decals::enabled());     // default on
-    dauntless_decals::set_enabled(false);
-    EXPECT_FALSE(dauntless_decals::enabled());
-    dauntless_decals::set_enabled(true);          // restore for other tests
+TEST(DauntlessDecalsGate, IsAlwaysOn) {
+    // Persistent hull scorch is core damage feedback with no user-facing
+    // toggle, exactly like the hull-breach pass it accompanies. The gate is
+    // retained only so the pass call sites stay uniform with the other VFX
+    // passes; it must never report off.
     EXPECT_TRUE(dauntless_decals::enabled());
 }
 
@@ -1423,10 +1423,12 @@ TEST_F(FrameTest, ScorchDecalDarkensHullAndDoesNotMirror) {
     EXPECT_NEAR(L1, L0, L0 * 0.05) << "damage leaked onto the mirror (left) half";
 }
 
-TEST_F(FrameTest, ScorchToggleOffRendersLikeUndamaged) {
-    // Same geometry as ScorchDecalDarkensHullAndDoesNotMirror.
-    // Verifies that dauntless_decals::set_enabled(false) suppresses the
-    // decal effect, and re-enabling it re-applies it.
+TEST_F(FrameTest, ScorchDecalDarkensHullVersusNoDecalAtAll) {
+    // Same geometry as ScorchDecalDarkensHullAndDoesNotMirror. Was
+    // ScorchToggleOffRendersLikeUndamaged, which used the dauntless_decals
+    // gate as its "before" image; the gate is gone (scorch is always on), so
+    // the baseline is now an instance carrying NO decal. That tests the decal
+    // itself rather than the switch, which is the stronger assertion anyway.
     auto model_h = cache->load(kGalaxyNif, kGalaxyTex);
     auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
         return reinterpret_cast<const assets::Model*>(h); };
@@ -1434,25 +1436,23 @@ TEST_F(FrameTest, ScorchToggleOffRendersLikeUndamaged) {
     scenegraph::World w;
     auto iid = w.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
     w.set_world_transform(iid, glm::mat4(1.0f));
+
+    // Baseline: same instance, same camera, no decal on it yet.
+    render_galaxy(w, *p, lut, 65.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double R_clean = block_mean(130, 100, 25, 50);
+
     w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
                            120.0f, 1.0f, scenegraph::WeaponClass::Scorch, 0.0f);
-
     // decal_time = 65 s isolates the permanent soot deposit from the transient
-    // flicker (randomised, up to 60 s) + ember (~10 s), so decals-on reads as
-    // darkened, not transiently brightened. (decal_time is irrelevant on the
-    // disabled path.)
-    dauntless_decals::set_enabled(false);
+    // flicker (randomised, up to 60 s) + ember (~10 s), so the scorched frame
+    // reads as darkened rather than transiently brightened.
     render_galaxy(w, *p, lut, 65.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    const double R_off = block_mean(130, 100, 25, 50);
-    dauntless_decals::set_enabled(true);
-    render_galaxy(w, *p, lut, 65.0f);
-    ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    const double R_on = block_mean(130, 100, 25, 50);
-    dauntless_decals::set_enabled(true);  // leave enabled
+    const double R_scorched = block_mean(130, 100, 25, 50);
 
-    EXPECT_GT(R_off, 0.0) << "right block should have hull pixels when decals off";
-    EXPECT_LT(R_on, R_off * 0.97) << "decals-on should differ from decals-off";
+    EXPECT_GT(R_clean, 0.0) << "right block should have hull pixels when undamaged";
+    EXPECT_LT(R_scorched, R_clean * 0.97) << "the scorch decal should darken the hull";
 }
 
 TEST_F(FrameTest, ScorchEmberIsBrightWhenFreshAndCoolsWithGameTime) {
@@ -1663,21 +1663,25 @@ TEST_F(FrameTest, ScorchFlickerBlacksOutThenRestoresForLongDurations) {
     auto lut = [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
         return reinterpret_cast<const assets::Model*>(h); };
 
-    auto sample = [&](float birth, float decal_time, bool decals_on) -> double {
-        dauntless_decals::set_enabled(decals_on);
+    // `with_decal=false` used to be dauntless_decals::set_enabled(false); the
+    // gate is gone (scorch is always on) and omitting the decal is exactly
+    // equivalent -- the gate zeroed u_decal_count, which is what an empty
+    // decal ring gives the shader anyway.
+    auto sample = [&](float birth, float decal_time, bool with_decal) -> double {
         scenegraph::World w;
         auto iid = w.create_instance(
             reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
         w.set_world_transform(iid, glm::mat4(1.0f));
-        w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
-                               120.0f, 0.25f, scenegraph::WeaponClass::Scorch, birth);
+        if (with_decal) {
+            w.get(iid)->decals.add(glm::vec3(60.0f, 0.0f, 20.0f), glm::vec3(0, 0, 1),
+                                   120.0f, 0.25f, scenegraph::WeaponClass::Scorch, birth);
+        }
         render_galaxy_zero_ambient(w, *p, lut, decal_time);
-        dauntless_decals::set_enabled(true);
         return block_mean(130, 100, 25, 50);
     };
 
-    // Glow-only baseline: same geometry, decals disabled.
-    const double B = sample(0.0f, 0.0f, /*decals_on=*/false);
+    // Glow-only baseline: same geometry, no decal.
+    const double B = sample(0.0f, 0.0f, /*with_decal=*/false);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     ASSERT_GT(B, 0.0) << "sample region has no glow; test would be vacuous";
 
