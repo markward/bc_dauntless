@@ -139,13 +139,23 @@
        discards the projected depth (star_map.project_points) and the JS sets
        only left/top, so a label reads the same size however far the camera is
        from the star it names. */
-    font-size: 15px; color: #ffd9a8;          /* POC #ffd9a8 */
+    /* ONE colour for every system name, in every state. State is carried by
+       the GL reticle and the you-are-here arrow; tinting the text as well was
+       a second colour axis saying the same thing. It mattered less when all
+       34 names were drawn — now that only the mission's destinations are
+       named by default, the handful on screen should read as one set. */
+    font-size: 15px; color: #ffffff;
     font-weight: 700;
     letter-spacing: 0.4px;
     text-transform: uppercase;
     text-shadow: 0 0 4px #000, 0 0 8px #000;
     transform: translate(8px, -6px);
     white-space: nowrap;
+    /* Above the nebula names. DOM order already achieves this (discs are
+       concatenated first), but that is incidental to how the two lists are
+       joined; stating it means a reordering there cannot bury a star's name
+       under a piece of scenery. */
+    z-index: 2;
 }
 /* Nebula names. SCENERY — deliberately subordinate to the system labels:
    smaller, dimmer, letter-spaced and non-bold, so the eye reads them as a
@@ -160,14 +170,41 @@
     font-weight: 400;
     text-shadow: 0 0 2px #000;
     transform: translate(6px, -4px);
+    z-index: 1;                                /* under the system names */
 }
 
-/* The three reserved states and selection. Each matches the GL marker it
-   sits beside, so label and reticle read as one object. */
-.sm-label--here      { color: #d8c1a8; }       /* beside #b28452 */
-.sm-label--course    { color: #ffce80; }       /* beside #ff9c00 */
-.sm-label--mission   { color: #99ccff; }       /* beside #3399ff */
-.sm-label--selected  { color: #ffffff; }
+/* The reserved states (--here/--course/--mission/--selected) are still
+   stamped by star_map.js and deliberately carry NO rule here: they no longer
+   re-tint the name (see .sm-label) and empty rules would just be dead weight.
+   They remain in the markup as hooks for any future non-colour emphasis, and
+   as the thing that keeps course and selection distinguishable at all. */
+
+/* You are here: a medium arrow hovering point-down over the star, replacing
+   the GL reticle this state used to take. Being CEF rather than GL is what
+   makes the hover free — and it frees the reticle, so a system you are IN can
+   still show its course or objective mark.
+
+   Centred with margins, NOT transform: the transform belongs to the bob, and
+   a second one here would overwrite it. Colour is star_map.HERE_MARKER_COLOR,
+   which the CSS-agreement test pins. */
+.sm-here-arrow {
+    position: absolute;
+    width: 0;
+    height: 0;
+    margin-left: -7px;      /* half the 14px width, to centre on the star */
+    margin-top: -26px;      /* clear of the star, pointing down at it */
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 10px solid #d8c1a8;
+    filter: drop-shadow(0 0 3px #000);
+    animation: sm-here-bob 2.4s ease-in-out infinite;
+    pointer-events: none;   /* never eat a click meant for the star */
+    z-index: 3;
+}
+@keyframes sm-here-bob {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(3px); }
+}
 
 /* A system this mission plots no course to. The GL dot is dimmed by
    star_map.INERT_DIM; this must match it, or a bright name sits over a faded

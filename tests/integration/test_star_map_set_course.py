@@ -168,8 +168,17 @@ def test_scene_buffers_match_the_binding_tuple_shapes(rec):
     exactly what host_bindings.cc unpacks."""
     from engine.host_loop import _drive_star_map
 
+    # A mission-named system, so there is a bracket to check the tuple shape
+    # of: "you are here" no longer produces one (it is the CEF arrow), and
+    # with no course and no objective the bracket list is legitimately empty.
+    from engine.appc.tg_ui.st_widgets import SortedRegionMenu_CreateW
+    course_menu = SortedRegionMenu_CreateW("Set Course")
+    course_menu.AddChild(
+        SortedRegionMenu_CreateW("Vesuvi", "Systems.Vesuvi.Vesuvi6"), 0, 0, 0)
+    course_menu._children[0].SetMissionName("Maelstrom.Episode3.E3M2.E3M2")
+
     panel = StarMapPanel()
-    panel.open(set_name="Vesuvi6")
+    panel.open(set_name="Vesuvi6", course_menu=course_menu)
     panel.dispatch_event("select-system:vesuvi")
     _drive_star_map(panel, (1280, 720), 720)
 
@@ -207,10 +216,14 @@ def test_scene_buffers_match_the_binding_tuple_shapes(rec):
     assert len(selected) == 1
     assert selected[0][2] == star_map.STAR_SELECTED_SIZE_PX
 
-    # The reticle for "you are here" rides along with its own colour.
-    here = [b for b in brackets if b[1] == star_map.MARK_HERE]
-    assert len(here) == 1
-    assert here[0][2] == star_map.MARK_HERE_COLOR
+    # The objective reticle rides along with its own colour.
+    objective = [b for b in brackets if b[1] == star_map.MARK_MISSION]
+    assert len(objective) == 1
+    assert objective[0][2] == star_map.MARK_MISSION_COLOR
+
+    # "You are here" is NOT in this buffer any more — CEF hangs an arrow over
+    # the star instead, so nothing here should carry MARK_HERE.
+    assert [b for b in brackets if b[1] == star_map.MARK_HERE] == []
 
 
 # --- the anchor the Helm hook feeds the map -------------------------------

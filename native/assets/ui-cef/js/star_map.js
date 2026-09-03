@@ -70,6 +70,17 @@ function setStarMapPanel(state) {
                 + '" style="left:' + l.x + 'px;top:' + l.y + 'px">'
                 + escapeHtmlSM(l.label) + '</div>';
         }).join('');
+
+        // You are here: a hovering arrow over the star, appended INSIDE the
+        // label layer so it shares the labels' coordinate space — the payload
+        // gives it the same projected position the name uses, so the two can
+        // never drift apart. Absent when the player's set maps to no charted
+        // system, or when the star is off screen.
+        const hm = state.here_marker;
+        if (hm && hm.visible) {
+            labelEl.innerHTML += '<div class="sm-here-arrow" style="left:'
+                + hm.x + 'px;top:' + hm.y + 'px"></div>';
+        }
     }
     // Target popup: a centred card over the map, shown only while a system is
     // selected. Its visibility follows `targets_open`, which Python derives

@@ -94,6 +94,13 @@ MARK_COURSE_COLOR  = COURSE_COLOR           # #ff9c00, as the plotted course
 # you: it has to separate from the field it sits in rather than blend with it.
 MARK_MISSION_COLOR = (0.200, 0.600, 1.000)  # #3399ff
 
+# CSS companions, kept HERE so Python owns every colour the map teaches and
+# the stylesheet can be pinned against it. A marker on black and text on a
+# panel want different weights of the same hue, so these are lighter than the
+# GL values rather than equal to them.
+MARK_MISSION_LABEL_COLOR = "#99ccff"   # the objective ROW in the target popup
+HERE_MARKER_COLOR = "#d8c1a8"          # the you-are-here arrow
+
 # Brightness multiplier for a system the mission does not offer a course to.
 # BC's Set Course menu listed ONLY the systems the mission built (E3M2 creates
 # two of the 34 charted), so every entry the player saw was actionable. The map
@@ -262,16 +269,26 @@ def build_scene(*, model=None, here_id=None, course_id=None,
     # above rather than left to be inferred: it was previously incidental —
     # course beat here only by being the second assignment, and mission lost
     # to both through a `setdefault` — and nothing tested any collision.
+    # "You are here" is NO LONGER a bracket: CEF draws a hovering arrow over
+    # the star instead (see StarMapPanel.render_payload -> here_marker). That
+    # takes it out of this collision entirely, so a system you are sitting in
+    # can show its course or objective reticle at the same time — previously
+    # COURSE simply beat HERE and one of the two facts was lost.
     reticled = {}
-    for sid, mark in ([(here_id, MARK_HERE)]
-                      + [(m, MARK_MISSION) for m in mission]
+    for sid, mark in ([(m, MARK_MISSION) for m in mission]
                       + [(course_id, MARK_COURSE)]):
         if sid in by_id:
             reticled[sid] = mark
 
     _floor_z = grid_bounds(systems)[3]
     lines = _grid_lines(systems)
-    for sid in reticled:
+    # The drop-line is a different job from the reticle — it anchors a star to
+    # the grid so its position reads in 3D — so the player's own system keeps
+    # one even though it no longer takes a bracket.
+    drop_ids = list(reticled)
+    if here_id in by_id and here_id not in reticled:
+        drop_ids.append(here_id)
+    for sid in drop_ids:
         p = by_id[sid]
         lines.append({"kind": "drop", "id": sid, "color": DROP_COLOR,
                       "a": p, "b": (p[0], p[1], _floor_z)})

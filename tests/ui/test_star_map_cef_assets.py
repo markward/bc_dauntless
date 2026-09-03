@@ -392,17 +392,20 @@ def test_labels_are_escaped():
     assert "escapeHtmlSM" in js
 
 
-def test_course_and_selected_are_styled_from_different_state_keys():
-    """course_system and selected_system are different states (course-set
-    vs merely-clicked) and must not share a CSS class."""
+def test_course_and_selected_are_stamped_from_different_state_keys():
+    """course_system and selected_system are different states (course-set vs
+    merely-clicked) and must not collapse into one class.
+
+    The assertion is on the JS, not on CSS rules: the state classes carry no
+    declarations now that every system name is white, so requiring a rule per
+    class would only force empty blocks into the stylesheet. What must not
+    regress is that the two states stay separately identifiable."""
     js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
     assert "state.course_system" in js
     assert "state.selected_system" in js
     assert "sm-label--course" in js
     assert "sm-label--selected" in js
-    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
-    assert re.search(r"\.sm-label--course\s*\{", css)
-    assert re.search(r"\.sm-label--selected\s*\{", css)
+    assert "sm-label--course" != "sm-label--selected"
 
 
 def test_the_popup_dismiss_control_is_a_close_icon_on_the_right():
@@ -499,16 +502,26 @@ def _rule_color(css, selector):
     return m.group(1).lower()
 
 
-def test_the_mission_destination_row_shares_the_maps_mission_colour():
+def test_the_mission_destination_row_uses_the_maps_objective_colour():
     """Map and target list must teach the same colour once.
 
-    The 3D map marks the SYSTEM (.sm-label--mission, beside the GL reticle's
-    MARK_MISSION_COLOR); the target popup marks the ROW inside it. Different
-    hues here would read as two unrelated states rather than one objective
-    seen at two zoom levels."""
+    System names went white, so the map's objective hue now lives only in the
+    GL reticle. Python owns the CSS companion of that hue
+    (star_map.MARK_MISSION_LABEL_COLOR) so the stylesheet can be pinned to it
+    rather than to another stylesheet rule that might itself change."""
+    from engine.ui.star_map import MARK_MISSION_LABEL_COLOR
     css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
-    assert _rule_color(css, ".sc-row--mission") == _rule_color(
-        css, ".sm-label--mission")
+    assert _rule_color(css, ".sc-row--mission") == MARK_MISSION_LABEL_COLOR
+
+
+def test_the_here_arrow_uses_the_colour_python_declares():
+    from engine.ui.star_map import HERE_MARKER_COLOR
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+    block = re.search(r"\.sm-here-arrow\s*\{([^}]*)\}", css)
+    assert block, "no .sm-here-arrow rule"
+    m = re.search(r"border-top\s*:[^;]*?(#[0-9a-fA-F]{3,8})", block.group(1))
+    assert m, "the arrow's fill is its border-top colour"
+    assert m.group(1).lower() == HERE_MARKER_COLOR
 
 
 def test_the_mission_row_class_is_driven_by_the_payload_flag():
@@ -550,3 +563,54 @@ def test_unoffered_labels_are_withheld_unless_show_all_is_on():
     js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
     assert "show_all_labels" in js
     assert "sm-label--inert" in js
+
+
+def test_system_labels_are_white_in_every_state():
+    """One colour for every system name. State is carried by the GL reticle
+    and the arrow, not by tinting the text: with unlisted systems unnamed by
+    default, a second colour axis on the few remaining names read as noise."""
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+    assert _rule_color(css, ".sm-label") == "#ffffff"
+    for state in ("--here", "--course", "--mission", "--selected"):
+        block = re.search(r"\.sm-label" + state + r"\s*\{([^}]*)\}", css)
+        if block:
+            assert "color" not in block.group(1), (
+                ".sm-label" + state + " must not re-tint the name")
+
+
+def test_system_labels_paint_above_nebula_names():
+    """Nebulae are scenery. DOM order already put system names last, but that
+    is incidental to how the two lists are concatenated; the stacking is
+    stated so a reordering of that concatenation cannot bury a system name."""
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+
+    def _z(selector):
+        block = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+        assert block, "no " + selector + " rule"
+        m = re.search(r"z-index\s*:\s*(-?\d+)", block.group(1))
+        assert m, "no z-index in " + selector
+        return int(m.group(1))
+
+    assert _z(".sm-label") > _z(".sm-label--disc")
+
+
+def test_the_here_arrow_bobs_by_three_pixels():
+    """A slow 3px hover. Pinned because the whole point of the marker is that
+    it moves — a keyframe block that stops translating would still render a
+    perfectly plausible static arrow."""
+    css = (ASSETS / "css" / "star_map.css").read_text(encoding="utf-8")
+    arrow = re.search(r"\.sm-here-arrow\s*\{([^}]*)\}", css)
+    assert arrow, "no .sm-here-arrow rule"
+    assert "animation" in arrow.group(1)
+
+    frames = re.search(r"@keyframes\s+sm-here-bob\s*\{(.*?)\n\}", css, re.S)
+    assert frames, "no sm-here-bob keyframes"
+    offsets = {abs(float(v)) for v in
+               re.findall(r"translateY\((-?[\d.]+)px\)", frames.group(1))}
+    assert 3.0 in offsets, "the hover must travel 3px"
+
+
+def test_the_here_arrow_is_rendered_from_the_payload():
+    js = (ASSETS / "js" / "star_map.js").read_text(encoding="utf-8")
+    assert "here_marker" in js
+    assert "sm-here-arrow" in js

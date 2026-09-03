@@ -422,6 +422,15 @@ class StarMapPanel(Panel):
             "has_hidden_labels": any(not p.get("offered", True)
                                      for p in self.scene["points"]),
             "here_system": self._here_system,
+            # Where CEF hangs the you-are-here arrow. Taken from the SAME
+            # projection the labels use, so the arrow and the star's name can
+            # never disagree about where the star is. None when the player's
+            # set maps to no charted system (deep space, an unmapped set) —
+            # a marker at the origin would claim a position they don't have.
+            "here_marker": next(
+                ({"x": round(l["x"], 1), "y": round(l["y"], 1),
+                  "visible": l["visible"]}
+                 for l in labels if l["id"] == self._here_system), None),
             "course_system": self._course_system() if self._visible else None,
             "mission_systems": self._mission_systems() if self._visible else [],
             "labels": [{"id": l["id"], "label": l["label"],

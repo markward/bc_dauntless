@@ -720,3 +720,28 @@ def test_the_system_you_are_in_keeps_its_label():
     p.open(set_name="Riha1", course_menu=_e3m2_course_menu())   # Riha unoffered
     labels = {l["id"]: l for l in _payload(p.render_payload())["labels"]}
     assert labels["riha"]["offered"] is True
+
+
+# --- the you-are-here arrow ------------------------------------------------
+
+def test_the_payload_locates_the_here_arrow():
+    """CEF draws the arrow, so it needs the star's projected position — the
+    same projection the labels use, so arrow and label cannot disagree."""
+    p = StarMapPanel()
+    p.open(set_name="Vesuvi6")
+    data = _payload(p.render_payload())
+    assert data["here_system"] == "vesuvi"
+    marker = data["here_marker"]
+    label = next(l for l in data["labels"] if l["id"] == "vesuvi")
+    assert (marker["x"], marker["y"]) == (label["x"], label["y"])
+    assert marker["visible"] is label["visible"]
+
+
+def test_no_here_arrow_when_the_players_system_is_unknown():
+    """Deep space / an unmapped set resolves to no system. A marker at the
+    origin would claim the player is somewhere they are not."""
+    p = StarMapPanel()
+    p.open(set_name="SomewhereUnmapped")
+    data = _payload(p.render_payload())
+    assert data["here_system"] is None
+    assert data["here_marker"] is None

@@ -69,8 +69,9 @@ def test_brackets_only_for_live_relationships():
     scene = sm.build_scene(model=_model(), here_id="vesuvi",
                            course_id="tevron", mission_ids=("albirea",))
     marks = {b["id"]: b["mark"] for b in scene["brackets"]}
-    assert marks == {"vesuvi": sm.MARK_HERE,
-                     "tevron": sm.MARK_COURSE,
+    # "You are here" is no longer a bracket: it is the CEF hover-arrow, so it
+    # no longer competes with course/mission for the one reticle a system gets.
+    assert marks == {"tevron": sm.MARK_COURSE,
                      "albirea": sm.MARK_MISSION}
 
 
@@ -86,8 +87,7 @@ def test_brackets_carry_their_own_colour_and_size():
     scene = sm.build_scene(model=_model(), here_id="vesuvi",
                            course_id="tevron", mission_ids=("albirea",))
     colors = {b["id"]: b["color"] for b in scene["brackets"]}
-    assert colors == {"vesuvi": sm.MARK_HERE_COLOR,
-                      "tevron": sm.MARK_COURSE_COLOR,
+    assert colors == {"tevron": sm.MARK_COURSE_COLOR,
                       "albirea": sm.MARK_MISSION_COLOR}
     assert all(b["size_px"] == sm.BRACKET_SIZE_PX for b in scene["brackets"])
 
@@ -284,10 +284,12 @@ def test_quickbattle_anchors_on_deep_space_with_a_here_reticle():
     assert sid == "deepspace"
     assert pos == (10.0, 20.0, 30.0)          # the system, not the centroid
 
+    # No bracket for "here" any more — but the drop-line still anchors it to
+    # the grid, which is what proves the anchor resolved at all.
     scene = sm.build_scene(model=model, here_id=sid)
-    here = [b for b in scene["brackets"] if b["mark"] == sm.MARK_HERE]
-    assert len(here) == 1
-    assert here[0]["id"] == "deepspace"
+    assert [b for b in scene["brackets"] if b["mark"] == sm.MARK_HERE] == []
+    drops = {ln["id"] for ln in scene["lines"] if ln["kind"] == "drop"}
+    assert drops == {"deepspace"}
 
 
 # --- one system, several states -------------------------------------------
@@ -313,14 +315,15 @@ def test_mark_precedence_is_course_then_mission_then_here():
     """
     HERE, COURSE, MISSION = sm.MARK_HERE, sm.MARK_COURSE, sm.MARK_MISSION
 
-    # Singles.
-    assert _one_system_marks(here_id="vesuvi") == HERE
+    # Singles. "here" no longer takes a bracket at all (it is the arrow).
+    assert _one_system_marks(here_id="vesuvi") is None
     assert _one_system_marks(course_id="vesuvi") == COURSE
     assert _one_system_marks(mission_ids=("vesuvi",)) == MISSION
 
     # Pairs.
     assert _one_system_marks(here_id="vesuvi",
                              mission_ids=("vesuvi",)) == MISSION
+    assert HERE not in (COURSE, MISSION)      # the enum value still exists
     assert _one_system_marks(here_id="vesuvi", course_id="vesuvi") == COURSE
     assert _one_system_marks(course_id="vesuvi",
                              mission_ids=("vesuvi",)) == COURSE
@@ -504,3 +507,24 @@ def test_the_players_own_system_is_never_hidden():
     by_id = {p["id"]: p for p in scene["points"]}
     assert by_id["tevron"]["offered"] is True
     assert by_id["albirea"]["offered"] is False    # the rule is not vacuous
+
+
+# --- "you are here" is an arrow now, not a reticle -------------------------
+
+def test_here_takes_no_bracket_but_keeps_its_drop_line():
+    """The you-are-here marker moved to CEF (a hovering arrow), so it no
+    longer consumes the one reticle a system gets — a system you are IN can
+    now show its course or objective mark at the same time. The drop-line
+    stays: it anchors the star to the grid, which is a different job."""
+    scene = sm.build_scene(model=_model(), here_id="vesuvi")
+    assert scene["brackets"] == []
+    drops = {ln["id"] for ln in scene["lines"] if ln["kind"] == "drop"}
+    assert drops == {"vesuvi"}
+
+
+def test_being_in_the_course_system_shows_both_marks():
+    """Previously COURSE beat HERE and you lost one of the two facts. With
+    the arrow separate, both are visible at once."""
+    scene = sm.build_scene(model=_model(), here_id="vesuvi", course_id="vesuvi")
+    marks = {b["id"]: b["mark"] for b in scene["brackets"]}
+    assert marks == {"vesuvi": sm.MARK_COURSE}
