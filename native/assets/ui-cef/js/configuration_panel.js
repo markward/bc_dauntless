@@ -24,7 +24,6 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'improved_space'});
         out.push({kind: 'ctrl', target: 'camera_realism'});
         out.push({kind: 'ctrl', target: 'realistic_lighting'});
-        out.push({kind: 'ctrl', target: 'decals'});
     } else if (state.selected_tab === 'gameplay') {
         out.push({kind: 'ctrl', target: 'subtitles'});
         out.push({kind: 'ctrl', target: 'disable_annoying_dialogue'});
@@ -123,17 +122,6 @@ function _cpRenderGraphicsBody(state, focusables) {
           +     '<button class="cp-toggle' + (s.realistic_lighting_on ? ' cp-toggle--on' : '') + '"'
           +        ' onclick="dauntlessEvent(\'configuration/toggle:realistic_lighting\')">'
           +       (s.realistic_lighting_on ? 'On' : 'Off')
-          +     '</button>'
-          +   '</div>'
-          + '</div>';
-
-    // Damage Decals toggle (persistent hull scorch + heat-glow)
-    html += '<div class="cp-row' + (isFoc('decals') ? ' cp-focused' : '') + '">'
-          +   '<div class="cp-row__label">Damage Decals</div>'
-          +   '<div class="cp-row__control">'
-          +     '<button class="cp-toggle' + (s.decals_on ? ' cp-toggle--on' : '') + '"'
-          +        ' onclick="dauntlessEvent(\'configuration/toggle:decals\')">'
-          +       (s.decals_on ? 'On' : 'Off')
           +     '</button>'
           +   '</div>'
           + '</div>';

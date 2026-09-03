@@ -6,11 +6,16 @@ effect. Every state mutation immediately fires the matching applier —
 there is no Apply/Cancel; closing the panel does not revert. Settings
 are not persisted across launches.
 
-Two rows are masters over several appliers each: Camera Realism (HDR,
-filmic filter, motion blur, modern lens flares) and Realistic Lighting
-(Fresnel rim light, dynamic shadows, nebula lightning, subsystem light
-emitters). The appliers stay individually injected so the renderer
-surface is unchanged.
+Three rows are masters over several appliers each: Improved Space
+Visuals (space dust, volumetric nebulae, procedural sky), Camera Realism
+(HDR, filmic filter, motion blur, modern lens flares) and Realistic
+Lighting (Fresnel rim light, dynamic shadows, nebula lightning,
+subsystem light emitters). The appliers stay individually injected so
+the renderer surface is unchanged.
+
+Effects deliberately NOT exposed, because they are core to how the game
+reads rather than preferences: specular highlights, damage decals, hull
+breaches, and the set-to-set warp cinematic.
 
 Spec: docs/superpowers/specs/2026-06-05-configuration-panel-design.md
 """
@@ -34,7 +39,6 @@ AI_DIFFICULTY_LABELS = ("Easy", "Medium", "Hard")
 
 @dataclass
 class SettingsSnapshot:
-    decals_on: bool
     fov_deg: int
     smaa_on: bool = True
     subtitles_on: bool = True
@@ -58,7 +62,6 @@ class ConfigurationPanel(Panel):
                  set_dust: Callable[[bool], None],
                  set_hdr: Callable[[bool], None],
                  set_rim: Callable[[bool], None],
-                 set_decals: Callable[[bool], None],
                  set_smaa: Callable[[bool], None],
                  set_subtitles: Callable[[bool], None],
                  set_disable_annoying_dialogue: Callable[[bool], None],
@@ -77,7 +80,6 @@ class ConfigurationPanel(Panel):
         self._tabs = list(tabs)
         self._selected_tab = tabs[0][0]
         self._settings = SettingsSnapshot(
-            decals_on=initial_settings.decals_on,
             smaa_on=initial_settings.smaa_on,
             fov_deg=int(initial_settings.fov_deg),
             subtitles_on=initial_settings.subtitles_on,
@@ -90,7 +92,6 @@ class ConfigurationPanel(Panel):
         self._set_dust = set_dust
         self._set_hdr = set_hdr
         self._set_rim = set_rim
-        self._set_decals = set_decals
         self._set_smaa = set_smaa
         self._set_subtitles = set_subtitles
         self._set_disable_annoying_dialogue = set_disable_annoying_dialogue
@@ -154,7 +155,6 @@ class ConfigurationPanel(Panel):
             controls_sig,
             self._capturing_action,
             self._controls_message,
-            self._settings.decals_on,
             self._settings.smaa_on,
             self._settings.subtitles_on,
             self._settings.disable_annoying_dialogue_on,
@@ -181,7 +181,6 @@ class ConfigurationPanel(Panel):
                                 else ""),
             "controls_message": self._controls_message,
             "settings": {
-                "decals_on": self._settings.decals_on,
                 "smaa_on": self._settings.smaa_on,
                 "subtitles_on": self._settings.subtitles_on,
                 "disable_annoying_dialogue_on": self._settings.disable_annoying_dialogue_on,
@@ -277,11 +276,6 @@ class ConfigurationPanel(Panel):
             self._set_nebula_lightning(new_val)
             self._set_ship_light_emitters(new_val)
             self._settings.realistic_lighting_on = new_val
-            return True
-        if action == "toggle:decals":
-            new_val = not self._settings.decals_on
-            self._set_decals(new_val)
-            self._settings.decals_on = new_val
             return True
         if action == "toggle:smaa":
             new_val = not self._settings.smaa_on
@@ -379,8 +373,6 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:camera_realism")
         elif activate and kind == "ctrl" and target == "realistic_lighting":
             self.dispatch_event("toggle:realistic_lighting")
-        elif activate and kind == "ctrl" and target == "decals":
-            self.dispatch_event("toggle:decals")
         elif activate and kind == "ctrl" and target == "smaa":
             self.dispatch_event("toggle:smaa")
         elif activate and kind == "ctrl" and target == "subtitles":
@@ -412,7 +404,7 @@ class ConfigurationPanel(Panel):
         standalone controls, then the 'Modern VFX' group of master toggles:
         [('tab','graphics'), ('ctrl','smaa'), ('ctrl','fov'),
          ('ctrl','improved_space'), ('ctrl','camera_realism'),
-         ('ctrl','realistic_lighting'), ('ctrl','decals')].
+         ('ctrl','realistic_lighting')].
 
         configuration_panel.js mirrors this list by hand; the two are pinned
         together by test_js_graphics_focusables_match_python."""
@@ -420,7 +412,7 @@ class ConfigurationPanel(Panel):
         if self._selected_tab == "graphics":
             out += [("ctrl", "smaa"), ("ctrl", "fov"),
                     ("ctrl", "improved_space"), ("ctrl", "camera_realism"),
-                    ("ctrl", "realistic_lighting"), ("ctrl", "decals")]
+                    ("ctrl", "realistic_lighting")]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles"),
                     ("ctrl", "disable_annoying_dialogue"),

@@ -37,7 +37,7 @@ _REQUIRED_BINDINGS = frozenset({
     "cef_toggle_devtools", "clear_hologram_ship", "clear_subsystem_pins",
     "clear_viewscreen_comm_source", "clear_viewscreen_scene_source",
     "consume_mouse_delta", "create_bridge_instance", "create_comm_instance",
-    "create_instance", "damage_decals_tick", "decals_set_enabled",
+    "create_instance", "damage_decals_tick",
     "destroy_instance", "dust_set_density", "dust_set_enabled", "filmic_enabled",
     "filmic_set_enabled", "frame", "get_instance_bounds",
     "get_instance_head_center", "hdr_lens_flare_enabled",
@@ -499,11 +499,6 @@ def set_shadows_enabled(enabled: bool) -> None:
     """Toggle sun shadow mapping (Modern VFX). Default: on after init()."""
     _h.shadows_set_enabled(enabled)
 
-
-def set_decals_enabled(enabled: bool) -> None:
-    """Toggle persistent hull damage decals (scorch/heat-glow). Default: on
-    after init()."""
-    _h.decals_set_enabled(enabled)
 
 
 def set_smaa_enabled(enabled: bool) -> None:

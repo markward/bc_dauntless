@@ -7242,7 +7242,6 @@ def run(mission_name: Optional[str] = None,
             tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay"),
                   ("controls", "Controls")],
             initial_settings=SettingsSnapshot(
-                decals_on=True,
                 smaa_on=True,
                 # One row over four effects. The renderer exposes no
                 # hdr_enabled() getter (HDR defaults on natively), so the
@@ -7267,7 +7266,6 @@ def run(mission_name: Optional[str] = None,
             set_dust=r.set_dust_enabled,
             set_hdr=r.set_hdr_enabled,
             set_rim=r.set_rim_enabled,
-            set_decals=r.set_decals_enabled,
             set_smaa=r.set_smaa_enabled,
             set_subtitles=_crew_speech.set_subtitles_enabled,
             set_disable_annoying_dialogue=_crew_speech.set_annoying_dialogue_disabled,

@@ -21,12 +21,11 @@ def _make(**overrides):
     kwargs = dict(
         tabs=[("graphics", "Graphics")],
         initial_settings=SettingsSnapshot(
-            decals_on=True, fov_deg=70,
+            fov_deg=70,
         ),
         set_dust=Mock(),
         set_hdr=Mock(),
         set_rim=Mock(),
-        set_decals=Mock(),
         set_smaa=Mock(),
         set_subtitles=Mock(),
         set_disable_annoying_dialogue=Mock(),
@@ -65,13 +64,13 @@ def test_open_close_round_trip():
 
 def test_initial_settings_round_trip_to_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        decals_on=False, fov_deg=62,
+        fov_deg=62,
     ))
     p.open()
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
-        "decals_on": False, "smaa_on": True,
+        "smaa_on": True,
         "subtitles_on": True, "improved_space_on": True,
         "camera_realism_on": True, "realistic_lighting_on": True,
         "disable_annoying_dialogue_on": True,
@@ -221,9 +220,8 @@ def test_handle_input_when_closed_is_noop():
 
 
 def test_focus_first_down_lands_on_first_focusable():
-    """Focusable order with one Graphics tab: [tab:graphics, ctrl:dust,
-    ctrl:fov]. First ↓ from unfocused lands on index 0
-    (the tab row)."""
+    """Focusable order with one Graphics tab: [tab:graphics, ctrl:smaa,
+    ctrl:fov, ...]. First ↓ from unfocused lands on index 0 (the tab row)."""
     p, _ = _make()
     p.open()
     r = _FakeReader()
@@ -237,7 +235,7 @@ def test_focus_first_down_lands_on_first_focusable():
 def test_focus_first_up_lands_on_last_focusable():
     p, _ = _make()
     p.open()
-    last = len(p._focusables()) - 1  # ctrl:smaa is the last focusable
+    last = len(p._focusables()) - 1
     r = _FakeReader()
     r.press(r.keys.KEY_UP)
     p.handle_input(r)
@@ -274,7 +272,7 @@ def test_walking_focus_to_a_row_and_pressing_space_activates_it():
 
 def test_right_arrow_on_fov_row_increments():
     p, kw = _make(initial_settings=SettingsSnapshot(
-        decals_on=True, fov_deg=30,
+        fov_deg=30,
     ))
     p.open()
     r = _FakeReader()
@@ -287,7 +285,7 @@ def test_right_arrow_on_fov_row_increments():
 
 def test_left_arrow_on_fov_row_decrements_and_clamps():
     p, kw = _make(initial_settings=SettingsSnapshot(
-        decals_on=True, fov_deg=25,
+        fov_deg=25,
     ))
     p.open()
     r = _FakeReader()
@@ -332,44 +330,6 @@ def test_handle_key_esc_when_closed_is_noop():
     p, _ = _make()
     p.handle_key_esc()
     assert p.is_open() is False
-
-
-# ---- damage decals toggle -------------------------------------------------
-
-def test_toggle_decals_fires_applier_and_flips_state():
-    p, kw = _make()
-    p.open()
-    assert p._settings.decals_on is True
-    assert p.dispatch_event("toggle:decals") is True
-    kw["set_decals"].assert_called_once_with(False)
-    assert p._settings.decals_on is False
-
-
-def test_render_payload_includes_decals_on():
-    p, _ = _make()
-    p.open()
-    payload = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
-    assert payload["settings"]["decals_on"] is True
-
-
-def test_decals_is_a_graphics_focusable():
-    p, _ = _make()
-    assert ("ctrl", "decals") in p._focusables()
-
-
-def test_space_on_decals_row_toggles():
-    p, kw = _make()
-    p.open()
-    r = _FakeReader()
-    # Navigate down to the decals control and activate it.
-    focusables = p._focusables()
-    # Reaching index i needs i+1 down-presses (first press lands on index 0).
-    steps = focusables.index(("ctrl", "decals")) + 1
-    for _ in range(steps):
-        r.press(r.keys.KEY_DOWN); p.handle_input(r)
-    r.press(r.keys.KEY_SPACE); p.handle_input(r)
-    kw["set_decals"].assert_called_once_with(False)
-    assert p._settings.decals_on is False
 
 
 # ---- smaa toggle ----------------------------------------------------------
@@ -455,7 +415,7 @@ def test_gameplay_tab_focusables_include_subtitles():
 
 def test_initial_subtitles_off_round_trips():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        decals_on=True, fov_deg=70, subtitles_on=False,
+        fov_deg=70, subtitles_on=False,
     ))
     p.open()
     payload = p.render_payload()
@@ -496,7 +456,7 @@ def test_gameplay_tab_focusables_include_disable_annoying_dialogue():
 
 def test_initial_disable_annoying_dialogue_off_round_trips():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        decals_on=True, fov_deg=70, disable_annoying_dialogue_on=False,
+        fov_deg=70, disable_annoying_dialogue_on=False,
     ))
     p.open()
     payload = p.render_payload()
@@ -539,7 +499,7 @@ def test_dispatch_ai_difficulty_garbage_returns_false():
 
 def test_ai_difficulty_in_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        decals_on=True, fov_deg=70, ai_difficulty=2,
+        fov_deg=70, ai_difficulty=2,
     ))
     p.open()
     payload = p.render_payload()
@@ -549,7 +509,7 @@ def test_ai_difficulty_in_render_payload():
 
 def test_ai_difficulty_initial_clamped_in_constructor():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        decals_on=True, fov_deg=70, ai_difficulty=99,
+        fov_deg=70, ai_difficulty=99,
     ))
     assert p._settings.ai_difficulty == 2
 
@@ -589,7 +549,6 @@ def test_dispatch_toggle_camera_realism_twice_flips_back_on():
 
 def test_camera_realism_off_in_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        decals_on=True,
         fov_deg=70, camera_realism_on=False,
     ))
     p.open()
@@ -650,7 +609,7 @@ def test_dispatch_toggle_realistic_lighting_twice_flips_back_on():
 
 def test_realistic_lighting_off_in_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        decals_on=True, fov_deg=70,
+        fov_deg=70,
         realistic_lighting_on=False,
     ))
     p.open()
@@ -658,12 +617,11 @@ def test_realistic_lighting_off_in_render_payload():
     assert body["settings"]["realistic_lighting_on"] is False
 
 
-def test_realistic_lighting_is_focusable_between_camera_realism_and_decals():
+def test_realistic_lighting_is_focusable_after_camera_realism():
     p, _ = _make()
     f = p._focusables()
     assert (f.index(("ctrl", "camera_realism"))
-            < f.index(("ctrl", "realistic_lighting"))
-            < f.index(("ctrl", "decals")))
+            < f.index(("ctrl", "realistic_lighting")))
 
 
 def test_absorbed_lighting_sub_toggles_no_longer_dispatch_or_focus():
@@ -716,7 +674,7 @@ def test_dispatch_toggle_improved_space_twice_flips_back_on():
 
 def test_improved_space_off_in_render_payload():
     p, _ = _make(initial_settings=SettingsSnapshot(
-        decals_on=True, fov_deg=70, improved_space_on=False,
+        fov_deg=70, improved_space_on=False,
     ))
     p.open()
     body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
@@ -751,6 +709,18 @@ def test_space_on_improved_space_row_toggles():
     p.handle_input(r)
     for name in _IMPROVED_SPACE_APPLIERS:
         kw[name].assert_called_once_with(False)
+
+
+def test_decals_is_no_longer_a_setting():
+    """Hull scorch is permanently on, matching the hull-breach pass — both are
+    core damage feedback, neither is switchable. God mode's per-hit
+    persist_decal=False is a separate mechanism and is unaffected."""
+    p, _ = _make()
+    p.open()
+    assert p.dispatch_event("toggle:decals") is False
+    assert ("ctrl", "decals") not in p._focusables()
+    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert "decals_on" not in body["settings"]
 
 
 def test_specular_is_no_longer_a_setting():
