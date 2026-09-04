@@ -35,6 +35,25 @@ LATERAL_GAIN           = 0.03
 _energy: float = 0.0
 _phase:  float = 0.0
 
+# Player-facing on/off, driven by the Modern VFX "Camera Shake" row. Like
+# engine.appc.light_emitters there is no native counterpart to delegate to --
+# the whole effect is Python. Reset by tests/conftest.py.
+_ENABLED: bool = True
+
+
+def enabled() -> bool:
+    """True when weapon impacts kick the camera."""
+    return _ENABLED
+
+
+def set_enabled(on: bool) -> None:
+    """Turning it off also drops shake already in flight: letting the existing
+    energy decay out would read as the setting not having worked."""
+    global _ENABLED
+    _ENABLED = bool(on)
+    if not _ENABLED:
+        reset()
+
 
 def reset() -> None:
     """Zero the energy pool and the phase accumulator. Called by tests
@@ -53,7 +72,7 @@ def apply_kick(damage: float) -> None:
     """Inject energy proportional to `damage`. Clamped per-hit to
     MAX_KICK_ENERGY; cumulative energy clamped to MAX_ENERGY."""
     global _energy
-    if damage <= 0.0:
+    if damage <= 0.0 or not _ENABLED:
         return
     delta = min(damage / DAMAGE_PER_UNIT_ENERGY, MAX_KICK_ENERGY)
     _energy = min(_energy + delta, MAX_ENERGY)

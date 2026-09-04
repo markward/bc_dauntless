@@ -4,6 +4,7 @@ API:
     apply_kick(damage: float) -> None
     update(dt: float) -> None
     perturb(eye, target, up) -> (eye, target, up)
+    enabled() -> bool  /  set_enabled(on: bool) -> None
     reset() -> None
     get_energy() -> float
 """
@@ -167,3 +168,49 @@ def test_yaw_crosses_zero_multiple_times_in_decay_window():
             prev_sign = sign
         camera_shake.update(1.0 / 60.0)
     assert crossings >= 4
+
+
+# ---- enable/disable gate (Modern VFX "Camera Shake" row) -------------------
+
+def test_camera_shake_is_enabled_by_default():
+    from engine.appc import camera_shake
+    assert camera_shake.enabled() is True
+
+
+def test_disabled_apply_kick_injects_no_energy():
+    from engine.appc import camera_shake
+    camera_shake.reset()
+    camera_shake.set_enabled(False)
+    try:
+        camera_shake.apply_kick(500.0)
+        assert camera_shake.get_energy() == 0.0
+    finally:
+        camera_shake.set_enabled(True)
+        camera_shake.reset()
+
+
+def test_disabling_drops_shake_already_in_flight():
+    """Letting existing energy decay out would read as the setting not having
+    worked, so disabling stops the camera immediately."""
+    from engine.appc import camera_shake
+    camera_shake.reset()
+    camera_shake.apply_kick(500.0)
+    assert camera_shake.get_energy() > 0.0
+    camera_shake.set_enabled(False)
+    try:
+        assert camera_shake.get_energy() == 0.0
+        eye, target, up = (0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)
+        assert camera_shake.perturb(eye, target, up) == (eye, target, up)
+    finally:
+        camera_shake.set_enabled(True)
+        camera_shake.reset()
+
+
+def test_re_enabling_allows_kicks_again():
+    from engine.appc import camera_shake
+    camera_shake.set_enabled(False)
+    camera_shake.set_enabled(True)
+    camera_shake.reset()
+    camera_shake.apply_kick(500.0)
+    assert camera_shake.get_energy() > 0.0
+    camera_shake.reset()

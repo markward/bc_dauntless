@@ -75,6 +75,8 @@ class SettingsSnapshot:
     # One master toggle over Fresnel rim light, dynamic shadows, nebula
     # lightning and the subsystem light emitters.
     realistic_lighting_on: bool = True
+    # Weapon-impact camera kick. Sits under Modern VFX beside the masters.
+    camera_shake_on: bool = True
 
 
 class ConfigurationPanel(Panel):
@@ -97,6 +99,7 @@ class ConfigurationPanel(Panel):
                  set_nebula_lightning: Callable[[bool], None],
                  set_hdr_lens_flare: Callable[[bool], None],
                  set_ship_light_emitters: Callable[[bool], None],
+                 set_camera_shake: Callable[[bool], None],
                  input_map=None):
         super().__init__()
         self._tabs = list(tabs)
@@ -111,6 +114,7 @@ class ConfigurationPanel(Panel):
             improved_space_on=initial_settings.improved_space_on,
             camera_realism_on=initial_settings.camera_realism_on,
             realistic_lighting_on=initial_settings.realistic_lighting_on,
+            camera_shake_on=initial_settings.camera_shake_on,
         )
         # Master-member appliers, addressed by the names in MASTER_TOGGLES.
         # Kept as explicit constructor params (not **kwargs) so a missing one
@@ -129,6 +133,7 @@ class ConfigurationPanel(Panel):
         }
         # Standalone rows keep their own attribute.
         self._set_dust = set_dust
+        self._set_camera_shake = set_camera_shake
         self._set_smaa = set_smaa
         self._set_subtitles = set_subtitles
         self._set_disable_annoying_dialogue = set_disable_annoying_dialogue
@@ -189,6 +194,7 @@ class ConfigurationPanel(Panel):
             self._settings.disable_annoying_dialogue_on,
             self._settings.ai_difficulty,
             self._settings.dust_on,
+            self._settings.camera_shake_on,
             tuple(getattr(self._settings, k + "_on") for k in MASTER_KEYS),
             self._settings.fov_deg,
         )
@@ -214,6 +220,7 @@ class ConfigurationPanel(Panel):
                 "disable_annoying_dialogue_on": self._settings.disable_annoying_dialogue_on,
                 "ai_difficulty": self._settings.ai_difficulty,
                 "dust_on": self._settings.dust_on,
+                "camera_shake_on": self._settings.camera_shake_on,
                 "fov_deg": self._settings.fov_deg,
                 **{k + "_on": getattr(self._settings, k + "_on")
                    for k in MASTER_KEYS},
@@ -283,6 +290,11 @@ class ConfigurationPanel(Panel):
             for name in appliers:
                 self._appliers[name](new_val)
             setattr(self._settings, key + "_on", new_val)
+            return True
+        if action == "toggle:camera_shake":
+            new_val = not self._settings.camera_shake_on
+            self._set_camera_shake(new_val)
+            self._settings.camera_shake_on = new_val
             return True
         if action == "toggle:dust":
             new_val = not self._settings.dust_on
@@ -381,6 +393,8 @@ class ConfigurationPanel(Panel):
 
         if activate and kind == "ctrl" and target in MASTER_KEYS:
             self.dispatch_event("toggle:" + target)
+        elif activate and kind == "ctrl" and target == "camera_shake":
+            self.dispatch_event("toggle:camera_shake")
         elif activate and kind == "ctrl" and target == "dust":
             self.dispatch_event("toggle:dust")
         elif activate and kind == "ctrl" and target == "smaa":
@@ -414,7 +428,7 @@ class ConfigurationPanel(Panel):
         standalone controls, then the 'Modern VFX' group of master toggles:
         [('tab','graphics'), ('ctrl','smaa'), ('ctrl','dust'), ('ctrl','fov'),
          ('ctrl','improved_space'), ('ctrl','camera_realism'),
-         ('ctrl','realistic_lighting')].
+         ('ctrl','realistic_lighting'), ('ctrl','camera_shake')].
 
         configuration_panel.js mirrors this list by hand; the two are pinned
         together by test_js_graphics_focusables_match_python."""
@@ -422,6 +436,7 @@ class ConfigurationPanel(Panel):
         if self._selected_tab == "graphics":
             out += [("ctrl", "smaa"), ("ctrl", "dust"), ("ctrl", "fov")]
             out += [("ctrl", k) for k in MASTER_KEYS]
+            out += [("ctrl", "camera_shake")]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles"),
                     ("ctrl", "disable_annoying_dialogue"),

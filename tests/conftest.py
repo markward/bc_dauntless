@@ -717,6 +717,13 @@ def _reset_leakable_engine_globals():
         _hl._note_static_backdrops([])
     except Exception:
         pass
+    # Camera shake: the Modern VFX row flips a module global, so a test that
+    # turns it off would silently kill every later test's shake.
+    try:
+        from engine.appc import camera_shake as _camera_shake
+        _camera_shake.set_enabled(True)
+    except Exception:
+        pass
     # Subsystem light emitters: the Realistic Lighting master toggle flips a
     # module global, so a test that turns it off would silently blank every
     # later test's emitter lights.

@@ -29,6 +29,7 @@ def _make(tmp_path):
         set_volumetric_nebulae=Mock(), set_nebula_lightning=Mock(),
         set_hdr_lens_flare=Mock(),
         set_ship_light_emitters=Mock(),
+        set_camera_shake=Mock(),
         input_map=im,
     )
     return panel, im

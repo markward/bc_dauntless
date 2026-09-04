@@ -7238,6 +7238,7 @@ def run(mission_name: Optional[str] = None,
         )
         from engine.appc import crew_speech as _crew_speech
         from engine.appc import light_emitters as _light_emitters
+        from engine.appc import camera_shake as _camera_shake
         configuration_panel = ConfigurationPanel(
             tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay"),
                   ("controls", "Controls")],
@@ -7246,6 +7247,8 @@ def run(mission_name: Optional[str] = None,
                 # No dust_enabled() getter; defaults on natively, like rim
                 # and shadows.
                 dust_on=True,
+                # Real getter, unlike dust/rim/shadows.
+                camera_shake_on=_camera_shake.enabled(),
                 improved_space_on=(r.procedural_sky_enabled()
                                    and r.volumetric_nebulae_enabled()),
                 # One row over four effects. The renderer exposes no
@@ -7281,6 +7284,7 @@ def run(mission_name: Optional[str] = None,
             set_nebula_lightning=r.set_nebula_lightning_enabled,
             set_hdr_lens_flare=r.set_hdr_lens_flare_enabled,
             set_ship_light_emitters=_light_emitters.set_enabled,
+            set_camera_shake=_camera_shake.set_enabled,
             input_map=input_map,
         )
 

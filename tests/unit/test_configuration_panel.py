@@ -41,6 +41,7 @@ def _make(**overrides):
         set_nebula_lightning=Mock(),
         set_hdr_lens_flare=Mock(),
         set_ship_light_emitters=Mock(),
+        set_camera_shake=Mock(),
     )
     kwargs.update(overrides)
     return ConfigurationPanel(**kwargs), kwargs
@@ -72,7 +73,7 @@ def test_initial_settings_round_trip_to_render_payload():
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
-        "smaa_on": True, "dust_on": True,
+        "smaa_on": True, "dust_on": True, "camera_shake_on": True,
         "subtitles_on": True, "improved_space_on": True,
         "camera_realism_on": True, "realistic_lighting_on": True,
         "disable_annoying_dialogue_on": True,
@@ -587,12 +588,6 @@ def test_absorbed_sub_toggle_no_longer_dispatches_or_focuses(member):
     kw["set_" + member].assert_not_called()
 
 
-def test_graphics_control_order_is_standalones_then_masters():
-    p, _ = _make()
-    ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
-    assert ctrls == ["smaa", "dust", "fov"] + list(MASTER_KEYS)
-
-
 def test_space_dust_is_its_own_toggle_not_a_master_member():
     """Dust was folded into Improved Space Visuals and pulled back out after a
     live look: it reads as its own thing, not part of the sky."""
@@ -622,6 +617,42 @@ def test_space_on_dust_row_toggles():
     r.press(r.keys.KEY_SPACE)
     p.handle_input(r)
     kw["set_dust"].assert_called_once_with(False)
+
+
+def test_dispatch_toggle_camera_shake_flips_and_calls_applier():
+    p, kw = _make()
+    p.open()
+    assert p.dispatch_event("toggle:camera_shake") is True
+    kw["set_camera_shake"].assert_called_once_with(False)
+    assert p._settings.camera_shake_on is False
+    assert p.dispatch_event("toggle:camera_shake") is True
+    kw["set_camera_shake"].assert_called_with(True)
+
+
+def test_camera_shake_off_in_render_payload():
+    p, _ = _make(initial_settings=SettingsSnapshot(fov_deg=70,
+                                                   camera_shake_on=False))
+    p.open()
+    body = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert body["settings"]["camera_shake_on"] is False
+
+
+def test_graphics_control_order_is_standalones_masters_then_trailing():
+    """The whole Graphics order in one assertion — supersedes the earlier
+    standalones-then-masters test, which camera shake made incomplete."""
+    p, _ = _make()
+    ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
+    assert ctrls == ["smaa", "dust", "fov"] + list(MASTER_KEYS) + ["camera_shake"]
+
+
+def test_space_on_camera_shake_row_toggles():
+    p, kw = _make()
+    p.open()
+    p._focused = p._focusables().index(("ctrl", "camera_shake"))
+    r = _FakeReader()
+    r.press(r.keys.KEY_SPACE)
+    p.handle_input(r)
+    kw["set_camera_shake"].assert_called_once_with(False)
 
 
 def test_decals_is_no_longer_a_setting():
@@ -678,7 +709,11 @@ def test_js_graphics_focusables_match_python():
     import re
     standalone = re.search(r"CP_GRAPHICS_STANDALONE = \[(.*?)\];", _js_source(), re.S)
     assert standalone, "CP_GRAPHICS_STANDALONE not found"
-    js_targets = re.findall(r"'(\w+)'", standalone.group(1)) + _js_master_keys()
+    trailing = re.search(r"CP_GRAPHICS_TRAILING = \[(.*?)\];", _js_source(), re.S)
+    assert trailing, "CP_GRAPHICS_TRAILING not found"
+    js_targets = (re.findall(r"'(\w+)'", standalone.group(1))
+                  + _js_master_keys()
+                  + re.findall(r"\['(\w+)',", trailing.group(1)))
     p, _ = _make()
     assert js_targets == [t for kind, t in p._focusables() if kind == "ctrl"]
 

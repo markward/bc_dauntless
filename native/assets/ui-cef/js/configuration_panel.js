@@ -26,8 +26,11 @@ const CP_MASTERS = [
 // Graphics-tab controls in rendered order: the standalone rows, then the
 // masters. Single source for both the focusable list and the rendered rows.
 const CP_GRAPHICS_STANDALONE = ['smaa', 'dust', 'fov'];
-const CP_GRAPHICS_CTRLS =
-    CP_GRAPHICS_STANDALONE.concat(CP_MASTERS.map(m => m[0]));
+// Plain rows that sit INSIDE the Modern VFX group, after the masters.
+const CP_GRAPHICS_TRAILING = [['camera_shake', 'Camera Shake']];
+const CP_GRAPHICS_CTRLS = CP_GRAPHICS_STANDALONE
+    .concat(CP_MASTERS.map(m => m[0]))
+    .concat(CP_GRAPHICS_TRAILING.map(t => t[0]));
 
 // One On/Off settings row. `key` names both the setting (`<key>_on`) and the
 // action (`toggle:<key>`), so a row cannot read one control and toggle another.
@@ -108,6 +111,9 @@ function _cpRenderGraphicsBody(state, focusables) {
     // effects; see MASTER_TOGGLES in configuration_panel.py for the members.
     CP_MASTERS.forEach(function (m) {
         html += _cpToggleRow(m[1], m[0], s[m[0] + '_on'], isFoc);
+    });
+    CP_GRAPHICS_TRAILING.forEach(function (t) {
+        html += _cpToggleRow(t[1], t[0], s[t[0] + '_on'], isFoc);
     });
 
     return html;
