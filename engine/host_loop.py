@@ -15,6 +15,7 @@ import os as _os_mod
 
 from engine import renderer as r
 from engine import host_io
+from engine import paths as _paths
 from engine.appc.ship_iter import (
     iter_set_objects as _iter_set_objects,
     iter_ships as _iter_ships,
@@ -1067,7 +1068,7 @@ def _resolve_game_texture(path: str) -> str:
     root; prepend 'game/' so the renderer's ifstream resolves."""
     if not path:
         return ""
-    abs_path = PROJECT_ROOT / "game" / path
+    abs_path = _paths.game_asset(path)
     return str(abs_path)
 
 
@@ -1883,7 +1884,7 @@ def _game_asset_path(p):
     """Resolve a game-relative asset path to an absolute path string.
     Mirrors _place_one_character's local _abs helper; defined here so it can
     be passed to BridgeCharacterAnimController as the asset_resolver."""
-    return _resolve_asset_path(p, PROJECT_ROOT / "game")
+    return _resolve_asset_path(p, _paths.game_root())
 
 
 def _clip_duration(renderer, rel_path) -> float:
@@ -3904,7 +3905,7 @@ def _iter_suns() -> Iterable:
 def _aggregate_suns() -> list:
     """Collect sun render descriptors in BC native world units."""
     from engine.appc.planet import aggregate_suns_for_renderer
-    return aggregate_suns_for_renderer(PROJECT_ROOT, _live_sets())
+    return aggregate_suns_for_renderer(_paths.game_root(), _live_sets())
 
 
 # ── Warp-VFX (Stage 2) host helpers: sun dim + cinematic ship turn ──────────
@@ -4081,7 +4082,7 @@ def _aggregate_lens_flares() -> list:
     from engine.appc.lens_flare import aggregate_lens_flares_for_renderer
     import App
     return aggregate_lens_flares_for_renderer(
-        PROJECT_ROOT, list(App.g_kSetManager._sets.values()))
+        _paths.game_root(), list(App.g_kSetManager._sets.values()))
 
 
 def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
@@ -4091,7 +4092,7 @@ def _planet_nif_path(planet, *, verbose: bool = False) -> Optional[str]:
         if verbose:
             print(f"[host_loop]   skip planet: GetModelPath() returned empty", flush=True)
         return None
-    abs_path = PROJECT_ROOT / "game" / rel
+    abs_path = _paths.game_asset(rel)
     if not abs_path.is_file():
         if verbose:
             print(f"[host_loop]   skip planet: NIF not found at {abs_path}", flush=True)
@@ -4137,7 +4138,7 @@ def _ship_nif_path(ship, *, verbose: bool = False) -> Optional[str]:
         if verbose:
             print(f"[host_loop]   skip: {script_name}.GetShipStats() missing 'FilenameHigh' (keys: {list(stats.keys())})", flush=True)
         return None
-    abs_path = PROJECT_ROOT / "game" / rel
+    abs_path = _paths.game_asset(rel)
     if not abs_path.is_file():
         if verbose:
             print(f"[host_loop]   skip: NIF file not found at {abs_path}", flush=True)
@@ -4209,9 +4210,9 @@ def _ship_texture_search(nif_path, ship) -> list[str]:
     share = _ship_texture_share_path(ship)
     return [
         str(Path(nif_path).parent / tier),
-        str(PROJECT_ROOT / "game" / share / tier),
-        str(PROJECT_ROOT / "game" / DEFAULT_TEXTURE_SEARCH),
-        str(PROJECT_ROOT / "game" / "data" / "Models" / "SharedTextures" / "FedBases" / "High"),
+        str(_paths.game_asset(share) / tier),
+        str(_paths.game_asset(DEFAULT_TEXTURE_SEARCH)),
+        str(_paths.game_asset("data/Models/SharedTextures/FedBases/High")),
     ]
 
 
@@ -4288,7 +4289,7 @@ def _aggregate_bridge_lights():
 def _authored_backdrops(pSet):
     """Stock-BC backdrops: this set's authored BackdropSphere objects."""
     from engine.appc.backdrops import aggregate_for_renderer
-    return aggregate_for_renderer(pSet, PROJECT_ROOT)
+    return aggregate_for_renderer(pSet, _paths.game_root())
 
 
 def _aggregate_backdrops(pSet):
@@ -4618,7 +4619,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
                 print(f"[host_loop]   realize: shield register skipped for ship: "
                       f"{type(e).__name__}: {e}", flush=True)
 
-    planet_tex_search = str(PROJECT_ROOT / "game" / DEFAULT_PLANET_TEXTURE_SEARCH)
+    planet_tex_search = str(_paths.game_asset(DEFAULT_PLANET_TEXTURE_SEARCH))
     for planet in _iter_planets_in_set(pSet):
         if planet in session.planet_instances:
             continue
@@ -5238,7 +5239,7 @@ class _MissionLoader:
                     print(f"[host_loop]   shield register skipped for ship: "
                           f"{type(e).__name__}: {e}", flush=True)
 
-        planet_tex_search = str(PROJECT_ROOT / "game" / DEFAULT_PLANET_TEXTURE_SEARCH)
+        planet_tex_search = str(_paths.game_asset(DEFAULT_PLANET_TEXTURE_SEARCH))
         for planet in _iter_planets(verbose=self._verbose):
             nif_path = _planet_nif_path(planet, verbose=self._verbose)
             if nif_path is None:
@@ -5611,17 +5612,17 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
                     dev_mode.log_swallowed("destroy comm instance (teardown)", _e)
             controller.comm_instances_by_set[set_name] = []
 
-        nif_abs = str(PROJECT_ROOT / "game" / nif)
+        nif_abs = str(_paths.game_asset(nif))
         env = _App.g_kModelManager.env_for(nif)
         if env:
-            tex_abs = str(PROJECT_ROOT / "game" / env)
+            tex_abs = str(_paths.game_asset(env))
         else:
             # No LoadModel-recorded env — comm sets declare geometry via
             # SetBackgroundModel, not LoadModel, so env_for is None. Set
             # textures live in <model_dir>/High by BC convention; use that
             # rather than the DBridge fallback (which holds only DBridge's tgas).
             import posixpath as _pp
-            tex_abs = str(PROJECT_ROOT / "game" / _pp.dirname(nif) / "High")
+            tex_abs = str(_paths.game_asset(_pp.dirname(nif)) / "High")
         if is_bridge:
             handle = r.load_model(nif_abs, tex_abs)
             iid = r.create_bridge_instance(handle)
@@ -5657,10 +5658,10 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
                 except Exception as _e:
                     dev_mode.log_swallowed("destroy viewscreen instance", _e)
                 controller.viewscreen_instance = None
-            vs_nif_abs = str(PROJECT_ROOT / "game" / vs.nif)
+            vs_nif_abs = str(_paths.game_asset(vs.nif))
             vs_env = _App.g_kModelManager.env_for(vs.nif)
-            vs_tex = (str(PROJECT_ROOT / "game" / vs_env) if vs_env
-                      else str(PROJECT_ROOT / "game" / DBRIDGE_TEX_REL))
+            vs_tex = (str(_paths.game_asset(vs_env)) if vs_env
+                      else str(_paths.game_asset(DBRIDGE_TEX_REL)))
             vs_handle = r.load_model(vs_nif_abs, vs_tex)
             vs_iid = r.create_bridge_instance(vs_handle)
             r.set_world_transform(vs_iid, IDENTITY_MAT4)
@@ -5872,7 +5873,7 @@ def _restation_character(r, character, placement) -> None:
     unbinds every channel, so a stale gesture cannot fight the new pose)."""
     from engine.appc.bridge_placement import capture_breathing
     iid = character._render_instance
-    path = str(PROJECT_ROOT / "game" / placement["clip_nif"])
+    path = str(_paths.game_asset(placement["clip_nif"]))
     idx = r.load_instance_clip(iid, path)
     if idx is None or idx < 0:
         return
@@ -5880,8 +5881,7 @@ def _restation_character(r, character, placement) -> None:
     breathing = capture_breathing(character)
     if not breathing:
         return
-    bidx = r.load_instance_clip(iid, str(PROJECT_ROOT / "game"
-                                         / breathing["clip_nif"]))
+    bidx = r.load_instance_clip(iid, str(_paths.game_asset(breathing["clip_nif"])))
     if bidx is None or bidx < 0:
         return
     r.play_instance_idle(iid, bidx)
@@ -5983,7 +5983,7 @@ def _realize_character_instance(controller, r, character, set_name, is_bridge,
         return None
 
     def _abs(p):
-        return str(PROJECT_ROOT / "game" / p) if p else None
+        return str(_paths.game_asset(p)) if p else None
 
     create = r.create_bridge_instance if is_bridge else r.create_comm_instance
 
@@ -7152,9 +7152,7 @@ def run(mission_name: Optional[str] = None,
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:
-                    from pathlib import Path
-                    project_root = Path(__file__).resolve().parent.parent
-                    sdk_scripts = project_root / "sdk" / "Build" / "scripts"
+                    sdk_scripts = _paths.sdk_scripts()
                     reg = _missions.discover(sdk_scripts)
                     # Dev-only synthetic family: in-repo preview missions that
                     # don't live under sdk/. The single "." episode is collapsed

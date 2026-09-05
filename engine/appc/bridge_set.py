@@ -12,16 +12,20 @@ menu/handler/camera-mode surface stays a silent `_LoudStub` no-op.
 These are registered into the `App` namespace by App.py (explicit module
 attributes shadow App.py's `__getattr__` catch-all).
 """
-from pathlib import Path as _Path
-
 from engine.appc.sets import SetClass
 from engine.appc.math import TGMatrix3, TGPoint3
 
-# bridge_set.py lives at engine/appc/ -> project root is two parents up.
-_GAME_ROOT = _Path(__file__).resolve().parent.parent.parent / "game"
-
 _ZOOM_DEFAULT_TIME = 0.375   # BC SetZoomTime on Galaxy/Sovereign maincamera;
                              # pre-SetZoomTime fallback so advance() never snaps.
+
+
+def _bridge_game_root():
+    """Resolved at USE: a module-level constant would be captured at import,
+    before the first-run picker can change the root. Exists so tests can
+    observe a late reconfigure the way off_texture_abs_path and the NIF
+    camera-parse path do inline."""
+    from engine import paths
+    return str(paths.game_root())
 
 
 class _LoudStub:
@@ -152,7 +156,8 @@ def off_texture_abs_path(viewscreen) -> str:
     rel = getattr(viewscreen, "_off_texture", None) if viewscreen is not None else None
     if not rel:
         return ""
-    return str(_GAME_ROOT / rel)
+    from engine import paths
+    return str(paths.game_asset(rel))
 
 
 class ZoomCameraObjectClass(_LoudStub):
@@ -698,7 +703,8 @@ class ModelManager:
         if _dauntless_host is None or not hasattr(_dauntless_host,
                                                   "parse_set_camera"):
             return None
-        nif_abs = str(_GAME_ROOT / path)
+        from engine import paths
+        nif_abs = str(paths.game_asset(path))
         data = _dauntless_host.parse_set_camera(nif_abs)
         if data is None:
             return None

@@ -73,8 +73,11 @@ _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
 
-# Source TGAs live under game/data/Icons/.
-_GAME_ICONS_DIR = os.path.join(_PROJECT_ROOT, "game", "data", "Icons")
+def _game_icons_dir():
+    """Resolved at USE: a module-level constant would be captured at import,
+    before the first-run picker can change the root."""
+    from engine import paths
+    return str(paths.game_asset("data/Icons"))
 
 # Hand-authored SVGs (checked in). When a file exists here for a given
 # icon number it overrides the auto-traced fallback — the trace is a
@@ -175,7 +178,7 @@ def trace_all(tga_dir: Optional[str] = None,
               output_dir: Optional[str] = None) -> set[int]:
     """Convenience wrapper using the default game / cache directories."""
     return trace_atlas(
-        tga_dir=tga_dir or _GAME_ICONS_DIR,
+        tga_dir=tga_dir or _game_icons_dir(),
         registry=ICON_REGISTRY,
         output_dir=output_dir or _SVG_CACHE_DIR,
     )
@@ -213,7 +216,7 @@ def export_reference_pngs(tga_dir: Optional[str] = None,
 
     Idempotent — fresh PNGs are skipped, just like the tracer.
     """
-    tga_dir = tga_dir or _GAME_ICONS_DIR
+    tga_dir = tga_dir or _game_icons_dir()
     registry = registry or ICON_REGISTRY
     output_dir = output_dir or _REFERENCE_DIR
     os.makedirs(output_dir, exist_ok=True)

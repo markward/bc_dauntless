@@ -50,10 +50,10 @@ def LensFlare_Create(pSet) -> LensFlare:
     return flare
 
 
-def aggregate_lens_flares_for_renderer(project_root, pSets) -> list:
+def aggregate_lens_flares_for_renderer(game_root, pSets) -> list:
     """Return list[dict] for all built LensFlares across pSets.
 
-    Resolves texture paths against ``project_root / "game"``. Drops:
+    Resolves texture paths against the game root. Drops:
       - flares whose Build() was never called
       - flares whose source object is missing or has no GetWorldLocation
       - flares with zero elements after texture-resolution filtering
@@ -61,7 +61,6 @@ def aggregate_lens_flares_for_renderer(project_root, pSets) -> list:
     Wedge counts are clamped to [3, 64]; very low or very high N produce
     degenerate or excessive meshes upstream.
     """
-    game_root = project_root / "game"
     out = []
     for pSet in pSets:
         for flare in getattr(pSet, "_lens_flares", []):

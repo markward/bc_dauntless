@@ -15,11 +15,6 @@ SetStaticVariation calls. If the icon manager is ever implemented, this constant
 is the single thing to replace.
 """
 import random
-from pathlib import Path
-
-# bridge_set.py-style root resolution: this file is engine/appc/ -> root is two
-# parents up, then "game".
-_GAME_ROOT = Path(__file__).resolve().parent.parent.parent / "game"
 
 # icon-group name -> ordered list of texture file names (SDK: EffectTextures.LoadStatic)
 _STATIC_TEXTURE_FILES = {
@@ -27,12 +22,19 @@ _STATIC_TEXTURE_FILES = {
 }
 
 
+def _effects_dir():
+    """Resolved at USE: a module-level constant would be captured at import,
+    before the first-run picker can change the root."""
+    from engine import paths
+    return paths.game_asset("data/Textures/Effects")
+
+
 def static_texture_paths(icon_group):
     """Absolute paths to the noise frames for `icon_group`, or [] if unknown."""
     files = _STATIC_TEXTURE_FILES.get(icon_group)
     if not files:
         return []
-    base = _GAME_ROOT / "data" / "Textures" / "Effects"
+    base = _effects_dir()
     return [str(base / f) for f in files]
 
 

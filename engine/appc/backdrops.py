@@ -123,7 +123,7 @@ def BackdropSphere_Create() -> BackdropSphere:
     return BackdropSphere()
 
 
-def aggregate_for_renderer(pSet, project_root):
+def aggregate_for_renderer(pSet, game_root):
     """Project SetClass._backdrops into a flat list of dicts that the
     C++ side can consume verbatim.
 
@@ -147,7 +147,7 @@ def aggregate_for_renderer(pSet, project_root):
 
     Backdrops with empty texture paths are dropped silently (script
     bug we can't fix from here). Backdrops whose texture file does not
-    exist under project_root/game/ are dropped with a once-per-set
+    exist under the game root are dropped with a once-per-set
     warning (pSet._backdrop_warned flag) — same gate pattern as the
     lighting overflow warning.
     """
@@ -159,7 +159,7 @@ def aggregate_for_renderer(pSet, project_root):
     for b in pSet._backdrops:
         if not b._texture_path:
             continue  # silent: script-author bug
-        abs_path = (project_root / "game" / b._texture_path).resolve()
+        abs_path = (game_root / b._texture_path).resolve()
         if not abs_path.is_file():
             # BC scripts reference textures by base path (e.g.
             # "data/Backgrounds/treknebula.tga"); the actual files live
@@ -168,7 +168,7 @@ def aggregate_for_renderer(pSet, project_root):
             from pathlib import Path as _Path
             rel = _Path(b._texture_path)
             for lod in ("High", "Medium", "Low"):
-                lod_path = (project_root / "game" /
+                lod_path = (game_root /
                             rel.parent / lod / rel.name).resolve()
                 if lod_path.is_file():
                     abs_path = lod_path

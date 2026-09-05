@@ -48,11 +48,6 @@ def _random_phoneme_segments(duration: float, rng, codes, period_range=_FLAP_PER
         t += d
     return segs
 
-# crew_speech hands us the DB-stored voice filename, which is game-relative
-# (the audio system resolves it under game/, same as engine.audio.tg_sound's
-# _resolve_sfx_path). Resolve it the same way before pairing the sibling .LIP.
-_GAME_DIR = Path(__file__).resolve().parents[1] / "game"
-
 # Optional diagnostic — set LIPSYNC_DEBUG=1 to print why each line did/didn't
 # drive lip-sync (which slots loaded, .LIP vs flap, speaker resolution).
 _DEBUG = os.environ.get("LIPSYNC_DEBUG", "0") != "0"
@@ -62,7 +57,11 @@ def _abs_sfx(wav: str) -> str:
     p = Path(wav)
     if p.is_absolute() or p.is_file():
         return str(p)
-    return str(_GAME_DIR / wav)
+    # crew_speech hands us the DB-stored voice filename, which is game-relative
+    # (the audio system resolves it the same way, engine.audio.tg_sound's
+    # _resolve_sfx_path). Resolve it here before pairing the sibling .LIP.
+    from engine import paths
+    return str(paths.game_asset(wav))
 
 
 def _decoded_duration(wav: str) -> float:

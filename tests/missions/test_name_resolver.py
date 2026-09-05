@@ -47,7 +47,7 @@ def fake_tgl(monkeypatch, tmp_path):
     import engine.missions.name_resolver as nr
     nr._load_tgl.cache_clear()
     monkeypatch.setattr(nr, "read_tgl", _fake)
-    monkeypatch.setattr(nr, "TGL_ROOTS", (root,))
+    monkeypatch.setattr(nr, "_tgl_roots", lambda: (root,))
     return store
 
 

@@ -32,7 +32,11 @@ from engine.ui.icon_tracer import (
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
-_DAMAGE_DIR = os.path.join(_PROJECT_ROOT, "game", "data", "Icons", "Damage")
+def _damage_dir():
+    """Resolved at USE: a module-level constant would be captured at import,
+    before the first-run picker can change the root."""
+    from engine import paths
+    return str(paths.game_asset("data/Icons/Damage"))
 _CURATED_DIR = os.path.join(
     _PROJECT_ROOT, "native", "assets", "ui-cef", "icons", "damage",
 )
@@ -107,7 +111,7 @@ def trace_all() -> set[int]:
     tga_cache: dict[str, bytes] = {}
     for num, spec in ICON_REGISTRY.items():
         out_path = os.path.join(_SVG_CACHE_DIR, f"{num}.svg")
-        source_path = os.path.join(_DAMAGE_DIR, spec.tga)
+        source_path = os.path.join(_damage_dir(), spec.tga)
         if not os.path.isfile(source_path):
             continue
         if not _needs_rebuild(out_path, source_path):

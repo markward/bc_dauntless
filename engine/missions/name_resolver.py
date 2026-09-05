@@ -12,11 +12,13 @@ from typing import Optional
 
 from engine.missions.tgl_reader import read_tgl, TGLFile
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-TGL_ROOTS: tuple[Path, ...] = (
-    PROJECT_ROOT / "sdk" / "Build" / "Data" / "TGL",
-    PROJECT_ROOT / "game" / "data" / "TGL",
-)
+
+def _tgl_roots() -> tuple[Path, ...]:
+    """Both TGL sources, resolved at USE. Was a module-level tuple holding
+    BOTH roots -- the single densest instance of the capture-at-import trap."""
+    from engine import paths
+    return (paths.sdk_data() / "TGL", paths.game_asset("data/TGL"))
+
 
 # Authoritative Maelstrom campaign structure, transcribed from the original
 # game's hardcoded test/new-game menu builder
@@ -106,7 +108,7 @@ def _match_episode_number(episode_dir: str) -> Optional[str]:
 
 @lru_cache(maxsize=None)
 def _load_tgl(relpath: str) -> Optional[TGLFile]:
-    for root in TGL_ROOTS:
+    for root in _tgl_roots():
         path = root / relpath
         if path.is_file():
             try:

@@ -36,7 +36,13 @@ from engine.ui.png_encoder import encode_png_rgba
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
-_GAME_ICONS_DIR = os.path.join(_PROJECT_ROOT, "game", "data", "Icons", "Ships")
+def _game_icons_dir():
+    """Resolved at USE: a module-level constant would be captured at import,
+    before the first-run picker can change the root."""
+    from engine import paths
+    return str(paths.game_asset("data/Icons/Ships"))
+
+
 _CACHE_DIR      = os.path.join(_PROJECT_ROOT, "native", "assets", "ui-cef", "icons", "ships")
 
 # species stem → data URL (or None for known-missing).
@@ -60,7 +66,7 @@ def icon_path_for_species(name: str) -> Optional[str]:
     if name in _resolved:
         return _resolved[name]
 
-    tga_path = os.path.join(_GAME_ICONS_DIR, name + ".tga")
+    tga_path = os.path.join(_game_icons_dir(), name + ".tga")
     if not os.path.isfile(tga_path):
         _resolved[name] = None
         return None

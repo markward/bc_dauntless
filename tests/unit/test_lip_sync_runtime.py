@@ -7,8 +7,9 @@ test_lip_sync_controller; this exercises the BC-specific glue.
 import random
 import struct
 
+from engine import paths
 from engine.lip_sync_runtime import (
-    LipSyncRuntime, _random_phoneme_segments, _abs_sfx, _GAME_DIR,
+    LipSyncRuntime, _random_phoneme_segments, _abs_sfx,
     _decoded_duration,
 )
 
@@ -34,7 +35,7 @@ def test_random_phoneme_segments_empty_for_zero_duration_or_no_codes():
 def test_abs_sfx_resolves_game_relative():
     # A bare relative path that isn't a CWD file resolves under game/.
     out = _abs_sfx("sfx/Bridge/Crew/XO/gf009.mp3")
-    assert out == str(_GAME_DIR / "sfx/Bridge/Crew/XO/gf009.mp3")
+    assert out == str(paths.game_asset("sfx/Bridge/Crew/XO/gf009.mp3"))
 
 
 class _FakeRenderer:

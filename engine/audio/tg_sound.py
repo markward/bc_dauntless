@@ -7,7 +7,6 @@ or hardpoint files touch it; the rest of the SDK surface stays stubbed.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Optional
 
 try:
@@ -17,15 +16,15 @@ except (ImportError, AttributeError):
     _audio = None  # tests can still import the module shape
 
 
-_GAME_DIR_ENV = "OPEN_STBC_GAME_DIR"
-
-
 def _resolve_sfx_path(rel: str) -> str:
-    base = os.environ.get(_GAME_DIR_ENV)
-    if base:
-        return str(Path(base) / rel)
-    # Fallback to project-relative game/ directory.
-    return str(Path(__file__).resolve().parents[2] / "game" / rel)
+    """Absolutise a BC-relative sound path.
+
+    OPEN_STBC_GAME_DIR lived here: a second env var doing engine.paths' job
+    under a different name, with its own project-relative fallback. Point
+    DAUNTLESS_GAME_DIR at a fixture instead.
+    """
+    from engine import paths
+    return str(paths.game_asset(rel))
 
 
 class _PlayingSound:

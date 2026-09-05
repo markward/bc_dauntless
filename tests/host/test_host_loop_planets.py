@@ -110,7 +110,7 @@ def test_planet_nif_path_returns_none_when_file_missing():
     assert result is None
 
 
-def test_planet_nif_path_returns_absolute_path_when_file_exists(tmp_path):
+def test_planet_nif_path_returns_absolute_path_when_file_exists(tmp_path, monkeypatch):
     """A model_path that resolves to an existing file → absolute path string."""
     from engine.appc.planet import Planet_Create
     from engine import host_loop
@@ -122,14 +122,10 @@ def test_planet_nif_path_returns_absolute_path_when_file_exists(tmp_path):
 
     pPlanet = Planet_Create(100.0, "data/models/environment/Test.nif")
 
-    # Temporarily redirect PROJECT_ROOT inside host_loop.
+    # Temporarily redirect engine.paths' game root inside host_loop.
     import engine.host_loop as hl
-    original_root = hl.PROJECT_ROOT
-    hl.PROJECT_ROOT = tmp_path
-    try:
-        result = hl._planet_nif_path(pPlanet)
-    finally:
-        hl.PROJECT_ROOT = original_root
+    monkeypatch.setattr(hl._paths, "game_root", lambda: tmp_path / "game")
+    result = hl._planet_nif_path(pPlanet)
 
     assert result == str(fake_nif)
 

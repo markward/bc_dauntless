@@ -137,7 +137,7 @@ _SUN_DEFAULT_TEXTURE = "data/Textures/SunBase.tga"
 _CORONA_SHELL_RATIO = 1.1
 
 
-def aggregate_suns_for_renderer(project_root, pSets):
+def aggregate_suns_for_renderer(game_root, pSets):
     """Return list[dict] for all Sun objects across pSets.
 
     Suns with no base_texture fall back to SunBase.tga (the BC engine default).
@@ -169,7 +169,7 @@ def aggregate_suns_for_renderer(project_root, pSets):
                 scale = 1.0
             loc = obj.GetWorldLocation()
             tex_rel = obj.GetModelPath() or _SUN_DEFAULT_TEXTURE
-            abs_path = (project_root / "game" / tex_rel).resolve()
+            abs_path = (game_root / tex_rel).resolve()
             if not abs_path.is_file():
                 if not obj.__dict__.get("_sun_warned", False):
                     print(
@@ -182,7 +182,7 @@ def aggregate_suns_for_renderer(project_root, pSets):
             flare_rel = getattr(obj, "_flare_texture", "") or ""
             flare_abs_str = ""
             if flare_rel:
-                flare_abs = (project_root / "game" / flare_rel).resolve()
+                flare_abs = (game_root / flare_rel).resolve()
                 if flare_abs.is_file():
                     flare_abs_str = str(flare_abs)
                 elif not obj.__dict__.get("_flare_warned", False):

@@ -13,20 +13,18 @@ import engine.dev_mode as dev_mode
 # handler every tick, so the toggle state must survive across re-binds.
 _test_character_iid = None
 
-# Real skinned character NIF shipped with BC. Confirmed present at
-# game/data/Models/Characters/Bodies/BodyMaleL/BodyMaleL.NIF. Absolutised the
-# same way host_loop resolves ship/bridge NIFs (PROJECT_ROOT / "game" / rel).
+# Kept for the non-BC-asset dev dump dir below (nonfinite_dumps/); not used
+# for anything under the game/SDK install.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_TEST_CHARACTER_NIF = str(
-    _PROJECT_ROOT
-    / "game"
-    / "data"
-    / "Models"
-    / "Characters"
-    / "Bodies"
-    / "BodyMaleL"
-    / "BodyMaleL.NIF"
-)
+
+
+def _test_character_nif():
+    """Resolved at USE. This one was invisible to a line-oriented grep: the
+    constant spanned nine lines, so no single line contained both the root and
+    the "game" segment."""
+    from engine import paths
+    return str(paths.game_asset(
+        "data/Models/Characters/Bodies/BodyMaleL/BodyMaleL.NIF"))
 
 
 def register_for_frame(_h, session, player) -> None:
@@ -125,7 +123,7 @@ def register_for_frame(_h, session, player) -> None:
         # bubbling out into the frame body — log and stay un-spawned.
         try:
             _test_character_iid = renderer.spawn_test_character(
-                _TEST_CHARACTER_NIF
+                _test_character_nif()
             )
         except Exception as exc:  # noqa: BLE001 - dev hook must not break the tick
             print("[dev] spawn_test_character failed:", exc)

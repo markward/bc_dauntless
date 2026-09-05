@@ -28,7 +28,7 @@ def test_procedural_fields_classify_and_colour(monkeypatch, tmp_path):
         _backdrop(bd.Backdrop.KIND_BACKDROP, "data/treknebula6.tga"),
         _backdrop(bd.Backdrop.KIND_BACKDROP, "data/galaxy4.tga"),
     ]
-    out = bd.aggregate_for_renderer(_Set(items), tmp_path)
+    out = bd.aggregate_for_renderer(_Set(items), tmp_path / "game")
     by_kind = {d["proc_kind"]: d for d in out}
     assert set(by_kind) == {"stars", "starcloud", "nebula"}
     # nebula colour is brightened dominant (max channel near 0.8)
@@ -45,7 +45,7 @@ def test_unknown_texture_is_graceful(monkeypatch, tmp_path):
     (tmp_path / "game" / "data").mkdir(parents=True, exist_ok=True)
     (tmp_path / "game" / "data" / "mystery.tga").write_bytes(b"x")
     b = _backdrop(bd.Backdrop.KIND_BACKDROP, "data/mystery.tga")
-    out = bd.aggregate_for_renderer(_Set([b]), tmp_path)
+    out = bd.aggregate_for_renderer(_Set([b]), tmp_path / "game")
     assert out[0]["proc_kind"] == "nebula"
     assert "color" in out[0] and "seed" in out[0]  # defaults, no crash
 

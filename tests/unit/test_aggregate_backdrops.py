@@ -10,14 +10,14 @@ GAME_DATA = PROJECT_ROOT / "game" / "data"
 
 def test_aggregate_returns_empty_for_none():
     from engine.appc.backdrops import aggregate_for_renderer
-    assert aggregate_for_renderer(None, PROJECT_ROOT) == []
+    assert aggregate_for_renderer(None, PROJECT_ROOT / "game") == []
 
 
 def test_aggregate_returns_empty_for_set_with_no_backdrops():
     import App
     from engine.appc.backdrops import aggregate_for_renderer
     pSet = App.SetClass_Create()
-    assert aggregate_for_renderer(pSet, PROJECT_ROOT) == []
+    assert aggregate_for_renderer(pSet, PROJECT_ROOT / "game") == []
 
 
 def test_aggregate_resolves_texture_path_against_game_dir():
@@ -31,7 +31,7 @@ def test_aggregate_resolves_texture_path_against_game_dir():
     s.SetTextureFileName("data/stars.tga")
     pSet.AddBackdropToSet(s, "stars")
 
-    result = aggregate_for_renderer(pSet, PROJECT_ROOT)
+    result = aggregate_for_renderer(pSet, PROJECT_ROOT / "game")
     assert len(result) == 1
     expected_abs = str((GAME_DATA / "stars.tga").resolve())
     assert result[0]["texture_path"] == expected_abs
@@ -50,7 +50,7 @@ def test_aggregate_preserves_draw_order():
     pSet.AddBackdropToSet(cloud1, "n1")
     pSet.AddBackdropToSet(cloud2, "n2")
 
-    result = aggregate_for_renderer(pSet, PROJECT_ROOT)
+    result = aggregate_for_renderer(pSet, PROJECT_ROOT / "game")
     assert [r["kind"] for r in result] == ["star", "backdrop", "backdrop"]
 
 
@@ -69,7 +69,7 @@ def test_aggregate_extracts_world_rotation_from_align_to_vectors():
     s.AlignToVectors(fwd, up)
     pSet.AddBackdropToSet(s, "stars")
 
-    result = aggregate_for_renderer(pSet, PROJECT_ROOT)
+    result = aggregate_for_renderer(pSet, PROJECT_ROOT / "game")
     m9 = result[0]["world_rotation"]
     assert len(m9) == 9
     # Row 1 (forward axis) must equal the AlignToVectors-normalized fwd.
@@ -89,7 +89,7 @@ def test_aggregate_drops_backdrops_with_unresolvable_texture(capsys):
     s.SetTextureFileName("data/does_not_exist.tga")
     pSet.AddBackdropToSet(s, "stars")
 
-    result = aggregate_for_renderer(pSet, PROJECT_ROOT)
+    result = aggregate_for_renderer(pSet, PROJECT_ROOT / "game")
     assert result == []
     out = capsys.readouterr().out
     assert "MissingTextureSet" in out
@@ -105,9 +105,9 @@ def test_aggregate_unresolvable_warning_fires_once_per_set(capsys):
     s.SetTextureFileName("data/missing.tga")
     pSet.AddBackdropToSet(s, "stars")
 
-    aggregate_for_renderer(pSet, PROJECT_ROOT)
+    aggregate_for_renderer(pSet, PROJECT_ROOT / "game")
     capsys.readouterr()  # drain first warning
-    aggregate_for_renderer(pSet, PROJECT_ROOT)
+    aggregate_for_renderer(pSet, PROJECT_ROOT / "game")
     assert capsys.readouterr().out == ""
 
 
@@ -119,7 +119,7 @@ def test_aggregate_drops_empty_texture_path_silently(capsys):
     # No SetTextureFileName called.
     pSet.AddBackdropToSet(s, "stars")
 
-    result = aggregate_for_renderer(pSet, PROJECT_ROOT)
+    result = aggregate_for_renderer(pSet, PROJECT_ROOT / "game")
     assert result == []
     assert capsys.readouterr().out == ""
 
@@ -134,7 +134,7 @@ def test_aggregate_snaps_target_poly_count_to_minimum():
     s.SetTextureFileName("data/stars.tga")
     s.SetTargetPolyCount(0)
     pSet.AddBackdropToSet(s, "stars")
-    result = aggregate_for_renderer(pSet, PROJECT_ROOT)
+    result = aggregate_for_renderer(pSet, PROJECT_ROOT / "game")
     assert result[0]["target_poly_count"] == 64
 
 
@@ -151,7 +151,7 @@ def test_aggregate_passes_through_tile_and_span():
     s.SetHorizontalSpan(0.3025)
     s.SetVerticalSpan(0.605)
     pSet.AddBackdropToSet(s, "stars")
-    result = aggregate_for_renderer(pSet, PROJECT_ROOT)
+    result = aggregate_for_renderer(pSet, PROJECT_ROOT / "game")
     assert result[0]["h_tile"] == 22.0
     assert result[0]["v_tile"] == 11.0
     assert result[0]["h_span"] == 0.3025

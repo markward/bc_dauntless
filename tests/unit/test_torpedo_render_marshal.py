@@ -9,10 +9,11 @@ disruptor-bolt colours are exempt."""
 import App
 import pytest
 
+from engine import paths
 from engine.appc.projectiles import Torpedo, register
 from engine.appc import projectiles
 from engine.host_loop import (
-    _build_torpedo_render_data, _color_tuple, PROJECT_ROOT, TORPEDO_BRIGHTNESS,
+    _build_torpedo_render_data, _color_tuple, TORPEDO_BRIGHTNESS,
 )
 
 
@@ -89,7 +90,7 @@ def test_photon_entry_fields():
     mag = (fx * fx + fy * fy + fz * fz) ** 0.5
     assert mag == pytest.approx(1.0)
 
-    assert entry["core_texture"].startswith(str(PROJECT_ROOT / "game"))
+    assert entry["core_texture"].startswith(str(paths.game_root()))
     assert entry["core_texture"].endswith("TorpedoCore.tga")
     assert entry["glow_texture"].endswith("TorpedoGlow.tga")
     assert entry["flares_texture"].endswith("TorpedoFlares.tga")

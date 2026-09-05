@@ -81,7 +81,7 @@ def test_aggregator_returns_descriptor_for_built_flare():
          "position": 1.4, "size": 0.075},
     ])
 
-    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT, [pSet])
+    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT / "game", [pSet])
 
     assert len(out) == 1
     d = out[0]
@@ -107,7 +107,7 @@ def test_aggregator_skips_unbuilt_flares():
     flare.SetSource(sun, 6)
     flare.AddFlare(8, "data/textures/rays.tga", 0.0, 0.3)
     # No Build() call.
-    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT, [pSet])
+    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT / "game", [pSet])
     assert out == []
 
 
@@ -116,13 +116,13 @@ def test_aggregator_skips_flares_with_no_source():
     flare = LensFlare_Create(pSet)
     flare.AddFlare(8, "data/textures/rays.tga", 0.0, 0.3)
     flare.Build()
-    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT, [pSet])
+    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT / "game", [pSet])
     assert out == []
 
 
 def test_aggregator_skips_flares_with_no_elements():
     pSet, sun, flare = _make_set_with_built_flare([])
-    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT, [pSet])
+    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT / "game", [pSet])
     assert out == []
 
 
@@ -134,7 +134,7 @@ def test_aggregator_drops_elements_whose_textures_do_not_resolve():
         {"wedges": 6, "texture": "data/textures/nope_does_not_exist.tga",
          "position": 0.5, "size": 0.1},
     ])
-    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT, [pSet])
+    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT / "game", [pSet])
     assert len(out) == 1
     assert len(out[0]["elements"]) == 1
     assert out[0]["elements"][0]["texture_path"].endswith("rays.tga")
@@ -146,7 +146,7 @@ def test_aggregator_clamps_wedges_to_valid_range():
         {"wedges": 2,  "texture": "data/textures/rays.tga", "position": 0.0, "size": 0.3},
         {"wedges": 99, "texture": "data/textures/rays.tga", "position": 0.0, "size": 0.3},
     ])
-    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT, [pSet])
+    out = aggregate_lens_flares_for_renderer(PROJECT_ROOT / "game", [pSet])
     assert out[0]["elements"][0]["wedges"] == 3   # min clamp
     assert out[0]["elements"][1]["wedges"] == 64  # max clamp
 

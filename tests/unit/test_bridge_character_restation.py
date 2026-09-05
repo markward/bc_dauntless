@@ -19,6 +19,7 @@ locations DO change (DBL1M -> DBCommander / DBGuest); nothing turned that into
 a pose.
 """
 import engine.host_loop as HL
+from engine import paths
 
 
 class _FakeR:
@@ -78,7 +79,6 @@ def _patch(monkeypatch, chars, *, placements=None, breathing=None):
         BP, "capture_breathing",
         breathing if breathing is not None
         else (lambda c: {"clip_nif": f"{c.GetLocation()}Breathe.nif"}))
-    monkeypatch.setattr(HL, "PROJECT_ROOT", HL.PROJECT_ROOT)
 
 
 def test_location_change_reposes_at_the_new_station(monkeypatch):
@@ -90,14 +90,12 @@ def test_location_change_reposes_at_the_new_station(monkeypatch):
 
     HL._sync_bridge_character_station(object(), r)
 
-    seat = r.loaded[(11, str(HL.PROJECT_ROOT / "game"
-                             / "data/animations/Seated_P.nif"))]
+    seat = r.loaded[(11, str(paths.game_asset("data/animations/Seated_P.nif")))]
     # Frame 0 of the placement clip is the at-station pose (sample_at_start).
     assert r.rest_poses == [(11, seat, True)]
     # Breathing re-established at the DESTINATION so the seated officer gets the
     # seated idle, not the standing one.
-    assert r.idled == [(11, r.loaded[(11, str(HL.PROJECT_ROOT / "game"
-                                              / "DBGuestBreathe.nif"))])]
+    assert r.idled == [(11, r.loaded[(11, str(paths.game_asset("DBGuestBreathe.nif")))])]
     assert picard._placed_location == "DBGuest"
 
 
