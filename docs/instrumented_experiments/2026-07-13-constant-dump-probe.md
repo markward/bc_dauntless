@@ -488,3 +488,70 @@ millions of times. **Fix the caller (guard by weapon type); do NOT implement
 
 This validates the method-coverage diff as strongly as the constant diff: it
 surfaces bugs in our own call sites, not just gaps in the shim.
+
+---
+
+## Applied to the shim 2026-08-31
+
+All 3,829 constants were applied to the shim: **581 previously-wrong values
+corrected**, every previously-missing constant defined. The shim now sits at
+`ok=3825 wrong=4 missing=0`.
+
+**The floor is 4, not 0, on purpose.** `PI` / `HALF_PI` / `TWO_PI` / `FOURTH_PI`
+are deliberately kept at Python double precision against BC's float32.
+
+`tests/unit/test_constant_surface.py` ratchets the surface — `REMAINING_WRONG`
+may only fall — and runs its terminal assertion with **0 skipped**, so every
+remaining difference must be a *declared* deviation.
+
+⚠️ **Never hand-edit `engine/appc/constants_generated.py`.** It is GENERATED.
+Change `tools/gen_app_constants.py`, or add a `DEVIATIONS` entry in
+`engine/appc/constants_apply.py`.
+
+### One RE finding worth keeping
+
+Our `ET_TORPEDO_AMMO_CONSUMED` — reverse-engineered from the binary with no SDK
+symbol to go on — turned out to be BC's own `ET_PLAYER_TORPEDO_COUNT_CHANGED`
+(both `0x800067`). The RE had recovered the real behaviour (a player-only
+torpedo-count broadcast) **correctly**; only the name was invented. A good
+reminder that an invented name is not an invented mechanism.
+
+⚠️ **Fixing a constant's VALUE does not add its emitter or its call site.** See
+[`../engine/event-emitter-gaps.md`](../engine/event-emitter-gaps.md), which is
+the live register for that separate class of gap.
+
+### Live-verified 2026-08-31 (Mark, 8-test in-game plan)
+
+Confirmed working in-game after the sweep:
+
+1. Keyboard flight, F-keys, and a modifier chord.
+2. E1M1 `s` skip-intro.
+3. Nebula / planet / sun render, with the orbit menu correctly listing planets
+   rather than suns.
+4. Subsystem targeting → repair pane.
+5. Tactical / engineering / bridge-menu layout, Galaxy and Sovereign icons
+   unmoved.
+6. Mission narration correctly interrupting engineer chatter — this is the
+   `CSP_` polarity check.
+7. The five revived bridge menu items — ***medium* confidence only**: they
+   respond, but only three have unambiguous visible results.
+8. Red alert and warp flash now non-positional (`LS_3D`).
+
+Both silent-failure paths (`CT_*` type dispatch, tests 3 and 4) passed.
+
+**Two traps this sweep uncovered**, both live bug classes if re-broken:
+
+* BC's `CSP_*` polarity is **lower = higher priority**.
+  `engine/appc/crew_speech.py` is written to match — change one, change both.
+* `CT_*` are **int tags**, resolved to classes for `isinstance` filtering by an
+  int↔class registry in `engine/appc/object_types.py`. They are *not* the class
+  objects themselves.
+
+### One fatal crash surfaced during that run — unrelated and pre-existing
+
+Fixed in `3748fb96`. This sweep neither caused nor covered it: the `g_k*Color`
+globals are Appc **instances**, not scalars, so the q13 dump never held them. 40
+of the 51 the SDK references remain undefined, and now degrade to a default
+colour instead of killing the frame
+(`engine/ui/info_box_panel.py:_color_to_list`). **Recovering their real values
+needs its own probe.**
