@@ -47,6 +47,9 @@ _REQUIRED_BINDINGS = frozenset({
     "set_phaser_beams", "set_tractor_beams",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
     "ray_trace_mesh",
+    "transform_alloc", "transform_free", "transform_get_position",
+    "transform_set_position", "transform_get_rotation", "transform_set_rotation",
+    "transform_get_rotation_col", "transform_live_count", "transform_capacity",
 })
 
 # OPTIONAL: soft-guarded (`getattr(_h, "NAME", None)` / `hasattr(_h, "NAME")`).
@@ -435,3 +438,71 @@ def swap_interval() -> int:
     """The interval currently set; -1 when unknown (no window, or no binding)."""
     fn = getattr(_h, "swap_interval", None)
     return int(fn()) if fn is not None else -1
+
+
+# ── Transform store ───────────────────────────────────────────────────────────
+# The native, process-wide dauntless::transform_store() — authoritative
+# position/rotation for every ObjectClass (see engine.appc.transform_store,
+# which talks to _dauntless_host directly rather than through this façade).
+# Required, not optional: a stale build missing any of these would leave
+# object placement silently broken rather than degrading a single feature.
+
+def transform_alloc() -> Optional[Tuple[int, int]]:
+    if _h is None:
+        return None
+    return _h.transform_alloc()
+
+
+def transform_free(index: int, generation: int) -> None:
+    if _h is None:
+        return
+    _h.transform_free(index, generation)
+
+
+def transform_get_position(
+    index: int, generation: int,
+) -> Optional[Tuple[float, float, float]]:
+    if _h is None:
+        return None
+    return _h.transform_get_position(index, generation)
+
+
+def transform_set_position(
+    index: int, generation: int, x: float, y: float, z: float,
+) -> None:
+    if _h is None:
+        return
+    _h.transform_set_position(index, generation, x, y, z)
+
+
+def transform_get_rotation(index: int, generation: int) -> Optional[tuple]:
+    """Row-major nine floats."""
+    if _h is None:
+        return None
+    return _h.transform_get_rotation(index, generation)
+
+
+def transform_set_rotation(index: int, generation: int, rot9) -> None:
+    if _h is None:
+        return
+    _h.transform_set_rotation(index, generation, rot9)
+
+
+def transform_get_rotation_col(
+    index: int, generation: int, col: int,
+) -> Optional[Tuple[float, float, float]]:
+    if _h is None:
+        return None
+    return _h.transform_get_rotation_col(index, generation, col)
+
+
+def transform_live_count() -> int:
+    if _h is None:
+        return 0
+    return _h.transform_live_count()
+
+
+def transform_capacity() -> int:
+    if _h is None:
+        return 0
+    return _h.transform_capacity()

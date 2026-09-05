@@ -1,14 +1,34 @@
 """One contract, run against every TransformStore backend.
 
 Two backends that are never live at the same time are only safe if something
-proves they agree. This is that something. Task 3 adds the native backend to
-STORE_FACTORIES; until then it runs against the Python one alone.
+proves they agree. This is that something.
+
+The native store is a process-wide singleton (there is exactly one
+dauntless::transform_store() per process), so every test using it must free
+every handle it allocates — a leaked slot inflates live_count()/capacity()
+for every later test in the session. The two count-based tests below measure
+deltas from a baseline captured at the start of the test for the same reason.
 """
 import pytest
 
-from engine.appc.transform_store import PythonTransformStore, StaleHandleError
+from engine.appc.transform_store import (
+    NativeTransformStore, PythonTransformStore, StaleHandleError)
 
-STORE_FACTORIES = [pytest.param(PythonTransformStore, id="python")]
+try:
+    import _dauntless_host as _h
+except ImportError:
+    _h = None
+
+_HAS_NATIVE = _h is not None and hasattr(_h, "transform_alloc")
+
+STORE_FACTORIES = [
+    pytest.param(PythonTransformStore, id="python"),
+    pytest.param(
+        lambda: NativeTransformStore(_h), id="native",
+        marks=pytest.mark.skipif(
+            not _HAS_NATIVE,
+            reason="native _dauntless_host transform bindings not built")),
+]
 
 IDENTITY = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
 
@@ -33,10 +53,15 @@ def test_position_round_trips(store):
 
 
 def test_rotation_round_trips(store):
+    # The native backend stores C++ `float` (32-bit) per the design spec
+    # ("asserted equal within float tolerance" — Section 5), so round-tripping
+    # values that are not exactly representable in binary32 (0.1, 0.2, ...)
+    # loses precision there even though the pure-Python backend is exact.
+    # pytest.approx keeps this contract test honest for both backends.
     i, g = store.alloc()
     src = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
     store.set_rotation(i, g, src)
-    assert store.get_rotation(i, g) == src
+    assert store.get_rotation(i, g) == pytest.approx(src, rel=1e-6)
     store.free(i, g)
 
 
@@ -94,24 +119,30 @@ def test_reused_index_gets_a_new_generation(store):
 
 
 def test_live_count_tracks_alloc_and_free(store):
-    assert store.live_count() == 0
+    # The native store is a process-wide singleton, so live_count() does not
+    # start at zero across tests — measure the delta from a baseline instead
+    # of an absolute count.
+    base = store.live_count()
     handles = [store.alloc() for _ in range(10)]
-    assert store.live_count() == 10
+    assert store.live_count() - base == 10
     for i, g in handles[:4]:
         store.free(i, g)
-    assert store.live_count() == 6
+    assert store.live_count() - base == 6
     for i, g in handles[4:]:
         store.free(i, g)
 
 
 def test_many_alloc_free_cycles_do_not_leak(store):
     """Torpedoes churn hard; the free list must actually be reused."""
+    base_live = store.live_count()
+    base_capacity = store.capacity()
     for _ in range(1000):
         i, g = store.alloc()
         store.free(i, g)
-    assert store.live_count() == 0
-    assert store.capacity() <= 4, (
-        "free list is not being reused; capacity grew to %d" % store.capacity())
+    assert store.live_count() == base_live
+    grown = store.capacity() - base_capacity
+    assert grown <= 4, (
+        "free list is not being reused; capacity grew by %d" % grown)
 
 
 def test_growth_preserves_existing_slots(store):
@@ -124,3 +155,26 @@ def test_growth_preserves_existing_slots(store):
         assert store.get_position(i, g) == (float(n), 0.0, 0.0)
     for i, g, n in handles:
         store.free(i, g)
+
+
+def test_recycled_slot_does_not_inherit_prior_transform(store):
+    """A reused slot must never inherit the prior occupant's transform."""
+    i1, g1 = store.alloc()
+    store.set_position(i1, g1, 42.0, -7.0, 3.5)
+    distinctive = (2.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 2.0)
+    store.set_rotation(i1, g1, distinctive)
+    store.free(i1, g1)
+
+    i2, g2 = store.alloc()
+    assert store.get_position(i2, g2) == (0.0, 0.0, 0.0)
+    assert store.get_rotation(i2, g2) == IDENTITY
+    store.free(i2, g2)
+
+
+def test_get_rotation_col_out_of_range_raises_index_error(store):
+    i, g = store.alloc()
+    with pytest.raises(IndexError):
+        store.get_rotation_col(i, g, -1)
+    with pytest.raises(IndexError):
+        store.get_rotation_col(i, g, 3)
+    store.free(i, g)

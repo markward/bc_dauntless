@@ -111,6 +111,67 @@ class PythonTransformStore:
                 "transform handle (%r, %r) is stale" % (index, generation))
 
 
+class NativeTransformStore:
+    """C++ backend. Thin translation of RuntimeError to StaleHandleError so
+    both backends raise the same exception type."""
+
+    __slots__ = ("_h",)
+
+    def __init__(self, host_module):
+        self._h = host_module
+
+    def alloc(self) -> tuple[int, int]:
+        return self._h.transform_alloc()
+
+    def free(self, index: int, generation: int) -> None:
+        try:
+            self._h.transform_free(index, generation)
+        except RuntimeError as exc:
+            raise StaleHandleError(str(exc)) from exc
+
+    def live_count(self) -> int:
+        return self._h.transform_live_count()
+
+    def capacity(self) -> int:
+        return self._h.transform_capacity()
+
+    def get_position(self, index: int, generation: int) -> tuple:
+        try:
+            return tuple(self._h.transform_get_position(index, generation))
+        except RuntimeError as exc:
+            raise StaleHandleError(str(exc)) from exc
+
+    def set_position(self, index: int, generation: int,
+                     x: float, y: float, z: float) -> None:
+        try:
+            self._h.transform_set_position(index, generation,
+                                           float(x), float(y), float(z))
+        except RuntimeError as exc:
+            raise StaleHandleError(str(exc)) from exc
+
+    def get_rotation(self, index: int, generation: int) -> tuple:
+        try:
+            return tuple(self._h.transform_get_rotation(index, generation))
+        except RuntimeError as exc:
+            raise StaleHandleError(str(exc)) from exc
+
+    def set_rotation(self, index: int, generation: int, t9) -> None:
+        try:
+            self._h.transform_set_rotation(index, generation,
+                                           [float(v) for v in t9])
+        except RuntimeError as exc:
+            raise StaleHandleError(str(exc)) from exc
+
+    def get_rotation_col(self, index: int, generation: int, col: int) -> tuple:
+        if col < 0 or col > 2:
+            raise IndexError(col)
+        try:
+            return tuple(
+                self._h.transform_get_rotation_col(index, generation, col))
+        except RuntimeError as exc:
+            raise StaleHandleError(str(exc)) from exc
+
+
 _STORE = None
 
 
@@ -122,7 +183,14 @@ def get_store():
     """
     global _STORE
     if _STORE is None:
-        _STORE = PythonTransformStore()
+        try:
+            import _dauntless_host as _h
+        except ImportError:
+            _h = None
+        if _h is not None and hasattr(_h, "transform_alloc"):
+            _STORE = NativeTransformStore(_h)
+        else:
+            _STORE = PythonTransformStore()
     return _STORE
 
 

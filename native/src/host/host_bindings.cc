@@ -16,6 +16,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
+#include "dauntless/transform_store.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -4425,4 +4426,59 @@ PYBIND11_MODULE(_dauntless_host, m) {
 #endif
 
     dauntless::audio::register_python_bindings(m);
+
+    // ── Transform store ──────────────────────────────────────────────────────
+    // Authoritative position/rotation for every ObjectClass. See
+    // docs/superpowers/specs/2026-09-05-native-transform-ownership-design.md.
+    m.def("transform_alloc", []() {
+              return dauntless::transform_store().alloc();
+          },
+          "Allocate a transform slot. Returns (index, generation).");
+
+    m.def("transform_free",
+          [](std::uint32_t i, std::uint32_t g) {
+              dauntless::transform_store().free(i, g);
+          },
+          py::arg("index"), py::arg("generation"),
+          "Release a transform slot. Raises RuntimeError if the handle is stale.");
+
+    m.def("transform_get_position",
+          [](std::uint32_t i, std::uint32_t g) {
+              return dauntless::transform_store().position(i, g);
+          },
+          py::arg("index"), py::arg("generation"));
+
+    m.def("transform_set_position",
+          [](std::uint32_t i, std::uint32_t g, float x, float y, float z) {
+              dauntless::transform_store().set_position(i, g, x, y, z);
+          },
+          py::arg("index"), py::arg("generation"),
+          py::arg("x"), py::arg("y"), py::arg("z"));
+
+    m.def("transform_get_rotation",
+          [](std::uint32_t i, std::uint32_t g) {
+              return dauntless::transform_store().rotation(i, g);
+          },
+          py::arg("index"), py::arg("generation"),
+          "Row-major nine floats.");
+
+    m.def("transform_set_rotation",
+          [](std::uint32_t i, std::uint32_t g, const std::array<float, 9>& r) {
+              dauntless::transform_store().set_rotation(i, g, r);
+          },
+          py::arg("index"), py::arg("generation"), py::arg("rot9"));
+
+    m.def("transform_get_rotation_col",
+          [](std::uint32_t i, std::uint32_t g, int col) {
+              return dauntless::transform_store().rotation_col(i, g, col);
+          },
+          py::arg("index"), py::arg("generation"), py::arg("col"));
+
+    m.def("transform_live_count", []() {
+              return dauntless::transform_store().live_count();
+          });
+
+    m.def("transform_capacity", []() {
+              return dauntless::transform_store().capacity();
+          });
 }
