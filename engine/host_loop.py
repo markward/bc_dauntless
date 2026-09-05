@@ -7255,7 +7255,7 @@ def run(mission_name: Optional[str] = None,
         # and snapshot_for_panel builds the panel's display state. This
         # replaces reconstructing the snapshot from renderer getters —
         # several of those do not exist, so the old snapshot asserted
-        # smaa_on/dust_on were True without reading anything.
+        # anti-aliasing and dust were on without reading anything.
         from engine.ui.configuration_panel import ConfigurationPanel
         from engine.appc import crew_speech as _crew_speech
         from engine.appc import light_emitters as _light_emitters
@@ -7278,7 +7278,12 @@ def run(mission_name: Optional[str] = None,
             set_dust=r.set_dust_enabled,
             set_hdr=r.set_hdr_enabled,
             set_rim=r.set_rim_enabled,
-            set_smaa=r.set_smaa_enabled,
+            # Routed through the settings row, not straight at the renderer:
+            # one aa_mode index drives both set_smaa_enabled and
+            # set_msaa_samples, and that fan-out lives in the SETTINGS table.
+            set_aa_mode=lambda mode: _settings.apply_setting(
+                _settings_ctx, "aa_mode", mode),
+            max_msaa_samples=r.max_msaa_samples(),
             set_subtitles=_crew_speech.set_subtitles_enabled,
             set_disable_annoying_dialogue=_crew_speech.set_annoying_dialogue_disabled,
             set_ai_difficulty=App.Game_SetDifficulty,

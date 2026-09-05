@@ -26,9 +26,14 @@ from typing import Any, Callable, Optional
 
 from engine import dev_mode
 from engine.cameras import EXTERIOR_FOV_Y_RAD
-from engine.ui.configuration_panel import FOV_MAX, FOV_MIN, SettingsSnapshot
+from engine.ui.configuration_panel import (
+    AA_MODE_SAMPLES, AA_MSAA_8X, AA_OFF, AA_SMAA,
+    FOV_MAX, FOV_MIN, SettingsSnapshot,
+)
 
-SCHEMA_VERSION = 1
+# 2: graphics.smaa_on (bool) became graphics.aa_mode (index) when SMAA and
+#    MSAA merged into one mutually-exclusive selector. See _migrate.
+SCHEMA_VERSION = 2
 
 # engine/settings_store.py -> engine/ -> <project root>, matching
 # host_loop.PROJECT_ROOT. Kept local rather than imported so the store has no
@@ -80,6 +85,35 @@ class SettingsStore:
             self._quarantine()
             return
         self._doc = doc
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Bring an older document up to SCHEMA_VERSION, in place.
+
+        Migrate UP ONLY. A file stamped newer than us belongs to a build that
+        knows things we do not; rewriting its keys would corrupt them. This
+        mirrors the setdefault-not-assignment rule in _save().
+
+        Migrations do NOT save. The next set() writes the whole document
+        anyway, and a load that silently rewrote the file would turn a
+        read-only install into a boot failure rather than a first-change one.
+        """
+        try:
+            stamped = int(self._doc.get("version", 1))
+        except (TypeError, ValueError):
+            stamped = 1
+        if stamped >= SCHEMA_VERSION:
+            return
+
+        # v1 -> v2: the independent `smaa_on` bool became one mutually
+        # exclusive `aa_mode` index shared with MSAA. An ABSENT smaa_on stays
+        # absent — apply_all never applies an unstored key, so inventing an
+        # aa_mode here would override the engine default on first launch.
+        graphics = self._doc.get("graphics")
+        if isinstance(graphics, dict) and "smaa_on" in graphics:
+            graphics["aa_mode"] = AA_SMAA if graphics.pop("smaa_on") else AA_OFF
+
+        self._doc["version"] = SCHEMA_VERSION
 
     def _quarantine(self) -> None:
         try:
@@ -207,8 +241,13 @@ def _fan(*appliers):
 
 
 SETTINGS: tuple = (
-    Setting("smaa", "graphics", "smaa_on", bool, True,
-            lambda c, v: c.r.set_smaa_enabled(v)),
+    # One row drives BOTH anti-aliasing engines, which is what makes them
+    # mutually exclusive by construction rather than by a rule someone has to
+    # remember. The fan-out lives here, not at the panel's call site.
+    Setting("aa_mode", "graphics", "aa_mode", int, AA_SMAA,
+            _fan(lambda c, v: c.r.set_smaa_enabled(v == AA_SMAA),
+                 lambda c, v: c.r.set_msaa_samples(AA_MODE_SAMPLES[v])),
+            lo=AA_OFF, hi=AA_MSAA_8X, reset_default=AA_SMAA),
     Setting("dust", "graphics", "dust_on", bool, True,
             lambda c, v: c.r.set_dust_enabled(v)),
     Setting("fov_deg", "graphics", "fov_deg", int,
@@ -339,6 +378,19 @@ def set_setting(store: SettingsStore, key: str, value) -> None:
     table knows a key's section, so the panel's on_change binds to this."""
     setting = setting_for(key)
     store.set(setting.section, setting.key, value)
+
+
+def apply_setting(ctx, key: str, value) -> None:
+    """Run one SETTINGS row's applier without touching the store.
+
+    The panel binds its `set_*` callbacks to this rather than to a renderer
+    function directly wherever one player-facing row drives more than one
+    engine call — aa_mode is one index that sets BOTH the SMAA flag and the
+    MSAA sample count. Keeping that fan-out in the table is what makes the two
+    engines mutually exclusive by construction instead of by a rule someone
+    has to remember at every call site.
+    """
+    setting_for(key).apply(ctx, value)
 
 
 def reset_and_apply_section(store: SettingsStore, ctx, section: str) -> dict:

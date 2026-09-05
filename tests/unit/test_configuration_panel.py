@@ -12,6 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from engine.ui.configuration_panel import (
+    AA_MSAA_2X, AA_MSAA_4X, AA_MSAA_8X, AA_OFF, AA_SMAA,
     MASTER_KEYS, MASTER_TOGGLES, ConfigurationPanel, SettingsSnapshot,
 )
 
@@ -28,7 +29,7 @@ def _make(**overrides):
         set_dust=Mock(),
         set_hdr=Mock(),
         set_rim=Mock(),
-        set_smaa=Mock(),
+        set_aa_mode=Mock(),
         set_subtitles=Mock(),
         set_disable_annoying_dialogue=Mock(),
         set_ai_difficulty=Mock(),
@@ -73,7 +74,8 @@ def test_initial_settings_round_trip_to_render_payload():
     payload = p.render_payload()
     body = json.loads(payload[len("setConfigurationPanel("):-2])
     assert body["settings"] == {
-        "smaa_on": True, "dust_on": True, "camera_shake_on": True,
+        "aa_mode": AA_SMAA, "max_msaa_samples": 8,
+        "dust_on": True, "camera_shake_on": True,
         "subtitles_on": True, "improved_space_on": True,
         "camera_realism_on": True, "realistic_lighting_on": True,
         "disable_annoying_dialogue_on": True,
@@ -223,7 +225,7 @@ def test_handle_input_when_closed_is_noop():
 
 
 def test_focus_first_down_lands_on_first_focusable():
-    """Focusable order with one Graphics tab: [tab:graphics, ctrl:smaa,
+    """Focusable order with one Graphics tab: [tab:graphics, ctrl:aa_mode,
     ctrl:fov, ...]. First ↓ from unfocused lands on index 0 (the tab row)."""
     p, _ = _make()
     p.open()
@@ -335,55 +337,101 @@ def test_handle_key_esc_when_closed_is_noop():
     assert p.is_open() is False
 
 
-# ---- smaa toggle ----------------------------------------------------------
+# ---- anti-aliasing selector -----------------------------------------------
 
-def test_toggle_smaa_fires_applier_and_flips_state():
+def test_aa_mode_dispatch_fires_applier_and_stores_the_index():
     p, kw = _make()
     p.open()
-    assert p._settings.smaa_on is True
-    assert p.dispatch_event("toggle:smaa") is True
-    kw["set_smaa"].assert_called_once_with(False)
-    assert p._settings.smaa_on is False
+    assert p._settings.aa_mode == AA_SMAA
+    assert p.dispatch_event("aa_mode:%d" % AA_MSAA_4X) is True
+    kw["set_aa_mode"].assert_called_once_with(AA_MSAA_4X)
+    assert p._settings.aa_mode == AA_MSAA_4X
 
 
-def test_render_payload_includes_smaa_on():
+def test_aa_mode_dispatch_rejects_out_of_range_and_garbage():
+    """The index comes off a CEF string. A bad one must be refused, not
+    indexed into AA_MODE_SAMPLES — 5 would IndexError inside the applier and
+    -1 would silently select 8x off the end of the tuple."""
+    p, kw = _make()
+    p.open()
+    assert p.dispatch_event("aa_mode:5") is False
+    assert p.dispatch_event("aa_mode:-1") is False
+    assert p.dispatch_event("aa_mode:banana") is False
+    assert p.dispatch_event("aa_mode:") is False
+    kw["set_aa_mode"].assert_not_called()
+    assert p._settings.aa_mode == AA_SMAA      # unchanged
+
+
+def test_render_payload_includes_aa_mode_and_the_sample_ceiling():
     p, _ = _make()
     p.open()
     payload = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
-    assert payload["settings"]["smaa_on"] is True
+    assert payload["settings"]["aa_mode"] == AA_SMAA
+    assert payload["settings"]["max_msaa_samples"] == 8
+    assert "smaa_on" not in payload["settings"]
 
 
-def test_smaa_is_a_graphics_focusable():
+def test_render_payload_carries_a_reduced_sample_ceiling():
+    """The JS omits segments above this, so a 4x-max driver must never be
+    offered 8x."""
+    p, _ = _make(max_msaa_samples=4)
+    p.open()
+    payload = json.loads(p.render_payload()[len("setConfigurationPanel("):-len(");")])
+    assert payload["settings"]["max_msaa_samples"] == 4
+
+
+def test_aa_mode_is_a_graphics_focusable():
     p, _ = _make()
-    assert ("ctrl", "smaa") in p._focusables()
+    assert ("ctrl", "aa_mode") in p._focusables()
+    assert ("ctrl", "smaa") not in p._focusables()
 
 
-def test_space_on_smaa_row_toggles():
+def test_arrow_keys_step_aa_mode_and_clamp_at_both_ends():
+    """A selector, not a toggle: left/right step it like AI Difficulty, and
+    holding a direction at either end is a no-op rather than a rejected
+    event or a wrapped index."""
+    class _Keys:
+        KEY_DOWN = 1; KEY_UP = 2; KEY_SPACE = 3; KEY_ENTER = 4
+        KEY_LEFT = 5; KEY_RIGHT = 6
+
+    class _H:
+        def __init__(self, code): self._code = code
+        keys = _Keys()
+        def key_pressed(self, code): return code == self._code
+
     p, kw = _make()
     p.open()
-    p._focused = p._focusables().index(("ctrl", "smaa"))
+    p._focused = p._focusables().index(("ctrl", "aa_mode"))
 
+    p.handle_input(_H(_Keys.KEY_RIGHT))            # SMAA -> 2x
+    assert p._settings.aa_mode == AA_MSAA_2X
+
+    p._settings.aa_mode = AA_MSAA_8X               # at the top
+    p.handle_input(_H(_Keys.KEY_RIGHT))
+    assert p._settings.aa_mode == AA_MSAA_8X       # clamped, not wrapped
+
+    p._settings.aa_mode = AA_OFF                   # at the bottom
+    p.handle_input(_H(_Keys.KEY_LEFT))
+    assert p._settings.aa_mode == AA_OFF           # clamped, not wrapped
+
+
+def test_space_does_not_activate_the_aa_mode_row():
+    """Space is the toggle gesture. On a multi-value selector it must do
+    nothing rather than pick an arbitrary mode."""
     class _Keys:
         KEY_DOWN = 1; KEY_UP = 2; KEY_SPACE = 3; KEY_ENTER = 4
         KEY_LEFT = 5; KEY_RIGHT = 6
 
     class _H:
         keys = _Keys()
-        def key_pressed(self, code):
-            return code == _Keys.KEY_SPACE
+        def key_pressed(self, code): return code == _Keys.KEY_SPACE
 
-    p.handle_input(_H())
-    kw["set_smaa"].assert_called_once_with(False)
-    assert p._settings.smaa_on is False
-
-
-def test_dispatch_toggle_smaa_flips_and_calls_applier():
     p, kw = _make()
     p.open()
-    assert p.dispatch_event("toggle:smaa") is True
-    kw["set_smaa"].assert_called_once_with(False)
-    assert p.dispatch_event("toggle:smaa") is True
-    kw["set_smaa"].assert_called_with(True)
+    p._focused = p._focusables().index(("ctrl", "aa_mode"))
+    p.handle_input(_H())
+    kw["set_aa_mode"].assert_not_called()
+    assert p._settings.aa_mode == AA_SMAA
 
 
 # ---- subtitles toggle / gameplay tab --------------------------------------
@@ -642,7 +690,7 @@ def test_graphics_control_order_is_standalones_masters_then_trailing():
     standalones-then-masters test, which camera shake made incomplete."""
     p, _ = _make()
     ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
-    assert ctrls == (["smaa", "dust", "fov"] + list(MASTER_KEYS)
+    assert ctrls == (["aa_mode", "dust", "fov"] + list(MASTER_KEYS)
                       + ["camera_shake", "reset_graphics"])
 
 
@@ -757,8 +805,8 @@ def test_every_boolean_setting_reaches_the_ui():
 def test_toggle_reports_the_change_once_with_key_and_value():
     on_change = Mock()
     p, _ = _make(on_change=on_change)
-    p.dispatch_event("toggle:smaa")
-    on_change.assert_called_once_with("smaa", False)
+    p.dispatch_event("aa_mode:%d" % AA_MSAA_2X)
+    on_change.assert_called_once_with("aa_mode", AA_MSAA_2X)
 
 
 def test_fov_reports_the_change_with_the_clamped_degree_value():
@@ -786,7 +834,7 @@ def test_every_toggleable_row_reports_a_change():
     """A branch that flips state but never calls on_change is a control that
     silently forgets. Cover them all rather than the two that were easy."""
     cases = [
-        ("toggle:smaa", "smaa"),
+        ("aa_mode:2", "aa_mode"),
         ("toggle:dust", "dust"),
         ("toggle:camera_shake", "camera_shake"),
         ("toggle:subtitles", "subtitles"),
@@ -806,18 +854,18 @@ def test_a_raising_applier_does_not_report_a_change():
     records a value the engine is not on."""
     boom = Mock(side_effect=RuntimeError("renderer said no"))
     on_change = Mock()
-    p, _ = _make(set_smaa=boom, on_change=on_change)
+    p, _ = _make(set_aa_mode=boom, on_change=on_change)
     with pytest.raises(RuntimeError):
-        p.dispatch_event("toggle:smaa")
+        p.dispatch_event("aa_mode:3")
     on_change.assert_not_called()
 
 
 def test_reset_graphics_writes_returned_fields_into_settings():
-    on_reset = Mock(return_value={"smaa_on": False, "fov_deg": 30})
+    on_reset = Mock(return_value={"aa_mode": AA_OFF, "fov_deg": 30})
     p, _ = _make(on_reset=on_reset)
     assert p.dispatch_event("reset:graphics") is True
     on_reset.assert_called_once_with("graphics")
-    assert p._settings.smaa_on is False
+    assert p._settings.aa_mode == AA_OFF
     assert p._settings.fov_deg == 30
 
 
@@ -852,7 +900,7 @@ def test_space_on_the_graphics_reset_row_dispatches_reset():
 def test_panel_constructs_without_the_persistence_callbacks():
     """Existing construction sites and tests must keep working."""
     p, _ = _make()
-    assert p.dispatch_event("toggle:smaa") is True     # no-op on_change
+    assert p.dispatch_event("aa_mode:2") is True       # no-op on_change
     assert p.dispatch_event("reset:graphics") is True  # no-op on_reset
 
 
