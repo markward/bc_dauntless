@@ -240,9 +240,12 @@ class ConfigurationPanel(Panel):
     def dispatch_event(self, action: str) -> bool:
         # Applier is invoked before the local state write — if the
         # applier raises, _settings stays on the previous value and the
-        # renderer state is whatever the applier left behind. For the
-        # no-persistence first pass that's acceptable (panel reflects
-        # engine state, exception propagates to the caller).
+        # renderer state is whatever the applier left behind. This ordering
+        # is now load-bearing, not just tolerated: on_change (settings
+        # persistence) fires from the same branches AFTER the setattr, so an
+        # applier that raises must also skip on_change — otherwise the store
+        # would record a value the engine never actually reached. See
+        # test_a_raising_applier_does_not_report_a_change.
         if action == "cancel":
             self.close()
             return True
@@ -455,10 +458,12 @@ class ConfigurationPanel(Panel):
     def _focusables(self) -> list:
         """Ordered focusable list: tab rows then controls in the
         currently selected tab. Order mirrors the rendered rows — the two
-        standalone controls, then the 'Modern VFX' group of master toggles:
+        standalone controls, then the 'Modern VFX' group of master toggles,
+        then the per-tab Reset row:
         [('tab','graphics'), ('ctrl','smaa'), ('ctrl','dust'), ('ctrl','fov'),
          ('ctrl','improved_space'), ('ctrl','camera_realism'),
-         ('ctrl','realistic_lighting'), ('ctrl','camera_shake')].
+         ('ctrl','realistic_lighting'), ('ctrl','camera_shake'),
+         ('ctrl','reset_graphics')].
 
         configuration_panel.js mirrors this list by hand; the two are pinned
         together by test_js_graphics_focusables_match_python."""

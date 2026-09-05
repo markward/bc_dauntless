@@ -279,7 +279,10 @@ def test_snapshot_uses_stored_value_where_present_and_default_where_absent(tmp_p
 
 
 def test_snapshot_does_not_call_any_applier(tmp_path):
-    """Building the panel's display state must not mutate the engine."""
+    """Building the panel's display state must not mutate the engine. It MAY
+    read live state for a callable display default (the three Modern VFX
+    masters read real getters — see Minor 3 of the fix-wave report — plus
+    camera_shake and fov_deg), but it must never call a setter."""
     s = _store(tmp_path)
     s.load()
     s.set("graphics", "smaa", False)
@@ -287,7 +290,7 @@ def test_snapshot_does_not_call_any_applier(tmp_path):
 
     snapshot_for_panel(s, ctx)
 
-    assert ctx.r.mock_calls == []
+    assert all(not name.startswith("set_") for name, _args, _kwargs in ctx.r.mock_calls)
     assert ctx.director.set_fov.called is False
 
 
@@ -318,3 +321,24 @@ def test_resolve_default_handles_values_and_callables():
     ctx = _ctx()
     assert resolve_default(setting_for("dust"), ctx) is True
     assert resolve_default(setting_for("fov_deg"), ctx) == 45
+
+
+def test_reset_restores_native_default_not_the_players_current_value(tmp_path):
+    """Setting.default for a callable-default row is a DISPLAY fallback — it
+    reads live state (camera_shake.enabled(), director.fov_y_rad) so the panel
+    never reports state it hasn't read. Reset must restore the engine's native
+    default instead, or the row visibly does not move (default() just
+    re-reads whatever the player already set) and the store still disagrees
+    with the next launch, since the section is deleted regardless."""
+    import math
+    s = _store(tmp_path)
+    s.load()
+    ctx = _ctx()
+    ctx.camera_shake.enabled.return_value = False   # the player turned it off
+    ctx.director.fov_y_rad = math.radians(55)        # the player maxed FOV
+
+    out = reset_and_apply_section(s, ctx, "graphics")
+
+    assert out["camera_shake_on"] is True     # native default, not the live False
+    assert out["fov_deg"] == 35               # native default, not the live 55
+    ctx.camera_shake.set_enabled.assert_any_call(True)

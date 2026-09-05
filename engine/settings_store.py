@@ -19,10 +19,15 @@ Spec: docs/superpowers/specs/2026-09-05-settings-persistence-design.md
 from __future__ import annotations
 
 import json
+import math
 import os
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable, Optional
 
 from engine import dev_mode
+from engine.cameras import EXTERIOR_FOV_Y_RAD
+from engine.ui.configuration_panel import FOV_MAX, FOV_MIN, SettingsSnapshot
 
 SCHEMA_VERSION = 1
 
@@ -116,6 +121,12 @@ class SettingsStore:
         keeps its stamp, so a downgrade doesn't relabel a newer document.
         A failed write is logged and swallowed — the in-memory settings stay
         live and the game keeps running.
+
+        NOTE: "version" is a reserved top-level key (the schema stamp, not a
+        section) — a SETTINGS row with section="version" would silently
+        collide with it. Unreachable today: every section comes from the
+        SETTINGS table, and test_every_setting_key_is_unique_and_in_a_known_section
+        pins the section set to {"graphics", "gameplay"}.
         """
         self._doc.setdefault("version", SCHEMA_VERSION)
         tmp = self._path.parent / (self._path.name + ".tmp")
@@ -124,7 +135,12 @@ class SettingsStore:
             tmp.write_text(json.dumps(self._doc, indent=2) + "\n",
                            encoding="utf-8")
             os.replace(tmp, self._path)
-        except OSError as exc:
+        except (OSError, TypeError, ValueError) as exc:
+            # TypeError/ValueError: json.dumps on a non-serialisable value
+            # (e.g. a stray Mock reaching store.set in a test double). Widened
+            # alongside OSError so a bad value can't raise out through
+            # store.set -> on_change -> the panel toggle, which would
+            # contradict "a failed write does not raise" above.
             dev_mode.log_swallowed("SettingsStore.save", exc)
             try:
                 tmp.unlink()
@@ -133,12 +149,6 @@ class SettingsStore:
 
 
 # ── The settings table ──────────────────────────────────────────────────────
-import math
-from dataclasses import dataclass
-from typing import Any, Callable, Optional
-
-from engine.ui.configuration_panel import FOV_MAX, FOV_MIN, SettingsSnapshot
-
 
 @dataclass
 class SettingsContext:
@@ -158,8 +168,25 @@ class Setting:
 
     `field` is the SettingsSnapshot attribute name, which is NOT derivable
     from `key` — fov_deg and ai_difficulty carry no `_on` suffix.
-    `default` is a value or a callable(ctx); it feeds the panel's display
-    snapshot only, never an applier.
+
+    `default` and `reset_default` answer two different questions that happen
+    to coincide for most rows, which is why this table has both:
+      - `default` is the panel's DISPLAY FALLBACK for an absent key — for a
+        row whose live value can drift from any fixed constant (fov_deg,
+        camera_shake, and the three Modern VFX masters) it is a callable(ctx)
+        that reads current engine state, so the panel never reports a value
+        it hasn't actually read. It feeds snapshot_for_panel only, never an
+        applier.
+      - `reset_default` is what "Reset to Defaults" restores — the engine's
+        native, constant default. `reset_and_apply_section` uses this,
+        falling back to `default` when unset (correct for every row whose
+        `default` is already a plain constant).
+    A row with a *callable* `default` MUST set `reset_default` explicitly:
+    otherwise Reset re-resolves `default(ctx)`, which reads back whatever the
+    player just set — Reset becomes a no-op that also deletes the stored
+    section, so the live session and the next launch disagree about what
+    Reset did. This is exactly the bug that shipped for fov_deg and
+    camera_shake before `reset_default` existed.
     """
     key: str
     section: str
@@ -169,6 +196,7 @@ class Setting:
     apply: Callable[[Any, Any], None]
     lo: Optional[int] = None
     hi: Optional[int] = None
+    reset_default: Any = None        # None means "use `default`" — see above
 
 
 def _fan(*appliers):
@@ -187,23 +215,40 @@ SETTINGS: tuple = (
     Setting("fov_deg", "graphics", "fov_deg", int,
             lambda c: int(round(math.degrees(c.director.fov_y_rad))),
             lambda c, v: c.director.set_fov(math.radians(v)),
-            lo=FOV_MIN, hi=FOV_MAX),
-    Setting("improved_space", "graphics", "improved_space_on", bool, True,
+            lo=FOV_MIN, hi=FOV_MAX,
+            reset_default=int(round(math.degrees(EXTERIOR_FOV_Y_RAD)))),
+    # The three masters' `default` reads the real getters (ANDed, matching the
+    # pre-persistence host_loop code) so the panel doesn't report state it
+    # hasn't read — see the Setting docstring. `reset_default` stays the
+    # static True: "Reset to Defaults" restores stock BC (everything on),
+    # not whatever combination the live getters currently report.
+    Setting("improved_space", "graphics", "improved_space_on", bool,
+            lambda c: (c.r.procedural_sky_enabled()
+                       and c.r.volumetric_nebulae_enabled()),
             _fan(lambda c, v: c.r.set_procedural_sky_enabled(v),
-                 lambda c, v: c.r.set_volumetric_nebulae_enabled(v))),
-    Setting("camera_realism", "graphics", "camera_realism_on", bool, True,
+                 lambda c, v: c.r.set_volumetric_nebulae_enabled(v)),
+            reset_default=True),
+    Setting("camera_realism", "graphics", "camera_realism_on", bool,
+            lambda c: (c.r.filmic_enabled()
+                       and c.r.motion_blur_enabled()
+                       and c.r.hdr_lens_flare_enabled()),
             _fan(lambda c, v: c.r.set_hdr_enabled(v),
                  lambda c, v: c.r.set_filmic_enabled(v),
                  lambda c, v: c.r.set_motion_blur_enabled(v),
-                 lambda c, v: c.r.set_hdr_lens_flare_enabled(v))),
-    Setting("realistic_lighting", "graphics", "realistic_lighting_on", bool, True,
+                 lambda c, v: c.r.set_hdr_lens_flare_enabled(v)),
+            reset_default=True),
+    Setting("realistic_lighting", "graphics", "realistic_lighting_on", bool,
+            lambda c: (c.r.nebula_lightning_enabled()
+                       and c.light_emitters.enabled()),
             _fan(lambda c, v: c.r.set_rim_enabled(v),
                  lambda c, v: c.r.set_shadows_enabled(v),
                  lambda c, v: c.r.set_nebula_lightning_enabled(v),
-                 lambda c, v: c.light_emitters.set_enabled(v))),
+                 lambda c, v: c.light_emitters.set_enabled(v)),
+            reset_default=True),
     Setting("camera_shake", "graphics", "camera_shake_on", bool,
             lambda c: c.camera_shake.enabled(),
-            lambda c, v: c.camera_shake.set_enabled(v)),
+            lambda c, v: c.camera_shake.set_enabled(v),
+            reset_default=True),
     Setting("subtitles", "gameplay", "subtitles_on", bool, True,
             lambda c, v: c.crew_speech.set_subtitles_enabled(v)),
     Setting("disable_annoying_dialogue", "gameplay",
@@ -222,7 +267,18 @@ def setting_for(key: str) -> Setting:
 
 
 def resolve_default(setting: Setting, ctx) -> Any:
+    """Panel display fallback for an absent key — see the Setting docstring.
+    NOT what "Reset to Defaults" restores; use resolve_reset_default for that."""
     return setting.default(ctx) if callable(setting.default) else setting.default
+
+
+def resolve_reset_default(setting: Setting, ctx) -> Any:
+    """The value "Reset to Defaults" restores — the engine's native, constant
+    default. Falls back to `default` when `reset_default` is unset, which is
+    correct exactly when `default` is already a plain constant; a row with a
+    callable `default` must set `reset_default` (see the Setting docstring)."""
+    target = setting.reset_default if setting.reset_default is not None else setting.default
+    return target(ctx) if callable(target) else target
 
 
 def _coerce(setting: Setting, raw):
@@ -237,6 +293,10 @@ def _coerce(setting: Setting, raw):
     if setting.kind is int:
         if isinstance(raw, bool):       # bool is an int subclass; reject it here
             raise ValueError("boolean where int expected: %r" % (raw,))
+        # int(raw) also tolerates a numeric STRING ("2" -> 2) alongside a
+        # hand-edited file's actual ints — the same hand-editing leniency as
+        # the bool tolerance above, just via int()'s own coercion rather than
+        # an explicit isinstance branch. "banana" still raises ValueError.
         value = int(raw)                # raises ValueError/TypeError on junk
         if setting.lo is not None:
             value = max(setting.lo, value)
@@ -283,18 +343,24 @@ def set_setting(store: SettingsStore, key: str, value) -> None:
 
 
 def reset_and_apply_section(store: SettingsStore, ctx, section: str) -> dict:
-    """Drop a section, re-apply its defaults to the engine, and return
+    """Drop a section, re-apply its NATIVE defaults to the engine, and return
     {SettingsSnapshot field: value} so the panel can setattr the result.
 
     Deleting rather than writing defaults is deliberate: it returns the player
     to genuine first-launch behaviour rather than to our transcription of it.
+
+    Uses resolve_reset_default, not resolve_default: for a row whose display
+    default reads live state (fov_deg, camera_shake, the three Modern VFX
+    masters), resolve_default(ctx) would just read back the value the player
+    is resetting AWAY from, making Reset a silent no-op. See the Setting
+    docstring.
     """
     store.reset_section(section)
     out = {}
     for setting in SETTINGS:
         if setting.section != section:
             continue
-        value = resolve_default(setting, ctx)
+        value = resolve_reset_default(setting, ctx)
         setting.apply(ctx, value)
         out[setting.field] = value
     return out

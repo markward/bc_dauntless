@@ -43,6 +43,14 @@ def test_reset_sdk_globals_preserves_persisted_settings():
         assert crew_speech.annoying_dialogue_disabled() is False
         assert camera_shake.enabled() is False
         assert light_emitters.enabled() is False
+        # NOTE: near-vacuous as written. `director` here is a LOCAL
+        # _CameraDirector instance that reset_sdk_globals() holds no
+        # reference to, and there is no module-level director for it to
+        # reset — so this assertion cannot fail for the reason the module
+        # docstring implies (that reset_sdk_globals might clobber a
+        # persisted FOV). It only guards against a FUTURE regression where
+        # reset_sdk_globals grows a module-level director default and resets
+        # it unconditionally. Kept rather than deleted for that future case.
         assert director.fov_y_rad == math.radians(25)
     finally:
         # These are module globals; the conftest autouse reset does not cover

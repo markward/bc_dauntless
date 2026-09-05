@@ -856,5 +856,22 @@ def test_panel_constructs_without_the_persistence_callbacks():
     assert p.dispatch_event("reset:graphics") is True  # no-op on_reset
 
 
-def test_js_gameplay_reset_row_exists():
-    assert "reset_gameplay" in _js_source()
+def test_js_gameplay_focusables_match_python():
+    """Same guard as test_js_graphics_focusables_match_python, for the
+    Gameplay tab. The old version of this test (`"reset_gameplay" in
+    _js_source()`) could not fail for what it claimed to guard: that string
+    also appears in CP_RESET_TARGETS, so the test passed even if
+    _cpFocusableList's gameplay branch never pushed it — drift there means
+    Python's focus index and JS's rendered row disagree, and Space fires the
+    wrong control (or nothing) once they slip past each other."""
+    import re
+    standalone = re.search(r"CP_GAMEPLAY_STANDALONE = \[(.*?)\];", _js_source(), re.S)
+    assert standalone, "CP_GAMEPLAY_STANDALONE not found"
+    resets = re.search(r"CP_RESET_TARGETS = \{(.*?)\};", _js_source(), re.S)
+    assert resets, "CP_RESET_TARGETS not found"
+    gameplay_reset = re.search(r"gameplay:\s*'(\w+)'", resets.group(1))
+    assert gameplay_reset, "CP_RESET_TARGETS has no gameplay entry"
+    js_targets = (re.findall(r"'(\w+)'", standalone.group(1))
+                  + [gameplay_reset.group(1)])
+    p, _ = _make(tabs=[("gameplay", "Gameplay")])
+    assert js_targets == [t for kind, t in p._focusables() if kind == "ctrl"]

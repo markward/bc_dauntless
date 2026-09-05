@@ -36,6 +36,17 @@ const CP_GRAPHICS_CTRLS = CP_GRAPHICS_STANDALONE
     .concat(CP_GRAPHICS_TRAILING.map(t => t[0]))
     .concat([CP_RESET_TARGETS.graphics]);
 
+// Gameplay-tab controls in rendered order, mirroring CP_GRAPHICS_CTRLS above.
+// Hoisted into its own const (rather than pushed inline in _cpFocusableList)
+// so a structural test can pin it against Python's _focusables() the same
+// way test_js_graphics_focusables_match_python pins CP_GRAPHICS_CTRLS —
+// before this, the Gameplay side of the lockstep was only pinned by a
+// substring check that could not fail if the list here ever drifted from
+// _cpRenderGameplayBody's rendered rows.
+const CP_GAMEPLAY_STANDALONE = ['subtitles', 'disable_annoying_dialogue', 'ai_difficulty'];
+const CP_GAMEPLAY_CTRLS = CP_GAMEPLAY_STANDALONE
+    .concat([CP_RESET_TARGETS.gameplay]);
+
 // One On/Off settings row. `key` names both the setting (`<key>_on`) and the
 // action (`toggle:<key>`), so a row cannot read one control and toggle another.
 function _cpToggleRow(label, key, on, isFoc) {
@@ -67,10 +78,7 @@ function _cpFocusableList(state) {
     if (state.selected_tab === 'graphics') {
         CP_GRAPHICS_CTRLS.forEach(t => out.push({kind: 'ctrl', target: t}));
     } else if (state.selected_tab === 'gameplay') {
-        out.push({kind: 'ctrl', target: 'subtitles'});
-        out.push({kind: 'ctrl', target: 'disable_annoying_dialogue'});
-        out.push({kind: 'ctrl', target: 'ai_difficulty'});
-        out.push({kind: 'ctrl', target: CP_RESET_TARGETS.gameplay});
+        CP_GAMEPLAY_CTRLS.forEach(t => out.push({kind: 'ctrl', target: t}));
     } else if (state.selected_tab === 'controls') {
         (state.controls || []).forEach(c => out.push({kind: 'rebind', target: c.id}));
         out.push({kind: 'ctrl', target: 'controls_reset'});
