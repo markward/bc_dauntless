@@ -164,6 +164,14 @@ existing leak rather than creating a new one. The lifecycle tests unregister
 explicitly and say so; they do not demonstrate production-time release. Fixing
 the registry's ownership is a separate piece of work.
 
+**Save/load consequence (noted during Task 4 review).** `ObjectClass` instances
+are now unpicklable: `weakref.finalize` is not picklable, and a `_xform` handle
+would be meaningless across a restore anyway. Nothing in `engine/` pickles these
+objects today, so this is not a live defect — but CLAUDE.md lists save/load as
+pending work, and whoever builds it must restore the transform through
+`SetTranslateXYZ`/`SetMatrixRotation` on a freshly allocated slot rather than
+expecting the handle to survive.
+
 Slot lifetime therefore tracks the *Python object's* lifetime, not set
 membership. That is correct: `RemoveObjectFromSet` / `DeleteObjectFromSet`
 (`engine/appc/sets.py:242-258`) merely pop from a dict while the object may
