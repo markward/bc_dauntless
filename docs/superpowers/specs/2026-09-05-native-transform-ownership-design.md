@@ -64,6 +64,41 @@ Python and stop marshalling them across the language boundary for the renderer.
 `render_prep` (12 ms combat, 15.8 ms bridge) is the largest single line item
 this touches, and it is won without any threading at all.
 
+> ### ⛔ MEASURED AFTER IMPLEMENTATION — the paragraph above did not survive contact
+>
+> The final whole-branch review benchmarked the accessors against the true
+> pre-branch code. Every per-call read got **slower**, because a pybind11
+> crossing costs more than the Python attribute read plus allocation it replaced:
+>
+> | accessor | pre-branch | after | |
+> |---|---|---|---|
+> | `GetWorldLocation` | 100 ns | 275 ns | **+176%** |
+> | `GetWorldForwardTG` | 130 ns | 328 ns | **+153%** |
+> | `GetWorldRotation` | 263 ns | 436 ns | **+66%** |
+>
+> Task 1's `TGMatrix3` allocation win is consumed and overdrawn. The absolute
+> magnitude is small — an instrumented combat smoke test counted ~31.6 accessor
+> calls per tick, so even at 20x that scale the regression is under 0.1 ms/tick.
+>
+> And the `render_prep` win did not arrive either: most ships render at
+> `lerp(prev, cur, alpha)` from a Python `TransformBuffer` of two sim snapshots
+> (`engine/host_loop.py:6465`), while the store holds only the live pose. Binding
+> those instances would delete interpolation and produce judder no test can see,
+> so only the manually-flown player and the planets bind — roughly 1 + N of ~17
+> ship matrices.
+>
+> **Net: this branch is approximately frame-time-neutral.** It delivers the
+> *correct ownership* the Goals section actually asks for, cleanly and
+> completely, and it is the foundation phases 4-5 need. It does not deliver the
+> frame-time case this section leads with. Do not plan phase 5 against these
+> numbers.
+>
+> Unlocking the rest needs a **native render-pose buffer** — two `Transform`
+> arrays plus an alpha, indexed by the same slot index. Nothing here forecloses
+> it: `Instance.xform_index`/`generation` already addresses it, and the
+> float32 downconvert lives in exactly one place (`compose_world_matrix`),
+> which is where interpolation will want it too.
+
 ## Goals
 
 - One authoritative store for every object's position and rotation, owned by C++.
