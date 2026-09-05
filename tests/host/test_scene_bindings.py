@@ -1,11 +1,11 @@
 """Verify scene-graph + camera bindings round-trip through pybind11."""
 import os
-from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-DOOR_NIF = PROJECT_ROOT / "game" / "data" / "Animations" / "DB_door_L1.NIF"
+from tests.helpers import bc_assets
+
+DOOR_NIF = bc_assets.GAME_ROOT / "data" / "Animations" / "DB_door_L1.NIF"
 
 
 def test_instance_lifecycle_without_window():
@@ -88,6 +88,7 @@ def test_set_world_transform_rejects_wrong_length_after_init():
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
     import _dauntless_host
     import pytest
+
     try:
         _dauntless_host.init(64, 64, "post-init-mat4-test")
     except RuntimeError as e:

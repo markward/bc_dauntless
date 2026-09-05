@@ -1064,8 +1064,9 @@ def _color_tuple(color):
 
 def _resolve_game_texture(path: str) -> str:
     """SDK projectile scripts reference textures by 'data/Textures/...' which
-    in BC means relative-to-game-root.  Our binary's CWD is the project
-    root; prepend 'game/' so the renderer's ifstream resolves."""
+    in BC means relative-to-game-root.  Absolutise against the configured
+    game root (engine.paths.game_asset) so the renderer's ifstream resolves
+    regardless of where the BC install actually lives."""
     if not path:
         return ""
     abs_path = _paths.game_asset(path)

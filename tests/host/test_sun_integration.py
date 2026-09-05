@@ -1,11 +1,11 @@
 """Integration tests for sun rendering wiring in host_loop.run()."""
 import os
-from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-GALAXY_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
+from tests.helpers import bc_assets
+
+GALAXY_NIF = bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
 
 
 def test_run_M1Basic_with_sun_wiring_does_not_crash():

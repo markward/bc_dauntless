@@ -36,7 +36,7 @@ def _second_install(game):
 
 # Every engine/ site that used to be a module-level constant. There are
 # EIGHT (not seven, and none of them was already exercised elsewhere): the
-# four here each got a no-arg accessor (mirroring weapon_icons/ship_icons/
+# six here each got a no-arg accessor (mirroring weapon_icons/ship_icons/
 # damage_icons's _game_icons_dir()/_damage_dir()); name_resolver and
 # lip_sync_runtime get their own dedicated tests below because their
 # accessors either return a tuple (_tgl_roots) or take an argument

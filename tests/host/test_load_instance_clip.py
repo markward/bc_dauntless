@@ -1,11 +1,11 @@
 """Task 4: load_instance_clip — attach gesture/reaction clips to an officer at runtime."""
 import os
-from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-GAME = PROJECT_ROOT / "game"
+from tests.helpers import bc_assets
+
+GAME = bc_assets.GAME_ROOT
 BODY_NIF = GAME / "data/Models/Characters/Bodies/BodyMaleM/BodyMaleM.NIF"
 HEAD_NIF = GAME / "data/Models/Characters/Heads/HeadPicard/Picard_head.NIF"
 PLACEMENT_NIF = GAME / "data/animations/DB_stand_H_M.NIF"

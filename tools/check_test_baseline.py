@@ -34,6 +34,7 @@ BUILD_DIR = os.path.join(ROOT, "build")
 CEILING_MB = os.environ.get("CEILING_MB", "4000")
 
 _PYTEST_FAILED = re.compile(r"^FAILED (\S+)")
+_PYTEST_ERRORED = re.compile(r"^ERROR (\S+)")
 # pytest always prints a counts summary ("12 passed, 1 failed in 3.2s",
 # "no tests ran in 0.1s"). Its absence means the runner never got that far.
 _PYTEST_RAN = re.compile(r"(\d+ (passed|failed|error|skipped|xfailed|xpassed)|no tests ran)")
@@ -65,11 +66,19 @@ def run_pytest():
     print("== pytest ==", flush=True)
     cmd = [
         "uv", "run", "python", "tools/pytest_rss_watchdog.py", CEILING_MB, "--",
-        "uv", "run", "pytest", "tests", "-q", "-rf", "--tb=no", "-p", "no:cacheprovider",
+        "uv", "run", "pytest", "tests", "-q", "-rfE", "--tb=no", "-p", "no:cacheprovider",
     ]
     proc = _run(cmd)
     out = proc.stdout + proc.stderr
-    failed = {"pytest:" + m.group(1) for m in map(_PYTEST_FAILED.match, out.splitlines()) if m}
+    lines = out.splitlines()
+    failed = {"pytest:" + m.group(1) for m in map(_PYTEST_FAILED.match, lines) if m}
+    # Errors (e.g. fixture/setup errors) fail a test just as surely as an
+    # assertion failure, but pytest reports them under a separate "ERROR"
+    # marker and its exit code with only errors present is still 1 — the same
+    # code as "there were failures". Fold errors into the same set so they are
+    # diffed against the baseline identically to failures, rather than being
+    # invisible to a gate that only ever looked for "^FAILED ".
+    failed |= {"pytest:" + m.group(1) for m in map(_PYTEST_ERRORED.match, lines) if m}
     # rc 99 == watchdog OOM kill; surface it as a harness error, not a clean pass.
     if proc.returncode == 99:
         print("  !! pytest watchdog killed the run (RSS ceiling) — incomplete", flush=True)

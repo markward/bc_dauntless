@@ -1,11 +1,11 @@
 """Load a known BC NIF through the bindings and create an instance with it."""
 import os
-from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-GAME_DATA = PROJECT_ROOT / "game" / "data"
+from tests.helpers import bc_assets
+
+GAME_DATA = bc_assets.GAME_ROOT / "data"
 GALAXY_NIF = GAME_DATA / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
 GALAXY_TEX = GAME_DATA / "Models" / "SharedTextures" / "FedShips" / "High"
 

@@ -6,14 +6,11 @@ goals fall back to raw string ids (E1DestroyDebrisGoal) instead of localized
 text (Clear Debris). host_loop._init_episode_context restores just the DB by
 deriving its path.
 """
-from pathlib import Path
-
 import pytest
 
 from engine.host_loop import _episode_tgl_path, _init_episode_context
 from engine.core.game import Episode
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.helpers import bc_assets
 
 
 @pytest.mark.parametrize("mission, expected", [
@@ -39,9 +36,9 @@ def test_init_episode_context_never_raises_on_missing_tgl():
 
 
 @pytest.mark.skipif(
-    not (_PROJECT_ROOT / "game" / "data" / "TGL" / "Maelstrom" / "Episode 1"
+    not (bc_assets.GAME_ROOT / "data" / "TGL" / "Maelstrom" / "Episode 1"
          / "Episode1.tgl").exists(),
-    reason="requires the gitignored BC game/ install (episode TGL)",
+    reason="requires a configured BC game install (episode TGL)",
 )
 def test_init_episode_context_localizes_goal_label():
     ep = Episode()

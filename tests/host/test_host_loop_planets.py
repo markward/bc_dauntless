@@ -1,8 +1,7 @@
 """Tests for planet/sun rendering wiring in host_loop."""
-from pathlib import Path
 import pytest
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+from tests.helpers import bc_assets
 
 
 # ---------------------------------------------------------------------------
@@ -150,9 +149,9 @@ def test_run_M1Basic_verbose_reports_planet_instances():
     for M1Basic/Biranu1 (which registers GreenPurplePlanet and moon)."""
     import os
 
-    PLANET_NIF = (PROJECT_ROOT / "game" / "data" / "Models" /
+    PLANET_NIF = (bc_assets.GAME_ROOT / "data" / "Models" /
                   "Environment" / "GreenPurplePlanet.nif")
-    GALAXY_NIF = (PROJECT_ROOT / "game" / "data" / "Models" /
+    GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" /
                   "Ships" / "Galaxy" / "Galaxy.nif")
     if not PLANET_NIF.is_file() or not GALAXY_NIF.is_file():
         pytest.skip("BC assets not available")

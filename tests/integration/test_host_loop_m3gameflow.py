@@ -6,15 +6,17 @@ run completes the configured tick budget without raising.
 
 Two preconditions must hold:
   - The `_dauntless_host` native extension is built (importorskip).
-  - The BC `game/` install is on disk (gitignored copyrighted assets).
-    Probe via the bridge NIF path the renderer loads at startup.
+  - The BC game install is on disk (a configured, developer-supplied root —
+    see engine.paths). Probe via the bridge NIF path the renderer loads at
+    startup.
 
 The test skips cleanly when either is missing — matches the pattern in
 tests/integration/test_gameloop_harness.py and accommodates CI/dev
 environments without the BC install."""
 import os
-from pathlib import Path
 import pytest
+
+from tests.helpers import bc_assets
 
 pytest.importorskip("_dauntless_host")
 
@@ -23,14 +25,13 @@ pytest.importorskip("_dauntless_host")
 # mission load (host_loop.realize_set via realize_all_sets) — a missing file there would
 # surface as a renderer-side RuntimeError. Skip rather than fail in
 # environments without BC assets.
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _BRIDGE_NIF = (
-    _PROJECT_ROOT / "game" / "data" / "Models" / "Sets" / "DBridge" / "Dbridge.NIF"
+    bc_assets.GAME_ROOT / "data" / "Models" / "Sets" / "DBridge" / "Dbridge.NIF"
 )
 if not _BRIDGE_NIF.exists():
     pytest.skip(
         f"BC game install missing (no {_BRIDGE_NIF}); renderer "
-        "verification requires the gitignored game/ directory.",
+        "verification requires a configured BC game install.",
         allow_module_level=True,
     )
 

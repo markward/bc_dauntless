@@ -28,6 +28,18 @@ matters. The C++ guard's comment handling is narrower still -- it skips
 would be flagged as a real offender. None exists in the tree today, so
 this has not needed the `# paths-guard:` escape yet, but a future block
 comment quoting a game/ path for documentation purposes would need one.
+
+Guard 3 (test_no_engine_module_captures_a_path_at_import) has a narrower
+reach than the string-constant guards above: it walks `tree.body`, i.e.
+MODULE-LEVEL statements only, and only `ast.Assign`/`ast.AnnAssign` among
+those. A call to `paths.game_asset(...)` (or any watched accessor) captured
+in a class-body attribute, a function's default argument value, a decorator
+argument, or inside a module-level `if`/`for`/`try` block all evaluate at
+import time exactly like a bare module-level assignment does, and none of
+those shapes is an `ast.Assign`/`ast.AnnAssign` directly under `tree.body`,
+so all four evade this guard. Checked: zero current violations of any of
+these shapes exist in engine/ today. Widening the guard to catch them is
+future work, not done here.
 """
 import ast
 from pathlib import Path
@@ -106,13 +118,17 @@ def _spells_a_root(value: str) -> bool:
 
 def test_no_python_source_spells_a_bc_root():
     offenders = []
-    unparseable = []
     for path in _sources():
         if path == _AUTHORITY or not path.exists():
             continue
         text = path.read_text(errors="replace")
         lines = text.splitlines()
-        tree = _parse_or_skip(path, unparseable)
+        # Unparseable sources (the Python 1.5 probes) are a real finding on
+        # their own -- test_the_only_unparseable_sources_are_the_python_1_5_
+        # probes below asserts the skip stays bounded to that zone. This test
+        # only cares about the strings it CAN read, so the discard list here
+        # is scratch, not tracked.
+        tree = _parse_or_skip(path, [])
         if tree is None:
             continue
         docs = _docstring_ids(tree)

@@ -12,12 +12,12 @@ the one that always finds them (it's the same partition graft_head_cpu builds
 and the renderer's bridge_pass.cc already uses for its own head/body split).
 """
 import os
-from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-GAME = PROJECT_ROOT / "game"
+from tests.helpers import bc_assets
+
+GAME = bc_assets.GAME_ROOT
 BODY_NIF = GAME / "data/Models/Characters/Bodies/BodyMaleM/BodyMaleM.NIF"
 HEAD_NIF = GAME / "data/Models/Characters/Heads/HeadMiguel/miguel_head.NIF"
 PLACEMENT_NIF = GAME / "data/animations/DB_stand_H_M.NIF"

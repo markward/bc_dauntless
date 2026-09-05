@@ -5,13 +5,13 @@ Format validated empirically across all 593 game .LIP files: a flat array of
 contiguous (start[n] + duration[n] == start[n+1]). code 0 == closed/silence.
 """
 import struct
-from pathlib import Path
 
 import pytest
 
 from engine.appc.lip_data import (
     LipSegment, parse_lip, lip_path_for, scale_segments,
 )
+from tests.helpers import bc_assets
 
 _REC = struct.Struct("<iff")
 
@@ -112,13 +112,13 @@ def test_scale_segments_empty_and_zero_length_timelines(tmp_path):
 
 
 @pytest.mark.skipif(
-    not (Path(__file__).resolve().parents[2] / "game" / "sfx" / "Maelstrom"
+    not (bc_assets.GAME_ROOT / "sfx" / "Maelstrom"
          / "Episode 1" / "Mission 1" / "E1M1Entrance1.LIP").is_file(),
-    reason="game/ assets not present",
+    reason="game assets not present",
 )
 def test_scale_segments_normalises_real_2x_e1m1_line():
     """E1M1Entrance1 (Picard's walk-on line): 14.07s of .LIP over 6.79s of mp3."""
-    lip = (Path(__file__).resolve().parents[2] / "game" / "sfx" / "Maelstrom"
+    lip = (bc_assets.GAME_ROOT / "sfx" / "Maelstrom"
            / "Episode 1" / "Mission 1" / "E1M1Entrance1.LIP")
     segs = parse_lip(lip)
     assert segs[-1].end == pytest.approx(14.07, abs=0.05)   # authored 2x timebase
@@ -127,14 +127,14 @@ def test_scale_segments_normalises_real_2x_e1m1_line():
     assert len(out) == len(segs)
 
 
-# --- Real BC asset cross-check (skips when game/ assets are not present) ------
+# --- Real BC asset cross-check (skips when game assets are not present) ------
 _PICARD = (
-    Path(__file__).resolve().parents[2]
-    / "game" / "sfx" / "Bridge" / "Crew" / "Picard" / "PicardYes3.LIP"
+    bc_assets.GAME_ROOT
+    / "sfx" / "Bridge" / "Crew" / "Picard" / "PicardYes3.LIP"
 )
 
 
-@pytest.mark.skipif(not _PICARD.is_file(), reason="game/ assets not present")
+@pytest.mark.skipif(not _PICARD.is_file(), reason="game assets not present")
 def test_parse_real_picard_yes3():
     segs = parse_lip(_PICARD)
     assert len(segs) == 8

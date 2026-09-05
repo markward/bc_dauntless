@@ -10,13 +10,13 @@ actual rendered pixels.
 """
 import os
 import sys
-from pathlib import Path
 
 import pytest
 
+from tests.helpers import bc_assets
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-GAME = PROJECT_ROOT / "game"
+
+GAME = bc_assets.GAME_ROOT
 GALAXY_NIF = GAME / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
 STARS_TGA = GAME / "data" / "stars.tga"
 

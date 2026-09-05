@@ -1,12 +1,10 @@
 """End-to-end: discover() returns entries with display_name filled."""
-from pathlib import Path
-
 import pytest
 
+from engine import paths as _paths
 from engine.missions import discover
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-SCRIPTS_ROOT = PROJECT_ROOT / "sdk" / "Build" / "scripts"
+SCRIPTS_ROOT = _paths.sdk_scripts()
 
 
 def test_display_names_are_non_empty():

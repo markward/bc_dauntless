@@ -13,13 +13,13 @@ Its NIF references textures in SharedTextures/CardShips/High (not in
 Ships/Keldon/High, which is empty on a stock install).
 """
 import os
-from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-KELDON_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Keldon" / "Keldon.nif"
-KELDON_TEX = PROJECT_ROOT / "game" / "data" / "Models" / "SharedTextures" / "CardShips" / "High"
+from tests.helpers import bc_assets
+
+KELDON_NIF = bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Keldon" / "Keldon.nif"
+KELDON_TEX = bc_assets.GAME_ROOT / "data" / "Models" / "SharedTextures" / "CardShips" / "High"
 
 
 def test_specular_ship_renders_with_directional_light():

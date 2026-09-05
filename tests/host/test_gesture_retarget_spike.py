@@ -28,8 +28,9 @@ import pathlib
 
 import pytest
 
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
-GAME = PROJECT_ROOT / "game"
+from tests.helpers import bc_assets
+
+GAME = bc_assets.GAME_ROOT
 GESTURE_NIF = GAME / "data" / "animations" / "react_console_left.NIF"
 PLACEMENT_NIF = GAME / "data" / "animations" / "DB_stand_H_M.NIF"
 

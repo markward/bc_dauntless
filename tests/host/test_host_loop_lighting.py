@@ -3,6 +3,8 @@ import os
 
 import pytest
 
+from tests.helpers import bc_assets
+
 
 def test_set_lighting_binding_smoke():
     """Calling set_lighting on the bindings module does not raise."""
@@ -194,8 +196,7 @@ def test_aggregate_backdrops_supplies_project_root_for_path_resolution():
     from pathlib import Path
     import App
     from engine import host_loop
-    PROJECT_ROOT = host_loop.PROJECT_ROOT
-    if not (PROJECT_ROOT / "game" / "data" / "stars.tga").is_file():
+    if not (bc_assets.GAME_ROOT / "data" / "stars.tga").is_file():
         pytest.skip("BC assets not available")
     pSet = App.SetClass_Create()
     s = App.StarSphere_Create()
@@ -225,8 +226,7 @@ def test_verbose_mode_logs_lighting_on_tick0(capsys):
     renderer was given."""
     from pathlib import Path
 
-    PROJECT_ROOT = Path(__file__).parent.parent.parent
-    GALAXY_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
+    GALAXY_NIF = bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
     if not GALAXY_NIF.is_file():
         pytest.skip("BC assets not available")
 
@@ -249,8 +249,7 @@ def test_g_lighting_persists_across_frames():
     of g_lighting from the rendered-pixel test that re-sets it each frame."""
     from pathlib import Path
 
-    PROJECT_ROOT = Path(__file__).parent.parent.parent
-    GALAXY_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
+    GALAXY_NIF = bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
     if not GALAXY_NIF.is_file():
         pytest.skip("BC assets not available")
 
@@ -259,7 +258,7 @@ def test_g_lighting_persists_across_frames():
 
     _dauntless_host.init(640, 360, "test_lighting_persistence")
     try:
-        tex_search = str(PROJECT_ROOT / "game" / "data" / "Models" /
+        tex_search = str(bc_assets.GAME_ROOT / "data" / "Models" /
                          "SharedTextures" / "FedShips" / "High")
         h = _dauntless_host.load_model(str(GALAXY_NIF), tex_search)
         iid = _dauntless_host.create_instance(h)
@@ -306,8 +305,7 @@ def test_g_lighting_resets_on_shutdown():
     set_lighting and checking the rendered pixel is *not* red."""
     from pathlib import Path
 
-    PROJECT_ROOT = Path(__file__).parent.parent.parent
-    GALAXY_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
+    GALAXY_NIF = bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
     if not GALAXY_NIF.is_file():
         pytest.skip("BC assets not available")
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
@@ -317,7 +315,7 @@ def test_g_lighting_resets_on_shutdown():
     def _render_one_frame(set_lighting_call):
         _dauntless_host.init(640, 360, "test_lighting_reset")
         try:
-            tex_search = str(PROJECT_ROOT / "game" / "data" / "Models" /
+            tex_search = str(bc_assets.GAME_ROOT / "data" / "Models" /
                              "SharedTextures" / "FedShips" / "High")
             h = _dauntless_host.load_model(str(GALAXY_NIF), tex_search)
             iid = _dauntless_host.create_instance(h)
@@ -370,8 +368,7 @@ def test_set_lighting_changes_rendered_pixel():
     with black ambient + no directionals."""
     from pathlib import Path
 
-    PROJECT_ROOT = Path(__file__).parent.parent.parent
-    GALAXY_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
+    GALAXY_NIF = bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
     if not GALAXY_NIF.is_file():
         pytest.skip("BC assets not available")
 
@@ -380,7 +377,7 @@ def test_set_lighting_changes_rendered_pixel():
 
     _dauntless_host.init(640, 360, "test_set_lighting_changes_pixel")
     try:
-        tex_search = str(PROJECT_ROOT / "game" / "data" / "Models" /
+        tex_search = str(bc_assets.GAME_ROOT / "data" / "Models" /
                          "SharedTextures" / "FedShips" / "High")
         h = _dauntless_host.load_model(str(GALAXY_NIF), tex_search)
         iid = _dauntless_host.create_instance(h)

@@ -1,8 +1,7 @@
 """MissionRegistry.discover walks sdk/Build/scripts to a typed tree."""
-from pathlib import Path
-
 import pytest
 
+from engine import paths as _paths
 from engine.missions.discovery import (
     discover,
     MissionEntry,
@@ -11,8 +10,7 @@ from engine.missions.discovery import (
     MissionRegistry,
 )
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-SCRIPTS_ROOT = PROJECT_ROOT / "sdk" / "Build" / "scripts"
+SCRIPTS_ROOT = _paths.sdk_scripts()
 
 
 def test_discover_returns_registry():

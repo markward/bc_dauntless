@@ -39,11 +39,17 @@ def test_discover_skips_missing_root(tmp_path, monkeypatch):
     assert [p.name for p in found] == ["x.tgl"]
 
 
+from engine import paths as _paths
 from engine.missions.tgl_reader import TGLParseError
 from tools.tgl_harness import classify
 
+# PROJECT_ROOT here mirrors tools/tgl_harness.py's own module-level constant
+# of the same name -- it is a DISPLAY convention (format_line renders paths
+# relative to it), not an asset-resolution root, so it is deliberately not
+# routed through engine.paths. SDK_TGL_ROOT, below, IS an asset root (used to
+# require a real on-disk TGL) and goes through engine.paths accordingly.
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-SDK_TGL_ROOT = PROJECT_ROOT / "sdk" / "Build" / "Data" / "TGL"
+SDK_TGL_ROOT = _paths.sdk_data() / "TGL"
 
 
 def test_classify_pass_returns_counts():

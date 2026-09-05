@@ -3,9 +3,10 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-SDK_TGL_ROOT = PROJECT_ROOT / "sdk" / "Build" / "Data" / "TGL"
-GAME_TGL_ROOT = PROJECT_ROOT / "game" / "data" / "TGL"
+from engine import paths as _paths
+
+SDK_TGL_ROOT = _paths.sdk_data() / "TGL"
+GAME_TGL_ROOT = _paths.game_root() / "data" / "TGL"
 
 
 @pytest.fixture

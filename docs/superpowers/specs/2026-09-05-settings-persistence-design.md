@@ -35,7 +35,8 @@ through the same appliers the panel uses, written on every change.
   combat can never drift; that property is worth more than the convenience.
 - **Quick Battle roster, SPV overlay state.** Session state, not preferences.
 - **Bootstrap paths.** See "Future: the bootstrap tier" — reserved in the
-  schema, read by nothing.
+  schema at the time this doc was written; now read by `engine/paths.py`.
+  See `docs/superpowers/specs/2026-09-05-bc-path-resolution-design.md`.
 
 ## Architecture
 

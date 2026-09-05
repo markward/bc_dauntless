@@ -1,4 +1,5 @@
 """host_loop module imports cleanly and exposes the public symbols."""
+from tests.helpers import bc_assets
 
 
 def test_imports():
@@ -17,11 +18,9 @@ def test_renderer_module_exposes_bindings():
 
 def test_run_M1_Basic_for_a_few_ticks():
     import os
-    from pathlib import Path
     import pytest
 
-    PROJECT_ROOT = Path(__file__).parent.parent.parent
-    GALAXY_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
+    GALAXY_NIF = bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
     if not GALAXY_NIF.is_file():
         pytest.skip("BC assets not available")
 
@@ -37,11 +36,9 @@ def test_run_M1_Basic_player_unmoved_without_input():
     pressed). Crashes here would surface NaN propagation or the bindings
     raising on stale state."""
     import os
-    from pathlib import Path
     import pytest
 
-    PROJECT_ROOT = Path(__file__).parent.parent.parent
-    GALAXY_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
+    GALAXY_NIF = bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
     if not GALAXY_NIF.is_file():
         pytest.skip("BC assets not available")
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
@@ -66,7 +63,7 @@ def test_run_M1_Basic_in_clean_subprocess():
     import pytest
 
     project_root = Path(__file__).parent.parent.parent
-    if not (project_root / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif").is_file():
+    if not (bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif").is_file():
         pytest.skip("BC assets not available")
     if not (project_root / "build" / "python").is_dir():
         pytest.skip("native _dauntless_host module not built")

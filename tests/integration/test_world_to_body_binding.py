@@ -6,15 +6,15 @@ renderer test suite's asset gating).
 """
 import math
 import os
-from pathlib import Path
 
 import pytest
 
+from tests.helpers import bc_assets
+
 _host = pytest.importorskip("_dauntless_host")
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-GALAXY_NIF = PROJECT_ROOT / "game" / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
-GALAXY_TEX = PROJECT_ROOT / "game" / "data" / "Models" / "SharedTextures" / "FedShips" / "High"
+GALAXY_NIF = bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy" / "Galaxy.nif"
+GALAXY_TEX = bc_assets.GAME_ROOT / "data" / "Models" / "SharedTextures" / "FedShips" / "High"
 
 
 def _ensure_init():

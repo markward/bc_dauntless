@@ -2,19 +2,16 @@
 recording animation surfaces stay faithful."""
 import importlib.util
 import sys
-from pathlib import Path
 
 import pytest
 
 import App
+from engine import paths as _paths
 from engine.core.game import Game, Episode, Mission, _set_current_game
 from engine.appc.bridge_placement import capture_placement
 from engine.appc.characters import CharacterClass
 
-SDK_LOADBRIDGE = (
-    Path(__file__).resolve().parents[2]
-    / "sdk" / "Build" / "scripts" / "LoadBridge.py"
-)
+SDK_LOADBRIDGE = _paths.sdk_scripts() / "LoadBridge.py"
 
 
 def _fresh_world():

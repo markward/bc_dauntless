@@ -37,7 +37,7 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 | Mission lib | `sdk/Build/scripts/MissionLib.py` | Timer lifecycle, two-tier timer architecture |
 | Gap analysis | `docs/gap_analysis.md` | 8 gaps, 26 open questions, solution paths |
 | Open questions | `docs/open_questions.md` | 4 instrumentation questions — Q4 closed |
-| Live game | `game/` | BC installation (gitignored) — needed for instrumentation |
+| Live game | configurable — see `engine/paths.py` | BC installation; location set via `--game-dir`/`DAUNTLESS_GAME_DIR`/`settings.json`, falling back to the in-project `game/` — needed for instrumentation |
 | BC content paths | `engine/paths.py`, `docs/superpowers/specs/2026-09-05-bc-path-resolution-design.md` | Where `game/` and `sdk/` live. Four sources, highest **set** one wins even when invalid. Resolved at USE, never at import — a module-level constant is stale the moment the first-run picker changes a root. Guarded by `tests/unit/test_path_indirection.py`. |
 | Space dust pass | `native/src/renderer/dust_pass.cc`, `docs/superpowers/specs/2026-05-11-space-dust-particles-design.md` | Camera-anchored dust particles with motion smear; toggle via `_h.dust_set_enabled()` |
 | BCS save format | `docs/engine/bcs-save-format.md`, `tools/bcs_inspect.py` | Real binary save format; preamble + object table + TGL + pickle-memo decoded; 93.6% object-state region remains as parking-lot RE work |

@@ -1,18 +1,27 @@
 """Guards for tests that need a retail Bridge Commander install.
 
-game/ is developer-supplied and gitignored, so a clean checkout has no
-textures, models or Maelstrom TGLs. The suite's convention is that
-asset-dependent tests SKIP rather than fail in that situation (see
-tools/check_test_baseline.py, which relies on it to stay runnable anywhere).
-These helpers make that check one call instead of an open-coded path probe.
+The game root is developer-supplied and configured through engine.paths (CLI
+flag, env var, settings.json, or the in-project game/ fallback) rather than
+hardcoded — a clean checkout, or one pointed at an install that lives outside
+the project tree, has no textures, models or Maelstrom TGLs unless a root is
+configured. The suite's convention is that asset-dependent tests SKIP rather
+than fail in that situation (see tools/check_test_baseline.py, which relies
+on it to stay runnable anywhere). These helpers make that check one call
+instead of an open-coded path probe.
+
+No env var is required here: tests/conftest.py resolves and configures
+engine.paths once at session start (failing fast if neither root can be
+found), so GAME_ROOT below just reads the already-configured root.
 """
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-GAME_ROOT = PROJECT_ROOT / "game"
+from engine import paths as _paths
+
+PROJECT_ROOT = _paths.PROJECT_ROOT
+GAME_ROOT = _paths.game_root()
 
 
 def resolve_game_path(relpath: str) -> Optional[Path]:

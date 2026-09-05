@@ -84,7 +84,7 @@ def test_every_call_site_names_an_asset_this_install_actually_has():
     path held in a variable is not checked. It catches the common shape.
     """
     repo = Path(__file__).resolve().parents[2]
-    if not (repo / "game" / "data").is_dir():
+    if not (bc_assets.GAME_ROOT / "data").is_dir():
         pytest.skip("BC assets not available")
 
     import re
