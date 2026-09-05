@@ -189,6 +189,8 @@ def test_get_positions_bulk_matches_individual_reads(store):
     assert len(bulk) == len(handles)
     for (i, g), got in zip(handles, bulk):
         assert got == store.get_position(i, g)
+    for i, g in handles:
+        store.free(i, g)
 
 
 def test_get_positions_rejects_a_stale_handle(store):
