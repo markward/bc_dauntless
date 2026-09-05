@@ -130,3 +130,171 @@ class SettingsStore:
                 tmp.unlink()
             except OSError:
                 pass
+
+
+# ── The settings table ──────────────────────────────────────────────────────
+import math
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
+
+from engine.ui.configuration_panel import FOV_MAX, FOV_MIN, SettingsSnapshot
+
+
+@dataclass
+class SettingsContext:
+    """The live objects the appliers act on, bundled so the table's lambdas
+    close over no globals and the module is testable headless."""
+    r: Any                # renderer binding module
+    director: Any         # engine.cameras director
+    crew_speech: Any      # engine.appc.crew_speech
+    light_emitters: Any   # engine.appc.light_emitters
+    camera_shake: Any     # engine.appc.camera_shake
+    App: Any              # the App shim
+
+
+@dataclass(frozen=True)
+class Setting:
+    """One persisted setting. The row is the whole spec for that setting.
+
+    `field` is the SettingsSnapshot attribute name, which is NOT derivable
+    from `key` — fov_deg and ai_difficulty carry no `_on` suffix.
+    `default` is a value or a callable(ctx); it feeds the panel's display
+    snapshot only, never an applier.
+    """
+    key: str
+    section: str
+    field: str
+    kind: type                       # bool or int
+    default: Any
+    apply: Callable[[Any, Any], None]
+    lo: Optional[int] = None
+    hi: Optional[int] = None
+
+
+def _fan(*appliers):
+    """Compose several appliers into the single `apply` a master row needs."""
+    def _apply(ctx, value):
+        for fn in appliers:
+            fn(ctx, value)
+    return _apply
+
+
+SETTINGS: tuple = (
+    Setting("smaa", "graphics", "smaa_on", bool, True,
+            lambda c, v: c.r.set_smaa_enabled(v)),
+    Setting("dust", "graphics", "dust_on", bool, True,
+            lambda c, v: c.r.set_dust_enabled(v)),
+    Setting("fov_deg", "graphics", "fov_deg", int,
+            lambda c: int(round(math.degrees(c.director.fov_y_rad))),
+            lambda c, v: c.director.set_fov(math.radians(v)),
+            lo=FOV_MIN, hi=FOV_MAX),
+    Setting("improved_space", "graphics", "improved_space_on", bool, True,
+            _fan(lambda c, v: c.r.set_procedural_sky_enabled(v),
+                 lambda c, v: c.r.set_volumetric_nebulae_enabled(v))),
+    Setting("camera_realism", "graphics", "camera_realism_on", bool, True,
+            _fan(lambda c, v: c.r.set_hdr_enabled(v),
+                 lambda c, v: c.r.set_filmic_enabled(v),
+                 lambda c, v: c.r.set_motion_blur_enabled(v),
+                 lambda c, v: c.r.set_hdr_lens_flare_enabled(v))),
+    Setting("realistic_lighting", "graphics", "realistic_lighting_on", bool, True,
+            _fan(lambda c, v: c.r.set_rim_enabled(v),
+                 lambda c, v: c.r.set_shadows_enabled(v),
+                 lambda c, v: c.r.set_nebula_lightning_enabled(v),
+                 lambda c, v: c.light_emitters.set_enabled(v))),
+    Setting("camera_shake", "graphics", "camera_shake_on", bool,
+            lambda c: c.camera_shake.enabled(),
+            lambda c, v: c.camera_shake.set_enabled(v)),
+    Setting("subtitles", "gameplay", "subtitles_on", bool, True,
+            lambda c, v: c.crew_speech.set_subtitles_enabled(v)),
+    Setting("disable_annoying_dialogue", "gameplay",
+            "disable_annoying_dialogue_on", bool, True,
+            lambda c, v: c.crew_speech.set_annoying_dialogue_disabled(v)),
+    Setting("ai_difficulty", "gameplay", "ai_difficulty", int, 1,
+            lambda c, v: c.App.Game_SetDifficulty(v),
+            lo=0, hi=2),
+)
+
+_BY_KEY = {s.key: s for s in SETTINGS}
+
+
+def setting_for(key: str) -> Setting:
+    return _BY_KEY[key]
+
+
+def resolve_default(setting: Setting, ctx) -> Any:
+    return setting.default(ctx) if callable(setting.default) else setting.default
+
+
+def _coerce(setting: Setting, raw):
+    """Stored value -> usable value. Raises ValueError if unusable, which
+    callers treat as 'key absent' rather than substituting a default."""
+    if setting.kind is bool:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, int):        # tolerate 0/1 from a hand-edited file
+            return bool(raw)
+        raise ValueError("not a boolean: %r" % (raw,))
+    if setting.kind is int:
+        if isinstance(raw, bool):       # bool is an int subclass; reject it here
+            raise ValueError("boolean where int expected: %r" % (raw,))
+        value = int(raw)                # raises ValueError/TypeError on junk
+        if setting.lo is not None:
+            value = max(setting.lo, value)
+        if setting.hi is not None:
+            value = min(setting.hi, value)
+        return value
+    raise ValueError("unhandled kind %r" % (setting.kind,))
+
+
+def _stored(store: SettingsStore, setting: Setting):
+    """(present, value). Absent, or present but uncoercible, -> (False, None)."""
+    if not store.has(setting.section, setting.key):
+        return False, None
+    try:
+        return True, _coerce(setting, store.get(setting.section, setting.key))
+    except (ValueError, TypeError) as exc:
+        dev_mode.log_swallowed("settings coerce %r" % (setting.key,), exc)
+        return False, None
+
+
+def apply_all(store: SettingsStore, ctx) -> None:
+    """Apply every STORED setting. An absent key never reaches its applier —
+    that is what makes a first launch byte-identical to today."""
+    for setting in SETTINGS:
+        present, value = _stored(store, setting)
+        if present:
+            setting.apply(ctx, value)
+
+
+def snapshot_for_panel(store: SettingsStore, ctx):
+    """Build the panel's display state. Reads only — touches no applier."""
+    values = {}
+    for setting in SETTINGS:
+        present, value = _stored(store, setting)
+        values[setting.field] = value if present else resolve_default(setting, ctx)
+    return SettingsSnapshot(**values)
+
+
+def set_setting(store: SettingsStore, key: str, value) -> None:
+    """Key-addressed write. The store is section/key addressed and only the
+    table knows a key's section, so the panel's on_change binds to this."""
+    setting = setting_for(key)
+    store.set(setting.section, setting.key, value)
+
+
+def reset_and_apply_section(store: SettingsStore, ctx, section: str) -> dict:
+    """Drop a section, re-apply its defaults to the engine, and return
+    {SettingsSnapshot field: value} so the panel can setattr the result.
+
+    Deleting rather than writing defaults is deliberate: it returns the player
+    to genuine first-launch behaviour rather than to our transcription of it.
+    """
+    store.reset_section(section)
+    out = {}
+    for setting in SETTINGS:
+        if setting.section != section:
+            continue
+        value = resolve_default(setting, ctx)
+        setting.apply(ctx, value)
+        out[setting.field] = value
+    return out
