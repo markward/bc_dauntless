@@ -13,6 +13,7 @@ import weakref
 
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.math import TGPoint3, TGMatrix3
+from engine.appc.transform_store import get_store
 
 # Lifetime constants (BC DamageableObject). LIFETIME_UNSET is the "not set"
 # sentinel: Effects.py:753 treats GetLifeTime() > 1e6 as unset, so the default
@@ -54,6 +55,18 @@ class _ObjectNodeRef(_NodeStub):
         return "<_ObjectNodeRef %r>" % (owner.GetName() if owner else None)
 
 
+def _release_transform_slot(store, handle) -> None:
+    """Free an object's transform slot. Registered via weakref.finalize, so it
+    runs on collection even when the object is part of a cycle."""
+    try:
+        store.free(*handle)
+    except Exception:
+        # A store reset (tests) or interpreter teardown can invalidate the
+        # handle first; a failed release must never propagate out of a
+        # finalizer.
+        pass
+
+
 class ObjectClass(TGEventHandlerObject):
     def __init__(self):
         super().__init__()
@@ -70,8 +83,16 @@ class ObjectClass(TGEventHandlerObject):
         self._radius: float = 0.0
         self._scale: float = 1.0
         self._hidden: bool = False
-        self._position: TGPoint3 = TGPoint3(0.0, 0.0, 0.0)
-        self._rotation: TGMatrix3 = TGMatrix3()   # identity
+        # Transform lives in the TransformStore, not on the instance. The
+        # handle is (index, generation); the generation makes a stale handle
+        # fail loudly instead of reading whatever object recycled the index.
+        _store = get_store()
+        self._xform = _store.alloc()
+        # weakref.finalize, NOT __del__: ObjectClass instances sit in
+        # reference cycles (they are event handlers and the event manager
+        # holds refs back), and __del__ on a cycle member is unreliable.
+        self._xform_finalizer = weakref.finalize(
+            self, _release_transform_slot, _store, self._xform)
         self._containing_set = None
         # Set via SetDeleteMe(1); the host loop removes flagged objects from
         # their set each tick (BC's engine deletes delete-me-flagged objects).
@@ -282,10 +303,11 @@ class ObjectClass(TGEventHandlerObject):
     # ── Translation ───────────────────────────────────────────────────────────
 
     def SetTranslateXYZ(self, x: float, y: float, z: float) -> None:
-        self._position = TGPoint3(float(x), float(y), float(z))
+        get_store().set_position(*self._xform, float(x), float(y), float(z))
 
     def SetTranslate(self, point: TGPoint3) -> None:
-        self._position = TGPoint3(point.x, point.y, point.z)
+        get_store().set_position(*self._xform,
+                                 float(point.x), float(point.y), float(point.z))
 
     def SetWorldLocation(self, pos) -> None:
         """Test/host-side helper to position an object via (x, y, z) tuple
@@ -294,15 +316,19 @@ class ObjectClass(TGEventHandlerObject):
         engine code that simulates SDK behavior.
         """
         if hasattr(pos, 'x'):
-            self._position = TGPoint3(float(pos.x), float(pos.y), float(pos.z))
+            get_store().set_position(*self._xform,
+                                     float(pos.x), float(pos.y), float(pos.z))
         else:
-            self._position = TGPoint3(float(pos[0]), float(pos[1]), float(pos[2]))
+            get_store().set_position(*self._xform,
+                                     float(pos[0]), float(pos[1]), float(pos[2]))
 
     def GetTranslate(self) -> TGPoint3:
-        return TGPoint3(self._position.x, self._position.y, self._position.z)
+        x, y, z = get_store().get_position(*self._xform)
+        return TGPoint3(x, y, z)
 
     def GetWorldLocation(self) -> TGPoint3:
-        return TGPoint3(self._position.x, self._position.y, self._position.z)
+        x, y, z = get_store().get_position(*self._xform)
+        return TGPoint3(x, y, z)
 
     def GetRandomPointOnModel(self) -> TGPoint3:
         """BC ObjectClass::GetRandomPointOnModel — random world-space point on
@@ -345,22 +371,29 @@ class ObjectClass(TGEventHandlerObject):
     # ── Rotation ──────────────────────────────────────────────────────────────
 
     def SetMatrixRotation(self, matrix: TGMatrix3) -> None:
-        self._rotation = matrix
+        """Set this object's rotation.
+
+        NOTE the matrix is COPIED into the transform store. This differs from
+        the pre-store behaviour, which kept the caller's matrix by reference so
+        later mutations of it silently re-oriented the object. Pinned by
+        tests/unit/test_object_transform_slots.py.
+        """
+        get_store().set_rotation(*self._xform, matrix.as_tuple())
 
     def GetRotation(self) -> TGMatrix3:
         result = TGMatrix3()
-        result.set_from_tuple(self._rotation.as_tuple())
+        result.set_from_tuple(get_store().get_rotation(*self._xform))
         return result
 
     def GetWorldRotation(self) -> TGMatrix3:
         result = TGMatrix3()
-        result.set_from_tuple(self._rotation.as_tuple())
+        result.set_from_tuple(get_store().get_rotation(*self._xform))
         return result
 
     def SetAngleAxisRotation(self, angle: float, axis: TGPoint3) -> None:
         m = TGMatrix3()
         m.MakeRotation(angle, axis)
-        self._rotation = m
+        get_store().set_rotation(*self._xform, m.as_tuple())
 
     def AlignToVectors(self, forward: TGPoint3, up: TGPoint3) -> None:
         """Build an orthonormal rotation matrix from forward and up vectors.
@@ -394,7 +427,7 @@ class ObjectClass(TGEventHandlerObject):
         m.SetCol(0, right)
         m.SetCol(1, fwd)
         m.SetCol(2, u)
-        self._rotation = m
+        get_store().set_rotation(*self._xform, m.as_tuple())
 
     def Rotate(self, *args) -> None:
         pass
@@ -494,7 +527,8 @@ class ObjectClass(TGEventHandlerObject):
         the project-wide convention. Prefer this helper over reading
         `GetWorldRotation().GetCol(1)` at the call site.
         """
-        return self._rotation.GetCol(1)
+        x, y, z = get_store().get_rotation_col(*self._xform, 1)
+        return TGPoint3(x, y, z)
 
     # World-direction siblings of GetWorldForwardTG (column-vector convention:
     # col0=right, col1=forward, col2=up). Without these, ObjectClass is a
@@ -503,22 +537,24 @@ class ObjectClass(TGEventHandlerObject):
     # player.GetWorldUpTG()), and stub "vectors" build a degenerate (zero-column)
     # rotation that later crashes render interpolation.
     def GetWorldBackwardTG(self) -> TGPoint3:
-        f = self._rotation.GetCol(1)
-        return TGPoint3(-f.x, -f.y, -f.z)
+        x, y, z = get_store().get_rotation_col(*self._xform, 1)
+        return TGPoint3(-x, -y, -z)
 
     def GetWorldUpTG(self) -> TGPoint3:
-        return self._rotation.GetCol(2)
+        x, y, z = get_store().get_rotation_col(*self._xform, 2)
+        return TGPoint3(x, y, z)
 
     def GetWorldDownTG(self) -> TGPoint3:
-        u = self._rotation.GetCol(2)
-        return TGPoint3(-u.x, -u.y, -u.z)
+        x, y, z = get_store().get_rotation_col(*self._xform, 2)
+        return TGPoint3(-x, -y, -z)
 
     def GetWorldRightTG(self) -> TGPoint3:
-        return self._rotation.GetCol(0)
+        x, y, z = get_store().get_rotation_col(*self._xform, 0)
+        return TGPoint3(x, y, z)
 
     def GetWorldLeftTG(self) -> TGPoint3:
-        r = self._rotation.GetCol(0)
-        return TGPoint3(-r.x, -r.y, -r.z)
+        x, y, z = get_store().get_rotation_col(*self._xform, 0)
+        return TGPoint3(-x, -y, -z)
 
     def GetContainingSetName(self) -> str:
         if self._containing_set is not None:

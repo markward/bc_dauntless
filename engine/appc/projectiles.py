@@ -186,6 +186,25 @@ class Torpedo(ObjectClass):
         live value, never a stale snapshot."""
         return self._position
 
+    # GetTranslate must mirror GetWorldLocation above, NOT the inherited
+    # ObjectClass.GetTranslate. Before the TransformStore migration
+    # (docs/superpowers/plans/2026-09-05-native-transform-ownership.md), both
+    # ObjectClass and Torpedo resolved through the same `self._position`
+    # attribute, so the two accessors were accidentally identical -- that
+    # accident is exactly what the class docstring above calls "the transform
+    # survives the promotion untouched". Once ObjectClass.GetTranslate moved
+    # to the store, that equivalence broke silently: engine.appc.subsystems.
+    # _get_xyz tries GetTranslate first (implements() finds it on the
+    # inherited ObjectClass), so it would read the store's default (0,0,0)
+    # instead of this torpedo's real, self-managed position. Torpedo keeps
+    # its own `_position` slot (not the store) so the per-tick motion
+    # integrator (update_all) can update it without a store round trip;
+    # overriding GetTranslate to match keeps both accessors truthful.
+    # Pinned by tests/unit/test_ship_only_loops_filter_non_ships.py::
+    # test_a_torpedo_still_reads_its_position_after_the_promotion.
+    def GetTranslate(self) -> TGPoint3:
+        return self._position
+
     def GetVelocityTG(self) -> TGPoint3:
         """Current in-flight velocity as a FRESH copy. Mirrors
         ObjectClass.GetVelocityTG() (objects.py:453). The copy is
