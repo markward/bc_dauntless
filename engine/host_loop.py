@@ -7228,46 +7228,34 @@ def run(mission_name: Optional[str] = None,
         registry = PanelRegistry()
         ai_inspector = _register_ai_inspector(registry)
 
-        # Configuration panel — production-visible pause-menu modal
-        # exposing the Graphics tab (SMAA, FOV, and the three master
-        # toggles). Settings apply live; no persistence. Construction
-        # uses the live director FOV so opening the panel doesn't lie
-        # about the current value.
-        from engine.ui.configuration_panel import (
-            ConfigurationPanel, SettingsSnapshot,
-        )
+        # Configuration panel — production-visible pause-menu modal.
+        # Settings persist across launches via engine.settings_store: the
+        # store loads, apply_all pushes every STORED value through the same
+        # appliers the panel uses (an absent key is never applied, so a
+        # missing settings.json leaves boot on the engine's own defaults),
+        # and snapshot_for_panel builds the panel's display state. This
+        # replaces reconstructing the snapshot from renderer getters —
+        # several of those do not exist, so the old snapshot asserted
+        # smaa_on/dust_on were True without reading anything.
+        from engine.ui.configuration_panel import ConfigurationPanel
         from engine.appc import crew_speech as _crew_speech
         from engine.appc import light_emitters as _light_emitters
         from engine.appc import camera_shake as _camera_shake
+        from engine import settings_store as _settings
+        _store = _settings.SettingsStore()
+        _store.load()
+        _settings_ctx = _settings.SettingsContext(
+            r=r, director=director, crew_speech=_crew_speech,
+            light_emitters=_light_emitters, camera_shake=_camera_shake, App=App,
+        )
+        _settings.apply_all(_store, _settings_ctx)
         configuration_panel = ConfigurationPanel(
             tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay"),
                   ("controls", "Controls")],
-            initial_settings=SettingsSnapshot(
-                smaa_on=True,
-                # No dust_enabled() getter; defaults on natively, like rim
-                # and shadows.
-                dust_on=True,
-                # Real getter, unlike dust/rim/shadows.
-                camera_shake_on=_camera_shake.enabled(),
-                improved_space_on=(r.procedural_sky_enabled()
-                                   and r.volumetric_nebulae_enabled()),
-                # One row over four effects. The renderer exposes no
-                # hdr_enabled() getter (HDR defaults on natively), so the
-                # master reads as on only when all three that do report on.
-                camera_realism_on=(r.filmic_enabled()
-                                and r.motion_blur_enabled()
-                                and r.hdr_lens_flare_enabled()),
-                # Likewise rim and shadows have no getters and default on;
-                # nebula lightning and the emitters do report their state.
-                realistic_lighting_on=(r.nebula_lightning_enabled()
-                                       and _light_emitters.enabled()),
-                fov_deg=int(round(_math.degrees(
-                    director.fov_y_rad
-                ))),
-                subtitles_on=_crew_speech.subtitles_enabled(),
-                disable_annoying_dialogue_on=_crew_speech.annoying_dialogue_disabled(),
-                ai_difficulty=App.Game_GetDifficulty(),
-            ),
+            initial_settings=_settings.snapshot_for_panel(_store, _settings_ctx),
+            on_change=lambda key, value: _settings.set_setting(_store, key, value),
+            on_reset=lambda section: _settings.reset_and_apply_section(
+                _store, _settings_ctx, section),
             set_dust=r.set_dust_enabled,
             set_hdr=r.set_hdr_enabled,
             set_rim=r.set_rim_enabled,

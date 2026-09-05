@@ -330,6 +330,8 @@ cache/
 /Options.cfg
 /BCTickLog.cfg
 /Keybindings.cfg
+/settings.json
+/settings.json.corrupt
 /stub_hits.jsonl
 # AI Inspector's Export button (dev-only); fixed name, overwritten per press.
 /ai_inspector_export.json
