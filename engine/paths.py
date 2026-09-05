@@ -133,6 +133,9 @@ def validate_sdk_root(path) -> Validation:
 
 # engine/paths.py -> engine/ -> <project root>. Kept as a module attribute
 # rather than a local so tests can point the legacy fallback at a tmp_path.
+# Path.resolve() here is fine -- the module's "never resolve()" rule protects
+# a user-supplied BC root from having its symlinks followed; this locates
+# OUR OWN module file, the same idiom engine/settings_store.py already uses.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 CLI_FLAGS = {"game": "--game-dir", "sdk": "--sdk-dir"}
@@ -175,14 +178,26 @@ class Resolution:
         return self.game_validation if kind == "game" else self.sdk_validation
 
 
-def _flag_value(argv, flag: str) -> Optional[str]:
-    """Support both `--game-dir X` and `--game-dir=X`."""
+# Distinguishes "flag absent" from "flag present with an empty value" --
+# `None` and `""` are both falsy, so a plain Optional[str] return can't tell
+# them apart. See _candidate()'s CLI tier for why the distinction matters.
+_UNSET = object()
+
+
+def _flag_value(argv, flag: str):
+    """Support both `--game-dir X` and `--game-dir=X`.
+
+    Returns `_UNSET` when the flag never appears in argv. Returns the raw
+    value -- which may be `""` -- when it does. Callers must check `is
+    _UNSET`, not truthiness: an explicit `--game-dir=` is a real answer
+    (an empty one), not the absence of one.
+    """
     for i, token in enumerate(argv):
         if token == flag:
             return argv[i + 1] if i + 1 < len(argv) else ""
         if token.startswith(flag + "="):
             return token[len(flag) + 1:]
-    return None
+    return _UNSET
 
 
 def _candidate(kind: str, argv, env, store):
@@ -191,19 +206,39 @@ def _candidate(kind: str, argv, env, store):
     Returns (None, "") when nothing is set. A set-but-wrong source is
     returned as-is and never skipped in favour of a lower one -- falling
     through would run a different install than the one that was asked for.
+
+    "Set" is deliberately NOT the same test at every tier -- see each
+    branch below for why.
     """
+    # CLI: present in argv -> SET, even when the value is "". Typing the
+    # flag is an explicit act at launch (`--game-dir="$UNSET_VAR"` with the
+    # shell var unset still puts `--game-dir=` on argv); treating that the
+    # same as never having typed the flag would silently boot a different
+    # install than the one the user named. Compare `is not _UNSET`, never
+    # truthiness.
     flag = _flag_value(argv, CLI_FLAGS[kind])
-    if flag:
+    if flag is not _UNSET:
         return flag, "cli"
 
+    # Env: present-but-empty is treated as UNSET -- deliberately asymmetric
+    # with the CLI tier above. `FOO=${BAR:-}` is idiomatic shell for
+    # "unset", and CI tooling routinely exports empty vars for undefined
+    # ones; erroring here would break boots that should work, and (unlike
+    # the CLI tier) an empty env value can't be the wrong-install harm the
+    # SET-wins rule exists to prevent, because nobody deliberately exports
+    # an empty override meaning "use THIS exact root".
     from_env = env.get(ENV_VARS[kind])
     if from_env:
         return from_env, "env"
 
+    # settings.json: store.has() IS the SET check -- a present key means
+    # set, full stop, regardless of its value. Don't re-check the retrieved
+    # value's truthiness: persist() only ever writes valid non-empty paths,
+    # so a present-but-empty stored value means a hand-edit, and that
+    # deserves to be reported as an error, not silently skipped in favour
+    # of the project default.
     if store is not None and store.has("paths", kind):
-        stored = store.get("paths", kind)
-        if stored:
-            return stored, "settings"
+        return store.get("paths", kind), "settings"
 
     project = PROJECT_ROOT / _PROJECT_DIR[kind]
     if project.is_dir():

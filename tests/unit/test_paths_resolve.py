@@ -18,9 +18,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 def _isolate_cache():
     """paths caches a Resolution in a module global.
 
-    Save and RESTORE rather than clearing: tests/conftest.py configures the
-    session's real resolution at import, and leaving None behind would make
-    every later test file re-resolve from ambient state.
+    Save and RESTORE rather than clearing: restores whatever was configured
+    before this test (currently `None`; a later task configures a session
+    resolution in conftest), rather than leaving `None` behind, which would
+    make every later test file re-resolve from ambient state.
     """
     saved = paths._RESOLUTION
     paths.configure(None)
@@ -100,6 +101,48 @@ def test_a_set_but_invalid_source_is_an_error_not_a_fallthrough(fake_bc_install,
     assert str(res.game_validation.root) == "/definitely/not/here"
 
 
+@pytest.mark.parametrize("argv", [["--game-dir", ""], ["--game-dir="]])
+def test_an_empty_cli_value_is_set_and_therefore_an_error(fake_bc_install, tmp_path, argv):
+    """--game-dir="$UNSET_VAR" must NOT fall through to a lower source: the
+    user named a root, and silently booting a different one is the exact harm
+    the precedence rule exists to prevent."""
+    game, sdk = fake_bc_install
+    store = _store_with(tmp_path, game=game, sdk=sdk)
+    res = paths.resolve(argv=argv, env={}, store=store)
+    assert not res.ok
+    assert res.game is None
+    assert res.game_source == "cli"
+
+
+def test_an_invalid_env_value_does_not_fall_through_to_settings(fake_bc_install, tmp_path):
+    game, sdk = fake_bc_install
+    store = _store_with(tmp_path, game=game, sdk=sdk)
+    res = paths.resolve(argv=[], env={"DAUNTLESS_GAME_DIR": "/definitely/not/here"}, store=store)
+    assert not res.ok
+    assert res.game is None
+    assert res.game_source == "env"
+
+
+def test_an_invalid_settings_value_does_not_fall_through_to_the_project_default(tmp_path, monkeypatch):
+    for rel in ("game/data", "game/data/Models", "game/data/Textures", "game/data/Icons"):
+        (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)
+    store = _store_with(tmp_path, game="/definitely/not/here")
+    res = paths.resolve(argv=[], env={}, store=store)
+    assert res.game is None
+    assert res.game_source == "settings"
+
+
+def test_an_empty_env_var_is_treated_as_unset(fake_bc_install, tmp_path):
+    """Deliberate asymmetry with the CLI tier: `FOO=${BAR:-}` is idiomatic
+    shell for "unset", and CI tooling exports empty vars for undefined ones."""
+    game, sdk = fake_bc_install
+    store = _store_with(tmp_path, game=game, sdk=sdk)
+    res = paths.resolve(argv=[], env={"DAUNTLESS_GAME_DIR": ""}, store=store)
+    assert res.game == game
+    assert res.game_source == "settings"
+
+
 def test_an_absent_project_default_is_not_an_error(tmp_path, monkeypatch):
     """Source 4 is a fallback: its absence means 'nothing configured'."""
     monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)
@@ -146,6 +189,9 @@ def test_persist_writes_only_cli_sourced_roots(fake_bc_install, tmp_path):
     paths.persist(res, store)
     doc = json.loads((tmp_path / "settings.json").read_text())
     assert doc["paths"]["game"] == str(game)
+    # Symmetric check: sdk came from settings, not cli, so persist() must
+    # leave the pre-existing value alone rather than re-writing it.
+    assert doc["paths"]["sdk"] == str(sdk)
 
 
 def test_persist_never_writes_an_env_sourced_root(fake_bc_install, tmp_path):
