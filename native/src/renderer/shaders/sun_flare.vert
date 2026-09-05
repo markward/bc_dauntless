@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 
 // Camera-aligned billboard for the BC SunEffect overlay layer.
 // Drawn as 4 vertices in a TRIANGLE_STRIP with corners encoded in a_corner

@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 // Skinned-mesh vertex stage. Pairs with opaque.frag (its `in` varyings match
 // the `out` varyings below), so skinned geometry shades identically to static
 // geometry once deformed. Used only for models with a non-empty skeleton.

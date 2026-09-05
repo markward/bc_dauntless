@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 layout(location = 0) in vec2 a_corner;   // unit quad corner in [-0.5, 0.5]
 uniform mat4  u_view_proj;
 uniform vec3  u_center_world;

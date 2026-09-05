@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 
 // Breach interior scoop — inner wall of a carve sphere, masked by the ship's
 // ORIGINAL (uncarved) fill.

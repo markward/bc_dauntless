@@ -37,14 +37,14 @@ constexpr float kRimPower = 36.0f;
 // Minimal fullscreen-triangle vertex shader (resolve.vert needs no attributes
 // beyond position, but keeping this local avoids coupling to its varyings).
 constexpr const char* kVS = R"GLSL(
-#version 330 core
+#version 410 core
 layout(location = 0) in vec2 a_pos;
 void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
 )GLSL";
 
 // r = the OLD expression (max), g = the FIXED expression (clamp).
 constexpr const char* kFS = R"GLSL(
-#version 330 core
+#version 410 core
 out vec4 frag_color;
 uniform float u_ndv;      // stands in for dot(n, V)
 uniform float u_power;

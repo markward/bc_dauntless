@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 in vec2 v_uv;                 // radial coord; length 0 at center, ~1 at edge
 uniform float u_t;            // age / lifetime, 0..1
 out vec4 frag;

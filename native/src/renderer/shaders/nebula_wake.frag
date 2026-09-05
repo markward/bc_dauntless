@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 in vec2 v_uv;             // [-1,1] quad space
 out vec4 frag;
 

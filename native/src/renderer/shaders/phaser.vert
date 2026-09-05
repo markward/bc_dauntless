@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 // Per-vertex attributes for an N-sided prism extruded from emitter to
 // target.  Per face the CPU emits 6 vertices (two triangles), each
 // carrying:

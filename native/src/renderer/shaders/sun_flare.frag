@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 
 // BC SunEffect particle: samples one cell from the SunFlares*.tga
 // sprite atlas (8x8 grid of distinct plasma puffs) and additively

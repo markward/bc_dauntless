@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 //
 // Non-finite probe: reduces a render target to a coarse grid of "did any texel
 // in this cell hold a NaN or an Inf" flags. Developer diagnostic for the HDR

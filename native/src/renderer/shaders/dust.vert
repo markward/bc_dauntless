@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 
 // Per-vertex (the quad). 4 vertices total.
 layout(location = 0) in vec2 a_corner;     // in {-1,-1}, {+1,-1}, {-1,+1}, {+1,+1}

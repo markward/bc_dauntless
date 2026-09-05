@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 in vec2 v_uv;
 uniform sampler2D u_glyph;     // black ink on transparent alpha
 out vec4 frag;

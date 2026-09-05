@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 //
 // Separable Gaussian blur for the lens-flare texture. Run twice by
 // LensFlareHdrPass (horizontal then vertical) to soften the ghosts/halo. Radius

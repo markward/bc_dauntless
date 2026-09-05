@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 //
 // Image-based ("pseudo") lens flare — John Chapman's feature-generation pass.
 // Source is the bloom mip0 texture (already half-res, blurred, thresholded, and

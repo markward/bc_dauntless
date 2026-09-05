@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 // Fullscreen triangle generated entirely from gl_VertexID — no vertex buffer.
 // v_uv spans [0,1] across the screen; the radial god-ray march works in this
 // UV space, smearing the bright HDR cloud toward the flash's screen anchor.

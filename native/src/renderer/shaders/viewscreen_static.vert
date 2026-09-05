@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 layout(location = 0) in vec2 a_pos;   // [-1,3] fullscreen triangle
 out vec2 v_uv;
 void main() {
