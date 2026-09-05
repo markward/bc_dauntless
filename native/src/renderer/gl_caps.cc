@@ -7,6 +7,12 @@ GlCaps query_gl_caps() {
     glGetIntegerv(GL_MAJOR_VERSION, &caps.version_major);
     glGetIntegerv(GL_MINOR_VERSION, &caps.version_minor);
     caps.tessellation_available = (caps.version_major >= 4);
+    glGetIntegerv(GL_MAX_SAMPLES, &caps.max_samples);
     return caps;
+}
+
+int clamp_msaa_samples(int requested, const GlCaps& caps) {
+    if (requested < 2) return 0;
+    return (requested > caps.max_samples) ? caps.max_samples : requested;
 }
 }  // namespace renderer
