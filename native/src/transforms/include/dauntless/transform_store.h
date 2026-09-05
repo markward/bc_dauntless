@@ -63,6 +63,10 @@ public:
                                        std::uint32_t generation,
                                        int col) const;
 
+    // Bulk read for per-frame sweeps: one boundary crossing instead of N.
+    std::vector<std::array<double, 3>> positions(
+        const std::vector<std::pair<std::uint32_t, std::uint32_t>>& handles) const;
+
     std::uint32_t live_count() const { return live_; }
     std::uint32_t capacity() const {
         return static_cast<std::uint32_t>(generations_.size());

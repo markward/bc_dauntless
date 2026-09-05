@@ -175,10 +175,9 @@ def perceived_by(observer) -> tuple:
     apply_conceal = sd.ENHANCED_SENSOR_CONTEST
 
     out = []
-    for ship in contact_index.ships_in(pSet):
+    for ship, (sx, sy, sz) in contact_index.ship_positions_in(pSet):
         if ship is observer:
             continue
-        sx, sy, sz = _get_xyz(ship)
         dx, dy, dz = sx - ox, sy - oy, sz - oz
         dist_sq = dx * dx + dy * dy + dz * dz
         # ONE detection rule, shared with the weapons, AI targeting and the

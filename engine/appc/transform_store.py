@@ -102,6 +102,19 @@ class PythonTransformStore:
         d = self._data
         return (d[base + col], d[base + 3 + col], d[base + 6 + col])
 
+    def get_positions(self, handles) -> list:
+        out = []
+        d = self._data
+        gens = self._generations
+        n = len(gens)
+        for index, generation in handles:
+            if index < 0 or index >= n or gens[index] != generation:
+                raise StaleHandleError(
+                    "transform handle (%r, %r) is stale" % (index, generation))
+            base = index * _STRIDE
+            out.append((d[base], d[base + 1], d[base + 2]))
+        return out
+
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _check(self, index: int, generation: int) -> None:
@@ -168,6 +181,13 @@ class NativeTransformStore:
         try:
             return tuple(
                 self._h.transform_get_rotation_col(index, generation, col))
+        except RuntimeError as exc:
+            raise StaleHandleError(str(exc)) from exc
+
+    def get_positions(self, handles) -> list:
+        try:
+            return [tuple(p) for p in
+                    self._h.transform_get_positions(list(handles))]
         except RuntimeError as exc:
             raise StaleHandleError(str(exc)) from exc
 

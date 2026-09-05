@@ -4474,6 +4474,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("index"), py::arg("generation"), py::arg("col"));
 
+    m.def("transform_get_positions",
+          [](const std::vector<std::pair<std::uint32_t, std::uint32_t>>& h) {
+              return dauntless::transform_store().positions(h);
+          },
+          py::arg("handles"),
+          "Bulk position read: one crossing instead of N.");
+
     m.def("transform_live_count", []() {
               return dauntless::transform_store().live_count();
           });

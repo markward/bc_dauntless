@@ -94,12 +94,17 @@ def _ensure_overlay(obj):
     return cv
 
 
-def _resolve_body(obj) -> "_Body":
+def _resolve_body(obj, position: TGPoint3 = None) -> "_Body":
     """Snapshot an object into a _Body. Ships are movable (inverse mass from
     GetMass, fallback when zero); planets/moons/suns are immovable. Velocity
-    is the world thrust velocity plus any active collision overlay."""
+    is the world thrust velocity plus any active collision overlay.
+
+    `position`, when given, is a pre-fetched world location (from a bulk
+    get_positions() call in resolve_collisions) — avoids one boundary
+    crossing per object. Defaults to obj.GetWorldLocation() so direct callers
+    (unit tests, collision_avoidance.py) are unaffected."""
     from engine.appc.ships import ShipClass
-    center = obj.GetWorldLocation()
+    center = position if position is not None else obj.GetWorldLocation()
     radius = obj.GetRadius()
     if isinstance(obj, ShipClass) and not obj.IsImmobile():
         m = obj.GetMass()
@@ -427,8 +432,20 @@ def resolve_collisions(objects, ship_instances=None):
     Returns the list of collision tuples from _respond_pair (for tests /
     debugging). De-penetration mutates positions in place; with n small and
     overlaps rare, later pairs reading slightly stale centres self-corrects
-    next frame (spec §4)."""
-    bodies = [_resolve_body(o) for o in objects]
+    next frame (spec §4).
+
+    Positions for the initial snapshot are fetched in one bulk call — nothing
+    between the old per-object GetWorldLocation() reads and this point writes
+    any object's transform (_apply_overlay_all, which does write positions,
+    already ran in tick_collisions before objects reached here; de-penetration
+    inside _respond_pair happens strictly after every body is snapshotted), so
+    hoisting the reads to a single batch changes only the number of boundary
+    crossings, not the values observed."""
+    from engine.appc.transform_store import get_store
+    objects = list(objects)
+    positions = get_store().get_positions([o._xform for o in objects])
+    bodies = [_resolve_body(o, TGPoint3(*p))
+              for o, p in zip(objects, positions)]
     hits = []
     for i in range(len(bodies)):
         for k in range(i + 1, len(bodies)):

@@ -101,3 +101,26 @@ def test_reset_clears_every_bucket():
     contact_index.reset()
 
     assert contact_index.ships_in(pSet) == ()
+
+
+def test_ship_positions_in_matches_individual_reads_in_order():
+    contact_index.reset()
+    pSet = SetClass()
+    a, b, c = _ship("A"), _ship("B"), _ship("C")
+    a.SetTranslateXYZ(1.0, 2.0, 3.0)
+    b.SetTranslateXYZ(-4.0, 0.0, 8.5)
+    c.SetTranslateXYZ(0.0, 0.0, 0.0)
+    for s in (a, b, c):
+        contact_index.on_added(pSet, s)
+
+    result = contact_index.ship_positions_in(pSet)
+
+    assert tuple(ship for ship, _ in result) == (a, b, c)
+    for ship, pos in result:
+        got = ship.GetTranslate()
+        assert pos == (got.x, got.y, got.z)
+
+
+def test_ship_positions_in_empty_set_is_empty():
+    contact_index.reset()
+    assert contact_index.ship_positions_in(SetClass()) == ()

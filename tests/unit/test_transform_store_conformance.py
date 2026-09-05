@@ -177,3 +177,26 @@ def test_get_rotation_col_out_of_range_raises_index_error(store):
     with pytest.raises(IndexError):
         store.get_rotation_col(i, g, 3)
     store.free(i, g)
+
+
+def test_get_positions_bulk_matches_individual_reads(store):
+    handles = []
+    for n in range(50):
+        i, g = store.alloc()
+        store.set_position(i, g, float(n), float(-n), 0.5)
+        handles.append((i, g))
+    bulk = store.get_positions(handles)
+    assert len(bulk) == len(handles)
+    for (i, g), got in zip(handles, bulk):
+        assert got == store.get_position(i, g)
+
+
+def test_get_positions_rejects_a_stale_handle(store):
+    i, g = store.alloc()
+    store.free(i, g)
+    with pytest.raises(StaleHandleError):
+        store.get_positions([(i, g)])
+
+
+def test_get_positions_empty_is_empty(store):
+    assert store.get_positions([]) == []

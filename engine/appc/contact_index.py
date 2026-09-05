@@ -92,6 +92,23 @@ def ships_in(pSet) -> tuple:
     return tuple(_buckets.get(pSet, ()))
 
 
+def ship_positions_in(pSet) -> tuple:
+    """(ship, (x, y, z)) for every ship in *pSet*, same order as ships_in.
+
+    Every bucketed ship is a ShipClass (see on_added's isinstance gate), so
+    every one carries a transform-store handle. This still reads positions
+    through to the object at query time, per the module docstring above — the
+    only change is one bulk transform-store call for the whole set instead of
+    one per ship, for callers (engine.appc.perception.perceived_by) that walk
+    every ship in a set once per call."""
+    ships = ships_in(pSet)
+    if not ships:
+        return ()
+    from engine.appc.transform_store import get_store
+    positions = get_store().get_positions([s._xform for s in ships])
+    return tuple(zip(ships, positions))
+
+
 def nebulae_in(pSet) -> tuple:
     """Nebulae currently in *pSet*, in insertion order. Empty for an unknown
     set or a set with none."""

@@ -49,7 +49,8 @@ _REQUIRED_BINDINGS = frozenset({
     "ray_trace_mesh",
     "transform_alloc", "transform_free", "transform_get_position",
     "transform_set_position", "transform_get_rotation", "transform_set_rotation",
-    "transform_get_rotation_col", "transform_live_count", "transform_capacity",
+    "transform_get_rotation_col", "transform_get_positions",
+    "transform_live_count", "transform_capacity",
 })
 
 # OPTIONAL: soft-guarded (`getattr(_h, "NAME", None)` / `hasattr(_h, "NAME")`).
@@ -446,7 +447,7 @@ def swap_interval() -> int:
 # build missing any of these would leave object placement silently broken
 # rather than degrading a single feature.
 #
-# These nine wrappers exist ONLY so the binding manifest (_REQUIRED_BINDINGS,
+# These ten wrappers exist ONLY so the binding manifest (_REQUIRED_BINDINGS,
 # validated by validate_bindings() at boot) can see the transform surface and
 # fail loudly on a stale/incomplete build, instead of an AttributeError mid-
 # frame. engine.appc.transform_store.NativeTransformStore deliberately
@@ -502,6 +503,12 @@ def transform_get_rotation_col(
     if _h is None:
         return None
     return _h.transform_get_rotation_col(index, generation, col)
+
+
+def transform_get_positions(handles) -> Optional[List[Tuple[float, float, float]]]:
+    if _h is None:
+        return None
+    return _h.transform_get_positions(list(handles))
 
 
 def transform_live_count() -> int:

@@ -91,6 +91,18 @@ std::array<double, 3> TransformStore::rotation_col(
     return {t.rot[col], t.rot[3 + col], t.rot[6 + col]};
 }
 
+std::vector<std::array<double, 3>> TransformStore::positions(
+        const std::vector<std::pair<std::uint32_t, std::uint32_t>>& handles) const {
+    std::vector<std::array<double, 3>> out;
+    out.reserve(handles.size());
+    for (const auto& h : handles) {
+        check(h.first, h.second);
+        const Transform& t = slots_[h.first];
+        out.push_back({t.pos[0], t.pos[1], t.pos[2]});
+    }
+    return out;
+}
+
 TransformStore& transform_store() {
     static TransformStore store;
     return store;
