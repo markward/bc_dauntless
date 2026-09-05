@@ -57,6 +57,7 @@
 #include <renderer/bridge_pass.h>
 #include <renderer/viewscreen_static_pass.h>
 #include <renderer/hdr_target.h>
+#include <renderer/hdr_msaa_target.h>
 #include <renderer/bloom_pass.h>
 #include <renderer/nonfinite_probe.h>
 #include "frame_dump.h"
@@ -130,8 +131,9 @@ namespace dauntless_nan_debug {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
 }
-// Forward-declared here (before the anonymous namespace) so render_space()
-// inside the anonymous namespace can read the always-on hull-breach gate.
+// Forward-declared here (before the anonymous namespace) so the space render
+// phases inside the anonymous namespace can read the always-on hull-breach
+// gate.
 namespace dauntless_hull_damage {
     bool enabled();            // defined in frame.cc
 }
@@ -772,16 +774,22 @@ void frame() {
         }
         sky_use_cubemap = g_backdrop_pass->has_cubemap();  // false if alloc failed
     }
-    // Renders the space scene from `cam` into `target` (bound by the caller),
-    // whose color/depth textures and viewport dims (vw, vh) drive the
-    // framebuffer-coupled passes (volumetric nebula, godrays, lens flares).
-    // The viewscreen RTT now renders every pass the main view does — dust
-    // (camera-anchored smear, keyed off for_viewscreen so the cockpit isn't
-    // smeared except during warp streaking), nebulae, godrays, lens flares,
-    // hull discharges, shockwaves, particles, and cloak refraction — so the
-    // bridge viewscreen matches the exterior view.
-    auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen,
-                            renderer::HdrTarget& target, int vw, int vh) {
+    // The space scene renders in two phases.
+    //
+    // PHASE 1 (here) — depth-writing geometry: backdrop, suns, hulls, breach,
+    // shields. It reads no scene textures, which is precisely why it can be
+    // multisampled: nothing in it samples the surface it is drawing into.
+    // Renders into EITHER the plain HDR target (msaa == nullptr, the stock
+    // path) or a multisample target the caller then resolves into the HDR
+    // target. Exactly one of hdr/msaa is non-null.
+    //
+    // PHASE 2 is render_space_vfx below; see its comment for why it can never
+    // be multisampled.
+    auto render_space_geometry = [&](const scenegraph::Camera& cam,
+                                     renderer::HdrTarget* hdr,
+                                     renderer::HdrMsaaTarget* msaa,
+                                     float ambient_scale) {
+        if (msaa != nullptr) msaa->bind(); else hdr->bind();
         {
             DAUNTLESS_FRAME_SCOPE("space.backdrop");
             if (sky_use_cubemap)
@@ -795,9 +803,6 @@ void frame() {
             DAUNTLESS_FRAME_SCOPE("space.suns");
             g_sun_pass->render(g_suns, cam, *g_pipeline, now);
         }
-        // Filmic ambient dim: -20% when the toggle is on, 1.0 when off. The
-        // viewscreen now matches the exterior view (no separate dim rule).
-        const float ambient_scale = dauntless_filmic::ambient_scale();
         {
             // The hull draw. No frustum or distance cull runs ahead of this —
             // every visible Space instance is submitted — so this scope is the
@@ -822,6 +827,29 @@ void frame() {
             DAUNTLESS_FRAME_SCOPE("space.shield");
             g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
         }
+    };
+
+    // PHASE 2 — everything transparent, additive, or reading the scene back,
+    // rendered into `target` whose color/depth textures and viewport dims
+    // (vw, vh) drive the framebuffer-coupled passes.
+    //
+    // ALWAYS single-sample, and that is a hard constraint rather than a
+    // preference: nebula_volumetric samples target.depth_texture() to
+    // terminate its raymarch, and both nebula_godray and cloak_pass sample
+    // target.color_texture() as u_scene while drawing into that same target.
+    // Those reads need a resolved, sampleable surface — a multisample
+    // renderbuffer cannot be sampled by an ordinary sampler2D at all.
+    //
+    // The viewscreen RTT renders every pass the main view does — dust
+    // (camera-anchored smear, keyed off for_viewscreen so the cockpit isn't
+    // smeared except during warp streaking), nebulae, godrays, lens flares,
+    // hull discharges, shockwaves, particles, and cloak refraction — so the
+    // bridge viewscreen matches the exterior view.
+    auto render_space_vfx = [&](const scenegraph::Camera& cam,
+                                bool for_viewscreen,
+                                renderer::HdrTarget& target,
+                                int vw, int vh, float ambient_scale) {
+        target.bind();
         // Dust is normally skipped on the viewscreen RTT (a camera-anchored
         // cockpit smear), but the WARP STREAK lives in this pass — so during
         // warp (streak > 0) we DO render it onto the viewscreen so the bridge
@@ -994,14 +1022,22 @@ void frame() {
             scenegraph::Camera scam = g_scene_source.cam;
             scam.aspect = static_cast<float>(kViewscreenRttW)
                         / static_cast<float>(kViewscreenRttH);
-            render_space(scam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
-                        kViewscreenRttW, kViewscreenRttH);
+            // The viewscreen RTT is deliberately never multisampled: it is a
+            // small in-world surface where edge quality barely reads.
+            const float vs_ambient = dauntless_filmic::ambient_scale();
+            render_space_geometry(scam, g_viewscreen_hdr.get(), nullptr,
+                                  vs_ambient);
+            render_space_vfx(scam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
+                        kViewscreenRttW, kViewscreenRttH, vs_ambient);
         } else {
             scenegraph::Camera vcam = g_camera;
             vcam.aspect = static_cast<float>(kViewscreenRttW)
                         / static_cast<float>(kViewscreenRttH);
-            render_space(vcam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
-                        kViewscreenRttW, kViewscreenRttH);
+            const float vs_ambient = dauntless_filmic::ambient_scale();
+            render_space_geometry(vcam, g_viewscreen_hdr.get(), nullptr,
+                                  vs_ambient);
+            render_space_vfx(vcam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
+                        kViewscreenRttW, kViewscreenRttH, vs_ambient);
         }
         // Static/"snow" overlay over the feed (degraded-signal hail look).
         if (g_viewscreen_static.on && g_viewscreen_static_pass
@@ -1034,7 +1070,12 @@ void frame() {
     // "wasted space render in bridge mode".
     if (!viewer_mode && !bridge_active) {
         DAUNTLESS_FRAME_SCOPE("space");
-        render_space(g_camera, /*for_viewscreen=*/false, *g_hdr_target, fw, fh);
+        // Task 3 is a pure split: both phases still use the plain HDR target.
+        // Task 4 routes the geometry phase through a multisample target here.
+        const float ex_ambient = dauntless_filmic::ambient_scale();
+        render_space_geometry(g_camera, g_hdr_target.get(), nullptr, ex_ambient);
+        render_space_vfx(g_camera, /*for_viewscreen=*/false, *g_hdr_target,
+                         fw, fh, ex_ambient);
     }
 
     if (g_hologram_ship.active) {
