@@ -127,3 +127,245 @@ def validate_game_root(path) -> Validation:
 def validate_sdk_root(path) -> Validation:
     """Is `path` a usable BC SDK tree? One stat per marker, no writes."""
     return _validate(path, "sdk")
+
+
+# --- resolution -------------------------------------------------------------
+
+# engine/paths.py -> engine/ -> <project root>. Kept as a module attribute
+# rather than a local so tests can point the legacy fallback at a tmp_path.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+CLI_FLAGS = {"game": "--game-dir", "sdk": "--sdk-dir"}
+ENV_VARS = {"game": "DAUNTLESS_GAME_DIR", "sdk": "DAUNTLESS_SDK_DIR"}
+_PROJECT_DIR = {"game": "game", "sdk": "sdk"}
+_VALIDATORS = {"game": validate_game_root, "sdk": validate_sdk_root}
+
+
+class PathsUnresolved(RuntimeError):
+    """No usable root for a requested half. Carries describe_failure()'s text.
+
+    Not meant to be handled: it is a boot-time configuration error and the
+    message is the whole point.
+    """
+
+
+@dataclass(frozen=True)
+class Resolution:
+    """The outcome of one resolve(). `game`/`sdk` are set ONLY when valid.
+
+    An invalid candidate leaves the root None and records the attempt in the
+    matching Validation, so describe_failure() can name the path and say what
+    was wrong with it.
+    """
+    game: Optional[Path]
+    sdk: Optional[Path]
+    game_source: str            # "cli" | "env" | "settings" | "project" | ""
+    sdk_source: str
+    game_validation: Optional[Validation]
+    sdk_validation: Optional[Validation]
+
+    @property
+    def ok(self) -> bool:
+        return self.game is not None and self.sdk is not None
+
+    def source(self, kind: str) -> str:
+        return self.game_source if kind == "game" else self.sdk_source
+
+    def validation(self, kind: str) -> Optional[Validation]:
+        return self.game_validation if kind == "game" else self.sdk_validation
+
+
+def _flag_value(argv, flag: str) -> Optional[str]:
+    """Support both `--game-dir X` and `--game-dir=X`."""
+    for i, token in enumerate(argv):
+        if token == flag:
+            return argv[i + 1] if i + 1 < len(argv) else ""
+        if token.startswith(flag + "="):
+            return token[len(flag) + 1:]
+    return None
+
+
+def _candidate(kind: str, argv, env, store):
+    """The highest-precedence SET source for one root, as (value, source).
+
+    Returns (None, "") when nothing is set. A set-but-wrong source is
+    returned as-is and never skipped in favour of a lower one -- falling
+    through would run a different install than the one that was asked for.
+    """
+    flag = _flag_value(argv, CLI_FLAGS[kind])
+    if flag:
+        return flag, "cli"
+
+    from_env = env.get(ENV_VARS[kind])
+    if from_env:
+        return from_env, "env"
+
+    if store is not None and store.has("paths", kind):
+        stored = store.get("paths", kind)
+        if stored:
+            return stored, "settings"
+
+    project = PROJECT_ROOT / _PROJECT_DIR[kind]
+    if project.is_dir():
+        return str(project), "project"
+
+    return None, ""
+
+
+def resolve(argv=None, env=None, store=None) -> Resolution:
+    """Resolve both roots. PURE: no globals, no writes, no ambient state
+    beyond the defaults for argv/env/store.
+
+    settings_store is imported HERE rather than at module scope: it imports
+    engine.ui.configuration_panel, and this module is imported by
+    engine/audio/ and engine/appc/.
+    """
+    import sys
+
+    if argv is None:
+        argv = sys.argv[1:]
+    if env is None:
+        env = os.environ
+    if store is None:
+        from engine.settings_store import SettingsStore
+        store = SettingsStore()
+        store.load()
+
+    roots: dict = {}
+    sources: dict = {}
+    validations: dict = {}
+    for kind in ("game", "sdk"):
+        value, source = _candidate(kind, argv, env, store)
+        sources[kind] = source
+        if value is None:
+            roots[kind] = None
+            validations[kind] = None
+            continue
+        verdict = _VALIDATORS[kind](value)
+        validations[kind] = verdict
+        roots[kind] = verdict.root if verdict.ok else None
+
+    return Resolution(
+        game=roots["game"], sdk=roots["sdk"],
+        game_source=sources["game"], sdk_source=sources["sdk"],
+        game_validation=validations["game"], sdk_validation=validations["sdk"],
+    )
+
+
+def persist(resolution: Resolution, store=None) -> None:
+    """Write CLI-sourced roots to settings.json [paths].
+
+    Only CLI, and only when valid. An env var is ephemeral by contract, so
+    `DAUNTLESS_SDK_DIR=/fixtures pytest` cannot mutate a real config; and a
+    typo never becomes the stored answer, which would make the NEXT launch
+    fail for a reason the player has already forgotten about.
+    """
+    if store is None:
+        from engine.settings_store import SettingsStore
+        store = SettingsStore()
+        store.load()
+    for kind in ("game", "sdk"):
+        root = resolution.game if kind == "game" else resolution.sdk
+        if root is not None and resolution.source(kind) == "cli":
+            store.set("paths", kind, str(root))
+
+
+# --- the cache --------------------------------------------------------------
+
+_RESOLUTION: Optional[Resolution] = None
+
+
+def configure(resolution: Optional[Resolution]) -> None:
+    """Install a Resolution as the answer every accessor reads.
+
+    Callable more than once, and later calls are observed by every consumer:
+    that is what the first-run picker needs, and it is why nothing may capture
+    a path at import. Pass None to clear (tests).
+    """
+    global _RESOLUTION
+    _RESOLUTION = resolution
+
+
+def current() -> Resolution:
+    """The configured Resolution, resolving from ambient state if configure()
+    has not run. The lazy path keeps a tools/ script or an isolated test
+    working without a boot sequence."""
+    global _RESOLUTION
+    if _RESOLUTION is None:
+        _RESOLUTION = resolve()
+    return _RESOLUTION
+
+
+def _root(kind: str) -> Path:
+    resolution = current()
+    root = resolution.game if kind == "game" else resolution.sdk
+    if root is None:
+        raise PathsUnresolved(describe_failure(resolution))
+    return root
+
+
+def game_root() -> Path:
+    """The BC game install root. Never captured at module scope."""
+    return _root("game")
+
+
+def sdk_root() -> Path:
+    """The BC SDK root. Never captured at module scope."""
+    return _root("sdk")
+
+
+def sdk_scripts() -> Path:
+    """sdk_root()/Build/scripts — where the SDK's Python modules live."""
+    return sdk_root() / "Build" / "scripts"
+
+
+def sdk_data() -> Path:
+    """sdk_root()/Build/Data — TGL string tables and friends."""
+    return sdk_root() / "Build" / "Data"
+
+
+def game_asset(rel) -> Path:
+    """Absolutise a BC-relative asset path, e.g. "data/Textures/x.tga"."""
+    return game_root() / rel
+
+
+# --- the failure message ----------------------------------------------------
+
+def describe_failure(resolution: Resolution) -> str:
+    """Every source consulted and what each said. Empty when nothing failed."""
+    if resolution.ok:
+        return ""
+
+    lines = ["dauntless: cannot locate your Bridge Commander install.", ""]
+    for kind, label in (("game", "game folder"), ("sdk", "sdk folder ")):
+        root = resolution.game if kind == "game" else resolution.sdk
+        if root is not None:
+            lines.append(f"  {label}: {root}")
+            lines.append("")
+            continue
+
+        verdict = resolution.validation(kind)
+        if verdict is None:
+            lines.append(f"  {label}: not found")
+            lines.append(f"     {CLI_FLAGS[kind]:<18}(not given)")
+            lines.append(f"     {ENV_VARS[kind]:<18}(not set)")
+            lines.append(f"     {'settings.json':<18}(not set)")
+            project = PROJECT_ROOT / _PROJECT_DIR[kind]
+            lines.append(f"     {str(project):<18}(does not exist)")
+        else:
+            lines.append(f"  {label}: invalid — {verdict.root}")
+            lines.append(f"     missing: {', '.join(verdict.missing)}")
+            lines.append(f"     source : {resolution.source(kind)}")
+            if verdict.hint:
+                lines.append(f"     hint   : {verdict.hint}")
+        lines.append("")
+
+    lines += [
+        "Set them once and they persist:",
+        "",
+        "  ./build/dauntless \\",
+        '      --game-dir "/path/to/Star Trek Bridge Commander/game" \\',
+        '      --sdk-dir  "/path/to/Star Trek Bridge Commander/sdk"',
+        "",
+    ]
+    return "\n".join(lines)

@@ -32,3 +32,13 @@ if sys.platform == "win32":
             # A missing or unreadable build/ is not fatal here: the import of
             # _dauntless_host will fail with its own, clearer message.
             pass
+
+# The extension itself lives in build/python/. Under build/dauntless it is a
+# built-in (registered via PyImport_AppendInittab before Py_Initialize), and
+# under pytest tests/conftest.py adds this directory -- but a bare
+# `uv run python tools/foo.py` has neither, and engine.settings_store imports
+# it transitively through engine.dev_mode. Built-ins still win over sys.path,
+# so this is inert in the host binary.
+_build_python = Path(__file__).resolve().parent.parent / "build" / "python"
+if _build_python.is_dir() and str(_build_python) not in sys.path:
+    sys.path.insert(0, str(_build_python))
