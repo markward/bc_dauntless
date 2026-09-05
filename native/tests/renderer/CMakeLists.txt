@@ -31,6 +31,7 @@ add_executable(renderer_tests
     head_weld_seam_test.cc
     officer_jaw_test.cc
     hdr_msaa_target_test.cc
+    hdr_msaa_resolve_test.cc
     hdr_target_test.cc
     cubemap_target_test.cc
     resolve_pass_test.cc
