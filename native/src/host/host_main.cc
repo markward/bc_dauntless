@@ -193,6 +193,9 @@ int main(int argc, char* argv[]) {
     // with the existing positional --smoke-check / --banner modes (which only
     // read argv[1]). Setting must happen before Py_InitializeEx so the
     // attribute set at PYBIND11_MODULE init reads the final value.
+    // --game-dir and --sdk-dir need no scan here: they are consumed entirely
+    // on the Python side (engine.paths.resolve() reads sys.argv), so this
+    // loop only has to publish argv below, not parse those two flags itself.
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--developer") {
             dauntless::set_developer_mode(true);
@@ -201,6 +204,27 @@ int main(int argc, char* argv[]) {
     }
 
     Py_InitializeEx(/*initsigs=*/1);
+
+    // engine.paths reads sys.argv for --game-dir / --sdk-dir, and
+    // Py_InitializeEx leaves sys.argv unset. Build the list directly rather
+    // than calling PySys_SetArgvEx, which is deprecated since 3.11 -- and
+    // which would also prepend argv[0] to sys.path unless told not to,
+    // undoing configure_python_path.
+    {
+        PyObject* list = PyList_New(0);
+        if (list) {
+            for (int i = 0; i < argc; ++i) {
+                PyObject* item = PyUnicode_DecodeFSDefault(argv[i]);
+                if (!item) { PyErr_Clear(); continue; }
+                PyList_Append(list, item);
+                Py_DECREF(item);
+            }
+            PySys_SetObject("argv", list);   // borrows; sys holds its own ref
+            Py_DECREF(list);
+        } else {
+            PyErr_Clear();
+        }
+    }
 
     int rc = 0;
     std::string mode = (argc >= 2) ? std::string(argv[1]) : "";

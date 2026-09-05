@@ -6726,6 +6726,20 @@ def run(mission_name: Optional[str] = None,
 
     boot_quickbattle = mission_name is None
 
+    # Resolve where BC content lives before anything asks for any of it. This
+    # must precede the SDK setup call below: the SDK meta-path finder calls
+    # paths.sdk_scripts(), so configuring afterwards would be too late.
+    #
+    # persist() writes only a CLI-sourced, valid root -- an env var is
+    # ephemeral by contract and a typo never becomes the stored answer.
+    _resolution = _paths.resolve()
+    _paths.configure(_resolution)
+    if not _resolution.ok:
+        import sys as _sys
+        print(_paths.describe_failure(_resolution), file=_sys.stderr)
+        return 1
+    _paths.persist(_resolution)
+
     _setup_sdk()
 
     import App
@@ -6752,6 +6766,12 @@ def run(mission_name: Optional[str] = None,
     # `keys` submodule diverging from engine.input_map's table.
     host_io.validate_bindings(strict=dev_mode.is_enabled())
     host_io.verify_keys()
+    # The renderer joins its own relative asset paths onto this. Set right
+    # after both façade validations — set_game_root is in _REQUIRED_BINDINGS,
+    # and validate_bindings() exists precisely to turn a stale/incomplete .so
+    # into a clear diagnostic instead of a bare AttributeError here — and
+    # before any pass constructs: their texture constants are relative now.
+    r.set_game_root(str(_paths.game_root()))
     # Initialise the CEF UI overlay. Resolves index.html relative
     # to the project root (two parents up from this file). _CEF_VIEW_W/H
     # are reused by the pause-menu mouse-forwarding path to scale

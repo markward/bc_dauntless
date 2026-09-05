@@ -338,3 +338,23 @@ def test_the_live_sdk_finder_has_no_module_level_path_constant():
         "mission_harness.SDK_SCRIPTS captures a path at import; it must call "
         "engine.paths.sdk_scripts() at point of use instead"
     )
+
+
+def test_boot_resolution_is_wired_before_the_sdk_finder(monkeypatch):
+    """host_loop.run() must configure paths BEFORE _setup_sdk(): the finder
+    asks paths.sdk_scripts(), so a later configure would be too late."""
+    import inspect
+    from engine import host_loop
+    source = inspect.getsource(host_loop.run)
+    configure_at = source.index("paths.configure(")
+    setup_at = source.index("_setup_sdk()")
+    assert configure_at < setup_at, (
+        "paths.configure() must run before _setup_sdk() in host_loop.run()"
+    )
+
+
+def test_boot_sets_the_renderer_game_root(monkeypatch):
+    from engine import host_loop
+    import inspect
+    source = inspect.getsource(host_loop.run)
+    assert "set_game_root(" in source
