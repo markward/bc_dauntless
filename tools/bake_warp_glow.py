@@ -29,9 +29,11 @@ import re
 import sys
 from pathlib import Path
 
+from engine import paths
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OVERRIDES_PATH = PROJECT_ROOT / "engine" / "appc" / "hardpoint_overrides.py"
-SDK_HARDPOINTS = PROJECT_ROOT / "sdk" / "Build" / "scripts" / "ships" / "Hardpoints"
+SDK_HARDPOINTS = paths.sdk_scripts() / "ships" / "Hardpoints"
 
 # Not real ships: galaxy_dauntless_mods is the stock-BC validation copy.
 EXCLUDE = {"galaxy_dauntless_mods"}

@@ -15,11 +15,14 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+from engine import paths
+
 from collect import extract_section          # reuse the exact section parser
 
 PROBES = pathlib.Path(__file__).parent
 RESULTS = PROBES / "results"
-GAME = PROBES.parent.parent / "game"
+GAME = paths.game_root()
 
 STREAMS = {
     "A":       ("BCProbe_q15_A",       "q15_firehose_A.txt"),

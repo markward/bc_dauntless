@@ -10,8 +10,10 @@ import re
 import sys
 from pathlib import Path
 
+from engine import paths
+
 PROJECT_ROOT = Path(__file__).parent.parent
-SDK_SCRIPTS = PROJECT_ROOT / "sdk" / "Build" / "scripts"
+SDK_SCRIPTS = paths.sdk_scripts()
 
 SPAWN_PATTERNS = [
     re.compile(r"\bCreateShip\b"),

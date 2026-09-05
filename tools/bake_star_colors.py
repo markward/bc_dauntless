@@ -30,8 +30,10 @@ import re
 import sys
 from pathlib import Path
 
+from engine import paths
+
 ROOT = Path(__file__).resolve().parents[1]
-SDK_SYSTEMS = ROOT / "sdk" / "Build" / "scripts" / "Systems"
+SDK_SYSTEMS = paths.sdk_scripts() / "Systems"
 OUT = ROOT / "engine" / "appc" / "sector_model.json"
 
 # A Sun_Create call with no texture arguments gets the engine's own default,

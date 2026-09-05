@@ -5,12 +5,12 @@ was run more than once. App.pyc.bak now holds our compiled instrumented
 bytecode (instrumentation is a no-op since file I/O fails silently).
 To fully restore the original game, reinstall it.
 """
-import pathlib
 import shutil
 import sys
 
-PROJECT_ROOT = pathlib.Path(__file__).parent.parent
-GAME_SCRIPTS = PROJECT_ROOT / "game" / "scripts"
+from engine import paths
+
+GAME_SCRIPTS = paths.game_asset("scripts")
 DEST_APP = GAME_SCRIPTS / "App.py"
 DEST_PYC = GAME_SCRIPTS / "App.pyc"
 DEST_PYC_BAK = GAME_SCRIPTS / "App.pyc.bak"

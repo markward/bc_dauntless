@@ -18,8 +18,9 @@ import pathlib
 import sys
 from dataclasses import dataclass
 
-PROJECT_ROOT = pathlib.Path(__file__).parent.parent
-DEFAULT_LOG = PROJECT_ROOT / "game" / "BCTickLog.cfg"
+from engine import paths
+
+DEFAULT_LOG = paths.game_asset("BCTickLog.cfg")
 
 # Column order emitted by appc_power_logger.py (mirrors its "pfields" key).
 FIELDS = [

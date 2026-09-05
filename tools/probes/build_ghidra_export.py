@@ -186,7 +186,7 @@ def main() -> None:
 
     bundle = {
         "meta": {
-            "source_binary": "game/stbc.exe",
+            "source_binary": "game/stbc.exe",  # paths-guard: label
             "python": "1.5.2 (magic 0x4E99), statically linked; SWIG ~1.1",
             "note": "docstrings stripped (no signatures); types via wrapper "
                     "PyArg_ParseTuple/Py_BuildValue only",

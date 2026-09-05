@@ -4,8 +4,9 @@ import pathlib
 import statistics
 import sys
 
-PROJECT_ROOT = pathlib.Path(__file__).parent.parent
-DEFAULT_LOG = PROJECT_ROOT / "game" / "BCTickLog.cfg"
+from engine import paths
+
+DEFAULT_LOG = paths.game_asset("BCTickLog.cfg")
 
 
 def read_log(log_path: pathlib.Path) -> tuple[

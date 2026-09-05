@@ -12,9 +12,12 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+from engine import paths
+
 PROBES = pathlib.Path(__file__).parent
 RESULTS = PROBES / "results"
-GAME = PROBES.parent.parent / "game"
+GAME = paths.game_root()
 
 
 def extract_section(cfg_path: pathlib.Path, section: str) -> list[str]:

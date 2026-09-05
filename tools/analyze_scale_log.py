@@ -14,6 +14,8 @@ import re
 import sys
 from collections import defaultdict
 
+from engine import paths
+
 
 SECTION = "BCScaleLog"
 
@@ -71,7 +73,7 @@ def main(argv: list[str]) -> int:
     if len(argv) >= 2:
         cfg_path = pathlib.Path(argv[1])
     else:
-        cfg_path = pathlib.Path(__file__).resolve().parent.parent / "game" / "BCScaleLog.cfg"
+        cfg_path = paths.game_asset("BCScaleLog.cfg")
     if not cfg_path.exists():
         print(f"not found: {cfg_path}", file=sys.stderr)
         print("hint: BCScaleLog.cfg is written into the game's working directory",

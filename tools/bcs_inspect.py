@@ -29,8 +29,9 @@ import pickletools
 import struct
 import sys
 
-PROJECT_ROOT = pathlib.Path(__file__).parent.parent
-DEFAULT_SAVE = PROJECT_ROOT / "game" / "saves" / "C-E8M1-Mark.BCS"
+from engine import paths
+
+DEFAULT_SAVE = paths.game_asset("saves/C-E8M1-Mark.BCS")
 
 # UtopiaSV preamble layout (all little-endian):
 #   pstr "UtopiaSV"        # 4-byte length + bytes (length includes trailing NUL)

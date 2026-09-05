@@ -25,9 +25,11 @@ import shutil
 import struct
 import sys
 
+from engine import paths
+
 PROJECT_ROOT = pathlib.Path(__file__).parent.parent
-GAME_SCRIPTS = PROJECT_ROOT / "game" / "scripts"
-SDK_APP = PROJECT_ROOT / "sdk" / "Build" / "scripts" / "App.py"
+GAME_SCRIPTS = paths.game_asset("scripts")
+SDK_APP = paths.sdk_scripts() / "App.py"
 SHIM_SNIPPET = PROJECT_ROOT / "tools" / "appc_logger.py"
 POWER_SNIPPET = PROJECT_ROOT / "tools" / "appc_power_logger.py"
 _snippet_path = SHIM_SNIPPET  # overridden by --power in main()
@@ -77,10 +79,10 @@ def main() -> None:
         print(f"Snippet:   {SHIM_SNIPPET.name} (tick/event instrumentation)")
 
     if not GAME_SCRIPTS.exists():
-        print("game/scripts/ not found - is the game installed in game/?")
+        print(f"scripts/ not found under {paths.game_root()} - set --game-dir or settings.json [paths].game")
         sys.exit(1)
     if not SDK_APP.exists():
-        print("sdk/Build/scripts/App.py not found - is the SDK installed in sdk/?")
+        print(f"Build/scripts/App.py not found under {paths.sdk_root()} - set --sdk-dir or settings.json [paths].sdk")
         sys.exit(1)
 
     # Remove stale files from earlier approaches.
@@ -121,7 +123,7 @@ def main() -> None:
     else:
         # First install: save original App.pyc and install source.
         if not DEST_PYC.exists():
-            print("game/scripts/App.pyc missing - game installation looks incomplete.")
+            print(f"scripts/App.pyc missing under {paths.game_root()} - the install looks incomplete")
             sys.exit(1)
         DEST_PYC.rename(DEST_PYC_BAK)
         DEST_APP.write_bytes(combined)

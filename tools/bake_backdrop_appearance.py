@@ -10,8 +10,10 @@ from pathlib import Path
 
 from PIL import Image
 
+from engine import paths
+
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GAME_DIRS = ["game/data/Backgrounds/High", "game/data/Backgrounds"]
+DEFAULT_GAME_DIRS = ["data/Backgrounds/High", "data/Backgrounds"]
 DEFAULT_OUT = ROOT / "engine" / "appc" / "backdrop_appearance.json"
 
 
@@ -37,7 +39,7 @@ def compute_appearance(img):
     }
 
 
-def main(game_root=ROOT, out_path=DEFAULT_OUT):
+def main(game_root=paths.game_root(), out_path=DEFAULT_OUT):
     dirs = [game_root / d for d in DEFAULT_GAME_DIRS]
     table = {}
     for d in dirs:

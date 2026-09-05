@@ -33,6 +33,7 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+from engine import paths  # noqa: E402
 from engine.missions.tgl_reader import read_tgl  # noqa: E402
 
 CMUDICT_URL = "https://raw.githubusercontent.com/cmusphinx/cmudict/master/cmudict.dict"
@@ -53,7 +54,7 @@ def load_cmudict() -> dict[str, list[str]]:
 
 def load_text() -> dict[str, str]:
     text: dict[str, str] = {}
-    for tgl in glob.glob(os.path.join(ROOT, "game/data/TGL/**/*.[tT][gG][lL]"), recursive=True):
+    for tgl in glob.glob(str(paths.game_asset("data/TGL/**/*.[tT][gG][lL]")), recursive=True):
         try:
             for k, v in read_tgl(tgl).strings.items():
                 if k not in text and isinstance(v, str) and v.strip():
@@ -89,7 +90,7 @@ def main() -> int:
     text = load_text()
     cmu = load_cmudict()
     lips = {os.path.splitext(os.path.basename(f))[0]: f
-            for f in glob.glob(os.path.join(ROOT, "game/sfx/Bridge/Crew/**/*.LIP"), recursive=True)}
+            for f in glob.glob(str(paths.game_asset("sfx/Bridge/Crew/**/*.LIP")), recursive=True)}
     if not lips:
         sys.stderr.write("no .LIP files under game/sfx/Bridge/Crew — is game/ present?\n")
         return 1

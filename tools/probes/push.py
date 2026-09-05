@@ -9,8 +9,11 @@ import pathlib
 import shutil
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+from engine import paths
+
 PROBES = pathlib.Path(__file__).parent
-GAME = PROBES.parent.parent / "game"
+GAME = paths.game_root()
 
 
 def find_probes(query: str) -> list[pathlib.Path]:
@@ -22,7 +25,7 @@ def main() -> None:
         print(__doc__)
         sys.exit(2)
     if not GAME.exists():
-        print(f"game/ not found at {GAME}")
+        print(f"game root not found at {GAME}")
         sys.exit(1)
 
     if sys.argv[1] == "--all":
