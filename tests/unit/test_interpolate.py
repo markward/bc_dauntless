@@ -7,11 +7,11 @@ from engine.core.interpolate import lerp_point, nlerp_rotation, lerp_transform
 
 
 def _det(m: TGMatrix3) -> float:
-    a = m._m
+    a = m.as_tuple()
     return (
-        a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
-        - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
-        + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])
+        a[0] * (a[4] * a[8] - a[5] * a[7])
+        - a[1] * (a[3] * a[8] - a[5] * a[6])
+        + a[2] * (a[3] * a[7] - a[4] * a[6])
     )
 
 
@@ -30,7 +30,7 @@ def test_nlerp_rotation_alpha_zero_returns_prev():
     out = nlerp_rotation(prev, cur, 0.0)
     for i in range(3):
         for j in range(3):
-            assert out._m[i][j] == prev._m[i][j]
+            assert out.GetEntry(i, j) == prev.GetEntry(i, j)
 
 
 def test_nlerp_rotation_alpha_one_matches_cur():
@@ -39,7 +39,7 @@ def test_nlerp_rotation_alpha_one_matches_cur():
     out = nlerp_rotation(prev, cur, 1.0)
     for i in range(3):
         for j in range(3):
-            assert abs(out._m[i][j] - cur._m[i][j]) < 1e-9
+            assert abs(out.GetEntry(i, j) - cur.GetEntry(i, j)) < 1e-9
 
 
 def test_nlerp_rotation_stays_orthonormal():
@@ -73,7 +73,7 @@ def test_lerp_transform_blends_both():
 
 def _zero_mat() -> TGMatrix3:
     m = TGMatrix3()
-    m._m = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+    m.MakeZero()
     return m
 
 
@@ -105,7 +105,7 @@ def test_nlerp_degenerate_forward_falls_back_to_endpoint():
 
 def test_nlerp_zero_up_column_only():
     m = TGMatrix3()
-    m._m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    m.MakeIdentity()
     # Wipe the up column (col 2) to zero; forward (col 1) stays valid.
     m.SetCol(2, TGPoint3(0.0, 0.0, 0.0))
     out = nlerp_rotation(m, m, 0.0)

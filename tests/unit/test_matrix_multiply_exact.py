@@ -17,13 +17,14 @@ from engine.appc.math import TGMatrix3, TGPoint3
 
 
 def _reference_mult(lhs, rhs):
-    """The pre-unroll implementation, character for character."""
-    result = TGMatrix3()
-    result.MakeZero()
+    """Naive triple-loop reference, the form MultMatrix replaced."""
+    result = TGMatrix3().MakeZero()
     for i in range(3):
         for j in range(3):
+            acc = result.GetEntry(i, j)
             for k in range(3):
-                result._m[i][j] += lhs._m[i][k] * rhs._m[k][j]
+                acc += lhs.GetEntry(i, k) * rhs.GetEntry(k, j)
+            result.SetEntry(i, j, acc)
     return result
 
 
@@ -36,40 +37,40 @@ def _bits(x: float) -> bytes:
     return struct.pack("<d", x)
 
 
-def _assert_identical(a, b, label):
+def _assert_bit_identical(a, b, label):
     for i in range(3):
         for j in range(3):
-            assert _bits(a._m[i][j]) == _bits(b._m[i][j]), (
-                "%s: element [%d][%d] differs: %r vs %r"
-                % (label, i, j, a._m[i][j], b._m[i][j]))
+            assert _bits(a.GetEntry(i, j)) == _bits(b.GetEntry(i, j)), (
+                "%s: entry (%d,%d) differs: %r vs %r"
+                % (label, i, j, a.GetEntry(i, j), b.GetEntry(i, j)))
 
 
-def _from_rows(rows):
+def _mk(rows):
     m = TGMatrix3()
-    m._m = [list(r) for r in rows]
+    m.set_from_tuple([v for row in rows for v in row])
     return m
 
 
 def test_identity_pair():
     a, b = TGMatrix3(), TGMatrix3()
-    _assert_identical(a.MultMatrix(b), _reference_mult(a, b), "identity")
+    _assert_bit_identical(a.MultMatrix(b), _reference_mult(a, b), "identity")
 
 
 def test_zero_pair():
     """All-zero products are where a signed zero would surface."""
     a, b = TGMatrix3().MakeZero(), TGMatrix3().MakeZero()
-    _assert_identical(a.MultMatrix(b), _reference_mult(a, b), "zero")
+    _assert_bit_identical(a.MultMatrix(b), _reference_mult(a, b), "zero")
 
 
 def test_negative_zero_elements():
-    neg = _from_rows([[-0.0, -0.0, -0.0]] * 3)
-    pos = _from_rows([[0.0, 0.0, 0.0]] * 3)
+    neg = _mk([[-0.0, -0.0, -0.0]] * 3)
+    pos = _mk([[0.0, 0.0, 0.0]] * 3)
     for label, (x, y) in {
         "neg*neg": (neg, neg),
         "neg*pos": (neg, pos),
         "pos*neg": (pos, neg),
     }.items():
-        _assert_identical(x.MultMatrix(y), _reference_mult(x, y), label)
+        _assert_bit_identical(x.MultMatrix(y), _reference_mult(x, y), label)
 
 
 def test_zero_angle_rotations():
@@ -80,7 +81,7 @@ def test_zero_angle_rotations():
     for axis in axes:
         a = TGMatrix3(); a.MakeRotation(0.0, axis)
         b = TGMatrix3(); b.MakeRotation(0.0, axis)
-        _assert_identical(a.MultMatrix(b), _reference_mult(a, b),
+        _assert_bit_identical(a.MultMatrix(b), _reference_mult(a, b),
                           "zero-angle %r" % ((axis.x, axis.y, axis.z),))
 
 
@@ -94,37 +95,37 @@ def test_real_rotation_compositions():
         p = TGMatrix3(); p.MakeRotation(rng.uniform(-math.pi, math.pi), X)
         y = TGMatrix3(); y.MakeRotation(rng.uniform(-math.pi, math.pi), Z)
         r = TGMatrix3(); r.MakeRotation(rng.uniform(-math.pi, math.pi), Y)
-        _assert_identical(p.MultMatrix(y), _reference_mult(p, y), "pitch.yaw")
+        _assert_bit_identical(p.MultMatrix(y), _reference_mult(p, y), "pitch.yaw")
         step = p.MultMatrix(y)
-        _assert_identical(step.MultMatrix(r), _reference_mult(step, r),
+        _assert_bit_identical(step.MultMatrix(r), _reference_mult(step, r),
                           "(pitch.yaw).roll")
 
 
 def test_random_dense_matrices():
     rng = random.Random(11)
     for _ in range(500):
-        a = _from_rows([[rng.uniform(-1e6, 1e6) for _ in range(3)]
+        a = _mk([[rng.uniform(-1e6, 1e6) for _ in range(3)]
                         for _ in range(3)])
-        b = _from_rows([[rng.uniform(-1e6, 1e6) for _ in range(3)]
+        b = _mk([[rng.uniform(-1e6, 1e6) for _ in range(3)]
                         for _ in range(3)])
-        _assert_identical(a.MultMatrix(b), _reference_mult(a, b), "random")
+        _assert_bit_identical(a.MultMatrix(b), _reference_mult(a, b), "random")
 
 
 def test_extreme_magnitudes():
     """Mixed huge/tiny terms are where a reordered sum would diverge most."""
-    a = _from_rows([[1e300, 1e-300, -1e300],
+    a = _mk([[1e300, 1e-300, -1e300],
                     [1e-300, 1e300, 1e-300],
                     [-1e300, 1e-300, 1e300]])
-    b = _from_rows([[1e-300, 1e300, 1e-300],
+    b = _mk([[1e-300, 1e300, 1e-300],
                     [1e300, 1e-300, 1e300],
                     [1e-300, 1e300, 1e-300]])
-    _assert_identical(a.MultMatrix(b), _reference_mult(a, b), "extremes")
+    _assert_bit_identical(a.MultMatrix(b), _reference_mult(a, b), "extremes")
 
 
-def test_result_is_a_fresh_matrix():
-    """MultMatrix must not alias either operand — callers chain it."""
-    a, b = TGMatrix3(), TGMatrix3()
+def test_result_does_not_alias_inputs():
+    a = TGMatrix3()
+    b = TGMatrix3()
     out = a.MultMatrix(b)
-    out._m[0][0] = 99.0
-    assert a._m[0][0] == 1.0
-    assert b._m[0][0] == 1.0
+    out.m00 = 99.0
+    assert a.m00 == 1.0
+    assert b.m00 == 1.0

@@ -56,7 +56,7 @@ class _FakeShip(ShipClass):
     def GetWorldRotation(self):
         from engine.appc.math import TGMatrix3
         out = TGMatrix3()
-        out._m = [row[:] for row in self._rot._m]
+        out.set_from_tuple(self._rot.as_tuple())
         return out
 
     def SetMatrixRotation(self, mat):

@@ -81,7 +81,7 @@ class _FakeShip:
     def GetWorldRotation(self):
         from engine.appc.math import TGMatrix3
         out = TGMatrix3()
-        out._m = [row[:] for row in self._rot._m]
+        out.set_from_tuple(self._rot.as_tuple())
         return out
 
     def SetMatrixRotation(self, mat):
@@ -203,7 +203,7 @@ def test_no_input_no_rotation():
     final = ship.GetWorldRotation()
     for r in range(3):
         for c in range(3):
-            assert abs(final._m[r][c] - initial._m[r][c]) < 1e-9
+            assert abs(final.GetEntry(r, c) - initial.GetEntry(r, c)) < 1e-9
 
 
 def test_pitch_down_rotates_forward_below_horizontal():

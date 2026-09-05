@@ -88,9 +88,9 @@ class TGPoint3:
 
         Matches SDK NiPoint3.MultMatrixLeft semantics. Returns None.
         """
-        x = matrix._m[0][0] * self.x + matrix._m[0][1] * self.y + matrix._m[0][2] * self.z
-        y = matrix._m[1][0] * self.x + matrix._m[1][1] * self.y + matrix._m[1][2] * self.z
-        z = matrix._m[2][0] * self.x + matrix._m[2][1] * self.y + matrix._m[2][2] * self.z
+        x = matrix.m00 * self.x + matrix.m01 * self.y + matrix.m02 * self.z
+        y = matrix.m10 * self.x + matrix.m11 * self.y + matrix.m12 * self.z
+        z = matrix.m20 * self.x + matrix.m21 * self.y + matrix.m22 * self.z
         self.x = x
         self.y = y
         self.z = z
@@ -159,38 +159,74 @@ class TGPoint3:
 
 
 class TGMatrix3:
-    """3×3 matrix stored row-major. Default is identity."""
+    """3×3 matrix stored row-major as nine slotted floats. Default is identity.
+
+    Flat slotted storage, not a list-of-lists: the old form cost ~6
+    allocations per instance (object + __dict__ + outer list + three rows),
+    and ObjectClass.GetWorldRotation constructs one on every call at 70 call
+    sites, per object, per frame.
+
+    Naming: mIJ is row I, column J. Column-vector convention (CLAUDE.md ↦
+    "Rotation matrix convention"), so GetCol(1) is forward.
+    """
+
+    __slots__ = ("m00", "m01", "m02", "m10", "m11", "m12", "m20", "m21", "m22")
 
     def __init__(self):
-        self._m: list[list[float]] = [
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ]
+        self.m00 = 1.0; self.m01 = 0.0; self.m02 = 0.0
+        self.m10 = 0.0; self.m11 = 1.0; self.m12 = 0.0
+        self.m20 = 0.0; self.m21 = 0.0; self.m22 = 1.0
+
+    # ── Bulk access (used by the transform store) ─────────────────────────────
+
+    def as_tuple(self) -> tuple:
+        """Nine floats, row-major."""
+        return (self.m00, self.m01, self.m02,
+                self.m10, self.m11, self.m12,
+                self.m20, self.m21, self.m22)
+
+    def set_from_tuple(self, t) -> None:
+        """Set all nine entries from a row-major sequence of nine floats."""
+        (self.m00, self.m01, self.m02,
+         self.m10, self.m11, self.m12,
+         self.m20, self.m21, self.m22) = (
+            float(t[0]), float(t[1]), float(t[2]),
+            float(t[3]), float(t[4]), float(t[5]),
+            float(t[6]), float(t[7]), float(t[8]))
 
     # ── Construction ──────────────────────────────────────────────────────────
 
     def MakeIdentity(self) -> "TGMatrix3":
-        self._m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        self.m00 = 1.0; self.m01 = 0.0; self.m02 = 0.0
+        self.m10 = 0.0; self.m11 = 1.0; self.m12 = 0.0
+        self.m20 = 0.0; self.m21 = 0.0; self.m22 = 1.0
         return self
 
     def MakeZero(self) -> "TGMatrix3":
-        self._m = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+        self.m00 = 0.0; self.m01 = 0.0; self.m02 = 0.0
+        self.m10 = 0.0; self.m11 = 0.0; self.m12 = 0.0
+        self.m20 = 0.0; self.m21 = 0.0; self.m22 = 0.0
         return self
 
     def MakeXRotation(self, angle: float) -> "TGMatrix3":
         c, s = _math.cos(angle), _math.sin(angle)
-        self._m = [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]]
+        self.m00 = 1.0; self.m01 = 0.0; self.m02 = 0.0
+        self.m10 = 0.0; self.m11 = c;   self.m12 = -s
+        self.m20 = 0.0; self.m21 = s;   self.m22 = c
         return self
 
     def MakeYRotation(self, angle: float) -> "TGMatrix3":
         c, s = _math.cos(angle), _math.sin(angle)
-        self._m = [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
+        self.m00 = c;   self.m01 = 0.0; self.m02 = s
+        self.m10 = 0.0; self.m11 = 1.0; self.m12 = 0.0
+        self.m20 = -s;  self.m21 = 0.0; self.m22 = c
         return self
 
     def MakeZRotation(self, angle: float) -> "TGMatrix3":
         c, s = _math.cos(angle), _math.sin(angle)
-        self._m = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
+        self.m00 = c;   self.m01 = -s;  self.m02 = 0.0
+        self.m10 = s;   self.m11 = c;   self.m12 = 0.0
+        self.m20 = 0.0; self.m21 = 0.0; self.m22 = 1.0
         return self
 
     def MakeRotation(self, angle: float, axis: TGPoint3) -> "TGMatrix3":
@@ -198,53 +234,78 @@ class TGMatrix3:
         c, s = _math.cos(angle), _math.sin(angle)
         t = 1.0 - c
         x, y, z = axis.x, axis.y, axis.z
-        self._m = [
-            [t*x*x + c,     t*x*y - s*z, t*x*z + s*y],
-            [t*x*y + s*z,   t*y*y + c,   t*y*z - s*x],
-            [t*x*z - s*y,   t*y*z + s*x, t*z*z + c  ],
-        ]
+        self.m00 = t*x*x + c;   self.m01 = t*x*y - s*z; self.m02 = t*x*z + s*y
+        self.m10 = t*x*y + s*z; self.m11 = t*y*y + c;   self.m12 = t*y*z - s*x
+        self.m20 = t*x*z - s*y; self.m21 = t*y*z + s*x; self.m22 = t*z*z + c
         return self
 
     def MakeDiagonal(self, d: TGPoint3) -> "TGMatrix3":
-        self._m = [[d.x, 0.0, 0.0], [0.0, d.y, 0.0], [0.0, 0.0, d.z]]
+        self.m00 = d.x; self.m01 = 0.0; self.m02 = 0.0
+        self.m10 = 0.0; self.m11 = d.y; self.m12 = 0.0
+        self.m20 = 0.0; self.m21 = 0.0; self.m22 = d.z
         return self
 
     # ── Row / Column / Entry access ───────────────────────────────────────────
 
     def GetRow(self, i: int) -> TGPoint3:
-        return TGPoint3(*self._m[i])
+        if i == 0:
+            return TGPoint3(self.m00, self.m01, self.m02)
+        if i == 1:
+            return TGPoint3(self.m10, self.m11, self.m12)
+        if i == 2:
+            return TGPoint3(self.m20, self.m21, self.m22)
+        raise IndexError(i)
 
     def SetRow(self, i: int, v: TGPoint3) -> None:
-        self._m[i] = [v.x, v.y, v.z]
+        if i == 0:
+            self.m00, self.m01, self.m02 = v.x, v.y, v.z
+        elif i == 1:
+            self.m10, self.m11, self.m12 = v.x, v.y, v.z
+        elif i == 2:
+            self.m20, self.m21, self.m22 = v.x, v.y, v.z
+        else:
+            raise IndexError(i)
 
     def GetCol(self, i: int) -> TGPoint3:
-        return TGPoint3(self._m[0][i], self._m[1][i], self._m[2][i])
+        if i == 0:
+            return TGPoint3(self.m00, self.m10, self.m20)
+        if i == 1:
+            return TGPoint3(self.m01, self.m11, self.m21)
+        if i == 2:
+            return TGPoint3(self.m02, self.m12, self.m22)
+        raise IndexError(i)
 
     def SetCol(self, i: int, v: TGPoint3) -> None:
-        self._m[0][i] = v.x
-        self._m[1][i] = v.y
-        self._m[2][i] = v.z
+        if i == 0:
+            self.m00, self.m10, self.m20 = v.x, v.y, v.z
+        elif i == 1:
+            self.m01, self.m11, self.m21 = v.x, v.y, v.z
+        elif i == 2:
+            self.m02, self.m12, self.m22 = v.x, v.y, v.z
+        else:
+            raise IndexError(i)
+
+    _ENTRY_NAMES = (("m00", "m01", "m02"),
+                    ("m10", "m11", "m12"),
+                    ("m20", "m21", "m22"))
 
     def GetEntry(self, i: int, j: int) -> float:
-        return self._m[i][j]
+        return getattr(self, TGMatrix3._ENTRY_NAMES[i][j])
 
     def SetEntry(self, i: int, j: int, v: float) -> None:
-        self._m[i][j] = float(v)
+        setattr(self, TGMatrix3._ENTRY_NAMES[i][j], float(v))
 
     def Set(self, *entries) -> None:
         """Set all 9 entries row-major: Set(m00,m01,m02, m10,m11,m12, m20,m21,m22)."""
-        flat = list(entries)
-        for i in range(3):
-            for j in range(3):
-                self._m[i][j] = float(flat[i * 3 + j])
+        self.set_from_tuple(entries)
 
     # ── Operations ────────────────────────────────────────────────────────────
 
     def Transpose(self) -> "TGMatrix3":
         result = TGMatrix3()
-        for i in range(3):
-            for j in range(3):
-                result._m[i][j] = self._m[j][i]
+        result.m00 = self.m00; result.m01 = self.m10; result.m02 = self.m20
+        result.m10 = self.m01; result.m11 = self.m11; result.m12 = self.m21
+        result.m20 = self.m02; result.m21 = self.m12; result.m22 = self.m22
         return result
 
     def MultMatrix(self, other: "TGMatrix3") -> "TGMatrix3":
@@ -264,16 +325,12 @@ class TGMatrix3:
         than argued: the only divergence the analysis admits is a signed zero,
         and a test is cheaper than being sure.
         """
-        a = self._m
-        b = other._m
-        a0, a1, a2 = a[0], a[1], a[2]
-        b0, b1, b2 = b[0], b[1], b[2]
-        a00, a01, a02 = a0[0], a0[1], a0[2]
-        a10, a11, a12 = a1[0], a1[1], a1[2]
-        a20, a21, a22 = a2[0], a2[1], a2[2]
-        b00, b01, b02 = b0[0], b0[1], b0[2]
-        b10, b11, b12 = b1[0], b1[1], b1[2]
-        b20, b21, b22 = b2[0], b2[1], b2[2]
+        a00, a01, a02 = self.m00, self.m01, self.m02
+        a10, a11, a12 = self.m10, self.m11, self.m12
+        a20, a21, a22 = self.m20, self.m21, self.m22
+        b00, b01, b02 = other.m00, other.m01, other.m02
+        b10, b11, b12 = other.m10, other.m11, other.m12
+        b20, b21, b22 = other.m20, other.m21, other.m22
 
         # The leading `0.0 +` is LOAD-BEARING, not noise. The loop form
         # accumulated into a MakeZero() element, i.e. ((0.0 + p0) + p1) + p2.
@@ -284,17 +341,15 @@ class TGMatrix3:
         # not having to reason about whether a signed zero can reach a
         # rotation matrix.
         result = TGMatrix3()
-        result._m = [
-            [0.0 + a00 * b00 + a01 * b10 + a02 * b20,
-             0.0 + a00 * b01 + a01 * b11 + a02 * b21,
-             0.0 + a00 * b02 + a01 * b12 + a02 * b22],
-            [0.0 + a10 * b00 + a11 * b10 + a12 * b20,
-             0.0 + a10 * b01 + a11 * b11 + a12 * b21,
-             0.0 + a10 * b02 + a11 * b12 + a12 * b22],
-            [0.0 + a20 * b00 + a21 * b10 + a22 * b20,
-             0.0 + a20 * b01 + a21 * b11 + a22 * b21,
-             0.0 + a20 * b02 + a21 * b12 + a22 * b22],
-        ]
+        result.m00 = 0.0 + a00 * b00 + a01 * b10 + a02 * b20
+        result.m01 = 0.0 + a00 * b01 + a01 * b11 + a02 * b21
+        result.m02 = 0.0 + a00 * b02 + a01 * b12 + a02 * b22
+        result.m10 = 0.0 + a10 * b00 + a11 * b10 + a12 * b20
+        result.m11 = 0.0 + a10 * b01 + a11 * b11 + a12 * b21
+        result.m12 = 0.0 + a10 * b02 + a11 * b12 + a12 * b22
+        result.m20 = 0.0 + a20 * b00 + a21 * b10 + a22 * b20
+        result.m21 = 0.0 + a20 * b01 + a21 * b11 + a22 * b21
+        result.m22 = 0.0 + a20 * b02 + a21 * b12 + a22 * b22
         return result
 
     def MultMatrixLeft(self, other: "TGMatrix3") -> "TGMatrix3":
@@ -323,9 +378,9 @@ class TGMatrix3:
     def MultPoint(self, v: TGPoint3) -> TGPoint3:
         """Apply matrix to column vector: result = M * v."""
         return TGPoint3(
-            self._m[0][0]*v.x + self._m[0][1]*v.y + self._m[0][2]*v.z,
-            self._m[1][0]*v.x + self._m[1][1]*v.y + self._m[1][2]*v.z,
-            self._m[2][0]*v.x + self._m[2][1]*v.y + self._m[2][2]*v.z,
+            self.m00*v.x + self.m01*v.y + self.m02*v.z,
+            self.m10*v.x + self.m11*v.y + self.m12*v.z,
+            self.m20*v.x + self.m21*v.y + self.m22*v.z,
         )
 
     # ── Euler angle extraction (stubs — used by some SDK scripts) ─────────────
@@ -348,10 +403,10 @@ class TGMatrix3:
     def __eq__(self, other) -> bool:
         if not isinstance(other, TGMatrix3):
             return NotImplemented
-        return self._m == other._m
+        return self.as_tuple() == other.as_tuple()
 
     def __repr__(self) -> str:
-        return f"TGMatrix3({self._m})"
+        return f"TGMatrix3({self.as_tuple()})"
 
 
 # ── Model-space direction constants ───────────────────────────────────────────

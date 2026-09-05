@@ -4377,11 +4377,10 @@ def _model_sphere_radius_from_aabb(center: tuple, half_extents: tuple) -> float:
 
 
 def _rot_determinant(rot) -> float:
-    """3x3 determinant of a row-major BC TGMatrix3 stored as nested lists."""
-    m = rot._m
-    return (m[0][0] * (m[1][1]*m[2][2] - m[1][2]*m[2][1])
-          - m[0][1] * (m[1][0]*m[2][2] - m[1][2]*m[2][0])
-          + m[0][2] * (m[1][0]*m[2][1] - m[1][1]*m[2][0]))
+    """3x3 determinant of a row-major BC TGMatrix3."""
+    return (rot.m00 * (rot.m11*rot.m22 - rot.m12*rot.m21)
+          - rot.m01 * (rot.m10*rot.m22 - rot.m12*rot.m20)
+          + rot.m02 * (rot.m10*rot.m21 - rot.m11*rot.m20))
 
 
 def _world_matrix_from(loc, rot, s: float) -> list:
@@ -4399,10 +4398,10 @@ def _world_matrix_from(loc, rot, s: float) -> list:
     handedness-unmirror.md.
     """
     return [
-        rot._m[0][0]*s, rot._m[0][1]*s, rot._m[0][2]*s, loc.x,
-        rot._m[1][0]*s, rot._m[1][1]*s, rot._m[1][2]*s, loc.y,
-        rot._m[2][0]*s, rot._m[2][1]*s, rot._m[2][2]*s, loc.z,
-        0.0,            0.0,            0.0,            1.0,
+        rot.m00*s, rot.m01*s, rot.m02*s, loc.x,
+        rot.m10*s, rot.m11*s, rot.m12*s, loc.y,
+        rot.m20*s, rot.m21*s, rot.m22*s, loc.z,
+        0.0,       0.0,       0.0,       1.0,
     ]
 
 

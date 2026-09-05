@@ -161,6 +161,6 @@ def test_world_matrix_from_matches_manual_build():
     m = _world_matrix_from(loc, rot, 0.5)
     # No reflection: scale 0.5 on all axes, col0 NOT negated.
     assert m[3] == 3.0 and m[7] == -2.0 and m[11] == 5.0  # translation
-    assert m[0] == rot._m[0][0] * 0.5  # col0 not negated
-    assert m[1] == rot._m[0][1] * 0.5
+    assert m[0] == rot.m00 * 0.5  # col0 not negated
+    assert m[1] == rot.m01 * 0.5
     assert m[15] == 1.0

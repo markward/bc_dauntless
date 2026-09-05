@@ -127,13 +127,12 @@ def hull_spheres_near(ship, center, radius) -> list:
     loc = ship.GetWorldLocation()
     R = ship.GetWorldRotation()
     scale = float(ship.GetScale())
-    m = R._m
     # World -> body: R^T · (center - loc). Row-major, so R^T's rows are R's
     # columns, and each component is a column dotted with the offset.
     dx, dy, dz = center.x - loc.x, center.y - loc.y, center.z - loc.z
-    qx = m[0][0] * dx + m[1][0] * dy + m[2][0] * dz
-    qy = m[0][1] * dx + m[1][1] * dy + m[2][1] * dz
-    qz = m[0][2] * dx + m[1][2] * dy + m[2][2] * dz
+    qx = R.m00 * dx + R.m10 * dy + R.m20 * dz
+    qy = R.m01 * dx + R.m11 * dy + R.m21 * dz
+    qz = R.m02 * dx + R.m12 * dy + R.m22 * dz
 
     out = []
     for (cx, cy, cz), r in cached:

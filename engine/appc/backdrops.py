@@ -181,11 +181,11 @@ def aggregate_for_renderer(pSet, game_root):
         # Column-major flatten. The C++ side reads m9 into glm::mat3(...)
         # which is column-major, and our BC matrix is column-vector (see
         # CLAUDE.md ↦ "Rotation matrix convention"), so m9[j*3 + i] =
-        # rot._m[i][j] sends BC column j as GL column j.
+        # rot.GetEntry(i, j) sends BC column j as GL column j.
         m9 = [
-            rot._m[0][0], rot._m[1][0], rot._m[2][0],  # col 0 (right)
-            rot._m[0][1], rot._m[1][1], rot._m[2][1],  # col 1 (forward)
-            rot._m[0][2], rot._m[1][2], rot._m[2][2],  # col 2 (up)
+            rot.m00, rot.m10, rot.m20,  # col 0 (right)
+            rot.m01, rot.m11, rot.m21,  # col 1 (forward)
+            rot.m02, rot.m12, rot.m22,  # col 2 (up)
         ]
         entry = {
             "texture_path": str(abs_path),

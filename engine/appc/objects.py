@@ -349,12 +349,12 @@ class ObjectClass(TGEventHandlerObject):
 
     def GetRotation(self) -> TGMatrix3:
         result = TGMatrix3()
-        result._m = [row[:] for row in self._rotation._m]
+        result.set_from_tuple(self._rotation.as_tuple())
         return result
 
     def GetWorldRotation(self) -> TGMatrix3:
         result = TGMatrix3()
-        result._m = [row[:] for row in self._rotation._m]
+        result.set_from_tuple(self._rotation.as_tuple())
         return result
 
     def SetAngleAxisRotation(self, angle: float, axis: TGPoint3) -> None:
