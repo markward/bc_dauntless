@@ -190,20 +190,32 @@ not global, so a fat-finger cannot wipe keybindings.
 | `version` older than ours | Migration hook; empty today |
 | Write fails (read-only dir) | Log once, keep running on in-memory settings |
 
-## Risks to verify during implementation
+## Survival across QuickBattle init and mission swaps — verified
 
-Both are the kind of thing a green suite will not catch.
+Every persisted setting must still be in force after `_QBGame.Initialize` and
+after every in-process mission swap. Checked against the code rather than
+assumed; all ten survive, in three storage classes:
 
-1. **`App.Game_SetDifficulty` at boot.** The panel already *reads*
-   `Game_GetDifficulty()` at this site, so a game object exists. But QuickBattle
-   boot runs `reset_sdk_globals()` and `_QBGame.Initialize` afterwards
-   (`engine/host_loop.py:5043`). Whether a difficulty set before that survives it
-   is unverified.
-2. **Mission swap.** If a swap re-establishes difficulty or renderer state,
-   gameplay settings may need re-applying after `_drain_pending_swap`. It is not
-   known that it does — this is a check to run, not a fix to design in advance.
+1. **Module globals nothing resets.** `_difficulty` (`engine/core/game.py:235`),
+   `_subtitles_enabled` and `_annoying_dialogue_disabled`
+   (`engine/appc/crew_speech.py:27`, `:43`). `reset_sdk_globals()` never touches
+   any of them, `Game()` construction doesn't, and nothing reloads either
+   module. `Game_SetDifficulty` has exactly one caller — the panel applier at
+   `host_loop.py:7277`. Note `reset_sdk_globals()` *does* call
+   `crew_speech.bus().reset()` on every swap, but that clears channel state
+   (active voice, priority, expiry, speaker) and not the two flags, which are
+   module-level and separate from the bus instance.
+2. **`director.fov_y_rad`** — seeded once from `EXTERIOR_FOV_Y_RAD` at director
+   construction (`engine/cameras/director.py:30`) and mutated only by
+   `set_fov()`. The director outlives every swap.
+3. **Renderer toggles** — C++ renderer state. `reset_sdk_globals()` touches only
+   `render_instances.reset()`, which drops the object→render-instance mirror,
+   not effect flags.
 
-Neither blocks the store. Either may add a re-apply call.
+This is a property of today's reset list, not a structural guarantee.
+`reset_sdk_globals`'s own docstring asks that the list be kept "in lockstep with
+what the SDK actually mutates", so a future entry could clear one of these and
+silently regress persistence to session-only. The testing section pins it.
 
 ## Testing
 
@@ -224,6 +236,18 @@ Neither blocks the store. Either may add a re-apply call.
 `MASTER_TOGGLES`. This catches "added a toggle, forgot to persist it" — the same
 bug class `test_js_graphics_focusables_match_python` guards on the JS side.
 
+**Swap-survival regression test.** Set the Python-side state to non-default
+values — `_difficulty`, `_subtitles_enabled`, `_annoying_dialogue_disabled`,
+`director.fov_y_rad`, `camera_shake`, `light_emitters` — call
+`reset_sdk_globals()`, assert every one is unchanged. This is what stops a
+future addition to the reset list from silently turning persistence back into
+session-only state, and nothing else in the suite would catch it.
+
+It cannot cover the four pure-renderer flags (`smaa`, `dust`, and the
+`improved_space` / `camera_realism` members), which live in C++ state with no
+headless getter. Their survival rests on the argument above — that
+`reset_sdk_globals()` touches only `render_instances` — plus live check 6.
+
 **`tests/unit/test_configuration_panel.py`** — extend: toggling calls
 `on_change` once with the right key and value, *after* the applier; a raising
 applier does **not** call `on_change`; `reset:graphics` calls `on_reset` and
@@ -232,10 +256,10 @@ params still works.
 
 ### Where the tests stop
 
-They cover `apply_all(store, ctx)` with a fake ctx. They do **not** prove the
-wiring at `host_loop.py:7236` is correct, that difficulty survives
-`_QBGame.Initialize`, or that a mission swap doesn't stomp a setting. Those are
-live checks:
+They cover `apply_all(store, ctx)` with a fake ctx and `reset_sdk_globals()`
+survival. They do **not** prove the wiring at `host_loop.py:7236` is correct —
+that a real boot applies real settings to a real renderer. That is a live
+check:
 
 1. No `settings.json` → everything reads as today
 2. Camera shake and subtitles off, quit, relaunch → both off **before** opening
@@ -243,7 +267,9 @@ live checks:
 3. FOV to 25, relaunch → 25 on the first frame
 4. Reset Graphics → stock; relaunch → still stock
 5. Hand-corrupt the file → boots on defaults, `.corrupt` appears
-6. Change difficulty, swap missions → still applied (risk 2 above)
+6. Change difficulty, subtitles **and a renderer toggle**, swap missions → all
+   three still applied. This is the only check that covers the renderer flags at
+   all, since no headless test can read them
 
 Gate is `scripts/check_tests.sh`, both suites. `.gitignore` gains
 `/settings.json` and `/settings.json.corrupt`.
