@@ -58,6 +58,7 @@
 #include <renderer/viewscreen_static_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/hdr_msaa_target.h>
+#include <renderer/gl_caps.h>
 #include <renderer/bloom_pass.h>
 #include <renderer/nonfinite_probe.h>
 #include "frame_dump.h"
@@ -273,6 +274,10 @@ glm::vec3 g_hologram_bg{0.0f, 0.0f, 0.0f};
 bool      g_spv_hull_mode = false;
 std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
+// Multisample target for the opaque space pass. Constructed unconditionally
+// but allocates NO GL objects until resize() is called with samples >= 2,
+// which only happens when the player has actually selected an MSAA mode.
+std::unique_ptr<renderer::HdrMsaaTarget>   g_msaa_target;
 std::unique_ptr<renderer::HdrTarget>       g_viewscreen_hdr;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
 // Developer-only NaN/Inf detector for the HDR target. Off by default even under
@@ -326,6 +331,10 @@ constexpr double kMotionBlurRefDt = 1.0 / 60.0;
 // so its GL handles are released in shutdown() while the context is current.
 std::unique_ptr<renderer::ShadowMapTarget> g_shadow_target;
 bool g_smaa_enabled = true;   // post-process SMAA 1x; default on. Set by smaa_set_enabled.
+// Requested MSAA sample count for the opaque space pass. 0 == off, which is
+// the stock path: no multisample target is allocated and no blit occurs.
+// Set by msaa_set_samples; clamped against GL_MAX_SAMPLES at apply time.
+int g_msaa_samples = 0;
 double g_prev_frame_time_seconds = 0.0;
 float g_decal_game_time = 0.0f;  // game-time secs for decal ember; set by damage_decals_tick
 
@@ -608,6 +617,7 @@ void init(int width, int height, const std::string& title) {
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
+    g_msaa_target     = std::make_unique<renderer::HdrMsaaTarget>();
     g_viewscreen_hdr  = std::make_unique<renderer::HdrTarget>();
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
     g_nonfinite_probe = std::make_unique<renderer::NonfiniteProbe>();
@@ -680,6 +690,7 @@ void shutdown() {
     g_ldr_target.reset();
     g_resolve_pass.reset();
     g_hdr_target.reset();
+    g_msaa_target.reset();
     g_viewscreen_hdr.reset();
     g_shadow_target.reset();
     g_window.reset();
@@ -1070,10 +1081,37 @@ void frame() {
     // "wasted space render in bridge mode".
     if (!viewer_mode && !bridge_active) {
         DAUNTLESS_FRAME_SCOPE("space");
-        // Task 3 is a pure split: both phases still use the plain HDR target.
-        // Task 4 routes the geometry phase through a multisample target here.
         const float ex_ambient = dauntless_filmic::ambient_scale();
-        render_space_geometry(g_camera, g_hdr_target.get(), nullptr, ex_ambient);
+
+        // MSAA path: the depth-writing geometry renders multisampled, then
+        // resolves colour+depth into g_hdr_target so every VFX pass and the
+        // whole post chain receive exactly the single-sample textures they
+        // already expect. Nothing downstream of the resolve is aware of MSAA.
+        //
+        // Falls through to the stock path whenever the requested count clamps
+        // to 0, or the driver refused the allocation (!valid()) — we never
+        // trust GL_RGBA16F multisample on the strength of the spec alone.
+        const int msaa = renderer::clamp_msaa_samples(
+            g_msaa_samples, renderer::query_gl_caps());
+        if (msaa >= 2) g_msaa_target->resize(fw, fh, msaa);
+        if (msaa >= 2 && g_msaa_target->valid()) {
+            // The multisample target is a DIFFERENT buffer from g_hdr_target
+            // and does not inherit the clear applied to it above; without this
+            // it would carry the previous frame's colour and a stale depth
+            // buffer. glClearColor is still set from that block and nothing
+            // between here and there touches it, so the two match by
+            // construction rather than by a duplicated literal.
+            g_msaa_target->bind();
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            render_space_geometry(g_camera, nullptr, g_msaa_target.get(),
+                                  ex_ambient);
+            g_msaa_target->resolve_to(*g_hdr_target);
+            // resolve_to leaves the READ/DRAW bindings split; the VFX phase
+            // re-binds g_hdr_target as GL_FRAMEBUFFER before it draws.
+        } else {
+            render_space_geometry(g_camera, g_hdr_target.get(), nullptr,
+                                  ex_ambient);
+        }
         render_space_vfx(g_camera, /*for_viewscreen=*/false, *g_hdr_target,
                          fw, fh, ex_ambient);
     }
@@ -3561,6 +3599,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { g_smaa_enabled = enabled; },
           py::arg("enabled"),
           "Enable/disable the post-process SMAA 1x pass (default on).");
+
+    m.def("msaa_set_samples",
+          [](int samples) { g_msaa_samples = samples; },
+          py::arg("samples"),
+          "Set MSAA sample count for the opaque space pass. 0 disables it "
+          "(the stock path: no multisample buffer, no resolve blit). "
+          "2/4/8 are clamped against GL_MAX_SAMPLES when applied.");
+
+    m.def("msaa_max_samples",
+          []() {
+              // MUST be guarded on g_window. query_gl_caps calls glGetIntegerv,
+              // and with no context glad's function pointer is null -- calling
+              // this before init() SEGFAULTS the interpreter rather than
+              // raising. Returning 0 makes the UI offer no MSAA segments,
+              // which is the correct answer for "no context".
+              if (!g_window) return 0;
+              return renderer::query_gl_caps().max_samples;
+          },
+          "GL_MAX_SAMPLES for this context -- the ceiling the UI offers. "
+          "Returns 0 before init(), when there is no context to ask.");
 
     m.def("dust_set_density",
           [](int count) {

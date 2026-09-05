@@ -45,7 +45,8 @@ _REQUIRED_BINDINGS = frozenset({
     "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "model_bounds",
     "motion_blur_enabled",
-    "motion_blur_set_enabled", "nebula_lightning_enabled",
+    "motion_blur_set_enabled",
+    "msaa_max_samples", "msaa_set_samples", "nebula_lightning_enabled",
     "nebula_lightning_set_enabled",
     "nonfinite_probe_enabled", "nonfinite_probe_set_enabled",
     "nonfinite_probe_stats",
@@ -509,6 +510,25 @@ def set_shadows_enabled(enabled: bool) -> None:
 def set_smaa_enabled(enabled: bool) -> None:
     """Toggle the post-process SMAA 1x pass. Default: on after init()."""
     _h.smaa_set_enabled(enabled)
+
+
+def set_msaa_samples(samples: int) -> None:
+    """Set MSAA sample count for the opaque space pass.
+
+    0 disables MSAA entirely — no multisample buffer is allocated and no
+    resolve blit runs, so the frame is byte-identical to the pre-MSAA
+    renderer. 2/4/8 are clamped against GL_MAX_SAMPLES when applied, and a
+    driver that refuses the allocation silently falls back to 0.
+    """
+    _h.msaa_set_samples(int(samples))
+
+
+def max_msaa_samples() -> int:
+    """GL_MAX_SAMPLES for the live context — the ceiling the UI offers.
+
+    Requires a current GL context; returns 0 before init().
+    """
+    return int(_h.msaa_max_samples())
 
 
 def set_rim_eligible(instance_id: InstanceId, eligible: bool) -> None:
