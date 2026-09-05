@@ -8,11 +8,10 @@ written by code we don't own.
 SettingsStore is section/key addressed and knows nothing about which settings
 exist; the SETTINGS table (added alongside it) supplies that.
 
-The "paths" section is RESERVED for the bootstrap tier — where the player's BC
-install lives, which has to be readable before anything boots. Nothing writes
-or reads it yet; game/ and sdk/ are still hardcoded to PROJECT_ROOT in
-host_loop. It is reserved here so the schema never has to change when that
-lands, and unknown-section preservation means an older build cannot destroy it.
+The "paths" section holds the bootstrap tier — where the player's BC install
+lives. engine/paths.py owns it; see
+docs/superpowers/specs/2026-09-05-bc-path-resolution-design.md. Unknown-section
+preservation means an older build cannot destroy it.
 
 Spec: docs/superpowers/specs/2026-09-05-settings-persistence-design.md
 """

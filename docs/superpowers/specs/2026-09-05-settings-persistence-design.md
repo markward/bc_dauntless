@@ -282,23 +282,7 @@ Gate is `scripts/check_tests.sh`, both suites. `.gitignore` gains
 
 ## Future: the bootstrap tier
 
-`game/` and `sdk/` are hardcoded today as `PROJECT_ROOT / "game"` and
-`PROJECT_ROOT / "sdk"` (`engine/host_loop.py:1829`, `:1886`, and ~25 further
-call sites). That is a dev-checkout assumption. A shipped Dauntless must ask the
-player where their BC install lives, and that answer has to be readable before
-anything else boots.
-
-This design reserves a `paths` section for it and is written so wiring it up
-later is additive:
-
-- The schema is versioned, and unknown sections survive a save, so a build
-  without paths support cannot destroy a build with it.
-- `paths` is documented but read by nothing. No behaviour depends on it yet.
-- The file-location resolver is a single function, so moving to a per-user OS
-  config directory — which the bootstrap tier will likely want, since an
-  installed game directory may be read-only — is one edit.
-
-Deliberately not built now: reading `paths.game_dir` / `paths.sdk_dir` through
-to asset resolution touches every `PROJECT_ROOT / "game"` call site plus the C++
-side, and the asset path is load-bearing for every live run. Smallest correct
-step is to fix the file format now and wire paths as its own piece of work.
+**Built 2026-09-05.** See
+`docs/superpowers/specs/2026-09-05-bc-path-resolution-design.md`.
+`engine/paths.py` owns the `paths` section; `game/` and `sdk/` are no longer
+hardcoded to the project root.

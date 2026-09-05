@@ -38,6 +38,7 @@ The original engine is a compiled C++ binary exposed to Python via a SWIG-genera
 | Gap analysis | `docs/gap_analysis.md` | 8 gaps, 26 open questions, solution paths |
 | Open questions | `docs/open_questions.md` | 4 instrumentation questions — Q4 closed |
 | Live game | `game/` | BC installation (gitignored) — needed for instrumentation |
+| BC content paths | `engine/paths.py`, `docs/superpowers/specs/2026-09-05-bc-path-resolution-design.md` | Where `game/` and `sdk/` live. Four sources, highest **set** one wins even when invalid. Resolved at USE, never at import — a module-level constant is stale the moment the first-run picker changes a root. Guarded by `tests/unit/test_path_indirection.py`. |
 | Space dust pass | `native/src/renderer/dust_pass.cc`, `docs/superpowers/specs/2026-05-11-space-dust-particles-design.md` | Camera-anchored dust particles with motion smear; toggle via `_h.dust_set_enabled()` |
 | BCS save format | `docs/engine/bcs-save-format.md`, `tools/bcs_inspect.py` | Real binary save format; preamble + object table + TGL + pickle-memo decoded; 93.6% object-state region remains as parking-lot RE work |
 | AI surface & gaps | `docs/engine/aieditor-ai-surface-and-gaps.md` | What the original `AIEditor` tool reveals about BC's AI: it's a code-generator emitting `CreateAI(pShip)` Python that Dauntless's `engine/appc/ai.py`+`ai_driver.py` already run. Maps the 7 AI container types, 8 named preprocessors, and 34 Condition classes against Dauntless's implementation. ⚠️ **Audited 2026-08-09 — two of its "confirmed gaps" were STALE.** `RandomAI` IS dispatched (`ai_driver.py:111`, `:478`) and `GetCloakingSubsystem` IS implemented (`ships.py:992`) — the latter caused a false confirmed gap. Still real: partial collision-avoidance (the reference cannot close it — `ProximityManager_Update` `0x005a83a0` is catalogued **stub**, body unreconstructed). **The ~10 Condition Appc-query rows are CLOSED 2026-08-11**: all ten names are real published API (addresses confirmed), and 8 were artifacts of an audit grep that searched `def <Name>(` — SWIG binds most of the surface at module level via `new.instancemethod`, so that grep can never match, and it also mis-attributes the receiver class. Two real gaps fell out, **both live-hit in `docs/stub_heatmap.md`, both ✅ FIXED 2026-08-11**: `WarpSequence.GetDestinationMission`/`GetDestinationEpisode` **plus `WarpSequence_Cast`** (all missing → truthy `_Stub` → `ConditionWarpingToMission` fired for *every* warp, and via the missing Cast even for ships **not warping at all** — fails ON, ranks 62/95) and `WaypointEvent` + `ET_AI_REACHED_WAYPOINT` (both undefined → `FollowWaypoints`' arrival broadcast was dead, killing `ConditionReachedWaypoint` and E8M2's handler, ranks 76/108/109/113). ✅ **`ET_SET_WARP_SEQUENCE` is CLOSED** (constant + emitter). The constant became real in the 2026-08-31 sweep (`0x8000ee`, measured); the emitter landed with it in `WarpEngineSubsystem.SetWarpSequence` (`engine/appc/subsystems.py`), so `ConditionWarpingToSet` now re-evaluates when the sequence changes instead of only at construction. Of the twelve event types that had real ints but no poster, **all twelve are now closed** (2026-09-02) — eleven with engine emitters, plus `ET_SET_TARGET` as a documented NON-emission (every SDK registration of it is paired with `ET_TARGET_WAS_CHANGED` on the same object to the same handler, so posting it would double-dispatch). The last one, `ET_RESTORE_PERSISTENT_TARGET`, needed the clean-room RE project: the reference server had no object model for `STTargetMenu` and no body for `ClearPersistentTarget`. Two lessons worth keeping — the restore runs on the target menu's **periodic refresh**, not on a target-list-entered event (our SDK-derived guess, wrong in a way that would have restored and cleared at the wrong moments); and `SetTargetHandle`'s second argument is a **`ShipSubsystem*`, not an int flag** as `spec/ShipClass.md 4.0` states, so a restore re-targets the object *and* its subsystem. `docs/engine/event-emitter-gaps.md` is the live register — read it rather than this sentence, which has already gone stale once. **Treat every ❌ in `aieditor-ai-surface-and-gaps.md` as a hypothesis to re-check against `engine/`, not a fact — and never use a `def <Name>(` grep to decide whether engine surface exists.** |
@@ -216,6 +217,45 @@ tests rarely exercised pitched orientations. The radar branch
 Branch `worktree-matrix-convention-unify` consolidated everything onto
 column. If you see `GetRow(1)` in code that's reading a ship's world
 forward, it is a regression — fix it.
+
+## BC content paths — one authority, resolved at use
+
+`game/` and `sdk/` do not have to live inside the project. `engine/paths.py`
+resolves both roots from four sources in precedence order — `--game-dir` /
+`--sdk-dir`, `DAUNTLESS_GAME_DIR` / `DAUNTLESS_SDK_DIR`, `settings.json`
+`[paths]`, then the legacy in-project layout. The highest source that is
+**set** wins even if it is invalid; falling through would silently run a
+different install than the one that was asked for. A CLI flag persists; an
+env var never does.
+
+### Hard rules
+
+- **Never spell `game` or `sdk` as a path segment.** Not in `engine/`, not in
+  `tools/`, not in `tests/conftest.py`, not in `native/src`. Ask
+  `paths.game_asset(rel)`, `paths.game_root()`, `paths.sdk_scripts()`,
+  `paths.sdk_data()`.
+- **Never capture a path at import.** No module-level constant may hold one.
+  `paths.configure()` is callable again after boot — that is what the
+  first-run picker needs — so anything captured at import is stale the moment
+  the player picks a folder. `engine/missions/name_resolver.py`'s `TGL_ROOTS`
+  was the densest instance of this trap.
+- C++ joins relative asset paths onto `renderer::game_root()`, default the
+  literal `"game"`. A literal `"game/"` reaching `resolve_asset_path` is a
+  missed migration: it is stripped so the asset still loads, and logged once.
+
+`tests/unit/test_path_indirection.py` enforces all three. The two Python
+guards **parse rather than grep**: a grep flags every docstring citing
+`sdk/Build/scripts/...` and still misses `dev_keybindings.py`'s nine-line
+constant, where no single line holds both the root and the segment. A string
+that describes the layout rather than building a path is exempted in place
+with `# paths-guard: <reason>` — a prefix, not a fixed string, so two
+different reasons (a Ghidra export label, a test fixture building a fake
+install tree) can both live in the tree without colliding. `tools/probes/`
+holds Python 1.5 sources injected into the original `stbc.exe`; modern `ast`
+cannot parse them, so the guard skips them and a second test asserts the
+skip never strays outside that one directory.
+
+Spec: `docs/superpowers/specs/2026-09-05-bc-path-resolution-design.md`
 
 ## Shared checkout — NEVER run destructive git
 
