@@ -77,8 +77,9 @@ The ten rows:
 
 ### 2. `SettingsStore`
 
-`load()`, `get(key)`, `set(key, value)`, `reset_section(name)` (delete only,
-no engine contact). Backed by a JSON
+`load()`, `has(section, key)`, `get(section, key)`, `set(section, key, value)`,
+`reset_section(name)` (delete only, no engine contact). Section/key addressed
+and table-agnostic — it knows nothing about `SETTINGS`. Backed by a JSON
 file at `PROJECT_ROOT / "settings.json"`; the constructor takes `path` so tests
 never touch the repo.
 
@@ -94,10 +95,15 @@ mid-write cannot leave a truncated file.
 - **`snapshot_for_panel(store, ctx) -> SettingsSnapshot`** — builds the panel's
   display state: stored value where present, the row's `default` (resolved, if
   callable) where absent.
+- **`set_setting(store, key, value)`** — key-addressed write, looking the
+  section up in the table. This is what the panel's `on_change` binds to;
+  `SettingsStore.set` alone can't serve, since only the table knows a key's
+  section.
 - **`reset_and_apply_section(store, ctx, name) -> dict`** — deletes the section
   via `store.reset_section(name)`, re-applies each row's resolved default, and
-  returns `{key: value}` for the panel. Named distinctly from the store's own
-  `reset_section` because it also touches the engine.
+  returns `{field: value}` keyed by `SettingsSnapshot` **field** name (e.g.
+  `smaa_on`), so the panel can `setattr` the result directly. Named distinctly
+  from the store's own `reset_section` because it also touches the engine.
 
 `ctx` is a small dataclass bundling `r`, `director`, `crew_speech`,
 `light_emitters`, `camera_shake`, `App`, so the table's lambdas close over no
@@ -149,7 +155,7 @@ store = SettingsStore(); store.load()
 apply_all(store, ctx)                                    # stored keys only
 configuration_panel = ConfigurationPanel(
     initial_settings = snapshot_for_panel(store, ctx),   # replaces the guesswork
-    on_change        = store.set,
+    on_change        = lambda k, v: set_setting(store, k, v),
     on_reset         = lambda name: reset_and_apply_section(store, ctx, name),
     ... appliers unchanged ...)
 ```
@@ -170,7 +176,7 @@ construction and test keeps working.
   A raising applier therefore can never write a value the engine isn't on.
 - **`on_reset(section) -> dict`** — the new `reset:<section>` action, bound
   host-side to `reset_and_apply_section`. It deletes the section, re-applies
-  each row's default, and returns `{key: value}` for the panel to write into
+  each row's default, and returns `{field: value}` for the panel to write into
   `_settings`. The panel never imports the store.
 
 The one unavoidable UI change is the two reset rows. `_focusables()` gains
