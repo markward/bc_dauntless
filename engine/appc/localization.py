@@ -13,9 +13,9 @@ same database, and the database is released when refcount returns to zero.
 This matches the Appc semantics — MissionLib.py routinely wraps Load/Unload
 around short-lived menu queries on shared menu databases.
 
-Load() resolves the SDK-relative path against game/ (real install) then
-sdk/Build/ (SDK fallback) and decodes the binary TGL via
-engine.missions.tgl_reader.  When the file can't be located, an empty
+Load() resolves the SDK-relative path against the game install root (real
+install) then the SDK root's Build/ (SDK fallback) and decodes the binary
+TGL via engine.missions.tgl_reader.  When the file can't be located, an empty
 database is returned and GetString falls back to returning the key, which
 keeps SDK call sites (FindMenu("Helm"), TextBanner(..., "Friendly Fire"),
 etc.) operating on real strings rather than stubs.
@@ -23,32 +23,43 @@ etc.) operating on real strings rather than stubs.
 
 from pathlib import Path
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+from engine import paths as _paths
 
 
 def _resolve_tgl_path(filename: str):
     """Resolve an SDK-form TGL path to a real file on disk, or None.
 
     SDK scripts pass paths like "data/TGL/Bridge Menus.tgl" — relative to
-    the BC working directory. We mirror that by checking game/ first, then
-    fall back to sdk/Build/ for SDK-shipped TGLs (used in headless tests
-    where game/ may not be installed). The SDK ships its TGLs under
-    sdk/Build/Data/TGL (capital D); the prefix is re-cased when present so
-    lookups work on case-sensitive filesystems.
+    the BC working directory. We mirror that by checking the game root
+    first, then falling back to the SDK root for SDK-shipped TGLs (used in
+    headless tests where the game install may not be present). The SDK
+    ships its TGLs under <sdk>/Build/Data/TGL (capital D); the prefix is
+    re-cased when present so lookups work on case-sensitive filesystems.
+    Either root may be unresolved (PathsUnresolved) -- that candidate is
+    simply skipped, matching the pre-existing "file can't be located"
+    fallback rather than raising.
     """
     raw = Path(filename)
     candidates = []
     if raw.is_absolute():
         candidates.append(raw)
-    candidates.append(_PROJECT_ROOT / "game" / filename)
+
+    try:
+        candidates.append(_paths.game_asset(filename))
+    except _paths.PathsUnresolved:
+        pass
 
     sdk_path = filename
     for lower in ("data/TGL/", "data/tgl/", "Data/tgl/"):
         if sdk_path.startswith(lower):
             sdk_path = "Data/TGL/" + sdk_path[len(lower):]
             break
-    candidates.append(_PROJECT_ROOT / "sdk" / "Build" / sdk_path)
-    candidates.append(_PROJECT_ROOT / filename)
+    try:
+        candidates.append(_paths.sdk_root() / "Build" / sdk_path)
+    except _paths.PathsUnresolved:
+        pass
+
+    candidates.append(_paths.PROJECT_ROOT / filename)
 
     for c in candidates:
         if c.is_file():

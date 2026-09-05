@@ -26,7 +26,15 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-SDK_SCRIPTS = _PROJECT_ROOT / "sdk" / "Build" / "scripts"
+def _sdk_scripts():
+    """The SDK's script root, resolved at USE.
+
+    Deliberately not a module-level constant: host_loop.py:3507 imports this
+    module at runtime, so a captured path would be stale the moment the
+    first-run picker changed it.
+    """
+    from engine import paths
+    return paths.sdk_scripts()
 
 _PY2_OCTAL = re.compile(r'(?<![\w.])0([0-7]+)\b')
 _PY2_RAISE = re.compile(r'^(\s*raise\s+\w[\w.]*)\s*,\s*(.*)', re.MULTILINE)
@@ -56,8 +64,9 @@ def discover_missions() -> list[str]:
     string 'def Initialize(pMission)'.  Episode-level scripts use
     'def Initialize(pEpisode)' and are therefore excluded automatically.
     """
+    sdk_scripts = _sdk_scripts()
     missions = []
-    for py_file in sorted(SDK_SCRIPTS.rglob("*.py")):
+    for py_file in sorted(sdk_scripts.rglob("*.py")):
         if py_file.name == "__init__.py":
             continue
         try:
@@ -66,7 +75,7 @@ def discover_missions() -> list[str]:
             continue
         if "def Initialize(pMission)" not in text:
             continue
-        rel = py_file.relative_to(SDK_SCRIPTS)
+        rel = py_file.relative_to(sdk_scripts)
         module_name = ".".join(rel.with_suffix("").parts)
         missions.append(module_name)
     return missions
@@ -361,7 +370,7 @@ class _FixImplicitRelativeImport(ast.NodeTransformer):
     def __init__(self, file_path):
         p = Path(file_path)
         try:
-            rel = p.relative_to(SDK_SCRIPTS)
+            rel = p.relative_to(_sdk_scripts())
         except ValueError:
             self._pkg = None
             return
@@ -448,16 +457,17 @@ class _SDKLoader(importlib.abc.Loader):
 
 class _SDKFinder(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path, target=None):
+        sdk_scripts = _sdk_scripts()
         rel = fullname.replace(".", "/")
         if (_PROJECT_ROOT / (rel + ".py")).exists():
             return None
         if (_PROJECT_ROOT / rel).is_dir() and (_PROJECT_ROOT / rel / "__init__.py").exists():
             return None
-        candidate = SDK_SCRIPTS / (rel + ".py")
+        candidate = sdk_scripts / (rel + ".py")
         if candidate.exists():
             loader = _SDKLoader(str(candidate))
             return importlib.machinery.ModuleSpec(fullname, loader, origin=str(candidate))
-        pkg_init = SDK_SCRIPTS / rel / "__init__.py"
+        pkg_init = sdk_scripts / rel / "__init__.py"
         if pkg_init.exists():
             loader = _SDKLoader(str(pkg_init))
             spec = importlib.machinery.ModuleSpec(fullname, loader, origin=str(pkg_init))
@@ -469,11 +479,11 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
             child = fullname.rpartition(".")[2]
             for _search_dir in path:
                 _p = Path(_search_dir)
-                if str(SDK_SCRIPTS) not in str(_p):
+                if str(sdk_scripts) not in str(_p):
                     continue
                 _cand = _p / (child + ".py")
                 if _cand.exists():
-                    _rel_parts = _cand.relative_to(SDK_SCRIPTS).with_suffix("").parts
+                    _rel_parts = _cand.relative_to(sdk_scripts).with_suffix("").parts
                     _qual = ".".join(_rel_parts)
                     if _qual != fullname and _qual in sys.modules:
                         loader = _AliasLoader(sys.modules[_qual])
@@ -482,7 +492,7 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
                     return importlib.machinery.ModuleSpec(fullname, loader, origin=str(_cand))
                 _pkg = _p / child / "__init__.py"
                 if _pkg.exists():
-                    _rel_parts = (_p / child).relative_to(SDK_SCRIPTS).parts
+                    _rel_parts = (_p / child).relative_to(sdk_scripts).parts
                     _qual = ".".join(_rel_parts)
                     if _qual != fullname and _qual in sys.modules:
                         loader = _AliasLoader(sys.modules[_qual])
@@ -495,19 +505,19 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
         # package directory to sys.path, so bare `import X` inside Bridge/ found
         # Bridge/X.py.  Search SDK subdirectories for a unique match.
         if "." not in fullname:
-            matches = sorted(SDK_SCRIPTS.rglob(f"{fullname}.py"))
+            matches = sorted(sdk_scripts.rglob(f"{fullname}.py"))
             caller_dir = None
             frame = sys._getframe(1)
             while frame is not None:
                 co_file = frame.f_code.co_filename
-                if str(SDK_SCRIPTS) in co_file:
+                if str(sdk_scripts) in co_file:
                     caller_dir = Path(co_file).parent
                     break
                 frame = frame.f_back
             if caller_dir:
                 matches.sort(key=lambda p: (p.parent != caller_dir, str(p)))
             for candidate in matches:
-                rel_parts = candidate.relative_to(SDK_SCRIPTS).with_suffix("").parts
+                rel_parts = candidate.relative_to(sdk_scripts).with_suffix("").parts
                 qualified = ".".join(rel_parts)
                 if qualified in sys.modules:
                     loader = _AliasLoader(sys.modules[qualified])
@@ -557,6 +567,8 @@ def setup_sdk() -> None:
     # binary doesn't have that luxury — call this before the finder.
     import string  # noqa: F401
 
+    sdk_scripts = _sdk_scripts()
+
     if not any(isinstance(f, _SDKFinder) for f in sys.meta_path):
         sys.meta_path.insert(0, _SDKFinder())
 
@@ -565,12 +577,12 @@ def setup_sdk() -> None:
 
     if "Bridge" not in sys.modules:
         _bridge = types.ModuleType("Bridge")
-        _bridge.__path__ = [str(SDK_SCRIPTS / "Bridge")]  # type: ignore[attr-defined]
+        _bridge.__path__ = [str(sdk_scripts / "Bridge")]  # type: ignore[attr-defined]
         sys.modules["Bridge"] = _bridge
 
     if "Actions" not in sys.modules:
         _actions = types.ModuleType("Actions")
-        _actions.__path__ = [str(SDK_SCRIPTS / "Actions")]  # type: ignore[attr-defined]
+        _actions.__path__ = [str(sdk_scripts / "Actions")]  # type: ignore[attr-defined]
         sys.modules["Actions"] = _actions
 
     _plain_stubs = [
@@ -629,7 +641,7 @@ def setup_sdk() -> None:
     # Multiplayer: pre-create the package so child stubs land as attributes.
     if "Multiplayer" not in sys.modules:
         _mp_pkg = types.ModuleType("Multiplayer")
-        _mp_pkg.__path__ = [str(SDK_SCRIPTS / "Multiplayer")]
+        _mp_pkg.__path__ = [str(sdk_scripts / "Multiplayer")]
         sys.modules["Multiplayer"] = _mp_pkg
 
     _multiplayer_ui_stubs = [
@@ -649,7 +661,7 @@ def setup_sdk() -> None:
     # Characters: alias package for Bridge.Characters (Python 1.5 implicit relative imports).
     if "Characters" not in sys.modules:
         _chars = types.ModuleType("Characters")
-        _chars.__path__ = [str(SDK_SCRIPTS / "Bridge" / "Characters")]  # type: ignore[attr-defined]
+        _chars.__path__ = [str(sdk_scripts / "Bridge" / "Characters")]  # type: ignore[attr-defined]
         sys.modules["Characters"] = _chars
 
     # Episode-level scripts: pre-load so mission scripts reading carry-over

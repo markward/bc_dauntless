@@ -27,7 +27,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OVERRIDES_PATH = PROJECT_ROOT / "engine" / "appc" / "hardpoint_overrides.py"
-SDK_HARDPOINTS = PROJECT_ROOT / "sdk" / "Build" / "scripts" / "ships" / "Hardpoints"
 ROOT_HARDPOINTS = PROJECT_ROOT / "ships" / "Hardpoints"
 
 # Not real ships: galaxy_dauntless_mods is the stock-BC validation copy of
@@ -38,6 +37,10 @@ EXCLUDE = {"galaxy_dauntless_mods"}
 # App pulls in engine modules that import _dauntless_host.
 sys.path.insert(0, str(PROJECT_ROOT / "build" / "python"))
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from engine import paths as _paths
+
+SDK_HARDPOINTS = _paths.sdk_scripts() / "ships" / "Hardpoints"
 
 
 def hardpoint_leaves() -> list[str]:

@@ -14,7 +14,29 @@ import pytest
 os.environ.setdefault("OPEN_STBC_AUDIO", "0")
 
 PROJECT_ROOT = Path(__file__).parent.parent
-SDK_SCRIPTS = PROJECT_ROOT / "sdk" / "Build" / "scripts"
+
+# Resolved once per pytest session. conftest is exempt from the
+# resolve-at-use rule in engine/paths.py: the test suite never runs under the
+# first-run picker, so nothing can change these roots mid-session.
+#
+# This FAILS FAST rather than skipping. Skipping would turn a missing install
+# into ~800 silent skips, and scripts/check_tests.sh diffs FAILURES against
+# tests/known_failures.txt -- a mass-skip would pass the gate green while
+# testing nothing.
+from engine import paths as _paths
+
+_RESOLUTION = _paths.resolve()
+_paths.configure(_RESOLUTION)
+if not _RESOLUTION.ok:
+    raise RuntimeError(
+        _paths.describe_failure(_RESOLUTION)
+        + "\nThe test suite needs both roots. Set them with:\n"
+        '  uv run python -c "from engine.settings_store import SettingsStore; '
+        "s=SettingsStore(); s.load(); s.set('paths','game','/path/to/game'); "
+        "s.set('paths','sdk','/path/to/sdk')\"\n"
+    )
+
+SDK_SCRIPTS = _paths.sdk_scripts()
 
 # Make the C++-built _dauntless_host extension importable. CMake outputs it
 # under build/python/ relative to the project root.

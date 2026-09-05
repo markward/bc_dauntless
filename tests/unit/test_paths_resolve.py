@@ -328,3 +328,13 @@ def test_resolve_works_without_conftest_on_the_path(tmp_path):
          "from engine import paths; print(paths.resolve(argv=[], env={}).game_source)"],
         cwd=str(PROJECT_ROOT), capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_the_live_sdk_finder_has_no_module_level_path_constant():
+    """tools/mission_harness is imported at runtime by host_loop, so a
+    captured path would be stale by the time the picker changes it."""
+    import tools.mission_harness as mh
+    assert not hasattr(mh, "SDK_SCRIPTS"), (
+        "mission_harness.SDK_SCRIPTS captures a path at import; it must call "
+        "engine.paths.sdk_scripts() at point of use instead"
+    )

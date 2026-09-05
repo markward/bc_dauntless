@@ -29,13 +29,14 @@ from pathlib import Path
 import App
 import pytest
 
+from engine import paths as _paths
 from engine.appc.bridge_placement import registered_module_path
 from engine.bridge_idle_gestures import build_sequence_clips
-from engine.host_loop import PROJECT_ROOT, _resolve_asset_path
+from engine.host_loop import _resolve_asset_path
 
 from tests.integration.test_sdk_bridge_load import _fresh_world, _load_sdk_loadbridge
 
-REAL_ANIMATIONS = PROJECT_ROOT / "game" / "data" / "animations"
+REAL_ANIMATIONS = _paths.game_root() / "data" / "animations"
 
 
 def _engineer_pushing_buttons_clip_paths():
@@ -101,7 +102,7 @@ def test_every_gesture_clip_path_resolves_to_a_loadable_file(tmp_path):
 )
 def test_every_gesture_clip_path_resolves_against_the_real_game_tree():
     for path in _engineer_pushing_buttons_clip_paths():
-        resolved = _resolve_asset_path(path, PROJECT_ROOT / "game")
+        resolved = _resolve_asset_path(path, _paths.game_root())
         assert Path(resolved).exists(), (
             "unloadable clip path against the SHIPPED assets: %r -> %r"
             % (path, resolved)

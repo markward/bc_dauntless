@@ -6,12 +6,10 @@ is therefore ALWAYS true; these tests check the input module directly and
 assert int-ness on App.
 """
 import re
-from pathlib import Path
 
 import App
 import engine.appc.input as appc_input
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from engine import paths as _paths
 
 _BASES = (
     [chr(c) for c in range(ord("A"), ord("Z") + 1)]
@@ -61,7 +59,7 @@ def test_family_codes_distinct_and_disjoint_from_base_band():
 
 
 def test_every_wc_name_the_sdk_references_is_defined():
-    sdk = _PROJECT_ROOT / "sdk" / "Build" / "scripts"
+    sdk = _paths.sdk_scripts()
     src = ""
     for fname in ("KeyConfig.py", "DefaultKeyboardBinding.py"):
         src += (sdk / fname).read_text(errors="replace")

@@ -23,7 +23,9 @@ _BUILD_PYTHON = ROOT / "build" / "python"
 if _BUILD_PYTHON.is_dir() and str(_BUILD_PYTHON) not in sys.path:
     sys.path.insert(0, str(_BUILD_PYTHON))
 
-SYS_DIR = ROOT / "sdk" / "Build" / "scripts" / "Systems"
+from engine import paths as _paths
+
+SYS_DIR = _paths.sdk_scripts() / "Systems"
 OUT = ROOT / "engine" / "appc" / "sector_model.json"
 
 

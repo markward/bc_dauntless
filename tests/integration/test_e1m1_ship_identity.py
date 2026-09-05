@@ -6,16 +6,18 @@ identity fields match the SDK hardpoint definition. Expected values
 are hand-coded for clarity, and cross-checked at module load against
 the actual ships/Hardpoints/<name>.py file via _hardpoint_parser.
 """
-from pathlib import Path
-
 import pytest
 
 import App
+from engine import paths as _paths
 from engine.appc.properties import ShieldProperty
 from tests.integration._hardpoint_parser import extract_setters
 
 
-SDK_HARDPOINTS = Path(__file__).resolve().parents[2] / "sdk" / "Build" / "scripts" / "ships" / "Hardpoints"
+# Test file, exempt from the resolve-at-use rule (engine/paths.py's docstring):
+# it runs to completion at collection time, well after conftest.py has already
+# resolved and configure()'d the session's roots.
+SDK_HARDPOINTS = _paths.sdk_scripts() / "ships" / "Hardpoints"
 
 
 # ── Per-ship expectations ────────────────────────────────────────────────────

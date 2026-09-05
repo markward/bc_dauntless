@@ -1,12 +1,11 @@
 """Hardpoint expectation extractor unit tests."""
-from pathlib import Path
-
 import pytest
 
+from engine import paths as _paths
 from tests.integration._hardpoint_parser import extract_setters
 
 
-SDK_HARDPOINTS = Path(__file__).resolve().parents[2] / "sdk" / "Build" / "scripts" / "ships" / "Hardpoints"
+SDK_HARDPOINTS = _paths.sdk_scripts() / "ships" / "Hardpoints"
 
 
 def test_extract_galaxy_ship_mass():
