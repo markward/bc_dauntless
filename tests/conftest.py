@@ -1067,3 +1067,24 @@ def _silence_undefined_event_summary_atexit():
         _events._undefined_event_types.clear()
     except Exception:
         pass
+
+
+@pytest.fixture
+def fake_bc_install(tmp_path):
+    """A minimal BC install: only the markers engine.paths validates.
+
+    Deliberately omits stbc.exe and scripts/ -- neither is loaded at runtime,
+    so requiring them would reject a usable content-only copy.
+
+    Returns (game_root, sdk_root), siblings under tmp_path/"install" so a test
+    can pass their shared parent to reproduce the commonest mistake.
+    """
+    install = tmp_path / "install"
+    game = install / "game"
+    sdk = install / "sdk"
+    for rel in ("data", "data/Models", "data/Textures", "data/Icons"):
+        (game / rel).mkdir(parents=True, exist_ok=True)
+    (sdk / "Build" / "scripts").mkdir(parents=True, exist_ok=True)
+    (sdk / "Build" / "scripts" / "App.py").write_text("# fake App shim\n")
+    (sdk / "Build" / "Data" / "TGL").mkdir(parents=True, exist_ok=True)
+    return game, sdk
