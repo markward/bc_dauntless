@@ -3,9 +3,21 @@
 #include <scenegraph/breach_events.h>
 #include <renderer/frame.h>    // ParticleEmitterDescriptor, ParticleKey
 #include <renderer/breach_venting.h>
+#include <renderer/asset_path.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <string>
+
+namespace {
+// Mirrors asset_path_test.cc's GameRootGuard: TextureFileExistsOnDisk below
+// mutates the process-global renderer game root, and ctest runs cases in one
+// process, so it must not leak into a later test.
+struct GameRootGuard {
+    std::string saved = renderer::game_root();
+    ~GameRootGuard() { renderer::set_game_root(saved); }
+};
+}  // namespace
 
 TEST(BuildVentingDescriptors, NoEventsYieldsEmptyVector) {
     scenegraph::BreachEventRing ring;
@@ -143,25 +155,45 @@ TEST(BuildVentingDescriptors, TextureIsASoftRadialSprite) {
 
 // Regression for the historical "ExplosionNoise.tga" bug: the pass silently
 // skips emitters whose texture fails to load, so a typo'd path means venting
-// never draws at all and nothing complains. game/ is gitignored, so skip when
-// the BC install is absent rather than failing a clean checkout.
+// never draws at all and nothing complains. The BC install no longer lives
+// under the project root -- it is optional in this checkout -- so skip when
+// it is genuinely absent rather than failing a clean checkout. The skip gate
+// below only checks whether *a* game root is configured, independent of the
+// specific texture path under test, so a broken constant still FAILS here
+// instead of masquerading as "no install".
 TEST(BuildVentingDescriptors, TextureFileExistsOnDisk) {
     namespace fs = std::filesystem;
     const fs::path root = std::filesystem::path(__FILE__)
         .parent_path().parent_path().parent_path().parent_path();
-    if (!fs::exists(root / "game")) {
-        GTEST_SKIP() << "no game/ install present";
+
+    GameRootGuard guard;
+    // Honour the same env var engine/paths.py reads as its second-precedence
+    // source, so this test runs against a real install wherever it is; fall
+    // back to the legacy in-project relative "game" when unset.
+    if (const char* env = std::getenv("DAUNTLESS_GAME_DIR")) {
+        renderer::set_game_root(env);
     }
+    fs::path game_dir = renderer::game_root();
+    if (game_dir.is_relative()) game_dir = root / game_dir;
+    if (!fs::exists(game_dir)) {
+        GTEST_SKIP() << "no BC install under \"" << renderer::game_root()
+                     << "\" -- set DAUNTLESS_GAME_DIR to run this test";
+    }
+
     scenegraph::BreachEventRing ring;
     ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 1u);
     scenegraph::InstanceId id{1, 1};
     auto desc = renderer::build_venting_descriptors(ring, id, 0.f);
     ASSERT_EQ(desc.size(), 1u);
+
     // texture_path is root-relative (e.g. "data/rough.tga"), resolved later
-    // by particle_pass.cc's resolve_asset_path -- so check it under "game/"
-    // (the default root) rather than the project root directly.
-    EXPECT_TRUE(fs::exists(root / "game" / desc[0].texture_path))
-        << "venting texture does not exist: " << desc[0].texture_path;
+    // by particle_pass.cc's resolve_asset_path at draw time -- resolve it the
+    // same way here, anchoring a relative root at the project root like the
+    // renderer's runtime CWD does.
+    fs::path resolved = renderer::resolve_asset_path(desc[0].texture_path);
+    if (resolved.is_relative()) resolved = root / resolved;
+    EXPECT_TRUE(fs::exists(resolved))
+        << "venting texture does not exist: " << resolved;
 }
 
 // With zero colour keys curve_lerp1 returns 1.0 (particle_math.h), so the tint

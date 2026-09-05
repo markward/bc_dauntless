@@ -159,19 +159,22 @@ int main(int argc, char* argv[]) {
     configure_python_path(project_root);
 
     // Enter the project root. Every renderer asset path is relative to it --
-    // renderer::resolve_asset_path prepends the configured game root
-    // (default "game"), and 36 load sites across 11 files spell
-    // "game/data/..." literally -- and window.cc opts out of GLFW's macOS
-    // chdir specifically to keep this cwd intact.
+    // 26 load sites across 11 files compose theirs through
+    // renderer::resolve_asset_path rather than spelling "game/data/..."
+    // literally, which by default (renderer::game_root() == "game") still
+    // joins onto this cwd -- and window.cc opts out of GLFW's macOS chdir
+    // specifically to keep this cwd intact.
     //
     // That invariant was never enforced, only habitual: it held because the
-    // binary was always launched from the root. Any other cwd left all 36
-    // paths dangling. It surfaced as "[breach] failed to open
-    // 'game/data/Damage1.tga'" on stderr and passes drawing untextured, not as
-    // a startup error -- measured 4 such failures launching from /tmp, 0 from
-    // the root. Latent until now only because argv[0] resolution aborted
-    // before reaching any of it; fixing that made every non-root launch
-    // reachable, so enforce the invariant here rather than at 36 call sites.
+    // binary was always launched from the root. Any other cwd left every one
+    // of those default-rooted paths dangling. It surfaced as "[breach] failed
+    // to open 'game/data/Damage1.tga'" on stderr and passes drawing
+    // untextured, not as a startup error -- measured 4 such failures
+    // launching from /tmp, 0 from the root. Latent until now only because
+    // argv[0] resolution aborted before reaching any of it; fixing that made
+    // every non-root launch reachable, so enforce the invariant here rather
+    // than at every call site. (A caller that sets an absolute game root via
+    // renderer::set_game_root is unaffected by this cwd either way.)
     std::error_code cd_ec;
     std::filesystem::current_path(project_root, cd_ec);
     if (cd_ec) {
