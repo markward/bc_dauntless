@@ -231,6 +231,17 @@ started, which is the entire premise of a picker.
 `PROJECT_ROOT / "game" / rel` → `paths.game_asset(rel)`.
 `PROJECT_ROOT / "sdk" / "Build" / "scripts"` → `paths.sdk_scripts()`.
 
+One prerequisite surfaced while planning. `resolve()` reads `settings.json`,
+so it imports `engine.settings_store` → `engine.dev_mode` → a bare
+`import _dauntless_host`, and that extension lives in `build/python/`, which
+**only `tests/conftest.py` puts on `sys.path`**. Every migrated `tools/`
+script would therefore die with `ModuleNotFoundError: No module named
+'_dauntless_host'` — an error saying nothing about paths. `engine/__init__.py`
+already claims this job in its docstring ("prepares the process to load the
+`_dauntless_host` extension module") but only does the Windows DLL-directory
+half; it gains the `sys.path` entry to complete it. Built-ins win over
+`sys.path`, so this is inert inside `build/dauntless`.
+
 `engine/audio/tg_sound.py` loses `OPEN_STBC_GAME_DIR` entirely
 (`tg_sound.py:20`). It is a second env var doing this job under a different
 name, with its own project-relative fallback, referenced by one test
