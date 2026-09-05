@@ -4388,8 +4388,10 @@ def _rot_determinant(rot) -> float:
 def _world_matrix_from(loc, rot, s: float) -> list:
     """Row-major TRS mat4 from an explicit (loc, rot) and combined scale s.
 
-    Shared by _ship_world_matrix, _astro_world_matrix, and the render
-    interpolation path.
+    Shared by _ship_world_matrix, _apply_live_world_transform's fallback, and
+    the render interpolation path. Its C++ twin — the one the renderer uses for
+    store-bound instances — is dauntless::compose_world_matrix
+    (native/src/transforms/src/transform_store.cc); change one, change both.
 
     Right-handed convention (post un-mirror, 2026-06-18): the rotation goes to
     the GPU untouched. The previous determinant-normalization X-flip — which
@@ -4453,21 +4455,66 @@ def _ship_world_matrix(ship, natural_scale: float) -> list:
     return _world_matrix_from(loc, rot, s)
 
 
-def _astro_world_matrix(obj, natural_scale: float) -> list:
-    """Row-major TRS mat4 for a planet/moon. Same two-layer formula as ships:
-    natural_scale (load-time GetRadius/NIF_extent) × GetScale() (per-frame).
-    Position is BC world-native (no global multiplier).
+def _bind_store_transform(session, obj, iid, scale: float) -> bool:
+    """Bind render instance `iid` to `obj`'s transform-store slot at `scale`.
 
-    See `_ship_world_matrix` for the determinant-normalization rationale.
+    Returns True when the instance is bound: the renderer then composes its
+    world matrix from the store in C++ every frame and the caller must NOT
+    push a matrix (the sweep at the top of frame() would overwrite it anyway).
+    False means there is no native instance to bind — headless, or a test
+    double's plain-int iid — and the caller must fall back to the explicit
+    matrix path.
+
+    Re-binds only when the (instance, slot, scale) triple actually changes, so
+    the steady state is one dict lookup per object per frame rather than a
+    boundary crossing. `GetScale()` is a live Python attribute read, which is
+    why scale can be re-checked cheaply.
     """
-    loc = obj.GetWorldLocation()
-    rot = obj.GetWorldRotation()
+    handle = getattr(obj, "_xform", None)
+    if handle is None:          # not a store-backed ObjectClass
+        return False
+    want = (iid, handle[0], handle[1], scale)
+    if session.slot_bindings.get(obj) == want:
+        return True
+    if not host_io.set_instance_transform_slot(iid, handle[0], handle[1], scale):
+        session.slot_bindings.pop(obj, None)
+        return False
+    session.slot_bindings[obj] = want
+    return True
+
+
+def _unbind_store_transform(session, obj, iid) -> None:
+    """Restore the explicit-matrix path for `iid`. No-op when unbound.
+
+    Needed whenever an object's rendered pose stops being its live store pose
+    — the player handing the helm to an AI (rendered interpolated), for
+    instance. Leaving it bound would let the per-frame store sweep overwrite
+    the pushed matrix.
+    """
+    if session.slot_bindings.pop(obj, None) is None:
+        return
+    host_io.set_instance_transform_slot(iid, -1, 0, 1.0)
+
+
+def _apply_live_world_transform(renderer_, session, obj, iid,
+                                natural_scale: float) -> None:
+    """Point `iid` at `obj`'s LIVE world transform (no render interpolation).
+
+    Prefers the store binding; falls back to pushing the same matrix
+    `_world_matrix_from` would build. Same two-layer scaling as
+    `_ship_world_matrix`: load-time natural_scale x the object's per-frame
+    GetScale().
+    """
     try:
         py_scale = float(obj.GetScale())
     except Exception:
         py_scale = 1.0
     s = natural_scale * py_scale
-    return _world_matrix_from(loc, rot, s)
+    if _bind_store_transform(session, obj, iid, s):
+        return
+    renderer_.set_world_transform(
+        iid, _world_matrix_from(obj.GetWorldLocation(),
+                                obj.GetWorldRotation(), s))
 
 
 @dataclass
@@ -4494,6 +4541,11 @@ class MissionSession:
     # need no per-object cache; planets vary in size class and still use
     # the GetRadius-derived per-object scale.
     planet_natural_scale: dict[Any, float] = field(default_factory=dict)
+    # Objects whose render instance is bound to their transform-store slot,
+    # keyed by object: obj -> (iid, index, generation, scale). Purely a
+    # re-bind guard — the binding itself lives on the native instance — so the
+    # per-frame path can skip the boundary crossing when nothing changed.
+    slot_bindings: dict[Any, tuple] = field(default_factory=dict)
     player: Optional[Any] = None
 
     def teardown(self, renderer) -> None:
@@ -4506,6 +4558,9 @@ class MissionSession:
         self.ship_emitters.clear()
         self.planet_instances.clear()
         self.planet_natural_scale.clear()
+        # The bindings themselves died with the instances above; drop the
+        # re-bind guard so a recycled object cannot look already-bound.
+        self.slot_bindings.clear()
         self.player = None
 
 
@@ -4648,7 +4703,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
         # AABB corner, so the planet draws at exactly GetRadius() game units.
         natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0
         iid = r_.create_instance(handle)
-        r_.set_world_transform(iid, _astro_world_matrix(planet, natural_scale))
+        _apply_live_world_transform(r_, session, planet, iid, natural_scale)
         session.planet_instances[planet] = iid
         session.planet_natural_scale[planet] = natural_scale
 
@@ -4665,11 +4720,15 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             renderer.destroy_instance(iid)
             # ship_glow_controllers is keyed by instance id.
             session.ship_glow_controllers.pop(iid, None)
+            # The transform-slot binding died with the instance; drop the
+            # re-bind guard so a re-realized object binds afresh.
+            session.slot_bindings.pop(ship, None)
     for planet in list(_iter_planets_in_set(pSet)):
         iid = session.planet_instances.pop(planet, None)
         if iid is not None:
             renderer.destroy_instance(iid)
             session.planet_natural_scale.pop(planet, None)
+            session.slot_bindings.pop(planet, None)
 
 
 def _reconcile_runtime_instances(session, renderer, *,
@@ -4750,6 +4809,8 @@ def _reconcile_runtime_instances(session, renderer, *,
                 renderer.destroy_instance(iid)
                 # ship_glow_controllers is keyed by instance id.
                 session.ship_glow_controllers.pop(iid, None)
+                # The transform-slot binding died with the instance.
+                session.slot_bindings.pop(ship, None)
 
     # PLAYER/CAMERA: detect a player identity change (covers RecreatePlayer).
     game = Game_GetCurrentGame()
@@ -5272,7 +5333,7 @@ class _MissionLoader:
             # the AABB corner, so the planet draws at exactly GetRadius() GU.
             natural_scale = (radius / sphere_radius) if sphere_radius > 0.0 else 1.0
             iid = r_.create_instance(handle)
-            r_.set_world_transform(iid, _astro_world_matrix(planet, natural_scale))
+            _apply_live_world_transform(r_, sess, planet, iid, natural_scale)
             sess.planet_instances[planet] = iid
             sess.planet_natural_scale[planet] = natural_scale
 
@@ -6389,13 +6450,16 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                               player_interp_pose=None) -> None:
     """Push ship + planet world transforms to the renderer for one frame.
 
-    Player ship: pushed live (it is integrated per render frame on
-    wall-clock dt in _PlayerControl, so it is already smooth in world
-    space) — UNLESS a helm-AI / waypoint order drives it, in which case it
-    moves on the 60 Hz tick and `player_interp_pose` carries its
-    render-interpolated (loc, rot); pushing that (and keeping its iid in the
-    buffer across frames) makes it smooth on high-refresh displays. Kept in
-    lock-step with the camera, which anchors on the same interpolated pose.
+    Player ship: rendered at its LIVE pose (it is integrated per render frame
+    on wall-clock dt in _PlayerControl, so it is already smooth in world
+    space), which means its instance is BOUND to its transform-store slot and
+    nothing is pushed — the renderer composes the matrix in C++ each frame.
+    UNLESS a helm-AI / waypoint order drives it, in which case it moves on the
+    60 Hz tick and `player_interp_pose` carries its render-interpolated
+    (loc, rot); the instance is then unbound and that pose is pushed (and its
+    iid kept in the buffer across frames), which makes it smooth on
+    high-refresh displays. Kept in lock-step with the camera, which anchors on
+    the same interpolated pose.
 
     Non-player ships: integrated on the fixed 60 Hz tick, so they are
     rendered at lerp(prev, cur, interp_alpha) to hide the discrete
@@ -6403,7 +6467,13 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     fired); here we capture the new current state and push the
     interpolated pose. This only affects what is sent to the renderer —
     the ship objects keep live transforms, so physics/AI/combat (which
-    ran earlier this frame) are unaffected.
+    ran earlier this frame) are unaffected. They therefore CANNOT be bound to
+    the transform store: the store holds one (live) pose, and binding them
+    would render the un-interpolated pose and put the judder back. Moving that
+    two-snapshot buffer native is the follow-up that would let them bind too.
+
+    Planets: rendered at their live pose, so they are bound like the
+    manually-flown player.
 
     Also ages each ship's glow controller on `game_time` (the same game
     clock the decal system ages on, engine.appc.damage_decals), drops
@@ -6472,14 +6542,25 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                     _ps = float(ship.GetScale())
                 except Exception:
                     _ps = 1.0
+                # The rendered pose is an interpolation of two SIM snapshots,
+                # not the live store pose, so this instance must be unbound —
+                # otherwise frame()'s store sweep overwrites the matrix pushed
+                # here and the smoothing is lost.
+                _unbind_store_transform(session, ship, iid)
                 r.set_world_transform(
                     iid, _world_matrix_from(_iloc, _irot, model_scale * _ps))
                 _live_ship_iids.append(iid)
             else:
-                r.set_world_transform(
-                    iid, _ship_world_matrix(ship, model_scale))
+                # Player under manual control integrates per RENDER frame, so
+                # its live store pose is already the pose to draw: bind the
+                # instance and let the renderer compose the matrix in C++.
+                _apply_live_world_transform(r, session, ship, iid, model_scale)
             continue
         _live_ship_iids.append(iid)
+        # A ship that was the player (bound) and is no longer one renders
+        # interpolated from here on; drop any binding before pushing below.
+        if session.slot_bindings:
+            _unbind_store_transform(session, ship, iid)
         if _warp_apply_vis:
             r.set_visible(iid, not _warp_hide)
         # NOTE: scale is read live, not interpolated — the
@@ -6507,7 +6588,10 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
             del session.ship_glow_controllers[_dead]
     for planet, iid in session.planet_instances.items():
         ns = session.planet_natural_scale.get(planet, 1.0)
-        r.set_world_transform(iid, _astro_world_matrix(planet, ns))
+        # Planets render at their live pose (no interpolation), so the store
+        # binding covers them: after the first frame this costs a dict lookup
+        # instead of two transform reads and a 16-float push.
+        _apply_live_world_transform(r, session, planet, iid, ns)
         if _warp_apply_vis:
             r.set_visible(iid, not _warp_hide)
 

@@ -31,6 +31,29 @@ def _make_pose(x, y, z, radius=0.0):
     return _Pose()
 
 
+def _live_matrix(pose, natural_scale):
+    """The matrix production actually pushes for an object rendered at its
+    LIVE pose (a planet, or the manually-flown player).
+
+    Goes through the real `_apply_live_world_transform`: a plain-int iid is
+    not a native render instance, so the transform-store binding declines and
+    the explicit-matrix fallback runs — the same path a headless host takes.
+    """
+    from engine import host_loop
+
+    captured = {}
+
+    class _CapturingRenderer:
+        def set_world_transform(self, iid, mat):
+            captured["mat"] = mat
+
+    session = host_loop.MissionSession("test")
+    host_loop._apply_live_world_transform(
+        _CapturingRenderer(), session, pose, 1, natural_scale)
+    assert "mat" in captured, "the fallback must push an explicit matrix"
+    return captured["mat"]
+
+
 def test_ship_world_matrix_scales_mesh_not_position():
     """Identity rotation: upper-left 3x3 = diag(+s, +s, +s) — no reflection
     (right-handed un-mirror); translation is the world location unchanged."""
@@ -93,7 +116,7 @@ def test_ship_world_matrix_columns_are_body_axes_in_world():
     assert m[10] == pytest.approx(up.z  * s)
 
 
-def test_astro_world_matrix_columns_are_body_axes_in_world():
+def test_planet_live_matrix_columns_are_body_axes_in_world():
     """Same row/column convention as ships, applied to planet/moon meshes
     so non-spherical astro objects render with their BC-convention body axes
     matching the camera/physics view."""
@@ -106,7 +129,7 @@ def test_astro_world_matrix_columns_are_body_axes_in_world():
 
     # Caller computes natural_scale = GetRadius() / NIF_extent at load.
     natural_scale = 170.0 / PLANET_NIF_NATIVE_RADIUS
-    m = host_loop._astro_world_matrix(pose, natural_scale)
+    m = _live_matrix(pose, natural_scale)
 
     rgt = pose._rot.GetCol(0)
     fwd = pose._rot.GetCol(1)
@@ -125,7 +148,7 @@ def test_astro_world_matrix_columns_are_body_axes_in_world():
     assert m[10] == pytest.approx(up.z  * s)
 
 
-def test_astro_world_matrix_scales_mesh_and_position():
+def test_planet_live_matrix_scales_mesh_and_position():
     """Identity rotation, natural_scale = radius/native: position is BC
     world-native (unchanged), mesh scaled by natural_scale with NO X-column
     negation (right-handed un-mirror)."""
@@ -134,7 +157,7 @@ def test_astro_world_matrix_scales_mesh_and_position():
 
     pose = _make_pose(100.0, 200.0, 300.0, radius=170.0)
     natural_scale = 170.0 / PLANET_NIF_NATIVE_RADIUS  # ~3.78
-    m = host_loop._astro_world_matrix(pose, natural_scale)
+    m = _live_matrix(pose, natural_scale)
 
     assert len(m) == 16
     # Upper-left 3x3: identity * natural_scale, NOT negated.

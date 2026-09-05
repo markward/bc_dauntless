@@ -87,6 +87,20 @@ private:
     std::uint32_t live_ = 0;
 };
 
+// Compose a row-major 4x4 TRS world matrix from a store transform and a
+// uniform scale, downconverting to the 32-bit floats GL wants. The store keeps
+// doubles (it is the sole owner of every object's transform); this is the one
+// place the precision drops, at the GL boundary.
+//
+// Reproduces engine/host_loop.py:_world_matrix_from element for element:
+// row-major rotation times the scale, translation in the fourth column,
+// bottom row 0,0,0,1. NO transpose and NO reflection — the renderer is
+// right-handed (2026-06-18 un-mirror) and NIF winding is handled by
+// glFrontFace(GL_CCW) in pipeline.cc. Re-introducing an X-column flip here
+// draws every hull mirror-imaged.
+void compose_world_matrix(const TransformStore::Transform& t, float scale,
+                          float out[16]);
+
 // The process-wide store.
 TransformStore& transform_store();
 

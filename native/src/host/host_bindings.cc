@@ -711,6 +711,38 @@ void update_bridge_node_anims(double now) {
     }
 }
 
+// Recompose the world matrix of every store-bound instance from the transform
+// store. Run once at the top of frame(), before anything reads inst->world, so
+// a bound object's position/rotation never has to cross into Python and back
+// as sixteen floats.
+//
+// Unbound instances (xform_index < 0) are untouched: they keep whatever
+// set_world_transform last pushed. A stale handle (the object was collected
+// but its render instance outlived it) unbinds itself and freezes on its last
+// matrix rather than reading whatever object recycled the slot.
+//
+// The Transform& from at() is used immediately and never retained — the
+// store's backing vector reallocates on growth.
+void sync_instance_transforms_from_store() {
+    dauntless::TransformStore& store = dauntless::transform_store();
+    g_world.for_each_alive([&store](scenegraph::Instance& inst) {
+        if (inst.xform_index < 0) return;
+        const auto index = static_cast<std::uint32_t>(inst.xform_index);
+        if (!store.valid(index, inst.xform_generation)) {
+            inst.xform_index = -1;
+            return;
+        }
+        float m[16];
+        dauntless::compose_world_matrix(store.at(index), inst.xform_scale, m);
+        // compose_world_matrix is row-major (it mirrors _world_matrix_from);
+        // glm is column-major. Transpose on the way in, exactly as
+        // set_world_transform does for a Python-supplied matrix.
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                inst.world[c][r] = m[r * 4 + c];
+    });
+}
+
 void frame() {
     if (!g_window || !g_pipeline || !g_submitter) {
         throw std::runtime_error("_dauntless_host: frame called before init");
@@ -737,6 +769,13 @@ void frame() {
     const double now = glfwGetTime();
     const float  dt  = static_cast<float>(now - g_prev_frame_time_seconds);
     g_prev_frame_time_seconds = now;
+
+    {
+        // Store-bound instances first: everything below (animation, culling,
+        // every draw pass) reads inst->world.
+        DAUNTLESS_FRAME_SCOPE("xform_sync");
+        sync_instance_transforms_from_store();
+    }
 
     {
         DAUNTLESS_FRAME_SCOPE("anim");
@@ -1578,6 +1617,41 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_world.set_world_transform(id, mat);
           },
           py::arg("id"), py::arg("mat4"));
+    m.def("set_instance_transform_slot",
+          [](scenegraph::InstanceId id, int index, std::uint32_t generation,
+             float scale) {
+              g_world.set_transform_slot(id, index, generation, scale);
+              // Compose once now, so an instance realized between frames is
+              // already in place for everything that reads inst->world outside
+              // frame() (world_to_body, damage_decal_add, hull_carve_add,
+              // ray_trace_mesh) instead of sitting at identity until the next
+              // frame. Cheap: one instance, not a sweep.
+              if (index >= 0) {
+                  auto& store = dauntless::transform_store();
+                  const auto i = static_cast<std::uint32_t>(index);
+                  if (store.valid(i, generation)) {
+                      float m4[16];
+                      dauntless::compose_world_matrix(store.at(i), scale, m4);
+                      glm::mat4 mat;
+                      for (int r = 0; r < 4; ++r)
+                          for (int c = 0; c < 4; ++c)
+                              mat[c][r] = m4[r * 4 + c];
+                      g_world.set_world_transform(id, mat);
+                  }
+              }
+          },
+          py::arg("iid"), py::arg("index"), py::arg("generation"),
+          py::arg("scale"),
+          "Bind a render instance to a transform-store slot plus a uniform "
+          "scale. The renderer composes its world matrix from the store each "
+          "frame, so the transform never crosses into Python. index < 0 "
+          "unbinds and restores the explicit set_world_transform path.");
+
+    m.def("_debug_sync_instance_transforms",
+          []() { sync_instance_transforms_from_store(); },
+          "Test hook: run the per-frame store->instance sweep that frame() "
+          "runs, without needing a GL context.");
+
     m.def("set_instance_bone_palette",
           [](scenegraph::InstanceId id,
              const std::vector<std::array<float, 16>>& mats) {

@@ -32,6 +32,15 @@ void World::set_world_transform(InstanceId id, const glm::mat4& world) {
     if (auto* inst = get(id)) inst->world = world;
 }
 
+void World::set_transform_slot(InstanceId id, int index,
+                               std::uint32_t generation, float scale) {
+    if (auto* inst = get(id)) {
+        inst->xform_index = index;
+        inst->xform_generation = generation;
+        inst->xform_scale = scale;
+    }
+}
+
 void World::set_bone_palette(InstanceId id, std::vector<glm::mat4> palette) {
     if (auto* inst = get(id)) inst->bone_palette = std::move(palette);
 }

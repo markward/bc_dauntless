@@ -51,6 +51,12 @@ _REQUIRED_BINDINGS = frozenset({
     "transform_set_position", "transform_get_rotation", "transform_set_rotation",
     "transform_get_rotation_col", "transform_get_positions",
     "transform_live_count", "transform_capacity",
+    "set_instance_transform_slot",
+    # Not a function: the InstanceId type itself. set_instance_transform_slot
+    # isinstance-checks against it to tell a real render instance from a test
+    # double's plain int, so a build without it is just as broken as one
+    # missing a call.
+    "InstanceId",
 })
 
 # OPTIONAL: soft-guarded (`getattr(_h, "NAME", None)` / `hasattr(_h, "NAME")`).
@@ -521,3 +527,28 @@ def transform_capacity() -> int:
     if _h is None:
         return 0
     return _h.transform_capacity()
+
+
+def set_instance_transform_slot(iid, index: int, generation: int,
+                                scale: float) -> bool:
+    """Bind render instance `iid` to transform-store slot (index, generation)
+    with a uniform `scale`; `index < 0` unbinds.
+
+    The renderer then composes that instance's world matrix from the store in
+    C++ every frame, so the object's position/rotation stops being marshalled
+    into Python only to be handed straight back as sixteen floats.
+
+    Returns True when the binding took effect. It returns False — and the
+    caller must fall back to pushing an explicit matrix — in exactly two cases:
+    the extension is absent (headless), or `iid` is not a native InstanceId
+    (a test double's plain int). Both mean "no native instance to bind", never
+    "the binding is missing": a stale build that dropped the binding trips
+    validate_bindings() at boot, because it is in _REQUIRED_BINDINGS.
+    """
+    if _h is None:
+        return False
+    if not isinstance(iid, _h.InstanceId):
+        return False
+    _h.set_instance_transform_slot(iid, int(index), int(generation),
+                                   float(scale))
+    return True

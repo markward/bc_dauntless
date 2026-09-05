@@ -129,4 +129,45 @@ TEST(World, CreateInstanceStampsIdOntoInstance) {
         << "create_instance must stamp the returned InstanceId onto instance.id";
 }
 
+// ── Transform-store slot binding ─────────────────────────────────────────────
+// A bound instance's world matrix is composed from the TransformStore each
+// frame instead of being pushed from Python. index < 0 unbinds.
+
+TEST(World, TransformSlotDefaultsToUnbound) {
+    scenegraph::World w;
+    auto id = w.create_instance(1);
+    EXPECT_LT(w.get(id)->xform_index, 0);
+    EXPECT_FLOAT_EQ(w.get(id)->xform_scale, 1.0f);
+}
+
+TEST(World, SetTransformSlotStoresHandleAndScale) {
+    scenegraph::World w;
+    auto id = w.create_instance(1);
+    w.set_transform_slot(id, 5, 3, 2.5f);
+    const scenegraph::Instance* inst = w.get(id);
+    EXPECT_EQ(inst->xform_index, 5);
+    EXPECT_EQ(inst->xform_generation, 3u);
+    EXPECT_FLOAT_EQ(inst->xform_scale, 2.5f);
+}
+
+TEST(World, NegativeTransformSlotUnbinds) {
+    scenegraph::World w;
+    auto id = w.create_instance(1);
+    w.set_transform_slot(id, 5, 3, 2.5f);
+    w.set_transform_slot(id, -1, 0, 1.0f);
+    EXPECT_LT(w.get(id)->xform_index, 0);
+}
+
+TEST(World, RecycledSlotIsNotBoundToThePriorObjectsTransform) {
+    // A destroyed instance's index is recycled; the new occupant must start
+    // unbound, or it would silently follow the dead object's store slot.
+    scenegraph::World w;
+    auto a = w.create_instance(1);
+    w.set_transform_slot(a, 9, 1, 4.0f);
+    w.destroy_instance(a);
+    auto b = w.create_instance(1);
+    ASSERT_EQ(b.index, a.index);
+    EXPECT_LT(w.get(b)->xform_index, 0);
+}
+
 }  // namespace

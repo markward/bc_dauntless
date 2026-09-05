@@ -32,6 +32,18 @@ enum class Pass : std::uint8_t { Space = 0, Bridge = 1, Comm = 2 };
 struct Instance {
     ModelHandle model_handle = 0;
     glm::mat4 world{1.0f};
+
+    /// Transform-store binding (dauntless::TransformStore slot + uniform
+    /// scale). When xform_index >= 0 the host recomposes `world` from the
+    /// store at the top of every frame, so the object's position/rotation
+    /// never crosses into Python just to be handed back as sixteen floats.
+    /// xform_index < 0 = unbound: `world` is whatever was last pushed via
+    /// set_world_transform (bridge geometry, officers, node-anim couplings and
+    /// every render-interpolated ship still take that path).
+    int           xform_index = -1;
+    std::uint32_t xform_generation = 0;
+    float         xform_scale = 1.0f;
+
     bool visible = true;
     Pass pass = Pass::Space;
 

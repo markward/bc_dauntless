@@ -12,6 +12,13 @@ public:
     InstanceId create_instance(ModelHandle model);
     void destroy_instance(InstanceId id);
     void set_world_transform(InstanceId id, const glm::mat4& world);
+
+    /// Bind this instance's world matrix to a transform-store slot plus a
+    /// uniform scale; `index < 0` unbinds and restores the explicit-matrix
+    /// path. The composition itself lives in the host (which owns the store),
+    /// so the scene graph stays free of that dependency.
+    void set_transform_slot(InstanceId id, int index, std::uint32_t generation,
+                            float scale);
     void set_bone_palette(InstanceId id, std::vector<glm::mat4> palette);
     void set_visible(InstanceId id, bool visible);
     void set_pass(InstanceId id, Pass pass);

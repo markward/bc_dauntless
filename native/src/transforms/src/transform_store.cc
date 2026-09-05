@@ -103,6 +103,21 @@ std::vector<std::array<double, 3>> TransformStore::positions(
     return out;
 }
 
+void compose_world_matrix(const TransformStore::Transform& t, float scale,
+                          float out[16]) {
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            out[row * 4 + col] =
+                static_cast<float>(t.rot[row * 3 + col] * scale);
+        }
+        out[row * 4 + 3] = static_cast<float>(t.pos[row]);
+    }
+    out[12] = 0.0f;
+    out[13] = 0.0f;
+    out[14] = 0.0f;
+    out[15] = 1.0f;
+}
+
 TransformStore& transform_store() {
     static TransformStore store;
     return store;

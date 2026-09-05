@@ -92,3 +92,53 @@ TEST(TransformStoreTest, RotationColOutOfRangeThrows) {
     EXPECT_THROW(s.rotation_col(i, g, 3), std::out_of_range);
     s.free(i, g);
 }
+
+// ── compose_world_matrix ─────────────────────────────────────────────────────
+// The renderer's TRS composition. Must reproduce
+// engine/host_loop.py:_world_matrix_from element for element: rotation
+// (row-major) times uniform scale, translation in the fourth column, bottom
+// row 0,0,0,1 — no transpose, no reflection.
+
+TEST(ComposeWorldMatrixTest, RowMajorTrsMatchesHostLoopFormula) {
+    TransformStore::Transform t{};
+    t.pos[0] = 3.0; t.pos[1] = -4.0; t.pos[2] = 5.5;
+    // Deliberately NOT orthonormal: the composition must copy the rotation
+    // through untouched rather than re-derive or normalise it.
+    const double r[9] = {0.11, 0.22, 0.33,
+                         0.44, 0.55, 0.66,
+                         0.77, 0.88, 0.99};
+    for (int i = 0; i < 9; ++i) t.rot[i] = r[i];
+
+    const float scale = 2.5f;
+    float m[16];
+    dauntless::compose_world_matrix(t, scale, m);
+
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            EXPECT_FLOAT_EQ(m[row * 4 + col],
+                            static_cast<float>(r[row * 3 + col]) * scale)
+                << "row " << row << " col " << col;
+        }
+    }
+    EXPECT_FLOAT_EQ(m[3],  3.0f);
+    EXPECT_FLOAT_EQ(m[7],  -4.0f);
+    EXPECT_FLOAT_EQ(m[11], 5.5f);
+    EXPECT_FLOAT_EQ(m[12], 0.0f);
+    EXPECT_FLOAT_EQ(m[13], 0.0f);
+    EXPECT_FLOAT_EQ(m[14], 0.0f);
+    EXPECT_FLOAT_EQ(m[15], 1.0f);
+}
+
+TEST(ComposeWorldMatrixTest, DoesNotReflectTheXColumn) {
+    // Regression guard: the pre-2026-06-18 determinant-normalisation flip
+    // negated body X and drew every hull mirror-imaged. Identity in, positive
+    // scale on the diagonal out.
+    TransformStore s;
+    auto [i, g] = s.alloc();
+    float m[16];
+    dauntless::compose_world_matrix(s.at(i), 3.0f, m);
+    EXPECT_FLOAT_EQ(m[0], 3.0f);
+    EXPECT_FLOAT_EQ(m[5], 3.0f);
+    EXPECT_FLOAT_EQ(m[10], 3.0f);
+    s.free(i, g);
+}
