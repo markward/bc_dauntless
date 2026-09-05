@@ -148,6 +148,7 @@ Some Python files at the project root exist specifically to **shadow SDK modules
 Current shims:
 - `App.py` — Phase 1 replacement for `Appc.dll` / `sdk/Build/scripts/App.py`
 - `LoadBridge.py` — empty `SetClass` registration so `g_kSetManager.GetSet("bridge")` works headless
+- `LoadDamageHitSounds.py` — project-authored SDK *companion* (no BC original): damage-impact sound names for `hit_feedback`. Lives here, not in `sdk/`, because BC content is no longer inside the project tree
 
 Add new SDK-name shadows at the root only when needed; keep application code in `engine/`. If a third shim shows up, consider grouping them into a `shims/` directory and updating `_SDKFinder` accordingly.
 
