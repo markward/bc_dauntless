@@ -120,10 +120,10 @@ def _validate(path, kind: str) -> Validation:
 
 
 def validate_game_root(path) -> Validation:
-    """Is `path` a usable BC game install? Six stat calls, no writes."""
+    """Is `path` a usable BC game install? One stat per marker, no writes."""
     return _validate(path, "game")
 
 
 def validate_sdk_root(path) -> Validation:
-    """Is `path` a usable BC SDK tree? Six stat calls, no writes."""
+    """Is `path` a usable BC SDK tree? One stat per marker, no writes."""
     return _validate(path, "sdk")

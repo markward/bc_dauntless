@@ -3,8 +3,6 @@
 Every test here runs with no real BC install present: fake_bc_install builds
 marker trees under tmp_path.
 """
-from pathlib import Path
-
 from engine import paths
 
 
@@ -79,7 +77,15 @@ def test_hint_when_one_level_too_deep(fake_bc_install):
 
 
 def test_case_mismatch_improves_the_message_without_changing_the_verdict(tmp_path):
-    """On a case-sensitive volume, 'Data/' vs 'data/' is the whole problem."""
+    """On a case-sensitive volume, 'Data/' vs 'data/' is the whole problem.
+
+    The else branch below (the "this volume is case-sensitive" hint path) is
+    case-sensitive-filesystem-only coverage: on a case-insensitive volume the
+    exact check already succeeds and that branch never runs here. See
+    test_case_insensitive_spelling_finds_the_real_on_disk_name and
+    test_hint_names_both_spellings_when_every_marker_differs_only_by_case
+    below for filesystem-independent coverage of the same feature.
+    """
     root = tmp_path / "install"
     for rel in ("Data", "Data/Models", "Data/Textures", "Data/Icons"):
         (root / rel).mkdir(parents=True, exist_ok=True)
@@ -93,6 +99,28 @@ def test_case_mismatch_improves_the_message_without_changing_the_verdict(tmp_pat
         assert not v.ok
         assert v.hint is not None
         assert "Data" in v.hint and "data" in v.hint
+
+
+def test_case_insensitive_spelling_finds_the_real_on_disk_name(tmp_path):
+    """Deterministic on any filesystem: the lookup compares iterdir() names
+    itself rather than asking the OS to match case, so it does not depend on
+    the volume being case-sensitive."""
+    (tmp_path / "Data" / "Models").mkdir(parents=True)
+    assert paths._case_insensitive_spelling(tmp_path, "data") == "Data"
+    assert paths._case_insensitive_spelling(tmp_path, "data/models") == "Data/Models"
+    assert paths._case_insensitive_spelling(tmp_path, "data/nope") is None
+    assert paths._case_insensitive_spelling(tmp_path / "absent", "data") is None
+
+
+def test_hint_names_both_spellings_when_every_marker_differs_only_by_case(tmp_path):
+    """The branch test_case_mismatch_... cannot reach on a case-insensitive
+    volume, driven directly so it runs everywhere."""
+    for rel in ("Data", "Data/Models", "Data/Textures", "Data/Icons"):
+        (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+    hint = paths._hint_for(tmp_path, "game", paths.GAME_MARKERS)
+    assert hint is not None
+    assert "Data" in hint and "data" in hint
+    assert "case-sensitive" in hint
 
 
 def test_hint_is_none_when_the_folder_is_simply_wrong(tmp_path):

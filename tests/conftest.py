@@ -1080,8 +1080,8 @@ def fake_bc_install(tmp_path):
     can pass their shared parent to reproduce the commonest mistake.
     """
     install = tmp_path / "install"
-    game = install / "game"
-    sdk = install / "sdk"
+    game = install / "game"   # paths-guard: fixture builds a fake install tree
+    sdk = install / "sdk"     # paths-guard: fixture builds a fake install tree
     for rel in ("data", "data/Models", "data/Textures", "data/Icons"):
         (game / rel).mkdir(parents=True, exist_ok=True)
     (sdk / "Build" / "scripts").mkdir(parents=True, exist_ok=True)
