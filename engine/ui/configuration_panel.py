@@ -4,7 +4,9 @@ Subclasses engine.ui.panel.Panel; pumped by PanelRegistry like the
 mission picker. Owns a SettingsSnapshot and one injected applier per
 effect. Every state mutation immediately fires the matching applier —
 there is no Apply/Cancel; closing the panel does not revert. Settings
-are not persisted across launches.
+persist across launches via engine.settings_store: the host loop
+loads the store, applies stored values, and binds on_change/on_reset. The
+panel itself never imports the store.
 
 Three rows are masters over several appliers each: Improved Space
 Visuals (volumetric nebulae, procedural sky), Camera Realism
@@ -100,7 +102,9 @@ class ConfigurationPanel(Panel):
                  set_hdr_lens_flare: Callable[[bool], None],
                  set_ship_light_emitters: Callable[[bool], None],
                  set_camera_shake: Callable[[bool], None],
-                 input_map=None):
+                 input_map=None,
+                 on_change: Optional[Callable[[str, object], None]] = None,
+                 on_reset: Optional[Callable[[str], dict]] = None):
         super().__init__()
         self._tabs = list(tabs)
         self._selected_tab = tabs[0][0]
@@ -142,6 +146,11 @@ class ConfigurationPanel(Panel):
         # Controls tab: action → physical-key remapping (engine.input_map.InputMap).
         # Optional so existing construction/tests without a controls tab still work.
         self._input_map = input_map
+        # Persistence seam. Defaults are no-ops so the panel works standalone
+        # and every existing construction site keeps compiling. The panel never
+        # imports the settings store — the host loop binds these.
+        self._on_change = on_change or (lambda key, value: None)
+        self._on_reset = on_reset or (lambda section: {})
         self._capturing_action: Optional[str] = None  # action_id mid key-capture
         self._controls_message: str = ""              # transient conflict/info text
         self._visible: bool = False
@@ -290,31 +299,37 @@ class ConfigurationPanel(Panel):
             for name in appliers:
                 self._appliers[name](new_val)
             setattr(self._settings, key + "_on", new_val)
+            self._on_change(key, new_val)
             return True
         if action == "toggle:camera_shake":
             new_val = not self._settings.camera_shake_on
             self._set_camera_shake(new_val)
             self._settings.camera_shake_on = new_val
+            self._on_change("camera_shake", new_val)
             return True
         if action == "toggle:dust":
             new_val = not self._settings.dust_on
             self._set_dust(new_val)
             self._settings.dust_on = new_val
+            self._on_change("dust", new_val)
             return True
         if action == "toggle:smaa":
             new_val = not self._settings.smaa_on
             self._set_smaa(new_val)
             self._settings.smaa_on = new_val
+            self._on_change("smaa", new_val)
             return True
         if action == "toggle:subtitles":
             new_val = not self._settings.subtitles_on
             self._set_subtitles(new_val)
             self._settings.subtitles_on = new_val
+            self._on_change("subtitles", new_val)
             return True
         if action == "toggle:disable_annoying_dialogue":
             new_val = not self._settings.disable_annoying_dialogue_on
             self._set_disable_annoying_dialogue(new_val)
             self._settings.disable_annoying_dialogue_on = new_val
+            self._on_change("disable_annoying_dialogue", new_val)
             return True
         if action.startswith("ai_difficulty:"):
             raw = action[len("ai_difficulty:"):]
@@ -325,6 +340,7 @@ class ConfigurationPanel(Panel):
             level = max(0, min(2, level))
             self._set_ai_difficulty(level)
             self._settings.ai_difficulty = level
+            self._on_change("ai_difficulty", level)
             return True
         if action.startswith("fov:"):
             raw = action[len("fov:"):]
@@ -335,6 +351,16 @@ class ConfigurationPanel(Panel):
             deg = max(FOV_MIN, min(FOV_MAX, deg))
             self._set_fov_rad(math.radians(deg))
             self._settings.fov_deg = deg
+            self._on_change("fov_deg", deg)
+            return True
+        if action.startswith("reset:"):
+            # Per-tab reset. Scoped rather than global so a fat-finger can't
+            # wipe keybindings, which the Controls tab resets on its own.
+            section = action[len("reset:"):]
+            if section not in ("graphics", "gameplay"):
+                return False
+            for field, value in self._on_reset(section).items():
+                setattr(self._settings, field, value)
             return True
         if action.startswith("tab:"):
             tab_id = action[len("tab:"):]
@@ -405,6 +431,10 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:disable_annoying_dialogue")
         elif activate and kind == "ctrl" and target == "controls_reset":
             self.dispatch_event("controls_reset")
+        elif activate and kind == "ctrl" and target == "reset_graphics":
+            self.dispatch_event("reset:graphics")
+        elif activate and kind == "ctrl" and target == "reset_gameplay":
+            self.dispatch_event("reset:gameplay")
         elif activate and kind == "rebind":
             self.dispatch_event("rebind:" + target)
         elif activate and kind == "tab":
@@ -437,10 +467,12 @@ class ConfigurationPanel(Panel):
             out += [("ctrl", "smaa"), ("ctrl", "dust"), ("ctrl", "fov")]
             out += [("ctrl", k) for k in MASTER_KEYS]
             out += [("ctrl", "camera_shake")]
+            out += [("ctrl", "reset_graphics")]
         elif self._selected_tab == "gameplay":
             out += [("ctrl", "subtitles"),
                     ("ctrl", "disable_annoying_dialogue"),
-                    ("ctrl", "ai_difficulty")]
+                    ("ctrl", "ai_difficulty"),
+                    ("ctrl", "reset_gameplay")]
         elif self._selected_tab == "controls" and self._input_map is not None:
             from engine.input_map import ACTION_IDS
             out += [("rebind", aid) for aid in ACTION_IDS]

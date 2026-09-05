@@ -642,7 +642,8 @@ def test_graphics_control_order_is_standalones_masters_then_trailing():
     standalones-then-masters test, which camera shake made incomplete."""
     p, _ = _make()
     ctrls = [t for kind, t in p._focusables() if kind == "ctrl"]
-    assert ctrls == ["smaa", "dust", "fov"] + list(MASTER_KEYS) + ["camera_shake"]
+    assert ctrls == (["smaa", "dust", "fov"] + list(MASTER_KEYS)
+                      + ["camera_shake", "reset_graphics"])
 
 
 def test_space_on_camera_shake_row_toggles():
@@ -704,16 +705,22 @@ def _js_master_keys():
 
 def test_js_graphics_focusables_match_python():
     """configuration_panel.js composes its focusable list the same way Python
-    does — standalones then masters — but by hand. If the two drift, keyboard
-    focus highlights one row while Space toggles another."""
+    does — standalones, masters, trailing rows, then the reset row — but by
+    hand. If the two drift, keyboard focus highlights one row while Space
+    toggles another."""
     import re
     standalone = re.search(r"CP_GRAPHICS_STANDALONE = \[(.*?)\];", _js_source(), re.S)
     assert standalone, "CP_GRAPHICS_STANDALONE not found"
     trailing = re.search(r"CP_GRAPHICS_TRAILING = \[(.*?)\];", _js_source(), re.S)
     assert trailing, "CP_GRAPHICS_TRAILING not found"
+    resets = re.search(r"CP_RESET_TARGETS = \{(.*?)\};", _js_source(), re.S)
+    assert resets, "CP_RESET_TARGETS not found"
+    graphics_reset = re.search(r"graphics:\s*'(\w+)'", resets.group(1))
+    assert graphics_reset, "CP_RESET_TARGETS has no graphics entry"
     js_targets = (re.findall(r"'(\w+)'", standalone.group(1))
                   + _js_master_keys()
-                  + re.findall(r"\['(\w+)',", trailing.group(1)))
+                  + re.findall(r"\['(\w+)',", trailing.group(1))
+                  + [graphics_reset.group(1)])
     p, _ = _make()
     assert js_targets == [t for kind, t in p._focusables() if kind == "ctrl"]
 
@@ -743,3 +750,111 @@ def test_every_boolean_setting_reaches_the_ui():
     panel, _ = _make()
     panel.open()
     assert_boolean_settings_redraw(panel, lambda body: body.get("settings", {}))
+
+
+# ── persistence callbacks + per-tab reset ───────────────────────────────────
+
+def test_toggle_reports_the_change_once_with_key_and_value():
+    on_change = Mock()
+    p, _ = _make(on_change=on_change)
+    p.dispatch_event("toggle:smaa")
+    on_change.assert_called_once_with("smaa", False)
+
+
+def test_fov_reports_the_change_with_the_clamped_degree_value():
+    on_change = Mock()
+    p, _ = _make(on_change=on_change)
+    p.dispatch_event("fov:999")
+    on_change.assert_called_once_with("fov_deg", 55)
+
+
+def test_ai_difficulty_reports_the_change():
+    on_change = Mock()
+    p, _ = _make(tabs=[("gameplay", "Gameplay")], on_change=on_change)
+    p.dispatch_event("ai_difficulty:2")
+    on_change.assert_called_once_with("ai_difficulty", 2)
+
+
+def test_master_toggle_reports_the_master_key_not_its_members():
+    on_change = Mock()
+    p, _ = _make(on_change=on_change)
+    p.dispatch_event("toggle:improved_space")
+    on_change.assert_called_once_with("improved_space", False)
+
+
+def test_every_toggleable_row_reports_a_change():
+    """A branch that flips state but never calls on_change is a control that
+    silently forgets. Cover them all rather than the two that were easy."""
+    cases = [
+        ("toggle:smaa", "smaa"),
+        ("toggle:dust", "dust"),
+        ("toggle:camera_shake", "camera_shake"),
+        ("toggle:subtitles", "subtitles"),
+        ("toggle:disable_annoying_dialogue", "disable_annoying_dialogue"),
+    ] + [("toggle:" + k, k) for k in MASTER_KEYS]
+    for action, key in cases:
+        on_change = Mock()
+        p, _ = _make(on_change=on_change)
+        p.dispatch_event(action)
+        assert on_change.call_count == 1, "%s did not report" % action
+        assert on_change.call_args[0][0] == key
+
+
+def test_a_raising_applier_does_not_report_a_change():
+    """Ordering is load-bearing: appliers first, setattr second, persistence
+    third. If an applier throws, nothing may be written — otherwise the file
+    records a value the engine is not on."""
+    boom = Mock(side_effect=RuntimeError("renderer said no"))
+    on_change = Mock()
+    p, _ = _make(set_smaa=boom, on_change=on_change)
+    with pytest.raises(RuntimeError):
+        p.dispatch_event("toggle:smaa")
+    on_change.assert_not_called()
+
+
+def test_reset_graphics_writes_returned_fields_into_settings():
+    on_reset = Mock(return_value={"smaa_on": False, "fov_deg": 30})
+    p, _ = _make(on_reset=on_reset)
+    assert p.dispatch_event("reset:graphics") is True
+    on_reset.assert_called_once_with("graphics")
+    assert p._settings.smaa_on is False
+    assert p._settings.fov_deg == 30
+
+
+def test_reset_unknown_section_returns_false():
+    on_reset = Mock(return_value={})
+    p, _ = _make(on_reset=on_reset)
+    assert p.dispatch_event("reset:nonsense") is False
+    on_reset.assert_not_called()
+
+
+def test_reset_row_is_last_focusable_on_graphics():
+    p, _ = _make()
+    assert p._focusables()[-1] == ("ctrl", "reset_graphics")
+
+
+def test_reset_row_is_last_focusable_on_gameplay():
+    p, _ = _make(tabs=[("gameplay", "Gameplay")])
+    assert p._focusables()[-1] == ("ctrl", "reset_gameplay")
+
+
+def test_space_on_the_graphics_reset_row_dispatches_reset():
+    on_reset = Mock(return_value={})
+    p, _ = _make(on_reset=on_reset)
+    p.open()
+    r = _FakeReader()
+    p._focused = p._focusables().index(("ctrl", "reset_graphics"))
+    r.press(r.keys.KEY_SPACE)
+    p.handle_input(r)
+    on_reset.assert_called_once_with("graphics")
+
+
+def test_panel_constructs_without_the_persistence_callbacks():
+    """Existing construction sites and tests must keep working."""
+    p, _ = _make()
+    assert p.dispatch_event("toggle:smaa") is True     # no-op on_change
+    assert p.dispatch_event("reset:graphics") is True  # no-op on_reset
+
+
+def test_js_gameplay_reset_row_exists():
+    assert "reset_gameplay" in _js_source()

@@ -28,9 +28,13 @@ const CP_MASTERS = [
 const CP_GRAPHICS_STANDALONE = ['smaa', 'dust', 'fov'];
 // Plain rows that sit INSIDE the Modern VFX group, after the masters.
 const CP_GRAPHICS_TRAILING = [['camera_shake', 'Camera Shake']];
+// Per-tab "Reset to Defaults" rows. Scoped, not global: the Controls tab
+// resets its own bindings, so a fat-finger here can't wipe them.
+const CP_RESET_TARGETS = {graphics: 'reset_graphics', gameplay: 'reset_gameplay'};
 const CP_GRAPHICS_CTRLS = CP_GRAPHICS_STANDALONE
     .concat(CP_MASTERS.map(m => m[0]))
-    .concat(CP_GRAPHICS_TRAILING.map(t => t[0]));
+    .concat(CP_GRAPHICS_TRAILING.map(t => t[0]))
+    .concat([CP_RESET_TARGETS.graphics]);
 
 // One On/Off settings row. `key` names both the setting (`<key>_on`) and the
 // action (`toggle:<key>`), so a row cannot read one control and toggle another.
@@ -46,6 +50,16 @@ function _cpToggleRow(label, key, on, isFoc) {
          + '</div>';
 }
 
+// One "Reset to Defaults" row, dispatching configuration/reset:<section>.
+function _cpResetRow(section, isFocused) {
+    return '<hr class="cp-divider">'
+         + '<div class="cp-row' + (isFocused ? ' cp-focused' : '') + '">'
+         +   '<span class="cp-label">Reset to Defaults</span>'
+         +   '<button class="cp-toggle"'
+         +      ' onclick="dauntlessEvent(\'configuration/reset:' + section + '\')">Reset</button>'
+         + '</div>';
+}
+
 function _cpFocusableList(state) {
     // Mirror ConfigurationPanel._focusables on the Python side: tabs
     // first, then per-tab controls. Only Graphics ships in this pass.
@@ -56,6 +70,7 @@ function _cpFocusableList(state) {
         out.push({kind: 'ctrl', target: 'subtitles'});
         out.push({kind: 'ctrl', target: 'disable_annoying_dialogue'});
         out.push({kind: 'ctrl', target: 'ai_difficulty'});
+        out.push({kind: 'ctrl', target: CP_RESET_TARGETS.gameplay});
     } else if (state.selected_tab === 'controls') {
         (state.controls || []).forEach(c => out.push({kind: 'rebind', target: c.id}));
         out.push({kind: 'ctrl', target: 'controls_reset'});
@@ -116,6 +131,10 @@ function _cpRenderGraphicsBody(state, focusables) {
         html += _cpToggleRow(t[1], t[0], s[t[0] + '_on'], isFoc);
     });
 
+    html += _cpResetRow('graphics',
+                        focused.kind === 'ctrl'
+                        && focused.target === CP_RESET_TARGETS.graphics);
+
     return html;
 }
 
@@ -157,6 +176,11 @@ function _cpRenderGameplayBody(state, focusables) {
               + '</button>';
     }
     html += '</div></div>';
+
+    html += _cpResetRow('gameplay',
+                        focused.kind === 'ctrl'
+                        && focused.target === CP_RESET_TARGETS.gameplay);
+
     return html;
 }
 
