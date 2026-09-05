@@ -62,7 +62,7 @@ def _place_one_step_outside_the_bubble(t, dt):
     the shot 1.55 GU earlier; the torpedo would already be inside, which is the
     fall-through-to-hull case, not the shield case."""
     step = abs(t._velocity.y) * dt
-    t._position = TGPoint3(0.0, GALAXY_HALF[1] * SQRT3 + 0.5 * step, 0.0)
+    t.SetTranslateXYZ(0.0, GALAXY_HALF[1] * SQRT3 + 0.5 * step, 0.0)
 
 
 def _torpedo_inbound(src, speed_gu_s=55.0):
@@ -188,13 +188,13 @@ def test_torpedo_detonates_on_the_bubble_not_the_bounding_sphere():
     bubble_y = GALAXY_HALF[1] * SQRT3
     # One step outside the bubble — and still well outside the bounding
     # sphere, so the OLD rule would not have registered a hit this tick at all.
-    t._position = TGPoint3(0.0, bubble_y + 0.5 * step, 0.0)
-    assert t._position.y > tgt._radius, "premise: outside the bounding sphere"
+    t.SetTranslateXYZ(0.0, bubble_y + 0.5 * step, 0.0)
+    assert t.GetTranslate().y > tgt._radius, "premise: outside the bounding sphere"
 
     hits = update_all(dt, [src, tgt])
 
     assert len(hits) == 1, "the segment crossed the bubble — that is the hit"
-    assert t._position.y == pytest.approx(bubble_y, abs=1e-3), \
+    assert t.GetTranslate().y == pytest.approx(bubble_y, abs=1e-3), \
         "the torpedo stops ON the bubble"
 
 
@@ -206,12 +206,12 @@ def test_torpedo_with_shields_down_still_uses_the_hull_path():
     dt = 1.0 / 60.0
     step = abs(t._velocity.y) * dt
     bubble_y = GALAXY_HALF[1] * SQRT3
-    t._position = TGPoint3(0.0, bubble_y + 0.5 * step, 0.0)
+    t.SetTranslateXYZ(0.0, bubble_y + 0.5 * step, 0.0)
 
     assert update_all(dt, [src, tgt]) == [], "no bubble to stop it out here"
 
     # It carries on and detonates at the bounding sphere, as before.
-    t._position = TGPoint3(0.0, tgt._radius + 0.5 * step, 0.0)
+    t.SetTranslateXYZ(0.0, tgt._radius + 0.5 * step, 0.0)
     assert len(update_all(dt, [src, tgt])) == 1
 
 
@@ -226,9 +226,9 @@ def test_dorsal_torpedo_reaches_the_thin_axis_of_the_bubble():
     t._velocity = TGPoint3(0.0, 0.0, -speed)          # straight down onto the dorsal
     step = speed * dt
     bubble_z = GALAXY_HALF[2] * SQRT3
-    t._position = TGPoint3(0.0, 0.0, bubble_z + 0.5 * step)
+    t.SetTranslateXYZ(0.0, 0.0, bubble_z + 0.5 * step)
 
     hits = update_all(dt, [src, tgt])
 
     assert len(hits) == 1
-    assert t._position.z == pytest.approx(bubble_z, abs=1e-3)
+    assert t.GetTranslate().z == pytest.approx(bubble_z, abs=1e-3)

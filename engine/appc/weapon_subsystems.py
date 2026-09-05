@@ -284,7 +284,8 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0):
     torp = Torpedo()
     source_ship = emitter._climb_to_ship()
     torp._source_ship = source_ship
-    torp._position = emitter._emitter_world_position()
+    spawn_pos = emitter._emitter_world_position()
+    torp.SetTranslateXYZ(spawn_pos.x, spawn_pos.y, spawn_pos.z)
 
     mod.Create(torp)
 

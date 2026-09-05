@@ -198,15 +198,17 @@ def test_get_xyz_probes_the_accessor_with_implements_not_hasattr():
 def test_a_torpedo_still_reads_its_position_after_the_promotion():
     """The promotion above must not have moved a torpedo's position read.
 
-    ObjectClass.GetTranslate and Torpedo's own GetWorldLocation both resolve
-    `self._position`, so _get_xyz now takes the FIRST accessor instead of the
-    second and must still land on the same coordinates. That equivalence is
-    the whole reason the base-class change was safe; pin it."""
+    Torpedo has no private `_position` field of its own (removed with the
+    TransformStore migration, docs/superpowers/plans/2026-09-05-native-
+    transform-ownership.md) -- GetTranslate and GetWorldLocation are both
+    inherited from ObjectClass unmodified, so both resolve the SAME store
+    slot. _get_xyz picks GetTranslate first (implements() finds it), and it
+    must land on the same coordinates SetTranslateXYZ wrote."""
     from engine.appc.projectiles import Torpedo
     from engine.appc.subsystems import _get_xyz
 
     torp = Torpedo()
-    torp._position = TGPoint3(0.0, 500.0, 0.0)
+    torp.SetTranslateXYZ(0.0, 500.0, 0.0)
 
     assert _get_xyz(torp) == (0.0, 500.0, 0.0)
 

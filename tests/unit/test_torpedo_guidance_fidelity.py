@@ -14,7 +14,7 @@ class FakeShip:
 
 def _torp(pos=(0, 0, 0), vel=(0, 10, 0), target=None):
     t = Torpedo()
-    t._position = TGPoint3(*pos); t._velocity = TGPoint3(*vel)
+    t.SetTranslateXYZ(*pos); t._velocity = TGPoint3(*vel)
     t._target_ship = target
     t.SetGuidanceLifetime(4.0); t.SetMaxAngularAccel(0.125)
     return t

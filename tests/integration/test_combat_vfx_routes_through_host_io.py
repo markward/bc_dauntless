@@ -51,7 +51,7 @@ def test_advance_combat_publishes_torpedo_descriptors_via_host_io():
     from engine.appc.projectiles import Torpedo, register
 
     t = Torpedo()
-    t._position = TGPoint3(1.0, 2.0, 3.0)
+    t.SetTranslateXYZ(1.0, 2.0, 3.0)
     t._velocity = TGPoint3(0.0, 0.0, 0.0)
     t._ttl = 30.0
     t._age = 0.0
@@ -98,7 +98,7 @@ def test_advance_combat_publishes_dynamic_light_descriptors_via_host_io():
         "data/Textures/Tactical/TorpedoGlow.tga",   glow_color, 3.0, 0.3, 0.6,
         "data/Textures/Tactical/TorpedoFlares.tga", glow_color, 8, 0.7, 0.4,
     )
-    t._position = TGPoint3(1.0, 2.0, 3.0)
+    t.SetTranslateXYZ(1.0, 2.0, 3.0)
     t._velocity = TGPoint3(0.0, 0.0, 0.0)
     register(t)
 

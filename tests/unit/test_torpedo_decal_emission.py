@@ -82,7 +82,7 @@ def make_host(monkeypatch):
 
 def _torp(src):
     t = Torpedo()
-    t._position = TGPoint3(0, 0, 0)
+    t.SetTranslateXYZ(0, 0, 0)
     t._velocity = TGPoint3(10, 0, 0)
     t._ttl = 30.0
     t._age = 0.0

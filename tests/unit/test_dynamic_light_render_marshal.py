@@ -38,7 +38,7 @@ def _make_photon():
         "data/Textures/Tactical/TorpedoGlow.tga",   glow_color, 3.0, 0.3, 0.6,
         "data/Textures/Tactical/TorpedoFlares.tga", glow_color, 8, 0.7, 0.4,
     )
-    t._position = App.TGPoint3(5.0, 6.0, 7.0)
+    t.SetTranslateXYZ(5.0, 6.0, 7.0)
     t._velocity = App.TGPoint3(3.0, 4.0, 0.0)
     register(t)
     return t, core_color, glow_color
@@ -91,7 +91,7 @@ def test_mixed_registry_emits_one_light_for_the_photon_only():
 
 def test_torpedo_with_no_create_call_is_skipped():
     t = Torpedo()
-    t._position = App.TGPoint3(1.0, 1.0, 1.0)
+    t.SetTranslateXYZ(1.0, 1.0, 1.0)
     register(t)
     out = _build_dynamic_light_render_data()
     assert out == []

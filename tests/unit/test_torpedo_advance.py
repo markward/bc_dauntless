@@ -30,7 +30,7 @@ def test_guide_homes_on_center_mass_ignoring_subsystem_lock():
     t = Torpedo()
     # Position chosen so the bearing to the hull centre (0,0,0) and the
     # bearing to the subsystem (0,50,0) diverge.
-    t._position = TGPoint3(100.0, -50.0, 0.0)
+    t.SetTranslateXYZ(100.0, -50.0, 0.0)
     t._velocity = TGPoint3(-10.0, 0.0, 0.0)
     t._max_angular_accel = 1000.0              # ample turn authority
     t._target_ship = ship
@@ -52,7 +52,7 @@ def clear_registry():
 
 def _torp_at(x, y, z, vx, vy, vz, ttl=30.0, age=0.0, src=None):
     t = Torpedo()
-    t._position = TGPoint3(x, y, z)
+    t.SetTranslateXYZ(x, y, z)
     t._velocity = TGPoint3(vx, vy, vz)
     t._ttl = ttl
     t._age = age
@@ -87,7 +87,7 @@ class _FakeShip:
 def test_torpedo_position_advances_by_velocity_dt():
     t = _torp_at(0, 0, 0, 10, 0, 0)
     update_all(dt=0.1, all_ships=[])
-    assert t._position.x == pytest.approx(1.0)
+    assert t.GetTranslate().x == pytest.approx(1.0)
     assert t._age == pytest.approx(0.1)
 
 
@@ -107,11 +107,13 @@ def test_torpedo_collides_with_ship_sphere():
     assert hits[0][0] is t
     assert hits[0][1] is target
     # 4-tuple: (torpedo, ship, hit_point, hit_normal). Headless (no host) →
-    # hit_point degrades to torpedo._position and the normal is None (no mesh trace).
+    # hit_point degrades to the torpedo's position and the normal is None
+    # (no mesh trace).
     assert len(hits[0]) == 4
-    assert hits[0][2].x == pytest.approx(t._position.x)
-    assert hits[0][2].y == pytest.approx(t._position.y)
-    assert hits[0][2].z == pytest.approx(t._position.z)
+    t_pos = t.GetTranslate()
+    assert hits[0][2].x == pytest.approx(t_pos.x)
+    assert hits[0][2].y == pytest.approx(t_pos.y)
+    assert hits[0][2].z == pytest.approx(t_pos.z)
     assert hits[0][3] is None
     assert _active == []
 

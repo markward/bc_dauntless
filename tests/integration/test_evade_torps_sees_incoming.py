@@ -51,7 +51,7 @@ def test_evade_torps_records_incoming_torpedo():
     ship = _build_ship()
     # A torpedo 100 GU dead ahead on +Y, closing at 50 GU/s.
     torp = projectiles.Torpedo()
-    torp._position = TGPoint3(0, 100, 0)
+    torp.SetTranslateXYZ(0, 100, 0)
     torp._velocity = TGPoint3(0, -50, 0)
     projectiles.register(torp)
 

@@ -938,7 +938,7 @@ def _fire(source, pos=(0.0, 100.0, 0.0), vel=(0.0, 19.0, 0.0)):
     register()s). 19.0 GU/s is PhotonTorpedo.GetLaunchSpeed()."""
     t = _projectiles.Torpedo()
     t._source_ship = source
-    t._position = TGPoint3(*pos)
+    t.SetTranslateXYZ(*pos)
     t._velocity = TGPoint3(*vel)
     _projectiles.register(t)
     return t

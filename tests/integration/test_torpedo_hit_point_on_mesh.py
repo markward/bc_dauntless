@@ -31,7 +31,7 @@ def test_torpedo_hit_uses_mesh_trace_point(monkeypatch):
     src = _FakeShip(-100, 0, 0)
     target = _FakeShip(5, 0, 0, radius=10.0)
     t = Torpedo()
-    t._position = TGPoint3(0, 0, 0)
+    t.SetTranslateXYZ(0, 0, 0)
     t._velocity = TGPoint3(10, 0, 0)
     t._ttl = 30.0
     t._age = 0.0

@@ -1101,8 +1101,9 @@ def _build_torpedo_render_data():
     falsy input back to "")."""
     out = []
     for t in projectiles._active:
+        pos = t.GetTranslate()
         out.append({
-            "position":      (t._position.x, t._position.y, t._position.z),
+            "position":      (pos.x, pos.y, pos.z),
             "core_texture":  _resolve_game_texture(t._core_texture),
             "core_color":    _dim_color(_color_tuple(t._core_color),
                                         TORPEDO_BRIGHTNESS),
@@ -1154,7 +1155,8 @@ def _build_dynamic_light_render_data():
             t._glow_size_a, t._glow_size_b)
         if radius <= 0:
             continue
-        pos = (t._position.x, t._position.y, t._position.z)
+        t_pos = t.GetTranslate()
+        pos = (t_pos.x, t_pos.y, t_pos.z)
         fade = _camera_distance_fade(pos)
         if fade is None:
             continue        # beyond the cull distance — not built at all

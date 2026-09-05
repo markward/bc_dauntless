@@ -1,4 +1,11 @@
-"""ObjectClass transforms live in the TransformStore, not on the instance."""
+"""ObjectClass transforms live in the TransformStore, not on the instance.
+
+The three lifecycle tests near the bottom (test_slot_is_released_after_
+unregister_and_collection and friends) prove slot release ONLY once an
+object has been both ids.unregister()'d and garbage collected -- see each
+one's docstring. They do not demonstrate that a slot is released in
+production merely by dropping application-level references, because
+engine/core/ids._registry keeps every TGObject alive regardless."""
 import gc
 
 import pytest
@@ -79,10 +86,21 @@ def test_direction_helpers_read_columns():
     assert (fwd.x, fwd.y, fwd.z) == (2.0, 5.0, 8.0)
 
 
-def test_slot_is_released_when_object_is_collected():
-    # engine/core/ids._registry holds every TGObject strongly until
-    # unregister() — mirror real teardown before the GC check (established
-    # convention: tests/unit/test_actions.py::test_object_node_ref_is_weak).
+def test_slot_is_released_after_unregister_and_collection():
+    """NOT a demonstration of production-time release.
+
+    engine/core/ids._registry holds every TGObject strongly for the whole
+    process (nothing calls unregister() for most objects in production —
+    see ids.py's own comments and tests/conftest.py's per-test
+    _ids._registry.clear()), so weakref.finalize cannot fire, and the slot
+    cannot be released, until that strong reference is gone. This test
+    manually calls ids.unregister() first to drop it — mirroring the
+    established convention in
+    tests/unit/test_actions.py::test_object_node_ref_is_weak ("mirror real
+    teardown before the GC check") — so what this proves is "the slot is
+    released once the object is BOTH unregistered AND collected", not that
+    an ordinary drop-all-references is enough on its own.
+    """
     from engine.core.ids import unregister
     store = get_store()
     # A prior test's ObjectClass instances lose their _registry entry the
@@ -105,10 +123,15 @@ def test_slot_is_released_when_object_is_collected():
         store.get_position(*handle)
 
 
-def test_slot_released_even_in_a_reference_cycle():
-    """ObjectClass instances sit in cycles (they are event handlers and the
+def test_slot_released_even_in_a_reference_cycle_after_unregister_and_collection():
+    """NOT a demonstration of production-time release -- see the sibling
+    test's docstring for why ids.unregister() is called first.
+
+    ObjectClass instances sit in cycles (they are event handlers and the
     event manager holds refs back), which is why release uses
-    weakref.finalize rather than __del__."""
+    weakref.finalize rather than __del__: once the registry's strong
+    reference is also gone, the finalizer still fires for a cyclic object,
+    where a bare __del__ would not be guaranteed to."""
     from engine.core.ids import unregister
     store = get_store()
     gc.collect()  # flush any backlog from a prior test; see the sibling test
@@ -124,7 +147,11 @@ def test_slot_released_even_in_a_reference_cycle():
         store.get_position(*handle)
 
 
-def test_many_objects_do_not_leak_slots():
+def test_many_objects_do_not_leak_slots_after_unregister_and_collection():
+    """NOT a demonstration of production-time release -- see
+    test_slot_is_released_after_unregister_and_collection's docstring for
+    why ids.unregister() is called first for every object before the
+    collection check."""
     from engine.core.ids import unregister
     store = get_store()
     gc.collect()  # flush any backlog from a prior test; see the sibling test

@@ -56,7 +56,7 @@ def _ship(x=0.0, y=0.0, z=0.0):
 def _torp(pos, vel, source=None):
     """A registered in-flight torpedo at `pos` travelling `vel`."""
     t = projectiles.Torpedo()
-    t._position = TGPoint3(*pos)
+    t.SetTranslateXYZ(*pos)
     t._velocity = TGPoint3(*vel)
     t._source_ship = source
     projectiles.register(t)

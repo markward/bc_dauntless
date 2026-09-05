@@ -99,7 +99,8 @@ def test_launch_sound_plays_at_the_torpedo_not_the_origin(audio):
     assert pos != (0.0, 0.0, 0.0), (
         "launch sound played at the world origin -- not attached to the torpedo"
     )
-    assert pos == pytest.approx((torp._position.x, torp._position.y, torp._position.z))
+    torp_pos = torp.GetTranslate()
+    assert pos == pytest.approx((torp_pos.x, torp_pos.y, torp_pos.z))
 
     _active.clear()
 
@@ -112,7 +113,8 @@ def test_launch_sound_tracks_the_torpedo_in_flight(audio):
 
     # Advance the torpedo the way projectiles.update_all does (position +=
     # velocity * dt), then pump attached sources exactly like host_loop does.
-    torp._position = torp._position + torp._velocity * 1.0
+    advanced = torp.GetTranslate() + torp._velocity * 1.0
+    torp.SetTranslateXYZ(advanced.x, advanced.y, advanced.z)
 
     _dauntless_host.audio.clear_command_log()
     attached_sources.pump(dt=1.0)
@@ -122,8 +124,9 @@ def test_launch_sound_tracks_the_torpedo_in_flight(audio):
         "the launch sound must be attached to (and follow) the torpedo's node, "
         "not a one-shot position snapshot"
     )
-    assert moves[-1]["f"][0] == pytest.approx(torp._position.x)
-    assert moves[-1]["f"][1] == pytest.approx(torp._position.y)
-    assert moves[-1]["f"][2] == pytest.approx(torp._position.z)
+    torp_pos = torp.GetTranslate()
+    assert moves[-1]["f"][0] == pytest.approx(torp_pos.x)
+    assert moves[-1]["f"][1] == pytest.approx(torp_pos.y)
+    assert moves[-1]["f"][2] == pytest.approx(torp_pos.z)
 
     _active.clear()

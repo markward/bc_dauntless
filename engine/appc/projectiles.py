@@ -32,19 +32,33 @@ class Torpedo(ObjectClass):
     Extends ObjectClass, NOT TGObject, since 2026-09-01 (emitter gaps #6/#7).
     A torpedo is a real set member: BC's ConditionIncomingTorps.EnteredSet
     opens with `App.ObjectClass_Cast(pEvent.GetDestination())` and bails on
-    None, and `SetClass.AddObjectToSet` needs SetName/_containing_set. The
-    transform survives the promotion untouched because both classes already
-    store it in `self._position` and both define GetWorldLocation.
+    None, and `SetClass.AddObjectToSet` needs SetName/_containing_set.
+
+    Position/rotation live in the TransformStore via the inherited
+    ObjectClass accessors (GetTranslate/SetTranslateXYZ/GetWorldLocation) --
+    NOT in a private `_position` field. That used to be true only by
+    accident: before the store migration
+    (docs/superpowers/plans/2026-09-05-native-transform-ownership.md) both
+    ObjectClass and Torpedo happened to read/write the same `self._position`
+    slot, so a Torpedo-local GetWorldLocation override was a harmless no-op.
+    Once ObjectClass.GetTranslate moved to the store, keeping that override
+    would have silently forked torpedoes onto a second, un-migrated storage
+    path -- exactly the "two storage paths, a branch in every accessor" the
+    migration's scope decision rejected. The per-tick motion integrator
+    (update_all) now reads/writes the store directly (one GetTranslate +
+    one SetTranslateXYZ per active torpedo per tick, not per access) rather
+    than mutating a private field.
 
     `__slots__` below is now advisory rather than load-bearing: no class in
     the ObjectClass chain declares slots, so every torpedo carries a __dict__
     regardless. Kept because the named fields still bind to real descriptors
     (cheaper than dict lookups on the hot motion path) and because the list
     documents the projectile's own state. If torpedo count ever becomes a
-    memory problem, this is where it starts.
+    memory problem, this is where it starts. `_position` is deliberately NOT
+    in this list -- it lives in the store, not on the instance.
     """
     __slots__ = (
-        "_position", "_velocity", "_age", "_ttl",
+        "_velocity", "_age", "_ttl",
         "_damage", "_damage_radius_factor",
         "_target_ship",
         "_guidance_lifetime", "_guidance_initial", "_max_angular_accel",
@@ -60,7 +74,8 @@ class Torpedo(ObjectClass):
 
     def __init__(self):
         super().__init__()
-        self._position = TGPoint3(0.0, 0.0, 0.0)
+        # Position/rotation come from ObjectClass.__init__ -> the
+        # TransformStore (default (0, 0, 0) / identity); no local field.
         self._velocity = TGPoint3(0.0, 0.0, 0.0)
         self._age = 0.0
         self._ttl = 60.0
@@ -178,32 +193,10 @@ class Torpedo(ObjectClass):
     def SetMaxAngularAccel(self, v) -> None:      self._max_angular_accel = float(v)
     def SetNetType(self, v) -> None:              pass  # multiplayer; ignored in PR 2b
 
-    def GetWorldLocation(self) -> TGPoint3:
-        """Current in-flight position. Mirrors ObjectClass.GetWorldLocation()
-        so a Torpedo can serve as its own GetNode() anchor for
-        TGSoundManager launch sounds (see GetNode below) -- update_all
-        replaces `_position` wholesale each tick, so this always reads the
-        live value, never a stale snapshot."""
-        return self._position
-
-    # GetTranslate must mirror GetWorldLocation above, NOT the inherited
-    # ObjectClass.GetTranslate. Before the TransformStore migration
-    # (docs/superpowers/plans/2026-09-05-native-transform-ownership.md), both
-    # ObjectClass and Torpedo resolved through the same `self._position`
-    # attribute, so the two accessors were accidentally identical -- that
-    # accident is exactly what the class docstring above calls "the transform
-    # survives the promotion untouched". Once ObjectClass.GetTranslate moved
-    # to the store, that equivalence broke silently: engine.appc.subsystems.
-    # _get_xyz tries GetTranslate first (implements() finds it on the
-    # inherited ObjectClass), so it would read the store's default (0,0,0)
-    # instead of this torpedo's real, self-managed position. Torpedo keeps
-    # its own `_position` slot (not the store) so the per-tick motion
-    # integrator (update_all) can update it without a store round trip;
-    # overriding GetTranslate to match keeps both accessors truthful.
-    # Pinned by tests/unit/test_ship_only_loops_filter_non_ships.py::
-    # test_a_torpedo_still_reads_its_position_after_the_promotion.
-    def GetTranslate(self) -> TGPoint3:
-        return self._position
+    # GetTranslate/GetWorldLocation/SetTranslateXYZ are inherited from
+    # ObjectClass unmodified -- both now resolve through the TransformStore
+    # slot allocated by ObjectClass.__init__. No override: see the class
+    # docstring above for why a Torpedo-local shadow field was removed.
 
     def GetVelocityTG(self) -> TGPoint3:
         """Current in-flight velocity as a FRESH copy. Mirrors
@@ -468,10 +461,21 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
         if t._target_ship is not None and t._age < t._guidance_lifetime:
             _guide(t, dt)
         # 2. Advance position + age.
-        prev_pos = t._position
-        t._position = t._position + t._velocity * dt
+        #
+        # Position is read from and written to the TransformStore exactly
+        # ONCE each per torpedo per tick (prev_pos here, the SetTranslateXYZ
+        # at the bottom of this iteration) -- `cur_pos` is the local,
+        # in-progress authoritative position for the rest of this iteration,
+        # so the store is never round-tripped mid-collision-check the way a
+        # naive per-access conversion of the old `t._position` reads/writes
+        # would have done. Nothing else can observe this torpedo's position
+        # mid-tick (single-threaded, and this torpedo isn't touched again
+        # until its own next iteration), so deferring the write is safe.
+        prev_pos = t.GetTranslate()
+        cur_pos = prev_pos + t._velocity * dt
         t._age += dt
         if t._age >= t._ttl:
+            t.SetTranslateXYZ(cur_pos.x, cur_pos.y, cur_pos.z)
             expired.append(t)
             continue
         # 3. Collide.
@@ -480,7 +484,7 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
         # They used to sit inside the ship loop, which rebuilt three vectors
         # per (torpedo, ship) pair -- 1,900 rebuilds a tick in a 17-ship
         # fight, for values that never varied across the loop.
-        seg = t._position - prev_pos
+        seg = cur_pos - prev_pos
         seg_len = seg.Length()
         # seg_len ~= 0 only if dt or velocity was zero this tick;
         # _resolve_hit_point treats `ray_direction=None` as "degrade
@@ -529,7 +533,7 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                 if (aim_unit is not None and shields_block(ship)) else None)
 
             if bubble_entry is None and not sphere_hit(
-                    t._position, ship.GetWorldLocation(), ship.GetRadius()):
+                    cur_pos, ship.GetWorldLocation(), ship.GetRadius()):
                 continue
 
             if bubble_entry is not None:
@@ -537,7 +541,7 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                 # TestHit returned. The hull point below is still resolved from
                 # the same ray, because damage that overdraws the facing has to
                 # land on real geometry for subsystem attribution.
-                t._position = bubble_entry
+                cur_pos = bubble_entry
             t._bubble_entry = bubble_entry
 
             # Cast from OUTSIDE the hull along the travel direction, long
@@ -551,9 +555,9 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                 radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
                 backoff = radius + seg_len
                 ray_origin = TGPoint3(
-                    t._position.x - aim_unit.x * backoff,
-                    t._position.y - aim_unit.y * backoff,
-                    t._position.z - aim_unit.z * backoff,
+                    cur_pos.x - aim_unit.x * backoff,
+                    cur_pos.y - aim_unit.y * backoff,
+                    cur_pos.z - aim_unit.z * backoff,
                 )
                 ray_max = 2.0 * radius + seg_len
             else:
@@ -564,11 +568,13 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                 ray_origin=ray_origin,
                 ray_direction=aim_unit,
                 max_dist=ray_max,
-                fallback_point=t._position,
+                fallback_point=cur_pos,
             )
             hits.append((t, ship, hit_point, hit_normal))
             expired.append(t)
             break
+
+        t.SetTranslateXYZ(cur_pos.x, cur_pos.y, cur_pos.z)
 
     for t in expired:
         expire(t)
@@ -605,6 +611,9 @@ def _guide(torpedo, dt: float) -> None:
     speed = torpedo._velocity.Length()
     if speed < 1e-6:
         return
+    # Read the store once and reuse it for both branches below (it is used
+    # up to twice per call: `to_t` in the visible branch, `to_aim` always).
+    torp_pos = torpedo.GetTranslate()
     if _target_visible(torpedo, target):
         pos = target.GetWorldLocation()
         torpedo._last_seen_target_pos = TGPoint3(pos.x, pos.y, pos.z)
@@ -612,7 +621,7 @@ def _guide(torpedo, dt: float) -> None:
                if hasattr(target, "GetVelocityTG") else TGPoint3(0, 0, 0))
         if not isinstance(vel, TGPoint3):
             vel = TGPoint3(0.0, 0.0, 0.0)
-        to_t = pos - torpedo._position
+        to_t = pos - torp_pos
         t_go = to_t.Length() / speed
         prev_vel = torpedo._last_target_vel
         if isinstance(prev_vel, TGPoint3) and dt > 1e-9:
@@ -631,7 +640,7 @@ def _guide(torpedo, dt: float) -> None:
         aim = torpedo._last_seen_target_pos
         if aim is None:
             return
-    to_aim = aim - torpedo._position
+    to_aim = aim - torp_pos
     dist = to_aim.Length()
     if dist < 1e-6:
         return

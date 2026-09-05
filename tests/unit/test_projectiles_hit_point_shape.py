@@ -19,7 +19,7 @@ def clear_registry():
 
 def _torp_at(x, y, z, vx, vy, vz, ttl=30.0, age=0.0, src=None):
     t = Torpedo()
-    t._position = TGPoint3(x, y, z)
+    t.SetTranslateXYZ(x, y, z)
     t._velocity = TGPoint3(vx, vy, vz)
     t._ttl = ttl
     t._age = age

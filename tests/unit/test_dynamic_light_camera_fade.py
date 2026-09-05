@@ -246,7 +246,7 @@ def _photon_at(position):
         "data/Textures/Tactical/TorpedoGlow.tga", _color(1.0, 0.25, 0.0), 3.0, 0.3, 0.6,
         "data/Textures/Tactical/TorpedoFlares.tga", _color(1.0, 0.25, 0.0), 8, 0.7, 0.4,
     )
-    t._position = App.TGPoint3(*position)
+    t.SetTranslateXYZ(*position)
     register(t)
     return t
 
