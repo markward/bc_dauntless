@@ -1068,6 +1068,15 @@ def _reset_leakable_engine_globals():
         reset_concealment_state()
     except Exception:
         pass
+    # TransformStore singleton: get_store() resolves the backend lazily on
+    # first use and then holds it for the process. A leaked store would carry
+    # allocated slots (and, once Task 3 lands, a process-wide native handle
+    # table) from one test into the next.
+    try:
+        from engine.appc import transform_store
+        transform_store._reset_store_for_tests()
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True)
