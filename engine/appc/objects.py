@@ -93,6 +93,11 @@ class ObjectClass(TGEventHandlerObject):
         # holds refs back), and __del__ on a cycle member is unreliable.
         self._xform_finalizer = weakref.finalize(
             self, _release_transform_slot, _store, self._xform)
+        # Not atexit: at interpreter shutdown every still-live object's slot
+        # would otherwise be freed one call at a time into the native
+        # extension, in the least predictable part of teardown, for no
+        # benefit -- the process is going away and the store dies with it.
+        self._xform_finalizer.atexit = False
         self._containing_set = None
         # Set via SetDeleteMe(1); the host loop removes flagged objects from
         # their set each tick (BC's engine deletes delete-me-flagged objects).

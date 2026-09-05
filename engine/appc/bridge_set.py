@@ -442,7 +442,7 @@ class CameraObjectClass(_LoudStub):
         """Set the camera's orientation directly from a TGMatrix3.
 
         Mirrors BaseObjectClass.SetMatrixRotation (App.py:3884) and
-        ObjectClass.SetMatrixRotation (engine/appc/objects.py:108): it stores
+        ObjectClass.SetMatrixRotation (engine/appc/objects.py): it stores
         the matrix verbatim — same column-vector right-handed convention
         GetWorldRotation returns and AlignToVectors builds (CLAUDE.md ↦
         rotation matrix convention). CutsceneCameraBegin

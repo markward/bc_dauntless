@@ -2779,9 +2779,9 @@ def _get_xyz(ship) -> tuple:
     stub, and read `.x/.y/.z` off it as 0.0. Any TGObject whose class does not
     really define GetTranslate but does define a later accessor therefore
     resolved to the ORIGIN instead of its position. Measured, not reasoned:
-    a Torpedo (projectiles.py, a TGObject with a real GetWorldLocation at :133
-    and no GetTranslate) read (0,0,0) under hasattr and (0,500,0) under
-    implements.
+    AT THE TIME this was found, Torpedo (projectiles.py) was a bare TGObject
+    with a real GetWorldLocation and no GetTranslate, so it read (0,0,0)
+    under hasattr and (0,500,0) under implements.
 
     That was latent, not live. `ObjectClass` really defines GetTranslate, so
     every ObjectClass descendant — ShipClass, Planet, PhysicsObjectClass,
@@ -2792,6 +2792,16 @@ def _get_xyz(ship) -> tuple:
     changed set, neither of which reaches any of them: Torpedo, and the
     ShipSubsystem/Weapon hierarchy. Running both implementations side by side
     over the whole test suite produced zero divergences.
+
+    STALE AS OF the TransformStore migration
+    (docs/superpowers/plans/2026-09-05-native-transform-ownership.md):
+    Torpedo now extends `ObjectClass` (emitter gaps #6/#7) and no longer
+    overrides GetWorldLocation or GetTranslate at all — both are inherited,
+    unmodified, and store-backed. So a Torpedo DOES define a real
+    GetTranslate today, and this loop resolves it through the FIRST
+    accessor, same as any other ObjectClass. The two-paragraphs above are
+    kept as the historical record of why `implements()` and not `hasattr()`
+    was the fix; do not read them as describing Torpedo's current class.
     """
     # GetTranslate() returns a TGPoint3 with .x, .y, .z attributes.
     for name in ("GetTranslate", "GetWorldLocation", "GetTranslation", "GetPosition",
@@ -2808,6 +2818,13 @@ def _get_xyz(ship) -> tuple:
             except Exception as _e:
                 dev_mode.log_swallowed(f"ship position via {name}", _e)
     # Last resort — direct attribute access for the simplest possible shim.
+    # Dead for every ObjectClass since the TransformStore migration: it no
+    # longer has a `_position` attribute at all, and engine/core/ids.py's
+    # TGObject.__getattr__ raises AttributeError (not a truthy _Stub) for
+    # single-underscore names, so hasattr() here is a real, honest False for
+    # it. Kept for non-ObjectClass duck-typed inputs (bare fakes/test
+    # doubles that set `_position` directly without implementing any of the
+    # accessors above) — do not delete.
     if hasattr(ship, "_position"):
         try:
             p = ship._position
