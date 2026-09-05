@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 // Cloak: translucent glow-keyed hull + screen-space refraction + chromatic
 // dispersion + animated shimmer.
 //

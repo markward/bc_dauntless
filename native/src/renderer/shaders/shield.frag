@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 
 const int MAX_HITS = 8;
 const float TAU = 6.2831853;

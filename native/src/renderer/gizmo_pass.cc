@@ -23,13 +23,13 @@ constexpr float kHeadRadius = 0.05f;
 constexpr float kCubeHalfSide = 0.06f;   // scale-handle cube: side 0.12 * length
 constexpr int kRingSegments = 48;   // rotate-handle ring: segments around the circle
 
-const std::string kVs = R"(#version 330 core
+const std::string kVs = R"(#version 410 core
 layout(location = 0) in vec3 a_pos;
 uniform mat4 u_mvp;
 void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); }
 )";
 
-const std::string kFs = R"(#version 330 core
+const std::string kFs = R"(#version 410 core
 out vec4 frag_color;
 uniform vec3 u_color;
 void main() { frag_color = vec4(u_color, 1.0); }

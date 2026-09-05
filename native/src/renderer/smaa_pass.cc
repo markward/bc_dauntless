@@ -24,7 +24,7 @@ namespace {
 // Common GLSL prologue + SMAA library, prepended to every stage source.
 // `stage_defines` selects VS vs PS code paths inside the SMAA library.
 std::string compose(const char* stage_defines, const char* entry) {
-    return std::string("#version 330 core\n")
+    return std::string("#version 410 core\n")
          + "#define SMAA_GLSL_3 1\n"
          + "#define SMAA_PRESET_HIGH 1\n"
          + stage_defines

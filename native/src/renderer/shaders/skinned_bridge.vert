@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 // Skinned vertex stage for bridge characters. Palette-blends like skinned.vert
 // but outputs the varyings bridge.frag consumes (v_uv, v_uv1), so a skinned
 // character is lit by the same base x ambient path as the bridge geometry.

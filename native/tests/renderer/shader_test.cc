@@ -8,11 +8,11 @@
 
 namespace {
 
-const char* kTrivialVS = R"(#version 330 core
+const char* kTrivialVS = R"(#version 410 core
 void main() { gl_Position = vec4(0.0, 0.0, 0.0, 1.0); }
 )";
 
-const char* kTrivialFS = R"(#version 330 core
+const char* kTrivialFS = R"(#version 410 core
 out vec4 frag;
 void main() { frag = vec4(1.0); }
 )";

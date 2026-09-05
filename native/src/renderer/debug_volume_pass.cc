@@ -18,13 +18,13 @@ namespace {
 
 constexpr int kSegments = 24;   // circular resolution of the debug cylinder
 
-const std::string kVs = R"(#version 330 core
+const std::string kVs = R"(#version 410 core
 layout(location = 0) in vec3 a_pos;
 uniform mat4 u_mvp;
 void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); }
 )";
 
-const std::string kFs = R"(#version 330 core
+const std::string kFs = R"(#version 410 core
 out vec4 frag_color;
 uniform vec3 u_color;
 uniform float u_alpha;   // 1.0 opaque (cylinders/boxes); < 1 for the sphere cage

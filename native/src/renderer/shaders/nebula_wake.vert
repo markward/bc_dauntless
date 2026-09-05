@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 layout(location = 0) in vec2 a_corner;   // [-1,1] quad corner
 
 uniform mat4  u_view;

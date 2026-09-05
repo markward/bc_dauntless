@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 // Screen-space radial scatter ("crepuscular rays"), GPU-Gems formulation.
 // For each lightning flash we march from the current fragment back toward the
 // flash's projected screen anchor, accumulating the bright HDR cloud colour

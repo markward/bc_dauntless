@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 // Star map primitives. Instanced: a_corner is the unit-quad corner for discs
 // and points; lines use a_corner.x as the segment end selector.
 layout(location = 0) in vec2 a_corner;

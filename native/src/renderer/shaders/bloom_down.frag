@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 in vec2 v_uv; out vec4 frag_color;
 uniform sampler2D u_src;
 uniform vec2 u_texel;          // 1/source_size

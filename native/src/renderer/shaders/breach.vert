@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 
 // Breach interior scoop — unit sphere driven per active carve sphere.
 //

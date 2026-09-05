@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 // Cloak refraction — mesh transform. The pass re-draws the cloaking ship's real
 // geometry at its world transform; the fragment shader bends the background
 // behind each fragment and composites the hull's own textures translucently.

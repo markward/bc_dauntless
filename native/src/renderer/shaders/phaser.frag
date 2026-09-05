@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 in  vec2 v_uv;
 in  float v_t;
 out vec4 frag_color;

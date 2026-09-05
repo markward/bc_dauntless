@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 in vec2 v_uv;
 uniform sampler2D u_tex;   // reticle art (white/grey, tinted by u_tint)
 uniform vec4 u_tint;       // multiply colour (rgb) + alpha scale

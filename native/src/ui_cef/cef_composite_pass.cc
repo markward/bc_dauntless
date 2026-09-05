@@ -11,7 +11,7 @@ namespace dauntless::ui_cef {
 namespace {
 
 const char* kVS = R"(
-#version 330 core
+#version 410 core
 layout(location=0) in vec2 a_pos;
 out vec2 v_uv;
 void main() {
@@ -22,7 +22,7 @@ void main() {
 )";
 
 const char* kFS = R"(
-#version 330 core
+#version 410 core
 in vec2 v_uv;
 out vec4 frag_color;
 uniform sampler2D u_tex;

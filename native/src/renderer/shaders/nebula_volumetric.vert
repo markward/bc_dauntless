@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 out vec2 v_uv;
 void main() {
     vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
