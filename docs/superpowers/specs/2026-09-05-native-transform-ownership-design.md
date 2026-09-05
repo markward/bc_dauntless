@@ -151,7 +151,18 @@ across a realloc, which is why Python receives an index and never a pointer.
 in reference cycles — they are event handlers and the event manager holds refs
 back — and `__del__` on cycle members is unreliable. A
 `weakref.finalize(self, _free_slot, index, generation)` registered at
-construction is deterministic and cycle-safe.
+construction is cycle-safe.
+
+**Correction (2026-09-05, found during Task 4): release is NOT deterministic in
+production.** `engine/core/ids.py:6` holds `_registry` as a plain strong dict and
+`TGObject.__init__` writes `_registry[self._obj_id] = self` (`:186`), so every
+object is immortal unless something calls `ids.unregister()`. The finalizer
+therefore fires only once that strong reference is gone, which for most objects
+is never. This **pre-dates this project** — objects were already immortal and
+already carried their transforms with them — so the store adds bytes to an
+existing leak rather than creating a new one. The lifecycle tests unregister
+explicitly and say so; they do not demonstrate production-time release. Fixing
+the registry's ownership is a separate piece of work.
 
 Slot lifetime therefore tracks the *Python object's* lifetime, not set
 membership. That is correct: `RemoveObjectFromSet` / `DeleteObjectFromSet`
