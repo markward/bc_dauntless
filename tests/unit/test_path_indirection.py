@@ -6,6 +6,28 @@ docstring in engine/ that cites sdk/Build/scripts/... -- there are dozens --
 and it MISSES engine/dev_keybindings.py's nine-line constant, where no single
 line holds both the root and the segment. A guard that cries wolf gets
 deleted, and one that misses the hardest case is worse than none.
+
+What the scan reaches, and what it does not. `ast.walk` sees every string
+constant in a module, not just assignment targets, so an assigned string
+(`X = "game/..."`), a bare string that is not a docstring, and a string
+buried in a dict or list literal are all caught the same way -- and so is
+an f-string SEGMENT that itself begins "game/", because each literal piece
+of an f-string is its own constant node. What it cannot see is a spelling
+assembled at runtime: an f-string substitution that only completes the
+prefix once formatted (`f"ga{x}me/data"`) or two constants joined by `+`
+(`"ga" + "me"`) never appear as a single string constant to walk, so
+neither is caught. That is an inherent limit of scanning string constants,
+not a bug in this guard, and it is not worth chasing -- nobody spells a BC
+root that way by accident, and anybody doing it on purpose to dodge the
+guard has bigger problems. The `# paths-guard:` escape is matched per
+LINE, by substring: a line carrying the comment silences every offending
+constant that line contains, not just the one the reason was written
+about, so keep escaped lines to one offender each if the distinction ever
+matters. The C++ guard's comment handling is narrower still -- it skips
+`//` line comments only; a `/* ... */` block comment containing `"game/`
+would be flagged as a real offender. None exists in the tree today, so
+this has not needed the `# paths-guard:` escape yet, but a future block
+comment quoting a game/ path for documentation purposes would need one.
 """
 import ast
 from pathlib import Path
@@ -36,13 +58,19 @@ UNPARSEABLE_ZONE = PROJECT_ROOT / "tools" / "probes"
 
 
 def _sources():
-    """engine/ and tools/ entirely, plus conftest -- but not tests/ at large:
-    a test fixture that builds a fake install tree is the one legitimate
-    reason to spell the layout."""
+    """engine/ and tools/ entirely, plus conftest and the project-root SDK
+    shims -- but not tests/ at large: a test fixture that builds a fake
+    install tree is the one legitimate reason to spell the layout.
+
+    The root shims (App.py, LoadBridge.py, LoadDamageHitSounds.py, ...) are
+    scanned because both SDK finders resolve them BEFORE the SDK, so one
+    hardcoding a BC root would silently win over the real thing.
+    """
     for sub in ("engine", "tools"):
         for path in (PROJECT_ROOT / sub).rglob("*.py"):
             if "__pycache__" not in path.parts:
                 yield path
+    yield from sorted(PROJECT_ROOT.glob("*.py"))
     yield PROJECT_ROOT / "tests" / "conftest.py"
 
 
@@ -158,18 +186,20 @@ def test_no_cpp_source_spells_a_game_prefix():
              PROJECT_ROOT / "native" / "src" / "renderer" / "include"
              / "renderer" / "asset_path.h"}
     offenders = []
-    for pattern in ("*.cc", "*.h", "*.mm"):
-        for path in (PROJECT_ROOT / "native" / "src").rglob(pattern):
-            if path in allow:
-                continue
-            for n, line in enumerate(
-                    path.read_text(errors="replace").splitlines(), 1):
-                stripped = line.strip()
-                if stripped.startswith("//") or _ESCAPE in line:
+    for cpp_root in (PROJECT_ROOT / "native" / "src",
+                      PROJECT_ROOT / "native" / "tools"):
+        for pattern in ("*.cc", "*.h", "*.mm"):
+            for path in cpp_root.rglob(pattern):
+                if path in allow:
                     continue
-                if '"game/' in line:
-                    offenders.append(
-                        f"{path.relative_to(PROJECT_ROOT)}:{n}: {stripped}")
+                for n, line in enumerate(
+                        path.read_text(errors="replace").splitlines(), 1):
+                    stripped = line.strip()
+                    if stripped.startswith("//") or _ESCAPE in line:
+                        continue
+                    if '"game/' in line:
+                        offenders.append(
+                            f"{path.relative_to(PROJECT_ROOT)}:{n}: {stripped}")
     assert offenders == [], (
         'these carry a literal "game/" prefix instead of routing through '
         "renderer::resolve_asset_path:\n" + "\n".join(offenders))
