@@ -86,7 +86,7 @@ std::vector<ParticleEmitterDescriptor> build_venting_descriptors(
         //     Noise3.tga is the viewscreen-static asset: alpha noise with border
         //     mean 125.8 vs centre 122.2 — no falloff, so every vent particle was
         //     a square of TV static. rough.tga measures 0.6 border / 234.3 centre.
-        d.texture_path = "game/data/rough.tga";
+        d.texture_path = "data/rough.tga";
 
         out.push_back(d);
     }

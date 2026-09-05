@@ -71,3 +71,55 @@ TEST(AssetPath, AlreadyPrefixedRequiresASeparatorNotJustThePrefix) {
     // Bare "game" is a file named game, not the prefix.
     EXPECT_EQ(resolve_asset_path("game"), "game/game");
 }
+
+// --- a settable game root ---------------------------------------------------
+//
+// The 26 literals that used to spell "game/data/..." now spell
+// "data/..." and route through resolve_asset_path, so one variable decides
+// where BC content lives. The default stays "game" so every test above, and
+// every native/tools/ probe, behaves exactly as it did.
+
+namespace {
+struct GameRootGuard {
+    std::string saved = renderer::game_root();
+    ~GameRootGuard() { renderer::set_game_root(saved); }
+};
+}  // namespace
+
+TEST(AssetPath, DefaultRootIsTheLiteralGame) {
+    EXPECT_EQ(renderer::game_root(), "game");
+}
+
+TEST(AssetPath, SetRootIsUsedAsThePrefix) {
+    GameRootGuard guard;
+    renderer::set_game_root("/opt/BC/game");
+    EXPECT_EQ(resolve_asset_path("data/rough.tga"), "/opt/BC/game/data/rough.tga");
+}
+
+TEST(AssetPath, IdempotentUnderAChangedRoot) {
+    GameRootGuard guard;
+    renderer::set_game_root("/opt/BC/game");
+    EXPECT_EQ(resolve_asset_path("/opt/BC/game/data/rough.tga"),
+              "/opt/BC/game/data/rough.tga");
+}
+
+TEST(AssetPath, AbsolutePathsStillPassThroughUnderAChangedRoot) {
+    GameRootGuard guard;
+    renderer::set_game_root("/opt/BC/game");
+    EXPECT_EQ(resolve_asset_path("/elsewhere/x.tga"), "/elsewhere/x.tga");
+}
+
+TEST(AssetPath, ALegacyGamePrefixIsStrippedNotDoubled) {
+    // A missed literal must still LOAD -- and be visible in the log -- rather
+    // than resolve to /opt/BC/game/game/data/... and silently draw untextured.
+    GameRootGuard guard;
+    renderer::set_game_root("/opt/BC/game");
+    EXPECT_EQ(resolve_asset_path("game/data/rough.tga"),
+              "/opt/BC/game/data/rough.tga");
+}
+
+TEST(AssetPath, EmptyRootFallsBackToTheDefault) {
+    GameRootGuard guard;
+    renderer::set_game_root("");
+    EXPECT_EQ(renderer::game_root(), "game");
+}

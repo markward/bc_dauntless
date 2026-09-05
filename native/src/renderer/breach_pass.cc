@@ -3,6 +3,7 @@
 
 #include <renderer/pipeline.h>
 #include <renderer/carve_field_cache.h>
+#include <renderer/asset_path.h>
 #include "sphere_mesh.h"
 
 #include <scenegraph/breach_events.h>
@@ -22,6 +23,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -40,10 +42,10 @@ namespace {
 // the game clock. (BC ships these loose in data/, separate from the static
 // Textures/Effects/Damage.tga.) 64x64 24-bit RGB each.
 constexpr const char* kDamageFramePaths[4] = {
-    "game/data/Damage1.tga",
-    "game/data/Damage2.tga",
-    "game/data/Damage3.tga",
-    "game/data/Damage4.tga",
+    "data/Damage1.tga",
+    "data/Damage2.tga",
+    "data/Damage3.tga",
+    "data/Damage4.tga",
 };
 // Animation playback rate (frames/sec). 4 frames at 8 fps = a 0.5s loop —
 // a lively damage shimmer on the breach interior. Eyeball-tunable.
@@ -115,7 +117,8 @@ void BreachPass::ensure_damage_frames() {
     if (damage_frames_tried_) return;
     damage_frames_tried_ = true;
     for (int i = 0; i < 4; ++i) {
-        assets::Texture tex = load_damage_tga(kDamageFramePaths[i]);
+        const std::string resolved = resolve_asset_path(kDamageFramePaths[i]);
+        assets::Texture tex = load_damage_tga(resolved.c_str());
         damage_frames_[i] = tex.id();
         damage_owned_.emplace_back(std::move(tex));  // keep the id alive on the pass
     }

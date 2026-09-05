@@ -70,7 +70,7 @@ std::vector<ParticleEmitterDescriptor> build_debris_descriptors(
             d.color_keys[1] = ParticleKey{1.0f, 0.f, 0.22f, 0.22f, 0.24f};
             d.seed = seed01((ev.seed ^ 0x9e3779b97f4a7c15ull)
                                     ^ 0x517cc1b727220a95ull);
-            d.texture_path = "game/data/square.tga";
+            d.texture_path = "data/square.tga";
             out.push_back(d);
         }
 
@@ -106,7 +106,7 @@ std::vector<ParticleEmitterDescriptor> build_debris_descriptors(
             d.color_keys[1] = ParticleKey{1.0f, 0.f, 0.7f, 0.18f, 0.02f};
             d.seed = seed01((ev.seed ^ 0xa24baed4963ee407ull)
                                     ^ 0x2545f4914f6cdd1dull);
-            d.texture_path = "game/data/spark.tga";
+            d.texture_path = "data/spark.tga";
             out.push_back(d);
         }
     }

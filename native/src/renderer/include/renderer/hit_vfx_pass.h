@@ -44,8 +44,8 @@ public:
 
     /// Sprite paths this pass opens via std::ifstream, relative to the
     /// renderer's runtime CWD (the project root). Exposed so a test can
-    /// verify they resolve — a missing "game/" prefix silently no-ops the
-    /// whole pass.
+    /// verify they resolve — a missing resolve_asset_path call silently
+    /// no-ops the whole pass.
     static const char* impact_texture_path();
     static const char* spark_texture_path();
 

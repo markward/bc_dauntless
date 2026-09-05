@@ -1472,6 +1472,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Open a window and initialise the renderer.");
     m.def("shutdown", &shutdown);
 
+    m.def("set_game_root",
+          [](const std::string& root) { renderer::set_game_root(root); },
+          py::arg("root"),
+          "Absolute path to the BC game install. Every relative asset path "
+          "the renderer resolves is joined onto this. Default is the literal "
+          "\"game\" (cwd-relative). Callable more than once.");
+
     // Introspection for tests/host/test_init_resets_frame_state.py: everything
     // reset_frame_state() clears, reduced to a count or a flag. Deliberately
     // read-only and deliberately covering EVERY member of that function -- the

@@ -21,8 +21,8 @@ TEST(BuildDebrisDescriptors, FreshEventYieldsChunkAndSpark) {
     scenegraph::InstanceId id{2, 1};
     auto desc = renderer::build_debris_descriptors(ring, id, 0.1f);
     ASSERT_EQ(desc.size(), 2u) << "one chunk emitter + one spark emitter";
-    EXPECT_EQ(desc[0].texture_path, "game/data/square.tga");
-    EXPECT_EQ(desc[1].texture_path, "game/data/spark.tga");
+    EXPECT_EQ(desc[0].texture_path, "data/square.tga");
+    EXPECT_EQ(desc[1].texture_path, "data/spark.tga");
 }
 
 TEST(BuildDebrisDescriptors, BothAttachedToInstance) {

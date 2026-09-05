@@ -1,6 +1,7 @@
 // native/tests/renderer/hit_vfx_pass_test.cc
 #include <gtest/gtest.h>
 #include <renderer/hit_vfx_pass.h>
+#include <renderer/asset_path.h>
 #include <scenegraph/world.h>
 #include <scenegraph/instance.h>
 #include <glm/glm.hpp>
@@ -26,12 +27,13 @@ TEST(HitVfxSparkAnchor, OriginTracksWorldMatrix) {
 
 // Regression guard for the texture-path bug: the renderer runs with CWD =
 // project root, and HitVfxPass opens its sprites via std::ifstream on
-// CWD-relative paths. A missing "game/" prefix makes load_sprite fail, the
-// main texture stays id()==0, and render() early-returns — silently
-// suppressing the WHOLE pass (flash + sparks). The existing render tests
-// never caught this because they load assets via absolute paths, not the
-// pass's CWD-relative ifstream. This test reproduces the runtime CWD and
-// asserts the pass's own constant paths actually open.
+// paths resolved through resolve_asset_path. A missing resolve_asset_path
+// call makes load_sprite fail, the main texture stays id()==0, and render()
+// early-returns — silently suppressing the WHOLE pass (flash + sparks). The
+// existing render tests never caught this because they load assets via
+// absolute paths, not the pass's CWD-relative ifstream. This test reproduces
+// the runtime CWD and asserts the pass's own constant paths, once resolved,
+// actually open.
 TEST(HitVfxTextures, ConstantPathsResolveFromRendererCwd) {
     namespace fs = std::filesystem;
     const fs::path root = fs::path(__FILE__)
@@ -39,8 +41,8 @@ TEST(HitVfxTextures, ConstantPathsResolveFromRendererCwd) {
 
     // Skip only when the BC sprite assets are genuinely absent (judged via
     // the known-good absolute locations, NOT the pass's constants — so a
-    // reverted "game/" prefix FAILS here instead of masquerading as "assets
-    // absent" and skipping).
+    // reverted resolve_asset_path call FAILS here instead of masquerading as
+    // "assets absent" and skipping).
     const fs::path known_flash =
         root / "game" / "data" / "Textures" / "Tactical" / "TorpedoFlares.tga";
     const fs::path known_spark = root / "game" / "data" / "rough.tga";
@@ -48,21 +50,24 @@ TEST(HitVfxTextures, ConstantPathsResolveFromRendererCwd) {
         GTEST_SKIP() << "BC sprite assets not present under " << (root / "game");
     }
 
-    // Emulate the renderer's runtime CWD and open the pass's verbatim paths.
+    // Emulate the renderer's runtime CWD and open the pass's constants
+    // through the same resolve_asset_path call load_sprite makes.
     const fs::path prev = fs::current_path();
     fs::current_path(root);
-    std::ifstream flash(renderer::HitVfxPass::impact_texture_path(), std::ios::binary);
-    std::ifstream spark(renderer::HitVfxPass::spark_texture_path(),  std::ios::binary);
+    const std::string flash_path =
+        renderer::resolve_asset_path(renderer::HitVfxPass::impact_texture_path());
+    const std::string spark_path =
+        renderer::resolve_asset_path(renderer::HitVfxPass::spark_texture_path());
+    std::ifstream flash(flash_path, std::ios::binary);
+    std::ifstream spark(spark_path, std::ios::binary);
     const bool flash_ok = flash.good();
     const bool spark_ok = spark.good();
     fs::current_path(prev);
 
     EXPECT_TRUE(flash_ok)
-        << "main flash sprite did not open from project root: "
-        << renderer::HitVfxPass::impact_texture_path();
+        << "main flash sprite did not open from project root: " << flash_path;
     EXPECT_TRUE(spark_ok)
-        << "spark sprite did not open from project root: "
-        << renderer::HitVfxPass::spark_texture_path();
+        << "spark sprite did not open from project root: " << spark_path;
 }
 
 // ── the flash rides the hull too ──────────────────────────────────────────

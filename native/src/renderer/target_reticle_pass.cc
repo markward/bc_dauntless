@@ -2,6 +2,8 @@
 #include "renderer/target_reticle_pass.h"
 #include "renderer/pipeline.h"
 
+#include <renderer/asset_path.h>
+
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
 
@@ -18,10 +20,10 @@ namespace renderer {
 
 namespace {
 
-constexpr const char* kCornerFile    = "game/data/target.tga";
-constexpr const char* kCrosshairFile = "game/data/subtarget.tga";
-constexpr const char* kBarFile   = "game/data/Icons/tilehorizline.tga";
-constexpr const char* kArrowFile = "game/data/Icons/TargetArrow.tga";
+constexpr const char* kCornerFile    = "data/target.tga";
+constexpr const char* kCrosshairFile = "data/subtarget.tga";
+constexpr const char* kBarFile   = "data/Icons/tilehorizline.tga";
+constexpr const char* kArrowFile = "data/Icons/TargetArrow.tga";
 
 // Constant on-screen size (pixels) for each corner glyph and the crosshair.
 constexpr float kCornerSizePx    = 24.0f;
@@ -101,10 +103,10 @@ void TargetReticlePass::ensure_quad() {
 void TargetReticlePass::ensure_textures() {
     if (textures_loaded_) return;
     textures_loaded_ = true;
-    corner_tex_    = load_tga(kCornerFile);
-    crosshair_tex_ = load_tga(kCrosshairFile);
-    bar_tex_   = load_tga(kBarFile);
-    arrow_tex_ = load_tga(kArrowFile);
+    corner_tex_    = load_tga(resolve_asset_path(kCornerFile).c_str());
+    crosshair_tex_ = load_tga(resolve_asset_path(kCrosshairFile).c_str());
+    bar_tex_   = load_tga(resolve_asset_path(kBarFile).c_str());
+    arrow_tex_ = load_tga(resolve_asset_path(kArrowFile).c_str());
 }
 
 void TargetReticlePass::render(const TargetReticle& reticle,

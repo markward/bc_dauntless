@@ -159,9 +159,10 @@ int main(int argc, char* argv[]) {
     configure_python_path(project_root);
 
     // Enter the project root. Every renderer asset path is relative to it --
-    // renderer::resolve_asset_path prepends "game/", and 36 load sites across
-    // 11 files spell "game/data/..." literally -- and window.cc opts out of
-    // GLFW's macOS chdir specifically to keep this cwd intact.
+    // renderer::resolve_asset_path prepends the configured game root
+    // (default "game"), and 36 load sites across 11 files spell
+    // "game/data/..." literally -- and window.cc opts out of GLFW's macOS
+    // chdir specifically to keep this cwd intact.
     //
     // That invariant was never enforced, only habitual: it held because the
     // binary was always launched from the root. Any other cwd left all 36

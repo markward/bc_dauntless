@@ -7,11 +7,13 @@
 #include "renderer/carve_field_cache.h"
 #include "renderer/dynamic_lights.h"
 #include "renderer/aabb.h"
+#include <renderer/asset_path.h>
 
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -229,10 +231,11 @@ unsigned int ensure_damage_decal_texture() {
     if (g_decal_tried) return g_decal_id;
     g_decal_tried = true;
 
-    constexpr const char* kPath = "game/data/Textures/Effects/Damage.tga";
-    std::ifstream in(kPath, std::ios::binary);
+    constexpr const char* kPath = "data/Textures/Effects/Damage.tga";
+    const std::string resolved = resolve_asset_path(kPath);
+    std::ifstream in(resolved, std::ios::binary);
     if (!in) {
-        // game/ not installed — framework will be silently disabled.
+        // game root not installed — framework will be silently disabled.
         return 0;
     }
     std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
@@ -243,7 +246,8 @@ unsigned int ensure_damage_decal_texture() {
         g_decal_id    = tex.id();
         g_decal_owner = std::move(tex);
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "[frame] failed to load '%s': %s\n", kPath, e.what());
+        std::fprintf(stderr, "[frame] failed to load '%s': %s\n",
+                     resolved.c_str(), e.what());
     }
     return g_decal_id;
 }

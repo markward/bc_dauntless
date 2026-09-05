@@ -32,19 +32,23 @@ inline bool is_absolute_asset_path(const std::string& path) {
 #endif
 }
 
+/// The BC install root every relative asset path is resolved against.
+/// Defaults to the literal "game", which is cwd-relative and preserves the
+/// in-project layout; host_loop sets an absolute path at boot once
+/// engine.paths has resolved one. Settable more than once: the first-run
+/// picker changes it after the window is already up.
+void set_game_root(const std::string& root);
+const std::string& game_root();
+
 /// Resolve an SDK/BC asset path (relative to the game install root, e.g.
-/// "data/Textures/Effects/ExplosionB.tga") to a path openable from the
-/// renderer's working directory (the repo root), where BC assets live under
-/// "game/". Idempotent: already-"game/"-prefixed, absolute, and empty paths
-/// are returned unchanged. Mirrors hit_vfx_pass.cc's hardcoded "game/" prefix.
-inline std::string resolve_asset_path(const std::string& path) {
-    if (path.empty()) return path;
-    if (is_absolute_asset_path(path)) return path;
-    if (path.rfind("game", 0) == 0 && path.size() > 4
-        && (path[4] == '/' || path[4] == kBackslash)) {
-        return path;                                 // already prefixed
-    }
-    return "game/" + path;
-}
+/// "data/Textures/Effects/ExplosionB.tga") to an openable path.
+/// Idempotent: already-rooted, absolute, and empty paths are returned
+/// unchanged.
+///
+/// A path that still carries a literal "game/" prefix while the root is
+/// something else is a MISSED MIGRATION: the prefix is stripped so the asset
+/// still loads, and the fact is logged once. Without that, the symptom would
+/// be an untextured pass and no error at all.
+std::string resolve_asset_path(const std::string& path);
 
 }  // namespace renderer

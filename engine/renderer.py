@@ -57,7 +57,7 @@ _REQUIRED_BINDINGS = frozenset({
     "rim_set_enabled", "set_backdrops", "set_bridge_ambient_scale",
     "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
-    "set_dust_planets", "set_emissive_scale", "set_glow_region_dim",
+    "set_dust_planets", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
     "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
     "set_instance_animation", "set_instance_rest_pose", "set_lens_flares",
@@ -197,6 +197,11 @@ def set_emissive_scale(iid: InstanceId, scale: float) -> None:
     """Scale an instance's self-illumination (emissive + glow). 1.0 = normal,
     0.0 = destroyed/dark hull."""
     _h.set_emissive_scale(iid, scale)
+
+
+def set_game_root(root: str) -> None:
+    """Point the renderer's relative asset paths at a BC install."""
+    _h.set_game_root(root)
 
 
 def set_camera(eye: Tuple[float, float, float],

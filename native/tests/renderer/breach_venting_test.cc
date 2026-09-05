@@ -157,7 +157,10 @@ TEST(BuildVentingDescriptors, TextureFileExistsOnDisk) {
     scenegraph::InstanceId id{1, 1};
     auto desc = renderer::build_venting_descriptors(ring, id, 0.f);
     ASSERT_EQ(desc.size(), 1u);
-    EXPECT_TRUE(fs::exists(root / desc[0].texture_path))
+    // texture_path is root-relative (e.g. "data/rough.tga"), resolved later
+    // by particle_pass.cc's resolve_asset_path -- so check it under "game/"
+    // (the default root) rather than the project root directly.
+    EXPECT_TRUE(fs::exists(root / "game" / desc[0].texture_path))
         << "venting texture does not exist: " << desc[0].texture_path;
 }
 

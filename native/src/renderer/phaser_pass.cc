@@ -2,6 +2,8 @@
 #include "renderer/phaser_pass.h"
 #include "renderer/pipeline.h"
 
+#include <renderer/asset_path.h>
+
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
 
@@ -11,6 +13,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <string>
 
 namespace renderer {
 
@@ -18,7 +21,7 @@ namespace {
 // Source-of-truth: galaxy.py:438 → SetTextureName("data/phaser.tga").
 // PhaserLights.tga (in Textures/Tactical/) is the lit-strip markings on
 // the saucer hull, NOT the beam visual.
-constexpr const char* kBeamTexturePath = "game/data/phaser.tga";
+constexpr const char* kBeamTexturePath = "data/phaser.tga";
 }
 
 PhaserPass::PhaserPass() = default;
@@ -31,9 +34,11 @@ PhaserPass::~PhaserPass() {
 void PhaserPass::ensure_texture() {
     if (texture_loaded_) return;
     texture_loaded_ = true;
-    std::ifstream in(kBeamTexturePath, std::ios::binary);
+    const std::string beam_path = resolve_asset_path(kBeamTexturePath);
+    std::ifstream in(beam_path, std::ios::binary);
     if (!in) {
-        std::fprintf(stderr, "[phaser_pass] failed to open '%s'\n", kBeamTexturePath);
+        std::fprintf(stderr, "[phaser_pass] failed to open '%s'\n",
+                     beam_path.c_str());
         texture_ = std::make_unique<assets::Texture>();
         return;
     }
@@ -49,7 +54,7 @@ void PhaserPass::ensure_texture() {
         texture_ = std::make_unique<assets::Texture>(std::move(tex));
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[phaser_pass] failed to decode '%s': %s\n",
-                     kBeamTexturePath, e.what());
+                     beam_path.c_str(), e.what());
         texture_ = std::make_unique<assets::Texture>();
     }
 }

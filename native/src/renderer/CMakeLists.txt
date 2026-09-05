@@ -125,6 +125,7 @@ embed_shader(SHADER_CLOAK_REFRACTION_VS shaders/cloak_refraction.vert cloak_refr
 embed_shader(SHADER_CLOAK_REFRACTION_FS shaders/cloak_refraction.frag cloak_refraction_fs)
 
 add_library(renderer STATIC
+    asset_path.cc
     window.cc
     gl_caps.cc
     shader.cc

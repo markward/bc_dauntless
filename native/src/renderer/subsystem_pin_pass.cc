@@ -2,6 +2,8 @@
 #include "renderer/subsystem_pin_pass.h"
 #include "renderer/pipeline.h"
 
+#include <renderer/asset_path.h>
+
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
 
@@ -12,6 +14,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <string>
 #include <vector>
 
 namespace renderer {
@@ -21,16 +24,16 @@ namespace {
 // Glyph paths indexed by DamageIcons enum (engine/ui/damage_icons.py
 // ICON_REGISTRY). Ids 0–9 map to the ten entries below.
 constexpr const char* kGlyphFiles[10] = {
-    "game/data/Icons/Damage/Hull.tga",       // 0
-    "game/data/Icons/Damage/Impulse.tga",    // 1
-    "game/data/Icons/Damage/Phaser.tga",     // 2
-    "game/data/Icons/Damage/Power.tga",      // 3
-    "game/data/Icons/Damage/Sensor.tga",     // 4
-    "game/data/Icons/Damage/Shield.tga",     // 5
-    "game/data/Icons/Damage/System.tga",     // 6 (default)
-    "game/data/Icons/Damage/Torpedo.tga",    // 7
-    "game/data/Icons/Damage/Warp.tga",       // 8
-    "game/data/Icons/Damage/Disruptor.tga",  // 9
+    "data/Icons/Damage/Hull.tga",       // 0
+    "data/Icons/Damage/Impulse.tga",    // 1
+    "data/Icons/Damage/Phaser.tga",     // 2
+    "data/Icons/Damage/Power.tga",      // 3
+    "data/Icons/Damage/Sensor.tga",     // 4
+    "data/Icons/Damage/Shield.tga",     // 5
+    "data/Icons/Damage/System.tga",     // 6 (default)
+    "data/Icons/Damage/Torpedo.tga",    // 7
+    "data/Icons/Damage/Warp.tga",       // 8
+    "data/Icons/Damage/Disruptor.tga",  // 9
 };
 
 // Constant on-screen pin size in *logical points*, independent of
@@ -77,10 +80,11 @@ void SubsystemPinPass::ensure_glyphs() {
     glyphs_.resize(10);
 
     for (int i = 0; i < 10; ++i) {
-        std::ifstream in(kGlyphFiles[i], std::ios::binary);
+        const std::string glyph_path = resolve_asset_path(kGlyphFiles[i]);
+        std::ifstream in(glyph_path, std::ios::binary);
         if (!in) {
             std::fprintf(stderr, "[subsystem_pin] glyph %d: failed to open '%s' (using blank disc)\n",
-                         i, kGlyphFiles[i]);
+                         i, glyph_path.c_str());
             glyphs_[i] = std::make_unique<assets::Texture>();
             continue;
         }

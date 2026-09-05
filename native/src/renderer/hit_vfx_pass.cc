@@ -3,6 +3,8 @@
 
 #include "renderer/pipeline.h"
 
+#include <renderer/asset_path.h>
+
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
 #include <scenegraph/world.h>
@@ -65,12 +67,12 @@ constexpr float kSparkDamping    = 1.4f;    // velocity damping rate (SDK SetDam
 constexpr float kSparkTailLength = 0.15f;   // streak length per unit speed (tune-by-eye)
 
 // Renderer CWD is the project root (see engine/host_loop.py:_resolve_game_texture),
-// so these direct-ifstream sprite loads need the "game/" prefix — matching
-// phaser_pass.cc's "game/data/phaser.tga". Without it load_sprite fails, the
-// main texture stays id()==0, and render() early-returns, suppressing the WHOLE
-// pass (flash + sparks).
-constexpr const char* kImpactTexturePath = "game/data/Textures/Tactical/TorpedoFlares.tga";
-constexpr const char* kSparkTexturePath  = "game/data/rough.tga";
+// so these direct-ifstream sprite loads need to route through
+// resolve_asset_path — matching phaser_pass.cc's kBeamTexturePath. Without it
+// load_sprite fails, the main texture stays id()==0, and render() early-returns,
+// suppressing the WHOLE pass (flash + sparks).
+constexpr const char* kImpactTexturePath = "data/Textures/Tactical/TorpedoFlares.tga";
+constexpr const char* kSparkTexturePath  = "data/rough.tga";
 
 constexpr float kQuadCorners[] = {
     -1.0f, -1.0f,
@@ -176,12 +178,12 @@ const char* HitVfxPass::spark_texture_path()  { return kSparkTexturePath; }
 
 void HitVfxPass::ensure_texture() {
     if (texture_) return;
-    load_sprite(texture_, kImpactTexturePath);
+    load_sprite(texture_, resolve_asset_path(kImpactTexturePath).c_str());
 }
 
 void HitVfxPass::ensure_spark_texture() {
     if (spark_texture_) return;
-    load_sprite(spark_texture_, kSparkTexturePath);
+    load_sprite(spark_texture_, resolve_asset_path(kSparkTexturePath).c_str());
 }
 
 void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,

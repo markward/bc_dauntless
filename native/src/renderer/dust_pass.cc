@@ -3,6 +3,8 @@
 
 #include "renderer/pipeline.h"
 
+#include <renderer/asset_path.h>
+
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
 
@@ -12,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <string>
 #include <vector>
 
 namespace renderer {
@@ -331,14 +334,15 @@ void DustPass::rebuild_instance_buffer(std::uint32_t seed, int count) {
 
 bool DustPass::ensure_texture() {
     if (texture_) return texture_->id() != 0;
-    // BC installation lives under `game/` per CLAUDE.md. Other passes
-    // receive absolute paths from Python (engine/appc/backdrops.py
-    // resolves them against project_root / "game"); the dust pass owns
-    // its single texture, so the relative path is hardcoded here.
-    const char* path = "game/data/Textures/spacedust.tga";
+    // BC installation lives under the configured game root (default "game"
+    // per CLAUDE.md). Other passes receive absolute paths from Python
+    // (engine/appc/backdrops.py resolves them against project_root / "game");
+    // the dust pass owns its single texture, so the relative path is
+    // hardcoded here and resolved through resolve_asset_path.
+    const std::string path = resolve_asset_path("data/Textures/spacedust.tga");
     std::ifstream in(path, std::ios::binary);
     if (!in) {
-        std::fprintf(stderr, "[dust] failed to open '%s'\n", path);
+        std::fprintf(stderr, "[dust] failed to open '%s'\n", path.c_str());
         texture_ = std::make_unique<assets::Texture>();  // sentinel (id == 0)
         return false;
     }
@@ -354,7 +358,8 @@ bool DustPass::ensure_texture() {
             assets::upload_image(img, /*generate_mipmaps=*/true));
         return true;
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "[dust] failed to decode '%s': %s\n", path, e.what());
+        std::fprintf(stderr, "[dust] failed to decode '%s': %s\n",
+                     path.c_str(), e.what());
         texture_ = std::make_unique<assets::Texture>();
         return false;
     }
