@@ -442,10 +442,18 @@ def swap_interval() -> int:
 
 # ── Transform store ───────────────────────────────────────────────────────────
 # The native, process-wide dauntless::transform_store() — authoritative
-# position/rotation for every ObjectClass (see engine.appc.transform_store,
-# which talks to _dauntless_host directly rather than through this façade).
-# Required, not optional: a stale build missing any of these would leave
-# object placement silently broken rather than degrading a single feature.
+# position/rotation for every ObjectClass. Required, not optional: a stale
+# build missing any of these would leave object placement silently broken
+# rather than degrading a single feature.
+#
+# These nine wrappers exist ONLY so the binding manifest (_REQUIRED_BINDINGS,
+# validated by validate_bindings() at boot) can see the transform surface and
+# fail loudly on a stale/incomplete build, instead of an AttributeError mid-
+# frame. engine.appc.transform_store.NativeTransformStore deliberately
+# bypasses this façade and calls _dauntless_host directly — it sits on the
+# per-object, per-frame hot path, and routing it through here would add a
+# Python function-call frame on exactly the path this design exists to keep
+# out of Python.
 
 def transform_alloc() -> Optional[Tuple[int, int]]:
     if _h is None:
@@ -476,7 +484,7 @@ def transform_set_position(
 
 
 def transform_get_rotation(index: int, generation: int) -> Optional[tuple]:
-    """Row-major nine floats."""
+    """Row-major nine doubles."""
     if _h is None:
         return None
     return _h.transform_get_rotation(index, generation)

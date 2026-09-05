@@ -132,7 +132,13 @@ path bolted on.
 ## Section 1 — Ownership and slot lifecycle
 
 **Native store.** A `TransformStore` in `native/src/` holding a contiguous
-vector of POD `Transform { float pos[3]; float rot[9]; }`, index-addressed.
+vector of POD `Transform { double pos[3]; double rot[9]; }`, index-addressed.
+**Double, not float** (amended 2026-09-05 during Task 3): Python's `float` IS a
+double, so a 32-bit store truncates on every write, makes the two backends
+numerically disagree, and would drift motion integration away from today's
+behaviour once every object routes through it. The Goal of byte-identical
+SDK-visible behaviour outranks the storage saving. The renderer converts to
+32-bit at the GL boundary.
 Slots come from a free list. Each slot carries a **generation counter**, so a
 stale handle from a freed object fails loudly instead of silently reading
 whatever object recycled its index. Growth is by doubling; indices stay valid

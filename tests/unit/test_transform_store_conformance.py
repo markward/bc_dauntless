@@ -53,15 +53,14 @@ def test_position_round_trips(store):
 
 
 def test_rotation_round_trips(store):
-    # The native backend stores C++ `float` (32-bit) per the design spec
-    # ("asserted equal within float tolerance" — Section 5), so round-tripping
-    # values that are not exactly representable in binary32 (0.1, 0.2, ...)
-    # loses precision there even though the pure-Python backend is exact.
-    # pytest.approx keeps this contract test honest for both backends.
+    # The native backend stores C++ `double`, matching Python's `float`
+    # exactly (bit-for-bit), so both backends must agree here without any
+    # tolerance — that agreement is the whole point of running one
+    # conformance suite against two implementations.
     i, g = store.alloc()
     src = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
     store.set_rotation(i, g, src)
-    assert store.get_rotation(i, g) == pytest.approx(src, rel=1e-6)
+    assert store.get_rotation(i, g) == src
     store.free(i, g)
 
 

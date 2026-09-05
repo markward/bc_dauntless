@@ -4449,7 +4449,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("index"), py::arg("generation"));
 
     m.def("transform_set_position",
-          [](std::uint32_t i, std::uint32_t g, float x, float y, float z) {
+          [](std::uint32_t i, std::uint32_t g, double x, double y, double z) {
               dauntless::transform_store().set_position(i, g, x, y, z);
           },
           py::arg("index"), py::arg("generation"),
@@ -4460,10 +4460,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return dauntless::transform_store().rotation(i, g);
           },
           py::arg("index"), py::arg("generation"),
-          "Row-major nine floats.");
+          "Row-major nine doubles.");
 
     m.def("transform_set_rotation",
-          [](std::uint32_t i, std::uint32_t g, const std::array<float, 9>& r) {
+          [](std::uint32_t i, std::uint32_t g, const std::array<double, 9>& r) {
               dauntless::transform_store().set_rotation(i, g, r);
           },
           py::arg("index"), py::arg("generation"), py::arg("rot9"));

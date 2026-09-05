@@ -5,9 +5,9 @@
 namespace dauntless {
 
 namespace {
-constexpr float kIdentity[9] = {1.0f, 0.0f, 0.0f,
-                                0.0f, 1.0f, 0.0f,
-                                0.0f, 0.0f, 1.0f};
+constexpr double kIdentity[9] = {1.0, 0.0, 0.0,
+                                 0.0, 1.0, 0.0,
+                                 0.0, 0.0, 1.0};
 }  // namespace
 
 StaleHandle::StaleHandle(std::uint32_t index, std::uint32_t generation)
@@ -26,7 +26,7 @@ std::pair<std::uint32_t, std::uint32_t> TransformStore::alloc() {
         slots_.emplace_back();
     }
     Transform& t = slots_[index];
-    t.pos[0] = t.pos[1] = t.pos[2] = 0.0f;
+    t.pos[0] = t.pos[1] = t.pos[2] = 0.0;
     for (int i = 0; i < 9; ++i) t.rot[i] = kIdentity[i];
     ++live_;
     return {index, generations_[index]};
@@ -51,7 +51,7 @@ void TransformStore::check(std::uint32_t index,
     if (!valid(index, generation)) throw StaleHandle(index, generation);
 }
 
-std::array<float, 3> TransformStore::position(
+std::array<double, 3> TransformStore::position(
         std::uint32_t index, std::uint32_t generation) const {
     check(index, generation);
     const Transform& t = slots_[index];
@@ -59,7 +59,7 @@ std::array<float, 3> TransformStore::position(
 }
 
 void TransformStore::set_position(std::uint32_t index, std::uint32_t generation,
-                                  float x, float y, float z) {
+                                  double x, double y, double z) {
     check(index, generation);
     Transform& t = slots_[index];
     t.pos[0] = x;
@@ -67,23 +67,23 @@ void TransformStore::set_position(std::uint32_t index, std::uint32_t generation,
     t.pos[2] = z;
 }
 
-std::array<float, 9> TransformStore::rotation(
+std::array<double, 9> TransformStore::rotation(
         std::uint32_t index, std::uint32_t generation) const {
     check(index, generation);
     const Transform& t = slots_[index];
-    std::array<float, 9> out{};
+    std::array<double, 9> out{};
     for (int i = 0; i < 9; ++i) out[i] = t.rot[i];
     return out;
 }
 
 void TransformStore::set_rotation(std::uint32_t index, std::uint32_t generation,
-                                  const std::array<float, 9>& r) {
+                                  const std::array<double, 9>& r) {
     check(index, generation);
     Transform& t = slots_[index];
     for (int i = 0; i < 9; ++i) t.rot[i] = r[i];
 }
 
-std::array<float, 3> TransformStore::rotation_col(
+std::array<double, 3> TransformStore::rotation_col(
         std::uint32_t index, std::uint32_t generation, int col) const {
     check(index, generation);
     if (col < 0 || col > 2) throw std::out_of_range("rotation column");

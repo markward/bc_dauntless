@@ -4,7 +4,7 @@
 
 **Goal:** Move authoritative ownership of every object's position and rotation out of Python and into a contiguous C++ store, and stop marshalling transforms across the language boundary for the renderer.
 
-**Architecture:** A `TransformStore` in C++ holds a contiguous vector of POD `Transform { float pos[3]; float rot[9]; }`, index-addressed with generation-counted slots. Each Python `ObjectClass` holds a slot handle allocated in `__init__` and released by `weakref.finalize`. Accessors read through and return fresh Python objects, so SDK semantics are unchanged; hot paths use bulk APIs that build no Python objects at all.
+**Architecture:** A `TransformStore` in C++ holds a contiguous vector of POD `Transform { double pos[3]; double rot[9]; }`, index-addressed with generation-counted slots. Each Python `ObjectClass` holds a slot handle allocated in `__init__` and released by `weakref.finalize`. Accessors read through and return fresh Python objects, so SDK semantics are unchanged; hot paths use bulk APIs that build no Python objects at all.
 
 **Tech Stack:** Python 3.11, C++20, pybind11, CMake, pytest, ctest.
 
@@ -948,7 +948,7 @@ TEST(TransformStoreTest, GrowthPreservesExistingSlots) {
 TEST(TransformStoreTest, RotationColReadsColumns) {
     TransformStore s;
     auto [i, g] = s.alloc();
-    const std::array<float, 9> m{1, 2, 3, 4, 5, 6, 7, 8, 9};
+    const std::array<double, 9> m{1, 2, 3, 4, 5, 6, 7, 8, 9};
     s.set_rotation(i, g, m);
     auto c1 = s.rotation_col(i, g, 1);
     EXPECT_FLOAT_EQ(c1[0], 2.0f);
@@ -1011,8 +1011,8 @@ public:
 class TransformStore {
 public:
     struct Transform {
-        float pos[3];
-        float rot[9];
+        double pos[3];
+        double rot[9];
     };
 
     // Returns (index, generation). New slots are identity at the origin.
@@ -1021,17 +1021,17 @@ public:
 
     bool valid(std::uint32_t index, std::uint32_t generation) const;
 
-    std::array<float, 3> position(std::uint32_t index,
+    std::array<double, 3> position(std::uint32_t index,
                                   std::uint32_t generation) const;
     void set_position(std::uint32_t index, std::uint32_t generation,
-                      float x, float y, float z);
+                      double x, double y, double z);
 
-    std::array<float, 9> rotation(std::uint32_t index,
+    std::array<double, 9> rotation(std::uint32_t index,
                                   std::uint32_t generation) const;
     void set_rotation(std::uint32_t index, std::uint32_t generation,
-                      const std::array<float, 9>& r);
+                      const std::array<double, 9>& r);
 
-    std::array<float, 3> rotation_col(std::uint32_t index,
+    std::array<double, 3> rotation_col(std::uint32_t index,
                                       std::uint32_t generation,
                                       int col) const;
 
@@ -1119,7 +1119,7 @@ void TransformStore::check(std::uint32_t index,
     if (!valid(index, generation)) throw StaleHandle(index, generation);
 }
 
-std::array<float, 3> TransformStore::position(
+std::array<double, 3> TransformStore::position(
         std::uint32_t index, std::uint32_t generation) const {
     check(index, generation);
     const Transform& t = slots_[index];
@@ -1127,7 +1127,7 @@ std::array<float, 3> TransformStore::position(
 }
 
 void TransformStore::set_position(std::uint32_t index, std::uint32_t generation,
-                                  float x, float y, float z) {
+                                  double x, double y, double z) {
     check(index, generation);
     Transform& t = slots_[index];
     t.pos[0] = x;
@@ -1135,23 +1135,23 @@ void TransformStore::set_position(std::uint32_t index, std::uint32_t generation,
     t.pos[2] = z;
 }
 
-std::array<float, 9> TransformStore::rotation(
+std::array<double, 9> TransformStore::rotation(
         std::uint32_t index, std::uint32_t generation) const {
     check(index, generation);
     const Transform& t = slots_[index];
-    std::array<float, 9> out{};
+    std::array<double, 9> out{};
     for (int i = 0; i < 9; ++i) out[i] = t.rot[i];
     return out;
 }
 
 void TransformStore::set_rotation(std::uint32_t index, std::uint32_t generation,
-                                  const std::array<float, 9>& r) {
+                                  const std::array<double, 9>& r) {
     check(index, generation);
     Transform& t = slots_[index];
     for (int i = 0; i < 9; ++i) t.rot[i] = r[i];
 }
 
-std::array<float, 3> TransformStore::rotation_col(
+std::array<double, 3> TransformStore::rotation_col(
         std::uint32_t index, std::uint32_t generation, int col) const {
     check(index, generation);
     if (col < 0 || col > 2) throw std::out_of_range("rotation column");
@@ -1226,7 +1226,7 @@ existing `m.def(...)` calls:
           py::arg("index"), py::arg("generation"));
 
     m.def("transform_set_position",
-          [](std::uint32_t i, std::uint32_t g, float x, float y, float z) {
+          [](std::uint32_t i, std::uint32_t g, double x, double y, double z) {
               dauntless::transform_store().set_position(i, g, x, y, z);
           },
           py::arg("index"), py::arg("generation"),
@@ -1240,7 +1240,7 @@ existing `m.def(...)` calls:
           "Row-major nine floats.");
 
     m.def("transform_set_rotation",
-          [](std::uint32_t i, std::uint32_t g, const std::array<float, 9>& r) {
+          [](std::uint32_t i, std::uint32_t g, const std::array<double, 9>& r) {
               dauntless::transform_store().set_rotation(i, g, r);
           },
           py::arg("index"), py::arg("generation"), py::arg("rot9"));
@@ -1860,16 +1860,16 @@ In the header:
 
 ```cpp
     // Bulk read for per-frame sweeps: one boundary crossing instead of N.
-    std::vector<std::array<float, 3>> positions(
+    std::vector<std::array<double, 3>> positions(
         const std::vector<std::pair<std::uint32_t, std::uint32_t>>& handles) const;
 ```
 
 In the implementation:
 
 ```cpp
-std::vector<std::array<float, 3>> TransformStore::positions(
+std::vector<std::array<double, 3>> TransformStore::positions(
         const std::vector<std::pair<std::uint32_t, std::uint32_t>>& handles) const {
-    std::vector<std::array<float, 3>> out;
+    std::vector<std::array<double, 3>> out;
     out.reserve(handles.size());
     for (const auto& h : handles) {
         check(h.first, h.second);
