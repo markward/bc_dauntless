@@ -29,11 +29,20 @@ void World::destroy_instance(InstanceId id) {
 }
 
 void World::set_world_transform(InstanceId id, const glm::mat4& world) {
-    if (auto* inst = get(id)) inst->world = world;
+    // A push wins over a binding BY CONSTRUCTION: unbinding here is what stops
+    // sync_instance_transforms_from_store() (host_bindings.cc, run at the top
+    // of every frame()) silently overwriting this matrix with whatever the
+    // transform store still holds for the slot. Without this, an explicit
+    // push onto a still-bound instance would render at the store's live pose
+    // instead, with no error and nothing a headless FrameTest could catch.
+    if (auto* inst = get(id)) {
+        inst->world = world;
+        inst->xform_index = -1;
+    }
 }
 
 void World::set_transform_slot(InstanceId id, int index,
-                               std::uint32_t generation, float scale) {
+                               std::uint32_t generation, double scale) {
     if (auto* inst = get(id)) {
         inst->xform_index = index;
         inst->xform_generation = generation;

@@ -18,7 +18,7 @@ public:
     /// path. The composition itself lives in the host (which owns the store),
     /// so the scene graph stays free of that dependency.
     void set_transform_slot(InstanceId id, int index, std::uint32_t generation,
-                            float scale);
+                            double scale);
     void set_bone_palette(InstanceId id, std::vector<glm::mat4> palette);
     void set_visible(InstanceId id, bool visible);
     void set_pass(InstanceId id, Pass pass);

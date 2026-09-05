@@ -42,7 +42,11 @@ struct Instance {
     /// every render-interpolated ship still take that path).
     int           xform_index = -1;
     std::uint32_t xform_generation = 0;
-    float         xform_scale = 1.0f;
+    // double, not float: compose_world_matrix multiplies this by the store's
+    // double-precision rotation and rounds to float only once, at the end —
+    // matching engine/host_loop.py:_world_matrix_from. A float here would
+    // round the scale before the multiply instead of after.
+    double        xform_scale = 1.0;
 
     bool visible = true;
     Pass pass = Pass::Space;

@@ -1619,13 +1619,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("id"), py::arg("mat4"));
     m.def("set_instance_transform_slot",
           [](scenegraph::InstanceId id, int index, std::uint32_t generation,
-             float scale) {
-              g_world.set_transform_slot(id, index, generation, scale);
+             double scale) {
               // Compose once now, so an instance realized between frames is
               // already in place for everything that reads inst->world outside
               // frame() (world_to_body, damage_decal_add, hull_carve_add,
               // ray_trace_mesh) instead of sitting at identity until the next
               // frame. Cheap: one instance, not a sweep.
+              //
+              // Order matters: set_world_transform() unbinds by construction
+              // (a push always wins over a binding), so the composed matrix
+              // is pushed FIRST and set_transform_slot() re-binds SECOND —
+              // otherwise this "compose once" step would immediately undo
+              // the very binding this function exists to create.
               if (index >= 0) {
                   auto& store = dauntless::transform_store();
                   const auto i = static_cast<std::uint32_t>(index);
@@ -1639,6 +1644,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       g_world.set_world_transform(id, mat);
                   }
               }
+              g_world.set_transform_slot(id, index, generation, scale);
           },
           py::arg("iid"), py::arg("index"), py::arg("generation"),
           py::arg("scale"),
@@ -1647,7 +1653,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "frame, so the transform never crosses into Python. index < 0 "
           "unbinds and restores the explicit set_world_transform path.");
 
-    m.def("_debug_sync_instance_transforms",
+    // TEST-ONLY: runs the exact per-frame store->instance sweep frame() runs,
+    // without needing a GL context. Named _test_only_ (not just _debug_) so
+    // its status is unmistakable at every call site — this is production
+    // machinery (sync_instance_transforms_from_store, defined above) exposed
+    // purely so headless tests can exercise it deterministically; it is not
+    // gated behind developer mode because pytest never goes through
+    // host_main.cc's argv parsing, so dauntless::is_developer_mode() would
+    // read permanently false there and silently no-op every caller.
+    m.def("_test_only_sync_instance_transforms",
           []() { sync_instance_transforms_from_store(); },
           "Test hook: run the per-frame store->instance sweep that frame() "
           "runs, without needing a GL context.");

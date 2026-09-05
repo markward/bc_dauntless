@@ -1068,15 +1068,16 @@ def _reset_leakable_engine_globals():
         reset_concealment_state()
     except Exception:
         pass
-    # TransformStore singleton: get_store() resolves the backend lazily on
-    # first use and then holds it for the process. A leaked store would carry
-    # allocated slots (and, once Task 3 lands, a process-wide native handle
-    # table) from one test into the next.
-    try:
-        from engine.appc import transform_store
-        transform_store._reset_store_for_tests()
-    except Exception:
-        pass
+    # TransformStore is deliberately NOT reset here. On the native backend
+    # `_reset_store_for_tests()` only drops the Python wrapper object — the
+    # C++ `dauntless::transform_store()` singleton and every slot it holds
+    # survive the process regardless, so the reset bought nothing. On the
+    # Python backend it was actively harmful: `ObjectClass.__init__`
+    # (engine/appc/objects.py) captures `_store` once for its finalizer while
+    # every accessor calls `get_store()` fresh, so any object that outlived a
+    # reset would raise StaleHandleError the next time it was read. The real
+    # fix is the rule the conformance suite already states and follows:
+    # every test that allocates a transform handle must free it.
 
 
 @pytest.fixture(autouse=True)

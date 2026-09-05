@@ -89,7 +89,7 @@ def test_composed_matrix_matches_world_matrix_from():
     iid = _h.create_instance(0)
     try:
         _h.set_instance_transform_slot(iid, *o._xform, scale)
-        _h._debug_sync_instance_transforms()
+        _h._test_only_sync_instance_transforms()
         expected = _world_matrix_from(
             o.GetWorldLocation(), o.GetWorldRotation(), scale)
         for probe in ((0.0, 0.0, 0.0), (100.0, 0.0, 0.0),
@@ -111,10 +111,33 @@ def test_bound_instance_follows_the_object_without_a_python_push():
         _h.set_instance_transform_slot(iid, *o._xform, 1.0)
         o.SetTranslateXYZ(50.0, 0.0, 0.0)
         # The per-frame sweep frame() runs; no transform crossed into Python.
-        _h._debug_sync_instance_transforms()
+        _h._test_only_sync_instance_transforms()
         # World point (50,0,0) is now the object's origin.
         assert _probe_body(iid, (50.0, 0.0, 0.0)) == pytest.approx(
             (0.0, 0.0, 0.0), abs=1e-4)
+    finally:
+        _h.destroy_instance(iid)
+
+
+def test_pushing_a_world_transform_while_bound_unbinds_and_wins():
+    """A push wins over a binding by construction: set_world_transform on a
+    STILL-BOUND instance must unbind it, so the pushed matrix survives the
+    next per-frame store sweep instead of being silently overwritten."""
+    o = ObjectClass()
+    o.SetTranslateXYZ(10.0, 0.0, 0.0)
+    iid = _h.create_instance(0)
+    try:
+        _h.set_instance_transform_slot(iid, *o._xform, 1.0)  # still bound
+        _h.set_world_transform(iid, [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ])
+        o.SetTranslateXYZ(999.0, 0.0, 0.0)   # must NOT move the instance
+        _h._test_only_sync_instance_transforms()  # the sweep must skip it now
+        assert _probe_body(iid, (7.0, 0.0, 0.0)) == pytest.approx(
+            (7.0, 0.0, 0.0), abs=1e-4)
     finally:
         _h.destroy_instance(iid)
 
@@ -134,7 +157,7 @@ def test_unbind_restores_the_explicit_matrix_path():
             0.0, 0.0, 0.0, 1.0,
         ])
         o.SetTranslateXYZ(999.0, 0.0, 0.0)   # must NOT move the instance
-        _h._debug_sync_instance_transforms()
+        _h._test_only_sync_instance_transforms()
         assert _probe_body(iid, (7.0, 0.0, 0.0)) == pytest.approx(
             (7.0, 0.0, 0.0), abs=1e-4)
     finally:

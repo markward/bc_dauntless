@@ -92,13 +92,20 @@ private:
 // doubles (it is the sole owner of every object's transform); this is the one
 // place the precision drops, at the GL boundary.
 //
+// `scale` is double, not float: rotation * scale is computed entirely in
+// double precision and rounded to float exactly once, in the final
+// assignment, matching engine/host_loop.py:_world_matrix_from (`rot.m00*s`,
+// Python floats are doubles). Accepting scale as a float here would round it
+// to 32 bits BEFORE the multiply, giving a different (and wrong-by-~1e-7-
+// relative) result than the Python path for the same inputs.
+//
 // Reproduces engine/host_loop.py:_world_matrix_from element for element:
 // row-major rotation times the scale, translation in the fourth column,
 // bottom row 0,0,0,1. NO transpose and NO reflection — the renderer is
 // right-handed (2026-06-18 un-mirror) and NIF winding is handled by
 // glFrontFace(GL_CCW) in pipeline.cc. Re-introducing an X-column flip here
 // draws every hull mirror-imaged.
-void compose_world_matrix(const TransformStore::Transform& t, float scale,
+void compose_world_matrix(const TransformStore::Transform& t, double scale,
                           float out[16]);
 
 // The process-wide store.

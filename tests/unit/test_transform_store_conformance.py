@@ -9,6 +9,8 @@ every handle it allocates — a leaked slot inflates live_count()/capacity()
 for every later test in the session. The two count-based tests below measure
 deltas from a baseline captured at the start of the test for the same reason.
 """
+import sys
+
 import pytest
 
 from engine.appc.transform_store import (
@@ -202,3 +204,64 @@ def test_get_positions_rejects_a_stale_handle(store):
 
 def test_get_positions_empty_is_empty(store):
     assert store.get_positions([]) == []
+
+
+def test_get_store_selects_python_backend_for_objectclass(monkeypatch):
+    """get_store()'s Python-backend branch is otherwise never exercised: the
+    fixture above instantiates PythonTransformStore directly, bypassing
+    get_store()'s own selection logic, so nothing proves an ObjectClass
+    actually works end-to-end when the native extension is unavailable.
+
+    Force native-detection to fail (as if _dauntless_host were absent) and
+    prove a real ObjectClass round-trips position and rotation through the
+    resulting PythonTransformStore. Both monkeypatches are undone by the
+    fixture on teardown, so later tests see the original singleton.
+    """
+    import engine.appc.transform_store as ts
+    from engine.appc.math import TGMatrix3, TGPoint3
+    from engine.appc.objects import ObjectClass
+
+    monkeypatch.setattr(ts, "_STORE", None)
+    monkeypatch.setitem(sys.modules, "_dauntless_host", None)
+
+    store = ts.get_store()
+    assert isinstance(store, ts.PythonTransformStore)
+
+    o = ObjectClass()
+    try:
+        o.SetTranslateXYZ(1.5, -2.5, 3.25)
+        loc = o.GetWorldLocation()
+        assert (loc.x, loc.y, loc.z) == pytest.approx((1.5, -2.5, 3.25))
+
+        axis = TGPoint3(1.0, 2.0, 3.0)
+        axis.Scale(1.0 / (14.0 ** 0.5))
+        rot = TGMatrix3()
+        rot.MakeRotation(0.7, axis)
+        o.SetMatrixRotation(rot)
+        got = o.GetWorldRotation()
+        assert got.as_tuple() == pytest.approx(rot.as_tuple())
+    finally:
+        # Force the finalizer now rather than relying on gc timing, so the
+        # slot is freed from the temporary store before it goes away.
+        o._xform_finalizer()
+
+
+def test_negative_index_raises_stale_handle_error(store):
+    """A negative index must surface as StaleHandleError on BOTH backends.
+
+    The native backend's bound functions take std::uint32_t, so a negative
+    Python int fails the pybind11 argument conversion with a TypeError
+    before the C++ store's own bounds check ever runs — a different
+    exception type than the RuntimeError a valid-but-stale handle raises.
+    NativeTransformStore must catch both so callers see one contract.
+    """
+    with pytest.raises(StaleHandleError):
+        store.get_position(-1, 0)
+    with pytest.raises(StaleHandleError):
+        store.set_position(-1, 0, 0.0, 0.0, 0.0)
+    with pytest.raises(StaleHandleError):
+        store.get_rotation(-1, 0)
+    with pytest.raises(StaleHandleError):
+        store.set_rotation(-1, 0, IDENTITY)
+    with pytest.raises(StaleHandleError):
+        store.free(-1, 0)

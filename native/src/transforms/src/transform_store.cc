@@ -103,10 +103,12 @@ std::vector<std::array<double, 3>> TransformStore::positions(
     return out;
 }
 
-void compose_world_matrix(const TransformStore::Transform& t, float scale,
+void compose_world_matrix(const TransformStore::Transform& t, double scale,
                           float out[16]) {
     for (int row = 0; row < 3; ++row) {
         for (int col = 0; col < 3; ++col) {
+            // t.rot and scale are both double here: the multiply happens at
+            // full precision and is rounded to float only in this assignment.
             out[row * 4 + col] =
                 static_cast<float>(t.rot[row * 3 + col] * scale);
         }

@@ -137,7 +137,7 @@ TEST(World, TransformSlotDefaultsToUnbound) {
     scenegraph::World w;
     auto id = w.create_instance(1);
     EXPECT_LT(w.get(id)->xform_index, 0);
-    EXPECT_FLOAT_EQ(w.get(id)->xform_scale, 1.0f);
+    EXPECT_DOUBLE_EQ(w.get(id)->xform_scale, 1.0);
 }
 
 TEST(World, SetTransformSlotStoresHandleAndScale) {
@@ -147,7 +147,7 @@ TEST(World, SetTransformSlotStoresHandleAndScale) {
     const scenegraph::Instance* inst = w.get(id);
     EXPECT_EQ(inst->xform_index, 5);
     EXPECT_EQ(inst->xform_generation, 3u);
-    EXPECT_FLOAT_EQ(inst->xform_scale, 2.5f);
+    EXPECT_DOUBLE_EQ(inst->xform_scale, 2.5);
 }
 
 TEST(World, NegativeTransformSlotUnbinds) {
@@ -156,6 +156,43 @@ TEST(World, NegativeTransformSlotUnbinds) {
     w.set_transform_slot(id, 5, 3, 2.5f);
     w.set_transform_slot(id, -1, 0, 1.0f);
     EXPECT_LT(w.get(id)->xform_index, 0);
+}
+
+TEST(World, PushingAWorldTransformUnbindsTheStoreSlot) {
+    // A push wins over a binding by construction: an explicit
+    // set_world_transform on a still-bound instance must clear xform_index,
+    // or the next per-frame store sweep would silently overwrite the pushed
+    // matrix with the store's live pose.
+    scenegraph::World w;
+    auto id = w.create_instance(1);
+    w.set_transform_slot(id, 5, 3, 2.5f);
+    ASSERT_GE(w.get(id)->xform_index, 0);
+
+    glm::mat4 m(1.0f);
+    m[3].x = 42.0f;
+    w.set_world_transform(id, m);
+
+    EXPECT_LT(w.get(id)->xform_index, 0);
+    EXPECT_FLOAT_EQ(w.get(id)->world[3].x, 42.0f);
+}
+
+TEST(World, PushedMatrixSurvivesBecauseUnboundInstancesAreSkippedByTheSweep) {
+    // The store sweep (host_bindings.cc's sync_instance_transforms_from_store)
+    // only recomposes bound instances (xform_index >= 0). Once
+    // set_world_transform unbinds, the instance falls outside that set, so a
+    // simulated sweep pass here must leave the pushed matrix untouched.
+    scenegraph::World w;
+    auto id = w.create_instance(1);
+    w.set_transform_slot(id, 5, 3, 2.5f);
+
+    glm::mat4 m(1.0f);
+    m[3].x = 42.0f;
+    w.set_world_transform(id, m);
+
+    // Simulate the sweep's guard: it skips anything with xform_index < 0.
+    bool would_be_swept = w.get(id)->xform_index >= 0;
+    EXPECT_FALSE(would_be_swept);
+    EXPECT_FLOAT_EQ(w.get(id)->world[3].x, 42.0f);
 }
 
 TEST(World, RecycledSlotIsNotBoundToThePriorObjectsTransform) {
