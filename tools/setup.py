@@ -1,4 +1,4 @@
-"""Install the Appc logging shim into game/scripts/.
+"""Install the Appc logging shim into the configured BC game root's scripts/.
 
 Normal mode (no flags):
   If App.pyc.bak exists, uses a timestamp trick so Python 1.5 loads the

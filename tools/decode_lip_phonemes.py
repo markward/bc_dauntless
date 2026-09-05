@@ -92,7 +92,7 @@ def main() -> int:
     lips = {os.path.splitext(os.path.basename(f))[0]: f
             for f in glob.glob(str(paths.game_asset("sfx/Bridge/Crew/**/*.LIP")), recursive=True)}
     if not lips:
-        sys.stderr.write("no .LIP files under game/sfx/Bridge/Crew — is game/ present?\n")
+        sys.stderr.write(f"no .LIP files under {paths.game_asset('sfx/Bridge/Crew')}\n")
         return 1
 
     co = collections.defaultdict(collections.Counter)

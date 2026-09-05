@@ -56,7 +56,7 @@ def collect_one(probe_file: pathlib.Path) -> bool:
     section = f"BCProbe_{qid}"
     cfg = GAME / f"BCProbe_{qid}.cfg"
     if not cfg.exists():
-        print(f"  {qid}: no {cfg.name} in game/ -- has the probe been run?")
+        print(f"  {qid}: no {cfg.name} under {GAME} -- has the probe been run?")
         return False
     lines = extract_section(cfg, section)
     if not lines:

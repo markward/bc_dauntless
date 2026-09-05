@@ -1,6 +1,6 @@
 """Bake game backdrop TGAs -> appearance table for the procedural sky.
 
-Offline build step (needs game/ + Pillow). The runtime consumes the JSON;
+Offline build step (needs the configured BC game root + Pillow). The runtime consumes the JSON;
 it never decodes a TGA. Ports poc/extract_map.py:tga_appearance.
 """
 import json
@@ -39,7 +39,9 @@ def compute_appearance(img):
     }
 
 
-def main(game_root=paths.game_root(), out_path=DEFAULT_OUT):
+def main(game_root=None, out_path=DEFAULT_OUT):
+    if game_root is None:
+        game_root = paths.game_root()
     dirs = [game_root / d for d in DEFAULT_GAME_DIRS]
     table = {}
     for d in dirs:

@@ -1,7 +1,7 @@
 """
 TGL parser smoke-test harness for open_stbc.
 
-Discovers every .tgl file under game/data/TGL/ and sdk/Build/Data/TGL/,
+Discovers every .tgl file under the configured BC game root's data/TGL/ and the SDK's Build/Data/TGL/,
 parses each via engine.missions.tgl_reader.read_tgl, and reports a
 ranked summary of failures (parse errors and empty files).
 
@@ -30,8 +30,8 @@ ROOTS: list[Path] = [
 def discover_tgl_files() -> list[Path]:
     """Return all .tgl files (case-insensitive) under ROOTS, sorted.
 
-    Missing roots are skipped silently — game/ is a developer-supplied
-    install and may not be present in every checkout.
+    Missing roots are skipped silently — the BC game root is a developer-supplied
+    install and may not be configured in every checkout.
     """
     found: list[Path] = []
     for root in ROOTS:
