@@ -20,10 +20,15 @@ _ZOOM_DEFAULT_TIME = 0.375   # BC SetZoomTime on Galaxy/Sovereign maincamera;
 
 
 def _bridge_game_root():
-    """Resolved at USE: a module-level constant would be captured at import,
-    before the first-run picker can change the root. Exists so tests can
-    observe a late reconfigure the way off_texture_abs_path and the NIF
-    camera-parse path do inline."""
+    """TEST-REACHABILITY-ONLY -- no production call site uses this.
+
+    off_texture_abs_path and the NIF camera-parse path each resolve
+    paths.game_asset(...) inline; neither shares a helper. This function
+    exists solely so tests/unit/test_paths_late_reconfigure.py has a no-arg
+    accessor to call to prove bridge_set observes a late paths.configure().
+    Do not delete it as dead code, and do not wire it into production --
+    if a real call site needs the bare game root later, that is a
+    coincidence, not a reason this docstring is wrong today."""
     from engine import paths
     return str(paths.game_root())
 

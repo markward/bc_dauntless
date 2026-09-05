@@ -32,11 +32,15 @@ from engine.ui.icon_tracer import (
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
+
+
 def _damage_dir():
     """Resolved at USE: a module-level constant would be captured at import,
     before the first-run picker can change the root."""
     from engine import paths
     return str(paths.game_asset("data/Icons/Damage"))
+
+
 _CURATED_DIR = os.path.join(
     _PROJECT_ROOT, "native", "assets", "ui-cef", "icons", "damage",
 )

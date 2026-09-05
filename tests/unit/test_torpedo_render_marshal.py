@@ -6,10 +6,12 @@ BOTH torpedo-quad and disruptor-bolt families — because the C++ parser (Task
 3) reads every key unconditionally. The audit-authentic colours read too hot on
 screen, so TORPEDO_BRIGHTNESS dims the quad layers' RGB here (alpha untouched);
 disruptor-bolt colours are exempt."""
+from pathlib import Path
+
 import App
 import pytest
 
-from engine import paths
+import engine.host_loop as hl
 from engine.appc.projectiles import Torpedo, register
 from engine.appc import projectiles
 from engine.host_loop import (
@@ -77,7 +79,15 @@ def test_all_descriptors_carry_the_full_key_set():
         assert set(entry.keys()) == FULL_KEYS
 
 
-def test_photon_entry_fields():
+def test_photon_entry_fields(monkeypatch):
+    # A fixture root the test chooses -- NOT the same paths.game_root() the
+    # production code itself calls. Comparing _resolve_game_texture()'s
+    # output to paths.game_asset()/paths.game_root() would be true by
+    # construction (the code under test calls exactly that), and could never
+    # catch a real resolution regression.
+    fixture_root = Path("/fixture/bc/game")
+    monkeypatch.setattr(hl._paths, "game_root", lambda: fixture_root)
+
     t, core_color, glow_color = _make_photon()
     out = _build_torpedo_render_data()
     entry = out[0]
@@ -90,10 +100,9 @@ def test_photon_entry_fields():
     mag = (fx * fx + fy * fy + fz * fz) ** 0.5
     assert mag == pytest.approx(1.0)
 
-    assert entry["core_texture"].startswith(str(paths.game_root()))
-    assert entry["core_texture"].endswith("TorpedoCore.tga")
-    assert entry["glow_texture"].endswith("TorpedoGlow.tga")
-    assert entry["flares_texture"].endswith("TorpedoFlares.tga")
+    assert entry["core_texture"] == str(fixture_root / "data/Textures/Tactical/TorpedoCore.tga")
+    assert entry["glow_texture"] == str(fixture_root / "data/Textures/Tactical/TorpedoGlow.tga")
+    assert entry["flares_texture"] == str(fixture_root / "data/Textures/Tactical/TorpedoFlares.tga")
 
     # Quad-layer colors are scaled by TORPEDO_BRIGHTNESS — RGB dimmed, alpha
     # left alone (the glow layer's additive alpha is the renderer's business).
