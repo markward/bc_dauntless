@@ -143,6 +143,31 @@ def test_an_empty_env_var_is_treated_as_unset(fake_bc_install, tmp_path):
     assert res.game_source == "settings"
 
 
+def test_an_empty_settings_value_is_set_and_therefore_an_error(tmp_path, monkeypatch):
+    """store.has() is the source of truth, not the value's truthiness. persist()
+    only ever writes valid non-empty paths, so an empty stored value is a
+    hand-edit that must be reported rather than silently skipped."""
+    for rel in ("game/data", "game/data/Models", "game/data/Textures", "game/data/Icons"):
+        (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)
+    store = _store_with(tmp_path, game="")
+    res = paths.resolve(argv=[], env={}, store=store)
+    assert not res.ok
+    assert res.game is None
+    assert res.game_source == "settings"      # NOT "project"
+
+
+def test_an_empty_value_never_validates_against_the_working_directory(fake_bc_install, monkeypatch):
+    """os.path.abspath("") is cwd. Without an explicit empty check, running
+    --game-dir= from inside a real BC install would validate ok=True."""
+    game, _sdk = fake_bc_install
+    monkeypatch.chdir(game)
+    res = paths.resolve(argv=["--game-dir="], env={}, store=None)
+    assert not res.ok
+    assert res.game is None
+    assert res.game_source == "cli"
+
+
 def test_an_absent_project_default_is_not_an_error(tmp_path, monkeypatch):
     """Source 4 is a fallback: its absence means 'nothing configured'."""
     monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)

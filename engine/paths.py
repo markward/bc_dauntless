@@ -110,6 +110,14 @@ def _hint_for(root: Path, kind: str, missing: tuple[str, ...]) -> Optional[str]:
 
 
 def _validate(path, kind: str) -> Validation:
+    # An empty value can never name a root, and must not be normalised
+    # first: os.path.abspath("") is the CURRENT WORKING DIRECTORY, so an
+    # empty --game-dir would validate against cwd and, launched from
+    # inside a real BC install, silently succeed -- the precise failure
+    # the set-but-invalid rule exists to prevent.
+    if not str(path).strip():
+        return Validation(ok=False, root=Path(""), missing=_MARKERS[kind],
+                          hint="No path given — the flag or setting is present but empty.")
     root = normalise(path)
     markers = _MARKERS[kind]
     missing = tuple(m for m in markers if not (root / m).exists())
@@ -184,7 +192,7 @@ class Resolution:
 _UNSET = object()
 
 
-def _flag_value(argv, flag: str):
+def _flag_value(argv, flag: str) -> str | object:
     """Support both `--game-dir X` and `--game-dir=X`.
 
     Returns `_UNSET` when the flag never appears in argv. Returns the raw
@@ -388,7 +396,12 @@ def describe_failure(resolution: Resolution) -> str:
             project = PROJECT_ROOT / _PROJECT_DIR[kind]
             lines.append(f"     {str(project):<18}(does not exist)")
         else:
-            lines.append(f"  {label}: invalid — {verdict.root}")
+            # _validate's empty-value guard sets root=Path(""), which
+            # stringifies to "." -- printing that verbatim reads as a
+            # reference to cwd, exactly the confusion the guard exists to
+            # avoid. Name it plainly instead.
+            root_display = "(empty)" if verdict.root == Path("") else str(verdict.root)
+            lines.append(f"  {label}: invalid — {root_display}")
             lines.append(f"     missing: {', '.join(verdict.missing)}")
             lines.append(f"     source : {resolution.source(kind)}")
             if verdict.hint:
