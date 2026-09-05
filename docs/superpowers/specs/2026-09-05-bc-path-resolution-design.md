@@ -8,7 +8,8 @@
 
 ## Problem
 
-`game/` and `sdk/` are hardcoded to the project root in 66 places. A BC
+`game/` and `sdk/` are hardcoded to the project root in 62 places, spread
+across three independent mechanisms and 25 further offline scripts. A BC
 install that lives anywhere else cannot be found, and moving one out of the
 project tree breaks the binary *and* the test suite — `pytest --collect-only`
 reports 18 collection errors with the directories absent.
@@ -17,12 +18,17 @@ The three hardcodings are independent, and all three must move together:
 
 | Where | How it resolves today | Count |
 |---|---|---|
-| Python | `PROJECT_ROOT / "game"`, `PROJECT_ROOT / "sdk"` | 39 sites, 15 files (19 in `host_loop.py`) |
-| C++ | `resolve_asset_path()` prepends the literal `"game/"`, relative to a cwd `main()` chdir's to | 27 literal constants, 11 files |
+| Python | `PROJECT_ROOT / "game"`, `PROJECT_ROOT / "sdk"` | 36 sites, 14 files (19 in `host_loop.py`) |
+| C++ | `resolve_asset_path()` prepends the literal `"game/"`, relative to a cwd `main()` chdir's to | 26 literal constants, 11 files |
 | SDK imports | a `SDK_SCRIPTS` meta-path finder, duplicated | `tools/mission_harness.py:29`, `tests/conftest.py:17` |
 
-A further 13 `tools/` scripts build the same paths and are broken by the same
+A further 23 `tools/` scripts build the same paths and are broken by the same
 move.
+
+Counts here are from an AST scan for non-docstring string constants equal to
+`game`/`sdk` or beginning `game/`/`sdk/` — a textual grep both over-reports
+(every `engine/` docstring citing `sdk/Build/scripts/...`) and under-reports
+(a constant split across lines, as at `engine/dev_keybindings.py:20`).
 
 ## Goal
 
@@ -197,13 +203,16 @@ never changes `ok`.
 
 ## The import-time trap
 
-Nine of the sites are **module-level constants**, evaluated at import:
+Eight `engine/` sites are **module-level constants**, evaluated at import —
+plus `tools/mission_harness.py`, which `host_loop.py:3507` imports at runtime:
 
 `engine/ui/weapon_icons.py:77`, `engine/ui/ship_icons.py:39`,
 `engine/ui/damage_icons.py:35`, `engine/lip_sync_runtime.py:54`,
 `engine/appc/viewscreen_static.py:22`, `engine/appc/bridge_set.py:21`,
+`engine/dev_keybindings.py:20` (`_TEST_CHARACTER_NIF`, split across nine lines
+and invisible to a line-oriented grep), and
 `engine/missions/name_resolver.py:16` (`TGL_ROOTS`, a tuple holding *both*
-roots), plus both SDK finders.
+roots).
 
 The tempting fix is to resolve paths in `engine/__init__.py`, early enough
 that the constants still work. **That would make Spec 2 impossible**: the
@@ -217,7 +226,7 @@ started, which is the entire premise of a picker.
 
 ## Migration
 
-### Python — 39 sites, 15 files
+### Python — 36 sites, 14 files
 
 `PROJECT_ROOT / "game" / rel` → `paths.game_asset(rel)`.
 `PROJECT_ROOT / "sdk" / "Build" / "scripts"` → `paths.sdk_scripts()`.
@@ -229,7 +238,7 @@ name, with its own project-relative fallback, referenced by one test
 `fake_bc_install` fixture. Leaving a rival spelling behind is the mess this
 spec removes.
 
-### C++ — 27 literals, 11 files
+### C++ — 26 literals, 11 files
 
 `native/src/renderer/include/renderer/asset_path.h` is header-only inline
 today. It gains an `asset_path.cc` holding one variable:
@@ -251,7 +260,7 @@ The default root stays the literal `"game"`, so the ctest suite, the
 do now. The chdir at `host_main.cc:175` **stays**: it is still required for
 `native/assets/`, and it is what keeps the legacy default working.
 
-The 27 literals drop their `"game/"` prefix and route through
+The 26 literals drop their `"game/"` prefix and route through
 `resolve_asset_path()` at their load sites.
 `_dauntless_host.set_game_root(str)` sets the root once from `host_loop.run()`
 before `r.init`, and is callable again later — Spec 2 calls it after the
@@ -267,18 +276,29 @@ missed literal from a silently-absent texture into a named error.
 `paths.sdk_scripts()`. This is the same twinned pair as the duplicated SDK AST
 transforms; changing one and not the other is the known failure mode here.
 
-### The 13 other `tools/` scripts
+### The 23 other `tools/` scripts
 
-`analyze_power_session`, `analyze_session`, `bake_backdrop_appearance`,
-`bake_impulse_glow`, `bake_warp_glow`, `bcs_inspect`, `decode_lip_phonemes`,
-`pick_simplest_mission`, `probes/build_ghidra_export`, `probes/push`, `setup`,
-`tgl_harness`, `uninstall`.
+`analyze_power_session`, `analyze_scale_log`, `analyze_session`,
+`bake_backdrop_appearance`, `bake_impulse_glow`, `bake_set_course_catalog`,
+`bake_star_colors`, `bake_warp_glow`, `bcs_inspect`, `decode_lip_phonemes`,
+`gameloop_harness`, `pick_simplest_mission`, `probes/build_ghidra_export`,
+`probes/collect`, `probes/collect_q13`, `probes/collect_q14`,
+`probes/collect_q15`, `probes/collect_q16`, `probes/collect_q17`,
+`probes/push`, `setup`, `tgl_harness`, `uninstall`.
 
 Each is one or two lines. They are broken by the same move, so fixing them is
-finishing the job, not widening it — and it lets the grep guard cover `tools/`
-with no allowlist. Module-level constants are acceptable *in these scripts*
-(they run to completion with no picker), so only the grep guard applies here,
-not the AST rule.
+finishing the job, not widening it — and it lets the guard cover `tools/` with
+no per-file allowlist. Module-level constants are acceptable *in these
+scripts* (they run to completion, never under the picker), so only the
+string-constant guard applies here, not the no-capture-at-import rule.
+
+Five of the flagged strings are **messages and labels, not paths** —
+`tools/setup.py:80,83,124` and `tools/probes/push.py:25` describe the legacy
+layout in error text and are rewritten to name the new sources; and
+`tools/probes/build_ghidra_export.py:189` records `"game/stbc.exe"` as a
+portable label in an export manifest, where an absolute machine-specific path
+would be worse. That one carries a `# paths-guard: label` comment, which the
+guard honours.
 
 ## Failure handling
 
@@ -322,10 +342,14 @@ A missed site fails silently — a texture that does not load, a mission that
 does not list. One pytest file, `tests/unit/test_path_indirection.py`, holds
 three guards:
 
-1. **Grep `engine/` and `tools/`** for `game`/`sdk` path construction.
-   Allowlist: `engine/paths.py`.
-2. **Grep `native/src`** for `"game/` string literals. Allowlist:
-   `asset_path.cc`.
+1. **AST scan of `engine/`, `tools/` and `tests/conftest.py`** for
+   non-docstring string constants equal to `game`/`sdk` or beginning
+   `game/`/`sdk/`. Allowlist: `engine/paths.py`, plus any line carrying a
+   `# paths-guard: label` comment. It must be AST-based, not a grep: a grep
+   flags every `engine/` docstring that cites `sdk/Build/scripts/...` — dozens
+   of them — and a guard that cries wolf gets deleted.
+2. **Grep `native/src`** for `"game/` string literals, skipping `//` comment
+   lines. Allowlist: `asset_path.cc`.
 3. **AST check**: no module in `engine/` binds a module-level name to a
    `paths.*` call. Allowlist: `engine/paths.py`, whose own `GAME_MARKERS` and
    `SDK_MARKERS` are module-level by design. This is the guard for the
