@@ -146,7 +146,13 @@ namespace dauntless_ambient_gradient {
         // The tuned "on" value. ONE home for this number: the Python master
         // toggle asks for enabled/disabled and never names a strength, so
         // retuning after a live look is a single-line change here.
-        constexpr float kTunedDefault = 0.6f;
+        // Retuned 0.6 -> 1.0 after Mark's first live look (asked for +0.5;
+        // the [0,1] clamp puts that at the ceiling). 1.0 is the maximum the
+        // design allows: the term is 1 + strength*dot(N,dir), so at 1.0 the
+        // face pointing exactly AWAY from the light gets 1 + 1*(-1) == 0,
+        // i.e. no ambient at all. Above 1.0 it would go negative, which is
+        // why the clamp is there.
+        constexpr float kTunedDefault = 1.0f;
         float g_strength = kTunedDefault;
     }
     float strength() { return g_strength; }

@@ -24,16 +24,18 @@ def test_set_ambient_gradient_coerces_to_float(monkeypatch):
 
 def test_ambient_gradient_reads_back(monkeypatch):
     fake = MagicMock()
-    fake.ambient_gradient_get.return_value = 0.6
+    fake.ambient_gradient_get.return_value = 1.0
     monkeypatch.setattr(renderer, "_h", fake)
-    assert renderer.ambient_gradient() == pytest.approx(0.6)
+    assert renderer.ambient_gradient() == pytest.approx(1.0)
 
 
 def test_default_is_biased_high_for_the_first_live_look():
-    """0.6, not something subtle. The house practice is to calibrate UP and
+    """1.0 after Mark's first live look asked for +0.5 on the original 0.6;
+    the [0,1] clamp lands that at the ceiling. The house practice is to
+    calibrate UP and
     then come down; a first pass too faint to see wastes the live check."""
     host = pytest.importorskip("_dauntless_host")
-    assert host.ambient_gradient_get() == pytest.approx(0.6)
+    assert host.ambient_gradient_get() == pytest.approx(1.0)
 
 
 def test_out_of_range_values_are_clamped_not_rejected():
