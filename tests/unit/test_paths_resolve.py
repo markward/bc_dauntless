@@ -342,14 +342,25 @@ def test_the_live_sdk_finder_has_no_module_level_path_constant():
 
 def test_boot_resolution_is_wired_before_the_sdk_finder(monkeypatch):
     """host_loop.run() must configure paths BEFORE _setup_sdk(): the finder
-    asks paths.sdk_scripts(), so a later configure would be too late."""
+    asks paths.sdk_scripts(), so a later configure would be too late.
+
+    paths.configure() itself now lives inside the extracted
+    _resolve_paths_or_report() helper (added so the branch is testable
+    without booting a window), called from run() before _setup_sdk() --
+    so the invariant is checked across both sources rather than
+    run()'s alone.
+    """
     import inspect
     from engine import host_loop
-    source = inspect.getsource(host_loop.run)
-    configure_at = source.index("paths.configure(")
-    setup_at = source.index("_setup_sdk()")
-    assert configure_at < setup_at, (
-        "paths.configure() must run before _setup_sdk() in host_loop.run()"
+    resolve_source = inspect.getsource(host_loop._resolve_paths_or_report)
+    assert "paths.configure(" in resolve_source, (
+        "_resolve_paths_or_report() must call paths.configure()"
+    )
+    run_source = inspect.getsource(host_loop.run)
+    resolve_call_at = run_source.index("_resolve_paths_or_report()")
+    setup_at = run_source.index("_setup_sdk()")
+    assert resolve_call_at < setup_at, (
+        "_resolve_paths_or_report() must run before _setup_sdk() in host_loop.run()"
     )
 
 
