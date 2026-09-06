@@ -3619,6 +3619,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               p.max_radius_frac = max_radius_frac;
               dauntless_dof::set_params(p);
           },
+          // Named args, unlike the neighbours above: six consecutive floats
+          // in a fixed order is exactly the signature a future edit can
+          // transpose silently. With py::arg the contract is documented at
+          // the binding and a mis-ordered keyword call fails loudly instead.
+          py::arg("focus_gu"), py::arg("blend"), py::arg("near_strength"),
+          py::arg("far_strength"), py::arg("far_ceiling"),
+          py::arg("max_radius_frac"),
           "Push the whole DOF parameter set for this frame. blend <= 0 means "
           "no subject is focused and the pass is skipped entirely. Every "
           "value is authored in engine/cameras/dof.py -- there is no C++ "
