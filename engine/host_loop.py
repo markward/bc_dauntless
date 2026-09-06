@@ -6788,11 +6788,14 @@ def _resolve_paths_or_report():
     if not resolution.ok:
         resolution = first_run.prompt_for_missing(resolution)
     _paths.configure(resolution)
+    # persist() only ever writes VALID, cli/picker-sourced roots, so a partial
+    # resolution stores the half that validated and nothing else -- the player
+    # located a BC install by hand, and the next launch must not ask again.
+    _paths.persist(resolution)
     if not resolution.ok:
         import sys as _sys
         print(_paths.describe_failure(resolution), file=_sys.stderr)
         return None
-    _paths.persist(resolution)
     return resolution
 
 
