@@ -353,7 +353,12 @@ def test_boot_resolution_is_wired_before_the_sdk_finder(monkeypatch):
     import inspect
     from engine import host_loop
     resolve_source = inspect.getsource(host_loop._resolve_paths_or_report)
-    assert "paths.configure(" in resolve_source, (
+    # Anchored on the actual spelling used inside the helper (the module is
+    # imported as `_paths`, not `paths`) -- a bare "paths.configure(" also
+    # matches one character into "_paths.configure(", which is exactly the
+    # coincidental-substring trap that broke this test's previous version
+    # when the call moved out of run() and into this helper.
+    assert "_paths.configure(" in resolve_source, (
         "_resolve_paths_or_report() must call paths.configure()"
     )
     run_source = inspect.getsource(host_loop.run)
@@ -361,6 +366,30 @@ def test_boot_resolution_is_wired_before_the_sdk_finder(monkeypatch):
     setup_at = run_source.index("_setup_sdk()")
     assert resolve_call_at < setup_at, (
         "_resolve_paths_or_report() must run before _setup_sdk() in host_loop.run()"
+    )
+
+
+def test_run_returns_nonzero_when_paths_are_unresolved():
+    """run() must turn a None from _resolve_paths_or_report() into a
+    non-zero return, not silently keep booting into _setup_sdk().
+
+    Executing run() is not viable in a test -- it boots a renderer window
+    -- so, like the two source-presence checks this sits beside, it
+    inspects run()'s source rather than calling it. This closes a real
+    gap: the tests in tests/host/test_host_loop_first_run.py call
+    _resolve_paths_or_report() directly, so they cannot see whether run()
+    still honours its None sentinel. A reviewer proved the gap by
+    temporarily deleting run()'s `if _resolution is None: return 1` block
+    and confirming every other first-run test still passed.
+    """
+    import inspect
+    from engine import host_loop
+    source = inspect.getsource(host_loop.run)
+    sentinel_at = source.index("_resolution is None")
+    return_at = source.index("return 1")
+    assert sentinel_at < return_at, (
+        "run() must check `_resolution is None` and return a non-zero "
+        "status right after calling _resolve_paths_or_report()"
     )
 
 
