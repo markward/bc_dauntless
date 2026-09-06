@@ -917,8 +917,16 @@ class TorpCameraMode(CameraMode):
         """The torpedo being ridden — the shot's actual subject.
 
         None once the torpedo has left the registry, even though the mode
-        holds its final pose for DelayAfterTorpGone seconds: the shot is over,
-        so the lens should release rather than stay locked on empty space.
+        holds its final pose for DelayAfterTorpGone seconds.
+
+        None here does NOT mean the lens releases. dof.focus_subject() treats
+        this hook as "the camera has no opinion" and falls through to
+        player.GetTarget(), which during a torpedo shot is essentially always
+        set — so through the hold window the lens racks to the target ship the
+        torpedo was fired at. That reads better than either alternative (a
+        release to deep focus mid-impact, or a lock on the empty space where
+        the torpedo was), so the behaviour stands; this docstring is corrected
+        to describe it rather than the fall-through being changed.
         """
         return self._torp
 

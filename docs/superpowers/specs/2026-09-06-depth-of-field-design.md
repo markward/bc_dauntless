@@ -354,11 +354,27 @@ needed. Noted explicitly so a reviewer does not flag its absence.
 
 Accepted for V1, stated so they are not later mistaken for bugs:
 
-1. **Additive transparents inherit the background's CoC.** Beams, torpedo
-   glows and dust do not write depth, so a phaser crossing from your hull to a
-   distant target is blurred by whatever is behind it, not by its own distance.
-   This is the standard post-DOF compromise; fixing it needs a separate
-   transparent-depth pass.
+1. **Every additive transparent over open space stays perfectly sharp.**
+   Seventeen renderer passes draw with `glDepthMask(GL_FALSE)` — beams,
+   torpedoes, explosions, shockwaves, shields, hull discharge, particles, the
+   sun, the nebula layers, dust. None of them writes depth, so each pixel
+   inherits whatever depth is already in the buffer. Where that is a hull, the
+   effect takes the hull's CoC (the familiar post-DOF compromise: a phaser
+   crossing from your hull to a distant target is blurred by what is *behind*
+   it rather than by its own distance). But where those pixels sit against the
+   **starfield** — which is most of the frame in space — the depth they inherit
+   is the clear value, and the [starfield exemption](#starfield-exemption)
+   deliberately maps that to `coc = 0`. The result is not "slightly wrong
+   blur": it is **razor-sharp weapon fire and explosions over a defocused
+   scene**.
+
+   This is worst in exactly the headline shot. Torpedo cam focuses ~4 GU out,
+   which puts the whole world at the far ceiling, while every weapon effect in
+   the frame renders at full sharpness against the sky.
+
+   Accepted for V1 and **not** to be "fixed" by weakening the starfield
+   exemption — that would mush the sky and cost readability for nothing. The
+   real fix is a transparent-depth pass, which is out of scope here.
 2. **Camera-anchored dust stays sharp**, for the same reason — its pixels carry
    the sky's depth. Arguably correct for a camera-anchored effect.
 3. **No bokeh shape control.** The kernel is a uniform disc; no aperture blades,
