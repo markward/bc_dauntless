@@ -666,6 +666,17 @@ std::uint32_t FrameSubmitter::ensure_black_texture() {
     return black_texture_;
 }
 
+// Sets the three ambient uniforms together. One helper rather than three
+// copies: u_ambient_light is set at three sites (submit_opaque,
+// submit_opaque_in_pass, submit_opaque_instance) and adding the gradient
+// uniforms by hand at each invites updating only some of them.
+void set_ambient_uniforms(Shader& s, const renderer::Lighting& lighting,
+                          float ambient_scale) {
+    s.set_vec3 ("u_ambient_light",    lighting.ambient * ambient_scale);
+    s.set_vec3 ("u_ambient_dir_ws",   lighting.ambient_dir_ws);
+    s.set_float("u_ambient_gradient", lighting.ambient_gradient);
+}
+
 void FrameSubmitter::submit_opaque(const scenegraph::World& world,
                                    const scenegraph::Camera& camera,
                                    Pipeline& pipeline,
@@ -688,7 +699,7 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
             glm::vec3(glm::inverse(camera.view_matrix())[3]);
         s.set_vec3("u_camera_pos_ws", cam_pos_ws);
 
-        s.set_vec3("u_ambient_light", lighting.ambient);
+        set_ambient_uniforms(s, lighting, 1.0f);
         s.set_int("u_dir_light_count", lighting.directional_count);
         if (lighting.directional_count > 0) {
             s.set_vec3_array("u_dir_light_dir_ws",
@@ -750,7 +761,7 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         // ambient_scale (default 1.0) dims ambient on the exterior view when the
         // Filmic Filter is on; the host passes the filmic scale only for the
         // main exterior pass (1.0 for the viewscreen inset / all other callers).
-        s.set_vec3("u_ambient_light", lighting.ambient * ambient_scale);
+        set_ambient_uniforms(s, lighting, ambient_scale);
         s.set_int("u_dir_light_count", lighting.directional_count);
         if (lighting.directional_count > 0) {
             s.set_vec3_array("u_dir_light_dir_ws",
@@ -812,7 +823,7 @@ void FrameSubmitter::submit_opaque_instance(const scenegraph::World& world,
         const glm::vec3 cam_pos_ws =
             glm::vec3(glm::inverse(camera.view_matrix())[3]);
         s.set_vec3("u_camera_pos_ws", cam_pos_ws);
-        s.set_vec3("u_ambient_light", lighting.ambient);
+        set_ambient_uniforms(s, lighting, 1.0f);
         s.set_int("u_dir_light_count", lighting.directional_count);
         if (lighting.directional_count > 0) {
             s.set_vec3_array("u_dir_light_dir_ws",

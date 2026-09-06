@@ -39,6 +39,11 @@ const float RIM_POWER = 36.0;  // sharp, edge-only falloff (higher = thinner)
 const float RIM_GAIN  = 12.75; // peak edge brightness (20.8 -> 17.0 -> -25% 2026-08-16)
 
 uniform vec3 u_ambient_light;
+// Directional ambient. u_ambient_gradient == 0 is the stock path: the term
+// collapses to u_ambient_light exactly. The axis is the luminance-weighted
+// sum of every directional (computed host-side), NOT light 0.
+uniform vec3  u_ambient_dir_ws;
+uniform float u_ambient_gradient;
 uniform vec3 u_camera_pos_ws;
 
 const int MAX_DIR_LIGHTS = 4;
@@ -644,7 +649,14 @@ void main() {
     vec4 base = texture(u_base_color, v_uv);
     // lit_dyn folds in EXACTLY where ambient + directional combine, so
     // material/diffuse color and base texture multiply it the same way.
-    vec3 lit  = (u_ambient_light + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
+    // MEAN-PRESERVING: dot(N, dir) averages to zero over a sphere, so the
+    // average ambient across a closed hull is unchanged and this only
+    // REDISTRIBUTES ambient. Do NOT rewrite as
+    //     u_ambient_light + u_ambient_gradient * (0.5 + 0.5 * d)
+    // which adds light and brightens the whole scene.
+    float amb_d = dot(n_shade, u_ambient_dir_ws);
+    vec3  amb   = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
+    vec3 lit  = (amb + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
 
     // Body-frame normal for object-space decals.
     vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);

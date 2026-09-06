@@ -99,6 +99,17 @@ protected:
         glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+        // a_normal (location 1) is left disabled, so opaque.vert reads the
+        // "current value" below instead of a per-vertex array. Real hull
+        // meshes never have a zero-length normal, but this test's synthetic
+        // triangle previously left it at the GL default (0,0,0), and
+        // normalize(0,0,0) is NaN -- harmless before the ambient-gradient
+        // term (every existing use of n_shade is behind a max(x, 0.0), which
+        // discards NaN on this driver) but the new `amb_d` multiply has no
+        // such clamp, so a NaN n_shade poisoned the whole ambient term to
+        // NaN regardless of u_ambient_gradient. Facing +Z is correct for a
+        // fullscreen quad standing in for a hull facing the camera.
+        glVertexAttrib3f(1, 0.0f, 0.0f, 1.0f);
         glBindVertexArray(0);
 
         white_tex_ = make_tex(255, 255, 255);
@@ -133,6 +144,15 @@ protected:
         s.set_mat4("u_model", glm::mat4(1.0f));
         s.set_mat4("u_ship_world_inv", glm::mat4(1.0f));
         s.set_vec3("u_ambient_light",   glm::vec3(1.0f));
+        // New uniforms are resolved-by-name, and GL only GUARANTEES a zero
+        // default; Apple's GL has been measured leaving genuinely stale
+        // driver state in unset locations (see docs frame-profiler notes on
+        // this platform), which turned this term into NaN and blacked out
+        // every one of this test's four draws. gradient=0 is the stock
+        // no-op value the real render path (set_ambient_uniforms) always
+        // pushes explicitly.
+        s.set_vec3("u_ambient_dir_ws",    glm::vec3(0.0f, 1.0f, 0.0f));
+        s.set_float("u_ambient_gradient", 0.0f);
         s.set_int("u_dir_light_count",  0);
         s.set_vec3("u_camera_pos_ws",   glm::vec3(0.0f, 0.0f, 1.0f));
         s.set_vec3("u_diffuse_color",   glm::vec3(1.0f));
