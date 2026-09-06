@@ -159,6 +159,47 @@ def test_a_degenerate_distance_is_treated_as_no_subject():
     assert s.blend == 0.0
 
 
+def test_a_subject_beyond_the_far_plane_is_treated_as_no_subject():
+    """focus_gu > far mushes the WHOLE frame. dd = 1 - focus/z is negative for
+    every visible pixel, so everything is near field and everything nearer than
+    focus/2 clamps to the hard -1 -- maximum blur, with the far ceiling unable
+    to help because nothing is far field. The lens must release to deep focus
+    rather than rack past infinity."""
+    s = dof.FocusSolver()
+    s.update(dof.MAX_FOCUS_GU + 1.0, 1.0 / 60.0)
+    assert s.blend == 0.0
+    assert s.focus_gu == 0.0
+
+
+def test_the_far_bound_is_reachable_from_a_real_sensor_fallback_range():
+    """Not a theoretical edge: sensor_detection.FALLBACK_RANGE_GU is 30000 GU,
+    six times the exterior camera's far plane, and a lock is only dropped when
+    can_detect fails."""
+    from engine.appc import sensor_detection
+    assert sensor_detection.FALLBACK_RANGE_GU > dof.MAX_FOCUS_GU
+    s = dof.FocusSolver()
+    s.update(sensor_detection.FALLBACK_RANGE_GU, 1.0 / 60.0)
+    assert s.blend == 0.0
+
+
+def test_a_held_subject_racking_past_the_far_plane_releases_the_lens():
+    """A target that warps out to beyond the far plane must ramp the blend down
+    like any other loss, not hold a saturated frame."""
+    s = dof.FocusSolver()
+    for _ in range(240):
+        s.update(120.0, 1.0 / 60.0)
+    assert s.blend == pytest.approx(1.0, abs=1e-3)
+    for _ in range(600):
+        s.update(9000.0, 1.0 / 60.0)
+    assert s.blend == 0.0
+
+
+def test_the_far_bound_matches_the_exterior_cameras_far_plane():
+    """MAX_FOCUS_GU is not a free parameter -- it IS the camera's far plane
+    (host_loop's r.set_camera(..., far=5000.0)). If that changes, this must."""
+    assert dof.MAX_FOCUS_GU == 5000.0
+
+
 def test_solver_seeds_its_lens_values_from_the_module_defaults():
     s = dof.FocusSolver()
     assert s.near_strength == dof.NEAR_STRENGTH

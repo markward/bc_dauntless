@@ -41,6 +41,23 @@ _BLEND_EPSILON = 1e-3
 # degenerates as focus approaches the near plane.
 MIN_FOCUS_GU = 0.5
 
+# ...and so is a subject at or beyond the camera's FAR plane, which is
+# 5000 GU on the exterior view (host_loop's r.set_camera(near=1.0, far=5000.0)).
+#
+# This is not a tidiness bound, it is the anti-mush bound. The CoC term is
+# dd = 1 - focus/z, so with focus >= far EVERY visible pixel has dd < 0 -- the
+# whole frame is near field -- and everything nearer than focus/2 clamps to the
+# hard -1, i.e. MAXIMUM blur. The far ceiling cannot help, because no part of
+# the frame is far field. The result is the entire scene mushed behind a sharp
+# starfield: exactly the over-blur this feature exists to avoid.
+#
+# It is reachable in normal play, not a theoretical edge: sensor_detection's
+# FALLBACK_RANGE_GU is 30000 GU, six times the far plane, and a lock is only
+# dropped when can_detect fails. Racking past infinity has no meaning anyway,
+# so a subject out there reads as NO subject and the lens releases to deep
+# focus -- the same behaviour as having no target at all.
+MAX_FOCUS_GU = 5000.0
+
 
 def _ease(current, target, dt, tau):
     """Frame-rate-independent exponential approach to `target`."""
@@ -121,7 +138,8 @@ class FocusSolver:
 
     def update(self, distance_gu, dt):
         """Advance one frame toward `distance_gu` (None = deep focus)."""
-        if distance_gu is not None and distance_gu > MIN_FOCUS_GU:
+        if (distance_gu is not None
+                and MIN_FOCUS_GU < distance_gu < MAX_FOCUS_GU):
             target_inv = 1.0 / distance_gu
             if self._inv_focus <= 0.0:
                 # First acquisition SNAPS the distance. Racking from nowhere
