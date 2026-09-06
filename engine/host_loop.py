@@ -5025,6 +5025,15 @@ class HostController:
         # before the new camera solves. None reads as "no camera known" — the
         # gate stays inert until the render path writes a real one.
         _note_camera_eye(None)
+        # Same hazard, the other camera-derived state: the depth-of-field lens
+        # belongs to the mission that racked it. Swap with a target held and
+        # blend == 1.0, and if the new mission selects a target on load --
+        # common in episode openers -- _inv_focus is still > 0, so the solver
+        # eases rather than snaps: the opening frames render at full blend
+        # focused at the PREVIOUS mission's distance. reset_focus() drops the
+        # rack and the engagement but KEEPS the nudged lens strengths, which
+        # are per-session dev tuning rather than mission state.
+        _focus_solver.reset_focus()
         reset_sdk_globals()
         # A mission swap mid-warp would otherwise leak the WarpVFX manager
         # (reset_sdk_globals zeroes the timer manager, cancelling the pending

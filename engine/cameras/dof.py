@@ -205,6 +205,23 @@ class FocusSolver:
                 self._inv_focus = 0.0
         return self
 
+    def reset_focus(self):
+        """Forget the current rack and engagement. Mission-swap use only.
+
+        The lens belongs to the mission that racked it. Carry `_inv_focus`
+        across a swap and update() takes the EASE branch rather than the snap
+        branch on the new mission's first acquisition -- so an episode opener
+        that selects a target on load renders its opening frames at full blend
+        focused at the PREVIOUS mission's distance.
+
+        The lens STRENGTHS are deliberately left alone: they are per-session
+        dev tuning the user just dialled in with the ',' / '.' / ';' / "'"
+        keys, not mission state, and wiping them mid-session would silently
+        undo a calibration round.
+        """
+        self._inv_focus = 0.0
+        self._blend = 0.0
+
     def nudge_strength(self, delta):
         """Move both defocus strengths by `delta`, clamped. Dev tuning only.
 
