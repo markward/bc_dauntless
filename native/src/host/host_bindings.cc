@@ -4383,6 +4383,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_Z")     = GLFW_KEY_Z;
     keys.attr("KEY_EQUAL") = GLFW_KEY_EQUAL;
     keys.attr("KEY_MINUS") = GLFW_KEY_MINUS;
+    // Live DOF tuning under --developer (engine/dev_keybindings.py):
+    // ',' / '.' nudge the blur magnitude, ';' / '\'' nudge the far ceiling.
+    // All four are unbound in engine/input_map.py's ACTIONS table.
+    keys.attr("KEY_COMMA")      = GLFW_KEY_COMMA;
+    keys.attr("KEY_PERIOD")     = GLFW_KEY_PERIOD;
+    keys.attr("KEY_SEMICOLON")  = GLFW_KEY_SEMICOLON;
+    keys.attr("KEY_APOSTROPHE") = GLFW_KEY_APOSTROPHE;
     keys.attr("KEY_UP")    = GLFW_KEY_UP;
     keys.attr("KEY_DOWN")  = GLFW_KEY_DOWN;
     keys.attr("KEY_LEFT")  = GLFW_KEY_LEFT;

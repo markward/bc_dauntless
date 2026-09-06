@@ -36,6 +36,12 @@ class _Keys:
     # (engine/dev_keybindings.py); this fixture must supply every KEY_* it
     # touches or the whole registration call raises AttributeError, taking
     # every other binding in this file down with it.
+    #
+    # NOTE: adding a constant HERE proves nothing about the real surface --
+    # KEY_COMMA/KEY_PERIOD were added to this double while _dauntless_host.keys
+    # still did not export them, which is how a process-killing dead key shipped
+    # past a green suite. The real surface is guarded by
+    # tests/unit/test_host_key_manifest.py; keep this double in step with it.
     KEY_COMMA = 44
     KEY_PERIOD = 46
 
