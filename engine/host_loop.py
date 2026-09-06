@@ -3218,10 +3218,15 @@ class _BridgeCamera:
         # docs/superpowers/specs/2026-07-25-bridge-camera-stand-persistence-design.md.
         self._held_pose = None
 
-    def _eye_offset(self) -> tuple:
-        """Captain's-chair eye for the current horizontal facing. Base is the
+    def _eye_offset(self, horiz=None) -> tuple:
+        """Captain's-chair eye for a horizontal facing. Base is the
         SDK GalaxyBridgeCaptain mode's BasePosition (= GetBaseCameraPosition,
         z=50), harvested at mission load into _BRIDGE_CAMERA_EYE.
+
+        `horiz` is the bearing off bridge-forward, in [0, pi]; None derives it
+        from the mouse-look yaw. compute_camera passes the bearing of the EASED
+        AIM while a look-at zoom is running, because the mode is BC's *place by
+        direction* — see the call site.
 
         Applies the SDK PlaceByDirection Movement as a gradual lift as the view
         turns away from forward: eye = base + Movement * frac, where frac
@@ -3235,11 +3240,13 @@ class _BridgeCamera:
         if move is None:
             return base
         (mx, my, mz), start, end = move
-        # Horizontal angle from forward: forward (toward viewscreen) is
-        # bridge-local -Y; our forward at yaw is (-sin yaw, cos yaw, 0), so the
-        # deviation from facing-forward is |wrap_to_pi(yaw - pi)| in [0, pi]
-        # (= 0 at yaw=pi facing the viewscreen, = pi at yaw=0 facing the rear).
-        horiz = abs(self.yaw_rad % (2.0 * _math.pi) - _math.pi)
+        if horiz is None:
+            # Horizontal angle from forward: forward (toward viewscreen) is
+            # bridge-local -Y; our forward at yaw is (-sin yaw, cos yaw, 0), so
+            # the deviation from facing-forward is |wrap_to_pi(yaw - pi)| in
+            # [0, pi] (= 0 at yaw=pi facing the viewscreen, = pi at yaw=0
+            # facing the rear).
+            horiz = abs(self.yaw_rad % (2.0 * _math.pi) - _math.pi)
         if horiz <= start:
             band = 0.0
         elif end > start and horiz >= end:
@@ -3250,6 +3257,34 @@ class _BridgeCamera:
             band = 1.0 if horiz > start else 0.0
         frac = band * _BRIDGE_CAMERA_MOVE_SCALE
         return (base[0] + mx * frac, base[1] + my * frac, base[2] + mz * frac)
+
+    @staticmethod
+    def _horiz_off_forward(fwd) -> float:
+        """Bearing of a look direction off bridge-forward (-Y), in [0, pi] — the
+        same quantity _eye_offset derives from yaw, for an arbitrary direction.
+        A straight up/down look has no bearing; read it as facing forward."""
+        hx, hy = fwd[0], fwd[1]
+        n = _math.sqrt(hx*hx + hy*hy)
+        if n < 1e-9:
+            return 0.0
+        return _math.acos(max(-1.0, min(1.0, -hy / n)))
+
+    def _ease_toward(self, eye, fwd, target_world, e):
+        """Unit forward eased fraction `e` from `fwd` toward the direction
+        eye -> target_world. None when either end is degenerate."""
+        dx = target_world[0] - eye[0]
+        dy = target_world[1] - eye[1]
+        dz = target_world[2] - eye[2]
+        dl = _math.sqrt(dx*dx + dy*dy + dz*dz)
+        if dl <= 1e-6:
+            return None
+        bx = self._lerp(fwd[0], dx/dl, e)
+        by = self._lerp(fwd[1], dy/dl, e)
+        bz = self._lerp(fwd[2], dz/dl, e)
+        bl = _math.sqrt(bx*bx + by*by + bz*bz)
+        if bl <= 1e-6:
+            return None
+        return (bx/bl, by/bl, bz/bl)
 
     @staticmethod
     def _smoothstep(t: float) -> float:
@@ -3377,37 +3412,44 @@ class _BridgeCamera:
         zoom_t, factor, target_world = self._zoom_state()
         if zoom_t > 0.0 and target_world is not None:
             e = self._smoothstep(zoom_t)
-            dx = target_world[0] - eye[0]
-            dy = target_world[1] - eye[1]
-            dz = target_world[2] - eye[2]
-            dl = _math.sqrt(dx*dx + dy*dy + dz*dz)
-            if dl > 1e-6:
-                ofwd = (dx/dl, dy/dl, dz/dl)
-                bx = self._lerp(local_fwd[0], ofwd[0], e)
-                by = self._lerp(local_fwd[1], ofwd[1], e)
-                bz = self._lerp(local_fwd[2], ofwd[2], e)
-                bl = _math.sqrt(bx*bx + by*by + bz*bz)
-                if bl > 1e-6:
-                    local_fwd = (bx/bl, by/bl, bz/bl)
-                    # Re-derive a roll-free up for the eased forward. Easing only
-                    # the forward leaves local_up frozen at its pre-zoom (yawed/
-                    # pitched) orientation, so it no longer lies in the new
-                    # forward's vertical plane and the camera rolls. Rebuilding up
-                    # from forward against bridge-up (+Z) keeps the horizon level
-                    # throughout the zoom and at the station, matching free-look.
-                    zr = (
-                        local_fwd[1]*1.0 - local_fwd[2]*0.0,
-                        local_fwd[2]*0.0 - local_fwd[0]*1.0,
-                        local_fwd[0]*0.0 - local_fwd[1]*0.0,
+            aimed = self._ease_toward(eye, local_fwd, target_world, e)
+            if aimed is not None and held is None:
+                # BC's captain mode is PLACE BY DIRECTION: the eye is a function
+                # of where the camera looks, whatever turned it. An officer
+                # engagement (crew menu, AT_WATCH_ME, every E1M1 crew intro)
+                # turns the camera through this look-at WITHOUT touching
+                # yaw_rad — mouse-look is frozen for the whole cutscene — so
+                # placing from yaw alone left the eye seated through the entire
+                # automatic turn and the aft science/engineering shot looked
+                # into the raised platform and the arch. Re-place from the eased
+                # aim, then re-derive the aim from the moved eye so the officer
+                # stays centred (the eye travels up to 15 units). One iteration:
+                # the movement band is saturated at the aft stations, so this is
+                # already the fixed point. Skipped under a held stand-up pose,
+                # which owns its (already elevated) eye outright.
+                eye = self._eye_offset(self._horiz_off_forward(aimed))
+                aimed = self._ease_toward(eye, local_fwd, target_world, e)
+            if aimed is not None:
+                local_fwd = aimed
+                # Re-derive a roll-free up for the eased forward. Easing only
+                # the forward leaves local_up frozen at its pre-zoom (yawed/
+                # pitched) orientation, so it no longer lies in the new
+                # forward's vertical plane and the camera rolls. Rebuilding up
+                # from forward against bridge-up (+Z) keeps the horizon level
+                # throughout the zoom and at the station, matching free-look.
+                zr = (
+                    local_fwd[1]*1.0 - local_fwd[2]*0.0,
+                    local_fwd[2]*0.0 - local_fwd[0]*1.0,
+                    local_fwd[0]*0.0 - local_fwd[1]*0.0,
+                )
+                zrl = _math.sqrt(zr[0]**2 + zr[1]**2 + zr[2]**2)
+                if zrl > 1e-6:
+                    zr = (zr[0]/zrl, zr[1]/zrl, zr[2]/zrl)
+                    local_up = (
+                        zr[1]*local_fwd[2] - zr[2]*local_fwd[1],
+                        zr[2]*local_fwd[0] - zr[0]*local_fwd[2],
+                        zr[0]*local_fwd[1] - zr[1]*local_fwd[0],
                     )
-                    zrl = _math.sqrt(zr[0]**2 + zr[1]**2 + zr[2]**2)
-                    if zrl > 1e-6:
-                        zr = (zr[0]/zrl, zr[1]/zrl, zr[2]/zrl)
-                        local_up = (
-                            zr[1]*local_fwd[2] - zr[2]*local_fwd[1],
-                            zr[2]*local_fwd[0] - zr[0]*local_fwd[2],
-                            zr[0]*local_fwd[1] - zr[1]*local_fwd[0],
-                        )
             fov = self.FOV_Y_RAD * self._lerp(_BRIDGE_ZOOM_MAX, factor, e)
         elif zoom_t > 0.0:
             # Viewscreen-forward zoom (look_at is None): ease the aim toward the
