@@ -16,7 +16,16 @@ std::optional<std::string> pick_folder(const std::string& title,
         // and this runs from the boot failure branch BEFORE r.init(), so
         // GLFW has not made one either. sharedApplication is idempotent and
         // creates it if needed.
-        [NSApplication sharedApplication];
+        NSApplication* app = [NSApplication sharedApplication];
+
+        // A bundle-less, non-foreground process can be left in an activation
+        // policy where no window may become key -- the panel would then open
+        // behind the launching terminal with no menu bar, which to a
+        // first-time player reads as the game hanging on launch. Both calls
+        // are idempotent and harmless if CEF or GLFW already made us a
+        // foreground app.
+        [app setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [app activateIgnoringOtherApps:YES];
 
         NSOpenPanel* panel = [NSOpenPanel openPanel];
         panel.canChooseFiles = NO;
