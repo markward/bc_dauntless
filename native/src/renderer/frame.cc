@@ -670,8 +670,11 @@ std::uint32_t FrameSubmitter::ensure_black_texture() {
 // copies: u_ambient_light is set at three sites (submit_opaque,
 // submit_opaque_in_pass, submit_opaque_instance) and adding the gradient
 // uniforms by hand at each invites updating only some of them.
-void set_ambient_uniforms(Shader& s, const renderer::Lighting& lighting,
-                          float ambient_scale) {
+// static: file-local. The anonymous namespace above (frame.cc:64-298) closes
+// well before this point, so without `static` this would have external
+// linkage it doesn't need.
+static void set_ambient_uniforms(Shader& s, const Lighting& lighting,
+                                 float ambient_scale) {
     s.set_vec3 ("u_ambient_light",    lighting.ambient * ambient_scale);
     s.set_vec3 ("u_ambient_dir_ws",   lighting.ambient_dir_ws);
     s.set_float("u_ambient_gradient", lighting.ambient_gradient);

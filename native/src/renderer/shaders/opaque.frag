@@ -655,20 +655,22 @@ void main() {
     //     u_ambient_light + u_ambient_gradient * (0.5 + 0.5 * d)
     // which adds light and brightens the whole scene.
     float amb_d = dot(n_shade, u_ambient_dir_ws);
-    // NaN guard: every OTHER use of n_shade in this file sits behind a
-    // max(x, 0.0), which happens to discard NaN on this driver. This
-    // multiply has no such clamp, so a degenerate (zero-length) vertex
-    // normal -- normalize(vec3(0)) is NaN -- would otherwise poison amb to
-    // NaN even with u_ambient_gradient == 0 (IEEE 0.0 * NaN is NaN, not 0).
-    // isnan(), matching bloom_prefilter.frag's established guard for the
-    // same class of bug: a `v == v` self-comparison was tried first and
-    // measured NOT to work on this driver (HullClipTest.
-    // DegenerateNormalWithGradientOnStaysFinite stayed non-finite with it) --
-    // this compiler evidently constant-folds float self-equality to true,
-    // which silently defeats that idiom as a guard (nonfinite_probe.frag
-    // keeps `v == v` only as one of several redundant DETECTION tests, never
-    // alone, for the same documented reason).
-    amb_d = isnan(amb_d) ? 0.0 : amb_d;
+    // NaN/Inf guard. n_shade and u_ambient_dir_ws are both unit vectors, so a
+    // correct amb_d is already in [-1, 1] -- clamp() to that range is a
+    // mathematical no-op on any legitimate input, and cannot change a
+    // correct result. What it buys: GLSL's min/max (and clamp, defined in
+    // terms of them) are specified so that a NaN operand loses to the other
+    // operand -- the same spec guarantee every OTHER n_shade use in this
+    // file already relies on via max(dot(n_shade, L), 0.0) (see nl below).
+    // That guarantee is what makes it a real guard rather than an idiom that
+    // merely looks like one: a `v == v` self-compare and a bare isnan() were
+    // both tried here first and both still left
+    // HullClipTest.DegenerateNormalWithGradientOnStaysFinite non-finite
+    // (measured, not inferred -- the probe still flagged 64 cells with
+    // isnan() in place). clamp() also catches +-Inf, which isnan() does not:
+    // an infinite u_ambient_dir_ws would otherwise give 0.0 * Inf == NaN and
+    // poison the OFF path too.
+    amb_d = clamp(amb_d, -1.0, 1.0);
     vec3  amb   = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
     vec3 lit  = (amb + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
 
