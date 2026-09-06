@@ -43,6 +43,7 @@ def _make(**overrides):
         set_hdr_lens_flare=Mock(),
         set_ship_light_emitters=Mock(),
         set_camera_shake=Mock(),
+        set_ambient_gradient=Mock(),
     )
     kwargs.update(overrides)
     return ConfigurationPanel(**kwargs), kwargs
@@ -923,3 +924,21 @@ def test_js_gameplay_focusables_match_python():
                   + [gameplay_reset.group(1)])
     p, _ = _make(tabs=[("gameplay", "Gameplay")])
     assert js_targets == [t for kind, t in p._focusables() if kind == "ctrl"]
+
+
+def test_master_label_is_cinematic_lighting_but_the_key_is_unchanged():
+    """The label is player-facing; the key drives the action string, the
+    payload key, the focusable and the persisted setting. Renaming the key
+    would need a schema migration for a cosmetic change, so it stays."""
+    from engine.ui.configuration_panel import MASTER_TOGGLES
+
+    row = next(r for r in MASTER_TOGGLES if r[0] == "realistic_lighting")
+    assert row[1] == "Cinematic Lighting"
+    assert "ambient_gradient" in row[2]
+
+
+def test_cinematic_lighting_toggle_fires_the_gradient_applier():
+    p, kw = _make()
+    p.open()
+    assert p.dispatch_event("toggle:realistic_lighting") is True
+    kw["set_ambient_gradient"].assert_called_once_with(False)

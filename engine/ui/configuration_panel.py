@@ -10,10 +10,10 @@ panel itself never imports the store.
 
 Three rows are masters over several appliers each: Improved Space
 Visuals (volumetric nebulae, procedural sky), Camera Realism
-(HDR, filmic filter, motion blur, modern lens flares) and Realistic
+(HDR, filmic filter, motion blur, modern lens flares) and Cinematic
 Lighting (Fresnel rim light, dynamic shadows, nebula lightning,
-subsystem light emitters). The appliers stay individually injected so
-the renderer surface is unchanged.
+subsystem light emitters, directional ambient). The appliers stay
+individually injected so the renderer surface is unchanged.
 
 Effects deliberately NOT exposed, because they are core to how the game
 reads rather than preferences: specular highlights, damage decals, hull
@@ -72,8 +72,14 @@ MASTER_TOGGLES = (
      ("procedural_sky", "volumetric_nebulae")),
     ("camera_realism", "Camera Realism",
      ("hdr", "filmic", "motion_blur", "hdr_lens_flare")),
-    ("realistic_lighting", "Realistic Lighting",
-     ("rim", "shadows", "nebula_lightning", "ship_light_emitters")),
+    # NOTE label vs key: the row reads "Cinematic Lighting" but the key stays
+    # `realistic_lighting`. The key drives the action string, the payload key,
+    # the focusable AND the persisted settings key, so renaming it would need
+    # a schema migration for a purely cosmetic change. The divergence is
+    # deliberate — do not "fix" it without one.
+    ("realistic_lighting", "Cinematic Lighting",
+     ("rim", "shadows", "nebula_lightning", "ship_light_emitters",
+      "ambient_gradient")),
 )
 
 MASTER_KEYS = tuple(key for key, _label, _appliers in MASTER_TOGGLES)
@@ -123,6 +129,7 @@ class ConfigurationPanel(Panel):
                  set_hdr_lens_flare: Callable[[bool], None],
                  set_ship_light_emitters: Callable[[bool], None],
                  set_camera_shake: Callable[[bool], None],
+                 set_ambient_gradient: Callable[[bool], None],
                  input_map=None,
                  # GL_MAX_SAMPLES from the live context. Defaults to the
                  # highest mode we offer so every existing construction site
@@ -160,6 +167,7 @@ class ConfigurationPanel(Panel):
             "nebula_lightning": set_nebula_lightning,
             "hdr_lens_flare": set_hdr_lens_flare,
             "ship_light_emitters": set_ship_light_emitters,
+            "ambient_gradient": set_ambient_gradient,
         }
         # Standalone rows keep their own attribute.
         self._set_dust = set_dust

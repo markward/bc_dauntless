@@ -103,7 +103,7 @@ def test_healthy_point_emitter_identity_pose_produces_one_light():
 
 
 def test_disabling_ship_light_emitters_produces_no_lights():
-    """The Realistic Lighting master toggle gates this producer. Off must
+    """The Cinematic Lighting master toggle gates this producer. Off must
     drop every emitter light, not merely dim them."""
     ship = _Ship()
     prop = _point_prop((1.0, 2.0, 3.0))

@@ -170,6 +170,7 @@ namespace dauntless_nebula_lightning {
 namespace dauntless_ambient_gradient {
     float strength();          // defined in frame.cc
     void  set_strength(float);  // defined in frame.cc
+    void  set_enabled(bool);    // defined in frame.cc
 }
 
 namespace {
@@ -3637,6 +3638,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("ambient_gradient_get",
           []() { return dauntless_ambient_gradient::strength(); },
           "Current directional-ambient strength.");
+
+    m.def("ambient_gradient_set_enabled",
+          [](bool on) {
+              dauntless_ambient_gradient::set_enabled(on);
+              resolve_ambient_gradient();
+          },
+          py::arg("enabled"),
+          "Directional ambient on/off for the Cinematic Lighting master. On "
+          "restores the engine's tuned strength; off is 0 (the stock path).");
 
     m.def("msaa_set_samples",
           [](int samples) { g_msaa_samples = samples; },

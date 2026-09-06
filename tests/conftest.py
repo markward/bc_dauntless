@@ -746,7 +746,7 @@ def _reset_leakable_engine_globals():
         _camera_shake.set_enabled(True)
     except Exception:
         pass
-    # Subsystem light emitters: the Realistic Lighting master toggle flips a
+    # Subsystem light emitters: the Cinematic Lighting master toggle flips a
     # module global, so a test that turns it off would silently blank every
     # later test's emitter lights.
     try:

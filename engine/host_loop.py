@@ -1310,7 +1310,7 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
     import App
     from engine.appc import light_emitters
     if not light_emitters.enabled():
-        return out          # Realistic Lighting off — cast no emitter lights.
+        return out          # Cinematic Lighting off — cast no emitter lights.
     from engine.appc.subsystem_glow import commanded_impulse_frac
 
     now = App.g_kUtopiaModule.GetGameTime()
@@ -7297,6 +7297,7 @@ def run(mission_name: Optional[str] = None,
             set_hdr_lens_flare=r.set_hdr_lens_flare_enabled,
             set_ship_light_emitters=_light_emitters.set_enabled,
             set_camera_shake=_camera_shake.set_enabled,
+            set_ambient_gradient=r.set_ambient_gradient_enabled,
             input_map=input_map,
         )
 

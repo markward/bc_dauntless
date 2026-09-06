@@ -142,11 +142,18 @@ namespace {
 // can be calibrated live. Default biased high on purpose (calibrate up,
 // then down).
 namespace dauntless_ambient_gradient {
-    namespace { float g_strength = 0.6f; }
+    namespace {
+        // The tuned "on" value. ONE home for this number: the Python master
+        // toggle asks for enabled/disabled and never names a strength, so
+        // retuning after a live look is a single-line change here.
+        constexpr float kTunedDefault = 0.6f;
+        float g_strength = kTunedDefault;
+    }
     float strength() { return g_strength; }
     void  set_strength(float v) {
         g_strength = (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.0f : v);
     }
+    void  set_enabled(bool on) { g_strength = on ? kTunedDefault : 0.0f; }
 }
 
 // Toggle for the opaque-pass persistent damage decals (Phase 2). Default on

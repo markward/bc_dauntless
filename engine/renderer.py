@@ -31,7 +31,7 @@ InstanceId = _h.InstanceId
 #   hard-fails `import`, so it needs no manifest entry.
 _REQUIRED_BINDINGS = frozenset({
     "add_box_region", "add_cylinder_region", "add_sphere_region",
-    "ambient_gradient_get", "ambient_gradient_set",
+    "ambient_gradient_get", "ambient_gradient_set", "ambient_gradient_set_enabled",
     "assemble_officer", "bridge_pass_set_enabled",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
     "cef_reload", "cef_shutdown",
@@ -526,6 +526,16 @@ def set_ambient_gradient(strength: float) -> None:
 def ambient_gradient() -> float:
     """Current directional-ambient strength."""
     return float(_h.ambient_gradient_get())
+
+
+def set_ambient_gradient_enabled(enabled: bool) -> None:
+    """Directional ambient on/off, for the Cinematic Lighting master.
+
+    On restores the engine's tuned strength rather than a value passed from
+    Python, so that constant has exactly one home and retuning it after a
+    live look is a single change in frame.cc.
+    """
+    _h.ambient_gradient_set_enabled(bool(enabled))
 
 
 def set_msaa_samples(samples: int) -> None:
