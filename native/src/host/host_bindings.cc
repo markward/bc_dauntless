@@ -69,6 +69,7 @@
 #include <renderer/smaa_pass.h>
 #include <renderer/filmic_pass.h>
 #include <renderer/motion_blur_pass.h>
+#include <renderer/dof_pass.h>
 #include <renderer/aabb.h>
 #include <renderer/shadow_light.h>
 #include <renderer/shadow_map_target.h>
@@ -155,6 +156,20 @@ namespace dauntless_motion_blur {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
 }
+// Depth-of-field state. `enabled` is the Camera Realism master; `params`
+// arrives whole from Python each frame. Deliberately no tuned defaults here
+// -- engine/cameras/dof.py is the single home for every look-affecting
+// number, so that tuning needs no rebuild.
+namespace dauntless_dof {
+namespace {
+bool                 g_enabled = true;
+renderer::DofParams  g_params;
+}
+bool enabled() { return g_enabled; }
+void set_enabled(bool e) { g_enabled = e; }
+const renderer::DofParams& params() { return g_params; }
+void set_params(const renderer::DofParams& p) { g_params = p; }
+}  // namespace dauntless_dof
 namespace dauntless_warp_vfx {
     float streak_intensity(); float flash_intensity();
     glm::vec3 travel_dir();
@@ -327,6 +342,8 @@ std::unique_ptr<renderer::LdrTarget>       g_ldr_target2;   // SMAA→filmic int
 std::unique_ptr<renderer::FilmicPass>      g_filmic_pass;
 std::unique_ptr<renderer::SmaaPass>        g_smaa_pass;
 std::unique_ptr<renderer::MotionBlurPass>  g_motion_blur_pass;
+std::unique_ptr<renderer::DofPass>    g_dof_pass;
+std::unique_ptr<renderer::HdrTarget>  g_dof_target;
 glm::mat4 g_prev_viewproj = glm::mat4(1.0f);   // previous exterior frame proj*view
 bool      g_have_prev_viewproj = false;         // false until first exterior frame
 // Motion blur is normalised to this frame rate. At or above it the shutter
@@ -635,6 +652,8 @@ void init(int width, int height, const std::string& title) {
     g_filmic_pass  = std::make_unique<renderer::FilmicPass>();
     g_smaa_pass    = std::make_unique<renderer::SmaaPass>();
     g_motion_blur_pass = std::make_unique<renderer::MotionBlurPass>();
+    g_dof_pass   = std::make_unique<renderer::DofPass>();
+    g_dof_target = std::make_unique<renderer::HdrTarget>();
     g_shadow_target = std::make_unique<renderer::ShadowMapTarget>();
     g_shadow_target->resize(2048, 2048);
     g_prev_frame_time_seconds = glfwGetTime();
@@ -691,6 +710,8 @@ void shutdown() {
     g_nonfinite_probe.reset();
     g_lens_flare_hdr_pass.reset();
     g_motion_blur_pass.reset();
+    g_dof_target.reset();
+    g_dof_pass.reset();
     g_smaa_pass.reset();
     g_filmic_pass.reset();
     g_ldr_target2.reset();
@@ -1286,13 +1307,39 @@ void frame() {
         }
     }
 
+    const bool exterior = !viewer_mode && !bridge_active;
+
+    // Depth of field. Runs in HDR BEFORE bloom, which is the whole point: a
+    // defocused nav light has to still be bright when it spreads, or it reads
+    // as a grey smudge rather than bokeh. Physically it is also the right
+    // order -- lens defocus happens before the sensor.
+    //
+    // Skipped entirely unless a subject is actually focused (blend > 0), so
+    // the default deep-focus frame is byte-identical to the pre-DOF renderer:
+    // bloom and resolve read g_hdr_target exactly as they always did.
+    std::uint32_t scene_tex = g_hdr_target->color_texture();
+    const bool dof_on = dauntless_dof::enabled()
+                        && dauntless_dof::params().blend > 0.0f
+                        && exterior
+                        && g_dof_pass && g_dof_target;
+    if (dof_on) {
+        DAUNTLESS_FRAME_SCOPE("dof");
+        g_dof_target->resize(fw, fh);
+        g_dof_pass->draw(g_hdr_target->color_texture(),
+                         g_hdr_target->depth_texture(),
+                         g_dof_target->fbo(), fw, fh,
+                         g_camera.near, g_camera.far,
+                         dauntless_dof::params());
+        scene_tex = g_dof_target->color_texture();
+    }
+
     // Compute bloom from the HDR target while the HDR FBO is still in use.
     // bloom_tex is set to the HDR color texture as a harmless dummy when HDR is
     // off — the resolve's OFF branch never samples u_bloom.
-    std::uint32_t bloom_tex = g_hdr_target->color_texture();
+    std::uint32_t bloom_tex = scene_tex;
     if (dauntless_hdr::enabled()) {
         DAUNTLESS_FRAME_SCOPE("bloom");
-        bloom_tex = g_bloom_pass->render(g_hdr_target->color_texture(), fw, fh);
+        bloom_tex = g_bloom_pass->render(scene_tex, fw, fh);
     }
 
     // Resolve the HDR target, then run any active optional LDR post passes
@@ -1301,7 +1348,6 @@ void frame() {
     // backbuffer (unchanged, zero-added-cost path). CEF composite + swap run
     // after this so the overlay composites on top of the resolved 3D scene.
     const bool aa_on    = g_smaa_enabled;
-    const bool exterior = !viewer_mode && !bridge_active;
     const bool filmic_on = dauntless_filmic::enabled() && exterior;
     const bool mblur_on  = dauntless_motion_blur::enabled() && exterior
                            && g_have_prev_viewproj;
@@ -1317,7 +1363,7 @@ void frame() {
     // the bloom bright-buffer and composite it in the resolve. Exterior-only
     // (no flares on the bridge interior), and only when HDR + the toggle are on
     // (the toggle also suppresses the classic billboard flares in host_loop).
-    std::uint32_t lens_flare_tex = g_hdr_target->color_texture();  // dummy when off
+    std::uint32_t lens_flare_tex = scene_tex;  // dummy when off
     float lens_flare_strength = 0.0f;
     if (dauntless_hdr::enabled() && dauntless_hdr_lens_flare::enabled()
             && exterior && g_lens_flare_hdr_pass) {
@@ -1338,7 +1384,7 @@ void frame() {
         bridge_active ? 0.0f : dauntless_warp_vfx::flash_intensity());
     {
         DAUNTLESS_FRAME_SCOPE("resolve");
-        g_resolve_pass->draw(g_hdr_target->color_texture(), bloom_tex, lens_flare_tex);
+        g_resolve_pass->draw(scene_tex, bloom_tex, lens_flare_tex);
     }
 
     if (any_post) {
@@ -3554,6 +3600,29 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("motion_blur_enabled",
           []() { return dauntless_motion_blur::enabled(); },
           "Read the Motion Blur toggle (Modern VFX). Default: on.");
+    m.def("dof_set_enabled",
+          [](bool enabled) { dauntless_dof::set_enabled(enabled); },
+          "Toggle depth of field (the Camera Realism master). Default: on. "
+          "Off means the pass never runs, whatever params say.");
+    m.def("dof_enabled",
+          []() { return dauntless_dof::enabled(); },
+          "Whether depth of field is enabled.");
+    m.def("dof_set_params",
+          [](float focus_gu, float blend, float near_strength,
+             float far_strength, float far_ceiling, float max_radius_frac) {
+              renderer::DofParams p;
+              p.focus_gu        = focus_gu;
+              p.blend           = blend;
+              p.near_strength   = near_strength;
+              p.far_strength    = far_strength;
+              p.far_ceiling     = far_ceiling;
+              p.max_radius_frac = max_radius_frac;
+              dauntless_dof::set_params(p);
+          },
+          "Push the whole DOF parameter set for this frame. blend <= 0 means "
+          "no subject is focused and the pass is skipped entirely. Every "
+          "value is authored in engine/cameras/dof.py -- there is no C++ "
+          "default that means anything.");
     m.def("volumetric_nebulae_set_enabled",
           [](bool enabled) { dauntless_volumetric_nebulae::set_enabled(enabled); },
           py::arg("enabled"),
