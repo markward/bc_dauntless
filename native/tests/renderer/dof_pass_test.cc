@@ -101,6 +101,22 @@ TEST_F(DofPassTest, AtFocusThePassIsIdentity) {
 }
 
 // Geometry well beyond the focus distance defocuses, softening the step.
+//
+// This asserts a BAND, not just "> 0". `transition_width() > 0` is blind to
+// magnitude: deleting the `* u_texel` conversion on dof.frag's tap offset (a
+// 64x units error at this fixture's resolution, orders of magnitude worse at
+// real resolution) still leaves some soft pixel somewhere and would pass a
+// bare "> 0" check, even though it turns the whole row into a smear.
+//
+// Expected magnitude, worked from this fixture's own params_at(): dd = 1 -
+// focus/z = 1 - 100/500 = 0.8, saturated at far_ceiling 0.4; max_radius_px =
+// max_radius_frac * fh = 0.05 * 64 = 3.2 px; so center_r = 0.4 * 3.2 = 1.28
+// px. The 24-tap Vogel kernel samples out to that radius (sqrt(t) spacing,
+// t in (0,1]), softening roughly a +/-1.28 px window around the boundary,
+// and GL_LINEAR sampling adds a little more. Measured in this environment:
+// transition_width == 2. [1, 5] is generous enough to absorb filtering
+// differences without losing discrimination: the u_texel deletion above
+// produces width == 64 (the entire row), nowhere close to this band.
 TEST_F(DofPassTest, FarFieldSoftensAStepEdge) {
     renderer::HdrTarget src, dst;
     fill_step_edge(src, depth_for_z(500.0f));   // focus at 100 -> far field
@@ -110,7 +126,9 @@ TEST_F(DofPassTest, FarFieldSoftensAStepEdge) {
     pass.draw(src.color_texture(), src.depth_texture(), dst.fbo(),
               kSize, kSize, kNear, kFar, params_at(100.0f));
 
-    EXPECT_GT(transition_width(read_edge_row(dst)), 0);
+    const int width = transition_width(read_edge_row(dst));
+    EXPECT_GE(width, 1);
+    EXPECT_LE(width, 5);
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
@@ -126,6 +144,67 @@ TEST_F(DofPassTest, ZeroBlendIsIdentity) {
               kSize, kSize, kNear, kFar, params_at(100.0f, /*blend=*/0.0f));
 
     EXPECT_EQ(transition_width(read_edge_row(dst)), 0);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// SCATTER-AS-GATHER GUARD. Every fixture above is uniform-depth, so a tap's
+// own CoC always equals the centre pixel's CoC and dof.frag's weight term
+// `w = clamp(tap_r - r + 1.0, 0.0, 1.0)` is identically 1.0 by construction
+// -- it can never be exercised there. Replacing that line with
+// `float w = 1.0;` leaves every test above green. This fixture puts two
+// DIFFERENT depths on either side of the step so the weight has real work
+// to do: a sharp (in-focus) region next to a defocused one.
+TEST_F(DofPassTest, ScatterAsGatherWeightStopsSharpBleedingIntoBlur) {
+    renderer::HdrTarget src, dst;
+    src.resize(kSize, kSize);
+    src.bind();
+    glEnable(GL_SCISSOR_TEST);
+
+    // Left half: white, sitting exactly at the focus distance -- sharp,
+    // coc == 0, so any tap landing here has its own tap_r == 0.
+    glClearDepth(static_cast<double>(depth_for_z(100.0f)));
+    glScissor(0, 0, kSize / 2, kSize);
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // Right half: black, far away -- defocused.
+    glClearDepth(static_cast<double>(depth_for_z(2000.0f)));
+    glScissor(kSize / 2, 0, kSize / 2, kSize);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glDisable(GL_SCISSOR_TEST);
+    glClearDepth(1.0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    dst.resize(kSize, kSize);
+
+    // Bigger radius than the other fixtures, and far_ceiling raised to 1.0
+    // (not params_at()'s 0.4) so the far side's CoC is not capped well below
+    // its geometric radius: max_radius_px = 0.2 * 64 = 12.8 px, dd = 1 -
+    // 100/2000 = 0.95, so center_r = 0.95 * 12.8 ~= 12.2 px -- big enough
+    // that an ungated tap would unmistakably reach across the boundary.
+    renderer::DofParams p = params_at(100.0f);
+    p.max_radius_frac = 0.2f;
+    p.far_ceiling     = 1.0f;
+
+    renderer::DofPass pass;
+    pass.draw(src.color_texture(), src.depth_texture(), dst.fbo(),
+              kSize, kSize, kNear, kFar, p);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, dst.fbo());
+    float px[4];
+    // A few pixels INTO the defocused (black) side, near the boundary --
+    // close enough for the wide kernel to reach across into the sharp white
+    // region if nothing were stopping it. Measured in this environment:
+    // 0.0074 with the weight intact, 0.29 with it replaced by `w = 1.0` --
+    // 0.1 sits well clear of both.
+    glReadPixels(kSize / 2 + 3, kSize / 2, 1, 1, GL_RGBA, GL_FLOAT, px);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+
+    EXPECT_LT(px[0], 0.1f)
+        << "sharp in-focus white bled across the depth boundary into the "
+           "blurred region -- the scatter-as-gather weight is not gating "
+           "taps by their OWN circle of confusion";
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
@@ -150,10 +229,22 @@ TEST_F(DofPassTest, StarfieldThresholdAgreesWithTheCppReference) {
     }
 
     // Outside it: dof.h says nonzero, so the shader must blur.
-    ASSERT_GT(renderer::coc_from_depth(depth_for_z(4000.0f), kNear, kFar, p), 0.0f);
+    //
+    // Sampled at 4700 GU, not 4000: the exemption threshold is far * 0.98 =
+    // 4900, so 4000 sits nowhere near it and this pair is blind to any
+    // exemption factor above ~0.80 -- e.g. if the shader's 0.98 in dof.frag
+    // silently drifted to 0.90 (threshold 4500), 4000 would still be caught
+    // as "outside" by both languages and the test would stay green while the
+    // two curves had already diverged. 4700 sits between a 0.90 threshold
+    // (4500, wrongly exempts 4700) and the real 0.98 (4900, does not), so it
+    // catches that drift. Not closer to 4900: at near=1, far=5000 the
+    // depth-buffer values for e.g. 4890 vs 4900 differ by only ~1e-6 (~17
+    // LSBs of a 24-bit depth buffer), which risks a flaky test; 4700 differs
+    // from the 4900 threshold by ~3.5e-6 (~58 LSBs), comfortably stable.
+    ASSERT_GT(renderer::coc_from_depth(depth_for_z(4700.0f), kNear, kFar, p), 0.0f);
     {
         renderer::HdrTarget src, dst;
-        fill_step_edge(src, depth_for_z(4000.0f));
+        fill_step_edge(src, depth_for_z(4700.0f));
         dst.resize(kSize, kSize);
         renderer::DofPass pass;
         pass.draw(src.color_texture(), src.depth_texture(), dst.fbo(),
