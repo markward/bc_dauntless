@@ -518,7 +518,8 @@ def set_ambient_gradient(strength: float) -> None:
 
     0 is the stock flat ambient and is byte-identical to the pre-gradient
     renderer. 1 swings ambient from 0 at the antipode to 2x on the
-    light-facing side. Default 0.6 — biased high for calibration.
+    light-facing side. Defaults to the engine's tuned default, biased high
+    for calibration.
     """
     _h.ambient_gradient_set(float(strength))
 

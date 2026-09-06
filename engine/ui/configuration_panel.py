@@ -102,7 +102,11 @@ class SettingsSnapshot:
     # lens flares — four settings the player used to set independently.
     camera_realism_on: bool = True
     # One master toggle over Fresnel rim light, dynamic shadows, nebula
-    # lightning and the subsystem light emitters.
+    # lightning, the subsystem light emitters, and directional ambient. The
+    # row displays "Cinematic Lighting" but the field/key stays
+    # `realistic_lighting` deliberately: that key drives the action string,
+    # the payload key sent to CEF, the focusable id, and the persisted
+    # setting name, so renaming it would be a migration, not a relabel.
     realistic_lighting_on: bool = True
     # Weapon-impact camera kick. Sits under Modern VFX beside the masters.
     camera_shake_on: bool = True

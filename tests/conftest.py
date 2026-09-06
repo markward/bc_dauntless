@@ -754,6 +754,17 @@ def _reset_leakable_engine_globals():
         _light_emitters.set_enabled(True)
     except Exception:
         pass
+    # Directional-ambient gradient strength: dauntless_ambient_gradient::g_strength
+    # is a process-lifetime C++ global (native/src/renderer/frame.cc), and
+    # ambient_gradient_set_enabled(False) zeroes it. Same class of bug as
+    # camera_shake/light_emitters above -- restore the tuned default so a
+    # future test calling ambient_gradient_set_enabled(False) can't make
+    # test_default_is_biased_high_for_the_first_live_look order-dependent.
+    try:
+        import _dauntless_host as _host
+        _host.ambient_gradient_set_enabled(True)
+    except Exception:
+        pass
     # Hull-hit smoke beam throttle: keyed by (id(target), id(source)), and
     # ids of short-lived test doubles get recycled, so a stale entry can
     # silence a later test's first puff.

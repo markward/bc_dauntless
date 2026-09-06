@@ -654,24 +654,34 @@ void main() {
     // REDISTRIBUTES ambient. Do NOT rewrite as
     //     u_ambient_light + u_ambient_gradient * (0.5 + 0.5 * d)
     // which adds light and brightens the whole scene.
-    float amb_d = dot(n_shade, u_ambient_dir_ws);
-    // NaN/Inf guard. n_shade and u_ambient_dir_ws are both unit vectors, so a
-    // correct amb_d is already in [-1, 1] -- clamp() to that range is a
-    // mathematical no-op on any legitimate input, and cannot change a
-    // correct result. What it buys: GLSL's min/max (and clamp, defined in
-    // terms of them) are specified so that a NaN operand loses to the other
-    // operand -- the same spec guarantee every OTHER n_shade use in this
-    // file already relies on via max(dot(n_shade, L), 0.0) (see nl below).
-    // That guarantee is what makes it a real guard rather than an idiom that
-    // merely looks like one: a `v == v` self-compare and a bare isnan() were
-    // both tried here first and both still left
-    // HullClipTest.DegenerateNormalWithGradientOnStaysFinite non-finite
-    // (measured, not inferred -- the probe still flagged 64 cells with
-    // isnan() in place). clamp() also catches +-Inf, which isnan() does not:
-    // an infinite u_ambient_dir_ws would otherwise give 0.0 * Inf == NaN and
-    // poison the OFF path too.
-    amb_d = clamp(amb_d, -1.0, 1.0);
-    vec3  amb   = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
+    //
+    // Byte-identity at u_ambient_gradient == 0 is a BRANCH, not a driver
+    // property: the modulated form below is only ever evaluated when the
+    // gradient is on, so the off path is u_ambient_light, unconditionally,
+    // regardless of what n_shade or u_ambient_dir_ws happen to hold.
+    vec3 amb = u_ambient_light;
+    if (u_ambient_gradient > 0.0) {
+        // n_shade and u_ambient_dir_ws are both unit vectors, so a correct
+        // dot product already lands in [-1, 1] -- clamp() here is a
+        // mathematical no-op on any legitimate input and cannot change a
+        // correct result. What it buys is the degenerate case: a fully
+        // zeroed vertex normal (see the a_normal comment on this fixture's
+        // HullClipTest counterpart) makes n_shade itself NaN, and
+        // clamp(NaN, -1, 1) resolves to -1 ON THIS DRIVER -- MEASURED, the
+        // same IEEE-maxNum framing already used above for the spot-cone
+        // clamp (clamp(NaN, 0, 1) == 0), not a GLSL language guarantee.
+        // Hardware that propagates NaN through clamp would leave amb_d, and
+        // this whole branch's ambient term, NaN instead; 0/0-style results
+        // are undefined behaviour either way. A `v == v` self-compare and a
+        // bare isnan() were both tried here first and both still left
+        // HullClipTest.DegenerateNormalWithGradientOnStaysFinite non-finite
+        // (measured, not inferred -- the probe still flagged 64 cells with
+        // isnan() in place). clamp() also catches +-Inf, which isnan() does
+        // not: an infinite u_ambient_dir_ws would otherwise give
+        // 0.0 * Inf == NaN here too.
+        float amb_d = clamp(dot(n_shade, u_ambient_dir_ws), -1.0, 1.0);
+        amb = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
+    }
     vec3 lit  = (amb + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
 
     // Body-frame normal for object-space decals.

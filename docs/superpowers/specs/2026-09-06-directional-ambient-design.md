@@ -1,7 +1,7 @@
 # Directional ambient — design
 
 **Date:** 2026-09-06
-**Status:** approved, not implemented
+**Status:** implemented
 
 ## Problem
 
@@ -145,14 +145,14 @@ direction computation, which needs no GL:
   strength 0 — this is the property most likely to be broken by a later edit,
   so it gets its own assertion
 
-## Open: exposure
+## Closed: exposure
 
-Whether this ships behind a setting, folds under the existing "Realistic
-Lighting" master, or is simply always on with a tuned constant is
-**deliberately deferred** until it has been seen in motion. The strength knob
-exists from the start so it can be calibrated; where the knob is surfaced —
-if at all — is a decision better made with the thing on screen, following the
-"calibrate up, then down" practice.
-
-The implementation must therefore keep the strength reachable for tuning
-without committing to a player-facing control.
+Decided by Mark before the live look (the spec had deferred it until after):
+directional ambient folds under the
+existing lighting master (`SettingsSnapshot.realistic_lighting_on`, which now
+also relabels its pause-menu row "Cinematic Lighting" rather than
+"Realistic Lighting" — see `engine/ui/configuration_panel.py`). It is not a
+standalone player-facing control; the strength knob stays live-tunable via
+`set_ambient_gradient`/`ambient_gradient` for calibration, and the master's
+on/off restores the engine's own tuned default rather than a value threaded
+from Python, so that constant has exactly one home.

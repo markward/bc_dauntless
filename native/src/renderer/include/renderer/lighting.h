@@ -92,6 +92,14 @@ inline AmbientGradient ambient_gradient_from_lights(
     const float mag = std::sqrt(glm::dot(sum, sum));
     if (mag < 1e-6f) return out;                // perfectly opposed: flat
     out.dir_ws  = sum / mag;
+    // The clamp is NOT dead code, even though the triangle inequality says
+    // |sum| <= total_lum in exact arithmetic (each term has magnitude ==
+    // its luminance, since dirs_to_light[i]/sqrt(len2) is meant to be unit
+    // length). In float it is only APPROXIMATELY unit length -- sqrt(len2)
+    // is itself rounded -- so mag/total_lum can land at 1 + 1ulp and push
+    // the gradient strength marginally negative without this clamp. Leave
+    // it; a prior review flagged it as dead by the exact-arithmetic
+    // argument and that argument does not hold in float.
     out.strength = budget * std::clamp(mag / total_lum, 0.0f, 1.0f);
     return out;
 }
