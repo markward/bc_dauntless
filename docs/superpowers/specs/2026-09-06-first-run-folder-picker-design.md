@@ -186,6 +186,24 @@ The stale-`.so` case must be `hasattr`-guarded rather than added to
 `r.validate_bindings()` does not run until line 6759. The picker is upstream
 of the check that would otherwise have caught it.
 
+## The empty-string boundary
+
+A picked path is rejected as empty **at the picker boundary**, before a
+`Path` is ever constructed from it — not inside `_validate`.
+
+`Path("")` normalises to `"."` at construction, so by the time a value
+reaches `_validate` it is indistinguishable from a deliberate `Path(".")`.
+The guard therefore cannot live there. Spec 1 already handles the sibling
+case for the CLI, env and settings sources, where the raw value is still a
+string when it arrives (`os.path.abspath("")` returns the CWD, so an empty
+`--game-dir=` launched from inside a BC install would otherwise validate
+`ok=True`).
+
+`pick_folder` returns `str | None`. `first_run` treats an empty or
+whitespace-only string exactly as it treats `None` — as a cancellation —
+so a panel that returns one can never become a root, and never becomes a
+silent `Path(".")` pointing at the working directory.
+
 ## Testing
 
 Python, all with an injected fake picker and no dialog:
@@ -200,6 +218,8 @@ Python, all with an injected fake picker and no dialog:
 - cancel on the first prompt → no second prompt
 - valid game, cancelled sdk → the game root persists; next launch prompts
   only for sdk
+- an empty or whitespace-only picked path is treated as a cancellation,
+  and never becomes `Path(".")`
 - **fallback guard:** picker returns `None` ⇒ boot prints the full
   `describe_failure()` text and returns 1
 
