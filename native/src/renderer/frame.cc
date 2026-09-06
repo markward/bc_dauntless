@@ -137,6 +137,18 @@ namespace {
     void set_enabled(bool v) { g_shadows_enabled = v; }
 }
 
+// Directional-ambient strength. Not a player-facing preference yet -- the
+// spec defers that until it has been seen in motion -- but reachable so it
+// can be calibrated live. Default biased high on purpose (calibrate up,
+// then down).
+namespace dauntless_ambient_gradient {
+    namespace { float g_strength = 0.6f; }
+    float strength() { return g_strength; }
+    void  set_strength(float v) {
+        g_strength = (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.0f : v);
+    }
+}
+
 // Toggle for the opaque-pass persistent damage decals (Phase 2). Default on
 // so the "Modern VFX" group ships enabled. host_bindings.cc forward-declares
 // set_enabled; draw_model reads enabled() per instance and uploads
