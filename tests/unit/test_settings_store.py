@@ -161,6 +161,7 @@ _MEMBER_CALL = {
     "shadows":             ("r", "set_shadows_enabled"),
     "nebula_lightning":    ("r", "set_nebula_lightning_enabled"),
     "ship_light_emitters": ("light_emitters", "set_enabled"),
+    "ambient_gradient":    ("r", "set_ambient_gradient_enabled"),
 }
 
 
@@ -480,3 +481,33 @@ def test_reset_graphics_restores_smaa_not_the_players_msaa_choice(tmp_path):
     out = reset_and_apply_section(s, _ctx(), "graphics")
     assert out["aa_mode"] == AA_SMAA
     assert not s.has("graphics", "aa_mode")
+
+
+def test_cinematic_lighting_master_drives_the_ambient_gradient():
+    """The master is a bool; the gradient is a strength. On must restore the
+    engine's tuned default rather than a number copied into Python, so the
+    constant can be retuned in one place after a live look."""
+    from engine.settings_store import SETTINGS
+
+    row = next(r for r in SETTINGS if r.key == "realistic_lighting")
+    ctx = _ctx()
+    row.apply(ctx, True)
+    ctx.r.set_ambient_gradient_enabled.assert_called_once_with(True)
+
+    ctx = _ctx()
+    row.apply(ctx, False)
+    ctx.r.set_ambient_gradient_enabled.assert_called_once_with(False)
+
+
+def test_cinematic_lighting_still_drives_its_four_original_members():
+    """Adding a member must not drop one. This is the whole risk of editing a
+    master's fan-out."""
+    from engine.settings_store import SETTINGS
+
+    row = next(r for r in SETTINGS if r.key == "realistic_lighting")
+    ctx = _ctx()
+    row.apply(ctx, True)
+    ctx.r.set_rim_enabled.assert_called_once_with(True)
+    ctx.r.set_shadows_enabled.assert_called_once_with(True)
+    ctx.r.set_nebula_lightning_enabled.assert_called_once_with(True)
+    ctx.light_emitters.set_enabled.assert_called_once_with(True)

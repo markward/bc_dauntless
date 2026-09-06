@@ -31,6 +31,7 @@ InstanceId = _h.InstanceId
 #   hard-fails `import`, so it needs no manifest entry.
 _REQUIRED_BINDINGS = frozenset({
     "add_box_region", "add_cylinder_region", "add_sphere_region",
+    "ambient_gradient_get", "ambient_gradient_set", "ambient_gradient_set_enabled",
     "assemble_officer", "bridge_pass_set_enabled",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
     "cef_reload", "cef_shutdown",
@@ -510,6 +511,32 @@ def set_shadows_enabled(enabled: bool) -> None:
 def set_smaa_enabled(enabled: bool) -> None:
     """Toggle the post-process SMAA 1x pass. Default: on after init()."""
     _h.smaa_set_enabled(enabled)
+
+
+def set_ambient_gradient(strength: float) -> None:
+    """Directional-ambient strength, clamped to [0, 1].
+
+    0 is the stock flat ambient and is byte-identical to the pre-gradient
+    renderer. 1 swings ambient from 0 at the antipode to 2x on the
+    light-facing side. Defaults to the engine's tuned default, biased high
+    for calibration.
+    """
+    _h.ambient_gradient_set(float(strength))
+
+
+def ambient_gradient() -> float:
+    """Current directional-ambient strength."""
+    return float(_h.ambient_gradient_get())
+
+
+def set_ambient_gradient_enabled(enabled: bool) -> None:
+    """Directional ambient on/off, for the Cinematic Lighting master.
+
+    On restores the engine's tuned strength rather than a value passed from
+    Python, so that constant has exactly one home and retuning it after a
+    live look is a single change in frame.cc.
+    """
+    _h.ambient_gradient_set_enabled(bool(enabled))
 
 
 def set_msaa_samples(samples: int) -> None:

@@ -17,7 +17,7 @@ from engine.appc.properties import read_indexed_setter_args
 _KINDS = ("point", "strip", "cone")
 
 # Player-facing on/off for the whole emitter family, driven by the
-# configuration panel's Realistic Lighting row. Unlike the renderer's other
+# configuration panel's Cinematic Lighting row. Unlike the renderer's other
 # graphics settings there is no native counterpart to delegate to: the
 # producer in engine/host_loop.py is pure Python, so the gate lives here and
 # the producer early-returns. Reset by tests/conftest.py.

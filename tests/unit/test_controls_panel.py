@@ -30,6 +30,7 @@ def _make(tmp_path):
         set_hdr_lens_flare=Mock(),
         set_ship_light_emitters=Mock(),
         set_camera_shake=Mock(),
+        set_ambient_gradient=Mock(),
         input_map=im,
     )
     return panel, im

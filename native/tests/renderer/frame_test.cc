@@ -2473,4 +2473,85 @@ TEST_F(FrameTest, NebulaWakeAdditiveTrail) {
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
+// Renders the Galaxy once and returns the summed RGB of one pixel.
+static int render_and_sample(renderer::Pipeline& p, assets::AssetCache& cache,
+                             const renderer::Lighting& lighting,
+                             int px, int py) {
+    auto model_h = cache.load(kGalaxyNif, kGalaxyTex);
+    scenegraph::World world;
+    auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(model_h.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, 1500.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.aspect = 1.0f;
+
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderer::FrameSubmitter submitter;
+    submitter.submit_opaque(world, cam, p,
+        [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting);
+
+    unsigned char px4[4] = {0};
+    glReadPixels(px, py, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px4);
+    return px4[0] + px4[1] + px4[2];
+}
+
+TEST_F(FrameTest, AmbientGradientZeroIsIdenticalToTheStockPath) {
+    // The OFF path must be byte-identical, not merely similar: the whole
+    // convention for VFX toggles in this renderer depends on it.
+    renderer::Lighting lighting;                  // gradient defaults to 0
+    const int a = render_and_sample(*p, *cache, lighting, 128, 128);
+    const int b = render_and_sample(*p, *cache, lighting, 128, 128);
+    EXPECT_EQ(a, b);
+    EXPECT_GT(a, 0) << "center pixel was black; the pass produced nothing";
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(FrameTest, AmbientGradientBrightensTheLitSideRelativeToTheShadowSide) {
+    // Light from +X only. With the gradient on, ambient must favour +X, so
+    // the +X flank gains relative to the -X flank. Comparing the DELTA
+    // between the two sides (rather than either alone) keeps the assertion
+    // about redistribution and not about overall brightness.
+    renderer::Lighting lighting;
+    lighting.directional_count      = 1;
+    lighting.directional_dir_ws[0]  = glm::vec3(1.0f, 0.0f, 0.0f);
+    lighting.directional_color[0]   = glm::vec3(1.0f);
+    lighting.ambient                = glm::vec3(0.25f);
+    // The RESOLVED axis, set directly: this test exercises the shader, not
+    // the reduction (that is Task 1's unit tests).
+    lighting.ambient_dir_ws         = glm::vec3(1.0f, 0.0f, 0.0f);
+
+    // Two points on the saucer, left and right of centre. The original
+    // (kRight=168, kLeft=88) sat on empty background: with this camera (eye
+    // at Z=1500, aspect 1.0) and asset, the Galaxy's silhouette at y=128
+    // spans only screen-x ~104..155, so both original samples read 0 for
+    // every draw and the assertion degenerated to 0 > 0 (always false).
+    // Diagnosed with a raw-value dump (all four were 0) then a coordinate
+    // sweep over the actual silhouette range; 108/152 sit well inside it
+    // with a wide, robust margin (measured delta widens 98 -> 133 here).
+    const int kRight = 152, kLeft = 108, kY = 128;
+
+    lighting.ambient_gradient = 0.0f;
+    const int off_r = render_and_sample(*p, *cache, lighting, kRight, kY);
+    const int off_l = render_and_sample(*p, *cache, lighting, kLeft,  kY);
+    ASSERT_GT(off_r, 0) << "sample point (right) missed the hull silhouette";
+    ASSERT_GT(off_l, 0) << "sample point (left) missed the hull silhouette";
+
+    lighting.ambient_gradient = 1.0f;
+    const int on_r = render_and_sample(*p, *cache, lighting, kRight, kY);
+    const int on_l = render_and_sample(*p, *cache, lighting, kLeft,  kY);
+
+    EXPECT_GT(on_r - on_l, off_r - off_l)
+        << "gradient did not widen the lit/shadow spread; the uniform may "
+           "not be reaching the shader";
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
 }  // namespace

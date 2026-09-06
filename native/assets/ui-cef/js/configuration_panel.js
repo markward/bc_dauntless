@@ -20,7 +20,7 @@ function escapeHtmlCP(s) {
 const CP_MASTERS = [
     ['improved_space',     'Improved Space Visuals'],
     ['camera_realism',     'Camera Realism'],
-    ['realistic_lighting', 'Realistic Lighting'],
+    ['realistic_lighting', 'Cinematic Lighting'],
 ];
 
 // Graphics-tab controls in rendered order: the standalone rows, then the

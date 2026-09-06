@@ -26,6 +26,7 @@
 #include <renderer/channel_binder.h>
 #include <renderer/frame.h>
 #include <renderer/frame_timer.h>
+#include <renderer/lighting.h>
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
 #include <renderer/dust_pass.h>
@@ -165,6 +166,11 @@ namespace dauntless_volumetric_nebulae {
 namespace dauntless_nebula_lightning {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
+}
+namespace dauntless_ambient_gradient {
+    float strength();          // defined in frame.cc
+    void  set_strength(float);  // defined in frame.cc
+    void  set_enabled(bool);    // defined in frame.cc
 }
 
 namespace {
@@ -1471,6 +1477,19 @@ void frame() {
     renderer::frame_timer().end_frame();
 }
 
+// Re-derive the resolved ambient gradient from whatever directionals
+// g_lighting currently holds. Called from set_lighting (once per frame,
+// after the directionals are populated) and from the two knob setters so
+// a change bites on the next frame rather than waiting for Python's next
+// lighting push.
+void resolve_ambient_gradient() {
+    const renderer::AmbientGradient ag = renderer::ambient_gradient_from_lights(
+        g_lighting.directional_dir_ws, g_lighting.directional_color,
+        g_lighting.directional_count, dauntless_ambient_gradient::strength());
+    g_lighting.ambient_dir_ws   = ag.dir_ws;
+    g_lighting.ambient_gradient = ag.strength;
+}
+
 }  // namespace
 
 // Toggle for the opaque-pass Fresnel rim term. Defined in frame.cc.
@@ -2381,6 +2400,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   g_lighting.directional_color[i] = {
                       std::get<0>(col), std::get<1>(col), std::get<2>(col)};
               }
+              // Resolve the gradient ONCE PER FRAME, here -- not in the draw
+              // path. submit_opaque_instance runs per instance, so reducing
+              // the lights there would repeat this for every ship.
+              resolve_ambient_gradient();
           },
           py::arg("ambient"), py::arg("directionals"),
           "Set the global lighting state used by the next frame()'s opaque pass.");
@@ -3599,6 +3622,31 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { g_smaa_enabled = enabled; },
           py::arg("enabled"),
           "Enable/disable the post-process SMAA 1x pass (default on).");
+
+    m.def("ambient_gradient_set",
+          [](float v) {
+              dauntless_ambient_gradient::set_strength(v);
+              // Re-resolve immediately so the knob bites on the NEXT frame
+              // rather than waiting for Python's next set_lighting push --
+              // which, on a static scene, may not come at all.
+              resolve_ambient_gradient();
+          },
+          py::arg("strength"),
+          "Directional-ambient strength, clamped to [0, 1]. 0 is the stock "
+          "flat ambient (byte-identical).");
+
+    m.def("ambient_gradient_get",
+          []() { return dauntless_ambient_gradient::strength(); },
+          "Current directional-ambient strength.");
+
+    m.def("ambient_gradient_set_enabled",
+          [](bool on) {
+              dauntless_ambient_gradient::set_enabled(on);
+              resolve_ambient_gradient();
+          },
+          py::arg("enabled"),
+          "Directional ambient on/off for the Cinematic Lighting master. On "
+          "restores the engine's tuned strength; off is 0 (the stock path).");
 
     m.def("msaa_set_samples",
           [](int samples) { g_msaa_samples = samples; },
