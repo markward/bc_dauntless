@@ -8,9 +8,24 @@ filter that would fight readability.
 
 TUNING. The four lens constants below are pushed to the shader as uniforms, so
 editing them needs NO REBUILD -- change the number, relaunch, look. Under
---developer the ',' and '.' keys nudge the strengths live (see
-engine/dev_keybindings.py) and print the result to stderr, so a value can be
-found in one session rather than three rebuild-and-relaunch rounds.
+--developer two key pairs nudge the live lens (see engine/dev_keybindings.py)
+and print all four values to stderr, so a value can be found in one session
+rather than three rebuild-and-relaunch rounds:
+
+    ','  '.'   MAX_RADIUS_FRAC  -- overall blur magnitude, the "don't
+                                  over-blur" control
+    ';'  "'"   FAR_CEILING      -- how much the distant background is allowed
+                                  to mush
+
+Those are the two knobs that actually move the picture. The STRENGTHS are NOT
+on keys, and the reason is worth keeping: the far field is ceiling-bound, not
+strength-bound. A background object at 10x the focus distance has dd = 0.9, so
+FAR_STRENGTH has to fall below 0.44 before the ceiling stops clipping it --
+six presses of a 0.1 strength nudge with ZERO visible change, and no upward
+press can ever affect the distant background at all. On the near side anything
+at z <= focus/2 is already clamped at the hard -1, so raising NEAR_STRENGTH
+above 1.0 only widens a narrow band. nudge_strength() is kept for anyone who
+wants it from a console, but it is not what "tweak the strength" means here.
 
 Spec: docs/superpowers/specs/2026-09-06-depth-of-field-design.md
 """
@@ -28,9 +43,28 @@ MAX_RADIUS_FRAC = 0.008  # max blur radius as a fraction of screen height
 RACK_TAU_S = 0.35        # focus-pull time constant
 BLEND_TAU_S = 0.25       # engage/release ramp
 
-# Bounds for the live dev nudge.
+# ── Bounds and step sizes for the live dev nudges ────────────────────────
 STRENGTH_MIN = 0.0
 STRENGTH_MAX = 3.0
+
+# MAX_RADIUS_FRAC. At 1080p the default 0.008 is a 8.6 px max blur radius, so a
+# 0.002 step is ~2.2 px -- a 25% change per press, visible immediately, and four
+# presses either doubles it or takes it to zero. A smaller step would reproduce
+# the "press it six times and nothing happens" problem the strength keys had.
+# The ceiling of 0.04 is 43 px at 1080p: far past anything usable, which is what
+# a bound is for.
+MAX_RADIUS_FRAC_MIN = 0.0
+MAX_RADIUS_FRAC_MAX = 0.04
+MAX_RADIUS_FRAC_STEP = 0.002
+
+# FAR_CEILING is the value this design is least confident in, so it gets the
+# other key pair. Default 0.4, step 0.05 -- eight presses down reaches 0.0 (a
+# perfectly sharp background), twelve up reaches 1.0, where the ceiling never
+# binds and the far field is governed by FAR_STRENGTH alone. 1.0 is the natural
+# maximum: it is the magnitude the NEAR side hard-clamps at.
+FAR_CEILING_MIN = 0.0
+FAR_CEILING_MAX = 1.0
+FAR_CEILING_STEP = 0.05
 
 # Below this the blend is snapped to exactly 0 so the host can skip the pass.
 # An exponential ease is asymptotic and would otherwise leave DOF running
@@ -172,9 +206,49 @@ class FocusSolver:
         return self
 
     def nudge_strength(self, delta):
-        """Move both defocus strengths by `delta`, clamped. Dev tuning only."""
+        """Move both defocus strengths by `delta`, clamped. Dev tuning only.
+
+        Deliberately NOT on a keybinding -- see the module docstring for why
+        the strengths are the wrong knob to hand someone calibrating live.
+        Kept because they are still real lens parameters.
+        """
         self.near_strength = min(STRENGTH_MAX,
                                  max(STRENGTH_MIN, self.near_strength + delta))
         self.far_strength = min(STRENGTH_MAX,
                                 max(STRENGTH_MIN, self.far_strength + delta))
         return (self.near_strength, self.far_strength)
+
+    def nudge_max_radius_frac(self, delta):
+        """Move the overall blur magnitude by `delta`, clamped. Dev tuning only.
+
+        The primary "don't over-blur" control: it scales the whole kernel, so
+        one press changes every defocused pixel in the frame.
+        """
+        self.max_radius_frac = min(
+            MAX_RADIUS_FRAC_MAX,
+            max(MAX_RADIUS_FRAC_MIN, self.max_radius_frac + delta))
+        return self.max_radius_frac
+
+    def nudge_far_ceiling(self, delta):
+        """Move the far-field CoC cap by `delta`, clamped. Dev tuning only.
+
+        The background-mush control. Lower keeps distant ships readable; at
+        FAR_CEILING_MAX the cap never binds and the far field is governed by
+        far_strength alone.
+        """
+        self.far_ceiling = min(FAR_CEILING_MAX,
+                               max(FAR_CEILING_MIN, self.far_ceiling + delta))
+        return self.far_ceiling
+
+    def lens_values(self):
+        """The whole live lens, ordered for a one-line readout.
+
+        All four are printed on every nudge so the complete state can be read
+        off in one line and pasted back into the module constants above --
+        printing only the knob that moved makes the developer reconstruct the
+        rest from memory across a session of presses.
+        """
+        return (("max_radius_frac", self.max_radius_frac),
+                ("far_ceiling", self.far_ceiling),
+                ("near_strength", self.near_strength),
+                ("far_strength", self.far_strength))

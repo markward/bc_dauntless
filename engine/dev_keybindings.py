@@ -8,6 +8,12 @@ import sys
 from pathlib import Path
 
 import engine.dev_mode as dev_mode
+# Step sizes live in engine/cameras/dof.py with the constants they move --
+# the one-home rule for DOF tuning numbers -- not duplicated here.
+from engine.cameras.dof import (
+    FAR_CEILING_STEP as _DOF_CEILING_STEP,
+    MAX_RADIUS_FRAC_STEP as _DOF_RADIUS_STEP,
+)
 
 # SP1 skinned-mesh preview: instance id of the spawned test character, or None.
 # Module-level (not closure state) because register_for_frame re-binds the
@@ -28,13 +34,22 @@ def _test_character_nif():
         "data/Models/Characters/Bodies/BodyMaleL/BodyMaleL.NIF"))
 
 
-def _dof_strength_nudge(delta):
-    """Move both DOF defocus strengths and report the result.
+def _dof_nudge(knob, delta):
+    """Nudge one live DOF lens knob and report the WHOLE lens.
 
-    Live tuning for a purely visual constant: nudge in flight, read the
-    number off stderr, and paste it into engine/cameras/dof.py as the new
-    default. Per-session only -- nothing is persisted, and nothing is written
-    back to the module constants.
+    Live tuning for purely visual constants: nudge in flight, read the values
+    off stderr, and paste them into engine/cameras/dof.py as the new defaults.
+    Per-session only -- nothing is persisted, and nothing is written back to
+    the module constants.
+
+    `knob` is the FocusSolver method name ("nudge_max_radius_frac" /
+    "nudge_far_ceiling"); the keys are bound to the two knobs that actually
+    move the picture, not to the strengths (dof.py's module docstring explains
+    why the strengths look inert from the keyboard).
+
+    All four values print on every press. Printing only the knob that moved
+    would make the developer reconstruct the rest from memory across a session
+    of presses; one line carries the entire state to paste back.
 
     The solver is resolved lazily rather than captured, so pressing the key
     before the host loop has started is a no-op instead of an exception that
@@ -44,8 +59,8 @@ def _dof_strength_nudge(delta):
     solver = getattr(host_loop, "_focus_solver", None)
     if solver is None:
         return
-    near, far = solver.nudge_strength(delta)
-    print("[dof] near_strength=%.2f far_strength=%.2f" % (near, far),
+    getattr(solver, knob)(delta)
+    print("[dof] " + "  ".join("%s=%.4f" % kv for kv in solver.lens_values()),
           file=sys.stderr)
 
 
@@ -224,11 +239,31 @@ def register_for_frame(_h, session, player) -> None:
     # Live DOF tuning. Registered here rather than at import time only
     # because `_h` arrives as a parameter; the handler itself closes over
     # no per-frame state, and re-registering the same key replaces it.
+    #
+    # Two pairs, aimed at the two knobs that actually move the picture:
+    #   , / .  blur magnitude (max_radius_frac) -- the "don't over-blur" knob
+    #   ; / '  far ceiling -- how much the distant background is allowed to mush
+    # All four keys are unbound in engine/input_map.py's ACTIONS table and all
+    # four are exported by _dauntless_host.keys (guarded by
+    # tests/unit/test_host_key_manifest.py -- an unexported one would kill the
+    # process on the first developer-mode tick, which is how , and . shipped).
     dev_mode.register_dev_keybinding(
-        _h.keys.KEY_COMMA, lambda: _dof_strength_nudge(-0.1),
-        "DOF strength -0.1 (,)"
+        _h.keys.KEY_COMMA,
+        lambda: _dof_nudge("nudge_max_radius_frac", -_DOF_RADIUS_STEP),
+        "DOF blur magnitude -%.3f (,)" % _DOF_RADIUS_STEP
     )
     dev_mode.register_dev_keybinding(
-        _h.keys.KEY_PERIOD, lambda: _dof_strength_nudge(+0.1),
-        "DOF strength +0.1 (.)"
+        _h.keys.KEY_PERIOD,
+        lambda: _dof_nudge("nudge_max_radius_frac", +_DOF_RADIUS_STEP),
+        "DOF blur magnitude +%.3f (.)" % _DOF_RADIUS_STEP
+    )
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_SEMICOLON,
+        lambda: _dof_nudge("nudge_far_ceiling", -_DOF_CEILING_STEP),
+        "DOF far ceiling -%.2f (;)" % _DOF_CEILING_STEP
+    )
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_APOSTROPHE,
+        lambda: _dof_nudge("nudge_far_ceiling", +_DOF_CEILING_STEP),
+        "DOF far ceiling +%.2f (')" % _DOF_CEILING_STEP
     )

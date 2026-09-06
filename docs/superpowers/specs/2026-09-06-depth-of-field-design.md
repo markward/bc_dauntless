@@ -270,22 +270,50 @@ There is no C++ default that can drift out of step with the Python one, and
 therefore no second place to look when a number seems wrong. The only C++
 constant is `kTapCount = 24`, which is kernel structure, not look.
 
-**3. Under `--developer`, two keybindings nudge the strength live** and print
-the resulting values to stderr:
+**3. Under `--developer`, two key *pairs* nudge the live lens** and print all
+four lens values to stderr on every press:
 
-- `,` — decrease near and far strength together by 0.1
-- `.` — increase them by 0.1
+| Keys | Knob | Step | Range |
+|---|---|---|---|
+| `,` / `.` | `max_radius_frac` — overall blur magnitude | 0.002 | `[0.0, 0.04]` |
+| `;` / `'` | `far_ceiling` — how much the background may mush | 0.05 | `[0.0, 1.0]` |
+
+**Not the strengths, and that is the point.** The far field is *ceiling*-bound,
+not strength-bound: with `FAR_CEILING = 0.4`, a background object at 10× the
+focus distance has `dd = 0.9`, so `far_strength` must fall below **0.44** before
+the ceiling stops clipping it — six presses of a 0.1 strength nudge with *zero
+visible change*, and no upward press could ever affect the distant background at
+all. On the near side anything at `z ≤ focus/2` is already clamped at the hard
+`-1`, so raising `near_strength` above 1.0 only widens a narrow band. Strength
+keys would have looked broken. `nudge_strength()` still exists for a console,
+but no key is bound to it.
+
+Step sizes are chosen to be *visible per press*: at 1080p the default
+`max_radius_frac = 0.008` is an 8.6 px radius, so a 0.002 step is ~2.2 px — a
+25% change, with four presses doubling it or taking it to zero.
+
+**All four values print on every press**, so one stderr line carries the whole
+state to paste back into `dof.py`; printing only the knob that moved would make
+the developer reconstruct the rest from memory across a session of presses.
 
 The module-level names above are **defaults**, not the live values. `FocusSolver`
 seeds mutable instance state from them at construction, and the dev keys nudge
 that instance state — so a nudge is per-session and never writes back to the
-module. Clamped to `[0.0, 3.0]`.
+module. A mission swap resets the *rack* (focus distance and blend) but
+deliberately **keeps** the nudged lens values: they are session tuning, not
+mission state.
 
-Both keys are free: they appear in `engine/input_map.py:197` only as
-display-name table entries and are bound to no action. Registered through
-`dev_mode.register_dev_keybinding(key, handler, description)`
+All four keys are free: they appear in `engine/input_map.py` only as
+display-name table entries and are bound to no action in `ACTIONS`. Registered
+through `dev_mode.register_dev_keybinding(key, handler, description)`
 (`engine/dev_mode.py:104`), so they also appear in the pause menu's developer
 section, and they are inert without `--developer`.
+
+⚠️ Every one of the four must also be **exported by `_dauntless_host.keys`**
+(`host_bindings.cc`). `register_for_frame()` reads them unguarded, every tick,
+inside a `try` with no `except` — an unexported constant terminates the process
+on the first developer-mode tick. `KEY_COMMA` and `KEY_PERIOD` shipped exactly
+that way; `tests/unit/test_host_key_manifest.py` now guards the whole submodule.
 
 This is the point of the whole section: Mark tunes in-flight in one session,
 reads the number he liked off stderr, and it becomes the Python default — rather

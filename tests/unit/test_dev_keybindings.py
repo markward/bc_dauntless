@@ -44,6 +44,8 @@ class _Keys:
     # tests/unit/test_host_key_manifest.py; keep this double in step with it.
     KEY_COMMA = 44
     KEY_PERIOD = 46
+    KEY_SEMICOLON = 59
+    KEY_APOSTROPHE = 39
 
 
 class _FakeHost:
