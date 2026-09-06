@@ -29,6 +29,12 @@ def _default_picker(title: str, message: str) -> Optional[str]:
     .so reaches here first and would raise instead of being reported. A
     missing binding is simply "no picker", which is the same branch as a
     cancel and as a platform with no implementation.
+
+    The call itself is also guarded: a binding that raises -- signature
+    drift, a non-UTF-8 path, anything -- collapses to the same "no picker"
+    answer rather than an unhandled traceback escaping run(). That keeps
+    "anything went wrong with the picker" a single branch, the property
+    folder_picker.h already documents.
     """
     try:
         import _dauntless_host
@@ -37,16 +43,26 @@ def _default_picker(title: str, message: str) -> Optional[str]:
     pick = getattr(_dauntless_host, "pick_folder", None)
     if pick is None:
         return None
-    return pick(title, message)
+    try:
+        return pick(title, message)
+    except Exception:
+        return None
 
 
-def _message_for(verdict) -> str:
-    """What the panel says. Empty on a first ask, informative on a retry."""
+def _message_for(verdict, subject: str = "That folder") -> str:
+    """What the panel says. Empty when there is nothing to report.
+
+    `subject` names whose folder failed: "That folder" fits a retry, where
+    the player just picked the thing being described. The very first ask
+    can also carry a failure -- a stale settings.json or a typo'd CLI flag
+    -- that the player never chose, so its caller passes "The configured
+    folder" instead; "That folder" there would have no referent.
+    """
     if verdict is None:
         return ""
     parts = []
     if verdict.missing:
-        parts.append("That folder is missing: " + ", ".join(verdict.missing))
+        parts.append(subject + " is missing: " + ", ".join(verdict.missing))
     if verdict.hint:
         parts.append(verdict.hint)
     return "  ".join(parts)
@@ -79,7 +95,8 @@ def prompt_for_missing(
         already = resolution.game if kind == "game" else resolution.sdk  # paths-guard: kind label, not a path segment
         if already is not None:
             continue
-        message = _message_for(resolution.validation(kind))
+        message = _message_for(
+            resolution.validation(kind), subject="The configured folder")
         cancelled = False
         while True:
             choice = picker(_TITLES[kind], message)

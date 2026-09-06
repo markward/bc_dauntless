@@ -90,6 +90,29 @@ def test_an_invalid_pick_re_prompts_with_what_was_wrong(install, tmp_path):
     assert retry_message                   # the retry says what was wrong
 
 
+def test_a_stale_configured_root_is_not_called_that_folder(install, tmp_path):
+    """FINDING 2: on the very FIRST ask, a failure carried in from a stale
+    settings.json or a typo'd CLI flag describes the CONFIGURED root, not
+    "that folder" -- the player has not chosen anything yet, so "that"
+    would have no referent.
+    """
+    game, sdk = install
+    bogus = tmp_path / "not-a-game-dir"      # paths-guard: test fixture tree
+    bogus.mkdir()
+    argv = ["--game-dir", str(bogus)]
+    start = paths.resolve(argv=argv, env={}, store=FakeStore())
+    assert start.game is None                # the flag's value was invalid
+
+    picker = RecordingPicker([str(game), str(sdk)])
+    result = first_run.prompt_for_missing(
+        start, picker=picker, argv=argv, env={}, store=FakeStore())
+
+    assert result.ok
+    first_message = picker.calls[0][1]
+    assert first_message.startswith("The configured folder is missing")
+    assert "That folder" not in first_message
+
+
 def test_cancel_on_the_first_prompt_asks_nothing_further():
     picker = RecordingPicker([None])
     result = first_run.prompt_for_missing(
@@ -124,3 +147,24 @@ def test_no_picker_available_returns_the_resolution_unchanged():
         start, picker=lambda title, message: None, argv=[], env={},
         store=FakeStore())
     assert result == start
+
+
+def test_a_raising_binding_is_treated_as_no_picker(monkeypatch):
+    """FINDING 3: signature drift, a non-UTF-8 path, anything the binding
+    itself raises must collapse to the same "no picker" answer as a
+    cancel or a missing binding -- not an unhandled traceback out of
+    run(). Exercise _default_picker directly against a fake
+    _dauntless_host so the real native module is never touched.
+    """
+    import sys
+    import types
+
+    fake_module = types.ModuleType("_dauntless_host")
+
+    def _raising_pick_folder(title, message):
+        raise RuntimeError("boom")
+
+    fake_module.pick_folder = _raising_pick_folder
+    monkeypatch.setitem(sys.modules, "_dauntless_host", fake_module)
+
+    assert first_run._default_picker("title", "message") is None
