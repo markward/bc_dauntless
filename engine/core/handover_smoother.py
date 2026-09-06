@@ -30,7 +30,9 @@ from engine.core.interpolate import lerp_transform
 
 # Fixed window. Long enough to hide a tick of motion, short enough that the
 # ship is back on its true pose before the player can act on the discrepancy.
-SMOOTH_DURATION_S = 0.12
+# Tuned live: 0.12 still left a slight shudder, 0.36 was the value that read
+# clean. Raising this trades a longer catch-up for a gentler one.
+SMOOTH_DURATION_S = 0.36
 
 
 class HandoverSmoother:
