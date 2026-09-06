@@ -253,9 +253,13 @@ lens values, plus the two the solver computes, arrive through one binding pushed
 each frame:
 
 ```python
-r.dof_set_params(focus_gu, blend,
+r.set_dof_params(focus_gu, blend,
                  near_strength, far_strength, far_ceiling, max_radius_frac)
 ```
+
+(The pybind binding itself is `dof_set_params`; `engine/renderer.py` wraps it as
+`set_dof_params`, matching how `msaa_set_samples` is exposed as
+`set_msaa_samples`.)
 
 `max_radius_frac` is converted to pixels **host-side** (`frac * fh`) so the
 shader never needs the framebuffer size. `blend` scales the final blur radius,
