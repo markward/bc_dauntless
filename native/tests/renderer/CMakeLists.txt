@@ -30,6 +30,8 @@ add_executable(renderer_tests
     skinned_bridge_test.cc
     head_weld_seam_test.cc
     officer_jaw_test.cc
+    hdr_msaa_target_test.cc
+    hdr_msaa_resolve_test.cc
     hdr_target_test.cc
     cubemap_target_test.cc
     resolve_pass_test.cc
@@ -43,6 +45,7 @@ add_executable(renderer_tests
     particle_pass_test.cc
     asset_path_test.cc
     hull_clip_test.cc
+    cloak_pass_test.cc
     breach_pass_test.cc
     breach_venting_test.cc
     breach_debris_test.cc

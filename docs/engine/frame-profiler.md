@@ -340,6 +340,52 @@ Two gaps, both deliberate and both worth knowing about:
 
 ---
 
+# ⛔ The GPU column is DEAD on this Mac
+
+Apple's GL returns **zeroed `GL_TIMESTAMP` counters**. Measured: 117 resolved
+frames of exactly 0.
+
+This is worse than a missing feature, because `gpu_ms` only accumulates when
+`t1 >= t0`, so every span is `>= 0` **by construction** — a dead driver and a
+completely free GPU produce identical output. There is no way to tell them apart
+from the numbers alone.
+
+The report now prints **GPU TIMING UNAVAILABLE** and blanks the column after 30
+such frames.
+
+**Every GPU figure recorded before 2026-08-28 was never measured.** Discard
+them. The CPU columns are unaffected and remain trustworthy.
+
+---
+
+# Two scenes, two different bottlenecks
+
+Profile the scene you actually mean to fix — the dominant cost moves completely
+between them.
+
+| Phase | QuickBattle / bridge | E3M1 / exterior |
+|---|---|---|
+| `render_prep` | **15.8 ms** | 0.8 ms |
+| `ui_panels` | — | **10.7 ms** |
+| `sim` | — | 5.0 ms |
+| `r.frame` | 7.7 ms | — |
+
+In the QuickBattle/bridge frame, inside `r.frame` (7.7 ms):
+
+* `anim` **4.1 ms** — bone palettes for every animated instance, ungated.
+* `cef.composite` **1.9 ms CPU** — the full-surface overlay upload. No
+  dirty-rect, no PBO.
+
+Both scenes: `scene_push` runs 0.7–1.5 ms (lights, backdrops, suns, planets,
+nebulae, decals, warp VFX). ⚠️ This was reported as `starmap` until the phase was
+split — the star map early-returns when closed and was **never** the cost. Real
+`input` is 0.034 ms.
+
+**The dominant costs are Python-side and CPU-side. None of them is a thread-count
+problem.**
+
+---
+
 # Building a headless sim harness: two traps
 
 Both of these silently skew a profile, and both cost real time this session.

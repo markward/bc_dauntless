@@ -152,3 +152,68 @@ def test_readme_does_not_tell_windows_to_skip_native_tests_that_build():
         assert "DAUNTLESS_BUILD_TESTS=OFF" not in block, (
             f"{len(msvc_arms)} native test target(s) carry an MSVC /WHOLEARCHIVE "
             "arm, but the README still tells Windows users to skip building them")
+
+
+# --- CLAUDE.md reference table: a row-length budget ------------------------
+#
+# The table accreted. A claim would be audited, found stale, and a warning
+# APPENDED rather than the claim replaced -- so single rows grew to 3-4.5k
+# characters carrying three layers of correction. Two costs, both paid:
+#
+#   1. The important lines competed with historical scar tissue for attention.
+#   2. Rows became the SOLE home for facts (the perf cadences had no topic doc
+#      at all), so nobody could prune them safely.
+#
+# Worse, length hid staleness. When the six heaviest rows were migrated out on
+# 2026-09-05, the shield row was found to be describing a texture-sampling
+# splash that had been replaced by a procedural one, and still flagging two
+# divergences that had been closed weeks earlier (the bubble-entry input on
+# 2026-08-19, subsystem residuals on 2026-08-20).
+#
+# The budget is the fix: a row states what is true NOW and points at a topic
+# doc or a well-commented code site for the detail. Detail belongs where it can
+# be verified against the tree, not in a summary table.
+
+REFERENCE_TABLE_ROW_BUDGET = 1200
+
+
+def reference_table_rows() -> list[tuple[int, str, str]]:
+    """(line number, label, full row) for each '## Key reference material' row.
+
+    Skips the header and the |---|---| separator.
+    """
+    lines = CLAUDE_MD.read_text(encoding="utf-8").split("\n")
+    rows, in_section = [], False
+    for lineno, line in enumerate(lines, start=1):
+        if line.startswith("## "):
+            in_section = line.strip() == "## Key reference material"
+            continue
+        if not in_section or not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.split("|")[1:-1]]
+        if len(cells) < 3 or cells[0] in ("Resource",) or set(cells[0]) <= set("-: "):
+            continue
+        rows.append((lineno, cells[0], line))
+    return rows
+
+
+def test_reference_table_is_found_at_all():
+    """Guard the guard: a renamed heading must not silently disable the budget."""
+    rows = reference_table_rows()
+    assert len(rows) >= 15, (
+        f"only {len(rows)} reference-table rows parsed -- the '## Key reference "
+        "material' heading or the table format changed, which would silently "
+        "switch off the row-length budget below")
+
+
+def test_no_reference_table_row_exceeds_its_budget():
+    """A row over budget means detail is accreting in the summary table again."""
+    over = [(n, label, len(row)) for n, label, row in reference_table_rows()
+            if len(row) > REFERENCE_TABLE_ROW_BUDGET]
+    assert not over, (
+        "CLAUDE.md reference-table row(s) over the "
+        f"{REFERENCE_TABLE_ROW_BUDGET}-char budget:\n"
+        + "\n".join(f"  line {n}: {c} chars -- {label}" for n, label, c in over)
+        + "\n\nDo not raise the budget. Move the detail into a topic doc under "
+          "docs/engine/ (or a well-commented code site) and leave the row "
+          "stating what is true now, plus the pointer.")

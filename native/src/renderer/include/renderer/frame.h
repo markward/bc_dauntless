@@ -33,6 +33,17 @@ struct Lighting {
     };
     /// Color × dimmer per directional.
     glm::vec3 directional_color[MaxDirectionals] = { glm::vec3(1.0f) };
+
+    /// RESOLVED directional-ambient axis and strength -- already reduced from
+    /// the directionals by ambient_gradient_from_lights. Stored resolved, not
+    /// as a budget, because the draw path must not run that reduction:
+    /// submit_opaque_instance is called PER INSTANCE, so computing there
+    /// would repeat it for every ship every frame. The host resolves it once
+    /// per frame in set_lighting (Task 3).
+    ///
+    /// ambient_gradient == 0 is the stock flat ambient, byte-identical.
+    glm::vec3 ambient_dir_ws = glm::vec3(0.0f, 1.0f, 0.0f);
+    float     ambient_gradient = 0.0f;
 };
 
 enum class BackdropKind { Star, Backdrop };

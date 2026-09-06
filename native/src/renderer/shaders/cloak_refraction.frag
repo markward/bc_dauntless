@@ -22,8 +22,15 @@ uniform vec3  u_camera_pos;
 
 // Directional + ambient lighting — same values the opaque pass uses so the
 // cloaked hull shades identically (no lit/unlit brightness pop at hand-over).
+// u_ambient_dir_ws / u_ambient_gradient feed the SAME guarded ambient-gradient
+// term as opaque.frag (see the amb/amb_d block below) -- without them the
+// cloak shell fell back to flat ambient while the hull it hands over from/to
+// had directional ambient, a real brightness step on the shadow side of any
+// cloaking ship once the gradient shipped.
 const int MAX_DIR_LIGHTS = 4;
 uniform vec3  u_ambient_light;
+uniform vec3  u_ambient_dir_ws;
+uniform float u_ambient_gradient;
 uniform int   u_dir_light_count;
 uniform vec3  u_dir_light_dir_ws[MAX_DIR_LIGHTS];  // direction TOWARD the light
 uniform vec3  u_dir_light_color[MAX_DIR_LIGHTS];   // colour × dimmer
@@ -79,14 +86,25 @@ void main() {
     vec3 base = texture(u_base_color, v_uv).rgb;
     vec4 glow = texture(u_glow_map,   v_uv);
 
-    // Shade the diffuse exactly as the opaque pass does — (ambient + Σ n·L) ×
-    // material diffuse × base texture — so the hull that hands over from the
-    // opaque pass is the same brightness (no "pops to fully lit" flash).
+    // Shade the diffuse exactly as the opaque pass does — (ambient
+    // [+ directional-ambient gradient] + Σ n·L) × material diffuse × base
+    // texture — so the hull that hands over from the opaque pass is the same
+    // brightness (no "pops to fully lit"/no ambient-facing-side flash).
     vec3 lit_dir = vec3(0.0);
     for (int i = 0; i < u_dir_light_count; ++i)
         lit_dir += max(dot(N, normalize(u_dir_light_dir_ws[i])), 0.0)
                  * u_dir_light_color[i];
-    vec3 lit = (u_ambient_light + lit_dir) * u_diffuse_color * base;
+
+    // Ambient-gradient term mirrored byte-for-byte from opaque.frag's
+    // amb/amb_d block -- same branch-gated byte-identity at gradient == 0,
+    // same measured-not-spec NaN/Inf clamp rationale. Keep the two in sync;
+    // they must not drift or the cloak shell and the hull disagree again.
+    vec3 amb = u_ambient_light;
+    if (u_ambient_gradient > 0.0) {
+        float amb_d = clamp(dot(N, u_ambient_dir_ws), -1.0, 1.0);
+        amb = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
+    }
+    vec3 lit = (amb + lit_dir) * u_diffuse_color * base;
 
     float glow_intensity =
         clamp(dot(glow.rgb, vec3(0.299, 0.587, 0.114)) * glow.a, 0.0, 1.0);

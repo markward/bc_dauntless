@@ -39,6 +39,11 @@ const float RIM_POWER = 36.0;  // sharp, edge-only falloff (higher = thinner)
 const float RIM_GAIN  = 12.75; // peak edge brightness (20.8 -> 17.0 -> -25% 2026-08-16)
 
 uniform vec3 u_ambient_light;
+// Directional ambient. u_ambient_gradient == 0 is the stock path: the term
+// collapses to u_ambient_light exactly. The axis is the luminance-weighted
+// sum of every directional (computed host-side), NOT light 0.
+uniform vec3  u_ambient_dir_ws;
+uniform float u_ambient_gradient;
 uniform vec3 u_camera_pos_ws;
 
 const int MAX_DIR_LIGHTS = 4;
@@ -644,7 +649,40 @@ void main() {
     vec4 base = texture(u_base_color, v_uv);
     // lit_dyn folds in EXACTLY where ambient + directional combine, so
     // material/diffuse color and base texture multiply it the same way.
-    vec3 lit  = (u_ambient_light + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
+    // MEAN-PRESERVING: dot(N, dir) averages to zero over a sphere, so the
+    // average ambient across a closed hull is unchanged and this only
+    // REDISTRIBUTES ambient. Do NOT rewrite as
+    //     u_ambient_light + u_ambient_gradient * (0.5 + 0.5 * d)
+    // which adds light and brightens the whole scene.
+    //
+    // Byte-identity at u_ambient_gradient == 0 is a BRANCH, not a driver
+    // property: the modulated form below is only ever evaluated when the
+    // gradient is on, so the off path is u_ambient_light, unconditionally,
+    // regardless of what n_shade or u_ambient_dir_ws happen to hold.
+    vec3 amb = u_ambient_light;
+    if (u_ambient_gradient > 0.0) {
+        // n_shade and u_ambient_dir_ws are both unit vectors, so a correct
+        // dot product already lands in [-1, 1] -- clamp() here is a
+        // mathematical no-op on any legitimate input and cannot change a
+        // correct result. What it buys is the degenerate case: a fully
+        // zeroed vertex normal (see the a_normal comment on this fixture's
+        // HullClipTest counterpart) makes n_shade itself NaN, and
+        // clamp(NaN, -1, 1) resolves to -1 ON THIS DRIVER -- MEASURED, the
+        // same IEEE-maxNum framing already used above for the spot-cone
+        // clamp (clamp(NaN, 0, 1) == 0), not a GLSL language guarantee.
+        // Hardware that propagates NaN through clamp would leave amb_d, and
+        // this whole branch's ambient term, NaN instead; 0/0-style results
+        // are undefined behaviour either way. A `v == v` self-compare and a
+        // bare isnan() were both tried here first and both still left
+        // HullClipTest.DegenerateNormalWithGradientOnStaysFinite non-finite
+        // (measured, not inferred -- the probe still flagged 64 cells with
+        // isnan() in place). clamp() also catches +-Inf, which isnan() does
+        // not: an infinite u_ambient_dir_ws would otherwise give
+        // 0.0 * Inf == NaN here too.
+        float amb_d = clamp(dot(n_shade, u_ambient_dir_ws), -1.0, 1.0);
+        amb = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
+    }
+    vec3 lit  = (amb + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
 
     // Body-frame normal for object-space decals.
     vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);

@@ -31,6 +31,7 @@ InstanceId = _h.InstanceId
 #   hard-fails `import`, so it needs no manifest entry.
 _REQUIRED_BINDINGS = frozenset({
     "add_box_region", "add_cylinder_region", "add_sphere_region",
+    "ambient_gradient_get", "ambient_gradient_set", "ambient_gradient_set_enabled",
     "assemble_officer", "bridge_pass_set_enabled",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
     "cef_reload", "cef_shutdown",
@@ -45,7 +46,8 @@ _REQUIRED_BINDINGS = frozenset({
     "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "model_bounds",
     "motion_blur_enabled",
-    "motion_blur_set_enabled", "nebula_lightning_enabled",
+    "motion_blur_set_enabled",
+    "msaa_max_samples", "msaa_set_samples", "nebula_lightning_enabled",
     "nebula_lightning_set_enabled",
     "nonfinite_probe_enabled", "nonfinite_probe_set_enabled",
     "nonfinite_probe_stats",
@@ -509,6 +511,51 @@ def set_shadows_enabled(enabled: bool) -> None:
 def set_smaa_enabled(enabled: bool) -> None:
     """Toggle the post-process SMAA 1x pass. Default: on after init()."""
     _h.smaa_set_enabled(enabled)
+
+
+def set_ambient_gradient(strength: float) -> None:
+    """Directional-ambient strength, clamped to [0, 1].
+
+    0 is the stock flat ambient and is byte-identical to the pre-gradient
+    renderer. 1 swings ambient from 0 at the antipode to 2x on the
+    light-facing side. Defaults to the engine's tuned default, biased high
+    for calibration.
+    """
+    _h.ambient_gradient_set(float(strength))
+
+
+def ambient_gradient() -> float:
+    """Current directional-ambient strength."""
+    return float(_h.ambient_gradient_get())
+
+
+def set_ambient_gradient_enabled(enabled: bool) -> None:
+    """Directional ambient on/off, for the Cinematic Lighting master.
+
+    On restores the engine's tuned strength rather than a value passed from
+    Python, so that constant has exactly one home and retuning it after a
+    live look is a single change in frame.cc.
+    """
+    _h.ambient_gradient_set_enabled(bool(enabled))
+
+
+def set_msaa_samples(samples: int) -> None:
+    """Set MSAA sample count for the opaque space pass.
+
+    0 disables MSAA entirely — no multisample buffer is allocated and no
+    resolve blit runs, so the frame is byte-identical to the pre-MSAA
+    renderer. 2/4/8 are clamped against GL_MAX_SAMPLES when applied, and a
+    driver that refuses the allocation silently falls back to 0.
+    """
+    _h.msaa_set_samples(int(samples))
+
+
+def max_msaa_samples() -> int:
+    """GL_MAX_SAMPLES for the live context — the ceiling the UI offers.
+
+    Requires a current GL context; returns 0 before init().
+    """
+    return int(_h.msaa_max_samples())
 
 
 def set_rim_eligible(instance_id: InstanceId, eligible: bool) -> None:

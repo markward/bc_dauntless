@@ -94,8 +94,17 @@ void CloakRefractionPass::render(const std::vector<CloakShipDescriptor>& ships,
     shader.set_float("u_vertex_wobble",   vertex_wobble_);
     shader.set_float("u_normal_bias",     normal_bias_);
     // Same lighting the opaque pass uses, so the cloaked hull shades identically
-    // (matched brightness — no lit/unlit pop when the hull hands over).
-    shader.set_vec3("u_ambient_light", lighting.ambient * ambient_scale);
+    // (matched brightness — no lit/unlit pop when the hull hands over). This
+    // MUST include the ambient-gradient pair (u_ambient_dir_ws/gradient), not
+    // just u_ambient_light: with the gradient on, a decloaking ship's shadow
+    // side has dimmer ambient on the opaque hull than flat u_ambient_light
+    // alone would give, and omitting these two left the cloak shell at the
+    // flat value -- a real brightness step at hand-over, not just a stale
+    // comment (see cloak_refraction.frag's amb/amb_d block, mirrored from
+    // opaque.frag's).
+    shader.set_vec3 ("u_ambient_light",    lighting.ambient * ambient_scale);
+    shader.set_vec3 ("u_ambient_dir_ws",   lighting.ambient_dir_ws);
+    shader.set_float("u_ambient_gradient", lighting.ambient_gradient);
     shader.set_int ("u_dir_light_count", lighting.directional_count);
     if (lighting.directional_count > 0) {
         shader.set_vec3_array("u_dir_light_dir_ws",

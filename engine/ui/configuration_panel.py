@@ -10,10 +10,10 @@ panel itself never imports the store.
 
 Three rows are masters over several appliers each: Improved Space
 Visuals (volumetric nebulae, procedural sky), Camera Realism
-(HDR, filmic filter, motion blur, modern lens flares) and Realistic
+(HDR, filmic filter, motion blur, modern lens flares) and Cinematic
 Lighting (Fresnel rim light, dynamic shadows, nebula lightning,
-subsystem light emitters). The appliers stay individually injected so
-the renderer surface is unchanged.
+subsystem light emitters, directional ambient). The appliers stay
+individually injected so the renderer surface is unchanged.
 
 Effects deliberately NOT exposed, because they are core to how the game
 reads rather than preferences: specular highlights, damage decals, hull
@@ -38,6 +38,27 @@ FOV_STEP = 5
 # AI difficulty index (0=Easy, 1=Medium, 2=Hard) — mirrors App.Game_GetDifficulty.
 AI_DIFFICULTY_LABELS = ("Easy", "Medium", "Hard")
 
+# ── Anti-aliasing modes ─────────────────────────────────────────────────────
+# One mutually-exclusive selector replaces the old independent SMAA toggle:
+# SMAA is post-process and MSAA is multisample geometry, and running both
+# would spend twice for one edge.
+#
+# The stored value is the INDEX, not a sample count. The settings table's
+# lo/hi does a contiguous-range check, which an index satisfies and the set
+# {0, 2, 4, 8} does not. Driver capability is a separate concern, handled by
+# clamping at apply time against GL_MAX_SAMPLES — so a settings file carrying
+# AA_MSAA_8X on a 4x-max machine applies 4x, and applies 8x again if that file
+# moves to a machine that supports it.
+AA_OFF = 0
+AA_SMAA = 1
+AA_MSAA_2X = 2
+AA_MSAA_4X = 3
+AA_MSAA_8X = 4
+
+# Indexed by aa_mode. SMAA is not a sample count, hence the second 0.
+AA_MODE_SAMPLES = (0, 0, 2, 4, 8)
+AA_MODE_LABELS = ("Off", "SMAA", "2×", "4×", "8×")
+
 # ── Master toggles ───────────────────────────────────────────────────────────
 # One player-facing row over several renderer appliers. (key, label, appliers),
 # in rendered order. The key drives everything by construction: the settings
@@ -51,8 +72,14 @@ MASTER_TOGGLES = (
      ("procedural_sky", "volumetric_nebulae")),
     ("camera_realism", "Camera Realism",
      ("hdr", "filmic", "motion_blur", "hdr_lens_flare")),
-    ("realistic_lighting", "Realistic Lighting",
-     ("rim", "shadows", "nebula_lightning", "ship_light_emitters")),
+    # NOTE label vs key: the row reads "Cinematic Lighting" but the key stays
+    # `realistic_lighting`. The key drives the action string, the payload key,
+    # the focusable AND the persisted settings key, so renaming it would need
+    # a schema migration for a purely cosmetic change. The divergence is
+    # deliberate — do not "fix" it without one.
+    ("realistic_lighting", "Cinematic Lighting",
+     ("rim", "shadows", "nebula_lightning", "ship_light_emitters",
+      "ambient_gradient")),
 )
 
 MASTER_KEYS = tuple(key for key, _label, _appliers in MASTER_TOGGLES)
@@ -61,7 +88,7 @@ MASTER_KEYS = tuple(key for key, _label, _appliers in MASTER_TOGGLES)
 @dataclass
 class SettingsSnapshot:
     fov_deg: int
-    smaa_on: bool = True
+    aa_mode: int = AA_SMAA
     subtitles_on: bool = True
     disable_annoying_dialogue_on: bool = True
     ai_difficulty: int = 1
@@ -75,7 +102,11 @@ class SettingsSnapshot:
     # lens flares — four settings the player used to set independently.
     camera_realism_on: bool = True
     # One master toggle over Fresnel rim light, dynamic shadows, nebula
-    # lightning and the subsystem light emitters.
+    # lightning, the subsystem light emitters, and directional ambient. The
+    # row displays "Cinematic Lighting" but the field/key stays
+    # `realistic_lighting` deliberately: that key drives the action string,
+    # the payload key sent to CEF, the focusable id, and the persisted
+    # setting name, so renaming it would be a migration, not a relabel.
     realistic_lighting_on: bool = True
     # Weapon-impact camera kick. Sits under Modern VFX beside the masters.
     camera_shake_on: bool = True
@@ -88,7 +119,7 @@ class ConfigurationPanel(Panel):
                  set_dust: Callable[[bool], None],
                  set_hdr: Callable[[bool], None],
                  set_rim: Callable[[bool], None],
-                 set_smaa: Callable[[bool], None],
+                 set_aa_mode: Callable[[int], None],
                  set_subtitles: Callable[[bool], None],
                  set_disable_annoying_dialogue: Callable[[bool], None],
                  set_ai_difficulty: Callable[[int], None],
@@ -102,14 +133,20 @@ class ConfigurationPanel(Panel):
                  set_hdr_lens_flare: Callable[[bool], None],
                  set_ship_light_emitters: Callable[[bool], None],
                  set_camera_shake: Callable[[bool], None],
+                 set_ambient_gradient: Callable[[bool], None],
                  input_map=None,
+                 # GL_MAX_SAMPLES from the live context. Defaults to the
+                 # highest mode we offer so every existing construction site
+                 # and test shows all five segments; the host loop passes the
+                 # driver's real ceiling.
+                 max_msaa_samples: int = 8,
                  on_change: Optional[Callable[[str, object], None]] = None,
                  on_reset: Optional[Callable[[str], dict]] = None):
         super().__init__()
         self._tabs = list(tabs)
         self._selected_tab = tabs[0][0]
         self._settings = SettingsSnapshot(
-            smaa_on=initial_settings.smaa_on,
+            aa_mode=max(AA_OFF, min(AA_MSAA_8X, int(initial_settings.aa_mode))),
             fov_deg=int(initial_settings.fov_deg),
             subtitles_on=initial_settings.subtitles_on,
             disable_annoying_dialogue_on=initial_settings.disable_annoying_dialogue_on,
@@ -134,11 +171,13 @@ class ConfigurationPanel(Panel):
             "nebula_lightning": set_nebula_lightning,
             "hdr_lens_flare": set_hdr_lens_flare,
             "ship_light_emitters": set_ship_light_emitters,
+            "ambient_gradient": set_ambient_gradient,
         }
         # Standalone rows keep their own attribute.
         self._set_dust = set_dust
         self._set_camera_shake = set_camera_shake
-        self._set_smaa = set_smaa
+        self._set_aa_mode = set_aa_mode
+        self._max_msaa_samples = int(max_msaa_samples)
         self._set_subtitles = set_subtitles
         self._set_disable_annoying_dialogue = set_disable_annoying_dialogue
         self._set_ai_difficulty = set_ai_difficulty
@@ -198,7 +237,7 @@ class ConfigurationPanel(Panel):
             controls_sig,
             self._capturing_action,
             self._controls_message,
-            self._settings.smaa_on,
+            self._settings.aa_mode,
             self._settings.subtitles_on,
             self._settings.disable_annoying_dialogue_on,
             self._settings.ai_difficulty,
@@ -224,7 +263,10 @@ class ConfigurationPanel(Panel):
                                 else ""),
             "controls_message": self._controls_message,
             "settings": {
-                "smaa_on": self._settings.smaa_on,
+                "aa_mode": self._settings.aa_mode,
+                # The driver's ceiling: the JS omits segments above it rather
+                # than showing options this machine cannot deliver.
+                "max_msaa_samples": self._max_msaa_samples,
                 "subtitles_on": self._settings.subtitles_on,
                 "disable_annoying_dialogue_on": self._settings.disable_annoying_dialogue_on,
                 "ai_difficulty": self._settings.ai_difficulty,
@@ -316,11 +358,16 @@ class ConfigurationPanel(Panel):
             self._settings.dust_on = new_val
             self._on_change("dust", new_val)
             return True
-        if action == "toggle:smaa":
-            new_val = not self._settings.smaa_on
-            self._set_smaa(new_val)
-            self._settings.smaa_on = new_val
-            self._on_change("smaa", new_val)
+        if action.startswith("aa_mode:"):
+            try:
+                mode = int(action[len("aa_mode:"):])
+            except ValueError:
+                return False
+            if not (AA_OFF <= mode <= AA_MSAA_8X):
+                return False
+            self._set_aa_mode(mode)
+            self._settings.aa_mode = mode
+            self._on_change("aa_mode", mode)
             return True
         if action == "toggle:subtitles":
             new_val = not self._settings.subtitles_on
@@ -426,8 +473,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("toggle:camera_shake")
         elif activate and kind == "ctrl" and target == "dust":
             self.dispatch_event("toggle:dust")
-        elif activate and kind == "ctrl" and target == "smaa":
-            self.dispatch_event("toggle:smaa")
+        # aa_mode has no activate branch: it is a multi-value selector driven
+        # by left/right below, like ai_difficulty, not a toggle.
         elif activate and kind == "ctrl" and target == "subtitles":
             self.dispatch_event("toggle:subtitles")
         elif activate and kind == "ctrl" and target == "disable_annoying_dialogue":
@@ -455,12 +502,22 @@ class ConfigurationPanel(Panel):
             if _pressed(k_left):
                 self.dispatch_event("ai_difficulty:" + str(self._settings.ai_difficulty - 1))
 
+        # Clamped here rather than relying on dispatch_event's range check, so
+        # holding right at 8x is a no-op instead of a rejected event.
+        if kind == "ctrl" and target == "aa_mode":
+            if _pressed(k_right):
+                self.dispatch_event(
+                    "aa_mode:" + str(min(AA_MSAA_8X, self._settings.aa_mode + 1)))
+            if _pressed(k_left):
+                self.dispatch_event(
+                    "aa_mode:" + str(max(AA_OFF, self._settings.aa_mode - 1)))
+
     def _focusables(self) -> list:
         """Ordered focusable list: tab rows then controls in the
         currently selected tab. Order mirrors the rendered rows — the two
         standalone controls, then the 'Modern VFX' group of master toggles,
         then the per-tab Reset row:
-        [('tab','graphics'), ('ctrl','smaa'), ('ctrl','dust'), ('ctrl','fov'),
+        [('tab','graphics'), ('ctrl','aa_mode'), ('ctrl','dust'), ('ctrl','fov'),
          ('ctrl','improved_space'), ('ctrl','camera_realism'),
          ('ctrl','realistic_lighting'), ('ctrl','camera_shake'),
          ('ctrl','reset_graphics')].
@@ -469,7 +526,7 @@ class ConfigurationPanel(Panel):
         together by test_js_graphics_focusables_match_python."""
         out: list = [("tab", tid) for tid, _ in self._tabs]
         if self._selected_tab == "graphics":
-            out += [("ctrl", "smaa"), ("ctrl", "dust"), ("ctrl", "fov")]
+            out += [("ctrl", "aa_mode"), ("ctrl", "dust"), ("ctrl", "fov")]
             out += [("ctrl", k) for k in MASTER_KEYS]
             out += [("ctrl", "camera_shake")]
             out += [("ctrl", "reset_graphics")]

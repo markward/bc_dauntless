@@ -20,12 +20,12 @@ function escapeHtmlCP(s) {
 const CP_MASTERS = [
     ['improved_space',     'Improved Space Visuals'],
     ['camera_realism',     'Camera Realism'],
-    ['realistic_lighting', 'Realistic Lighting'],
+    ['realistic_lighting', 'Cinematic Lighting'],
 ];
 
 // Graphics-tab controls in rendered order: the standalone rows, then the
 // masters. Single source for both the focusable list and the rendered rows.
-const CP_GRAPHICS_STANDALONE = ['smaa', 'dust', 'fov'];
+const CP_GRAPHICS_STANDALONE = ['aa_mode', 'dust', 'fov'];
 // Plain rows that sit INSIDE the Modern VFX group, after the masters.
 const CP_GRAPHICS_TRAILING = [['camera_shake', 'Camera Shake']];
 // Per-tab "Reset to Defaults" rows. Scoped, not global: the Controls tab
@@ -111,7 +111,26 @@ function _cpRenderGraphicsBody(state, focusables) {
     const s = state.settings;
     let html = '';
 
-    html += _cpToggleRow('Anti-Aliasing (SMAA)', 'smaa', s.smaa_on, isFoc);
+    // Anti-aliasing — five-way segmented control, mirroring the AI Difficulty
+    // row below. SMAA (post-process) and MSAA (multisample geometry) are
+    // mutually exclusive, so they are one setting rather than two toggles.
+    // Segments above the driver's GL_MAX_SAMPLES are OMITTED rather than shown
+    // disabled: an option this machine cannot deliver should not be offered.
+    const aaLabels  = ['Off', 'SMAA', '2×', '4×', '8×'];
+    const aaSamples = [0, 0, 2, 4, 8];
+    const aaMax = (typeof s.max_msaa_samples === 'number') ? s.max_msaa_samples : 8;
+    const aa = (typeof s.aa_mode === 'number') ? s.aa_mode : 1;
+    html += '<div class="cp-row' + (isFoc('aa_mode') ? ' cp-focused' : '') + '">'
+          +     '<span class="cp-label">Anti-aliasing</span>'
+          +     '<div class="cp-segmented">';
+    for (let i = 0; i < aaLabels.length; ++i) {
+        if (aaSamples[i] > aaMax) continue;
+        html += '<button class="cp-toggle' + (aa === i ? ' cp-toggle--on' : '') + '"'
+              +    ' onclick="dauntlessEvent(\'configuration/aa_mode:' + i + '\')">'
+              +    aaLabels[i]
+              + '</button>';
+    }
+    html += '</div></div>';
     html += _cpToggleRow('Space Dust', 'dust', s.dust_on, isFoc);
 
     // FOV slider — listen on 'change' (released), not 'input' (every

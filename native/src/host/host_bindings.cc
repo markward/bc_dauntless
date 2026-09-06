@@ -27,6 +27,7 @@
 #include <renderer/channel_binder.h>
 #include <renderer/frame.h>
 #include <renderer/frame_timer.h>
+#include <renderer/lighting.h>
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
 #include <renderer/dust_pass.h>
@@ -58,6 +59,8 @@
 #include <renderer/bridge_pass.h>
 #include <renderer/viewscreen_static_pass.h>
 #include <renderer/hdr_target.h>
+#include <renderer/hdr_msaa_target.h>
+#include <renderer/gl_caps.h>
 #include <renderer/bloom_pass.h>
 #include <renderer/nonfinite_probe.h>
 #include "frame_dump.h"
@@ -131,8 +134,9 @@ namespace dauntless_nan_debug {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
 }
-// Forward-declared here (before the anonymous namespace) so render_space()
-// inside the anonymous namespace can read the always-on hull-breach gate.
+// Forward-declared here (before the anonymous namespace) so the space render
+// phases inside the anonymous namespace can read the always-on hull-breach
+// gate.
 namespace dauntless_hull_damage {
     bool enabled();            // defined in frame.cc
 }
@@ -163,6 +167,11 @@ namespace dauntless_volumetric_nebulae {
 namespace dauntless_nebula_lightning {
     bool enabled();            // defined in frame.cc
     void set_enabled(bool v);  // defined in frame.cc
+}
+namespace dauntless_ambient_gradient {
+    float strength();          // defined in frame.cc
+    void  set_strength(float);  // defined in frame.cc
+    void  set_enabled(bool);    // defined in frame.cc
 }
 
 namespace {
@@ -272,6 +281,10 @@ glm::vec3 g_hologram_bg{0.0f, 0.0f, 0.0f};
 bool      g_spv_hull_mode = false;
 std::unique_ptr<renderer::BridgePass>      g_bridge_pass;
 std::unique_ptr<renderer::HdrTarget>       g_hdr_target;
+// Multisample target for the opaque space pass. Constructed unconditionally
+// but allocates NO GL objects until resize() is called with samples >= 2,
+// which only happens when the player has actually selected an MSAA mode.
+std::unique_ptr<renderer::HdrMsaaTarget>   g_msaa_target;
 std::unique_ptr<renderer::HdrTarget>       g_viewscreen_hdr;
 std::unique_ptr<renderer::BloomPass>       g_bloom_pass;
 // Developer-only NaN/Inf detector for the HDR target. Off by default even under
@@ -325,6 +338,10 @@ constexpr double kMotionBlurRefDt = 1.0 / 60.0;
 // so its GL handles are released in shutdown() while the context is current.
 std::unique_ptr<renderer::ShadowMapTarget> g_shadow_target;
 bool g_smaa_enabled = true;   // post-process SMAA 1x; default on. Set by smaa_set_enabled.
+// Requested MSAA sample count for the opaque space pass. 0 == off, which is
+// the stock path: no multisample target is allocated and no blit occurs.
+// Set by msaa_set_samples; clamped against GL_MAX_SAMPLES at apply time.
+int g_msaa_samples = 0;
 double g_prev_frame_time_seconds = 0.0;
 float g_decal_game_time = 0.0f;  // game-time secs for decal ember; set by damage_decals_tick
 
@@ -607,6 +624,7 @@ void init(int width, int height, const std::string& title) {
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
+    g_msaa_target     = std::make_unique<renderer::HdrMsaaTarget>();
     g_viewscreen_hdr  = std::make_unique<renderer::HdrTarget>();
     g_bloom_pass   = std::make_unique<renderer::BloomPass>();
     g_nonfinite_probe = std::make_unique<renderer::NonfiniteProbe>();
@@ -679,6 +697,7 @@ void shutdown() {
     g_ldr_target.reset();
     g_resolve_pass.reset();
     g_hdr_target.reset();
+    g_msaa_target.reset();
     g_viewscreen_hdr.reset();
     g_shadow_target.reset();
     g_window.reset();
@@ -812,16 +831,22 @@ void frame() {
         }
         sky_use_cubemap = g_backdrop_pass->has_cubemap();  // false if alloc failed
     }
-    // Renders the space scene from `cam` into `target` (bound by the caller),
-    // whose color/depth textures and viewport dims (vw, vh) drive the
-    // framebuffer-coupled passes (volumetric nebula, godrays, lens flares).
-    // The viewscreen RTT now renders every pass the main view does — dust
-    // (camera-anchored smear, keyed off for_viewscreen so the cockpit isn't
-    // smeared except during warp streaking), nebulae, godrays, lens flares,
-    // hull discharges, shockwaves, particles, and cloak refraction — so the
-    // bridge viewscreen matches the exterior view.
-    auto render_space = [&](const scenegraph::Camera& cam, bool for_viewscreen,
-                            renderer::HdrTarget& target, int vw, int vh) {
+    // The space scene renders in two phases.
+    //
+    // PHASE 1 (here) — depth-writing geometry: backdrop, suns, hulls, breach,
+    // shields. It reads no scene textures, which is precisely why it can be
+    // multisampled: nothing in it samples the surface it is drawing into.
+    // Renders into EITHER the plain HDR target (msaa == nullptr, the stock
+    // path) or a multisample target the caller then resolves into the HDR
+    // target. Exactly one of hdr/msaa is non-null.
+    //
+    // PHASE 2 is render_space_vfx below; see its comment for why it can never
+    // be multisampled.
+    auto render_space_geometry = [&](const scenegraph::Camera& cam,
+                                     renderer::HdrTarget* hdr,
+                                     renderer::HdrMsaaTarget* msaa,
+                                     float ambient_scale) {
+        if (msaa != nullptr) msaa->bind(); else hdr->bind();
         {
             DAUNTLESS_FRAME_SCOPE("space.backdrop");
             if (sky_use_cubemap)
@@ -835,9 +860,6 @@ void frame() {
             DAUNTLESS_FRAME_SCOPE("space.suns");
             g_sun_pass->render(g_suns, cam, *g_pipeline, now);
         }
-        // Filmic ambient dim: -20% when the toggle is on, 1.0 when off. The
-        // viewscreen now matches the exterior view (no separate dim rule).
-        const float ambient_scale = dauntless_filmic::ambient_scale();
         {
             // The hull draw. No frustum or distance cull runs ahead of this —
             // every visible Space instance is submitted — so this scope is the
@@ -862,6 +884,29 @@ void frame() {
             DAUNTLESS_FRAME_SCOPE("space.shield");
             g_shield_pass->submit(g_world, cam, *g_pipeline, now, lookup);
         }
+    };
+
+    // PHASE 2 — everything transparent, additive, or reading the scene back,
+    // rendered into `target` whose color/depth textures and viewport dims
+    // (vw, vh) drive the framebuffer-coupled passes.
+    //
+    // ALWAYS single-sample, and that is a hard constraint rather than a
+    // preference: nebula_volumetric samples target.depth_texture() to
+    // terminate its raymarch, and both nebula_godray and cloak_pass sample
+    // target.color_texture() as u_scene while drawing into that same target.
+    // Those reads need a resolved, sampleable surface — a multisample
+    // renderbuffer cannot be sampled by an ordinary sampler2D at all.
+    //
+    // The viewscreen RTT renders every pass the main view does — dust
+    // (camera-anchored smear, keyed off for_viewscreen so the cockpit isn't
+    // smeared except during warp streaking), nebulae, godrays, lens flares,
+    // hull discharges, shockwaves, particles, and cloak refraction — so the
+    // bridge viewscreen matches the exterior view.
+    auto render_space_vfx = [&](const scenegraph::Camera& cam,
+                                bool for_viewscreen,
+                                renderer::HdrTarget& target,
+                                int vw, int vh, float ambient_scale) {
+        target.bind();
         // Dust is normally skipped on the viewscreen RTT (a camera-anchored
         // cockpit smear), but the WARP STREAK lives in this pass — so during
         // warp (streak > 0) we DO render it onto the viewscreen so the bridge
@@ -1034,14 +1079,22 @@ void frame() {
             scenegraph::Camera scam = g_scene_source.cam;
             scam.aspect = static_cast<float>(kViewscreenRttW)
                         / static_cast<float>(kViewscreenRttH);
-            render_space(scam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
-                        kViewscreenRttW, kViewscreenRttH);
+            // The viewscreen RTT is deliberately never multisampled: it is a
+            // small in-world surface where edge quality barely reads.
+            const float vs_ambient = dauntless_filmic::ambient_scale();
+            render_space_geometry(scam, g_viewscreen_hdr.get(), nullptr,
+                                  vs_ambient);
+            render_space_vfx(scam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
+                        kViewscreenRttW, kViewscreenRttH, vs_ambient);
         } else {
             scenegraph::Camera vcam = g_camera;
             vcam.aspect = static_cast<float>(kViewscreenRttW)
                         / static_cast<float>(kViewscreenRttH);
-            render_space(vcam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
-                        kViewscreenRttW, kViewscreenRttH);
+            const float vs_ambient = dauntless_filmic::ambient_scale();
+            render_space_geometry(vcam, g_viewscreen_hdr.get(), nullptr,
+                                  vs_ambient);
+            render_space_vfx(vcam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
+                        kViewscreenRttW, kViewscreenRttH, vs_ambient);
         }
         // Static/"snow" overlay over the feed (degraded-signal hail look).
         if (g_viewscreen_static.on && g_viewscreen_static_pass
@@ -1074,7 +1127,39 @@ void frame() {
     // "wasted space render in bridge mode".
     if (!viewer_mode && !bridge_active) {
         DAUNTLESS_FRAME_SCOPE("space");
-        render_space(g_camera, /*for_viewscreen=*/false, *g_hdr_target, fw, fh);
+        const float ex_ambient = dauntless_filmic::ambient_scale();
+
+        // MSAA path: the depth-writing geometry renders multisampled, then
+        // resolves colour+depth into g_hdr_target so every VFX pass and the
+        // whole post chain receive exactly the single-sample textures they
+        // already expect. Nothing downstream of the resolve is aware of MSAA.
+        //
+        // Falls through to the stock path whenever the requested count clamps
+        // to 0, or the driver refused the allocation (!valid()) — we never
+        // trust GL_RGBA16F multisample on the strength of the spec alone.
+        const int msaa = renderer::clamp_msaa_samples(
+            g_msaa_samples, renderer::query_gl_caps());
+        if (msaa >= 2) g_msaa_target->resize(fw, fh, msaa);
+        if (msaa >= 2 && g_msaa_target->valid()) {
+            // The multisample target is a DIFFERENT buffer from g_hdr_target
+            // and does not inherit the clear applied to it above; without this
+            // it would carry the previous frame's colour and a stale depth
+            // buffer. glClearColor is still set from that block and nothing
+            // between here and there touches it, so the two match by
+            // construction rather than by a duplicated literal.
+            g_msaa_target->bind();
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            render_space_geometry(g_camera, nullptr, g_msaa_target.get(),
+                                  ex_ambient);
+            g_msaa_target->resolve_to(*g_hdr_target);
+            // resolve_to leaves the READ/DRAW bindings split; the VFX phase
+            // re-binds g_hdr_target as GL_FRAMEBUFFER before it draws.
+        } else {
+            render_space_geometry(g_camera, g_hdr_target.get(), nullptr,
+                                  ex_ambient);
+        }
+        render_space_vfx(g_camera, /*for_viewscreen=*/false, *g_hdr_target,
+                         fw, fh, ex_ambient);
     }
 
     if (g_hologram_ship.active) {
@@ -1430,6 +1515,19 @@ void frame() {
     }
 
     renderer::frame_timer().end_frame();
+}
+
+// Re-derive the resolved ambient gradient from whatever directionals
+// g_lighting currently holds. Called from set_lighting (once per frame,
+// after the directionals are populated) and from the two knob setters so
+// a change bites on the next frame rather than waiting for Python's next
+// lighting push.
+void resolve_ambient_gradient() {
+    const renderer::AmbientGradient ag = renderer::ambient_gradient_from_lights(
+        g_lighting.directional_dir_ws, g_lighting.directional_color,
+        g_lighting.directional_count, dauntless_ambient_gradient::strength());
+    g_lighting.ambient_dir_ws   = ag.dir_ws;
+    g_lighting.ambient_gradient = ag.strength;
 }
 
 }  // namespace
@@ -2391,6 +2489,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   g_lighting.directional_color[i] = {
                       std::get<0>(col), std::get<1>(col), std::get<2>(col)};
               }
+              // Resolve the gradient ONCE PER FRAME, here -- not in the draw
+              // path. submit_opaque_instance runs per instance, so reducing
+              // the lights there would repeat this for every ship.
+              resolve_ambient_gradient();
           },
           py::arg("ambient"), py::arg("directionals"),
           "Set the global lighting state used by the next frame()'s opaque pass.");
@@ -3609,6 +3711,51 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](bool enabled) { g_smaa_enabled = enabled; },
           py::arg("enabled"),
           "Enable/disable the post-process SMAA 1x pass (default on).");
+
+    m.def("ambient_gradient_set",
+          [](float v) {
+              dauntless_ambient_gradient::set_strength(v);
+              // Re-resolve immediately so the knob bites on the NEXT frame
+              // rather than waiting for Python's next set_lighting push --
+              // which, on a static scene, may not come at all.
+              resolve_ambient_gradient();
+          },
+          py::arg("strength"),
+          "Directional-ambient strength, clamped to [0, 1]. 0 is the stock "
+          "flat ambient (byte-identical).");
+
+    m.def("ambient_gradient_get",
+          []() { return dauntless_ambient_gradient::strength(); },
+          "Current directional-ambient strength.");
+
+    m.def("ambient_gradient_set_enabled",
+          [](bool on) {
+              dauntless_ambient_gradient::set_enabled(on);
+              resolve_ambient_gradient();
+          },
+          py::arg("enabled"),
+          "Directional ambient on/off for the Cinematic Lighting master. On "
+          "restores the engine's tuned strength; off is 0 (the stock path).");
+
+    m.def("msaa_set_samples",
+          [](int samples) { g_msaa_samples = samples; },
+          py::arg("samples"),
+          "Set MSAA sample count for the opaque space pass. 0 disables it "
+          "(the stock path: no multisample buffer, no resolve blit). "
+          "2/4/8 are clamped against GL_MAX_SAMPLES when applied.");
+
+    m.def("msaa_max_samples",
+          []() {
+              // MUST be guarded on g_window. query_gl_caps calls glGetIntegerv,
+              // and with no context glad's function pointer is null -- calling
+              // this before init() SEGFAULTS the interpreter rather than
+              // raising. Returning 0 makes the UI offer no MSAA segments,
+              // which is the correct answer for "no context".
+              if (!g_window) return 0;
+              return renderer::query_gl_caps().max_samples;
+          },
+          "GL_MAX_SAMPLES for this context -- the ceiling the UI offers. "
+          "Returns 0 before init(), when there is no context to ask.");
 
     m.def("dust_set_density",
           [](int count) {
