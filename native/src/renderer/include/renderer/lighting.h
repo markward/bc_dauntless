@@ -96,10 +96,13 @@ inline AmbientGradient ambient_gradient_from_lights(
     // |sum| <= total_lum in exact arithmetic (each term has magnitude ==
     // its luminance, since dirs_to_light[i]/sqrt(len2) is meant to be unit
     // length). In float it is only APPROXIMATELY unit length -- sqrt(len2)
-    // is itself rounded -- so mag/total_lum can land at 1 + 1ulp and push
-    // the gradient strength marginally negative without this clamp. Leave
-    // it; a prior review flagged it as dead by the exact-arithmetic
-    // argument and that argument does not hold in float.
+    // is itself rounded -- so mag/total_lum can land at 1 + 1ulp, pushing
+    // out.strength marginally ABOVE the caller's requested budget. (An
+    // earlier version of this comment said "negative", which is wrong:
+    // budget, mag and total_lum are all non-negative, so no path here
+    // produces a negative product.) Leave the clamp; a prior review called
+    // it dead by the exact-arithmetic argument, and that argument does not
+    // hold in float.
     out.strength = budget * std::clamp(mag / total_lum, 0.0f, 1.0f);
     return out;
 }
