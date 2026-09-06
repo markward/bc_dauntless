@@ -25,6 +25,12 @@ depends on what happens to be on disk.
 These guards ask git, not the filesystem. `git check-ignore` is pure
 pattern evaluation, so the first test means the same thing on a machine
 with a real install, one with a symlink, and a bare CI checkout.
+
+`test_no_tracked_symlink_escapes_the_repo` is a RATCHET, not yet an active
+guard: this repo has zero tracked symlinks today, so its loop body never
+executes and the test currently proves nothing beyond "git ls-files
+succeeded". It only starts doing work the day some future symlink is
+actually committed.
 """
 
 import subprocess
