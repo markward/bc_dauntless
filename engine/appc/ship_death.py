@@ -12,6 +12,7 @@ See docs/superpowers/specs/2026-06-11-ship-death-sequence-design.md.
 """
 
 import engine.dev_mode as dev_mode
+from engine.appc import explosion_lights
 from engine.core.ids import implements
 
 THROES_DURATION       = 5.0   # seconds the ship coasts, dying, before removal
@@ -228,6 +229,19 @@ def _spawn_explosion(ship) -> None:
         from engine.appc.math import TGPoint3
         radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 1.0
         size = max(radius * EXPLOSION_SIZE_FACTOR, MIN_EXPLOSION_SIZE)
+        # Births land at i*spacing; used both for the controller's emission
+        # frequency below and for the matching light schedule, so the two can
+        # never disagree about when a blast happens.
+        spacing = THROES_DURATION / EXPLOSION_COUNT
+        # Dynamic lights for the fireballs. The particle backend is analytic --
+        # the renderer derives every puff from the controller's curves, so
+        # there is no per-puff hook -- which is why the light registry is
+        # handed this schedule rather than observing the births. `size` is
+        # passed rather than recomputed so explosion_lights never becomes a
+        # second interpreter of the fireball-size formula above.
+        explosion_lights.register(ship, size_gu=size, count=EXPLOSION_COUNT,
+                                  spacing_s=spacing,
+                                  life_s=EXPLOSION_PUFF_LIFE)
         action = Effects.CreateExplosionPuffHigh(
             THROES_DURATION,            # fLife
             size,                       # fSize
@@ -251,7 +265,6 @@ def _spawn_explosion(ship) -> None:
             # (COUNT - 0.5)*spacing allows births 0..COUNT-1 and no more. The
             # last blast finishes its animation after the hulk is removed,
             # anchored at the wreck site.
-            spacing = THROES_DURATION / EXPLOSION_COUNT
             ctrl.SetEmitFrequency(spacing)
             ctrl.SetEffectLifeTime(spacing * (EXPLOSION_COUNT - 0.5))
         if action is not None and hasattr(action, "Play"):
@@ -261,5 +274,11 @@ def _spawn_explosion(ship) -> None:
 
 
 def reset() -> None:
-    """Clear the registry (mission swap / test teardown)."""
+    """Clear the registry (mission swap / test teardown).
+
+    Also clears the explosion-light registry: a ship that died in the
+    previous mission would otherwise keep lighting the next one from its
+    old world position.
+    """
     _active.clear()
+    explosion_lights.reset()

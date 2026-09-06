@@ -76,6 +76,7 @@ from engine.appc import (
     weapon_tactical_commands,
     render_instances,
 )
+from engine.appc import explosion_lights as _explosion_lights
 from engine.appc import target_menu as _target_menu_mod
 from engine.appc import viewscreen_static as _vss
 from engine.appc import bridge_set as _bridge_set
@@ -891,6 +892,9 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         particles.advance(dt)
     with frame_profiler.scope("cb.death"):
         ship_death.advance(dt)
+        # Fireball lights age on the same clock as the death sequence that
+        # scheduled them.
+        _explosion_lights.advance(dt)
         from engine.appc import object_lifetime
         object_lifetime.advance(dt)
     with frame_profiler.scope("cb.damage_sys"):
@@ -1033,7 +1037,8 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         host_io.set_dynamic_lights(
             _build_dynamic_light_render_data() +
             _build_emitter_light_render_data(ship_instances, ship_emitters,
-                                             player=player))
+                                             player=player) +
+            _build_explosion_light_render_data())
         from engine.appc import shockwaves as _shockwaves
         host_io.set_shockwaves(_shockwaves.render_data())
         host_io.set_hit_vfx(_build_hit_vfx_render_data())
@@ -1287,6 +1292,30 @@ def _warp_glow_envelope(ship):
     if not w.is_active() or not warp_state.is_flythrough(ship):
         return None
     return w.engine_glow()
+
+
+def _build_explosion_light_render_data():
+    """One point light per live death-explosion blast.
+
+    BC's death fireball is sprite-only -- it reads bright but casts nothing --
+    so this is the light that makes it fall on neighbouring hulls. The blasts
+    and their bloom-and-fade envelope come from engine.appc.explosion_lights,
+    which owns every tunable; this function only applies the same
+    camera-distance fade the torpedo lights use, so a distant battle does not
+    fill the light list with entries no hull on screen can see.
+    """
+    out = []
+    for entry in _explosion_lights.render_data():
+        fade = _camera_distance_fade(entry["position"])
+        if fade is None:
+            continue        # beyond the cull distance -- not built at all
+        out.append({
+            "position":  entry["position"],
+            "color":     entry["color"],
+            "radius":    entry["radius"],
+            "intensity": entry["intensity"] * fade,
+        })
+    return out
 
 
 def _build_emitter_light_render_data(ship_instances, ship_emitters,
@@ -4993,6 +5022,7 @@ class HostController:
         ship_lifecycle.reset()
         from engine.appc import ship_death
         ship_death.reset()
+        _explosion_lights.reset()
         from engine.appc import object_lifetime
         object_lifetime.reset()
         from engine.appc import subsystem_cascade

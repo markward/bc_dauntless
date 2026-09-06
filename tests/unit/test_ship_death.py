@@ -735,3 +735,67 @@ def test_out_of_action_false_for_non_damageable_object():
     from engine.appc.placement import Waypoint
 
     assert ship_death._out_of_action(Waypoint()) is False
+
+
+# ── explosion lights ─────────────────────────────────────────────────────
+# The death fireball is sprite-only in BC; these cover the dynamic lights that
+# make it actually cast onto nearby hulls.
+
+def test_begin_schedules_explosion_lights():
+    from engine.appc import explosion_lights
+    ship = FakeShip(radius=20.0)
+    ship.GetWorldLocation = lambda: type("P", (), {"x": 1.0, "y": 2.0, "z": 3.0})()
+
+    ship_death.begin(ship)
+    explosion_lights.advance(1.0 / 60.0)
+
+    data = explosion_lights.render_data()
+    assert len(data) == 1, "the first blast fires on the frame after death"
+    assert data[0]["position"] == pytest.approx((1.0, 2.0, 3.0))
+
+
+def test_explosion_light_radius_follows_the_fireball_size():
+    """The light must be sized off the SAME formula the sprite uses, not a
+    second copy of it — ship_death passes its computed size through."""
+    from engine.appc import explosion_lights
+    ship = FakeShip(radius=20.0)
+    ship.GetWorldLocation = lambda: type("P", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
+
+    ship_death.begin(ship)
+    explosion_lights.advance(1.0 / 60.0)
+
+    expected_size = max(20.0 * ship_death.EXPLOSION_SIZE_FACTOR,
+                        ship_death.MIN_EXPLOSION_SIZE)
+    assert explosion_lights.render_data()[0]["radius"] == pytest.approx(
+        expected_size * explosion_lights.RADIUS_FACTOR)
+
+
+def test_all_scheduled_blasts_are_borne_across_the_throes():
+    from engine.appc import explosion_lights
+    ship = FakeShip(radius=20.0)
+    ship.GetWorldLocation = lambda: type("P", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
+
+    ship_death.begin(ship)
+    seen = 0
+    for _ in range(int(ship_death.THROES_DURATION * 60) + 5):
+        seen = max(seen, len(explosion_lights.render_data()))
+        explosion_lights.advance(1.0 / 60.0)
+    # Blasts overlap (puff life exceeds the spacing), so several are live at
+    # once; the count borne over the window is what matters.
+    assert not explosion_lights._sequences, "every blast should have been borne"
+
+
+def test_reset_clears_explosion_lights_too():
+    """ship_death.reset() runs on mission swap. A ship that died in the
+    previous mission must not keep lighting the next one from its old
+    world position."""
+    from engine.appc import explosion_lights
+    ship = FakeShip(radius=20.0)
+    ship.GetWorldLocation = lambda: type("P", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
+
+    ship_death.begin(ship)
+    explosion_lights.advance(1.0 / 60.0)
+    assert explosion_lights.render_data()
+
+    ship_death.reset()
+    assert explosion_lights.render_data() == []

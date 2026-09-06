@@ -1,0 +1,176 @@
+"""Dynamic point lights for death-explosion fireballs.
+
+BC's death explosion is a SPRITE-ONLY effect: the fireball reads bright but
+contributes nothing to the shading of hulls near it, so a ship alongside a
+detonation is lit exactly as if nothing had happened. This module registers a
+short-lived point light per blast so the fireball actually casts onto nearby
+hulls.
+
+WHY A SCHEDULE RATHER THAN A PER-PUFF HOOK. The particle backend is
+*analytic*: a controller stores keyframe curves and the renderer derives every
+puff from them each frame (see engine/appc/particles.py's module docstring), so
+there is no per-puff callback for Python to hang a light on. What Python does
+know is the schedule -- ship_death spawns a fixed number of blasts evenly
+across the throes window -- and that is deterministic, so the blast times are
+reproduced here rather than observed.
+
+The schedule itself is NOT duplicated: ship_death owns those constants
+(EXPLOSION_COUNT, THROES_DURATION, EXPLOSION_PUFF_LIFE, and the fireball size
+formula) and passes them to register(). This module owns only the LIGHT
+tunables below. Two homes, one for each concern, so neither can drift into a
+second interpreter of the other's numbers.
+
+TUNING: every look-affecting value lives in this file and nowhere else, so
+retuning after a live look is a Python edit with no rebuild -- the same rule
+the depth-of-field work settled on.
+"""
+
+# ── Light tunables — the only home for these numbers ─────────────────────
+# Deliberately conservative; expect to calibrate up and then back down after a
+# live look.
+PEAK_INTENSITY = 6.0      # intensity at the top of the bloom
+RADIUS_FACTOR = 3.0       # light reach as a multiple of the fireball's drawn
+                          # size, so the light spills onto neighbouring hulls
+                          # rather than stopping at the sprite's edge
+COLOR = (1.0, 0.62, 0.28)  # warm orange; r > g > b is what reads as fire
+RISE_FRACTION = 0.12      # fraction of a blast's life spent brightening
+DECAY_EXPONENT = 2.0      # >1 fades fast at first, then lingers
+
+# Below this an entry contributes nothing worth the per-instance top-K scan
+# that runs for every hull on screen, so it is dropped rather than emitted.
+_MIN_EMITTED_INTENSITY = 1e-3
+
+# Blasts that have been born and are still glowing.
+# Each: {"position": (x, y, z), "radius": float, "age": float, "life": float}
+_active: list[dict] = []
+
+# Death sequences that still have blasts to bear.
+# Each: {"ship", "size_gu", "remaining", "spacing_s", "life_s", "next_at"}
+_sequences: list[dict] = []
+
+
+def register(ship, *, size_gu, count, spacing_s, life_s) -> None:
+    """Schedule `count` blasts for a dying ship, `spacing_s` apart.
+
+    Mirrors the emission ship_death sets up on the particle controller: births
+    land at i*spacing for i in 0..count-1, so the first blast is at t=0 and
+    fires on the next advance().
+
+    `size_gu` is the fireball's drawn size, computed by ship_death -- passed in
+    rather than recomputed here so this file never becomes a second
+    interpreter of that formula.
+    """
+    if count <= 0 or size_gu <= 0.0 or life_s <= 0.0:
+        return
+    _sequences.append({
+        "ship":      ship,
+        "size_gu":   float(size_gu),
+        "remaining": int(count),
+        "spacing_s": float(spacing_s),
+        "life_s":    float(life_s),
+        "next_at":   0.0,      # blast 0 is immediate
+    })
+
+
+def advance(dt: float) -> None:
+    """Bear any blasts whose time has come, then age the live ones."""
+    if dt <= 0.0:
+        return
+
+    for seq in _sequences:
+        seq["next_at"] -= dt
+        # A long frame can cross more than one birth time; bear them all
+        # rather than silently dropping blasts on a stutter.
+        while seq["remaining"] > 0 and seq["next_at"] <= 0.0:
+            _bear(seq)
+            seq["remaining"] -= 1
+            seq["next_at"] += seq["spacing_s"]
+    _sequences[:] = [s for s in _sequences if s["remaining"] > 0]
+
+    for blast in _active:
+        blast["age"] += dt
+    _active[:] = [b for b in _active if b["age"] < b["life"]]
+
+
+def _bear(seq) -> None:
+    """Add one blast at the ship's CURRENT world position.
+
+    Position is captured here and then fixed: the hull is removed after the
+    throes while the last blast is still burning (ship_death anchors it at the
+    wreck site), so holding the ship would leave a dangling reference. A
+    fireball barely moves relative to its own size, so a fixed point is a fair
+    reading of a puff that tracked the hull.
+    """
+    pos = _world_position(seq["ship"])
+    if pos is None:
+        return
+    _active.append({
+        "position": pos,
+        "radius":   seq["size_gu"] * RADIUS_FACTOR,
+        "age":      0.0,
+        "life":     seq["life_s"],
+    })
+
+
+def _world_position(ship):
+    """(x, y, z) for `ship`, or None if it cannot be read.
+
+    Every scheduled birth lands while the hull still exists, so None is not
+    expected -- but this runs inside the per-frame render path, where an
+    exception would take the frame down rather than merely lose a light.
+    """
+    try:
+        get_loc = getattr(ship, "GetWorldLocation", None)
+        if not callable(get_loc):
+            return None
+        p = get_loc()
+        if p is None:
+            return None
+        return (float(p.x), float(p.y), float(p.z))
+    except Exception:
+        return None
+
+
+def envelope(t_norm: float) -> float:
+    """Intensity scale over a blast's normalised life, in [0, 1].
+
+    Fast bloom, slow fade -- a fireball reaches full brightness almost at once
+    and then falls away, so the peak sits early rather than mid-life.
+    """
+    if t_norm <= 0.0 or t_norm >= 1.0:
+        return 0.0
+    if t_norm < RISE_FRACTION:
+        return t_norm / RISE_FRACTION
+    decay = (t_norm - RISE_FRACTION) / (1.0 - RISE_FRACTION)
+    return (1.0 - decay) ** DECAY_EXPONENT
+
+
+def render_data() -> list:
+    """Light descriptors for the current frame.
+
+    Shape mirrors _build_dynamic_light_render_data's torpedo descriptors:
+    position / color / radius / intensity.
+    """
+    out = []
+    for blast in _active:
+        intensity = PEAK_INTENSITY * envelope(blast["age"] / blast["life"])
+        if intensity <= _MIN_EMITTED_INTENSITY:
+            continue
+        out.append({
+            "position":  blast["position"],
+            "color":     COLOR,
+            "radius":    blast["radius"],
+            "intensity": intensity,
+        })
+    return out
+
+
+def reset() -> None:
+    """Clear every blast and pending sequence (mission swap / test teardown).
+
+    Called from the host loop's swap drain beside ship_death.reset(). Without
+    it a ship that died in the previous mission would keep lighting the next
+    one from its old world position.
+    """
+    _active.clear()
+    _sequences.clear()
