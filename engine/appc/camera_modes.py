@@ -98,6 +98,17 @@ class CameraMode:
     def IsValid(self):
         return 1 if self._ideal() is not None else 0
 
+    def focus_subject(self):
+        """The object this camera wants in focus, or None.
+
+        Depth of field consults this before falling back to the player's
+        selected target, so a camera that frames something other than the
+        target can say so. Only TorpCameraMode overrides it today; the hook
+        exists so cutscene and cinematic modes can adopt it without another
+        special case.
+        """
+        return None
+
     # ── Sweep control ─────────────────────────────────────────────────────────
     def set_initial_pose(self, eye, fwd, up):
         self._cur = (tuple(eye), tuple(fwd), tuple(up))
@@ -901,6 +912,15 @@ class TorpCameraMode(CameraMode):
         self._gone_t = None
         self._final = None
         self._dir = None
+
+    def focus_subject(self):
+        """The torpedo being ridden — the shot's actual subject.
+
+        None once the torpedo has left the registry, even though the mode
+        holds its final pose for DelayAfterTorpGone seconds: the shot is over,
+        so the lens should release rather than stay locked on empty space.
+        """
+        return self._torp
 
     def _ideal(self, pose_of=None):
         t = self.GetAttrIDObject("Target")
