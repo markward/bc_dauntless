@@ -2528,12 +2528,21 @@ TEST_F(FrameTest, AmbientGradientBrightensTheLitSideRelativeToTheShadowSide) {
     // the reduction (that is Task 1's unit tests).
     lighting.ambient_dir_ws         = glm::vec3(1.0f, 0.0f, 0.0f);
 
-    // Two symmetric points on the saucer, left and right of centre.
-    const int kRight = 168, kLeft = 88, kY = 128;
+    // Two points on the saucer, left and right of centre. The original
+    // (kRight=168, kLeft=88) sat on empty background: with this camera (eye
+    // at Z=1500, aspect 1.0) and asset, the Galaxy's silhouette at y=128
+    // spans only screen-x ~104..155, so both original samples read 0 for
+    // every draw and the assertion degenerated to 0 > 0 (always false).
+    // Diagnosed with a raw-value dump (all four were 0) then a coordinate
+    // sweep over the actual silhouette range; 108/152 sit well inside it
+    // with a wide, robust margin (measured delta widens 98 -> 133 here).
+    const int kRight = 152, kLeft = 108, kY = 128;
 
     lighting.ambient_gradient = 0.0f;
     const int off_r = render_and_sample(*p, *cache, lighting, kRight, kY);
     const int off_l = render_and_sample(*p, *cache, lighting, kLeft,  kY);
+    ASSERT_GT(off_r, 0) << "sample point (right) missed the hull silhouette";
+    ASSERT_GT(off_l, 0) << "sample point (left) missed the hull silhouette";
 
     lighting.ambient_gradient = 1.0f;
     const int on_r = render_and_sample(*p, *cache, lighting, kRight, kY);

@@ -655,6 +655,20 @@ void main() {
     //     u_ambient_light + u_ambient_gradient * (0.5 + 0.5 * d)
     // which adds light and brightens the whole scene.
     float amb_d = dot(n_shade, u_ambient_dir_ws);
+    // NaN guard: every OTHER use of n_shade in this file sits behind a
+    // max(x, 0.0), which happens to discard NaN on this driver. This
+    // multiply has no such clamp, so a degenerate (zero-length) vertex
+    // normal -- normalize(vec3(0)) is NaN -- would otherwise poison amb to
+    // NaN even with u_ambient_gradient == 0 (IEEE 0.0 * NaN is NaN, not 0).
+    // isnan(), matching bloom_prefilter.frag's established guard for the
+    // same class of bug: a `v == v` self-comparison was tried first and
+    // measured NOT to work on this driver (HullClipTest.
+    // DegenerateNormalWithGradientOnStaysFinite stayed non-finite with it) --
+    // this compiler evidently constant-folds float self-equality to true,
+    // which silently defeats that idiom as a guard (nonfinite_probe.frag
+    // keeps `v == v` only as one of several redundant DETECTION tests, never
+    // alone, for the same documented reason).
+    amb_d = isnan(amb_d) ? 0.0 : amb_d;
     vec3  amb   = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
     vec3 lit  = (amb + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
 

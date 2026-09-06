@@ -32,6 +32,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <renderer/frame.h>
+#include <renderer/hdr_target.h>
+#include <renderer/nonfinite_probe.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
 #include <renderer/shader.h>
@@ -144,13 +146,17 @@ protected:
         s.set_mat4("u_model", glm::mat4(1.0f));
         s.set_mat4("u_ship_world_inv", glm::mat4(1.0f));
         s.set_vec3("u_ambient_light",   glm::vec3(1.0f));
-        // New uniforms are resolved-by-name, and GL only GUARANTEES a zero
-        // default; Apple's GL has been measured leaving genuinely stale
-        // driver state in unset locations (see docs frame-profiler notes on
-        // this platform), which turned this term into NaN and blacked out
-        // every one of this test's four draws. gradient=0 is the stock
-        // no-op value the real render path (set_ambient_uniforms) always
-        // pushes explicitly.
+        // Two new uniforms the shader now reads. Set explicitly, matching
+        // every other uniform in this function, so this hand-rolled minimal
+        // set stays current with the shader's real minimum requirement: the
+        // real render path (set_ambient_uniforms, frame.cc) always pushes
+        // both of these every draw, and this test should not rely on
+        // whatever the GL spec's zero default happens to be when it can
+        // just say what it means. gradient=0 is the stock no-op value.
+        // (This was NOT the cause of this test's earlier NaN failure --
+        // that was a degenerate a_normal, see the glVertexAttrib3f comment
+        // below. Leaving it here anyway is a correctness improvement, not
+        // a workaround for anything measured on this driver.)
         s.set_vec3("u_ambient_dir_ws",    glm::vec3(0.0f, 1.0f, 0.0f));
         s.set_float("u_ambient_gradient", 0.0f);
         s.set_int("u_dir_light_count",  0);
@@ -292,3 +298,48 @@ TEST_F(HullClipTest, FragmentOutsideSphereRendersHull) {
         << " B=" << (int)px[2]
         << ") — fragment outside carve sphere must NOT be discarded";
 }
+
+// GL Test E (regression): degenerate vertex normal + ambient gradient ON
+// must not go non-finite. n_shade = normalize(a_normal); with a_normal ==
+// (0,0,0) (this fixture's own attribute-1 default before this test
+// overrides it -- see set_uniforms's comment on the +Z default) that is
+// normalize(vec3(0)) == NaN. Every OTHER use of n_shade in opaque.frag sits
+// behind max(x, 0.0), which happens to discard NaN on this driver, but the
+// ambient-gradient dot product did not, so 0.0 * NaN == NaN (not 0 under
+// IEEE 754) poisoned the whole ambient term even with the gradient
+// mathematically "off". This is not a synthetic-fixture-only concern: this
+// project generates smooth vertex normals for BC set NIFs precisely because
+// many BC meshes ship with none, so a degenerate normal is a real,
+// reachable production input, not just this test's artifact.
+TEST_F(HullClipTest, DegenerateNormalWithGradientOnStaysFinite) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+    prog.set_vec3("u_ambient_dir_ws",   glm::vec3(1.0f, 0.0f, 0.0f));
+    prog.set_float("u_ambient_gradient", 1.0f);  // the vulnerable path: ON
+    glVertexAttrib3f(1, 0.0f, 0.0f, 0.0f);       // force a_normal to (0,0,0)
+
+    // An 8-bit backbuffer cannot hold a NaN -- it would already be baked
+    // into some clamped value by the time anything reads it back, destroying
+    // the evidence. Render to a float target instead, matching
+    // FrameTest.RimEnabledPassProducesNoNonFiniteTexels's pattern.
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+    hdr.bind();
+    glDisable(GL_DEPTH_TEST);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+    glFinish();
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    renderer::NonfiniteProbe probe;
+    const auto& r = probe.run(hdr.color_texture(), kW, kH);
+    EXPECT_FALSE(r.any)
+        << r.flagged_cells << " cell(s) went non-finite with a degenerate "
+        << "normal and the ambient gradient on (cause code " << r.max_code
+        << ") -- the amb_d NaN guard in opaque.frag is missing or broken";
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
