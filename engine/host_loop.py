@@ -16,6 +16,7 @@ import os as _os_mod
 from engine import renderer as r
 from engine import host_io
 from engine import paths as _paths
+from engine import first_run
 from engine.appc.ship_iter import (
     iter_set_objects as _iter_set_objects,
     iter_ships as _iter_ships,
@@ -6772,6 +6773,29 @@ def record_course_selection(module) -> None:
         dev_mode.log_swallowed("announce course set", _e)
 
 
+def _resolve_paths_or_report():
+    """Resolve the BC roots, asking the player if they are not configured.
+
+    Returns the Resolution on success. Returns None after printing the
+    full diagnostic, which means run() should return 1.
+
+    The prompt sits behind this one call site on purpose: paths.current()
+    is reached lazily by tools/ scripts, pytest and CI, none of which can
+    dismiss a modal dialog. A picker reachable from the library would hang
+    them, so the library never has one.
+    """
+    resolution = _paths.resolve()
+    if not resolution.ok:
+        resolution = first_run.prompt_for_missing(resolution)
+    _paths.configure(resolution)
+    if not resolution.ok:
+        import sys as _sys
+        print(_paths.describe_failure(resolution), file=_sys.stderr)
+        return None
+    _paths.persist(resolution)
+    return resolution
+
+
 def run(mission_name: Optional[str] = None,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
@@ -6816,15 +6840,12 @@ def run(mission_name: Optional[str] = None,
     # must precede the SDK setup call below: the SDK meta-path finder calls
     # paths.sdk_scripts(), so configuring afterwards would be too late.
     #
-    # persist() writes only a CLI-sourced, valid root -- an env var is
-    # ephemeral by contract and a typo never becomes the stored answer.
-    _resolution = _paths.resolve()
-    _paths.configure(_resolution)
-    if not _resolution.ok:
-        import sys as _sys
-        print(_paths.describe_failure(_resolution), file=_sys.stderr)
+    # An unresolved root prompts the player with a native folder panel. A
+    # cancel, an unsupported platform and a stale .so all land on the same
+    # branch, which prints the diagnostic instead.
+    _resolution = _resolve_paths_or_report()
+    if _resolution is None:
         return 1
-    _paths.persist(_resolution)
 
     _setup_sdk()
 
