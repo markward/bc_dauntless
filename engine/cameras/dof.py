@@ -93,21 +93,32 @@ def subject_distance_gu(eye, subject):
     """Distance in game units from the camera to `subject`, or None.
 
     Both ships and torpedoes expose GetWorldLocation(); anything that does not
-    is treated as unfocusable rather than raising, because a focus failure must
-    never take the frame down.
+    -- or that hands back something whose components are not numbers, which a
+    stubbed attribute will -- is treated as unfocusable rather than raising,
+    because a focus failure must never take the frame down. This runs deep in
+    the render path with no `except` between it and process exit, so "must
+    never" is literal: catch broadly and report no subject.
     """
     if subject is None:
         return None
     get_loc = getattr(subject, "GetWorldLocation", None)
     if not callable(get_loc):
         return None
-    p = get_loc()
-    if p is None:
+    try:
+        p = get_loc()
+        if p is None:
+            return None
+        dx = float(p.x) - eye[0]
+        dy = float(p.y) - eye[1]
+        dz = float(p.z) - eye[2]
+        d = math.sqrt(dx * dx + dy * dy + dz * dz)
+    except Exception:
+        # A missing/stub .x, a non-numeric component, a GetWorldLocation that
+        # raises: all mean "cannot focus on this", never "take the frame down".
         return None
-    dx = p.x - eye[0]
-    dy = p.y - eye[1]
-    dz = p.z - eye[2]
-    return math.sqrt(dx * dx + dy * dy + dz * dz)
+    if not math.isfinite(d):
+        return None
+    return d
 
 
 class FocusSolver:

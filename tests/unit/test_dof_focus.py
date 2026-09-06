@@ -200,6 +200,52 @@ def test_the_far_bound_matches_the_exterior_cameras_far_plane():
     assert dof.MAX_FOCUS_GU == 5000.0
 
 
+# ── a focus failure must never take the frame down ───────────────────────
+
+def test_a_subject_with_a_non_numeric_position_is_unfocusable_not_fatal():
+    """The stub path hands back objects whose attributes are stubs, not floats.
+    `p.x - eye[0]` on one of those raises TypeError deep in the render path,
+    where there is no `except` between it and process exit."""
+    class _StubPt:
+        x = object()
+        y = object()
+        z = object()
+
+    class _StubSubject:
+        def GetWorldLocation(self):
+            return _StubPt()
+
+    assert dof.subject_distance_gu((0.0, 0.0, 0.0), _StubSubject()) is None
+
+
+def test_a_subject_with_a_missing_component_is_unfocusable_not_fatal():
+    class _Bare:
+        pass
+
+    class _Subject:
+        def GetWorldLocation(self):
+            return _Bare()
+
+    assert dof.subject_distance_gu((0.0, 0.0, 0.0), _Subject()) is None
+
+
+def test_a_raising_getworldlocation_is_unfocusable_not_fatal():
+    class _Subject:
+        def GetWorldLocation(self):
+            raise RuntimeError("stale handle")
+
+    assert dof.subject_distance_gu((0.0, 0.0, 0.0), _Subject()) is None
+
+
+def test_a_non_finite_position_is_unfocusable_not_fatal():
+    """A NaN distance would propagate straight into 1/focus and out to the
+    shader as a NaN uniform."""
+    assert dof.subject_distance_gu((0.0, 0.0, 0.0),
+                                   _Obj(float("nan"), 0.0, 0.0)) is None
+    assert dof.subject_distance_gu((0.0, 0.0, 0.0),
+                                   _Obj(float("inf"), 0.0, 0.0)) is None
+
+
 def test_solver_seeds_its_lens_values_from_the_module_defaults():
     s = dof.FocusSolver()
     assert s.near_strength == dof.NEAR_STRENGTH
