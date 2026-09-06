@@ -32,6 +32,12 @@ class _Keys:
     KEY_LEFT_BRACKET = 91
     KEY_RIGHT_BRACKET = 93
     KEY_GRAVE_ACCENT = 96
+    # register_for_frame() unconditionally registers the DOF tuning keys too
+    # (engine/dev_keybindings.py); this fixture must supply every KEY_* it
+    # touches or the whole registration call raises AttributeError, taking
+    # every other binding in this file down with it.
+    KEY_COMMA = 44
+    KEY_PERIOD = 46
 
 
 class _FakeHost:

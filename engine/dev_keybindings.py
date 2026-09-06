@@ -4,6 +4,7 @@ Handlers needing per-frame state (player ship, session) are re-bound every
 tick via register_for_frame(); pure-static handlers can be registered once
 at module import time.
 """
+import sys
 from pathlib import Path
 
 import engine.dev_mode as dev_mode
@@ -25,6 +26,27 @@ def _test_character_nif():
     from engine import paths
     return str(paths.game_asset(
         "data/Models/Characters/Bodies/BodyMaleL/BodyMaleL.NIF"))
+
+
+def _dof_strength_nudge(delta):
+    """Move both DOF defocus strengths and report the result.
+
+    Live tuning for a purely visual constant: nudge in flight, read the
+    number off stderr, and paste it into engine/cameras/dof.py as the new
+    default. Per-session only -- nothing is persisted, and nothing is written
+    back to the module constants.
+
+    The solver is resolved lazily rather than captured, so pressing the key
+    before the host loop has started is a no-op instead of an exception that
+    would take down the whole dev-key dispatch.
+    """
+    from engine import host_loop
+    solver = getattr(host_loop, "_focus_solver", None)
+    if solver is None:
+        return
+    near, far = solver.nudge_strength(delta)
+    print("[dof] near_strength=%.2f far_strength=%.2f" % (near, far),
+          file=sys.stderr)
 
 
 def register_for_frame(_h, session, player) -> None:
@@ -198,3 +220,15 @@ def register_for_frame(_h, session, player) -> None:
     # visible, toggling it is deliberate, and the row says what it will do.
     # Unattended captures are unaffected: DAUNTLESS_PROFILE_FRAMES=N still
     # enables both halves at startup (engine/host_loop.py).
+
+    # Live DOF tuning. Registered here rather than at import time only
+    # because `_h` arrives as a parameter; the handler itself closes over
+    # no per-frame state, and re-registering the same key replaces it.
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_COMMA, lambda: _dof_strength_nudge(-0.1),
+        "DOF strength -0.1 (,)"
+    )
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_PERIOD, lambda: _dof_strength_nudge(+0.1),
+        "DOF strength +0.1 (.)"
+    )
