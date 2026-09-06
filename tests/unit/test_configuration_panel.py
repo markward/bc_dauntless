@@ -38,6 +38,7 @@ def _make(**overrides):
         set_procedural_sky=Mock(),
         set_filmic=Mock(),
         set_motion_blur=Mock(),
+        set_dof=Mock(),
         set_volumetric_nebulae=Mock(),
         set_nebula_lightning=Mock(),
         set_hdr_lens_flare=Mock(),

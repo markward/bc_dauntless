@@ -157,6 +157,7 @@ _MEMBER_CALL = {
     "filmic":              ("r", "set_filmic_enabled"),
     "motion_blur":         ("r", "set_motion_blur_enabled"),
     "hdr_lens_flare":      ("r", "set_hdr_lens_flare_enabled"),
+    "dof":                 ("r", "set_dof_enabled"),
     "rim":                 ("r", "set_rim_enabled"),
     "shadows":             ("r", "set_shadows_enabled"),
     "nebula_lightning":    ("r", "set_nebula_lightning_enabled"),
