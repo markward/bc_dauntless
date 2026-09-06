@@ -10,6 +10,7 @@ add_executable(renderer_tests
     hit_vfx_pass_test.cc
     lighting_test.cc
     dof_test.cc
+    dof_pass_test.cc
     backdrop_pass_test.cc
     sun_pass_test.cc
     dust_pass_test.cc
