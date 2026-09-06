@@ -689,3 +689,258 @@ desyncs it; a live check on a stale build is worthless):
 
 Then decide the open question the spec left: setting, master-toggle member, or
 always-on constant.
+
+---
+
+### Task 4: Fold the gradient under the master, renamed "Cinematic Lighting"
+
+**Added after the plan was approved**, at Mark's request: the directional
+ambient joins the existing lighting master rather than getting its own row,
+and that master's display label becomes "Cinematic Lighting".
+
+**Files:**
+- Modify: `native/src/renderer/frame.cc` (add an enabled-setter beside the strength gate)
+- Modify: `native/src/host/host_bindings.cc` (one pybind def)
+- Modify: `engine/renderer.py`
+- Modify: `engine/ui/configuration_panel.py:70-77` (`MASTER_TOGGLES`)
+- Modify: `engine/settings_store.py:278-285` (the master's `_fan`)
+- Modify: `native/assets/ui-cef/js/configuration_panel.js:23`
+- Modify: `engine/host_loop.py` (the panel's constructor call)
+- Test: `tests/unit/test_configuration_panel.py`, `tests/unit/test_settings_store.py`
+
+**Interfaces:**
+- Consumes: `dauntless_ambient_gradient::strength()` / `set_strength()` and
+  `renderer.set_ambient_gradient` from Task 3.
+- Produces: `renderer.set_ambient_gradient_enabled(bool)` in Python;
+  `_dauntless_host.ambient_gradient_set_enabled`. The master's applier list
+  gains `"ambient_gradient"`, so `ConfigurationPanel` gains a
+  `set_ambient_gradient` constructor parameter (the `set_<name>` convention
+  `MASTER_TOGGLES` already uses).
+
+**Two decisions carried into this task, both deliberate:**
+
+**The label changes; the KEY does not.** `realistic_lighting` stays as the
+settings key, the action string `toggle:realistic_lighting`, the payload key
+and the focusable. Renaming it would need a third schema migration and touches
+the master-toggle machinery for no functional gain. The divergence between key
+and label must be commented at the definition so it reads as a decision rather
+than as drift.
+
+**A bool master needs a tuned "on" value, and that constant must have ONE
+home.** Do not duplicate `0.6` into the Python applier — add a C++
+enabled-setter that restores the gate's own tuned default, so the number lives
+only in `frame.cc`. A Python-side copy would silently diverge the first time
+the constant is retuned after a live look, which is exactly what it exists to
+allow.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `tests/unit/test_settings_store.py`:
+
+```python
+def test_cinematic_lighting_master_drives_the_ambient_gradient():
+    """The master is a bool; the gradient is a strength. On must restore the
+    engine's tuned default rather than a number copied into Python, so the
+    constant can be retuned in one place after a live look."""
+    from engine.settings_store import SETTINGS
+
+    row = next(r for r in SETTINGS if r.key == "realistic_lighting")
+    ctx = _ctx()
+    row.apply(ctx, True)
+    ctx.r.set_ambient_gradient_enabled.assert_called_once_with(True)
+
+    ctx = _ctx()
+    row.apply(ctx, False)
+    ctx.r.set_ambient_gradient_enabled.assert_called_once_with(False)
+
+
+def test_cinematic_lighting_still_drives_its_four_original_members():
+    """Adding a member must not drop one. This is the whole risk of editing a
+    master's fan-out."""
+    from engine.settings_store import SETTINGS
+
+    row = next(r for r in SETTINGS if r.key == "realistic_lighting")
+    ctx = _ctx()
+    row.apply(ctx, True)
+    ctx.r.set_rim_enabled.assert_called_once_with(True)
+    ctx.r.set_shadows_enabled.assert_called_once_with(True)
+    ctx.r.set_nebula_lightning_enabled.assert_called_once_with(True)
+    ctx.light_emitters.set_enabled.assert_called_once_with(True)
+```
+
+Append to `tests/unit/test_configuration_panel.py`:
+
+```python
+def test_master_label_is_cinematic_lighting_but_the_key_is_unchanged():
+    """The label is player-facing; the key drives the action string, the
+    payload key, the focusable and the persisted setting. Renaming the key
+    would need a schema migration for a cosmetic change, so it stays."""
+    from engine.ui.configuration_panel import MASTER_TOGGLES
+
+    row = next(r for r in MASTER_TOGGLES if r[0] == "realistic_lighting")
+    assert row[1] == "Cinematic Lighting"
+    assert "ambient_gradient" in row[2]
+
+
+def test_cinematic_lighting_toggle_fires_the_gradient_applier():
+    p, kw = _make()
+    p.open()
+    assert p.dispatch_event("toggle:realistic_lighting") is True
+    kw["set_ambient_gradient"].assert_called_once_with(False)
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+```bash
+uv run pytest tests/unit/test_settings_store.py tests/unit/test_configuration_panel.py -q
+```
+
+Expected: FAIL — `AssertionError: 'Realistic Lighting' != 'Cinematic Lighting'` and
+`TypeError: __init__() got an unexpected keyword argument 'set_ambient_gradient'`.
+
+- [ ] **Step 3: Add the C++ enabled-setter**
+
+In `native/src/renderer/frame.cc`, extend the `dauntless_ambient_gradient`
+namespace added in Task 3:
+
+```cpp
+namespace dauntless_ambient_gradient {
+    namespace {
+        // The tuned "on" value. ONE home for this number: the Python master
+        // toggle asks for enabled/disabled and never names a strength, so
+        // retuning after a live look is a single-line change here.
+        constexpr float kTunedDefault = 0.6f;
+        float g_strength = kTunedDefault;
+    }
+    float strength() { return g_strength; }
+    void  set_strength(float v) {
+        g_strength = (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.0f : v);
+    }
+    void  set_enabled(bool on) { g_strength = on ? kTunedDefault : 0.0f; }
+}
+```
+
+In `native/src/host/host_bindings.cc`, beside the Task 3 defs (and re-resolving
+`g_lighting` the same way `ambient_gradient_set` does):
+
+```cpp
+    m.def("ambient_gradient_set_enabled",
+          [](bool on) {
+              dauntless_ambient_gradient::set_enabled(on);
+              const renderer::AmbientGradient ag =
+                  renderer::ambient_gradient_from_lights(
+                      g_lighting.directional_dir_ws, g_lighting.directional_color,
+                      g_lighting.directional_count,
+                      dauntless_ambient_gradient::strength());
+              g_lighting.ambient_dir_ws   = ag.dir_ws;
+              g_lighting.ambient_gradient = ag.strength;
+          },
+          py::arg("enabled"),
+          "Directional ambient on/off for the Cinematic Lighting master. On "
+          "restores the engine's tuned strength; off is 0 (the stock path).");
+```
+
+In `engine/renderer.py`, add `"ambient_gradient_set_enabled"` to the
+expected-name tuple and, beside `set_ambient_gradient`:
+
+```python
+def set_ambient_gradient_enabled(enabled: bool) -> None:
+    """Directional ambient on/off, for the Cinematic Lighting master.
+
+    On restores the engine's tuned strength rather than a value passed from
+    Python, so that constant has exactly one home and retuning it after a
+    live look is a single change in frame.cc.
+    """
+    _h.ambient_gradient_set_enabled(bool(enabled))
+```
+
+- [ ] **Step 4: Rename the label and add the member**
+
+In `engine/ui/configuration_panel.py`, replace the `realistic_lighting` row:
+
+```python
+    # NOTE label vs key: the row reads "Cinematic Lighting" but the key stays
+    # `realistic_lighting`. The key drives the action string, the payload key,
+    # the focusable AND the persisted settings key, so renaming it would need
+    # a schema migration for a purely cosmetic change. The divergence is
+    # deliberate — do not "fix" it without one.
+    ("realistic_lighting", "Cinematic Lighting",
+     ("rim", "shadows", "nebula_lightning", "ship_light_emitters",
+      "ambient_gradient")),
+```
+
+Add the constructor parameter beside the other master-member appliers:
+
+```python
+                 set_ambient_gradient: Callable[[bool], None],
+```
+
+and register it in the `self._appliers` dict:
+
+```python
+            "ambient_gradient": set_ambient_gradient,
+```
+
+In `engine/settings_store.py`, add the fifth applier to the master's `_fan`:
+
+```python
+            _fan(lambda c, v: c.r.set_rim_enabled(v),
+                 lambda c, v: c.r.set_shadows_enabled(v),
+                 lambda c, v: c.r.set_nebula_lightning_enabled(v),
+                 lambda c, v: c.light_emitters.set_enabled(v),
+                 lambda c, v: c.r.set_ambient_gradient_enabled(v)),
+```
+
+In `native/assets/ui-cef/js/configuration_panel.js:23`, change the label:
+
+```js
+    ['realistic_lighting', 'Cinematic Lighting'],
+```
+
+In `engine/host_loop.py`, add to the `ConfigurationPanel(...)` call beside
+`set_ship_light_emitters`:
+
+```python
+            set_ambient_gradient=r.set_ambient_gradient_enabled,
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+```bash
+cmake -B build -S . && cmake --build build -j
+uv run pytest tests/unit/test_settings_store.py tests/unit/test_configuration_panel.py -q
+grep -rn "Realistic Lighting" engine/ native/assets/ tests/ | grep -v "\.pyc"
+```
+
+Expected: tests PASS. The grep should return only *comments* mentioning the
+old name — update those to "Cinematic Lighting" too so the codebase reads
+consistently (`engine/host_loop.py`, `engine/appc/light_emitters.py`,
+`tests/test_host_loop_emitter_lights.py`, `tests/conftest.py`).
+
+- [ ] **Step 6: Run the full gate**
+
+```bash
+cmake -B build -S . && ./scripts/check_tests.sh 2>&1 | tail -30
+```
+
+Expected: exit 0.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add native/src/renderer/frame.cc native/src/host/host_bindings.cc \
+        engine/renderer.py engine/ui/configuration_panel.py \
+        engine/settings_store.py engine/host_loop.py \
+        native/assets/ui-cef/js/configuration_panel.js \
+        tests/unit/test_configuration_panel.py tests/unit/test_settings_store.py
+git commit -m "feat(ui): fold directional ambient into Cinematic Lighting
+
+The lighting master gains the directional ambient as a fifth member and is
+relabelled from 'Realistic Lighting'. The KEY stays realistic_lighting: it
+drives the action string, payload key, focusable and persisted setting, so
+renaming it would need a schema migration for a cosmetic change.
+
+A bool master needs a tuned 'on' strength, and that constant lives only in
+frame.cc -- Python asks for enabled/disabled and never names a number, so
+retuning after a live look stays a one-line change."
+```
