@@ -1476,6 +1476,19 @@ void frame() {
     renderer::frame_timer().end_frame();
 }
 
+// Re-derive the resolved ambient gradient from whatever directionals
+// g_lighting currently holds. Called from set_lighting (once per frame,
+// after the directionals are populated) and from the two knob setters so
+// a change bites on the next frame rather than waiting for Python's next
+// lighting push.
+void resolve_ambient_gradient() {
+    const renderer::AmbientGradient ag = renderer::ambient_gradient_from_lights(
+        g_lighting.directional_dir_ws, g_lighting.directional_color,
+        g_lighting.directional_count, dauntless_ambient_gradient::strength());
+    g_lighting.ambient_dir_ws   = ag.dir_ws;
+    g_lighting.ambient_gradient = ag.strength;
+}
+
 }  // namespace
 
 // Toggle for the opaque-pass Fresnel rim term. Defined in frame.cc.
@@ -2389,13 +2402,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // Resolve the gradient ONCE PER FRAME, here -- not in the draw
               // path. submit_opaque_instance runs per instance, so reducing
               // the lights there would repeat this for every ship.
-              const renderer::AmbientGradient ag =
-                  renderer::ambient_gradient_from_lights(
-                      g_lighting.directional_dir_ws, g_lighting.directional_color,
-                      g_lighting.directional_count,
-                      dauntless_ambient_gradient::strength());
-              g_lighting.ambient_dir_ws   = ag.dir_ws;
-              g_lighting.ambient_gradient = ag.strength;
+              resolve_ambient_gradient();
           },
           py::arg("ambient"), py::arg("directionals"),
           "Set the global lighting state used by the next frame()'s opaque pass.");
@@ -3621,13 +3628,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // Re-resolve immediately so the knob bites on the NEXT frame
               // rather than waiting for Python's next set_lighting push --
               // which, on a static scene, may not come at all.
-              const renderer::AmbientGradient ag =
-                  renderer::ambient_gradient_from_lights(
-                      g_lighting.directional_dir_ws, g_lighting.directional_color,
-                      g_lighting.directional_count,
-                      dauntless_ambient_gradient::strength());
-              g_lighting.ambient_dir_ws   = ag.dir_ws;
-              g_lighting.ambient_gradient = ag.strength;
+              resolve_ambient_gradient();
           },
           py::arg("strength"),
           "Directional-ambient strength, clamped to [0, 1]. 0 is the stock "
