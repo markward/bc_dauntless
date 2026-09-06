@@ -212,12 +212,12 @@ namespace renderer {
 /// Adding a "tuned default" here would create a second home for a number that
 /// must have exactly one -- see the spec's Tuning ergonomics section.
 struct DofParams {
-    float focus_gu        = 0.0f;   ///< distance to the focus subject, GU
-    float blend           = 0.0f;   ///< 0..1 engage ramp; 0 == pass is skipped
-    float near_strength   = 1.0f;   ///< foreground defocus gain
-    float far_strength    = 1.0f;   ///< background defocus gain, pre-ceiling
-    float far_ceiling     = 0.4f;   ///< hard cap on far-field CoC
-    float max_radius_frac = 0.008f; ///< max blur radius / screen height
+    float focus_gu        = 0.0f; ///< distance to the focus subject, GU
+    float blend           = 0.0f; ///< 0..1 engage ramp; 0 == pass is skipped
+    float near_strength   = 0.0f; ///< foreground defocus gain
+    float far_strength    = 0.0f; ///< background defocus gain, pre-ceiling
+    float far_ceiling     = 0.0f; ///< hard cap on far-field CoC
+    float max_radius_frac = 0.0f; ///< max blur radius / screen height
 };
 
 /// Convert a [0,1] depth-buffer value to a view distance in game units.
@@ -253,7 +253,7 @@ inline float coc_from_depth(float d, float near_gu, float far_gu,
     if (p.focus_gu <= 0.0f) return 0.0f;
 
     const float z = linear_depth_gu(d, near_gu, far_gu);
-    if (z <= 0.0f) return 0.0f;              // degenerate projection
+    if (z <= 0.0f) return 0.0f;              // guard against invalid caller args
 
     // The backdrop pass draws the sky with glDepthMask(GL_FALSE), so sky
     // pixels never write depth and hold the clear value. Testing the

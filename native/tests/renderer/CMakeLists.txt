@@ -9,6 +9,7 @@ add_executable(renderer_tests
     skinned_render_test.cc
     hit_vfx_pass_test.cc
     lighting_test.cc
+    dof_test.cc
     backdrop_pass_test.cc
     sun_pass_test.cc
     dust_pass_test.cc
