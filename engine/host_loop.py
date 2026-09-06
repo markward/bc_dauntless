@@ -2070,6 +2070,11 @@ from engine.cameras import (
     CAM_BACK_RADII, CAM_UP_RADII, CAM_MIN_RADII, CAM_MAX_RADII,
     CameraMode,
 )
+from engine.cameras.dof import FocusSolver as _DofFocusSolver
+
+# Depth-of-field focus. Module-level so the dev keybindings can nudge the
+# live lens strengths without threading a reference through the loop.
+_focus_solver = _DofFocusSolver()
 
 
 class _PlayerControl:
@@ -8799,6 +8804,24 @@ def run(mission_name: Optional[str] = None,
                 # Feed the dynamic-light distance gate. Read by next frame's
                 # _advance_combat, which runs upstream of this solve.
                 _note_camera_eye(eye)
+                # Depth of field. The subject is whatever the active
+                # cinematic camera names (TorpCameraMode rides a torpedo),
+                # else the player's selected target, else nothing — and
+                # nothing means blend 0, which makes the host skip the pass
+                # entirely. Measured from `eye`, this frame's actual camera
+                # position, so a shaken or cutscene camera focuses correctly.
+                from engine.cameras import dof as _dof
+                _dof_mode = _cc[1] if _cc is not None else None
+                _dof_solver_out = _focus_solver.update(
+                    _dof.subject_distance_gu(
+                        eye, _dof.focus_subject(player, _dof_mode)),
+                    _player_dt)
+                r.set_dof_params(_dof_solver_out.focus_gu,
+                                 _dof_solver_out.blend,
+                                 _dof_solver_out.near_strength,
+                                 _dof_solver_out.far_strength,
+                                 _dof_solver_out.far_ceiling,
+                                 _dof_solver_out.max_radius_frac)
                 # Reticle is an exterior-view HUD element; in bridge view it
                 # would draw over the bridge scene. Also hidden during a
                 # cutscene started with bHideReticle (BC's clean cinematic
