@@ -1259,7 +1259,39 @@ def test_nudge_clamps_at_both_ends():
     assert s.near_strength == dof.STRENGTH_MIN
 
 
-def test_zero_dt_does_not_divide_by_zero():
+def test_paused_frame_does_not_advance_engagement():
+    """A paused frame (dt=0) freezes the engagement ramp, not snaps to full.
+    With dt=0 there is no time for the exponential ease to move, so blend
+    stays exactly where it was."""
+    s = dof.FocusSolver()
+    # Ramp blend partway with normal dt
+    for _ in range(10):
+        s.update(120.0, 1.0 / 60.0)
+    blend_partway = s.blend
+    assert 0.0 < blend_partway < 1.0
+    # Paused frame does not advance blend
+    s.update(120.0, 0.0)
+    assert s.blend == pytest.approx(blend_partway)
+
+
+def test_paused_frame_does_not_advance_the_rack():
+    """A paused frame (dt=0) freezes the focus distance, not jumps to the new target.
+    After acquiring one distance, changing target with dt=0 should leave focus_gu
+    unchanged because no time has passed."""
+    s = dof.FocusSolver()
+    # Acquire and partially ramp to first distance
+    s.update(120.0, 1.0 / 60.0)
+    s.update(120.0, 1.0 / 60.0)
+    focus_partway = s.focus_gu
+    assert focus_partway == pytest.approx(120.0)
+    # Paused frame with different target does not advance rack
+    s.update(400.0, 0.0)
+    assert s.focus_gu == pytest.approx(focus_partway)
+
+
+def test_first_acquisition_snaps_at_zero_dt():
+    """First acquisition snaps the distance even with dt=0, because the snap
+    is a deliberate bypass of the easing function, not dependent on it."""
     s = dof.FocusSolver()
     s.update(120.0, 0.0)
     assert s.focus_gu == pytest.approx(120.0)
@@ -1324,8 +1356,10 @@ MIN_FOCUS_GU = 0.5
 
 def _ease(current, target, dt, tau):
     """Frame-rate-independent exponential approach to `target`."""
-    if tau <= 0.0 or dt <= 0.0:
-        return target
+    if tau <= 0.0:
+        return target      # zero time constant: instantaneous by definition
+    if dt <= 0.0:
+        return current     # no time passed (paused frame): nothing moves
     return current + (target - current) * (1.0 - math.exp(-dt / tau))
 
 

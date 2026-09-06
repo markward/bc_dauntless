@@ -44,8 +44,10 @@ MIN_FOCUS_GU = 0.5
 
 def _ease(current, target, dt, tau):
     """Frame-rate-independent exponential approach to `target`."""
-    if tau <= 0.0 or dt <= 0.0:
-        return target
+    if tau <= 0.0:
+        return target      # zero time constant: instantaneous by definition
+    if dt <= 0.0:
+        return current     # no time passed (paused frame): nothing moves
     return current + (target - current) * (1.0 - math.exp(-dt / tau))
 
 
