@@ -6,8 +6,10 @@
 # COPYRIGHTED GAME MATERIALS — NEVER COMMIT
 # Original Bridge Commander game files and SDK content
 # =============================================================================
-game/
-sdk/
+# No trailing slash: `game/` would match a real directory ONLY, leaving a
+# symlink into an install elsewhere (and a fresh checkout) stageable.
+game
+sdk
 
 # Local git worktrees created for parallel feature work
 .worktrees/
