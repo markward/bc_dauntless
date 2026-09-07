@@ -872,6 +872,15 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 
 `r.frame()` already pumps CEF and composites it internally (`native/src/host/host_bindings.cc:1477` and `:1484`), so the loop body is four lines. **`set_hologram_only_mode` must be on for the whole screen**: it clears to a solid colour and skips the entire space and bridge pass, which is what guarantees no asset load happens while the game root is still unset. Turn it off before returning.
 
+**⚠️ Source-grep tests: anchor on spellings that cannot match by accident.**
+This branch has now been bitten three times by a `source.index(...)` guard
+matching something other than what it named — once by `"paths.configure("`
+matching the aliased `"_paths.configure("` one character in, and once by a
+comment this plan itself suggested containing the literal `_setup_sdk()`,
+which made a *comment* satisfy an ordering assertion about *code*. When you
+write or edit one of these, check that the substring you search for appears
+exactly once and in the position you mean — comments included.
+
 - [ ] **Step 1: Write the failing tests**
 
 Add to `tests/host/test_host_loop_first_run.py`:
@@ -1023,13 +1032,25 @@ Run: `uv run pytest tests/host/test_host_loop_first_run.py tests/unit/test_first
 
 Expected: PASS.
 
-- [ ] **Step 8: Bounded headless boot**
+- [ ] **Step 8: End-to-end boot evidence**
+
+**Corrected 2026-09-07.** An earlier version of this step asked for
+`timeout 25 ./build/dauntless --smoke-check`. Do not use that: `--smoke-check`
+calls `engine.bootstrap.smoke_check()`, a different code path that never
+invokes `host_loop.run()`, so it exercises none of this. Task 2 found that.
+Launching the game directly is also against a standing project rule — Mark does
+all live testing.
+
+Use the existing pinned tests that drive `run()` end-to-end through the real
+compiled bindings instead, including the clean-subprocess one, which is what
+catches import-order bugs that an in-process run can mask:
 
 ```bash
-timeout 25 ./build/dauntless 2>&1 | tail -20
+uv run pytest tests/host/test_host_loop_unit.py -q -k "test_run_"
 ```
 
-With the roots resolvable this must reach the game loop exactly as before — the screen should not appear. Paste the output into your report.
+With the roots resolvable the screen must not appear and `run()` must return 0
+exactly as before. Paste the output into your report.
 
 - [ ] **Step 9: Run the full gate**
 
