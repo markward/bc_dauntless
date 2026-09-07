@@ -146,10 +146,6 @@ class FirstRunPanel(Panel):
         silently dropped."""
         self._last_pushed = None
 
-    def handle_key_esc(self) -> None:
-        """ESC does what Quit does, so the two can never disagree."""
-        self.dispatch_event("quit")
-
     # ── browse ──────────────────────────────────────────────────────────
     def _browse(self, kind: str) -> bool:
         if kind not in _VALIDATORS:
