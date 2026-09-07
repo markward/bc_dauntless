@@ -1605,7 +1605,10 @@ class CharacterAction(TGAction):
         # bridge camera AT this character; AT_STOP_WATCHING_ME releases it. All
         # complete inline — the camera eases underneath while the scene proceeds.
         if at in (self.AT_WATCH_ME, self.AT_LOOK_AT_ME, self.AT_LOOK_AT_ME_NOW):
-            self._set_camera_watch(snap=(at == self.AT_LOOK_AT_ME_NOW))
+            # hold: AT_WATCH_ME is an active follow that outranks an open crew
+            # menu; AT_LOOK_AT_ME[_NOW] is the resting aim and yields to one.
+            self._set_camera_watch(snap=(at == self.AT_LOOK_AT_ME_NOW),
+                                   hold=(at == self.AT_WATCH_ME))
             self.Completed()
             return
         if at == self.AT_STOP_WATCHING_ME:
@@ -1981,7 +1984,7 @@ class CharacterAction(TGAction):
         except Exception:
             pass
 
-    def _set_camera_watch(self, *, snap: bool) -> None:
+    def _set_camera_watch(self, *, snap: bool, hold: bool = True) -> None:
         # Frame this character with the captain's-eye camera (AT_WATCH_ME /
         # AT_LOOK_AT_ME[_NOW]). Best-effort: never raises out of Play().
         from engine.appc.characters import CharacterClass_Cast
@@ -1990,7 +1993,7 @@ class CharacterAction(TGAction):
             cc = CharacterClass_Cast(self._character) if self._character is not None else None
             ctrl = bridge_camera_watch.get_controller()
             if cc is not None and ctrl is not None:
-                ctrl.watch(cc, snap=snap)
+                ctrl.watch(cc, snap=snap, hold=hold)
         except Exception:
             pass
 

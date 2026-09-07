@@ -11,8 +11,11 @@ class _RecordingWatch:
     def __init__(self):
         self.watched = []
         self.cleared = 0
-    def watch(self, character, snap=False):
-        self.watched.append((character, snap))
+    def watch(self, character, snap=False, hold=True):
+        # Mirrors BridgeCameraWatchController.watch exactly, `hold` included:
+        # _set_camera_watch swallows exceptions, so a double that is missing a
+        # parameter turns a TypeError into a silent no-op instead of a failure.
+        self.watched.append((character, snap, hold))
     def clear(self):
         self.cleared += 1
 
@@ -29,7 +32,7 @@ def test_watch_me_sets_target_and_completes(monkeypatch):
     _patch(monkeypatch, ctrl)
     act = CharacterAction(ch, CharacterAction.AT_WATCH_ME)
     act.Play()
-    assert ctrl.watched == [(ch, False)]
+    assert ctrl.watched == [(ch, False, True)]
     assert act.IsPlaying() is False                     # inline
 
 
@@ -38,7 +41,7 @@ def test_look_at_me_now_snaps(monkeypatch):
     ctrl = _RecordingWatch()
     _patch(monkeypatch, ctrl)
     CharacterAction(ch, CharacterAction.AT_LOOK_AT_ME_NOW).Play()
-    assert ctrl.watched == [(ch, True)]
+    assert ctrl.watched == [(ch, True, False)]
 
 
 def test_look_at_me_eases(monkeypatch):
@@ -46,7 +49,7 @@ def test_look_at_me_eases(monkeypatch):
     ctrl = _RecordingWatch()
     _patch(monkeypatch, ctrl)
     CharacterAction(ch, CharacterAction.AT_LOOK_AT_ME).Play()
-    assert ctrl.watched == [(ch, False)]
+    assert ctrl.watched == [(ch, False, False)]
 
 
 def test_stop_watching_clears(monkeypatch):

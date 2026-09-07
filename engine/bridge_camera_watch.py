@@ -15,17 +15,38 @@ class BridgeCameraWatchController:
     def __init__(self):
         self._watched = None
         self._snap_pending = False
+        self._hold = False
 
-    def watch(self, character, snap=False) -> None:
-        """Frame `character` (AT_WATCH_ME / AT_LOOK_AT_ME). snap=True (AT_..._NOW)
-        jumps the camera instead of easing. Supersedes any prior target."""
+    def watch(self, character, snap=False, hold=True) -> None:
+        """Frame `character`. snap=True (AT_..._NOW) jumps instead of easing.
+        Supersedes any prior target.
+
+        `hold` separates BC's two verbs, and it is a PRECEDENCE flag, not a
+        lifetime one — both kinds persist until cleared:
+
+          hold=True  (AT_WATCH_ME) — an active follow. BC always pairs it with
+              AT_STOP_WATCHING_ME and releases it BEFORE raising a menu
+              (E1M1.py:2344-2345), so it outranks an open crew menu.
+          hold=False (AT_LOOK_AT_ME[_NOW]) — the resting aim. BC never releases
+              one, because it expects whatever comes next to supersede it. It
+              therefore sits BELOW an open crew menu: E1M1's crew intros leave
+              AT_LOOK_AT_ME(Picard) standing across every following
+              introduction, and ranking it above the menu held the camera on
+              Picard's face instead of framing the station being introduced.
+        """
         self._watched = character
         self._snap_pending = snap
+        self._hold = bool(hold)
+
+    def is_holding(self) -> bool:
+        """True when the live target came from AT_WATCH_ME (outranks a menu)."""
+        return self._watched is not None and self._hold
 
     def clear(self) -> None:
         """Stop framing (AT_STOP_WATCHING_ME)."""
         self._watched = None
         self._snap_pending = False
+        self._hold = False
 
     def is_watching(self) -> bool:
         return self._watched is not None
@@ -62,6 +83,7 @@ class BridgeCameraWatchController:
     def reset(self) -> None:
         self._watched = None
         self._snap_pending = False
+        self._hold = False
 
 
 _controller = None

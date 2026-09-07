@@ -10,21 +10,16 @@ def test_host_loop_constructs_and_wires_watch_controller():
     assert "set_watch_ctrl(" in src or "set_controller" in src
     # Reset on mission swap (next to walk_ctrl.reset()).
     assert "watch_ctrl.reset()" in src
-    # Drives the camera via the watch-target-over-menu-zoom precedence, now
-    # inlined at the zoom call site (Task 8 folded _resolve_bridge_focus_world's
-    # body directly into the loop; see tests/unit/test_bridge_camera_zoom.py
-    # and the resolver's former docstring, preserved as a comment there).
-    # The watch target must be resolved and checked BEFORE falling through to
-    # the crew-menu zoom-to-officer -- that ordering IS the precedence.
-    # "watch_ctrl.resolve_target_world(r)" and "_active_zoom_officer(
-    # crew_menu_panel, r)" both appear only at their inlined call sites (the
-    # `_active_zoom_officer_world` thin wrapper was retired -- final-review
-    # FIX 3, zero production callers) -- search for the menu-zoom fallback
-    # AFTER the watch-target resolve so this compares the two call sites in
-    # their actual precedence order.
-    watch_idx = src.index("watch_ctrl.resolve_target_world(r)")
-    menu_idx = src.index("_active_zoom_officer(crew_menu_panel, r)", watch_idx)
-    assert watch_idx < menu_idx
+    # Both candidate targets are resolved at the zoom call site and handed to
+    # _pick_bridge_engagement, which owns the precedence. Source ORDER no
+    # longer encodes it: a lingering AT_LOOK_AT_ME now ranks BELOW an open crew
+    # menu (E1M1's crew intros left one standing on Picard and it held the
+    # camera on his face through every introduction), so the ordering lives in
+    # the resolver and is asserted behaviourally in
+    # tests/unit/test_bridge_engagement_precedence.py.
+    assert "watch_ctrl.resolve_target_world(r)" in src
+    assert "_active_zoom_officer(crew_menu_panel, r)" in src
+    assert "_pick_bridge_engagement(" in src
 
 
 def test_watch_singleton_roundtrip():
@@ -39,13 +34,12 @@ def test_host_loop_sets_engaged_char_from_watch_ctrl():
     # Regression (final-review FIX 1): a watch-first engagement (fresh
     # session, _last_engaged_char still [None]) must give the resolver a
     # driver character, or MenuEventHandler is never called and the
-    # maincamera never zooms. Assert the wiring exists at the watch-branch
-    # call site, immediately after the target resolves.
+    # maincamera never zooms. The watched character must reach
+    # _pick_bridge_engagement as its watch_char argument.
+    # (test_watch_first_engagement_reaches_camera_engage below is the runtime
+    # half of this same regression.)
     src = inspect.getsource(HL)
-    watch_idx = src.index("watch_ctrl.resolve_target_world(r)")
-    getter_idx = src.index("watch_ctrl.watched_character()", watch_idx)
-    menu_idx = src.index("_active_zoom_officer(crew_menu_panel, r)", watch_idx)
-    assert watch_idx < getter_idx < menu_idx
+    assert "watch_char=(watch_ctrl.watched_character()" in src
 
 
 class _R:

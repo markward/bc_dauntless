@@ -3526,6 +3526,34 @@ def _active_zoom_officer(crew_menu_panel, r):
     return (center[0], center[1], center[2]), off
 
 
+def _pick_bridge_engagement(*, watch_world, watch_holds, watch_char,
+                            menu_world, menu_char, menu_zoom, hail):
+    """Choose the single bridge-camera engagement for this frame.
+
+    Precedence, highest first:
+      1. AT_WATCH_ME  — an active character follow. BC releases it with
+         AT_STOP_WATCHING_ME before raising a menu, so it wins outright.
+      2. an open crew menu — the station the scene is pointing at.
+      3. AT_LOOK_AT_ME[_NOW] — the resting aim, which BC never releases and
+         always expects the next beat to supersede. Ranking it above (2) is
+         what held E1M1's camera on Picard's face through every crew intro
+         instead of framing engineering/science.
+      4. a viewscreen hail (look_at None = viewscreen-forward).
+
+    Returns (engaged, look_at, zoom_factor, character); look_at None with
+    engaged True means "aim at the viewscreen"."""
+    if watch_world is not None and watch_holds:
+        return True, watch_world, _BRIDGE_ZOOM_MIN, watch_char
+    if menu_world is not None:
+        return True, menu_world, menu_zoom, menu_char
+    if watch_world is not None:
+        return True, watch_world, _BRIDGE_ZOOM_MIN, watch_char
+    if hail is not None:
+        hail_char, hail_zoom = hail
+        return True, None, hail_zoom, hail_char
+    return False, None, _BRIDGE_ZOOM_MIN, None
+
+
 def _officer_zoom_factor(officer):
     """officer.GetPositionZoom(officer.GetLocation()) -> per-station FOV
     factor (SP4), or POSITION_ZOOM_SENTINEL when the station has no authored
@@ -8712,28 +8740,22 @@ def run(mission_name: Optional[str] = None,
                         # look-at + FOV factor; MenuEventHandler reconciles the
                         # maincamera zoom; advance() eases it on _player_dt so it
                         # freezes under pause.
-                        _engaged = False
-                        _look_at = None
-                        _zoom_factor = _BRIDGE_ZOOM_MIN
-                        _engaged_char = None
-                        if watch_ctrl is not None:
-                            _w = watch_ctrl.resolve_target_world(r)
-                            if _w is not None:
-                                _engaged, _look_at = True, _w
-                                _engaged_char = watch_ctrl.watched_character()
-                        if not _engaged:
-                            _wc, _zoom_off = _active_zoom_officer(crew_menu_panel, r)
-                            if _wc is not None:
-                                _engaged, _look_at = True, _wc
-                                _zoom_factor = _officer_zoom_factor(_zoom_off)
-                                if _zoom_factor == POSITION_ZOOM_SENTINEL:
-                                    _zoom_factor = _BRIDGE_ZOOM_MIN
-                                _engaged_char = _zoom_off
-                        if not _engaged:
-                            _hail = _viewscreen_hail_engagement(controller)
-                            if _hail is not None:
-                                _engaged_char, _zoom_factor = _hail
-                                _engaged, _look_at = True, None   # viewscreen-forward
+                        _w = (watch_ctrl.resolve_target_world(r)
+                              if watch_ctrl is not None else None)
+                        _wc, _zoom_off = _active_zoom_officer(crew_menu_panel, r)
+                        _menu_zoom = _officer_zoom_factor(_zoom_off)
+                        if _menu_zoom == POSITION_ZOOM_SENTINEL:
+                            _menu_zoom = _BRIDGE_ZOOM_MIN
+                        _engaged, _look_at, _zoom_factor, _engaged_char = \
+                            _pick_bridge_engagement(
+                                watch_world=_w,
+                                watch_holds=(watch_ctrl is not None
+                                             and watch_ctrl.is_holding()),
+                                watch_char=(watch_ctrl.watched_character()
+                                            if watch_ctrl is not None else None),
+                                menu_world=_wc, menu_char=_zoom_off,
+                                menu_zoom=_menu_zoom,
+                                hail=_viewscreen_hail_engagement(controller))
                         _drv = _engaged_char or _last_engaged_char[0]
                         if _drv is not None:
                             _drv.MenuEventHandler(_engaged, _look_at, _zoom_factor,
