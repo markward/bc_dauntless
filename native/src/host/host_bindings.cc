@@ -842,10 +842,22 @@ void frame() {
     //
     // PHASE 2 is render_space_vfx below; see its comment for why it can never
     // be multisampled.
+    // `dyn_lights` is an explicit parameter rather than a captured global so
+    // every call site has to state what it wants. The viewscreen passes
+    // nullptr: emitter, torpedo and explosion lights are all suppressed on
+    // that feed, leaving only the sun (a separate pass plus the directionals
+    // in g_lighting, neither of which is a dynamic light).
+    //
+    // This is a CPU saving, not a fill saving. The RTT is only 640x360, but
+    // select_instance_dynamic_lights runs PER INSTANCE and scores EVERY light
+    // in the list, which costs the same at any resolution — and with the
+    // bridge up that whole selection currently runs twice per frame.
     auto render_space_geometry = [&](const scenegraph::Camera& cam,
                                      renderer::HdrTarget* hdr,
                                      renderer::HdrMsaaTarget* msaa,
-                                     float ambient_scale) {
+                                     float ambient_scale,
+                                     const std::vector<renderer::DynamicLightDescriptor>*
+                                         dyn_lights) {
         if (msaa != nullptr) msaa->bind(); else hdr->bind();
         {
             DAUNTLESS_FRAME_SCOPE("space.backdrop");
@@ -868,7 +880,7 @@ void frame() {
             g_submitter->submit_opaque_in_pass(
                 g_world, cam, *g_pipeline, lookup, g_lighting,
                 scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
-                ambient_scale, &g_dynamic_lights);
+                ambient_scale, dyn_lights);
         }
         // Breach scoop pass: for each active carve sphere, draws the front-
         // face-culled sphere inner wall masked by the original hull fill
@@ -1083,7 +1095,7 @@ void frame() {
             // small in-world surface where edge quality barely reads.
             const float vs_ambient = dauntless_filmic::ambient_scale();
             render_space_geometry(scam, g_viewscreen_hdr.get(), nullptr,
-                                  vs_ambient);
+                                  vs_ambient, /*dyn_lights=*/nullptr);
             render_space_vfx(scam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
                         kViewscreenRttW, kViewscreenRttH, vs_ambient);
         } else {
@@ -1092,7 +1104,7 @@ void frame() {
                         / static_cast<float>(kViewscreenRttH);
             const float vs_ambient = dauntless_filmic::ambient_scale();
             render_space_geometry(vcam, g_viewscreen_hdr.get(), nullptr,
-                                  vs_ambient);
+                                  vs_ambient, /*dyn_lights=*/nullptr);
             render_space_vfx(vcam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
                         kViewscreenRttW, kViewscreenRttH, vs_ambient);
         }
@@ -1150,13 +1162,13 @@ void frame() {
             g_msaa_target->bind();
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             render_space_geometry(g_camera, nullptr, g_msaa_target.get(),
-                                  ex_ambient);
+                                  ex_ambient, &g_dynamic_lights);
             g_msaa_target->resolve_to(*g_hdr_target);
             // resolve_to leaves the READ/DRAW bindings split; the VFX phase
             // re-binds g_hdr_target as GL_FRAMEBUFFER before it draws.
         } else {
             render_space_geometry(g_camera, g_hdr_target.get(), nullptr,
-                                  ex_ambient);
+                                  ex_ambient, &g_dynamic_lights);
         }
         render_space_vfx(g_camera, /*for_viewscreen=*/false, *g_hdr_target,
                          fw, fh, ex_ambient);
@@ -4333,6 +4345,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_LEFT_BRACKET")  = GLFW_KEY_LEFT_BRACKET;
     keys.attr("KEY_RIGHT_BRACKET") = GLFW_KEY_RIGHT_BRACKET;
     keys.attr("KEY_GRAVE_ACCENT")  = GLFW_KEY_GRAVE_ACCENT;
+    // Punctuation used by the dev tuning keybindings. A dev binding on an
+    // UNEXPORTED constant raises AttributeError on the first developer-mode
+    // tick, and the enclosing try in host_loop has no except clause -- so it
+    // kills the process before any live look. That is exactly how a dead key
+    // shipped once already; tests/unit/test_host_key_manifest.py and
+    // test_dev_key_collisions.py now guard it from both directions.
+    keys.attr("KEY_COMMA")      = GLFW_KEY_COMMA;
+    keys.attr("KEY_PERIOD")     = GLFW_KEY_PERIOD;
+    keys.attr("KEY_SEMICOLON")  = GLFW_KEY_SEMICOLON;
+    keys.attr("KEY_APOSTROPHE") = GLFW_KEY_APOSTROPHE;
     keys.attr("KEY_LEFT_SUPER")   = GLFW_KEY_LEFT_SUPER;
     keys.attr("KEY_LEFT_CONTROL") = GLFW_KEY_LEFT_CONTROL;
     keys.attr("KEY_SPACE") = GLFW_KEY_SPACE;

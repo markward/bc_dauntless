@@ -4,9 +4,15 @@ Handlers needing per-frame state (player ship, session) are re-bound every
 tick via register_for_frame(); pure-static handlers can be registered once
 at module import time.
 """
+import sys
 from pathlib import Path
 
 import engine.dev_mode as dev_mode
+# Step sizes live with the constants they move -- the one-home rule.
+from engine.appc.explosion_lights import (
+    PEAK_INTENSITY_STEP as _EXPL_INTENSITY_STEP,
+    RADIUS_FACTOR_STEP as _EXPL_RADIUS_STEP,
+)
 
 # SP1 skinned-mesh preview: instance id of the spawned test character, or None.
 # Module-level (not closure state) because register_for_frame re-binds the
@@ -25,6 +31,24 @@ def _test_character_nif():
     from engine import paths
     return str(paths.game_asset(
         "data/Models/Characters/Bodies/BodyMaleL/BodyMaleL.NIF"))
+
+
+def _explosion_light_nudge(fn_name, delta):
+    """Move a death-fireball light tunable and report the whole live state.
+
+    Live tuning for a purely visual value: nudge while a ship is blowing up,
+    read the numbers off stderr, and paste them into
+    engine/appc/explosion_lights.py as the new defaults. Per-session only --
+    the module constants are never written back.
+
+    Radius and intensity resolve at RENDER time, so a press moves blasts that
+    are already burning rather than only the next one.
+    """
+    from engine.appc import explosion_lights
+    getattr(explosion_lights, fn_name)(delta)
+    print("[explosion] " + "  ".join("%s=%.2f" % kv
+                                     for kv in explosion_lights.tuning_values()),
+          file=sys.stderr)
 
 
 def register_for_frame(_h, session, player) -> None:
@@ -198,3 +222,38 @@ def register_for_frame(_h, session, player) -> None:
     # visible, toggling it is deliberate, and the row says what it will do.
     # Unattended captures are unaffected: DAUNTLESS_PROFILE_FRAMES=N still
     # enables both halves at startup (engine/host_loop.py).
+
+    # ── Death-fireball light tuning ─────────────────────────────────────
+    #   , / .  peak intensity -- how hard a blast lights nearby hulls
+    #   ; / '  radius factor  -- how far the light reaches past the sprite
+    #
+    # All four are free in every namespace a key can be claimed in: input_map
+    # ACTIONS (which stores DISPLAY names like "-", so it must be checked by
+    # display name and NOT by KEY_ constant -- that exact mistake put a dev key
+    # on camera zoom), the dev bindings above, host_loop's direct key_pressed()
+    # reads (throttle 1-9, F12), and the SDK's WC_ routing (F6/F9).
+    # tests/unit/test_dev_key_collisions.py enforces all four.
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_COMMA,
+        lambda: _explosion_light_nudge("nudge_peak_intensity",
+                                       -_EXPL_INTENSITY_STEP),
+        "Explosion light -%.1f (,)" % _EXPL_INTENSITY_STEP
+    )
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_PERIOD,
+        lambda: _explosion_light_nudge("nudge_peak_intensity",
+                                       +_EXPL_INTENSITY_STEP),
+        "Explosion light +%.1f (.)" % _EXPL_INTENSITY_STEP
+    )
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_SEMICOLON,
+        lambda: _explosion_light_nudge("nudge_radius_factor",
+                                       -_EXPL_RADIUS_STEP),
+        "Explosion light reach -%.1f (;)" % _EXPL_RADIUS_STEP
+    )
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_APOSTROPHE,
+        lambda: _explosion_light_nudge("nudge_radius_factor",
+                                       +_EXPL_RADIUS_STEP),
+        "Explosion light reach +%.1f (')" % _EXPL_RADIUS_STEP
+    )

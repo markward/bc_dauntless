@@ -5,6 +5,7 @@ add_executable(renderer_tests
     pipeline_test.cc
     frame_test.cc
     test_cone_light_frame.cc
+    explosion_light_frame_test.cc
     skinned_program_test.cc
     skinned_render_test.cc
     hit_vfx_pass_test.cc

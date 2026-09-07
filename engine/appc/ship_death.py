@@ -12,6 +12,7 @@ See docs/superpowers/specs/2026-06-11-ship-death-sequence-design.md.
 """
 
 import engine.dev_mode as dev_mode
+from engine.appc import explosion_lights
 from engine.core.ids import implements
 
 THROES_DURATION       = 5.0   # seconds the ship coasts, dying, before removal
@@ -21,8 +22,26 @@ WRECK_LINGER_DURATION = 5.0   # seconds a dead hull lingers, selectable in the
 # THROES_DURATION. Tuned by feel.
 EXPLOSION_SIZE_FACTOR   = 0.75  # per-puff size as a fraction of ship radius
 MIN_EXPLOSION_SIZE      = 2.0   # GU floor for tiny craft
-EXPLOSION_PUFF_LIFE     = 3.0   # seconds per puff = 8-frame animation duration
-                                # (2x the SDK 1.5s default → frames play 2x slower)
+EXPLOSION_PUFF_LIFE     = 1.0   # seconds per puff = 8-frame animation duration.
+                                # The renderer derives the sprite-sheet cell as
+                                # frame = (age / life) * columns, so this value
+                                # IS the animation duration -- halving it doubles
+                                # the frame rate. Was 3.0 (the SDK's own 1.5s
+                                # default, deliberately slowed 2x); restored to
+                                # 1.5, then 1.0 on request -- 3x the original
+                                # speed and faster than the SDK's own default.
+                                # The explosion LIGHT is handed this same value,
+                                # so the flash tracks the sprite instead of
+                                # outliving it.
+                                #
+                                # NOTE this is now SHORTER than the 1.25 s
+                                # spacing (THROES_DURATION / EXPLOSION_COUNT), so
+                                # the blasts no longer overlap: the throes read
+                                # as four separate flashes with a ~0.25 s dark
+                                # gap between them, where they used to be a
+                                # continuous burn. Raising EXPLOSION_COUNT to 5
+                                # closes the gap exactly (5.0 / 5 = 1.0 s
+                                # spacing) if continuity is wanted back.
 EXPLOSION_SPREAD_FACTOR = 0.8   # emit-sphere radius as a fraction of ship radius,
                                 # so puffs spawn all over the hull, not just centre
 EXPLOSION_COUNT         = 4     # total big blasts over the throes window —
@@ -228,6 +247,19 @@ def _spawn_explosion(ship) -> None:
         from engine.appc.math import TGPoint3
         radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 1.0
         size = max(radius * EXPLOSION_SIZE_FACTOR, MIN_EXPLOSION_SIZE)
+        # Births land at i*spacing; used both for the controller's emission
+        # frequency below and for the matching light schedule, so the two can
+        # never disagree about when a blast happens.
+        spacing = THROES_DURATION / EXPLOSION_COUNT
+        # Dynamic lights for the fireballs. The particle backend is analytic --
+        # the renderer derives every puff from the controller's curves, so
+        # there is no per-puff hook -- which is why the light registry is
+        # handed this schedule rather than observing the births. `size` is
+        # passed rather than recomputed so explosion_lights never becomes a
+        # second interpreter of the fireball-size formula above.
+        explosion_lights.register(ship, size_gu=size, count=EXPLOSION_COUNT,
+                                  spacing_s=spacing,
+                                  life_s=EXPLOSION_PUFF_LIFE)
         action = Effects.CreateExplosionPuffHigh(
             THROES_DURATION,            # fLife
             size,                       # fSize
@@ -251,7 +283,6 @@ def _spawn_explosion(ship) -> None:
             # (COUNT - 0.5)*spacing allows births 0..COUNT-1 and no more. The
             # last blast finishes its animation after the hulk is removed,
             # anchored at the wreck site.
-            spacing = THROES_DURATION / EXPLOSION_COUNT
             ctrl.SetEmitFrequency(spacing)
             ctrl.SetEffectLifeTime(spacing * (EXPLOSION_COUNT - 0.5))
         if action is not None and hasattr(action, "Play"):
@@ -261,5 +292,11 @@ def _spawn_explosion(ship) -> None:
 
 
 def reset() -> None:
-    """Clear the registry (mission swap / test teardown)."""
+    """Clear the registry (mission swap / test teardown).
+
+    Also clears the explosion-light registry: a ship that died in the
+    previous mission would otherwise keep lighting the next one from its
+    old world position.
+    """
     _active.clear()
+    explosion_lights.reset()

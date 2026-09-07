@@ -76,6 +76,7 @@ from engine.appc import (
     weapon_tactical_commands,
     render_instances,
 )
+from engine.appc import explosion_lights as _explosion_lights
 from engine.appc import target_menu as _target_menu_mod
 from engine.appc import viewscreen_static as _vss
 from engine.appc import bridge_set as _bridge_set
@@ -891,6 +892,9 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         particles.advance(dt)
     with frame_profiler.scope("cb.death"):
         ship_death.advance(dt)
+        # Fireball lights age on the same clock as the death sequence that
+        # scheduled them.
+        _explosion_lights.advance(dt)
         from engine.appc import object_lifetime
         object_lifetime.advance(dt)
     with frame_profiler.scope("cb.damage_sys"):
@@ -1030,10 +1034,11 @@ def _advance_combat(ships, dt: float, ship_instances=None,
     # the report, which is worse than the exception itself.
     with frame_profiler.scope("cb.render_data"):
         host_io.set_torpedoes(_build_torpedo_render_data())
-        host_io.set_dynamic_lights(
-            _build_dynamic_light_render_data() +
+        host_io.set_dynamic_lights(_budgeted_dynamic_lights(
+            _build_explosion_light_render_data(),
+            _build_dynamic_light_render_data(),
             _build_emitter_light_render_data(ship_instances, ship_emitters,
-                                             player=player))
+                                             player=player)))
         from engine.appc import shockwaves as _shockwaves
         host_io.set_shockwaves(_shockwaves.render_data())
         host_io.set_hit_vfx(_build_hit_vfx_render_data())
@@ -1287,6 +1292,76 @@ def _warp_glow_envelope(ship):
     if not w.is_active() or not warp_state.is_flythrough(ship):
         return None
     return w.engine_glow()
+
+
+# ── Dynamic-light budget ─────────────────────────────────────────────────
+# set_dynamic_lights hard-clamps to the native per-frame cap by TRUNCATING --
+# it keeps the first N and silently drops the rest. Plain concatenation
+# therefore starves whichever category comes last, and in a large engagement
+# subsystem emitters alone exceed the cap, so explosions vanished exactly when
+# the scene was busiest.
+#
+# Each category instead gets a guaranteed share. The shares deliberately sum to
+# less than the cap, and the leftover is then spilled in priority order, so a
+# quiet frame still gets every emitter it asks for rather than being capped at
+# its guarantee -- a strict per-category cap would make ordinary scenes WORSE
+# than the plain truncation it replaces.
+_LIGHT_CAP = 64            # MUST match renderer::kMaxDynamicLightsPerFrame
+_LIGHT_BUDGET_EXPLOSIONS = 10
+_LIGHT_BUDGET_TORPEDOES = 10
+_LIGHT_BUDGET_EMITTERS = 40
+
+
+def _budgeted_dynamic_lights(explosions, torpedoes, emitters):
+    """Blend the three light sources into at most `_LIGHT_CAP` entries.
+
+    Every category is guaranteed its budget before any category gets a second
+    helping. Priority order for the spill is explosions, torpedoes, emitters:
+    an explosion is rare, brief and the most missed when dropped, while losing
+    one hull emitter among forty is close to invisible.
+    """
+    groups = ((explosions, _LIGHT_BUDGET_EXPLOSIONS),
+              (torpedoes, _LIGHT_BUDGET_TORPEDOES),
+              (emitters, _LIGHT_BUDGET_EMITTERS))
+    out = []
+    for items, budget in groups:
+        out.extend(items[:budget])
+    for items, budget in groups:
+        room = _LIGHT_CAP - len(out)
+        if room <= 0:
+            break
+        out.extend(items[budget:budget + room])
+    return out
+
+
+def _build_explosion_light_render_data():
+    """One point light per live death-explosion blast.
+
+    BC's death fireball is sprite-only -- it reads bright but casts nothing --
+    so this is the light that makes it fall on neighbouring hulls. The blasts
+    and their bloom-and-fade envelope come from engine.appc.explosion_lights,
+    which owns every tunable; this function only applies the same
+    camera-distance fade the torpedo lights use, so a distant battle does not
+    fill the light list with entries no hull on screen can see.
+    """
+    # DELIBERATELY NOT camera-distance culled, unlike the torpedo and emitter
+    # lights above.
+    #
+    # _camera_distance_fade drops anything past DYN_LIGHT_CULL_GU (~86 GU,
+    # 15 km). That is right for a hull-local light -- a torpedo glow or a
+    # subsystem emitter genuinely cannot matter to anything once the camera is
+    # that far away. An explosion light has a radius of 110+ GU and exists to
+    # light the ships AROUND it, so how far the CAMERA is from it says nothing
+    # about whether it matters: combat routinely happens beyond 15 km, and the
+    # cull silently discarded every fireball light before it was ever built.
+    # That, not intensity or radius, is why the effect could not be seen.
+    #
+    # Nothing is lost by skipping the cull here. The category budget caps
+    # explosions at 10 entries, and the renderer already scores every light
+    # per instance (select_dynamic_lights) -- a genuinely irrelevant one
+    # scores ~0 and is never selected. The camera distance was the wrong
+    # question to ask of this light.
+    return [dict(entry) for entry in _explosion_lights.render_data()]
 
 
 def _build_emitter_light_render_data(ship_instances, ship_emitters,
@@ -4993,6 +5068,7 @@ class HostController:
         ship_lifecycle.reset()
         from engine.appc import ship_death
         ship_death.reset()
+        _explosion_lights.reset()
         from engine.appc import object_lifetime
         object_lifetime.reset()
         from engine.appc import subsystem_cascade
