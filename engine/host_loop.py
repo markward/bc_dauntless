@@ -6839,26 +6839,6 @@ def run(mission_name: Optional[str] = None,
 
     boot_quickbattle = mission_name is None
 
-    # Resolve where BC content lives before anything asks for any of it. This
-    # must precede the SDK setup call below: the SDK meta-path finder calls
-    # paths.sdk_scripts(), so configuring afterwards would be too late.
-    #
-    # An unresolved root prompts the player with a native folder panel. A
-    # cancel, an unsupported platform and a stale .so all land on the same
-    # branch, which prints the diagnostic instead.
-    _resolution = _resolve_paths_or_report()
-    if _resolution is None:
-        return 1
-
-    _setup_sdk()
-
-    import App
-    from engine.core.loop import GameLoop
-    # Hoisted out of the per-tick loop body — imported once per run()
-    # rather than every frame. Both are only used inside the loop below.
-    from engine.appc import collisions
-    from engine.appc import camera_shake
-
     r.init(1280, 720, "open_stbc")
     # Verify the native module exposes every binding the renderer façade calls.
     # Catches a stale/incomplete .so at boot (a recurring hazard — host_bindings
@@ -6876,12 +6856,6 @@ def run(mission_name: Optional[str] = None,
     # `keys` submodule diverging from engine.input_map's table.
     host_io.validate_bindings(strict=dev_mode.is_enabled())
     host_io.verify_keys()
-    # The renderer joins its own relative asset paths onto this. Set right
-    # after both façade validations — set_game_root is in _REQUIRED_BINDINGS,
-    # and validate_bindings() exists precisely to turn a stale/incomplete .so
-    # into a clear diagnostic instead of a bare AttributeError here — and
-    # before any pass constructs: their texture constants are relative now.
-    r.set_game_root(str(_paths.game_root()))
     # Initialise the CEF UI overlay. Resolves index.html relative
     # to the project root (two parents up from this file). _CEF_VIEW_W/H
     # are reused by the pause-menu mouse-forwarding path to scale
@@ -6910,6 +6884,36 @@ def run(mission_name: Optional[str] = None,
         import sys as _sys
         print("[host_loop] cef_initialize returned False — overlay disabled",
               file=_sys.stderr)
+
+    # Resolve where BC content lives. This runs AFTER cef_initialize so the
+    # first-run screen has a live browser to draw into when the roots are
+    # not configured -- and still BEFORE the SDK setup call below, because
+    # the SDK meta-path finder calls paths.sdk_scripts().
+    #
+    # Verified safe to boot this far unresolved: CEF's page is project
+    # content, not BC content, and window/pipeline init reads no game
+    # assets.
+    _resolution = _resolve_paths_or_report()
+    if _resolution is None:
+        return 1
+
+    # The renderer joins its own relative asset paths onto this. Set right
+    # after resolution -- set_game_root is in _REQUIRED_BINDINGS, and
+    # validate_bindings() (run above, at r.init()) exists precisely to turn
+    # a stale/incomplete .so into a clear diagnostic instead of a bare
+    # AttributeError here -- and before any pass constructs: their texture
+    # constants are relative now.
+    r.set_game_root(str(_paths.game_root()))
+
+    _setup_sdk()
+
+    import App
+    from engine.core.loop import GameLoop
+    # Hoisted out of the per-tick loop body — imported once per run()
+    # rather than every frame. Both are only used inside the loop below.
+    from engine.appc import collisions
+    from engine.appc import camera_shake
+
     try:
         # Controller owns the renderer, the nif-handle cache, and the
         # current mission session. _MissionLoader.load() runs the

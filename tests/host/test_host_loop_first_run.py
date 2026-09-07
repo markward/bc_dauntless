@@ -129,3 +129,25 @@ def test_a_validated_pick_persists_even_when_a_later_pick_is_cancelled(
     assert fake_store.get("paths", "game") == str(game)
     assert not fake_store.has("paths", "sdk"), (
         "the cancelled sdk pick must not be written")
+
+
+def test_cef_comes_up_before_the_sdk_finder_is_installed():
+    """The screen must exist before the roots are known, so CEF init has to
+    precede _setup_sdk(). Verified on run()'s source rather than by booting
+    a window, the same technique the neighbouring boot-order guards use.
+
+    Anchored on the real spellings, not substrings that match something else
+    one character in -- a guard in this family has already broken that way.
+    """
+    import inspect
+    from engine import host_loop
+    source = inspect.getsource(host_loop.run)
+    init_at = source.index("r.init(")
+    cef_at = source.index("r.cef_initialize(")
+    resolve_at = source.index("_resolve_paths_or_report()")
+    sdk_at = source.index("_setup_sdk()")
+    assert init_at < cef_at < resolve_at < sdk_at, (
+        "boot order must be: window, CEF, resolve, SDK -- the first-run "
+        "screen needs a live browser before the roots are known, and the "
+        "SDK meta-path finder needs the roots before it is installed"
+    )
