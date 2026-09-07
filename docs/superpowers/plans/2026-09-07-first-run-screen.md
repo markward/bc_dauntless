@@ -32,7 +32,7 @@
 
 | File | Responsibility |
 |---|---|
-| `engine/first_run.py` (modify) | Keep picker access + validation; **delete `prompt_for_missing`** — the panel replaces it |
+| `engine/first_run.py` (modify, **Task 4**) | Keep `_default_picker`; `prompt_for_missing` is deleted only once Task 4 replaces its caller |
 | `engine/ui/first_run_panel.py` (create) | `Panel` subclass: row state, validation, Continue gating, event dispatch |
 | `native/assets/ui-cef/index.html` (modify) | The screen's markup section |
 | `native/assets/ui-cef/css/first_run.css` (create) | Centred card over a full-bleed background |
@@ -47,15 +47,14 @@
 
 **Files:**
 - Create: `engine/ui/first_run_panel.py`
-- Modify: `engine/first_run.py` — delete `prompt_for_missing`, keep the rest
-- Modify: `tests/unit/test_first_run_picker.py` — delete the tests for the removed function
+- Modify: `engine/first_run.py` — add a "superseded" comment only; **no deletions** (see Step 4)
 - Test: `tests/unit/test_first_run_panel.py`
 
 **Interfaces:**
 - Consumes: `paths.validate_game_root`, `paths.validate_sdk_root`, `paths.resolve(picked=…)`, `Resolution.game/.sdk/.ok/.source(kind)`, `Validation.ok/.root/.hint`; `first_run._default_picker(title, message)`.
 - Produces: `FirstRunPanel(resolution, picker=None, resolver=None)` with `name == "first-run"`, `render_payload()`, `dispatch_event(action)`, `.outcome` (`None` while running, `"continue"` or `"quit"` when finished), `.resolution` (the current best `Resolution`).
 
-**Why `prompt_for_missing` goes:** it drives its own blocking loop over the picker, which is now the panel's job. Left in place it would be dead code that *can prompt*, quietly breaking the spec's "reachable from exactly one call site" guarantee.
+**`prompt_for_missing` is superseded but NOT removed here.** It drives its own blocking loop over the picker, which becomes the panel's job — but its only caller is `host_loop._resolve_paths_or_report()`, which Task 4 rewires. Deleting it in this task leaves the tree red for two whole tasks, which is exactly what happened on this plan's first attempt. Task 4 Step 5 removes it, once nothing calls it.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -434,11 +433,23 @@ def _default_resolver(picked: Dict[str, str]):
     return paths.resolve(picked=picked)
 ```
 
-- [ ] **Step 4: Delete `prompt_for_missing` and its tests**
+- [ ] **Step 4: Leave `prompt_for_missing` alone — it is deleted in Task 4**
 
-Remove `prompt_for_missing` from `engine/first_run.py`. Keep `_default_picker`, `_TITLES` if still referenced, and `_message_for` only if something still calls it — delete it too if nothing does. Do not delete `_default_picker`: the panel uses it.
+**Corrected 2026-09-07 after this task's first attempt left the tree red.**
+An earlier version of this step had you delete `prompt_for_missing` here.
+Do not: its only caller is `engine/host_loop.py`'s `_resolve_paths_or_report()`,
+which is not rewired until Task 4. Deleting it now breaks three tests in
+`tests/host/test_host_loop_first_run.py` with `AttributeError`, including the
+feature's most important guard, and Task 2's full gate would then go red for a
+reason that has nothing to do with Task 2.
 
-Remove from `tests/unit/test_first_run_picker.py` every test that calls `prompt_for_missing`. If that empties the file, delete the file. Keep any test that covers `_default_picker` (the getattr guard, the raising-picker guard) — move it into `tests/unit/test_first_run_panel.py` if the file goes.
+Add a short comment above `prompt_for_missing` saying it is superseded by
+`engine.ui.first_run_panel.FirstRunPanel` and is removed once `host_loop` stops
+calling it — so the next reader does not delete it again, and does not mistake
+it for a second live prompting path.
+
+`engine/first_run.py` is otherwise untouched by this task. `_default_picker`
+stays exactly as it is: your panel's default picker is that function.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -982,17 +993,37 @@ def _resolve_paths_or_report():
     return resolution
 ```
 
-- [ ] **Step 5: Restore the real event handler after the screen**
+- [ ] **Step 5: Delete `prompt_for_missing` — now that nothing calls it**
+
+You have just replaced its only caller. Remove `prompt_for_missing` from
+`engine/first_run.py`, along with `_message_for`, `_TITLES` and `_VALIDATORS`
+if nothing else references them once it is gone — check with a grep rather
+than assuming; `FirstRunPanel` has its own copies of the titles and validator
+table. **Keep `_default_picker`**: the panel's default picker is that function.
+
+Remove from `tests/unit/test_first_run_picker.py` every test that exercises
+`prompt_for_missing`. Keep the tests covering `_default_picker` — the getattr
+guard and the raising-picker guard — moving them into
+`tests/unit/test_first_run_panel.py` if that empties the file.
+
+This deletion belongs here and not earlier: leaving a second, blocking
+prompting path alive would break the spec's guarantee that the picker is
+reachable from exactly one call site, but deleting it before its caller is
+replaced leaves the tree red for two whole tasks.
+
+Confirm with `grep -rn "prompt_for_missing" engine/ tests/` — expect no output.
+
+- [ ] **Step 6: Restore the real event handler after the screen**
 
 The screen installs its own CEF event handler. `run()` installs the `PanelRegistry` handler later (search for `cef_set_event_handler`), which overwrites it — confirm by reading that this happens AFTER the screen returns, and say so in your report. If it does not, the screen's handler would survive into the game and swallow panel events.
 
-- [ ] **Step 6: Run the tests**
+- [ ] **Step 7: Run the tests**
 
 Run: `uv run pytest tests/host/test_host_loop_first_run.py tests/unit/test_first_run_panel.py tests/unit/test_paths_resolve.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 7: Bounded headless boot**
+- [ ] **Step 8: Bounded headless boot**
 
 ```bash
 timeout 25 ./build/dauntless 2>&1 | tail -20
@@ -1000,11 +1031,11 @@ timeout 25 ./build/dauntless 2>&1 | tail -20
 
 With the roots resolvable this must reach the game loop exactly as before — the screen should not appear. Paste the output into your report.
 
-- [ ] **Step 8: Run the full gate**
+- [ ] **Step 9: Run the full gate**
 
 Run: `scripts/check_tests.sh`, then `uv run pytest tests -q --tb=no` and record the raw tail. Compare passed / skipped / xfailed / failed against the baseline. A rise in skips is a regression.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```
 feat(paths): draw the first-run screen instead of bare dialogs
