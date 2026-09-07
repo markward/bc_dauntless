@@ -10,6 +10,7 @@ import pytest
 
 from engine import paths
 from engine.settings_store import SettingsStore
+from tests.helpers.source_guards import code_only as _code_only
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -349,10 +350,17 @@ def test_boot_resolution_is_wired_before_the_sdk_finder(monkeypatch):
     without booting a window), called from run() before _setup_sdk() --
     so the invariant is checked across both sources rather than
     run()'s alone.
+
+    Comments stripped first (see tests.helpers.source_guards.code_only):
+    a mutation testing round proved these two ordering checks were
+    foolable by an adversarial comment placed above the real call --
+    the sibling guards in tests/host/test_host_loop_first_run.py already
+    routed through the same helper (there, locally defined) and held.
     """
     import inspect
     from engine import host_loop
-    resolve_source = inspect.getsource(host_loop._resolve_paths_or_report)
+    resolve_source = _code_only(
+        inspect.getsource(host_loop._resolve_paths_or_report))
     # Anchored on the actual spelling used inside the helper (the module is
     # imported as `_paths`, not `paths`) -- a bare "paths.configure(" also
     # matches one character into "_paths.configure(", which is exactly the
@@ -361,8 +369,11 @@ def test_boot_resolution_is_wired_before_the_sdk_finder(monkeypatch):
     assert "_paths.configure(" in resolve_source, (
         "_resolve_paths_or_report() must call paths.configure()"
     )
-    run_source = inspect.getsource(host_loop.run)
-    resolve_call_at = run_source.index("_resolve_paths_or_report()")
+    run_source = _code_only(inspect.getsource(host_loop.run))
+    # Not "_resolve_paths_or_report()" -- the call now threads the CEF view
+    # dimensions and cef_ready through, so the closing paren no longer
+    # follows immediately.
+    resolve_call_at = run_source.index("_resolve_paths_or_report(")
     setup_at = run_source.index("_setup_sdk()")
     assert resolve_call_at < setup_at, (
         "_resolve_paths_or_report() must run before _setup_sdk() in host_loop.run()"
@@ -381,15 +392,46 @@ def test_run_returns_nonzero_when_paths_are_unresolved():
     still honours its None sentinel. A reviewer proved the gap by
     temporarily deleting run()'s `if _resolution is None: return 1` block
     and confirming every other first-run test still passed.
+
+    Comments stripped first (see tests.helpers.source_guards.code_only) --
+    see test_boot_resolution_is_wired_before_the_sdk_finder above for why.
     """
     import inspect
     from engine import host_loop
-    source = inspect.getsource(host_loop.run)
+    source = _code_only(inspect.getsource(host_loop.run))
     sentinel_at = source.index("_resolution is None")
     return_at = source.index("return 1")
     assert sentinel_at < return_at, (
         "run() must check `_resolution is None` and return a non-zero "
         "status right after calling _resolve_paths_or_report()"
+    )
+
+
+def test_the_unresolved_early_return_tears_down_cef_and_the_window():
+    """IMPORTANT 2 regression: before this branch reordered boot, the
+    `if _resolution is None: return 1` branch ran BEFORE r.init() and
+    cef_initialize(), so nothing was live yet and a bare `return 1` was
+    correct. After the reorder both are live at that point (a Quit on the
+    first-run screen, or the player closing the window while it is up,
+    both land here) -- so this early return must explicitly tear both
+    down. cef_shutdown()'s own contract is to run before the GL context
+    dies, so it must come before r.shutdown(), and both before the return.
+
+    Executing run() is not viable in a test (boots a renderer window), so
+    this inspects source like its neighbours. Comments stripped first (see
+    tests.helpers.source_guards.code_only).
+    """
+    import inspect
+    from engine import host_loop
+    source = _code_only(inspect.getsource(host_loop.run))
+    sentinel_at = source.index("_resolution is None")
+    cef_shutdown_at = source.index("r.cef_shutdown()", sentinel_at)
+    shutdown_at = source.index("r.shutdown()", sentinel_at)
+    return_at = source.index("return 1", sentinel_at)
+    assert sentinel_at < cef_shutdown_at < shutdown_at < return_at, (
+        "the unresolved-paths early return must call r.cef_shutdown() then "
+        "r.shutdown() before returning -- CEF and the GL window are both "
+        "live by this point in boot and neither is torn down otherwise"
     )
 
 
