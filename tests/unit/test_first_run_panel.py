@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from engine import paths
+from engine import first_run, paths
 from engine.ui.first_run_panel import FirstRunPanel
 
 
@@ -277,3 +277,28 @@ def test_a_cancelled_browse_after_a_rejection_leaves_the_rejection_in_place(inst
     assert after is None, "a cancelled browse changes nothing, so nothing re-renders"
     assert before["rows"][1]["status"] == "Not a Bridge Commander install"
     assert before["rows"][1]["hint"]
+
+
+def test_a_raising_binding_is_treated_as_no_picker(monkeypatch):
+    """FINDING 3: signature drift, a non-UTF-8 path, anything the binding
+    itself raises must collapse to the same "no picker" answer as a
+    cancel or a missing binding -- not an unhandled traceback out of
+    run(). Exercise _default_picker directly against a fake
+    _dauntless_host so the real native module is never touched.
+
+    Moved here from tests/unit/test_first_run_picker.py when
+    first_run.prompt_for_missing was deleted -- FirstRunPanel is
+    _default_picker's only caller now.
+    """
+    import sys
+    import types
+
+    fake_module = types.ModuleType("_dauntless_host")
+
+    def _raising_pick_folder(title, message):
+        raise RuntimeError("boom")
+
+    fake_module.pick_folder = _raising_pick_folder
+    monkeypatch.setitem(sys.modules, "_dauntless_host", fake_module)
+
+    assert first_run._default_picker("title", "message") is None

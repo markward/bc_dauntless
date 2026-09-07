@@ -10,7 +10,7 @@ import pytest
 from engine import first_run, host_loop, paths
 
 # Captured before any fixture gets a chance to monkeypatch paths.persist,
-# so test_a_validated_pick_persists_even_when_a_later_pick_is_cancelled can
+# so test_a_partial_screen_result_persists_even_when_boot_still_fails can
 # reinstate the REAL implementation (pointed at a FakeStore) instead of the
 # no-op _nothing_resolves_by_accident installs for every other test here.
 _REAL_PERSIST = paths.persist
@@ -52,10 +52,11 @@ def _nothing_resolves_by_accident(monkeypatch):
     fake_store = FakeStore()
     real_resolve = paths.resolve
 
-    # The keyword names must match what first_run.prompt_for_missing
-    # actually passes -- it calls paths.resolve(argv=, env=, store=,
-    # picked=), so a replacement that renames `store` raises TypeError
-    # rather than running the branch under test.
+    # The keyword names must match what _resolve_paths_or_report and the
+    # first-run screen's resolver actually pass -- both call
+    # paths.resolve(argv=, env=, store=, picked=), so a replacement that
+    # renames `store` raises TypeError rather than running the branch under
+    # test.
     def resolve(argv=None, env=None, store=None, picked=None):
         return real_resolve(argv=[], env={}, store=fake_store, picked=picked)
 
@@ -65,17 +66,33 @@ def _nothing_resolves_by_accident(monkeypatch):
     return fake_store
 
 
-def test_unresolved_paths_prompt_and_then_boot(monkeypatch, install):
+def test_unresolved_paths_hand_off_to_the_first_run_screen(monkeypatch, install):
+    """When paths.resolve() comes back unresolved, _resolve_paths_or_report
+    hands off to the first-run screen and boots on whatever it comes back
+    with. The screen's own picker-driving mechanics -- prompting per row,
+    skipping an already-resolved one, reporting what was wrong -- are
+    FirstRunPanel's job and are covered at that layer
+    (tests/unit/test_first_run_panel.py), plus end-to-end through the real
+    pump loop (tests/host/test_host_loop_unit.py). This test is the WIRING:
+    the screen is consulted on failure, and gets the unresolved Resolution.
+    """
     game, sdk = install
-    answers = [str(game), str(sdk)]
-    monkeypatch.setattr(first_run, "_default_picker",
-                        lambda title, message: answers.pop(0))
+    resolved = paths.resolve(argv=[], env={}, store=FakeStore(),
+                              picked={"game": str(game), "sdk": str(sdk)})
+    seen = []
+
+    def fake_screen(resolution, **kwargs):
+        seen.append(resolution)
+        return resolved
+
+    monkeypatch.setattr(host_loop, "_run_first_run_screen", fake_screen)
 
     result = host_loop._resolve_paths_or_report()
 
     assert result is not None and result.ok
     assert result.source("game") == "picker"
-    assert answers == []
+    assert len(seen) == 1 and not seen[0].ok, (
+        "the screen must be handed the UNRESOLVED resolution")
 
 
 def test_no_picker_prints_the_diagnostic_and_stops_boot(monkeypatch, capsys):
@@ -91,16 +108,20 @@ def test_no_picker_prints_the_diagnostic_and_stops_boot(monkeypatch, capsys):
     assert "--game-dir" in printed
 
 
-def test_a_validated_pick_persists_even_when_a_later_pick_is_cancelled(
+def test_a_partial_screen_result_persists_even_when_boot_still_fails(
         monkeypatch, install, _nothing_resolves_by_accident):
-    """FINDING 1 regression test: a validated pick must reach the STORE,
-    not just the in-memory Resolution, even when boot still fails overall.
+    """FINDING 1 regression test: a root the first-run screen located must
+    reach the STORE, not just the in-memory Resolution, even when boot still
+    fails overall -- e.g. the player located the game folder by hand, then
+    quit before finding the sdk one.
 
     _resolve_paths_or_report() used to call persist() only after the
-    `if not resolution.ok: return None` branch, so a player who located
-    their BC game folder by hand but cancelled the sdk picker got nothing
+    `if not resolution.ok: return None` branch, so that player got nothing
     written -- next launch asked for BOTH roots again. persist() must run
-    on this partial-resolution path too.
+    on this partial-resolution path too. The screen itself is stubbed out
+    here (its picker-driving mechanics are FirstRunPanel's job, covered in
+    tests/unit/test_first_run_panel.py) so this test is purely about what
+    _resolve_paths_or_report does with a partial result.
     """
     game, _sdk = install
     fake_store = _nothing_resolves_by_accident
@@ -114,11 +135,13 @@ def test_a_validated_pick_persists_even_when_a_later_pick_is_cancelled(
         paths, "persist",
         lambda resolution, store=None: _REAL_PERSIST(resolution, store=fake_store))
 
-    # Answer the game picker, then cancel the sdk one.
-    monkeypatch.setattr(
-        first_run, "_default_picker",
-        lambda title, message: (
-            str(game) if title == first_run._TITLES["game"] else None))
+    # The screen located "game" and returned with "sdk" still missing --
+    # the shape a quit-after-one-pick leaves behind.
+    partial = paths.resolve(argv=[], env={}, store=FakeStore(),
+                             picked={"game": str(game)})
+    assert partial.game == game and not partial.ok
+    monkeypatch.setattr(host_loop, "_run_first_run_screen",
+                         lambda resolution, **kwargs: partial)
 
     result = host_loop._resolve_paths_or_report()
 
@@ -128,7 +151,31 @@ def test_a_validated_pick_persists_even_when_a_later_pick_is_cancelled(
         "asked for it again next launch")
     assert fake_store.get("paths", "game") == str(game)
     assert not fake_store.has("paths", "sdk"), (
-        "the cancelled sdk pick must not be written")
+        "the missing sdk root must not be written")
+
+
+def test_the_screen_suppresses_the_3d_scene_while_it_runs(monkeypatch):
+    """No asset may load while the game root is unset, so the scene pass is
+    off for the screen's whole lifetime and back on before boot continues."""
+    import inspect
+    from engine import host_loop
+    source = inspect.getsource(host_loop._run_first_run_screen)
+    on_at = source.index("set_hologram_only_mode(True")
+    off_at = source.index("set_hologram_only_mode(False")
+    assert on_at < off_at, "the scene pass must be re-enabled after the screen"
+
+
+def test_the_screen_pushes_its_first_payload_from_the_load_end_handler():
+    """A push before the page's scripts have run is silently dropped in this
+    project, which has caused real bugs. The screen's initial state must go
+    out from the document-load handler, not at cef_initialize time."""
+    import inspect
+    from engine import host_loop
+    source = inspect.getsource(host_loop._run_first_run_screen)
+    assert "invalidate" in source, (
+        "the panel must be invalidated on document load so its first payload "
+        "is emitted once the page can actually receive it"
+    )
 
 
 def _code_only(src: str) -> str:

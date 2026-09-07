@@ -16,7 +16,6 @@ import os as _os_mod
 from engine import renderer as r
 from engine import host_io
 from engine import paths as _paths
-from engine import first_run
 from engine.appc.ship_iter import (
     iter_set_objects as _iter_set_objects,
     iter_ships as _iter_ships,
@@ -6773,27 +6772,107 @@ def record_course_selection(module) -> None:
         dev_mode.log_swallowed("announce course set", _e)
 
 
+def _run_first_run_screen(resolution, resolver=None):
+    """Draw the "Select Bridge Commander Install" screen until the player
+    continues or quits. Returns the best Resolution reached.
+
+    r.frame() already pumps CEF and composites it, so this loop is only:
+    emit whatever the panel has to say, draw, check the outcome.
+
+    The 3D scene pass is OFF for the screen's whole lifetime. The game root
+    is still unset here, so a scene pass could ask the renderer to resolve
+    an asset path against the literal default -- hologram-only mode clears
+    to a solid colour and skips the space and bridge passes entirely, which
+    makes that impossible rather than unlikely.
+
+    `resolver` is threaded in from _resolve_paths_or_report(), bound to the
+    same argv/env/store it used for the resolve() that got us here -- so a
+    `--game-dir` given at launch is still the answer a re-resolve sees after
+    the player picks the other root, rather than being silently outranked by
+    whatever FirstRunPanel's own default (a fresh sys.argv/os.environ/
+    SettingsStore read) would produce. Left None, FirstRunPanel falls back
+    to that default itself, which is fine for a caller with no boot
+    context (e.g. a test constructing the screen directly).
+    """
+    from engine.ui.first_run_panel import FirstRunPanel
+
+    try:
+        import _dauntless_host as _h
+    except ImportError:
+        _h = None  # bindings module not built; skip input handling.
+
+    panel = FirstRunPanel(resolution, resolver=resolver)
+
+    _set_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
+    if _set_handler is not None:
+        def _dispatch(event: str) -> None:
+            prefix = panel.name + "/"
+            if event.startswith(prefix):
+                panel.dispatch_event(event[len(prefix):])
+        _set_handler(_dispatch)
+
+    r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
+    try:
+        # The page's scripts have not necessarily run yet, and a push before
+        # they do is dropped. invalidate() forces a re-emit, and the loop
+        # below re-emits every frame the snapshot changes, so the first
+        # payload the page CAN receive is the first one it does.
+        panel.invalidate()
+        while not r.should_close() and panel.outcome is None:
+            script = panel.render_payload()
+            if script is not None and _h is not None:
+                _h.cef_execute_javascript(script)
+            r.frame()
+    finally:
+        r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
+        if _h is not None:
+            try:
+                _h.cef_execute_javascript("setFirstRun(null);")
+            except Exception as _e:
+                dev_mode.log_swallowed("first-run screen teardown", _e)
+
+    return panel.resolution
+
+
 def _resolve_paths_or_report():
     """Resolve the BC roots, asking the player if they are not configured.
 
     Returns the Resolution on success. Returns None after printing the
     full diagnostic, which means run() should return 1.
 
-    The prompt sits behind this one call site on purpose: paths.current()
-    is reached lazily by tools/ scripts, pytest and CI, none of which can
-    dismiss a modal dialog. A picker reachable from the library would hang
-    them, so the library never has one.
+    The screen is reachable from here and nowhere else: paths.current() is
+    reached lazily by tools/ scripts, pytest and CI, none of which can drive
+    a UI. A prompt reachable from the library would hang them, so the
+    library never has one.
+
+    argv/env/store are captured ONCE here and threaded explicitly into both
+    the initial resolve() and the screen's resolver, rather than letting
+    each call re-derive its own defaults (sys.argv[1:] / os.environ / a
+    freshly-loaded SettingsStore) -- a `--game-dir` given at launch must
+    still be there for every re-resolve the screen does, not just the first.
     """
-    resolution = _paths.resolve()
+    import os as _os
+    import sys as _sys
+    from engine.settings_store import SettingsStore
+
+    argv = _sys.argv[1:]
+    env = _os.environ
+    store = SettingsStore()
+    store.load()
+
+    resolution = _paths.resolve(argv=argv, env=env, store=store)
     if not resolution.ok:
-        resolution = first_run.prompt_for_missing(resolution)
+        resolution = _run_first_run_screen(
+            resolution,
+            resolver=lambda picked: _paths.resolve(
+                argv=argv, env=env, store=store, picked=picked),
+        )
     _paths.configure(resolution)
-    # persist() only ever writes VALID, cli/picker-sourced roots, so a partial
-    # resolution stores the half that validated and nothing else -- the player
-    # located a BC install by hand, and the next launch must not ask again.
-    _paths.persist(resolution)
+    # Above the early return on purpose: a root the player located by hand
+    # is stored even if they quit before finding the other one, so the next
+    # launch asks only for what is still missing.
+    _paths.persist(resolution, store=store)
     if not resolution.ok:
-        import sys as _sys
         print(_paths.describe_failure(resolution), file=_sys.stderr)
         return None
     return resolution
