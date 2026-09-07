@@ -86,6 +86,7 @@
 #include <assets/texture.h>
 #include <nif/file.h>
 #include <nif/scene_camera.h>
+#include <platform/folder_picker.h>
 
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -1684,6 +1685,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Absolute path to the BC game install. Every relative asset path "
           "the renderer resolves is joined onto this. Default is the literal "
           "\"game\" (cwd-relative). Callable more than once.");
+
+    m.def("pick_folder",
+          [](const std::string& title, const std::string& message)
+              -> std::optional<std::string> {
+              // The panel is modal and blocks for as long as the player
+              // takes to answer. Holding the GIL across that would freeze
+              // every other Python thread for the duration.
+              py::gil_scoped_release release;
+              return dauntless::platform::pick_folder(title, message);
+          },
+          py::arg("title"), py::arg("message"),
+          "Show a native folder chooser and return the chosen absolute "
+          "path. Returns None when the player cancels -- and also when "
+          "this platform has no implementation, which callers must treat "
+          "identically. title names the window; message is the "
+          "explanatory line inside the panel.");
 
     // Introspection for tests/host/test_init_resets_frame_state.py: everything
     // reset_frame_state() clears, reduced to a count or a flag. Deliberately

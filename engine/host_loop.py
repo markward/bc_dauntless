@@ -6971,6 +6971,175 @@ def record_course_selection(module) -> None:
         dev_mode.log_swallowed("announce course set", _e)
 
 
+def _run_first_run_screen(resolution, resolver=None, view_w=1280, view_h=720):
+    """Draw the "Select Bridge Commander Install" screen until the player
+    continues or quits. Returns the best Resolution reached.
+
+    r.frame() already pumps CEF and composites it, so this loop is only:
+    emit whatever the panel has to say, forward mouse input, draw, check
+    the outcome.
+
+    The 3D scene pass is OFF for the screen's whole lifetime. The game root
+    is still unset here, so a scene pass could ask the renderer to resolve
+    an asset path against the literal default -- hologram-only mode clears
+    to a solid colour and skips the space and bridge passes entirely, which
+    makes that impossible rather than unlikely.
+
+    `resolver` is threaded in from _resolve_paths_or_report(), bound to the
+    same argv/env/store it used for the resolve() that got us here -- so a
+    `--game-dir` given at launch is still the answer a re-resolve sees after
+    the player picks the other root, rather than being silently outranked by
+    whatever FirstRunPanel's own default (a fresh sys.argv/os.environ/
+    SettingsStore read) would produce. Left None, FirstRunPanel falls back
+    to that default itself, which is fine for a caller with no boot
+    context (e.g. a test constructing the screen directly).
+
+    `view_w`/`view_h` are the CEF OSR view's logical-pixel dimensions --
+    the same _CEF_VIEW_W/_CEF_VIEW_H run() passes to cef_initialize().
+    Threaded in rather than re-derived so the mouse-forwarding math below
+    matches the view CEF was actually initialised with, the same way
+    run()'s own pause-menu mouse-forwarding uses its copies of those two
+    locals.
+    """
+    from engine.ui.first_run_panel import FirstRunPanel
+
+    try:
+        import _dauntless_host as _h
+    except ImportError:
+        _h = None  # bindings module not built; skip input handling.
+
+    panel = FirstRunPanel(resolution, resolver=resolver)
+
+    _set_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
+    if _set_handler is not None:
+        def _dispatch(event: str) -> None:
+            prefix = panel.name + "/"
+            if event.startswith(prefix):
+                panel.dispatch_event(event[len(prefix):])
+        _set_handler(_dispatch)
+
+    # CreateBrowser is asynchronous (~340ms measured -- see cef_lifecycle.cc's
+    # execute_javascript()), and every cef_execute_javascript push is dropped
+    # silently until the page's own <script> tags have run. Without this
+    # handler the screen's only payload goes out on frame 1, is dropped, and
+    # nothing ever pushes again -- render_payload() diffs against its own
+    # cache and the snapshot never changes on its own. The load-end handler
+    # is what actually gets a payload onto the page: it fires once the
+    # browser reports the document loaded, and panel.invalidate() there
+    # drops the cache so the very next render_payload() re-emits into a page
+    # that can now receive it.
+    _set_load_end = getattr(_h, "cef_set_load_end_handler", None) if _h else None
+    if _set_load_end is not None:
+        _set_load_end(panel.invalidate)
+
+    _cef_send_mouse_move = getattr(_h, "cef_send_mouse_move", None) if _h else None
+    _cef_send_mouse_click = getattr(_h, "cef_send_mouse_click", None) if _h else None
+
+    r.set_hologram_only_mode(True, (0.0, 0.0, 0.0))
+    try:
+        # Also invalidated by the load-end handler above once the page
+        # actually loads (which may land before or after this first
+        # iteration runs); kept here too since a fresh panel's _last_pushed
+        # already starts None, and FirstRunPanel is a public class other
+        # callers may hand a non-fresh one.
+        panel.invalidate()
+        while not r.should_close() and panel.outcome is None:
+            script = panel.render_payload()
+            if script is not None and _h is not None:
+                _h.cef_execute_javascript(script)
+            # Forward mouse move + left-click edges so Browse/Continue/Quit
+            # are actually clickable. Neither the spec nor the plan mention
+            # this: run()'s main loop only ever forwards mouse to CEF from
+            # INSIDE the game loop (pause menu, crew menus, ...), and this
+            # screen runs its own loop before that one exists. Mirrors
+            # run()'s pause-menu forwarding block (_forward_mouse_to_cef +
+            # the mouse_button_pressed/released edge pair), the only other
+            # place this project turns host cursor state into CEF input.
+            if _cef_send_mouse_move is not None:
+                _mx, _my = _forward_mouse_to_cef(
+                    _h, _cef_send_mouse_move, view_w, view_h)
+                if _cef_send_mouse_click is not None:
+                    if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
+                        _cef_send_mouse_click(_mx, _my, 0, True)
+                    if host_io.mouse_button_released(_h.keys.MOUSE_BUTTON_LEFT):
+                        _cef_send_mouse_click(_mx, _my, 0, False)
+            r.frame()
+    finally:
+        # Unguarded deliberately, unlike the JS call below: this only ever
+        # assigns two native globals (g_hologram_only_mode, g_hologram_bg),
+        # with no browser/CEF state to be torn down or absent -- there is no
+        # failure mode for it to swallow.
+        r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
+        if _set_load_end is not None:
+            # Replace rather than leave bound to this finished panel: run()
+            # registers its OWN load-end handler later (once the game loop
+            # exists), which would overwrite this anyway, but a bare no-op
+            # here means there is no window -- however unlikely -- where a
+            # reload could call back into a panel whose screen has ended.
+            _set_load_end(lambda: None)
+        if _h is not None:
+            try:
+                _h.cef_execute_javascript("setFirstRun(null);")
+            except Exception as _e:
+                dev_mode.log_swallowed("first-run screen teardown", _e)
+
+    return panel.resolution
+
+
+def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
+    """Resolve the BC roots, asking the player if they are not configured.
+
+    Returns the Resolution on success. Returns None after printing the
+    full diagnostic, which means run() should return 1.
+
+    The screen is reachable from here and nowhere else: paths.current() is
+    reached lazily by tools/ scripts, pytest and CI, none of which can drive
+    a UI. A prompt reachable from the library would hang them, so the
+    library never has one.
+
+    argv/env/store are captured ONCE here and threaded explicitly into both
+    the initial resolve() and the screen's resolver, rather than letting
+    each call re-derive its own defaults (sys.argv[1:] / os.environ / a
+    freshly-loaded SettingsStore) -- a `--game-dir` given at launch must
+    still be there for every re-resolve the screen does, not just the first.
+
+    `cef_ready` is run()'s own cef_initialize() return value. Every cef_*
+    binding is a no-op stub in a `--no-cef` build, and cef_initialize()
+    itself returns False when CEF is enabled but failed to come up -- in
+    either case there is no live browser to draw the screen into, and
+    pumping a loop that can never receive a click or a keypress would spin
+    forever on a black window with no way out. Skip straight to the same
+    describe_failure() + non-zero return a picker-less platform already
+    gets, rather than hand off to a screen that cannot work.
+    """
+    import os as _os
+    import sys as _sys
+    from engine.settings_store import SettingsStore
+
+    argv = _sys.argv[1:]
+    env = _os.environ
+    store = SettingsStore()
+    store.load()
+
+    resolution = _paths.resolve(argv=argv, env=env, store=store)
+    if not resolution.ok and cef_ready:
+        resolution = _run_first_run_screen(
+            resolution,
+            resolver=lambda picked: _paths.resolve(
+                argv=argv, env=env, store=store, picked=picked),
+            view_w=view_w, view_h=view_h,
+        )
+    _paths.configure(resolution)
+    # Above the early return on purpose: a root the player located by hand
+    # is stored even if they quit before finding the other one, so the next
+    # launch asks only for what is still missing.
+    _paths.persist(resolution, store=store)
+    if not resolution.ok:
+        print(_paths.describe_failure(resolution), file=_sys.stderr)
+        return None
+    return resolution
+
+
 def run(mission_name: Optional[str] = None,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
@@ -7011,29 +7180,6 @@ def run(mission_name: Optional[str] = None,
 
     boot_quickbattle = mission_name is None
 
-    # Resolve where BC content lives before anything asks for any of it. This
-    # must precede the SDK setup call below: the SDK meta-path finder calls
-    # paths.sdk_scripts(), so configuring afterwards would be too late.
-    #
-    # persist() writes only a CLI-sourced, valid root -- an env var is
-    # ephemeral by contract and a typo never becomes the stored answer.
-    _resolution = _paths.resolve()
-    _paths.configure(_resolution)
-    if not _resolution.ok:
-        import sys as _sys
-        print(_paths.describe_failure(_resolution), file=_sys.stderr)
-        return 1
-    _paths.persist(_resolution)
-
-    _setup_sdk()
-
-    import App
-    from engine.core.loop import GameLoop
-    # Hoisted out of the per-tick loop body — imported once per run()
-    # rather than every frame. Both are only used inside the loop below.
-    from engine.appc import collisions
-    from engine.appc import camera_shake
-
     r.init(1280, 720, "open_stbc")
     # Verify the native module exposes every binding the renderer façade calls.
     # Catches a stale/incomplete .so at boot (a recurring hazard — host_bindings
@@ -7051,12 +7197,6 @@ def run(mission_name: Optional[str] = None,
     # `keys` submodule diverging from engine.input_map's table.
     host_io.validate_bindings(strict=dev_mode.is_enabled())
     host_io.verify_keys()
-    # The renderer joins its own relative asset paths onto this. Set right
-    # after both façade validations — set_game_root is in _REQUIRED_BINDINGS,
-    # and validate_bindings() exists precisely to turn a stale/incomplete .so
-    # into a clear diagnostic instead of a bare AttributeError here — and
-    # before any pass constructs: their texture constants are relative now.
-    r.set_game_root(str(_paths.game_root()))
     # Initialise the CEF UI overlay. Resolves index.html relative
     # to the project root (two parents up from this file). _CEF_VIEW_W/H
     # are reused by the pause-menu mouse-forwarding path to scale
@@ -7076,15 +7216,61 @@ def run(mission_name: Optional[str] = None,
             _cef_dsf = float(_fb_w) / float(_win_w)
     except Exception as _e:
         dev_mode.log_swallowed("CEF device-pixel-ratio probe", _e)
-    if not r.cef_initialize(_CEF_VIEW_W, _CEF_VIEW_H, str(_cef_html),
-                            device_scale_factor=_cef_dsf):
+    _cef_ready = r.cef_initialize(_CEF_VIEW_W, _CEF_VIEW_H, str(_cef_html),
+                                  device_scale_factor=_cef_dsf)
+    if not _cef_ready:
         # Non-fatal in builds where CEF is disabled (the stub returns False).
         # If CEF is enabled and initialize failed, the binary will print the
         # framework-load error to stderr — surface it but keep running so the
-        # 3D scene still renders.
+        # 3D scene still renders (once the roots below are resolved some
+        # other way; see _resolve_paths_or_report's cef_ready gate for the
+        # case where they are not).
         import sys as _sys
         print("[host_loop] cef_initialize returned False — overlay disabled",
               file=_sys.stderr)
+
+    # Resolve where BC content lives. This runs AFTER cef_initialize so the
+    # first-run screen has a live browser to draw into when the roots are
+    # not configured -- and still BEFORE the SDK setup call below, because
+    # the SDK meta-path finder calls paths.sdk_scripts(). _cef_ready is
+    # threaded through so a build/init with no live browser falls straight
+    # to the describe_failure() diagnostic instead of pumping a screen that
+    # can never receive a click.
+    #
+    # Verified safe to boot this far unresolved: CEF's page is project
+    # content, not BC content, and window/pipeline init reads no game
+    # assets.
+    _resolution = _resolve_paths_or_report(_CEF_VIEW_W, _CEF_VIEW_H,
+                                           cef_ready=_cef_ready)
+    if _resolution is None:
+        # CEF and the GL window are both live at this point (cef_initialize
+        # and r.init() above), and cef_shutdown()'s own contract is to run
+        # before the GL context dies -- so both must come down explicitly
+        # on this early exit, not left dangling. The try/finally a few
+        # lines down that tears these down for every OTHER exit path does
+        # not cover this one: it wraps the SDK/controller/game-loop setup
+        # that starts only once resolution has already succeeded.
+        r.cef_shutdown()
+        r.shutdown()
+        return 1
+
+    # The renderer joins its own relative asset paths onto this. Set right
+    # after resolution -- set_game_root is in _REQUIRED_BINDINGS, and
+    # validate_bindings() (run above, at window init) exists precisely to
+    # turn a stale/incomplete .so into a clear diagnostic instead of a bare
+    # AttributeError here -- and before any pass constructs: their texture
+    # constants are relative now.
+    r.set_game_root(str(_paths.game_root()))
+
+    _setup_sdk()
+
+    import App
+    from engine.core.loop import GameLoop
+    # Hoisted out of the per-tick loop body — imported once per run()
+    # rather than every frame. Both are only used inside the loop below.
+    from engine.appc import collisions
+    from engine.appc import camera_shake
+
     try:
         # Controller owns the renderer, the nif-handle cache, and the
         # current mission session. _MissionLoader.load() runs the

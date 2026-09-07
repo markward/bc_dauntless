@@ -170,7 +170,7 @@ class Resolution:
     """
     game: Optional[Path]
     sdk: Optional[Path]
-    game_source: str            # "cli" | "env" | "settings" | "project" | ""
+    game_source: str            # "picker" | "cli" | "env" | "settings" | "project" | ""
     sdk_source: str
     game_validation: Optional[Validation]
     sdk_validation: Optional[Validation]
@@ -208,7 +208,7 @@ def _flag_value(argv, flag: str) -> str | object:
     return _UNSET
 
 
-def _candidate(kind: str, argv, env, store):
+def _candidate(kind: str, argv, env, store, picked=None):
     """The highest-precedence SET source for one root, as (value, source).
 
     Returns (None, "") when nothing is set. A set-but-wrong source is
@@ -218,6 +218,16 @@ def _candidate(kind: str, argv, env, store):
     "Set" is deliberately NOT the same test at every tier -- see each
     branch below for why.
     """
+    # Picker: a folder the player chose in the first-run dialog, and the
+    # most recent explicit human act there is. It outranks the CLI tier
+    # BECAUSE of the set-wins rule, not in spite of it: an invalid
+    # --game-dir stays "set", so anything lower would lose to the very
+    # flag the dialog exists to correct.
+    if picked is not None:
+        chosen = picked.get(kind)
+        if chosen is not None:
+            return chosen, "picker"
+
     # CLI: present in argv -> SET, even when the value is "". Typing the
     # flag is an explicit act at launch (`--game-dir="$UNSET_VAR"` with the
     # shell var unset still puts `--game-dir=` on argv); treating that the
@@ -255,9 +265,13 @@ def _candidate(kind: str, argv, env, store):
     return None, ""
 
 
-def resolve(argv=None, env=None, store=None) -> Resolution:
+def resolve(argv=None, env=None, store=None, picked=None) -> Resolution:
     """Resolve both roots. PURE: no globals, no writes, no ambient state
     beyond the defaults for argv/env/store.
+
+    `picked` is the first-run dialog's answer -- a dict keyed "game" /
+    "sdk" -- and outranks every other source. It is a plain argument, not
+    ambient state, so this function still never prompts and never blocks.
 
     settings_store is imported HERE rather than at module scope: it imports
     engine.ui.configuration_panel, and this module is imported by
@@ -278,7 +292,7 @@ def resolve(argv=None, env=None, store=None) -> Resolution:
     sources: dict = {}
     validations: dict = {}
     for kind in ("game", "sdk"):
-        value, source = _candidate(kind, argv, env, store)
+        value, source = _candidate(kind, argv, env, store, picked)
         sources[kind] = source
         if value is None:
             roots[kind] = None
@@ -296,12 +310,14 @@ def resolve(argv=None, env=None, store=None) -> Resolution:
 
 
 def persist(resolution: Resolution, store=None) -> None:
-    """Write CLI-sourced roots to settings.json [paths].
+    """Write CLI- and picker-sourced roots to settings.json [paths].
 
-    Only CLI, and only when valid. An env var is ephemeral by contract, so
-    `DAUNTLESS_SDK_DIR=/fixtures pytest` cannot mutate a real config; and a
-    typo never becomes the stored answer, which would make the NEXT launch
-    fail for a reason the player has already forgotten about.
+    Only these two, and only when valid. An env var is ephemeral by
+    contract, so `DAUNTLESS_SDK_DIR=/fixtures pytest` cannot mutate a real
+    config; and a typo never becomes the stored answer, which would make
+    the NEXT launch fail for a reason the player has already forgotten
+    about. A picked root is stored for the opposite reason: the whole
+    point of asking was to not ask again.
     """
     if store is None:
         from engine.settings_store import SettingsStore
@@ -309,7 +325,7 @@ def persist(resolution: Resolution, store=None) -> None:
         store.load()
     for kind in ("game", "sdk"):
         root = resolution.game if kind == "game" else resolution.sdk
-        if root is not None and resolution.source(kind) == "cli":
+        if root is not None and resolution.source(kind) in ("cli", "picker"):
             store.set("paths", kind, str(root))
 
 
