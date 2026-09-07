@@ -61,13 +61,16 @@
     <!-- First-run overlay (production). Shown when BC's content roots can't
          be found at launch; the player locates Game/SDK folders here.
          setFirstRun(payload) drives state where payload is
-         {title, rows: [{kind, label, path, status, hint, ok}], can_continue}
-         or null to hide. Row Browse buttons fire
+         {title, rows: [{kind, label, path, status, hint, ok, state}],
+         can_continue} or null to hide. `state` is one of "ok"/"bad"/"unset"
+         -- the page keys the status line's colour off it directly, since
+         `path` alone can't distinguish a rejected root from an untouched
+         one (both are ""). Row Browse buttons fire
          dauntlessEvent('first-run/browse:<kind>'); Continue and Quit fire
          'first-run/continue' and 'first-run/quit'. The page holds no logic:
          engine/ui/first_run_panel.py is the state machine.
          Spec: .superpowers/sdd/2026-09-07-first-run-screen/ -->
-    <section id="first-run" hidden>
+    <section id="first-run">
         <div class="fr-backdrop"></div>
         <div class="fr-card">
             <h1 class="fr-title" id="fr-title"></h1>

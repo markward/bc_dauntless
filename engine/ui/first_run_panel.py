@@ -85,16 +85,24 @@ class FirstRunPanel(Panel):
         # just because a LATER browse of the same row picked something bad.
         # The valid root wins the status; the rejection still surfaces, as
         # the hint, so the bad click doesn't look like it did nothing.
+        #
+        # `state` is the page's ONLY signal for which colour to render --
+        # deliberately separate from `path`, which is "" for both an
+        # untouched row and a rejected one and so cannot carry this
+        # distinction itself. A satisfied row is always "ok", even with a
+        # pending rejection hint attached: the row is fine, the last click
+        # was not.
         root = self._root_for(kind)
         if root is not None:
             hint = ""
             if kind in self._rejected:
                 hint = ("That folder is not a Bridge Commander install "
                         "-- keeping the current one.")
-            return {"status": _FOUND, "hint": hint, "ok": True}
+            return {"status": _FOUND, "hint": hint, "ok": True, "state": "ok"}
         if kind in self._rejected:
-            return {"status": _NOT_AN_INSTALL, "hint": self._rejected[kind], "ok": False}
-        return {"status": _UNSET, "hint": "", "ok": False}
+            return {"status": _NOT_AN_INSTALL, "hint": self._rejected[kind],
+                    "ok": False, "state": "bad"}
+        return {"status": _UNSET, "hint": "", "ok": False, "state": "unset"}
 
     def _snapshot(self) -> dict:
         rows = []

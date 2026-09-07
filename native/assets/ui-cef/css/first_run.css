@@ -1,10 +1,15 @@
 #first-run {
+    /* Hidden by default; Python's setFirstRun sets style.display = 'flex' /
+       'none' both ways (an inline style wins the cascade over the
+       user-agent [hidden] rule -- see css/global.css's #pause-menu and
+       #mission-picker, which use the same idiom). */
+    display: none;
     position: fixed;
     inset: 0;
-    display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 100;
+    z-index: 300;  /* above #mission-picker (z-index 200), the highest
+                      existing tier -- this screen blocks everything else */
 }
 
 /* Full-bleed background, with a starfield-ish gradient BEHIND it so a

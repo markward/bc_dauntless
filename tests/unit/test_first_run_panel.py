@@ -221,6 +221,7 @@ def test_a_bad_browse_on_an_already_satisfied_row_keeps_the_valid_root(install):
     assert row["path"] == str(sdk)        # the OLD valid root, not destroyed
     assert row["hint"]                    # the bad click still says something
     assert payload["can_continue"] is True
+    assert row["state"] == "ok"           # the row is fine; the LAST CLICK wasn't
 
 
 def test_a_bad_browse_on_an_unsatisfied_row_still_reports_not_an_install(install):
@@ -238,6 +239,29 @@ def test_a_bad_browse_on_an_unsatisfied_row_still_reports_not_an_install(install
     assert row["path"] == ""
     assert row["hint"]
     assert payload["can_continue"] is False
+
+
+def test_row_state_pins_ok_bad_and_unset(install):
+    """`state` is the page's ONLY signal for the status colour, because
+    `path` is "" for both an untouched row and a rejected one and so can't
+    tell them apart on its own. Pin all three values across one row's
+    lifecycle plus the sibling row staying untouched throughout.
+    """
+    game, sdk = install
+    panel = _panel(RecordingPicker([str(sdk / "Build"), str(game)]))
+
+    payload = _payload(panel)
+    assert payload["rows"][0]["state"] == "unset"   # never touched
+    assert payload["rows"][1]["state"] == "unset"
+
+    panel.dispatch_event("browse:sdk")              # invalid pick
+    payload = _payload(panel)
+    assert payload["rows"][1]["state"] == "bad"     # rejected, never valid
+    assert payload["rows"][0]["state"] == "unset"   # still untouched
+
+    panel.dispatch_event("browse:game")             # valid pick
+    payload = _payload(panel)
+    assert payload["rows"][0]["state"] == "ok"      # satisfied
 
 
 def test_a_cancelled_browse_after_a_rejection_leaves_the_rejection_in_place(install):
