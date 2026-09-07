@@ -160,7 +160,39 @@ protected:
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, kW, kH);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        // Stencil starts at 0 = "no hull was cut here", which BLOCKS the scoop.
+        // A test that wants the scoop drawn must call mark_hull_cut() first.
+        glStencilMask(0xFF);
+        glClearStencil(0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    }
+
+    // Stand in for FrameSubmitter::submit_carve_stencil: stamp the whole frame
+    // as "hull was cut away here" so the scoop's stencil test passes. The
+    // production path stamps only the cut region; a test that isn't about the
+    // stencil gate wants it out of the way.
+    void mark_hull_cut() {
+        glStencilMask(0xFF);
+        glClearStencil(1);
+        glClear(GL_STENCIL_BUFFER_BIT);
+        glClearStencil(0);
+    }
+
+    // Does this framebuffer even have a stencil plane? Without one GL treats
+    // the stencil test as ALWAYS PASSING, which would make the gate tests pass
+    // vacuously — precisely how this suite stayed green before the gate existed.
+    static bool has_stencil() {
+        // GL_STENCIL_BITS is gone in core profile. On the DEFAULT framebuffer
+        // the attachment enum is the bare GL_STENCIL — the mirror of the FBO
+        // case, where it must be GL_STENCIL_ATTACHMENT instead (see
+        // HdrTargetTest.CarriesAStencilPlane). Using the wrong one of the pair
+        // raises INVALID_ENUM and quietly reports 0 bits.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        GLint bits = 0;
+        glGetFramebufferAttachmentParameteriv(
+            GL_FRAMEBUFFER, GL_STENCIL,
+            GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &bits);
+        return bits > 0;
     }
 };
 
@@ -196,6 +228,7 @@ TEST_F(BreachPassGLTest, SolidFillDrawsScoopInterior) {
 
     scenegraph::Camera cam = cam_looking_at_origin();
 
+    mark_hull_cut();   // the scoop draws only where hull was cut away
     pass.draw_instance(/*instance_key=*/1, fill, carve,
                        glm::mat4(1.0f), cam, *pipeline);
     glFinish();
@@ -204,6 +237,40 @@ TEST_F(BreachPassGLTest, SolidFillDrawsScoopInterior) {
     EXPECT_GT(read_inner_max(), 24)
         << "Inner region is background — solid fill: scoop sphere inner wall "
            "should be visible around the breach axis";
+}
+
+// GL: the stencil gate. Identical to SolidFillDrawsScoopInterior except the
+// stencil is left at 0 ("no hull was cut here") — the scoop must not draw.
+//
+// This is the artifact that put a scoop hanging in the Galaxy's neck gap: BC's
+// fill mask reaches up to ~3 cells past the hull, so a solid fill alone is NOT
+// evidence that there is a hole to see through. `discard` writes no depth, so
+// without the stencil the scoop cannot tell a hole from open space.
+TEST_F(BreachPassGLTest, StencilZeroBlocksScoopSoItCannotFloatInOpenSpace) {
+    if (!has_stencil())
+        GTEST_SKIP() << "framebuffer has no stencil plane — the stencil test "
+                        "would always pass and this would assert nothing";
+    clear_framebuffer();          // stencil = 0, deliberately NOT marked
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = solid_fill();   // fill says "material here"
+
+    scenegraph::HullCarveField carve;
+    carve.add(glm::vec3(0.f, 0.f, 0.f), 1.5f, 600.f,
+              glm::vec3(0.f, 0.f, 1.f)).radius = 1.5f;
+
+    scenegraph::Camera cam = cam_looking_at_origin();
+
+    pass.draw_instance(/*instance_key=*/4, fill, carve,
+                       glm::mat4(1.0f), cam, *pipeline);
+    glFinish();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in stencil-blocked draw";
+    EXPECT_LT(read_inner_max(), 16)
+        << "Scoop drew with stencil 0 — it would appear in open space wherever "
+           "the fill mask balloons past the hull";
 }
 
 // GL: with ONE active carve and an EMPTY fill, every scoop fragment is
@@ -269,6 +336,7 @@ TEST_F(BreachPassGLTest, HotBreachBrighterThanCold) {
 
     // ── Cold render (age well past kRimLife → heat = 0, no emissive) ────────
     clear_framebuffer();
+    mark_hull_cut();
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     {
@@ -284,6 +352,7 @@ TEST_F(BreachPassGLTest, HotBreachBrighterThanCold) {
 
     // ── Hot render (age=0 → heat=1, maximum emissive) ───────────────────────
     clear_framebuffer();
+    mark_hull_cut();
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     {

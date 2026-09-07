@@ -280,7 +280,8 @@ void draw_model(const assets::Model& model,
                 const std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>&
                     dyn_lights = {},
                 int dyn_light_count = 0,
-                const voxel::VoxelVolume* carve_fill = nullptr);
+                const voxel::VoxelVolume* carve_fill = nullptr,
+                bool carve_invert = false);
 
 /// Release the process-lifetime damage-decal texture (game/data/Textures/
 /// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.
@@ -336,6 +337,28 @@ public:
                                CarveFieldCache* carve_cache = nullptr,
                                float ambient_scale = 1.0f,
                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
+
+    /// Stamp the stencil buffer with "hull was cut away here", for every
+    /// visible instance in `pass` that has active carves.
+    ///
+    /// Run BETWEEN the opaque hull and the breach scoop. The scoop must appear
+    /// only through real holes, never in open space — `discard` writes no
+    /// depth, so a hole and empty space look identical from the scoop's side,
+    /// and BC's fill mask balloons up to ~3 cells past the hull (39-55% of mask
+    /// volume lies outside the hull mesh, measured), which is exactly where the
+    /// scoop was left floating free of the ship.
+    ///
+    /// Draws each carved hull again through opaque.frag with u_carve_invert=1
+    /// (keep only what the hull draw discarded) with colour and depth writes
+    /// masked off, so the draw contributes nothing but stencil value 1. Depth
+    /// TEST stays on, so a cut hidden behind nearer geometry does not stamp.
+    /// Restores all GL state it touches. No-op when nothing is carved.
+    void submit_carve_stencil(const scenegraph::World& world,
+                              const scenegraph::Camera& camera,
+                              Pipeline& pipeline,
+                              const ModelLookup& lookup,
+                              scenegraph::Pass pass,
+                              CarveFieldCache* carve_cache);
 
     /// Draw a SINGLE instance (by id) through the full opaque lighting/texture
     /// path, ignoring its visibility flag. Used by the Ship Property Viewer's

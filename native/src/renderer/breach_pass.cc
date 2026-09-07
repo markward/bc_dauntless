@@ -151,6 +151,38 @@ unsigned int BreachPass::upload_fill_tex(const voxel::VoxelVolume& fill) {
     return t;
 }
 
+namespace {
+// The scoop's GL state, in ONE place so render() and draw_instance() cannot
+// diverge. Depth ON, cull FRONT (the recessed inner wall), and — the part that
+// must not be forgotten by either caller — the stencil test that keeps the
+// scoop out of open space.
+//
+// `discard` writes no depth, so a hole in the hull and empty space look
+// identical from here, and BC's fill mask reaches up to ~3 cells past the hull
+// (39-55% of mask volume lies outside the hull mesh, measured). Stencil 1 is
+// stamped by FrameSubmitter::submit_carve_stencil and means "hull was actually
+// cut away at this pixel". Callers MUST have stamped it, or nothing draws.
+void begin_scoop_state() {
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+    glEnable(GL_STENCIL_TEST);
+    glStencilFunc(GL_EQUAL, 1, 0xFF);
+    glStencilMask(0x00);            // test only; never write
+}
+
+void end_scoop_state() {
+    glDisable(GL_STENCIL_TEST);
+    // Back to the GL default. glClear(GL_STENCIL_BUFFER_BIT) is MASKED by
+    // glStencilMask, so leaving it closed silently turns the next stencil clear
+    // into a no-op and lets marks accumulate across frames.
+    glStencilMask(0xFF);
+    glCullFace(GL_BACK);
+}
+}  // namespace
+
 void BreachPass::draw_scoop(const glm::vec3& center_body,
                              float radius,
                              const glm::vec3& surface_normal,
@@ -233,12 +265,7 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     }
     if (fe.tex3d == 0) return;
 
-    // GL state: depth ON, cull FRONT (inner/far sphere wall → recessed).
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_FRONT);
+    begin_scoop_state();
 
     for (const auto& s : carve.slots()) {
         if (!s.active) continue;
@@ -250,8 +277,7 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
                    breach_age, damage_frames_[0]);
     }
 
-    // Restore cull state.
-    glCullFace(GL_BACK);
+    end_scoop_state();
 
     // Restore texture bindings.
     glActiveTexture(GL_TEXTURE1);
@@ -283,11 +309,7 @@ void BreachPass::render(const scenegraph::World& world,
     auto ensure_state = [&]() {
         if (any_state_changed) return;
         any_state_changed = true;
-        glEnable(GL_DEPTH_TEST);
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_FRONT);
+        begin_scoop_state();
     };
 
     world.for_each_visible_in_pass(
@@ -339,7 +361,7 @@ void BreachPass::render(const scenegraph::World& world,
         });
 
     if (any_state_changed) {
-        glCullFace(GL_BACK);
+        end_scoop_state();
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
         glDepthMask(GL_TRUE);
