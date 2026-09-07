@@ -23,6 +23,14 @@
         radial-gradient(ellipse at 30% 40%, #10131c 0%, #05070c 60%, #000 100%);
 }
 
+/* Antonio, the UI face used by the pause menu and HUD. Set on the section so
+   every child inherits it -- global.css declares the @font-face but applies it
+   per-component rather than on body, so anything that does not ask for it
+   silently falls back to the browser's default serif. */
+#first-run {
+    font-family: "Antonio", sans-serif;
+}
+
 #first-run .fr-card {
     position: relative;
     width: 30rem;
@@ -37,9 +45,14 @@
 
 #first-run .fr-title {
     margin: 0 0 1.5rem;
-    font-size: 1.35rem;
-    font-weight: 500;
-    letter-spacing: 0.02em;
+    font-size: 1.5rem;
+    /* 600 with only Antonio-Regular on disk means a synthesised faux-bold --
+       which is deliberate, because it is what every other panel here does
+       (configuration_panel, crew_menus, character_tooltip all set 600+). Being
+       the one screen with true-weight text would read as the odd one out. */
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
 #first-run .fr-row { margin-bottom: 1.35rem; }
