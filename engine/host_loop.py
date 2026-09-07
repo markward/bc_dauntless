@@ -6899,8 +6899,8 @@ def run(mission_name: Optional[str] = None,
 
     # The renderer joins its own relative asset paths onto this. Set right
     # after resolution -- set_game_root is in _REQUIRED_BINDINGS, and
-    # validate_bindings() (run above, at r.init()) exists precisely to turn
-    # a stale/incomplete .so into a clear diagnostic instead of a bare
+    # validate_bindings() (run above, at window init) exists precisely to
+    # turn a stale/incomplete .so into a clear diagnostic instead of a bare
     # AttributeError here -- and before any pass constructs: their texture
     # constants are relative now.
     r.set_game_root(str(_paths.game_root()))

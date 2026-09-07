@@ -131,6 +131,24 @@ def test_a_validated_pick_persists_even_when_a_later_pick_is_cancelled(
         "the cancelled sdk pick must not be written")
 
 
+def _code_only(src: str) -> str:
+    """`src` with `#` comments removed.
+
+    Ordering guards below search source text for call spellings. A comment
+    mentioning a call reads identically to the call itself, so without this
+    a COMMENT can satisfy an assertion about CODE -- which has happened
+    four times on this branch, twice in comments this very file's guards
+    were written to protect. Every ``inspect.getsource`` ordering assertion
+    in this file must run through this first.
+
+    A ``#`` inside a string literal is stripped too. Harmless for the
+    ordering guards here (none of the spellings they search for appear
+    inside a string literal in ``run()``), but it means this is not a real
+    tokenizer -- don't reach for it outside this narrow use.
+    """
+    return "\n".join(line.split("#", 1)[0] for line in src.splitlines())
+
+
 def test_cef_comes_up_before_the_sdk_finder_is_installed():
     """The screen must exist before the roots are known, so CEF init has to
     precede _setup_sdk(). Verified on run()'s source rather than by booting
@@ -138,10 +156,13 @@ def test_cef_comes_up_before_the_sdk_finder_is_installed():
 
     Anchored on the real spellings, not substrings that match something else
     one character in -- a guard in this family has already broken that way.
+    Comments stripped first (see _code_only): a comment mentioning
+    "r.init()" while explaining a LATER call broke this exact guard once
+    already, silently, with no failing test to announce it.
     """
     import inspect
     from engine import host_loop
-    source = inspect.getsource(host_loop.run)
+    source = _code_only(inspect.getsource(host_loop.run))
     init_at = source.index("r.init(")
     cef_at = source.index("r.cef_initialize(")
     resolve_at = source.index("_resolve_paths_or_report()")
