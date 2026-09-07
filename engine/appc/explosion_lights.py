@@ -28,7 +28,19 @@ the depth-of-field work settled on.
 # ── Light tunables — the only home for these numbers ─────────────────────
 # Deliberately conservative; expect to calibrate up and then back down after a
 # live look.
-PEAK_INTENSITY = 6.0      # intensity at the top of the bloom
+PEAK_INTENSITY = 1.5      # intensity at the top of the bloom.
+                          #
+                          # MEASURED, not guessed: native/tests/renderer/
+                          # explosion_light_frame_test.cc renders a hull lit by
+                          # exactly this light and reads the pixel back. Summed
+                          # RGB, 765 = saturated white, 30 = the unlit baseline:
+                          #     i=1.0  ->  422 at 10 GU, 293 at 20 GU
+                          #     i=1.5  ->  554 at 10 GU, 424 at 20 GU
+                          #     i=6.0  ->  765 at 10 GU, 752 at 20 GU (blown out)
+                          # 6.0 was the original guess and clips everywhere
+                          # close. 1.5 reads unmistakably against a 30 baseline
+                          # while leaving headroom, and only saturates when you
+                          # are right on top of the blast -- which is right.
 RADIUS_FACTOR = 10.0      # light reach as a multiple of the fireball's drawn
                           # size.
                           #
@@ -60,8 +72,9 @@ DECAY_EXPONENT = 2.0      # >1 fades fast at first, then lingers
 
 # Nudge steps for the live dev keys (engine/dev_keybindings.py). Sized as a
 # sensible FRACTION of the value each moves, so a press is visible without
-# being a third of the range.
-PEAK_INTENSITY_STEP = 1.0
+# being a third of the range. The intensity step was cut 1.0 -> 0.25
+# alongside the 6.0 -> 1.5 recalibration, for the same reason.
+PEAK_INTENSITY_STEP = 0.25
 RADIUS_FACTOR_STEP = 1.0
 
 # Live, per-session values seeded from the constants above. The dev keys move

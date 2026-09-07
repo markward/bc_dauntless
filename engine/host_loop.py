@@ -1344,18 +1344,24 @@ def _build_explosion_light_render_data():
     camera-distance fade the torpedo lights use, so a distant battle does not
     fill the light list with entries no hull on screen can see.
     """
-    out = []
-    for entry in _explosion_lights.render_data():
-        fade = _camera_distance_fade(entry["position"])
-        if fade is None:
-            continue        # beyond the cull distance -- not built at all
-        out.append({
-            "position":  entry["position"],
-            "color":     entry["color"],
-            "radius":    entry["radius"],
-            "intensity": entry["intensity"] * fade,
-        })
-    return out
+    # DELIBERATELY NOT camera-distance culled, unlike the torpedo and emitter
+    # lights above.
+    #
+    # _camera_distance_fade drops anything past DYN_LIGHT_CULL_GU (~86 GU,
+    # 15 km). That is right for a hull-local light -- a torpedo glow or a
+    # subsystem emitter genuinely cannot matter to anything once the camera is
+    # that far away. An explosion light has a radius of 110+ GU and exists to
+    # light the ships AROUND it, so how far the CAMERA is from it says nothing
+    # about whether it matters: combat routinely happens beyond 15 km, and the
+    # cull silently discarded every fireball light before it was ever built.
+    # That, not intensity or radius, is why the effect could not be seen.
+    #
+    # Nothing is lost by skipping the cull here. The category budget caps
+    # explosions at 10 entries, and the renderer already scores every light
+    # per instance (select_dynamic_lights) -- a genuinely irrelevant one
+    # scores ~0 and is never selected. The camera distance was the wrong
+    # question to ask of this light.
+    return [dict(entry) for entry in _explosion_lights.render_data()]
 
 
 def _build_emitter_light_render_data(ship_instances, ship_emitters,

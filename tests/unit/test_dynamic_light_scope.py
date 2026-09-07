@@ -174,3 +174,49 @@ def test_explosion_light_radius_clears_the_ship_scale_ceiling():
         f"the {CEILING_GU:g} GU ship-scale ceiling -- it will not carry to a "
         "neighbouring hull"
     )
+
+
+def test_explosion_lights_survive_a_camera_far_beyond_the_dyn_light_cull():
+    """THE bug that made the feature invisible in game.
+
+    `_camera_distance_fade` returns None -- meaning "do not build this light at
+    all" -- past DYN_LIGHT_CULL_GU (~86 GU, 15 km). That is correct for
+    hull-local lights like torpedo glows and subsystem emitters. An explosion
+    light has a 110+ GU radius and exists to light the ships AROUND it, so the
+    camera's distance from it is the wrong question: combat routinely happens
+    past 15 km, and every fireball light was discarded before it was built.
+    Intensity, radius and list truncation were all irrelevant while this held.
+    """
+    import engine.host_loop as host_loop
+    from engine.appc import explosion_lights
+
+    class _P:
+        def __init__(self, x):
+            self.x, self.y, self.z = x, 0.0, 0.0
+
+    class _Ship:
+        def __init__(self, x):
+            self._p = _P(x)
+
+        def GetWorldLocation(self):
+            return self._p
+
+    explosion_lights.reset()
+    try:
+        # A ship dying 4000 GU away -- far outside the cull, ordinary for combat.
+        far_gu = host_loop.DYN_LIGHT_CULL_GU * 45.0
+        explosion_lights.register(_Ship(far_gu), size_gu=11.0, count=1,
+                                  spacing_s=1.0, life_s=3.0)
+        explosion_lights.advance(0.4)
+        host_loop._note_camera_eye((0.0, 0.0, 0.0))
+
+        built = host_loop._build_explosion_light_render_data()
+        assert built, (
+            f"an explosion {far_gu:.0f} GU from the camera produced no light; "
+            "the camera-distance cull is being applied to a light whose reach "
+            "has nothing to do with camera distance"
+        )
+        assert built[0]["intensity"] > 0.0
+    finally:
+        explosion_lights.reset()
+        host_loop._note_camera_eye(None)
