@@ -27,15 +27,19 @@ void HdrMsaaTarget::resize(int w, int h, int samples) {
 
     glGenRenderbuffers(1, &depth_rb_);
     glBindRenderbuffer(GL_RENDERBUFFER, depth_rb_);
+    // DEPTH24_STENCIL8 to match HdrTarget — the breach pass runs BEFORE
+    // resolve_to(), so the stencil it tests lives on whichever of the two is
+    // bound. The resolve blit still moves colour+depth only; stencil is spent
+    // by then and never needs to survive the resolve.
     glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples,
-                                     GL_DEPTH_COMPONENT24, w, h);
+                                     GL_DEPTH24_STENCIL8, w, h);
     glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
     glGenFramebuffers(1, &fbo_);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                               GL_RENDERBUFFER, color_rb_);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                               GL_RENDERBUFFER, depth_rb_);
 
     const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);

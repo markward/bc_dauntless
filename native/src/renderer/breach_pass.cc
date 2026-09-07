@@ -151,6 +151,38 @@ unsigned int BreachPass::upload_fill_tex(const voxel::VoxelVolume& fill) {
     return t;
 }
 
+namespace {
+// The scoop's GL state, in ONE place so render() and draw_instance() cannot
+// diverge. Depth ON, cull FRONT (the recessed inner wall), and — the part that
+// must not be forgotten by either caller — the stencil test that keeps the
+// scoop out of open space.
+//
+// `discard` writes no depth, so a hole in the hull and empty space look
+// identical from here, and BC's fill mask reaches up to ~3 cells past the hull
+// (39-55% of mask volume lies outside the hull mesh, measured). Stencil 1 is
+// stamped by FrameSubmitter::submit_carve_stencil and means "hull was actually
+// cut away at this pixel". Callers MUST have stamped it, or nothing draws.
+void begin_scoop_state() {
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+    glEnable(GL_STENCIL_TEST);
+    glStencilFunc(GL_EQUAL, 1, 0xFF);
+    glStencilMask(0x00);            // test only; never write
+}
+
+void end_scoop_state() {
+    glDisable(GL_STENCIL_TEST);
+    // Back to the GL default. glClear(GL_STENCIL_BUFFER_BIT) is MASKED by
+    // glStencilMask, so leaving it closed silently turns the next stencil clear
+    // into a no-op and lets marks accumulate across frames.
+    glStencilMask(0xFF);
+    glCullFace(GL_BACK);
+}
+}  // namespace
+
 void BreachPass::draw_scoop(const glm::vec3& center_body,
                              float radius,
                              const glm::vec3& surface_normal,
@@ -186,6 +218,9 @@ void BreachPass::draw_scoop(const glm::vec3& center_body,
     shader.set_ivec3("u_fill_dims",  fill_dims);
     shader.set_float("u_fill_iso",
                      static_cast<float>(CarveFieldCache::kIsovalue) / 255.0f);
+    // Must equal opaque.frag's u_carve_fill_iso — same threshold, same shape.
+    shader.set_float("u_fill_backing",
+                     static_cast<float>(CarveFieldCache::kBackingIsovalue) / 255.0f);
 
     // Triplanar Damage.tga on unit 1.
     shader.set_int("u_damage_tex", 1);
@@ -230,24 +265,19 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     }
     if (fe.tex3d == 0) return;
 
-    // GL state: depth ON, cull FRONT (inner/far sphere wall → recessed).
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_FRONT);
+    begin_scoop_state();
 
     for (const auto& s : carve.slots()) {
         if (!s.active) continue;
         if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
+        if (!carve_has_backing(fill, s.center_body, s.surface_normal)) continue;
         draw_scoop(s.center_body, s.radius, s.surface_normal,
                    fe.tex3d, fill.origin, fill.cell, fill.dims,
                    world_xf, camera, pipeline,
                    breach_age, damage_frames_[0]);
     }
 
-    // Restore cull state.
-    glCullFace(GL_BACK);
+    end_scoop_state();
 
     // Restore texture bindings.
     glActiveTexture(GL_TEXTURE1);
@@ -279,11 +309,7 @@ void BreachPass::render(const scenegraph::World& world,
     auto ensure_state = [&]() {
         if (any_state_changed) return;
         any_state_changed = true;
-        glEnable(GL_DEPTH_TEST);
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_FRONT);
+        begin_scoop_state();
     };
 
     world.for_each_visible_in_pass(
@@ -298,11 +324,23 @@ void BreachPass::render(const scenegraph::World& world,
                 carve_cache.get_for_source(model->source);
             if (ce == nullptr) return;
 
+            // Same fill the gate consults, CPU-side. Cheap: source-keyed and
+            // already decoded for the texture upload above.
+            const voxel::VoxelVolume& fill =
+                carve_cache.volume_for_source(model->source);
+
             ensure_state();
 
             for (const auto& s : inst.carve.slots()) {
                 if (!s.active) continue;
                 if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
+                // Backing-material gate: frame.cc leaves the hull UNCUT for this
+                // carve, so its scoop would be hidden behind intact hull. Skip
+                // the draw rather than rely on the depth test to eat it — and,
+                // more importantly, keep the two passes reading the SAME gate so
+                // they cannot drift apart.
+                if (!carve_has_backing(fill, s.center_body, s.surface_normal))
+                    continue;
 
                 // Find the nearest active breach event for this carve slot.
                 float breach_age = scenegraph::kRimLife + 1.f;  // default: cold
@@ -323,7 +361,7 @@ void BreachPass::render(const scenegraph::World& world,
         });
 
     if (any_state_changed) {
-        glCullFace(GL_BACK);
+        end_scoop_state();
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
         glDepthMask(GL_TRUE);

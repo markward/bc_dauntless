@@ -30,7 +30,14 @@ uniform sampler3D u_fill;
 uniform vec3      u_fill_origin;   // body-frame min corner
 uniform vec3      u_fill_cell;     // cell size per axis
 uniform ivec3     u_fill_dims;     // nx, ny, nz
-uniform float     u_fill_iso;      // 64.0/255.0
+uniform float     u_fill_iso;      // 64.0/255.0 — solid interior (rim falloff)
+
+// SPIKE (backing-material gate): "is there ANY hull material here?", the same
+// threshold opaque.frag's hull cut uses. The two MUST match, or the hole and
+// the interior are different shapes again and the gap between them is a window
+// through the ship. Discarding at u_fill_iso instead put 39-53% of hull
+// triangles (measured, stock hulls) outside the scoop's own mask.
+uniform float     u_fill_backing;  // kBackingIsovalue/255.0
 
 uniform sampler2D u_damage_tex;
 uniform vec3      u_camera_pos_ws; // camera world position — uploaded CPU-side, avoids per-fragment inverse
@@ -65,7 +72,7 @@ void main() {
     vec3 tc = (v_body_pos - u_fill_origin) / (u_fill_cell * vec3(u_fill_dims));
     if (any(lessThan(tc, vec3(0.0))) || any(greaterThan(tc, vec3(1.0)))) discard;
     float fillv = texture(u_fill, tc).r;
-    if (fillv < u_fill_iso) discard;
+    if (fillv < u_fill_backing) discard;
 
     // ── Triplanar blend ────────────────────────────────────────────────────
     vec3 n = normalize(v_body_normal);

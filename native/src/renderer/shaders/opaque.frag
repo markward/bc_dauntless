@@ -119,6 +119,24 @@ uniform int  u_carve_count;                    // 0 = no clip
 uniform vec4 u_carve_spheres[MAX_CARVES];      // xyz=center_body, w=radius
 uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
 
+// Stencil-marking pass. The breach scoop must draw only where hull was CUT
+// AWAY, never in open space — `discard` writes no depth, so from the scoop's
+// side a hole in the hull and empty space are indistinguishable, and BC's fill
+// mask balloons up to ~3 cells past the hull (measured: 39-55% of mask volume
+// lies outside the hull mesh), which is where the scoop was left floating.
+//
+// Stencil cannot be written by the discarding draw itself — a discarded
+// fragment performs no stencil op. So the region is marked by a second draw of
+// the same hull through THIS shader with u_carve_invert = 1, which flips the
+// test: keep exactly the fragments the normal pass discards, discard the rest.
+// Colour and depth writes are masked off by the caller, so only stencil lands.
+//
+// Reusing this shader rather than writing a marking shader is deliberate: the
+// oblate + noise + strut maths stays in ONE place, so the cut region and the
+// marked region cannot drift apart. That drift is what caused the original
+// see-through bug.
+uniform int u_carve_invert;   // 0 = normal hull draw; 1 = stencil-marking draw
+
 // ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
 // Projects Damage.tga's alpha channel onto the hull in an annular band around
 // each breach. High alpha = structural strut (kept); low alpha = gap (discarded).
@@ -496,6 +514,7 @@ void main() {
     // Discard hull fragments inside any active carve sphere. The breach pass
     // renders the exposed interior (scoop) within the same spheres, so hole and
     // interior align by construction. u_carve_count == 0 (or disabled) = stock path.
+    bool marked = false;
     if (u_carve_enabled != 0 && u_carve_count > 0) {
         for (int i = 0; i < u_carve_count; i++) {
             vec3 c  = u_carve_spheres[i].xyz;
@@ -535,10 +554,22 @@ void main() {
                         // AND we're outside the open core; everything else is cut.
                         if (a > kStrutAlpha && frac > kOpenCore) cut = false;
                     }
-                    if (cut) discard;
+                    if (u_carve_invert != 0) {
+                        // Marking pass: this fragment is inside the cut, which
+                        // is precisely what we want to stamp. Keep it and stop
+                        // looking — the caller masks colour and depth.
+                        if (cut) { marked = true; break; }
+                    } else if (cut) {
+                        discard;
+                    }
                 }
             }
         }
+        // Marking pass: anything NOT inside a cut must not stamp the stencil.
+        if (u_carve_invert != 0 && !marked) discard;
+    } else if (u_carve_invert != 0) {
+        // Marking pass with no carves at all: nothing to stamp.
+        discard;
     }
 
     // Shadow attenuates ONLY the sun (directional index 0). When shadows are

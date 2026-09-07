@@ -903,6 +903,16 @@ void frame() {
                 scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
                 ambient_scale, dyn_lights);
         }
+        // Stencil-mark where the hull was cut away, so the scoop below draws
+        // only through real holes and never in open space. Must sit between the
+        // hull draw and the breach pass; costs one extra draw per carved
+        // instance and nothing at all when nothing is damaged.
+        if (g_submitter && g_carve_cache) {
+            DAUNTLESS_FRAME_SCOPE("space.carve_stencil");
+            g_submitter->submit_carve_stencil(g_world, cam, *g_pipeline, lookup,
+                                              scenegraph::Pass::Space,
+                                              g_carve_cache.get());
+        }
         // Breach scoop pass: for each active carve sphere, draws the front-
         // face-culled sphere inner wall masked by the original hull fill
         // (triplanar Damage.tga). Runs right after the opaque hull
@@ -1100,7 +1110,7 @@ void frame() {
         g_viewscreen_hdr->resize(kViewscreenRttW, kViewscreenRttH);
         g_viewscreen_hdr->bind();
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         if (g_comm_source.active && g_bridge_pass) {
             scenegraph::Camera ccam = g_comm_source.cam;
             ccam.aspect = static_cast<float>(kViewscreenRttW)
@@ -1151,7 +1161,7 @@ void frame() {
     } else {
         glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
     }
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     if (fh > 0) g_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
 
     // Space scene goes to the main view only outside bridge view (in bridge
@@ -1181,7 +1191,7 @@ void frame() {
             // between here and there touches it, so the two match by
             // construction rather than by a duplicated literal.
             g_msaa_target->bind();
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
             render_space_geometry(g_camera, nullptr, g_msaa_target.get(),
                                   ex_ambient, &g_dynamic_lights);
             g_msaa_target->resolve_to(*g_hdr_target);
@@ -1254,7 +1264,7 @@ void frame() {
     if (bridge_active) {
         DAUNTLESS_FRAME_SCOPE("bridge");
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
         // Warp boom flash on the bridge is confined to the viewscreen feed (the
         // surrounding interior must not flash); the main resolve-pass flash is
