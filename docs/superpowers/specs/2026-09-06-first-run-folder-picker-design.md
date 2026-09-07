@@ -213,10 +213,25 @@ something, and only a row that was actually *answered wrongly* says what
 was wrong with it.
 
 One row per root, game first. Each row shows the current path (or "not
-set"), a **Browse** button, and a status line underneath: a tick with the
-markers found, or the `missing` list plus `hint` from the same `Validation`
-the CLI path uses. A root that already resolved is shown satisfied and is
-not asked for again.
+set"), a **Browse** button, and a one-line status underneath. A root that
+already resolved is shown satisfied and is not asked for again.
+
+**The status line is a verdict, not a checklist.** `GAME_MARKERS` and
+`SDK_MARKERS` are the paths `validate_*_root` stats to reach its answer —
+four probes for one question, not four separate checks — and listing them
+tells the player nothing they can act on:
+
+| State | Status line |
+|---|---|
+| Not answered yet | `Not set` |
+| Validated | `✓ Bridge Commander install found` |
+| Answered, failed | `✗ Not a Bridge Commander install` + the `hint`, when there is one |
+
+The `hint` is the part that is actually actionable — `validate_*_root`
+already produces things like *"That's the Build folder — pick its parent"*
+and a case-insensitive spelling suggestion. The marker list stays where it
+belongs, in the `describe_failure()` text on stderr, for whoever is
+debugging an odd install rather than trying to start the game.
 
 **Continue** enables only when both roots validate. `_setup_sdk()` runs
 immediately after, so letting the player through with only `game` would just
@@ -302,8 +317,10 @@ Python, all with an injected fake picker and no dialog:
   `legacy`
 - both roots missing → both rows shown unsatisfied; only sdk missing → the
   game row is shown satisfied and not asked for again
-- a Browse answer that fails validation updates that row's status with the
-  `missing` markers and `hint`, and leaves Continue disabled
+- a Browse answer that fails validation sets that row to the failed verdict
+  plus the `hint`, and leaves Continue disabled
+- a validated row shows the verdict only — the status line never enumerates
+  `GAME_MARKERS` / `SDK_MARKERS`, in either state
 - an empty or whitespace-only picked path is treated as no answer, and never
   becomes `Path(".")`
 - Continue is disabled until BOTH roots validate, and enabled the moment
@@ -369,9 +386,9 @@ Mark runs these; they cannot be checked headlessly.
    window and takes focus**. This is the reorder's main risk: the screen now
    runs after `r.init()`, so GLFW has already created the `NSApp` that
    `pick_folder` previously created itself.
-3. Pick a valid game folder → the row turns satisfied and names what it
-   found; Continue stays disabled while the sdk row is unsatisfied.
-4. Pick an *invalid* folder for sdk → the row shows the missing markers and
+3. Pick a valid game folder → the row turns satisfied; Continue stays
+   disabled while the sdk row is unsatisfied.
+4. Pick an *invalid* folder for sdk → the row shows the failed verdict and
    the hint; Continue stays disabled.
 5. Pick a valid sdk folder → Continue enables; pressing it boots the game
    normally, with no leftover screen and no stuck input focus.
