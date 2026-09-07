@@ -6824,6 +6824,10 @@ def _run_first_run_screen(resolution, resolver=None):
                 _h.cef_execute_javascript(script)
             r.frame()
     finally:
+        # Unguarded deliberately, unlike the JS call below: this only ever
+        # assigns two native globals (g_hologram_only_mode, g_hologram_bg),
+        # with no browser/CEF state to be torn down or absent -- there is no
+        # failure mode for it to swallow.
         r.set_hologram_only_mode(False, (0.0, 0.0, 0.0))
         if _h is not None:
             try:

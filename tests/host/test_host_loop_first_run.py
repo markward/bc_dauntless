@@ -8,12 +8,14 @@ describe_failure() diagnostic, nothing else in the suite would notice.
 import pytest
 
 from engine import first_run, host_loop, paths
+from engine import settings_store as _settings_store_mod
 
-# Captured before any fixture gets a chance to monkeypatch paths.persist,
-# so test_a_partial_screen_result_persists_even_when_boot_still_fails can
-# reinstate the REAL implementation (pointed at a FakeStore) instead of the
-# no-op _nothing_resolves_by_accident installs for every other test here.
+# Captured before any fixture gets a chance to monkeypatch paths.persist /
+# paths.resolve, so a test can reinstate the REAL implementation (pointed at
+# a FakeStore, or left otherwise real) instead of the no-op
+# _nothing_resolves_by_accident installs for every other test here.
 _REAL_PERSIST = paths.persist
+_REAL_RESOLVE = paths.resolve
 
 
 class FakeStore:
@@ -154,12 +156,86 @@ def test_a_partial_screen_result_persists_even_when_boot_still_fails(
         "the missing sdk root must not be written")
 
 
+def test_the_screens_resolver_is_bound_to_boots_real_store(monkeypatch, install):
+    """Carried-forward regression: the resolver _resolve_paths_or_report()
+    hands to the first-run screen must be bound to the SAME store it built
+    for its own initial resolve() -- not FirstRunPanel's own default (a
+    FRESH SettingsStore() read). Without this, a root already on record in
+    the real settings.json could be silently outranked by "nothing found"
+    once the screen re-resolves after a browse of the OTHER root.
+
+    Every other test in this file passes even if `resolver=` is dropped
+    entirely at the call site, because paths.resolve()'s own default
+    (argv=None/env=None/store=None) happens to read the same ambient
+    sys.argv/os.environ/settings.json in this process either way -- so this
+    test proves the wiring by giving boot's store an "sdk" entry a fresh
+    SettingsStore() could never produce (it never touches disk at all), and
+    calling the CAPTURED resolver directly rather than driving the pump
+    loop.
+    """
+    game, sdk = install
+
+    class _DistinctiveStore:
+        """Never reads settings.json -- a fresh SettingsStore() could not
+        coincidentally reproduce this "sdk" answer."""
+        def load(self):
+            pass
+
+        def has(self, section, key):
+            return (section, key) == ("paths", "sdk")
+
+        def get(self, section, key):
+            assert (section, key) == ("paths", "sdk")
+            return str(sdk)
+
+        def set(self, section, key, value):
+            pass
+
+    # Undo _nothing_resolves_by_accident's substitution: this test wants the
+    # REAL resolve()/persist(), pointed only at the distinctive store above
+    # (via the SettingsStore class patch below), not a hardcoded fake one
+    # that would mask which store the resolver actually used.
+    monkeypatch.setattr(paths, "resolve", _REAL_RESOLVE)
+    monkeypatch.setattr(paths, "persist", lambda resolution, store=None: None)
+    monkeypatch.setattr(paths, "configure", lambda resolution: None)
+    monkeypatch.setattr(_settings_store_mod, "SettingsStore",
+                        lambda *a, **kw: _DistinctiveStore())
+
+    captured = {}
+
+    def fake_screen(resolution, **kwargs):
+        captured["resolver"] = kwargs.get("resolver")
+        return resolution
+
+    monkeypatch.setattr(host_loop, "_run_first_run_screen", fake_screen)
+
+    host_loop._resolve_paths_or_report()
+
+    resolver = captured.get("resolver")
+    assert resolver is not None, (
+        "_run_first_run_screen must be given a resolver -- a caller that "
+        "drops the kwarg would leave FirstRunPanel to fall back to its own "
+        "default, which reads a FRESH SettingsStore() instead of boot's")
+    result = resolver({"game": str(game)})
+    assert result.sdk == sdk, (
+        "the resolver resolved sdk from somewhere other than boot's own "
+        "store -- a resolver bound to a fresh default SettingsStore() could "
+        "never have produced this answer, since that store never touches "
+        "disk")
+
+
 def test_the_screen_suppresses_the_3d_scene_while_it_runs(monkeypatch):
     """No asset may load while the game root is unset, so the scene pass is
-    off for the screen's whole lifetime and back on before boot continues."""
+    off for the screen's whole lifetime and back on before boot continues.
+
+    Comments stripped first (see _code_only): every inspect.getsource
+    ordering assertion in this file must run through it, on the file's own
+    policy -- a comment mentioning either call spelling would otherwise
+    satisfy this without the real calls being in the right order.
+    """
     import inspect
     from engine import host_loop
-    source = inspect.getsource(host_loop._run_first_run_screen)
+    source = _code_only(inspect.getsource(host_loop._run_first_run_screen))
     on_at = source.index("set_hologram_only_mode(True")
     off_at = source.index("set_hologram_only_mode(False")
     assert on_at < off_at, "the scene pass must be re-enabled after the screen"
@@ -168,11 +244,18 @@ def test_the_screen_suppresses_the_3d_scene_while_it_runs(monkeypatch):
 def test_the_screen_pushes_its_first_payload_from_the_load_end_handler():
     """A push before the page's scripts have run is silently dropped in this
     project, which has caused real bugs. The screen's initial state must go
-    out from the document-load handler, not at cef_initialize time."""
+    out from the document-load handler, not at cef_initialize time.
+
+    Anchored on the real call spelling (``panel.invalidate()``), not the
+    bare word "invalidate" -- and comments stripped first (see _code_only)
+    -- because the bare word also appears in this function's own
+    explanatory comment, which would satisfy a looser assertion even with
+    the real call deleted.
+    """
     import inspect
     from engine import host_loop
-    source = inspect.getsource(host_loop._run_first_run_screen)
-    assert "invalidate" in source, (
+    source = _code_only(inspect.getsource(host_loop._run_first_run_screen))
+    assert "panel.invalidate()" in source, (
         "the panel must be invalidated on document load so its first payload "
         "is emitted once the page can actually receive it"
     )
