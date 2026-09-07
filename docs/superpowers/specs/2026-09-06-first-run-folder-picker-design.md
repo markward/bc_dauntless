@@ -352,8 +352,17 @@ site, not only inside the helper — a version of this guard that tested only
 the helper missed exactly that gap and was found by mutation.
 
 The screen's panel logic is Python and testable with a fake picker and a
-fake page transport. The **pump loop and the page itself are not** — see
-below.
+fake page transport. **The page itself is not** — see below. The pump
+loop's *mechanics* (page-load gating, mouse forwarding) turned out to be
+more testable than this spec's first version claimed, and that gap in
+testing is exactly why both Criticals from the final review shipped
+undetected: `tests/host/test_first_run_pump_loop.py` drives
+`_run_first_run_screen` with fakes for `r.frame`/`should_close`/
+`set_hologram_only_mode` and the `_h.cef_*` bindings, including a
+`page_loaded` gate modelling `cef_lifecycle.cc`'s real drop-until-loaded
+behaviour and a mouse-forwarding recorder. What is still genuinely
+untestable is the loop driving a **live** CEF browser against a **real**
+GL surface — see below.
 
 `tests/unit/test_path_indirection.py` needs no change: it already scans all
 of `engine/`, so `first_run.py` inherits the no-import-time-capture rule.
@@ -367,10 +376,17 @@ and the game is not launched during verification. That is why it holds no
 logic; if it grows past roughly 30 lines the design has leaked and the
 excess belongs in Python.
 
-**The pump loop** — it drives a live CEF browser against a real GL surface.
-It is kept to the smallest possible body (poll, pump, composite, swap, check
-one flag) for exactly that reason; every decision it might have made belongs
-in the panel class instead.
+**The pump loop against a LIVE browser and GL surface** — no test drives a
+real `CreateBrowser` call, its actual ~340ms async completion, or a real
+window. That is why the loop is kept to the smallest possible body (poll,
+pump, composite, swap, check one flag, forward mouse), with every decision
+it might have made living in the panel class instead. The loop's own
+*wiring* to that live surface — does it register the load-end handler
+correctly, does it forward mouse edges every frame — is covered with fakes
+in `tests/host/test_first_run_pump_loop.py`, which is a narrower claim than
+"the pump loop is untestable": what remains genuinely uncoverable is CEF's
+and GLFW's own real-world timing and behaviour, not this project's code
+that talks to them.
 
 **The page** — CEF is software-rasterized here, so there is no headless
 render to assert against. The page must hold no logic beyond
