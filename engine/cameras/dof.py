@@ -39,6 +39,28 @@ FAR_STRENGTH = 1.0       # background defocus gain, before the ceiling
 FAR_CEILING = 0.4        # hard cap on far-field CoC -- the anti-mush knob
 MAX_RADIUS_FRAC = 0.008  # max blur radius as a fraction of screen height
 
+# ── The foreground ramp, in PLAYER SHIP RADII ────────────────────────────
+# The foreground's blur is anchored to the CAMERA, not to the focus plane, so
+# that the player's own hull -- which never moves relative to the chase camera
+# -- always gets the same amount of defocus no matter how far away the target
+# is. The thin-lens ratio it replaced pinned the hull at maximum blur for any
+# target past ~18 km, which meant switching targets visibly changed your own
+# ship. See renderer/dof.h for the full reasoning.
+#
+# Expressed in RADII rather than GU because the chase camera sits at ~1.5x the
+# ship's radius: fixed distances would blur a shuttle far harder than a
+# Galaxy, where radii make every ship read the same. The hull spans roughly
+# 0.5x to 2.5x radius in view depth, so a 1 -> 4 ramp puts the nose and tail at
+# genuinely different points on it -- the gradient that makes this read as an
+# object out of focus rather than a blurry texture.
+NEAR_FULL_RADII = 1.0    # at/inside this many radii from the camera: full blur
+NEAR_SHARP_RADII = 4.0   # at/beyond this many: sharp
+
+# Fallback when the player's radius is unknown (no player yet, or a stub without
+# GetRadius). A typical capital hull, so the foreground still behaves sanely
+# rather than the ramp collapsing and switching the foreground off entirely.
+FALLBACK_SHIP_RADIUS_GU = 15.0
+
 # ── Focus behaviour — consumed here, never reaches the shader ────────────
 RACK_TAU_S = 0.35        # focus-pull time constant
 BLEND_TAU_S = 0.25       # engage/release ramp
@@ -167,6 +189,9 @@ class FocusSolver:
         self.far_strength = FAR_STRENGTH
         self.far_ceiling = FAR_CEILING
         self.max_radius_frac = MAX_RADIUS_FRAC
+        # Resolved from the player's radius each frame by update().
+        self.near_sharp_gu = FALLBACK_SHIP_RADIUS_GU * NEAR_SHARP_RADII
+        self.near_full_gu = FALLBACK_SHIP_RADIUS_GU * NEAR_FULL_RADII
         # Held as a dioptre (1/distance); 0 means "not focused on anything".
         self._inv_focus = 0.0
         self._blend = 0.0
@@ -180,6 +205,18 @@ class FocusSolver:
     def blend(self):
         """0..1 engage ramp. Exactly 0 means the host skips the pass."""
         return self._blend
+
+    def set_ship_radius(self, radius_gu):
+        """Size the foreground ramp from the player ship's radius.
+
+        Called each frame alongside update(). A non-positive or missing radius
+        falls back to a typical capital hull rather than collapsing the ramp,
+        which would switch the foreground blur off entirely.
+        """
+        r = radius_gu if (radius_gu and radius_gu > 0.0) else FALLBACK_SHIP_RADIUS_GU
+        self.near_sharp_gu = r * NEAR_SHARP_RADII
+        self.near_full_gu = r * NEAR_FULL_RADII
+        return self
 
     def update(self, distance_gu, dt):
         """Advance one frame toward `distance_gu` (None = deep focus)."""
@@ -268,4 +305,6 @@ class FocusSolver:
         return (("max_radius_frac", self.max_radius_frac),
                 ("far_ceiling", self.far_ceiling),
                 ("near_strength", self.near_strength),
-                ("far_strength", self.far_strength))
+                ("far_strength", self.far_strength),
+                ("near_full_gu", self.near_full_gu),
+                ("near_sharp_gu", self.near_sharp_gu))

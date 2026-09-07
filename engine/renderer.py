@@ -557,7 +557,8 @@ def dof_enabled() -> bool:
 
 def set_dof_params(focus_gu: float, blend: float,
                    near_strength: float, far_strength: float,
-                   far_ceiling: float, max_radius_frac: float) -> None:
+                   far_ceiling: float, max_radius_frac: float,
+                   near_sharp_gu: float, near_full_gu: float) -> None:
     """Push this frame's DOF parameters.
 
     `focus_gu` is the camera-to-subject distance in game units and `blend` the
@@ -567,7 +568,8 @@ def set_dof_params(focus_gu: float, blend: float,
     """
     _h.dof_set_params(float(focus_gu), float(blend),
                       float(near_strength), float(far_strength),
-                      float(far_ceiling), float(max_radius_frac))
+                      float(far_ceiling), float(max_radius_frac),
+                      float(near_sharp_gu), float(near_full_gu))
 
 
 def set_msaa_samples(samples: int) -> None:

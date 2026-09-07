@@ -19,6 +19,8 @@ struct DofParams {
     float far_strength    = 0.0f; ///< background defocus gain, pre-ceiling
     float far_ceiling     = 0.0f; ///< hard cap on far-field CoC
     float max_radius_frac = 0.0f; ///< max blur radius / screen height
+    float near_sharp_gu   = 0.0f; ///< foreground ramp: sharp at/beyond this
+    float near_full_gu    = 0.0f; ///< ...and full blur at/inside this
 };
 
 /// Convert a [0,1] depth-buffer value to a view distance in game units.
@@ -64,9 +66,32 @@ inline float coc_from_depth(float d, float near_gu, float far_gu,
     // ever that distant.
     if (z >= far_gu * 0.98f) return 0.0f;
 
-    const float dd = 1.0f - p.focus_gu / z;
-    return (dd < 0.0f) ? std::max(dd * p.near_strength, -1.0f)
-                       : std::min(dd * p.far_strength,   p.far_ceiling);
+    if (z < p.focus_gu) {
+        // FOREGROUND -- anchored to the CAMERA, not to the focus plane.
+        //
+        // A thin lens makes this a RATIO, 1 - focus/z, and that ratio is what
+        // made the effect unusable at BC's scales. The player's hull sits at a
+        // fixed distance from the chase camera and never moves, yet a ratio
+        // lets the TARGET's distance set its blur: past ~18 km it pinned at
+        // maximum, so merely switching targets changed how your own ship
+        // looked. A lens is the wrong model when the focus distance is
+        // hundreds of kilometres.
+        //
+        // This ramp depends only on distance from the camera, so the hull's
+        // blur is CONSTANT whatever is focused on, and its nose and tail land
+        // at different points on the ramp -- which is what makes it read as an
+        // object out of focus rather than a smeared texture.
+        //
+        // The caller sizes the ramp in multiples of the player ship's radius
+        // (the chase camera sits at ~1.5x it), so every ship reads the same.
+        const float span = p.near_sharp_gu - p.near_full_gu;
+        if (span <= 0.0f) return 0.0f;      // degenerate ramp: no foreground blur
+        const float t = std::clamp((p.near_sharp_gu - z) / span, 0.0f, 1.0f);
+        return -p.near_strength * t;
+    }
+    // BACKGROUND -- still a real thin lens. Already bounded by far_ceiling, so
+    // it never suffered the runaway the near side did.
+    return std::min((1.0f - p.focus_gu / z) * p.far_strength, p.far_ceiling);
 }
 
 }  // namespace renderer

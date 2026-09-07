@@ -24,9 +24,12 @@ def test_set_dof_params_forwards_every_field(monkeypatch):
             seen["args"] = args
 
     monkeypatch.setattr(r, "_h", _FakeHost())
-    r.set_dof_params(120.0, 0.5, 1.0, 1.0, 0.4, 0.008)
+    r.set_dof_params(120.0, 0.5, 1.0, 1.0, 0.4, 0.008, 60.0, 15.0)
 
-    assert seen["args"] == (120.0, 0.5, 1.0, 1.0, 0.4, 0.008)
+    # near_sharp_gu / near_full_gu size the camera-anchored foreground ramp;
+    # dropping them would silently switch the foreground blur off, since the
+    # shader treats a degenerate span as "no near blur".
+    assert seen["args"] == (120.0, 0.5, 1.0, 1.0, 0.4, 0.008, 60.0, 15.0)
 
 
 def test_set_dof_enabled_coerces_to_bool(monkeypatch):

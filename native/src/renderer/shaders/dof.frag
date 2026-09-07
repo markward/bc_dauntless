@@ -25,6 +25,8 @@ uniform float u_near_strength;
 uniform float u_far_strength;
 uniform float u_far_ceiling;
 uniform float u_max_radius_px;       // already frac * framebuffer height
+uniform float u_near_sharp_gu;       // foreground ramp: sharp at/beyond this
+uniform float u_near_full_gu;        // ...and full blur at/inside this
 uniform vec2  u_texel;               // 1.0 / textureSize(u_src, 0)
 
 const int   kTapCount   = 24;
@@ -43,9 +45,18 @@ float coc_at(vec2 uv) {
     // the clear value. Tested on the linearized distance so the exemption
     // does not depend on the exact clear value.
     if (z >= u_far * 0.98) return 0.0;
-    float dd = 1.0 - u_focus_gu / z;
-    return (dd < 0.0) ? max(dd * u_near_strength, -1.0)
-                      : min(dd * u_far_strength,  u_far_ceiling);
+    if (z < u_focus_gu) {
+        // FOREGROUND -- camera-anchored ramp, NOT the thin lens's focus/z
+        // ratio. See renderer/dof.h for why: the ratio pinned the player's own
+        // hull at maximum blur for any target past ~18 km, so switching
+        // targets changed how your own ship looked. Mirrors dof.h exactly.
+        float span = u_near_sharp_gu - u_near_full_gu;
+        if (span <= 0.0) return 0.0;
+        float t = clamp((u_near_sharp_gu - z) / span, 0.0, 1.0);
+        return -u_near_strength * t;
+    }
+    // BACKGROUND -- still a real thin lens, already bounded by the ceiling.
+    return min((1.0 - u_focus_gu / z) * u_far_strength, u_far_ceiling);
 }
 
 void main() {

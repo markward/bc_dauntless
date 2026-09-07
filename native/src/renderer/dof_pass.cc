@@ -60,6 +60,8 @@ void DofPass::draw(std::uint32_t src_tex, std::uint32_t depth_tex,
     shader_->set_float("u_near_strength", p.near_strength);
     shader_->set_float("u_far_strength",  p.far_strength);
     shader_->set_float("u_far_ceiling",   p.far_ceiling);
+    shader_->set_float("u_near_sharp_gu", p.near_sharp_gu);
+    shader_->set_float("u_near_full_gu",  p.near_full_gu);
     // The radius is authored as a fraction of screen HEIGHT so it is
     // resolution-independent; converting here keeps the framebuffer size out
     // of the shader.

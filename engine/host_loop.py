@@ -8822,6 +8822,13 @@ def run(mission_name: Optional[str] = None,
                 # position, so a shaken or cutscene camera focuses correctly.
                 from engine.cameras import dof as _dof
                 _dof_mode = _cc[1] if _cc is not None else None
+                # The foreground ramp is sized in PLAYER SHIP RADII, so the
+                # hull reads the same on every ship (the chase camera sits at
+                # ~1.5x the radius).
+                _focus_solver.set_ship_radius(
+                    player.GetRadius() if (player is not None
+                                           and hasattr(player, "GetRadius"))
+                    else None)
                 _dof_solver_out = _focus_solver.update(
                     _dof.subject_distance_gu(
                         eye, _dof.focus_subject(player, _dof_mode)),
@@ -8831,7 +8838,9 @@ def run(mission_name: Optional[str] = None,
                                  _dof_solver_out.near_strength,
                                  _dof_solver_out.far_strength,
                                  _dof_solver_out.far_ceiling,
-                                 _dof_solver_out.max_radius_frac)
+                                 _dof_solver_out.max_radius_frac,
+                                 _dof_solver_out.near_sharp_gu,
+                                 _dof_solver_out.near_full_gu)
                 # Reticle is an exterior-view HUD element; in bridge view it
                 # would draw over the bridge scene. Also hidden during a
                 # cutscene started with bHideReticle (BC's clean cinematic

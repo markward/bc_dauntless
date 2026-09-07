@@ -3609,7 +3609,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Whether depth of field is enabled.");
     m.def("dof_set_params",
           [](float focus_gu, float blend, float near_strength,
-             float far_strength, float far_ceiling, float max_radius_frac) {
+             float far_strength, float far_ceiling, float max_radius_frac,
+             float near_sharp_gu, float near_full_gu) {
               renderer::DofParams p;
               p.focus_gu        = focus_gu;
               p.blend           = blend;
@@ -3617,6 +3618,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               p.far_strength    = far_strength;
               p.far_ceiling     = far_ceiling;
               p.max_radius_frac = max_radius_frac;
+              p.near_sharp_gu   = near_sharp_gu;
+              p.near_full_gu    = near_full_gu;
               dauntless_dof::set_params(p);
           },
           // Named args, unlike the neighbours above: six consecutive floats
@@ -3626,6 +3629,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("focus_gu"), py::arg("blend"), py::arg("near_strength"),
           py::arg("far_strength"), py::arg("far_ceiling"),
           py::arg("max_radius_frac"),
+          py::arg("near_sharp_gu"), py::arg("near_full_gu"),
           "Push the whole DOF parameter set for this frame. blend <= 0 means "
           "no subject is focused and the pass is skipped entirely. Every "
           "value is authored in engine/cameras/dof.py -- there is no C++ "

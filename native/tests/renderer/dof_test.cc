@@ -23,6 +23,9 @@ renderer::DofParams params_at(float focus_gu) {
     p.far_strength    = 1.0f;
     p.far_ceiling     = 0.4f;
     p.max_radius_frac = 0.008f;
+    // Foreground ramp for a 15 GU hull at the shipped 1x..4x radii.
+    p.near_full_gu    = 15.0f;
+    p.near_sharp_gu   = 60.0f;
     return p;
 }
 
@@ -44,21 +47,31 @@ TEST(Dof, SharpExactlyAtFocus) {
                 0.0f, 1e-4f);
 }
 
-// Near field is signed negative and clamps hard at -1. At half the focus
-// distance the thin-lens term is exactly -1, which is the clamp boundary.
-TEST(Dof, NearFieldClampsAtMinusOne) {
+// Near field is signed negative and never exceeds the foreground gain.
+//
+// This used to assert the THIN-LENS clamp: at half the focus distance the
+// ratio 1 - focus/z is exactly -1. The foreground is no longer a ratio (it is
+// a camera-anchored ramp -- see DofForeground below), so the boundary now sits
+// at the ramp's inner end instead. The invariant it was really protecting --
+// that the foreground saturates rather than running away -- is unchanged.
+TEST(Dof, NearFieldSaturatesAtTheForegroundGain) {
     const auto p = params_at(100.0f);
-    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(50.0f), kNear, kFar, p),
-                -1.0f, 1e-3f);
-    // Closer still stays clamped, never overshoots.
+    // Inside near_full_gu (15) the ramp is fully saturated.
     EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(10.0f), kNear, kFar, p),
+                -1.0f, 1e-3f);
+    // Closer still stays there, never overshoots.
+    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(3.0f), kNear, kFar, p),
                 -1.0f, 1e-3f);
 }
 
-TEST(Dof, NearFieldBelowTheClampIsProportional) {
+TEST(Dof, NearFieldIsProportionalAcrossTheRamp) {
     const auto p = params_at(100.0f);
-    // z=80: 1 - 100/80 = -0.25
-    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(80.0f), kNear, kFar, p),
+    // Ramp runs 60 GU (sharp) -> 15 GU (full). At 37.5 GU it is exactly half
+    // way: (60 - 37.5) / (60 - 15) = 0.5.
+    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(37.5f), kNear, kFar, p),
+                -0.5f, 1e-3f);
+    // A quarter of the way in.
+    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(48.75f), kNear, kFar, p),
                 -0.25f, 1e-3f);
 }
 
@@ -102,12 +115,84 @@ TEST(Dof, StrengthScalesBothSidesIndependently) {
     auto p = params_at(100.0f);
     p.near_strength = 0.5f;
     p.far_strength  = 0.25f;
-    // z=80: -0.25 * 0.5 = -0.125
-    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(80.0f), kNear, kFar, p),
-                -0.125f, 1e-3f);
-    // z=200: 0.5 * 0.25 = 0.125, under the ceiling so uncapped.
+    // Foreground: half way along the ramp (37.5 GU), scaled by 0.5 -> -0.25.
+    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(37.5f), kNear, kFar, p),
+                -0.25f, 1e-3f);
+    // Background is untouched by the model change: z=200 gives 0.5 * 0.25.
     EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(200.0f), kNear, kFar, p),
                 0.125f, 1e-3f);
 }
 
 }  // namespace
+
+// ── The foreground ramp: camera-anchored, NOT a thin-lens ratio ──────────
+//
+// The thin lens made foreground blur a function of focus/z, so the player's
+// own hull -- which never moves relative to the chase camera -- had its blur
+// set by how far away the TARGET was. Past ~18 km it pinned at maximum, and
+// merely switching targets visibly changed your own ship. These pin the
+// property that replaced it.
+
+namespace {
+
+// A hull surface 30 GU from the camera: where the chase camera actually puts
+// the player ship (~1.5x a 20 GU radius).
+constexpr float kHullZ = 30.0f;
+
+}  // namespace
+
+TEST(DofForeground, HullBlurIsIdenticalAcrossEveryTargetDistance) {
+    const float d_hull = depth_for_z(kHullZ);
+    const float first  = renderer::coc_from_depth(d_hull, kNear, kFar,
+                                                  params_at(100.0f));
+    for (float target : {150.0f, 400.0f, 1200.0f, 3000.0f, 4500.0f}) {
+        EXPECT_NEAR(renderer::coc_from_depth(d_hull, kNear, kFar,
+                                             params_at(target)),
+                    first, 1e-6f)
+            << "the player's hull changed blur because the TARGET moved to "
+            << target << " GU -- the foreground must not depend on focus";
+    }
+    EXPECT_LT(first, 0.0f) << "the foreground should actually be defocused";
+}
+
+TEST(DofForeground, RampGivesAGradientAcrossTheHullRatherThanOneFlatValue) {
+    // A uniform blur across a shape reads as a smeared TEXTURE; a gradient
+    // reads as an object out of focus. Nose and tail must differ.
+    const auto p = params_at(400.0f);
+    const float nose = renderer::coc_from_depth(depth_for_z(18.0f), kNear, kFar, p);
+    const float tail = renderer::coc_from_depth(depth_for_z(45.0f), kNear, kFar, p);
+    EXPECT_LT(nose, tail) << "nearer geometry must be blurrier";
+    EXPECT_GT(tail - nose, 0.15f)
+        << "the gradient across a hull is too flat to read as defocus";
+}
+
+TEST(DofForeground, SharpAtAndBeyondTheRampStart) {
+    const auto p = params_at(400.0f);
+    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(60.0f), kNear, kFar, p),
+                0.0f, 1e-4f);
+    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(90.0f), kNear, kFar, p),
+                0.0f, 1e-4f);
+}
+
+TEST(DofForeground, SaturatesAtFullBlurInsideTheRamp) {
+    const auto p = params_at(400.0f);
+    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(15.0f), kNear, kFar, p),
+                -1.0f, 1e-3f);
+    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(5.0f), kNear, kFar, p),
+                -1.0f, 1e-3f);
+}
+
+TEST(DofForeground, DegenerateRampDisablesForegroundBlurRatherThanDividingByZero) {
+    auto p = params_at(400.0f);
+    p.near_sharp_gu = p.near_full_gu;    // zero span
+    EXPECT_EQ(renderer::coc_from_depth(depth_for_z(20.0f), kNear, kFar, p), 0.0f);
+}
+
+TEST(DofForeground, BackgroundIsStillAThinLens) {
+    // Only the near side changed; the far side keeps its ratio and its ceiling.
+    const auto p = params_at(100.0f);
+    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(125.0f), kNear, kFar, p),
+                0.2f, 1e-3f);
+    EXPECT_NEAR(renderer::coc_from_depth(depth_for_z(2000.0f), kNear, kFar, p),
+                0.4f, 1e-3f);
+}
