@@ -82,12 +82,18 @@ Visual-damage methods that need shims:
 
 | Method | Frame | Caller | Status |
 |---|---|---|---|
-| `AddObjectDamageVolume(x,y,z, influRad, strength)` | body-space | story `Damage*.py` | ❌ MISSING |
-| `AddDamage(pEmitPos, fRadius, fDamage)` | world-space | runtime, `Effects.py:698` (`DeathExplosionDamage`) | ❌ MISSING |
-| `DamageRefresh()` | — | trigger re-polygonization | ❌ MISSING |
-| `RemoveVisibleDamage()` | — | clear all damage | ❌ MISSING |
-| `SetVisibleDamageRadiusModifier(float)` | — | per-ship scale | ❌ MISSING |
-| `SetVisibleDamageStrengthModifier(float)` | — | per-ship scale | ❌ MISSING |
+| `AddObjectDamageVolume(x,y,z, influRad, strength)` | body-space | story `Damage*.py` | ✅ `objects.py` → `visible_damage.queue_body_volume` |
+| `AddDamage(pEmitPos, fRadius, fDamage)` | world-space | runtime, `Effects.py:698` (`DeathExplosionDamage`); the death cascade | ✅ `objects.py` → carve + shield-bypassing `apply_hit` |
+| `DamageRefresh()` | — | trigger re-polygonization | ✅ no-op by design — our breach renderer is per-frame, so carves are already live |
+| `RemoveVisibleDamage()` | — | clear all damage | ⚠️ PARTIAL — drops PENDING volumes only; clearing emitted carves needs `HullCarveField::clear()` + binding |
+| `SetVisibleDamageRadiusModifier(float)` | — | per-ship scale | ✅ stored + applied |
+| `SetVisibleDamageStrengthModifier(float)` | — | per-ship scale | ⚠️ stored only (see Gap 2) |
+
+> **Re-verified 2026-09-07** against `engine/appc/objects.py`. Every row above
+> read ❌ MISSING when this doc was written; all six are now implemented (one
+> fully by design as a no-op, two partial). Treat any remaining ❌ in this file
+> as a hypothesis to re-check, not a fact — that warning is in CLAUDE.md for a
+> reason, and this table is why.
 
 Peripheral / lower priority: `SetSpecularKs`, `DisableGlowAlphaMaps`,
 `GetClonedModelRadius`, `HasClonedModel`, `GetClonedModelCount`.

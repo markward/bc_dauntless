@@ -2,7 +2,7 @@
 """Unit tests for the ship death sequence (engine/appc/ship_death.py)."""
 import pytest
 
-from engine.appc import ship_death
+from engine.appc import death_cascade, ship_death
 
 
 class FakeSet:
@@ -28,6 +28,13 @@ class FakeShip:
     def IsDead(self):            return 1 if self._dead else 0
     def SetDying(self, v):       self._dying = bool(v)
     def SetDead(self, v=True):   self._dead = bool(v) if v is not True else True
+    # --- surface the death cascade exercises on every dying ship ---
+    def GetLifeTime(self):       return 1.0e30      # BC's "unset" sentinel
+    def GetNode(self):           return None
+    def AddDamage(self, pEmitPos, fRadius, fDamage): pass
+    def GetRandomPointOnModel(self):
+        from engine.appc.math import TGPoint3
+        return TGPoint3(0.0, 0.0, 0.0)
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +68,7 @@ def test_begin_is_idempotent():
     ship_death.begin(ship)
     ship_death.begin(ship)  # second call must not double-register
     # Advance just short of the throes window: still exactly one entry, alive.
-    ship_death.advance(ship_death.THROES_DURATION - 0.01)
+    ship_death.advance(death_cascade.THROES_MIN - 0.01)
     assert ship.IsDead() == 0
 
 
@@ -69,7 +76,7 @@ def test_advance_marks_dead_at_throes_but_keeps_wreck_in_set():
     s = FakeSet()
     ship = FakeShip(name="Doomed", containing_set=s)
     ship_death.begin(ship)
-    ship_death.advance(ship_death.THROES_DURATION)   # throes expire
+    ship_death.advance(ship_death.MAX_THROES_DURATION)   # throes expire
     # Death-marker fired, but the wreck lingers — NOT removed yet.
     assert ship.IsDead() == 1
     assert s.removed == []
@@ -80,7 +87,7 @@ def test_advance_removes_wreck_after_throes_plus_linger():
     s = FakeSet()
     ship = FakeShip(name="Doomed", containing_set=s)
     ship_death.begin(ship)
-    ship_death.advance(ship_death.THROES_DURATION)        # -> linger
+    ship_death.advance(ship_death.MAX_THROES_DURATION)        # -> linger
     ship_death.advance(ship_death.WRECK_LINGER_DURATION)  # linger expires
     assert s.removed == ["Doomed"]
     assert ship_death.is_targetable_wreck(ship) is False
@@ -89,7 +96,7 @@ def test_advance_removes_wreck_after_throes_plus_linger():
 def test_advance_does_not_kill_before_throes_elapse():
     ship = FakeShip()
     ship_death.begin(ship)
-    ship_death.advance(ship_death.THROES_DURATION / 2.0)
+    ship_death.advance(death_cascade.THROES_MIN / 2.0)
     assert ship.IsDead() == 0
     assert ship.IsDying() == 1
 
@@ -98,7 +105,7 @@ def test_wreck_entry_pruned_after_final_removal():
     s = FakeSet()
     ship = FakeShip(name="Doomed", containing_set=s)
     ship_death.begin(ship)
-    ship_death.advance(ship_death.THROES_DURATION)
+    ship_death.advance(ship_death.MAX_THROES_DURATION)
     ship_death.advance(ship_death.WRECK_LINGER_DURATION)  # removed once
     s.removed.clear()
     ship_death.advance(1.0)   # entry pruned -> no second removal
@@ -116,7 +123,7 @@ def test_locks_clear_only_at_final_removal(monkeypatch):
                         lambda s: cleared.append(s))
     ship = FakeShip()
     ship_death.begin(ship)
-    ship_death.advance(ship_death.THROES_DURATION)
+    ship_death.advance(ship_death.MAX_THROES_DURATION)
     assert cleared == []                 # not cleared at throes end
     ship_death.advance(ship_death.WRECK_LINGER_DURATION)
     assert cleared == [ship]             # cleared only at linger end
@@ -134,7 +141,7 @@ def test_destroyed_event_fires_at_throes_not_linger():
     try:
         ship = FakeShip()
         ship_death.begin(ship)
-        ship_death.advance(ship_death.THROES_DURATION)
+        ship_death.advance(ship_death.MAX_THROES_DURATION)
         assert App.ET_OBJECT_DESTROYED in seen   # fired at the 5s mark
         assert ship.IsDead() == 1
         assert ship._set.removed == []           # still in set (lingering)
@@ -146,7 +153,7 @@ def test_reset_clears_registry():
     ship = FakeShip()
     ship_death.begin(ship)
     ship_death.reset()
-    ship_death.advance(ship_death.THROES_DURATION)
+    ship_death.advance(ship_death.MAX_THROES_DURATION)
     assert ship.IsDead() == 0  # nothing ticked
 
 
@@ -162,14 +169,14 @@ def test_out_of_action_predicate():
 
 def test_begin_ignores_none():
     ship_death.begin(None)  # must not raise
-    ship_death.advance(ship_death.THROES_DURATION)  # registry stayed empty
+    ship_death.advance(ship_death.MAX_THROES_DURATION)  # registry stayed empty
 
 
 def test_advance_prunes_ship_with_no_set():
     ship = FakeShip()
     ship._set = None  # GetContainingSet() -> None
     ship_death.begin(ship)
-    ship_death.advance(ship_death.THROES_DURATION)  # must not raise
+    ship_death.advance(ship_death.MAX_THROES_DURATION)  # must not raise
     assert ship.IsDead() == 1
 
 
@@ -280,7 +287,7 @@ def test_host_loop_advance_combat_ticks_death():
     ship = FakeShip(name="Tick")
     ship_death.begin(ship)
     # Drive the per-frame combat hub with no ships and a full-throes dt.
-    host_loop._advance_combat([], ship_death.THROES_DURATION)
+    host_loop._advance_combat([], ship_death.MAX_THROES_DURATION)
     assert ship.IsDead() == 1
 
 
@@ -352,13 +359,17 @@ def test_weapon_offline_unaffected_when_no_parent_ship():
 
 
 # --- Task 7: explosion VFX --------------------------------------------------
-def test_begin_spawns_explosion_controller():
-    """begin must register at least one particle controller targeting an
-    Explosion sprite."""
+def test_cascade_spawns_explosion_controllers():
+    """The cascade registers particle controllers targeting an Explosion sprite.
+
+    The first blast lands on the first advance(), not inside begin() -- BC
+    enters its loop at fExplosionTime = 0, and we tick that from the frame hub.
+    """
     from engine.appc import particles
     particles.reset()
     ship = FakeShip(name="Boom", radius=3.0)
     ship_death.begin(ship)
+    ship_death.advance(1.0 / 60.0)
     descriptors = particles.snapshot_descriptors()
     assert len(descriptors) >= 1
     paths = [d.get("texture_path", "") for d in descriptors]
@@ -366,15 +377,45 @@ def test_begin_spawns_explosion_controller():
     particles.reset()
 
 
+def test_cascade_keeps_exploding_for_the_whole_window():
+    """BC's ~4-5 blasts a second, not the four we used to emit. Counts the
+    controllers born across a death rather than those alive at one instant."""
+    from engine.appc import particles
+    particles.reset()
+    ship = FakeShip(name="Storm", radius=3.0)
+    ship_death.begin(ship)
+    born = 0
+    for _ in range(int(ship_death.MAX_THROES_DURATION * 60)):
+        before = len(particles.snapshot_descriptors())
+        ship_death.advance(1.0 / 60.0)
+        after = len(particles.snapshot_descriptors())
+        born += max(0, after - before)
+    assert born >= 15, f"only {born} explosions across the whole death"
+    particles.reset()
+
+
 def test_spawn_explosion_raise_safe(monkeypatch):
-    """If the SDK Effects call raises, begin must still mark the ship dying."""
+    """If the SDK Effects call raises, the death must still proceed -- the
+    lifecycle can never depend on VFX succeeding."""
     import Effects
     def boom(*a, **k):
         raise RuntimeError("no backend")
-    monkeypatch.setattr(Effects, "CreateExplosionPuffHigh", boom)
+    monkeypatch.setattr(Effects, "CreateDebrisExplosion", boom)
     ship = FakeShip(name="Safe")
-    ship_death.begin(ship)  # must not raise
+    ship_death.begin(ship)          # must not raise
+    ship_death.advance(1.0 / 60.0)  # nor must the cascade
     assert ship.IsDying() == 1
+
+
+def test_carve_survives_a_failing_effects_backend(monkeypatch):
+    """The carve is dealt before the VFX, so a dead effects backend costs the
+    ship its fireballs but never its holes."""
+    import Effects
+    monkeypatch.setattr(Effects, "CreateDebrisExplosion",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    ship = CarveRecordingShip(radius=4.0)
+    _run_full_death(ship)
+    assert ship.damage_calls, "VFX failure swallowed the hull damage too"
 
 
 # --- Task 8: ET_OBJECT_DESTROYED broadcast ----------------------------------
@@ -406,7 +447,7 @@ def test_death_broadcasts_object_destroyed_once():
         App.ET_OBJECT_DESTROYED, wrapper, "Destroyed", ship)
 
     ship_death.begin(ship)
-    ship_death.advance(ship_death.THROES_DURATION)
+    ship_death.advance(ship_death.MAX_THROES_DURATION)
 
     assert fired["count"] == 1
     assert fired["source_name"] == "Marked"
@@ -607,12 +648,14 @@ def test_anim_controller_texture_cells_default_and_set():
 
 
 def test_death_explosion_is_explosionA_8x8_sheet():
-    """The death explosion forces the colour ExplosionA sheet and declares its
-    8x8 sprite-sheet grid so the renderer animates frames + varies the row."""
+    """BC's CreateDebrisExplosion targets the colour ExplosionA sheet, and
+    CreateTarget declares its 8x8 grid so the renderer animates frames + varies
+    the row instead of drawing the whole sheet as one static billboard."""
     from engine.appc import particles
     particles.reset()
     ship = FakeShip(name="Boom", radius=3.0)
     ship_death.begin(ship)
+    ship_death.advance(1.0 / 60.0)
     descriptors = particles.snapshot_descriptors()
     sheets = [d for d in descriptors
               if "ExplosionA" in d.get("texture_path", "")
@@ -621,28 +664,30 @@ def test_death_explosion_is_explosionA_8x8_sheet():
     particles.reset()
 
 
-def test_death_explosion_tuning():
-    """Per-puff life drives the 8-frame animation duration; the emit radius
-    spreads puffs across a hull-sized sphere; the size is the 0.75 factor."""
+def test_death_explosion_tuning_matches_bc():
+    """Each cascade blast is BC's CreateDebrisExplosion(fRadius * 0.25, 1.5,
+    ...): life 1.5 s, and size keys scaled by a quarter of the ship radius.
+
+    Radius 8 is chosen so fSize is 2.0 -- at radius 4 the scale factor is 1.0
+    and a missing multiply would pass unnoticed.
+    """
     from engine.appc import particles
     particles.reset()
-    radius = 4.0
+    radius = 8.0
     ship = FakeShip(name="Tuned", radius=radius)
     ship_death.begin(ship)
+    ship_death.advance(1.0 / 60.0)
     sheets = [d for d in particles.snapshot_descriptors()
               if "ExplosionA" in d.get("texture_path", "")]
     assert sheets
     d = sheets[0]
-    assert d["emit_life"] == ship_death.EXPLOSION_PUFF_LIFE          # slower animation
-    assert d["emit_radius"] == radius * ship_death.EXPLOSION_SPREAD_FACTOR  # hull spread
-    assert ship_death.EXPLOSION_SIZE_FACTOR == 0.75                  # smaller puffs
-    # Exactly EXPLOSION_COUNT births: spacing covers the throes evenly and
-    # the emission window admits births 0..COUNT-1 only.
-    spacing = ship_death.THROES_DURATION / ship_death.EXPLOSION_COUNT
-    assert d["emit_frequency"] == spacing
-    births = [i * spacing for i in range(ship_death.EXPLOSION_COUNT + 2)
-              if i * spacing <= d["stop_age"]]
-    assert len(births) == ship_death.EXPLOSION_COUNT
+    assert d["emit_life"] == death_cascade.BLAST_LIFE
+
+    size = radius * death_cascade.BLAST_SIZE_FRACTION          # BC: fRadius / 4
+    assert size == 2.0
+    # BC's authored curve: 0.1, 0.5, 1.6, 2.0 times fSize.
+    assert [v for _t, v in d["size_keys"]] == pytest.approx(
+        [0.1 * size, 0.5 * size, 1.6 * size, 2.0 * size])
     particles.reset()
 
 
@@ -706,12 +751,12 @@ def test_locks_held_through_throes_and_released_at_finish():
         bystander.SetTarget(other)             # unrelated lock must survive
 
         ship_death.begin(victim)
-        ship_death.advance(ship_death.THROES_DURATION / 2.0)
+        ship_death.advance(death_cascade.THROES_MIN / 2.0)
         # Mid-throes: still locked on the dying ship.
         assert attacker.GetTarget() is victim
         assert attacker.GetTargetSubsystem() is not None
 
-        ship_death.advance(ship_death.THROES_DURATION / 2.0)
+        ship_death.advance(ship_death.MAX_THROES_DURATION)
         # Throes elapsed: ship is dead and marked, but still lingering as a
         # selectable wreck — locks persist, wreck not removed yet.
         assert victim.IsDead() == 1
@@ -747,10 +792,11 @@ def test_begin_schedules_explosion_lights():
     ship.GetWorldLocation = lambda: type("P", (), {"x": 1.0, "y": 2.0, "z": 3.0})()
 
     ship_death.begin(ship)
-    explosion_lights.advance(1.0 / 60.0)
+    ship_death.advance(1.0 / 60.0)        # cascade fires blast 0
+    explosion_lights.advance(1.0 / 60.0)  # ...which is borne here
 
     data = explosion_lights.render_data()
-    assert len(data) == 1, "the first blast fires on the frame after death"
+    assert data, "the first blast of the cascade lit nothing"
     assert data[0]["position"] == pytest.approx((1.0, 2.0, 3.0))
 
 
@@ -762,26 +808,37 @@ def test_explosion_light_radius_follows_the_fireball_size():
     ship.GetWorldLocation = lambda: type("P", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
 
     ship_death.begin(ship)
+    ship_death.advance(1.0 / 60.0)
     explosion_lights.advance(1.0 / 60.0)
 
-    expected_size = max(20.0 * ship_death.EXPLOSION_SIZE_FACTOR,
-                        ship_death.MIN_EXPLOSION_SIZE)
+    # BC's per-blast fireball size: a quarter of the ship radius.
+    expected_size = 20.0 * death_cascade.BLAST_SIZE_FRACTION
     assert explosion_lights.render_data()[0]["radius"] == pytest.approx(
         expected_size * explosion_lights.RADIUS_FACTOR)
 
 
-def test_all_scheduled_blasts_are_borne_across_the_throes():
+def test_blasts_keep_lighting_the_scene_across_the_throes():
+    """The cascade must light the whole death, not just its first frame -- and
+    every registered blast must be borne, leaving nothing queued at the end.
+
+    Drives ship_death (which fires the blasts) alongside explosion_lights
+    (which bears them); ticking only the latter would make this vacuous.
+    """
     from engine.appc import explosion_lights
     ship = FakeShip(radius=20.0)
     ship.GetWorldLocation = lambda: type("P", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
 
     ship_death.begin(ship)
-    seen = 0
-    for _ in range(int(ship_death.THROES_DURATION * 60) + 5):
-        seen = max(seen, len(explosion_lights.render_data()))
+    lit_frames = 0
+    for _ in range(int(ship_death.MAX_THROES_DURATION * 60)):
+        ship_death.advance(1.0 / 60.0)
         explosion_lights.advance(1.0 / 60.0)
-    # Blasts overlap (puff life exceeds the spacing), so several are live at
-    # once; the count borne over the window is what matters.
+        lit_frames += 1 if explosion_lights.render_data() else 0
+
+    # BC's mean spacing is 0.225 s against a 1.5 s light life, so a death is
+    # continuously lit rather than a few separated flashes.
+    assert lit_frames > int(ship_death.MAX_THROES_DURATION * 60 * 0.5), (
+        f"scene was lit for only {lit_frames} frames of the death")
     assert not explosion_lights._sequences, "every blast should have been borne"
 
 
@@ -794,8 +851,107 @@ def test_reset_clears_explosion_lights_too():
     ship.GetWorldLocation = lambda: type("P", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
 
     ship_death.begin(ship)
+    ship_death.advance(1.0 / 60.0)
     explosion_lights.advance(1.0 / 60.0)
     assert explosion_lights.render_data()
 
     ship_death.reset()
     assert explosion_lights.render_data() == []
+
+
+# ── BC death cascade (Effects.ObjectExploding) ───────────────────────────────
+# Replaces the old fixed 5 s / 4-puff sequence. See engine/appc/death_cascade.py.
+
+class CarveRecordingShip(FakeShip):
+    """FakeShip that records AddDamage and can be sampled for hull points."""
+    def __init__(self, radius=4.0, **kw):
+        super().__init__(radius=radius, **kw)
+        self.damage_calls = []
+        self._samples = 0
+    def GetLifeTime(self):
+        return 1.0e30                      # BC's "not set" sentinel
+    def GetRandomPointOnModel(self):
+        from engine.appc.math import TGPoint3
+        self._samples += 1
+        return TGPoint3(float(self._samples), 0.0, 0.0)
+    def AddDamage(self, pEmitPos, fRadius, fDamage):
+        self.damage_calls.append((pEmitPos, fRadius, fDamage))
+
+
+def _run_full_death(ship, seconds=None):
+    """Tick a death from begin() to the end of the throes."""
+    from engine.appc import death_cascade
+    seconds = seconds if seconds is not None else death_cascade.THROES_MAX
+    ship_death.begin(ship)
+    for _ in range(int(seconds * 60)):
+        ship_death.advance(1.0 / 60.0)
+
+
+def test_throes_duration_varies_per_ship():
+    """BC rolls 5-15 s per ship; the old engine gave every ship a flat 5.0."""
+    durations = set()
+    for _ in range(60):
+        ship_death.reset()
+        ship = CarveRecordingShip()
+        ship_death.begin(ship)
+        durations.add(ship_death._active[0]["time_left"])
+    ship_death.reset()
+    assert len(durations) > 1, "every ship got an identical death window"
+    from engine.appc import death_cascade
+    assert min(durations) >= death_cascade.THROES_MIN
+    assert max(durations) < death_cascade.THROES_MAX
+
+
+def test_death_carves_holes_through_the_dying_hull():
+    """The headline behaviour: a ship dying under the cascade takes repeated
+    AddDamage calls at BC's radius/4 and strength 600, which is what tears it
+    open. The old sequence carved nothing."""
+    from engine.appc import death_cascade
+    ship = CarveRecordingShip(radius=4.0)
+    _run_full_death(ship)
+
+    assert len(ship.damage_calls) >= 3, (
+        f"a full death only carved {len(ship.damage_calls)} times")
+    for _pt, radius, strength in ship.damage_calls:
+        assert radius == pytest.approx(4.0 * death_cascade.DAMAGE_RADIUS_FRACTION)
+        assert strength == pytest.approx(death_cascade.DAMAGE_STRENGTH)
+
+
+def test_carves_are_spread_over_the_hull():
+    """Each blast samples GetRandomPointOnModel afresh, so the ship ends up
+    holed all over rather than in one place."""
+    ship = CarveRecordingShip()
+    _run_full_death(ship)
+    xs = [pt.x for pt, _r, _s in ship.damage_calls]
+    assert len(set(xs)) == len(xs)
+
+
+def test_cascade_stops_when_the_wreck_is_removed():
+    """Carving must not continue into the linger phase or past removal."""
+    from engine.appc import death_cascade
+    ship = CarveRecordingShip()
+    _run_full_death(ship)
+    settled = len(ship.damage_calls)
+    for _ in range(int((death_cascade.THROES_MAX
+                        + ship_death.WRECK_LINGER_DURATION) * 60)):
+        ship_death.advance(1.0 / 60.0)
+    assert len(ship.damage_calls) == settled
+
+
+def test_mission_set_lifetime_still_drives_the_window():
+    """E7M1's doomed freighter sets SetLifeTime(4.0); BC honours it instead of
+    rolling, and the throes must match."""
+    class TimedShip(CarveRecordingShip):
+        def GetLifeTime(self):
+            return 4.0
+    ship = TimedShip()
+    ship_death.begin(ship)
+    assert ship_death._active[0]["time_left"] == pytest.approx(4.0)
+
+
+def test_reset_clears_cascades():
+    ship = CarveRecordingShip()
+    ship_death.begin(ship)
+    ship_death.reset()
+    ship_death.advance(1.0)
+    assert ship.damage_calls == []

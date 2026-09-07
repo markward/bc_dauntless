@@ -14,11 +14,11 @@ know is the schedule -- ship_death spawns a fixed number of blasts evenly
 across the throes window -- and that is deterministic, so the blast times are
 reproduced here rather than observed.
 
-The schedule itself is NOT duplicated: ship_death owns those constants
-(EXPLOSION_COUNT, THROES_DURATION, EXPLOSION_PUFF_LIFE, and the fireball size
-formula) and passes them to register(). This module owns only the LIGHT
-tunables below. Two homes, one for each concern, so neither can drift into a
-second interpreter of the other's numbers.
+The schedule itself is NOT duplicated: `engine.appc.death_cascade` owns BC's
+blast constants (spacing, BLAST_LIFE, and the fireball size formula) and calls
+register() once per blast as it fires. This module owns only the LIGHT tunables
+below. Two homes, one for each concern, so neither can drift into a second
+interpreter of the other's numbers.
 
 TUNING: every look-affecting value lives in this file and nowhere else, so
 retuning after a live look is a Python edit with no rebuild -- the same rule
@@ -66,8 +66,8 @@ RADIUS_FACTOR = 34.0      # light reach as a multiple of the fireball's drawn
                           # top of that range does to the falloff.
 MIN_LIGHT_RADIUS_GU = 60.0  # floor, comfortably clear of the renderer's 40 GU
                           # ship-scale ceiling. RADIUS_FACTOR alone is not
-                          # enough: ship_death's MIN_EXPLOSION_SIZE is 2 GU, so
-                          # a shuttle's fireball would land at 20 GU -- under
+                          # enough: a shuttle's per-blast fireball (a quarter
+                          # of its radius) would land at ~20 GU -- under
                           # the ceiling, on the hull-local falloff curve, and
                           # invisible. Small craft get a light that carries;
                           # capital ships still scale past this by size.

@@ -166,7 +166,7 @@ def test_explosion_light_radius_clears_the_ship_scale_ceiling():
     CEILING_GU = 40.0   # renderer::kDynLightShipCeilingGU
     # A small craft is the worst case: the smallest fireball, hence the
     # smallest radius this factor can produce.
-    smallest_fireball_gu = 2.0          # ship_death.MIN_EXPLOSION_SIZE
+    smallest_fireball_gu = 2.0          # a small craft's per-blast fireball
     radius = max(smallest_fireball_gu * el.RADIUS_FACTOR,
                  el.MIN_LIGHT_RADIUS_GU)
     assert radius > CEILING_GU, (

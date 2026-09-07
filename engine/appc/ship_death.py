@@ -1,54 +1,35 @@
 # engine/appc/ship_death.py
-"""Ship death sequence — fixed-window throes, then removal.
+"""Ship death sequence — BC's explosion cascade, then removal.
 
-Single owner of the dying -> dead transition. `begin(ship)` starts the
-throes timer (and spawns the death explosion); `advance(dt)` ticks every
-dying ship and, when its timer expires, marks it dead (which fires
-ship_lifecycle.publish_destroyed), broadcasts ET_OBJECT_DESTROYED, and
-removes it from its set. Plugs into the per-frame _advance_combat hub the
-same way hit_vfx / particles do.
+Single owner of the dying -> dead transition. `begin(ship)` starts the throes
+(and the death cascade); `advance(dt)` ticks every dying ship and, when its
+timer expires, marks it dead (which fires ship_lifecycle.publish_destroyed),
+broadcasts ET_OBJECT_DESTROYED, and removes it from its set. Plugs into the
+per-frame _advance_combat hub the same way hit_vfx / particles do.
 
-See docs/superpowers/specs/2026-06-11-ship-death-sequence-design.md.
+The throes window is no longer a fixed 5 s: `engine.appc.death_cascade` rolls
+BC's 5-15 s per ship (honouring a mission-set lifetime), and drives the storm of
+explosions that carves the hull open while it dies. That module owns everything
+visual about a death; this one owns the lifecycle.
+
+See docs/superpowers/specs/2026-06-11-ship-death-sequence-design.md and
+engine/appc/death_cascade.py.
 """
 
 import engine.dev_mode as dev_mode
-from engine.appc import explosion_lights
+from engine.appc import death_cascade, explosion_lights
 from engine.core.ids import implements
 
-THROES_DURATION       = 5.0   # seconds the ship coasts, dying, before removal
 WRECK_LINGER_DURATION = 5.0   # seconds a dead hull lingers, selectable in the
                               # target list, after the throes before removal
-# Explosion VFX tunables (consumed by _spawn_explosion), kept beside
-# THROES_DURATION. Tuned by feel.
-EXPLOSION_SIZE_FACTOR   = 0.75  # per-puff size as a fraction of ship radius
-MIN_EXPLOSION_SIZE      = 2.0   # GU floor for tiny craft
-EXPLOSION_PUFF_LIFE     = 1.0   # seconds per puff = 8-frame animation duration.
-                                # The renderer derives the sprite-sheet cell as
-                                # frame = (age / life) * columns, so this value
-                                # IS the animation duration -- halving it doubles
-                                # the frame rate. Was 3.0 (the SDK's own 1.5s
-                                # default, deliberately slowed 2x); restored to
-                                # 1.5, then 1.0 on request -- 3x the original
-                                # speed and faster than the SDK's own default.
-                                # The explosion LIGHT is handed this same value,
-                                # so the flash tracks the sprite instead of
-                                # outliving it.
-                                #
-                                # NOTE this is now SHORTER than the 1.25 s
-                                # spacing (THROES_DURATION / EXPLOSION_COUNT), so
-                                # the blasts no longer overlap: the throes read
-                                # as four separate flashes with a ~0.25 s dark
-                                # gap between them, where they used to be a
-                                # continuous burn. Raising EXPLOSION_COUNT to 5
-                                # closes the gap exactly (5.0 / 5 = 1.0 s
-                                # spacing) if continuity is wanted back.
-EXPLOSION_SPREAD_FACTOR = 0.8   # emit-sphere radius as a fraction of ship radius,
-                                # so puffs spawn all over the hull, not just centre
-EXPLOSION_COUNT         = 4     # total big blasts over the throes window —
-                                # evenly spaced, each at a different hull spot
+
+# The longest throes BC can roll. Callers that need to drive a death to
+# completion (tests, teardown) advance by this rather than by a per-ship value
+# they cannot know — the throes are randomised per ship now.
+MAX_THROES_DURATION = death_cascade.THROES_MAX
 
 # Registry of in-progress death sequences: each entry is
-# {"ship": ship, "time_left": float}.
+# {"ship": ship, "phase": str, "time_left": float, "cascade": dict | None}.
 _active: list[dict] = []
 
 
@@ -80,7 +61,16 @@ def begin(ship, killer=None) -> None:
         return
     if hasattr(ship, "SetDying"):
         ship.SetDying(True)
-    _active.append({"ship": ship, "phase": "throes", "time_left": THROES_DURATION})
+    # BC rolls the death window per ship (Effects.ObjectExploding), honouring a
+    # lifetime a mission already set. The cascade is planned against that same
+    # duration, so the finish always lands inside the throes.
+    duration = death_cascade.roll_duration(ship)
+    _active.append({
+        "ship": ship,
+        "phase": "throes",
+        "time_left": duration,
+        "cascade": death_cascade.begin(ship, duration),
+    })
     # Run the mission's authored death script (SDK SetDeathScript) before the
     # generic fireball, so authored debris VFX/sound lead. Raise-safe.
     if hasattr(ship, "RunDeathScript"):
@@ -89,7 +79,6 @@ def begin(ship, killer=None) -> None:
         except Exception as _e:
             dev_mode.log_swallowed("run death script from begin", _e)
     _broadcast_exploding(ship, killer)
-    _spawn_explosion(ship)
     # Faithful death-explosion collateral: BC's m_splashDamage to everything in
     # m_splashDamageRadius (loadspacehelper sets it on every ship). Raise-safe;
     # a no-op for objects with no authored splash. Fired here so EVERY death
@@ -129,6 +118,10 @@ def advance(dt: float) -> None:
         return
     survivors = []
     for entry in _active:
+        # Drive the explosion cascade before the timer, so a blast scheduled at
+        # the very end of the window still fires on the frame the throes expire.
+        if entry["phase"] == "throes" and entry["cascade"] is not None:
+            death_cascade.advance(entry["cascade"], dt)
         entry["time_left"] -= dt
         if entry["time_left"] > 0.0:
             survivors.append(entry)
@@ -136,6 +129,7 @@ def advance(dt: float) -> None:
         if entry["phase"] == "throes":
             _mark_dead(entry["ship"])
             entry["phase"] = "linger"
+            entry["cascade"] = None          # stop carving; the ship is dead
             entry["time_left"] = WRECK_LINGER_DURATION
             survivors.append(entry)          # wreck lingers, still selectable
         else:  # "linger"
@@ -227,68 +221,6 @@ def _broadcast_destroyed(ship) -> None:
         App.g_kEventManager.AddEvent(evt)
     except Exception as _e:
         dev_mode.log_swallowed("broadcast ET_OBJECT_DESTROYED", _e)
-
-
-def _spawn_explosion(ship) -> None:
-    """Death explosion: an animated ExplosionA fireball sized to the ship
-    radius, emitted from the (still-present, coasting) hull. Reuses the SDK
-    Effects helper via our AnimTSParticleController shim + particle backend.
-
-    ExplosionA.tga is a 256x256, 8x8 sprite sheet: 8 animation frames across,
-    8 explosion variants down. We force ExplosionA (it carries its own alpha,
-    unlike the greyscale ExplosionB) and declare the 8x8 grid so the renderer
-    steps a per-particle cell (frame from age, row for variety) instead of
-    drawing the whole sheet as one static billboard.
-
-    Raise-safe: death logic must never depend on VFX succeeding (missing
-    asset / headless test without a backend just yields no explosion)."""
-    try:
-        import Effects
-        from engine.appc.math import TGPoint3
-        radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 1.0
-        size = max(radius * EXPLOSION_SIZE_FACTOR, MIN_EXPLOSION_SIZE)
-        # Births land at i*spacing; used both for the controller's emission
-        # frequency below and for the matching light schedule, so the two can
-        # never disagree about when a blast happens.
-        spacing = THROES_DURATION / EXPLOSION_COUNT
-        # Dynamic lights for the fireballs. The particle backend is analytic --
-        # the renderer derives every puff from the controller's curves, so
-        # there is no per-puff hook -- which is why the light registry is
-        # handed this schedule rather than observing the births. `size` is
-        # passed rather than recomputed so explosion_lights never becomes a
-        # second interpreter of the fireball-size formula above.
-        explosion_lights.register(ship, size_gu=size, count=EXPLOSION_COUNT,
-                                  spacing_s=spacing,
-                                  life_s=EXPLOSION_PUFF_LIFE)
-        action = Effects.CreateExplosionPuffHigh(
-            THROES_DURATION,            # fLife
-            size,                       # fSize
-            ship,                       # pEmitFrom — tracks the tumbling hull
-            TGPoint3(0.0, 0.0, 0.0),    # kEmitPos (body origin)
-            TGPoint3(0.0, 0.0, 1.0),    # kEmitDir
-            None,                       # pAttachTo — unattached at emit pos
-        )
-        ctrl = action.GetController() if hasattr(action, "GetController") else None
-        if ctrl is not None:
-            # Force the colour sheet (helper randomly picks A or greyscale B);
-            # CreateTarget auto-declares the 8x8 sprite-sheet grid.
-            ctrl.CreateTarget("data/Textures/Effects/ExplosionA.tga")
-            # Frames step over each puff's life, so a longer life = slower
-            # animation. Spread births across a hull-sized sphere so puffs
-            # appear all over the ship, not just at its centre.
-            ctrl.SetEmitLife(EXPLOSION_PUFF_LIFE)
-            ctrl.SetEmitRadius(radius * EXPLOSION_SPREAD_FACTOR)
-            # Exactly EXPLOSION_COUNT births, evenly spaced across the throes
-            # window: births land at i*spacing; capping the emission window at
-            # (COUNT - 0.5)*spacing allows births 0..COUNT-1 and no more. The
-            # last blast finishes its animation after the hulk is removed,
-            # anchored at the wreck site.
-            ctrl.SetEmitFrequency(spacing)
-            ctrl.SetEffectLifeTime(spacing * (EXPLOSION_COUNT - 0.5))
-        if action is not None and hasattr(action, "Play"):
-            action.Play()
-    except Exception as _e:
-        dev_mode.log_swallowed("spawn death explosion", _e)
 
 
 def reset() -> None:

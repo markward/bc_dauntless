@@ -163,11 +163,11 @@ def test_neighbour_breach_does_not_rearm_lingering_wreck(monkeypatch):
         # --- Step 1: put the wreck through ship_death into the linger phase ---
         ship_death.begin(wreck)
         # Advance past the full throes window so the wreck transitions to linger.
-        ship_death.advance(ship_death.THROES_DURATION)
+        ship_death.advance(ship_death.MAX_THROES_DURATION)
 
         # Precondition: wreck is now a dead, targetable linger-phase wreck.
         assert ship_death.is_targetable_wreck(wreck), (
-            "wreck should be in the linger phase after THROES_DURATION"
+            "wreck should be in the linger phase after the throes"
         )
         assert wreck._dead, "wreck._dead should be True after throes expire"
 

@@ -836,7 +836,7 @@ def test_destroyed_ship_lingers_in_list_then_drops_after_removal():
         assert "Doomed" in [r["name"] for r in state["rows"]]   # listed as a wreck
 
         # Run out the throes + linger -> final removal -> no longer a wreck.
-        ship_death.advance(ship_death.THROES_DURATION)
+        ship_death.advance(ship_death.MAX_THROES_DURATION)
         ship_death.advance(ship_death.WRECK_LINGER_DURATION)
         assert ship_death.is_targetable_wreck(wreck) is False
         _pump(target_menu, player)
