@@ -4345,6 +4345,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
     keys.attr("KEY_LEFT_BRACKET")  = GLFW_KEY_LEFT_BRACKET;
     keys.attr("KEY_RIGHT_BRACKET") = GLFW_KEY_RIGHT_BRACKET;
     keys.attr("KEY_GRAVE_ACCENT")  = GLFW_KEY_GRAVE_ACCENT;
+    // Punctuation used by the dev tuning keybindings. A dev binding on an
+    // UNEXPORTED constant raises AttributeError on the first developer-mode
+    // tick, and the enclosing try in host_loop has no except clause -- so it
+    // kills the process before any live look. That is exactly how a dead key
+    // shipped once already; tests/unit/test_host_key_manifest.py and
+    // test_dev_key_collisions.py now guard it from both directions.
+    keys.attr("KEY_COMMA")      = GLFW_KEY_COMMA;
+    keys.attr("KEY_PERIOD")     = GLFW_KEY_PERIOD;
+    keys.attr("KEY_SEMICOLON")  = GLFW_KEY_SEMICOLON;
+    keys.attr("KEY_APOSTROPHE") = GLFW_KEY_APOSTROPHE;
     keys.attr("KEY_LEFT_SUPER")   = GLFW_KEY_LEFT_SUPER;
     keys.attr("KEY_LEFT_CONTROL") = GLFW_KEY_LEFT_CONTROL;
     keys.attr("KEY_SPACE") = GLFW_KEY_SPACE;

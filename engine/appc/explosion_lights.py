@@ -36,6 +36,42 @@ COLOR = (1.0, 0.62, 0.28)  # warm orange; r > g > b is what reads as fire
 RISE_FRACTION = 0.12      # fraction of a blast's life spent brightening
 DECAY_EXPONENT = 2.0      # >1 fades fast at first, then lingers
 
+# Nudge steps for the live dev keys (engine/dev_keybindings.py). Sized as a
+# sensible FRACTION of the value each moves, so a press is visible without
+# being a third of the range.
+PEAK_INTENSITY_STEP = 1.0
+RADIUS_FACTOR_STEP = 0.5
+
+# Live, per-session values seeded from the constants above. The dev keys move
+# THESE, never the module constants: a live experiment must not become the
+# shipped default by accident -- you read the number off stderr and paste it
+# in deliberately. Deliberately NOT cleared by reset(), which is mission
+# state; tuning survives a mission swap so a calibration session is not lost
+# to loading a different mission.
+_peak_intensity = PEAK_INTENSITY
+_radius_factor = RADIUS_FACTOR
+
+
+def nudge_peak_intensity(delta):
+    """Move the bloom's peak brightness. Dev tuning only."""
+    global _peak_intensity
+    _peak_intensity = max(0.0, min(60.0, _peak_intensity + delta))
+    return _peak_intensity
+
+
+def nudge_radius_factor(delta):
+    """Move the light's reach, as a multiple of the fireball's drawn size."""
+    global _radius_factor
+    _radius_factor = max(0.0, min(20.0, _radius_factor + delta))
+    return _radius_factor
+
+
+def tuning_values():
+    """The whole live tuning state, for a one-line stderr readout."""
+    return (("peak_intensity", _peak_intensity),
+            ("radius_factor", _radius_factor))
+
+
 # Below this an entry contributes nothing worth the per-instance top-K scan
 # that runs for every hull on screen, so it is dropped rather than emitted.
 _MIN_EMITTED_INTENSITY = 1e-3
@@ -106,7 +142,7 @@ def _bear(seq) -> None:
         return
     _active.append({
         "position": pos,
-        "radius":   seq["size_gu"] * RADIUS_FACTOR,
+        "size_gu":  seq["size_gu"],
         "age":      0.0,
         "life":     seq["life_s"],
     })
@@ -153,13 +189,17 @@ def render_data() -> list:
     """
     out = []
     for blast in _active:
-        intensity = PEAK_INTENSITY * envelope(blast["age"] / blast["life"])
+        # Radius and intensity resolve HERE rather than at birth, so a live
+        # nudge moves blasts that are already burning instead of only the
+        # next one -- which is the difference between tuning by eye and
+        # tuning by waiting for another ship to die.
+        intensity = _peak_intensity * envelope(blast["age"] / blast["life"])
         if intensity <= _MIN_EMITTED_INTENSITY:
             continue
         out.append({
             "position":  blast["position"],
             "color":     COLOR,
-            "radius":    blast["radius"],
+            "radius":    blast["size_gu"] * _radius_factor,
             "intensity": intensity,
         })
     return out
