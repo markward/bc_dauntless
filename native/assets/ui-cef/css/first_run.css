@@ -53,6 +53,11 @@
     position: relative;
     height: auto;
     max-width: 90vw;
+    /* .cp-modal's rgb(20,22,28) at 0.8, so the ship behind reads through the
+       box. Scoped to this root on purpose: the pause-menu modals sit over a
+       live 3D scene and need to stay opaque to be legible, and this is the
+       only screen whose backdrop is a still image chosen to be seen. */
+    background: rgba(20, 22, 28, 0.8);
 }
 
 #first-run .fr-body {
