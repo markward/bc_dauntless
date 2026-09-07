@@ -22,8 +22,16 @@ WRECK_LINGER_DURATION = 5.0   # seconds a dead hull lingers, selectable in the
 # THROES_DURATION. Tuned by feel.
 EXPLOSION_SIZE_FACTOR   = 0.75  # per-puff size as a fraction of ship radius
 MIN_EXPLOSION_SIZE      = 2.0   # GU floor for tiny craft
-EXPLOSION_PUFF_LIFE     = 3.0   # seconds per puff = 8-frame animation duration
-                                # (2x the SDK 1.5s default → frames play 2x slower)
+EXPLOSION_PUFF_LIFE     = 1.5   # seconds per puff = 8-frame animation duration.
+                                # The renderer derives the sprite-sheet cell as
+                                # frame = (age / life) * columns, so this value
+                                # IS the animation duration -- halving it doubles
+                                # the frame rate. Was 3.0 (the SDK's own 1.5s
+                                # default, deliberately slowed 2x); restored to
+                                # 1.5 on request so the fireball plays at twice
+                                # its previous speed. The explosion LIGHT is
+                                # handed this same value, so the flash tracks the
+                                # sprite instead of outliving it.
 EXPLOSION_SPREAD_FACTOR = 0.8   # emit-sphere radius as a fraction of ship radius,
                                 # so puffs spawn all over the hull, not just centre
 EXPLOSION_COUNT         = 4     # total big blasts over the throes window —
