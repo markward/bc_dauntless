@@ -32,6 +32,20 @@ class _Keys:
     KEY_LEFT_BRACKET = 91
     KEY_RIGHT_BRACKET = 93
     KEY_GRAVE_ACCENT = 96
+    # register_for_frame() unconditionally registers the explosion-light
+    # tuning keys too, so this double must supply every KEY_* that function
+    # touches -- otherwise the whole registration call raises AttributeError
+    # and takes every OTHER binding in this file down with it, which is what
+    # these four names being absent did.
+    #
+    # NOTE: adding a constant HERE proves nothing about the real surface. The
+    # exports are guarded against the live module by
+    # tests/unit/test_host_key_manifest.py and test_dev_key_collisions.py;
+    # keep this double in step with them rather than trusting it.
+    KEY_COMMA = 44
+    KEY_PERIOD = 46
+    KEY_SEMICOLON = 59
+    KEY_APOSTROPHE = 39
 
 
 class _FakeHost:
