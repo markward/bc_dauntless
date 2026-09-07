@@ -114,15 +114,24 @@ construction, not by discipline.
 | Resolution | `engine/paths.py` | `picked` source, `persist()` accepts it |
 | Screen (Python) | `engine/ui/first_run_panel.py` | **new** — `Panel` subclass, IPC with the page |
 | Screen (page) | `native/assets/ui-cef/panels/first_run/` | **new** — markup, CSS, JS |
-| Background | `native/assets/ui-cef/images/first-run-bg.jpg` | **new asset, supplied by Mark** |
+| Background | `native/assets/ui-cef/images/first-run-bg.png` | supplied 2026-09-07 |
 | Pump loop | `engine/host_loop.py` | **new** — drives CEF before the game loop exists |
 | Call site | `engine/host_loop.py` | after `cef_initialize`, one call |
 
 The background image ships in the repo and **cannot** come from `game/` —
-that is precisely what is missing when the screen appears. Until Mark
-supplies a screenshot the page falls back to a CSS starfield, which must
-look deliberate rather than broken: the screen is functional either way and
-dropping the asset in later requires no code change.
+that is precisely what is missing when the screen appears. Supplied
+2026-09-07: a 1920×1080 render of a Galaxy-class ship against a starfield,
+832 KB.
+
+**Its composition dictates the layout.** The ship sits dead centre with
+bright window detail across the saucer; a centred panel would land straight
+on top of it and fight the text. The left third is clean, near-black
+starfield. So the panel sits **left, vertically centred**, with the ship
+visible to its right — better composition and better legibility than
+centring over a scrim.
+
+The page still keeps a CSS starfield fallback behind the image, so a missing
+or failed asset degrades to something deliberate rather than a white void.
 
 `platform` is the correct home and `ui_cef` is not: `ui_cef/CMakeLists.txt`
 returns early when `DAUNTLESS_ENABLE_CEF` is off, so the existing
@@ -375,5 +384,6 @@ control cleanly to the real game loop.
 - Windows `IFileOpenDialog` behind the same seam. Until then the screen
   still appears on Windows and Linux with Browse inert — legible, where the
   previous design gave those platforms a silent exit.
-- Replace the CSS starfield fallback with Mark's screenshot once supplied;
-  no code change, just the asset.
+- The background is a placeholder taken from the `dauntless_web` assets. If
+  a purpose-shot screenshot replaces it later, keep the left third clear —
+  the panel's position depends on it.
