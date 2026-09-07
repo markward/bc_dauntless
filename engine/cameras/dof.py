@@ -34,10 +34,16 @@ import math
 # ── Lens shape — pushed to the shader as uniforms ────────────────────────
 # Deliberately conservative. Expect to calibrate UP and then back down after a
 # live look, the way the directional ambient gradient went 0.6 -> 1.0 -> 0.8.
-NEAR_STRENGTH = 1.5      # foreground defocus gain
+NEAR_STRENGTH = 1.0      # foreground defocus gain
 FAR_STRENGTH = 1.0       # background defocus gain, before the ceiling
-FAR_CEILING = 0.4        # hard cap on far-field CoC -- the anti-mush knob
-MAX_RADIUS_FRAC = 0.008  # max blur radius as a fraction of screen height
+FAR_CEILING = 0.2        # hard cap on far-field CoC -- the anti-mush knob
+MAX_RADIUS_FRAC = 0.006  # max blur radius as a fraction of screen height
+
+# All three above are Mark's live-chosen values (2026-09-07), read off the
+# in-game readout after the foreground ramp was reworked to span the hull.
+# Previous: near 1.5, radius 0.008, ceiling 0.4 -- so he took the foreground
+# down a third, the overall magnitude down a quarter, and HALVED the
+# background ceiling, which is the knob the design was least sure of.
 
 # ── The foreground ramp, in PLAYER SHIP RADII ────────────────────────────
 # The foreground's blur is anchored to the CAMERA, not to the focus plane, so

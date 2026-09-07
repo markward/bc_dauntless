@@ -180,8 +180,27 @@ def test_far_ceiling_nudge_clamps_at_both_ends():
 
 
 def test_nudges_never_write_back_to_the_module_constants():
+    """A live experiment must not silently become the shipped default -- the
+    number is read off stderr and pasted in deliberately.
+
+    Captures the constants rather than pinning literals: this asserts the
+    INVARIANT (they do not move), not what they happen to be, so retuning the
+    defaults after a live look does not break it. It used to hardcode 0.008
+    and 0.4, and duly failed the moment those were retuned.
+    """
+    before_radius = dof.MAX_RADIUS_FRAC
+    before_ceiling = dof.FAR_CEILING
+    before_near = dof.NEAR_STRENGTH
+
     s = FocusSolver()
     s.nudge_max_radius_frac(MAX_RADIUS_FRAC_STEP)
     s.nudge_far_ceiling(FAR_CEILING_STEP)
-    assert dof.MAX_RADIUS_FRAC == 0.008
-    assert dof.FAR_CEILING == 0.4
+    s.nudge_near_strength(dof.NEAR_STRENGTH_STEP)
+
+    assert dof.MAX_RADIUS_FRAC == before_radius
+    assert dof.FAR_CEILING == before_ceiling
+    assert dof.NEAR_STRENGTH == before_near
+    # ...and the instance really did move, or the assertions above are vacuous.
+    assert s.max_radius_frac != before_radius
+    assert s.far_ceiling != before_ceiling
+    assert s.near_strength != before_near
