@@ -143,6 +143,11 @@ def _clear_all_targets(ship) -> None:
     _WarpTransit set, so the derived membership is empty by construction and
     repopulates from the destination on arrival. Fail-open: a failure here
     never blocks the warp.
+
+    ⚠️ THIS IS THE ENGAGE-TIME CLEAR, AND IT DOES NOT STICK ON ITS OWN. It is
+    ours, not BC's -- BC clears on ARRIVAL (PostWarpEnableMenu). Read
+    `_ArrivalClearTargetsAction`, which is the one that holds, before deleting
+    either as a duplicate of the other.
     """
     try:
         if ship is not None:
@@ -161,10 +166,101 @@ def _clear_all_targets(ship) -> None:
         pass
 
 
+def _stand_down_player_ai(ship) -> None:
+    """Drop the player's bridge-officer AI: the Helm has the conn for the warp.
+
+    ⚠️ MUST RUN AFTER `_clear_all_targets`, NOT BEFORE — the order is the whole
+    point. Clearing the target posts ET_TARGET_WAS_CHANGED synchronously, and
+    the SDK handler `Bridge.TacticalMenuHandlers.TargetChanged` responds by
+    calling `UpdateOrders` -> `StartAI`, which BUILDS A FRESH ATTACK AI. Stand
+    down first and that rebuild simply undoes it.
+
+    Without this, an attack AI ordered before the warp keeps running for the
+    whole align + transit, and its `SelectTarget` re-acquires the enemy one
+    frame after the engage clear (via `AutoTargetChange` — see
+    `_ArrivalClearTargetsAction` for the full chain). Live-reported 2026-09-07:
+    the reticle, the target ship-display panel and the range/speed readouts all
+    stayed on the ship being left behind for the entire warp.
+
+    Same operation, and the same SDK justification, as
+    `host_loop._PlayerControl._cancel_player_ai` (manual input overrides the
+    current order) — `MissionLib.SetPlayerAI(ctrl, None)` is
+    `pPlayer.ClearAI()` plus a controller update, done directly so this module
+    never imports MissionLib. The controller is reset to **None, not "Helm"**:
+    `TacticalMenuHandlers.GetOrderString` returns None for any controller
+    outside `(None, "Tactical")`, so parking it on "Helm" would leave Tactical
+    unable to take orders after the warp.
+
+    Felix is not stood down permanently — `g_iOrderState` is untouched, so the
+    next `UpdateOrders` restores him, which the player's first target pick in
+    the destination system triggers through the same TargetChanged path.
+    """
+    if ship is None:
+        return
+    if hasattr(ship, "ClearAI"):
+        ship.ClearAI()
+    import sys
+    ml = sys.modules.get("MissionLib")
+    if ml is not None and hasattr(ml, "g_sPlayerShipController"):
+        ml.g_sPlayerShipController = None
+
+
 class _ClearTargetsAction(TGAction):
     """Drop every target at warp engage. Runs on BOTH the flythrough and the
     instant hard-cut path (added first in each), so the target list is empty
-    the instant warp begins regardless of the Modern-VFX toggle. Fail-open."""
+    the instant warp begins regardless of the Modern-VFX toggle. Fail-open.
+
+    Also stands the player's AI down, which is what makes the clear HOLD for
+    the transit rather than survive a single frame — see
+    `_stand_down_player_ai`, whose ordering after the clear is load-bearing."""
+
+    def __init__(self, ship):
+        super().__init__()
+        self._ship = ship
+
+    def _do_play(self):
+        _clear_all_targets(self._ship)
+        try:
+            _stand_down_player_ai(self._ship)
+        except Exception as _e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("stand down player AI for warp", _e)
+
+
+class _ArrivalClearTargetsAction(TGAction):
+    """Drop the target AGAIN on arrival — BC's clear, and the one that holds.
+
+    Ported from the second half of `PostWarpEnableMenu`
+    (Bridge/HelmMenuHandlers.py:939-948), which stock BC schedules at the end
+    of its warp sequence (WarpSequence.py:324) and comments: "Clear the
+    player's target, and the persistent target info in the target menu, so
+    that we don't retarget the same thing when we return to the old set (or if
+    the object follows us to the new set)." We had ported that function's
+    menu-enable half as `_EnableHelmMenuAction` and left this half behind.
+
+    WHY THE ENGAGE-TIME `_ClearTargetsAction` IS NOT ENOUGH, and why deleting
+    this as a duplicate of it re-opens a reported bug: clearing at engage posts
+    ET_TARGET_WAS_CHANGED, whose SDK handler
+    `Bridge.TacticalMenuHandlers.TargetChanged` runs `UpdateOrders` ->
+    `StartAI`. That rebuilds the player's AI from a still-live Tactical attack
+    order, reading `GetTarget()` — now None — so the new `SelectTarget` starts
+    with no target. On its next update the player is STILL IN THE SOURCE SET
+    (the flythrough align phase lasts seconds), so it re-picks the same enemy
+    and pushes it back via `AutoTargetChange`, which is gated only on the
+    "Target At Will" button that `CreateTacticalMenu` builds SetChosen(1) — on
+    by default. The player then arrived in the new system still targeting a
+    ship left behind in the torn-down source set: the reticle and tracking
+    camera stayed welded to it while the target list, being derived from the
+    current set, could not list it, so it could be neither selected nor cycled
+    away from.
+
+    Clearing HERE is immune to that race by construction rather than by
+    timing: the player is already in the destination set, so every name the AI
+    can push resolves against the new system or resolves to nothing.
+
+    Added only on the branches that perform a REAL warp — a falsy destination
+    degrades to "nothing happened", and a no-op warp must not eat the target.
+    """
 
     def __init__(self, ship):
         super().__init__()
@@ -181,6 +277,10 @@ class _EnableHelmMenuAction(TGAction):
     BC's equivalent is PostWarpEnableMenu (Bridge/HelmMenuHandlers.py:918),
     which stock BC schedules into its own warp sequence at
     WarpSequence.py:324. This sequence is ours, so the scheduling is explicit.
+
+    ⚠️ THIS IS ONLY PostWarpEnableMenu's FIRST HALF. Its second half clears the
+    player's target, and lives here as `_ArrivalClearTargetsAction` — split out
+    because that half must NOT run on a no-op warp, while this half must.
 
     Added UNCONDITIONALLY on both branches, deliberately outside the
     `_module_is_empty` guards: a falsy destination degrades the hard-cut path
@@ -635,6 +735,11 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         seq.AddAction(swap, total)
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
+        # BC's PostWarpEnableMenu clear — the player is in the destination set
+        # by now, so this is the clear that holds. Placed at ARRIVAL rather
+        # than at the end of the tail below: the reticle must drop the instant
+        # you come out of warp, not _T_EXIT_DECEL seconds later.
+        seq.AppendAction(_ArrivalClearTargetsAction(ship))
         seq.AppendAction(_WarpSoundAction("Exit Warp"))
         # The manager keeps running for _T_EXIT_DECEL seconds after arrival to
         # glide the ship from in-system warp speed down to 0; schedule the
@@ -655,6 +760,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     if not _module_is_empty(dest_module):
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
+        seq.AppendAction(_ArrivalClearTargetsAction(ship))
     seq.AppendAction(_EnableHelmMenuAction())
     return seq
 
