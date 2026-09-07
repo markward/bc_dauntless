@@ -1,0 +1,85 @@
+#first-run {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+/* Full-bleed background, with a starfield-ish gradient BEHIND it so a
+   missing or failed image degrades to something deliberate rather than a
+   white void. */
+#first-run .fr-backdrop {
+    position: absolute;
+    inset: 0;
+    background:
+        url("../images/first-run-bg.png") center / cover no-repeat,
+        radial-gradient(ellipse at 30% 40%, #10131c 0%, #05070c 60%, #000 100%);
+}
+
+#first-run .fr-card {
+    position: relative;
+    width: 30rem;
+    max-width: 80vw;
+    padding: 2rem 2.25rem;
+    background: rgba(8, 11, 18, 0.88);
+    border: 1px solid rgba(120, 160, 220, 0.35);
+    border-radius: 6px;
+    box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.6);
+    color: #dfe7f5;
+}
+
+#first-run .fr-title {
+    margin: 0 0 1.5rem;
+    font-size: 1.35rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+}
+
+#first-run .fr-row { margin-bottom: 1.35rem; }
+#first-run .fr-row-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+#first-run .fr-label { font-size: 0.95rem; }
+#first-run .fr-path {
+    margin-top: 0.35rem;
+    font-size: 0.8rem;
+    color: #93a3bd;
+    word-break: break-all;
+    min-height: 1em;
+}
+#first-run .fr-status { margin-top: 0.3rem; font-size: 0.85rem; }
+#first-run .fr-status.ok { color: #7fd4a0; }
+#first-run .fr-status.bad { color: #e8a0a0; }
+#first-run .fr-status.unset { color: #7b8798; }
+#first-run .fr-hint {
+    margin-top: 0.2rem;
+    font-size: 0.8rem;
+    color: #c9b98a;
+}
+
+#first-run .fr-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin-top: 1.75rem;
+}
+#first-run .fr-btn {
+    padding: 0.45rem 1.1rem;
+    font: inherit;
+    font-size: 0.9rem;
+    color: #dfe7f5;
+    background: rgba(40, 52, 72, 0.9);
+    border: 1px solid rgba(120, 160, 220, 0.35);
+    border-radius: 4px;
+    cursor: pointer;
+}
+#first-run .fr-btn-primary { background: rgba(48, 84, 132, 0.95); }
+#first-run .fr-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}

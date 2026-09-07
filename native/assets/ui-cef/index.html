@@ -20,6 +20,7 @@
     <link rel="stylesheet" href="css/engineering_power.css">
     <link rel="stylesheet" href="css/character_tooltip.css">
     <link rel="stylesheet" href="css/star_map.css">
+    <link rel="stylesheet" href="css/first_run.css">
 </head>
 <body>
     <!-- Target reticle text labels (name above box, range/speed below),
@@ -53,6 +54,29 @@
                         onclick="dauntlessEvent('mission-picker/cancel')">
                     Cancel
                 </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- First-run overlay (production). Shown when BC's content roots can't
+         be found at launch; the player locates Game/SDK folders here.
+         setFirstRun(payload) drives state where payload is
+         {title, rows: [{kind, label, path, status, hint, ok}], can_continue}
+         or null to hide. Row Browse buttons fire
+         dauntlessEvent('first-run/browse:<kind>'); Continue and Quit fire
+         'first-run/continue' and 'first-run/quit'. The page holds no logic:
+         engine/ui/first_run_panel.py is the state machine.
+         Spec: .superpowers/sdd/2026-09-07-first-run-screen/ -->
+    <section id="first-run" hidden>
+        <div class="fr-backdrop"></div>
+        <div class="fr-card">
+            <h1 class="fr-title" id="fr-title"></h1>
+            <div class="fr-rows" id="fr-rows"></div>
+            <div class="fr-actions">
+                <button type="button" class="fr-btn"
+                        onclick="dauntlessEvent('first-run/quit')">Quit</button>
+                <button type="button" class="fr-btn fr-btn-primary" id="fr-continue"
+                        onclick="dauntlessEvent('first-run/continue')">Continue</button>
             </div>
         </div>
     </section>
@@ -932,5 +956,6 @@
     <script src="js/ai_inspector.js"></script>
     <script src="js/info_box.js"></script>
     <script src="js/engineering_power.js"></script>
+    <script src="js/first_run.js"></script>
 </body>
 </html>
