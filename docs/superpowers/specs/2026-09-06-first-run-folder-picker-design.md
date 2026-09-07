@@ -191,21 +191,34 @@ and `import App` move after resolution:
 ```
 r.init(1280, 720)
 r.validate_bindings / host_io.validate_bindings / host_io.verify_keys
-cef_initialize(...)
+cef_ready = cef_initialize(...)
     ↓
 resolution = paths.resolve()
-if not resolution.ok:
-    resolution = first_run_panel.run(resolution)   ← the screen, pumped
-    ↓
+if not resolution.ok and cef_ready:
+    resolution = _run_first_run_screen(resolution)   ← the screen, pumped
+    ↓                                    `and cef_ready` is load-bearing: in a
+    ↓                                    --no-cef build every cef_* binding is
+    ↓                                    a no-op stub, so without it the loop
+    ↓                                    spins forever on a black window where
+    ↓                                    the old code exited legibly.
 paths.configure(resolution)
 paths.persist(resolution)          ← above the early return; a validated
 if not resolution.ok:                pick survives a later abandonment
     print(describe_failure(...), file=stderr)
-    return 1
+    r.cef_shutdown()               ← the window and CEF are LIVE on this path
+    r.shutdown()                     now. run()'s own teardown sits inside a
+    return 1                         try/ that begins after this point, so an
+                                     early return here skips it.
 r.set_game_root(str(paths.game_root()))
 _setup_sdk()
 import App …                       ← everything downstream unchanged
 ```
+
+Both annotations above are behaviour the first implementation missed and the
+final review caught. Neither is incidental: the first is the difference
+between a legible exit and an unbreakable black window on any build without a
+browser, and the second is a live GL context and CEF left running past the
+process's own teardown.
 
 ### The screen
 

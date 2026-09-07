@@ -78,7 +78,7 @@ def test_unresolved_paths_hand_off_to_the_first_run_screen(monkeypatch, install)
     skipping an already-resolved one, reporting what was wrong -- are
     FirstRunPanel's job and are covered at that layer
     (tests/unit/test_first_run_panel.py), plus end-to-end through the real
-    pump loop (tests/host/test_host_loop_unit.py). This test is the WIRING:
+    pump loop (tests/host/test_first_run_pump_loop.py). This test is the WIRING:
     the screen is consulted on failure, and gets the unresolved Resolution.
     """
     game, sdk = install

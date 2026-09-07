@@ -438,5 +438,8 @@ def test_the_unresolved_early_return_tears_down_cef_and_the_window():
 def test_boot_sets_the_renderer_game_root(monkeypatch):
     from engine import host_loop
     import inspect
-    source = inspect.getsource(host_loop.run)
+    # Comment-stripped like every other source check here: a comment naming
+    # set_game_root() reads identically to the call, and that collision has
+    # bitten this codebase five times.
+    source = _code_only(inspect.getsource(host_loop.run))
     assert "set_game_root(" in source
