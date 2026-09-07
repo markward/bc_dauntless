@@ -46,6 +46,8 @@ class _Keys:
     KEY_PERIOD = 46
     KEY_SEMICOLON = 59
     KEY_APOSTROPHE = 39
+    KEY_I = 73
+    KEY_T = 84
 
 
 class _FakeHost:

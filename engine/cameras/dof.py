@@ -34,7 +34,7 @@ import math
 # ── Lens shape — pushed to the shader as uniforms ────────────────────────
 # Deliberately conservative. Expect to calibrate UP and then back down after a
 # live look, the way the directional ambient gradient went 0.6 -> 1.0 -> 0.8.
-NEAR_STRENGTH = 1.0      # foreground defocus gain
+NEAR_STRENGTH = 1.5      # foreground defocus gain
 FAR_STRENGTH = 1.0       # background defocus gain, before the ceiling
 FAR_CEILING = 0.4        # hard cap on far-field CoC -- the anti-mush knob
 MAX_RADIUS_FRAC = 0.008  # max blur radius as a fraction of screen height
@@ -78,6 +78,14 @@ STRENGTH_MAX = 3.0
 MAX_RADIUS_FRAC_MIN = 0.0
 MAX_RADIUS_FRAC_MAX = 0.04
 MAX_RADIUS_FRAC_STEP = 0.002
+
+# Step for the FOREGROUND gain. It has its own knob because near and far are
+# bound by different things: the far side saturates against FAR_CEILING, while
+# the near side is what a large foreground object -- the player's own hull in
+# chase view -- is judged on. Without this the only foreground control was
+# MAX_RADIUS_FRAC, which moves the whole picture, and pressing it while hunting
+# for the near blur turns that blur DOWN.
+NEAR_STRENGTH_STEP = 0.25
 
 # FAR_CEILING is the value this design is least confident in, so it gets the
 # other key pair. Default 0.4, step 0.05 -- eight presses down reaches 0.0 (a
@@ -271,6 +279,12 @@ class FocusSolver:
         self.far_strength = min(STRENGTH_MAX,
                                 max(STRENGTH_MIN, self.far_strength + delta))
         return (self.near_strength, self.far_strength)
+
+    def nudge_near_strength(self, delta):
+        """Move the FOREGROUND defocus gain by `delta`, clamped."""
+        self.near_strength = min(STRENGTH_MAX,
+                                 max(STRENGTH_MIN, self.near_strength + delta))
+        return self.near_strength
 
     def nudge_max_radius_frac(self, delta):
         """Move the overall blur magnitude by `delta`, clamped. Dev tuning only.

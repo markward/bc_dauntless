@@ -13,6 +13,7 @@ import engine.dev_mode as dev_mode
 from engine.cameras.dof import (
     FAR_CEILING_STEP as _DOF_CEILING_STEP,
     MAX_RADIUS_FRAC_STEP as _DOF_RADIUS_STEP,
+    NEAR_STRENGTH_STEP as _DOF_NEAR_STEP,
 )
 
 # SP1 skinned-mesh preview: instance id of the spawned test character, or None.
@@ -266,4 +267,21 @@ def register_for_frame(_h, session, player) -> None:
         _h.keys.KEY_APOSTROPHE,
         lambda: _dof_nudge("nudge_far_ceiling", +_DOF_CEILING_STEP),
         "DOF far ceiling +%.2f (')" % _DOF_CEILING_STEP
+    )
+
+    # I / T  FOREGROUND defocus -- how soft the player's own hull goes.
+    #
+    # This was missing, and its absence actively misled: the only foreground
+    # control was , / . (blur MAGNITUDE), so hunting for the near blur with
+    # those keys turned it down instead of up. I and T are exported and free of
+    # every namespace a key can be claimed in.
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_I,
+        lambda: _dof_nudge("nudge_near_strength", -_DOF_NEAR_STEP),
+        "DOF foreground blur -%.2f (I)" % _DOF_NEAR_STEP
+    )
+    dev_mode.register_dev_keybinding(
+        _h.keys.KEY_T,
+        lambda: _dof_nudge("nudge_near_strength", +_DOF_NEAR_STEP),
+        "DOF foreground blur +%.2f (T)" % _DOF_NEAR_STEP
     )
