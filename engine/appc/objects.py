@@ -1352,6 +1352,31 @@ def ObjectClass_GetObjectByID(pSet, obj_id) -> "ObjectClass | None":
     return obj if isinstance(obj, ObjectClass) else None
 
 
+def DamageableObject_GetObjectByID(pSet, obj_id) -> "DamageableObject | None":
+    """Look up a DamageableObject by integer ID, scoped to pSet (globally if None).
+
+    The damageable sibling of ObjectClass_GetObjectByID. SDK caller:
+    ``Effects.DeathExplosionDamage`` (Effects.py:689), the action BC's death
+    cascade schedules for ~30% of its explosions::
+
+        pObject = App.DamageableObject_GetObjectByID(None, iObjectID)
+        if (pObject):
+            pObject.AddDamage(pEmitPos, fRadius, fDamage)
+
+    Undefined, this resolved to a truthy App._NamedStub: the `if (pObject)`
+    guard passed and every death-cascade hull carve was swallowed by the stub.
+
+    Narrows to DamageableObject deliberately — the caller goes straight to
+    AddDamage, which a non-damageable ObjectClass (Waypoint, LightPlacement)
+    cannot service. A None obj_id yields None, matching the ObjectClass form.
+    """
+    if obj_id is None:
+        return None
+    from engine.core.ids import get_object_by_id
+    obj = get_object_by_id(int(obj_id))
+    return obj if isinstance(obj, DamageableObject) else None
+
+
 # ── IsNull ────────────────────────────────────────────────────────────────────
 
 def IsNull(obj) -> int:
