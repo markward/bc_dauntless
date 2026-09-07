@@ -72,13 +72,13 @@
          Spec: .superpowers/sdd/2026-09-07-first-run-screen/ -->
     <section id="first-run">
         <div class="fr-backdrop"></div>
-        <div class="fr-card">
-            <h1 class="fr-title" id="fr-title"></h1>
-            <div class="fr-rows" id="fr-rows"></div>
-            <div class="fr-actions">
-                <button type="button" class="fr-btn"
+        <div class="cp-modal fr-modal">
+            <div class="cp-header" id="fr-title"></div>
+            <div class="fr-body" id="fr-rows"></div>
+            <div class="cp-footer">
+                <button type="button" class="cp-done-button"
                         onclick="dauntlessEvent('first-run/quit')">Quit</button>
-                <button type="button" class="fr-btn fr-btn-primary" id="fr-continue"
+                <button type="button" class="cp-done-button" id="fr-continue"
                         onclick="dauntlessEvent('first-run/continue')">Continue</button>
             </div>
         </div>

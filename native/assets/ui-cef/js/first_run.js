@@ -40,7 +40,7 @@ function setFirstRun(payload) {
 
         var browse = document.createElement('button');
         browse.type = 'button';
-        browse.className = 'fr-btn';
+        browse.className = 'cp-done-button';
         browse.textContent = 'Browse…';
         browse.setAttribute(
             'onclick',

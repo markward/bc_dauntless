@@ -1,3 +1,20 @@
+/* First-run screen — "Select Bridge Commander Install".
+ *
+ * The box is the shared pause-menu modal chrome (.cp-modal / .cp-header /
+ * .cp-footer / .cp-done-button, configuration_panel.css), the same reuse
+ * Developer Options makes. Only the parts with no cp- equivalent -- the
+ * per-root rows -- are styled here.
+ *
+ * #first-run is deliberately NOT in tests/ui/test_pause_modal_overlays.py's
+ * OVERLAY_ROOTS: it is not reachable from the pause menu and it owns the whole
+ * frame rather than overlaying the HUD, which is the same reason #spv-root is
+ * excluded. But that file records what happened to #ai-inspector-panel when it
+ * took the .cp-modal chrome and half-inherited it -- it fell out of the
+ * centred layout, took no backdrop, no z-index and not even the Antonio family
+ * the chrome is designed around. So this root supplies that half itself,
+ * below: fixed, full-viewport, centred, stacked, and in Antonio.
+ */
+
 #first-run {
     /* Hidden by default; Python's setFirstRun sets style.display = 'flex' /
        'none' both ways (an inline style wins the cascade over the
@@ -10,11 +27,16 @@
     justify-content: center;
     z-index: 300;  /* above #mission-picker (z-index 200), the highest
                       existing tier -- this screen blocks everything else */
+    /* global.css declares the @font-face but applies Antonio per-component
+       rather than on body, so anything that does not ask for it falls back to
+       the browser's default serif. The cp- chrome is designed around it. */
+    font-family: "Antonio", sans-serif;
 }
 
 /* Full-bleed background, with a starfield-ish gradient BEHIND it so a
    missing or failed image degrades to something deliberate rather than a
-   white void. */
+   white void. Unlike the pause-menu modals there is no translucent scrim
+   here: nothing is running behind this screen to show through. */
 #first-run .fr-backdrop {
     position: absolute;
     inset: 0;
@@ -23,81 +45,70 @@
         radial-gradient(ellipse at 30% 40%, #10131c 0%, #05070c 60%, #000 100%);
 }
 
-/* Antonio, the UI face used by the pause menu and HUD. Set on the section so
-   every child inherits it -- global.css declares the @font-face but applies it
-   per-component rather than on body, so anything that does not ask for it
-   silently falls back to the browser's default serif. */
-#first-run {
-    font-family: "Antonio", sans-serif;
-}
-
-#first-run .fr-card {
+/* .cp-modal is a fixed 640x420 built for a tab strip and a scrolling body.
+   This screen has two rows and no tabs, so it keeps the chrome's width and
+   lets the height follow its content. `position: relative` lifts it above
+   the absolutely-positioned backdrop. */
+#first-run .fr-modal {
     position: relative;
-    width: 30rem;
-    max-width: 80vw;
-    padding: 2rem 2.25rem;
-    background: rgba(8, 11, 18, 0.88);
-    border: 1px solid rgba(120, 160, 220, 0.35);
-    border-radius: 6px;
-    box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.6);
-    color: #dfe7f5;
+    height: auto;
+    max-width: 90vw;
 }
 
-#first-run .fr-title {
-    margin: 0 0 1.5rem;
-    font-size: 1.5rem;
-    /* 600 with only Antonio-Regular on disk means a synthesised faux-bold --
-       which is deliberate, because it is what every other panel here does
-       (configuration_panel, crew_menus, character_tooltip all set 600+). Being
-       the one screen with true-weight text would read as the odd one out. */
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+#first-run .fr-body {
+    padding: 18px 16px 6px;
 }
 
-#first-run .fr-row { margin-bottom: 1.35rem; }
+#first-run .fr-row {
+    margin-bottom: 18px;
+}
+
 #first-run .fr-row-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    gap: 16px;
 }
-#first-run .fr-label { font-size: 0.95rem; }
+
+#first-run .fr-label {
+    font-size: 14px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+}
+
 #first-run .fr-path {
-    margin-top: 0.35rem;
-    font-size: 0.8rem;
-    color: #93a3bd;
+    margin-top: 5px;
+    font-size: 12px;
+    color: #8d94a0;
     word-break: break-all;
     min-height: 1em;
 }
-#first-run .fr-status { margin-top: 0.3rem; font-size: 0.85rem; }
-#first-run .fr-status.ok { color: #7fd4a0; }
-#first-run .fr-status.bad { color: #e8a0a0; }
-#first-run .fr-status.unset { color: #7b8798; }
-#first-run .fr-hint {
-    margin-top: 0.2rem;
-    font-size: 0.8rem;
-    color: #c9b98a;
+
+#first-run .fr-status {
+    margin-top: 4px;
+    font-size: 13px;
 }
 
-#first-run .fr-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.75rem;
-    margin-top: 1.75rem;
+/* Status colours follow the pause-menu accent language rather than a new
+   palette: gold (rgb(255,210,90)) is this UI's "this is live / this will
+   activate" cue, and the maroon of the header bar carries its failures. */
+#first-run .fr-status.ok    { color: rgb(255, 210, 90); }
+#first-run .fr-status.bad   { color: rgb(226, 118, 110); }
+#first-run .fr-status.unset { color: #6f7784; }
+
+#first-run .fr-hint {
+    margin-top: 3px;
+    font-size: 12px;
+    color: #8d94a0;
 }
-#first-run .fr-btn {
-    padding: 0.45rem 1.1rem;
-    font: inherit;
-    font-size: 0.9rem;
-    color: #dfe7f5;
-    background: rgba(40, 52, 72, 0.9);
-    border: 1px solid rgba(120, 160, 220, 0.35);
-    border-radius: 4px;
-    cursor: pointer;
+
+/* The footer holds two cp-done-buttons; the chrome's own rule right-aligns
+   them, this only spaces the pair. */
+#first-run .cp-footer {
+    gap: 8px;
 }
-#first-run .fr-btn-primary { background: rgba(48, 84, 132, 0.95); }
-#first-run .fr-btn:disabled {
+
+#first-run .cp-done-button:disabled {
     opacity: 0.4;
     cursor: default;
 }
