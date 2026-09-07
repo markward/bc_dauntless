@@ -94,10 +94,11 @@
     font-size: 13px;
 }
 
-/* Status colours follow the pause-menu accent language rather than a new
-   palette: gold (rgb(255,210,90)) is this UI's "this is live / this will
-   activate" cue, and the maroon of the header bar carries its failures. */
-#first-run .fr-status.ok    { color: rgb(255, 210, 90); }
+/* Green for a validated root. NOT the pause menu's gold: gold here means
+   "this is what will activate" -- a hover/focus cue on a row you are about to
+   pick -- so spending it on a settled success state misreads the language it
+   borrows from. Failure keeps the maroon of the header gradient. */
+#first-run .fr-status.ok    { color: #7fd4a0; }
 #first-run .fr-status.bad   { color: rgb(226, 118, 110); }
 #first-run .fr-status.unset { color: #6f7784; }
 
