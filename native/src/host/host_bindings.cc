@@ -86,6 +86,7 @@
 #include <assets/texture.h>
 #include <nif/file.h>
 #include <nif/scene_camera.h>
+#include <platform/folder_picker.h>
 
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -903,6 +904,16 @@ void frame() {
                 scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
                 ambient_scale, dyn_lights);
         }
+        // Stencil-mark where the hull was cut away, so the scoop below draws
+        // only through real holes and never in open space. Must sit between the
+        // hull draw and the breach pass; costs one extra draw per carved
+        // instance and nothing at all when nothing is damaged.
+        if (g_submitter && g_carve_cache) {
+            DAUNTLESS_FRAME_SCOPE("space.carve_stencil");
+            g_submitter->submit_carve_stencil(g_world, cam, *g_pipeline, lookup,
+                                              scenegraph::Pass::Space,
+                                              g_carve_cache.get());
+        }
         // Breach scoop pass: for each active carve sphere, draws the front-
         // face-culled sphere inner wall masked by the original hull fill
         // (triplanar Damage.tga). Runs right after the opaque hull
@@ -1100,7 +1111,7 @@ void frame() {
         g_viewscreen_hdr->resize(kViewscreenRttW, kViewscreenRttH);
         g_viewscreen_hdr->bind();
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         if (g_comm_source.active && g_bridge_pass) {
             scenegraph::Camera ccam = g_comm_source.cam;
             ccam.aspect = static_cast<float>(kViewscreenRttW)
@@ -1151,7 +1162,7 @@ void frame() {
     } else {
         glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
     }
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     if (fh > 0) g_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
 
     // Space scene goes to the main view only outside bridge view (in bridge
@@ -1181,7 +1192,7 @@ void frame() {
             // between here and there touches it, so the two match by
             // construction rather than by a duplicated literal.
             g_msaa_target->bind();
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
             render_space_geometry(g_camera, nullptr, g_msaa_target.get(),
                                   ex_ambient, &g_dynamic_lights);
             g_msaa_target->resolve_to(*g_hdr_target);
@@ -1254,7 +1265,7 @@ void frame() {
     if (bridge_active) {
         DAUNTLESS_FRAME_SCOPE("bridge");
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         if (fh > 0) g_bridge_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
         // Warp boom flash on the bridge is confined to the viewscreen feed (the
         // surrounding interior must not flash); the main resolve-pass flash is
@@ -1674,6 +1685,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Absolute path to the BC game install. Every relative asset path "
           "the renderer resolves is joined onto this. Default is the literal "
           "\"game\" (cwd-relative). Callable more than once.");
+
+    m.def("pick_folder",
+          [](const std::string& title, const std::string& message)
+              -> std::optional<std::string> {
+              // The panel is modal and blocks for as long as the player
+              // takes to answer. Holding the GIL across that would freeze
+              // every other Python thread for the duration.
+              py::gil_scoped_release release;
+              return dauntless::platform::pick_folder(title, message);
+          },
+          py::arg("title"), py::arg("message"),
+          "Show a native folder chooser and return the chosen absolute "
+          "path. Returns None when the player cancels -- and also when "
+          "this platform has no implementation, which callers must treat "
+          "identically. title names the window; message is the "
+          "explanatory line inside the panel.");
 
     // Introspection for tests/host/test_init_resets_frame_state.py: everything
     // reset_frame_state() clears, reduced to a count or a flag. Deliberately

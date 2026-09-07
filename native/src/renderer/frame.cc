@@ -338,6 +338,20 @@ void reset_model_radius_cache() {
     g_model_radius_cache.clear();
 }
 
+// The original fill volume for an instance's hull, or nullptr when there is
+// nothing to gate with. Skipped for undamaged instances so the common case never
+// touches the cache; the cache memoises the decode per hull source.
+static const voxel::VoxelVolume* carve_fill_entry(
+        CarveFieldCache* cache,
+        const assets::Model* model,
+        const scenegraph::HullCarveField& carve) {
+    if (cache == nullptr || model == nullptr) return nullptr;
+    if (carve.count() == 0) return nullptr;
+    if (model->source.empty()) return nullptr;
+    const voxel::VoxelVolume& v = cache->volume_for_source(model->source);
+    return v.occ.empty() ? nullptr : &v;
+}
+
 void draw_model(const assets::Model& model,
                 const glm::mat4& world,
                 Shader& shader,
@@ -354,7 +368,9 @@ void draw_model(const assets::Model& model,
                 const scenegraph::HullCarveField& carve,
                 const std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>&
                     dyn_lights,
-                int dyn_light_count) {
+                int dyn_light_count,
+                const voxel::VoxelVolume* carve_fill,
+                bool carve_invert) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -488,12 +504,18 @@ void draw_model(const assets::Model& model,
                 if (!s.active) continue;
                 if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
                 if (ns >= kMaxCarves) break;
+                // Backing-material gate: skip a carve the scoop cannot fill.
+                if (carve_fill != nullptr &&
+                    !carve_has_backing(*carve_fill, s.center_body,
+                                       s.surface_normal))
+                    continue;
                 spheres[ns] = glm::vec4(s.center_body, s.radius);
                 normals[ns] = s.surface_normal;
                 ++ns;
             }
             prog.set_int("u_carve_enabled", 1);
             prog.set_int("u_carve_count", ns);
+            prog.set_int("u_carve_invert", carve_invert ? 1 : 0);
             if (ns > 0) {
                 // Ensure u_ship_world_inv is set (p_body) even if this instance
                 // has no decals and no glow regions.
@@ -504,7 +526,9 @@ void draw_model(const assets::Model& model,
         } else {
             prog.set_int("u_carve_enabled", 0);
             prog.set_int("u_carve_count", 0);
+            prog.set_int("u_carve_invert", carve_invert ? 1 : 0);
         }
+
     }
 
     // ── Skeletal framework lattice (Damage.tga alpha stencil) ─────────────────
@@ -767,7 +791,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
                           white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
                           inst.emissive_scale, palette, inst.carve,
-                          lights, light_count);
+                          lights, light_count,
+                          carve_fill_entry(carve_cache, m, inst.carve));
     });
 }
 
@@ -829,8 +854,76 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
                           inst.emissive_scale, palette, inst.carve,
-                          lights, light_count);
+                          lights, light_count,
+                          carve_fill_entry(carve_cache, m, inst.carve));
     });
+}
+
+void FrameSubmitter::submit_carve_stencil(const scenegraph::World& world,
+                                          const scenegraph::Camera& camera,
+                                          Pipeline& pipeline,
+                                          const ModelLookup& lookup,
+                                          scenegraph::Pass pass,
+                                          CarveFieldCache* carve_cache) {
+    if (!dauntless_hull_damage::enabled()) return;
+
+    // Collect first so the GL state change is skipped entirely in the common
+    // case of an undamaged scene.
+    std::vector<const scenegraph::Instance*> carved;
+    world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
+        if (inst.carve.count() > 0) carved.push_back(&inst);
+    });
+    if (carved.empty()) return;
+
+    Shader& shader = pipeline.opaque_shader();
+    shader.use();
+    shader.set_mat4("u_view", camera.view_matrix());
+    shader.set_mat4("u_proj", camera.proj_matrix());
+
+    // Stencil only: no colour, no depth. Depth TEST stays on so a cut behind
+    // nearer geometry does not stamp a pixel that geometry owns.
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_STENCIL_TEST);
+    glStencilFunc(GL_ALWAYS, 1, 0xFF);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+    glStencilMask(0xFF);
+
+    const GLuint white = ensure_white_texture();
+    const GLuint black = ensure_black_texture();
+
+    for (const scenegraph::Instance* inst : carved) {
+        const assets::Model* m = lookup(inst->model_handle);
+        if (!m) continue;
+        std::vector<glm::mat4> palette;
+        if (!m->skeleton.bones.empty())
+            palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
+        std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> lights{};
+        // u_carve_invert is set INSIDE draw_model's carve block (it needs the
+        // same program the block configures), so it is passed through here.
+        draw_model(*m, inst->world, shader, pipeline.skinned_shader(),
+                   white, black, /*rim_strength=*/0.0f,
+                   inst->decals, inst->glow_regions, /*decal_time=*/0.0f,
+                   inst->emissive_scale, palette, inst->carve,
+                   lights, /*dyn_light_count=*/0,
+                   carve_fill_entry(carve_cache, m, inst->carve),
+                   /*carve_invert=*/true);
+    }
+
+    // Back to the GL default (0xFF), NOT 0x00: glClear(GL_STENCIL_BUFFER_BIT)
+    // is masked by glStencilMask, so leaving it closed would silently turn next
+    // frame's stencil clear into a no-op and let marks accumulate.
+    glStencilMask(0xFF);
+    glDisable(GL_STENCIL_TEST);
+    glDepthMask(GL_TRUE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    // Leave u_carve_invert clear so the next ordinary hull draw is unaffected
+    // even if it happens before the next configure pass.
+    shader.use();
+    shader.set_int("u_carve_invert", 0);
+    pipeline.skinned_shader().use();
+    pipeline.skinned_shader().set_int("u_carve_invert", 0);
 }
 
 void FrameSubmitter::submit_opaque_instance(const scenegraph::World& world,
@@ -889,8 +982,8 @@ void FrameSubmitter::submit_opaque_instance(const scenegraph::World& world,
                white, black, rim_strength,
                inst->decals, inst->glow_regions, decal_time,
                inst->emissive_scale, palette, inst->carve,
-               lights, light_count);
-    (void)carve_cache;  // reserved: parity with submit_opaque_in_pass signature
+               lights, light_count,
+               carve_fill_entry(carve_cache, m, inst->carve));
 }
 
 // ── Shadow depth pre-pass ──────────────────────────────────────────────────
