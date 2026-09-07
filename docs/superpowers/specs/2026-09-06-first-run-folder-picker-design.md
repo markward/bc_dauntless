@@ -35,16 +35,29 @@ uses, persist what validates, and continue booting.
 
 ## Decisions
 
-### Native panel, not a CEF first-run screen
+### A CEF first-run screen, with the native panel behind its Browse buttons
 
-A richer HTML first-run screen (explanatory copy, two Browse buttons, live
-validation) would require reordering boot: `_setup_sdk()` runs immediately
-after path resolution and needs `sdk`, while the window and CEF do not come
-up until ~60 lines later. A native panel needs no reordering at all — it
-slots into the existing failure branch.
+**Revised 2026-09-07, after live testing.** The first version of this spec
+chose bare native folder dialogs and no screen, to avoid reordering boot.
+That shipped, and it was wrong. Two OS panels appear against nothing — no
+game window, no context, no explanation — and there is nowhere to say *why*
+a folder was rejected. Mark's verdict on seeing it: it reads as broken.
 
-Rejecting CEF also sidesteps an unknown. CEF's own header is explicit that a
-parentless windowless browser is unreliable for exactly this:
+The engineering argument for the original choice was sound; it optimised for
+implementation risk over what a first launch feels like, which is the wrong
+trade for the one screen a new player is guaranteed to meet.
+
+So: the window comes up as normal, and a full-screen first-run screen is
+drawn in CEF over it — a background image with a centred panel carrying one
+row per root, a Browse button each, and validation feedback under each row.
+
+**Browse still opens the native `NSOpenPanel`.** A text field the player
+types an absolute path into would be worse than the dialogs this replaces.
+The panel supplies the *frame*: what is being asked for, what was wrong with
+the last answer, and whether Continue is allowed yet.
+
+CEF's parentless-windowless caveat does not apply, because we never ask CEF
+to show the dialog — we call our own binding and CEF only renders the page:
 
 > The `parent` value will be used to identify monitor info and **to act as
 > the parent view for dialogs**, context menus, etc. If `parent` is not
@@ -53,9 +66,23 @@ parentless windowless browser is unreliable for exactly this:
 > — `build/_deps/cef-src/include/internal/cef_mac.h:95-110`
 
 We create the browser with `SetAsWindowless(0)` — no parent —
-(`native/src/ui_cef/cef_lifecycle.cc:246`). CEF does not promise the default
-dialog works in that configuration. Owning the panel removes the question
-rather than testing it.
+(`native/src/ui_cef/cef_lifecycle.cc:246`), which is why the dialog stays
+ours rather than CEF's.
+
+### The boot reorder is the real cost, and it is now paid deliberately
+
+`_setup_sdk()` and `import App` currently run *before* `r.init()`. They move
+after CEF init, because the screen must exist before the roots are known.
+Verified feasible: CEF's page is `native/assets/ui-cef/index.html` — project
+content, not BC content — and window/pipeline init reads no game assets, so
+both come up fine with the roots unresolved.
+
+### Triggered by unresolved roots, not by "first launch"
+
+There is no virgin-launch flag. The screen appears whenever resolution
+fails, which covers a genuine first run and an install that later moved out
+from under a stale `settings.json`. The general form is simpler than the
+special case, so it is the one built.
 
 ### macOS now; other platforms degrade to today's error
 
@@ -83,9 +110,19 @@ construction, not by discipline.
 | Fallback | `native/src/platform/folder_picker.cc` | returns `nullopt` |
 | Header | `native/src/platform/folder_picker.h` | |
 | Binding | `native/src/host/host_bindings.cc` | `pick_folder` |
-| Flow | `engine/first_run.py` | **new** — all decision logic |
+| Flow | `engine/first_run.py` | all decision logic; validation reused by the panel |
 | Resolution | `engine/paths.py` | `picked` source, `persist()` accepts it |
-| Call site | `engine/host_loop.py` | the failure branch, one call |
+| Screen (Python) | `engine/ui/first_run_panel.py` | **new** — `Panel` subclass, IPC with the page |
+| Screen (page) | `native/assets/ui-cef/panels/first_run/` | **new** — markup, CSS, JS |
+| Background | `native/assets/ui-cef/images/first-run-bg.jpg` | **new asset, supplied by Mark** |
+| Pump loop | `engine/host_loop.py` | **new** — drives CEF before the game loop exists |
+| Call site | `engine/host_loop.py` | after `cef_initialize`, one call |
+
+The background image ships in the repo and **cannot** come from `game/` —
+that is precisely what is missing when the screen appears. Until Mark
+supplies a screenshot the page falls back to a CSS starfield, which must
+look deliberate rather than broken: the screen is functional either way and
+dropping the asset in later requires no code change.
 
 `platform` is the correct home and `ui_cef` is not: `ui_cef/CMakeLists.txt`
 returns early when `DAUNTLESS_ENABLE_CEF` is off, so the existing
@@ -137,36 +174,64 @@ recent explicit human act and must outrank the flag it is correcting.
 
 ## Flow
 
-```python
-# host_loop.run(), replacing the bare `return 1`
-_resolution = _paths.resolve()
-if not _resolution.ok:
-    _resolution = first_run.prompt_for_missing(_resolution)
-_paths.configure(_resolution)
-if not _resolution.ok:
-    print(_paths.describe_failure(_resolution), file=_sys.stderr)
+Boot order changes. Resolution moves *after* CEF init, and `_setup_sdk()`
+and `import App` move after resolution:
+
+```
+r.init(1280, 720)
+r.validate_bindings / host_io.validate_bindings / host_io.verify_keys
+cef_initialize(...)
+    ↓
+resolution = paths.resolve()
+if not resolution.ok:
+    resolution = first_run_panel.run(resolution)   ← the screen, pumped
+    ↓
+paths.configure(resolution)
+paths.persist(resolution)          ← above the early return; a validated
+if not resolution.ok:                pick survives a later abandonment
+    print(describe_failure(...), file=stderr)
     return 1
-_paths.persist(_resolution)
+r.set_game_root(str(paths.game_root()))
+_setup_sdk()
+import App …                       ← everything downstream unchanged
 ```
 
-`first_run.prompt_for_missing` takes the picker function as an injectable
-argument so tests drive the whole flow with a fake.
+### The screen
 
-Per folder, in order (game, then sdk), skipping any that already resolved:
+One row per unresolved root, game first. Each row shows the current path (or
+"not set"), a **Browse** button, and a status line underneath: a tick with
+the markers found, or the `missing` list plus `hint` from the same
+`Validation` the CLI path uses. A root that already resolved is shown
+satisfied and is not asked for again.
 
-1. Open the panel. The title names the folder. On a retry the message
-   carries the previous attempt's `missing` markers and `hint`, so the
-   second dialog is more informative than the first.
-2. Validate with the existing `validate_game_root` / `validate_sdk_root` —
-   the same markers the CLI path uses, so a folder accepted here cannot fail
-   later in boot.
-3. Invalid → re-prompt. Unbounded; cancel is always available.
-4. Cancel → stop immediately and return what has been gathered.
+**Continue** enables only when both roots validate. `_setup_sdk()` runs
+immediately after, so letting the player through with only `game` would just
+move the failure somewhere with no UI to report it. **Quit** exits with the
+full `describe_failure()` diagnostic on stderr and a non-zero code — the
+same ending the old bare-dialog path had.
 
-A validated pick persists even when a later one is cancelled. If the player
-locates `game/` and then gives up on `sdk/`, the next launch asks only for
-the sdk. The stored root passed the same validation as any other, so this
-does not weaken Spec 1's "a typo never becomes the stored answer" rule.
+Browse calls `_dauntless_host.pick_folder`, and the answer is validated with
+`validate_game_root` / `validate_sdk_root` — the same markers the CLI path
+uses, so a folder the screen accepts cannot fail later in boot. An invalid
+choice updates that row's status line and leaves Continue disabled; there is
+no retry limit because there is no modal to escape from.
+
+### The pump loop
+
+The game loop does not exist yet, so the screen runs its own: poll events →
+pump CEF → composite → swap, until Continue or Quit. This is the one
+genuinely new mechanism, and the reason the screen cannot simply reuse
+`PanelRegistry` as the in-game panels do.
+
+**JS must not be pushed before the page's scripts have run** — pre-load
+pushes are silently dropped in this project, which has caused real bugs. The
+screen's initial state is therefore sent from the load-end handler, not at
+`cef_initialize` time.
+
+A validated pick persists even if the player quits before finishing. If they
+locate `game/` and abandon `sdk/`, the next launch asks only for the sdk.
+The stored root passed the same validation as any other, so this does not
+weaken Spec 1's "a typo never becomes the stored answer" rule.
 
 ## Failure handling
 
@@ -178,13 +243,22 @@ Three unrelated causes collapse into one `None` branch:
 | Stale `.so` lacking the binding | `getattr(_h, "pick_folder", None)` |
 | Player cancelled | panel returns no selection |
 
-All three route to `describe_failure()` + exit 1 — today's behaviour
-exactly. Windows therefore needs no special case.
+All three now mean the same thing to the screen: **Browse did not produce a
+path**, so that row keeps its previous state and Continue stays disabled.
+The player is not stranded — the screen is still there, saying what it
+needs — and Quit remains the way out to `describe_failure()` + exit 1.
 
-The stale-`.so` case must be `hasattr`-guarded rather than added to
-`_REQUIRED_BINDINGS`: the picker runs at `engine/host_loop.py:6738`, while
-`r.validate_bindings()` does not run until line 6759. The picker is upstream
-of the check that would otherwise have caught it.
+This is a real improvement the revision buys. Under the bare-dialog design a
+platform with no picker meant the player saw *nothing at all* and the game
+exited; now they see a screen that names both folders, with Browse simply
+inert. On Windows and Linux, until `IFileOpenDialog` lands, that is the
+difference between an unexplained exit and a legible one.
+
+The stale-`.so` case is still `getattr`-guarded rather than added to
+`_REQUIRED_BINDINGS`, but for a changed reason: after the reorder the screen
+runs *after* `r.validate_bindings()`, so a stale `.so` would now be caught
+by it. The guard stays anyway — it costs one line and keeps `first_run.py`
+callable from tests and tools that never validated bindings at all.
 
 ## The empty-string boundary
 
@@ -212,31 +286,56 @@ Python, all with an injected fake picker and no dialog:
   invalid `--game-dir`**, the case that invalidates the cheaper design
 - `persist()` accepts `cli` and `picker`; still refuses `env`, `settings`,
   `legacy`
-- both roots missing → two prompts; only sdk missing → game is not re-asked
-- invalid then valid → two picker calls, and the second call's message
-  contains the hint
-- cancel on the first prompt → no second prompt
-- valid game, cancelled sdk → the game root persists; next launch prompts
-  only for sdk
-- an empty or whitespace-only picked path is treated as a cancellation,
-  and never becomes `Path(".")`
-- **fallback guard:** picker returns `None` ⇒ boot prints the full
-  `describe_failure()` text and returns 1
+- both roots missing → both rows shown unsatisfied; only sdk missing → the
+  game row is shown satisfied and not asked for again
+- a Browse answer that fails validation updates that row's status with the
+  `missing` markers and `hint`, and leaves Continue disabled
+- an empty or whitespace-only picked path is treated as no answer, and never
+  becomes `Path(".")`
+- Continue is disabled until BOTH roots validate, and enabled the moment
+  they do
+- Quit with a validated game root and no sdk → the game root persists; next
+  launch asks only for the sdk
+- **fallback guard:** the screen returns without a complete resolution ⇒
+  boot prints the full `describe_failure()` text and returns non-zero
 
 The fallback guard is the most important test in the set. Without it a later
-refactor could let a picker-less platform boot on unresolved paths, or drop
-the error message, and no other test would fail.
+refactor could let boot continue on unresolved paths, or drop the error
+message, and no other test would fail. It must be pinned at the boot call
+site, not only inside the helper — a version of this guard that tested only
+the helper missed exactly that gap and was found by mutation.
+
+The screen's panel logic is Python and testable with a fake picker and a
+fake page transport. The **pump loop and the page itself are not** — see
+below.
 
 `tests/unit/test_path_indirection.py` needs no change: it already scans all
 of `engine/`, so `first_run.py` inherits the no-import-time-capture rule.
 
 ## What cannot be tested
 
-A modal `NSOpenPanel` cannot be exercised by ctest, and the game is not
-launched during verification. `folder_picker.mm` is therefore unverified by
-automated tests, which is the reason it holds no logic. If it grows past
-roughly 30 lines, the design has leaked and the excess belongs in
-`first_run.py`.
+Three surfaces here have no automated coverage, and each is deliberate:
+
+**`folder_picker.mm`** — a modal `NSOpenPanel` cannot be exercised by ctest
+and the game is not launched during verification. That is why it holds no
+logic; if it grows past roughly 30 lines the design has leaked and the
+excess belongs in Python.
+
+**The pump loop** — it drives a live CEF browser against a real GL surface.
+It is kept to the smallest possible body (poll, pump, composite, swap, check
+one flag) for exactly that reason; every decision it might have made belongs
+in the panel class instead.
+
+**The page** — CEF is software-rasterized here, so there is no headless
+render to assert against. The page must hold no logic beyond
+display-and-report: it renders the state it is given and reports button
+presses. Anything conditional belongs in `first_run_panel.py`, which is
+testable with a fake transport.
+
+The recurring rule: **the untestable layer is a renderer, never a decider.**
+This spec's first version proved the cost of getting that wrong in the other
+direction — the logic was correctly placed, but the layer it served was the
+wrong shape entirely, and only a live run showed it.
 
 ## Gate reporting
 
@@ -249,17 +348,32 @@ do not execute, that must be visible rather than inferred.
 
 Mark runs these; they cannot be checked headlessly.
 
-1. Remove `[paths]` from `settings.json` with `game/` absent from the
-   project → two dialogs appear in order.
-2. Pick both valid folders → the game boots.
-3. Relaunch → no dialogs.
-4. Pick an invalid folder → the panel reappears with the missing markers
-   named in its message.
-5. Cancel → the terminal shows the full `describe_failure()` text and a
-   non-zero exit.
+1. Remove `[paths]` from `settings.json` with no BC content in the project →
+   **the game window opens as normal** and the first-run screen is drawn
+   over it, with both rows unsatisfied.
+2. Browse on the game row → the native panel appears **in front of the game
+   window and takes focus**. This is the reorder's main risk: the screen now
+   runs after `r.init()`, so GLFW has already created the `NSApp` that
+   `pick_folder` previously created itself.
+3. Pick a valid game folder → the row turns satisfied and names what it
+   found; Continue stays disabled while the sdk row is unsatisfied.
+4. Pick an *invalid* folder for sdk → the row shows the missing markers and
+   the hint; Continue stays disabled.
+5. Pick a valid sdk folder → Continue enables; pressing it boots the game
+   normally, with no leftover screen and no stuck input focus.
+6. Relaunch → no screen at all.
+7. Fresh state again, pick only the game folder, then Quit → terminal shows
+   the full `describe_failure()` text and a non-zero exit; the NEXT launch
+   asks only for the sdk.
+
+Step 2 and step 5 are the ones most likely to fail. Step 2 is the
+window/dialog focus interaction; step 5 is whether the pump loop hands
+control cleanly to the real game loop.
 
 ## Future work
 
-- Windows `IFileOpenDialog` behind the same seam.
-- A CEF first-run screen, if the panel's single line of explanatory text
-  proves insufficient. It would require the boot reorder described above.
+- Windows `IFileOpenDialog` behind the same seam. Until then the screen
+  still appears on Windows and Linux with Browse inert — legible, where the
+  previous design gave those platforms a silent exit.
+- Replace the CSS starfield fallback with Mark's screenshot once supplied;
+  no code change, just the asset.
