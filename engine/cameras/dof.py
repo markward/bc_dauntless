@@ -297,14 +297,21 @@ class FocusSolver:
     def lens_values(self):
         """The whole live lens, ordered for a one-line readout.
 
-        All four are printed on every nudge so the complete state can be read
-        off in one line and pasted back into the module constants above --
-        printing only the knob that moved makes the developer reconstruct the
-        rest from memory across a session of presses.
+        Everything is printed on every nudge, not just the knob that moved:
+        the complete state can then be read off one line and pasted back into
+        the module constants above.
+
+        focus_gu and blend are included because they are the two values that
+        make the whole effect a no-op when wrong -- blend 0 means no subject is
+        focused and the pass is skipped entirely, and a focus_gu nearer than
+        the hull puts it in the BACKGROUND branch. Neither is visible from the
+        picture, so without them "I see no blur" is unattributable.
         """
-        return (("max_radius_frac", self.max_radius_frac),
-                ("far_ceiling", self.far_ceiling),
-                ("near_strength", self.near_strength),
-                ("far_strength", self.far_strength),
+        return (("focus_gu", self.focus_gu),
+                ("blend", self.blend),
                 ("near_full_gu", self.near_full_gu),
-                ("near_sharp_gu", self.near_sharp_gu))
+                ("near_sharp_gu", self.near_sharp_gu),
+                ("near_strength", self.near_strength),
+                ("max_radius_frac", self.max_radius_frac),
+                ("far_ceiling", self.far_ceiling),
+                ("far_strength", self.far_strength))

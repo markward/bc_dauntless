@@ -81,6 +81,11 @@ protected:
         p.far_strength    = 1.0f;
         p.far_ceiling     = 0.4f;
         p.max_radius_frac = 0.05f;   // exaggerated so the blur is unmistakable
+        // Foreground ramp for a 15 GU hull at the shipped 1x..4x radii. A ZERO
+        // span means "no foreground blur" by design, so leaving these unset
+        // would silently disable the whole near field in every test here.
+        p.near_full_gu    = 15.0f;
+        p.near_sharp_gu   = 60.0f;
         return p;
     }
 };
@@ -252,6 +257,72 @@ TEST_F(DofPassTest, StarfieldThresholdAgreesWithTheCppReference) {
         EXPECT_GT(transition_width(read_edge_row(dst)), 0)
             << "shader left sharp a depth dof.h blurs";
     }
+}
+
+}  // namespace
+
+namespace {
+
+// ── The near field, end to end through the shader ───────────────────────
+//
+// The CoC maths is covered by dof_test.cc, and the far field by the tests
+// above. This is the link neither reaches: whether the SHADER's foreground
+// branch, driven by the ramp uniforms, actually blurs. It is also the branch
+// that silently does nothing if near_sharp_gu / near_full_gu fail to arrive,
+// because a zero span is defined as "no foreground blur".
+
+TEST_F(DofPassTest, ForegroundAtHullDistanceIsBlurred) {
+    renderer::HdrTarget src, dst;
+    // A hull 30 GU from the camera -- where the chase camera puts the player
+    // ship -- with the subject far beyond it.
+    fill_step_edge(src, depth_for_z(30.0f));
+    dst.resize(kSize, kSize);
+
+    renderer::DofPass pass;
+    pass.draw(src.color_texture(), src.depth_texture(), dst.fbo(),
+              kSize, kSize, kNear, kFar, params_at(400.0f));
+
+    EXPECT_GT(transition_width(read_edge_row(dst)), 0)
+        << "geometry 30 GU from the camera, with the subject at 400 GU, was "
+           "left sharp -- the foreground ramp is not reaching the shader";
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+TEST_F(DofPassTest, ForegroundBlurIsUnchangedByTheSubjectsDistance) {
+    // THE property the camera-anchored ramp exists for. The hull does not
+    // move; its blur must not care where the target is.
+    auto width_for = [&](float focus_gu) {
+        renderer::HdrTarget src, dst;
+        fill_step_edge(src, depth_for_z(30.0f));
+        dst.resize(kSize, kSize);
+        renderer::DofPass pass;
+        pass.draw(src.color_texture(), src.depth_texture(), dst.fbo(),
+                  kSize, kSize, kNear, kFar, params_at(focus_gu));
+        return transition_width(read_edge_row(dst));
+    };
+    const int near_target = width_for(150.0f);
+    EXPECT_GT(near_target, 0) << "no foreground blur at all";
+    for (float far_target : {600.0f, 2000.0f, 4000.0f}) {
+        EXPECT_EQ(width_for(far_target), near_target)
+            << "the hull's blur changed because the target moved to "
+            << far_target << " GU";
+    }
+}
+
+TEST_F(DofPassTest, AZeroSpanRampLeavesTheForegroundSharp) {
+    // The documented degenerate case, pinned so it stays a deliberate no-op
+    // rather than becoming a divide-by-zero.
+    renderer::HdrTarget src, dst;
+    fill_step_edge(src, depth_for_z(30.0f));
+    dst.resize(kSize, kSize);
+
+    auto p = params_at(400.0f);
+    p.near_sharp_gu = p.near_full_gu;
+    renderer::DofPass pass;
+    pass.draw(src.color_texture(), src.depth_texture(), dst.fbo(),
+              kSize, kSize, kNear, kFar, p);
+
+    EXPECT_EQ(transition_width(read_edge_row(dst)), 0);
 }
 
 }  // namespace
