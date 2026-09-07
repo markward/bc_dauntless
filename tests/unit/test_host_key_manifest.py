@@ -75,7 +75,13 @@ def test_the_collector_actually_finds_references():
     catch. These three are hard reads in engine/ today."""
     refs = _collect_key_refs()
     assert len(refs) > 10, "AST walk found almost nothing — the walker is broken"
-    for sentinel in ("KEY_COMMA", "KEY_F10", "MOUSE_BUTTON_LEFT"):
+    # Sentinels chosen for STABLE readers, not merely for being read today: a
+    # dev binding (F10), a key host_loop reads directly (KEY_1, throttle) and a
+    # mouse button. KEY_COMMA sat here until the DOF tuning keys were removed
+    # and took its only reader with them -- it happens to be read again now, by
+    # the explosion-light keys, but a sentinel whose reader is itself in flux
+    # turns an unrelated refactor into a failure in this file.
+    for sentinel in ("KEY_1", "KEY_F10", "MOUSE_BUTTON_LEFT"):
         assert sentinel in refs, "%s is read in engine/ but was not collected" % sentinel
 
 

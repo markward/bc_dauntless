@@ -273,7 +273,8 @@ SETTINGS: tuple = (
             _fan(lambda c, v: c.r.set_hdr_enabled(v),
                  lambda c, v: c.r.set_filmic_enabled(v),
                  lambda c, v: c.r.set_motion_blur_enabled(v),
-                 lambda c, v: c.r.set_hdr_lens_flare_enabled(v)),
+                 lambda c, v: c.r.set_hdr_lens_flare_enabled(v),
+                 lambda c, v: c.r.set_dof_enabled(v)),
             reset_default=True),
     Setting("realistic_lighting", "graphics", "realistic_lighting_on", bool,
             lambda c: (c.r.nebula_lightning_enabled()

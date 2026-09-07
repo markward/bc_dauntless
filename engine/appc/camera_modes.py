@@ -98,6 +98,17 @@ class CameraMode:
     def IsValid(self):
         return 1 if self._ideal() is not None else 0
 
+    def focus_subject(self):
+        """The object this camera wants in focus, or None.
+
+        Depth of field consults this before falling back to the player's
+        selected target, so a camera that frames something other than the
+        target can say so. Only TorpCameraMode overrides it today; the hook
+        exists so cutscene and cinematic modes can adopt it without another
+        special case.
+        """
+        return None
+
     # ── Sweep control ─────────────────────────────────────────────────────────
     def set_initial_pose(self, eye, fwd, up):
         self._cur = (tuple(eye), tuple(fwd), tuple(up))
@@ -901,6 +912,23 @@ class TorpCameraMode(CameraMode):
         self._gone_t = None
         self._final = None
         self._dir = None
+
+    def focus_subject(self):
+        """The torpedo being ridden — the shot's actual subject.
+
+        None once the torpedo has left the registry, even though the mode
+        holds its final pose for DelayAfterTorpGone seconds.
+
+        None here does NOT mean the lens releases. dof.focus_subject() treats
+        this hook as "the camera has no opinion" and falls through to
+        player.GetTarget(), which during a torpedo shot is essentially always
+        set — so through the hold window the lens racks to the target ship the
+        torpedo was fired at. That reads better than either alternative (a
+        release to deep focus mid-impact, or a lock on the empty space where
+        the torpedo was), so the behaviour stands; this docstring is corrected
+        to describe it rather than the fall-through being changed.
+        """
+        return self._torp
 
     def _ideal(self, pose_of=None):
         t = self.GetAttrIDObject("Target")

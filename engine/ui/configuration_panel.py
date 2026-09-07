@@ -71,7 +71,7 @@ MASTER_TOGGLES = (
     ("improved_space", "Improved Space Visuals",
      ("procedural_sky", "volumetric_nebulae")),
     ("camera_realism", "Camera Realism",
-     ("hdr", "filmic", "motion_blur", "hdr_lens_flare")),
+     ("hdr", "filmic", "motion_blur", "hdr_lens_flare", "dof")),
     # NOTE label vs key: the row reads "Cinematic Lighting" but the key stays
     # `realistic_lighting`. The key drives the action string, the payload key,
     # the focusable AND the persisted settings key, so renaming it would need
@@ -128,6 +128,7 @@ class ConfigurationPanel(Panel):
                  set_procedural_sky: Callable[[bool], None],
                  set_filmic: Callable[[bool], None],
                  set_motion_blur: Callable[[bool], None],
+                 set_dof: Callable[[bool], None],
                  set_volumetric_nebulae: Callable[[bool], None],
                  set_nebula_lightning: Callable[[bool], None],
                  set_hdr_lens_flare: Callable[[bool], None],
@@ -167,6 +168,7 @@ class ConfigurationPanel(Panel):
             "procedural_sky": set_procedural_sky,
             "filmic": set_filmic,
             "motion_blur": set_motion_blur,
+            "dof": set_dof,
             "volumetric_nebulae": set_volumetric_nebulae,
             "nebula_lightning": set_nebula_lightning,
             "hdr_lens_flare": set_hdr_lens_flare,

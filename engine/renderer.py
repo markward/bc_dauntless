@@ -39,7 +39,8 @@ _REQUIRED_BINDINGS = frozenset({
     "clear_viewscreen_comm_source", "clear_viewscreen_scene_source",
     "consume_mouse_delta", "create_bridge_instance", "create_comm_instance",
     "create_instance", "damage_decals_tick",
-    "destroy_instance", "dust_set_density", "dust_set_enabled", "filmic_enabled",
+    "destroy_instance", "dof_enabled", "dof_set_enabled", "dof_set_params",
+    "dust_set_density", "dust_set_enabled", "filmic_enabled",
     "filmic_set_enabled", "frame", "get_instance_bounds",
     "get_instance_head_center", "hdr_lens_flare_enabled",
     "hdr_lens_flare_set_enabled", "hdr_set_enabled", "init", "letterbox_set",
@@ -537,6 +538,38 @@ def set_ambient_gradient_enabled(enabled: bool) -> None:
     live look is a single change in frame.cc.
     """
     _h.ambient_gradient_set_enabled(bool(enabled))
+
+
+def set_dof_enabled(enabled: bool) -> None:
+    """Depth of field on/off, for the Camera Realism master.
+
+    Off means the pass never runs. On is not enough on its own: the pass also
+    needs a focused subject (blend > 0 via set_dof_params), so the default
+    deep-focus frame stays byte-identical to the pre-DOF renderer.
+    """
+    _h.dof_set_enabled(bool(enabled))
+
+
+def dof_enabled() -> bool:
+    """Whether depth of field is enabled."""
+    return bool(_h.dof_enabled())
+
+
+def set_dof_params(focus_gu: float, blend: float,
+                   near_strength: float, far_strength: float,
+                   far_ceiling: float, max_radius_frac: float,
+                   near_sharp_gu: float, near_full_gu: float) -> None:
+    """Push this frame's DOF parameters.
+
+    `focus_gu` is the camera-to-subject distance in game units and `blend` the
+    0..1 engage ramp; both come from engine.cameras.dof.FocusSolver. The other
+    four are lens shape, authored as module constants in that same file so
+    retuning them after a live look needs no rebuild.
+    """
+    _h.dof_set_params(float(focus_gu), float(blend),
+                      float(near_strength), float(far_strength),
+                      float(far_ceiling), float(max_radius_frac),
+                      float(near_sharp_gu), float(near_full_gu))
 
 
 def set_msaa_samples(samples: int) -> None:
