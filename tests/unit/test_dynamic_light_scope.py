@@ -134,33 +134,24 @@ def test_main_view_renders_keep_their_dynamic_lights():
 
 # ── the two bugs that made the fireball lights invisible in-game ─────────
 
-def test_explosion_lights_come_first_in_the_light_list():
-    """set_dynamic_lights TRUNCATES to the native 64-light cap -- it keeps the
-    first 64 and silently drops the rest. Subsystem emitters alone exceed that
-    in a large engagement, so anything concatenated after them vanishes exactly
-    when the scene is busiest. This shipped once with explosions LAST and could
-    not be seen at all with 50 ships on screen."""
+def test_the_light_list_goes_through_the_category_budget():
+    """Plain concatenation starves whichever category is last, and the native
+    cap truncates rather than prioritising. The budget helper is what stops a
+    busy scene dropping every explosion light, so the binding must be fed from
+    it and not from a raw `a + b + c`."""
     tree = ast.parse(_HOST_LOOP.read_text())
     calls = _calls_named(tree, "set_dynamic_lights")
     assert calls, "host_loop never calls set_dynamic_lights"
 
     for call in calls:
-        for arg in call.args:
-            order = [n.func.id for n in ast.walk(arg)
-                     if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-                     and n.func.id.startswith("_build_")]
-            if "_build_explosion_light_render_data" not in order:
-                continue
-            # ast.walk on a left-nested BinOp yields the outermost operands
-            # first, so compare against the emitter builder directly.
-            src = ast.unparse(arg)
-            assert (src.index("_build_explosion_light_render_data")
-                    < src.index("_build_emitter_light_render_data")), (
-                "explosion lights are concatenated after the subsystem "
-                "emitters, so the 64-light truncation will drop them in any "
-                "busy scene:\n  " + src
-            )
-            return
+        src = ast.unparse(call)
+        if "_build_explosion_light_render_data" not in src:
+            continue
+        assert "_budgeted_dynamic_lights" in src, (
+            "the light list is built by raw concatenation, so the native "
+            "truncation decides what survives:\n  " + src
+        )
+        return
     raise AssertionError("no set_dynamic_lights call builds explosion lights")
 
 

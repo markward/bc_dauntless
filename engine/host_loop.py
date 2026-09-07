@@ -1034,22 +1034,11 @@ def _advance_combat(ships, dt: float, ship_instances=None,
     # the report, which is worse than the exception itself.
     with frame_profiler.scope("cb.render_data"):
         host_io.set_torpedoes(_build_torpedo_render_data())
-        # ORDER IS LOAD-BEARING. set_dynamic_lights hard-clamps to the native
-        # per-frame cap (kMaxDynamicLightsPerFrame, 64) by TRUNCATING -- it
-        # keeps the first 64 and silently drops the rest. Subsystem emitters
-        # alone exceed that in any large engagement (one or more per ship), so
-        # anything concatenated after them is invisible exactly when the scene
-        # is busiest.
-        #
-        # Explosions go FIRST: they are rare, brief and the most dramatic, and
-        # a missing one is far more noticeable than a missing hull emitter.
-        # Torpedoes next; ambient emitters last, since losing a few is the
-        # least visible outcome of an over-full frame.
-        host_io.set_dynamic_lights(
-            _build_explosion_light_render_data() +
-            _build_dynamic_light_render_data() +
+        host_io.set_dynamic_lights(_budgeted_dynamic_lights(
+            _build_explosion_light_render_data(),
+            _build_dynamic_light_render_data(),
             _build_emitter_light_render_data(ship_instances, ship_emitters,
-                                             player=player))
+                                             player=player)))
         from engine.appc import shockwaves as _shockwaves
         host_io.set_shockwaves(_shockwaves.render_data())
         host_io.set_hit_vfx(_build_hit_vfx_render_data())
@@ -1303,6 +1292,46 @@ def _warp_glow_envelope(ship):
     if not w.is_active() or not warp_state.is_flythrough(ship):
         return None
     return w.engine_glow()
+
+
+# ── Dynamic-light budget ─────────────────────────────────────────────────
+# set_dynamic_lights hard-clamps to the native per-frame cap by TRUNCATING --
+# it keeps the first N and silently drops the rest. Plain concatenation
+# therefore starves whichever category comes last, and in a large engagement
+# subsystem emitters alone exceed the cap, so explosions vanished exactly when
+# the scene was busiest.
+#
+# Each category instead gets a guaranteed share. The shares deliberately sum to
+# less than the cap, and the leftover is then spilled in priority order, so a
+# quiet frame still gets every emitter it asks for rather than being capped at
+# its guarantee -- a strict per-category cap would make ordinary scenes WORSE
+# than the plain truncation it replaces.
+_LIGHT_CAP = 64            # MUST match renderer::kMaxDynamicLightsPerFrame
+_LIGHT_BUDGET_EXPLOSIONS = 10
+_LIGHT_BUDGET_TORPEDOES = 10
+_LIGHT_BUDGET_EMITTERS = 40
+
+
+def _budgeted_dynamic_lights(explosions, torpedoes, emitters):
+    """Blend the three light sources into at most `_LIGHT_CAP` entries.
+
+    Every category is guaranteed its budget before any category gets a second
+    helping. Priority order for the spill is explosions, torpedoes, emitters:
+    an explosion is rare, brief and the most missed when dropped, while losing
+    one hull emitter among forty is close to invisible.
+    """
+    groups = ((explosions, _LIGHT_BUDGET_EXPLOSIONS),
+              (torpedoes, _LIGHT_BUDGET_TORPEDOES),
+              (emitters, _LIGHT_BUDGET_EMITTERS))
+    out = []
+    for items, budget in groups:
+        out.extend(items[:budget])
+    for items, budget in groups:
+        room = _LIGHT_CAP - len(out)
+        if room <= 0:
+            break
+        out.extend(items[budget:budget + room])
+    return out
 
 
 def _build_explosion_light_render_data():
