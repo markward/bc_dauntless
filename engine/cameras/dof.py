@@ -24,7 +24,7 @@ FAR_STRENGTH has to fall below 0.44 before the ceiling stops clipping it --
 six presses of a 0.1 strength nudge with ZERO visible change, and no upward
 press can ever affect the distant background at all. On the near side anything
 at z <= focus/2 is already clamped at the hard -1, so raising NEAR_STRENGTH
-above 1.0 only widens a narrow band. nudge_strength() is kept for anyone who
+above 1.0 only widens a narrow band. the strengths remain editable here for anyone who
 wants it from a console, but it is not what "tweak the strength" means here.
 
 Spec: docs/superpowers/specs/2026-09-06-depth-of-field-design.md
@@ -90,8 +90,6 @@ RACK_TAU_S = 0.35        # focus-pull time constant
 BLEND_TAU_S = 0.25       # engage/release ramp
 
 # ── Bounds and step sizes for the live dev nudges ────────────────────────
-STRENGTH_MIN = 0.0
-STRENGTH_MAX = 3.0
 
 # MAX_RADIUS_FRAC. At 1080p the default 0.008 is a 8.6 px max blur radius, so a
 # 0.002 step is ~2.2 px -- a 25% change per press, visible immediately, and four
@@ -99,26 +97,13 @@ STRENGTH_MAX = 3.0
 # the "press it six times and nothing happens" problem the strength keys had.
 # The ceiling of 0.04 is 43 px at 1080p: far past anything usable, which is what
 # a bound is for.
-MAX_RADIUS_FRAC_MIN = 0.0
-MAX_RADIUS_FRAC_MAX = 0.04
-MAX_RADIUS_FRAC_STEP = 0.002
 
-# Step for the FOREGROUND gain. It has its own knob because near and far are
-# bound by different things: the far side saturates against FAR_CEILING, while
-# the near side is what a large foreground object -- the player's own hull in
-# chase view -- is judged on. Without this the only foreground control was
-# MAX_RADIUS_FRAC, which moves the whole picture, and pressing it while hunting
-# for the near blur turns that blur DOWN.
-NEAR_STRENGTH_STEP = 0.25
 
 # FAR_CEILING is the value this design is least confident in, so it gets the
 # other key pair. Default 0.4, step 0.05 -- eight presses down reaches 0.0 (a
 # perfectly sharp background), twelve up reaches 1.0, where the ceiling never
 # binds and the far field is governed by FAR_STRENGTH alone. 1.0 is the natural
 # maximum: it is the magnitude the NEAR side hard-clamps at.
-FAR_CEILING_MIN = 0.0
-FAR_CEILING_MAX = 1.0
-FAR_CEILING_STEP = 0.05
 
 # Below this the blend is snapped to exactly 0 so the host can skip the pass.
 # An exponential ease is asymptotic and would otherwise leave DOF running
@@ -301,66 +286,3 @@ class FocusSolver:
         """
         self._inv_focus = 0.0
         self._blend = 0.0
-
-    def nudge_strength(self, delta):
-        """Move both defocus strengths by `delta`, clamped. Dev tuning only.
-
-        Deliberately NOT on a keybinding -- see the module docstring for why
-        the strengths are the wrong knob to hand someone calibrating live.
-        Kept because they are still real lens parameters.
-        """
-        self.near_strength = min(STRENGTH_MAX,
-                                 max(STRENGTH_MIN, self.near_strength + delta))
-        self.far_strength = min(STRENGTH_MAX,
-                                max(STRENGTH_MIN, self.far_strength + delta))
-        return (self.near_strength, self.far_strength)
-
-    def nudge_near_strength(self, delta):
-        """Move the FOREGROUND defocus gain by `delta`, clamped."""
-        self.near_strength = min(STRENGTH_MAX,
-                                 max(STRENGTH_MIN, self.near_strength + delta))
-        return self.near_strength
-
-    def nudge_max_radius_frac(self, delta):
-        """Move the overall blur magnitude by `delta`, clamped. Dev tuning only.
-
-        The primary "don't over-blur" control: it scales the whole kernel, so
-        one press changes every defocused pixel in the frame.
-        """
-        self.max_radius_frac = min(
-            MAX_RADIUS_FRAC_MAX,
-            max(MAX_RADIUS_FRAC_MIN, self.max_radius_frac + delta))
-        return self.max_radius_frac
-
-    def nudge_far_ceiling(self, delta):
-        """Move the far-field CoC cap by `delta`, clamped. Dev tuning only.
-
-        The background-mush control. Lower keeps distant ships readable; at
-        FAR_CEILING_MAX the cap never binds and the far field is governed by
-        far_strength alone.
-        """
-        self.far_ceiling = min(FAR_CEILING_MAX,
-                               max(FAR_CEILING_MIN, self.far_ceiling + delta))
-        return self.far_ceiling
-
-    def lens_values(self):
-        """The whole live lens, ordered for a one-line readout.
-
-        Everything is printed on every nudge, not just the knob that moved:
-        the complete state can then be read off one line and pasted back into
-        the module constants above.
-
-        focus_gu and blend are included because they are the two values that
-        make the whole effect a no-op when wrong -- blend 0 means no subject is
-        focused and the pass is skipped entirely, and a focus_gu nearer than
-        the hull puts it in the BACKGROUND branch. Neither is visible from the
-        picture, so without them "I see no blur" is unattributable.
-        """
-        return (("focus_gu", self.focus_gu),
-                ("blend", self.blend),
-                ("near_full_gu", self.near_full_gu),
-                ("near_sharp_gu", self.near_sharp_gu),
-                ("near_strength", self.near_strength),
-                ("max_radius_frac", self.max_radius_frac),
-                ("far_ceiling", self.far_ceiling),
-                ("far_strength", self.far_strength))

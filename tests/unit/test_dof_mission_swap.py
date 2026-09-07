@@ -79,14 +79,17 @@ def test_the_next_mission_snaps_to_its_own_distance_not_the_previous_one():
 
 # ── what must NOT be reset ───────────────────────────────────────────────
 
-def test_mission_swap_preserves_the_nudged_lens_strengths():
+def test_mission_swap_preserves_the_lens_settings():
     """Those are per-session dev tuning the user just dialled in live, not
     mission state. Wiping them mid-session would silently undo a calibration
     round -- the exact opposite of what the live-tuning keys are for."""
     solver = host_loop._focus_solver
-    solver.nudge_strength(0.5)
-    solver.nudge_max_radius_frac(0.004)
-    solver.nudge_far_ceiling(0.15)
+    # Set the lens directly: the live nudge keys were removed once the values
+    # were settled, but the INVARIANT they exercised is unchanged -- a mission
+    # swap must clear focus state without touching the lens.
+    solver.near_strength = 0.5
+    solver.max_radius_frac = 0.004
+    solver.far_ceiling = 0.15
     tuned = (solver.near_strength, solver.far_strength,
              solver.max_radius_frac, solver.far_ceiling)
 
@@ -101,7 +104,7 @@ def test_reset_focus_is_not_a_fresh_solver():
     which would drop the tuning AND orphan the dev keys' lazily-resolved
     reference."""
     s = FocusSolver()
-    s.nudge_far_ceiling(0.2)
+    s.far_ceiling = 0.2
     tuned = s.far_ceiling
     s.update(120.0, 1.0 / 60.0)
     s.reset_focus()

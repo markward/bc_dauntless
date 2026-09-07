@@ -75,7 +75,11 @@ def test_the_collector_actually_finds_references():
     catch. These three are hard reads in engine/ today."""
     refs = _collect_key_refs()
     assert len(refs) > 10, "AST walk found almost nothing — the walker is broken"
-    for sentinel in ("KEY_COMMA", "KEY_F10", "MOUSE_BUTTON_LEFT"):
+    # Deliberately keys with STABLE readers: a dev binding (F10) , a directly
+    # read gameplay key (KEY_1, throttle) and a mouse button. KEY_COMMA used to
+    # be here and broke when the DOF tuning keys were removed -- a sentinel is
+    # only useful if its reader is not itself in flux.
+    for sentinel in ("KEY_1", "KEY_F10", "MOUSE_BUTTON_LEFT"):
         assert sentinel in refs, "%s is read in engine/ but was not collected" % sentinel
 
 

@@ -254,25 +254,6 @@ def test_solver_seeds_its_lens_values_from_the_module_defaults():
     assert s.max_radius_frac == dof.MAX_RADIUS_FRAC
 
 
-def test_nudge_moves_both_strengths_and_never_writes_back_to_the_module():
-    s = dof.FocusSolver()
-    before = dof.NEAR_STRENGTH
-    near, far = s.nudge_strength(0.1)
-    assert near == pytest.approx(before + 0.1)
-    assert far == pytest.approx(dof.FAR_STRENGTH + 0.1)
-    assert dof.NEAR_STRENGTH == before, "nudge must be per-session, not global"
-
-
-def test_nudge_clamps_at_both_ends():
-    s = dof.FocusSolver()
-    for _ in range(100):
-        s.nudge_strength(1.0)
-    assert s.near_strength == dof.STRENGTH_MAX
-    for _ in range(100):
-        s.nudge_strength(-1.0)
-    assert s.near_strength == dof.STRENGTH_MIN
-
-
 def test_paused_frame_does_not_advance_engagement():
     """A paused frame (dt=0) freezes the engagement ramp, not snaps to full.
     With dt=0 there is no time for the exponential ease to move, so blend
