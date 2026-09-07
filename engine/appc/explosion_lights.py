@@ -29,9 +29,31 @@ the depth-of-field work settled on.
 # Deliberately conservative; expect to calibrate up and then back down after a
 # live look.
 PEAK_INTENSITY = 6.0      # intensity at the top of the bloom
-RADIUS_FACTOR = 3.0       # light reach as a multiple of the fireball's drawn
-                          # size, so the light spills onto neighbouring hulls
-                          # rather than stopping at the sprite's edge
+RADIUS_FACTOR = 10.0      # light reach as a multiple of the fireball's drawn
+                          # size.
+                          #
+                          # MUST clear renderer's kDynLightShipCeilingGU (40 GU)
+                          # by a wide margin, and that is not a matter of taste.
+                          # Below the ceiling the attenuation reference is 1, so
+                          # the light falls off as 1/(d^2+1) with d in GAME UNITS
+                          # -- a curve meant for lights sitting ON a hull, like
+                          # the subsystem emitters. It dies within a few GU.
+                          # Above the ceiling the reference grows and the light
+                          # actually carries between ships.
+                          #
+                          # Measured, at PEAK_INTENSITY 6 and a warbird-sized
+                          # fireball, effective brightness on a hull 20 GU away:
+                          #   factor  3 -> radius  33 GU -> 0.011   (invisible)
+                          #   factor 10 -> radius 110 GU -> 3.28
+                          # The first shipped at 3 and could not be seen even
+                          # with 50 ships packed together.
+MIN_LIGHT_RADIUS_GU = 60.0  # floor, comfortably clear of the renderer's 40 GU
+                          # ship-scale ceiling. RADIUS_FACTOR alone is not
+                          # enough: ship_death's MIN_EXPLOSION_SIZE is 2 GU, so
+                          # a shuttle's fireball would land at 20 GU -- under
+                          # the ceiling, on the hull-local falloff curve, and
+                          # invisible. Small craft get a light that carries;
+                          # capital ships still scale past this by size.
 COLOR = (1.0, 0.62, 0.28)  # warm orange; r > g > b is what reads as fire
 RISE_FRACTION = 0.12      # fraction of a blast's life spent brightening
 DECAY_EXPONENT = 2.0      # >1 fades fast at first, then lingers
@@ -40,7 +62,7 @@ DECAY_EXPONENT = 2.0      # >1 fades fast at first, then lingers
 # sensible FRACTION of the value each moves, so a press is visible without
 # being a third of the range.
 PEAK_INTENSITY_STEP = 1.0
-RADIUS_FACTOR_STEP = 0.5
+RADIUS_FACTOR_STEP = 1.0
 
 # Live, per-session values seeded from the constants above. The dev keys move
 # THESE, never the module constants: a live experiment must not become the
@@ -199,7 +221,8 @@ def render_data() -> list:
         out.append({
             "position":  blast["position"],
             "color":     COLOR,
-            "radius":    blast["size_gu"] * _radius_factor,
+            "radius":    max(blast["size_gu"] * _radius_factor,
+                                 MIN_LIGHT_RADIUS_GU),
             "intensity": intensity,
         })
     return out

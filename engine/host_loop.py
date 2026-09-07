@@ -1034,11 +1034,22 @@ def _advance_combat(ships, dt: float, ship_instances=None,
     # the report, which is worse than the exception itself.
     with frame_profiler.scope("cb.render_data"):
         host_io.set_torpedoes(_build_torpedo_render_data())
+        # ORDER IS LOAD-BEARING. set_dynamic_lights hard-clamps to the native
+        # per-frame cap (kMaxDynamicLightsPerFrame, 64) by TRUNCATING -- it
+        # keeps the first 64 and silently drops the rest. Subsystem emitters
+        # alone exceed that in any large engagement (one or more per ship), so
+        # anything concatenated after them is invisible exactly when the scene
+        # is busiest.
+        #
+        # Explosions go FIRST: they are rare, brief and the most dramatic, and
+        # a missing one is far more noticeable than a missing hull emitter.
+        # Torpedoes next; ambient emitters last, since losing a few is the
+        # least visible outcome of an over-full frame.
         host_io.set_dynamic_lights(
+            _build_explosion_light_render_data() +
             _build_dynamic_light_render_data() +
             _build_emitter_light_render_data(ship_instances, ship_emitters,
-                                             player=player) +
-            _build_explosion_light_render_data())
+                                             player=player))
         from engine.appc import shockwaves as _shockwaves
         host_io.set_shockwaves(_shockwaves.render_data())
         host_io.set_hit_vfx(_build_hit_vfx_render_data())

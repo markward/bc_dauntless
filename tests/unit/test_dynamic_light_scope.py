@@ -130,3 +130,56 @@ def test_main_view_renders_keep_their_dynamic_lights():
         assert "&g_dynamic_lights" in args, (
             f"a main-view render lost its dynamic lights: {args!r}"
         )
+
+
+# ── the two bugs that made the fireball lights invisible in-game ─────────
+
+def test_explosion_lights_come_first_in_the_light_list():
+    """set_dynamic_lights TRUNCATES to the native 64-light cap -- it keeps the
+    first 64 and silently drops the rest. Subsystem emitters alone exceed that
+    in a large engagement, so anything concatenated after them vanishes exactly
+    when the scene is busiest. This shipped once with explosions LAST and could
+    not be seen at all with 50 ships on screen."""
+    tree = ast.parse(_HOST_LOOP.read_text())
+    calls = _calls_named(tree, "set_dynamic_lights")
+    assert calls, "host_loop never calls set_dynamic_lights"
+
+    for call in calls:
+        for arg in call.args:
+            order = [n.func.id for n in ast.walk(arg)
+                     if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                     and n.func.id.startswith("_build_")]
+            if "_build_explosion_light_render_data" not in order:
+                continue
+            # ast.walk on a left-nested BinOp yields the outermost operands
+            # first, so compare against the emitter builder directly.
+            src = ast.unparse(arg)
+            assert (src.index("_build_explosion_light_render_data")
+                    < src.index("_build_emitter_light_render_data")), (
+                "explosion lights are concatenated after the subsystem "
+                "emitters, so the 64-light truncation will drop them in any "
+                "busy scene:\n  " + src
+            )
+            return
+    raise AssertionError("no set_dynamic_lights call builds explosion lights")
+
+
+def test_explosion_light_radius_clears_the_ship_scale_ceiling():
+    """Below renderer's kDynLightShipCeilingGU (40 GU) the attenuation
+    reference is 1 and the light falls off as 1/(d^2+1) in GAME UNITS -- a
+    curve for lights sitting ON a hull. A fireball light under that ceiling
+    delivers ~0.01 to a neighbour 20 GU away, i.e. nothing. This shipped at a
+    33 GU radius and was invisible even with 50 ships packed together."""
+    from engine.appc import explosion_lights as el
+
+    CEILING_GU = 40.0   # renderer::kDynLightShipCeilingGU
+    # A small craft is the worst case: the smallest fireball, hence the
+    # smallest radius this factor can produce.
+    smallest_fireball_gu = 2.0          # ship_death.MIN_EXPLOSION_SIZE
+    radius = max(smallest_fireball_gu * el.RADIUS_FACTOR,
+                 el.MIN_LIGHT_RADIUS_GU)
+    assert radius > CEILING_GU, (
+        f"the smallest fireball's light radius is {radius:g} GU, at or under "
+        f"the {CEILING_GU:g} GU ship-scale ceiling -- it will not carry to a "
+        "neighbouring hull"
+    )
