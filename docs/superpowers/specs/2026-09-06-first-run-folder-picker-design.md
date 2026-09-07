@@ -123,15 +123,14 @@ that is precisely what is missing when the screen appears. Supplied
 2026-09-07: a 1920×1080 render of a Galaxy-class ship against a starfield,
 832 KB.
 
-**Its composition dictates the layout.** The ship sits dead centre with
-bright window detail across the saucer; a centred panel would land straight
-on top of it and fight the text. The left third is clean, near-black
-starfield. So the panel sits **left, vertically centred**, with the ship
-visible to its right — better composition and better legibility than
-centring over a scrim.
+**The panel is centred, and the layout does not depend on the image.** The
+background is expected to change over time, so the panel carries its own
+semi-opaque dark card and is legible over anything behind it. Do not tune
+the position, or any other choice, to what this particular picture happens
+to look like.
 
-The page still keeps a CSS starfield fallback behind the image, so a missing
-or failed asset degrades to something deliberate rather than a white void.
+The page keeps a CSS starfield fallback behind the image, so a missing or
+failed asset degrades to something deliberate rather than a white void.
 
 `platform` is the correct home and `ui_cef` is not: `ui_cef/CMakeLists.txt`
 returns early when `DAUNTLESS_ENABLE_CEF` is off, so the existing
@@ -207,11 +206,17 @@ import App …                       ← everything downstream unchanged
 
 ### The screen
 
-One row per unresolved root, game first. Each row shows the current path (or
-"not set"), a **Browse** button, and a status line underneath: a tick with
-the markers found, or the `missing` list plus `hint` from the same
-`Validation` the CLI path uses. A root that already resolved is shown
-satisfied and is not asked for again.
+Titled **"Select Bridge Commander Install"**. The framing is deliberate:
+this is a setup step the player completes, not an error report about a
+failure they caused. Copy throughout follows that — the screen asks for
+something, and only a row that was actually *answered wrongly* says what
+was wrong with it.
+
+One row per root, game first. Each row shows the current path (or "not
+set"), a **Browse** button, and a status line underneath: a tick with the
+markers found, or the `missing` list plus `hint` from the same `Validation`
+the CLI path uses. A root that already resolved is shown satisfied and is
+not asked for again.
 
 **Continue** enables only when both roots validate. `_setup_sdk()` runs
 immediately after, so letting the player through with only `game` would just
@@ -384,6 +389,6 @@ control cleanly to the real game loop.
 - Windows `IFileOpenDialog` behind the same seam. Until then the screen
   still appears on Windows and Linux with Browse inert — legible, where the
   previous design gave those platforms a silent exit.
-- The background is a placeholder taken from the `dauntless_web` assets. If
-  a purpose-shot screenshot replaces it later, keep the left third clear —
-  the panel's position depends on it.
+- The background is a placeholder taken from the `dauntless_web` assets and
+  is expected to be replaced. Swapping it is an asset change only — nothing
+  in the layout depends on what it depicts.
