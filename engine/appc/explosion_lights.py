@@ -41,7 +41,7 @@ PEAK_INTENSITY = 1.5      # intensity at the top of the bloom.
                           # close. 1.5 reads unmistakably against a 30 baseline
                           # while leaving headroom, and only saturates when you
                           # are right on top of the blast -- which is right.
-RADIUS_FACTOR = 10.0      # light reach as a multiple of the fireball's drawn
+RADIUS_FACTOR = 20.0      # light reach as a multiple of the fireball's drawn
                           # size.
                           #
                           # MUST clear renderer's kDynLightShipCeilingGU (40 GU)
@@ -59,6 +59,11 @@ RADIUS_FACTOR = 10.0      # light reach as a multiple of the fireball's drawn
                           #   factor 10 -> radius 110 GU -> 3.28
                           # The first shipped at 3 and could not be seen even
                           # with 50 ships packed together.
+                          #
+                          # Raised 10 -> 20 after a live look: 10 read as too
+                          # tight. The nudge ceiling is 60 -- see
+                          # nudge_radius_factor for what the top of that range
+                          # actually does to the falloff.
 MIN_LIGHT_RADIUS_GU = 60.0  # floor, comfortably clear of the renderer's 40 GU
                           # ship-scale ceiling. RADIUS_FACTOR alone is not
                           # enough: ship_death's MIN_EXPLOSION_SIZE is 2 GU, so
@@ -75,7 +80,7 @@ DECAY_EXPONENT = 2.0      # >1 fades fast at first, then lingers
 # being a third of the range. The intensity step was cut 1.0 -> 0.25
 # alongside the 6.0 -> 1.5 recalibration, for the same reason.
 PEAK_INTENSITY_STEP = 0.25
-RADIUS_FACTOR_STEP = 1.0
+RADIUS_FACTOR_STEP = 2.0
 
 # Live, per-session values seeded from the constants above. The dev keys move
 # THESE, never the module constants: a live experiment must not become the
@@ -95,9 +100,18 @@ def nudge_peak_intensity(delta):
 
 
 def nudge_radius_factor(delta):
-    """Move the light's reach, as a multiple of the fireball's drawn size."""
+    """Move the light's reach, as a multiple of the fireball's drawn size.
+
+    Ceiling raised 20 -> 60 on request after a live look. Worth knowing what
+    the top of that range does: the renderer's attenuation reference GROWS with
+    radius above the 40 GU ship-scale ceiling, so a very large radius flattens
+    the falloff rather than merely extending it. At factor 60 a warbird
+    fireball reaches 660 GU and lights nearly everything on screen about
+    equally, which reads as the whole scene brightening rather than as a blast
+    throwing light. If that is the look, it is available.
+    """
     global _radius_factor
-    _radius_factor = max(0.0, min(20.0, _radius_factor + delta))
+    _radius_factor = max(0.0, min(60.0, _radius_factor + delta))
     return _radius_factor
 
 

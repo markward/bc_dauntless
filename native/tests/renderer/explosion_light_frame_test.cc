@@ -143,14 +143,20 @@ TEST_F(ExplosionLightFrameTest, DiagnosticSweepOfShippedParameters) {
     std::printf("  baseline      at ambient 0.04, no light   : %d\n",
                 render(-1.0f, 0.0f, 0.0f, 0.04f));
 
-    // Intensity sweep at a close-quarters separation, to pick a peak that
-    // reads bright without blowing out. 765 is fully saturated white.
-    std::printf("\n  intensity sweep, r=110, ambient 0.04:\n");
-    for (float i : {0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f}) {
-        std::printf("    i=%-4.1f  d=10GU: %-4d  d=20GU: %-4d  d=40GU: %-4d\n",
-                    i, render(10.0f, i, kWarbirdRadius, 0.04f),
-                    render(20.0f, i, kWarbirdRadius, 0.04f),
-                    render(40.0f, i, kWarbirdRadius, 0.04f));
+    // Radius sweep across the tunable range, at the shipped intensity, for an
+    // 11 GU warbird fireball. 765 is saturated white; 30 is the unlit
+    // baseline. Shows what the reach knob actually buys -- and where the
+    // falloff stops being a falloff.
+    std::printf("\n  radius sweep, i=1.5, ambient 0.04 (11 GU fireball):\n");
+    std::printf("    %-22s %-9s %-9s %-9s %-9s\n",
+                "factor -> radius", "d=20GU", "d=100GU", "d=300GU", "d=600GU");
+    for (float f : {10.0f, 20.0f, 30.0f, 40.0f, 60.0f}) {
+        const float r = 11.0f * f;
+        std::printf("    x%-5.0f -> %-11.0f %-9d %-9d %-9d %-9d\n", f, r,
+                    render(20.0f,  1.5f, r, 0.04f),
+                    render(100.0f, 1.5f, r, 0.04f),
+                    render(300.0f, 1.5f, r, 0.04f),
+                    render(600.0f, 1.5f, r, 0.04f));
     }
     SUCCEED();
 }
