@@ -8825,10 +8825,18 @@ def run(mission_name: Optional[str] = None,
                 # The foreground ramp is sized in PLAYER SHIP RADII, so the
                 # hull reads the same on every ship (the chase camera sits at
                 # ~1.5x the radius).
-                _focus_solver.set_ship_radius(
-                    player.GetRadius() if (player is not None
-                                           and hasattr(player, "GetRadius"))
-                    else None)
+                # The foreground ramp spans the player's hull itself, so the
+                # whole ship defocuses and the ramp follows the chase camera's
+                # zoom. Both inputs come from this frame's real geometry --
+                # a guessed camera multiple got the chase distance wrong (1.5x
+                # assumed, 2.58x actual) and left the nacelles reading sharp.
+                _dof_r = (player.GetRadius()
+                          if (player is not None and hasattr(player, "GetRadius"))
+                          else None)
+                _focus_solver.set_foreground_frame(
+                    _dof_r,
+                    _dof.subject_distance_gu(eye, player)
+                    if player is not None else None)
                 _dof_solver_out = _focus_solver.update(
                     _dof.subject_distance_gu(
                         eye, _dof.focus_subject(player, _dof_mode)),

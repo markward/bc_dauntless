@@ -309,3 +309,66 @@ def test_first_acquisition_snaps_at_zero_dt():
     s = dof.FocusSolver()
     s.update(120.0, 0.0)
     assert s.focus_gu == pytest.approx(120.0)
+
+
+# ── The foreground ramp spans the hull itself ────────────────────────────
+# It used to be a fixed multiple of the ship's radius, sized against an
+# ASSUMED chase distance of ~1.5x radius. The real distance is 2.58x, which
+# put the ramp's sharp end barely past the nacelles: their rear got ~2 px of
+# blur against the nose's ~14 and read as sharp, so the ship looked
+# half-defocused. Deriving the ramp from where the hull actually sits fixes
+# that by construction, and makes it follow the chase camera's zoom.
+
+def _ramp_blur(solver, z):
+    """CoC magnitude at view distance `z`, mirroring renderer/dof.h."""
+    span = solver.near_sharp_gu - solver.near_full_gu
+    if span <= 0.0:
+        return 0.0
+    t = max(0.0, min(1.0, (solver.near_sharp_gu - z) / span))
+    return solver.near_strength * t
+
+
+def test_the_whole_hull_is_inside_the_ramp_nacelles_included():
+    """The report that prompted this: the rear of the nacelles sat beyond
+    where the blur reached, so the ship was blurred at the front and sharp at
+    the back."""
+    r, cam = 4.03, 2.58 * 4.03
+    s = dof.FocusSolver()
+    s.set_foreground_frame(r, cam)
+
+    nose = _ramp_blur(s, cam - r)
+    rear = _ramp_blur(s, cam + r)
+    assert rear > 0.4 * nose, (
+        f"the nacelle rear ({rear:.2f}) is barely blurred next to the nose "
+        f"({nose:.2f}) -- the ramp taps out before the back of the ship"
+    )
+    assert nose > rear, "the near end must still be blurrier: that is the depth cue"
+
+
+def test_the_ramp_follows_the_chase_cameras_zoom():
+    """A fixed multiple of the radius would not: zooming out would slide the
+    hull up a stationary ramp and silently change its blur."""
+    r = 4.03
+    close, far = dof.FocusSolver(), dof.FocusSolver()
+    close.set_foreground_frame(r, 2.58 * r)
+    far.set_foreground_frame(r, 6.0 * r)
+
+    # The hull centre sits at the same RELATIVE place on each ramp, so its
+    # blur is comparable at both zoom levels rather than collapsing when
+    # zoomed out.
+    assert _ramp_blur(close, 2.58 * r) > 0.3
+    assert _ramp_blur(far, 6.0 * r) > 0.3
+
+
+def test_falls_back_to_radius_multiples_without_a_camera_distance():
+    s = dof.FocusSolver()
+    s.set_foreground_frame(4.03, None)
+    assert s.near_sharp_gu > s.near_full_gu > 0.0
+
+
+def test_a_missing_radius_does_not_collapse_the_ramp():
+    """A zero span is defined as 'no foreground blur', so a missing radius
+    must not silently switch the near field off."""
+    s = dof.FocusSolver()
+    s.set_foreground_frame(None, None)
+    assert s.near_sharp_gu > s.near_full_gu > 0.0

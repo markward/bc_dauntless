@@ -53,8 +53,26 @@ MAX_RADIUS_FRAC = 0.008  # max blur radius as a fraction of screen height
 # 0.5x to 2.5x radius in view depth, so a 1 -> 4 ramp puts the nose and tail at
 # genuinely different points on it -- the gradient that makes this read as an
 # object out of focus rather than a blurry texture.
-NEAR_FULL_RADII = 1.0    # at/inside this many radii from the camera: full blur
-NEAR_SHARP_RADII = 4.0   # at/beyond this many: sharp
+# The ramp is derived from where the player's hull ACTUALLY IS, not from a
+# guessed camera position. The hull occupies [cam - r, cam + r] in view depth,
+# so:
+#   full blur at its NEAR extent, and sharp somewhat beyond its FAR extent.
+#
+# Anchoring to the hull rather than to a multiple of the radius matters twice
+# over. A fixed multiple assumed the chase camera sat at ~1.5x the radius when
+# it actually sits at 2.58x, which put the ramp's sharp end barely past the
+# nacelles -- their rear got 2 px of blur against the nose's 14 and read as
+# sharp, so the ship looked half-defocused. And a fixed multiple does not
+# follow the chase camera's ZOOM: zooming out would slide the hull up the ramp
+# and silently change its blur. Derived from the hull, neither can happen.
+FOREGROUND_FULL_AT = 1.0    # x the hull's NEAR extent: full blur at/inside it
+FOREGROUND_SHARP_AT = 1.6   # x the hull's FAR extent: sharp at/beyond it
+
+# Used only when the camera distance is unknown (no player, or a stub without a
+# position). Multiples of the ship radius, matching what the derived form
+# produces at the real 2.58x chase distance.
+FALLBACK_FULL_RADII = 1.6
+FALLBACK_SHARP_RADII = 5.7
 
 # Fallback when the player's radius is unknown (no player yet, or a stub without
 # GetRadius). A typical capital hull, so the foreground still behaves sanely
@@ -198,8 +216,8 @@ class FocusSolver:
         self.far_ceiling = FAR_CEILING
         self.max_radius_frac = MAX_RADIUS_FRAC
         # Resolved from the player's radius each frame by update().
-        self.near_sharp_gu = FALLBACK_SHIP_RADIUS_GU * NEAR_SHARP_RADII
-        self.near_full_gu = FALLBACK_SHIP_RADIUS_GU * NEAR_FULL_RADII
+        self.near_sharp_gu = FALLBACK_SHIP_RADIUS_GU * FALLBACK_SHARP_RADII
+        self.near_full_gu = FALLBACK_SHIP_RADIUS_GU * FALLBACK_FULL_RADII
         # Held as a dioptre (1/distance); 0 means "not focused on anything".
         self._inv_focus = 0.0
         self._blend = 0.0
@@ -214,16 +232,27 @@ class FocusSolver:
         """0..1 engage ramp. Exactly 0 means the host skips the pass."""
         return self._blend
 
-    def set_ship_radius(self, radius_gu):
-        """Size the foreground ramp from the player ship's radius.
+    def set_foreground_frame(self, radius_gu, camera_distance_gu=None):
+        """Size the foreground ramp from where the player's hull actually sits.
 
-        Called each frame alongside update(). A non-positive or missing radius
-        falls back to a typical capital hull rather than collapsing the ramp,
-        which would switch the foreground blur off entirely.
+        `camera_distance_gu` is camera-to-hull-centre; with it the ramp spans
+        the hull itself, so the whole ship is defocused and the ramp follows
+        the chase camera's zoom. Without it (no player yet, or a stub with no
+        position) it falls back to multiples of the radius.
+
+        A non-positive or missing radius falls back to a typical capital hull
+        rather than collapsing the ramp, which would switch the foreground blur
+        off entirely -- a zero span is defined as "no near blur".
         """
         r = radius_gu if (radius_gu and radius_gu > 0.0) else FALLBACK_SHIP_RADIUS_GU
-        self.near_sharp_gu = r * NEAR_SHARP_RADII
-        self.near_full_gu = r * NEAR_FULL_RADII
+        if camera_distance_gu and camera_distance_gu > 0.0:
+            near_extent = max(camera_distance_gu - r, 1e-3)
+            far_extent = camera_distance_gu + r
+            self.near_full_gu = near_extent * FOREGROUND_FULL_AT
+            self.near_sharp_gu = far_extent * FOREGROUND_SHARP_AT
+        else:
+            self.near_full_gu = r * FALLBACK_FULL_RADII
+            self.near_sharp_gu = r * FALLBACK_SHARP_RADII
         return self
 
     def update(self, distance_gu, dt):
