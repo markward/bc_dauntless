@@ -156,28 +156,45 @@ def test_a_partial_screen_result_persists_even_when_boot_still_fails(
         "the missing sdk root must not be written")
 
 
-def test_the_screens_resolver_is_bound_to_boots_real_store(monkeypatch, install):
-    """Carried-forward regression: the resolver _resolve_paths_or_report()
-    hands to the first-run screen must be bound to the SAME store it built
-    for its own initial resolve() -- not FirstRunPanel's own default (a
-    FRESH SettingsStore() read). Without this, a root already on record in
-    the real settings.json could be silently outranked by "nothing found"
-    once the screen re-resolves after a browse of the OTHER root.
+def test_the_screens_resolver_stays_bound_to_the_store_boot_captured(
+        monkeypatch, install, tmp_path):
+    """Carried-forward regression, fix round 2.
 
-    Every other test in this file passes even if `resolver=` is dropped
-    entirely at the call site, because paths.resolve()'s own default
-    (argv=None/env=None/store=None) happens to read the same ambient
-    sys.argv/os.environ/settings.json in this process either way -- so this
-    test proves the wiring by giving boot's store an "sdk" entry a fresh
-    SettingsStore() could never produce (it never touches disk at all), and
-    calling the CAPTURED resolver directly rather than driving the pump
-    loop.
+    Round 1's version of this test discriminated on VALUE -- a distinctive
+    "sdk" answer no fresh SettingsStore() could reproduce -- but
+    engine.settings_store.SettingsStore is necessarily patched at the CLASS
+    level (it's the only lever a test has over what boot's own `store is
+    None` branch would build), so paths.resolve()'s OWN `store is None`
+    branch -- exactly what FirstRunPanel._default_resolver hits -- reads
+    the SAME patched class and reproduces any answer a correctly-threaded
+    resolver gives. Value-based discrimination cannot work here: a review
+    proved it with a standalone repro (a bare
+    ``lambda picked: paths.resolve(argv=argv, env=env, picked=picked)``
+    -- no store -- produced the identical result.sdk under that patch).
+
+    What actually distinguishes a correctly-wired resolver is WHEN it
+    captures its store, not what the store contains: bound ONCE, at
+    _resolve_paths_or_report()'s own resolve() call, and never
+    re-constructed afterwards. So this test captures the resolver, THEN
+    changes what a fresh SettingsStore() would build, THEN calls the
+    captured resolver -- a resolver closed over the already-built store
+    object stays on the ORIGINAL answer regardless; a resolver that
+    re-derives its store per call (dropped `resolver=` entirely, or bound
+    with the weak/default-equivalent ``paths.resolve(picked=picked)`` form)
+    picks up the CHANGED one instead.
     """
-    game, sdk = install
+    game, sdk_at_capture = install
+    sdk_after_capture = tmp_path / "other_install" / "sdk"  # paths-guard: test fixture tree
+    (sdk_after_capture / "Build" / "scripts").mkdir(parents=True, exist_ok=True)
+    (sdk_after_capture / "Build" / "scripts" / "App.py").write_text("")
+    (sdk_after_capture / "Build" / "Data" / "TGL").mkdir(parents=True, exist_ok=True)
 
-    class _DistinctiveStore:
-        """Never reads settings.json -- a fresh SettingsStore() could not
-        coincidentally reproduce this "sdk" answer."""
+    class _StoreWithSdk:
+        """Answers only ("paths", "sdk"), with whichever path it was built
+        with -- never touches disk."""
+        def __init__(self, sdk_path):
+            self._sdk = str(sdk_path)
+
         def load(self):
             pass
 
@@ -186,20 +203,20 @@ def test_the_screens_resolver_is_bound_to_boots_real_store(monkeypatch, install)
 
         def get(self, section, key):
             assert (section, key) == ("paths", "sdk")
-            return str(sdk)
+            return self._sdk
 
         def set(self, section, key, value):
             pass
 
     # Undo _nothing_resolves_by_accident's substitution: this test wants the
-    # REAL resolve()/persist(), pointed only at the distinctive store above
-    # (via the SettingsStore class patch below), not a hardcoded fake one
-    # that would mask which store the resolver actually used.
+    # REAL resolve()/persist(), pointed only at the patched SettingsStore
+    # class below, not a hardcoded fake one that would mask which store the
+    # resolver actually used.
     monkeypatch.setattr(paths, "resolve", _REAL_RESOLVE)
     monkeypatch.setattr(paths, "persist", lambda resolution, store=None: None)
     monkeypatch.setattr(paths, "configure", lambda resolution: None)
     monkeypatch.setattr(_settings_store_mod, "SettingsStore",
-                        lambda *a, **kw: _DistinctiveStore())
+                        lambda *a, **kw: _StoreWithSdk(sdk_at_capture))
 
     captured = {}
 
@@ -215,13 +232,20 @@ def test_the_screens_resolver_is_bound_to_boots_real_store(monkeypatch, install)
     assert resolver is not None, (
         "_run_first_run_screen must be given a resolver -- a caller that "
         "drops the kwarg would leave FirstRunPanel to fall back to its own "
-        "default, which reads a FRESH SettingsStore() instead of boot's")
+        "default, which re-derives a store per call instead of staying "
+        "bound to boot's")
+
+    # AFTER capture: change what a FRESH SettingsStore() would build. A
+    # resolver correctly bound to the store boot already constructed must
+    # not observe this -- only a re-defaulting one would.
+    monkeypatch.setattr(_settings_store_mod, "SettingsStore",
+                        lambda *a, **kw: _StoreWithSdk(sdk_after_capture))
+
     result = resolver({"game": str(game)})
-    assert result.sdk == sdk, (
-        "the resolver resolved sdk from somewhere other than boot's own "
-        "store -- a resolver bound to a fresh default SettingsStore() could "
-        "never have produced this answer, since that store never touches "
-        "disk")
+    assert result.sdk == sdk_at_capture, (
+        "the resolver picked up ambient state that changed AFTER it was "
+        "captured -- it must stay bound to the store boot built ONCE at "
+        "its own resolve() call, not re-derive a fresh one on every call")
 
 
 def test_the_screen_suppresses_the_3d_scene_while_it_runs(monkeypatch):
