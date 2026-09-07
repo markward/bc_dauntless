@@ -11,6 +11,7 @@ import pytest
 
 from engine import first_run, host_loop, paths
 from engine import settings_store as _settings_store_mod
+from tests.helpers.source_guards import code_only as _code_only
 
 # Captured before any fixture gets a chance to monkeypatch paths.persist /
 # paths.resolve, so a test can reinstate the REAL implementation (pointed at
@@ -110,6 +111,37 @@ def test_no_picker_prints_the_diagnostic_and_stops_boot(monkeypatch, capsys):
     printed = capsys.readouterr().err
     assert "cannot locate your Bridge Commander install" in printed
     assert "--game-dir" in printed
+
+
+def test_no_live_browser_skips_the_screen_and_prints_the_diagnostic(
+        monkeypatch, capsys):
+    """CRITICAL 3 regression: a `--no-cef` build, or a live build whose
+    cef_initialize() call failed, stubs every cef_* binding to a no-op --
+    including cef_set_load_end_handler, whose callback would then never
+    fire. Pumping _run_first_run_screen's loop in that state spins forever
+    on a black window with no way for the player to ever close it, where
+    the OLD behaviour (before this branch reordered boot) was an
+    immediate, legible diagnostic and a non-zero exit.
+
+    run() captures cef_initialize()'s own return value and threads it in
+    as `cef_ready`; when False, _resolve_paths_or_report() must skip
+    _run_first_run_screen entirely and fall straight through to the same
+    describe_failure() + None path a picker-less platform already takes.
+    Proven here by making _run_first_run_screen raise if it is ever
+    called -- this test fails loudly instead of hanging if the gate is
+    ever removed.
+    """
+    def _must_not_be_called(resolution, **kwargs):
+        raise AssertionError(
+            "_run_first_run_screen must not run when cef_ready is False -- "
+            "there is no live browser for it to draw into")
+    monkeypatch.setattr(host_loop, "_run_first_run_screen", _must_not_be_called)
+
+    result = host_loop._resolve_paths_or_report(cef_ready=False)
+
+    assert result is None, "boot must not continue on unresolved paths"
+    printed = capsys.readouterr().err
+    assert "cannot locate your Bridge Commander install" in printed
 
 
 def test_a_partial_screen_result_persists_even_when_boot_still_fails(
@@ -292,37 +324,29 @@ def test_the_screen_pushes_its_first_payload_from_the_load_end_handler():
     project, which has caused real bugs. The screen's initial state must go
     out from the document-load handler, not at cef_initialize time.
 
-    Anchored on the real call spelling (``panel.invalidate()``), not the
-    bare word "invalidate" -- and comments stripped first (see _code_only)
-    -- because the bare word also appears in this function's own
-    explanatory comment, which would satisfy a looser assertion even with
-    the real call deleted.
+    Anchored on the real REGISTRATION spelling (``_set_load_end(panel.
+    invalidate)``), not just the bare call ``panel.invalidate()`` -- the
+    bare call alone is satisfied by the pre-loop invalidate() that has
+    always been there, even while CRITICAL 1 (nothing ever registers a
+    load-end handler, so the pre-loop push is the ONLY push and it is
+    dropped on frame 1 with nothing to re-trigger it) was fully live. A
+    guard anchored only on the bare call therefore passed on broken code
+    and its own failure message misled about what was actually missing.
+    Comments stripped first (see tests.helpers.source_guards.code_only):
+    the bare word "invalidate" also appears in this function's own
+    explanatory comments, which would satisfy a looser assertion even with
+    the real registration deleted.
     """
     import inspect
     from engine import host_loop
     source = _code_only(inspect.getsource(host_loop._run_first_run_screen))
-    assert "panel.invalidate()" in source, (
-        "the panel must be invalidated on document load so its first payload "
-        "is emitted once the page can actually receive it"
+    assert "_set_load_end(panel.invalidate)" in source, (
+        "the load-end handler must be registered to call panel.invalidate() "
+        "-- without it, the screen's first payload is pushed before the "
+        "page's scripts have run, silently dropped, and nothing ever "
+        "re-triggers a push because the panel's own snapshot never changes "
+        "again on its own"
     )
-
-
-def _code_only(src: str) -> str:
-    """`src` with `#` comments removed.
-
-    Ordering guards below search source text for call spellings. A comment
-    mentioning a call reads identically to the call itself, so without this
-    a COMMENT can satisfy an assertion about CODE -- which has happened
-    four times on this branch, twice in comments this very file's guards
-    were written to protect. Every ``inspect.getsource`` ordering assertion
-    in this file must run through this first.
-
-    A ``#`` inside a string literal is stripped too. Harmless for the
-    ordering guards here (none of the spellings they search for appear
-    inside a string literal in ``run()``), but it means this is not a real
-    tokenizer -- don't reach for it outside this narrow use.
-    """
-    return "\n".join(line.split("#", 1)[0] for line in src.splitlines())
 
 
 def test_cef_comes_up_before_the_sdk_finder_is_installed():
@@ -341,7 +365,7 @@ def test_cef_comes_up_before_the_sdk_finder_is_installed():
     source = _code_only(inspect.getsource(host_loop.run))
     init_at = source.index("r.init(")
     cef_at = source.index("r.cef_initialize(")
-    resolve_at = source.index("_resolve_paths_or_report()")
+    resolve_at = source.index("_resolve_paths_or_report(")
     sdk_at = source.index("_setup_sdk()")
     assert init_at < cef_at < resolve_at < sdk_at, (
         "boot order must be: window, CEF, resolve, SDK -- the first-run "
