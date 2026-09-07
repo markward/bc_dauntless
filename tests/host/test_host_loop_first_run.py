@@ -5,6 +5,8 @@ picker-less platform ever boots on unresolved paths, or loses the
 describe_failure() diagnostic, nothing else in the suite would notice.
 """
 
+import sys as _sys
+
 import pytest
 
 from engine import first_run, host_loop, paths
@@ -182,7 +184,27 @@ def test_the_screens_resolver_stays_bound_to_the_store_boot_captured(
     re-derives its store per call (dropped `resolver=` entirely, or bound
     with the weak/default-equivalent ``paths.resolve(picked=picked)`` form)
     picks up the CHANGED one instead.
+
+    Fix round 3 -- order-dependent gate regression. This test drives the
+    REAL _resolve_paths_or_report(), which reads the REAL sys.argv and
+    os.environ (that is the whole point: it is checking what boot's own
+    resolve() call captures). Under `scripts/check_tests.sh` the gate
+    exports DAUNTLESS_GAME_DIR (see that script -- it derives the
+    developer's real, VALID game root so the C++ asset tests can run) for
+    the whole pytest subprocess. With that var set, the initial
+    `_paths.resolve(argv=argv, env=env, store=store)` call inside
+    _resolve_paths_or_report() resolves "game" from the environment all by
+    itself, and combined with the patched store answering "sdk", the
+    Resolution comes back already `ok=True` -- so `_run_first_run_screen`
+    (and therefore this test's `fake_screen`) is never even called, and
+    `captured["resolver"]` stays None. That is real leakage from the
+    process environment, not a bug in the resolver-binding logic this test
+    exists to pin -- so argv/env are pinned here explicitly rather than
+    trusted to whatever the runner happened to export.
     """
+    monkeypatch.setattr(_sys, "argv", ["dauntless"])
+    monkeypatch.delenv("DAUNTLESS_GAME_DIR", raising=False)
+    monkeypatch.delenv("DAUNTLESS_SDK_DIR", raising=False)
     game, sdk_at_capture = install
     sdk_after_capture = tmp_path / "other_install" / "sdk"  # paths-guard: test fixture tree
     (sdk_after_capture / "Build" / "scripts").mkdir(parents=True, exist_ok=True)
