@@ -80,12 +80,21 @@ class FirstRunPanel(Panel):
         return self._resolution.game if kind == "game" else self._resolution.sdk  # paths-guard: kind label, not a path segment
 
     def _status_for(self, kind: str) -> dict:
+        # A rejection may NEVER override the status of a root the current
+        # Resolution still says is valid -- that root did not stop working
+        # just because a LATER browse of the same row picked something bad.
+        # The valid root wins the status; the rejection still surfaces, as
+        # the hint, so the bad click doesn't look like it did nothing.
+        root = self._root_for(kind)
+        if root is not None:
+            hint = ""
+            if kind in self._rejected:
+                hint = ("That folder is not a Bridge Commander install "
+                        "-- keeping the current one.")
+            return {"status": _FOUND, "hint": hint, "ok": True}
         if kind in self._rejected:
             return {"status": _NOT_AN_INSTALL, "hint": self._rejected[kind], "ok": False}
-        root = self._root_for(kind)
-        if root is None:
-            return {"status": _UNSET, "hint": "", "ok": False}
-        return {"status": _FOUND, "hint": "", "ok": True}
+        return {"status": _UNSET, "hint": "", "ok": False}
 
     def _snapshot(self) -> dict:
         rows = []

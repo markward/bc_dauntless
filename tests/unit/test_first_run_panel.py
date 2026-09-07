@@ -197,3 +197,59 @@ def test_invalidate_forces_a_re_emit():
     assert panel.render_payload() is None
     panel.invalidate()
     assert panel.render_payload() is not None
+
+
+def test_a_bad_browse_on_an_already_satisfied_row_keeps_the_valid_root(install):
+    """Regression: a bad re-browse of an already-valid row must not produce
+    a self-contradictory payload -- claiming "Not a Bridge Commander
+    install" while still showing the OLD, still-valid path, with
+    can_continue coming from the still-good Resolution regardless. The
+    player's earlier work must stand; the bad click should still say
+    something (via hint), or it looks like it did nothing.
+    """
+    game, sdk = install
+    # One level too deep -- invalid, same fixture shape as the existing
+    # invalid-browse test.
+    picker = RecordingPicker([str(sdk / "Build")])
+    panel = _panel(picker, argv=["--game-dir", str(game), "--sdk-dir", str(sdk)])
+    _payload(panel)                       # drain the initial payload
+    panel.dispatch_event("browse:sdk")
+    payload = _payload(panel)
+    row = payload["rows"][1]
+    assert row["ok"] is True
+    assert row["status"] == "Bridge Commander install found"
+    assert row["path"] == str(sdk)        # the OLD valid root, not destroyed
+    assert row["hint"]                    # the bad click still says something
+    assert payload["can_continue"] is True
+
+
+def test_a_bad_browse_on_an_unsatisfied_row_still_reports_not_an_install(install):
+    """Pin: the behaviour above must not regress the ORIGINAL case -- a bad
+    pick on a row with no valid root yet still reports NOT_AN_INSTALL with
+    the hint, and can_continue stays False.
+    """
+    sdk = install[1]
+    panel = _panel(RecordingPicker([str(sdk / "Build")]))
+    panel.dispatch_event("browse:sdk")
+    payload = _payload(panel)
+    row = payload["rows"][1]
+    assert row["ok"] is False
+    assert row["status"] == "Not a Bridge Commander install"
+    assert row["path"] == ""
+    assert row["hint"]
+    assert payload["can_continue"] is False
+
+
+def test_a_cancelled_browse_after_a_rejection_leaves_the_rejection_in_place(install):
+    """A cancel does not clear a PRIOR rejection -- the row stays exactly as
+    it was, hint included, same as the plain cancelled-browse case above.
+    """
+    sdk = install[1]
+    panel = _panel(RecordingPicker([str(sdk / "Build"), None]))
+    panel.dispatch_event("browse:sdk")
+    before = _payload(panel)
+    panel.dispatch_event("browse:sdk")    # picker returns None this time
+    after = panel.render_payload()
+    assert after is None, "a cancelled browse changes nothing, so nothing re-renders"
+    assert before["rows"][1]["status"] == "Not a Bridge Commander install"
+    assert before["rows"][1]["hint"]
