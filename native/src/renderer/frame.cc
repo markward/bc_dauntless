@@ -338,6 +338,20 @@ void reset_model_radius_cache() {
     g_model_radius_cache.clear();
 }
 
+// The original fill volume for an instance's hull, or nullptr when there is
+// nothing to gate with. Skipped for undamaged instances so the common case never
+// touches the cache; the cache memoises the decode per hull source.
+static const voxel::VoxelVolume* carve_fill_entry(
+        CarveFieldCache* cache,
+        const assets::Model* model,
+        const scenegraph::HullCarveField& carve) {
+    if (cache == nullptr || model == nullptr) return nullptr;
+    if (carve.count() == 0) return nullptr;
+    if (model->source.empty()) return nullptr;
+    const voxel::VoxelVolume& v = cache->volume_for_source(model->source);
+    return v.occ.empty() ? nullptr : &v;
+}
+
 void draw_model(const assets::Model& model,
                 const glm::mat4& world,
                 Shader& shader,
@@ -354,7 +368,8 @@ void draw_model(const assets::Model& model,
                 const scenegraph::HullCarveField& carve,
                 const std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>&
                     dyn_lights,
-                int dyn_light_count) {
+                int dyn_light_count,
+                const voxel::VoxelVolume* carve_fill) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -488,6 +503,11 @@ void draw_model(const assets::Model& model,
                 if (!s.active) continue;
                 if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
                 if (ns >= kMaxCarves) break;
+                // Backing-material gate: skip a carve the scoop cannot fill.
+                if (carve_fill != nullptr &&
+                    !carve_has_backing(*carve_fill, s.center_body,
+                                       s.surface_normal))
+                    continue;
                 spheres[ns] = glm::vec4(s.center_body, s.radius);
                 normals[ns] = s.surface_normal;
                 ++ns;
@@ -505,6 +525,7 @@ void draw_model(const assets::Model& model,
             prog.set_int("u_carve_enabled", 0);
             prog.set_int("u_carve_count", 0);
         }
+
     }
 
     // ── Skeletal framework lattice (Damage.tga alpha stencil) ─────────────────
@@ -767,7 +788,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
                           white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
                           inst.emissive_scale, palette, inst.carve,
-                          lights, light_count);
+                          lights, light_count,
+                          carve_fill_entry(carve_cache, m, inst.carve));
     });
 }
 
@@ -829,7 +851,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
                           inst.emissive_scale, palette, inst.carve,
-                          lights, light_count);
+                          lights, light_count,
+                          carve_fill_entry(carve_cache, m, inst.carve));
     });
 }
 
@@ -889,8 +912,8 @@ void FrameSubmitter::submit_opaque_instance(const scenegraph::World& world,
                white, black, rim_strength,
                inst->decals, inst->glow_regions, decal_time,
                inst->emissive_scale, palette, inst->carve,
-               lights, light_count);
-    (void)carve_cache;  // reserved: parity with submit_opaque_in_pass signature
+               lights, light_count,
+               carve_fill_entry(carve_cache, m, inst->carve));
 }
 
 // ── Shadow depth pre-pass ──────────────────────────────────────────────────

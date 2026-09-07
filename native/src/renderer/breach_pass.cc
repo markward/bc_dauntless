@@ -186,6 +186,9 @@ void BreachPass::draw_scoop(const glm::vec3& center_body,
     shader.set_ivec3("u_fill_dims",  fill_dims);
     shader.set_float("u_fill_iso",
                      static_cast<float>(CarveFieldCache::kIsovalue) / 255.0f);
+    // Must equal opaque.frag's u_carve_fill_iso — same threshold, same shape.
+    shader.set_float("u_fill_backing",
+                     static_cast<float>(CarveFieldCache::kBackingIsovalue) / 255.0f);
 
     // Triplanar Damage.tga on unit 1.
     shader.set_int("u_damage_tex", 1);
@@ -240,6 +243,7 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     for (const auto& s : carve.slots()) {
         if (!s.active) continue;
         if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
+        if (!carve_has_backing(fill, s.center_body, s.surface_normal)) continue;
         draw_scoop(s.center_body, s.radius, s.surface_normal,
                    fe.tex3d, fill.origin, fill.cell, fill.dims,
                    world_xf, camera, pipeline,
@@ -298,11 +302,23 @@ void BreachPass::render(const scenegraph::World& world,
                 carve_cache.get_for_source(model->source);
             if (ce == nullptr) return;
 
+            // Same fill the gate consults, CPU-side. Cheap: source-keyed and
+            // already decoded for the texture upload above.
+            const voxel::VoxelVolume& fill =
+                carve_cache.volume_for_source(model->source);
+
             ensure_state();
 
             for (const auto& s : inst.carve.slots()) {
                 if (!s.active) continue;
                 if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
+                // Backing-material gate: frame.cc leaves the hull UNCUT for this
+                // carve, so its scoop would be hidden behind intact hull. Skip
+                // the draw rather than rely on the depth test to eat it — and,
+                // more importantly, keep the two passes reading the SAME gate so
+                // they cannot drift apart.
+                if (!carve_has_backing(fill, s.center_body, s.surface_normal))
+                    continue;
 
                 // Find the nearest active breach event for this carve slot.
                 float breach_age = scenegraph::kRimLife + 1.f;  // default: cold

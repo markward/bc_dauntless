@@ -13,6 +13,9 @@
 #include <scenegraph/instance.h>
 
 #include <renderer/shadow_light.h>
+// draw_model takes a voxel::VoxelVolume* and CarveFieldCache's nested
+// constants, so the forward declaration below is not enough on its own.
+#include <renderer/carve_field_cache.h>
 
 namespace assets { struct Model; }
 namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_t;
@@ -276,7 +279,8 @@ void draw_model(const assets::Model& model,
                 const scenegraph::HullCarveField& carve,
                 const std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>&
                     dyn_lights = {},
-                int dyn_light_count = 0);
+                int dyn_light_count = 0,
+                const voxel::VoxelVolume* carve_fill = nullptr);
 
 /// Release the process-lifetime damage-decal texture (game/data/Textures/
 /// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.

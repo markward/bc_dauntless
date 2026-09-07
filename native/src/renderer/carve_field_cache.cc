@@ -3,7 +3,33 @@
 
 #include <glad/glad.h>
 
+#include <cmath>
+
 namespace renderer {
+
+bool carve_has_backing(const voxel::VoxelVolume& fill,
+                       const glm::vec3& center_body,
+                       const glm::vec3& normal_body) {
+    if (fill.occ.empty()) return true;      // no volume to consult → don't gate
+    if (fill.cell.x <= 0.0f) return true;
+    const float reach = CarveFieldCache::kBackingCells * fill.cell.x;
+    for (int t = 1; t <= CarveFieldCache::kBackingTaps; ++t) {
+        const float d =
+            reach * static_cast<float>(t) / CarveFieldCache::kBackingTaps;
+        const glm::vec3 p = center_body - normal_body * d;
+        const glm::vec3 g = (p - fill.origin) / fill.cell;
+        const glm::ivec3 c(static_cast<int>(std::floor(g.x)),
+                           static_cast<int>(std::floor(g.y)),
+                           static_cast<int>(std::floor(g.z)));
+        if (c.x < 0 || c.y < 0 || c.z < 0 ||
+            c.x >= fill.dims.x || c.y >= fill.dims.y || c.z >= fill.dims.z)
+            continue;                       // outside the grid: genuinely nothing
+        if (fill.occ[fill.index(c.x, c.y, c.z)] >=
+            CarveFieldCache::kBackingIsovalue)
+            return true;
+    }
+    return false;
+}
 
 CarveFieldCache::~CarveFieldCache() {
     for (auto& kv : by_source_) {
