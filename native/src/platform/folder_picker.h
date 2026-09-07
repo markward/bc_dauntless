@@ -21,7 +21,10 @@ namespace dauntless::platform {
 /// Show a modal folder chooser. Blocks until dismissed.
 ///
 /// `title` names the window; `message` is the explanatory line inside the
-/// panel, and carries the previous attempt's problem on a retry.
+/// panel. The only caller (engine/first_run.py's _default_picker, via
+/// FirstRunPanel._browse) always passes "" -- the screen shows a row's
+/// rejection as that row's own status/hint text instead, so there is
+/// nothing left for the native panel's message to carry.
 std::optional<std::string> pick_folder(const std::string& title,
                                        const std::string& message);
 

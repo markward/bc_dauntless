@@ -142,9 +142,12 @@ headers.
 
 `folder_picker.mm` must call `[NSApplication sharedApplication]` itself.
 `install_macos_app()` is inside `#ifdef DAUNTLESS_ENABLE_CEF`
-(`native/src/host/host_main.cc:130-137`), and the picker fires before
-`r.init()`, so GLFW has not created an `NSApp` either. `sharedApplication`
-is idempotent, so this is safe whether CEF, GLFW, both or neither ran first.
+(`native/src/host/host_main.cc:130-137`), so a `--no-cef` build never calls
+it at all -- and even in a CEF build, a bundle-less process launched
+straight from a terminal is not guaranteed to be a foreground app just
+because `r.init()` and `cef_initialize()` ran first (see Flow: the picker
+now fires *after* both). `sharedApplication` is idempotent, so calling it
+unconditionally is safe regardless of what ran before this point.
 
 ### Seam
 
@@ -256,6 +259,18 @@ genuinely new mechanism, and the reason the screen cannot simply reuse
 pushes are silently dropped in this project, which has caused real bugs. The
 screen's initial state is therefore sent from the load-end handler, not at
 `cef_initialize` time.
+
+**Mouse input must be forwarded explicitly, every frame this loop runs.**
+This was missing from the original design and the plan built from it — a
+real hole, not a slip. The OSR browser only ever receives input through
+`cef_send_mouse_move` / `cef_send_mouse_click`, and every existing caller of
+those bindings lives inside the *game* loop (the pause menu, crew menus,
+…), which does not exist yet while this screen is up. Without the pump loop
+forwarding cursor position and left-click press/release edges itself,
+nothing on the page — Browse, Continue, Quit — is clickable. The
+implementation reuses the same `_forward_mouse_to_cef` helper and edge
+pattern `run()`'s pause-menu block already uses, rather than a second
+implementation.
 
 A validated pick persists even if the player quits before finishing. If they
 locate `game/` and abandon `sdk/`, the next launch asks only for the sdk.

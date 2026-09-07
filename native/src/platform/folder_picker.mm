@@ -12,10 +12,14 @@ std::optional<std::string> pick_folder(const std::string& title,
                                        const std::string& message) {
     @autoreleasepool {
         // NSOpenPanel needs an NSApplication to exist, and we cannot assume
-        // one does: install_macos_app() sits behind DAUNTLESS_ENABLE_CEF,
-        // and this runs from the boot failure branch BEFORE r.init(), so
-        // GLFW has not made one either. sharedApplication is idempotent and
-        // creates it if needed.
+        // one does: install_macos_app() sits behind DAUNTLESS_ENABLE_CEF, and
+        // while this now runs AFTER both r.init() (GLFW) and cef_initialize()
+        // have had their chance to create one, a bundle-less process launched
+        // straight from a terminal is not guaranteed to be a foreground app
+        // even so -- and a `--no-cef` build never calls install_macos_app()
+        // at all. sharedApplication is idempotent and creates it if needed,
+        // so calling it unconditionally here is still correct regardless of
+        // what ran before this point.
         NSApplication* app = [NSApplication sharedApplication];
 
         // A bundle-less, non-foreground process can be left in an activation
