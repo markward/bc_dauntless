@@ -51,9 +51,15 @@ AtlasLayout atlas_layout_for(const glm::ivec3& dims);
 /// with `128 + 127` (fully outside), so a sampling bug that reaches an
 /// unused tile reads as empty space rather than as hull.
 ///
-/// Returns an empty vector when `f.empty()`, `!l.valid()`, or `l` does not
-/// describe `f`'s own shape (a mismatch would otherwise index the atlas
-/// buffer using one field's tile geometry while reading another's cells).
+/// Returns an empty vector when `f.empty()`, when `f.dims` has a
+/// non-positive component, when `!l.valid()`, when `l`'s `tile_w`/`tile_h`/
+/// `slices` do not match `f.dims`, or when `l`'s `tiles_x`/`tiles_y`/`width`/
+/// `height` are not large enough to actually hold every one of `l.slices`
+/// tiles (`tiles_x*tiles_y < slices`, or `width`/`height` narrower than
+/// `tiles_x*tile_w`/`tiles_y*tile_h`). Any of these would otherwise index
+/// the atlas buffer using tile geometry that doesn't match its own
+/// dimensions -- `l.valid()` alone is not sufficient: it only proves width,
+/// height and slices are positive, not that they are large enough.
 std::vector<std::uint8_t> pack_field_to_atlas(const DistanceField& f,
                                               const AtlasLayout& l);
 

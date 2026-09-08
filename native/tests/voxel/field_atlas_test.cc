@@ -80,13 +80,57 @@ TEST(FieldAtlas, DegenerateDimsYieldAnInvalidLayout) {
     EXPECT_FALSE(voxel::atlas_layout_for(glm::ivec3(4, 4, 0)).valid());
 
     // A real, non-empty field paired with a layout built from degenerate
-    // dims must still pack to nothing: the l.valid() guard has to fire even
-    // when f itself is perfectly fine, proving pack_field_to_atlas checks
-    // the layout and does not merely fall back on f.empty().
+    // dims must still pack to nothing: pack_field_to_atlas must not fall
+    // back on f.empty() alone and skip checking the layout it was actually
+    // given. NOTE: `bad` here is the all-zero AtlasLayout{} (atlas_layout_for
+    // returns that default for degenerate dims), so this specific case is
+    // rejected by the tile_w/tile_h/slices shape-mismatch check
+    // (bad.tile_w == 0 != f.dims.x + 2 == 6) -- NOT by l.valid() in
+    // isolation. A hand-built layout with correct tile_w/tile_h/slices but
+    // an all-zero width/height/tiles_x/tiles_y would ALSO be caught by that
+    // same shape-mismatch check before l.valid() could matter on its own, so
+    // this test cannot (and does not claim to) isolate l.valid() as an
+    // independently-necessary guard -- see UndersizedLayoutBufferIsRejected
+    // below for the guard that genuinely cannot be replaced by l.valid().
     const voxel::DistanceField f = pattern_field(glm::ivec3(4, 4, 4));
     ASSERT_FALSE(f.empty());
     const voxel::AtlasLayout bad = voxel::atlas_layout_for(glm::ivec3(0, 4, 4));
     EXPECT_TRUE(voxel::pack_field_to_atlas(f, bad).empty());
+}
+
+// l.valid() only proves width, height and slices are POSITIVE -- it says
+// nothing about whether they are LARGE ENOUGH to hold every tile the layout
+// itself claims to have. This is the guard DegenerateDimsYieldAnInvalidLayout
+// cannot exercise: every corruption below leaves width, height and slices
+// strictly positive (so l.valid() reports true throughout) while making the
+// layout describe a buffer too small for its own tile grid -- exactly the
+// shape of bug that would otherwise index the atlas array past its own row
+// stride.
+TEST(FieldAtlas, UndersizedLayoutBufferIsRejected) {
+    const glm::ivec3 dims(4, 4, 3);
+    const voxel::DistanceField f = pattern_field(dims);
+    const voxel::AtlasLayout good = voxel::atlas_layout_for(dims);
+    ASSERT_TRUE(good.valid());
+    ASSERT_EQ(good.tiles_x, 2);
+    ASSERT_EQ(good.tiles_y, 2);   // 2*2=4 tile slots for 3 slices
+
+    voxel::AtlasLayout undersized_width = good;
+    undersized_width.width -= 1;   // one texel short of tiles_x * tile_w
+    ASSERT_TRUE(undersized_width.valid()) << "width is still positive";
+    EXPECT_TRUE(voxel::pack_field_to_atlas(f, undersized_width).empty())
+        << "a width smaller than tiles_x * tile_w must be rejected";
+
+    voxel::AtlasLayout undersized_height = good;
+    undersized_height.height -= 1;   // one texel short of tiles_y * tile_h
+    ASSERT_TRUE(undersized_height.valid()) << "height is still positive";
+    EXPECT_TRUE(voxel::pack_field_to_atlas(f, undersized_height).empty())
+        << "a height smaller than tiles_y * tile_h must be rejected";
+
+    voxel::AtlasLayout insufficient_tiles = good;
+    insufficient_tiles.tiles_x = 1;   // 1*tiles_y=2 tile slots < 3 slices
+    ASSERT_TRUE(insufficient_tiles.valid()) << "width/height/slices unchanged, still positive";
+    EXPECT_TRUE(voxel::pack_field_to_atlas(f, insufficient_tiles).empty())
+        << "a tile grid too small to cover every slice must be rejected";
 }
 
 TEST(FieldAtlas, PackedSizeMatchesTheLayout) {
