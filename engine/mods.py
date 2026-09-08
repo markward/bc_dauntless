@@ -383,3 +383,20 @@ def describe(index: ModIndex) -> str:
     for rel, loser, winner in index.conflicts:
         lines.append(f"  WARNING conflict: {rel} -- {winner} wins over {loser}")
     return "mods:\n" + "\n".join(lines)
+
+
+def renderer_overrides(index: ModIndex) -> dict:
+    """The game-targeted subset, as {folded_rel: abs_path_str}, for C++."""
+    return {rel: str(mf.abs_path) for rel, mf in sorted(index.files.items())
+            if mf.target == "game"}  # paths-guard: kind label
+
+
+def install(argv=None, env=None) -> ModIndex:
+    """Build, classify, scan and install the index. Called once at boot,
+    AFTER paths.configure() -- mapping Data/ and Scripts/ to their targets
+    needs the resolved roots."""
+    index = build_index(mods_root(argv=argv, env=env))
+    classify(index, paths.game_root(), paths.sdk_scripts())
+    detect_frameworks(index)
+    configure(index)
+    return index

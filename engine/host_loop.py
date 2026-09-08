@@ -7141,6 +7141,26 @@ def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
     if not resolution.ok:
         print(_paths.describe_failure(resolution), file=_sys.stderr)
         return None
+
+    # Mods layer over the resolved roots, so this must follow both configure()
+    # above and the resolution.ok check just above it -- classify() calls
+    # paths.game_root() and paths.sdk_scripts(), which raise PathsUnresolved
+    # with no roots. Guarded so a broken mods/ directory (unreadable tree,
+    # a bug in a mod's own script triggering an unexpected exception) never
+    # blocks boot -- it is reported and the game proceeds modless, same as
+    # if mods/ were absent. Same argv/env this function already resolved
+    # paths with, so a --mods-dir given at launch is honoured.
+    from engine import mods as _mods
+    try:
+        _mod_index = _mods.install(argv=argv, env=env)
+    except Exception as _mod_exc:
+        print(f"[host_loop] mods.install() failed -- booting without mods: "
+              f"{_mod_exc!r}", file=_sys.stderr)
+    else:
+        _report = _mods.describe(_mod_index)
+        if _report:
+            print(_report, file=_sys.stderr)
+
     return resolution
 
 
@@ -7265,6 +7285,13 @@ def run(mission_name: Optional[str] = None,
     # AttributeError here -- and before any pass constructs: their texture
     # constants are relative now.
     r.set_game_root(str(_paths.game_root()))
+    # Pushed alongside set_game_root, not before -- the C++ side resolves a
+    # relative asset path onto the game root, so its override map must land
+    # no earlier than the root itself. mods.current() is whatever
+    # _resolve_paths_or_report installed above (or the empty index its own
+    # failure-isolation guard leaves in place).
+    from engine import mods as _mods
+    r.set_asset_overrides(_mods.renderer_overrides(_mods.current()))
 
     _setup_sdk()
 
