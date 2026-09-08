@@ -320,6 +320,36 @@ def detect_frameworks(index: ModIndex) -> None:
                 status.requires.append(name)
 
 
+_INDEX: Optional[ModIndex] = None
+
+
+def configure(index: Optional[ModIndex]) -> None:
+    """Install the index every consumer reads. Pass None to clear (tests)."""
+    global _INDEX
+    _INDEX = index
+
+
+def current() -> ModIndex:
+    """The configured index, or an EMPTY one.
+
+    Deliberately unlike paths.current(): it never builds from ambient state.
+    A tool or test that has not opted in must see stock content, and an
+    implicit disk scan on first asset lookup would be a surprising cost.
+    """
+    global _INDEX
+    if _INDEX is None:
+        _INDEX = ModIndex(files={}, mods=[])
+    return _INDEX
+
+
+def game_override(rel) -> Optional[Path]:
+    """The mod file for a game-root-relative path, or None."""
+    hit = current().lookup(rel)
+    if hit is None or hit.target != "game":  # paths-guard: kind label
+        return None
+    return hit.abs_path
+
+
 def describe(index: ModIndex) -> str:
     """The boot report. Empty when no mods are installed."""
     if not index.mods:

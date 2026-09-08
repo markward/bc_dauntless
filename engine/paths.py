@@ -384,7 +384,15 @@ def sdk_data() -> Path:
 
 
 def game_asset(rel) -> Path:
-    """Absolutise a BC-relative asset path, e.g. "data/Textures/x.tga"."""
+    """Absolutise a BC-relative asset path, e.g. "data/Textures/x.tga".
+
+    An installed mod that provides this path wins. Imported lazily, like
+    settings_store in resolve(), so engine.mods can import engine.paths.
+    """
+    from engine import mods
+    override = mods.game_override(rel)
+    if override is not None:
+        return override
     return game_root() / rel
 
 
