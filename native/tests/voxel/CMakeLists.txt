@@ -13,6 +13,7 @@ add_executable(voxel_tests
     dhv_test.cc
     hull_volume_cache_test.cc
     field_brush_test.cc
+    field_atlas_test.cc
 )
 target_link_libraries(voxel_tests PRIVATE voxel GTest::gtest_main)
 target_compile_definitions(voxel_tests PRIVATE

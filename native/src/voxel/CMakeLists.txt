@@ -9,6 +9,7 @@ add_library(voxel STATIC
     src/dhv.cc
     src/hull_volume_cache.cc
     src/field_brush.cc
+    src/field_atlas.cc
 )
 target_include_directories(voxel PUBLIC include)
 target_compile_features(voxel PUBLIC cxx_std_20)
