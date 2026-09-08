@@ -60,7 +60,18 @@ bool write_dhv(const std::filesystem::path& path,
 
         s.write(reinterpret_cast<const char*>(field.dist.data()),
                 static_cast<std::streamsize>(field.dist.size()));
-        write_ok = static_cast<bool>(s);
+
+        // Explicitly close (which flushes) and check the result BEFORE
+        // deciding write_ok. Our whole ~150-byte-plus-payload write easily
+        // fits inside the filebuf's internal buffer, so the individual
+        // s.write() calls above can all report success without a single
+        // underlying write() syscall having happened yet -- a failure that
+        // only surfaces at the real flush (e.g. ENOSPC landing on the last
+        // buffered chunk) would otherwise be invisible until AFTER we had
+        // already committed to write_ok = true, letting a short file get
+        // renamed into place as if it were valid.
+        s.close();
+        write_ok = !s.fail();
     }
     if (!write_ok) {
         // Partial write: drop the temp file rather than leaving debris a

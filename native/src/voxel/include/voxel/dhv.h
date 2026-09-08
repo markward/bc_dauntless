@@ -33,9 +33,10 @@ bool write_dhv(const std::filesystem::path& path,
                const HullVolumeMeta& meta);
 
 /// Read `path`. Returns false -- and leaves the outputs untouched -- for a
-/// missing file, a bad magic, a format or baker version mismatch, implausible
-/// dimensions, or a payload shorter than the header says. The caller's only
-/// correct response to false is to rebake.
+/// missing file, a bad magic, a format or baker version mismatch, an
+/// implausibly long source_path, implausible dimensions, or a payload
+/// shorter than the header says. The caller's only correct response to
+/// false is to rebake.
 bool read_dhv(const std::filesystem::path& path,
               DistanceField& out_field,
               HullVolumeMeta& out_meta);
