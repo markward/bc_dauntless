@@ -21,6 +21,11 @@ inline constexpr float kCarveDepthFactor = 0.45f;
 /// is what lets overlapping carves merge into one cavity instead of evicting
 /// each other, which the fixed 24-slot sphere array could not do.
 ///
+/// Each call quantizes `d_new` to int8 immediately, so overlapping carves
+/// accumulate through quantised values, not full-precision floats. This is a
+/// design property: do not "optimise" by keeping a float accumulator, as that
+/// would change every result.
+///
 /// All arguments are body frame, MODEL UNITS. A degenerate normal falls back to
 /// +Z rather than producing NaN. Empty field, non-positive radius, non-finite
 /// radius, non-finite centre_body or normal_body components, or a carve

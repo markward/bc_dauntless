@@ -79,17 +79,13 @@ TEST(FieldBrush, OverlappingCarvesUnionRatherThanReplace) {
     // The whole point of the field over a sphere list: two overlapping carves
     // leave ONE cavity, and neither undoes the other. This test discriminates by
     // checking the VALUE at x=19 (centre 19.5), where both carves visit and
-    // disagree: carve 1 contributes -d_brush=0.675, carve 2 contributes 0.225.
-    // Correct max() gives 0.675 → rounds to 3 → 0.75. Overwrite bug would give
-    // 0.225 → rounds to 1 → 0.25. EXPECT_NEAR with tolerance 0.13 catches this.
+    // disagree. Cell (19,20,20) has centre (19.5, 20.5, 20.5), accounting for
+    // y/z offsets that affect the ellipsoid distance. Correct max() gives 0.5,
+    // overwrite bug gives 0.25. EXPECT_NEAR with tolerance 0.13 catches this.
     voxel::DistanceField f = solid_block(40);
     voxel::field_carve_oblate(f, glm::vec3(16.0f, 20.0f, 20.0f), kUp, 5.0f);
     voxel::field_carve_oblate(f, glm::vec3(24.0f, 20.0f, 20.0f), kUp, 5.0f);
 
-    // Check the overlap point at x=19. Carve 1's AABB ends at x=21, carve 2's
-    // starts at x=19, so this is in the actual overlap region. Cell (19,20,20)
-    // has centre (19.5, 20.5, 20.5), accounting for y/z offsets that affect the
-    // ellipsoid distance. Correct max() gives 0.5, overwrite bug gives 0.25.
     const glm::ivec3 overlap_point = cell_of(f, glm::vec3(19.0f, 20.0f, 20.0f));
     EXPECT_NEAR(f.distance_at(overlap_point.x, overlap_point.y, overlap_point.z), 0.5f, 0.13f)
         << "x=19 is in the overlap region where carves differ; "
