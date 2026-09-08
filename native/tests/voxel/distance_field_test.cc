@@ -110,17 +110,34 @@ TEST(PointTriangleDistance, FullyCollapsedTriangleReturnsDistanceToVertex) {
 TEST(PointTriangleDistance, UltraThinTriangleFallsBackToVertexDistance) {
     // Test the guard fallback path: an ultra-thin triangle where sum = (2*Area)^2
     // can drop below the 1e-20 epsilon even though the interior is geometrically real.
-    // a=(0,0,0), b=(1,0,0), c=(0,1e-11,0) → area ≈ 5e-12, sum ≈ 1e-22
-    // Point (0.5, 0.5e-11, 1) targets the interior above the thin triangle.
-    // The guard fires (sum < 1e-20) and returns distance to vertex a.
+    //
+    // a=(0,0,0), b=(1,0,0), c=(0,1e-11,0), p=(1e-6, 1e-13, 0).
+    //
+    // This point was found by sweeping the parameter space for a query that
+    // actually reaches the interior region in float32: d1~9.99e-7, d2~1.0e-24
+    // (vertex-a check fails since both aren't <= 0), and likewise every
+    // vertex/edge region check fails, leaving va~9.9e-23, vb~1.0e-28,
+    // vc~1.0e-24, all strictly positive so region falls through to the
+    // interior branch. There, sum = va+vb+vc ~ 1.0e-22, below the 1e-20
+    // epsilon, so the guard fires and returns distance to vertex a.
+    //
+    // Verified by instrumenting a standalone build of the real function:
+    // every vertex/edge branch condition printed "no", the guard condition
+    // printed "YES", and the returned distance matched length(p - a) to
+    // full float32 precision (not the ~0.0 the unclamped interior formula
+    // would give for this same point) -- see task-2-report.md.
     const voxel::Tri thin{glm::vec3(0.0f, 0.0f, 0.0f),
                           glm::vec3(1.0f, 0.0f, 0.0f),
                           glm::vec3(0.0f, 1e-11f, 0.0f)};
-    const float r = voxel::point_triangle_distance(glm::vec3(0.5f, 0.5e-11f, 1.0f), thin);
-    // Result must be finite (guard prevents division by ~zero).
-    // Exact value depends on which region catches the point in float precision,
-    // but must be close to distance-to-vertex-a = sqrt(0.5^2 + (0.5e-11)^2 + 1^2).
+    const glm::vec3 p(1e-06f, 1e-13f, 0.0f);
+    const float r = voxel::point_triangle_distance(p, thin);
+
+    // Only correct if the guard fired and returned length(p - a): the
+    // unclamped interior formula for this same point evaluates to 0.0, six
+    // orders of magnitude away, so this tolerance cannot be satisfied by any
+    // other branch's result.
+    const float expected_distance_to_vertex_a =
+        std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
     EXPECT_TRUE(std::isfinite(r));
-    EXPECT_GT(r, 0.999f);  // At minimum, vertical component
-    EXPECT_LT(r, 1.2f);    // Upper bound to catch gross errors
+    EXPECT_NEAR(r, expected_distance_to_vertex_a, 1e-12f);
 }
