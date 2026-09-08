@@ -4790,8 +4790,10 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
         iid = r_.create_instance(handle)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
-        # BC's authored damage-volume cell size for this hull
-        # (ShipProperty.SetDamageResolution). Best-effort: never block spawn.
+        # BC's authored damage-volume RESOLUTION for this hull
+        # (ShipProperty.SetDamageResolution) -- a per-ship ratio, NOT a cell
+        # size; the native baker derives cell = authored_res / quality.
+        # Best-effort: never block spawn.
         try:
             from engine.appc.hull_volume import push_resolution
             push_resolution(ship, iid)
@@ -5172,6 +5174,8 @@ class HostController:
         hit_feedback._pending_carve_strength.clear()
         from engine.appc import hull_hit_smoke
         hull_hit_smoke.reset()
+        from engine.appc import damage_geometry
+        damage_geometry.reset()
         # The dynamic-light distance gate's camera eye belongs to the mission
         # that solved it. The next mission's ships spawn wherever its sets put
         # them, so a carried-over eye can cull their lights on the first frame,
@@ -5428,8 +5432,10 @@ class _MissionLoader:
             iid = r_.create_instance(handle)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
-            # BC's authored damage-volume cell size for this hull
-            # (ShipProperty.SetDamageResolution). Best-effort: never block spawn.
+            # BC's authored damage-volume RESOLUTION for this hull
+            # (ShipProperty.SetDamageResolution) -- a per-ship ratio, NOT a
+            # cell size; the native baker derives cell = authored_res / quality.
+            # Best-effort: never block spawn.
             try:
                 from engine.appc.hull_volume import push_resolution
                 push_resolution(ship, iid)
