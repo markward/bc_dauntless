@@ -246,6 +246,54 @@ TEST(Dhv, NonPositiveDimsIsRejected) {
     std::filesystem::remove(p);
 }
 
+TEST(Dhv, EmptyFieldRoundTrips) {
+    // dims == (0,0,0) is NOT corruption: it is the documented return of
+    // distance_field_from_tris() for a hull with no triangles (missing
+    // source, unparseable NIF, or a genuinely empty mesh) -- see
+    // distance_field.h. HullVolumeCache relies on this round-tripping
+    // correctly, or a hull that fails to parse would rebake on every single
+    // launch rather than being cached like any other result.
+    const auto p = tmp_path("dauntless_emptyfield.dhv");
+    voxel::DistanceField empty;  // default: dims{0}, dist empty
+    ASSERT_EQ(empty.dims, glm::ivec3(0));
+    ASSERT_TRUE(empty.dist.empty());
+    const voxel::HullVolumeMeta mi = sample_meta();
+    ASSERT_TRUE(voxel::write_dhv(p, empty, mi));
+
+    voxel::DistanceField out;
+    voxel::HullVolumeMeta mo;
+    ASSERT_TRUE(voxel::read_dhv(p, out, mo))
+        << "a legitimately empty field must survive the round trip, not be "
+           "rejected as if it were corrupt";
+    EXPECT_EQ(out.dims, glm::ivec3(0));
+    EXPECT_TRUE(out.dist.empty());
+    EXPECT_EQ(mo.source_size, mi.source_size);
+    EXPECT_EQ(mo.source_path, mi.source_path);
+
+    std::filesystem::remove(p);
+}
+
+TEST(Dhv, MixedZeroDimsIsStillRejected) {
+    // Boundary of the EmptyFieldRoundTrips exemption above: only ALL THREE
+    // dims exactly zero is treated as the legitimate empty-field sentinel.
+    // Two zero axes plus one positive axis is neither a real grid nor the
+    // sentinel, and must stay rejected -- this pins the exemption so it
+    // cannot silently widen into accepting any zero axis later.
+    const auto p = tmp_path("dauntless_mixedzero.dhv");
+    RawHeader h;
+    h.dims[0] = 0;
+    h.dims[1] = 0;
+    h.dims[2] = 5;  // one positive axis: not all-zero, not all-positive
+    write_raw(p, h);
+
+    voxel::DistanceField out;
+    voxel::HullVolumeMeta mo;
+    EXPECT_FALSE(voxel::read_dhv(p, out, mo))
+        << "a mixed zero/positive dims combination is not the all-zero empty "
+           "sentinel and must still be rejected as a malformed grid";
+    std::filesystem::remove(p);
+}
+
 TEST(Dhv, OversizedCellCountIsRejected) {
     // Individually plausible-looking dims whose straightforward product
     // (no overflow trickery needed) is already past kMaxCells -- the

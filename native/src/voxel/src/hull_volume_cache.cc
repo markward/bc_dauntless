@@ -71,7 +71,13 @@ const DistanceField& HullVolumeCache::get(
 
     // Try the cache. Accept only when the entry still describes THIS hull, at
     // THIS resolution and quality. read_dhv has already rejected a wrong baker
-    // version, a bad magic and a short payload.
+    // version, a bad magic and a short payload. source_path is checked too --
+    // path_for hashes (hull, res, quality) into a 64-bit filename, so two
+    // different tuples CAN collide onto the same cache file; without this
+    // check that collision would be caught only by size/mtime coincidentally
+    // differing. dhv.h's "diagnosis only, never for lookup" note is about not
+    // using source_path to LOCATE a file -- using it to validate one already
+    // loaded is exactly this layer's job.
     {
         DistanceField f;
         HullVolumeMeta m;
@@ -79,7 +85,8 @@ const DistanceField& HullVolumeCache::get(
             m.source_size == size &&
             m.source_mtime == mtime &&
             m.authored_res == authored_res &&
-            m.quality == quality) {
+            m.quality == quality &&
+            m.source_path == hull_nif.string()) {
             auto [ins, _] = by_key_.emplace(key, std::move(f));
             return ins->second;
         }
