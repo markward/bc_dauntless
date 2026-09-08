@@ -91,16 +91,26 @@ DistanceField distance_field_from_tris(const std::vector<Tri>& tris,
         mx = glm::max(mx, glm::max(t.a, glm::max(t.b, t.c)));
     }
 
-    // Two-cell margin so the outside band is representable all the way round.
-    f.cell   = cell;
-    f.origin = mn - cell * 2.0f;
-    const glm::vec3 span = (mx - mn) / cell;
-    f.dims = glm::ivec3(static_cast<int>(std::ceil(span.x)) + 5,
-                        static_cast<int>(std::ceil(span.y)) + 5,
-                        static_cast<int>(std::ceil(span.z)) + 5);
-
     const float band = band_cells * std::max(cell.x, std::max(cell.y, cell.z));
     f.scale = band / 127.0f;
+
+    // Margin: enough cells on EVERY side, on EVERY axis, that the WHOLE
+    // outside band is representable -- a later stage samples the field at and
+    // slightly outside the hull surface (a carve sphere straddles it), so a
+    // point up to `band` world units beyond the surface needs a real cell to
+    // land in rather than falling off the grid edge. Derived from
+    // `band_cells` (never hardcoded) and symmetric: the same cell count is
+    // added on the near and far side of each axis, so an anisotropic `cell`
+    // still gets full band coverage on its finest (smallest) axis.
+    f.cell = cell;
+    const glm::ivec3 margin(static_cast<int>(std::ceil(band / cell.x)),
+                            static_cast<int>(std::ceil(band / cell.y)),
+                            static_cast<int>(std::ceil(band / cell.z)));
+    f.origin = mn - glm::vec3(margin) * cell;
+    const glm::vec3 span = (mx - mn) / cell;
+    f.dims = glm::ivec3(static_cast<int>(std::ceil(span.x)) + 2 * margin.x,
+                        static_cast<int>(std::ceil(span.y)) + 2 * margin.y,
+                        static_cast<int>(std::ceil(span.z)) + 2 * margin.z);
 
     // Sign: the flood-filled occupancy of the SAME lattice.
     const VoxelVolume occ = voxelize_into(tris, f.dims, f.origin, f.cell);

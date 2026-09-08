@@ -223,11 +223,110 @@ TEST(DistanceField, EmptyInputYieldsAnEmptyField) {
 }
 
 TEST(DistanceField, GridCoversTheHullPlusAMargin) {
+    const glm::vec3 lo(0.0f), hi(100.0f), cellv(5.0f);
     const voxel::DistanceField f = voxel::distance_field_from_tris(
-        box_tris(glm::vec3(0.0f), glm::vec3(100.0f)), glm::vec3(5.0f),
-        voxel::kDefaultBandCells);
-    // origin sits below the hull minimum, and the far corner above its maximum.
-    EXPECT_LT(f.origin.x, 0.0f);
-    const float far_x = f.origin.x + f.cell.x * static_cast<float>(f.dims.x);
-    EXPECT_GT(far_x, 100.0f);
+        box_tris(lo, hi), cellv, voxel::kDefaultBandCells);
+
+    // The margin must cover the FULL outside band -- on every axis, on both
+    // sides -- not half of it and not just the +X direction. A margin
+    // hardcoded independent of band_cells (the regression this test exists to
+    // catch) gives ~2 cells near / ~3-4 cells far against a 4-cell band; every
+    // assertion below fails against that old behaviour (checked by hand:
+    // origin.x - lo.x was 10, not 20, and would fail the first EXPECT_NEAR).
+    const float band = voxel::kDefaultBandCells *
+        std::max({cellv.x, cellv.y, cellv.z});
+    const glm::vec3 far = f.origin + glm::vec3(f.dims) * f.cell;
+
+    EXPECT_NEAR(lo.x - f.origin.x, band, 1e-3f);
+    EXPECT_NEAR(lo.y - f.origin.y, band, 1e-3f);
+    EXPECT_NEAR(lo.z - f.origin.z, band, 1e-3f);
+    EXPECT_NEAR(far.x - hi.x, band, 1e-3f);
+    EXPECT_NEAR(far.y - hi.y, band, 1e-3f);
+    EXPECT_NEAR(far.z - hi.z, band, 1e-3f);
+}
+
+TEST(DistanceField, NonPositiveCellXYieldsAnEmptyField) {
+    // Guard must fire on the X axis specifically, for both zero and negative.
+    const auto tris = box_tris(glm::vec3(0.0f), glm::vec3(10.0f));
+    EXPECT_TRUE(voxel::distance_field_from_tris(
+        tris, glm::vec3(0.0f, 5.0f, 5.0f), voxel::kDefaultBandCells).dist.empty());
+    EXPECT_TRUE(voxel::distance_field_from_tris(
+        tris, glm::vec3(-1.0f, 5.0f, 5.0f), voxel::kDefaultBandCells).dist.empty());
+}
+
+TEST(DistanceField, NonPositiveCellYYieldsAnEmptyField) {
+    const auto tris = box_tris(glm::vec3(0.0f), glm::vec3(10.0f));
+    EXPECT_TRUE(voxel::distance_field_from_tris(
+        tris, glm::vec3(5.0f, 0.0f, 5.0f), voxel::kDefaultBandCells).dist.empty());
+    EXPECT_TRUE(voxel::distance_field_from_tris(
+        tris, glm::vec3(5.0f, -1.0f, 5.0f), voxel::kDefaultBandCells).dist.empty());
+}
+
+TEST(DistanceField, NonPositiveCellZYieldsAnEmptyField) {
+    const auto tris = box_tris(glm::vec3(0.0f), glm::vec3(10.0f));
+    EXPECT_TRUE(voxel::distance_field_from_tris(
+        tris, glm::vec3(5.0f, 5.0f, 0.0f), voxel::kDefaultBandCells).dist.empty());
+    EXPECT_TRUE(voxel::distance_field_from_tris(
+        tris, glm::vec3(5.0f, 5.0f, -1.0f), voxel::kDefaultBandCells).dist.empty());
+}
+
+TEST(DistanceField, NonPositiveBandCellsYieldsAnEmptyField) {
+    const auto tris = box_tris(glm::vec3(0.0f), glm::vec3(10.0f));
+    EXPECT_TRUE(voxel::distance_field_from_tris(tris, glm::vec3(5.0f), 0.0f).dist.empty());
+    EXPECT_TRUE(voxel::distance_field_from_tris(tris, glm::vec3(5.0f), -2.0f).dist.empty());
+}
+
+TEST(DistanceField, ZeroAreaTriangleReadsFiniteNearbyAndSaturatesFarAway) {
+    // Three coincident vertices: the triangle has zero area, but it is not
+    // empty input -- distance_field_from_tris must still build a real grid
+    // around it rather than degenerating to nothing.
+    //
+    // Verified against the real implementation (not just reasoned): the cell
+    // containing the point reads -1.7008 (negative -- surface_voxelize marks
+    // its own rasterized cell solid regardless of enclosure -- and small in
+    // magnitude), while a corner well outside the point's band reads exactly
+    // 127*scale, both confirming the grid stayed sane around degenerate input.
+    const std::vector<voxel::Tri> tris = {
+        voxel::Tri{glm::vec3(5.0f), glm::vec3(5.0f), glm::vec3(5.0f)}};
+    const voxel::DistanceField f = voxel::distance_field_from_tris(
+        tris, glm::vec3(2.0f), voxel::kDefaultBandCells);
+    ASSERT_FALSE(f.dist.empty());
+
+    // The cell containing the point reads a small, finite magnitude -- proof
+    // the nearest-triangle search actually found this triangle rather than
+    // silently falling back to the saturated band default (8.0 here).
+    const glm::ivec3 near = cell_of(f, glm::vec3(5.0f));
+    const float d_near = f.distance_at(near.x, near.y, near.z);
+    EXPECT_TRUE(std::isfinite(d_near));
+    EXPECT_LT(std::abs(d_near), 5.0f)
+        << "expected a close reading near the degenerate point, got " << d_near;
+
+    // A corner well outside the point's band still saturates normally -- the
+    // degenerate triangle does not poison the rest of the field.
+    EXPECT_NEAR(f.distance_at(0, 0, 0), 127.0f * f.scale, 1e-3f);
+}
+
+TEST(DistanceField, HullThinnerThanOneCellStillReadsFiniteNearSurface) {
+    // A slab 1 unit thick against a 5-unit cell: the interior cannot be
+    // resolved as a cell distinct from either face, but the nearest-triangle
+    // search must still produce a real (non-saturated) reading right at the
+    // surface rather than losing the geometry to quantisation.
+    //
+    // Verified against the real implementation: the slab-centre cell reads
+    // -1.5748 (small magnitude, not the -20.0 saturation value), and a corner
+    // far from the slab still reads exactly 127*scale.
+    const std::vector<voxel::Tri> tris =
+        box_tris(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(100.0f, 100.0f, 1.0f));
+    const voxel::DistanceField f = voxel::distance_field_from_tris(
+        tris, glm::vec3(5.0f), voxel::kDefaultBandCells);
+    ASSERT_FALSE(f.dist.empty());
+
+    const glm::ivec3 center = cell_of(f, glm::vec3(50.0f, 50.0f, 0.5f));
+    const float d = f.distance_at(center.x, center.y, center.z);
+    EXPECT_TRUE(std::isfinite(d));
+    EXPECT_LT(std::abs(d), 5.0f)
+        << "expected a close reading at the thin slab centre, got " << d;
+
+    // Far from the slab, the field still saturates normally.
+    EXPECT_NEAR(f.distance_at(0, 0, 0), 127.0f * f.scale, 1e-3f);
 }

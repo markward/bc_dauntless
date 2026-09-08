@@ -48,10 +48,14 @@ struct DistanceField {
 };
 
 /// Build a signed distance field for a hull triangle soup at the given cell
-/// size. Grid is the tris' AABB plus a 2-cell margin. Sign comes from flood
-/// fill (BC hulls are 99.5%+ manifold -- MEASURED -- so this is sound);
-/// magnitude from the nearest triangle within `band_cells`, saturating beyond.
-/// Returns an empty field when `tris` is empty or `cell` is degenerate.
+/// size. Grid is the tris' AABB plus a margin sized to the FULL outside band
+/// (symmetric, per axis, derived from `band_cells` -- never a fixed cell
+/// count) so that a point up to `band_cells` cells beyond the hull surface,
+/// on any face, still lands inside the grid rather than off its edge. Sign
+/// comes from flood fill (BC hulls are 99.5%+ manifold -- MEASURED -- so this
+/// is sound); magnitude from the nearest triangle within `band_cells`,
+/// saturating beyond. Returns an empty field when `tris` is empty or `cell`
+/// is degenerate.
 DistanceField distance_field_from_tris(const std::vector<Tri>& tris,
                                        glm::vec3 cell,
                                        float band_cells = kDefaultBandCells);
