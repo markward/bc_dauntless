@@ -64,9 +64,17 @@ def test_a_ship_without_the_accessor_is_skipped(recorder):
     assert recorder.calls == []
 
 
-def test_a_renderer_failure_does_not_propagate(recorder, monkeypatch):
-    """Spawn must never fail because a VFX detail could not be pushed."""
+def test_a_renderer_failure_propagates(recorder, monkeypatch):
+    """A broken binding (stale .so, a pybind arg-type regression) must NOT be
+    swallowed inside push_resolution -- both host_loop call sites wrap this
+    call in their own try/except + dev_mode.log_swallowed, which is the
+    intended visibility mechanism for this class of failure. Catching it here
+    too would silently disable that logging forever, indistinguishable from
+    "no ship authored a resolution". A ship with a missing/non-numeric
+    GetDamageResolution is a separate, genuinely-swallowed case -- see
+    test_a_ship_without_the_accessor_is_skipped above."""
     def boom(iid, resolution):
         raise RuntimeError("no renderer")
     monkeypatch.setattr(recorder, "hull_volume_set_resolution", boom)
-    assert hull_volume.push_resolution(FakeShip(10.0), 7) is False
+    with pytest.raises(RuntimeError):
+        hull_volume.push_resolution(FakeShip(10.0), 7)

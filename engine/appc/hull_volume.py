@@ -24,7 +24,15 @@ def push_resolution(ship, iid) -> bool:
     that never had one keeps the native default rather than being handed 0.0,
     which the baker would divide by.
 
-    Never raises: a ship must spawn even if this VFX detail cannot be recorded.
+    A missing/non-numeric GetDamageResolution is a data problem on the ship,
+    not an engine fault, and is swallowed (returns False). A failure from the
+    renderer call itself -- a stale .so missing the binding, a broken pybind
+    arg type -- is NOT swallowed here: it propagates so the caller can log it.
+    Both host_loop call sites wrap this call in their own
+    try/except + dev_mode.log_swallowed, which is the intended visibility
+    mechanism for that class of failure; catching it here too would silently
+    disable that logging forever, indistinguishable from "no ship authored a
+    resolution".
     """
     getter = getattr(ship, "GetDamageResolution", None)
     if getter is None:
@@ -35,8 +43,5 @@ def push_resolution(ship, iid) -> bool:
         return False
     if not resolution > 0.0:
         return False
-    try:
-        _renderer.hull_volume_set_resolution(iid, resolution)
-    except Exception:
-        return False
+    _renderer.hull_volume_set_resolution(iid, resolution)
     return True
