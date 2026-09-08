@@ -186,9 +186,12 @@ TEST(VoxelizeResolution, ThinPlateIsNotPerforated) {
         box_tris(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(200.0f, 200.0f, 8.0f));
     const voxel::VoxelVolume v = voxel::voxelize_tris(tris, glm::ivec3(96));
     const double frac = static_cast<double>(v.solid_count()) / (96.0 * 96 * 96);
-    // The plate is 8/200 of the grid's Z extent, so ~4% is the expected order.
-    // A perforated plate reads far lower still; a leaked one reads near zero.
-    EXPECT_GT(frac, 0.02) << "thin plate perforated (fraction " << frac << ")";
+    // voxelize_tris fits the lattice to the AABB PER AXIS (cell =
+    // extent/(dims-2)), so the plate's 8-unit Z becomes 96 very thin cells and
+    // the plate fills its own grid minus the margin: ~((96-2)/96)^3 = 0.94.
+    // The point of the case is the ASPECT RATIO -- the Z cells are 25x smaller
+    // than the X/Y cells, so a sampler tuned to one axis perforates the others.
+    EXPECT_GT(frac, 0.5) << "thin plate perforated (fraction " << frac << ")";
 }
 ```
 
@@ -1285,7 +1288,7 @@ TEST(HullVolumeCache, SecondGetReadsTheCacheRatherThanRebaking) {
     clear_scratch();
 }
 
-TEST(HullVolumeCache, RepeatedGetDoesNotEvenTouchTheDisk) {
+TEST(HullVolumeCache, RepeatedGetUsesTheInMemoryMemo) {
     clear_scratch();
     voxel::HullVolumeCache c(scratch_root() / "cache");
     const auto src = make_source("hullA.nif", "hull-a");
@@ -1776,7 +1779,8 @@ Add `#include <string>` and `#include <unordered_map>` to that .cc if absent.
 - [ ] **Step 4: Add the renderer façade entry**
 
 In `engine/renderer.py`, add `"hull_volume_set_resolution"` to the `__all__`-style
-name list at line 57 (alongside `"play_instance_idle"`), and add:
+name list, which is alphabetical — insert it after `"hdr_set_enabled",` and
+before `"init",` (around line 51). Then add:
 
 ```python
 def hull_volume_set_resolution(iid: InstanceId, resolution: float) -> None:
