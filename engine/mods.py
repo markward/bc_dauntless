@@ -11,7 +11,7 @@ Spec: docs/superpowers/specs/2026-09-08-mod-overlay-design.md
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -140,6 +140,8 @@ class ModStatus:
 class ModIndex:
     files: dict
     mods: list
+    conflicts: list = field(default_factory=list)
+    overrides: list = field(default_factory=list)
 
     def lookup(self, rel) -> Optional[ModFile]:
         return self.files.get(fold(rel))
@@ -184,6 +186,7 @@ def build_index(root: Path) -> ModIndex:
     """
     files: dict = {}
     statuses: list = []
+    conflicts: list = []
 
     for candidate in discover_mods(root):
         status = ModStatus(name=candidate.name, content_root=candidate.content_root)
@@ -210,6 +213,9 @@ def build_index(root: Path) -> ModIndex:
                 # game_asset() is called with "data/..." paths.
                 keep = rel_parts if target == "game" else rel_parts[1:]  # paths-guard: kind label
                 rel = fold("/".join(keep))
+                existing = files.get(rel)
+                if existing is not None and existing.mod_name != candidate.name:
+                    conflicts.append((rel, existing.mod_name, candidate.name))
                 files[rel] = ModFile(abs_path=path, mod_name=candidate.name,
                                      target=target, rel=rel)
                 status.placed += 1
@@ -218,4 +224,36 @@ def build_index(root: Path) -> ModIndex:
             # Skip it and continue indexing other mods.
             pass
 
-    return ModIndex(files=files, mods=statuses)
+    return ModIndex(files=files, mods=statuses, conflicts=conflicts)
+
+
+def classify(index: ModIndex, game_root: Path, sdk_scripts: Path) -> None:
+    """Fill index.overrides. Costs one stat PER MOD KEY -- never a walk of
+    the install."""
+    roots = {"game": game_root, "sdk": sdk_scripts}  # paths-guard: kind labels
+    index.overrides = [
+        rel for rel, mf in sorted(index.files.items())
+        if (roots[mf.target] / mf.rel).exists()
+    ]
+
+
+def describe(index: ModIndex) -> str:
+    """The boot report. Empty when no mods are installed."""
+    if not index.mods:
+        return ""
+    lines = []
+    for status in index.mods:
+        if status.content_root is None:
+            lines.append(f"  {status.name}: no BC content found -- not loaded")
+            continue
+        line = f"  {status.name}: {status.placed} files"
+        if status.ignored:
+            line += f", {status.ignored} ignored"
+        if status.unplaced:
+            line += f", unplaced: {', '.join(status.unplaced)}"
+        lines.append(line)
+    if index.overrides:
+        lines.append(f"  {len(index.overrides)} stock file(s) overridden")
+    for rel, loser, winner in index.conflicts:
+        lines.append(f"  WARNING conflict: {rel} -- {winner} wins over {loser}")
+    return "mods:\n" + "\n".join(lines)
