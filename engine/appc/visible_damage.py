@@ -30,6 +30,13 @@ from engine.appc.math import TGPoint3, TGMatrix3
 # ship, or a failed spawn never leaks an un-emittable entry.
 MAX_PENDING_AGE = 5.0
 
+# Standoff (GU) for the surface-normal probe in `_mesh_normal`: the ray starts
+# this far outside the sample point along the radial and casts twice as far
+# back inward. Small and local on purpose -- a long cast from outside the
+# bounding sphere would hit whatever hull piece happens to be in front (a
+# nacelle occluding the saucer) rather than the surface actually being carved.
+NORMAL_PROBE_MARGIN_GU = 0.5
+
 # Registry of not-yet-emitted volumes. Each entry:
 #   {"ship", "kind": "body"|"world", "pt": (x, y, z), "radius": float, "age": float}
 _pending: list[dict] = []
@@ -105,7 +112,7 @@ def _advance_one(entry, dt, ship_instances) -> bool:
         entry["age"] += dt
         return entry["age"] < MAX_PENDING_AGE
 
-    world_pt, normal = _resolve(entry, ship)
+    world_pt, normal = _resolve(entry, ship, iid)
     if world_pt is None:
         return False
 
@@ -135,7 +142,7 @@ def _advance_one(entry, dt, ship_instances) -> bool:
     return False   # emitted once -> drop
 
 
-def _resolve(entry, ship):
+def _resolve(entry, ship, iid=None):
     """Return (world_point, outward_normal) as TGPoint3s, or (None, None) when
     the ship carries no world transform."""
     if not hasattr(ship, "GetWorldLocation"):
@@ -145,7 +152,9 @@ def _resolve(entry, ship):
 
     if entry["kind"] == "world":
         world_pt = TGPoint3(px, py, pz)
-        return world_pt, _outward_normal(world_pt, loc, ship)
+        radial = _outward_normal(world_pt, loc, ship)
+        mesh = _mesh_normal(iid, world_pt, radial)
+        return world_pt, (radial if mesh is None else mesh)
 
     # Body frame: world = loc + R . (x, y, z); NO scale (BC stores authored
     # volumes in world units relative to the ship centre, like subsystem mounts
@@ -162,8 +171,60 @@ def _resolve(entry, ship):
     return world_pt, normal
 
 
+def _mesh_normal(iid, world_pt, radial):
+    """The TRUE hull surface normal at `world_pt`, or None if unobtainable.
+
+    WHY THIS MATTERS MORE THAN IT LOOKS. The shader's carve is an OBLATE built
+    around this normal (opaque.frag): the full lateral radius `r`, but only
+    `kDepthFactor * r` (0.45) along the normal itself. So the normal decides
+    which way the hole is squashed and how deep it cuts.
+
+    `_outward_normal`'s radial-from-centre guess is nearly TANGENTIAL on a wide
+    flat structure -- a Galaxy saucer sits ~2 GU off the axis but only ~0.3 GU
+    above centre, so the radial direction is almost horizontal where the real
+    surface normal is almost vertical. That lays the oblate's shallow axis ALONG
+    the hull, cutting a narrow slot across the plate instead of a broad shallow
+    crater through it, and leaves the hole up to 55% narrower in that direction.
+    The same normal also aims `carve_has_backing`'s inward probe (frame.cc), so a
+    wrong one can drop the carve outright.
+
+    The combat path never had this problem -- it passes ray_trace's mesh normal
+    and skips the carve entirely when it only has a sphere-entry fallback
+    (hit_feedback.py). This gives the AddDamage path the same quality of normal:
+    stand off along the radial and cast back inward, taking the first hit.
+    ray_trace flips its normal against the incoming ray, so the result is
+    outward-facing, matching the convention decals and carves already use.
+
+    Raise-safe and miss-safe: the caller keeps the radial guess, because an
+    approximate carve beats no carve (authored wrecks must still appear
+    headless, where there is no instance to trace against).
+    """
+    if iid is None or radial is None:
+        return None
+    try:
+        origin = (world_pt.x + radial.x * NORMAL_PROBE_MARGIN_GU,
+                  world_pt.y + radial.y * NORMAL_PROBE_MARGIN_GU,
+                  world_pt.z + radial.z * NORMAL_PROBE_MARGIN_GU)
+        hit = host_io.ray_trace_mesh(
+            iid, origin, (-radial.x, -radial.y, -radial.z),
+            NORMAL_PROBE_MARGIN_GU * 2.0)
+    except Exception as _e:
+        dev_mode.log_swallowed("probe carve surface normal", _e)
+        return None
+    if not hit:
+        return None
+    nx, ny, nz = hit[1]
+    normal = TGPoint3(float(nx), float(ny), float(nz))
+    return None if normal.Unitize() <= 1e-6 else normal
+
+
 def _outward_normal(world_pt, loc, ship):
-    """Unit vector from the ship centre toward `world_pt`; ship-up at the centre."""
+    """Unit vector from the ship centre toward `world_pt`; ship-up at the centre.
+
+    Fallback only for world carves -- see `_mesh_normal` for why a real surface
+    normal is worth the ray cast. Still the primary path for BODY-frame authored
+    volumes, whose points sit inside the hull rather than on its surface, so
+    there is no surface to probe."""
     n = TGPoint3(world_pt.x - loc.x, world_pt.y - loc.y, world_pt.z - loc.z)
     if n.Unitize() <= 1e-6:
         return _ship_up(ship)

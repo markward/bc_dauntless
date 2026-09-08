@@ -190,3 +190,77 @@ def test_damageable_object_methods_route_to_visible_damage():
 
     obj.RemoveVisibleDamage()    # clears this object's pending volumes
     assert visible_damage._pending == []
+
+
+# ── True surface normal for world carves ────────────────────────────────────
+# The shader's carve is an OBLATE built around this normal: full lateral radius
+# `r`, but only `kDepthFactor * r` (0.45) along it. So the normal decides which
+# way the hole is squashed. A radial-from-centre guess is nearly TANGENTIAL on a
+# wide flat structure -- a Galaxy saucer sits ~2 GU off-axis but only ~0.3 GU
+# above centre -- which lays the shallow axis along the hull and cuts a narrow
+# slot instead of a broad crater. The combat path never has this problem: it
+# passes ray_trace's mesh normal (hit_feedback.py:418) and skips the carve
+# entirely when it only has a sphere-entry fallback.
+
+def test_world_carve_prefers_the_mesh_surface_normal(host, monkeypatch):
+    """A saucer-top hit: radial is nearly horizontal, the true normal is +Z."""
+    hit_normal = (0.0, 0.0, 1.0)
+    monkeypatch.setattr(host_io, "ray_trace_mesh",
+                        lambda iid, o, d, m: ((13.0, 4.0, 0.3), hit_normal, 0.1))
+
+    ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
+    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.3), 0.6, 600.0)
+    visible_damage.advance(0.0, {ship: 2})
+
+    _iid, _point, normal, *_rest = host.carves[0]
+    assert normal == pytest.approx(hit_normal), (
+        "carve used the radial guess where a real mesh normal was available")
+
+
+def test_world_carve_probes_along_the_radial_toward_the_hull(host, monkeypatch):
+    """The probe must start OUTSIDE the surface and fire inward, or it starts
+    inside the hull and the trace exits through the far side."""
+    seen = {}
+
+    def _trace(iid, origin, direction, max_dist):
+        seen["origin"] = origin
+        seen["direction"] = direction
+        return ((13.0, 4.0, 0.0), (0.0, 0.0, 1.0), 0.1)
+
+    monkeypatch.setattr(host_io, "ray_trace_mesh", _trace)
+    ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
+    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.advance(0.0, {ship: 2})
+
+    # Radial at that point is (0.6, 0.8, 0); origin sits outward along it and
+    # the ray fires back inward.
+    ox, oy, _oz = seen["origin"]
+    assert ox > 13.0 and oy > 4.0, "probe did not start outside the surface"
+    assert seen["direction"] == pytest.approx((-0.6, -0.8, 0.0))
+
+
+def test_world_carve_falls_back_to_radial_when_the_trace_misses(host, monkeypatch):
+    """Headless, no instance, or a grazing sample: keep the old behaviour
+    rather than dropping the carve -- authored wrecks must still appear."""
+    monkeypatch.setattr(host_io, "ray_trace_mesh", lambda *a, **k: None)
+
+    ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
+    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.advance(0.0, {ship: 2})
+
+    _iid, _point, normal, *_rest = host.carves[0]
+    assert normal == pytest.approx((0.6, 0.8, 0.0))
+
+
+def test_world_carve_survives_a_raising_trace(host, monkeypatch):
+    def _boom(*a, **k):
+        raise RuntimeError("no native module")
+    monkeypatch.setattr(host_io, "ray_trace_mesh", _boom)
+
+    ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
+    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.advance(0.0, {ship: 2})
+
+    assert host.carves, "a failing normal probe must not lose the carve"
+    _iid, _point, normal, *_rest = host.carves[0]
+    assert normal == pytest.approx((0.6, 0.8, 0.0))
