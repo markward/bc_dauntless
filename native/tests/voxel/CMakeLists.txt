@@ -1,6 +1,7 @@
 add_executable(voxel_tests
     volume_test.cc
     voxelize_test.cc
+    voxelize_resolution_test.cc
     decode_test.cc
     iou_test.cc
     iou_realdata_test.cc
