@@ -10,7 +10,9 @@ Spec: docs/superpowers/specs/2026-09-08-mod-overlay-design.md
 """
 from __future__ import annotations
 
+import ast
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -23,6 +25,14 @@ CONTENT_DIRS = frozenset({"data", "scripts"})
 
 CLI_FLAG = "--mods-dir"
 ENV_VAR = "DAUNTLESS_MODS_DIR"
+
+KNOWN_FRAMEWORKS = frozenset({
+    "Foundation", "FoundationTech", "FoundationTriggers", "Registry",
+})
+
+_IMPORT_RE = re.compile(
+    r"^\s*(?:import\s+([A-Za-z_][\w.]*)|from\s+([A-Za-z_][\w.]*)\s+import)",
+    re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -131,10 +141,13 @@ class ModStatus:
     ignored: int = 0
     unplaced: list = None        # top-level dir names we could not place
     read_error: bool = False     # set if rglob walk failed for this mod
+    requires: list = None        # frameworks this mod imports that are unavailable
 
     def __post_init__(self):
         if self.unplaced is None:
             self.unplaced = []
+        if self.requires is None:
+            self.requires = []
 
 
 @dataclass
@@ -238,6 +251,57 @@ def classify(index: ModIndex, game_root: Path, sdk_scripts: Path) -> None:
     ]
 
 
+def _imported_names(source: str) -> set:
+    """Root module names imported by `source`.
+
+    Mod scripts are Python 1.5 era and may not parse under Python 3
+    (backtick-repr, `has_key`), so a regex fallback covers what ast cannot.
+    Same posture tests/unit/test_path_indirection.py takes for tools/probes/.
+    """
+    names = set()
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        for m in _IMPORT_RE.finditer(source):
+            raw = m.group(1) or m.group(2)
+            names.add(raw.split(".")[0])
+        return names
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            names.add(node.module.split(".")[0])
+    return names
+
+
+def detect_frameworks(index: ModIndex) -> None:
+    """Record which unavailable frameworks each mod imports.
+
+    A mod that SUPPLIES the framework does not require it -- checked against
+    the index, so a bundled Foundation counts as present.
+    """
+    provided = {Path(mf.rel).stem for mf in index.files.values()
+                if mf.rel.endswith(".py")}
+    by_mod: dict = {status.name: status for status in index.mods}
+    for status in index.mods:
+        status.requires = []
+
+    for mf in index.files.values():
+        if not mf.rel.endswith(".py"):
+            continue
+        try:
+            source = mf.abs_path.read_text(errors="replace")
+        except OSError:
+            continue
+        status = by_mod[mf.mod_name]
+        for name in sorted(_imported_names(source)):
+            if name in KNOWN_FRAMEWORKS and name.lower() not in provided \
+                    and name not in status.requires:
+                status.requires.append(name)
+
+
 def describe(index: ModIndex) -> str:
     """The boot report. Empty when no mods are installed."""
     if not index.mods:
@@ -255,6 +319,8 @@ def describe(index: ModIndex) -> str:
             line += f", {status.ignored} ignored"
         if status.unplaced:
             line += f", unplaced: {', '.join(status.unplaced)}"
+        if status.requires:
+            line += f", requires: {', '.join(status.requires)} (unsupported)"
         lines.append(line)
     if index.overrides:
         lines.append(f"  {len(index.overrides)} stock file(s) overridden")
