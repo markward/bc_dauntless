@@ -5841,7 +5841,7 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
         nif_abs = str(_paths.game_asset(nif))
         env = _App.g_kModelManager.env_for(nif)
         if env:
-            tex_abs = str(_paths.game_asset(env))
+            tex_abs = [str(p) for p in _paths.game_asset_dirs(env)]
         else:
             # No LoadModel-recorded env — comm sets declare geometry via
             # SetBackgroundModel, not LoadModel, so env_for is None. Set
