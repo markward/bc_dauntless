@@ -137,6 +137,89 @@ uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
 // see-through bug.
 uniform int u_carve_invert;   // 0 = normal hull draw; 1 = stencil-marking draw
 
+// ── Per-instance hull distance field (hull-volume-field-transport, Task 5) ──
+// Replaces the 24-sphere ceiling for the hull-clip DISCARD decision: the
+// field carries the UNION of every carve ever made (voxel::field_carve_oblate
+// is monotonic -- see field_brush.h), not just the 24 most recently active
+// spheres above. u_hull_field_enabled == 0 is the stock path -- zero
+// per-fragment cost, byte-identical to today. Everything ELSE (the breach
+// scoop, the framework lattice below, the decal ring) still derives from the
+// sphere list untouched; this block only ever ADDS a discard, it never keeps
+// a fragment the sphere block would otherwise cut.
+//
+// u_hull_field is a 2D R8 slice atlas, NOT a sampler3D: measured on this
+// machine, a sampler3D in this shader corrupts shading across four unrelated
+// test suites even on a branch that never executes (renderer/field_atlas.h).
+// Every Z-slice of the instance's DistanceField is tiled into one 2D texture
+// with a replicated 1-texel border per tile, so hardware bilinear filtering
+// INSIDE a slice cannot bleed into a neighbouring tile's data.
+uniform sampler2D u_hull_field;      // R8 slice atlas; 128 = the hull surface
+uniform int   u_hull_field_enabled;  // 0 = stock path, zero per-fragment cost
+uniform vec3  u_hull_field_origin;   // body frame, model units
+uniform vec3  u_hull_field_cell;     // model units per cell
+uniform vec3  u_hull_field_dims;     // float (dims.x, dims.y, dims.z) -- avoids int division below
+uniform vec2  u_hull_field_tiles;    // tiles_x, tiles_y (voxel::AtlasLayout)
+uniform vec2  u_hull_field_texel;    // 1 / atlas size, i.e. (1/width, 1/height)
+
+// Fetch one Z-slice's raw (normalised [0,1]) texel at continuous in-slice
+// coordinate `sxy` (sample-space: an integer component lands exactly on that
+// index's stored sample; -1 and dims are the replicated border). `slice` is
+// a float holding an already-clamped integer index into [0, dims.z - 1].
+float hull_field_slice(float slice, vec2 sxy, float tile_w, float tile_h) {
+    float tile_ox = mod(slice, u_hull_field_tiles.x) * tile_w;
+    float tile_oy = floor(slice / u_hull_field_tiles.x) * tile_h;
+    // +1 skips the tile's own border column/row; +0.5 lands on the texel
+    // CENTRE so texture() samples exactly the stored value at sxy == integer,
+    // matching voxel::pack_field_to_atlas's interior-texel placement.
+    vec2 atlas_texel = vec2(tile_ox, tile_oy) + 1.0 + sxy + 0.5;
+    return texture(u_hull_field, atlas_texel * u_hull_field_texel).r;
+}
+
+// Sample the per-instance hull field at a body-frame point, returning a
+// value whose SIGN matches voxel::DistanceField's convention rescaled from
+// the packed encoding: negative = inside solid hull, positive = outside (a
+// carved cavity or genuinely outside the hull). ONE function -- every
+// consumer of the field (today's clip, anything added later) must sample
+// through here so they cannot drift apart.
+//
+// Encoding: pack_field_to_atlas stores d + 128 as a byte, so texture() (GL_R8,
+// normalised) returns (d + 128) / 255; subtracting 0.5 re-centres that on
+// zero at the hull surface (128), which is the same "texel - 0.5" comparison
+// InstanceFieldCache's upload() comment documents.
+//
+// Z has no atlas border (slices are whole tiles, not filtered together by
+// hardware) -- the two bracketing slices are fetched by hand and lerped,
+// which is exactly what the atlas border on X/Y exists to make safe to do
+// per-slice via hardware bilinear.
+float sample_hull_field(vec3 p_body) {
+    // DistanceField cell (x,y,z)'s stored sample sits at body-frame position
+    // origin + (idx + 0.5) * cell (voxel/field_brush.cc, distance_field.h),
+    // so subtracting 0.5 after dividing by cell converts a corner-relative
+    // coordinate into "sample space", where an exact integer lands on a
+    // stored sample and hardware bilinear does the rest between them.
+    vec3 g = (p_body - u_hull_field_origin) / u_hull_field_cell - 0.5;
+
+    // Clamp X/Y into the atlas' own padded range [-1, dims]: precisely the
+    // border pack_field_to_atlas replicated, so this can never read a
+    // neighbouring tile no matter how far outside the field's box p_body is.
+    vec2 sxy = clamp(g.xy, vec2(-1.0), u_hull_field_dims.xy);
+
+    // Z: clamp into the valid slice range FIRST (there is no border to fall
+    // back on), then bracket with the next slice up, clamped at the top edge
+    // so s1 never reaches an out-of-range (or unused/kOutside) tile.
+    float sz = clamp(g.z, 0.0, u_hull_field_dims.z - 1.0);
+    float s0 = floor(sz);
+    float s1 = min(s0 + 1.0, u_hull_field_dims.z - 1.0);
+    float wz = sz - s0;
+
+    float tile_w = u_hull_field_dims.x + 2.0;   // voxel::AtlasLayout::tile_w
+    float tile_h = u_hull_field_dims.y + 2.0;   // voxel::AtlasLayout::tile_h
+
+    float v0 = hull_field_slice(s0, sxy, tile_w, tile_h);
+    float v1 = hull_field_slice(s1, sxy, tile_w, tile_h);
+    return mix(v0, v1, wz) - 0.5;   // > 0 outside the hull, < 0 inside
+}
+
 // ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
 // Projects Damage.tga's alpha channel onto the hull in an annular band around
 // each breach. High alpha = structural strut (kept); low alpha = gap (discarded).
@@ -523,11 +606,28 @@ void main() {
     // Body-frame fragment position (object-space carve + decals).
     vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
 
+    // ── Hull-field clip (hull-volume-field-transport, Task 5) ──────────────
+    // Independent of the sphere block below and evaluated first: it never
+    // KEEPS a fragment the sphere block would otherwise cut (the framework
+    // lattice's strut-preserving logic there is untouched), it only ever ADDS
+    // a discard for damage beyond the 24-sphere ceiling. `marked` is shared
+    // with the sphere block below so a single trailing check (after both) can
+    // ask "did EITHER mechanism mark this fragment", instead of two separate
+    // marking-pass fallbacks that could each independently force a discard.
+    bool marked = false;
+    if (u_hull_field_enabled != 0) {
+        bool field_cut = sample_hull_field(p_body) > 0.0;
+        if (u_carve_invert != 0) {
+            if (field_cut) marked = true;
+        } else if (field_cut) {
+            discard;
+        }
+    }
+
     // ── Hull-breach hole: pure damage-sphere clip ──────────────────────────
     // Discard hull fragments inside any active carve sphere. The breach pass
     // renders the exposed interior (scoop) within the same spheres, so hole and
     // interior align by construction. u_carve_count == 0 (or disabled) = stock path.
-    bool marked = false;
     if (u_carve_enabled != 0 && u_carve_count > 0) {
         for (int i = 0; i < u_carve_count; i++) {
             vec3 c  = u_carve_spheres[i].xyz;
@@ -578,12 +678,12 @@ void main() {
                 }
             }
         }
-        // Marking pass: anything NOT inside a cut must not stamp the stencil.
-        if (u_carve_invert != 0 && !marked) discard;
-    } else if (u_carve_invert != 0) {
-        // Marking pass with no carves at all: nothing to stamp.
-        discard;
     }
+    // Marking pass: anything NOT marked by EITHER mechanism (field or sphere)
+    // must not stamp the stencil. Covers the old "no carves at all" fallback
+    // too: with both blocks above skipped (disabled or empty), `marked` is
+    // still false here, so this discards exactly as it always did.
+    if (u_carve_invert != 0 && !marked) discard;
 
     // Shadow attenuates ONLY the sun (directional index 0). When shadows are
     // off, sun_shadow_factor() returns 1.0, so the ×sf below is the identity

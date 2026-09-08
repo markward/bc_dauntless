@@ -52,6 +52,7 @@ add_executable(renderer_tests
     particle_pass_test.cc
     asset_path_test.cc
     hull_clip_test.cc
+    hull_field_clip_test.cc
     cloak_pass_test.cc
     breach_pass_test.cc
     breach_venting_test.cc
