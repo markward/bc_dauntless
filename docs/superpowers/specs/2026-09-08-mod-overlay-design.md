@@ -198,8 +198,8 @@ then the stock directory:
 |---|---|
 | `host_loop.py:4347` `_ship_texture_search` | per-ship + shared texture dirs (**already returns a list**) |
 | `host_loop.py:4829`, `:5465` | `DEFAULT_PLANET_TEXTURE_SEARCH` |
-| `host_loop.py:5848` | `dirname(nif)/High` |
-| `host_loop.py:5887` | `DBRIDGE_TEX_REL` |
+| `host_loop.py:5841` **and** `:5848` | the set's recorded `env_for(nif)`, **and** the `dirname(nif)/High` fallback — **both branches** |
+| `host_loop.py:5886` **and** `:5887` | the viewscreen's `vs_env`, **and** the `DBRIDGE_TEX_REL` fallback — **both branches** |
 | `engine/missions/name_resolver.py:20` | `data/TGL` |
 | `engine/appc/viewscreen_static.py:29` | `data/Textures/Effects` |
 
@@ -207,6 +207,17 @@ then the stock directory:
 'data/TGL/FTBShips.TGL')` is confirmed Foundation surface, so mods really do
 ship TGL string tables, and a mod-provided one is how a modded ship gets a
 display name.
+
+**Both branches of the two texture-directory sites must be converted, not
+just the fallback.** An earlier revision of this table named only the
+`/High` and `DBRIDGE_TEX_REL` fallbacks. That was wrong in the worst
+direction: `env_for(nif)` is *truthy* for DBridge and EBridge — the standard
+player bridges on virtually every mission — so the unconverted branch was
+the common path, and bridge reskins are among the most-modded BC asset
+classes. It was also structurally inert rather than merely narrow: `env` is
+a *directory*-shaped string, and `game_asset()` matches individual *files*,
+so that branch could never have resolved a mod override under any
+circumstances.
 
 ### SDK imports
 
