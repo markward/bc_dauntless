@@ -243,6 +243,26 @@ float sample_hull_field(vec3 p_body) {
 // regardless of what `scale` (cell size, hull, quality) actually is. This
 // is therefore the SMALLEST margin that fully absorbs quantisation
 // rounding, for any instance -- not an arbitrary safety pad.
+//
+// SCOPE, and what this constant does NOT cover: the derivation above bounds
+// QUANTISATION error only (~0.5*scale, ~0.24 model units at BC's authored
+// 15-unit resolution and quality 1). The error that decides the sign at a
+// given surface fragment is actually TRILINEAR RECONSTRUCTION error against
+// the true continuous surface, which is ~0 on a locally planar panel (where
+// this margin's own derivation is scoped, and where almost the whole hull
+// is) but grows large at convex edges and sub-cell-thick features -- roughly
+// 0.24 CELLS (not 0.24 model units) at a fragment 0.1 cells from a 90-degree
+// exterior corner, i.e. ~3.6 model units at that same 15-unit/quality-1
+// resolution: 4-15x this margin. Enlarging kHullFieldIsoMargin to cover that
+// is NOT the fix (a cell-scaled margin would be ~32x larger here and would
+// start eating small carves -- the exact counter-pressure that made an iso
+// offset the right shape of fix over a cell-sized one). That residual is not
+// observable headlessly (every test in hull_field_clip_test.cc probes flat,
+// locally-planar synthetic fields) and needs the live check: if speckle
+// shows up localised to hull EDGES and thin plates specifically -- not
+// spread across whole flat panels -- that is this residual, not a driver
+// bug, and the fix is a larger margin or a different sampling strategy for
+// those regions, decided from what is actually seen live.
 const float kHullFieldIsoMargin = 0.5 / 255.0;
 
 // ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
@@ -661,6 +681,25 @@ void main() {
                 float r_eff = r * (1.0 + kShapeAmp * (vnoise3(az * kShapeFreq + c * kPhase) * 2.0 - 1.0));
                 float dz = along / (kDepthFactor * r);
                 float e  = (ld * ld) / (r_eff * r_eff) + dz * dz;   // <1 inside the oblate
+                // field_carve_oblate carves the UNPERTURBED oblate -- full
+                // radius `r`, no noise (it has no access to this per-fragment
+                // screen-space hash, only geometry). `e` alone is therefore a
+                // STRICT SUBSET of what the field cut whenever the noise dips
+                // r_eff below r: the band r_eff < ld < r is outside e<1.0 but
+                // inside what the field carved, so gating suppression on e<1.0
+                // alone would leave the field free to cut a smooth-edged ring
+                // there with no scoop behind it (breach.vert builds the scoop
+                // from r_eff too) -- a see-through gap around roughly half of
+                // every tracked breach's rim. Union in the UNPERTURBED test so
+                // that band is covered too. The e<1.0 half stays needed on its
+                // own for the opposite case: where noise pushes r_eff ABOVE r,
+                // a fragment can be inside the perturbed (sphere-drawn) oblate
+                // while outside the field's unperturbed carve -- e.g. a strut
+                // the lattice keeps beyond the field's cut must stay kept, not
+                // be silently re-exposed to field suppression only to find the
+                // field never touched it anyway (harmless either way, but the
+                // sphere block's own decision must still run untouched there).
+                if ((ld * ld) / (r * r) + dz * dz < 1.0) inside_any_oblate = true;
                 if (e < 1.0) {
                     inside_any_oblate = true;
                     // ── Skeletal framework lattice (INSIDE the breach) ──────────

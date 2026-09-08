@@ -52,7 +52,9 @@
 #include <voxel/distance_field.h>
 #include <voxel/field_atlas.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -726,6 +728,77 @@ TEST_F(HullFieldClipTest, FieldNeverOverridesAFragmentInsideATrackedOblate) {
     glDeleteTextures(1, &strut_tex);
 }
 
+// ── N1 fix: the gate must be the UNION of the perturbed and unperturbed
+// oblate, not the perturbed one alone ───────────────────────────────────
+//
+// field_carve_oblate carves the UNPERTURBED oblate -- full radius `r`, no
+// noise (it has no access to opaque.frag's per-fragment screen-space hash).
+// The sphere block's own `e < 1.0` test uses the NOISE-PERTURBED radius
+// r_eff, which can be SMALLER than r on azimuths where the noise dips
+// inward. On exactly that band (r_eff < ld < r), a fragment is OUTSIDE
+// e<1.0 -- so gating suppression on e<1.0 alone leaves `inside_any_oblate`
+// false there -- while still being INSIDE what the field actually carved.
+// An ungated field would cut a ring there with no scoop behind it
+// (breach.vert builds the scoop from r_eff too), showing space instead of
+// interior around roughly half of every tracked breach's rim -- reopening
+// the exact drift Critical 2's fix exists to close.
+//
+// Geometry found by an EMPIRICAL GPU SEARCH, not a hand or CPU derivation.
+// A first attempt hand-picked c=(0,23,0) after checking the noise value in
+// a standalone Python re-implementation of vh3/vnoise3 (predicted e~=1.198,
+// e_unpert~=0.846) -- run for real it FAILED: the sphere block discarded
+// the fragment on its own, meaning e < 1.0 on the actual GPU, contradicting
+// the CPU prediction. Root cause: vh3's `sin(dot(p, (127.1,311.7,74.7)))`
+// evaluates sin() of arguments in the hundreds; this driver's sin/cosine
+// hardware does not reproduce a CPU double's range reduction at that
+// magnitude for every input, and there is no way to know in advance which
+// inputs it disagrees on. So this candidate was instead found by rendering
+// a 360x512 target where pixel (x,y) evaluates THIS SHADER'S OWN
+// vh3/vnoise3 (copied verbatim into a standalone probe program) at
+// theta=x degrees, ld=12.5+(y/512)*12.5 (r=25 fixed, c=-ld*(cos theta,
+// sin theta,0), normal=(0,0,1)), and scanning the read-back e/e_unpert for
+// the largest simultaneous margin on both sides of 1.0. Best found on THIS
+// GPU: theta=129 deg, ld=23.05 -> c=(14.505837,-17.913212,0), giving
+// (measured, not predicted) e=1.1465 (margin 0.1465 above 1.0: OUTSIDE the
+// perturbed oblate) and e_unpert=0.8506 (margin 0.1494 below 1.0: INSIDE
+// the unperturbed one) -- comfortable margins on a driver where a coarser
+// margin could plausibly not exist at all for some other geometry.
+TEST_F(HullFieldClipTest, FieldSuppressedInTheBandBetweenThePerturbedAndUnperturbedRadius) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+
+    const glm::vec4 sphere(14.505837f, -17.913212f, 0.0f, 25.0f);
+    const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+    prog.set_int("u_carve_enabled", 1);
+    prog.set_int("u_carve_count", 1);
+    prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+    prog.set_vec3_array("u_carve_normals", &normal, 1);
+    // Framework lattice stays off (set_uniforms default): irrelevant here,
+    // since e >= 1.0 means the sphere loop's own `if (e < 1.0)` body -- the
+    // only place u_frame_enabled is read -- never executes for this
+    // fragment regardless.
+
+    // Field independently marks the SAME point outside/cut -- must be
+    // suppressed by the union gate now that this fragment sits inside the
+    // UNPERTURBED oblate, even though it is outside the perturbed one.
+    const voxel::DistanceField field = make_probe_field(/*center_value=*/80);
+    enable_field(prog, field, /*invert=*/false);
+
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 128 * 3 / 2)
+        << "Center pixel is dark (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2]
+        << ") — a fragment between the perturbed and unperturbed oblate "
+           "radii is inside what the field actually carved (unperturbed "
+           "e<1) even though it is outside the sphere block's own "
+           "noise-perturbed e<1 test; the union gate must still suppress "
+           "the field there, or every tracked breach grows a see-through "
+           "ring where the noise happens to dip the rim inward";
+}
+
 // ── Important 3 fix: frame.cc's draw_model uniform-setting block ──────────
 //
 // Everything above drives opaque.frag's uniforms directly via the test's
@@ -839,6 +912,75 @@ TEST_F(HullFieldDrawModelTest, EntryAbsentStillAssignsUnitSixAndDisables) {
         << "draw_model must leave the field disabled when hull_field is nullptr";
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// N2 fix: u_ship_world_inv must not be left STALE for a field-enabled
+// instance with no active carve spheres, decals, or glow regions -- the
+// only three places draw_model otherwise sets it. An InstanceFieldCache::
+// Entry persists independently of those, so before this fix a field-only
+// instance would sample the field through whatever matrix the PREVIOUS
+// draw call happened to leave behind (a different ship's body frame, or --
+// as reproduced here -- an arbitrary sentinel nobody drew with at all).
+//
+// Proof: explicitly poke u_ship_world_inv to a value draw_model could not
+// possibly compute from `world` (a translation nowhere near the identity or
+// `world`'s own inverse) BEFORE calling draw_model with a hull_field entry
+// and every other body-frame-writing input (decals/glow/carve) empty. If
+// the fix is missing, that sentinel survives untouched and this test reads
+// it back; if the fix is present, draw_model's own glm::inverse(world)
+// overwrites it regardless.
+TEST_F(HullFieldDrawModelTest, EntryPresentForcesShipWorldInvEvenWithNoOtherBodyFrameSource) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    const voxel::DistanceField field = make_probe_field(/*center_value=*/0);
+    voxel::AtlasLayout layout;
+    GLuint tex = upload_field_atlas(field, layout);
+    renderer::InstanceFieldCache::Entry entry;
+    entry.tex2d  = tex;
+    entry.layout = layout;
+    entry.origin = field.origin;
+    entry.cell   = field.cell;
+    entry.dims   = field.dims;
+    entry.scale  = field.scale;
+
+    // Sentinel: a matrix draw_model's glm::inverse(world) call (world ==
+    // identity below) could never produce -- a large translation, easy to
+    // tell apart from the identity inverse (itself the identity) at a
+    // glance.
+    prog.use();
+    const glm::mat4 sentinel = glm::translate(glm::mat4(1.0f), glm::vec3(999.0f, 888.0f, 777.0f));
+    prog.set_mat4("u_ship_world_inv", sentinel);
+
+    renderer::draw_model(empty_model, glm::mat4(1.0f), prog, pipeline->skinned_shader(),
+                         white_tex_, black_tex_, /*rim_strength=*/0.0f,
+                         no_decals, no_glow, /*decal_time=*/0.0f,
+                         /*emissive_scale=*/1.0f, no_palette, no_carve,
+                         no_lights, /*dyn_light_count=*/0,
+                         /*carve_fill=*/nullptr, /*carve_invert=*/false,
+                         &entry);
+
+    GLuint program = prog.program();
+    GLfloat readback[16];
+    glGetUniformfv(program, glGetUniformLocation(program, "u_ship_world_inv"), readback);
+    const glm::mat4 expected = glm::inverse(glm::mat4(1.0f));   // == identity
+    bool matches_expected = true, matches_sentinel = true;
+    for (int col = 0; col < 4; ++col) {
+        for (int row = 0; row < 4; ++row) {
+            const float got = readback[col * 4 + row];
+            if (std::abs(got - expected[col][row]) > 1e-5f) matches_expected = false;
+            if (std::abs(got - sentinel[col][row]) > 1e-5f) matches_sentinel = false;
+        }
+    }
+    EXPECT_TRUE(matches_expected)
+        << "u_ship_world_inv was not set to glm::inverse(world) by draw_model's "
+           "hull-field block -- a field-enabled instance with no carves, decals, "
+           "or glow regions would sample the field through a stale matrix";
+    EXPECT_FALSE(matches_sentinel)
+        << "u_ship_world_inv still reads the pre-draw sentinel -- draw_model's "
+           "hull-field block did not write it at all";
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    glDeleteTextures(1, &tex);
 }
 
 // Behaviour 5 (regression canary): degenerate vertex normal + ambient

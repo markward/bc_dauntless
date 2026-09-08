@@ -552,6 +552,16 @@ void draw_model(const assets::Model& model,
         prog.set_int("u_hull_field", 6);
         prog.set_int("u_hull_field_enabled", hull_field != nullptr ? 1 : 0);
         if (hull_field != nullptr) {
+            // u_ship_world_inv (p_body reconstruction) is otherwise only set
+            // above when this instance has active carve spheres, decals, or
+            // glow regions. An InstanceFieldCache::Entry persists independent
+            // of the 24-slot sphere ring, so a field-enabled instance with
+            // none of those active would otherwise sample the field through
+            // a STALE matrix left by whichever instance drew last -- reading
+            // a different ship's body frame. Pre-existing gap in the other
+            // three blocks' shared assumption, unreachable before the field
+            // existed to be sampled through it.
+            prog.set_mat4("u_ship_world_inv", glm::inverse(world));
             glActiveTexture(GL_TEXTURE6);
             glBindTexture(GL_TEXTURE_2D, hull_field->tex2d);
             glActiveTexture(GL_TEXTURE0);  // restore default active unit
