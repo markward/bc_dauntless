@@ -136,7 +136,8 @@ Grid size implied by the authored cell size, one byte per cell:
 
 ### 2.5 Bake cost is a first-load-only cost
 
-Galaxy, single-threaded, including NIF parse and triangle collection (0.9 ms):
+Occupancy voxelization alone (Galaxy, single-threaded, including NIF parse and
+triangle collection at 0.9 ms):
 
 | grid | time |
 |---|---|
@@ -144,7 +145,28 @@ Galaxy, single-threaded, including NIF parse and triangle collection (0.9 ms):
 | 128³ (2.1 M cells) | 29.7 ms |
 | 192³ (7.1 M cells) | 70.7 ms |
 
-Authored resolutions produce far smaller grids than any of these.
+**Measured again 2026-09-08 against the implemented signed-distance baker**, on
+real hulls at authored-resolution-over-2× cells — this is the number that
+matters, and it is larger than the occupancy figures above because the SDF does
+strictly more work:
+
+| hull | cell | grid | resident | bake |
+|---|---|---|---|---|
+| Galor | 5 | 54×78×19 | 0.08 MB | 57 ms |
+| Galaxy | 5 | 101×137×37 | 0.49 MB | 120 ms |
+| Warbird | 6 | 173×218×66 | 2.37 MB | 192 ms |
+
+Still comfortably a first-load-only cost, and cached thereafter. Sign verified
+correct on all three: the corner cell saturates positive (outside) and the
+Galaxy and Galor bbox centres read negative (inside). The Warbird's bbox centre
+reads outside, which is correct for its shape — its centre sits in open space
+between the wings.
+
+⚠️ Two consequences of the margin sizing (§3) worth carrying forward: grids are
+~34% larger than the §2.4 estimates because the margin covers a full band on
+every face, and **74–83% of every grid saturates as far-outside**. A dense grid
+therefore spends most of its bytes on empty space; a narrow-band or sparse
+representation is the obvious later win, and is not attempted here.
 
 ### 2.6 `opaque.frag` accepts `sampler2D` and rejects `sampler3D`
 
