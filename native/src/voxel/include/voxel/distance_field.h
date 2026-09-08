@@ -1,9 +1,6 @@
 // native/src/voxel/include/voxel/distance_field.h
 #pragma once
 
-#include <cstdint>
-#include <vector>
-
 #include <glm/glm.hpp>
 
 #include <voxel/voxelize.h>

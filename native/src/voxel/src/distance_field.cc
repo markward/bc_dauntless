@@ -1,7 +1,6 @@
 // native/src/voxel/src/distance_field.cc
 #include <voxel/distance_field.h>
 
-#include <algorithm>
 #include <cmath>
 
 namespace voxel {
