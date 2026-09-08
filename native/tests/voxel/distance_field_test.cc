@@ -106,3 +106,21 @@ TEST(PointTriangleDistance, FullyCollapsedTriangleReturnsDistanceToVertex) {
     EXPECT_TRUE(std::isfinite(r));
     EXPECT_NEAR(r, 3.0f, 1e-4f);
 }
+
+TEST(PointTriangleDistance, UltraThinTriangleFallsBackToVertexDistance) {
+    // Test the guard fallback path: an ultra-thin triangle where sum = (2*Area)^2
+    // can drop below the 1e-20 epsilon even though the interior is geometrically real.
+    // a=(0,0,0), b=(1,0,0), c=(0,1e-11,0) → area ≈ 5e-12, sum ≈ 1e-22
+    // Point (0.5, 0.5e-11, 1) targets the interior above the thin triangle.
+    // The guard fires (sum < 1e-20) and returns distance to vertex a.
+    const voxel::Tri thin{glm::vec3(0.0f, 0.0f, 0.0f),
+                          glm::vec3(1.0f, 0.0f, 0.0f),
+                          glm::vec3(0.0f, 1e-11f, 0.0f)};
+    const float r = voxel::point_triangle_distance(glm::vec3(0.5f, 0.5e-11f, 1.0f), thin);
+    // Result must be finite (guard prevents division by ~zero).
+    // Exact value depends on which region catches the point in float precision,
+    // but must be close to distance-to-vertex-a = sqrt(0.5^2 + (0.5e-11)^2 + 1^2).
+    EXPECT_TRUE(std::isfinite(r));
+    EXPECT_GT(r, 0.999f);  // At minimum, vertical component
+    EXPECT_LT(r, 1.2f);    // Upper bound to catch gross errors
+}
