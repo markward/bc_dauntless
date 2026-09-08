@@ -179,6 +179,7 @@ add_library(renderer STATIC
     breach_debris.cc
     breach_pass.cc
     carve_field_cache.cc
+    instance_field_cache.cc
     subsystem_pin_pass.cc
     debug_volume_pass.cc
     gizmo_pass.cc
