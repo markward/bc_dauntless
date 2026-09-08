@@ -4159,6 +4159,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "strength crosses the iso). time is accepted for call-shape symmetry "
           "with damage_decal_add but unused.");
 
+    // BC authors a damage-volume resolution per ship
+    // (ShipProperty.SetDamageResolution, in every hardpoint file). It is the
+    // cell size in MODEL UNITS the hull volume should be baked at -- a per-ship
+    // detail ratio, which the quality multiplier then scales globally.
+    m.def("hull_volume_set_resolution",
+          [](scenegraph::InstanceId id, float resolution) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;      // stale id — drop silently
+              if (!(resolution > 0.0f)) return; // unset: keep the native default
+              // An Instance holds a model_handle, not a path. resolve_model is
+              // the idiom used throughout this file (e.g. compute_capsule_region,
+              // just below), and model->source is the same key breach_pass.cc:328
+              // hands to CarveFieldCache::get_for_source -- so the resolution is
+              // keyed by exactly the string the volume will be looked up by.
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr || model->source.empty()) return;
+              renderer::set_hull_volume_resolution(model->source, resolution);
+          },
+          pybind11::arg("instance_id"), pybind11::arg("resolution"));
+
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> center,

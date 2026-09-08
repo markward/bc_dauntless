@@ -4790,6 +4790,13 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
         iid = r_.create_instance(handle)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
+        # BC's authored damage-volume cell size for this hull
+        # (ShipProperty.SetDamageResolution). Best-effort: never block spawn.
+        try:
+            from engine.appc.hull_volume import push_resolution
+            push_resolution(ship, iid)
+        except Exception as _e:
+            dev_mode.log_swallowed("push hull volume resolution", _e)
         render_instances.register(ship, iid)
         # Fresnel rim applies to ship hulls only — planets share the opaque
         # shader and must stay rim-free (default ineligible).
@@ -5421,6 +5428,13 @@ class _MissionLoader:
             iid = r_.create_instance(handle)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
+            # BC's authored damage-volume cell size for this hull
+            # (ShipProperty.SetDamageResolution). Best-effort: never block spawn.
+            try:
+                from engine.appc.hull_volume import push_resolution
+                push_resolution(ship, iid)
+            except Exception as _e:
+                dev_mode.log_swallowed("push hull volume resolution", _e)
             render_instances.register(ship, iid)
             # Fresnel rim applies to ship hulls only — planets share the
             # opaque shader and must stay rim-free (default ineligible).

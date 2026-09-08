@@ -43,7 +43,8 @@ _REQUIRED_BINDINGS = frozenset({
     "dust_set_density", "dust_set_enabled", "filmic_enabled",
     "filmic_set_enabled", "frame", "get_instance_bounds",
     "get_instance_head_center", "hdr_lens_flare_enabled",
-    "hdr_lens_flare_set_enabled", "hdr_set_enabled", "init", "letterbox_set",
+    "hdr_lens_flare_set_enabled", "hdr_set_enabled", "hull_volume_set_resolution",
+    "init", "letterbox_set",
     "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "model_bounds",
     "motion_blur_enabled",
@@ -474,6 +475,16 @@ def set_hdr_lens_flare_enabled(enabled: bool) -> None:
     """Toggle image-based Modern Lens Flares (Modern VFX). Default: on. When on,
     the classic per-sun billboard flares are suppressed by the host loop."""
     _h.hdr_lens_flare_set_enabled(enabled)
+
+
+def hull_volume_set_resolution(iid: InstanceId, resolution: float) -> None:
+    """Record BC's authored damage-volume cell size for this instance's hull.
+
+    No hasattr guard, deliberately. host_loop.py:4780 documents a feature that
+    shipped completely inert because a hasattr guard turned a loud missing-
+    binding failure into a silent per-ship skip.
+    """
+    _h.hull_volume_set_resolution(iid, float(resolution))
 
 
 def set_nonfinite_probe_enabled(enabled: bool, dump_dir: str = "",

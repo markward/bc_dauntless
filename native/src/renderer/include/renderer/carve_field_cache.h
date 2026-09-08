@@ -63,6 +63,13 @@ float carve_cavity_depth_cells(const voxel::VoxelVolume& fill,
                                const glm::vec3& center_body,
                                const glm::vec3& normal_body);
 
+/// Record the authored damage-volume cell size (model units) for a hull source.
+/// Set from Python at spawn out of BC's ShipProperty.SetDamageResolution.
+void set_hull_volume_resolution(const std::filesystem::path& source, float cell);
+
+/// The authored cell size for a hull source, or 0 when none was set.
+float hull_volume_resolution(const std::filesystem::path& source);
+
 /// Shared STATIC original-fill cache (hull-breach-2b Path C).
 ///
 /// Serves the original (UNCARVED) hull fill as a GL_R8 3D texture, built

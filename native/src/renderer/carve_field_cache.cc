@@ -4,6 +4,8 @@
 #include <glad/glad.h>
 
 #include <cmath>
+#include <string>
+#include <unordered_map>
 
 namespace renderer {
 
@@ -59,6 +61,23 @@ float carve_cavity_depth_cells(const voxel::VoxelVolume& fill,
     }
     return CarveFieldCache::kCavityMaxCells * static_cast<float>(hits)
            / CarveFieldCache::kCavityTaps;
+}
+
+namespace {
+std::unordered_map<std::string, float>& resolution_table() {
+    static std::unordered_map<std::string, float> t;
+    return t;
+}
+}  // namespace
+
+void set_hull_volume_resolution(const std::filesystem::path& source, float cell) {
+    if (source.empty() || !(cell > 0.0f)) return;
+    resolution_table()[source.string()] = cell;
+}
+
+float hull_volume_resolution(const std::filesystem::path& source) {
+    auto it = resolution_table().find(source.string());
+    return (it == resolution_table().end()) ? 0.0f : it->second;
 }
 
 CarveFieldCache::~CarveFieldCache() {
