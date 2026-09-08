@@ -57,7 +57,8 @@ _REQUIRED_BINDINGS = frozenset({
     "play_instance_gesture", "play_instance_idle",
     "play_instance_walk",
     "procedural_sky_enabled", "procedural_sky_set_enabled", "restore_rest_pose",
-    "rim_set_enabled", "set_backdrops", "set_bridge_ambient_scale",
+    "rim_set_enabled", "set_asset_overrides", "set_backdrops",
+    "set_bridge_ambient_scale",
     "set_bridge_camera", "set_bridge_lighting",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
     "set_dust_planets", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
@@ -205,6 +206,11 @@ def set_emissive_scale(iid: InstanceId, scale: float) -> None:
 def set_game_root(root: str) -> None:
     """Point the renderer's relative asset paths at a BC install."""
     _h.set_game_root(root)
+
+
+def set_asset_overrides(overrides: dict) -> None:
+    """Install mod asset overrides in the renderer (case-folded keys)."""
+    _h.set_asset_overrides(overrides)
 
 
 def set_camera(eye: Tuple[float, float, float],

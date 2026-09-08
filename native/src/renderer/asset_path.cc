@@ -1,7 +1,9 @@
 // native/src/renderer/asset_path.cc
 #include <renderer/asset_path.h>
 
+#include <cctype>
 #include <cstdio>
+#include <map>
 #include <string>
 
 namespace renderer {
@@ -15,6 +17,27 @@ std::string& mutable_game_root() {
     return root;
 }
 
+// Mod-supplied asset overrides, keyed by the case-folded relative path
+// engine/mods.py builds. Empty by default so a modless run never consults it.
+std::map<std::string, std::string>& mutable_overrides() {
+    static std::map<std::string, std::string> overrides;
+    return overrides;
+}
+
+// Matches engine/mods.py:fold() exactly: lowercase, backslashes to forward
+// slashes. Python builds the map's keys and C++ looks them up, so any
+// divergence here means the map silently never hits.
+std::string fold_key(const std::string& path) {
+    std::string out;
+    out.reserve(path.size());
+    for (char c : path) {
+        out.push_back(c == kBackslash ? '/'
+                                       : static_cast<char>(std::tolower(
+                                             static_cast<unsigned char>(c))));
+    }
+    return out;
+}
+
 bool starts_with_dir(const std::string& path, const std::string& prefix) {
     if (prefix.empty() || path.size() <= prefix.size()) return false;
     if (path.compare(0, prefix.size(), prefix) != 0) return false;
@@ -23,6 +46,12 @@ bool starts_with_dir(const std::string& path, const std::string& prefix) {
 }
 
 }  // namespace
+
+void set_asset_overrides(const std::map<std::string, std::string>& overrides) {
+    mutable_overrides() = overrides;
+}
+
+void clear_asset_overrides() { mutable_overrides().clear(); }
 
 void set_game_root(const std::string& root) {
     // An empty root would silently produce "/data/..." -- an absolute path
@@ -35,6 +64,12 @@ const std::string& game_root() { return mutable_game_root(); }
 std::string resolve_asset_path(const std::string& path) {
     if (path.empty()) return path;
     if (is_absolute_asset_path(path)) return path;
+
+    const auto& overrides = mutable_overrides();
+    if (!overrides.empty()) {
+        const auto it = overrides.find(fold_key(path));
+        if (it != overrides.end()) return it->second;
+    }
 
     const std::string& root = game_root();
     if (starts_with_dir(path, root)) return path;

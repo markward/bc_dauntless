@@ -123,3 +123,53 @@ TEST(AssetPath, EmptyRootFallsBackToTheDefault) {
     renderer::set_game_root("");
     EXPECT_EQ(renderer::game_root(), "game");
 }
+
+// --- mod overrides ----------------------------------------------------------
+//
+// A mod's file lives outside the game root entirely, so the root prefix can
+// never name it. The map is consulted first, keyed by the same case-folded
+// relative path engine/mods.py builds.
+
+namespace {
+struct OverrideGuard {
+    ~OverrideGuard() { renderer::clear_asset_overrides(); }
+};
+}  // namespace
+
+TEST(AssetPath, OverrideWinsOverTheRootPrefix) {
+    OverrideGuard guard;
+    renderer::set_asset_overrides({{"data/textures/spacedust.tga",
+                                    "/mods/M/Data/Textures/SpaceDust.tga"}});
+    EXPECT_EQ(resolve_asset_path("data/Textures/spacedust.tga"),
+              "/mods/M/Data/Textures/SpaceDust.tga");
+}
+
+TEST(AssetPath, OverrideLookupIsCaseInsensitive) {
+    OverrideGuard guard;
+    renderer::set_asset_overrides({{"data/textures/spacedust.tga", "/mods/x.tga"}});
+    EXPECT_EQ(resolve_asset_path("DATA/Textures/SPACEDUST.TGA"), "/mods/x.tga");
+}
+
+TEST(AssetPath, UnmatchedPathsStillUseTheRoot) {
+    OverrideGuard guard;
+    renderer::set_asset_overrides({{"data/textures/spacedust.tga", "/mods/x.tga"}});
+    EXPECT_EQ(resolve_asset_path("data/rough.tga"), "game/data/rough.tga");
+}
+
+TEST(AssetPath, ClearRestoresStockResolution) {
+    renderer::set_asset_overrides({{"data/rough.tga", "/mods/x.tga"}});
+    renderer::clear_asset_overrides();
+    EXPECT_EQ(resolve_asset_path("data/rough.tga"), "game/data/rough.tga");
+}
+
+TEST(AssetPath, AbsolutePathsAreNotOverridden) {
+    OverrideGuard guard;
+    renderer::set_asset_overrides({{"/abs/path.tga", "/mods/x.tga"}});
+    EXPECT_EQ(resolve_asset_path("/abs/path.tga"), "/abs/path.tga");
+}
+
+TEST(AssetPath, NoOverridesIsByteIdenticalToStock) {
+    OverrideGuard guard;
+    renderer::set_asset_overrides({});
+    EXPECT_EQ(resolve_asset_path("data/rough.tga"), "game/data/rough.tga");
+}

@@ -1686,6 +1686,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "the renderer resolves is joined onto this. Default is the literal "
           "\"game\" (cwd-relative). Callable more than once.");
 
+    m.def("set_asset_overrides",
+          [](const std::map<std::string, std::string>& overrides) {
+              renderer::set_asset_overrides(overrides);
+          },
+          "Install mod asset overrides, keyed by case-folded relative path.");
+
     m.def("pick_folder",
           [](const std::string& title, const std::string& message)
               -> std::optional<std::string> {
