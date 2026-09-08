@@ -58,8 +58,8 @@ void field_carve_oblate(DistanceField& f,
         // each axis by its own half-extent turns the ellipsoid into a unit
         // sphere; multiplying the result by the SMALLEST half-extent ensures
         // the correct sign at the ellipsoid boundary (shape fidelity). Monotonicity
-        // is unconditional given the max() structure below: it never looks at
-        // d_old, only at -d_brush, so it cannot restore material.
+        // is unconditional given the max() structure below: the scaling never
+        // looks at d_old, only at -d_brush, so the max() cannot restore material.
         const float u = ld / radius;
         const float w = along / depth;
         const float unit = std::sqrt(u * u + w * w);
