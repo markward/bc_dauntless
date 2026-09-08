@@ -4160,9 +4160,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "with damage_decal_add but unused.");
 
     // BC authors a damage-volume resolution per ship
-    // (ShipProperty.SetDamageResolution, in every hardpoint file). It is the
-    // cell size in MODEL UNITS the hull volume should be baked at -- a per-ship
-    // detail ratio, which the quality multiplier then scales globally.
+    // (ShipProperty.SetDamageResolution, in every hardpoint file). This is
+    // NOT the bake cell size -- it is a per-ship detail RATIO (Shuttle 6,
+    // Akira 8, Galaxy 10, Warbird 12, stations 15). HullVolumeCache::get
+    // derives the actual cell size in model units as
+    // `authored_res / quality`, where quality is the global fidelity
+    // multiplier (kDefaultQuality). Reading this value as a cell size
+    // directly bakes every hull at half the intended fidelity.
     m.def("hull_volume_set_resolution",
           [](scenegraph::InstanceId id, float resolution) {
               auto* inst = g_world.get(id);

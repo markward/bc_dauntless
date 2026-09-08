@@ -70,9 +70,9 @@ std::unordered_map<std::string, float>& resolution_table() {
 }
 }  // namespace
 
-void set_hull_volume_resolution(const std::filesystem::path& source, float cell) {
-    if (source.empty() || !(cell > 0.0f)) return;
-    resolution_table()[source.string()] = cell;
+void set_hull_volume_resolution(const std::filesystem::path& source, float authored_res) {
+    if (source.empty() || !(authored_res > 0.0f)) return;
+    resolution_table()[source.string()] = authored_res;
 }
 
 float hull_volume_resolution(const std::filesystem::path& source) {

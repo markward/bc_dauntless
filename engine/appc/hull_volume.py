@@ -4,9 +4,12 @@
 -- Shuttle 6, Akira 8, Galaxy 10, Warbird 12, stations 15 -- and copied onto the
 ship by `ShipClass` property application. Until now nothing read it.
 
-It is the cell size, in MODEL UNITS, that the ship's damage volume should be
-baked at: a per-ship detail ratio which a global quality multiplier then scales.
-It is also finer than what BC itself shipped (Galaxy 10 vs a baked 15, Akira 8
+It is NOT a cell size: it is a per-ship detail RATIO (Shuttle 6, Akira 8,
+Galaxy 10, Warbird 12, stations 15). The native baker (`HullVolumeCache::get`)
+derives the actual bake cell size, in model units, as `authored_res / quality`,
+where quality is a global fidelity multiplier -- see
+`native/src/voxel/include/voxel/hull_volume_cache.h`. It is also finer than
+what BC itself shipped (Galaxy 10 vs a baked 15, Akira 8
 vs 15, Warbird 12 vs 25) -- and the Warbird, the worst mismatch in the fleet, is
 exactly the ship whose breaches were seen cutting into nothing.
 
