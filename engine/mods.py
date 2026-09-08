@@ -267,17 +267,22 @@ def _imported_names(source: str) -> set:
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        # Fallback for Python 1.5 syntax: handle import statements with comma-separated names
-        for m in _IMPORT_LIST_RE.finditer(source):
-            names_str = m.group(1)
-            for name in names_str.split(','):
-                name = name.strip()
-                if name:
-                    names.add(name.split(".")[0])
-        # Fallback for from...import statements
-        for m in _FROM_IMPORT_RE.finditer(source):
-            raw = m.group(1)
-            names.add(raw.split(".")[0])
+        # Fallback for Python 1.5 syntax. Split on semicolons first to handle
+        # multiple statements on one line (e.g., "import App; import Foundation").
+        # The regex anchors to line start (^\s*), so this preserves correct
+        # behaviour for commented-out imports and indentation.
+        for statement in source.split(';'):
+            # Handle import statements with comma-separated names
+            for m in _IMPORT_LIST_RE.finditer(statement):
+                names_str = m.group(1)
+                for name in names_str.split(','):
+                    name = name.strip()
+                    if name:
+                        names.add(name.split(".")[0])
+            # Handle from...import statements
+            for m in _FROM_IMPORT_RE.finditer(statement):
+                raw = m.group(1)
+                names.add(raw.split(".")[0])
         return names
 
     for node in ast.walk(tree):

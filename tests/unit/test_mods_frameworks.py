@@ -69,3 +69,11 @@ def test_from_import_through_regex_fallback():
     # from...import through the regex fallback (not AST)
     src = "from Foundation import ShipDef\nx = `1`\n"
     assert "Foundation" in mods._imported_names(src)
+
+
+def test_semicolon_separated_imports_detected_through_regex_fallback():
+    # Backtick-repr forces regex fallback; semicolon-separated imports must not be missed
+    src = "import App; import Foundation\nx = `1`\n"
+    names = mods._imported_names(src)
+    assert "Foundation" in names
+    assert "App" in names
