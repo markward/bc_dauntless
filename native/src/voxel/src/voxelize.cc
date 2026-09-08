@@ -84,11 +84,20 @@ void surface_voxelize(VoxelVolume& v, const std::vector<Tri>& tris) {
         const float longest = std::max(glm::length(t.b - t.a),
                              std::max(glm::length(t.c - t.a),
                                       glm::length(t.c - t.b)));
-        // Half a cell between samples along the longest edge. The clamp bounds
-        // worst-case cost on a single huge triangle; N*N samples are taken.
+        // Half a cell between samples along the longest edge. The clamp ensures
+        // a single huge triangle doesn't cost O(n^4) work; N*N samples are taken.
+        //
+        // The bound is not arbitrary: the safety invariant is that edge_component_i / N
+        // must be <= 0.5*cell[i] for every axis i. For an edge spanning the full
+        // grid extent along axis i, max edge_component_i = (dims[i]-2)*cell[i].
+        // So we need N >= 2*(dims[i]-2) for each axis i. This holds for ANY dims,
+        // not just isotropic ones. A future caller passing anisotropic dims
+        // (e.g. 49x67x17 for a Galaxy hull) would silently reintroduce the pinhole
+        // bug under a flat 512 clamp if one axis had fewer cells.
         int N = static_cast<int>(std::ceil(longest / (0.5f * min_cell)));
         if (N < 1) N = 1;
-        if (N > 512) N = 512;
+        const int max_samples = std::max({2 * (v.dims.x - 2), 2 * (v.dims.y - 2), 2 * (v.dims.z - 2)});
+        if (N > max_samples) N = max_samples;
 
         for (int i = 0; i <= N; ++i)
         for (int j = 0; j + i <= N; ++j) {

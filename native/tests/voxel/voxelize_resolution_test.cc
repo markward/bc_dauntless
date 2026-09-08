@@ -86,3 +86,35 @@ TEST(VoxelizeResolution, ThinPlateIsNotPerforated) {
     // than the X/Y cells, so a sampler tuned to one axis perforates the others.
     EXPECT_GT(frac, 0.5) << "thin plate perforated (fraction " << frac << ")";
 }
+
+// A regression test for the anisotropic-dims clamp bug. The original flat 512
+// clamp was correct only for isotropic grids and could silently reintroduce the
+// pinhole bug for anisotropic dims like 49x67x17 (Galaxy hull). The clamp must
+// be derived from the grid to ensure every axis is sampled at 0.5 cells or finer.
+TEST(VoxelizeResolution, AnisotropicDimsStaySolidUnderClamp) {
+    // Strongly anisotropic grid: 40 cells in X, 300 in Y, 10 in Z.
+    // Each axis has the same extent (1000) but vastly different cell sizes:
+    // cell.x = 1000/38 ~ 26.3, cell.y = 1000/298 ~ 3.36, cell.z = 1000/8 = 125.
+    // The Y axis has the smallest cells and is the bottleneck.
+    //
+    // A large box (1000^3) has edges that span the full extent. The longest edge
+    // needs unclamped N = ceil(1732 / 1.68) ~ 1031 samples. A flat 512 clamp
+    // would cause under-sampling in Y (spacing ~1.95 > allowed ~1.68). The
+    // dynamic clamp 2*max(38, 298, 8) = 596 prevents this.
+    const glm::ivec3 dims(40, 300, 10);
+    const glm::vec3 origin(0.f);
+    const glm::vec3 cell(1000.f / (dims.x - 2), 1000.f / (dims.y - 2), 1000.f / (dims.z - 2));
+
+    const std::vector<voxel::Tri> tris =
+        box_tris(glm::vec3(0.0f), glm::vec3(1000.0f));
+
+    const voxel::VoxelVolume v = voxel::voxelize_into(tris, dims, origin, cell);
+    const double frac = static_cast<double>(v.solid_count())
+                      / (static_cast<double>(dims.x) * dims.y * dims.z);
+
+    // With the dynamic clamp, solid fraction should be > 0.5.
+    // With a flat 512 clamp, this would collapse to ~0.02.
+    EXPECT_GT(frac, 0.5)
+        << "anisotropic grid collapsed (fraction " << frac
+        << " with dims " << dims.x << "x" << dims.y << "x" << dims.z << ")";
+}
