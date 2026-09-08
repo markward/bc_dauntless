@@ -4,6 +4,8 @@
 #include <renderer/carve_field_cache.h>
 #include <voxel/field_brush.h>
 
+#include <algorithm>
+
 #include <glad/glad.h>
 
 namespace renderer {
@@ -121,6 +123,44 @@ bool InstanceFieldCache::upload(Instance& inst) {
     inst.pub.dims   = inst.field.dims;
     inst.pub.scale  = inst.field.scale;
     return true;
+}
+
+HullCarveDepositResult hull_carve_deposit(
+        scenegraph::HullCarveField& carve,
+        InstanceFieldCache* field_cache,
+        scenegraph::InstanceId id,
+        const std::filesystem::path& source,
+        float authored_res,
+        const glm::vec3& center_body,
+        const glm::vec3& normal_body,
+        float influ_radius_model,
+        float strength,
+        float floor_radius_model,
+        float radius_modifier,
+        float inv_scale) {
+    scenegraph::HullCarve& c =
+        carve.add(center_body, influ_radius_model, strength, normal_body);
+    const float prev_radius = c.radius;
+    // Strength -> an ABSOLUTE carve radius (GU): a weapon carves the same
+    // hole whatever it hits, so no scaling by hull size. radius_modifier is
+    // BC's per-ship DamageRadMod (default 1.0; only big fixed structures set
+    // it bigger). inv_scale converts that GU radius to the instance's model
+    // units, same as influ_radius_model/floor_radius_model already are.
+    const float vis_gu =
+        scenegraph::hull_carve_strength_to_radius_gu(c.strength) * radius_modifier;
+    const float vis_model = vis_gu * inv_scale;
+    c.radius = std::max(c.radius, std::max(floor_radius_model, vis_model));
+
+    // Carve the per-instance distance field with the SAME body-frame centre/
+    // normal/radius the sphere above just received, so the two
+    // representations describe the same damage. No-op when there is no field
+    // to carve (missing/disabled cache, or a hull with no baked source).
+    if (field_cache != nullptr && !source.empty()) {
+        field_cache->carve(id, source, authored_res, center_body, normal_body,
+                           c.radius);
+    }
+
+    return HullCarveDepositResult{prev_radius, c.radius};
 }
 
 }  // namespace renderer

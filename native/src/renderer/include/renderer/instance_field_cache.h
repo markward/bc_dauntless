@@ -127,4 +127,55 @@ private:
     std::size_t uploads_ = 0;
 };
 
+/// Result of hull_carve_deposit: the sphere slot's visible radius before and
+/// after this deposit. Exists so hull_carve_deposit does not need to know
+/// anything about breach events itself -- the caller (host_bindings.cc's
+/// hull_carve_add) compares the two to decide whether to fire one.
+struct HullCarveDepositResult {
+    float prev_radius = 0.0f;  // c.radius BEFORE this deposit
+    float radius = 0.0f;       // c.radius AFTER this deposit
+};
+
+/// Deposit hull-damage strength onto BOTH representations of one instance's
+/// damage in a single call: the fixed 24-slot sphere ring (`carve`,
+/// scenegraph::HullCarveField -- still the only thing the breach scoop, the
+/// framework lattice and the breach-event ring read) and, alongside it, the
+/// per-instance distance field (`field_cache`) -- using the SAME body-frame
+/// centre/normal and the SAME derived visible radius for both, so the two
+/// representations describe the same damage.
+///
+/// This is the entire sequence host_bindings.cc's `hull_carve_add` pybind
+/// binding runs once it has transformed a hit into body frame and converted
+/// GU to model units: deposit strength into the sphere ring, derive the
+/// visible radius from the grown total via
+/// scenegraph::hull_carve_strength_to_radius_gu (monotonic -- never below
+/// `floor_radius_model`, never shrinking), then carve the field with that
+/// SAME centre/normal/radius. It lives here, not inlined in the pybind
+/// lambda, specifically so a test can call this IDENTICAL code path instead
+/// of re-deriving the same arithmetic and silently drifting from it --
+/// host_bindings.cc's `hull_carve_add` is a thin wrapper around this
+/// function plus the world->body transform and the breach-event push.
+///
+/// `field_cache` may be null and `source` may be empty (a hull with no baked
+/// field, or field carving unavailable) -- the sphere ring is still updated
+/// exactly as it was before this feature existed.
+///
+/// Every radius argument here is already in MODEL UNITS (or a plain
+/// multiplier, for radius_modifier/inv_scale); this function performs no
+/// GU<->model conversion of its own -- the caller does that once, the same
+/// way it always has.
+HullCarveDepositResult hull_carve_deposit(
+    scenegraph::HullCarveField& carve,
+    InstanceFieldCache* field_cache,
+    scenegraph::InstanceId id,
+    const std::filesystem::path& source,
+    float authored_res,
+    const glm::vec3& center_body,
+    const glm::vec3& normal_body,
+    float influ_radius_model,
+    float strength,
+    float floor_radius_model,
+    float radius_modifier,
+    float inv_scale);
+
 }  // namespace renderer

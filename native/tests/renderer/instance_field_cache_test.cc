@@ -112,18 +112,46 @@ bool seed_baked_field(voxel::HullVolumeCache& cache,
 // Read back the whole GL_R8 atlas actually bound in `e` -- proves what
 // InstanceFieldCache uploaded, not just what it recorded in the Entry's
 // glm-typed geometry fields.
+//
+// GL_PACK_ALIGNMENT defaults to 4: without overriding it, glGetTexImage pads
+// each row out to a multiple of 4 bytes in the destination buffer, so a
+// width not itself a multiple of 4 (e.g. 7, from a 5-wide field's 1-texel
+// border) reads back with a spurious zero byte at the end of every row --
+// this file's earlier fields (dims 4x4x4, atlas width 12) never exposed it
+// because 12 already is a multiple of 4. upload() sets the matching
+// GL_UNPACK_ALIGNMENT for the write side; this mirrors it for the read.
 std::vector<std::uint8_t> read_atlas(const InstanceFieldCache::Entry& e) {
     std::vector<std::uint8_t> pixels(
         static_cast<std::size_t>(e.layout.width) *
         static_cast<std::size_t>(e.layout.height));
+    GLint prev_pack = 4;
+    glGetIntegerv(GL_PACK_ALIGNMENT, &prev_pack);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glBindTexture(GL_TEXTURE_2D, e.tex2d);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RED, GL_UNSIGNED_BYTE, pixels.data());
     glBindTexture(GL_TEXTURE_2D, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, prev_pack);
     return pixels;
 }
 
 constexpr float kAuthoredRes = 10.0f;
 const glm::vec3 kUp(0.0f, 0.0f, 1.0f);
+
+// hull_carve_deposit derives its VISIBLE radius from accumulated strength via
+// scenegraph::hull_carve_strength_to_radius_gu, in GAME UNITS, then multiplies
+// by the caller's inv_scale to reach model units (mirroring host_bindings.cc's
+// hull_carve_add: `vis_model = vis_gu * inv_s`). At strength ==
+// kHullCarveStrengthIso + 50 that curve gives exactly 0.06 GU
+// (kHullCarveRadiusAtIso 0.03 + 50 * kHullCarveRadiusPerStrength 0.0006).
+// This inv_scale turns that into model-unit radius 3.0 -- the exact
+// radius/cell-10 combination already established elsewhere in this file
+// (see TwoInstancesOfSameHullGetIndependentFields) to touch exactly one
+// 10-unit cell and no more. Passing inv_scale=1 here (i.e. treating the GU
+// curve's output as already model units) was tried first and produced a
+// carve too small to round to a visibly-outside cell against this file's
+// scale=1.0 fields -- every affected cell quantized to exactly the surface
+// (0), not outside it.
+constexpr float kInvScaleForRadius3 = 3.0f / 0.06f;
 
 class InstanceFieldCacheTest : public ::testing::Test {
 protected:
@@ -354,6 +382,230 @@ TEST_F(InstanceFieldCacheTest, TwoInstancesOfSameHullGetIndependentFields) {
     EXPECT_EQ(read_atlas(*eb), expected_b_bytes)
         << "instance B must carry exactly its own carve -- not none, and "
            "not instance A's";
+}
+
+// ── hull-volume-field-transport Task 6: wiring carves into the field ───────
+//
+// The three tests below drive renderer::hull_carve_deposit -- the exact
+// function host_bindings.cc's hull_carve_add pybind binding calls, not a
+// re-implementation of its arithmetic (see instance_field_cache.h). That
+// closes the gap a hand-rolled "simulate what hull_carve_add does" test
+// would leave open: if hull_carve_deposit's own body regressed (wrong
+// radius passed to the field, or the field carve call dropped entirely),
+// these tests fail for that reason. host_bindings.cc's own glue around it --
+// the world->body transform, resolve_model, and the pybind argument
+// marshalling -- is pybind-only and cannot link into this gtest binary, so
+// that thin remainder is verified by direct code reading only.
+
+TEST_F(InstanceFieldCacheTest, ProductionDepositAppearsInBothSphereAndInstanceField) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_dual_deposit");
+    const auto src = make_source("hull_dual_deposit.nif", "hull");
+    const voxel::DistanceField baked = make_baked_field();
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, baked));
+
+    scenegraph::HullCarveField sphere_field;
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+    const glm::vec3 center_body(5.0f, 5.0f, 5.0f);
+
+    // Strength above the iso so the carve is actually visible (radius > 0) --
+    // a sub-iso deposit stays invisible by design and would make this test
+    // pass vacuously (an inert 0-radius field carve is a no-op).
+    const float strength = scenegraph::kHullCarveStrengthIso + 50.0f;
+    const renderer::HullCarveDepositResult result = renderer::hull_carve_deposit(
+        sphere_field, &cache, id, src, kAuthoredRes,
+        center_body, kUp, /*influ_radius_model=*/3.0f, strength,
+        /*floor_radius_model=*/0.0f, /*radius_modifier=*/1.0f,
+        /*inv_scale=*/kInvScaleForRadius3);
+
+    ASSERT_GT(result.radius, 0.0f) << "sanity: strength was set above the iso";
+    EXPECT_GT(result.radius, result.prev_radius);
+
+    // Sphere side: the same surface the breach scoop / framework lattice /
+    // breach-event ring still read.
+    ASSERT_EQ(sphere_field.count(), 1u);
+    EXPECT_EQ(sphere_field.slots()[0].center_body, center_body);
+    EXPECT_FLOAT_EQ(sphere_field.slots()[0].radius, result.radius);
+
+    // Field side: an entry now exists AND actually carries the carve -- not
+    // merely "an entry exists" (the untouched-baked-field trap the earlier
+    // tests in this file guard against).
+    const InstanceFieldCache::Entry* e = cache.get(id);
+    ASSERT_NE(e, nullptr);
+    voxel::DistanceField expected = baked;
+    voxel::field_carve_oblate(expected, center_body, kUp, result.radius);
+    const auto expected_bytes = voxel::pack_field_to_atlas(
+        expected, voxel::atlas_layout_for(expected.dims));
+    const auto baked_bytes = voxel::pack_field_to_atlas(
+        baked, voxel::atlas_layout_for(baked.dims));
+    ASSERT_NE(expected_bytes, baked_bytes)
+        << "sanity: the carve must actually change something";
+    EXPECT_EQ(read_atlas(*e), expected_bytes)
+        << "the instance field must carry the SAME carve the sphere just "
+           "received -- same body-frame centre, normal, and radius";
+}
+
+// Behaviour: THE plan's headline win. The sphere ring is a fixed 24-slot
+// array (accumulate-merge-then-evict); the field has no such ceiling. 30
+// well-separated deposits must evict 6 spheres from the ring while every one
+// of the 30 carved cells survives in the field.
+TEST_F(InstanceFieldCacheTest, ThirtyCarvesAllSurviveInTheField) {
+    // A 5x6 grid of 10-unit cells in the z=0 layer -- 30 distinct cells. A
+    // radius-3 carve on a 10-unit cell touches ONLY that one cell (see the
+    // arithmetic worked out in TwoInstancesOfSameHullGetIndependentFields
+    // above), so every carve below is guaranteed non-overlapping with every
+    // other.
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_thirty_carves");
+    const auto src = make_source("hull_thirty_carves.nif", "hull");
+    voxel::DistanceField baked;
+    baked.dims   = glm::ivec3(5, 6, 1);
+    baked.origin = glm::vec3(0.0f);
+    baked.cell   = glm::vec3(10.0f);
+    baked.scale  = 1.0f;
+    baked.dist.assign(static_cast<std::size_t>(5 * 6 * 1),
+                      static_cast<std::int8_t>(-100));
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, baked));
+
+    scenegraph::HullCarveField sphere_field;
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+    const float strength = scenegraph::kHullCarveStrengthIso + 50.0f;
+
+    std::vector<glm::vec3> centers;
+    for (int j = 0; j < 6; ++j) {
+        for (int i = 0; i < 5; ++i) {
+            centers.emplace_back(i * 10.0f + 5.0f, j * 10.0f + 5.0f, 5.0f);
+        }
+    }
+    ASSERT_EQ(centers.size(), 30u);
+
+    // Independently-built expectation: apply the SAME oblate brush the
+    // production carve uses, at every one of the 30 centres, to a private
+    // copy of the baked field -- built by this test, not read back from the
+    // cache under test.
+    voxel::DistanceField expected = baked;
+    for (const glm::vec3& c : centers) {
+        const renderer::HullCarveDepositResult result = renderer::hull_carve_deposit(
+            sphere_field, &cache, id, src, kAuthoredRes, c, kUp,
+            /*influ_radius_model=*/1.0f, strength,
+            /*floor_radius_model=*/0.0f, /*radius_modifier=*/1.0f,
+            /*inv_scale=*/kInvScaleForRadius3);
+        ASSERT_GT(result.radius, 0.0f);
+        voxel::field_carve_oblate(expected, c, kUp, result.radius);
+    }
+
+    // The sphere ring is fixed-capacity: 30 deposits into 24 slots must have
+    // evicted six. This is the CURRENT, pre-field behaviour this plan is
+    // measured against -- a dying ship's damage popping in and out.
+    EXPECT_EQ(sphere_field.count(), scenegraph::HullCarveField::kMaxCarves);
+
+    // Sanity check on the independently-built `expected` field ITSELF (not
+    // the cache under test): proves this test's own construction actually
+    // touched all 30 cells, so the byte-equality below is not comparing two
+    // equally-untouched arrays.
+    const auto baked_bytes = voxel::pack_field_to_atlas(
+        baked, voxel::atlas_layout_for(baked.dims));
+    const auto expected_bytes = voxel::pack_field_to_atlas(
+        expected, voxel::atlas_layout_for(expected.dims));
+    ASSERT_NE(expected_bytes, baked_bytes);
+    for (int j = 0; j < 6; ++j) {
+        for (int i = 0; i < 5; ++i) {
+            EXPECT_GT(expected.distance_at(i, j, 0), 0.0f)
+                << "this test's own reference construction should have "
+                   "carved cell (" << i << "," << j << ")";
+        }
+    }
+
+    // The field has NO 24-slot ceiling: every one of the 30 carved cells,
+    // INCLUDING the six the sphere ring evicted, must survive here. This is
+    // the assertion that actually distinguishes a working field-carve wire-up
+    // from a broken one: if hull_carve_deposit stopped calling
+    // field_cache->carve, cache.get(id) would be null after the very first
+    // deposit and this ASSERT would fail outright; if it only carved some of
+    // the 30, the byte-for-byte compare below would catch the mismatch.
+    const InstanceFieldCache::Entry* e = cache.get(id);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(read_atlas(*e), expected_bytes)
+        << "all 30 carves must survive in the field even though the sphere "
+           "ring evicted 6 of them";
+}
+
+// Behaviour: an instance destroyed and recreated does not inherit the old
+// instance's field. scenegraph::World bumps the slot generation on every
+// reuse of a freed index (world.cc's create_instance), so "the same id" in
+// the practical, player-facing sense used here means "the same slot index" --
+// the InstanceId itself always differs afterward. host_bindings.cc's
+// destroy_instance binding calls InstanceFieldCache::forget(old_id) at
+// exactly the moment the old instance dies, before its index can be
+// recycled; this test drives that exact sequence directly (forget() is
+// itself production code, just not reachable from this gtest binary via the
+// pybind binding around it).
+TEST_F(InstanceFieldCacheTest, DestroyedAndRecreatedInstanceDoesNotInheritOldField) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_recycle");
+    const auto src = make_source("hull_recycle.nif", "hull");
+    const voxel::DistanceField baked = make_baked_field();
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, baked));
+
+    InstanceFieldCache cache(&bake_cache);
+    const float strength = scenegraph::kHullCarveStrengthIso + 50.0f;
+
+    // Old instance: index 1, generation 1 (World's first-ever id at a fresh
+    // index). Carve it at cell (0,0,0)'s midpoint.
+    scenegraph::HullCarveField old_sphere_field;
+    const scenegraph::InstanceId old_id{1, 1};
+    renderer::hull_carve_deposit(old_sphere_field, &cache, old_id, src,
+                                 kAuthoredRes, glm::vec3(5.0f, 5.0f, 5.0f),
+                                 kUp, 3.0f, strength, 0.0f, 1.0f,
+                                 kInvScaleForRadius3);
+
+    const InstanceFieldCache::Entry* old_entry = cache.get(old_id);
+    ASSERT_NE(old_entry, nullptr);
+    const unsigned int old_tex = old_entry->tex2d;
+    ASSERT_TRUE(glIsTexture(old_tex));
+
+    // The ship is destroyed: host_bindings.cc's destroy_instance calls
+    // forget() at exactly this point.
+    cache.forget(old_id);
+
+    // Resource hygiene: forget() at destroy time actually released the OLD
+    // texture -- it did not just become unreachable and leak. Checked HERE,
+    // before anything else runs, because a texture name freed by
+    // glDeleteTextures is eligible for immediate reuse by the very next
+    // glGenTextures -- the new instance's own upload() below could otherwise
+    // recycle this exact id and make glIsTexture(old_tex) read true again
+    // for an unrelated reason, masking a real leak.
+    EXPECT_FALSE(glIsTexture(old_tex))
+        << "forget() at destroy time must release the old GL texture, not "
+           "leak one every time a damaged ship is destroyed and replaced";
+
+    // A new ship spawns and World recycles the same slot INDEX with a
+    // bumped generation (world.cc's create_instance: `slots_[idx].generation
+    // += 1`). Carve it at cell (3,3,3)'s midpoint -- a different cell from
+    // the old instance's carve.
+    const scenegraph::InstanceId new_id{1, 2};
+    scenegraph::HullCarveField new_sphere_field;
+    const renderer::HullCarveDepositResult new_result = renderer::hull_carve_deposit(
+        new_sphere_field, &cache, new_id, src, kAuthoredRes,
+        glm::vec3(35.0f, 35.0f, 35.0f), kUp, 3.0f, strength, 0.0f, 1.0f,
+        kInvScaleForRadius3);
+    ASSERT_GT(new_result.radius, 0.0f);
+
+    const InstanceFieldCache::Entry* new_entry = cache.get(new_id);
+    ASSERT_NE(new_entry, nullptr);
+
+    // Correctness: the new instance's field reflects ONLY its own carve --
+    // freshly copied from the baked field, not the old instance's
+    // battle-scarred copy.
+    voxel::DistanceField expected_new = baked;
+    voxel::field_carve_oblate(expected_new, glm::vec3(35.0f, 35.0f, 35.0f),
+                              kUp, new_result.radius);
+    const auto expected_new_bytes = voxel::pack_field_to_atlas(
+        expected_new, voxel::atlas_layout_for(expected_new.dims));
+    EXPECT_EQ(read_atlas(*new_entry), expected_new_bytes)
+        << "the new instance must not inherit the old instance's carve";
 }
 
 }  // namespace
