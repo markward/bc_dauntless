@@ -271,6 +271,10 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
         if (!s.active) continue;
         if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
         if (!carve_has_backing(fill, s.center_body, s.surface_normal)) continue;
+        // Too little material behind the breach to build a cavity in: draw
+        // nothing and let it show through. See carve_cavity_depth_cells.
+        if (carve_cavity_depth_cells(fill, s.center_body, s.surface_normal)
+            < CarveFieldCache::kMinCavityCells) continue;
         draw_scoop(s.center_body, s.radius, s.surface_normal,
                    fe.tex3d, fill.origin, fill.cell, fill.dims,
                    world_xf, camera, pipeline,
@@ -340,6 +344,14 @@ void BreachPass::render(const scenegraph::World& world,
                 // more importantly, keep the two passes reading the SAME gate so
                 // they cannot drift apart.
                 if (!carve_has_backing(fill, s.center_body, s.surface_normal))
+                    continue;
+                // A hull too thin to hold a cavity gets no scoop at all: the
+                // mask would collapse to a mid-plane sheet of damage material
+                // that backfills the hole instead of revealing depth. See
+                // carve_cavity_depth_cells.
+                if (carve_cavity_depth_cells(fill, s.center_body,
+                                             s.surface_normal)
+                    < CarveFieldCache::kMinCavityCells)
                     continue;
 
                 // Find the nearest active breach event for this carve slot.

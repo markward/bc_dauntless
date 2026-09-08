@@ -31,6 +31,36 @@ bool carve_has_backing(const voxel::VoxelVolume& fill,
     return false;
 }
 
+float carve_cavity_depth_cells(const voxel::VoxelVolume& fill,
+                               const glm::vec3& center_body,
+                               const glm::vec3& normal_body) {
+    // No volume to consult means no opinion — a mod ship with no _vox.nif keeps
+    // its scoop rather than losing it to a probe with nothing to say. Same
+    // contract as carve_has_backing's empty-volume case.
+    if (fill.occ.empty() || fill.cell.x <= 0.0f)
+        return CarveFieldCache::kCavityMaxCells;
+
+    const float reach = CarveFieldCache::kCavityMaxCells * fill.cell.x;
+    int hits = 0;
+    for (int t = 1; t <= CarveFieldCache::kCavityTaps; ++t) {
+        const float d =
+            reach * static_cast<float>(t) / CarveFieldCache::kCavityTaps;
+        const glm::vec3 p = center_body - normal_body * d;
+        const glm::vec3 g = (p - fill.origin) / fill.cell;
+        const glm::ivec3 c(static_cast<int>(std::floor(g.x)),
+                           static_cast<int>(std::floor(g.y)),
+                           static_cast<int>(std::floor(g.z)));
+        if (c.x < 0 || c.y < 0 || c.z < 0 ||
+            c.x >= fill.dims.x || c.y >= fill.dims.y || c.z >= fill.dims.z)
+            continue;                       // off the grid: no material here
+        if (fill.occ[fill.index(c.x, c.y, c.z)] >=
+            CarveFieldCache::kBackingIsovalue)
+            ++hits;
+    }
+    return CarveFieldCache::kCavityMaxCells * static_cast<float>(hits)
+           / CarveFieldCache::kCavityTaps;
+}
+
 CarveFieldCache::~CarveFieldCache() {
     for (auto& kv : by_source_) {
         if (kv.second.tex3d) {

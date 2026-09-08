@@ -36,6 +36,33 @@ bool carve_has_backing(const voxel::VoxelVolume& fill,
                        const glm::vec3& center_body,
                        const glm::vec3& normal_body);
 
+/// How DEEP the hull material runs inward from a carve, in cells.
+///
+/// A different question from carve_has_backing, and the two must not be
+/// conflated: that one asks "is there anything to cut into at all?", this asks
+/// "is there enough of it to be worth drawing a cavity in?".
+///
+/// The scoop draws the damage sphere's inner surface masked by the fill, which
+/// degenerates when the fill is thin. BC's authored volumes are only a handful
+/// of nodes deep through a hull's vertical axis -- MEASURED on stock hulls:
+/// Galaxy 9, Vorcha 7, BirdOfPrey 6, Sovereign 5, Akira 5, Galor 3 -- so on a
+/// thin ship the mask passes only near the mid-plane and the "interior"
+/// collapses into a flat sheet of damage material down the ship's centre,
+/// visible through every breach and impossible to cut away because it is not
+/// hull. It also backfills the hole: a carve near an edge discards the hull as
+/// it should, then the sheet paints across the gap so the breach reads as a
+/// crust rather than as a hole.
+///
+/// Below kMinCavityCells the scoop draws nothing and you see straight through.
+///
+/// Depth is the material found over a fixed inward reach rather than the run
+/// length to the first gap: a carve centre sits ON the hull surface, which for
+/// these volumes is often just outside the fill, so a strict run would measure
+/// zero on most real carves.
+float carve_cavity_depth_cells(const voxel::VoxelVolume& fill,
+                               const glm::vec3& center_body,
+                               const glm::vec3& normal_body);
+
 /// Shared STATIC original-fill cache (hull-breach-2b Path C).
 ///
 /// Serves the original (UNCARVED) hull fill as a GL_R8 3D texture, built
@@ -92,6 +119,20 @@ public:
     // to 2-11%, and marching 3 cells does not improve on it.
     static constexpr int   kBackingTaps  = 4;
     static constexpr float kBackingCells = 1.5f;
+
+    // Cavity probe (carve_cavity_depth_cells). Reach far enough to distinguish
+    // a thin plate from a real interior, sampled finely enough that a hull one
+    // cell thick is not missed between taps.
+    static constexpr int   kCavityTaps     = 16;
+    static constexpr float kCavityMaxCells = 4.0f;
+
+    // Minimum depth worth drawing a cavity in. Below this the scoop stands
+    // down and the breach shows through.
+    //
+    // Sized against the fleet: a Galor's whole hull is ~19 model units through
+    // a 15-unit cell (~1.3 cells), so it never earns a scoop and its breaches
+    // become real holes; a Galaxy saucer runs ~2.7 cells and keeps one.
+    static constexpr float kMinCavityCells = 2.0f;
 
     /// A cached static fill entry for one hull source path.
     struct Entry {
