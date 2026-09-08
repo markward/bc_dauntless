@@ -350,6 +350,14 @@ def game_override(rel) -> Optional[Path]:
     return hit.abs_path
 
 
+def sdk_override(module_rel) -> Optional[Path]:
+    """The mod file for an SDK-scripts-relative path, or None."""
+    hit = current().lookup(module_rel)
+    if hit is None or hit.target != "sdk":  # paths-guard: kind label
+        return None
+    return hit.abs_path
+
+
 def describe(index: ModIndex) -> str:
     """The boot report. Empty when no mods are installed."""
     if not index.mods:

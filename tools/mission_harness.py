@@ -463,6 +463,22 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
             return None
         if (_PROJECT_ROOT / rel).is_dir() and (_PROJECT_ROOT / rel / "__init__.py").exists():
             return None
+        # An installed mod's script wins over the stock SDK module. Checked
+        # after the project-root shims (those are OUR replacements and must
+        # not be overridable) and before the SDK itself.
+        from engine import mods as _mods
+        _override = _mods.sdk_override(rel + ".py")
+        if _override is not None:
+            loader = _SDKLoader(str(_override))
+            return importlib.machinery.ModuleSpec(
+                fullname, loader, origin=str(_override))
+        _pkg_override = _mods.sdk_override(rel + "/__init__.py")
+        if _pkg_override is not None:
+            loader = _SDKLoader(str(_pkg_override))
+            spec = importlib.machinery.ModuleSpec(
+                fullname, loader, origin=str(_pkg_override))
+            spec.submodule_search_locations = [str(Path(_pkg_override).parent)]
+            return spec
         candidate = sdk_scripts / (rel + ".py")
         if candidate.exists():
             loader = _SDKLoader(str(candidate))
