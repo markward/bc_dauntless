@@ -334,13 +334,16 @@ def test_realize_set_comm_geometry_is_idempotent():
 def test_realize_set_comm_texture_path_is_model_dir_high():
     """env_for is None for comm sets (SetupBridgeSet uses SetBackgroundModel, not
     LoadModel) — the texture search path must be <model_dir>/High, not the
-    DBridge fallback (which holds only DBridge's textures)."""
+    DBridge fallback (which holds only DBridge's textures). Now a mod-aware
+    list of search dirs (paths.game_asset_dirs); with no mods configured it
+    is the stock directory alone, per that function's modless invariant."""
     s = _comm_set_with_geometry()
     c = _CommCtl(); c.comm_instances_by_set = {}; c.nif_to_handle = {}
     r = _comm_renderer()
     hl.realize_set(c, r, s, is_bridge=False, comm_set_id=1)
     _nif_abs, tex_abs = r.loaded[0]
-    assert tex_abs.replace("\\", "/").endswith(
+    assert isinstance(tex_abs, list)
+    assert tex_abs[-1].replace("\\", "/").endswith(
         "data/Models/Sets/StarbaseControl/High")
 
 

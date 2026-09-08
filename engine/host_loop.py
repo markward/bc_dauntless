@@ -4363,9 +4363,10 @@ def _ship_texture_search(nif_path, ship) -> list[str]:
     share = _ship_texture_share_path(ship)
     return [
         str(Path(nif_path).parent / tier),
-        str(_paths.game_asset(share) / tier),
-        str(_paths.game_asset(DEFAULT_TEXTURE_SEARCH)),
-        str(_paths.game_asset("data/Models/SharedTextures/FedBases/High")),
+        *[str(p) for p in _paths.game_asset_dirs(f"{share}/{tier}")],
+        *[str(p) for p in _paths.game_asset_dirs(DEFAULT_TEXTURE_SEARCH)],
+        *[str(p) for p in _paths.game_asset_dirs(
+            "data/Models/SharedTextures/FedBases/High")],
     ]
 
 
@@ -4826,7 +4827,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
                 print(f"[host_loop]   realize: shield register skipped for ship: "
                       f"{type(e).__name__}: {e}", flush=True)
 
-    planet_tex_search = str(_paths.game_asset(DEFAULT_PLANET_TEXTURE_SEARCH))
+    planet_tex_search = [str(p) for p in
+                         _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
     for planet in _iter_planets_in_set(pSet):
         if planet in session.planet_instances:
             continue
@@ -5462,7 +5464,8 @@ class _MissionLoader:
                     print(f"[host_loop]   shield register skipped for ship: "
                           f"{type(e).__name__}: {e}", flush=True)
 
-        planet_tex_search = str(_paths.game_asset(DEFAULT_PLANET_TEXTURE_SEARCH))
+        planet_tex_search = [str(p) for p in
+                             _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
         for planet in _iter_planets(verbose=self._verbose):
             nif_path = _planet_nif_path(planet, verbose=self._verbose)
             if nif_path is None:
@@ -5845,7 +5848,8 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
             # textures live in <model_dir>/High by BC convention; use that
             # rather than the DBridge fallback (which holds only DBridge's tgas).
             import posixpath as _pp
-            tex_abs = str(_paths.game_asset(_pp.dirname(nif)) / "High")
+            tex_abs = [str(p) for p in
+                       _paths.game_asset_dirs(_pp.dirname(nif) + "/High")]
         if is_bridge:
             handle = r.load_model(nif_abs, tex_abs)
             iid = r.create_bridge_instance(handle)
@@ -5883,8 +5887,8 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
                 controller.viewscreen_instance = None
             vs_nif_abs = str(_paths.game_asset(vs.nif))
             vs_env = _App.g_kModelManager.env_for(vs.nif)
-            vs_tex = (str(_paths.game_asset(vs_env)) if vs_env
-                      else str(_paths.game_asset(DBRIDGE_TEX_REL)))
+            vs_tex = ([str(p) for p in _paths.game_asset_dirs(vs_env)] if vs_env
+                      else [str(p) for p in _paths.game_asset_dirs(DBRIDGE_TEX_REL)])
             vs_handle = r.load_model(vs_nif_abs, vs_tex)
             vs_iid = r.create_bridge_instance(vs_handle)
             r.set_world_transform(vs_iid, IDENTITY_MAT4)

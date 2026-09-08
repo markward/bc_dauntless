@@ -14,10 +14,11 @@ from engine.missions.tgl_reader import read_tgl, TGLFile
 
 
 def _tgl_roots() -> tuple[Path, ...]:
-    """Both TGL sources, resolved at USE. Was a module-level tuple holding
-    BOTH roots -- the single densest instance of the capture-at-import trap."""
+    """Every TGL source, resolved at USE: SDK, then mod dirs, then stock.
+    Was a module-level tuple holding BOTH roots -- the single densest
+    instance of the capture-at-import trap."""
     from engine import paths
-    return (paths.sdk_data() / "TGL", paths.game_asset("data/TGL"))
+    return (paths.sdk_data() / "TGL", *paths.game_asset_dirs("data/TGL"))
 
 
 # Authoritative Maelstrom campaign structure, transcribed from the original

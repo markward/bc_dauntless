@@ -396,6 +396,18 @@ def game_asset(rel) -> Path:
     return game_root() / rel
 
 
+def game_asset_dirs(rel) -> list:
+    """Every directory to SEARCH for `rel`, mod directories first.
+
+    game_asset() answers "which file?", which a caller that scans a
+    directory cannot use. Always includes the stock directory last, so a
+    modless call is exactly today's single-directory behaviour wrapped in a
+    list.
+    """
+    from engine import mods
+    return [*mods.current().dirs_for(rel), game_root() / rel]
+
+
 # --- the failure message ----------------------------------------------------
 
 def describe_failure(resolution: Resolution) -> str:
