@@ -148,8 +148,21 @@ uniform int       u_frame_enabled;  // 0 = framework skipped (stock path)
 // breach: hull struts remain where Damage.tga's alpha is opaque, gaps reveal the
 // interior behind. The surrounding hull is never touched.
 const float kFrameUvScale = 0.6;  // breach radius → texture span (lower = bigger lattice cells)
-const float kStrutAlpha   = 0.5;  // keep a hull strut where stencil alpha exceeds this
-const float kOpenCore     = 0.35; // inner fraction of the breach always fully open (no struts)
+const float kStrutAlpha   = 0.5;  // keep a hull strut where stencil alpha exceeds this.
+                                  // A WEAK lever: Damage.tga's alpha is close to
+                                  // binary, so 42.1% of the stencil is opaque at
+                                  // 0.5 and still 38.4% at 0.9. Raising it barely
+                                  // opens the breach; kOpenCore is the real knob.
+const float kOpenCore     = 0.75; // inner fraction of the breach RADIUS always fully
+                                  // open (no struts). Area goes as the square, so
+                                  // this is 56% of the breach open by area, with the
+                                  // struts confined to a torn outer rim.
+                                  //
+                                  // Was 0.35 -- only 12% of the area, leaving ~37% of
+                                  // every breach bridged by a lattice spread across
+                                  // the whole opening. That reads as a crust on the
+                                  // hull rather than a hole through it: you perceive
+                                  // the grille, not the gap.
 
 // breach shape — KEEP IN SYNC with breach.vert.
 // OBLATE spheroid centred on the hull surface: FULL lateral radius (original
