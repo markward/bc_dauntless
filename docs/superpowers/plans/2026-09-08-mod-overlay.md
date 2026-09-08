@@ -33,7 +33,7 @@
 | `tests/conftest.py` (modify) | Same change, second copy. |
 | `engine/ui/{ship,weapon,damage}_icons.py` (modify) | Directory-join lookups become single relative-path lookups. |
 | `engine/missions/name_resolver.py` (modify) | `_tgl_roots()` includes mod TGL directories. |
-| `engine/appc/viewscreen_static.py` (modify) | Effects directory becomes a search list. |
+| `engine/appc/viewscreen_static.py` (modify) | Static noise frames resolve per file through the index. |
 | `engine/host_loop.py` (modify) | Texture and planet searches gain mod dirs; boot builds and installs the index. |
 | `native/src/renderer/asset_path.{h,cc}` (modify) | Override map consulted before the root prefix. |
 | `native/src/host/host_bindings.cc` (modify) | `set_asset_overrides` binding. |
@@ -1110,10 +1110,10 @@ git commit -m "feat(mods): let mod scripts override SDK modules in both finders"
 
 ---
 
-### Task 7: Icon consumers (directory-then-join → single lookup)
+### Task 7: Directory-then-join consumers → single lookups
 
 **Files:**
-- Modify: `engine/ui/ship_icons.py`, `engine/ui/weapon_icons.py`, `engine/ui/damage_icons.py`
+- Modify: `engine/ui/ship_icons.py`, `engine/ui/weapon_icons.py`, `engine/ui/damage_icons.py`, `engine/appc/viewscreen_static.py:26-38`
 - Test: `tests/unit/test_mods_consumers.py`
 
 **Interfaces:**
@@ -1157,6 +1157,24 @@ def test_ship_icon_path_falls_back_to_stock(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "g")
     got = ship_icons._game_icon_file("Galaxy")
     assert got == tmp_path / "g" / "data/Icons/Ships/Galaxy.tga"
+
+
+def test_viewscreen_static_frames_prefer_a_mod(monkeypatch, tmp_path):
+    from engine.appc import viewscreen_static
+    monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "g")
+    _touch(tmp_path / "mods" / "M" / "Data" / "Textures" / "Effects" / "Noise2.tga")
+    mods.configure(mods.build_index(tmp_path / "mods"))
+    got = viewscreen_static.static_texture_paths("View Screen Static")
+    assert got[1] == str(
+        tmp_path / "mods" / "M" / "Data" / "Textures" / "Effects" / "Noise2.tga")
+    # The other two frames are unmodded and still come from stock.
+    assert got[0] == str(tmp_path / "g" / "data/Textures/Effects/Noise1.tga")
+
+
+def test_viewscreen_static_unknown_group_is_still_empty(monkeypatch, tmp_path):
+    from engine.appc import viewscreen_static
+    monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "g")
+    assert viewscreen_static.static_texture_paths("nope") == []
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1197,6 +1215,22 @@ def _game_icon_file(stem: str):
 
 Leave `_game_icons_dir()` in place in all three modules if anything else still calls it; delete it only where it becomes unused.
 
+`engine/appc/viewscreen_static.py` is the same shape — it builds a directory then joins each frame name onto it. Resolve each frame individually instead, and delete `_effects_dir()`, which becomes unused:
+
+```python
+def static_texture_paths(icon_group):
+    """Absolute paths to the noise frames for `icon_group`, or [] if unknown.
+
+    Each frame is resolved individually so a mod supplying one frame is
+    found: the index maps files, and a directory built once cannot see it.
+    """
+    from engine import paths
+    files = _STATIC_TEXTURE_FILES.get(icon_group)
+    if not files:
+        return []
+    return [str(paths.game_asset(f"data/Textures/Effects/{f}")) for f in files]
+```
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/unit/test_mods_consumers.py -v`
@@ -1210,8 +1244,8 @@ Expected: only baselined failures.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add engine/ui/ship_icons.py engine/ui/weapon_icons.py engine/ui/damage_icons.py tests/unit/test_mods_consumers.py
-git commit -m "feat(mods): resolve icon files through the mod index"
+git add engine/ui/ship_icons.py engine/ui/weapon_icons.py engine/ui/damage_icons.py engine/appc/viewscreen_static.py tests/unit/test_mods_consumers.py
+git commit -m "feat(mods): resolve icon and viewscreen frames through the mod index"
 ```
 
 ---
@@ -1219,7 +1253,7 @@ git commit -m "feat(mods): resolve icon files through the mod index"
 ### Task 8: Directory-search consumers
 
 **Files:**
-- Modify: `engine/paths.py`, `engine/host_loop.py` (`_ship_texture_search` ~4347, planet search ~4829 and ~5465, bridge texture dirs ~5848 and ~5887), `engine/missions/name_resolver.py:16-20`, `engine/appc/viewscreen_static.py:29`
+- Modify: `engine/paths.py`, `engine/host_loop.py` (`_ship_texture_search` ~4347, planet search ~4829 and ~5465, bridge texture dirs ~5848 and ~5887), `engine/missions/name_resolver.py:16-20`
 - Test: `tests/unit/test_mods_search_dirs.py`
 
 **Interfaces:**
@@ -1322,12 +1356,6 @@ def _tgl_roots() -> tuple:
     return (paths.sdk_data() / "TGL", *paths.game_asset_dirs("data/TGL"))
 ```
 
-`engine/appc/viewscreen_static.py:29` — return the list instead of one path, and update its caller to iterate:
-
-```python
-    return paths.game_asset_dirs("data/Textures/Effects")
-```
-
 `engine/host_loop.py` `_ship_texture_search` (~4347) — replace the two shared-directory entries and prepend per-ship mod dirs:
 
 ```python
@@ -1340,9 +1368,23 @@ def _tgl_roots() -> tuple:
     ]
 ```
 
-At `~4829` and `~5465`, `planet_tex_search` becomes a list; pass every entry where one was passed before. At `~5848` and `~5887`, apply `game_asset_dirs` to the bridge texture directories the same way.
+At `~4829` and `~5465`, `planet_tex_search` becomes a list. At `~5848` and `~5887`, apply `game_asset_dirs` to the bridge texture directories the same way:
 
-**If a native binding accepts only a single search directory**, do not silently drop the mod dirs: pass the first entry that exists on disk, and leave a comment naming the binding as the limitation. Record it in the plan's follow-ups rather than widening the C++ API in this task.
+```python
+    # ~4829 and ~5465
+    planet_tex_search = [str(p) for p in
+                         _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
+
+    # ~5848
+    tex_abs = [str(p) for p in
+               _paths.game_asset_dirs(_pp.dirname(nif) + "/High")]
+
+    # ~5887
+    vs_tex = ([str(p) for p in _paths.game_asset_dirs(vs_env)] if vs_env
+              else [str(p) for p in _paths.game_asset_dirs(DBRIDGE_TEX_REL)])
+```
+
+**`renderer.load_model`'s `texture_search_path` already accepts a list** — `_ship_texture_search` passes one at `host_loop.py:4757`, so no C++ change is needed and no mod directory has to be dropped. The parameter's singular name is historical; do not "fix" it in this task.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1357,7 +1399,7 @@ Expected: only baselined failures. Texture and TGL resolution are widely exercis
 - [ ] **Step 6: Commit**
 
 ```bash
-git add engine/paths.py engine/host_loop.py engine/missions/name_resolver.py engine/appc/viewscreen_static.py tests/unit/test_mods_search_dirs.py
+git add engine/paths.py engine/host_loop.py engine/missions/name_resolver.py tests/unit/test_mods_search_dirs.py
 git commit -m "feat(mods): search mod directories for TGL, textures and effects"
 ```
 
