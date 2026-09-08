@@ -391,12 +391,26 @@ def renderer_overrides(index: ModIndex) -> dict:
             if mf.target == "game"}  # paths-guard: kind label
 
 
-def install(argv=None, env=None) -> ModIndex:
+def install(argv=None, env=None, game_root=None, sdk_scripts=None) -> ModIndex:
     """Build, classify, scan and install the index. Called once at boot,
     AFTER paths.configure() -- mapping Data/ and Scripts/ to their targets
-    needs the resolved roots."""
+    needs the resolved roots.
+
+    `game_root`/`sdk_scripts` let a caller that already holds a resolved
+    Resolution (host_loop's boot sequence) pass those roots directly rather
+    than going through paths.game_root()/paths.sdk_scripts() -- those read
+    the global paths._RESOLUTION, which a caller may have deliberately left
+    unconfigured (e.g. a test that monkeypatches paths.configure to a no-op
+    while holding its own fake Resolution). When either is omitted, this
+    falls back to the ambient paths accessors exactly as before, so every
+    existing caller (tools/, tests with no Resolution in hand) is unaffected.
+    """
+    if game_root is None:
+        game_root = paths.game_root()
+    if sdk_scripts is None:
+        sdk_scripts = paths.sdk_scripts()
     index = build_index(mods_root(argv=argv, env=env))
-    classify(index, paths.game_root(), paths.sdk_scripts())
+    classify(index, game_root, sdk_scripts)
     detect_frameworks(index)
     configure(index)
     return index

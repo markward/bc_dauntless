@@ -7143,19 +7143,29 @@ def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
         return None
 
     # Mods layer over the resolved roots, so this must follow both configure()
-    # above and the resolution.ok check just above it -- classify() calls
-    # paths.game_root() and paths.sdk_scripts(), which raise PathsUnresolved
-    # with no roots. Guarded so a broken mods/ directory (unreadable tree,
-    # a bug in a mod's own script triggering an unexpected exception) never
-    # blocks boot -- it is reported and the game proceeds modless, same as
-    # if mods/ were absent. Same argv/env this function already resolved
-    # paths with, so a --mods-dir given at launch is honoured.
+    # above and the resolution.ok check just above it. Roots are passed
+    # EXPLICITLY from the local `resolution` this function just computed,
+    # not read back via paths.game_root()/paths.sdk_scripts() -- those read
+    # the global paths._RESOLUTION, which a caller (a test that monkeypatches
+    # paths.configure to a no-op, holding its own fake Resolution) may
+    # deliberately leave stale or unconfigured. Reading the global here would
+    # silently fall through to ambient, real-machine path resolution instead
+    # of honouring that isolation. Guarded so a broken mods/ directory
+    # (unreadable tree, a bug in a mod's own script triggering an unexpected
+    # exception) never blocks boot -- it is reported and the game proceeds
+    # modless, same as if mods/ were absent. Same argv/env this function
+    # already resolved paths with, so a --mods-dir given at launch is
+    # honoured.
     from engine import mods as _mods
     try:
-        _mod_index = _mods.install(argv=argv, env=env)
+        _mod_index = _mods.install(
+            argv=argv, env=env,
+            game_root=resolution.game,
+            sdk_scripts=_paths.sdk_scripts_in(resolution.sdk))
     except Exception as _mod_exc:
+        import traceback as _traceback
         print(f"[host_loop] mods.install() failed -- booting without mods: "
-              f"{_mod_exc!r}", file=_sys.stderr)
+              f"{_mod_exc!r}\n{_traceback.format_exc()}", file=_sys.stderr)
     else:
         _report = _mods.describe(_mod_index)
         if _report:

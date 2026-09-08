@@ -373,9 +373,21 @@ def sdk_root() -> Path:
     return _root("sdk")
 
 
+def sdk_scripts_in(root: Path) -> Path:
+    """root/Build/scripts. Pure: takes the root rather than resolving one.
+
+    The one place that knows the SDK's on-disk layout -- sdk_scripts() below
+    is just this applied to the ambient sdk_root(). Exists so a caller that
+    already holds a resolved root (e.g. a Resolution from paths.resolve())
+    can derive the scripts dir without going through the global _RESOLUTION
+    -- see engine/mods.py:install()'s game_root/sdk_scripts parameters.
+    """
+    return root / "Build" / "scripts"
+
+
 def sdk_scripts() -> Path:
     """sdk_root()/Build/scripts — where the SDK's Python modules live."""
-    return sdk_root() / "Build" / "scripts"
+    return sdk_scripts_in(sdk_root())
 
 
 def sdk_data() -> Path:
