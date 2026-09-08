@@ -29,6 +29,7 @@ add_executable(renderer_tests
     shield_state_test.cc
     carve_backing_test.cc
     carve_cavity_test.cc
+    hull_volume_cache_root_test.cc
     skin_shield_test.cc
     lens_flare_pass_test.cc
     bridge_pass_test.cc

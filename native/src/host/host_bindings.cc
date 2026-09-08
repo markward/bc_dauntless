@@ -4159,6 +4159,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "strength crosses the iso). time is accepted for call-shape symmetry "
           "with damage_decal_add but unused.");
 
+    // Where HullVolumeCache reads/writes its on-disk .dhv bakes. Pushed once
+    // from Python at boot, right alongside set_game_root -- see
+    // engine.renderer.hull_volume_set_cache_root (no hasattr guard there
+    // deliberately: host_loop.py's realize-set path documents a feature that
+    // shipped completely inert because a guard turned a loud missing-binding
+    // failure into a silent skip). Only the value in place at the FIRST call
+    // to renderer::hull_volume_cache() matters -- see that function's doc
+    // comment in carve_field_cache.h.
+    m.def("hull_volume_set_cache_root",
+          [](const std::string& root) {
+              renderer::set_hull_volume_cache_root(root);
+          },
+          py::arg("root"),
+          "Directory HullVolumeCache reads/writes its on-disk .dhv bakes "
+          "under. Set once from Python at boot, before any hull volume is "
+          "baked. Callable more than once, but only the value configured "
+          "before the cache's first use takes effect.");
+
     // BC authors a damage-volume resolution per ship
     // (ShipProperty.SetDamageResolution, in every hardpoint file). This is
     // NOT the bake cell size -- it is a per-ship detail RATIO (Shuttle 6,

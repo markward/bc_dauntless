@@ -7281,6 +7281,12 @@ def run(mission_name: Optional[str] = None,
     # AttributeError here -- and before any pass constructs: their texture
     # constants are relative now.
     r.set_game_root(str(_paths.game_root()))
+    # Where the native HullVolumeCache bakes/reads .dhv files for per-instance
+    # hull damage fields. Pushed here, right alongside set_game_root, for the
+    # same reason: it must land before the first hull volume lookup, and
+    # nothing else at boot touches one yet. No try/except -- a broken binding
+    # here must be as loud as a broken set_game_root, not silently skipped.
+    r.hull_volume_set_cache_root(str(_paths.hull_volume_cache_root()))
 
     _setup_sdk()
 

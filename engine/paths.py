@@ -388,6 +388,19 @@ def game_asset(rel) -> Path:
     return game_root() / rel
 
 
+def hull_volume_cache_root() -> Path:
+    """Where the per-instance hull-volume SDF bake cache (.dhv files) lives.
+
+    <PROJECT_ROOT>/cache/hull_volumes -- matching the cache/icons/... layout
+    engine/ui/weapon_icons.py already uses, and covered by the `cache/` line
+    in .gitignore. Unlike game_root()/sdk_root(), this does not depend on the
+    first-run picker's resolution (PROJECT_ROOT never moves at runtime), but
+    it is still computed fresh on every call rather than cached in a module
+    constant: callers must never capture its return value at import either.
+    """
+    return PROJECT_ROOT / "cache" / "hull_volumes"
+
+
 # --- the failure message ----------------------------------------------------
 
 def describe_failure(resolution: Resolution) -> str:

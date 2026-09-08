@@ -8,6 +8,7 @@
 
 #include <glm/glm.hpp>
 
+#include <voxel/hull_volume_cache.h>
 #include <voxel/source_cache.h>
 #include <voxel/volume.h>
 
@@ -73,6 +74,23 @@ void set_hull_volume_resolution(const std::filesystem::path& source, float autho
 /// set_hull_volume_resolution -- this is BC's raw SetDamageResolution value,
 /// not a cell size.
 float hull_volume_resolution(const std::filesystem::path& source);
+
+/// Configure where the process-wide HullVolumeCache reads/writes its on-disk
+/// .dhv bakes. Pushed once from Python at boot (via the
+/// hull_volume_set_cache_root binding, engine.renderer.hull_volume_set_cache_
+/// root), before anything calls hull_volume_cache(). Callable more than once,
+/// but only the value in place at the FIRST call to hull_volume_cache()
+/// matters -- the cache singleton below is constructed lazily and does not
+/// rebuild itself if the root changes afterward (this mirrors "push it once
+/// at boot" -- there is no live re-root use case, unlike set_game_root).
+void set_hull_volume_cache_root(const std::filesystem::path& root);
+
+/// The process-wide HullVolumeCache, constructed on first call with whatever
+/// root set_hull_volume_cache_root last configured. When nothing configured
+/// one (root is empty), falls back to a path under the system temp directory
+/// so the cache still works -- just without cross-run persistence -- rather
+/// than crashing or writing into the process's cwd.
+voxel::HullVolumeCache& hull_volume_cache();
 
 /// Shared STATIC original-fill cache (hull-breach-2b Path C).
 ///
