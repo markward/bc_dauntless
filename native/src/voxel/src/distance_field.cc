@@ -48,7 +48,10 @@ float point_triangle_distance(const glm::vec3& p, const Tri& t) {
     }
 
     const float sum = va + vb + vc;                                 // interior
-    if (!(std::abs(sum) > 1e-20f)) return glm::length(ap);          // degenerate
+    // Defensive: sum equals 2*area. Six region checks partition all space; when
+    // area→0, interior region vanishes and all points are caught by edge/vertex
+    // checks. This guard prevents division by ~zero, returning distance to vertex a.
+    if (!(std::abs(sum) > 1e-20f)) return glm::length(ap);
     const float inv = 1.0f / sum;
     return glm::length(p - (t.a + ab * (vb * inv) + ac * (vc * inv)));
 }
