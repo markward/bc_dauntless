@@ -22,20 +22,17 @@ _STATIC_TEXTURE_FILES = {
 }
 
 
-def _effects_dir():
-    """Resolved at USE: a module-level constant would be captured at import,
-    before the first-run picker can change the root."""
-    from engine import paths
-    return paths.game_asset("data/Textures/Effects")
-
-
 def static_texture_paths(icon_group):
-    """Absolute paths to the noise frames for `icon_group`, or [] if unknown."""
+    """Absolute paths to the noise frames for `icon_group`, or [] if unknown.
+
+    Each frame is resolved individually so a mod supplying one frame is
+    found: the index maps files, and a directory built once cannot see it.
+    """
+    from engine import paths
     files = _STATIC_TEXTURE_FILES.get(icon_group)
     if not files:
         return []
-    base = _effects_dir()
-    return [str(base / f) for f in files]
+    return [str(paths.game_asset(f"data/Textures/Effects/{f}")) for f in files]
 
 
 def static_intensity(fmin, fmax, rng=random.random):

@@ -36,18 +36,17 @@ def _second_install(game):
 
 # Every engine/ site that used to be a module-level constant. There are
 # EIGHT (not seven, and none of them was already exercised elsewhere): the
-# six here each got a no-arg accessor (mirroring weapon_icons/ship_icons/
-# damage_icons's _game_icons_dir()/_damage_dir()); name_resolver and
-# lip_sync_runtime get their own dedicated tests below because their
-# accessors either return a tuple (_tgl_roots) or take an argument
-# (_abs_sfx) rather than fitting this parametrize's no-arg/str-contains
-# shape.
+# two here get a no-arg accessor; weapon_icons/ship_icons/damage_icons's
+# former no-arg _game_icons_dir()/_damage_dir() accessors were converted to
+# mod-aware single-file lookups (Task 7) and now take a stem argument, so
+# they moved to their own dedicated test below alongside name_resolver and
+# lip_sync_runtime, whose accessors either return a tuple (_tgl_roots) or
+# take an argument (_abs_sfx) and don't fit this parametrize's no-arg/
+# str-contains shape either. viewscreen_static's former _effects_dir()
+# accessor was deleted outright (Task 7) — static_texture_paths() now
+# resolves each frame individually and gets its own dedicated test too.
 CONSUMERS = [
-    ("engine.ui.weapon_icons", "_game_icons_dir"),
-    ("engine.ui.ship_icons", "_game_icons_dir"),
-    ("engine.ui.damage_icons", "_damage_dir"),
     ("engine.dev_keybindings", "_test_character_nif"),
-    ("engine.appc.viewscreen_static", "_effects_dir"),
     ("engine.appc.bridge_set", "_bridge_game_root"),
 ]
 
@@ -78,6 +77,46 @@ def test_tgl_roots_follow_a_later_configure(fake_bc_install):
     other = _second_install(game)
     _point_at((other, sdk))
     assert str(other / "data" / "TGL") in [str(r) for r in name_resolver._tgl_roots()]
+
+
+@pytest.mark.parametrize("module_name,func_name,stem", [
+    ("engine.ui.ship_icons", "_game_icon_file", "Galaxy"),
+    ("engine.ui.weapon_icons", "_game_icon_file", "PhaserArcs"),
+    ("engine.ui.damage_icons", "_game_icon_file", "Hull"),
+])
+def test_icon_file_accessors_follow_a_later_configure(
+        fake_bc_install, module_name, func_name, stem):
+    """ship_icons/weapon_icons/damage_icons's _game_icon_file(stem) took
+    over from the old no-arg _game_icons_dir()/_damage_dir() accessors
+    (Task 7) — same resolve-at-use contract, now with an argument."""
+    game, sdk = fake_bc_install
+    module = importlib.import_module(module_name)
+    _point_at((game, sdk))
+    first = str(getattr(module, func_name)(stem))
+    assert str(game) in first
+
+    other = _second_install(game)
+    _point_at((other, sdk))
+    second = str(getattr(module, func_name)(stem))
+    assert str(other) in second
+    assert first != second
+
+
+def test_viewscreen_static_texture_paths_follows_a_later_configure(fake_bc_install):
+    """static_texture_paths() took over from the old no-arg _effects_dir()
+    accessor (Task 7), which was deleted outright rather than kept
+    unused."""
+    from engine.appc import viewscreen_static
+    game, sdk = fake_bc_install
+    _point_at((game, sdk))
+    first = viewscreen_static.static_texture_paths("View Screen Static")
+    assert all(str(game) in p for p in first)
+
+    other = _second_install(game)
+    _point_at((other, sdk))
+    second = viewscreen_static.static_texture_paths("View Screen Static")
+    assert all(str(other) in p for p in second)
+    assert first != second
 
 
 def test_lip_sync_runtime_follows_a_later_configure(fake_bc_install):
