@@ -6,6 +6,7 @@ add_library(voxel STATIC
     src/source_cache.cc
     src/dual_contour.cc
     src/distance_field.cc
+    src/dhv.cc
 )
 target_include_directories(voxel PUBLIC include)
 target_compile_features(voxel PUBLIC cxx_std_20)
