@@ -71,6 +71,31 @@ def _nothing_resolves_by_accident(monkeypatch):
     return fake_store
 
 
+@pytest.fixture(autouse=True)
+def _mods_scan_is_hermetic(monkeypatch, tmp_path):
+    """Point the mods scan at an empty, per-test directory.
+
+    Every test here drives the REAL _resolve_paths_or_report(), and on any
+    path that reaches an ok Resolution that now includes a real call to
+    mods.install() (Task 10's boot wiring). Without this fixture, that call
+    resolves its mods root from real ambient argv/env exactly as boot does
+    in production -- which is correct for boot, but means this file's tests
+    perform a LIVE scan of whatever happens to sit in the developer's own
+    mods/ directory (this worktree keeps a real reference mod there for
+    Mark's manual verification) and their stderr output becomes
+    machine-dependent: a passing/failing assertion here would depend on
+    what mod content someone's checkout happens to have on disk. Discovered
+    live via `pytest ... -v -s` printing "mods: aad-moerman-s-steamrunner:
+    42 files..." from inside test_unresolved_paths_hand_off_to_the_first_
+    run_screen, a test with nothing to do with mods.
+    Setting DAUNTLESS_MODS_DIR to an empty tmp_path directory exercises the
+    real mods.mods_root()/install() code path (env var precedence, same as
+    a real --mods-dir launch) rather than stubbing it out -- a stub would
+    also hide a future regression in that code.
+    """
+    monkeypatch.setenv("DAUNTLESS_MODS_DIR", str(tmp_path / "empty_mods"))
+
+
 def test_unresolved_paths_hand_off_to_the_first_run_screen(monkeypatch, install):
     """When paths.resolve() comes back unresolved, _resolve_paths_or_report
     hands off to the first-run screen and boots on whatever it comes back

@@ -36,6 +36,23 @@ if not _BRIDGE_NIF.exists():
     )
 
 
+@pytest.fixture(autouse=True)
+def _mods_scan_is_hermetic(monkeypatch, tmp_path):
+    """Isolate the real mods.install() scan Task 10 wired into host_loop.run().
+
+    Both tests below call the REAL host_loop.run(), which (since Task 10)
+    calls mods.install() on the success path. Without this, that call
+    resolves its mods root from real ambient argv/env exactly as boot does
+    in production -- correct for boot, but it means these tests perform a
+    LIVE scan of whatever sits in the developer's own mods/ directory (this
+    worktree keeps a real reference mod there for manual verification),
+    making their output and mods._INDEX's contents machine-dependent. See
+    tests/host/test_host_loop_first_run.py's identical fixture for the full
+    discovery story.
+    """
+    monkeypatch.setenv("DAUNTLESS_MODS_DIR", str(tmp_path / "empty_mods"))
+
+
 def test_host_loop_runs_m3gameflow_120_ticks(monkeypatch):
     """120 ticks ≈ 2 seconds at 60Hz. Smallest viable smoke for the
     renderer + M3Gameflow integration. Headless mode hides the window."""
