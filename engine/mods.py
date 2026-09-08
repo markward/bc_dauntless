@@ -91,3 +91,124 @@ def discover_mods(root: Path) -> list[ModCandidate]:
         return []
     return [ModCandidate(name=d.name, mod_dir=d, content_root=find_content_root(d))
             for d in dirs]
+
+
+IGNORED_NAMES = frozenset({".ds_store", "thumbs.db"})
+IGNORED_SUFFIXES = (".txt", ".html", ".htm", ".pdf", ".rtf", ".doc")
+
+# Mod top-level directory -> target root kind. The values are KIND LABELS
+# keying paths.py's own vocabulary, not path segments.
+_TARGET_FOR = {
+    "data": "game",     # paths-guard: kind label, keys paths.game_root()
+    "scripts": "sdk",   # paths-guard: kind label, keys paths.sdk_scripts()
+}
+
+
+def fold(rel) -> str:
+    """The index key for a relative path: lowercase, forward slashes.
+
+    BC ran on a case-insensitive filesystem, so mod authors were never
+    forced to be consistent and overwhelmingly are not -- the reference mod
+    alone spells Data/data, Ships/ships and .NIF/.nif. Folding here makes
+    resolution correct on case-sensitive filesystems too.
+    """
+    return str(rel).replace("\\", "/").strip("/").lower()
+
+
+@dataclass(frozen=True)
+class ModFile:
+    abs_path: Path
+    mod_name: str
+    target: str          # "game" or "sdk" -- a kind label, not a path segment
+    rel: str             # folded, relative to that target root
+
+
+@dataclass
+class ModStatus:
+    name: str
+    content_root: Optional[Path]
+    placed: int = 0
+    ignored: int = 0
+    unplaced: list = None        # top-level dir names we could not place
+
+    def __post_init__(self):
+        if self.unplaced is None:
+            self.unplaced = []
+
+
+@dataclass
+class ModIndex:
+    files: dict
+    mods: list
+
+    def lookup(self, rel) -> Optional[ModFile]:
+        return self.files.get(fold(rel))
+
+    def dirs_for(self, rel) -> list:
+        """Every mod directory that provides files under `rel`.
+
+        For the one consumer that hands a directory LIST to C++; a single
+        file lookup should use lookup() instead.
+        """
+        prefix = fold(rel) + "/"
+        seen = []
+        for key, mf in self.files.items():
+            if not key.startswith(prefix):
+                continue
+            depth = len(key[len(prefix):].split("/")) - 1
+            d = mf.abs_path
+            for _ in range(depth + 1):
+                d = d.parent
+            if d not in seen:
+                seen.append(d)
+        return seen
+
+
+def _is_ignored(path: Path, content_root: Path) -> bool:
+    if path.name.lower() in IGNORED_NAMES:
+        return True
+    # Documents at the content root only -- a readme buried in a model
+    # folder is harmless to place, and BC content does include stray .txt.
+    if path.parent == content_root and path.suffix.lower() in IGNORED_SUFFIXES:
+        return True
+    return False
+
+
+def build_index(root: Path) -> ModIndex:
+    """Index every enabled mod under `root`. O(mod files), never the install.
+
+    Later mods win, and discover_mods() sorts by name, so the winner is
+    deterministic across runs.
+    """
+    files: dict = {}
+    statuses: list = []
+
+    for candidate in discover_mods(root):
+        status = ModStatus(name=candidate.name, content_root=candidate.content_root)
+        statuses.append(status)
+        if candidate.content_root is None:
+            continue
+
+        for path in sorted(candidate.content_root.rglob("*")):
+            if not path.is_file():
+                continue
+            if _is_ignored(path, candidate.content_root):
+                status.ignored += 1
+                continue
+            rel_parts = path.relative_to(candidate.content_root).parts
+            top = rel_parts[0].lower()
+            target = _TARGET_FOR.get(top)
+            if target is None:
+                if rel_parts[0] not in status.unplaced:
+                    status.unplaced.append(rel_parts[0])
+                continue
+            # Under "scripts" the target root IS the scripts dir, so the
+            # segment itself is dropped; under "data" it is kept, because
+            # game_asset() is called with "data/..." paths.
+            keep = rel_parts if target == "game" else rel_parts[1:]  # paths-guard: kind label
+            rel = fold("/".join(keep))
+            files[rel] = ModFile(abs_path=path, mod_name=candidate.name,
+                                 target=target, rel=rel)
+            status.placed += 1
+
+    return ModIndex(files=files, mods=statuses)
