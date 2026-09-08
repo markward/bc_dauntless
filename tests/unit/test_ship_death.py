@@ -681,7 +681,9 @@ def test_death_explosion_tuning_matches_bc():
               if "ExplosionA" in d.get("texture_path", "")]
     assert sheets
     d = sheets[0]
-    assert d["emit_life"] == death_cascade.BLAST_LIFE
+    # Puff life is deliberately NOT the SDK's 1.5 — see death_cascade.PUFF_LIFE
+    # and tests/unit/test_death_cascade_fireball.py.
+    assert d["emit_life"] == death_cascade.PUFF_LIFE
 
     size = radius * death_cascade.BLAST_SIZE_FRACTION          # BC: fRadius / 4
     assert size == 2.0

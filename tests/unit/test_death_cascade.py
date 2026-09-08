@@ -50,6 +50,8 @@ class FakeShip:
         return TGPoint3(float(self.sample_count), 0.0, 0.0)
     def AddDamage(self, pEmitPos, fRadius, fDamage):
         self.damage_calls.append((pEmitPos, fRadius, fDamage))
+    def GetNode(self):
+        return None
 
 
 # ── duration: BC's randomised 5-15 s window ──────────────────────────────────

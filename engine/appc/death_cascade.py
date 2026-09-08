@@ -53,7 +53,28 @@ DAMAGE_RADIUS_FRACTION = 0.25  # fRadius / 4.0
 DAMAGE_STRENGTH = 600.0        # the "major hull breach" authored tier
 
 BLAST_SIZE_FRACTION = 0.25   # CreateDebrisExplosion(fRadius * 0.25, ...)
-BLAST_LIFE = 1.5             # fLife on every debris explosion
+BLAST_LIFE = 1.5             # fLife argument to CreateDebrisExplosion
+
+# ── Fireball timing: OVERRIDES of the SDK helper, tuned by eye ───────────────
+# `Effects.CreateDebrisExplosion` hardcodes SetEmitLife(1.5) and emits every
+# 0.2 s for fLife + 1.5 seconds. Taken literally that is 15 puffs per blast,
+# each animating over 1.5 s -- and at BC's ~4-5 blasts a second, ~570
+# overlapping sprites across one death. It reads as sludge: no single explosion
+# can punch, because it never gets a gap to punch into.
+#
+# 1.5 s was also already rejected once. The fixed four-puff sequence this
+# cascade replaced carried EXPLOSION_PUFF_LIFE, tuned 3.0 -> 1.5 -> 1.0 by eye;
+# deleting that function lost the tuning and the SDK default came back with it.
+#
+# So both settings are overridden on the controller after the helper returns,
+# exactly as the old _spawn_explosion did.
+PUFF_LIFE = 1.0            # per-puff life = the ANIMATION duration. The renderer
+                           # derives the sprite-sheet cell as
+                           # frame = (age / life) * columns, so halving this
+                           # doubles the frame rate.
+PUFF_EMIT_INTERVAL = 0.2   # SDK CreateDebrisExplosion's own emit frequency
+PUFFS_MIN = 1              # puffs per blast, rolled per blast so explosions
+PUFFS_MAX = 5              # vary between small pops and fuller bursts
 SOUND_MIN_GAP = 0.4          # "don't play a sound for every explosion, or we
                              # end up flooding all the 3D sound handles"
 FINAL_BARRAGE_LEAD = 2.5     # the big finish lands at fTotalLifeLeft - 2.5
@@ -165,7 +186,7 @@ def _fire(state: dict, sound_ok: bool) -> None:
         if rand(10) < DAMAGE_CHANCE_IN_10:
             ship.AddDamage(point, radius * DAMAGE_RADIUS_FRACTION, DAMAGE_STRENGTH)
 
-        _debris_explosion(ship, point, radius * BLAST_SIZE_FRACTION)
+        _debris_explosion(ship, point, radius * BLAST_SIZE_FRACTION, rand)
         _light(ship, radius * BLAST_SIZE_FRACTION)
         if sound_ok:
             _death_sound(ship)
@@ -192,18 +213,48 @@ def _fire_final(state: dict) -> None:
         if App.EffectController_GetEffectLevel() >= App.EffectController.MEDIUM:
             count = 4
         for _ in range(count):
-            Effects.CreateDebrisExplosion(
-                radius, BLAST_LIFE, ship.GetRandomPointOnModel(), 1, root).Play()
+            action = Effects.CreateDebrisExplosion(
+                radius, BLAST_LIFE, ship.GetRandomPointOnModel(), 1, root)
+            # Same animation speed as every other blast — a finale that plays
+            # at a different frame rate reads as a different effect. It does
+            # get the full puff count: this is the one that should be big.
+            _tune(action, PUFFS_MAX)
+            action.Play()
         _light(ship, radius)
         _death_sound(ship)
     except Exception as _e:
         dev_mode.log_swallowed("death cascade final barrage", _e)
 
 
-def _debris_explosion(ship, point, size) -> None:
-    """BC: CreateDebrisExplosion(fRadius * 0.25, 1.5, pEmitPos, 1, GetNode())."""
+def _debris_explosion(ship, point, size, rand=None) -> None:
+    """BC: CreateDebrisExplosion(fRadius * 0.25, 1.5, pEmitPos, 1, GetNode()),
+    with the helper's puff life and puff count overridden — see PUFF_LIFE.
+
+    A missing controller (a backend that hands back a bare action) just leaves
+    the SDK defaults in place rather than failing the blast.
+    """
     import Effects
-    Effects.CreateDebrisExplosion(size, BLAST_LIFE, point, 1, ship.GetNode()).Play()
+    rand = rand or _rand
+    action = Effects.CreateDebrisExplosion(size, BLAST_LIFE, point, 1,
+                                           ship.GetNode())
+    _tune(action, PUFFS_MIN + rand(PUFFS_MAX - PUFFS_MIN + 1))
+    action.Play()
+
+
+def _tune(action, puffs: int) -> None:
+    """Override the SDK helper's puff life and puff count on `action`.
+
+    A missing controller (a backend that hands back a bare action) just leaves
+    the SDK defaults in place rather than failing the blast.
+    """
+    ctrl = action.GetController() if hasattr(action, "GetController") else None
+    if ctrl is None:
+        return
+    ctrl.SetEmitLife(PUFF_LIFE)
+    # Births land at i * PUFF_EMIT_INTERVAL, so an emission window of
+    # (n - 0.5) intervals admits births 0..n-1 and no more — the same
+    # half-interval trick the old fixed sequence used to land an exact count.
+    ctrl.SetEffectLifeTime(PUFF_EMIT_INTERVAL * (puffs - 0.5))
 
 
 def _death_sound(ship) -> None:
@@ -230,4 +281,4 @@ def _light(ship, size_gu: float) -> None:
     a coin flip."""
     from engine.appc import explosion_lights
     explosion_lights.register(ship, size_gu=size_gu, count=1,
-                              spacing_s=0.0, life_s=BLAST_LIFE)
+                              spacing_s=0.0, life_s=PUFF_LIFE)
