@@ -14,6 +14,7 @@
 #include <voxel/field_brush.h>
 
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -76,11 +77,15 @@ TEST(FieldBrush, ShapeIsOblateNotSpherical) {
 
 TEST(FieldBrush, OverlappingCarvesUnionRatherThanReplace) {
     // The whole point of the field over a sphere list: two overlapping carves
-    // leave ONE cavity, and neither undoes the other.
+    // leave ONE cavity, and neither undoes the other. This test discriminates
+    // by sampling at x=18, where the FIRST carve is the stronger contributor,
+    // so an unconditional-overwrite bug would restore material after the second
+    // carve. First carve reaches x=18 (distance 2 from centre 16); second carve
+    // does not (distance 6 from centre 24, with radius 5).
     voxel::DistanceField f = solid_block(40);
     voxel::field_carve_oblate(f, glm::vec3(16.0f, 20.0f, 20.0f), kUp, 5.0f);
     voxel::field_carve_oblate(f, glm::vec3(24.0f, 20.0f, 20.0f), kUp, 5.0f);
-    for (float x : {16.0f, 20.0f, 24.0f}) {
+    for (float x : {16.0f, 18.0f, 24.0f}) {
         const glm::ivec3 c = cell_of(f, glm::vec3(x, 20.0f, 20.0f));
         EXPECT_GT(f.distance_at(c.x, c.y, c.z), 0.0f)
             << "x=" << x << " should be inside the merged cavity";
@@ -124,5 +129,36 @@ TEST(FieldBrush, CarveOutsideTheGridDoesNotWriteOutOfBounds) {
     voxel::DistanceField f = solid_block(20);
     const std::vector<std::int8_t> before = f.dist;
     voxel::field_carve_oblate(f, glm::vec3(500.0f, 500.0f, 500.0f), kUp, 5.0f);
+    EXPECT_EQ(f.dist, before);
+}
+
+TEST(FieldBrush, NonFiniteRadiusIsANoOp) {
+    voxel::DistanceField f = solid_block(20);
+    const std::vector<std::int8_t> before = f.dist;
+    voxel::field_carve_oblate(f, glm::vec3(10.0f), kUp, std::numeric_limits<float>::infinity());
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_oblate(f, glm::vec3(10.0f), kUp, std::numeric_limits<float>::quiet_NaN());
+    EXPECT_EQ(f.dist, before);
+}
+
+TEST(FieldBrush, NonFiniteCentreComponentIsANoOp) {
+    voxel::DistanceField f = solid_block(20);
+    const std::vector<std::int8_t> before = f.dist;
+    voxel::field_carve_oblate(f, glm::vec3(std::numeric_limits<float>::infinity(), 10.0f, 10.0f), kUp, 4.0f);
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_oblate(f, glm::vec3(10.0f, std::numeric_limits<float>::quiet_NaN(), 10.0f), kUp, 4.0f);
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_oblate(f, glm::vec3(10.0f, 10.0f, -std::numeric_limits<float>::infinity()), kUp, 4.0f);
+    EXPECT_EQ(f.dist, before);
+}
+
+TEST(FieldBrush, NonFiniteNormalComponentIsANoOp) {
+    voxel::DistanceField f = solid_block(20);
+    const std::vector<std::int8_t> before = f.dist;
+    voxel::field_carve_oblate(f, glm::vec3(10.0f), glm::vec3(std::numeric_limits<float>::infinity(), 0.0f, 0.0f), 4.0f);
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_oblate(f, glm::vec3(10.0f), glm::vec3(0.0f, std::numeric_limits<float>::quiet_NaN(), 0.0f), 4.0f);
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_oblate(f, glm::vec3(10.0f), glm::vec3(0.0f, 0.0f, -std::numeric_limits<float>::infinity()), 4.0f);
     EXPECT_EQ(f.dist, before);
 }

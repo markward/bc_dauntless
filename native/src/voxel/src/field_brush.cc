@@ -14,6 +14,15 @@ void field_carve_oblate(DistanceField& f,
     if (!(radius > 0.0f)) return;
     if (!(f.scale > 0.0f)) return;
 
+    // Reject non-finite inputs. Infinity or NaN in center_body, normal_body, or
+    // radius would lead to undefined behaviour in floor() and int casts below.
+    if (!std::isfinite(center_body.x) || !std::isfinite(center_body.y) ||
+        !std::isfinite(center_body.z) || !std::isfinite(radius) ||
+        !std::isfinite(normal_body.x) || !std::isfinite(normal_body.y) ||
+        !std::isfinite(normal_body.z)) {
+        return;
+    }
+
     glm::vec3 n = normal_body;
     const float nl = glm::length(n);
     n = (nl > 1e-4f) ? n / nl : glm::vec3(0.0f, 0.0f, 1.0f);
@@ -47,9 +56,10 @@ void field_carve_oblate(DistanceField& f,
 
         // Signed distance to the oblate, scaled back to model units. Dividing
         // each axis by its own half-extent turns the ellipsoid into a unit
-        // sphere; multiplying the result by the SMALLEST half-extent keeps the
-        // value a conservative (never over-deep) distance, which is what the
-        // max() below needs to stay monotonic.
+        // sphere; multiplying the result by the SMALLEST half-extent ensures
+        // the correct sign at the ellipsoid boundary (shape fidelity). Monotonicity
+        // is unconditional given the max() structure below: it never looks at
+        // d_old, only at -d_brush, so it cannot restore material.
         const float u = ld / radius;
         const float w = along / depth;
         const float unit = std::sqrt(u * u + w * w);

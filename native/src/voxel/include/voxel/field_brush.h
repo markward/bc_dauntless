@@ -22,7 +22,8 @@ inline constexpr float kCarveDepthFactor = 0.45f;
 /// each other, which the fixed 24-slot sphere array could not do.
 ///
 /// All arguments are body frame, MODEL UNITS. A degenerate normal falls back to
-/// +Z rather than producing NaN. Empty field, non-positive radius, or a carve
+/// +Z rather than producing NaN. Empty field, non-positive radius, non-finite
+/// radius, non-finite centre_body or normal_body components, or a carve
 /// entirely off the grid are all no-ops.
 void field_carve_oblate(DistanceField& f,
                         const glm::vec3& center_body,
