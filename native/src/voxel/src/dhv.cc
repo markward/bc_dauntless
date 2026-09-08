@@ -1,6 +1,7 @@
 // native/src/voxel/src/dhv.cc
 #include <voxel/dhv.h>
 
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <system_error>
@@ -31,6 +32,19 @@ bool get(std::istream& s, T& v) {
 bool write_dhv(const std::filesystem::path& path,
                const DistanceField& field,
                const HullVolumeMeta& meta) {
+    // A payload size inconsistent with dims is an internally malformed
+    // field: writing it would either short a later gcount() check (too few
+    // bytes) or silently drop trailing bytes (too many). Reject at the
+    // source instead of writing a file no reader can trust. int64_t rather
+    // than the field's own int32 dims avoids overflow for the product.
+    const std::int64_t expected_cells =
+        static_cast<std::int64_t>(field.dims.x) *
+        static_cast<std::int64_t>(field.dims.y) *
+        static_cast<std::int64_t>(field.dims.z);
+    if (expected_cells < 0 ||
+        static_cast<std::int64_t>(field.dist.size()) != expected_cells)
+        return false;
+
     std::error_code ec;
     if (path.has_parent_path())
         std::filesystem::create_directories(path.parent_path(), ec);
@@ -107,9 +121,18 @@ bool read_dhv(const std::filesystem::path& path,
     if (!get(s, f.dims.x) || !get(s, f.dims.y) || !get(s, f.dims.z)) return false;
     if (!get(s, f.origin.x) || !get(s, f.origin.y) || !get(s, f.origin.z)) return false;
     if (!get(s, f.cell.x) || !get(s, f.cell.y) || !get(s, f.cell.z)) return false;
+    // Untrusted file: a non-finite or non-positive cell component divides
+    // through in any consumer converting a body-frame point to a cell index.
+    if (!(std::isfinite(f.cell.x) && std::isfinite(f.cell.y) &&
+          std::isfinite(f.cell.z) &&
+          f.cell.x > 0.0f && f.cell.y > 0.0f && f.cell.z > 0.0f))
+        return false;
     if (!get(s, m.authored_res)) return false;
     if (!get(s, m.quality)) return false;
     if (!get(s, f.scale)) return false;
+    // Same reasoning: a corrupt scale makes distance_at() return NaN for
+    // every cell in the field.
+    if (!(std::isfinite(f.scale) && f.scale > 0.0f)) return false;
 
     std::uint32_t plen = 0;
     if (!get(s, plen)) return false;

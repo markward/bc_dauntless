@@ -27,7 +27,15 @@ inline constexpr std::uint16_t kBakerVersion = 1;
 struct HullVolumeMeta {
     std::uint16_t baker_version = kBakerVersion;
     std::uint32_t source_size   = 0;   // hull nif size in bytes
-    std::int64_t  source_mtime  = 0;   // hull nif mtime, unix seconds
+    // hull nif mtime -- NOT unix seconds. It is
+    // std::filesystem::last_write_time(...).time_since_epoch().count(): raw
+    // filesystem-clock ticks, whose unit and epoch are implementation-defined
+    // (see hull_volume_cache.cc's mtime_of). Only ever compared for equality
+    // against a fresh read of the same file on the same build, never
+    // interpreted as a real timestamp, so this is harmless -- but a toolchain
+    // change to the clock's epoch or tick period invalidates the whole cache
+    // (it just rebakes, which should not surprise anyone reading this field).
+    std::int64_t  source_mtime  = 0;
     float         authored_res  = 0.0f;  // SetDamageResolution, as given
     float         quality       = 0.0f;  // cell = authored_res / quality
     // Diagnosis, AND a validation check once a file is already loaded (a
@@ -46,9 +54,15 @@ bool write_dhv(const std::filesystem::path& path,
 
 /// Read `path`. Returns false -- and leaves the outputs untouched -- for a
 /// missing file, a bad magic, a format or baker version mismatch, an
-/// implausibly long source_path, implausible dimensions, or a payload
-/// shorter than the header says. The caller's only correct response to
-/// false is to rebake.
+/// implausibly long source_path, implausible dimensions, a non-finite or
+/// non-positive `cell` component, a non-finite or non-positive `scale`, or a
+/// payload shorter than the header says. The caller's only correct response
+/// to false is to rebake.
+///
+/// The cell/scale checks matter because this file is untrusted input: a
+/// corrupt `scale` makes DistanceField::distance_at return NaN for every
+/// cell, and a zero or negative `cell` component divides through in any
+/// consumer converting a body-frame point to a cell index.
 ///
 /// "Implausible dimensions" has one deliberate exemption: dims == (0,0,0) is
 /// accepted, not rejected, because it is the documented return of

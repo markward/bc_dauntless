@@ -220,6 +220,23 @@ TEST(DistanceField, EmptyInputYieldsAnEmptyField) {
     const voxel::DistanceField f = voxel::distance_field_from_tris(
         {}, glm::vec3(5.0f), voxel::kDefaultBandCells);
     EXPECT_TRUE(f.dist.empty());
+    EXPECT_TRUE(f.empty()) << "empty() must agree with dist.empty()";
+}
+
+TEST(DistanceField, EmptyIsTrueForADefaultConstructedField) {
+    // The precondition distance_at() relies on: a default field's index(0,0,0)
+    // is 0, and dist is empty, so distance_at(0,0,0) would read past the end
+    // of an empty vector if a caller didn't check empty() first.
+    const voxel::DistanceField f;
+    EXPECT_TRUE(f.empty());
+}
+
+TEST(DistanceField, EmptyIsFalseForARealField) {
+    const auto tris = box_tris(glm::vec3(0.0f), glm::vec3(10.0f));
+    const voxel::DistanceField f = voxel::distance_field_from_tris(
+        tris, glm::vec3(2.0f), voxel::kDefaultBandCells);
+    ASSERT_FALSE(f.dist.empty());
+    EXPECT_FALSE(f.empty());
 }
 
 TEST(DistanceField, GridCoversTheHullPlusAMargin) {

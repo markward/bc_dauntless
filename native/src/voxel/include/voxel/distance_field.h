@@ -42,6 +42,20 @@ struct DistanceField {
              * (static_cast<std::size_t>(y)
              +  static_cast<std::size_t>(dims.y) * static_cast<std::size_t>(z));
     }
+
+    /// True when this field holds no data -- the documented sentinel
+    /// distance_field_from_tris() returns for a hull with no triangles
+    /// (missing source, unparseable NIF, or a genuinely empty mesh), and what
+    /// HullVolumeCache::get serves (and caches) for a hull it cannot read at
+    /// all. Callers MUST check this before calling distance_at(): index()
+    /// still resolves to 0 for a default-constructed (dims == {0,0,0})
+    /// field, and dist[0] on an empty vector is out of bounds.
+    bool empty() const { return dist.empty(); }
+
+    /// Distance at cell (x,y,z), in model units, negative inside the hull.
+    /// UNDEFINED BEHAVIOUR if this field is empty() -- see empty()'s doc.
+    /// Callers must check empty() first (or otherwise know the field was
+    /// baked from a non-empty triangle set) before calling this.
     float distance_at(int x, int y, int z) const {
         return static_cast<float>(dist[index(x, y, z)]) * scale;
     }
