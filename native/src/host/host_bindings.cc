@@ -1690,6 +1690,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](const std::map<std::string, std::string>& overrides) {
               renderer::set_asset_overrides(overrides);
           },
+          py::arg("overrides"),
           "Install mod asset overrides, keyed by case-folded relative path.");
 
     m.def("pick_folder",

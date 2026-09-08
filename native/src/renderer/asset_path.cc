@@ -24,16 +24,28 @@ std::map<std::string, std::string>& mutable_overrides() {
     return overrides;
 }
 
-// Matches engine/mods.py:fold() exactly: lowercase, backslashes to forward
-// slashes. Python builds the map's keys and C++ looks them up, so any
-// divergence here means the map silently never hits.
+// Mirrors engine/mods.py:fold() exactly -- the same three operations in the
+// same order: backslashes to forward slashes, strip leading AND trailing
+// '/', then lowercase. Python builds the map's keys and C++ looks them up,
+// so any divergence here means the map silently never hits. Keep both sides
+// in sync if either changes.
 std::string fold_key(const std::string& path) {
     std::string out;
     out.reserve(path.size());
     for (char c : path) {
-        out.push_back(c == kBackslash ? '/'
-                                       : static_cast<char>(std::tolower(
-                                             static_cast<unsigned char>(c))));
+        out.push_back(c == kBackslash ? '/' : c);
+    }
+
+    const size_t begin = out.find_first_not_of('/');
+    if (begin == std::string::npos) {
+        out.clear();
+    } else {
+        const size_t end = out.find_last_not_of('/');
+        out = out.substr(begin, end - begin + 1);
+    }
+
+    for (char& c : out) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return out;
 }
