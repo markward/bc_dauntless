@@ -94,9 +94,14 @@ void surface_voxelize(VoxelVolume& v, const std::vector<Tri>& tris) {
         // not just isotropic ones. A future caller passing anisotropic dims
         // (e.g. 49x67x17 for a Galaxy hull) would silently reintroduce the pinhole
         // bug under a flat 512 clamp if one axis had fewer cells.
+        //
+        // The bound is floored to 1 because degenerate grids (dims_i <= 2) would
+        // otherwise make max_samples <= 0, breaking the N >= 1 invariant. Without
+        // this floor, N could become 0 (causing NaN in u = 0.0/0) or negative
+        // (causing the loop to skip triangles silently).
         int N = static_cast<int>(std::ceil(longest / (0.5f * min_cell)));
         if (N < 1) N = 1;
-        const int max_samples = std::max({2 * (v.dims.x - 2), 2 * (v.dims.y - 2), 2 * (v.dims.z - 2)});
+        const int max_samples = std::max(1, std::max({2 * (v.dims.x - 2), 2 * (v.dims.y - 2), 2 * (v.dims.z - 2)}));
         if (N > max_samples) N = max_samples;
 
         for (int i = 0; i <= N; ++i)

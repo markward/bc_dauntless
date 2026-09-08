@@ -118,3 +118,52 @@ TEST(VoxelizeResolution, AnisotropicDimsStaySolidUnderClamp) {
         << "anisotropic grid collapsed (fraction " << frac
         << " with dims " << dims.x << "x" << dims.y << "x" << dims.z << ")";
 }
+
+// Regression test for degenerate dims. When dims_i <= 2, the dynamic clamp
+// computation max_samples = max(2*(dims_i-2), ...) would underflow to <= 0
+// without a floor, causing N to become 0 (NaN in u = 0/0) or negative (loop
+// skips silently). The floor ensures N >= 1 unconditionally.
+TEST(VoxelizeResolution, DegenerateDims2x2x2DoesNotCrash) {
+    const glm::ivec3 dims(2, 2, 2);
+    const glm::vec3 origin(0.f);
+    const glm::vec3 cell(100.f, 100.f, 100.f);
+
+    const std::vector<voxel::Tri> tris =
+        box_tris(glm::vec3(0.0f), glm::vec3(100.0f));
+
+    // Call should not crash, produce NaN, or silently skip triangles.
+    const voxel::VoxelVolume v = voxel::voxelize_into(tris, dims, origin, cell);
+
+    // Occupancy vector should have correct size.
+    EXPECT_EQ(v.occ.size(), static_cast<std::size_t>(dims.x * dims.y * dims.z));
+
+    // All occupancy values must be 0 or 1 (no garbage from NaN).
+    for (std::uint8_t occ_val : v.occ) {
+        EXPECT_TRUE(occ_val == 0 || occ_val == 1)
+            << "found non-binary occupancy value: " << static_cast<int>(occ_val);
+    }
+}
+
+// Regression test for even more degenerate dims: 1x1x1.
+// Without a floor on the clamp, max_samples = 2*(1-2) = -2, and N would
+// underflow to negative, silently skipping all triangles.
+TEST(VoxelizeResolution, DegenerateDims1x1x1DoesNotCrash) {
+    const glm::ivec3 dims(1, 1, 1);
+    const glm::vec3 origin(0.f);
+    const glm::vec3 cell(100.f, 100.f, 100.f);
+
+    const std::vector<voxel::Tri> tris =
+        box_tris(glm::vec3(0.0f), glm::vec3(100.0f));
+
+    // Call should not crash or silently fail.
+    const voxel::VoxelVolume v = voxel::voxelize_into(tris, dims, origin, cell);
+
+    // Occupancy vector should have correct size.
+    EXPECT_EQ(v.occ.size(), static_cast<std::size_t>(dims.x * dims.y * dims.z));
+
+    // All occupancy values must be 0 or 1 (no garbage).
+    for (std::uint8_t occ_val : v.occ) {
+        EXPECT_TRUE(occ_val == 0 || occ_val == 1)
+            << "found non-binary occupancy value: " << static_cast<int>(occ_val);
+    }
+}
