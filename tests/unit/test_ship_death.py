@@ -83,13 +83,15 @@ def test_advance_marks_dead_at_throes_but_keeps_wreck_in_set():
     assert ship_death.is_targetable_wreck(ship) is True
 
 
-def test_advance_removes_wreck_after_throes_plus_linger():
+def test_wreck_becomes_a_persistent_hulk_after_the_linger():
+    """The linger ends selectability, NOT the hull. It stays in its set as a
+    hulk so it keeps drawing and colliding — see test_ship_death_hulks.py."""
     s = FakeSet()
     ship = FakeShip(name="Doomed", containing_set=s)
     ship_death.begin(ship)
-    ship_death.advance(ship_death.MAX_THROES_DURATION)        # -> linger
-    ship_death.advance(ship_death.WRECK_LINGER_DURATION)  # linger expires
-    assert s.removed == ["Doomed"]
+    ship_death.advance(ship_death.MAX_THROES_DURATION)    # -> linger
+    ship_death.advance(ship_death.WRECK_LINGER_DURATION)  # -> hulk
+    assert s.removed == []
     assert ship_death.is_targetable_wreck(ship) is False
 
 
@@ -101,14 +103,25 @@ def test_advance_does_not_kill_before_throes_elapse():
     assert ship.IsDying() == 1
 
 
-def test_wreck_entry_pruned_after_final_removal():
+def test_evicted_hulk_entry_is_pruned_and_never_removed_twice():
+    """Eviction is now the final step. Once a hulk is evicted its entry must
+    leave the registry, or later frames would re-remove it."""
     s = FakeSet()
     ship = FakeShip(name="Doomed", containing_set=s)
     ship_death.begin(ship)
     ship_death.advance(ship_death.MAX_THROES_DURATION)
-    ship_death.advance(ship_death.WRECK_LINGER_DURATION)  # removed once
+    ship_death.advance(ship_death.WRECK_LINGER_DURATION)   # -> hulk
+
+    # Push it past the cap with fresher deaths.
+    for i in range(ship_death.MAX_HULKS):
+        other = FakeShip(name=f"Other{i}")
+        ship_death.begin(other)
+        ship_death.advance(ship_death.MAX_THROES_DURATION)
+        ship_death.advance(ship_death.WRECK_LINGER_DURATION)
+
+    assert s.removed == ["Doomed"]        # evicted as the oldest
     s.removed.clear()
-    ship_death.advance(1.0)   # entry pruned -> no second removal
+    ship_death.advance(1.0)               # entry pruned -> no second removal
     assert s.removed == []
 
 

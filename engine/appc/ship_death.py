@@ -20,8 +20,24 @@ import engine.dev_mode as dev_mode
 from engine.appc import death_cascade, explosion_lights
 from engine.core.ids import implements
 
-WRECK_LINGER_DURATION = 5.0   # seconds a dead hull lingers, selectable in the
-                              # target list, after the throes before removal
+WRECK_LINGER_DURATION = 5.0   # seconds a dead hull stays SELECTABLE in the
+                              # target list after the throes, before it becomes
+                              # a hulk
+
+# How many dead hulls stay in the world at once. Oldest evicted.
+#
+# BC removed the hull the moment the death lifetime expired, and this sequence
+# used to match that: throes, linger, gone. Five quiet seconds after a 5-15 s
+# death reads as vanishing on the spot, so a dead hull now STAYS as a hulk.
+#
+# Persisting costs nothing to wire — both the renderer's instance reaper and
+# collisions.iter_collidables walk set membership with no dead filter, so a
+# hull left in its set keeps drawing and colliding by construction. It does
+# cost per frame, though: every hulk is a full hull draw plus collision pairs.
+# Hence a cap rather than true permanence; a long fight cannot grow the scene
+# without limit. This is a deliberate DEVIATION from BC, not recovered
+# behaviour.
+MAX_HULKS = 8
 
 # The longest throes BC can roll. Callers that need to drive a death to
 # completion (tests, teardown) advance by this rather than by a per-ship value
@@ -118,6 +134,9 @@ def advance(dt: float) -> None:
         return
     survivors = []
     for entry in _active:
+        if entry["phase"] == "hulk":
+            survivors.append(entry)          # no timer — a hulk waits for the cap
+            continue
         # Drive the explosion cascade before the timer, so a blast scheduled at
         # the very end of the window still fires on the frame the throes expire.
         if entry["phase"] == "throes" and entry["cascade"] is not None:
@@ -132,9 +151,29 @@ def advance(dt: float) -> None:
             entry["cascade"] = None          # stop carving; the ship is dead
             entry["time_left"] = WRECK_LINGER_DURATION
             survivors.append(entry)          # wreck lingers, still selectable
-        else:  # "linger"
-            _remove(entry["ship"])           # pruned (not re-appended)
+        else:  # "linger" -> "hulk"
+            # Release every lock HERE, not at eviction: the hulk leaves the
+            # target list at this moment, so a player still tracking it would
+            # otherwise stay locked onto a corpse for the rest of the battle.
+            _clear_target_locks(entry["ship"])
+            entry["phase"] = "hulk"
+            survivors.append(entry)
     _active[:] = survivors
+    _evict_excess_hulks()
+
+
+def _evict_excess_hulks() -> None:
+    """Keep at most MAX_HULKS dead hulls in the world, oldest first out.
+
+    `_active` is append-ordered by time of death, so the oldest hulks are
+    simply the earliest matching entries."""
+    hulks = [e for e in _active if e["phase"] == "hulk"]
+    excess = len(hulks) - MAX_HULKS
+    if excess <= 0:
+        return
+    for entry in hulks[:excess]:
+        _remove(entry["ship"])
+        _active.remove(entry)
 
 
 def _mark_dead(ship) -> None:
@@ -173,12 +212,17 @@ def retire(ship) -> None:
 
 
 def is_targetable_wreck(ship) -> bool:
-    """True while `ship` is in an in-progress death/linger sequence (dying or a
-    dead wreck not yet removed). The HUD target list uses this to keep a
-    destroyed ship selectable through the throes + linger window. Identity
-    match against the active registry; no engine calls, so it is safe to call
-    on any object."""
-    return any(entry["ship"] is ship for entry in _active)
+    """True while `ship` is dying or is a dead wreck still worth selecting.
+
+    The HUD target list uses this to keep a destroyed ship selectable through
+    the throes + linger window. Hulks are excluded deliberately: they persist
+    for the rest of the battle, and a target list that fills with corpses is
+    worse than one with no wrecks in it at all.
+
+    Identity match against the active registry; no engine calls, so it is safe
+    to call on any object."""
+    return any(entry["ship"] is ship and entry["phase"] != "hulk"
+               for entry in _active)
 
 
 def _broadcast_exploding(ship, killer=None) -> None:

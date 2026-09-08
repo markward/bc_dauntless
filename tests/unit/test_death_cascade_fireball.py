@@ -81,15 +81,25 @@ def test_blast_puff_count_varies_between_blasts():
 
 
 def test_whole_death_puff_count_is_bounded():
-    """The regression this guards: ~570 overlapping puffs across one death."""
-    state = death_cascade.begin(FakeShip(), duration=10.0)
-    emitters = 0
+    """The regression this guards: ~570 overlapping puffs across one death.
+
+    The RNG is PINNED. Drawing from App.g_kSystemWrapper makes the blast count
+    depend on whatever ran before (a zero spacing roll costs no time, so a
+    10 s window can schedule anywhere from ~22 to MAX_BLASTS), which is a
+    property of the test order rather than of this code.
+    """
+    mid = lambda n: n // 2                     # spacing 0.3 s, 3 puffs a blast
+    state = death_cascade.begin(FakeShip(), duration=10.0, rand=mid)
     for _ in range(int(10.0 * 60)):
-        before = len(particles.snapshot_descriptors())
         death_cascade.advance(state, 1.0 / 60.0)
-        emitters += max(0, len(particles.snapshot_descriptors()) - before)
-    worst = emitters * death_cascade.PUFFS_MAX
-    assert worst < 300, f"worst-case {worst} puffs across one death"
+
+    total = 0
+    for d in particles.snapshot_descriptors():
+        if "ExplosionA" not in d.get("texture_path", ""):
+            continue
+        total += len([i for i in range(64)
+                      if i * d["emit_frequency"] <= d["stop_age"] + 1e-9])
+    assert total < 200, f"{total} puffs across one death (was ~570)"
 
 
 def test_explosion_light_tracks_the_puff_not_the_emitter():
