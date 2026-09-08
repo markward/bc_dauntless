@@ -30,8 +30,13 @@ KNOWN_FRAMEWORKS = frozenset({
     "Foundation", "FoundationTech", "FoundationTriggers", "Registry",
 })
 
-_IMPORT_RE = re.compile(
-    r"^\s*(?:import\s+([A-Za-z_][\w.]*)|from\s+([A-Za-z_][\w.]*)\s+import)",
+# Regex patterns for import statement fallback (Python 1.5 syntax tolerance).
+# Separate patterns for import and from...import to handle comma-separated imports.
+_IMPORT_LIST_RE = re.compile(
+    r"^\s*import\s+([A-Za-z_][\w.]*(?:\s*,\s*[A-Za-z_][\w.]*)*)",
+    re.MULTILINE)
+_FROM_IMPORT_RE = re.compile(
+    r"^\s*from\s+([A-Za-z_][\w.]*)\s+import",
     re.MULTILINE)
 
 
@@ -262,8 +267,16 @@ def _imported_names(source: str) -> set:
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        for m in _IMPORT_RE.finditer(source):
-            raw = m.group(1) or m.group(2)
+        # Fallback for Python 1.5 syntax: handle import statements with comma-separated names
+        for m in _IMPORT_LIST_RE.finditer(source):
+            names_str = m.group(1)
+            for name in names_str.split(','):
+                name = name.strip()
+                if name:
+                    names.add(name.split(".")[0])
+        # Fallback for from...import statements
+        for m in _FROM_IMPORT_RE.finditer(source):
+            raw = m.group(1)
             names.add(raw.split(".")[0])
         return names
 

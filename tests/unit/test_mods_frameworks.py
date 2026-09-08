@@ -48,3 +48,24 @@ def test_a_mod_providing_the_framework_itself_does_not_require_it(tmp_path):
     idx = mods.build_index(tmp_path)
     mods.detect_frameworks(idx)
     assert {m.name: m.requires for m in idx.mods}["Found"] == []
+
+
+def test_comma_separated_imports_detected_through_regex_fallback():
+    # Backtick-repr forces regex fallback; comma-separated imports must not be missed
+    src = "import App, Foundation\nx = `1`\n"
+    assert "Foundation" in mods._imported_names(src)
+    assert "App" in mods._imported_names(src)
+
+
+def test_comma_separated_with_submodules_detected_through_regex_fallback():
+    # Multiple imports including dotted names; only root module matters
+    src = "import App, Foundation.Sub\nx = `1`\n"
+    names = mods._imported_names(src)
+    assert "Foundation" in names
+    assert "App" in names
+
+
+def test_from_import_through_regex_fallback():
+    # from...import through the regex fallback (not AST)
+    src = "from Foundation import ShipDef\nx = `1`\n"
+    assert "Foundation" in mods._imported_names(src)
