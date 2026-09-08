@@ -174,14 +174,39 @@ One dict lookup on the fast path — no stat, no per-layer walk.
 **With zero mods installed the returned path must be byte-identical to
 today's.** A modless boot may not shift at all; this is an explicit test.
 
-Three Python-side consumers currently take a *directory* from `game_asset()`
-and immediately join a filename onto it — `engine/ui/ship_icons.py`,
-`weapon_icons.py`, `damage_icons.py`. These become single relative-path
-lookups through the index, which is simpler than what is there now.
+**Directory-shaped consumers need separate handling**, and there are more of
+them than a first pass suggests — an index of individual *files* cannot
+serve a caller that asks for a *directory*. Nine call sites take a directory
+from `game_asset()`, in two distinct shapes:
 
-`host_loop.py:4347` `_ship_texture_search` is the one consumer that
-genuinely hands C++ a directory list. It **already returns a list**; mod
-directories that provide textures for that ship are appended.
+*Shape A — directory then immediate filename join.* These become single
+relative-path lookups through the index, which is simpler than what is there
+now:
+
+| Site | Directory |
+|---|---|
+| `engine/ui/ship_icons.py:43` | `data/Icons/Ships` |
+| `engine/ui/weapon_icons.py:80` | `data/Icons` |
+| `engine/ui/damage_icons.py:41` | `data/Icons/Damage` |
+
+*Shape B — a directory (or list of them) handed onward to be searched.*
+These need every providing mod's directory, not one file, so they take a new
+`paths.game_asset_dirs(rel) -> list[Path]` returning mod directories first,
+then the stock directory:
+
+| Site | Directory |
+|---|---|
+| `host_loop.py:4347` `_ship_texture_search` | per-ship + shared texture dirs (**already returns a list**) |
+| `host_loop.py:4829`, `:5465` | `DEFAULT_PLANET_TEXTURE_SEARCH` |
+| `host_loop.py:5848` | `dirname(nif)/High` |
+| `host_loop.py:5887` | `DBRIDGE_TEX_REL` |
+| `engine/missions/name_resolver.py:20` | `data/TGL` |
+| `engine/appc/viewscreen_static.py:29` | `data/Textures/Effects` |
+
+`data/TGL` matters more than it looks: `Foundation.TGLDef('FTB Ships',
+'data/TGL/FTBShips.TGL')` is confirmed Foundation surface, so mods really do
+ship TGL string tables, and a mod-provided one is how a modded ship gets a
+display name.
 
 ### SDK imports
 
