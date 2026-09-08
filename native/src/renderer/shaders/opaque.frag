@@ -182,10 +182,15 @@ float hull_field_slice(float slice, vec2 sxy, float tile_w, float tile_h) {
 // consumer of the field (today's clip, anything added later) must sample
 // through here so they cannot drift apart.
 //
-// Encoding: pack_field_to_atlas stores d + 128 as a byte, so texture() (GL_R8,
-// normalised) returns (d + 128) / 255; subtracting 0.5 re-centres that on
-// zero at the hull surface (128), which is the same "texel - 0.5" comparison
-// InstanceFieldCache's upload() comment documents.
+// Encoding: pack_field_to_atlas stores byte = round(d / scale) + 128, so
+// texture() (GL_R8, normalised) returns byte / 255 = (round(d/scale) + 128)
+// / 255. Subtracting 128/255 EXACTLY (not 0.5 -- 128/255 = 0.50196..., a
+// half-quantisation-step bias toward "outside" at exactly the boundary
+// Critical 1's kHullFieldIsoMargin exists to guard) leaves
+// round(d/scale) / 255 -- i.e. this function's return value is
+// d / (scale * 255), plus at most +-0.5/255 of rounding error. That last
+// fact is what makes kHullFieldIsoMargin below scale-independent: see its
+// derivation.
 //
 // Z has no atlas border (slices are whole tiles, not filtered together by
 // hardware) -- the two bracketing slices are fetched by hand and lerped,
@@ -217,8 +222,28 @@ float sample_hull_field(vec3 p_body) {
 
     float v0 = hull_field_slice(s0, sxy, tile_w, tile_h);
     float v1 = hull_field_slice(s1, sxy, tile_w, tile_h);
-    return mix(v0, v1, wz) - 0.5;   // > 0 outside the hull, < 0 inside
+    return mix(v0, v1, wz) - (128.0 / 255.0);   // > 0 outside the hull, < 0 inside
 }
+
+// Discard margin, in sample_hull_field's own return units. MUST be > 0, not
+// 0 -- every fragment this shader shades sits ON the hull's mesh surface by
+// construction (that is what is being drawn), so its TRUE distance is ~0.
+// The baked field is the SDF of those same triangles, so on any locally
+// planar panel its zero crossing coincides with the drawn surface to within
+// quantisation -- at d == 0 exactly the SIGN of the decoded sample is
+// decided by rounding noise, not geometry. Comparing against a bare 0.0
+// there discards in a dithered speckle pattern across the WHOLE hull of any
+// damaged ship, not just where a carve actually cut material away.
+//
+// Derivation: sample_hull_field's return value is d / (scale * 255) plus at
+// most +-0.5/255 of rounding error (see its own derivation above) -- i.e.
+// exactly HALF A QUANTISATION STEP of margin, expressed in encoded byte
+// units, cancels the per-instance `scale` entirely: half a step in model
+// units is 0.5 * scale, and (0.5 * scale) / (scale * 255) == 0.5 / 255
+// regardless of what `scale` (cell size, hull, quality) actually is. This
+// is therefore the SMALLEST margin that fully absorbs quantisation
+// rounding, for any instance -- not an arbitrary safety pad.
+const float kHullFieldIsoMargin = 0.5 / 255.0;
 
 // ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
 // Projects Damage.tga's alpha channel onto the hull in an annular band around
@@ -606,28 +631,18 @@ void main() {
     // Body-frame fragment position (object-space carve + decals).
     vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
 
-    // ── Hull-field clip (hull-volume-field-transport, Task 5) ──────────────
-    // Independent of the sphere block below and evaluated first: it never
-    // KEEPS a fragment the sphere block would otherwise cut (the framework
-    // lattice's strut-preserving logic there is untouched), it only ever ADDS
-    // a discard for damage beyond the 24-sphere ceiling. `marked` is shared
-    // with the sphere block below so a single trailing check (after both) can
-    // ask "did EITHER mechanism mark this fragment", instead of two separate
-    // marking-pass fallbacks that could each independently force a discard.
-    bool marked = false;
-    if (u_hull_field_enabled != 0) {
-        bool field_cut = sample_hull_field(p_body) > 0.0;
-        if (u_carve_invert != 0) {
-            if (field_cut) marked = true;
-        } else if (field_cut) {
-            discard;
-        }
-    }
-
     // ── Hull-breach hole: pure damage-sphere clip ──────────────────────────
     // Discard hull fragments inside any active carve sphere. The breach pass
     // renders the exposed interior (scoop) within the same spheres, so hole and
     // interior align by construction. u_carve_count == 0 (or disabled) = stock path.
+    //
+    // UNCHANGED from before the hull-field clip existed, with one addition:
+    // `inside_any_oblate` records whether this fragment fell inside ANY
+    // TRACKED oblate (the same `e < 1.0` test the framework lattice already
+    // computes), so the field block below can defer to this block wherever
+    // it applies. See that block's comment for why.
+    bool marked = false;
+    bool inside_any_oblate = false;
     if (u_carve_enabled != 0 && u_carve_count > 0) {
         for (int i = 0; i < u_carve_count; i++) {
             vec3 c  = u_carve_spheres[i].xyz;
@@ -647,6 +662,7 @@ void main() {
                 float dz = along / (kDepthFactor * r);
                 float e  = (ld * ld) / (r_eff * r_eff) + dz * dz;   // <1 inside the oblate
                 if (e < 1.0) {
+                    inside_any_oblate = true;
                     // ── Skeletal framework lattice (INSIDE the breach) ──────────
                     // Don't cut a clean hole: leave torn HULL STRUTS bridging the
                     // breach where Damage.tga's stencil is opaque; the gaps between
@@ -679,6 +695,41 @@ void main() {
             }
         }
     }
+
+    // ── Hull-field clip (hull-volume-field-transport, Task 5) ──────────────
+    // Evaluated AFTER the sphere block, and only where `!inside_any_oblate`:
+    // a TRACKED carve's shape, jagged noise rim, and framework-lattice strut
+    // decision above are computed from real geometry (the sphere, its
+    // normal, Damage.tga's stencil); the field has none of that -- it only
+    // knows "carved or not" at a point. If the field discarded unconditionally
+    // it would OVERRIDE the sphere block's own decision inside every tracked
+    // oblate: every strut the lattice just decided to keep would still be cut
+    // (field_carve_oblate carved that exact region unconditionally), the
+    // jagged noise rim would be replaced by the field's smooth, un-perturbed
+    // edge, and the hull hole would extend past where the sphere-and-noise-
+    // derived breach scoop actually draws (Global Constraint 6: hole and
+    // scoop must not drift, and the scoop still derives from the sphere
+    // list this plan does not remove).
+    //
+    // Gating on `!inside_any_oblate` means the field can only ever ADD a
+    // discard where the sphere block does not already govern -- i.e. damage
+    // beyond the 24-sphere ceiling, which is the plan's actual win. Inside a
+    // tracked oblate, the sphere block's decision (struts, noise rim, hole
+    // shape) is authoritative and untouched.
+    if (u_hull_field_enabled != 0 && !inside_any_oblate) {
+        // kHullFieldIsoMargin, not 0.0: see its derivation above this
+        // function -- every fragment here sits ON the hull surface (d ~ 0),
+        // so comparing the raw sign against zero would discard in a
+        // dithered speckle pattern decided by quantisation rounding rather
+        // than by real geometry.
+        bool field_cut = sample_hull_field(p_body) > kHullFieldIsoMargin;
+        if (u_carve_invert != 0) {
+            if (field_cut) marked = true;
+        } else if (field_cut) {
+            discard;
+        }
+    }
+
     // Marking pass: anything NOT marked by EITHER mechanism (field or sphere)
     // must not stamp the stencil. Covers the old "no carves at all" fallback
     // too: with both blocks above skipped (disabled or empty), `marked` is

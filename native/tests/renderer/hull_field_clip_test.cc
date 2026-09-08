@@ -3,7 +3,8 @@
 // Tests for the per-instance hull-field clip (hull-volume-field-transport,
 // Task 5): opaque.frag samples voxel::DistanceField data packed into a 2D
 // slice atlas (voxel/field_atlas.h) instead of the fixed 24-sphere array, and
-// discards a hull fragment when the sampled value reads OUTSIDE the hull.
+// discards a hull fragment when the sampled value reads OUTSIDE the hull by
+// more than kHullFieldIsoMargin.
 //
 //  u_hull_field_enabled == 0                       -> stock path (no discard;
 //                                                      zero per-fragment cost)
@@ -11,20 +12,24 @@
 //  u_hull_field_enabled == 1 AND sample says OUTSIDE -> discard
 //  u_carve_invert == 1 flips both of the enabled cases (the stencil-marking
 //  pass keeps exactly what the normal pass would have discarded).
+//  A fragment inside a TRACKED sphere carve is governed by the sphere block
+//  (struts, jagged noise rim); the field can only add a discard OUTSIDE every
+//  tracked oblate.
 //
 // Test strategy, modelled on hull_clip_test.cc: GL compile + draw + readback,
 // skipping without a GL context. With identity view/model/proj/ship_world_inv
 // matrices, the fullscreen triangle's interpolated a_position IS p_body, so
-// the CENTRE fragment always reads p_body == (0, 0, 0).
-//
-// Every probe field here is built so p_body == (0,0,0) samples EXACTLY ONE
-// stored cell with zero interpolation blend on any axis: dims (4,4,4), cell
-// (1,1,1), origin (-2.5,-2.5,-2.5) puts (0,0,0) at cell-space g = (2.5,2.5,2.5),
-// and the shader's sample-space is g - 0.5 = (2,2,2) exactly -- an integer on
-// every axis, so X/Y hardware bilinear and the hand-rolled Z lerp both
-// degenerate to reading cell (2,2,2) alone. That is the ONE cell each test
-// sets to a specific value; every other cell stays deep inside (-100) so nothing
-// else can leak into the sampled result even with sub-ULP filtering fuzz.
+// the CENTRE fragment reads p_body ~= (0, 0, 0) -- MEASURED (not exactly:
+// glReadPixels(kW/2, kH/2, ...) samples the pixel centred at NDC (1/64,
+// 1/64), confirmed with an isolated probe shader that output the
+// interpolated position directly; p_body.z IS exactly 0.0, since this
+// fixture's triangle is flat in Z). Every field's ORIGIN is chosen per test
+// so that p_body lands at whatever sample-space coordinate that test needs
+// to probe (an exact integer for the basic on/off tests, a deliberate
+// fraction for the interpolation tests) -- see each test's comment for its
+// own derivation. The 1/64 X/Y offset is negligible everywhere EXCEPT
+// HullFieldIsoMarginTest, whose derivation explains why and how it is
+// avoided there.
 
 #include <gtest/gtest.h>
 
@@ -32,8 +37,10 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <assets/model.h>
 #include <renderer/frame.h>
 #include <renderer/hdr_target.h>
+#include <renderer/instance_field_cache.h>
 #include <renderer/nonfinite_probe.h>
 #include <renderer/pipeline.h>
 #include <renderer/window.h>
@@ -68,6 +75,22 @@ voxel::DistanceField make_probe_field(std::int8_t center_value) {
     f.dist.assign(static_cast<std::size_t>(4 * 4 * 4),
                   static_cast<std::int8_t>(-100));
     f.dist[f.index(2, 2, 2)] = center_value;
+    return f;
+}
+
+// A uniform field: every cell holds `value`. Used where the test wants to
+// isolate ONE axis of the sampling maths (X/Y bilinear, the Z lerp, or the
+// tile-bleed clamp) without any other cell's value being able to leak in and
+// confound the result.
+voxel::DistanceField make_uniform_field(glm::ivec3 dims, glm::vec3 origin,
+                                        glm::vec3 cell, std::int8_t value) {
+    voxel::DistanceField f;
+    f.dims   = dims;
+    f.origin = origin;
+    f.cell   = cell;
+    f.scale  = 1.0f;
+    f.dist.assign(static_cast<std::size_t>(dims.x) * dims.y * dims.z,
+                  value);
     return f;
 }
 
@@ -209,17 +232,22 @@ protected:
         s.set_int("u_decal_count",       0);
         s.set_float("u_decal_time",      0.0f);
         s.set_int("u_glow_region_count", 0);
-        // Pure sphere clip: disabled for every test in this file -- only the
-        // field mechanism is under test here.
+        // Pure sphere clip: disabled by default -- only CritTwoFieldNeverOverridesATrackedStrut
+        // turns it on. Every other test in this file exercises the field in
+        // isolation.
         s.set_int("u_carve_enabled", 0);
         s.set_int("u_carve_count", 0);
         s.set_int("u_carve_invert", 0);
+        s.set_int("u_frame_enabled", 0);
         {
             std::array<glm::vec3, 24> normals;
             normals.fill(glm::vec3(0.0f, 0.0f, 1.0f));
             s.set_vec3_array("u_carve_normals", normals.data(),
                              static_cast<int>(normals.size()));
         }
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, black_tex_);
+        s.set_int("u_damage_decal", 3);
         // Hull field: baseline disabled/stock. Unit 6 assigned regardless of
         // enabled state (Global Constraint 2).
         s.set_int("u_hull_field", 6);
@@ -269,26 +297,40 @@ protected:
 
 }  // namespace
 
-// Behaviour 1: disabled field -> stock path, hull renders (matches
-// HullClipTest.DisabledClipRendersHull's discrimination: a broken "always
-// discard" implementation would fail this).
+// Behaviour 1: disabled field -> stock path, hull renders. Binds a atlas
+// that is ENTIRELY outside (every cell +127) to unit 6 while leaving
+// u_hull_field_enabled at 0: a missing/deleted `if (u_hull_field_enabled !=
+// 0)` guard would sample this texture, read a clearly-outside value, and
+// discard -- so this genuinely exercises the gate, not just "nothing was
+// ever bound". (An earlier version of this test bound nothing at all, which
+// a deleted guard could still pass vacuously: an incomplete/unbound sampler
+// reads back (0,0,0,0), and 0.0 - 128.0/255.0 is negative -- "inside" -- so
+// the gate's absence would have been invisible.)
 TEST_F(HullFieldClipTest, DisabledFieldRendersHullUnchanged) {
     renderer::Shader& prog = pipeline->opaque_shader();
-    set_uniforms(prog);   // u_hull_field_enabled = 0
+    set_uniforms(prog);
+    // Every cell +127 (deep outside), not just one probed cell, so the
+    // guard is tested regardless of exactly where the fragment samples.
+    const voxel::DistanceField field = make_uniform_field(
+        glm::ivec3(4, 4, 4), glm::vec3(-2.5f), glm::vec3(1.0f), 127);
+    enable_field(prog, field, /*invert=*/false);
+    prog.set_int("u_hull_field_enabled", 0);   // the guard under test
     draw();
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in disabled-field draw";
     auto px = read_center();
     EXPECT_GT(px[0] + px[1] + px[2], 128 * 3 / 2)
         << "Center pixel is dark (R=" << (int)px[0] << " G=" << (int)px[1]
-        << " B=" << (int)px[2] << ") — disabled field must not discard";
+        << " B=" << (int)px[2] << ") — disabled field must not discard, even "
+           "with an all-outside atlas bound";
 }
 
 // Behaviour 2: a fragment inside a carved region (sampled value reads
 // OUTSIDE the hull) is discarded. center_value = +80 model units at the
 // SOLE cell the centre fragment samples (see file header) -- well past the
-// zero surface threshold, so this cannot pass by an off-by-one at the
-// boundary.
+// kHullFieldIsoMargin threshold, so this cannot pass by an off-by-one at the
+// boundary. (The boundary ITSELF is pinned separately by the IsoMargin*
+// tests below.)
 TEST_F(HullFieldClipTest, FragmentInsideCarvedRegionIsDiscarded) {
     renderer::Shader& prog = pipeline->opaque_shader();
     set_uniforms(prog);
@@ -358,6 +400,445 @@ TEST_F(HullFieldClipTest, InvertFlipsSurvivingFragmentToDiscarded) {
         << "Center pixel is bright (R=" << (int)px[0] << " G=" << (int)px[1]
         << " B=" << (int)px[2]
         << ") — u_carve_invert=1 must DISCARD the fragment the normal pass renders";
+}
+
+// ── Critical 1 fix: kHullFieldIsoMargin boundary ────────────────────────────
+//
+// Every fragment this shader ever shades sits ON the hull's own mesh
+// surface (that is what is being drawn), so at that exact point the field's
+// TRUE distance is ~0. Comparing the decoded sample against a bare 0.0
+// would discard on quantisation-rounding noise alone -- a speckled hull, not
+// real damage. opaque.frag now compares against kHullFieldIsoMargin =
+// 0.5/255 (see its derivation in the shader). These two tests PIN that
+// threshold by walking the sampled value through it via a Z-slice blend
+// (slice z=2 at raw distance 0, slice z=3 at raw distance +1 -- i.e. bytes
+// 128 and 129), read at two different fractional Z weights that straddle
+// the 0.5-of-one-step boundary:
+//
+//   wz=0.3 -> blended value = 0.3/255 < kHullFieldIsoMargin -> survives
+//   wz=0.7 -> blended value = 0.7/255 > kHullFieldIsoMargin -> discards
+//
+// Both would come out WRONG under the old bare `> 0.0` comparison (both
+// blended values are strictly positive, so both would have discarded).
+// Together the pair also discriminates a broken/missing Z lerp: a "floor
+// only" bug reads byte 128 at both weights (value 0, survives both -- wz=0.7
+// would then wrongly survive); a "ceil only" bug reads byte 129 at both
+// weights (value 1/255, discards both -- wz=0.3 would then wrongly
+// discard); and an inverted weight (1-wz instead of wz) swaps which of the
+// two tests fails.
+//
+// MEASURED, not assumed: the fullscreen triangle's centre fragment does NOT
+// land at EXACTLY p_body == (0,0,0), despite that being this file's (and
+// hull_clip_test.cc's) documented assumption. glReadPixels(kW/2, kH/2, ...)
+// samples the pixel whose CENTRE is at window (32.5, 32.5) of 64, i.e. NDC
+// (2*32.5/64 - 1) = 1/64 on both X and Y -- confirmed by an isolated probe
+// shader that output the interpolated position directly: (0.015625,
+// 0.015625, 0.0). Every OTHER test in this file uses value swings of >=3
+// raw distance units, which an ~1.5% cross-contamination from a neighbouring
+// cell (bilinear-blending in that 1/64 of a cell) cannot flip the sign of.
+// This margin test tries to resolve a ONE-STEP difference, which THAT same
+// contamination CAN flip (confirmed: the original single-cell-override
+// version of this fixture passed ValueWithinHalfAStepOfTheSurfaceSurvives by
+// accident and genuinely failed ValueJustPastHalfAStepDiscards, both because
+// of exactly this, not because of a shader bug -- traced with a standalone
+// isolated shader reproducing sample_hull_field byte-for-byte, which
+// confirmed the sampling maths themselves are exactly correct).
+//
+// Fix: fill the ENTIRE z=2 and z=3 slices uniformly (not just cell (2,2,*)),
+// so bilinear blending across the X/Y sub-cell offset mixes a cell with an
+// IDENTICALLY-valued neighbour -- eliminating the contamination rather than
+// trying to out-guess it with a compensating offset.
+class HullFieldIsoMarginTest : public HullFieldClipTest {
+protected:
+    // origin.z is the only thing that differs between the two probes: it is
+    // chosen so g.z - 0.5 (sample-space z) equals 2 + wz exactly, landing the
+    // fullscreen triangle's centre fragment (p_body.z == 0.0 exactly -- the
+    // triangle is flat in Z, so unlike X/Y there is no sub-pixel offset to
+    // account for) at that fractional Z.
+    voxel::DistanceField make_margin_field(float wz) {
+        voxel::DistanceField f;
+        f.dims   = glm::ivec3(4, 4, 4);
+        f.cell   = glm::vec3(1.0f);
+        f.scale  = 1.0f;
+        const float sample_space_z = 2.0f + wz;
+        const float g_z = sample_space_z + 0.5f;
+        f.origin = glm::vec3(-2.5f, -2.5f, -g_z);
+        f.dist.assign(static_cast<std::size_t>(4 * 4 * 4),
+                      static_cast<std::int8_t>(-100));
+        for (int y = 0; y < 4; ++y) {
+            for (int x = 0; x < 4; ++x) {
+                f.dist[f.index(x, y, 2)] = 0;   // byte 128: exactly the hull surface
+                f.dist[f.index(x, y, 3)] = 1;   // byte 129: one quantisation step out
+            }
+        }
+        return f;
+    }
+};
+
+TEST_F(HullFieldIsoMarginTest, ValueWithinHalfAStepOfTheSurfaceSurvives) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+    const voxel::DistanceField field = make_margin_field(/*wz=*/0.3f);
+    enable_field(prog, field, /*invert=*/false);
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 128 * 3 / 2)
+        << "Center pixel is dark (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2]
+        << ") — a blended value of 0.3/255 is WITHIN kHullFieldIsoMargin "
+           "(0.5/255) and must not discard";
+}
+
+TEST_F(HullFieldIsoMarginTest, ValueJustPastHalfAStepDiscards) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+    const voxel::DistanceField field = make_margin_field(/*wz=*/0.7f);
+    enable_field(prog, field, /*invert=*/false);
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    auto px = read_center();
+    EXPECT_LT(px[0] + px[1] + px[2], 64)
+        << "Center pixel is bright (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2]
+        << ") — a blended value of 0.7/255 is PAST kHullFieldIsoMargin "
+           "(0.5/255) and must discard";
+}
+
+// ── Important 2 fix: X/Y hardware bilinear ─────────────────────────────────
+//
+// Both tests probe a fractional X sample-space coordinate between two
+// opposite-signed neighbouring cells, at a weight chosen so the CORRECT
+// blended sign DIFFERS from what GL_NEAREST (or a "floor only"/"ceil only"
+// shader bug) would read -- not just from the two cells' own signs, which a
+// coarse ±100 test at wx=0.9/0.1 could satisfy by coincidence even under
+// nearest-filtering. See the derivation in each test.
+class HullFieldXyBilinearTest : public HullFieldClipTest {
+protected:
+    // origin.x placed so sample-space x == 1 + wx exactly; y/z stay at the
+    // exact-integer (2,2) used elsewhere, so only X blends.
+    voxel::DistanceField make_xy_field(float wx, std::int8_t cell1,
+                                       std::int8_t cell2) {
+        voxel::DistanceField f;
+        f.dims   = glm::ivec3(4, 4, 4);
+        f.cell   = glm::vec3(1.0f);
+        f.scale  = 1.0f;
+        const float sample_space_x = 1.0f + wx;
+        const float g_x = sample_space_x + 0.5f;
+        f.origin = glm::vec3(-g_x, -2.5f, -2.5f);
+        f.dist.assign(static_cast<std::size_t>(4 * 4 * 4),
+                      static_cast<std::int8_t>(-100));
+        f.dist[f.index(1, 2, 2)] = cell1;
+        f.dist[f.index(2, 2, 2)] = cell2;
+        return f;
+    }
+};
+
+// wx=0.6 (majority weight on cell x=2, byte 131 i.e. raw +3 -- barely
+// outside on its own). GL_NEAREST at wx=0.6 (>= 0.5) would round to x=2 and
+// read +3 -> discard. The CORRECT bilinear blend pulls in x=1's byte 28
+// (raw -100) at 40% weight: mix(28,131,0.6) = 89.8 -> value = -38.2/255,
+// clearly negative -> survives. Also catches a "ceil only" shader bug
+// (reads byte 131 -> discard, wrong).
+TEST_F(HullFieldXyBilinearTest, BlendPullsAcrossZeroTowardTheMinorityWeightedNearCell) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+    const voxel::DistanceField field =
+        make_xy_field(/*wx=*/0.6f, /*cell1=*/-100, /*cell2=*/3);
+    enable_field(prog, field, /*invert=*/false);
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 128 * 3 / 2)
+        << "Center pixel is dark (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2]
+        << ") — bilinear blend of -100 (40%) and +3 (60%) is negative and "
+           "must survive; a nearest-filter or ceil-only bug reads +3 alone";
+}
+
+// wx=0.4 (majority weight on cell x=1, byte 131 i.e. raw +3). GL_NEAREST at
+// wx=0.4 (< 0.5) would round to x=1 and read +3 -> discard. The CORRECT
+// bilinear blend pulls in x=2's byte 28 (raw -100) at 40% weight:
+// mix(131,28,0.4) = 89.8 -> value = -38.2/255 -> survives. Also catches a
+// "floor only" shader bug (reads byte 131 -> discard, wrong).
+TEST_F(HullFieldXyBilinearTest, BlendPullsAcrossZeroTowardTheMinorityWeightedFarCell) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+    const voxel::DistanceField field =
+        make_xy_field(/*wx=*/0.4f, /*cell1=*/3, /*cell2=*/-100);
+    enable_field(prog, field, /*invert=*/false);
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 128 * 3 / 2)
+        << "Center pixel is dark (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2]
+        << ") — bilinear blend of +3 (60%) and -100 (40%) is negative and "
+           "must survive; a nearest-filter or floor-only bug reads +3 alone";
+}
+
+// ── Important 2 fix: cross-tile bleed (the anti-bleed clamp) ───────────────
+//
+// dims (4,4,2) puts TWO slices side by side in the SAME atlas row
+// (atlas_layout_for: tiles_x=ceil(sqrt(2))=2, tiles_y=1) -- adjacent tiles,
+// exactly the seam field_atlas.h's border exists to protect. Slice 0 is
+// UNIFORMLY -100 (deep inside); slice 1 is UNIFORMLY +100 (deep outside).
+// The probe's body position is chosen so the UNCLAMPED sample-space X is a
+// wildly out-of-range +50 -- if the shader's `clamp(g.xy, -1, dims)` guard
+// is missing, that reaches past slice 0's own tile into slice 1's texels
+// (bleed); Z is pinned at sample-space 0 (wz == 0 exactly) so the Z lerp
+// contributes NOTHING (slice 1's value cannot reach the result via Z
+// blending) -- any slice-1 contamination here can only come from the X
+// clamp failing, isolating that one mechanism.
+//
+// NOTE: this test cannot distinguish the correct clamp range [-1, dims] from
+// a NARROWER one like [0, dims-1] -- both stay inside slice 0's own tile for
+// any overshoot, because the border texel at sample-space `dims` always
+// holds the SAME byte as the interior edge cell at `dims-1`
+// (pack_field_to_atlas replicates it there by construction), so the two
+// clamp bounds are value-indistinguishable except when the clamp is REMOVED
+// or WIDENED enough to reach a genuinely different tile -- which is what
+// this test exercises.
+TEST_F(HullFieldClipTest, CrossTileBleedDoesNotReachTheNeighbouringSlice) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+
+    const float unclamped_sample_space_x = 50.0f;
+    const float g_x = unclamped_sample_space_x + 0.5f;
+    const float g_z = 0.5f;   // sample-space z == 0 exactly -> wz == 0
+    voxel::DistanceField slice0 = make_uniform_field(
+        glm::ivec3(4, 4, 2), glm::vec3(-g_x, -2.5f, -g_z), glm::vec3(1.0f), -100);
+    // Overwrite slice 1 (z=1) to the opposite extreme so any bleed is visible.
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x)
+            slice0.dist[slice0.index(x, y, 1)] = 100;
+
+    enable_field(prog, slice0, /*invert=*/false);
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 128 * 3 / 2)
+        << "Center pixel is dark (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2]
+        << ") — a wildly out-of-bounds X must clamp within slice 0's own "
+           "tile (deep inside, -100), not bleed into slice 1's tile (+100)";
+}
+
+// ── Important 2 fix: non-cubic dims / tile-axis transposition ──────────────
+//
+// dims (3,5,6): every dimension distinct, and tiles_x=ceil(sqrt(6))=3 !=
+// tiles_y=ceil(6/3)=2 -- so an x<->y swap in the shader's cell coordinates,
+// OR a tiles_x<->tiles_y swap in the tile-offset maths, relocates the probe
+// to a DIFFERENT tile/cell instead of merely misreading within the same one.
+// The whole field is uniformly deep-inside (-100) except ONE cell at
+// (x=1, y=2, slice=4) set to +100 (outside). The probe samples that exact
+// cell at an exact integer sample-space coordinate (no interpolation, so
+// this isolates tile-axis correctness from the interpolation tests above).
+// Any transposition bug reads a DIFFERENT (still -100) cell and wrongly
+// survives.
+TEST_F(HullFieldClipTest, NonCubicDimsDoesNotTransposeTileAxes) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+
+    voxel::DistanceField field = make_uniform_field(
+        glm::ivec3(3, 5, 6), glm::vec3(-1.5f, -2.5f, -4.5f), glm::vec3(1.0f), -100);
+    field.dist[field.index(1, 2, 4)] = 100;   // the one cell the probe hits
+
+    enable_field(prog, field, /*invert=*/false);
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    auto px = read_center();
+    EXPECT_LT(px[0] + px[1] + px[2], 64)
+        << "Center pixel is bright (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2]
+        << ") — cell (1,2, slice 4) of a (3,5,6) field is +100 (outside) and "
+           "must discard; a tile-axis transposition would read a different, "
+           "still-deep-inside cell instead";
+}
+
+// ── Critical 2 fix: the field must not override a TRACKED oblate ──────────
+//
+// Sphere carve centred at c=(-1.85,0,0), radius 2, normal (0,0,1); the
+// centre fragment sits at p_body=(0,0,0), so v=(1.85,0,0), along=0,
+// lateral=(1.85,0,0), ld=1.85, az=(1,0,0) exactly (along==0, so az is exact,
+// not a normalized-noise direction). These numbers were run through a
+// standalone re-implementation of opaque.frag's vh3/vnoise3/oblate maths
+// (not shipped here, but reproducible from the shader's own formulas) to
+// confirm, with the ACTUAL noise value at this az/c: r_eff ~= 2.370,
+// e ~= 0.609 (comfortably < 1.0, so this fragment IS inside the tracked
+// oblate) and frac = sqrt(e) ~= 0.781 (comfortably > kOpenCore = 0.75, so
+// the framework lattice's strut branch is reachable). u_frame_enabled=1 and
+// a damage-decal texture bound with alpha=255 everywhere satisfies
+// `a > kStrutAlpha` unconditionally, so `cut` resolves to `false` --this
+// fragment is a KEPT STRUT.
+//
+// The field is ALSO enabled and marks this exact point as outside (+80, via
+// make_probe_field, same body-frame origin the sphere geometry above was
+// derived against). Before the Critical-2 fix, the field's independent
+// discard fired regardless of the sphere block's decision, silently erasing
+// every strut the moment Task 6 turns the field on. After the fix, the
+// field is gated on `!inside_any_oblate`, which is false here, so the field
+// is never consulted and the strut survives.
+TEST_F(HullFieldClipTest, FieldNeverOverridesAFragmentInsideATrackedOblate) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+
+    // Framework lattice: enabled, opaque (alpha=255) stencil so `a >
+    // kStrutAlpha` unconditionally, satisfying the strut branch regardless
+    // of the UV this fragment happens to land on.
+    GLuint strut_tex = make_tex(255, 255, 255);   // RGBA(255,255,255,255)
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, strut_tex);
+    prog.set_int("u_damage_decal", 3);
+    prog.set_int("u_frame_enabled", 1);
+    glActiveTexture(GL_TEXTURE0);
+
+    // Tracked sphere carve covering the centre fragment (verified geometry
+    // above: e ~= 0.609 < 1, frac ~= 0.781 > kOpenCore).
+    const glm::vec4 sphere(-1.85f, 0.0f, 0.0f, 2.0f);
+    const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+    prog.set_int("u_carve_enabled", 1);
+    prog.set_int("u_carve_count", 1);
+    prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+    prog.set_vec3_array("u_carve_normals", &normal, 1);
+
+    // Field ALSO marks the same point outside -- must be suppressed.
+    const voxel::DistanceField field = make_probe_field(/*center_value=*/80);
+    enable_field(prog, field, /*invert=*/false);
+
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in tracked-oblate draw";
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 128 * 3 / 2)
+        << "Center pixel is dark (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2]
+        << ") — a fragment inside a TRACKED oblate that the framework "
+           "lattice kept as a strut must survive even though the field "
+           "independently marks it outside";
+
+    glDeleteTextures(1, &strut_tex);
+}
+
+// ── Important 3 fix: frame.cc's draw_model uniform-setting block ──────────
+//
+// Everything above drives opaque.frag's uniforms directly via the test's
+// own set_uniforms()/enable_field() -- none of it exercises frame.cc's new
+// block in draw_model() at all. These two tests call the REAL draw_model()
+// free function (same one skinned_render_test.cc calls directly) with an
+// empty assets::Model (no nodes/meshes, so its per-mesh loop is a no-op --
+// but the hull-field uniform block runs unconditionally BEFORE that loop),
+// then read the uniforms back via glGetUniform* the way
+// particle_pass_test.cc already does for u_roll. This is code frame.cc sets
+// on its own initiative, not the test's -- so it is real coverage of
+// Constraint 2 (unit 6 assigned on every path) and the geometry uniforms,
+// not just a restatement of what the fixture already pokes in.
+class HullFieldDrawModelTest : public HullFieldClipTest {
+protected:
+    assets::Model empty_model;
+    scenegraph::DamageDecalRing no_decals;
+    const std::array<scenegraph::Instance::GlowRegion,
+                     scenegraph::Instance::kMaxGlowRegions> no_glow{};
+    scenegraph::HullCarveField no_carve;
+    std::vector<glm::mat4> no_palette;
+    std::array<renderer::DynamicLightDescriptor, renderer::kMaxDynamicLightsPerDraw>
+        no_lights{};
+};
+
+TEST_F(HullFieldDrawModelTest, EntryPresentBindsTextureAndSetsGeometryUniforms) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    const voxel::DistanceField field = make_probe_field(/*center_value=*/0);
+    voxel::AtlasLayout layout;
+    GLuint tex = upload_field_atlas(field, layout);
+
+    renderer::InstanceFieldCache::Entry entry;
+    entry.tex2d  = tex;
+    entry.layout = layout;
+    entry.origin = field.origin;
+    entry.cell   = field.cell;
+    entry.dims   = field.dims;
+    entry.scale  = field.scale;
+
+    renderer::draw_model(empty_model, glm::mat4(1.0f), prog, pipeline->skinned_shader(),
+                         white_tex_, black_tex_, /*rim_strength=*/0.0f,
+                         no_decals, no_glow, /*decal_time=*/0.0f,
+                         /*emissive_scale=*/1.0f, no_palette, no_carve,
+                         no_lights, /*dyn_light_count=*/0,
+                         /*carve_fill=*/nullptr, /*carve_invert=*/false,
+                         &entry);
+
+    GLuint program = prog.program();
+    GLint unit_val = -1;
+    glGetUniformiv(program, glGetUniformLocation(program, "u_hull_field"), &unit_val);
+    EXPECT_EQ(unit_val, 6) << "draw_model must assign u_hull_field to unit 6";
+
+    GLint enabled_val = -1;
+    glGetUniformiv(program, glGetUniformLocation(program, "u_hull_field_enabled"),
+                   &enabled_val);
+    EXPECT_EQ(enabled_val, 1) << "draw_model must enable the field when an Entry is passed";
+
+    GLfloat origin_val[3] = {0, 0, 0};
+    glGetUniformfv(program, glGetUniformLocation(program, "u_hull_field_origin"), origin_val);
+    EXPECT_FLOAT_EQ(origin_val[0], field.origin.x);
+    EXPECT_FLOAT_EQ(origin_val[1], field.origin.y);
+    EXPECT_FLOAT_EQ(origin_val[2], field.origin.z);
+
+    GLfloat dims_val[3] = {0, 0, 0};
+    glGetUniformfv(program, glGetUniformLocation(program, "u_hull_field_dims"), dims_val);
+    EXPECT_FLOAT_EQ(dims_val[0], static_cast<float>(field.dims.x));
+
+    GLfloat tiles_val[2] = {0, 0};
+    glGetUniformfv(program, glGetUniformLocation(program, "u_hull_field_tiles"), tiles_val);
+    EXPECT_FLOAT_EQ(tiles_val[0], static_cast<float>(layout.tiles_x));
+    EXPECT_FLOAT_EQ(tiles_val[1], static_cast<float>(layout.tiles_y));
+
+    // Confirm the ACTUAL GL binding, not just the uniform int: unit 6 must
+    // hold the Entry's own texture object.
+    GLint prev_active = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prev_active);
+    glActiveTexture(GL_TEXTURE6);
+    GLint bound_tex = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound_tex);
+    EXPECT_EQ(static_cast<GLuint>(bound_tex), tex)
+        << "draw_model must bind the Entry's tex2d to unit 6";
+    glActiveTexture(static_cast<GLenum>(prev_active));
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    glDeleteTextures(1, &tex);
+}
+
+TEST_F(HullFieldDrawModelTest, EntryAbsentStillAssignsUnitSixAndDisables) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    renderer::draw_model(empty_model, glm::mat4(1.0f), prog, pipeline->skinned_shader(),
+                         white_tex_, black_tex_, /*rim_strength=*/0.0f,
+                         no_decals, no_glow, /*decal_time=*/0.0f,
+                         /*emissive_scale=*/1.0f, no_palette, no_carve,
+                         no_lights, /*dyn_light_count=*/0,
+                         /*carve_fill=*/nullptr, /*carve_invert=*/false,
+                         /*hull_field=*/nullptr);
+
+    GLuint program = prog.program();
+    GLint unit_val = -1;
+    glGetUniformiv(program, glGetUniformLocation(program, "u_hull_field"), &unit_val);
+    EXPECT_EQ(unit_val, 6)
+        << "draw_model must assign u_hull_field to unit 6 even when hull_field "
+           "is nullptr (Global Constraint 2: on EVERY path)";
+
+    GLint enabled_val = -1;
+    glGetUniformiv(program, glGetUniformLocation(program, "u_hull_field_enabled"),
+                   &enabled_val);
+    EXPECT_EQ(enabled_val, 0)
+        << "draw_model must leave the field disabled when hull_field is nullptr";
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
 
 // Behaviour 5 (regression canary): degenerate vertex normal + ambient
