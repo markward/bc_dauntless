@@ -119,7 +119,9 @@ in *cells* and the Warbird's cells are 67% larger than everyone's.
 
 ### 2.4 Volume memory is not a constraint
 
-Grid size implied by the authored cell size, one byte per cell:
+Grid size implied by the authored resolution (the `cell` column below IS
+`SetDamageResolution`, so these are @1x; the cell size at quality q is
+`authored/q`), one byte per cell:
 
 | Ship | radius (GU) | cell | grid @1× | grid @2× |
 |---|---|---|---|---|
@@ -403,7 +405,7 @@ verified live, not assumed:
 
 | SDK surface | Today | Under this design |
 |---|---|---|
-| `ShipProperty.SetDamageResolution` | captured, **never read** | bake cell size |
+| `ShipProperty.SetDamageResolution` | captured, **never read** | bake resolution; cell size is `authored/quality` |
 | `DamageableObject.RemoveVisibleDamage` | implemented | `field.reset()` |
 | `SetVisibleDamage{Radius,Strength}Modifier` | implemented | brush scale (unchanged) |
 | `DamageableObject_IsDamageGeometryEnabled` | **`_NamedStub`** (truthy) | real flag, default on |

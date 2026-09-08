@@ -478,7 +478,14 @@ def set_hdr_lens_flare_enabled(enabled: bool) -> None:
 
 
 def hull_volume_set_resolution(iid: InstanceId, resolution: float) -> None:
-    """Record BC's authored damage-volume cell size for this instance's hull.
+    """Record BC's authored damage-volume RESOLUTION for this instance's hull.
+
+    This is `ShipProperty.SetDamageResolution` as authored (Shuttle 6, Akira 8,
+    Galaxy 10, Warbird 12, stations 15) -- a per-ship detail RATIO, NOT a cell
+    size. The cell size is `authored_res / quality`, computed by
+    `voxel::HullVolumeCache::get`. Passing this value where a cell size is
+    expected bakes the hull at `quality`x too coarse -- silently, since the
+    volume still works, just at lower fidelity.
 
     No hasattr guard, deliberately. host_loop.py:4780 documents a feature that
     shipped completely inert because a hasattr guard turned a loud missing-
