@@ -141,3 +141,93 @@ TEST(PointTriangleDistance, UltraThinTriangleFallsBackToVertexDistance) {
     EXPECT_TRUE(std::isfinite(r));
     EXPECT_NEAR(r, expected_distance_to_vertex_a, 1e-12f);
 }
+
+namespace {
+
+// A CLOSED axis-aligned box as 12 triangles.
+std::vector<voxel::Tri> box_tris(glm::vec3 lo, glm::vec3 hi) {
+    const glm::vec3 c[8] = {
+        {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {hi.x, hi.y, lo.z}, {lo.x, hi.y, lo.z},
+        {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z}, {hi.x, hi.y, hi.z}, {lo.x, hi.y, hi.z},
+    };
+    const int q[6][4] = {{0,1,2,3},{4,5,6,7},{0,1,5,4},{3,2,6,7},{0,3,7,4},{1,2,6,5}};
+    std::vector<voxel::Tri> t;
+    for (const auto& f : q) {
+        t.push_back({c[f[0]], c[f[1]], c[f[2]]});
+        t.push_back({c[f[0]], c[f[2]], c[f[3]]});
+    }
+    return t;
+}
+
+// Cell index containing a body-frame point.
+glm::ivec3 cell_of(const voxel::DistanceField& f, glm::vec3 p) {
+    const glm::vec3 g = (p - f.origin) / f.cell;
+    return glm::ivec3(int(std::floor(g.x)), int(std::floor(g.y)), int(std::floor(g.z)));
+}
+
+}  // namespace
+
+TEST(DistanceField, SignIsNegativeInsideAndPositiveOutside) {
+    const voxel::DistanceField f = voxel::distance_field_from_tris(
+        box_tris(glm::vec3(0.0f), glm::vec3(100.0f)), glm::vec3(5.0f),
+        voxel::kDefaultBandCells);
+    ASSERT_FALSE(f.dist.empty());
+
+    const glm::ivec3 mid = cell_of(f, glm::vec3(50.0f));
+    EXPECT_LT(f.distance_at(mid.x, mid.y, mid.z), 0.0f) << "box centre read as outside";
+
+    // A cell in the margin, comfortably outside the box.
+    EXPECT_GT(f.distance_at(0, 0, 0), 0.0f) << "margin cell read as inside";
+}
+
+TEST(DistanceField, DepthNearAFaceMatchesGeometry) {
+    // Cell 2 units so the answer is not dominated by quantisation.
+    const voxel::DistanceField f = voxel::distance_field_from_tris(
+        box_tris(glm::vec3(0.0f), glm::vec3(100.0f)), glm::vec3(2.0f),
+        voxel::kDefaultBandCells);
+
+    // 5 units below the +Z face, far from every other face.
+    const glm::ivec3 c = cell_of(f, glm::vec3(50.0f, 50.0f, 95.0f));
+    const float d = f.distance_at(c.x, c.y, c.z);
+    EXPECT_LT(d, 0.0f);
+    // Within one cell of the true -5.
+    EXPECT_NEAR(d, -5.0f, 2.0f);
+}
+
+TEST(DistanceField, HeightAboveAFaceMatchesGeometry) {
+    const voxel::DistanceField f = voxel::distance_field_from_tris(
+        box_tris(glm::vec3(0.0f), glm::vec3(100.0f)), glm::vec3(2.0f),
+        voxel::kDefaultBandCells);
+
+    const glm::ivec3 c = cell_of(f, glm::vec3(50.0f, 50.0f, 103.0f));
+    const float d = f.distance_at(c.x, c.y, c.z);
+    EXPECT_GT(d, 0.0f);
+    EXPECT_NEAR(d, 3.0f, 2.0f);
+}
+
+TEST(DistanceField, FarFieldSaturatesRatherThanWrapping) {
+    const voxel::DistanceField f = voxel::distance_field_from_tris(
+        box_tris(glm::vec3(0.0f), glm::vec3(100.0f)), glm::vec3(5.0f),
+        voxel::kDefaultBandCells);
+    // The band is 4 cells = 20 units; the box centre is 50 units from every
+    // face, so it must clamp to the most negative representable value, not
+    // wrap to a positive one.
+    const glm::ivec3 mid = cell_of(f, glm::vec3(50.0f));
+    EXPECT_NEAR(f.distance_at(mid.x, mid.y, mid.z), -127.0f * f.scale, 1e-3f);
+}
+
+TEST(DistanceField, EmptyInputYieldsAnEmptyField) {
+    const voxel::DistanceField f = voxel::distance_field_from_tris(
+        {}, glm::vec3(5.0f), voxel::kDefaultBandCells);
+    EXPECT_TRUE(f.dist.empty());
+}
+
+TEST(DistanceField, GridCoversTheHullPlusAMargin) {
+    const voxel::DistanceField f = voxel::distance_field_from_tris(
+        box_tris(glm::vec3(0.0f), glm::vec3(100.0f)), glm::vec3(5.0f),
+        voxel::kDefaultBandCells);
+    // origin sits below the hull minimum, and the far corner above its maximum.
+    EXPECT_LT(f.origin.x, 0.0f);
+    const float far_x = f.origin.x + f.cell.x * static_cast<float>(f.dims.x);
+    EXPECT_GT(far_x, 100.0f);
+}

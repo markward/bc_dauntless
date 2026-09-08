@@ -2,6 +2,8 @@
 #include <voxel/distance_field.h>
 
 #include <cmath>
+#include <cstdint>
+#include <unordered_map>
 
 namespace voxel {
 
@@ -55,6 +57,95 @@ float point_triangle_distance(const glm::vec3& p, const Tri& t) {
     if (!(std::abs(sum) > 1e-20f)) return glm::length(ap);
     const float inv = 1.0f / sum;
     return glm::length(p - (t.a + ab * (vb * inv) + ac * (vc * inv)));
+}
+
+namespace {
+
+// Hash key for a triangle bin.
+struct BinKey {
+    int x, y, z;
+    bool operator==(const BinKey& o) const { return x == o.x && y == o.y && z == o.z; }
+};
+struct BinHash {
+    std::size_t operator()(const BinKey& k) const {
+        // Cheap mix; bins are few relative to cells.
+        return (static_cast<std::size_t>(k.x) * 73856093u)
+             ^ (static_cast<std::size_t>(k.y) * 19349663u)
+             ^ (static_cast<std::size_t>(k.z) * 83492791u);
+    }
+};
+
+}  // namespace
+
+DistanceField distance_field_from_tris(const std::vector<Tri>& tris,
+                                       glm::vec3 cell,
+                                       float band_cells) {
+    DistanceField f;
+    if (tris.empty()) return f;
+    if (!(cell.x > 0.0f) || !(cell.y > 0.0f) || !(cell.z > 0.0f)) return f;
+    if (!(band_cells > 0.0f)) return f;
+
+    glm::vec3 mn(1e30f), mx(-1e30f);
+    for (const auto& t : tris) {
+        mn = glm::min(mn, glm::min(t.a, glm::min(t.b, t.c)));
+        mx = glm::max(mx, glm::max(t.a, glm::max(t.b, t.c)));
+    }
+
+    // Two-cell margin so the outside band is representable all the way round.
+    f.cell   = cell;
+    f.origin = mn - cell * 2.0f;
+    const glm::vec3 span = (mx - mn) / cell;
+    f.dims = glm::ivec3(static_cast<int>(std::ceil(span.x)) + 5,
+                        static_cast<int>(std::ceil(span.y)) + 5,
+                        static_cast<int>(std::ceil(span.z)) + 5);
+
+    const float band = band_cells * std::max(cell.x, std::max(cell.y, cell.z));
+    f.scale = band / 127.0f;
+
+    // Sign: the flood-filled occupancy of the SAME lattice.
+    const VoxelVolume occ = voxelize_into(tris, f.dims, f.origin, f.cell);
+
+    // Bin triangles by band-sized cells, each inserted into every bin its
+    // band-expanded bbox touches. A voxel then need only consult its OWN bin:
+    // any triangle within `band` of it is guaranteed to be there.
+    std::unordered_map<BinKey, std::vector<std::uint32_t>, BinHash> bins;
+    auto bin_of = [&](const glm::vec3& p) {
+        return BinKey{static_cast<int>(std::floor(p.x / band)),
+                      static_cast<int>(std::floor(p.y / band)),
+                      static_cast<int>(std::floor(p.z / band))};
+    };
+    for (std::uint32_t i = 0; i < tris.size(); ++i) {
+        const Tri& t = tris[i];
+        const glm::vec3 tlo = glm::min(t.a, glm::min(t.b, t.c)) - band;
+        const glm::vec3 thi = glm::max(t.a, glm::max(t.b, t.c)) + band;
+        const BinKey lo = bin_of(tlo), hi = bin_of(thi);
+        for (int z = lo.z; z <= hi.z; ++z)
+        for (int y = lo.y; y <= hi.y; ++y)
+        for (int x = lo.x; x <= hi.x; ++x)
+            bins[BinKey{x, y, z}].push_back(i);
+    }
+
+    f.dist.assign(static_cast<std::size_t>(f.dims.x)
+                * static_cast<std::size_t>(f.dims.y)
+                * static_cast<std::size_t>(f.dims.z), 0);
+
+    for (int z = 0; z < f.dims.z; ++z)
+    for (int y = 0; y < f.dims.y; ++y)
+    for (int x = 0; x < f.dims.x; ++x) {
+        const glm::vec3 p = f.origin
+                          + (glm::vec3(x, y, z) + 0.5f) * f.cell;
+        float best = band;
+        auto it = bins.find(bin_of(p));
+        if (it != bins.end())
+            for (std::uint32_t ti : it->second)
+                best = std::min(best, point_triangle_distance(p, tris[ti]));
+
+        const float sign = occ.solid(x, y, z) ? -1.0f : 1.0f;
+        float q = std::round(sign * best / f.scale);
+        q = std::max(-127.0f, std::min(127.0f, q));
+        f.dist[f.index(x, y, z)] = static_cast<std::int8_t>(q);
+    }
+    return f;
 }
 
 }  // namespace voxel
