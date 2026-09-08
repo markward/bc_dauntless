@@ -353,3 +353,19 @@ cache/
 
 # Developer NaN/Inf probe frame dumps (engine/dev_keybindings.py, F11)
 nonfinite_dumps/
+
+# =============================================================================
+# MODS — third-party BC content the player drops in. NEVER COMMIT.
+# =============================================================================
+# Same reasoning as /game and /sdk above, plus a licensing one: community mod
+# packages carry unclear terms or none at all (Foundation is "all rights
+# reserved" with permission scoped to the Activision SDK licence; Foundation
+# Technologies ships no licence text whatsoever). This tree is public GPLv3.
+# The directory itself stays tracked via .gitkeep so a fresh clone has
+# somewhere to drop them.
+#
+# This block must stay BELOW the `!**/.gitkeep` exception higher up: later
+# rules win, so `mods/*` would otherwise re-ignore the placeholder. The
+# negation is repeated here to keep the pair order-independent.
+mods/*
+!mods/.gitkeep
