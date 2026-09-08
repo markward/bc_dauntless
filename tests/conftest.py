@@ -1079,6 +1079,15 @@ def _reset_leakable_engine_globals():
         reset_concealment_state()
     except Exception:
         pass
+    # Damage-geometry switches (App.DamageableObject_*Enabled): in Dauntless
+    # damage is always on, but the setters are honoured so a mission can
+    # suppress damage for a cutscene. Module-level state, so a test that flips
+    # one flag would otherwise leak it into every later test.
+    try:
+        from engine.appc import damage_geometry
+        damage_geometry.reset()
+    except Exception:
+        pass
     # TransformStore is deliberately NOT reset here. On the native backend
     # `_reset_store_for_tests()` only drops the Python wrapper object — the
     # C++ `dauntless::transform_store()` singleton and every slot it holds

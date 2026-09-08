@@ -1419,3 +1419,33 @@ def IsNull(obj) -> int:
     except AttributeError:
         pass
     return 0
+
+
+# --- BC's damage-geometry switches (App-module functions, not methods) ------
+# App.py binds these at module level (App.py:11251-11261), not on the class.
+# They were truthy _NamedStubs; E3M1 stores their results and writes them back.
+from engine.appc import damage_geometry as _damage_geometry
+
+
+def DamageableObject_SetDamageGeometryEnabled(value) -> None:
+    _damage_geometry.set_damage_geometry_enabled(value)
+
+
+def DamageableObject_IsDamageGeometryEnabled() -> int:
+    return _damage_geometry.is_damage_geometry_enabled()
+
+
+def DamageableObject_SetVolumeDamageGeometryEnabled(value) -> None:
+    _damage_geometry.set_volume_damage_geometry_enabled(value)
+
+
+def DamageableObject_IsVolumeDamageGeometryEnabled() -> int:
+    return _damage_geometry.is_volume_damage_geometry_enabled()
+
+
+def DamageableObject_SetBreakableComponentsEnabled(value) -> None:
+    _damage_geometry.set_breakable_components_enabled(value)
+
+
+def DamageableObject_IsBreakableComponentsEnabled() -> int:
+    return _damage_geometry.is_breakable_components_enabled()
