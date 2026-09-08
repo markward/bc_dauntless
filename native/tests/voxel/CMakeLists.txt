@@ -11,6 +11,7 @@ add_executable(voxel_tests
     dual_contour_test.cc
     distance_field_test.cc
     dhv_test.cc
+    hull_volume_cache_test.cc
 )
 target_link_libraries(voxel_tests PRIVATE voxel GTest::gtest_main)
 target_compile_definitions(voxel_tests PRIVATE

@@ -120,7 +120,15 @@ bool read_dhv(const std::filesystem::path& path,
         if (!s) return false;
     }
 
-    if (f.dims.x <= 0 || f.dims.y <= 0 || f.dims.z <= 0) return false;
+    // dims==(0,0,0) is not corruption: it is the documented return of
+    // distance_field_from_tris() for a hull with no triangles (missing
+    // source, unparseable NIF, or a genuinely empty mesh) -- see
+    // distance_field.h. That empty field is a legitimate bake result and
+    // must round-trip through this container like any other, so only a
+    // MIXED zero/negative combination (one axis zero or negative while
+    // another is not) is rejected as a malformed grid.
+    const bool all_zero = f.dims.x == 0 && f.dims.y == 0 && f.dims.z == 0;
+    if (!all_zero && (f.dims.x <= 0 || f.dims.y <= 0 || f.dims.z <= 0)) return false;
     // Multiply and bounds-check in two steps rather than forming
     // dims.x*dims.y*dims.z in one expression. Each dim is an attacker-
     // controlled positive int32 (up to ~2^31); the full triple product can
