@@ -842,6 +842,22 @@ def test_blasts_keep_lighting_the_scene_across_the_throes():
     from engine.appc import explosion_lights
     ship = FakeShip(radius=20.0)
     ship.GetWorldLocation = lambda: type("P", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
+    # Pin the death window instead of leaving FakeShip.GetLifeTime at its
+    # default "unset" sentinel (1e30): that sentinel sends
+    # death_cascade.roll_duration down the RANDOM 5-15s branch, drawing from
+    # the SAME global RNG stream as every other test in the suite -- an
+    # unrelated earlier test shifting that stream's consumption order can
+    # roll a short window here while the loop below always ticks the FULL
+    # MAX_THROES_DURATION. A short window's cascade finishes early and the
+    # remaining ticks add zero more lit frames, so "lit for more than 50% of
+    # the MAXIMUM window" can fail for a death that was simply shorter than
+    # the max -- a real flake, not a real regression. Pinning via
+    # GetLifeTime instead takes BC's OTHER, deterministic branch (a mission
+    # that set a lifetime means it -- see roll_duration's docstring), and
+    # the assertion below is scaled to match the pinned value so the two
+    # stay consistent with each other.
+    pinned_duration = 10.0
+    ship.GetLifeTime = lambda: pinned_duration
 
     ship_death.begin(ship)
     lit_frames = 0
@@ -851,8 +867,10 @@ def test_blasts_keep_lighting_the_scene_across_the_throes():
         lit_frames += 1 if explosion_lights.render_data() else 0
 
     # BC's mean spacing is 0.225 s against a 1.5 s light life, so a death is
-    # continuously lit rather than a few separated flashes.
-    assert lit_frames > int(ship_death.MAX_THROES_DURATION * 60 * 0.5), (
+    # continuously lit rather than a few separated flashes -- measured
+    # against the PINNED window (what this death actually ran for), not the
+    # maximum possible one.
+    assert lit_frames > int(pinned_duration * 60 * 0.5), (
         f"scene was lit for only {lit_frames} frames of the death")
     assert not explosion_lights._sequences, "every blast should have been borne"
 

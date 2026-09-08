@@ -608,4 +608,108 @@ TEST_F(InstanceFieldCacheTest, DestroyedAndRecreatedInstanceDoesNotInheritOldFie
         << "the new instance must not inherit the old instance's carve";
 }
 
+// Behaviour: a MERGED deposit carves the field at the SLOT's stored centre,
+// not at the raw point the second hit landed on. HullCarveField::add
+// deliberately does not move a slot's centre/normal when a later hit merges
+// into it (a swept beam gouges a line, not one carve dragged to the newest
+// point -- hull_carve.cc:15-20); hull_carve_deposit must read that merged
+// slot back and carve the field at ITS centre, not at this call's raw
+// center_body argument.
+//
+// Discrimination: the FIRST deposit's call-site centre and the slot's stored
+// centre are IDENTICAL (a fresh slot always takes the deposit's own
+// geometry), so a test with only one deposit -- or two deposits far enough
+// apart to land in separate slots -- cannot distinguish "carve at the slot's
+// centre" from "carve at this call's raw centre": they agree. This test
+// forces two deposits into the SAME slot (B is within merge distance of A)
+// at DIFFERENT, well-separated grid cells, so the two candidate carve
+// centres are geometrically distinguishable. Reverting the fix (passing
+// center_body/normal_body instead of c.center_body/c.surface_normal at
+// instance_field_cache.cc's field_cache->carve call) makes this test fail:
+// see the task report for the RED transcript.
+TEST_F(InstanceFieldCacheTest, MergedDepositCarvesTheFieldAtTheSlotsStoredCentreNotTheRawHitPoint) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_merge_anchor");
+    const auto src = make_source("hull_merge_anchor.nif", "hull");
+    const voxel::DistanceField baked = make_baked_field();
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, baked));
+
+    // A sits in cell (0,0,0); B sits in cell (3,0,0) of the 4x4x4/cell-10
+    // baked field -- 30 units apart, far enough that even a generously
+    // oversized (post-merge) carve at one cannot reach the other's cell (see
+    // the arithmetic below). influ_radius_model is set large enough that
+    // HullCarveField::add's merge_dist (0.5 * influ_radius_model) exceeds
+    // that 30-unit separation, so the second deposit MERGES into the first
+    // slot instead of opening a new one.
+    const glm::vec3 a(5.0f, 5.0f, 5.0f);
+    const glm::vec3 b(35.0f, 5.0f, 5.0f);
+    const float influ_radius_model = 70.0f;   // merge_dist = 35 > |a-b| = 30
+    const float per_deposit_strength = scenegraph::kHullCarveStrengthIso + 50.0f;
+
+    scenegraph::HullCarveField sphere_field;
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+
+    const renderer::HullCarveDepositResult first = renderer::hull_carve_deposit(
+        sphere_field, &cache, id, src, kAuthoredRes, a, kUp,
+        influ_radius_model, per_deposit_strength,
+        /*floor_radius_model=*/0.0f, /*radius_modifier=*/1.0f,
+        kInvScaleForRadius3);
+    ASSERT_GT(first.radius, 0.0f);
+    // Radius from a single deposit is small (see kInvScaleForRadius3's
+    // derivation) -- an AABB of [a-r, a+r] stays well inside cell (0,0,0)
+    // and nowhere near b's cell.
+    ASSERT_LT(first.radius, 5.0f);
+
+    const renderer::HullCarveDepositResult second = renderer::hull_carve_deposit(
+        sphere_field, &cache, id, src, kAuthoredRes, b, kUp,
+        influ_radius_model, per_deposit_strength,
+        /*floor_radius_model=*/0.0f, /*radius_modifier=*/1.0f,
+        kInvScaleForRadius3);
+
+    // Sanity: this really did merge into the SAME slot (not open a second
+    // one), and the slot's stored centre/normal stayed anchored at `a` --
+    // exactly the HullCarveField::add contract this test exists to exercise.
+    ASSERT_EQ(sphere_field.count(), 1u)
+        << "b should have merged into a's slot, not opened a new one";
+    EXPECT_EQ(sphere_field.slots()[0].center_body, a)
+        << "a merged deposit must not move the slot's centre to the newest "
+           "hit point";
+    // The merge grew accumulated strength, so the second radius must be
+    // bigger than the first -- and still small enough that even a carve
+    // anchored at `a` cannot reach b's cell (30 units away).
+    EXPECT_GT(second.radius, first.radius);
+    ASSERT_LT(second.radius, 15.0f);
+
+    const InstanceFieldCache::Entry* e = cache.get(id);
+    ASSERT_NE(e, nullptr);
+
+    // Independently-built expectation: BOTH deposits landed on the SAME
+    // slot, so a correct implementation carves the field at `a` twice (first
+    // at first.radius, then again at the grown second.radius) -- never at
+    // `b`.
+    voxel::DistanceField expected = baked;
+    voxel::field_carve_oblate(expected, a, kUp, first.radius);
+    voxel::field_carve_oblate(expected, a, kUp, second.radius);
+    const auto expected_bytes = voxel::pack_field_to_atlas(
+        expected, voxel::atlas_layout_for(expected.dims));
+
+    // Sanity: the reference construction actually changed something, and b's
+    // cell specifically stayed at the untouched baked value -- otherwise
+    // this test could pass vacuously regardless of where the real
+    // implementation carved.
+    const auto baked_bytes = voxel::pack_field_to_atlas(
+        baked, voxel::atlas_layout_for(baked.dims));
+    ASSERT_NE(expected_bytes, baked_bytes);
+    ASSERT_FLOAT_EQ(expected.distance_at(3, 0, 0), baked.distance_at(3, 0, 0))
+        << "sanity: b's cell must stay untouched in the reference "
+           "construction too, or this test cannot discriminate";
+
+    EXPECT_EQ(read_atlas(*e), expected_bytes)
+        << "a merged deposit must carve the field at the SLOT's stored "
+           "centre (a), not at the raw hit point of the call that merged "
+           "into it (b)";
+
+}
+
 }  // namespace

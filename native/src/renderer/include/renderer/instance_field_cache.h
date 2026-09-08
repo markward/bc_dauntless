@@ -144,17 +144,30 @@ struct HullCarveDepositResult {
 /// centre/normal and the SAME derived visible radius for both, so the two
 /// representations describe the same damage.
 ///
+/// "Same centre/normal" means the SPHERE SLOT's stored centre/normal, not
+/// this call's `center_body`/`normal_body` arguments -- they coincide only
+/// on a slot's first deposit. HullCarveField::add deliberately does NOT move
+/// an existing slot's centre/normal when a later hit merges into it within
+/// influence radius (a swept beam gouges a line, not one carve dragged along
+/// it -- see hull_carve.cc); it only grows `strength` and re-derives
+/// `radius` in place. This function reads the merged slot BACK from `add()`
+/// and carves the field at *its* centre/normal, so a merged hit's field
+/// carve stays anchored where the sphere and the scoop are, growing in
+/// place exactly like the sphere does, rather than wandering to wherever the
+/// most recent raw hit landed.
+///
 /// This is the entire sequence host_bindings.cc's `hull_carve_add` pybind
 /// binding runs once it has transformed a hit into body frame and converted
 /// GU to model units: deposit strength into the sphere ring, derive the
 /// visible radius from the grown total via
 /// scenegraph::hull_carve_strength_to_radius_gu (monotonic -- never below
-/// `floor_radius_model`, never shrinking), then carve the field with that
-/// SAME centre/normal/radius. It lives here, not inlined in the pybind
-/// lambda, specifically so a test can call this IDENTICAL code path instead
-/// of re-deriving the same arithmetic and silently drifting from it --
-/// host_bindings.cc's `hull_carve_add` is a thin wrapper around this
-/// function plus the world->body transform and the breach-event push.
+/// `floor_radius_model`, never shrinking), then carve the field at the
+/// (possibly merged) slot's own centre/normal with that radius. It lives
+/// here, not inlined in the pybind lambda, specifically so a test can call
+/// this IDENTICAL code path instead of re-deriving the same arithmetic and
+/// silently drifting from it -- host_bindings.cc's `hull_carve_add` is a
+/// thin wrapper around this function plus the world->body transform and the
+/// breach-event push.
 ///
 /// `field_cache` may be null and `source` may be empty (a hull with no baked
 /// field, or field carving unavailable) -- the sphere ring is still updated

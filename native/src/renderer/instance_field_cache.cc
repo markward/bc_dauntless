@@ -151,13 +151,23 @@ HullCarveDepositResult hull_carve_deposit(
     const float vis_model = vis_gu * inv_scale;
     c.radius = std::max(c.radius, std::max(floor_radius_model, vis_model));
 
-    // Carve the per-instance distance field with the SAME body-frame centre/
-    // normal/radius the sphere above just received, so the two
-    // representations describe the same damage. No-op when there is no field
-    // to carve (missing/disabled cache, or a hull with no baked source).
+    // Carve the per-instance distance field at the SLOT's own centre/normal
+    // -- NOT this call's raw center_body/normal_body -- so the two
+    // representations describe the same damage even when this deposit
+    // MERGED into an existing carve. HullCarveField::add deliberately keeps
+    // a merged slot's original centre/normal (a swept beam gouges a line,
+    // not one carve dragged to the newest hit point; see hull_carve.cc), so
+    // c.center_body/c.surface_normal are only equal to this call's
+    // center_body/normal_body on a slot's FIRST deposit. Carving at the raw
+    // call-site point instead would anchor the field's hole at whichever hit
+    // happened to land most recently while the sphere and the scoop stayed
+    // fixed at the first hit -- the two representations would visibly drift
+    // apart under any sustained fire on one hull section. No-op when there
+    // is no field to carve (missing/disabled cache, or a hull with no baked
+    // source).
     if (field_cache != nullptr && !source.empty()) {
-        field_cache->carve(id, source, authored_res, center_body, normal_body,
-                           c.radius);
+        field_cache->carve(id, source, authored_res, c.center_body,
+                           c.surface_normal, c.radius);
     }
 
     return HullCarveDepositResult{prev_radius, c.radius};
