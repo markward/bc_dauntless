@@ -20,8 +20,20 @@ The spec covers three shippable subsystems. This is plan 1 of 3.
 | 2 — Field as authority | per-instance mutable field, brushes, `sampler2D` transport, `opaque.frag` clip, breach interior, the quality **setting** | §6, §7, §10 |
 | 3 — Breakables and dents | connected components, chunk spawn, radius gate, vertex displacement | §8, §7 (dents) |
 
-Plan 1 changes nothing visible in game. That is deliberate: it is entirely
-headless-testable, so it does not consume live-test rounds.
+Plan 1 changes nothing visible in game **for stock hulls that have a
+decodable `_vox.nif` sibling** -- all 18 stock ship directories ship one, so
+this covers the whole stock fleet as shipped. It is NOT inert for every hull:
+`SourceVolumeCache::get_for_hull` (`native/src/voxel/src/source_cache.cc:33`)
+falls back to `voxelize_tris(tris, 48^3)` for any hull whose `_vox.nif` is
+missing or fails to decode, and that fallback volume feeds
+`carve_has_backing` / `carve_cavity_depth_cells` -- the gate deciding whether
+a hull is cut at all and where the breach scoop draws. Task 1's voxelizer fix
+changed sampling density at that exact 48^3 resolution, making the fallback
+volume more solid and the backing gate open more often. Mod ships and any
+`_vox`-less hull therefore take a changed code path and warrant a live check,
+not an assumed no-op -- this was not exercised or measured before merge.
+Otherwise, for the covered (stock, decodable `_vox`) case, the branch is
+entirely headless-testable, so it does not consume live-test rounds.
 
 Spec §11's test list is distributed across all three plans; its
 `opaque.frag`-carries-no-`sampler3D` guard belongs to plan 2 and must be written
@@ -2315,8 +2327,22 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ## Done criteria for plan 1
 
 - `scripts/check_tests.sh` exits 0.
-- `.dhv` files appear under `cache/hull_volumes/` after a run and are reused on the next.
 - `voxelize_tris` no longer collapses: solid fraction rises with resolution.
 - `SetDamageResolution` reaches the baker from both spawn paths.
 - No `App.DamageableObject_*Enabled` name resolves to a `_NamedStub`.
-- Nothing visible changes in game. Plan 2 makes the field authoritative.
+- Nothing visible changes in game for stock hulls with a decodable `_vox.nif`
+  sibling (the whole stock fleet). Mod ships and `_vox`-less hulls take the
+  changed `voxelize_tris(tris, 48^3)` fallback in `source_cache.cc` and
+  warrant a live check -- see the "Plan 1 changes nothing visible" note
+  above. Plan 2 makes the field authoritative for the covered case.
+
+**Deferred to plan 2:** "`.dhv` files appear under `cache/hull_volumes/`
+after a run and are reused on the next" was a plan-1 done criterion in an
+earlier draft of this document, but nothing in plan 1 constructs a
+`HullVolumeCache` from `engine/` -- `HullVolumeCache` is native-only C++,
+exercised solely by `native/tests/voxel/hull_volume_cache_test.cc`. No Python
+code path reaches it, so no `.dhv` file has ever appeared under
+`cache/hull_volumes/` from a real run of this branch. That wiring (and the
+criterion) belongs to plan 2, which is what actually reads the cache from a
+running game. See spec §4's "Path discipline" note for the corresponding gap
+in test coverage.

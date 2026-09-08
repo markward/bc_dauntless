@@ -221,7 +221,9 @@ offset  size  field
 4       2     format_version   currently 1
 6       2     baker_version    bumped whenever bake output changes
 8       4     source_size      hull nif size in bytes    ) fingerprint
-12      8     source_mtime     hull nif mtime, unix secs )
+12      8     source_mtime     hull nif mtime, RAW FILESYSTEM-CLOCK TICKS --
+                                NOT unix seconds; implementation-defined unit
+                                and epoch, only ever compared for equality  )
 20      12    dims             int32 x, y, z
 32      12    origin           float32, body frame, model units
 44      12    cell             float32, model units per cell (uniform)
@@ -275,6 +277,14 @@ short files are discarded and rebaked rather than trusted.
 **Path discipline.** The cache root is resolved through `engine/paths.py` at use,
 never captured at import, per the project rule. The literal segments `game` and
 `sdk` appear nowhere in this subsystem.
+
+⚠️ **Unexercised by plan 1.** `HullVolumeCache` is native-only C++
+(`native/src/voxel/`), tested only by `native/tests/voxel/hull_volume_cache_test.cc`
+with a `std::filesystem::path` cache root passed directly by the test -- no
+Python code in `engine/` constructs a `HullVolumeCache` yet, so nothing in
+this branch resolves the cache root through `engine/paths.py` at all. This
+requirement is real but untested end-to-end until plan 2 wires the cache root
+from Python through to the native cache.
 
 ---
 
@@ -369,8 +379,11 @@ Enabled where the ship's radius exceeds a **Galor's**, i.e. **2.381 GU**
 has an open question against the clean-room reference (which puts a Galaxy near
 4 GU where our AABB derivation gives 3.5). The threshold is therefore pinned as a
 named constant **and** guarded by a test asserting which stock ships fall either
-side, so a change to radius derivation surfaces as a failing test rather than as
-a silently re-sorted fleet.
+side of it, so a change to the *threshold constant* surfaces as a failing test
+naming exactly which ships moved sides. That test's fleet radii are literals
+hardcoded in the test file, not read from `GetRadius` or a hull asset — it does
+**not** detect a change to how `GetRadius` itself is derived; that would
+re-sort the fleet silently.
 
 ### Scale reality check
 

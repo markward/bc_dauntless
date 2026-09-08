@@ -133,10 +133,15 @@ def test_ships_no_larger_than_a_galor_are_not(name, radius):
 
 
 def test_the_nebula_margin_is_deliberate():
-    """The Nebula clears the Galor by 1.5% (2.416 vs 2.381). This test exists
-    so that a change to how GetRadius is derived -- an OPEN question against
-    the clean-room reference, which puts a Galaxy nearer 4 GU than our 3.5 --
-    surfaces as a failure instead of silently re-sorting the fleet."""
+    """The Nebula clears the Galor by 1.5% (2.416 vs 2.381). This pins the
+    THRESHOLD CONSTANT itself, so that if someone changes
+    BREAKABLE_MIN_RADIUS_GU this test fails and names the value that moved.
+
+    It does NOT guard how GetRadius is derived: the radii above are literals
+    hardcoded in this file, not read from GetRadius or a hull asset, so a
+    change to the derivation of GetRadius (an open question against the
+    clean-room reference) would not be caught here or by any other test in
+    this file -- re-sorting the fleet would happen silently."""
     assert damage_geometry.BREAKABLE_MIN_RADIUS_GU == pytest.approx(2.381)
     assert damage_geometry.breakables_allowed_for(FakeShip(2.416))
     assert not damage_geometry.breakables_allowed_for(FakeShip(2.381))
