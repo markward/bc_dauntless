@@ -178,7 +178,9 @@ def build_index(root: Path) -> ModIndex:
     """Index every enabled mod under `root`. O(mod files), never the install.
 
     Later mods win, and discover_mods() sorts by name, so the winner is
-    deterministic across runs.
+    deterministic across runs. A missing mod root is not an error; a
+    permission or symlink failure for one mod does not prevent indexing
+    the others.
     """
     files: dict = {}
     statuses: list = []
@@ -189,26 +191,31 @@ def build_index(root: Path) -> ModIndex:
         if candidate.content_root is None:
             continue
 
-        for path in sorted(candidate.content_root.rglob("*")):
-            if not path.is_file():
-                continue
-            if _is_ignored(path, candidate.content_root):
-                status.ignored += 1
-                continue
-            rel_parts = path.relative_to(candidate.content_root).parts
-            top = rel_parts[0].lower()
-            target = _TARGET_FOR.get(top)
-            if target is None:
-                if rel_parts[0] not in status.unplaced:
-                    status.unplaced.append(rel_parts[0])
-                continue
-            # Under "scripts" the target root IS the scripts dir, so the
-            # segment itself is dropped; under "data" it is kept, because
-            # game_asset() is called with "data/..." paths.
-            keep = rel_parts if target == "game" else rel_parts[1:]  # paths-guard: kind label
-            rel = fold("/".join(keep))
-            files[rel] = ModFile(abs_path=path, mod_name=candidate.name,
-                                 target=target, rel=rel)
-            status.placed += 1
+        try:
+            for path in sorted(candidate.content_root.rglob("*")):
+                if not path.is_file():
+                    continue
+                if _is_ignored(path, candidate.content_root):
+                    status.ignored += 1
+                    continue
+                rel_parts = path.relative_to(candidate.content_root).parts
+                top = rel_parts[0].lower()
+                target = _TARGET_FOR.get(top)
+                if target is None:
+                    if rel_parts[0] not in status.unplaced:
+                        status.unplaced.append(rel_parts[0])
+                    continue
+                # Under "scripts" the target root IS the scripts dir, so the
+                # segment itself is dropped; under "data" it is kept, because
+                # game_asset() is called with "data/..." paths.
+                keep = rel_parts if target == "game" else rel_parts[1:]  # paths-guard: kind label
+                rel = fold("/".join(keep))
+                files[rel] = ModFile(abs_path=path, mod_name=candidate.name,
+                                     target=target, rel=rel)
+                status.placed += 1
+        except OSError:
+            # Permission denied, broken symlink, or other read failure for this mod.
+            # Skip it and continue indexing other mods.
+            pass
 
     return ModIndex(files=files, mods=statuses)

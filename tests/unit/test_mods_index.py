@@ -88,3 +88,26 @@ def test_dirs_for_returns_every_providing_mod_dir(tmp_path):
     got = idx.dirs_for("data/Tex")
     assert sorted(p.name for p in got) == ["Tex", "Tex"]
     assert {p.parent.parent.name for p in got} == {"Alpha", "Bravo"}
+
+
+def test_permission_error_in_one_mod_does_not_prevent_others(tmp_path):
+    import os
+    # Create two mods: one readable, one with an unreadable subdirectory.
+    _touch(tmp_path / "Good" / "Data" / "a.nif")
+    bad_dir = tmp_path / "Bad" / "Data" / "SubDir"
+    _touch(bad_dir / "hidden.nif")
+
+    # Make the subdirectory unreadable.
+    os.chmod(bad_dir, 0o000)
+    try:
+        # Index should skip the Bad mod's files but still include Good's.
+        idx = mods.build_index(tmp_path)
+        assert idx.lookup("data/a.nif") is not None
+        assert idx.lookup("data/a.nif").mod_name == "Good"
+        # Bad mod should be present in statuses but have no placed files.
+        status_by_name = {m.name: m for m in idx.mods}
+        assert "Bad" in status_by_name
+        assert status_by_name["Bad"].placed == 0
+    finally:
+        # Restore permissions so tmp_path teardown can clean up.
+        os.chmod(bad_dir, 0o755)
