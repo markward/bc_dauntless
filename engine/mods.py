@@ -130,6 +130,7 @@ class ModStatus:
     placed: int = 0
     ignored: int = 0
     unplaced: list = None        # top-level dir names we could not place
+    read_error: bool = False     # set if rglob walk failed for this mod
 
     def __post_init__(self):
         if self.unplaced is None:
@@ -221,8 +222,8 @@ def build_index(root: Path) -> ModIndex:
                 status.placed += 1
         except OSError:
             # Permission denied, broken symlink, or other read failure for this mod.
-            # Skip it and continue indexing other mods.
-            pass
+            # Mark it so describe() can emit explicit problem language.
+            status.read_error = True
 
     return ModIndex(files=files, mods=statuses, conflicts=conflicts)
 
@@ -245,6 +246,9 @@ def describe(index: ModIndex) -> str:
     for status in index.mods:
         if status.content_root is None:
             lines.append(f"  {status.name}: no BC content found -- not loaded")
+            continue
+        if status.read_error:
+            lines.append(f"  {status.name}: could not read mod contents -- placed 0 files")
             continue
         line = f"  {status.name}: {status.placed} files"
         if status.ignored:
