@@ -5,6 +5,7 @@ add_library(voxel STATIC
     src/plane_index.cc
     src/source_cache.cc
     src/dual_contour.cc
+    src/distance_field.cc
 )
 target_include_directories(voxel PUBLIC include)
 target_compile_features(voxel PUBLIC cxx_std_20)
