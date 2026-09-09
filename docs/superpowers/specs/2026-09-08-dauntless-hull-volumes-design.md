@@ -538,6 +538,21 @@ entries by header comparison, not by deletion.
    non-issue. Wants one live round to confirm.
 4. **Should authored sub-object boundaries bias where breaks occur?** Deferred;
    §2.7 records the data if we want it.
+5. **Why does a collision produce no visible hole?** Live-observed 2026-09-09,
+   deferred to plan 3 by agreement. Dents are simply not built — there is no
+   `dent` brush — but *carves* from collisions should already work: `collisions.py`
+   routes kinetic impacts through `combat.apply_hit` with `bypass_shields=True`
+   and `damage_hull` left True, which reaches `hit_feedback`'s carve gate with
+   `allow_hull_carve=True`, and that gate does not inspect `weapon_type`. The
+   plumbing has been read, not watched. Three candidate causes, needing different
+   fixes: (a) `_ke_damage` is **quadratic** in closing speed with
+   `COLLISION_DAMAGE_COEFF = 5.0`, so a gentle bump does almost no hull damage
+   while a hard one is "instantly lethal" per that module's own comment — the
+   visible band may be narrow, which would be tuning, not a defect;
+   (b) `carve_has_backing` correctly refusing thin leading-edge structures
+   (nacelles, pylons) — exactly where a ramming contact lands; (c) a real break.
+   Discriminate by ramming at moderate speed and watching hull integrity first:
+   damage registering with no hole means (b) or (c).
 
 ---
 
