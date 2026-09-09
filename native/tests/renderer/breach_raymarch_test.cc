@@ -348,24 +348,71 @@ TEST_F(BreachRaymarchTest, FindsWallOfKnownCavityWithinOneCell) {
 
 // ── kHullFieldIsoMargin actually participates in the crossing, not just 0.0 ─
 //
-// Every other test uses plateaus of +-100 (field value +-0.392157), which
-// dwarfs the margin (0.0019608): the crossing sample nearest zero happens to
-// land almost exactly ON the margin-based threshold too, so replacing every
-// `<= kHullFieldIsoMargin` with `<= 0.0` shifts the refined hit by only
-// ~0.0025 -- invisible against a 0.05 tolerance. This test uses plateaus of
-// +-1 instead (field value +-0.0039216, only 2x the margin), where the two
-// thresholds diverge by a real, easily-measured amount.
+// The mutation this test must kill is BOTH `<= kHullFieldIsoMargin`
+// comparisons (the top-of-function precondition and the in-loop check)
+// replaced with `<= 0.0`, leaving the refinement line's
+// `t = clamp((prev - kHullFieldIsoMargin) / ..., 0, 1)` UNTOUCHED. An
+// earlier version of this test used plateaus of +-1 with ro phased so the
+// triggering sample landed at EXACTLY field value 0.0 -- but a value of
+// exactly 0.0 satisfies `<= 0.0` and `<= margin` at the very same sample,
+// so detection timing (which sample triggers) was identical either way,
+// and only the (still-correct, untouched) refinement line's arithmetic
+// differed. That is not the mutation described above: it does not
+// distinguish "the comparison used 0.0" from "the comparison used margin",
+// only "the refinement subtracted 0.0 instead of margin" -- a DIFFERENT,
+// already-fixed bug (see FindsWallOfKnownCavityWithinOneCell's sibling
+// history). To kill the actual mutation, a march sample must exist whose
+// value sits STRICTLY inside (0, kHullFieldIsoMargin) = (0, 0.0019608): a
+// value there satisfies `<= margin` (triggers correctly) but NOT `<= 0.0`
+// (does not trigger under the mutation), so the two implementations
+// disagree about WHICH sample the crossing is, not just how it's refined.
 //
-// Same slab shape as FindsWallOfKnownCavityWithinOneCell (carved 0-2,
-// intact 3-7), cell=1, ro=(0.5,0.5,0.5). Detection triggers at the SAME
-// sample either way (p_next=z=3.0, g.z=2.5, blend of slice2/3 at wz=0.5,
-// v=mix(+0.0039216,-0.0039216,0.5)=0.0 exactly, which is <= both 0.0 and
-// the margin) -- only the REFINEMENT fraction differs:
-//   correct (threshold=margin=0.0019608): t=(0.0039216-0.0019608)/0.0078431
-//                                            = 0.25 -> hit z = 2.5+0.25 = 2.75
-//   buggy   (threshold=0.0):               t=(0.0039216-0)/0.0078431 = 0.5
-//                                            -> hit z = 2.5+0.5 = 3.0
-// A quarter-cell (0.25) difference, trivially outside a 0.05 tolerance.
+// A plateau cannot land there: the smallest positive quantised value is
+// 1/255 = 0.00392, already 2x the margin. It has to come from
+// INTERPOLATION at a chosen fractional slice position wz. Derivation, with
+// plateaus +-1 (encoded +-1/255 exactly -- byte=129 or 127, /255 minus
+// 128/255):
+//   v(wz) = mix(v0, v1, wz) = v0 - wz*(v0 - v1),  v0=1/255, v1=-1/255
+//   v(wz) == 0            at wz = v0 / (v0-v1)          = 0.5
+//   v(wz) == margin(0.5/255) at wz = (v0-margin) / (v0-v1) = 0.25
+// so wz in (0.25, 0.5) gives v in (0, margin). Picking the midpoint,
+// wz=0.375 (comfortably clear of both edges), gives
+//   v = 1/255 - 0.375*(2/255) = 0.25/255 = 0.00098039,
+// which is indeed strictly between 0 and margin (0.5/255=0.00196078).
+//
+// Realising wz=0.375 physically: with cell=1, origin=0, sample-space is
+// g.z = z - 0.5, so g.z=2.375 (s0=2, s1=3, wz=0.375, the carved/intact
+// boundary between slice 2 and slice 3) is body z = 2.875. Field:
+// slices 0-2 = +1 (carved), 3-7 = -1 (intact), so slice 2 -> 3 is the same
+// boundary every other test in this file crosses. ro.z=0.375 puts the
+// march's 0.5-spaced sample lattice (step_len = 0.5*breach_min_cell() =
+// 0.5*1 = 0.5) exactly on 2.875 (and on 2.375, the sample immediately
+// before it, which reads a clean +1 = 0.0039216, comfortably above margin
+// -- no premature trigger). ro itself (z=0.375, Z-clamped to slice 0) also
+// reads +1, safely above margin, so the top-of-function precondition never
+// interferes here either.
+//
+// CORRECT trajectory: every sample up to and including z=2.375 reads +1
+// (0.0039216 > margin, no trigger). At z=2.875, v=0.25/255=0.00098039,
+// which IS <= margin (0.0019608) -- triggers. prev (from z=2.375) = 1/255.
+//   t = (prev - margin) / (prev - v) = (1/255 - 0.5/255) / (1/255 - 0.25/255)
+//     = (0.5/255) / (0.75/255) = 2/3
+//   hit.z = mix(2.375, 2.875, 2/3) = 2.375 + (2/3)*0.5 = 2.708333
+//
+// MUTATED trajectory (both comparisons -> <= 0.0, refinement line
+// untouched): at z=2.875, v=0.00098039 does NOT satisfy `<= 0.0` (it's
+// positive) -- no trigger; prev advances to 0.00098039, p_prev to 2.875.
+// Next sample z=3.375: g.z=2.875, wz=0.875, v = 1/255 - 0.875*(2/255)
+// = -0.75/255 = -0.00294118, which DOES satisfy `<= 0.0` -- triggers here
+// instead, a full step later than the correct implementation.
+//   t = (prev - margin) / (prev - v)  [refinement line itself untouched]
+//     = (0.25/255 - 0.5/255) / (0.25/255 - (-0.75/255))
+//     = (-0.25/255) / (1.0/255) = -0.25, clamped to 0.0
+//   hit.z = mix(2.875, 3.375, 0.0) = 2.875
+//
+// 2.708333 (correct) vs 2.875 (mutated): a 0.1667 difference, well outside
+// the 0.05 tolerance below -- this is what actually kills the mutation
+// the finding named, verified live (see the task report).
 TEST_F(BreachRaymarchTest, IsoMarginParticipatesInTheCrossingNotJustZero) {
     const std::vector<std::int8_t> z_values = {1, 1, 1, -1, -1, -1, -1, -1};
     const voxel::DistanceField field =
@@ -376,15 +423,15 @@ TEST_F(BreachRaymarchTest, IsoMarginParticipatesInTheCrossingNotJustZero) {
     set_common_uniforms(*prog);
     bind_field(*prog, field);
 
-    const glm::vec3 ro(0.5f, 0.5f, 0.5f);
+    const glm::vec3 ro(0.5f, 0.5f, 0.375f);
     const glm::vec3 rd(0.0f, 0.0f, 1.0f);
     const glm::vec4 out = draw_and_read(*prog, ro, rd, /*mode=*/0);
 
     ASSERT_GT(out.w, 0.5f) << "expected a hit";
-    EXPECT_NEAR(out.z, 2.75f, 0.05f)
-        << "hit_point.z=" << out.z << " -- expected the margin-based crossing at 2.75; a "
-           "threshold of 0.0 instead of kHullFieldIsoMargin would read ~3.0 here, a full "
-           "quarter cell off";
+    EXPECT_NEAR(out.z, 2.708333f, 0.05f)
+        << "hit_point.z=" << out.z << " -- expected the margin-triggered crossing at "
+           "~2.708333; a comparison of <= 0.0 instead of <= kHullFieldIsoMargin would miss "
+           "this sample entirely and trigger one step later, at ~2.875";
 }
 
 // ── Undamaged field: a miss, not a hallucinated wall ────────────────────────
@@ -691,10 +738,15 @@ TEST_F(BreachRaymarchTest, BoundedStepsTerminateOnAPathologicalRay) {
 // ── Reach scales with the field's own extent, at a REALISTIC cell size ─────
 //
 // dims=(4,4,20), cell=(7.5,7.5,7.5) -- BC's authored cell is
-// authored_res/quality (voxel/hull_volume_cache.h), roughly 7.5-12.5 model
-// units for typical authored values; 7.5 is the small end of that range, on
-// purpose, since a SMALLER cell makes the reach cap (proportional to
-// dims*cell) harder to satisfy, the more demanding direction to test.
+// authored_res/quality (voxel/hull_volume_cache.h, quality=2.0); with
+// authored_res running 6-15 across the fleet (docs/engine/damagetool-and-
+// hull-damage-gaps.md), cell runs 3.0-7.5 model units. 7.5 is the TOP of
+// that range (authored_res=15), chosen as a concrete, real, sourced value
+// rather than a round number picked for convenience -- not because it is
+// more "demanding": the crossing this test places (~97.48 model units,
+// see below) is beyond the OLD fixed 64.0-unit cap regardless of which
+// real cell size is used, since that old cap was a fixed distance, not a
+// cell count.
 // Slices 0-12 carved (+100), 13-19 intact (-100, 7 slices). Same margin
 // fraction as every other crossing in this file (wz=0.497500 -- it depends
 // only on the field VALUES, not on cell scale), applied at THIS cell's

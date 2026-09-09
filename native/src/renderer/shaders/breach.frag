@@ -222,17 +222,20 @@ const int kBreachMaxSteps = 64;
 // of this used `const float kBreachMaxDist = 64.0` model units, commented
 // "past any BC hull's extent" -- that comment was WRONG. 1 model unit =
 // 0.01 GU and 1 GU = 175 m (engine/units.py), so 64 model units is 0.64 GU,
-// about 112 m -- a small fraction of a real hull, not past its extent. Worse,
-// with BC's authored cell size (cell = authored_res / quality, ~7.5-12.5
-// model units at typical authored_res/kDefaultQuality -- voxel/
-// hull_volume_cache.h), step_len = 0.5 * cell put the OLD fixed cap's cutoff
-// at as few as 5-8 samples: it was the actual binding limiter in practice,
-// not kBreachMaxSteps, and it could cut a march off before it ever reached
-// a real cavity's far wall. The field's own box already hugs the hull
-// (voxel::distance_field_from_tris' AABB plus its accuracy band), so its
-// diagonal both scales automatically with every ship and is provably an
-// upper bound for any single straight march that starts inside the box:
-// no axis-aligned (or any other) march confined to the box can exceed it.
+// about 112 m -- a small fraction of a real hull, not past its extent.
+//
+// BC's authored cell is cell = authored_res / quality (voxel/
+// hull_volume_cache.h, quality default 2.0); authored_res runs 6-15 across
+// the fleet (docs/engine/damagetool-and-hull-damage-gaps.md), so cell runs
+// 3.0-7.5 model units, and step_len = kHullFieldStepFrac * cell = 1.5-3.75.
+// The OLD fixed 64.0 cap fired at 64/step_len = 17.1-42.7 samples across
+// that range -- fewer than kBreachMaxSteps (64), so it WAS the binding
+// limiter, on every ship, not just small ones. The field's own box already
+// hugs the hull (voxel::distance_field_from_tris' AABB plus its accuracy
+// band), so its diagonal both scales automatically with every ship and is
+// provably an upper bound for any single straight march that starts inside
+// the box: no axis-aligned (or any other) march confined to the box can
+// exceed it.
 float breach_field_reach() {
     return length(u_hull_field_dims * u_hull_field_cell);
 }
@@ -284,11 +287,29 @@ bool raymarch_breach_cavity(vec3 ro, vec3 rd, out vec3 hit_point, out vec3 hit_n
     vec3 p_prev = ro;
     // Loop bound is the named compile-time constant directly (not a
     // runtime-derived step count) -- see
-    // BreachRaymarchStaticGuard.LoopBoundIsANamedCompileTimeConstant. The
-    // field-extent distance cap is enforced separately inside the loop and
-    // is, at BC's real authored cell sizes, the limiter that actually fires
-    // first (see breach_field_reach's derivation) -- kBreachMaxSteps is the
-    // backstop, not the primary bound.
+    // BreachRaymarchStaticGuard.LoopBoundIsANamedCompileTimeConstant.
+    //
+    // Which cap binds where: the step budget alone can only ever reach
+    // kBreachMaxSteps * kHullFieldStepFrac = 32 cells deep (64*0.5),
+    // independent of cell size -- 96-240 model units across BC's real
+    // authored_res range (see breach_field_reach's derivation). A full-size
+    // warship's own field diagonal is well past that: Galaxy's hull alone
+    // (length/draft/beam 641/137/467 m, docs/lore/ships/
+    // federation-classes.md) gives an AABB diagonal of ~460 model units
+    // BEFORE the field's own accuracy-band padding is added, and Galaxy's
+    // authored_res is 10 (damagetool-and-hull-damage-gaps.md), i.e. cell=5.0,
+    // step=2.5, a 160-model-unit budget reach against that ~460+ diagonal.
+    // So on the ships this feature exists for, kBreachMaxSteps binds FIRST,
+    // not breach_field_reach() -- the field-extent cap below only ever
+    // matters on small craft or this file's own tiny synthetic test fields.
+    //
+    // Consequence, stated plainly rather than left implicit: a contiguous
+    // carved run deeper than ~32 cells (~160 model units on a Galaxy) will
+    // still silently miss its far wall. No single carve's own depth
+    // approaches that (field_carve_oblate's depth is a small fraction of
+    // its radius), but a long chain of merged, overlapping carves boring in
+    // the same direction could. Not fixed here -- kBreachMaxSteps is a
+    // fragment-cost budget, not something to raise casually.
     for (int i = 0; i < kBreachMaxSteps; ++i) {
         float dist = step_len * float(i + 1);
         if (dist > max_dist) {
