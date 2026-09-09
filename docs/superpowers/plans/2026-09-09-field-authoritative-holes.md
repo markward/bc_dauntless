@@ -496,7 +496,10 @@ Add to `native/tests/renderer/hull_field_clip_test.cc`:
 // the source: the noise must be added to the margin, and its factor must be
 // a bare vnoise3 in [0,1] with no remap into [-1,1].
 TEST(HullFieldClip, FieldRimNoiseOnlyShrinksTheHole) {
-    const std::string src = renderer::embedded_shader_source("opaque.frag");
+    // read_shader_source() is the helper Task 2 added to this file (adapted
+    // from breach_raymarch_test.cc). There is NO renderer::
+    // embedded_shader_source() -- an earlier draft of this plan invented one.
+    const std::string src = read_shader_source("opaque.frag");
     const std::size_t at = src.find("kFieldRimNoise * ");
     ASSERT_NE(at, std::string::npos) << "field rim noise term missing";
     const std::string line = src.substr(at, src.find('\n', at) - at);
@@ -554,16 +557,24 @@ with:
                        > kHullFieldIsoMargin + kFieldRimNoise * vnoise3(p_body * kFieldRimFreq);
 ```
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 4: Add a BEHAVIOURAL test, not just the source guard**
+
+The Step 1 test reads shader text. It passes even if `kFieldRimNoise` is declared and never used, which is exactly the failure mode Task 2 found in its own constant-parity test. Add a second test that renders.
+
+Model it on `HullFieldClipTest.FieldSuppressedOutToTheBrushesDilatedBound`, which Task 2 added to this same file — copy its harness rather than inventing another. The behaviour to pin: **with a field value only marginally above the plain iso margin and no tracked carve in play, some fragments survive that would have been cut without the noise term.** Set the field so a patch reads just above `kHullFieldIsoMargin` but below `kHullFieldIsoMargin + kFieldRimNoise`, render, and assert that patch is **not** uniformly discarded. Assert both directions where you can — a test that only checks "something survived" passes against a shader that cuts nothing at all.
+
+Prove its teeth the same way Task 2 did: delete the `+ kFieldRimNoise * vnoise3(...)` term behind a `cp` backup, confirm the new test fails, restore, and `diff` to prove the restore is byte-identical.
+
+- [ ] **Step 5: Run the tests**
 
 ```bash
 cmake -B build -S . && cmake --build build -j && \
   ./build/native/tests/renderer/renderer_tests
 ```
 
-Expected: PASS, whole binary.
+Expected: PASS, whole binary, unfiltered.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add native/src/renderer/shaders/opaque.frag \
