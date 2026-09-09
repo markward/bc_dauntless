@@ -796,19 +796,9 @@ void main() {
     // The glow-map term is already textured (glow_rgb is a texture sample), so
     // only the material term needs the base multiply. A material emissive of
     // 0.0 leaves this byte-identical to before.
-    // ...and it SATURATES rather than accumulating. BC's fixed-function output
-    // is base * clamp(emissive + ambient + diffuse, 0, 1), so a hull-wide
-    // emissive drives the surface toward its own texture colour and stops
-    // there. Adding it on top instead pushes the hull ~30% past its texture
-    // everywhere, which reads as a uniformly self-lit ship with no directional
-    // shading -- and feeds bloom besides.
-    //
-    // Only the MATERIAL term is limited this way, and only up to what the
-    // lighting has not already supplied. Dynamic lights (torpedo flashes,
-    // explosions) must still be able to drive a hull past 1.0 for bloom, so
-    // the bracket as a whole is deliberately NOT clamped. Where the material
-    // emissive is 0.0 -- every Galaxy material and 40 of the Akira's 44 --
-    // headroom is irrelevant and this is byte-identical to before.
+    vec3 self_illum = u_emissive_scale *
+        (u_emissive_color * base.rgb + glow_rgb * glow.a * gf * nac * region_gain);
+
     // Emissive surfaces are light SOURCES, not mirrors. Suppress the reflective
     // diffuse + specular terms where the glow map emits, so a sunlit glow strip
     // (nacelle bussards, windows) doesn't stack reflection on top of its own
@@ -817,19 +807,8 @@ void main() {
     // map's own LUMINANCE (not glow.a alone: the no-glow-map fallback is opaque
     // black, alpha=1, so alpha is not a reliable emissive mask). Non-emissive
     // hull (glow.rgb == 0) yields refl_mask == 1 → byte-identical to before.
-    //
-    // Computed here, before self_illum, because the material-emissive headroom
-    // below has to know how much light the surface has already received.
     float emit_lum  = dot(glow.rgb, vec3(0.2126, 0.7152, 0.0722)) * glow.a;
     float refl_mask = 1.0 - clamp(emit_lum, 0.0, 1.0);
-
-    vec3 lighting_factor = (amb + lit_dir + lit_dyn) * u_diffuse_color * refl_mask;
-    vec3 emissive_headroom = max(vec3(0.0), vec3(1.0) - lighting_factor);
-    vec3 emissive_term = min(u_emissive_color, emissive_headroom) * base.rgb;
-
-    vec3 self_illum = u_emissive_scale *
-        (emissive_term + glow_rgb * glow.a * gf * nac * region_gain);
-
     vec3 final_color = lit * refl_mask + self_illum + spec * refl_mask
                      + rim + decal_emissive;
 
