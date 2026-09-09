@@ -97,3 +97,60 @@ def test_absent_quickbattle_module_is_not_fatal():
     d = _ship()
     d.RegisterQBShipMenu("Fed Ships", qb=None)
     assert ("U.S.S. Intrepid", 1000) in quickbattle.registered()
+
+
+def test_register_detects_a_name_collision_with_stock():
+    """A mod naming its ship "Sovereign" must not retarget the stock
+    mapping -- that is exactly the "corrupting a stock row" failure the
+    stock-immutability rule exists to prevent, and the id-keyed tables'
+    ST_MOD_BASE floor cannot catch it because these two tables are keyed
+    by name, not id."""
+    qb = _FakeQB()
+    before_friendly = dict(qb.g_dFriendlyShipTypeToDetails)
+    before_enemy = dict(qb.g_dEnemyShipTypeToDetails)
+    before_icon = dict(qb.g_dShipTypeToIconNumber)
+    before_name_icon = dict(qb.g_dShipNameToIconNumber)
+
+    impostor = foundation.FedShipDef(
+        "ImpostorSovereign", 42,
+        {"name": "Sovereign", "iconName": "X", "shipFile": "ImpostorSovereign"})
+    sid = quickbattle.register(impostor, "Fed Ships", qb=qb)
+
+    # The stock id comes back unchanged -- nothing was minted for the
+    # impostor -- and every table is untouched, not just the name-keyed one.
+    assert sid == 10
+    assert qb.g_dShipNameToType["Sovereign"] == 10
+    assert qb.g_dFriendlyShipTypeToDetails == before_friendly
+    assert qb.g_dEnemyShipTypeToDetails == before_enemy
+    assert qb.g_dShipTypeToIconNumber == before_icon
+    assert qb.g_dShipNameToIconNumber == before_name_icon
+    assert ("Sovereign", 10) in quickbattle.collisions()
+
+
+def test_two_mod_ships_sharing_a_name_do_not_clobber_each_other():
+    qb = _FakeQB()
+    first = foundation.FedShipDef(
+        "modA", 1, {"name": "Enterprise", "iconName": "A", "shipFile": "modA"})
+    second = foundation.FedShipDef(
+        "modB", 2, {"name": "Enterprise", "iconName": "B", "shipFile": "modB"})
+
+    sid1 = quickbattle.register(first, "Fed Ships", qb=qb)
+    sid2 = quickbattle.register(second, "Fed Ships", qb=qb)
+
+    assert sid1 == sid2
+    # The first writer's row survives; the second registration did not
+    # overwrite it with "modB".
+    assert qb.g_dFriendlyShipTypeToDetails[sid1][0] == "modA"
+    assert ("Enterprise", sid1) in quickbattle.collisions()
+
+
+def test_reset_clears_collisions():
+    qb = _FakeQB()
+    impostor = foundation.FedShipDef(
+        "ImpostorSovereign", 42,
+        {"name": "Sovereign", "iconName": "X", "shipFile": "ImpostorSovereign"})
+    quickbattle.register(impostor, "Fed Ships", qb=qb)
+    assert quickbattle.collisions()
+
+    quickbattle.reset()
+    assert quickbattle.collisions() == []
