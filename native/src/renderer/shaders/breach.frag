@@ -293,15 +293,17 @@ bool raymarch_breach_cavity(vec3 ro, vec3 rd, out vec3 hit_point, out vec3 hit_n
     // kBreachMaxSteps * kHullFieldStepFrac = 32 cells deep (64*0.5),
     // independent of cell size -- 96-240 model units across BC's real
     // authored_res range (see breach_field_reach's derivation). A full-size
-    // warship's own field diagonal is well past that: Galaxy's hull alone
-    // (length/draft/beam 641/137/467 m, docs/lore/ships/
-    // federation-classes.md) gives an AABB diagonal of ~460 model units
-    // BEFORE the field's own accuracy-band padding is added, and Galaxy's
-    // authored_res is 10 (damagetool-and-hull-damage-gaps.md), i.e. cell=5.0,
-    // step=2.5, a 160-model-unit budget reach against that ~460+ diagonal.
-    // So on the ships this feature exists for, kBreachMaxSteps binds FIRST,
-    // not breach_field_reach() -- the field-extent cap below only ever
-    // matters on small craft or this file's own tiny synthetic test fields.
+    // warship's own field diagonal is well past that: MEASURED (not
+    // derived from hull dimensions -- docs/superpowers/specs/
+    // 2026-09-08-dauntless-hull-volumes-design.md Table 2.5, baked against
+    // the real implemented SDF baker), Galaxy's actual field is
+    // 101x137x37 cells at cell=5.0, i.e. extent 505x685x185 model units,
+    // diagonal ~871 model units -- BEFORE any further padding. Galaxy's
+    // own budget reach at that same cell=5.0 is 64*0.5*5.0=160 model
+    // units, so on the ships this feature exists for, kBreachMaxSteps
+    // binds FIRST, by a factor of ~5.4 (871/160) -- not breach_field_reach(),
+    // which only ever matters on small craft or this file's own tiny
+    // synthetic test fields.
     //
     // Consequence, stated plainly rather than left implicit: a contiguous
     // carved run deeper than ~32 cells (~160 model units on a Galaxy) will
