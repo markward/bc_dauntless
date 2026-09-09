@@ -1193,3 +1193,148 @@ TEST(HullFieldClip, GlslBrushConstantsMatchCxx) {
     EXPECT_FLOAT_EQ(glsl_const("kShapeAmp"),        voxel::kCarveRimAmp);
     EXPECT_FLOAT_EQ(glsl_const("kDepthFactor"),     voxel::kCarveDepthFactor);
 }
+
+// ── Task 3: the FIELD's hole edge gets a body-space noise rim ─────────────
+//
+// The field rim perturbation must be one-sided. A term that can LOWER the
+// threshold grows the hole past the region field_brush.cc's conservative
+// brush guaranteed damage in, which is the see-through defect this whole
+// plan exists to remove. Guard the source: the noise must be ADDED to the
+// margin, and its factor must be a bare vnoise3 in [0,1] with no remap into
+// [-1,1] (the sphere block's own rim noise does exactly such a remap two
+// dozen lines above, so copying that line is a live hazard).
+//
+// This is a TEXT guard and it is not sufficient on its own -- it passes
+// against a shader that declares the constant and never uses it, which is
+// the failure mode Task 2 hit with its own constant-parity test. The two
+// FieldRimNoise* TEST_Fs below are the behavioural half.
+TEST(HullFieldClip, FieldRimNoiseOnlyShrinksTheHole) {
+    const std::string src = read_shader_source("opaque.frag");
+    ASSERT_FALSE(src.empty()) << "opaque.frag could not be read";
+    const std::size_t at = src.find("kFieldRimNoise * ");
+    ASSERT_NE(at, std::string::npos) << "field rim noise term missing";
+    const std::string line = src.substr(at, src.find('\n', at) - at);
+    // A "* 2.0 - 1.0" remap on this term would make it signed.
+    EXPECT_EQ(line.find("2.0 - 1.0"), std::string::npos)
+        << "rim noise is signed; it must only raise the threshold: " << line;
+    EXPECT_NE(src.find("kHullFieldIsoMargin + kFieldRimNoise"), std::string::npos)
+        << "rim noise must be ADDED to the iso margin";
+}
+
+namespace {
+
+// Classify EVERY pixel of the frame, not just the centre one.
+//
+// The centre fragment is useless for this feature: with identity matrices
+// p_body IS the fragment's NDC position, so the centre sits at
+// (1/64, 1/64, 0) -- within 0.006 of the noise lattice's origin, where
+// vh3(0,0,0) = fract(sin(0)*k) = 0 EXACTLY on any precision. vnoise3 there
+// is ~1e-4, i.e. the rim term is invisible at the one pixel every other test
+// in this file reads. Scanning the whole frame sweeps p_body across
+// [-1,1]^2, which at kFieldRimFreq = 0.35 covers parts of four noise cells
+// and gives the term room to differ from pixel to pixel.
+//
+// Deliberately NOT predicting which pixels: vh3 is fract(sin(x)*43758), so a
+// float32 GPU and a double host disagree wildly on any individual lattice
+// hash. Only frame-wide "some, and not all" statements are portable.
+struct FrameCoverage {
+    int lit  = 0;   // hull survived
+    int dark = 0;   // discarded (cleared black shows through)
+    int other = 0;  // neither -- would mean the fixture stopped being binary
+};
+
+FrameCoverage classify_frame() {
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    std::vector<unsigned char> px(static_cast<std::size_t>(kW) * kH * 4);
+    glReadPixels(0, 0, kW, kH, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    FrameCoverage c;
+    for (std::size_t i = 0; i < px.size(); i += 4) {
+        const int sum = px[i] + px[i + 1] + px[i + 2];
+        if (sum >= 384)     ++c.lit;
+        else if (sum <= 32) ++c.dark;
+        else                ++c.other;
+    }
+    return c;
+}
+
+// A uniform field whose sampled value is `value / 255` everywhere (uniform
+// in, uniform out: bilinear, the Z lerp and the replicated atlas border all
+// preserve a constant). Same geometry as make_probe_field, so p_body's
+// [-1,1]^2 sweep stays inside the field's box on every pixel.
+voxel::DistanceField make_flat_field(std::int8_t value) {
+    return make_uniform_field(glm::ivec3(4, 4, 4), glm::vec3(-2.5f),
+                              glm::vec3(1.0f), value);
+}
+
+}  // namespace
+
+// BEHAVIOURAL half of Task 3, and the reason it exists: the text guard above
+// passes against a shader that declares kFieldRimNoise and never uses it --
+// the exact failure mode Task 2's constant-parity test was found to have.
+//
+// Field value +1 (1/255 = 0.00392) is ABOVE the plain iso margin (0.5/255 =
+// 0.00196) and BELOW margin + kFieldRimNoise (0.0620), so it sits inside the
+// band the rim noise governs. Without the noise term the threshold is the
+// bare margin and EVERY pixel is discarded; with it, a pixel is cut only
+// where vnoise3(p_body * kFieldRimFreq) < (0.00392 - 0.00196)/0.06 = 0.033.
+//
+// Both directions are asserted from the SAME uniform field, which is what
+// makes the pair meaningful: the field value is identical at every pixel, so
+// the only position-dependent term left in the comparison is the rim noise.
+//   - some pixels lit  => the noise term exists and raises the threshold
+//                         (impossible without it: 0.00392 > 0.00196)
+//   - some pixels dark => the field clip is still live and the noise is
+//                         bounded (a huge or unbounded term would spare the
+//                         whole frame, and "something survived" would then
+//                         pass against a shader that cuts nothing at all)
+TEST_F(HullFieldClipTest, FieldRimNoiseSparesFragmentsTheBareMarginWouldCut) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+    const voxel::DistanceField field = make_flat_field(/*value=*/1);
+    enable_field(prog, field, /*invert=*/false);
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    const FrameCoverage c = classify_frame();
+    EXPECT_EQ(c.other, 0) << "frame is no longer binary lit/discarded: "
+                          << c.other << " intermediate pixels";
+    EXPECT_GT(c.lit, 0)
+        << "every one of " << (kW * kH) << " pixels was discarded -- a field "
+           "value of 1/255 exceeds the bare iso margin, so this is exactly "
+           "the frame the shader produces with NO rim-noise term. The hole's "
+           "edge is the brush's smooth ellipsoid again.";
+    EXPECT_GT(c.dark, 0)
+        << "no pixel was discarded anywhere (lit=" << c.lit << ") -- the "
+           "field clip is not cutting at all, so the surviving pixels above "
+           "prove nothing about the rim noise";
+}
+
+// ONE-SIDEDNESS, behaviourally. The rim noise may only RAISE the threshold.
+// A signed version (`* 2.0 - 1.0`, the remap the sphere block's own rim noise
+// uses, one copy-paste away) would drop the threshold as low as
+// 0.00196 - 0.06 = -0.058, cutting hull the field says is UNDAMAGED -- hull
+// with no interior behind it, which is the see-through defect this plan
+// exists to remove.
+//
+// Field value -10 (-0.0392) is comfortably below the plain margin -- 10.5
+// quantisation steps below it, so no rounding can flip the sign -- and
+// comfortably inside the [-0.058, +0.062] window a signed term would sweep.
+// So: nothing may be cut here, at any pixel, ever.
+TEST_F(HullFieldClipTest, FieldRimNoiseNeverCutsBelowThePlainMargin) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+    const voxel::DistanceField field = make_flat_field(/*value=*/-10);
+    enable_field(prog, field, /*invert=*/false);
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    const FrameCoverage c = classify_frame();
+    EXPECT_EQ(c.other, 0) << "frame is no longer binary lit/discarded: "
+                          << c.other << " intermediate pixels";
+    EXPECT_EQ(c.dark, 0)
+        << c.dark << " of " << (kW * kH) << " pixels were discarded where the "
+           "field reads -10/255, i.e. NO damage. The rim noise is signed: it "
+           "lowered the threshold below the field value and grew the hole "
+           "past the region field_brush.cc guarantees damage in.";
+    EXPECT_EQ(c.lit, kW * kH);
+}

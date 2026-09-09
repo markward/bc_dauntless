@@ -323,6 +323,31 @@ const float kPhase       = 0.13;
 const float kFieldDepthFloor = 1.25;
 const float kFieldSdfOffset  = 1.25;
 
+// Body-space erosion of the FIELD's hole edge, so a hole cut beyond the
+// 24-carve ring gets a broken rim instead of the brush's smooth ellipsoid.
+// Tracked carves do not use this -- they have a real per-carve azimuth and
+// their own noise (kShapeAmp above); beyond the ring there is no per-carve
+// frame to build an azimuth from, which is the whole point of being out
+// there, so the perturbation has to come from a body-space field instead.
+//
+// ONE-SIDED BY CONSTRUCTION: vnoise3 returns [0,1] and the term is ADDED to
+// the iso margin, so it can only ever RAISE the threshold and SHRINK the
+// hole. A signed version (the *2-1 remap the sphere block's own rim noise
+// uses) would grow the hole past the region field_brush.cc guarantees
+// damage in, putting un-backed hull at the rim -- the see-through defect
+// this plan removes. HullFieldClip.FieldRimNoiseOnlyShrinksTheHole guards
+// the source text; FieldRimNoiseNeverCutsBelowThePlainMargin guards the
+// behaviour. breach.frag is deliberately NOT given this term: its plain
+// margin stays a LOWER threshold than the hull's, which keeps
+// hole (subset of) interior by construction.
+//
+// 0.06 in sample_hull_field's return units is about half a cell: scale is
+// 4*cell/127 model units per step, so 0.5*cell is 15.875 steps = 0.0623
+// after the /255 normalisation. Because scale is proportional to cell, this
+// is the same half cell on every ship without needing a uniform.
+const float kFieldRimNoise = 0.06;
+const float kFieldRimFreq  = 0.35;   // cycles per model unit
+
 float vh3(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453123); }
 float vnoise3(vec3 p){
     vec3 i = floor(p), f = fract(p);
@@ -815,7 +840,13 @@ void main() {
         // brush actually crosses zero and quantisation rounding could
         // otherwise decide the sign in a dithered speckle pattern instead
         // of real geometry.
-        bool field_cut = sample_hull_field(p_body) > kHullFieldIsoMargin;
+        //
+        // The threshold is raised (never lowered) by body-space noise, so
+        // the field's own hole edge breaks up instead of reading as the
+        // brush's smooth ellipsoid. See kFieldRimNoise for why the term is
+        // strictly one-sided.
+        bool field_cut = sample_hull_field(p_body)
+                       > kHullFieldIsoMargin + kFieldRimNoise * vnoise3(p_body * kFieldRimFreq);
         if (u_carve_invert != 0) {
             if (field_cut) marked = true;
         } else if (field_cut) {
