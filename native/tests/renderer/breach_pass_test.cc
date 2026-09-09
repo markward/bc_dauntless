@@ -587,6 +587,93 @@ TEST_F(BreachPassGLTest, NonIdentityNodeTransformRendersIdenticallyToIdentity) {
         << " chained=" << chained_sum;
 }
 
+// The same invariance argument as the node-chain test above, applied to the
+// OTHER half of the transform: a ROTATED instance world matrix.
+//
+// This one exists for a defect the node-chain test structurally cannot see:
+// both of its legs use an identity instance world, so body space and world
+// space coincide there and a shader that mixes the two still passes. The
+// diffuse term used to do exactly that -- `n` is the damage FIELD's own
+// gradient at hit_point, a BODY-frame direction, while view_dir was built
+// from a world-space hit point and a world-space camera. The dot product of
+// the two is only correct when the instance world matrix carries no rotation,
+// i.e. never for a ship that is moving or turning. It never blanked anything
+// (light stays in [0.35, 0.90]), so nothing but a frame-aware test can catch
+// it: it reads as interior shading that goes flat, or swims, as the hull
+// turns.
+//
+// Rotating the instance world by R and the camera's eye/target/up by the SAME
+// R leaves the view matrix as view*inverse(R), so view*inverse(R) * (R*p) ==
+// view*p: the rasterised image, every body-frame quantity (v_body_pos,
+// u_camera_pos_body, hit_point, the field gradient) and the body-frame
+// geometry are all unchanged, and only world space moves. A frame-exact match
+// against the unrotated baseline is therefore the correct expectation, same as
+// for the node-chain test; the 1% tolerance covers only float round-trip noise
+// through R * inverse(R).
+//
+// 60 degrees about body X is picked so the error is large and computable, not
+// because anything special happens there: it swings the world-space view
+// direction to (0, -sin60, cos60), whose dot with the body-frame gradient
+// (0,0,1) is 0.5 instead of 1.0, i.e. light 0.35+0.55*0.5 = 0.625 against a
+// correct 0.90 -- a ~31% fall in frame sum, far outside the tolerance.
+constexpr float kRotatedWorldPitchDeg = 60.0f;
+
+TEST_F(BreachPassGLTest, RotatedInstanceWorldShadesIdenticallyToUnrotated) {
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = solid_fill();
+    const voxel::DistanceField field = make_single_cavity_field();
+    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+    const assets::Model patch =
+        make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    const scenegraph::Camera cam =
+        cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+
+    // Baseline: identity instance world (what every other test here uses).
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    mark_hull_cut();
+    pass.draw_instance(/*instance_key=*/1, fill, entry, patch,
+                       glm::mat4(1.0f), cam, *pipeline);
+    glFinish();
+    ASSERT_EQ(glGetError(), GL_NO_ERROR) << "GL error in unrotated baseline draw";
+    const long long flat_sum = read_frame_sum();
+    ASSERT_GT(read_inner_max(), 24)
+        << "unrotated baseline drew nothing — the comparison below would be "
+           "vacuous (black == black)";
+
+    // Rotate the ship AND the camera by the same R: identical picture, identical
+    // body frame, different world frame.
+    const glm::mat4 R = glm::rotate(glm::mat4(1.0f),
+                                    glm::radians(kRotatedWorldPitchDeg),
+                                    glm::vec3(1.f, 0.f, 0.f));
+    scenegraph::Camera rot_cam = cam;
+    rot_cam.eye    = glm::vec3(R * glm::vec4(cam.eye, 1.0f));
+    rot_cam.target = glm::vec3(R * glm::vec4(cam.target, 1.0f));
+    rot_cam.up     = glm::vec3(R * glm::vec4(cam.up, 0.0f));
+
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    mark_hull_cut();
+    pass.draw_instance(/*instance_key=*/1, fill, entry, patch, R, rot_cam, *pipeline);
+    glFinish();
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in rotated-world draw";
+    EXPECT_EQ(pass.draw_calls(), 2u) << "two draw_instance() calls, two submissions";
+
+    const long long rot_sum = read_frame_sum();
+    EXPECT_GT(read_inner_max(), 24)
+        << "A rotated instance world rendered NO interior — this pass should be "
+           "orientation-invariant in body frame";
+    EXPECT_NEAR(static_cast<double>(rot_sum), static_cast<double>(flat_sum),
+                0.01 * static_cast<double>(flat_sum))
+        << "The same ship, same damage, same view, shaded differently purely "
+           "because the hull is turned. Something in this pass is combining a "
+           "BODY-frame vector with a WORLD-space one — the field gradient `n` "
+           "with a world-space view direction is how this went wrong before. "
+           "flat=" << flat_sum << " rotated=" << rot_sum;
+}
+
 TEST_F(BreachPassGLTest, StencilZeroBlocksInteriorSoItCannotFloatInOpenSpace) {
     if (!has_stencil())
         GTEST_SKIP() << "framebuffer has no stencil plane — the stencil test "

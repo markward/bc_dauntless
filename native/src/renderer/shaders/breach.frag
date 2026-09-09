@@ -63,22 +63,21 @@ uniform float     u_fill_iso;      // 64.0/255.0 — solid interior (rim falloff
 uniform float     u_fill_backing;  // kBackingIsovalue/255.0
 
 uniform sampler2D u_damage_tex;
-uniform vec3      u_camera_pos_ws; // camera world position — uploaded CPU-side, avoids per-fragment inverse
 uniform float     u_tex_scale;     // body-units -> texture-period scale
 
-// Task 3 body/world plumbing.
-// u_ship_world: the INSTANCE world matrix ALONE -- NOT breach.vert's u_model,
-// which additionally carries the mesh's node chain. Needed here (not just in
-// the vertex stage) because main() shades at hit_point, a BODY-frame point the
-// raymarch finds, generally NOT v_body_pos, and must transform THAT point to
-// world space for the view-dependent lighting term below. Since hit_point is
-// already body frame, the node chain must NOT be applied to it a second time.
 // u_camera_pos_body: camera position in THIS instance's body frame,
 // precomputed CPU-side as inverse(instance_world) * cam_ws (one matrix inverse
-// per draw, not per fragment -- same idiom as u_camera_pos_ws) -- the ray
-// origin every fragment marches from. u_ship_world is that same matrix
-// un-inverted, so the two agree by construction.
-uniform mat4  u_ship_world;
+// per draw, not per fragment) -- the ray origin every fragment marches from,
+// and also the eye point the interior wall is shaded against.
+//
+// This stage deliberately holds NO world-space uniform. Everything it reads --
+// the damage field, the fill volume, hit_point, the field gradient,
+// u_breach_center -- is body frame, so a world-space vector here has nothing
+// legal to combine with. Rounds 1-3 carried a ship world matrix and a
+// world-space camera position for the lighting term alone; both are gone, and
+// breach_pass.cc no longer uploads them. The vertex stage still needs
+// u_ship_world_inv (see breach.vert) to get from its NODE-LOCAL attribute
+// into this frame in the first place.
 uniform vec3  u_camera_pos_body;
 
 // Molten-rim emissive (hull-breach-2c).
@@ -490,16 +489,23 @@ void main() {
     // therefore has no fixed relationship to the fragment's own facing, and
     // faceforward() turns it toward the viewer for shading.
     //
-    // hit_world is hit_point transformed to world space with u_ship_world --
-    // the instance world matrix ALONE. NOT breach.vert's u_model: that also
-    // carries the mesh's node chain, and hit_point is already BODY frame
-    // (raymarch_breach_cavity works entirely in the field's frame, starting
-    // from v_body_pos which breach.vert already node-composed), so u_model
-    // would apply the node chain a second time and displace the shading point
-    // by the chain's translation -- 128 model units on a Galaxy.
-    vec3 hit_world = (u_ship_world * vec4(hit_point, 1.0)).xyz;
-    vec3 cam_pos  = u_camera_pos_ws;
-    vec3 view_dir = normalize(cam_pos - hit_world);
+    // EVERYTHING here is BODY space. `n` is the damage field's own gradient at
+    // hit_point, so it is a body-frame direction and there is no world-space
+    // vector it can legally be dotted with. Earlier rounds transformed
+    // hit_point to world space and used u_camera_pos_ws, which made `ndl`
+    // below a dot product across two frames: correct only while the instance
+    // world matrix carried no rotation, i.e. never for a ship that is moving
+    // or turning. That did not blank anything (light stayed in [0.35, 0.90]),
+    // it just shaded the interior by the ship's heading -- flat at some
+    // attitudes, swimming as the hull turned.
+    //
+    // u_camera_pos_body is already the camera in this instance's body frame
+    // (breach_pass.cc: inverse(world_xf) * cam_ws), and it is already the
+    // other endpoint of the ray this fragment marched, so reusing it here
+    // costs nothing, needs no world round-trip and no world-space uniform,
+    // and keeps the shading ray and the march ray the same ray by
+    // construction.
+    vec3 view_dir = normalize(u_camera_pos_body - hit_point);
     // n (hit_normal) already points out of the wall into the open cavity;
     // faceforward flips it toward the camera for the lighting dot product,
     // same role v_body_normal played for the old sphere.

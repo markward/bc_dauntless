@@ -185,13 +185,16 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
                                  unsigned int damage_tex) {
     // Camera world position: inverse of view matrix column 3, computed once
     // CPU-side per draw (not per fragment). Matches how the opaque pass derives
-    // u_camera_pos_ws in submit_opaque / submit_opaque_in_pass.
-    const glm::mat4 view_inv = glm::inverse(camera.view_matrix());
+    // u_camera_pos_ws in submit_opaque / submit_opaque_in_pass. NOT uploaded to
+    // the shader -- breach.frag holds no world-space uniform at all (see its own
+    // comment at u_camera_pos_body); this is purely the input to cam_pos_body.
+    const glm::mat4 view_inv   = glm::inverse(camera.view_matrix());
     const glm::vec3 cam_pos_ws = glm::vec3(view_inv[3]);
 
     // Camera position in THIS instance's body frame — the ray origin every
-    // fragment marches from (breach.frag's u_camera_pos_body). One matrix
-    // inverse per draw, not per fragment.
+    // fragment marches from, and the eye point it shades against
+    // (breach.frag's u_camera_pos_body). One matrix inverse per draw, not per
+    // fragment.
     const glm::mat4 world_inv = glm::inverse(world_xf);
     const glm::vec3 cam_pos_body =
         glm::vec3(world_inv * glm::vec4(cam_pos_ws, 1.0f));
@@ -203,22 +206,20 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
     // and every other uniform below are the same for the whole instance.
     shader.set_mat4("u_view",            camera.view_matrix());
     shader.set_mat4("u_proj",            camera.proj_matrix());
-    shader.set_vec3("u_camera_pos_ws",   cam_pos_ws);
     shader.set_vec3("u_camera_pos_body", cam_pos_body);
-    // The instance world matrix and its inverse, WITHOUT the node chain that
-    // draw_model_positions_only folds into u_model. These are what convert
-    // between world space and the ship's BODY frame -- the frame the damage
-    // field was baked in (voxel/voxelize.cc's collect_hull_triangles composes
-    // the node chain), the frame the fill volume, cam_pos_body above and
-    // breach_center below all use, and the frame opaque.frag reconstructs with
-    // its own u_ship_world_inv (frame.cc) before running the very carve test
-    // whose discard stamps the stencil this pass draws under.
+    // Inverse of the instance world matrix, WITHOUT the node chain that
+    // draw_model_positions_only folds into u_model. This is what gets
+    // breach.vert's NODE-LOCAL vertex attribute into the ship's BODY frame --
+    // the frame the damage field was baked in (voxel/voxelize.cc's
+    // collect_hull_triangles composes the node chain), the frame the fill
+    // volume, cam_pos_body above and breach_center below all use, and the
+    // frame opaque.frag reconstructs with its own u_ship_world_inv (frame.cc)
+    // before running the very carve test whose discard stamps the stencil this
+    // pass draws under:
     //   breach.vert: v_body_pos = u_ship_world_inv * u_model * a_pos
     //                           = node_chain * a_pos            (BODY frame)
-    //   breach.frag: hit_world  = u_ship_world * hit_point       (WORLD space)
-    // Applying u_model to hit_point instead would re-apply the node chain to a
-    // point that already carries it.
-    shader.set_mat4("u_ship_world",       world_xf);
+    // The un-inverted world matrix is deliberately NOT uploaded: breach.frag
+    // works entirely in body frame and has nothing to do with world space.
     shader.set_mat4("u_ship_world_inv",   world_inv);
 
     // Fill mask (original uncarved fill).
