@@ -880,6 +880,15 @@ def _reset_leakable_engine_globals():
         _mods.configure(None)
     except Exception:
         pass
+    # The projectile-module cache memoises import FAILURES, so one test
+    # firing a tube with an unimportable script would otherwise decide every
+    # later test's torpedoes for that script name.
+    try:
+        from engine.appc.weapon_subsystems import (
+            _reset_projectile_module_cache)
+        _reset_projectile_module_cache()
+    except Exception:
+        pass
     try:
         import App
     except Exception:

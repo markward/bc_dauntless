@@ -3730,6 +3730,12 @@ def reset_sdk_globals() -> None:
     _tooltip_dispatch_state["last"] = -1e9
     from engine.appc.characters import CharacterClass_SetCurrentToolTipOwner
     CharacterClass_SetCurrentToolTipOwner(None)
+    # Drop the resolved projectile-module cache. It memoises import FAILURES
+    # too (so an unimportable mod projectile is not retried every shot), and a
+    # swap reloads the SDK tree — a failure cached against the old tree must
+    # not decide the next mission's torpedoes.
+    from engine.appc.weapon_subsystems import _reset_projectile_module_cache
+    _reset_projectile_module_cache()
     # Clear MissionLib's "viewscreen in use" flag. If a mission is swapped
     # away mid-briefing (while its bridge viewscreen shows a comm character),
     # g_bViewscreenOn is left at 1. On the next mission's load, the briefing's
