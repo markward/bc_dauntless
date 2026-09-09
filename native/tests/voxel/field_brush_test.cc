@@ -238,3 +238,55 @@ TEST(FieldBrushConservative, SubCellCarveSurvivesReconstruction) {
         << "hole fragments with no damage behind them: " << (total - damaged)
         << " of " << total;
 }
+
+// The invariant the whole plan rests on: every point opaque.frag would
+// discard as hull must read damaged in the field. Swept across BC's full
+// authored resolution range (cell = authored_res/quality, authored_res 6-15,
+// quality 2 => cell 3.0-7.5), the full carve radius range hit_feedback can
+// produce (3-30 model units), and sub-cell placements -- because the defect
+// this guards was placement-dependent and read 0% at cell corners.
+TEST(FieldBrushConservative, HoleIsAlwaysBackedAcrossTheParameterRange) {
+    const float cells[]   = {3.0f, 5.0f, 7.5f};
+    const float radii[]   = {3.0f, 5.0f, 8.0f, 10.0f, 20.0f, 30.0f};
+    // Sub-cell placements of the LATTICE relative to the carve. Which offset
+    // puts the carve on a cell centre and which on a cell corner depends on
+    // the parity of n, which varies across this sweep, so all four are swept
+    // rather than trusting any one of them to be the worst case. Measured
+    // against the pre-conservative brush at cell=3 radius=3: 576/576 hole
+    // fragments un-backed at off=0.0, 208/576 at off=0.5.
+    const float offsets[] = {0.0f, 0.25f, 0.5f, 0.75f};
+
+    for (float cell : cells)
+    for (float radius : radii)
+    for (float off : offsets) {
+        // Box big enough for the dilated brush plus a margin, on any axis.
+        const int n = int(std::ceil((radius * 4.0f + cell * 8.0f) / cell)) + 4;
+        voxel::DistanceField f;
+        f.dims   = glm::ivec3(n, n, n);
+        f.cell   = glm::vec3(cell);
+        f.scale  = 4.0f * cell / 127.0f;
+        f.origin = glm::vec3(-0.5f * float(n) * cell) + glm::vec3(off * cell);
+        f.dist.assign(std::size_t(n) * n * n, static_cast<std::int8_t>(-127));
+
+        voxel::field_carve_oblate(f, glm::vec3(0.0f),
+                                  glm::vec3(0.0f, 0.0f, 1.0f), radius);
+
+        // opaque.frag cuts where its perturbed rim allows, out to
+        // radius * (1 + kShapeAmp) at the extreme. Sample that whole disc.
+        const float rim = radius * (1.0f + voxel::kCarveRimAmp);
+        int total = 0, undamaged = 0;
+        for (int i = 0; i < 48; ++i) {
+            const float th = 6.28318530718f * float(i) / 48.0f;
+            for (int j = 1; j <= 12; ++j) {
+                const float rad = rim * float(j) / 12.0f;
+                const glm::vec3 p(rad * std::cos(th), rad * std::sin(th), 0.0f);
+                ++total;
+                if (trilinear_int8(f, p) <= 0.5f) ++undamaged;
+            }
+        }
+        EXPECT_EQ(undamaged, 0)
+            << "cell=" << cell << " radius=" << radius << " offset=" << off
+            << ": " << undamaged << " of " << total
+            << " hole fragments have no damage behind them";
+    }
+}
