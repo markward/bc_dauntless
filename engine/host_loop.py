@@ -5299,6 +5299,23 @@ class _MissionLoader:
         import QuickBattle.QuickBattleGame as _QBGame
         _QBGame.Initialize(game)
 
+        # QuickBattle.Initialize (inside the cascade above) has just run
+        # BuildDialog(). A Foundation ship registered into the five tables
+        # (engine/foundation/quickbattle.py:register) is NOT yet a button
+        # anywhere: GenerateShipMenu is a hardcoded per-ship
+        # `if (iShipsUnlocked1 & AKIRA)` ladder that never reads those
+        # tables. Inject them into the built g_pShipsPane/g_pPlayerPane now,
+        # well before the Quick Battle Setup panel's first DFS read of the
+        # widget tree (it opens later, off the XO menu — see host_loop's
+        # boot sequence). A no-op when nothing is registered. Guarded so one
+        # broken mod ship cannot take the whole QuickBattle boot down with
+        # it.
+        try:
+            from engine.foundation import quickbattle as _fq
+            _fq.inject_into_menus()
+        except Exception as _e:
+            dev_mode.log_swallowed("Foundation QuickBattle menu injection", _e)
+
         # BC gives a Federation player ship a default registry / hull name
         # ("Dauntless" for a Galaxy, etc. — MissionLib's "default NCC"). QuickBattle
         # runs no script ReplaceTexture, so apply the class default here (before
