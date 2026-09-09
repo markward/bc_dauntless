@@ -197,3 +197,59 @@ def test_reset_clears_registrations_so_a_later_call_injects_nothing():
 
     assert added == 0
     assert _categories(qb.g_pShipsPane) == []
+
+
+# ── Group labels are TGL KEYS, not display strings ──────────────────────
+# BC's own QuickBattle.py builds every stock category through the mission
+# database: `STCharacterMenu_CreateW(g_pMissionDatabase.GetString("Fed
+# Ships"))`. Foundation's StaticDefs.py registers the 30 stock ships under
+# those same keys ('Fed Ships', 'Card Ships', ...), which is why every mod
+# in the corpus authors `menuGroup = 'Fed Ships'`. Comparing a mod's raw
+# key against a built category's RESOLVED label never matches, so mod ships
+# used to form a duplicate "Fed Ships" category beside "Federation Ships".
+
+class _FakeDatabase:
+    """The two stock keys whose TGL text differs from the key itself."""
+
+    _STRINGS = {
+        "Fed Ships":  "Federation Ships",
+        "Card Ships": "Cardassian Ships",
+    }
+
+    def GetString(self, key):
+        # Appc returns the key unchanged for an unregistered key.
+        return self._STRINGS.get(key, key)
+
+
+def _qb_with_database():
+    qb = _FakeQB()
+    qb.g_pMissionDatabase = _FakeDatabase()
+    return qb
+
+
+def test_tgl_key_group_lands_in_the_resolved_stock_category():
+    _ship(ship_group="Fed Ships")
+    qb = _qb_with_database()
+    _add_stock_category(qb.g_pShipsPane, "Federation Ships", "Galaxy")
+
+    added = quickbattle.inject_into_menus(qb=qb)
+
+    assert added == 1
+    cats = _categories(qb.g_pShipsPane)
+    assert [c.GetLabel() for c in cats] == ["Federation Ships"]
+    assert cats[0].GetButtonW("ZZ Test Ship") is not None
+
+
+def test_group_with_no_tgl_entry_keeps_its_own_category():
+    # "Borg Ships" is a category the mod invents (the Steamrunner pack
+    # registers two ships there); BC has no such key, so GetString returns
+    # it unchanged and a new category is the correct outcome.
+    _ship(ship_group="Borg Ships")
+    qb = _qb_with_database()
+    _add_stock_category(qb.g_pShipsPane, "Federation Ships", "Galaxy")
+
+    added = quickbattle.inject_into_menus(qb=qb)
+
+    assert added == 1
+    labels = [c.GetLabel() for c in _categories(qb.g_pShipsPane)]
+    assert labels == ["Federation Ships", "Borg Ships"]

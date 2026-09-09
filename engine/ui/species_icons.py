@@ -80,3 +80,45 @@ def stem_for_species(species: int) -> Optional[str]:
     """Returns the TGA filename stem for the given species int, or None
     if the species has no registered icon."""
     return _SPECIES_TO_STEM.get(int(species))
+
+
+def stem_for_ship(ship) -> Optional[str]:
+    """Icon stem for one ship: a Foundation ShipDef's authored `iconName`
+    if it has one, else the species map above.
+
+    The species is NOT a mod ship's artwork. `SetSpecies` drives faction,
+    AI and networking behaviour, so mod hardpoints reuse a stock id --
+    the LC Intrepid pack calls `SetSpecies(103)`, and 103 is Akira here,
+    which is exactly why an Intrepid used to fly under an Akira
+    silhouette. Foundation carries the icon separately in `iconName`, and
+    a pack ships the matching TGA (`data/Icons/Ships/LCIntrepid.tga`),
+    which the mod overlay places for `ship_icons` to find.
+
+    No fall-through from a Foundation stem to the species: a mod that
+    declares an `iconName` and ships no art gets no silhouette, the same
+    as it would under Foundation. Falling back would put a stock ship's
+    outline on a modded hull, which is the bug this replaced.
+    """
+    script = None
+    getter = getattr(ship, "GetScript", None)
+    if callable(getter):
+        try:
+            script = getter()
+        except Exception:
+            script = None
+    if script:
+        from engine.foundation.shipdef import icon_name_for_script
+        icon = icon_name_for_script(script)
+        if icon:
+            return icon
+
+    getter = getattr(ship, "GetSpecies", None)
+    if not callable(getter):
+        return None
+    try:
+        species = getter()
+    except Exception:
+        return None
+    if not isinstance(species, int):
+        return None
+    return stem_for_species(species)

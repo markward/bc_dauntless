@@ -133,6 +133,37 @@ def _ensure_build_dialog_reinjects(module) -> None:
     module.BuildDialog = _build_dialog_and_reinject
 
 
+def _category_label(module, group):
+    """A mod's `menuGroup` is a TGL KEY; the built categories carry the
+    RESOLVED text. Translate before matching or creating.
+
+    BC's own QuickBattle.py builds every stock category through the
+    mission database -- `STCharacterMenu_CreateW(g_pMissionDatabase.
+    GetString("Fed Ships"))` -- and Foundation's StaticDefs.py re-registers
+    all 30 stock ships under those same keys, which is why every mod in
+    the corpus authors `menuGroup = 'Fed Ships'` rather than the
+    "Federation Ships" a player sees. Comparing the raw key against a
+    built category's label never matched, so mod ships used to pile into
+    a second, duplicate Federation category.
+
+    Appc returns the key unchanged for a key with no TGL entry, so a
+    group a mod invents (the Steamrunner pack's "Borg Ships") still gets
+    its own category -- the correct outcome, and the same one BC gives.
+    Falls back to the raw group when no database is present.
+    """
+    db = getattr(module, "g_pMissionDatabase", None)
+    get_string = getattr(db, "GetString", None) if db is not None else None
+    if get_string is None:
+        return group
+    try:
+        resolved = get_string(group)
+    except Exception:
+        return group
+    # TGString subclasses str, so this is already comparable; str() keeps
+    # the widget label a plain string either way.
+    return str(resolved) if resolved else group
+
+
 def _inject_registered_ships(module) -> int:
     added = 0
     for name, sid in _registered:
@@ -150,10 +181,11 @@ def _inject_registered_ships(module) -> int:
             pane = getattr(module, pane_attr, None)
             if pane is None:
                 continue
-            category = _find_category(pane, group)
+            label = _category_label(module, group)
+            category = _find_category(pane, label)
             if category is None:
                 from engine.appc.tg_ui.st_widgets import STCharacterMenu_CreateW
-                category = STCharacterMenu_CreateW(group)
+                category = STCharacterMenu_CreateW(label)
                 pane.AddChild(category, 0.0, 0.0)
             if category.GetButtonW(name) is not None:
                 continue  # already there -- idempotent

@@ -24,6 +24,37 @@ def all_definitions() -> list:
     return list(_ALL_DEFINITIONS)
 
 
+def icon_name_for_script(script):
+    """The authored `iconName` of the ShipDef whose `shipFile` is `script`.
+
+    `script` is what `ObjectClass.GetScript()` returns -- the dotted module
+    `loadspacehelper.CreateShip` stores via `pShip.SetScript("ships." +
+    pcScript)` -- so only the last segment is compared.
+
+    This exists because a mod ship's SPECIES is not its artwork. Mods
+    routinely reuse a stock species id (the LC Intrepid's hardpoint calls
+    `SetSpecies(103)`, which is Akira) since species drives faction/AI
+    behaviour and networking; `iconName` is the separate, authored icon,
+    and the pack ships the matching TGA. See `engine/ui/species_icons.py`.
+
+    Matching is case-insensitive: mod authors spell the module and
+    `shipFile` inconsistently, and the LC pack itself declares iconName
+    'LCintrepid' against a file named LCIntrepid.tga.
+    """
+    if not script:
+        return None
+    leaf = str(script).rsplit(".", 1)[-1].lower()
+    if not leaf:
+        return None
+    for definition in _ALL_DEFINITIONS:
+        ship_file = getattr(definition, "shipFile", None)
+        if ship_file and str(ship_file).lower() == leaf:
+            icon = getattr(definition, "iconName", None)
+            if icon:
+                return str(icon)
+    return None
+
+
 class ShipDefinition:
     """One registered ship. Attribute-set is how mods configure it."""
 
