@@ -74,10 +74,23 @@ def icon_path_for_species(name: str) -> Optional[str]:
         _resolved[name] = None
         return None
 
-    with open(tga_path, "rb") as fp:
-        blob = fp.read()
-    width, height, rgba = decode_tga(blob)
-    png = encode_png_rgba(width, height, rgba)
+    # A silhouette is decoration; an unreadable icon must cost only itself.
+    # This runs from ShipDisplayPanel.render_payload, so anything raised here
+    # goes straight up through the panel registry and out of the host loop --
+    # which is exactly what happened when mod icons first reached this
+    # decoder and it met a Targa type it refused. Mod assets are untrusted
+    # input: cache the failure (so a per-frame render does not re-read and
+    # re-fail the same file every frame) and carry on without a silhouette.
+    try:
+        with open(tga_path, "rb") as fp:
+            blob = fp.read()
+        width, height, rgba = decode_tga(blob)
+        png = encode_png_rgba(width, height, rgba)
+    except Exception as _e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("ship icon %r unreadable" % tga_path, _e)
+        _resolved[name] = None
+        return None
 
     # Keep the disk cache for inspection / debugging.
     try:

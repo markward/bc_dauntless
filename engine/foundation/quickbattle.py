@@ -377,8 +377,13 @@ def register(ship_def, group, player: bool = False, qb=_UNSET) -> int:
     module.g_dShipTypeToIconNumber[sid] = icon
 
     for table_name, side, ai in (
+            # Both names are verbatim from the stock tables
+            # (sdk/.../QuickBattle/QuickBattle.py:580-585): every enemy row
+            # names "QuickBattleAI", and there is NO QuickBattleEnemyAI
+            # module -- we invented that name, and StartSimulation2's
+            # `__import__(row[3])` died on it, taking battle start with it.
             ("g_dFriendlyShipTypeToDetails", "Friendly", "QuickBattleFriendlyAI"),
-            ("g_dEnemyShipTypeToDetails", "Enemy", "QuickBattleEnemyAI")):
+            ("g_dEnemyShipTypeToDetails", "Enemy", "QuickBattleAI")):
         table = getattr(module, table_name)
         table[sid] = [
             ship_def.shipFile,

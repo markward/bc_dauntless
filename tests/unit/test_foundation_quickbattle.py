@@ -19,9 +19,14 @@ class _FakeQB:
         self.g_dFriendlyShipTypeToDetails = {
             10: ["Sovereign", "Sovereign", "QBFriendlySovereignDestroyed",
                  "QuickBattleFriendlyAI", "Friendly"]}
+        # "QuickBattleAI" verbatim from the real table
+        # (sdk/.../QuickBattle/QuickBattle.py:580-585) -- every stock ENEMY
+        # row names that module. This double previously said
+        # "QuickBattleEnemyAI", a module that does not exist, which is how
+        # the same invented name reached the shipping code unchallenged.
         self.g_dEnemyShipTypeToDetails = {
             10: ["Sovereign", "Sovereign", "QBEnemySovereignDestroyed",
-                 "QuickBattleEnemyAI", "Enemy"]}
+                 "QuickBattleAI", "Enemy"]}
         self.g_dShipTypeToIconNumber = {10: 1, 9: 2}
 
 
@@ -158,6 +163,34 @@ def test_reregistering_the_same_ship_is_not_a_collision():
 
     assert sid1 == sid2 == 1000
     assert quickbattle.collisions() == []
+
+
+def test_detail_rows_name_ai_modules_that_actually_import():
+    """QuickBattle.StartSimulation2 does `__import__(row[3])` on the AI module
+    named in the detail row, so a name that does not resolve takes the whole
+    battle start down with a ModuleNotFoundError.
+
+    We shipped "QuickBattleEnemyAI" -- invented, never a real module; the
+    stock enemy rows all name "QuickBattleAI". Importing here is the check
+    that catches it, because no amount of shape-testing can tell a plausible
+    module name from a real one.
+    """
+    import importlib
+
+    qb = _FakeQB()
+    sid = quickbattle.register(_ship(), "Fed Ships", qb=qb)
+
+    for table in (qb.g_dFriendlyShipTypeToDetails,
+                  qb.g_dEnemyShipTypeToDetails):
+        module_name = table[sid][3]
+        importlib.import_module(module_name)   # raises if we invented it
+
+
+def test_enemy_rows_use_the_same_ai_module_as_stock():
+    qb = _FakeQB()
+    stock_enemy_ai = qb.g_dEnemyShipTypeToDetails[10][3]
+    sid = quickbattle.register(_ship(), "Fed Ships", qb=qb)
+    assert qb.g_dEnemyShipTypeToDetails[sid][3] == stock_enemy_ai
 
 
 def test_reset_clears_collisions():
