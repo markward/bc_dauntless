@@ -733,6 +733,14 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
+## Noted during execution — not blocking, do not fix inside this plan
+
+**Task 1's write AABB is loose.** `reach = max(lat, depth) * dil` scales the *largest* half-extent by a dilation computed from the *smallest*, so a carve visits roughly 3× the cells it needs: ~10,500 instead of ~3,800 for radius 30 on a Galaxy lattice, ~300 instead of ~110 for radius 3. The exact axis-aligned bound for an oblate with axis `n`, lateral half-extent `A` and along half-extent `B` is per-axis `sqrt(A²(1-(e·n)²) + B²(e·n)²)` — three cheap evaluations, strictly tighter, never truncating.
+
+Left alone deliberately. The cost is a few hundred thousand flops per carve, and a large carve already visited 1,728 cells before this plan, so the order of magnitude is unchanged. Worth tightening only if a profile ever points at `field_carve_oblate`; correctness does not depend on it.
+
+**Task 1 trap for Task 2's implementer:** in `field_brush.cc` the loop-local `lateral` vector was named `lat`, colliding with the new `float lat` half-extent. It shadowed silently and would have reverted the whole rim dilation had the types been compatible; the vector is now `lat_vec`. `opaque.frag` already calls its vector `lateral`, so `float lat` is safe there — but check, do not assume.
+
 ## Live verification briefing
 
 Green tests cannot see this. When the plan is done, the live pass should check, in order:
