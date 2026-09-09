@@ -154,9 +154,37 @@ is wide enough that a future BC-content addition could not close it.
 
 `menuGroup` plus `SubMenu` / `SubSubMenu` become the category path.
 
-**Our CEF picker needs no changes at all.** `quick_battle_setup_panel` does not
-hold a ship list — it walks the live `g_pShipsPane` / `g_pPlayerPane` widget
-tree and renders whatever buttons exist. Feed the tables and the ship appears.
+⚠️ **CORRECTION — feeding the tables is necessary but NOT sufficient.**
+
+This section originally claimed "our CEF picker needs no changes at all — feed
+the tables and the ship appears". That was wrong, and the end-to-end test in
+the plan's final task is what caught it: every unit test passed, all five
+tables were correctly populated, and no ship appeared.
+
+`quick_battle_setup_panel` does indeed hold no ship list — it walks the live
+`g_pShipsPane` widget tree. But that tree is built by `GenerateShipMenu`, which
+**never consults the five tables**. Every ship in it is a literal line gated by
+an unlock bitflag:
+
+```python
+if (iShipsUnlocked1 & AKIRA):
+    pFederation.AddChild(CreateBridgeMenuButton(..., ST_AKIRA, g_pXO))
+```
+
+The tables govern what happens *after* a selection — the detail row, the AI
+module, the player-ship assignment — not what is offered. Both menus are
+hardcoded, which is exactly why real Foundation replaces `QuickBattle.py`
+outright.
+
+So registration needs **both** halves: the tables (so a selected ship behaves
+correctly) **and** an injection of categories and buttons into the built menu
+(so it can be selected at all). The second is a follow-up task; without it the
+feature registers ships that nothing displays.
+
+The error came from reading `_read_ships`, seeing it walk widgets, and
+inferring the tables fed those widgets rather than reading the builder. Worth
+recording: the same reading-one-layer-and-inferring-the-next mistake produced
+two wrong diagnoses earlier in the same work.
 
 That is also why this approach was chosen over injecting widgets after the
 panes are built, or keeping a parallel registry the panel merges in: both of
