@@ -144,6 +144,22 @@ def test_two_mod_ships_sharing_a_name_do_not_clobber_each_other():
     assert ("Enterprise", sid1) in quickbattle.collisions()
 
 
+def test_reregistering_the_same_ship_is_not_a_collision():
+    """Every ship in our mod corpus calls RegisterQBShipMenu then
+    RegisterQBPlayerShipMenu -- the standard generated pattern. The second
+    call's name is already in g_dShipNameToType (written by the first),
+    but it must not be reported as a collision or nine real ships would
+    all look like clashes in the boot report."""
+    qb = _FakeQB()
+    d = _ship()
+
+    sid1 = d.RegisterQBShipMenu("Fed Ships", qb=qb)
+    sid2 = d.RegisterQBPlayerShipMenu("Fed Ships", qb=qb)
+
+    assert sid1 == sid2 == 1000
+    assert quickbattle.collisions() == []
+
+
 def test_reset_clears_collisions():
     qb = _FakeQB()
     impostor = foundation.FedShipDef(

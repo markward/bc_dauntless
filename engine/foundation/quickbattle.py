@@ -95,6 +95,17 @@ def register(ship_def, group, player: bool = False, qb=_UNSET) -> int:
     name = ship_def.name
     module = _resolve_qb() if qb is _UNSET else qb
 
+    # allocate_ship_type is keyed by ship IDENTITY here, not by name. Name
+    # alone cannot distinguish "the same ShipDefinition registered twice"
+    # (the standard RegisterQBShipMenu-then-RegisterQBPlayerShipMenu
+    # pattern every ship in our mod corpus uses) from "two different
+    # ShipDefinitions that happen to share a display name" -- both would
+    # look identical to a name-keyed cache. Object identity is stable for
+    # the run: ShipDefinition.__init__ (shipdef.py) appends every instance
+    # to _ALL_DEFINITIONS, so it is never garbage-collected -- and its
+    # id() never reused -- before foundation.reset() runs.
+    own_key = id(ship_def)
+
     # Guard the two NAME-keyed tables. The three id-keyed tables below are
     # safe by construction (every minted id is >= ST_MOD_BASE, stock only
     # occupies 0..30), but g_dShipNameToType / g_dShipNameToIconNumber are
@@ -107,10 +118,18 @@ def register(ship_def, group, player: bool = False, qb=_UNSET) -> int:
     # started there, and our own prior registrations land there too.
     if module is not None and name in module.g_dShipNameToType:
         existing_id = module.g_dShipNameToType[name]
+        if _ids.get(own_key) == existing_id:
+            # This exact ShipDefinition instance already claimed `name` at
+            # this id (we minted it below, on an earlier call) -- a
+            # re-registration, not a collision. The tables already hold
+            # this ship's data from that first call; we chose to leave
+            # them as they are rather than rewrite them idempotently,
+            # since a rewrite would put back the same values.
+            return existing_id
         _collisions.append((name, existing_id))
         return existing_id
 
-    sid = allocate_ship_type(name)
+    sid = allocate_ship_type(own_key)
     entry = (name, sid)
     if entry not in _registered:
         _registered.append(entry)
