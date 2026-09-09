@@ -474,14 +474,43 @@ def _imported_names(source: str) -> set:
     return names
 
 
+# Frameworks the ENGINE itself implements, mapped to the module that proves
+# it. `requires` means UNAVAILABLE, so a framework we reimplement must not be
+# listed -- every mod in the corpus imports Foundation, and reporting all six
+# as "requires: Foundation (unsupported)" told the player their mods would not
+# work while Foundation was registering 45 of their ships.
+#
+# Proved by import rather than asserted by a literal: if engine/foundation/ is
+# ever removed or renamed, the report corrects itself instead of lying in the
+# other direction. That failure mode is the entire reason this mapping exists.
+_ENGINE_FRAMEWORKS = {
+    "Foundation": "engine.foundation",
+}
+
+
+def _engine_provides(name: str) -> bool:
+    module = _ENGINE_FRAMEWORKS.get(name)
+    if module is None:
+        return False
+    import importlib
+    try:
+        importlib.import_module(module)
+    except Exception:
+        return False
+    return True
+
+
 def detect_frameworks(index: ModIndex) -> None:
     """Record which unavailable frameworks each mod imports.
 
-    A mod that SUPPLIES the framework does not require it -- checked against
-    the index, so a bundled Foundation counts as present.
+    Unavailable means neither the ENGINE nor a mod supplies it. A mod that
+    bundles its own copy does not require it -- checked against the index --
+    and neither does one importing a framework we reimplement.
     """
     provided = {Path(mf.rel).stem for mf in index.files.values()
                 if mf.rel.endswith(".py")}
+    provided |= {name.lower() for name in KNOWN_FRAMEWORKS
+                 if _engine_provides(name)}
     by_mod: dict = {status.name: status for status in index.mods}
     for status in index.mods:
         status.requires = []

@@ -23,14 +23,17 @@ def test_install_builds_classifies_and_configures(monkeypatch, tmp_path):
     (tmp_path / "g").mkdir(); (tmp_path / "s").mkdir()
     _touch(tmp_path / "mods" / "M" / "Data" / "a.nif")
     _touch(tmp_path / "mods" / "M" / "Scripts" / "Custom" / "x.py",)
+    # FoundationTech, not Foundation: this asserts only that install() RUNS
+    # detect_frameworks, so its example has to be a framework we do not
+    # implement. Foundation stopped being one when engine/foundation/ landed.
     (tmp_path / "mods" / "M" / "Scripts" / "Custom" / "x.py").write_text(
-        "import Foundation\n")
+        "import FoundationTech\n")
 
     idx = mods.install(argv=["--mods-dir", str(tmp_path / "mods")], env={})
 
     assert mods.current() is idx
     assert idx.lookup("data/a.nif") is not None
-    assert {m.name: m.requires for m in idx.mods}["M"] == ["Foundation"]
+    assert {m.name: m.requires for m in idx.mods}["M"] == ["FoundationTech"]
 
 
 def test_install_with_no_mods_dir_is_an_empty_index(monkeypatch, tmp_path):
