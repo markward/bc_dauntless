@@ -151,6 +151,33 @@ float sample_hull_field(vec3 p_body) {
 // body frame) this steps `rd` (body frame, UNIT length, pointing FURTHER
 // INTO the hull) until the field falls back to <= margin: the far wall of
 // the cavity.
+//
+// PRECONDITION this function does not itself check (matching every other
+// consumer of sample_hull_field in this file, all of which are gated by
+// their caller on u_hull_field_enabled != 0): call this only when a valid
+// per-instance field is actually bound on unit 6. With the field disabled
+// (no per-instance field cached for this hull) u_hull_field may hold
+// whatever texture a previous draw left on that unit, or be unbound
+// entirely -- sampling it here would not crash, but the result would be
+// meaningless. Task 3's call site owns that gate, the same way opaque.frag
+// already gates its own field-based discard on u_hull_field_enabled before
+// ever calling sample_hull_field.
+//
+// KNOWN GAP, deliberately not fixed here: the field carries DAMAGE ONLY,
+// never hull geometry (renderer/instance_field_cache.h). A carve's brush
+// (field_carve_oblate) is admitted into the field as a single all-or-
+// nothing decision -- carve_has_backing gates whether the WHOLE brush is
+// deposited (instance_field_cache.cc's hull_carve_deposit), not a per-cell
+// clip of the brush against real hull thickness. So a carve that visually
+// cuts clean through a thin plate still leaves a bounded, brush-shaped
+// positive region in the field, and this march will still find ITS far
+// edge and report a hit there -- a wall floating in open space, not real
+// hull material. This function alone cannot tell the two cases apart: it
+// only has the damage field, not the hull's own backing/fill volume (bound
+// as u_fill above, used today only by main()'s discard mask). Task 3, which
+// already has access to both, must additionally check the fill/backing
+// volume AT hit_point before treating a reported hit as real -- do not
+// treat this function's `true` return as sufficient on its own.
 
 // GLSL const has no linkage across two separately compiled programs, so
 // this is breach.frag's own copy of the VALUE -- not a second, independently
@@ -186,12 +213,29 @@ float breach_min_cell() {
 const float kHullFieldStepFrac = 0.5;
 
 // Bounded steps -- an unbounded loop in a fragment shader is a hang, not a
-// slow frame. kBreachMaxDist is a belt-and-braces cap independent of step
-// count, in case a degenerate (near-zero) u_hull_field_cell would otherwise
-// demand many more steps than the budget to cover any useful distance;
-// kBreachMaxSteps caps the loop directly regardless of either.
-const int   kBreachMaxSteps = 64;
-const float kBreachMaxDist  = 64.0;   // model units -- past any BC hull's extent
+// slow frame. kBreachMaxSteps caps the loop directly and unconditionally:
+// see BreachRaymarchStaticGuard.LoopBoundIsANamedCompileTimeConstant.
+const int kBreachMaxSteps = 64;
+
+// Longest useful march distance: the field's own body-frame box diagonal
+// (length(dims * cell)), NOT a fixed model-unit constant. A first version
+// of this used `const float kBreachMaxDist = 64.0` model units, commented
+// "past any BC hull's extent" -- that comment was WRONG. 1 model unit =
+// 0.01 GU and 1 GU = 175 m (engine/units.py), so 64 model units is 0.64 GU,
+// about 112 m -- a small fraction of a real hull, not past its extent. Worse,
+// with BC's authored cell size (cell = authored_res / quality, ~7.5-12.5
+// model units at typical authored_res/kDefaultQuality -- voxel/
+// hull_volume_cache.h), step_len = 0.5 * cell put the OLD fixed cap's cutoff
+// at as few as 5-8 samples: it was the actual binding limiter in practice,
+// not kBreachMaxSteps, and it could cut a march off before it ever reached
+// a real cavity's far wall. The field's own box already hugs the hull
+// (voxel::distance_field_from_tris' AABB plus its accuracy band), so its
+// diagonal both scales automatically with every ship and is provably an
+// upper bound for any single straight march that starts inside the box:
+// no axis-aligned (or any other) march confined to the box can exceed it.
+float breach_field_reach() {
+    return length(u_hull_field_dims * u_hull_field_cell);
+}
 
 // Field gradient by central differences, body-frame units. Points toward
 // INCREASING field value -- i.e. toward the carved/cavity side, away from
@@ -212,15 +256,25 @@ vec3 breach_field_gradient(vec3 p) {
 }
 
 // `ro`/`rd` body frame; `rd` MUST be unit length (the step below assumes
-// unit-speed marching). Returns false -- a MISS, paint nothing, the same
-// "a hole is a hole" rule the fill mask above already applies -- when:
+// unit-speed marching). `hit_point`/`hit_normal` are always written (zeroed
+// on a miss) so a caller that ignores the bool return never reads
+// undefined `out` values -- this shader's own HDR bloom pass has a
+// documented history of turning an uninitialised/NaN value into a black
+// square. Returns false -- a MISS, paint nothing, the same "a hole is a
+// hole" rule the fill mask above already applies -- when:
 //   * `ro` is not already inside carved material (nothing to march INTO), or
 //   * the field never falls back below the margin within the bounded
-//     step/distance budget: a carve that cuts clean through a thin plate
-//     has no far wall, and drawing a wall at the box edge or the ship's far
-//     side would be wrong.
+//     step/distance budget.
+// See this function's header comment above for the KNOWN GAP a `true`
+// return does NOT yet cover: a hit here may be the far edge of a carve
+// brush in open space, not real hull material -- Task 3 must additionally
+// check the backing/fill volume at hit_point.
 bool raymarch_breach_cavity(vec3 ro, vec3 rd, out vec3 hit_point, out vec3 hit_normal) {
+    hit_point  = vec3(0.0);
+    hit_normal = vec3(0.0);
+
     float step_len = max(breach_min_cell() * kHullFieldStepFrac, 1e-5);
+    float max_dist = breach_field_reach();
 
     float prev = sample_hull_field(ro);
     if (prev <= kHullFieldIsoMargin) {
@@ -231,12 +285,13 @@ bool raymarch_breach_cavity(vec3 ro, vec3 rd, out vec3 hit_point, out vec3 hit_n
     // Loop bound is the named compile-time constant directly (not a
     // runtime-derived step count) -- see
     // BreachRaymarchStaticGuard.LoopBoundIsANamedCompileTimeConstant. The
-    // distance cap is enforced separately inside the loop, so a degenerate
-    // (near-zero) u_hull_field_cell still bails out on distance rather than
-    // spending the whole step budget crawling a few model units.
+    // field-extent distance cap is enforced separately inside the loop and
+    // is, at BC's real authored cell sizes, the limiter that actually fires
+    // first (see breach_field_reach's derivation) -- kBreachMaxSteps is the
+    // backstop, not the primary bound.
     for (int i = 0; i < kBreachMaxSteps; ++i) {
         float dist = step_len * float(i + 1);
-        if (dist > kBreachMaxDist) {
+        if (dist > max_dist) {
             return false;
         }
         vec3 p_next = ro + rd * dist;

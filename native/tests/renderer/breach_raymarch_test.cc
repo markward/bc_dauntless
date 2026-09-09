@@ -94,8 +94,14 @@ uniform vec3 u_test_rd;
 uniform int  u_test_mode;   // 0 = report hit_point, 1 = report hit_normal
 
 void main() {
-    vec3 hit_point  = vec3(0.0);
-    vec3 hit_normal = vec3(0.0);
+    // Sentinel (NOT zero): the point of UndamagedFieldMisses' zero-init
+    // assertion is to prove raymarch_breach_cavity itself writes hit_point/
+    // hit_normal to vec3(0.0) before any early return, not merely that this
+    // test harness's own locals started at zero. Starting them at a
+    // conspicuously non-zero value here means a miss that reads back
+    // ~(0,0,0) can only be explained by the CALLEE having written it.
+    vec3 hit_point  = vec3(999.0);
+    vec3 hit_normal = vec3(999.0);
     bool hit = raymarch_breach_cavity(u_test_ro, u_test_rd, hit_point, hit_normal);
     vec3 payload = (u_test_mode == 0) ? hit_point : hit_normal;
     frag_color = vec4(payload, hit ? 1.0 : 0.0);
@@ -296,7 +302,20 @@ protected:
 // (z=3.5) the field is linearly interpolated, so solving
 //   mix(+0.392157, -0.392157, wz) == kHullFieldIsoMargin (0.5/255 = 0.0019608)
 // for wz gives wz = (0.392157 - 0.0019608) / 0.784314 = 0.497500, i.e. the
-// analytic crossing is at z = 2.5 + 0.497500 = 2.9975.
+// analytic crossing is at z = 2.5 + 0.497500 = 2.9975 -- independent of ro's
+// phase (the crossing is intrinsic to the field; ro only decides which step
+// lattice samples it).
+//
+// ro.z = 0.75 (not the lattice-aligned 0.5) is deliberate. With step 0.5
+// starting at 0.5, samples land at 1.0, 1.5, 2.0, 2.5, 3.0, ..., and the
+// bracket that catches 2.9975 is [2.5, 3.0]; the true crossing sits at
+// t=(0.392157-0.0019608)/0.784314=0.995 of THAT bracket -- barely
+// distinguishable from simply returning p_next (3.0 is already within 0.003
+// of the true 2.9975). Starting at 0.75 instead shifts the lattice to
+// 1.25, 1.75, ..., 2.75, 3.25, so the same crossing now falls at t=0.495 of
+// the bracket [2.75, 3.25]: genuinely MID-bracket, so returning p_next
+// (3.25) instead of the refined point is off by a full quarter cell -- which
+// the tight tolerance below actually catches, unlike the original phase.
 TEST_F(BreachRaymarchTest, FindsWallOfKnownCavityWithinOneCell) {
     const std::vector<std::int8_t> z_values = {100, 100, 100, -100, -100, -100, -100, -100};
     const voxel::DistanceField field =
@@ -307,7 +326,7 @@ TEST_F(BreachRaymarchTest, FindsWallOfKnownCavityWithinOneCell) {
     set_common_uniforms(*prog);
     bind_field(*prog, field);
 
-    const glm::vec3 ro(0.5f, 0.5f, 0.5f);   // deep in slice 0: already inside carved material
+    const glm::vec3 ro(0.5f, 0.5f, 0.75f);  // deep in slice 0; off-lattice phase, see above
     const glm::vec3 rd(0.0f, 0.0f, 1.0f);   // marching straight into the hull
     const glm::vec4 out = draw_and_read(*prog, ro, rd, /*mode=*/0);
 
@@ -316,16 +335,56 @@ TEST_F(BreachRaymarchTest, FindsWallOfKnownCavityWithinOneCell) {
     EXPECT_NEAR(out.z, 2.9975f, 1.0f)
         << "hit_point.z=" << out.z << " -- more than one cell from the analytic crossing "
            "2.9975 (the brief's own stated acceptance bound)";
-    // Tighter check: the march refines within its bracketing step by linear
-    // interpolation rather than snapping to the coarse step grid, so a
-    // correct implementation should land far closer than the 1-cell bound
-    // above -- this is what actually distinguishes "found roughly the right
-    // wall" from "found the analytically exact one".
+    // Tighter check: with this ro, the true crossing sits mid-bracket
+    // (t=0.495 -- see the derivation above), so an implementation that skips
+    // linear refinement and just returns p_next would read ~3.25, a full
+    // quarter cell off and well outside this tolerance.
     EXPECT_NEAR(out.z, 2.9975f, 0.05f)
         << "hit_point.z=" << out.z << " -- expected the refined crossing near 2.9975, not "
-           "merely somewhere within the generous one-cell bound";
+           "p_next (~3.25) from skipping linear refinement";
     EXPECT_NEAR(out.x, 0.5f, 1e-3f) << "X must not move: rd has no X component";
     EXPECT_NEAR(out.y, 0.5f, 1e-3f) << "Y must not move: rd has no Y component";
+}
+
+// ── kHullFieldIsoMargin actually participates in the crossing, not just 0.0 ─
+//
+// Every other test uses plateaus of +-100 (field value +-0.392157), which
+// dwarfs the margin (0.0019608): the crossing sample nearest zero happens to
+// land almost exactly ON the margin-based threshold too, so replacing every
+// `<= kHullFieldIsoMargin` with `<= 0.0` shifts the refined hit by only
+// ~0.0025 -- invisible against a 0.05 tolerance. This test uses plateaus of
+// +-1 instead (field value +-0.0039216, only 2x the margin), where the two
+// thresholds diverge by a real, easily-measured amount.
+//
+// Same slab shape as FindsWallOfKnownCavityWithinOneCell (carved 0-2,
+// intact 3-7), cell=1, ro=(0.5,0.5,0.5). Detection triggers at the SAME
+// sample either way (p_next=z=3.0, g.z=2.5, blend of slice2/3 at wz=0.5,
+// v=mix(+0.0039216,-0.0039216,0.5)=0.0 exactly, which is <= both 0.0 and
+// the margin) -- only the REFINEMENT fraction differs:
+//   correct (threshold=margin=0.0019608): t=(0.0039216-0.0019608)/0.0078431
+//                                            = 0.25 -> hit z = 2.5+0.25 = 2.75
+//   buggy   (threshold=0.0):               t=(0.0039216-0)/0.0078431 = 0.5
+//                                            -> hit z = 2.5+0.5 = 3.0
+// A quarter-cell (0.25) difference, trivially outside a 0.05 tolerance.
+TEST_F(BreachRaymarchTest, IsoMarginParticipatesInTheCrossingNotJustZero) {
+    const std::vector<std::int8_t> z_values = {1, 1, 1, -1, -1, -1, -1, -1};
+    const voxel::DistanceField field =
+        make_slab_field(glm::ivec3(2, 2, 8), glm::vec3(0.0f), glm::vec3(1.0f), z_values);
+
+    auto prog = compile_probe();
+    ASSERT_NE(prog, nullptr);
+    set_common_uniforms(*prog);
+    bind_field(*prog, field);
+
+    const glm::vec3 ro(0.5f, 0.5f, 0.5f);
+    const glm::vec3 rd(0.0f, 0.0f, 1.0f);
+    const glm::vec4 out = draw_and_read(*prog, ro, rd, /*mode=*/0);
+
+    ASSERT_GT(out.w, 0.5f) << "expected a hit";
+    EXPECT_NEAR(out.z, 2.75f, 0.05f)
+        << "hit_point.z=" << out.z << " -- expected the margin-based crossing at 2.75; a "
+           "threshold of 0.0 instead of kHullFieldIsoMargin would read ~3.0 here, a full "
+           "quarter cell off";
 }
 
 // ── Undamaged field: a miss, not a hallucinated wall ────────────────────────
@@ -356,23 +415,64 @@ TEST_F(BreachRaymarchTest, UndamagedFieldMisses) {
         << "field is -127 (no damage) everywhere -- there is no cavity to be inside, so the "
            "march must report a miss (paint nothing), not hallucinate a wall at/near ro "
            "(got hit_point=(" << out.x << "," << out.y << "," << out.z << "), hit=" << out.w << ")";
+    // hit_point is written vec3(0.0) at raymarch_breach_cavity's own entry
+    // (not left undefined on a miss): the GLSL spec leaves an `out`
+    // parameter the callee never writes as implementation-defined on
+    // return, and this shader's own HDR bloom pass has a documented history
+    // of an uninitialised/NaN value turning into a black square downstream
+    // -- a caller that reads hit_point without checking the bool return
+    // first should still get a defined value.
+    //
+    // HONESTLY DISCLOSED LIMIT on this assertion's discrimination: I tried
+    // to verify it the same way as every other fix in this file -- change
+    // this test harness's own local `hit_point`/`hit_normal` sentinel
+    // (build_test_fragment_source's test-only main()) from vec3(0.0) to a
+    // conspicuous vec3(999.0), then remove breach.frag's explicit zero-init
+    // and confirm this test starts failing. It did NOT: even with the
+    // sentinel at 999.0 and the explicit init removed, this miss still read
+    // back (0,0,0) to within 1e-6. That means on THIS machine's shader
+    // toolchain, `out` parameters left unwritten on some path are already
+    // auto-zeroed by the compiler itself (a real, observed platform
+    // behaviour, not a guess) -- so this specific assertion cannot be
+    // proven to catch a regression HERE. The production zero-init is kept
+    // anyway because the GLSL spec still calls the unwritten case
+    // implementation-defined in general (a different driver/compiler is not
+    // guaranteed to zero it), so this remains a live CONTRACT check -- read
+    // it as "the function's documented behaviour", not as verified evidence
+    // that removing the fix would be caught here.
+    EXPECT_NEAR(out.x, 0.0f, 1e-6f) << "hit_point.x must be the zero-initialised default on a miss";
+    EXPECT_NEAR(out.y, 0.0f, 1e-6f) << "hit_point.y must be the zero-initialised default on a miss";
+    EXPECT_NEAR(out.z, 0.0f, 1e-6f) << "hit_point.z must be the zero-initialised default on a miss";
 }
 
-// ── Clean-through carve: a miss, not a wall on the ship's far side ─────────
+// ── Carved everywhere reachable: a miss, not a wall painted at the budget's edge
 //
 // Every cell +100 (solidly carved) across the whole field, AND -- because
 // sample_hull_field clamps its Z index into [0, dims.z-1] with no border
 // fallback beyond that -- the sampled value stays +100 forever past the
-// field's own box too. There is no far wall anywhere along this ray; the
-// march must run out its bounded budget and report a miss.
+// field's own box too. There is no crossing anywhere the march can reach;
+// it must exhaust its bounded budget (breach_field_reach(), for this small
+// field's dims=(2,2,4)/cell=1 -- see the reach test below for a realistic-
+// scale version) and report a miss.
 //
-// Discrimination: if step-budget exhaustion were (wrongly) treated as a hit
-// at the last sampled point -- a plausible "ran out of steps, but I found
-// SOMETHING" bug -- out.w would read 1.0 here instead of the expected miss,
-// and the "wall" would be painted at the far edge of the march (a hole cut
-// clean through would show a wall on the ship's far side/the background
-// instead of empty space).
-TEST_F(BreachRaymarchTest, CleanThroughCarveMissesRatherThanPaintingFarWall) {
+// NOTE on naming: an earlier version of this test was called
+// "CleanThroughCarveMissesRatherThanPaintingFarWall" and its comment
+// claimed this models a carve that "cuts clean through a thin plate". That
+// claim was FALSE and has been corrected out of raymarch_breach_cavity's
+// own doc comment (see its "KNOWN GAP" paragraph in breach.frag): the field
+// carries damage only, never real hull geometry, so a carve punched through
+// an actual thin plate still deposits a BOUNDED, brush-shaped positive
+// region with its own far edge -- this function currently WOULD find a
+// (spurious) hit there. This test's all-+100 field has no such bounded
+// region at all (nothing anywhere reverts to intact), which is a different,
+// simpler scenario: pure budget exhaustion, not "no far wall by
+// construction". See RaymarchAloneCannotDistinguishABrushBoundaryFromRealBacking
+// below for a test of the actual bounded-brush case, and its own gap.
+//
+// Discrimination: if budget exhaustion were (wrongly) treated as a hit at
+// the last sampled point -- a plausible "ran out of budget, but I found
+// SOMETHING" bug -- out.w would read 1.0 here instead of the expected miss.
+TEST_F(BreachRaymarchTest, CarvedThroughoutTheReachableFieldMissesRatherThanPaintingAFarWall) {
     const std::vector<std::int8_t> z_values = {100, 100, 100, 100};
     const voxel::DistanceField field =
         make_slab_field(glm::ivec3(2, 2, 4), glm::vec3(0.0f), glm::vec3(1.0f), z_values);
@@ -384,9 +484,49 @@ TEST_F(BreachRaymarchTest, CleanThroughCarveMissesRatherThanPaintingFarWall) {
 
     const glm::vec4 out = draw_and_read(*prog, glm::vec3(0.5f, 0.5f, 0.5f), glm::vec3(0.0f, 0.0f, 1.0f), 0);
     EXPECT_LT(out.w, 0.5f)
-        << "field reads carved everywhere the march can reach -- there is no far wall, so a "
+        << "field reads carved everywhere the march can reach -- there is no crossing, so a "
            "hit here (got hit_point=(" << out.x << "," << out.y << "," << out.z
         << ")) would paint a wall where the correct result is to draw nothing";
+}
+
+// ── KNOWN GAP: the march alone cannot tell a brush boundary from real backing
+//
+// Same field/ro as FindsWallOfKnownCavityWithinOneCell (carved 0-2, intact
+// 3-7, cell=1, ro=(0.5,0.5,0.75)): from the FIELD's point of view this looks
+// exactly like a genuine cavity with a real back wall. But because the field
+// carries damage only (see raymarch_breach_cavity's "KNOWN GAP" doc comment
+// in breach.frag), the SAME field shape is what a carve brush that punched
+// clean through a thin plate with NOTHING behind it would also produce: the
+// brush is bounded, so beyond its own far edge the field reverts to -127
+// ("no damage") whether or not real hull material is actually there.
+//
+// This test does not assert a bug -- it asserts and documents the CURRENT,
+// intentionally incomplete behaviour: raymarch_breach_cavity alone reports a
+// hit here (hit=true), because it has no way to know whether hit_point sits
+// on real backing material. Fixing that requires checking the fill/backing
+// volume (u_fill, already bound in this pass) AT hit_point, which is Task
+// 3's job once it owns the draw call and both textures are live together --
+// deliberately NOT implemented in this task. If a future change makes this
+// test start failing (hit=false), that is a sign the gap was closed
+// elsewhere and this test (and its comment, and breach_raymarch_cavity's
+// KNOWN GAP paragraph) need updating, not that something broke.
+TEST_F(BreachRaymarchTest, RaymarchAloneCannotDistinguishABrushBoundaryFromRealBacking) {
+    const std::vector<std::int8_t> z_values = {100, 100, 100, -100, -100, -100, -100, -100};
+    const voxel::DistanceField field =
+        make_slab_field(glm::ivec3(2, 2, 8), glm::vec3(0.0f), glm::vec3(1.0f), z_values);
+
+    auto prog = compile_probe();
+    ASSERT_NE(prog, nullptr);
+    set_common_uniforms(*prog);
+    bind_field(*prog, field);
+
+    const glm::vec4 out = draw_and_read(*prog, glm::vec3(0.5f, 0.5f, 0.75f), glm::vec3(0.0f, 0.0f, 1.0f), 0);
+    EXPECT_GT(out.w, 0.5f)
+        << "documenting the known gap: the field alone cannot distinguish this from a real "
+           "cavity wall, so the march reports a hit (hit_point=(" << out.x << "," << out.y
+        << "," << out.z << ")) even though, in the 'clean through a thin plate' framing this "
+           "field also models, there is no real hull material there -- Task 3 must additionally "
+           "check the backing/fill volume at hit_point before trusting this";
 }
 
 // ── Step size catches a one-cell-thin wall, not the far side of it ─────────
@@ -433,6 +573,46 @@ TEST_F(BreachRaymarchTest, StepSizeCatchesAOneCellThinWallNotTheFarSide) {
         << "hit_point.z=" << out.z << " -- expected the NEAR crossing (the thin wall's own "
            "entrance, ~1.9975), not its far side (~3.0, roughly a whole cell further, which is "
            "what a too-coarse step size finds by tunnelling straight through the wall)";
+}
+
+// ── breach_min_cell() uses the SMALLEST axis, not X, not the largest ───────
+//
+// Identical field/ro/rd to StepSizeCatchesAOneCellThinWallNotTheFarSide
+// above, EXCEPT cell=(4,4,1): the march axis (Z) now has the SMALLEST cell
+// (1.0) while X and Y are much larger (4.0). All the Z-axis arithmetic in
+// that test's derivation is keyed only on cell.z, so it is unchanged:
+// step_len = 0.5 * breach_min_cell() must still equal 0.5 * 1.0 = 0.5 (using
+// the small Z axis) for the march to find the near crossing at ~1.9975, the
+// same way it did with an isotropic cell=(1,1,1).
+//
+// If breach_min_cell() picked the wrong axis -- `max` instead of `min`, or
+// just `.x`/`.y` -- it would return 4.0 here instead of 1.0, giving
+// step_len = 0.5*4.0 = 2.0. That is the EXACT step length this project
+// already proved (by live mutation, see the task report) tunnels through
+// this one-cell wall and lands on its far side instead, at z ~= 2.99 rather
+// than 1.9975 -- so a min-vs-max/axis bug reproduces that same, already-
+// measured failure here.
+TEST_F(BreachRaymarchTest, StepSizeUsesTheSmallestCellAxisEvenWhenItIsNotTheMarchAxis) {
+    const std::vector<std::int8_t> z_values = {100, 100, -100, 100, 100};
+    const voxel::DistanceField field =
+        make_slab_field(glm::ivec3(2, 2, 5), glm::vec3(0.0f), glm::vec3(4.0f, 4.0f, 1.0f), z_values);
+
+    auto prog = compile_probe();
+    ASSERT_NE(prog, nullptr);
+    set_common_uniforms(*prog);
+    bind_field(*prog, field);
+
+    const glm::vec3 ro(0.5f, 0.5f, 1.0f);
+    const glm::vec3 rd(0.0f, 0.0f, 1.0f);
+    const glm::vec4 out = draw_and_read(*prog, ro, rd, /*mode=*/0);
+
+    ASSERT_GT(out.w, 0.5f) << "expected a hit -- the thin wall is real and the correct "
+                              "(smallest-axis) step size must find it";
+    EXPECT_NEAR(out.z, 1.9975f, 0.2f)
+        << "hit_point.z=" << out.z << " -- expected the NEAR crossing (~1.9975); a step "
+           "derived from the LARGER X/Y cell (4.0) instead of the smaller Z cell (1.0) would "
+           "tunnel through the thin wall and land near its far side (~2.99) instead, exactly "
+           "as measured when kHullFieldStepFrac was live-mutated to 2.0 in the sibling test";
 }
 
 // ── Gradient normal points out of the wall, not into it ────────────────────
@@ -508,6 +688,57 @@ TEST_F(BreachRaymarchTest, BoundedStepsTerminateOnAPathologicalRay) {
            "is a miss once the step budget runs out, not a hang";
 }
 
+// ── Reach scales with the field's own extent, at a REALISTIC cell size ─────
+//
+// dims=(4,4,20), cell=(7.5,7.5,7.5) -- BC's authored cell is
+// authored_res/quality (voxel/hull_volume_cache.h), roughly 7.5-12.5 model
+// units for typical authored values; 7.5 is the small end of that range, on
+// purpose, since a SMALLER cell makes the reach cap (proportional to
+// dims*cell) harder to satisfy, the more demanding direction to test.
+// Slices 0-12 carved (+100), 13-19 intact (-100, 7 slices). Same margin
+// fraction as every other crossing in this file (wz=0.497500 -- it depends
+// only on the field VALUES, not on cell scale), applied at THIS cell's
+// scale:
+//   slice 12 centre z = (12+0.5)*7.5 = 93.75
+//   slice 13 centre z = (13+0.5)*7.5 = 101.25
+//   crossing z = 93.75 + 0.497500*7.5 = 97.48125
+//
+// ro=(0.5,0.5,0.5) (reads slice 0, deep carved via the Z clamp), rd=(0,0,1),
+// step_len = 0.5*breach_min_cell() = 0.5*7.5 = 3.75. Reaching z~=97.48 from
+// ro.z=0.5 takes ~26 steps -- far under kBreachMaxSteps=64, so the STEP
+// BUDGET is not what's tested here; only the DISTANCE cap could plausibly
+// stop this march short.
+//
+// This is exactly the scenario Important-1 in code review flagged: the
+// field's own reach here is length(dims*cell) = length(30,30,150) ~= 155.9
+// model units, comfortably past the crossing at 97.48, so the fix (deriving
+// the cap from the field's own extent) finds it -- hit=true. The FIRST
+// version of this shader used a flat `kBreachMaxDist = 64.0` model-unit
+// constant instead: that cap fires at i=17 (dist=67.5>64), at z~=64.25,
+// roughly a third of the way to the true crossing -- a MISS, wrongly, on a
+// wall that genuinely exists. Verified live: temporarily reverting
+// breach_field_reach() to return a fixed 64.0 and rebuilding makes this
+// exact test fail with hit=false (see the task report's TDD evidence for
+// the reviewer's follow-up), then reverted.
+TEST_F(BreachRaymarchTest, RealisticCellSizeReachesAWallTheOldFixedCapWouldHaveMissed) {
+    std::vector<std::int8_t> z_values(20, 100);
+    for (int i = 13; i < 20; ++i) z_values[static_cast<std::size_t>(i)] = -100;
+    const voxel::DistanceField field =
+        make_slab_field(glm::ivec3(4, 4, 20), glm::vec3(0.0f), glm::vec3(7.5f), z_values);
+
+    auto prog = compile_probe();
+    ASSERT_NE(prog, nullptr);
+    set_common_uniforms(*prog);
+    bind_field(*prog, field);
+
+    const glm::vec4 out = draw_and_read(*prog, glm::vec3(0.5f, 0.5f, 0.5f), glm::vec3(0.0f, 0.0f, 1.0f), 0);
+    ASSERT_GT(out.w, 0.5f)
+        << "expected a hit -- the crossing at z~=97.48 is well within the field's own extent "
+           "(reach ~=155.9) even though it is well beyond the old, too-small fixed 64.0 cap";
+    EXPECT_NEAR(out.z, 97.48125f, 1.0f)
+        << "hit_point.z=" << out.z << " -- expected the crossing near 97.48";
+}
+
 // ── Static guards (no GL context needed) ────────────────────────────────────
 
 namespace {
@@ -517,14 +748,32 @@ namespace {
 // completion (rather than its absence) count as evidence: a bound that is a
 // named, small, compile-time constant cannot become an unbounded loop
 // without also failing this test.
+//
+// Matches EXACTLY ONE for-loop (asserted below) and additionally requires
+// it to appear textually after `bool raymarch_breach_cavity(` -- today
+// there is only one for-loop in the whole file, so the first check alone
+// would already catch a second, earlier loop (e.g. Task 3 adding one to
+// its own draw-side code in this file); the anchor is a second, independent
+// reason the SAME match couldn't silently be validating the wrong loop.
 TEST(BreachRaymarchStaticGuard, LoopBoundIsANamedCompileTimeConstant) {
     const std::string src = read_file(shader_path("breach.frag"));
 
+    const std::size_t fn_pos = src.find("bool raymarch_breach_cavity(");
+    ASSERT_NE(fn_pos, std::string::npos) << "breach.frag: raymarch_breach_cavity not found";
+
     static const std::regex loop_re(R"(for\s*\(\s*int\s+\w+\s*=\s*0\s*;\s*\w+\s*<\s*(\w+)\s*;)");
-    std::smatch m;
-    ASSERT_TRUE(std::regex_search(src, m, loop_re))
-        << "breach.frag: no bounded for-loop matching 'for (int i = 0; i < N; ...)' found -- "
-           "the raymarch must use a compile-time-bounded loop, never e.g. a while(true)";
+    const auto matches_begin = std::sregex_iterator(src.begin(), src.end(), loop_re);
+    const auto matches_end   = std::sregex_iterator();
+    const std::vector<std::smatch> matches(matches_begin, matches_end);
+    ASSERT_EQ(matches.size(), 1u)
+        << "breach.frag: expected exactly one bounded for-loop matching "
+           "'for (int i = 0; i < N; ...)', found " << matches.size()
+        << " -- this guard validates a SPECIFIC loop's bound and must be updated (not "
+           "silently pass) if a second loop is added anywhere in this file";
+    const std::smatch& m = matches.front();
+    ASSERT_GT(static_cast<std::size_t>(m.position(0)), fn_pos)
+        << "breach.frag: the matched for-loop appears before raymarch_breach_cavity's own "
+           "signature -- this guard is meant to validate THAT function's loop bound";
     const std::string bound_name = m[1].str();
 
     const std::regex const_re("const\\s+int\\s+" + bound_name + "\\s*=\\s*(\\d+)\\s*;");
