@@ -313,11 +313,15 @@ One per-instance mutable field. Three operations, all in body-frame model units:
 ```
 carve(center, radius, softness)          // weapons, death cascade
 dent (center, radius, direction, depth)  // collisions
-reset()                                  // DamageableObject.RemoveVisibleDamage()
+reset()                                  // DamageableObject.RemoveVisibleDamage() -- DEFERRED, not built
 ```
 
 `carve` subtracts; `dent` displaces the surface inward without removing material;
-`reset` restores the pristine baked field.
+`reset` would restore the pristine baked field, but neither `reset()` nor a
+`RemoveVisibleDamage` mapping to it exists yet (see §9, §13) — `carve` is the
+only operation this design actually shipped. The field is therefore monotonic
+in practice: nothing can clear it. `visible_damage.clear_for` still only drops
+*pending* (not-yet-applied) volumes, which is a different thing.
 
 The 24-carve ceiling disappears. That matters immediately: the death cascade
 currently lands enough blasts to evict its own earlier damage mid-sequence, so a
@@ -406,14 +410,14 @@ verified live, not assumed:
 | SDK surface | Today | Under this design |
 |---|---|---|
 | `ShipProperty.SetDamageResolution` | captured, **never read** | bake resolution; cell size is `authored/quality` |
-| `DamageableObject.RemoveVisibleDamage` | implemented | `field.reset()` |
+| `DamageableObject.RemoveVisibleDamage` | implemented (drops *pending* volumes only, via `visible_damage.clear_for`) | **DEFERRED** — `field.reset()` does not exist; the per-instance field is monotonic and cannot be cleared. Not on this design's out-of-scope list (§13), so it reads as done when it is not; tracked here until a later plan builds it |
 | `SetVisibleDamage{Radius,Strength}Modifier` | implemented | brush scale (unchanged) |
-| `DamageableObject_IsDamageGeometryEnabled` | **`_NamedStub`** (truthy) | real flag, default on |
-| `DamageableObject_SetDamageGeometryEnabled` | **`_NamedStub`** | real setter |
-| `DamageableObject_IsVolumeDamageGeometryEnabled` | **`_NamedStub`** (truthy) | real flag, default on |
-| `DamageableObject_SetVolumeDamageGeometryEnabled` | **`_NamedStub`** | real setter |
-| `DamageableObject_IsBreakableComponentsEnabled` | **`_NamedStub`** (truthy) | real flag, radius-gated |
-| `DamageableObject_SetBreakableComponentsEnabled` | **`_NamedStub`** | real setter |
+| `DamageableObject_IsDamageGeometryEnabled` | **`_NamedStub`** (truthy) | real flag, default on, round-trips faithfully |
+| `DamageableObject_SetDamageGeometryEnabled` | **`_NamedStub`** | real setter, round-trips faithfully |
+| `DamageableObject_IsVolumeDamageGeometryEnabled` | **`_NamedStub`** (truthy) | real flag, default on, round-trips faithfully |
+| `DamageableObject_SetVolumeDamageGeometryEnabled` | **`_NamedStub`** | real setter, round-trips faithfully |
+| `DamageableObject_IsBreakableComponentsEnabled` | **`_NamedStub`** (truthy) | real flag, default on, round-trips faithfully; `breakables_allowed_for` additionally radius-gates, as a standalone helper |
+| `DamageableObject_SetBreakableComponentsEnabled` | **`_NamedStub`** | real setter, round-trips faithfully |
 
 `Maelstrom/Episode3/E3M1/E3M1.py:3001-3003` reads all three getters into
 `g_pVisibleDamageState` to save and restore damage state around a cutscene. The
@@ -421,8 +425,18 @@ matching setters are commented out in the shipped SDK, so the practical damage
 today is limited — but these are the SDK's real switches for this subsystem, and
 they are currently truthy stubs, which is a live bug class in this project.
 
-**Policy:** in Dauntless damage is always on — all three default enabled — and
-the setters are honoured so a mission can still suppress damage for a cutscene.
+**Policy:** in Dauntless damage is always on — all three default enabled. The
+getters/setters (`engine/appc/damage_geometry.py`) round-trip faithfully — a
+mission's `Get.../Set...` pair reads back exactly what it wrote, closing the
+truthy-stub bug above — but **nothing yet consults these flags to actually
+suppress damage.** There is no production call site that checks
+`is_damage_geometry_enabled()`, `is_volume_damage_geometry_enabled()`, or
+`breakables_allowed_for()` before carving, decaling, or breaking a ship apart;
+a mission that calls `Set...Enabled(0)` around a cutscene gets the value back
+unchanged, but damage still happens exactly as before. Wiring that gating is
+real behaviour change needing live verification and is deferred to a later
+plan (tracked alongside `field.reset()` above); this design's scope was the
+honest round-trip, not the gate.
 
 `HasClonedModel` / `GetClonedModelCount` / `GetClonedModelRadius` are related
 surface (`Conditions/ConditionInRange.py:211` swaps to the cloned radius when a
@@ -454,8 +468,9 @@ entries by header comparison, not by deletion.
 - **Breakables:** the radius gate places each stock ship on the expected side of
   the line (§8); a severing carve yields two components, a non-severing one
   yields one.
-- **SDK:** each of the six toggles round-trips and actually gates behaviour; a
-  ship whose `SetDamageResolution` differs bakes a different cell size.
+- **SDK:** each of the six toggles round-trips faithfully (§9 -- gating
+  behaviour is explicitly deferred to a later plan, not tested here); a ship
+  whose `SetDamageResolution` differs bakes a different cell size.
 - **Shader:** `opaque.frag` carries no `sampler3D` — asserted by a test, because
   §2.6 is a driver constraint no reviewer will infer from reading the file.
 - **Gate:** `scripts/check_tests.sh` (both suites) green before merge.
@@ -485,6 +500,16 @@ entries by header comparison, not by deletion.
   surface). Wants the field to prove itself first.
 - Persisting hull damage across save/load. Carves are runtime VFX today and stay
   that way here.
+- **Wiring the six damage-geometry toggles to actually gate behaviour.** §9's
+  getters/setters round-trip faithfully but are not consulted anywhere; a
+  mission that suppresses damage for a cutscene gets its flag back unchanged
+  while damage keeps happening. This is a live behaviour change needing a live
+  verification pass, deferred to a follow-up plan.
+- **`field.reset()` / `DamageableObject.RemoveVisibleDamage`.** §6 lists
+  `reset()` as one of the field's three operations; it does not exist. The
+  per-instance field is monotonic (only `carve` is implemented) and cannot be
+  cleared today — `RemoveVisibleDamage` still only drops pending volumes via
+  `visible_damage.clear_for`. Deferred to a follow-up plan.
 - BC's `bytes2` plane index and `dual_contour`'s palette path. `planes_for_hull`
   is decoded but has zero consumers, and this design gives it none; it and the
   `_vox.nif` decode path retire once nothing reads them.

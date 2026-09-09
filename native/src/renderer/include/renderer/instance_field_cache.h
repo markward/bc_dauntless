@@ -11,6 +11,7 @@
 #include <voxel/distance_field.h>
 #include <voxel/field_atlas.h>
 #include <voxel/hull_volume_cache.h>
+#include <voxel/volume.h>
 
 namespace renderer {
 
@@ -173,6 +174,29 @@ struct HullCarveDepositResult {
 /// field, or field carving unavailable) -- the sphere ring is still updated
 /// exactly as it was before this feature existed.
 ///
+/// `fill` is the same backing-material gate the sphere path already applies
+/// in frame.cc (renderer::carve_has_backing / CarveFieldCache::
+/// volume_for_source): the ORIGINAL, uncarved fill volume for this hull
+/// source, used only to decide whether the FIELD carve below should happen
+/// at all. When `fill` is non-null and carve_has_backing(*fill, slot centre,
+/// slot normal) is false, the field carve is skipped -- same as frame.cc
+/// dropping that slot from u_carve_spheres and breach_pass.cc drawing no
+/// scoop for it -- so a hole with nothing behind it in the sphere/scoop
+/// representation cannot appear as a see-through hole in the field
+/// representation either. `fill` is null when no fill volume is available
+/// for this source (matching frame.cc's carve_fill_entry: an empty/missing
+/// mask means "nothing to gate with", so the carve proceeds ungated, exactly
+/// as it did before this parameter existed). This gate intentionally does
+/// NOT touch the sphere ring above -- `carve.add()` and the derived radius
+/// are computed identically regardless of `fill`.
+///
+/// NOTE: this duplicates the backing-material decision that frame.cc's
+/// sphere path already makes (carve_has_backing is the same ONE function
+/// carve_field_cache.h asks both the hull cut and the scoop to share) --
+/// consolidating so the field path shares that single call site too (e.g. by
+/// moving the gate inside scenegraph::HullCarveField::add) is follow-up
+/// work, not done here.
+///
 /// Every radius argument here is already in MODEL UNITS (or a plain
 /// multiplier, for radius_modifier/inv_scale); this function performs no
 /// GU<->model conversion of its own -- the caller does that once, the same
@@ -189,6 +213,7 @@ HullCarveDepositResult hull_carve_deposit(
     float strength,
     float floor_radius_model,
     float radius_modifier,
-    float inv_scale);
+    float inv_scale,
+    const voxel::VoxelVolume* fill = nullptr);
 
 }  // namespace renderer

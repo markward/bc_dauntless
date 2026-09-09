@@ -76,6 +76,40 @@ def test_realize_set_objects_pushes_resolution(monkeypatch):
     assert calls == [(ship, iid)]
 
 
+def test_realize_set_objects_prewarms_the_field(monkeypatch):
+    """Site 1 must also call prewarm_field for every ship it realizes (I1:
+    bake the hull field at spawn/mission-load, not lazily on the ship's first
+    combat hit) -- a separate call from push_resolution above, so a test that
+    only checks push_resolution cannot see this call site going missing."""
+    from engine import host_loop as hl
+    import engine.appc.hull_volume as hull_volume_mod
+
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: "fake.nif")
+    monkeypatch.setattr(hull_volume_mod, "push_resolution",
+                        lambda ship, iid: True)
+
+    calls = []
+
+    def fake_prewarm(iid):
+        calls.append(iid)
+
+    monkeypatch.setattr(hull_volume_mod, "prewarm_field", fake_prewarm)
+
+    sess = hl.MissionSession(mission_name="t")
+    r = _FakeRenderer()
+    s = SetClass_Create()
+    App.g_kSetManager.AddSet(s, "S")
+    ship = App.ShipClass_Create()
+    ship.SetName("rock")
+    s.AddObjectToSet(ship, "rock")
+
+    hl.realize_set_objects(sess, s, r)
+
+    assert ship in sess.ship_instances
+    iid = sess.ship_instances[ship]
+    assert calls == [iid]
+
+
 def test_realize_session_pushes_resolution(monkeypatch):
     """Site 2: _MissionLoader._realize_session (the QuickBattle boot path)
     must call push_resolution for every ship it realizes too -- this is the
@@ -108,3 +142,38 @@ def test_realize_session_pushes_resolution(monkeypatch):
     assert player in session.ship_instances
     iid = session.ship_instances[player]
     assert (player, iid) in calls
+
+
+def test_realize_session_prewarms_the_field(monkeypatch):
+    """Site 2 (_MissionLoader._realize_session / QuickBattle boot) must also
+    call prewarm_field for every ship it realizes -- the second call site
+    site 1's test above cannot reach."""
+    from tools import mission_harness
+    mission_harness.setup_sdk()
+
+    from engine import host_loop as hl
+    import engine.appc.hull_volume as hull_volume_mod
+
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: "fake.nif")
+    monkeypatch.setattr(hull_volume_mod, "push_resolution",
+                        lambda ship, iid: True)
+
+    calls = []
+
+    def fake_prewarm(iid):
+        calls.append(iid)
+
+    monkeypatch.setattr(hull_volume_mod, "prewarm_field", fake_prewarm)
+
+    controller = hl.HostController()
+    controller.renderer = _FakeRenderer()
+    controller.loader = hl._MissionLoader(controller, verbose=False)
+
+    session = controller.loader.load_quickbattle()
+
+    from engine.core.game import Game_GetCurrentGame
+    player = Game_GetCurrentGame().GetPlayer()
+    assert player is not None
+    assert player in session.ship_instances
+    iid = session.ship_instances[player]
+    assert iid in calls

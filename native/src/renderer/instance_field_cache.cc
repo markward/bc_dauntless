@@ -106,7 +106,9 @@ bool InstanceFieldCache::upload(Instance& inst) {
     // pixels is one byte per texel, tightly packed row-major.
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     // GL_R8: 128 encodes the surface (see pack_field_to_atlas), matching the
-    // hull-clip shader's texel - 0.5 zero comparison.
+    // hull-clip shader's sample_hull_field, which subtracts 128.0/255.0 EXACTLY
+    // (NOT 0.5 -- opaque.frag's own comment at that subtraction calls out the
+    // distinction as load-bearing) before comparing against zero.
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, layout.width, layout.height, 0,
                 GL_RED, GL_UNSIGNED_BYTE, pixels.data());
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -137,7 +139,8 @@ HullCarveDepositResult hull_carve_deposit(
         float strength,
         float floor_radius_model,
         float radius_modifier,
-        float inv_scale) {
+        float inv_scale,
+        const voxel::VoxelVolume* fill) {
     scenegraph::HullCarve& c =
         carve.add(center_body, influ_radius_model, strength, normal_body);
     const float prev_radius = c.radius;
@@ -165,7 +168,16 @@ HullCarveDepositResult hull_carve_deposit(
     // apart under any sustained fire on one hull section. No-op when there
     // is no field to carve (missing/disabled cache, or a hull with no baked
     // source).
-    if (field_cache != nullptr && !source.empty()) {
+    //
+    // Backing-material gate (see this function's doc comment): a carve with
+    // nothing behind it must not be cut into the field either, or the hull
+    // discards with no scoop drawn behind it -- see straight through the
+    // ship. `fill == nullptr` means no fill volume was available to gate
+    // with, so the carve proceeds exactly as it did before this gate
+    // existed.
+    if (field_cache != nullptr && !source.empty() &&
+        (fill == nullptr || carve_has_backing(*fill, c.center_body,
+                                              c.surface_normal))) {
         field_cache->carve(id, source, authored_res, c.center_body,
                            c.surface_normal, c.radius);
     }

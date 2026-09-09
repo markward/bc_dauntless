@@ -43,8 +43,8 @@ _REQUIRED_BINDINGS = frozenset({
     "dust_set_density", "dust_set_enabled", "filmic_enabled",
     "filmic_set_enabled", "frame", "get_instance_bounds",
     "get_instance_head_center", "hdr_lens_flare_enabled",
-    "hdr_lens_flare_set_enabled", "hdr_set_enabled", "hull_volume_set_cache_root",
-    "hull_volume_set_resolution",
+    "hdr_lens_flare_set_enabled", "hdr_set_enabled", "hull_volume_prewarm",
+    "hull_volume_set_cache_root", "hull_volume_set_resolution",
     "init", "letterbox_set",
     "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "model_bounds",
@@ -510,6 +510,29 @@ def hull_volume_set_resolution(iid: InstanceId, resolution: float) -> None:
     binding failure into a silent per-ship skip.
     """
     _h.hull_volume_set_resolution(iid, float(resolution))
+
+
+def hull_volume_prewarm(iid: InstanceId) -> None:
+    """Force this instance's hull damage field to bake now, at spawn time.
+
+    Design spec §4 puts the bake "on first use of a hull, during model
+    load" -- without this call nothing pre-warms it, so `HullVolumeCache::get`
+    instead runs for the first time from inside `hull_carve_add`, mid-combat:
+    a full NIF re-parse, voxelization, distance transform, and up to a
+    ~2.4 MB `.dhv` write, spec-measured at 57ms (Galor) to 192ms (Warbird) --
+    4-12 dropped frames on the first hit against each new hull class. Call
+    this right after `hull_volume_set_resolution`, at spawn, to move that
+    cost to mission load instead.
+
+    No-op when no resolution has been pushed for this hull yet -- there is
+    nothing to bake at the native default.
+
+    No hasattr guard, deliberately, matching hull_volume_set_resolution and
+    hull_volume_set_cache_root above -- see host_loop.py:4780's comment about
+    a feature that shipped completely inert because a guard turned a loud
+    missing-binding failure into a silent skip.
+    """
+    _h.hull_volume_prewarm(iid)
 
 
 def set_nonfinite_probe_enabled(enabled: bool, dump_dir: str = "",

@@ -91,6 +91,8 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <array>
+#include <cstdio>
+#include <unordered_set>
 #include "developer_mode.h"
 
 #ifdef DAUNTLESS_ENABLE_CEF
@@ -4156,6 +4158,45 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const float authored_res =
                   source.empty() ? 0.0f : renderer::hull_volume_resolution(source);
 
+              // A resolved hull source with NO resolution ever pushed for it
+              // (engine/appc/hull_volume.py's push_resolution never ran, or
+              // ran for a different path) degrades silently and correctly:
+              // authored_res 0 -> HullVolumeCache::get derives cell 0 and
+              // bakes nothing -> InstanceFieldCache::carve sees an empty
+              // baked field and creates no entry. The sphere ring is
+              // unaffected either way. That silence is exactly the kind of
+              // inert-feature bug this project has shipped repeatedly (see
+              // CLAUDE.md's stub-hardening ratchet), so make it audible once
+              // per hull source rather than leaving it invisible.
+              if (!source.empty() && authored_res == 0.0f &&
+                  dauntless::is_developer_mode()) {
+                  static std::unordered_set<std::string> warned_sources;
+                  if (warned_sources.insert(source.string()).second) {
+                      std::fprintf(stderr,
+                                   "[hull_carve_add] no authored damage "
+                                   "resolution was ever pushed for hull "
+                                   "source \"%s\" -- its per-instance "
+                                   "distance field will stay absent for "
+                                   "every carve (sphere ring is unaffected).\n",
+                                   source.string().c_str());
+                  }
+              }
+
+              // Backing-material gate input: the same ORIGINAL fill volume
+              // frame.cc's sphere path already gates u_carve_spheres with
+              // (renderer::carve_has_backing / CarveFieldCache::
+              // volume_for_source). Null when there is no fill to gate with
+              // (no cache, no source, or a hull with no decoded mask) --
+              // hull_carve_deposit then carves the field ungated, matching
+              // frame.cc's carve_fill_entry falling back to nullptr in the
+              // same situation.
+              const voxel::VoxelVolume* fill_for_gate = nullptr;
+              if (!source.empty() && g_carve_cache) {
+                  const voxel::VoxelVolume& v =
+                      g_carve_cache->volume_for_source(source);
+                  if (!v.occ.empty()) fill_for_gate = &v;
+              }
+
               // Deposit onto BOTH representations of this instance's damage
               // (hull-volume-field-transport Task 6): the fixed 24-slot
               // sphere ring (still what the breach scoop / framework lattice
@@ -4168,7 +4209,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   renderer::hull_carve_deposit(
                       inst->carve, g_instance_field_cache.get(), id, source,
                       authored_res, pb, nb, influ_model, strength,
-                      floor_model, radius_modifier, inv_s);
+                      floor_model, radius_modifier, inv_s, fill_for_gate);
 
               // Breach event (transient VFX: debris, venting, rim) only when the
               // carve newly appears or visibly grows — sub-iso accumulation is
@@ -4247,6 +4288,44 @@ PYBIND11_MODULE(_dauntless_host, m) {
               renderer::set_hull_volume_resolution(model->source, resolution);
           },
           pybind11::arg("instance_id"), pybind11::arg("resolution"));
+
+    // Spec §4 puts the bake "on first use of a hull, during model load" --
+    // without this call nothing pre-warmed it, so the bake instead ran
+    // lazily from hull_carve_add's field_cache->carve() the first time a
+    // player HIT that hull class, mid-combat: a full NIF re-parse +
+    // voxelization + distance transform + up to a ~2.4 MB .dhv write, spec-
+    // measured at 57ms (Galor) to 192ms (Warbird) -- 4-12 dropped frames on
+    // the first hit against each new hull class. Called from
+    // engine/appc/hull_volume.py's prewarm_field, right after
+    // push_resolution, at both host_loop.py spawn sites -- so the cost lands
+    // at mission load instead.
+    //
+    // Pure CPU + disk I/O (HullVolumeCache::get parses/voxelizes/bakes/reads
+    // .dhv; nothing here touches GL), so it is safe to call synchronously
+    // from Python at spawn time with no render context considerations --
+    // the exact same call InstanceFieldCache::carve() already makes lazily.
+    m.def("hull_volume_prewarm",
+          [](scenegraph::InstanceId id) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;  // stale id — drop silently
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr || model->source.empty()) return;
+              const float authored_res =
+                  renderer::hull_volume_resolution(model->source);
+              // No authored resolution pushed for this source (yet, or
+              // ever): the baker would derive cell 0 from it and bake
+              // nothing (see HullVolumeCache::get) -- match that no-op
+              // rather than forcing a bake at some arbitrary substitute
+              // resolution.
+              if (!(authored_res > 0.0f)) return;
+              renderer::hull_volume_cache().get(model->source, authored_res,
+                                                voxel::kDefaultQuality);
+          },
+          pybind11::arg("instance_id"),
+          "Force this instance's hull damage field to bake now (or load its "
+          "on-disk .dhv cache), instead of lazily on its first "
+          "hull_carve_add deposit during combat. No-op when no authored "
+          "resolution has been pushed for this hull yet.");
 
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,

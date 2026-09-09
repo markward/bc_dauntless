@@ -18,6 +18,7 @@
 
 #include <gtest/gtest.h>
 
+#include <renderer/carve_field_cache.h>
 #include <renderer/instance_field_cache.h>
 #include <renderer/window.h>
 
@@ -25,6 +26,7 @@
 #include <voxel/field_atlas.h>
 #include <voxel/field_brush.h>
 #include <voxel/hull_volume_cache.h>
+#include <voxel/volume.h>
 
 #include <glad/glad.h>
 
@@ -710,6 +712,110 @@ TEST_F(InstanceFieldCacheTest, MergedDepositCarvesTheFieldAtTheSlotsStoredCentre
            "centre (a), not at the raw hit point of the call that merged "
            "into it (b)";
 
+}
+
+// ── Backing-material gate (merge-blocker fix) ──────────────────────────────
+//
+// frame.cc's sphere path already drops a carve from u_carve_spheres, and
+// breach_pass.cc already draws no scoop for it, when carve_has_backing()
+// finds no hull material behind the hit -- the shared contract documented at
+// carve_field_cache.h's "ONE function, so the cut and the scoop cannot drift
+// apart." hull_carve_deposit's field-carve call had NO such gate: a carve
+// dropped from the sphere ring (nothing cut, nothing scooped) still cut the
+// per-instance FIELD, so opaque.frag's `inside_any_oblate` fired there with
+// nothing drawn behind it -- a permanent see-through hole. This test proves
+// the fix: the SAME fill volume that blocks the sphere path also blocks the
+// field carve, and a fill with material at the same probe location does not.
+//
+// Builds a small VoxelVolume by hand (cell 1, origin 0) rather than reusing
+// this file's DistanceField helpers -- carve_has_backing consults a
+// voxel::VoxelVolume (BC's 0..127 fill mask), a completely different type
+// from the voxel::DistanceField the rest of this file carves. For centre
+// (5,5,5) and normal +Z, carve_has_backing's probe (kBackingCells=1.5,
+// kBackingTaps=4) samples grid cells (5,5,4) and (5,5,3) -- see the
+// arithmetic in carve_field_cache.cc's carve_has_backing: reach = 1.5*cell.x
+// = 1.5, taps at d = 1.5*{1,2,3,4}/4 = {0.375,0.75,1.125,1.5}, so
+// z = 5-d = {4.625,4.25,3.875,3.5} floors to {4,4,3,3}.
+TEST_F(InstanceFieldCacheTest, CarveWithNoBackingMaterialIsAbsentFromField) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_backing_gate");
+    const auto src = make_source("hull_backing_gate.nif", "hull");
+    const voxel::DistanceField baked = make_baked_field();
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, baked));
+
+    const glm::vec3 center_body(5.0f, 5.0f, 5.0f);
+    const float strength = scenegraph::kHullCarveStrengthIso + 50.0f;
+
+    // No material anywhere: every probe tap samples occ==0 < kBackingIsovalue.
+    voxel::VoxelVolume fill_no_backing;
+    fill_no_backing.dims   = glm::ivec3(10, 10, 10);
+    fill_no_backing.origin = glm::vec3(0.0f);
+    fill_no_backing.cell   = glm::vec3(1.0f);
+    fill_no_backing.occ.assign(10u * 10u * 10u, std::uint8_t{0});
+
+    // Same shape, but with solid material (127) at cell (5,5,4) -- one of the
+    // two cells the probe above is proven to sample -- so carve_has_backing
+    // finds it on the very first tap.
+    voxel::VoxelVolume fill_with_backing = fill_no_backing;
+    fill_with_backing.occ[fill_with_backing.index(5, 5, 4)] = 127;
+
+    // Sanity on the gate function itself, independent of hull_carve_deposit:
+    // the two fills must actually disagree, or this test cannot discriminate.
+    ASSERT_FALSE(renderer::carve_has_backing(fill_no_backing, center_body, kUp));
+    ASSERT_TRUE(renderer::carve_has_backing(fill_with_backing, center_body, kUp));
+
+    InstanceFieldCache cache(&bake_cache);
+
+    // Blocked: no backing material behind the hit.
+    {
+        scenegraph::HullCarveField sphere_field;
+        const scenegraph::InstanceId id{1, 0};
+        const renderer::HullCarveDepositResult result =
+            renderer::hull_carve_deposit(
+                sphere_field, &cache, id, src, kAuthoredRes, center_body, kUp,
+                /*influ_radius_model=*/3.0f, strength,
+                /*floor_radius_model=*/0.0f, /*radius_modifier=*/1.0f,
+                /*inv_scale=*/kInvScaleForRadius3, &fill_no_backing);
+
+        // The sphere ring is untouched by the gate: this deposit's radius
+        // arithmetic and slot bookkeeping happen exactly as before.
+        ASSERT_GT(result.radius, 0.0f)
+            << "sanity: strength was set above the iso";
+        EXPECT_EQ(sphere_field.count(), 1u)
+            << "the sphere ring must still receive the carve -- the gate "
+               "only affects the field side";
+
+        // The field side must have NO entry at all: hull_carve_deposit's
+        // very first call for this id is the one being gated, so if the
+        // field carve were skipped correctly, InstanceFieldCache never even
+        // creates a map entry for it (see carve()'s "resolve on first use"
+        // comment above). Before the fix, this carve reached
+        // field_cache->carve() ungated and an entry WOULD exist here.
+        EXPECT_EQ(cache.get(id), nullptr)
+            << "a carve with nothing behind it must not appear in the field "
+               "-- the hull would discard with nothing drawn behind it";
+        EXPECT_EQ(cache.size(), 0u);
+    }
+
+    // Allowed: material IS behind the hit, at the same centre/normal and the
+    // same sphere-side arithmetic -- proves the gate discriminates rather
+    // than always blocking.
+    {
+        scenegraph::HullCarveField sphere_field;
+        const scenegraph::InstanceId id{2, 0};
+        const renderer::HullCarveDepositResult result =
+            renderer::hull_carve_deposit(
+                sphere_field, &cache, id, src, kAuthoredRes, center_body, kUp,
+                /*influ_radius_model=*/3.0f, strength,
+                /*floor_radius_model=*/0.0f, /*radius_modifier=*/1.0f,
+                /*inv_scale=*/kInvScaleForRadius3, &fill_with_backing);
+
+        ASSERT_GT(result.radius, 0.0f);
+        EXPECT_EQ(sphere_field.count(), 1u);
+        EXPECT_NE(cache.get(id), nullptr)
+            << "with backing material present, the field carve must proceed "
+               "exactly as it did before this gate existed";
+    }
 }
 
 }  // namespace

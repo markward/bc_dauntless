@@ -4799,6 +4799,15 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
             push_resolution(ship, iid)
         except Exception as _e:
             dev_mode.log_swallowed("push hull volume resolution", _e)
+        # Pre-warm the bake NOW, at spawn, instead of paying it lazily on
+        # this hull's first combat hit (spec §4; up to 192ms measured on a
+        # Warbird). Separate try/except, same "never block spawn" contract
+        # as push_resolution above.
+        try:
+            from engine.appc.hull_volume import prewarm_field
+            prewarm_field(iid)
+        except Exception as _e:
+            dev_mode.log_swallowed("prewarm hull volume field", _e)
         render_instances.register(ship, iid)
         # Fresnel rim applies to ship hulls only — planets share the opaque
         # shader and must stay rim-free (default ineligible).
@@ -5441,6 +5450,15 @@ class _MissionLoader:
                 push_resolution(ship, iid)
             except Exception as _e:
                 dev_mode.log_swallowed("push hull volume resolution", _e)
+            # Pre-warm the bake NOW, at spawn, instead of paying it lazily on
+            # this hull's first combat hit (spec §4; up to 192ms measured on
+            # a Warbird). Separate try/except, same "never block spawn"
+            # contract as push_resolution above.
+            try:
+                from engine.appc.hull_volume import prewarm_field
+                prewarm_field(iid)
+            except Exception as _e:
+                dev_mode.log_swallowed("prewarm hull volume field", _e)
             render_instances.register(ship, iid)
             # Fresnel rim applies to ship hulls only — planets share the
             # opaque shader and must stay rim-free (default ineligible).

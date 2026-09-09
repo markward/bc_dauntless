@@ -926,6 +926,13 @@ void FrameSubmitter::submit_carve_stencil(const scenegraph::World& world,
     // case of an undamaged scene.
     std::vector<const scenegraph::Instance*> carved;
     world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
+        // Filters on the SPHERE ring, not the per-instance field -- correct
+        // today only because HullCarveField::add never evicts down to zero
+        // (the ring only grows/merges until eviction swaps in a new carve,
+        // it has no clear()). A field-only damage source (no matching sphere
+        // slot) would silently skip this stencil pass; if HullCarveField
+        // ever gains a clear() this condition needs a field.count()-style
+        // check added alongside it.
         if (inst.carve.count() > 0) carved.push_back(&inst);
     });
     if (carved.empty()) return;

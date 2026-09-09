@@ -8,8 +8,16 @@ so every getter returned a truthy stub object instead of a flag.
 the stubs were being stored and written back.
 
 Policy: in Dauntless damage is always on, so all three default enabled. The
-setters are still honoured, because a mission legitimately wants to suppress
-damage for a cutscene.
+setters/getters round-trip faithfully -- a mission's Get.../Set... pair
+(g_pVisibleDamageState above) reads back exactly what it wrote -- but nothing
+in this branch actually CONSULTS these flags to suppress damage: there is no
+production call site that checks is_damage_geometry_enabled(),
+is_volume_damage_geometry_enabled(), or breakables_allowed_for() before
+carving, decaling, or breaking a ship apart. A mission that calls
+Set...Enabled(0) around a cutscene gets the value back unchanged, but damage
+still happens exactly as if it had never called it. Wiring that gating is
+deliberately deferred to a later plan (see the design doc's open-items list);
+this module's job today is the honest round-trip, not the gate.
 
 `BreakableComponents` is BC's name for pieces breaking off a ship. Hulls are
 authored as named body sections (Galaxy: `Ent-D Saucer Section`, `Ent-D-Hull`,

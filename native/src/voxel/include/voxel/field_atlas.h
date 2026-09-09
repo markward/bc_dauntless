@@ -41,7 +41,10 @@ AtlasLayout atlas_layout_for(const glm::ivec3& dims);
 /// Pack every Z-slice of `f` into a GL_R8 atlas per `l`: interior texel
 /// (x, y) of slice s (at atlas position `(tile_ox + 1 + x, tile_oy + 1 + y)`,
 /// where `tile_ox/tile_oy` is tile s's origin) holds `d + 128`, so 128 is the
-/// surface and the shader's `texel - 0.5` compares against zero. The 1-texel
+/// surface and the shader's `sample_hull_field` compares against
+/// `texel - 128.0/255.0` (NOT `texel - 0.5`; opaque.frag's own comment at the
+/// subtraction calls that out as load-bearing -- the two happen to be
+/// numerically close but are not the same expression). The 1-texel
 /// border around each tile is filled by clamping the source coordinate into
 /// `[0, dims-1]` -- the same rule GL_CLAMP_TO_EDGE would apply within a
 /// slice -- so it always replicates the nearest interior texel, never a

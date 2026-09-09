@@ -23,9 +23,13 @@ class FakeShip:
 class Recorder:
     def __init__(self):
         self.calls = []
+        self.prewarm_calls = []
 
     def hull_volume_set_resolution(self, iid, resolution):
         self.calls.append((iid, resolution))
+
+    def hull_volume_prewarm(self, iid):
+        self.prewarm_calls.append(iid)
 
 
 @pytest.fixture
@@ -78,3 +82,23 @@ def test_a_renderer_failure_propagates(recorder, monkeypatch):
     monkeypatch.setattr(recorder, "hull_volume_set_resolution", boom)
     with pytest.raises(RuntimeError):
         hull_volume.push_resolution(FakeShip(10.0), 7)
+
+
+# ── prewarm_field (I1: bake at spawn, not on the first combat hit) ──────────
+
+def test_prewarm_field_calls_the_renderer(recorder):
+    hull_volume.prewarm_field(42)
+    assert recorder.prewarm_calls == [42]
+
+
+def test_prewarm_failure_propagates(recorder, monkeypatch):
+    """Same error contract as push_resolution's test above: a broken binding
+    must NOT be swallowed inside prewarm_field -- both host_loop call sites
+    wrap this call in their own try/except + dev_mode.log_swallowed, which is
+    the intended visibility mechanism. Catching it here too would silently
+    disable that logging forever."""
+    def boom(iid):
+        raise RuntimeError("no renderer")
+    monkeypatch.setattr(recorder, "hull_volume_prewarm", boom)
+    with pytest.raises(RuntimeError):
+        hull_volume.prewarm_field(7)

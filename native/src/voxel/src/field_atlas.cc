@@ -40,15 +40,16 @@ std::vector<std::uint8_t> pack_field_to_atlas(const DistanceField& f,
         return {};
     }
 
-    // l.valid() (above) only proves width, height and slices are POSITIVE --
-    // it says nothing about whether they are LARGE ENOUGH. A hand-built
-    // layout can carry tile_w/tile_h/slices that agree with f (passing the
-    // check just above) while tiles_x/tiles_y don't cover every slice, or
-    // width/height are narrower than tiles_x*tile_w/tiles_y*tile_h demand.
-    // Either lets the write loop below index past its own row stride or
-    // past the tail of `out`. This check is independent of l.valid(), not a
-    // restatement of it: every one of these conditions can be violated
-    // while width, height and slices all stay strictly positive.
+    // l.valid() was already checked true at this function's entry (above),
+    // which by itself guarantees width, height and slices are all POSITIVE
+    // by the time we get here -- this guard is fully SUBSUMED by that check
+    // for positivity, not independent of it. What valid() cannot express is
+    // whether they are LARGE ENOUGH: a hand-built layout can carry tile_w/
+    // tile_h/slices that agree with f (passing the shape-match check just
+    // above) while tiles_x/tiles_y don't cover every slice, or width/height
+    // are narrower than tiles_x*tile_w/tiles_y*tile_h demand. Either lets
+    // the write loop below index past its own row stride or past the tail
+    // of `out`.
     if (l.tiles_x <= 0 || l.tiles_y <= 0 ||
         l.tiles_x * l.tiles_y < l.slices ||
         l.width < l.tile_w * l.tiles_x ||
