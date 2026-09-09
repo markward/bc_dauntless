@@ -205,6 +205,21 @@ void BreachPass::draw_hull_proxy(const assets::Model& model,
     shader.set_mat4("u_proj",            camera.proj_matrix());
     shader.set_vec3("u_camera_pos_ws",   cam_pos_ws);
     shader.set_vec3("u_camera_pos_body", cam_pos_body);
+    // The instance world matrix and its inverse, WITHOUT the node chain that
+    // draw_model_positions_only folds into u_model. These are what convert
+    // between world space and the ship's BODY frame -- the frame the damage
+    // field was baked in (voxel/voxelize.cc's collect_hull_triangles composes
+    // the node chain), the frame the fill volume, cam_pos_body above and
+    // breach_center below all use, and the frame opaque.frag reconstructs with
+    // its own u_ship_world_inv (frame.cc) before running the very carve test
+    // whose discard stamps the stencil this pass draws under.
+    //   breach.vert: v_body_pos = u_ship_world_inv * u_model * a_pos
+    //                           = node_chain * a_pos            (BODY frame)
+    //   breach.frag: hit_world  = u_ship_world * hit_point       (WORLD space)
+    // Applying u_model to hit_point instead would re-apply the node chain to a
+    // point that already carries it.
+    shader.set_mat4("u_ship_world",       world_xf);
+    shader.set_mat4("u_ship_world_inv",   world_inv);
 
     // Fill mask (original uncarved fill).
     shader.set_int("u_fill",    0);

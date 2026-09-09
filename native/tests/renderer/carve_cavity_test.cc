@@ -2,7 +2,7 @@
 //
 // ORPHANED as of raymarched-breach-interior Task 3: breach_pass.cc's
 // per-carve CPU gate (this function's one production caller) was removed
-// when that pass switched to one box-proxy draw per instance -- the
+// when that pass switched to one hull-mesh draw per instance -- the
 // equivalent question is now asked per-FRAGMENT by breach.frag's own
 // u_fill/u_fill_backing check at the raymarch's hit_point, not per-carve on
 // the CPU (see carve_field_cache.h's own note at this function's

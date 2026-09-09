@@ -282,11 +282,19 @@ GLuint upload_field_atlas_tex(const voxel::DistanceField& f, voxel::AtlasLayout&
 // Build a minimal assets::Model standing in for "a patch of hull surface":
 // one node, one small quad (2 triangles) centred at `center`, in the plane
 // perpendicular to `normal` (the direction the camera approaches from --
-// see cam_facing below), CCW-from-outside (build_unit_box_cpu's verified
-// convention, breach_pass.cc) so it survives this pass's glCullFace(BACK).
+// see cam_facing below), wound CCW as seen from `normal`'s side so it
+// survives this pass's glFrontFace(GL_CCW) + glCullFace(GL_BACK) -- the same
+// convention the opaque pass draws real hull meshes under (pipeline.cc).
+//
+// `node_xf` is the model's single node's local_transform. The vertices are
+// emitted PRE-multiplied by its inverse, so the composed body-frame geometry
+// (node_xf * a_pos, what draw_model_positions_only feeds the shader through
+// u_model) is identical for every node_xf -- which is exactly what
+// NonIdentityNodeTransformRendersIdenticallyToIdentity below relies on.
 // `half_size` should be large enough that the pixels read_center()/
 // read_inner_max() sample land on it at the test's camera distance.
-assets::Model make_surface_patch_model(glm::vec3 center, glm::vec3 normal, float half_size) {
+assets::Model make_surface_patch_model(glm::vec3 center, glm::vec3 normal, float half_size,
+                                       const glm::mat4& node_xf = glm::mat4(1.0f)) {
     normal = glm::normalize(normal);
     const glm::vec3 ref = (std::fabs(normal.z) < 0.9f) ? glm::vec3(0.f, 0.f, 1.f)
                                                         : glm::vec3(1.f, 0.f, 0.f);
@@ -298,9 +306,13 @@ assets::Model make_surface_patch_model(glm::vec3 center, glm::vec3 normal, float
     const glm::vec3 p01 = center - half_size * u + half_size * v;
     const glm::vec3 p10 = center + half_size * u - half_size * v;
     const glm::vec3 p11 = center + half_size * u + half_size * v;
+    // Store vertices NODE-LOCAL: node_xf * stored == the body-frame point
+    // above, whatever node_xf is. With the default identity the stored
+    // positions are the body-frame ones unchanged.
+    const glm::mat4 node_inv = glm::inverse(node_xf);
     for (const glm::vec3& p : {p00, p01, p10, p11}) {
         assets::MeshCpu::Vertex vert;
-        vert.position = p;
+        vert.position = glm::vec3(node_inv * glm::vec4(p, 1.0f));
         vert.normal   = normal;
         cpu.vertices.push_back(vert);
     }
@@ -311,7 +323,7 @@ assets::Model make_surface_patch_model(glm::vec3 center, glm::vec3 normal, float
     m.meshes.push_back(assets::upload_mesh(cpu));
     assets::Node node;
     node.parent_index    = -1;
-    node.local_transform = glm::mat4(1.0f);
+    node.local_transform = node_xf;
     node.meshes          = {0};
     m.nodes.push_back(node);
     m.root_node = 0;
@@ -470,6 +482,109 @@ TEST_F(BreachPassGLTest, SolidFillDrawsInterior) {
     EXPECT_GT(read_inner_max(), 24)
         << "Inner region is background — solid fill: the cavity's interior wall "
            "should be visible around the raymarch axis";
+}
+
+// ── Node-chain frame: BODY frame, not a mesh node's LOCAL frame ────────────
+//
+// renderer::draw_model_positions_only sets u_model = instance_world *
+// node_chain, so a vertex ATTRIBUTE is NODE-LOCAL and the ship's BODY frame is
+// node_chain * a_pos. Body frame is the frame everything this pass reads lives
+// in: the damage field (voxel/voxelize.cc's collect_hull_triangles composes
+// the same node chain when BAKING it), the fill volume, u_camera_pos_body,
+// u_breach_center -- and the frame opaque.frag reconstructs (p_body =
+// u_ship_world_inv * v_position_ws, frame.cc) before running the very carve
+// discard that stamps the stencil this pass draws under. Mixing the two frames
+// makes every field lookup here read the wrong point.
+//
+// Every OTHER GL test in this file builds its model with an identity node
+// transform, which makes them blind to that distinction BY CONSTRUCTION: with
+// one identity node, node-local IS body frame, so a shader that confuses them
+// still passes. Real hulls are not identity -- Galaxy.nif's chain is the pure
+// translation below (measured: the NIF's node-local vertex bounds have
+// identical widths on all three axes to voxel_inspect --dump-hull-obj's
+// body-frame bounds, so the chain is a translation, and this is its offset).
+// At Galaxy's 5.0 field cell that is ~27 cells in Y, against carves whose
+// entire along-normal extent is 2.7-27 model units.
+constexpr glm::vec3 kGalaxyNodeChain(0.0f, 128.447f, 38.005f);
+
+// Draw the SAME body-frame geometry as SolidFillDrawsInterior, with the SAME
+// field, fill and camera, changing ONLY how the transform is split: the node
+// carries kGalaxyNodeChain and make_surface_patch_model stores its vertices
+// pre-multiplied by that node's inverse. So u_model (= instance_world *
+// node_chain, instance_world identity here) maps the stored vertices back onto
+// the identical world positions -- gl_Position, the body-frame surface point,
+// the camera's body-frame position and the world-space shading point are ALL
+// unchanged. A frame-exact match against the identity-node baseline is
+// therefore the correct expectation, not an approximation of one; the 1%
+// tolerance covers only float round-trip noise through node_xf * inverse(
+// node_xf) (~1e-6 model units here, sub-nanopixel).
+//
+// Discrimination -- this fails, loudly, if either frame is mixed:
+//   * breach.vert setting v_body_pos = a_pos (node-local) instead of
+//     composing the node chain: ro becomes body z 7.5 - 38.005 = -30.5, which
+//     clamps to the field's slice 0 (INTACT, -100), so
+//     raymarch_breach_cavity's own opening precondition (sample_hull_field(ro)
+//     > kHullFieldIsoMargin) returns false and main() discards EVERY fragment.
+//     The frame goes black: read_inner_max drops from ~hundreds to 0.
+//   * breach.frag shading with u_model instead of u_ship_world: hit_world is
+//     displaced by kGalaxyNodeChain (hit_point is already body frame), swinging
+//     view_dir off the field gradient and dropping the diffuse term
+//     0.35 + 0.55*ndl from ~0.90 to ~0.61 -- a ~32% fall in frame sum, well
+//     past the 1% tolerance. The identity-node baseline cannot catch this one
+//     at all (there u_model == u_ship_world == identity), which is exactly why
+//     this test compares the two splits rather than asserting on one frame.
+TEST_F(BreachPassGLTest, NonIdentityNodeTransformRendersIdenticallyToIdentity) {
+    renderer::BreachPass pass;
+    voxel::VoxelVolume fill = solid_fill();
+    const voxel::DistanceField field = make_single_cavity_field();
+    const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+    const scenegraph::Camera cam =
+        cam_facing(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 100.f);
+
+    // Baseline: identity node, exactly as every other test here builds it.
+    const assets::Model flat =
+        make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f);
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    mark_hull_cut();
+    pass.draw_instance(/*instance_key=*/1, fill, entry, flat,
+                       glm::mat4(1.0f), cam, *pipeline);
+    glFinish();
+    ASSERT_EQ(glGetError(), GL_NO_ERROR) << "GL error in identity-node baseline draw";
+    const long long flat_sum = read_frame_sum();
+    ASSERT_GT(read_inner_max(), 24)
+        << "identity-node baseline drew nothing — the comparison below would be "
+           "vacuous (black == black)";
+
+    // Same geometry in body frame; the node carries Galaxy's measured chain.
+    const glm::mat4 node_xf = glm::translate(glm::mat4(1.0f), kGalaxyNodeChain);
+    const assets::Model chained =
+        make_surface_patch_model(kCavitySurfaceCenter, glm::vec3(0, 0, 1), 50.f, node_xf);
+    clear_framebuffer();
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    mark_hull_cut();
+    pass.draw_instance(/*instance_key=*/1, fill, entry, chained,
+                       glm::mat4(1.0f), cam, *pipeline);
+    glFinish();
+    EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in node-chained draw";
+    EXPECT_EQ(pass.draw_calls(), 2u) << "two draw_instance() calls, two submissions";
+
+    const long long chained_sum = read_frame_sum();
+    EXPECT_GT(read_inner_max(), 24)
+        << "A hull mesh whose node chain is a real BC translation rendered NO "
+           "interior. The shaders are sampling the damage field at the "
+           "node-LOCAL vertex position instead of the body-frame one "
+           "(node_chain * a_pos) — see this test's own comment.";
+    EXPECT_NEAR(static_cast<double>(chained_sum), static_cast<double>(flat_sum),
+                0.01 * static_cast<double>(flat_sum))
+        << "Identical body-frame geometry rendered differently depending on how "
+           "the transform is split between the node chain and the instance world "
+           "matrix. Some part of this pass is using u_model (which carries the "
+           "node chain) where it needs the instance world matrix alone, or vice "
+           "versa — see this test's own comment. flat=" << flat_sum
+        << " chained=" << chained_sum;
 }
 
 TEST_F(BreachPassGLTest, StencilZeroBlocksInteriorSoItCannotFloatInOpenSpace) {

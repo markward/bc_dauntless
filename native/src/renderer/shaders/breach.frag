@@ -37,10 +37,13 @@
 // only through an actual hole (no depth written there by the opaque pass,
 // since it discarded that fragment).
 
-// v_body_pos is the REAL hull mesh's own vertex position (breach.vert is now
-// a plain passthrough -- see that file's header). No box, no per-vertex
-// normal computed here: hit_normal (below) comes from the field's own
-// gradient, not from mesh geometry.
+// v_body_pos is the REAL hull mesh's own vertex position, in the ship's BODY
+// frame -- breach.vert composes the mesh's node chain onto the node-local
+// vertex and strips the instance world matrix back off, so this is the same
+// frame opaque.frag's p_body, the baked damage field, the fill volume,
+// u_camera_pos_body and u_breach_center all live in (see breach.vert's own
+// derivation). No box, no per-vertex normal computed here: hit_normal (below)
+// comes from the field's own gradient, not from mesh geometry.
 in vec3 v_body_pos;
 
 // Original (uncarved) hull fill — static per hull, never rebuilt.
@@ -63,16 +66,19 @@ uniform sampler2D u_damage_tex;
 uniform vec3      u_camera_pos_ws; // camera world position — uploaded CPU-side, avoids per-fragment inverse
 uniform float     u_tex_scale;     // body-units -> texture-period scale
 
-// Box-proxy Task 3 additions.
-// u_model: ship world matrix -- needed here (not just in breach.vert) because
-// main() now shades at hit_point (a body-frame point the raymarch finds,
-// generally NOT v_body_pos) and must transform THAT point to world space for
-// the view-dependent lighting term below.
+// Task 3 body/world plumbing.
+// u_ship_world: the INSTANCE world matrix ALONE -- NOT breach.vert's u_model,
+// which additionally carries the mesh's node chain. Needed here (not just in
+// the vertex stage) because main() shades at hit_point, a BODY-frame point the
+// raymarch finds, generally NOT v_body_pos, and must transform THAT point to
+// world space for the view-dependent lighting term below. Since hit_point is
+// already body frame, the node chain must NOT be applied to it a second time.
 // u_camera_pos_body: camera position in THIS instance's body frame,
-// precomputed CPU-side (one matrix inverse per draw, not per fragment --
-// same idiom as u_camera_pos_ws) -- the ray origin every fragment marches
-// from.
-uniform mat4  u_model;
+// precomputed CPU-side as inverse(instance_world) * cam_ws (one matrix inverse
+// per draw, not per fragment -- same idiom as u_camera_pos_ws) -- the ray
+// origin every fragment marches from. u_ship_world is that same matrix
+// un-inverted, so the two agree by construction.
+uniform mat4  u_ship_world;
 uniform vec3  u_camera_pos_body;
 
 // Molten-rim emissive (hull-breach-2c).
@@ -204,7 +210,7 @@ float sample_hull_field(vec3 p_body) {
 // share a texture unit, only the sampling code). Task 3's call site owns
 // that gate structurally rather than with a per-fragment u_hull_field_
 // enabled branch: BreachPass::render() (breach_pass.cc) only ever issues a
-// draw_box_proxy() call for an instance that InstanceFieldCache::get()
+// draw_hull_proxy() call for an instance that InstanceFieldCache::get()
 // already returned a real Entry for, so every fragment that reaches main()
 // in this pass has a genuinely bound, current field on unit 2 -- there is no
 // "disabled" draw to gate against, unlike opaque.frag which draws every
@@ -477,12 +483,21 @@ void main() {
     tex = kBase + tex * 1.1;
 
     // ── Double-sided lighting ──────────────────────────────────────────────
-    // The interior wall is found via a back-culled proxy (cull-front), so
-    // gl_FrontFacing is false; faceforward() corrects the normal toward the
-    // viewer for shading. hit_world is hit_point transformed to world space
-    // (NOT v_world_pos -- the box's own far-face world position -- which is
-    // generally a different, farther point than the true interior surface).
-    vec3 hit_world = (u_model * vec4(hit_point, 1.0)).xyz;
+    // The wall this shades is a point INSIDE the hull found by the raymarch,
+    // while the fragment itself came from the outward-facing hull surface
+    // (this pass draws the real mesh with the opaque pass's own winding, cull
+    // BACK, so gl_FrontFacing is true here). The field gradient at hit_point
+    // therefore has no fixed relationship to the fragment's own facing, and
+    // faceforward() turns it toward the viewer for shading.
+    //
+    // hit_world is hit_point transformed to world space with u_ship_world --
+    // the instance world matrix ALONE. NOT breach.vert's u_model: that also
+    // carries the mesh's node chain, and hit_point is already BODY frame
+    // (raymarch_breach_cavity works entirely in the field's frame, starting
+    // from v_body_pos which breach.vert already node-composed), so u_model
+    // would apply the node chain a second time and displace the shading point
+    // by the chain's translation -- 128 model units on a Galaxy.
+    vec3 hit_world = (u_ship_world * vec4(hit_point, 1.0)).xyz;
     vec3 cam_pos  = u_camera_pos_ws;
     vec3 view_dir = normalize(cam_pos - hit_world);
     // n (hit_normal) already points out of the wall into the open cavity;

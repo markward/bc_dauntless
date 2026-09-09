@@ -41,7 +41,7 @@ bool carve_has_backing(const voxel::VoxelVolume& fill,
 ///
 /// ORPHANED as of raymarched-breach-interior Task 3: this and
 /// kMinCavityCells had exactly one production caller, breach_pass.cc's
-/// per-carve CPU gate, removed when that pass switched to one box-proxy
+/// per-carve CPU gate, removed when that pass switched to one hull-mesh
 /// draw per instance -- the equivalent question (does real hull material
 /// back a reported cavity wall?) is now asked per-FRAGMENT, more precisely,
 /// by breach.frag's own u_fill/u_fill_backing check at the raymarch's

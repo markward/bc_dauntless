@@ -943,8 +943,10 @@ void frame() {
                                               g_carve_cache.get(),
                                               g_instance_field_cache.get());
         }
-        // Breach box-proxy pass (raymarched-breach-interior Task 3): one
-        // front-face-culled box per DAMAGED instance, raymarching the
+        // Breach interior pass (raymarched-breach-interior Task 3): one
+        // hull-mesh draw per DAMAGED instance -- the same geometry and the
+        // same winding (cull BACK) the opaque pass drew, under the carve
+        // stencil -- raymarching the
         // per-instance damage field per fragment to find the cavity wall,
         // masked by the original hull fill (triplanar Damage.tga). Runs
         // right after the opaque hull (depth-test/write on) so the interior

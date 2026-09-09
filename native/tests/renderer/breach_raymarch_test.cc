@@ -7,10 +7,10 @@
 // that crossing's position and outward (into-the-cavity) normal, or a MISS
 // when no such crossing exists within a bounded step/distance budget.
 //
-// Nothing calls this function from breach.frag's own main() yet (Task 3
-// wires it in once the per-instance box proxy replaces the per-carve sphere
-// draw), so it is tested here in isolation, DIRECTLY against the shipped
-// shader text: every test below reads breach.frag off disk, splices its own
+// breach.frag's own main() calls this function directly as of Task 3 round 3
+// (one hull-mesh draw per damaged instance, no entry search -- see
+// breach_pass.h). It is ALSO tested here in isolation, DIRECTLY against the
+// shipped shader text: every test below reads breach.frag off disk, splices its own
 // real production source (everything up to its real `void main()`, which
 // includes the raymarch function itself) onto a tiny test-only main() that
 // calls raymarch_breach_cavity() and reports the result, then compiles and
