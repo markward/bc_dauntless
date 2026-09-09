@@ -77,13 +77,29 @@ divergence is on the *frozen, do-not-change* list in
 the RE doc's transcription where they conflict, and reconciling them is a
 separately gated follow-up.
 
-It is invisible on stock content, because essentially every stock hardpoint
-declares `1.0`. **A mod that authors anything else gets a phaser that drains
-at a rate BC would have ignored.** Nothing warns about this today: the value
-is read, applied, and plausible, so it produces a wrong feel rather than a
-reported line — the one failure mode the tier-1 promise above is otherwise
-built to avoid. Worth a boot-report line if a second mod is ever found doing
-it; our current corpus does not.
+It is invisible on stock content: **all 208 emitters in all 52 stock hardpoint
+files declare exactly `1.0`** (measured 2026-09-09 — "essentially every" was an
+understatement; it is every one). **A mod that authors anything else gets a
+phaser that drains at a rate BC would have ignored.** Nothing warns about this
+today: the value is read, applied, and plausible, so it produces a wrong feel
+rather than a reported line — the one failure mode the tier-1 promise above is
+otherwise built to avoid.
+
+**CONFIRMED LIVE, 2026-09-09, and it is worse than "a wrong feel".**
+CGSovereign authors `SetNormalDischargeRate(200.0)` on 30 emitters against a
+`MaxCharge` of `1.0`, so the bank empties in `1/200` s — one tick. Reported
+from the live pass as *"blasting for like 0.1s before being fully drained."*
+VoyagerCubeHP does the same to 12 tractors at `10.0`. Two of six mods in the
+corpus, not one.
+
+That uniformity also has a sharp corollary: because stock is 1.0 everywhere,
+no stock-only measurement can distinguish reading the property from a flat
+1.0 — which is exactly what the frozen entry's own justification was built
+on. Resolving it needs the flat table's real values, tracked in
+[`../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md`](../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md).
+Until that lands the behaviour stays as shipped — and a boot-report line
+naming any mod that authors a non-1.0 rate would at least make the divergence
+visible instead of leaving it to be felt.
 
 For contrast, the same audit is *why* the LC Intrepid's 0.8 s / 2.0 s phaser
 cycle is **not** a gap: `MaxCharge`, `MinFiringCharge` and `RechargeRate` are

@@ -308,6 +308,18 @@ In scope — all in `_EnergyWeaponFireMixin` / `PhaserSystem`:
 
 - Discharge-rate source (we read the hardpoint's `NormalDischargeRate`; BC's
   firing path reads a flat power-level table and leaves that property dead).
+  ⚠️ **This entry's justification does not hold, though the freeze stands
+  pending measurement.** All 208 emitters in all 52 stock hardpoint files
+  declare exactly `1.0` (measured 2026-09-09), so on stock content "read the
+  property" and "use a flat 1.0" are observationally identical — the
+  2026-06-29 probe ran on stock ships and therefore *could not* have
+  discriminated between them. Mod content diverges by 200x (CGSovereign
+  authors `200.0` on 30 emitters, draining a 1.0 tank in one tick) and a live
+  report says that is wrong. **Do not lift or re-justify this freeze from the
+  armchair in either direction** — resolve it with
+  [`../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md`](../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md),
+  which needs the flat table's actual values and a probe fired from a
+  NON-1.0 emitter.
 - Damage formula and power-level damage scales (BC C++ table says
   LOW 0.25 / MED 0.5 / HIGH 0.5; our constants were verified end-to-end
   against real-game exchanges and may already absorb these factors).
