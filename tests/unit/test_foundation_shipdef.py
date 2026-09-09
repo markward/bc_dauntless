@@ -104,3 +104,17 @@ def test_generated_boilerplate_tail_runs_end_to_end():
             foundation.shipList[longName].friendlyDetails[2]
         foundation.ShipDef.__dict__[longName].enemyDetails[2] = \
             foundation.shipList[longName].enemyDetails[2]
+
+
+def test_modes_round_trip_through_the_dict_parameter():
+    # `dict=` is how real mods spell this keyword -- pass it BY KEYWORD,
+    # since that's the call shape most likely to break if the parameter
+    # is ever renamed.
+    mode = object()
+    d = foundation.FedShipDef("X", 1, {"name": "X"}, dict={"modes": [mode]})
+    assert d.modes == [mode]
+
+
+def test_absent_dict_leaves_modes_empty():
+    d = foundation.FedShipDef("X", 1, {"name": "X"})
+    assert d.modes == []

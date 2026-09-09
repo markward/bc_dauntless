@@ -1,8 +1,10 @@
 """Foundation compatibility -- the surface real BC ship mods call.
 
-Ours always wins over a mod-supplied Foundation.py: `Foundation.py` at the
-project root is checked by _SDKFinder BEFORE the mod index, an ordering the
-mod overlay chose deliberately so our own replacements cannot be overridden.
+Ours is intended to always win over a mod-supplied Foundation.py: it will be
+shadowed by a `Foundation.py` at the project root (Task 5), checked by
+_SDKFinder BEFORE the mod index, an ordering the mod overlay is meant to
+choose deliberately so our own replacements cannot be overridden. That shim
+does not exist yet -- this module is the surface it will forward to.
 
 Spec: docs/superpowers/specs/2026-09-09-foundation-compatibility-design.md
 """
@@ -51,7 +53,6 @@ def __getattr__(attr):
 
 def reset():
     """Drop all registered state. Tests only."""
-    global ShipDef, shipList
     for k in [k for k in ShipDef.__dict__ if not k.startswith("_")]:
         delattr(ShipDef, k)
     shipList._items.clear()
