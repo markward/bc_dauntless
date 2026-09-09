@@ -26,7 +26,7 @@ mods:
 Nine ship definitions across the two, none of them reachable in game.
 
 The reason Foundation exists at all is that BC's QuickBattle holds a **static**
-ship table: `g_dShipTypeToDetails` and friends are literal dicts keyed by
+ship table: `g_dFriendlyShipTypeToDetails` and friends are literal dicts keyed by
 `ST_*` integer constants (`ST_MARAUDER = 0` … `ST_TRANSPORT = 30`), so adding a
 ship means editing a shipped file. Foundation's readme puts it plainly: it
 "replaces the static indexes of Bridge Commander with dynamic structures".
