@@ -130,12 +130,36 @@ def fold(rel) -> str:
     return str(rel).replace("\\", "/").strip("/").lower()
 
 
+_MULTI_SEP_RE = re.compile(r"/{2,}")
+
+
+def fold_search_prefix(rel) -> str:
+    """fold(), plus collapsing INTERNAL duplicate separators.
+
+    Only for prefix matching over index keys (dirs_for). Deliberately NOT
+    part of fold(): fold() is mirrored byte-for-byte by
+    native/src/renderer/asset_path.cc:fold_key(), and the index keys it
+    builds are assembled from path PARTS, so they can never contain a double
+    separator. Callers, however, can -- host_loop composes
+    f"{share}/{tier}" from a SetTextureSharePath a mod author may have
+    written with a trailing slash, and "data/x//high/" then prefix-matches
+    nothing and degrades that group to stock-only with no diagnostic.
+    """
+    return _MULTI_SEP_RE.sub("/", fold(rel))
+
+
 @dataclass(frozen=True)
 class ModFile:
     abs_path: Path
     mod_name: str
     target: str          # "game" or "sdk" -- a kind label, not a path segment
     rel: str             # folded, relative to that target root
+    # The SAME relative path in the mod author's own spelling. Kept because
+    # classify() stats it against the stock root: the folded spelling only
+    # finds a stock file when the stock file happens to be all-lowercase, so
+    # on a case-sensitive filesystem "Data/Icons/Ships/Galaxy.tga" would be
+    # reported as a pure addition rather than the override it is.
+    raw_rel: str = ""
 
 
 @dataclass
@@ -145,7 +169,7 @@ class ModStatus:
     placed: int = 0
     ignored: int = 0
     unplaced: list = None        # top-level dir names we could not place
-    read_error: bool = False     # set if rglob walk failed for this mod
+    read_error: bool = False     # set if any directory of this mod was unreadable
     requires: list = None        # frameworks this mod imports that are unavailable
 
     def __post_init__(self):
@@ -171,7 +195,7 @@ class ModIndex:
         For the one consumer that hands a directory LIST to C++; a single
         file lookup should use lookup() instead.
         """
-        prefix = fold(rel) + "/"
+        prefix = fold_search_prefix(rel) + "/"
         seen = []
         for key, mf in self.files.items():
             if not key.startswith(prefix):
@@ -195,6 +219,27 @@ def _is_ignored(path: Path, content_root: Path) -> bool:
     return False
 
 
+def _walk_files(content_root: Path, status: "ModStatus") -> list:
+    """Every file under `content_root`, sorted, recording read failures.
+
+    os.walk(onerror=...) rather than Path.rglob(): rglob SWALLOWS a
+    permission error and simply does not descend, so an unreadable subtree
+    used to be indistinguishable from an empty one -- the mod reported
+    "0 files" with no problem language, which is the single most likely real
+    failure reporting as a clean success. onerror is the only way to observe
+    it. The global sort reproduces sorted(rglob("*")) exactly, so which file
+    wins a within-mod case collision does not change.
+    """
+    def _on_error(_exc: OSError) -> None:
+        status.read_error = True
+
+    found: list = []
+    for dirpath, dirnames, filenames in os.walk(content_root, onerror=_on_error):
+        for name in filenames:
+            found.append(Path(dirpath) / name)
+    return sorted(found)
+
+
 def build_index(root: Path) -> ModIndex:
     """Index every enabled mod under `root`. O(mod files), never the install.
 
@@ -214,7 +259,7 @@ def build_index(root: Path) -> ModIndex:
             continue
 
         try:
-            for path in sorted(candidate.content_root.rglob("*")):
+            for path in _walk_files(candidate.content_root, status):
                 if not path.is_file():
                     continue
                 if _is_ignored(path, candidate.content_root):
@@ -231,16 +276,19 @@ def build_index(root: Path) -> ModIndex:
                 # segment itself is dropped; under "data" it is kept, because
                 # game_asset() is called with "data/..." paths.
                 keep = rel_parts if target == "game" else rel_parts[1:]  # paths-guard: kind label
-                rel = fold("/".join(keep))
+                raw_rel = "/".join(keep)
+                rel = fold(raw_rel)
                 existing = files.get(rel)
                 if existing is not None and existing.mod_name != candidate.name:
                     conflicts.append((rel, existing.mod_name, candidate.name))
                 files[rel] = ModFile(abs_path=path, mod_name=candidate.name,
-                                     target=target, rel=rel)
+                                     target=target, rel=rel, raw_rel=raw_rel)
                 status.placed += 1
         except OSError:
-            # Permission denied, broken symlink, or other read failure for this mod.
-            # Mark it so describe() can emit explicit problem language.
+            # Belt and braces: _walk_files() already routes every directory
+            # read failure to status.read_error, so this catches only a
+            # failure in the per-file work above (a stat on a file whose
+            # directory became unreadable mid-walk).
             status.read_error = True
 
     return ModIndex(files=files, mods=statuses, conflicts=conflicts)
@@ -250,9 +298,22 @@ def classify(index: ModIndex, game_root: Path, sdk_scripts: Path) -> None:
     """Fill index.overrides. Costs one stat PER MOD KEY -- never a walk of
     the install."""
     roots = {"game": game_root, "sdk": sdk_scripts}  # paths-guard: kind labels
+
+    def _shadows_stock(mf: ModFile) -> bool:
+        # Stat the mod author's OWN spelling as well as the folded one. On a
+        # case-insensitive filesystem the two are the same question; on a
+        # case-sensitive one the folded spelling finds a stock file only when
+        # the stock file is all-lowercase, so a mod shipping
+        # Data/Icons/Ships/Galaxy.tga over the identically-spelled stock file
+        # was reported as a pure addition. Reporting only -- resolution is
+        # always by the folded key.
+        root = roots[mf.target]
+        if mf.raw_rel and (root / mf.raw_rel).exists():
+            return True
+        return (root / mf.rel).exists()
+
     index.overrides = [
-        rel for rel, mf in sorted(index.files.items())
-        if (roots[mf.target] / mf.rel).exists()
+        rel for rel, mf in sorted(index.files.items()) if _shadows_stock(mf)
     ]
 
 
@@ -367,9 +428,6 @@ def describe(index: ModIndex) -> str:
         if status.content_root is None:
             lines.append(f"  {status.name}: no BC content found -- not loaded")
             continue
-        if status.read_error:
-            lines.append(f"  {status.name}: could not read mod contents -- placed 0 files")
-            continue
         line = f"  {status.name}: {status.placed} files"
         if status.ignored:
             line += f", {status.ignored} ignored"
@@ -377,6 +435,11 @@ def describe(index: ModIndex) -> str:
             line += f", unplaced: {', '.join(status.unplaced)}"
         if status.requires:
             line += f", requires: {', '.join(status.requires)} (unsupported)"
+        if status.read_error:
+            # An unreadable subtree is a PARTIAL failure: some files may have
+            # been placed already, so the count stays and the warning is
+            # appended rather than replacing the line.
+            line += " -- WARNING: could not read mod contents, some files were skipped"
         lines.append(line)
     if index.overrides:
         lines.append(f"  {len(index.overrides)} stock file(s) overridden")

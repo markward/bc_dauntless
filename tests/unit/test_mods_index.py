@@ -1,4 +1,7 @@
+import os
 from pathlib import Path
+
+import pytest
 
 from engine import mods
 
@@ -90,8 +93,9 @@ def test_dirs_for_returns_every_providing_mod_dir(tmp_path):
     assert {p.parent.parent.name for p in got} == {"Alpha", "Bravo"}
 
 
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: -1)() == 0,
+                    reason="root ignores mode 000, so nothing is unreadable")
 def test_permission_error_in_one_mod_does_not_prevent_others(tmp_path):
-    import os
     # Create two mods: one readable, one with an unreadable subdirectory.
     _touch(tmp_path / "Good" / "Data" / "a.nif")
     bad_dir = tmp_path / "Bad" / "Data" / "SubDir"
@@ -108,6 +112,14 @@ def test_permission_error_in_one_mod_does_not_prevent_others(tmp_path):
         status_by_name = {m.name: m for m in idx.mods}
         assert "Bad" in status_by_name
         assert status_by_name["Bad"].placed == 0
+        # The point of the whole exercise: an unreadable subtree must be
+        # OBSERVED, not silently reported as an empty mod. Path.rglob()
+        # swallows the permission error and just does not descend, so this
+        # assertion is what separates a real walk from a blind one.
+        assert status_by_name["Bad"].read_error is True
+        text = mods.describe(idx)
+        assert "Bad" in text
+        assert "could not read mod contents" in text
     finally:
         # Restore permissions so tmp_path teardown can clean up.
         os.chmod(bad_dir, 0o755)
