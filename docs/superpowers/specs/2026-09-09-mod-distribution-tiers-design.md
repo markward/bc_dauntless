@@ -61,6 +61,35 @@ It is a real promise, not an absence of one. Concretely:
 - We do not promise any particular mod works, and we do not owe a fix for
   every convention we meet.
 
+## Known tier-1 fidelity gaps
+
+Places where a sideloaded mod can run without error and still not behave as
+it did under BC. These are not bugs to be fixed on sight — some are
+deliberate, live-verified divergences — but a mod author hitting one deserves
+to find it written down rather than discover it by feel.
+
+**`NormalDischargeRate` is live for us and dead for BC.** BC's firing path
+reads a flat power-level table for energy-weapon discharge and never consults
+the hardpoint's `SetNormalDischargeRate`. We read the property. That
+divergence is on the *frozen, do-not-change* list in
+[`2026-07-15-bc-faithful-weapon-dispatch-design.md`](2026-07-15-bc-faithful-weapon-dispatch-design.md)
+§7 — it is there because our live 2026-06-29 instrumented measurements beat
+the RE doc's transcription where they conflict, and reconciling them is a
+separately gated follow-up.
+
+It is invisible on stock content, because essentially every stock hardpoint
+declares `1.0`. **A mod that authors anything else gets a phaser that drains
+at a rate BC would have ignored.** Nothing warns about this today: the value
+is read, applied, and plausible, so it produces a wrong feel rather than a
+reported line — the one failure mode the tier-1 promise above is otherwise
+built to avoid. Worth a boot-report line if a second mod is ever found doing
+it; our current corpus does not.
+
+For contrast, the same audit is *why* the LC Intrepid's 0.8 s / 2.0 s phaser
+cycle is **not** a gap: `MaxCharge`, `MinFiringCharge` and `RechargeRate` are
+all read faithfully through the audited model, so that ship simply is a
+burst-phaser design.
+
 ## The floor
 
 Best effort still has a floor, and it is this:

@@ -1,6 +1,6 @@
 # The #1 question: what BC's C++ actually does to a target when a weapon hits
 
-Status: IN-PROGRESS  (Q1, Q3, Q4, Q5, Q6, Q7 closed via q02..q08; Q2 deferred; Q8-Q10 deferred to approach 1)
+Status: IN-PROGRESS  (Q1, Q3, Q4, Q5, Q6, Q7 closed via q02..q08; Q2 deferred; **Q8-Q10 since closed by the 2026-07-15 RE audit — see their bullet**)
 Author: 2026-06-29 session (instrumentation approach 2)
 Created: 2026-06-29
 Closed:  —
@@ -384,7 +384,9 @@ This explains why `engine/appc/combat.py:apply_hit`'s strict-cascade model is co
   | **q08 (lock=impulse, FULL)** | impulse | sensors (-291) | **impulse (-0)** |
 
   The lock readback at PRE confirmed `lock_was = impulse` (the API accepted the lock), but the damage routing ignored it entirely. The hull/sub split was 54/46 — identical to q07a. Subsystem locks must be purely AI-priority / visual reticle / bridge-officer-aim hints — NOT a damage-routing input. Engine implication: **`combat.apply_hit` doesn't need a lock-aware branch; routing is `(intensity, nearest_geometric_subsystem_to_impact)`**.
-- **Q8 / Q9 / Q10 — DEFERRED to approach 1.** q03 proved snapshot-diff can't measure discharge: the bank fully recharges between PRE and POST snapshots (`d_charge = 0` over 35 sec). Per-tick polling via an `App.py` snippet (see `tools/charge_logger.py` for the pattern) is the right tool.
+- **Q8 / Q9 / Q10 — CLOSED 2026-07-15, from the binary, not from a probe.** They were deferred here, and that deferral stood in this file for two months after it stopped being true. The answers are in [`../superpowers/specs/2026-07-15-bc-faithful-weapon-dispatch-design.md`](../superpowers/specs/2026-07-15-bc-faithful-weapon-dispatch-design.md) §7, from the RE audit's `weapon-firing-mechanics.md` §1.6: recharge is per-second scaled by the bank's own condition; the fire/stop/restart "thresholds" are one start/sustain asymmetry (`≥ MinFiringCharge` to start, `> 0` to sustain); and **Q8 was malformed** — BC's firing path reads a flat power-level table and leaves `NormalDischargeRate` dead, a divergence we keep deliberately and which §7 freezes on the strength of *this* probe's measurements.
+
+  ⚠️ **Correcting this file's own summary of q03.** "The bank fully recharges between PRE and POST snapshots" is not what q03 shows. Its raw result (`tools/probes/results/q03_weapon_fire_diff.txt`) records `post.charge = 5.0`, `post.is_firing = 0`, and the note *"bank charge did not drain — weapon didn't fire. arc/range/fire-key issue?"*. Shields and hull did take damage over those 35 s, so something fired; the sampled bank either never did or refilled unobserved. **The file measures no rate in either direction** — do not cite it as evidence about recharge speed.
 
 ### Bonus findings (not in original question set)
 

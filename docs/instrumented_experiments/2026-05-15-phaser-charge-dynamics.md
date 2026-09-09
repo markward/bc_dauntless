@@ -1,9 +1,11 @@
 # Phaser charge dynamics + multi-bank fire timing investigation
 
-Status: **PENDING**
+Status: **SUPERSEDED** — the charge half was answered from the binary, not
+from this probe. See the Findings section; do not read the `_TBD_`s below as
+open questions.
 Author: 2026-05-15 session
 Created: 2026-05-15
-Closed:  —
+Closed:  2026-09-09 (superseded by the 2026-07-15 audit; see Findings)
 
 ## Goal
 
@@ -411,19 +413,38 @@ crashed mid-experiment:
 
 ## Findings
 
-*(Pending the Windows session — fill in once the cfg is captured.)*
+**This probe never ran. The charge questions were answered anyway, two
+months later and by a different route** — the RE audit of `stbc.exe`
+recorded in
+[`../superpowers/specs/2026-07-15-bc-faithful-weapon-dispatch-design.md`](../superpowers/specs/2026-07-15-bc-faithful-weapon-dispatch-design.md)
+§7, whose evidence base is the RE project's `weapon-firing-mechanics.md`
+§1.6 (decompiled function bodies, not SDK inference). Binary RE outranks
+this probe's method for engine internals, so the answers below stand
+without the Windows session.
 
-- **Q-C1** — Per-second discharge rate: _TBD_ (SDK declares 1.0)
-- **Q-C2** — Per-second recharge rate: _TBD_ (SDK declares 0.08)
-- **Q-C3** — CanFire threshold: _TBD_ (SDK declares MinFiringCharge=3.0)
-- **Q-C4** — Auto-stop threshold while firing: _TBD_
-- **Q-C5** — Restart-after-depletion threshold: _TBD_
-- **Q-C6** — Rate dependence on power_level / alert: _TBD_
-- **Q-C7** — Simultaneous vs. staggered initial fire (tick offsets per bank): _TBD_
-- **Q-C8** — Independence of re-fire timing after auto-stop: _TBD_
+Recorded 2026-09-09, after this document's stale `_TBD_`s were quoted in a
+live session as evidence that the charge unit was still unknown — it was
+not, and had not been since July.
 
-Once filled in:
-- Retune `_EnergyWeaponFireMixin.UpdateCharge` to match BC's actual
-  semantics; drop the assumed-per-second interpretation.
-- If Q-C7 reveals BC staggers banks, add a per-bank fire delay queue
-  to `PhaserSystem.StartFiring` so our visuals match.
+- **Q-C1** — Discharge: **the question was malformed.** BC's firing path
+  reads a **flat power-level table** and leaves `NormalDischargeRate`
+  **dead**. We deliberately read the hardpoint property instead; that
+  divergence is on §7's *frozen, do-not-change* list, live-verified by the
+  2026-06-29 instrumented weapon-exchange probe. Invisible on stock content
+  (essentially every stock hardpoint declares 1.0) — **but live for mods**,
+  see the mod-distribution spec's tier-1 gap list.
+- **Q-C2** — Recharge: per-second, scaled by the bank's **own condition**
+  (§7.2 added the missing `× ConditionPercentage`). The audited 1.25
+  non-local boost is inert in single-player by construction.
+- **Q-C3/C4/C5** — Settled together as one asymmetry, not three thresholds:
+  `> 0` to **sustain** an already-firing beam, `≥ MinFiringCharge` to
+  **start** one. That asymmetry **is** the hysteresis — the invented
+  `REFIRE_HEADROOM_FRACTION` and `_armed` flag were deleted, not tuned.
+  Firing discharges all the way to 0; `MinFiringCharge` gates start only.
+- **Q-C6** — Partially: discharge is power-level dependent (that flat table
+  *is* the dependence). Alert-state dependence: still unmeasured.
+- **Q-C7/C8** — **Still open.** `spec/Weapon.md` records a per-instance
+  jitter seed at `+0x9c`, "seeded from `rand()` in the constructor", which
+  suggests BC does stagger — but the field's consumer is not reconstructed,
+  and nothing has measured the tick offsets. If you want these, this probe
+  is still the right tool.
