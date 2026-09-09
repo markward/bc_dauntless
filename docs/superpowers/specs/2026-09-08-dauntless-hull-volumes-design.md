@@ -337,11 +337,45 @@ Per-ship scale continues to come from `SetVisibleDamageRadiusModifier` /
 **Transport.** Field → `sampler2D` atlas (§2.6), uploaded when an instance's
 field is dirty, not per frame.
 
-**Hull.** `opaque.frag` clips against the field, replacing the
-`u_carve_spheres[24]` loop. Arbitrary connected carved regions become possible,
-including ones that reach the silhouette. An undamaged instance takes the stock
-path with zero added per-fragment cost, exactly as `u_carve_enabled == 0` does
-today.
+**Hull.** `opaque.frag` clips against the field. Arbitrary connected carved
+regions become possible, including ones that reach the silhouette. An undamaged
+instance takes the stock path with zero added per-fragment cost, exactly as
+`u_carve_enabled == 0` does today.
+
+⚠️ **Corrected 2026-09-09 (plan 2c), measured.** This section originally said the
+field clip *replaces* the `u_carve_spheres[24]` loop, and that baking the rim
+noise into the brush would let the sphere list be retired. **That is not
+achievable at this lattice resolution and the plan deliberately does not attempt
+it.** The rim perturbation is ±25% of the carve radius (0.75–7.5 model units) and
+the framework struts are thinner still, while the cell is 3.0–7.5 model units
+across the fleet. Both are *sub-cell*: baking them into the field would not
+sharpen the hole, it would **erase** the jagged rim and the struts.
+
+The two representations divide as:
+
+- **The field is the admission authority.** A hole may exist only where the field
+  reads damaged. This is what guarantees every hole has an interior behind it,
+  because the interior is raymarched from the same field.
+- **The sphere list is the sub-cell detail layer.** Within the region the field
+  admits, it supplies the noise rim and the strut lattice. It is not retired.
+
+**The brush is deliberately conservative** — `voxel::kCarveDepthFloorCells` and
+`kCarveFieldOffsetCells`, both 1.25 cells — so that a carve is rounded *up* to
+the smallest shape the lattice can hold. That is what makes the containment hold.
+Without it a carve's half-depth is `0.45 × radius`, thinner than one cell for
+every radius below ~11 model units, and the brush does not survive trilinear
+reconstruction at all: measured worst-case coverage of the analytically cut hole
+was **0% for every carve radius up to 10**, and a sweep of all 72
+cell × radius × sub-cell-placement combinations failed against the pre-2c brush.
+With the conservative brush it is **100%** across cell 3.0–7.5 and radius 3–30.
+`FieldBrushConservative.HoleIsAlwaysBackedAcrossTheParameterRange` holds it there.
+
+The residual cost is that the field's damaged region is ~1.7× the nominal rim
+(up to 3.3× for a tiny carve on a coarse lattice). It is suppressed wherever a
+tracked carve governs, so it shows only as slightly generous holes cut beyond the
+24-carve ring. Raising `kDefaultQuality` from 2 to 4 shrinks it proportionally at
+8× field memory per instance — the lever to reach for if a live pass says those
+holes read badly.
 
 **Dents.** Vertex displacement along the field gradient, which preserves UVs and
 therefore all authored texture detail.
@@ -356,9 +390,22 @@ ships that have actually been hit. **Collision deformation is therefore expected
 to land coarse in the first live round.**
 
 **Breach interior.** Derived from the field, replacing the sphere-inner-surface
-scoop. `carve_has_backing` and `carve_cavity_depth_cells` — both of which exist
-only to reconcile two disagreeing representations — become a single distance
-query and are deleted.
+scoop — built in plan 2b, and the scoop mesh is gone.
+
+⚠️ **Corrected 2026-09-09 (plan 2c).** `carve_has_backing` was **not** deleted and
+`carve_cavity_depth_cells` was **not** replaced by a single distance query. Both
+still exist. The premise — that they exist only to reconcile two disagreeing
+representations — no longer holds now that the two representations are in a
+containment relation rather than a race: `carve_has_backing` is a whole-brush
+*admission* gate (does this carve have material behind it at all), which is a
+different question from the interior's own shape. Removing them is a behaviour
+change needing its own live pass, not a cleanup.
+
+A hull with **no** baked field now cuts **no** holes. Before plan 2c the sphere
+path cut holes regardless while `breach_pass` returned early on a null field
+entry, so a hull whose bake failed was unconditionally see-through. All 52 stock
+hardpoints bake successfully, so this only ever affected mods and bake failures —
+but "if we cannot draw what is behind it, we do not cut it" is the rule now.
 
 ---
 
