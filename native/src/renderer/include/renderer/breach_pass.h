@@ -1,6 +1,7 @@
 // native/src/renderer/include/renderer/breach_pass.h
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -14,31 +15,42 @@
 #include <scenegraph/breach_events.h>
 #include <scenegraph/instance.h>  // InstanceId, ModelHandle
 
+#include <renderer/instance_field_cache.h>  // InstanceFieldCache::Entry
 #include <voxel/volume.h>
 
 namespace assets { struct Model; }
-namespace scenegraph { class World; struct Camera; class HullCarveField; }
+namespace scenegraph { class World; struct Camera; }
 
 namespace renderer {
 
 class Pipeline;
 class CarveFieldCache;
 
-/// Breach pass — sphere-scoop interior surface (hull-breach-2b Path C).
+/// Breach pass — box-proxy interior surface (raymarched-breach-interior
+/// Task 3; supersedes the hull-breach-2b/2c per-carve sphere scoop).
 ///
-/// For each damaged instance (with active carve spheres), draws the inner
-/// (far) wall of a unit sphere scaled to each active carve sphere's radius,
-/// masked by the ORIGINAL (uncarved) hull fill. Fragments where the original
-/// fill says "no material" (open space, far side of thin hull) are discarded,
-/// giving genuine see-through. Fragments in solid material render the recessed
-/// interior bowl, triplanar-textured with BC's Damage.tga.
+/// For each DAMAGED instance (one with a per-instance damage field in
+/// `InstanceFieldCache` — see that header's class comment for what "damaged"
+/// means there), draws ONE box proxy covering the field's own body-frame
+/// extent (`InstanceFieldCache::Entry::origin` / `dims * cell`), masked by
+/// the ORIGINAL (uncarved) hull fill. The box itself is undecorated —
+/// `breach.vert` performs no per-carve deformation — and every pixel it
+/// covers raymarches the damage field per-fragment (`breach.frag`) to find
+/// the actual cavity wall, or discards. This is what removes the plan's
+/// namesake defect: the old sphere-per-carve draw only ever covered the
+/// fixed 24-slot `HullCarveField` ring, so a carve beyond slot 24 cut hull
+/// with nothing drawn behind it (see-through to space); the field itself has
+/// no such cap, so the box proxy's interior tracks every carve regardless of
+/// how many the sphere ring could hold.
 ///
-/// GL state: depth-test ON, depth-write ON, cull FRONT (so the inner/far wall
-/// is drawn and cannot poke out past the hull). Must run AFTER the opaque hull
-/// pass so the hull's depth occludes the scoop except through the clip holes.
-///
-/// The hull hole clip (opaque.frag) is now a pure sphere clip — identical
-/// spheres — so hole and scoop align by construction.
+/// GL state: depth-test ON, depth-write ON, cull FRONT (so only the box's
+/// far faces — exactly the point where each covered pixel's view ray exits
+/// the box — are rasterised). Must run AFTER the opaque hull pass so the
+/// hull's depth occludes the proxy except through the clip holes, and AFTER
+/// the stencil is stamped (`FrameSubmitter::submit_carve_stencil`) — the
+/// stencil test (`GL_EQUAL` against 1, `breach_pass.cc`) is what keeps the
+/// proxy from painting over the whole ship; nothing here weakens or
+/// replaces it.
 ///
 /// Gated entirely on dauntless_hull_damage::enabled(): when off, render() is
 /// a no-op and the stock-BC path is byte-identical.
@@ -52,64 +64,98 @@ public:
     BreachPass(const BreachPass&)            = delete;
     BreachPass& operator=(const BreachPass&) = delete;
 
-    /// Iterate the world; for each Space-pass instance with active carves,
-    /// fetch the original fill from `carve_cache` and draw the scoop.
-    /// `now` is the current game-clock time (seconds) used to compute the age
-    /// of each breach event for the molten-rim emissive term.
+    /// Iterate the world; for each Space-pass instance with a per-instance
+    /// damage field (`field_cache->get(inst.id) != nullptr`), fetch the
+    /// original fill from `carve_cache` and draw ONE box proxy. An instance
+    /// with no field entry (never carved, or no baked field for its source)
+    /// draws nothing — checked FIRST, before any model/fill lookup, so an
+    /// undamaged ship costs exactly one map lookup, not a model-lookup +
+    /// fill-cache round trip. `field_cache` may be null (feature entirely
+    /// unavailable): render() then draws nothing for any instance.
+    ///
+    /// `now` is the current game-clock time (seconds), used to compute the
+    /// molten-rim emissive term's age. With one draw per instance (not per
+    /// carve) there is no longer a single carve slot to measure age from;
+    /// the uniform passed to the shader is the age of the MOST RECENT active
+    /// breach event on the instance (kRimLife + 1, "cold", if none) — a
+    /// simplification from the old per-carve-localised rim glow, not a
+    /// faithful per-fragment reconstruction of it. See breach_pass.cc's
+    /// render() for the exact rule.
     void render(const scenegraph::World& world,
                 const scenegraph::Camera& camera,
                 Pipeline& pipeline,
                 const ModelLookup& lookup,
                 CarveFieldCache& carve_cache,
-                float now = 0.f);    // NEW: game clock for event age lookup
+                InstanceFieldCache* field_cache,
+                float now = 0.f);
 
-    /// Draw the breach scoop for ONE instance given its ORIGINAL fill,
-    /// carve field, and world transform. Builds and uploads a GL_R8 3D
-    /// texture for the fill on first use (keyed by fill pointer). Public so
-    /// GL render tests can drive the pass without standing up the full asset
-    /// cache. Caller owns the GL state (depth/cull); render() sets it.
+    /// Draw the breach box proxy for ONE instance given its ORIGINAL fill,
+    /// its already-built per-instance damage-field entry, and world
+    /// transform. Builds and uploads a GL_R8 3D texture for the fill on
+    /// first use (keyed by `instance_key`). Public so GL render tests can
+    /// drive the pass without standing up the full asset cache / World /
+    /// CarveFieldCache / InstanceFieldCache machinery — a test builds its
+    /// own `InstanceFieldCache::Entry` (pack a `voxel::DistanceField` via
+    /// `voxel::pack_field_to_atlas` and upload it) and passes it directly.
+    /// Caller owns the GL state (depth/cull); render() sets it the same way.
     ///
-    /// `instance_key` is used to cache the per-instance fill 3D texture in
-    /// test paths; in production, the fill texture comes from CarveFieldCache.
+    /// `instance_key` is used to cache the per-instance FILL 3D texture in
+    /// this test/standalone path; in production the fill texture comes from
+    /// `CarveFieldCache` instead (source-keyed, shared across instances of
+    /// the same hull). `field.tex2d` (the DAMAGE atlas) is never cached
+    /// here — it is always the caller's own, already-uploaded texture,
+    /// exactly as `InstanceFieldCache::get()` returns it in production.
     ///
     /// `breach_age` is the age (in seconds) of the matching breach event for
-    /// the molten-rim emissive. Pass 0.0f for a fresh (hot) breach, or
-    /// kRimLife + 1 (the default) for a cold/no-event scoop — which is
-    /// byte-identical to the pre-emissive 2b scoop.
+    /// the molten-rim emissive. Pass 0.0f for a fresh (hot) proxy, or
+    /// kRimLife + 1 (the default) for a cold/no-event proxy — which is
+    /// byte-identical to the pre-emissive scoop.
     void draw_instance(std::uintptr_t instance_key,
                        const voxel::VoxelVolume& fill,
-                       const scenegraph::HullCarveField& carve,
+                       const InstanceFieldCache::Entry& field,
                        const glm::mat4& world_xf,
                        const scenegraph::Camera& camera,
                        Pipeline& pipeline,
                        float breach_age = scenegraph::kRimLife + 1.f);
 
+    /// Total number of box-proxy draw calls (glDrawElements invocations)
+    /// issued by this pass instance so far, across every render()/
+    /// draw_instance() call. Exists for the same reason InstanceFieldCache::
+    /// uploads() does: a pass that silently issued more than one draw per
+    /// damaged instance (the exact regression this task exists to prevent —
+    /// the old code drew one sphere PER CARVE) would otherwise be
+    /// indistinguishable, from the rendered pixels alone, from one that
+    /// draws correctly.
+    std::size_t draw_calls() const { return draw_calls_; }
+
 private:
-    void ensure_sphere();
+    void ensure_box();
     // Lazily load the 4-frame animated interior texture (game/data/Damage1..4.tga).
     void ensure_damage_frames();
 
-    // Draw one sphere scoop for a single carve slot using an already-uploaded
-    // fill 3D texture. Sets the per-carve uniforms (center, radius, fill).
-    void draw_scoop(const glm::vec3& center_body,
-                    float radius,
-                    const glm::vec3& surface_normal,
-                    unsigned int fill_tex,
-                    const glm::vec3& fill_origin,
-                    const glm::vec3& fill_cell,
-                    const glm::ivec3& fill_dims,
-                    const glm::mat4& world_xf,
-                    const scenegraph::Camera& camera,
-                    Pipeline& pipeline,
-                    float breach_age,     // age of matching event; large = cold
-                    unsigned int damage_tex);  // current animation frame texture
+    // Draw one box proxy for a single instance using an already-uploaded
+    // fill 3D texture and an already-built damage-field entry. Sets every
+    // per-instance uniform (fill, field atlas on unit 2, damage texture,
+    // rim age) and issues exactly one glDrawElements call.
+    void draw_box_proxy(const InstanceFieldCache::Entry& field,
+                        unsigned int fill_tex,
+                        const glm::vec3& fill_origin,
+                        const glm::vec3& fill_cell,
+                        const glm::ivec3& fill_dims,
+                        const glm::mat4& world_xf,
+                        const scenegraph::Camera& camera,
+                        Pipeline& pipeline,
+                        float breach_age,     // age of matching event; large = cold
+                        unsigned int damage_tex);  // current animation frame texture
 
     // Build (once) a fill GL_R8 3D texture from a VoxelVolume.
     // Returns 0 on failure.  Caller owns the GL texture.
     static unsigned int upload_fill_tex(const voxel::VoxelVolume& fill);
 
-    // Sphere VAO/VBO/EBO — built once per pass lifetime.
-    std::unique_ptr<assets::Mesh> sphere_mesh_;
+    // Unit-cube ([0,1]^3) VAO/VBO/EBO — built once per pass lifetime. Scaled
+    // and offset per-instance in breach.vert via u_hull_field_origin/cell/
+    // dims; this CPU-side mesh never changes.
+    std::unique_ptr<assets::Mesh> box_mesh_;
 
     // 4-frame animated interior texture (game/data/Damage1..4.tga), cycled by
     // the game clock in render(). Any frame left 0 (asset missing / headless
@@ -126,6 +172,11 @@ private:
     // CarveFieldCache. Keyed by instance_key; textures are deleted in the dtor.
     struct FillEntry { unsigned int tex3d = 0; };
     std::unordered_map<std::uintptr_t, FillEntry> fill_cache_;
+
+    // See draw_calls(). Incremented once per glDrawElements call, inside
+    // draw_box_proxy() — the ONE place either render() or draw_instance()
+    // actually submits geometry.
+    std::size_t draw_calls_ = 0;
 };
 
 }  // namespace renderer

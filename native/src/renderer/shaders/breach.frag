@@ -1,27 +1,42 @@
 #version 410 core
 
-// Breach interior scoop — inner wall of a carve sphere, masked by the ship's
-// ORIGINAL (uncarved) fill.
+// Breach interior — the far wall of a hull cavity, found by raymarching the
+// per-instance DAMAGE field through a per-instance BOX proxy (raymarched-
+// breach-interior Task 3; supersedes the old per-carve sphere scoop).
 //
-// For each fragment:
-//   1. Map v_body_pos to a texture coordinate in the original fill (GL_R8 3D
-//      texture). If the fill value is below u_fill_iso (= 64/255), there is
-//      no solid hull material there → discard. This makes the scoop only
-//      render where real ship interior exists: it fades to nothing (genuine
-//      see-through) where the sphere extends into open space or past a thin
-//      hull wall.
-//   2. Triplanar projection of BC's Damage.tga — muted grey interior shading
-//      identical to the previous breach.frag's approach, now applied to the
-//      sphere's inner wall rather than a DC mesh.
+// One draw per DAMAGED INSTANCE (breach_pass.cc's draw_box_proxy), not one
+// per carve: the box covers the instance's whole damage-field extent, so a
+// carve past the old 24-slot sphere ring's cap still gets an interior drawn
+// for it -- the field itself has no such cap. For each fragment:
+//   1. Reconstruct the view ray in body frame from v_body_pos (this box's
+//      far-face position -- see below) and u_camera_pos_body.
+//   2. Walk the ray to find where it first enters carved material
+//      (find_breach_entry), then raymarch from there to the cavity's far
+//      wall (raymarch_breach_cavity, Task 2) -- hit_point/hit_normal.
+//   3. Map hit_point to a texture coordinate in the ORIGINAL (uncarved) fill
+//      (GL_R8 3D texture). If the fill value is below u_fill_backing, there
+//      is no real hull material there → discard: this is what keeps a carve
+//      brush's far edge (floating past a thin plate; see raymarch_breach_
+//      cavity's KNOWN GAP comment) from painting as though it were a real
+//      wall -- "a hole is a hole".
+//   4. Triplanar projection of BC's Damage.tga onto hit_point -- muted grey
+//      interior shading, unchanged from the pre-Task-3 scoop.
 //
-// Rendered with glCullFace(GL_FRONT) so only back faces (the recessed inner
-// wall) are drawn; no geometry can poke out past the hull.
-// Depth-test ON, depth-write ON: the scoop hides behind intact hull (depth
-// written by the opaque pass) and shows only through the hole (no depth there).
+// Rendered with glCullFace(GL_FRONT) so only the box's back (far) faces are
+// drawn; no geometry can poke out past the hull.
+// Depth-test ON, depth-write ON: the proxy hides behind intact hull (depth
+// written by the opaque pass) and shows only through an actual hole (no
+// depth there).
 
+// v_body_pos is the box's FAR-face position (this pass
+// rasterises only the box's back faces -- glCullFace(GL_FRONT), breach.vert)
+// -- i.e. exactly the point where this fragment's view ray EXITS the field's
+// AABB. v_body_normal/v_world_pos are gone: the box carries no meaningful
+// per-vertex normal (unlike the old per-carve sphere, whose vertex WAS the
+// outward normal), and the fragment recomputes its own world position from
+// whichever body-frame point it ends up shading (hit_point, not v_body_pos)
+// via u_model -- see main() below.
 in vec3 v_body_pos;
-in vec3 v_body_normal;
-in vec3 v_world_pos;
 
 // Original (uncarved) hull fill — static per hull, never rebuilt.
 // GL_R8: byte b samples as b/255.0; occ 0..127 → [0, ~0.498].
@@ -42,6 +57,18 @@ uniform float     u_fill_backing;  // kBackingIsovalue/255.0
 uniform sampler2D u_damage_tex;
 uniform vec3      u_camera_pos_ws; // camera world position — uploaded CPU-side, avoids per-fragment inverse
 uniform float     u_tex_scale;     // body-units -> texture-period scale
+
+// Box-proxy Task 3 additions.
+// u_model: ship world matrix -- needed here (not just in breach.vert) because
+// main() now shades at hit_point (a body-frame point the raymarch finds,
+// generally NOT v_body_pos) and must transform THAT point to world space for
+// the view-dependent lighting term below.
+// u_camera_pos_body: camera position in THIS instance's body frame,
+// precomputed CPU-side (one matrix inverse per draw, not per fragment --
+// same idiom as u_camera_pos_ws) -- the ray origin every fragment marches
+// from.
+uniform mat4  u_model;
+uniform vec3  u_camera_pos_body;
 
 // Molten-rim emissive (hull-breach-2c).
 // u_breach_age: age of the matching breach event (large value → cold when no match).
@@ -137,13 +164,13 @@ float sample_hull_field(vec3 p_body) {
 }
 // === HULL_FIELD_SAMPLING END ===
 
-// Cavity-wall raymarch (raymarched-breach-interior Task 2). Not called by
-// main() below yet -- Task 3 replaces the per-carve sphere proxy with one
-// per-instance box and wires a call to raymarch_breach_cavity() from there,
-// binding the atlas on texture unit 2. Written now so it can be compiled
-// and tested in isolation against the field-sampling code above (see
+// Cavity-wall raymarch (raymarched-breach-interior Task 2), called from
+// main() below via find_breach_entry (Task 3) once that has located where
+// the view ray first enters carved material. Originally written and tested
+// in isolation before Task 3 wired it in -- see
 // native/tests/renderer/breach_raymarch_test.cc, which splices this file's
-// own production text onto a test-only main()).
+// own production text onto a test-only main() and still exercises this
+// function directly, independent of main()'s own box-proxy plumbing.
 //
 // A fragment that will reach this pass is, by the stencil (breach_pass.cc,
 // GL_EQUAL against 1), one where sample_hull_field(entry point) already
@@ -152,16 +179,17 @@ float sample_hull_field(vec3 p_body) {
 // INTO the hull) until the field falls back to <= margin: the far wall of
 // the cavity.
 //
-// PRECONDITION this function does not itself check (matching every other
-// consumer of sample_hull_field in this file, all of which are gated by
-// their caller on u_hull_field_enabled != 0): call this only when a valid
-// per-instance field is actually bound on unit 6. With the field disabled
-// (no per-instance field cached for this hull) u_hull_field may hold
-// whatever texture a previous draw left on that unit, or be unbound
-// entirely -- sampling it here would not crash, but the result would be
-// meaningless. Task 3's call site owns that gate, the same way opaque.frag
-// already gates its own field-based discard on u_hull_field_enabled before
-// ever calling sample_hull_field.
+// PRECONDITION this function does not itself check: call this only when a
+// valid per-instance field is actually bound on unit 2 (this pass's unit;
+// opaque.frag binds the same atlas on its own unit 6 -- the two passes don't
+// share a texture unit, only the sampling code). Task 3's call site owns
+// that gate structurally rather than with a per-fragment u_hull_field_
+// enabled branch: BreachPass::render() (breach_pass.cc) only ever issues a
+// draw_box_proxy() call for an instance that InstanceFieldCache::get()
+// already returned a real Entry for, so every fragment that reaches main()
+// in this pass has a genuinely bound, current field on unit 2 -- there is no
+// "disabled" draw to gate against, unlike opaque.frag which draws every
+// instance (damaged or not) through one shared program.
 //
 // KNOWN GAP, deliberately not fixed here: the field carries DAMAGE ONLY,
 // never hull geometry (renderer/instance_field_cache.h). A carve's brush
@@ -335,6 +363,83 @@ bool raymarch_breach_cavity(vec3 ro, vec3 rd, out vec3 hit_point, out vec3 hit_n
     return false;   // ran the whole budget: no crossing, no far wall
 }
 
+// ── Box-proxy entry search (raymarched-breach-interior Task 3) ─────────────
+//
+// raymarch_breach_cavity (above) requires its OWN `ro` to already sit inside
+// carved material -- true by construction for the old per-carve sphere (its
+// geometry WAS shaped to the carve, sized and centred on it) but not for this
+// task's box proxy, which covers the instance's WHOLE damage-field box: most
+// rays through it never touch a carve at all. These two helpers are what
+// main() uses to find where -- if anywhere -- a given view ray first crosses
+// into carved territory, before handing that point to raymarch_breach_cavity
+// to find the FAR wall of that same cavity.
+
+// Analytic (loop-free) ray/AABB entry distance: the smallest `t >= 0` at
+// which `ro + rd*t` crosses into the field's own body-frame box
+// (u_hull_field_origin .. + u_hull_field_cell*u_hull_field_dims -- the SAME
+// box breach.vert places its proxy geometry at). Standard slab test.
+// Components of `rd` at or near 0 produce +-inf in `inv_rd`; the min/max
+// reduction below is still correct under IEEE arithmetic (a ray parallel to
+// a slab either always or never lies within it along that axis, and +-inf
+// sorts to the correct side of both cases).
+//
+// Clamped to >= 0 so a camera already inside the box (a first-person/cinematic
+// view close to a hull breach) searches from the camera itself rather than
+// from behind it.
+//
+// The matching EXIT distance is NOT computed here: it is exactly t_exit as
+// main() derives it from v_body_pos, this fragment's own interpolated
+// position -- this pass rasterises the box's FAR faces only (see
+// breach.vert's header comment), so whatever face survives cull(GL_FRONT) at
+// this pixel already IS the ray's own box-exit point.
+float breach_box_entry_t(vec3 ro, vec3 rd) {
+    vec3 bmin = u_hull_field_origin;
+    vec3 bmax = u_hull_field_origin + u_hull_field_cell * u_hull_field_dims;
+    vec3 inv_rd = 1.0 / rd;
+    vec3 t0 = (bmin - ro) * inv_rd;
+    vec3 t1 = (bmax - ro) * inv_rd;
+    vec3 tmin = min(t0, t1);
+    float t_enter = max(max(tmin.x, tmin.y), tmin.z);
+    return max(t_enter, 0.0);
+}
+
+// Search for where the view ray first crosses INTO carved material, walking
+// from the box's own entry point (t_start, from breach_box_entry_t) out to
+// this fragment's own exit point (t_end, == v_body_pos's distance from ro --
+// see breach_box_entry_t's comment). Unlike raymarch_breach_cavity, this does
+// NOT assume `ro` starts inside carved material -- that guarantee is exactly
+// what the old per-carve sphere proxy gave for free, and the box proxy
+// cannot: it covers the whole field, so this loop is what tells "this ray
+// touches a carve" apart from "it doesn't" before handing off to
+// raymarch_breach_cavity.
+//
+// Same step size as raymarch_breach_cavity (kHullFieldStepFrac * the
+// smallest field cell -- see that function's own derivation) and the same
+// kBreachMaxSteps bound, for the same reason: this loop's own reach need
+// never exceed the field's box diagonal (breach_field_reach()), which bounds
+// t_end - t_start by construction -- both ro+rd*t_start and ro+rd*t_end
+// (== v_body_pos) lie on or inside the box.
+//
+// Returns false -- entry_point left at vec3(0.0), caller must discard, same
+// "a hole is a hole" rule as everywhere else in this file -- when the ray
+// never touches carved material between the box's own walls: the ordinary
+// case for most box-proxy fragments, since one instance's box covers its
+// WHOLE hull while any single carve is a small local feature within it.
+bool find_breach_entry(vec3 ro, vec3 rd, float t_start, float t_end, out vec3 entry_point) {
+    entry_point = vec3(0.0);
+    float step_len = max(breach_min_cell() * kHullFieldStepFrac, 1e-5);
+    for (int j = 0; j < kBreachMaxSteps; ++j) {
+        float t = t_start + step_len * float(j);
+        if (t > t_end) return false;
+        vec3 p = ro + rd * t;
+        if (sample_hull_field(p) > kHullFieldIsoMargin) {
+            entry_point = p;
+            return true;
+        }
+    }
+    return false;   // ran the whole budget: no carved material along this ray
+}
+
 out vec4 frag_color;
 
 // Blackbody-ish ramp keyed on heat 0..1 (white-hot -> red -> black).
@@ -350,23 +455,57 @@ vec3 blackbody(float heat) {
 }
 
 void main() {
-    // ── Fill mask ──────────────────────────────────────────────────────────
-    // Discard where the original hull fill says "no material here" (open space
-    // or past a thin hull wall). Clamp-to-edge wrap means fragments outside
-    // the fill grid sample the boundary value; explicit range check + discard
-    // for out-of-grid fragments keeps the scoop finite.
-    vec3 tc = (v_body_pos - u_fill_origin) / (u_fill_cell * vec3(u_fill_dims));
+    // ── Reconstruct the view ray in body frame ─────────────────────────────
+    // v_body_pos is this fragment's position on the box's FAR face -- the
+    // only faces this pass rasterises (glCullFace(GL_FRONT), breach.vert).
+    // For a convex box that IS the ray's own box-exit point, so the whole
+    // ray is determined by it plus u_camera_pos_body.
+    vec3 ro = u_camera_pos_body;
+    vec3 rd = v_body_pos - ro;
+    float t_exit = length(rd);
+    if (t_exit < 1e-6) discard;   // camera exactly on the box surface: degenerate ray, nothing to march
+    rd /= t_exit;
+
+    // ── Find where the ray first enters carved material ────────────────────
+    // This instance's box covers its WHOLE hull, not just one carve -- most
+    // rays through it never touch damage at all. find_breach_entry (see its
+    // header comment, above) is what tells that case apart, walking from the
+    // box's own analytic entry point out to this fragment's own exit point.
+    float t_enter = breach_box_entry_t(ro, rd);
+    vec3 entry_point;
+    if (!find_breach_entry(ro, rd, t_enter, t_exit, entry_point)) discard;
+
+    // ── March to the far wall of THAT cavity ────────────────────────────────
+    vec3 hit_point, hit_normal;
+    if (!raymarch_breach_cavity(entry_point, rd, hit_point, hit_normal)) discard;
+
+    // ── Fill mask (Task 3 obligation #1) ────────────────────────────────────
+    // The march alone cannot tell a real cavity wall from a carve brush's far
+    // edge floating past a thin plate -- see raymarch_breach_cavity's KNOWN
+    // GAP comment above. Only the fill/backing volume knows where real hull
+    // material actually is. A hit with nothing behind it must not be
+    // painted: "a hole is a hole", the same rule this file already applied
+    // to v_body_pos before the raymarch existed -- now applied to hit_point,
+    // the point actually being shaded.
+    //
+    // Clamp-to-edge wrap means fragments outside the fill grid would sample
+    // the boundary value; the explicit range check + discard for out-of-grid
+    // fragments keeps the scoop finite, same as before.
+    vec3 tc = (hit_point - u_fill_origin) / (u_fill_cell * vec3(u_fill_dims));
     if (any(lessThan(tc, vec3(0.0))) || any(greaterThan(tc, vec3(1.0)))) discard;
     float fillv = texture(u_fill, tc).r;
     if (fillv < u_fill_backing) discard;
 
     // ── Triplanar blend ────────────────────────────────────────────────────
-    vec3 n = normalize(v_body_normal);
+    // hit_normal is the field's own gradient at hit_point (raymarch_breach_
+    // cavity), pointing out of the wall into the open cavity -- the same role
+    // v_body_normal played for the old sphere (its outward normal).
+    vec3 n = normalize(hit_normal);
     vec3 w = abs(n);
     w = max(w, vec3(1e-4));
     w /= (w.x + w.y + w.z);
 
-    vec3 uvw = v_body_pos * u_tex_scale;
+    vec3 uvw = hit_point * u_tex_scale;
     vec3 cx  = texture(u_damage_tex, uvw.yz).rgb;   // project along +X
     vec3 cy  = texture(u_damage_tex, uvw.zx).rgb;   // project along +Y
     vec3 cz  = texture(u_damage_tex, uvw.xy).rgb;   // project along +Z
@@ -382,12 +521,17 @@ void main() {
     tex = kBase + tex * 1.1;
 
     // ── Double-sided lighting ──────────────────────────────────────────────
-    // The inner wall is rendered back-face (cull-front), so gl_FrontFacing is
-    // false; faceforward() corrects the normal toward the viewer for shading.
+    // The interior wall is found via a back-culled proxy (cull-front), so
+    // gl_FrontFacing is false; faceforward() corrects the normal toward the
+    // viewer for shading. hit_world is hit_point transformed to world space
+    // (NOT v_world_pos -- the box's own far-face world position -- which is
+    // generally a different, farther point than the true interior surface).
+    vec3 hit_world = (u_model * vec4(hit_point, 1.0)).xyz;
     vec3 cam_pos  = u_camera_pos_ws;
-    vec3 view_dir = normalize(cam_pos - v_world_pos);
-    // v_body_normal is the OUTWARD sphere normal; faceforward flips it inward
-    // (toward camera) for the lighting dot product.
+    vec3 view_dir = normalize(cam_pos - hit_world);
+    // n (hit_normal) already points out of the wall into the open cavity;
+    // faceforward flips it toward the camera for the lighting dot product,
+    // same role v_body_normal played for the old sphere.
     vec3 nf = faceforward(n, -view_dir, n);
 
     // Fixed key light from camera-ish direction: interior reads as shadowed

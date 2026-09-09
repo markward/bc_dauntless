@@ -1,39 +1,59 @@
 #version 410 core
 
-// Breach interior scoop — unit sphere driven per active carve sphere.
+// Breach interior BOX PROXY (raymarched-breach-interior Task 3).
 //
-// Each draw call covers one active carve sphere. The breach pass sets:
-//   u_carve_center : body-frame centre of the sphere
-//   u_carve_radius : radius in body-frame model units
+// One draw per DAMAGED INSTANCE, not one per carve sphere. This stage places
+// a unit cube ([0,1]^3, a_pos) at the instance's own damage-field box --
+// u_hull_field_origin .. + u_hull_field_cell*u_hull_field_dims, the SAME
+// extent InstanceFieldCache::Entry describes and breach.frag samples through
+// -- and does NOTHING else: no per-carve deformation. The fragment shader
+// raymarches the field per-pixel to find the actual cavity surface (see
+// raymarch_breach_cavity in breach.frag); this stage's only job is to get
+// pixels covering that box in front of the rasteriser.
 //
-// The vertex is placed in body space as:
-//   body_pos = u_carve_center + u_carve_radius * a_pos
-// where a_pos is a unit-sphere vertex (position == outward normal on a unit
-// sphere), so the sphere envelopes the carve region exactly.
+// u_hull_field_origin/cell/dims are declared here AND in breach.frag with
+// the SAME names: one linked program, one uniform location per name, so
+// BreachPass::draw_box_proxy sets each exactly once from C++ and both stages
+// see it -- no duplicate uniform, no risk of the two disagreeing.
 //
-// Rendered with glCullFace(GL_FRONT): only back faces (the far/inner wall as
-// seen from outside) are drawn, so the scoop is recessed and cannot poke
-// through the hull. The fill mask in breach.frag discards fragments where
-// there is no solid hull material, giving genuine see-through where the sphere
-// extends out of the hull volume.
+// Winding (the CPU-side mesh in breach_pass.cc's build_unit_box_cpu, not
+// anything in this file): EMPIRICALLY verified, not derived from
+// build_uv_sphere's stated "clockwise from outside" convention -- see that
+// function's own header comment for the measured result and why a naive
+// per-face CW/CCW prediction didn't carry over. Rendered with
+// glCullFace(GL_FRONT), so only the box's FAR faces (as seen from the
+// camera) survive rasterisation -- exactly the point where the view ray
+// EXITS the box at every covered pixel. breach.frag's main() relies on
+// that: v_body_pos IS the ray's own box-exit point, with no separate
+// computation needed.
+//
+// NOTE: the old per-carve deformation (u_carve_center/u_carve_radius/
+// u_carve_normal, the vh3/vnoise3 noise helpers) is dead below this point --
+// nothing sets those uniforms or calls those functions any more. Left in
+// place deliberately: retiring them is Task 4's job (raymarched-breach-
+// interior plan), not this one, so this diff stays focused on the box
+// proxy itself.
 
-layout(location = 0) in vec3 a_pos;     // unit-sphere vertex (== outward normal)
+layout(location = 0) in vec3 a_pos;     // unit-cube corner, [0,1]^3
 
 uniform mat4  u_model;          // ship world matrix (same as opaque pass)
 uniform mat4  u_view;
 uniform mat4  u_proj;
-uniform vec3  u_carve_center;   // body-frame sphere centre (model units)
-uniform float u_carve_radius;   // sphere radius (model units)
-uniform vec3  u_carve_normal;   // body-frame outward hit normal
+uniform vec3  u_carve_center;   // DEAD -- see note above (Task 4 removes)
+uniform float u_carve_radius;   // DEAD -- see note above (Task 4 removes)
+uniform vec3  u_carve_normal;   // DEAD -- see note above (Task 4 removes)
 
-out vec3 v_body_pos;      // body-frame position (fill mask TC + triplanar UVs)
-out vec3 v_body_normal;   // unit-sphere outward normal in body frame
-out vec3 v_world_pos;     // world position (double-sided lighting)
+// Field box extent -- see this file's header comment. Body frame, model
+// units. Shared uniform names with breach.frag's own copies.
+uniform vec3  u_hull_field_origin;
+uniform vec3  u_hull_field_cell;
+uniform vec3  u_hull_field_dims;
 
-// breach shape — KEEP IN SYNC with opaque.frag.
-// The breach is an OBLATE spheroid centred on the hull surface: FULL lateral
-// radius (original hole width) but compressed to kDepthFactor along the normal
-// (shallow). Noise perturbs the lateral radius by azimuth (jagged rim).
+out vec3 v_body_pos;      // body-frame position on the box surface (ray-exit point)
+
+// breach shape — DEAD, see note above (Task 4 removes). KEPT VERBATIM so
+// this diff does not also have to re-derive/re-verify shape math nobody
+// calls any more.
 const float kDepthFactor = 0.45;  // depth = kDepthFactor * radius (shallow)
 const float kShapeAmp    = 0.25;
 const float kShapeFreq   = 4.0;
@@ -50,28 +70,8 @@ float vnoise3(vec3 p){
 }
 
 void main() {
-    vec3  nrm     = normalize(u_carve_normal);
-    float along   = dot(a_pos, nrm);            // unit-sphere component along the normal
-    vec3  lateral = a_pos - along * nrm;         // unit-sphere lateral component
-    float ll      = length(lateral);
-    // Azimuthal direction (around the normal) drives the noise — identical on
-    // both the hull-clip and the scoop, so the jagged rim aligns.
-    vec3  az = ll > 1e-4 ? lateral / ll : vec3(1.0, 0.0, 0.0);
-    float r_eff = u_carve_radius * (1.0 + kShapeAmp * (vnoise3(az * kShapeFreq + u_carve_center * kPhase) * 2.0 - 1.0));
-    // Oblate spheroid: full lateral radius r_eff, compressed depth along normal.
-    vec3 body_pos = u_carve_center
-                  + lateral * r_eff
-                  + nrm * (along * kDepthFactor * u_carve_radius);
-    // Contain to the hull: project any part above the impact tangent plane back
-    // down onto it. The oblate's outward half (and the fat-fill balloon) would
-    // otherwise rise proud of the hull; this keeps the breach flush at the
-    // surface with the interior recessed below — never above the hull line
-    // (matches stock BC).
-    float above = dot(body_pos - u_carve_center, nrm);
-    if (above > 0.0) body_pos -= above * nrm;
-    vec4 world    = u_model * vec4(body_pos, 1.0);
+    vec3 body_pos = u_hull_field_origin + a_pos * (u_hull_field_cell * u_hull_field_dims);
     v_body_pos    = body_pos;
-    v_body_normal = a_pos;              // unit-sphere outward normal in body frame
-    v_world_pos   = world.xyz;
+    vec4 world    = u_model * vec4(body_pos, 1.0);
     gl_Position   = u_proj * u_view * world;
 }

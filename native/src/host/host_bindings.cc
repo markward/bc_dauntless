@@ -943,15 +943,18 @@ void frame() {
                                               g_carve_cache.get(),
                                               g_instance_field_cache.get());
         }
-        // Breach scoop pass: for each active carve sphere, draws the front-
-        // face-culled sphere inner wall masked by the original hull fill
-        // (triplanar Damage.tga). Runs right after the opaque hull
-        // (depth-test/write on) so the scoop shows only through clip holes.
-        // Gated on dauntless_hull_damage::enabled() inside the pass (no-op when off).
+        // Breach box-proxy pass (raymarched-breach-interior Task 3): one
+        // front-face-culled box per DAMAGED instance, raymarching the
+        // per-instance damage field per fragment to find the cavity wall,
+        // masked by the original hull fill (triplanar Damage.tga). Runs
+        // right after the opaque hull (depth-test/write on) so the interior
+        // shows only through clip holes. Gated on
+        // dauntless_hull_damage::enabled() inside the pass (no-op when off).
         if (g_breach_pass && g_carve_cache) {
             DAUNTLESS_FRAME_SCOPE("space.breach");
             g_breach_pass->render(g_world, cam, *g_pipeline, lookup,
-                                  *g_carve_cache, g_decal_game_time);
+                                  *g_carve_cache, g_instance_field_cache.get(),
+                                  g_decal_game_time);
         }
         if (g_shield_pass) {
             DAUNTLESS_FRAME_SCOPE("space.shield");

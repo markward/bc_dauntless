@@ -513,8 +513,13 @@ TEST_F(BreachRaymarchTest, UndamagedFieldMisses) {
 // (spurious) hit there. This test's all-+100 field has no such bounded
 // region at all (nothing anywhere reverts to intact), which is a different,
 // simpler scenario: pure budget exhaustion, not "no far wall by
-// construction". See RaymarchAloneCannotDistinguishABrushBoundaryFromRealBacking
-// below for a test of the actual bounded-brush case, and its own gap.
+// construction". The actual bounded-brush case (a carve that punches clean
+// through a thin plate) is exercised end-to-end, through the real main()
+// and its fill/backing check, by breach_pass_test.cc's
+// HitWithNoBackingMaterialDoesNotPaint -- this file's own splice harness
+// bypasses main() entirely (see build_test_fragment_source above) and so
+// cannot observe that fix; see this file's git history for the test that
+// used to document the gap here before Task 3 closed it.
 //
 // Discrimination: if budget exhaustion were (wrongly) treated as a hit at
 // the last sampled point -- a plausible "ran out of budget, but I found
@@ -536,45 +541,28 @@ TEST_F(BreachRaymarchTest, CarvedThroughoutTheReachableFieldMissesRatherThanPain
         << ")) would paint a wall where the correct result is to draw nothing";
 }
 
-// ── KNOWN GAP: the march alone cannot tell a brush boundary from real backing
+// ── (Retired) KNOWN GAP: the march alone cannot tell a brush boundary from
+// real backing ───────────────────────────────────────────────────────────
 //
-// Same field/ro as FindsWallOfKnownCavityWithinOneCell (carved 0-2, intact
-// 3-7, cell=1, ro=(0.5,0.5,0.75)): from the FIELD's point of view this looks
-// exactly like a genuine cavity with a real back wall. But because the field
-// carries damage only (see raymarch_breach_cavity's "KNOWN GAP" doc comment
-// in breach.frag), the SAME field shape is what a carve brush that punched
-// clean through a thin plate with NOTHING behind it would also produce: the
-// brush is bounded, so beyond its own far edge the field reverts to -127
-// ("no damage") whether or not real hull material is actually there.
+// A test named RaymarchAloneCannotDistinguishABrushBoundaryFromRealBacking
+// used to live here, documenting that raymarch_breach_cavity() alone (same
+// field/ro as FindsWallOfKnownCavityWithinOneCell: carved 0-2, intact 3-7,
+// cell=1, ro=(0.5,0.5,0.75)) cannot tell a genuine cavity wall from a carve
+// brush's far edge floating past a thin plate with nothing behind it --
+// because the field carries damage only, both shapes look identical to the
+// field alone (see raymarch_breach_cavity's "KNOWN GAP" doc comment in
+// breach.frag). That was Task 2's deliberately incomplete state.
 //
-// This test does not assert a bug -- it asserts and documents the CURRENT,
-// intentionally incomplete behaviour: raymarch_breach_cavity alone reports a
-// hit here (hit=true), because it has no way to know whether hit_point sits
-// on real backing material. Fixing that requires checking the fill/backing
-// volume (u_fill, already bound in this pass) AT hit_point, which is Task
-// 3's job once it owns the draw call and both textures are live together --
-// deliberately NOT implemented in this task. If a future change makes this
-// test start failing (hit=false), that is a sign the gap was closed
-// elsewhere and this test (and its comment, and breach_raymarch_cavity's
-// KNOWN GAP paragraph) need updating, not that something broke.
-TEST_F(BreachRaymarchTest, RaymarchAloneCannotDistinguishABrushBoundaryFromRealBacking) {
-    const std::vector<std::int8_t> z_values = {100, 100, 100, -100, -100, -100, -100, -100};
-    const voxel::DistanceField field =
-        make_slab_field(glm::ivec3(2, 2, 8), glm::vec3(0.0f), glm::vec3(1.0f), z_values);
-
-    auto prog = compile_probe();
-    ASSERT_NE(prog, nullptr);
-    set_common_uniforms(*prog);
-    bind_field(*prog, field);
-
-    const glm::vec4 out = draw_and_read(*prog, glm::vec3(0.5f, 0.5f, 0.75f), glm::vec3(0.0f, 0.0f, 1.0f), 0);
-    EXPECT_GT(out.w, 0.5f)
-        << "documenting the known gap: the field alone cannot distinguish this from a real "
-           "cavity wall, so the march reports a hit (hit_point=(" << out.x << "," << out.y
-        << "," << out.z << ")) even though, in the 'clean through a thin plate' framing this "
-           "field also models, there is no real hull material there -- Task 3 must additionally "
-           "check the backing/fill volume at hit_point before trusting this";
-}
+// Task 3 closed the gap -- NOT inside raymarch_breach_cavity() itself
+// (unchanged: it still, correctly, reports a hit for this exact field/ro
+// pair; that is its whole documented job) but in main(), which now checks
+// the fill/backing volume at hit_point before painting anything. Editing
+// the old test to keep asserting hit=true would have kept it green while
+// documenting a bug the code no longer has, so it was removed rather than
+// patched; breach_pass_test.cc's HitWithNoBackingMaterialDoesNotPaint
+// asserts the CORRECTED end-to-end behaviour instead -- through the real
+// main(), which this file's splice harness (build_test_fragment_source,
+// above) cannot reach, since main() is exactly what it replaces.
 
 // ── Step size catches a one-cell-thin wall, not the far side of it ─────────
 //
@@ -801,12 +789,32 @@ namespace {
 // named, small, compile-time constant cannot become an unbounded loop
 // without also failing this test.
 //
-// Matches EXACTLY ONE for-loop (asserted below) and additionally requires
-// it to appear textually after `bool raymarch_breach_cavity(` -- today
-// there is only one for-loop in the whole file, so the first check alone
-// would already catch a second, earlier loop (e.g. Task 3 adding one to
-// its own draw-side code in this file); the anchor is a second, independent
-// reason the SAME match couldn't silently be validating the wrong loop.
+// UPDATED for Task 3 (raymarched-breach-interior): the box proxy cannot
+// assume its own view ray already starts inside carved material (the old
+// per-carve sphere's WHOLE geometry guaranteed that; the box covers an
+// instance's entire hull, so most rays through it touch no carve at all).
+// breach.frag's find_breach_entry() -- a second bounded loop, walking from
+// the box's own entry point to the fragment's exit point looking for where
+// the ray first crosses INTO carved material -- is what tells that case
+// apart before handing off to raymarch_breach_cavity(). It deliberately
+// reuses kBreachMaxSteps rather than inventing a second named bound: its own
+// reach is bounded by the SAME field-diagonal argument raymarch_breach_
+// cavity's own header comment makes (both loops can only ever march at most
+// the field's own box diagonal in one straight line).
+//
+// This guard was originally written expecting exactly ONE such loop in the
+// whole file; per this file's own header comment ("Nothing calls this
+// function from breach.frag's own main() yet ... Task 3 wires it in"), a
+// second, deliberately added loop was the anticipated outcome once Task 3
+// landed, and the guard is updated here to match -- NOT relaxed to "at
+// least one", which would stop catching a THIRD loop appearing by accident.
+//
+// Matches EXACTLY TWO for-loops (asserted below), and additionally requires
+// BOTH to appear textually after `bool raymarch_breach_cavity(` -- today
+// there are only two for-loops in the whole file (raymarch_breach_cavity's
+// own, and find_breach_entry's), so the count check alone would already
+// catch a third, earlier loop; the anchor is a second, independent reason no
+// match could silently be validating the wrong loop.
 TEST(BreachRaymarchStaticGuard, LoopBoundIsANamedCompileTimeConstant) {
     const std::string src = read_file(shader_path("breach.frag"));
 
@@ -817,28 +825,31 @@ TEST(BreachRaymarchStaticGuard, LoopBoundIsANamedCompileTimeConstant) {
     const auto matches_begin = std::sregex_iterator(src.begin(), src.end(), loop_re);
     const auto matches_end   = std::sregex_iterator();
     const std::vector<std::smatch> matches(matches_begin, matches_end);
-    ASSERT_EQ(matches.size(), 1u)
-        << "breach.frag: expected exactly one bounded for-loop matching "
-           "'for (int i = 0; i < N; ...)', found " << matches.size()
-        << " -- this guard validates a SPECIFIC loop's bound and must be updated (not "
-           "silently pass) if a second loop is added anywhere in this file";
-    const std::smatch& m = matches.front();
-    ASSERT_GT(static_cast<std::size_t>(m.position(0)), fn_pos)
-        << "breach.frag: the matched for-loop appears before raymarch_breach_cavity's own "
-           "signature -- this guard is meant to validate THAT function's loop bound";
-    const std::string bound_name = m[1].str();
+    ASSERT_EQ(matches.size(), 2u)
+        << "breach.frag: expected exactly two bounded for-loops matching "
+           "'for (int i = 0; i < N; ...)' (raymarch_breach_cavity's own march, and "
+           "find_breach_entry's box-entry search -- see this test's header comment), "
+           "found " << matches.size()
+        << " -- this guard validates SPECIFIC loops' bounds and must be updated (not "
+           "silently pass) if a loop count changes anywhere in this file";
+    for (const std::smatch& m : matches) {
+        ASSERT_GT(static_cast<std::size_t>(m.position(0)), fn_pos)
+            << "breach.frag: a matched for-loop appears before raymarch_breach_cavity's own "
+               "signature -- this guard is meant to validate loops AFTER that point only";
+        const std::string bound_name = m[1].str();
 
-    const std::regex const_re("const\\s+int\\s+" + bound_name + "\\s*=\\s*(\\d+)\\s*;");
-    std::smatch cm;
-    ASSERT_TRUE(std::regex_search(src, cm, const_re))
-        << bound_name << " must be declared 'const int " << bound_name
-        << " = <literal>;' -- a uniform bound could be set to something huge/degenerate at "
-           "runtime, and a variable computed inside the loop is not a fixed bound at all";
-    const int bound_value = std::stoi(cm[1].str());
-    EXPECT_GT(bound_value, 0);
-    EXPECT_LE(bound_value, 256)
-        << bound_name << " = " << bound_value
-        << " -- suspiciously large for a per-fragment loop; confirm this is intentional";
+        const std::regex const_re("const\\s+int\\s+" + bound_name + "\\s*=\\s*(\\d+)\\s*;");
+        std::smatch cm;
+        ASSERT_TRUE(std::regex_search(src, cm, const_re))
+            << bound_name << " must be declared 'const int " << bound_name
+            << " = <literal>;' -- a uniform bound could be set to something huge/degenerate at "
+               "runtime, and a variable computed inside the loop is not a fixed bound at all";
+        const int bound_value = std::stoi(cm[1].str());
+        EXPECT_GT(bound_value, 0);
+        EXPECT_LE(bound_value, 256)
+            << bound_name << " = " << bound_value
+            << " -- suspiciously large for a per-fragment loop; confirm this is intentional";
+    }
 }
 
 // Global Constraint / brief instruction: "kHullFieldIsoMargin is the
