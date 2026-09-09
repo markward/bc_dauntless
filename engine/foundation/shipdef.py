@@ -61,6 +61,18 @@ class ShipDefinition:
             self.unknown_attributes[key] = value
         object.__setattr__(self, key, value)
 
+    def RegisterQBShipMenu(self, group=None, **kw):
+        # **kw so an omitted qb stays omitted and reaches register()'s own
+        # _UNSET default; passing qb=None explicitly must mean "no module".
+        from engine.foundation import quickbattle
+        self.menuGroup = group
+        return quickbattle.register(self, group, player=False, **kw)
+
+    def RegisterQBPlayerShipMenu(self, group=None, **kw):
+        from engine.foundation import quickbattle
+        self.playerMenuGroup = group
+        return quickbattle.register(self, group, player=True, **kw)
+
 
 class _ShipDefNamespace:
     """`Foundation.ShipDef` -- mods assign onto it and read __dict__ back."""
