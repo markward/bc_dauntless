@@ -51,6 +51,11 @@ def __getattr__(attr):
     return factory
 
 
+def load_plugins():
+    from engine.foundation.loader import load_plugins as _lp
+    return _lp()
+
+
 def reset():
     """Drop all registered state. Tests only."""
     for k in [k for k in ShipDef.__dict__ if not k.startswith("_")]:
