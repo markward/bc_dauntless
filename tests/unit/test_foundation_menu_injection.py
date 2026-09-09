@@ -253,3 +253,109 @@ def test_group_with_no_tgl_entry_keeps_its_own_category():
     assert added == 1
     labels = [c.GetLabel() for c in _categories(qb.g_pShipsPane)]
     assert labels == ["Federation Ships", "Borg Ships"]
+
+
+# ── SubMenu / SubSubMenu nest inside the group ──────────────────────────
+# Foundation ship defs carry SubMenu and SubSubMenu beside menuGroup, and
+# the corpus uses both depths: the LC Intrepid pack puts three ships under
+# menuGroup 'Fed Ships' + SubMenu "LC Intrepid Class", and the Steamrunner
+# pack adds SubSubMenu "Steamrunner Class" under SubMenu "TNG Ships". The
+# hierarchy is menuGroup > SubMenu > SubSubMenu > ship. STMenu already
+# models this natively -- AddChild registers a nested STMenu in _submenus,
+# reachable via GetSubmenuW -- so nesting is BC's own widget shape.
+
+def _sub_ship(name, label, sub=None, subsub=None, group="Fed Ships"):
+    d = foundation.FedShipDef(name, 1, {"name": label, "shipFile": name})
+    if sub is not None:
+        d.SubMenu = sub
+    if subsub is not None:
+        d.SubSubMenu = subsub
+    d.RegisterQBShipMenu(group, qb=None)
+    return d
+
+
+def test_submenu_nests_the_ship_one_level_deeper():
+    _sub_ship("ZZI", "USS Intrepid LC", sub="LC Intrepid Class")
+    qb = _qb_with_database()
+
+    quickbattle.inject_into_menus(qb=qb)
+
+    cats = _categories(qb.g_pShipsPane)
+    assert [c.GetLabel() for c in cats] == ["Federation Ships"]
+    # The ship is NOT a direct child of the group...
+    assert cats[0].GetButtonW("USS Intrepid LC") is None
+    # ...it is inside the submenu.
+    sub = cats[0].GetSubmenuW("LC Intrepid Class")
+    assert sub is not None
+    assert sub.GetButtonW("USS Intrepid LC") is not None
+
+
+def test_ships_sharing_a_submenu_share_one_menu():
+    for n, label in (("ZZI", "USS Intrepid LC"),
+                     ("ZZV", "USS Voyager LC"),
+                     ("ZZB", "USS Bellerophon LC")):
+        _sub_ship(n, label, sub="LC Intrepid Class")
+    qb = _qb_with_database()
+
+    added = quickbattle.inject_into_menus(qb=qb)
+
+    assert added == 3
+    group = _categories(qb.g_pShipsPane)[0]
+    subs = [c for c in group._children if isinstance(c, STCharacterMenu)]
+    assert len(subs) == 1, "one submenu, not one per ship"
+    assert sorted(b.GetLabel() for b in subs[0]._children) == [
+        "USS Bellerophon LC", "USS Intrepid LC", "USS Voyager LC"]
+
+
+def test_subsubmenu_nests_a_third_level():
+    _sub_ship("ZZS", "Steamrunner Aad",
+              sub="TNG Ships", subsub="Steamrunner Class")
+    qb = _qb_with_database()
+
+    quickbattle.inject_into_menus(qb=qb)
+
+    group = _categories(qb.g_pShipsPane)[0]
+    tng = group.GetSubmenuW("TNG Ships")
+    assert tng is not None
+    klass = tng.GetSubmenuW("Steamrunner Class")
+    assert klass is not None
+    assert klass.GetButtonW("Steamrunner Aad") is not None
+
+
+def test_subsubmenu_without_submenu_uses_one_level():
+    """A gap in the chain closes up rather than creating an unnamed level."""
+    _sub_ship("ZZX", "Odd One Out", subsub="Only Deep Label")
+    qb = _qb_with_database()
+
+    quickbattle.inject_into_menus(qb=qb)
+
+    group = _categories(qb.g_pShipsPane)[0]
+    only = group.GetSubmenuW("Only Deep Label")
+    assert only is not None
+    assert only.GetButtonW("Odd One Out") is not None
+
+
+def test_no_submenu_still_lands_directly_in_the_group():
+    """The path stock ships take must be untouched."""
+    _sub_ship("ZZP", "Plain Ship")
+    qb = _qb_with_database()
+
+    quickbattle.inject_into_menus(qb=qb)
+
+    group = _categories(qb.g_pShipsPane)[0]
+    assert group.GetButtonW("Plain Ship") is not None
+    assert [c for c in group._children
+            if isinstance(c, STCharacterMenu)] == []
+
+
+def test_nested_injection_is_idempotent():
+    _sub_ship("ZZI", "USS Intrepid LC", sub="LC Intrepid Class")
+    qb = _qb_with_database()
+
+    assert quickbattle.inject_into_menus(qb=qb) == 1
+    assert quickbattle.inject_into_menus(qb=qb) == 0
+
+    group = _categories(qb.g_pShipsPane)[0]
+    subs = [c for c in group._children if isinstance(c, STCharacterMenu)]
+    assert len(subs) == 1
+    assert len(subs[0]._children) == 1

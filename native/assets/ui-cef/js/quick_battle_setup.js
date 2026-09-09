@@ -19,13 +19,19 @@ function escapeHtmlQBS(s) {
 // `action` is the per-ship dauntlessEvent verb ('click-ship' for the enemy
 // catalog, 'select-player-ship' for the player ship); `highlightKey` is the
 // per-ship flag that draws the row as highlighted ('selected' / 'current').
-function _qbsRenderCategories(categories, action, highlightKey) {
-    const cats = categories || [];
-    if (!cats.length) return '<div class="qbs-placeholder">(no ships)</div>';
+// Render one level of the category tree, then recurse into its children.
+// A node is {id, label, expanded, ships:[...], children:[...]}. Nesting comes
+// from a Foundation ship def's SubMenu / SubSubMenu (menuGroup > SubMenu >
+// SubSubMenu > ship); a stock category has an empty `children` and renders
+// exactly as it did when this was a fixed two-level loop.
+//
+// Ships are emitted before child menus so a group whose stock hulls were added
+// before a mod appended its submenu reads in insertion order.
+function _qbsRenderNodes(nodes, action, highlightKey, depth) {
     let html = '';
-    for (const cat of cats) {
+    for (const cat of (nodes || [])) {
         const open = cat.expanded === true;
-        html += '<div class="qbs-row" data-depth="1"'
+        html += '<div class="qbs-row" data-depth="' + depth + '"'
               +   ' onclick="dauntlessEvent(\'quick-battle-setup/expand:' + cat.id + '\')">'
               +   '<span class="qbs-caret">' + (open ? '▾' : '▸') + '</span>'
               +   '<span class="qbs-label">' + escapeHtmlQBS(cat.label) + '</span>'
@@ -38,12 +44,19 @@ function _qbsRenderCategories(categories, action, highlightKey) {
                 + (ship[highlightKey] ? ' qbs-row--selected' : '');
             const onclick = disabled ? ''
                 : ' onclick="dauntlessEvent(\'quick-battle-setup/' + action + ':' + ship.id + '\')"';
-            html += '<div class="' + cls + '" data-depth="2"' + onclick + '>'
+            html += '<div class="' + cls + '" data-depth="' + (depth + 1) + '"' + onclick + '>'
                   +   '<span class="qbs-label">' + escapeHtmlQBS(ship.label) + '</span>'
                   + '</div>';
         }
+        html += _qbsRenderNodes(cat.children, action, highlightKey, depth + 1);
     }
     return html;
+}
+
+function _qbsRenderCategories(categories, action, highlightKey) {
+    const cats = categories || [];
+    if (!cats.length) return '<div class="qbs-placeholder">(no ships)</div>';
+    return _qbsRenderNodes(cats, action, highlightKey, 1);
 }
 
 // Friendly / Enemy roster list — stacked "shopping-basket" rows. Each group is

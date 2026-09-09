@@ -574,3 +574,79 @@ def test_start_is_noop_when_rosters_empty():
     assert p.dispatch_event("start") is True
     assert calls == []
     assert p.is_open() is True
+
+
+# ---- nested submenus (Foundation SubMenu / SubSubMenu) --------------------
+#
+# A Foundation ship def can nest itself under menuGroup > SubMenu >
+# SubSubMenu, which engine/foundation/quickbattle.py builds as nested
+# STCharacterMenus (STMenu holds buttons AND child submenus). The payload
+# therefore has to be a tree: each node keeps its own `ships` and gains a
+# `children` list of the same shape. Stock categories have no children, so
+# their payload is unchanged — the tests above still pin that.
+
+def _nested_qb_module():
+    """The stub module, with the LC Intrepid pack's shape grafted into the
+    Federation category: Fed Ships > LC Intrepid Class > three hulls."""
+    mod = _stub_qb_module()
+    fed = (mod.g_pShipsPane.GetFirstChild()   # stylized window
+           .GetFirstChild()                   # ship-menu STSubPane
+           .GetFirstChild())                  # Fed Ships
+    klass = STCharacterMenu("LC Intrepid Class")
+    for label in ("USS Intrepid LC", "USS Voyager LC", "USS Bellerophon LC"):
+        klass.AddChild(_ship_button(label))
+    fed.AddChild(klass)
+    return mod
+
+
+@pytest.fixture
+def nested_panel():
+    p = QuickBattleSetupPanel()
+    p._qb_module = _nested_qb_module()
+    p.open()
+    return p
+
+
+def test_nested_submenu_appears_as_a_child_node(nested_panel):
+    fed = _body(nested_panel.render_payload())["categories"][0]
+    # The group keeps its own direct ships...
+    assert [s["label"] for s in fed["ships"]] == ["Akira", "Galaxy"]
+    # ...and carries the submenu as a child node.
+    assert [c["label"] for c in fed["children"]] == ["LC Intrepid Class"]
+    assert [s["label"] for s in fed["children"][0]["ships"]] == [
+        "USS Intrepid LC", "USS Voyager LC", "USS Bellerophon LC"]
+
+
+def test_a_ship_is_never_also_a_child_node(nested_panel):
+    """The nested menu must not leak into its parent's ship list — that was
+    the flat behaviour this replaces."""
+    fed = _body(nested_panel.render_payload())["categories"][0]
+    assert "LC Intrepid Class" not in [s["label"] for s in fed["ships"]]
+
+
+def test_stock_categories_have_no_children(nested_panel):
+    cats = _body(nested_panel.render_payload())["categories"]
+    klingon = cats[1]
+    assert klingon["children"] == []
+    assert [s["label"] for s in klingon["ships"]] == ["BOP"]
+
+
+def test_nested_node_expands_independently(nested_panel):
+    body = _body(nested_panel.render_payload())
+    sub = body["categories"][0]["children"][0]
+    assert sub["expanded"] is False
+    assert nested_panel.dispatch_event("expand:" + str(sub["id"])) is True
+    body2 = _body(nested_panel.render_payload())
+    assert body2["categories"][0]["children"][0]["expanded"] is True
+    # The parent group is unaffected by expanding a child.
+    assert body2["categories"][0]["expanded"] is False
+
+
+def test_nested_ship_resolves_to_its_widget_and_is_clickable(nested_panel):
+    sub = _body(nested_panel.render_payload())["categories"][0]["children"][0]
+    ship_id = sub["ships"][0]["id"]
+    widget = nested_panel.widget_for_id(ship_id)
+    assert widget.GetLabel() == "USS Intrepid LC"
+    fired = _spy_activation(widget)
+    assert nested_panel.dispatch_event("click-ship:" + str(ship_id)) is True
+    assert fired == [True]

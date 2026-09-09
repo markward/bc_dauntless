@@ -164,6 +164,52 @@ def _category_label(module, group):
     return str(resolved) if resolved else group
 
 
+def _resolve_category_chain(module, pane, ship_def, group):
+    """The menu a ship's button belongs in, creating levels as needed.
+
+    Foundation ship defs carry `SubMenu` and `SubSubMenu` beside
+    `menuGroup`, and the hierarchy runs
+    ``menuGroup > SubMenu > SubSubMenu > ship``. Both corpus packs use it:
+    the LC Intrepid pack puts three hulls under `SubMenu` "LC Intrepid
+    Class", and the Steamrunner pack goes a level further with `SubSubMenu`
+    "Steamrunner Class" under "TNG Ships". Flattening them made one long
+    Federation list where the mod authored a tree.
+
+    Nesting is the widget model's own shape, not something bolted on:
+    `STMenu.AddChild` already files a nested `STMenu` under `_submenus` and
+    `GetSubmenuW` reads it back -- its docstring says it "holds buttons and
+    child submenus".
+
+    A ship with neither attribute lands directly in the group, which is the
+    path every stock ship takes, so their menus are unchanged. A gap in the
+    chain (`SubSubMenu` set with no `SubMenu`) closes up rather than
+    creating an unnamed level.
+
+    Every label goes through `_category_label` for the same reason the group
+    does -- a mod is free to name a submenu with a TGL key, and translating
+    a key that has no entry returns it unchanged.
+    """
+    from engine.appc.tg_ui.st_widgets import STCharacterMenu_CreateW
+
+    label = _category_label(module, group)
+    node = _find_category(pane, label)
+    if node is None:
+        node = STCharacterMenu_CreateW(label)
+        pane.AddChild(node, 0.0, 0.0)
+
+    for attr in ("SubMenu", "SubSubMenu"):
+        sub = getattr(ship_def, attr, None)
+        if not sub:
+            continue
+        sub_label = _category_label(module, sub)
+        child = node.GetSubmenuW(sub_label)
+        if child is None:
+            child = STCharacterMenu_CreateW(sub_label)
+            node.AddChild(child)
+        node = child
+    return node
+
+
 def _inject_registered_ships(module) -> int:
     added = 0
     for name, sid in _registered:
@@ -181,12 +227,7 @@ def _inject_registered_ships(module) -> int:
             pane = getattr(module, pane_attr, None)
             if pane is None:
                 continue
-            label = _category_label(module, group)
-            category = _find_category(pane, label)
-            if category is None:
-                from engine.appc.tg_ui.st_widgets import STCharacterMenu_CreateW
-                category = STCharacterMenu_CreateW(label)
-                pane.AddChild(category, 0.0, 0.0)
+            category = _resolve_category_chain(module, pane, ship_def, group)
             if category.GetButtonW(name) is not None:
                 continue  # already there -- idempotent
             event = getattr(module, event_attr, None)

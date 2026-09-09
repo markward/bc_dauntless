@@ -103,35 +103,60 @@ class QuickBattleSetupPanel(Panel):
         return cats
 
     def _read_pane_categories(self, pane, ship_extra):
-        """Walk a ship-menu pane (g_pShipsPane / g_pPlayerPane) into a list of
-        {id, label, expanded, ships:[{id, label, enabled, **extra}]} and register
-        the id->widget map. `ship_extra(sid, btn)` adds per-ship flags (e.g.
-        'selected' for the enemy catalog, 'current' for the player ship)."""
+        """Walk a ship-menu pane (g_pShipsPane / g_pPlayerPane) into a TREE of
+        {id, label, expanded, ships:[{id, label, enabled, **extra}], children:[...]}
+        and register the id->widget map. `ship_extra(sid, btn)` adds per-ship
+        flags (e.g. 'selected' for the enemy catalog, 'current' for the player
+        ship).
+
+        `children` holds nested categories, which is how a Foundation ship def's
+        `SubMenu` / `SubSubMenu` reach the UI: the hierarchy is
+        ``menuGroup > SubMenu > SubSubMenu > ship`` and
+        `engine/foundation/quickbattle.py` builds it as nested
+        STCharacterMenus. `STMenu` has always been able to hold both ("buttons
+        and child submenus"); this reader simply stopped at the first level, so
+        the LC Intrepid pack's three hulls piled into one flat Federation list
+        where the mod had authored a group.
+
+        A stock category has no nested menus, so its `children` is empty and its
+        payload is otherwise unchanged.
+        """
         from engine.appc.characters import STButton
+        from engine.appc.tg_ui.st_widgets import STCharacterMenu
         from engine.appc.tg_ui.widgets import ensure_widget_id
-        categories: list = []
-        for cat in self._collect_categories(pane):
+
+        def node(cat):
             cid = ensure_widget_id(cat)
             self._id_to_widget[cid] = cat
-            ships = []
-            for btn in self._child_widgets(cat):
-                if isinstance(btn, STButton):
-                    sid = ensure_widget_id(btn)
-                    self._id_to_widget[sid] = btn
+            ships: list = []
+            children: list = []
+            for child in self._child_widgets(cat):
+                # Order matters only in that a nested menu is not a button;
+                # the two branches are disjoint.
+                if isinstance(child, STCharacterMenu):
+                    children.append(node(child))
+                elif isinstance(child, STButton):
+                    sid = ensure_widget_id(child)
+                    self._id_to_widget[sid] = child
                     ship = {
                         "id": sid,
-                        "label": btn.GetLabel(),
-                        "enabled": bool(btn.IsEnabled()),
+                        "label": child.GetLabel(),
+                        "enabled": bool(child.IsEnabled()),
                     }
-                    ship.update(ship_extra(sid, btn))
+                    ship.update(ship_extra(sid, child))
                     ships.append(ship)
-            categories.append({
+            return {
                 "id": cid,
                 "label": cat.GetLabel(),
                 "expanded": cid in self._expanded_ids,
                 "ships": ships,
-            })
-        return categories
+                "children": children,
+            }
+
+        # _collect_categories stops descending at each STCharacterMenu, so it
+        # yields the TOP-level categories only — nested ones are reached by
+        # node() above rather than being listed twice.
+        return [node(cat) for cat in self._collect_categories(pane)]
 
     def _read_ships(self):
         """Walk the live QuickBattle widgets and return
