@@ -710,6 +710,11 @@ void main() {
     // block's comment for why.
     bool marked = false;
     bool field_suppressed = false;
+    // Loop-invariant: the field lattice is per-instance, not per-carve. Hoisted
+    // out of the carve loop below, where it was recomputed for every one of up
+    // to 24 active carves on every fragment.
+    float cellmin = min(u_hull_field_cell.x,
+                        min(u_hull_field_cell.y, u_hull_field_cell.z));
     if (u_carve_enabled != 0 && u_carve_count > 0) {
         for (int i = 0; i < u_carve_count; i++) {
             vec3 c  = u_carve_spheres[i].xyz;
@@ -732,13 +737,18 @@ void main() {
             // Computed OUTSIDE the guard below on purpose: the dilated
             // region reaches past that guard's box whenever the cell is
             // coarse relative to the carve.
-            float cellmin = min(u_hull_field_cell.x,
-                                min(u_hull_field_cell.y, u_hull_field_cell.z));
+            // `cellmin` is loop-INVARIANT -- hoisted above the loop, where it
+            // is computed once per fragment instead of once per active carve.
+            //
+            // Compared SQUARED: `unit < dil` with both sides non-negative is
+            // exactly `unit^2 < dil^2`, so this drops a sqrt from every
+            // fragment-carve pair (up to 24 per fragment) with no change of
+            // result whatsoever.
             float lat = r * (1.0 + kShapeAmp);
             float dep = max(kDepthFactor * r, kFieldDepthFloor * cellmin);
             float dil = 1.0 + (kFieldSdfOffset * cellmin) / min(lat, dep);
-            float unit = sqrt((ld * ld) / (lat * lat) + (along * along) / (dep * dep));
-            if (unit < dil) field_suppressed = true;
+            float unit2 = (ld * ld) / (lat * lat) + (along * along) / (dep * dep);
+            if (unit2 < dil * dil) field_suppressed = true;
             if (ld < r * (1.0 + kShapeAmp) && abs(along) < kDepthFactor * r * (1.0 + kShapeAmp)) {
                 // Azimuthal noise on the lateral radius (jagged rim); same
                 // azimuth term the scoop uses, so the hole edge aligns.
@@ -845,8 +855,28 @@ void main() {
         // the field's own hole edge breaks up instead of reading as the
         // brush's smooth ellipsoid. See kFieldRimNoise for why the term is
         // strictly one-sided.
-        bool field_cut = sample_hull_field(p_body)
-                       > kHullFieldIsoMargin + kFieldRimNoise * vnoise3(p_body * kFieldRimFreq);
+        // SHORT-CIRCUIT, and it is load-bearing for frame rate, not tidiness.
+        // vnoise3 is EIGHT sin-based hashes, and this block runs on every
+        // fragment of every damaged hull that no tracked carve suppresses --
+        // i.e. essentially the whole visible surface of every ship that has
+        // ever been hit. Evaluating the noise there unconditionally cost
+        // eight transcendentals per fragment across the entire fleet.
+        //
+        // kFieldRimNoise * vnoise3(...) is >= 0 by construction (vnoise3
+        // returns [0,1] and the term is added, never subtracted -- see the
+        // constant's comment and FieldRimNoiseNeverCutsBelowThePlainMargin).
+        // So `fv > kHullFieldIsoMargin` is a NECESSARY condition for a cut,
+        // and testing it first is EXACTLY equivalent, not an approximation:
+        // any fragment it rejects would have been rejected by the full test
+        // too, whatever the noise happened to be. Undamaged fragments -- the
+        // overwhelming majority -- now pay two texture fetches instead of
+        // two fetches plus eight sins.
+        float fv = sample_hull_field(p_body);
+        bool field_cut = false;
+        if (fv > kHullFieldIsoMargin) {
+            field_cut = fv
+                      > kHullFieldIsoMargin + kFieldRimNoise * vnoise3(p_body * kFieldRimFreq);
+        }
         if (u_carve_invert != 0) {
             if (field_cut) marked = true;
         } else if (field_cut) {
