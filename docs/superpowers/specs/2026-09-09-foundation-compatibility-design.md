@@ -129,9 +129,18 @@ surface, not an implementation detail we may hide.
 ## Registration into QuickBattle
 
 `RegisterQBShipMenu(group)` and `RegisterQBPlayerShipMenu(group)` mint a fresh
-`ST_*` id and append to the four parallel tables QuickBattle builds its panes
-from: `g_dShipTypeToDetails`, `g_dFriendlyShipTypeToDetails`,
-`g_dEnemyShipTypeToDetails`, `g_dShipTypeToIconNumber`. The row shape is
+`ST_*` id and append to the **five** parallel tables QuickBattle builds its
+panes from — verified by reading the module rather than from memory:
+
+| Table | Key → value |
+|---|---|
+| `g_dShipNameToType` | `"Sovereign"` → `ST_SOVEREIGN` |
+| `g_dShipNameToIconNumber` | `"Sovereign"` → icon number |
+| `g_dFriendlyShipTypeToDetails` | `ST_*` → detail row (friendly side) |
+| `g_dEnemyShipTypeToDetails` | `ST_*` → detail row (enemy side) |
+| `g_dShipTypeToIconNumber` | `ST_*` → icon number |
+
+The detail row shape is
 
 ```python
 ST_SOVEREIGN: ["Sovereign", "Sovereign", "QBFriendlySovereignDestroyed",
