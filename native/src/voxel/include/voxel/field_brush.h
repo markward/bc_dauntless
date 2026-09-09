@@ -13,6 +13,37 @@ namespace voxel {
 /// same oblate. Change one, change both, and live-test the pair.
 inline constexpr float kCarveDepthFactor = 0.45f;
 
+/// Rim-noise amplitude, as a fraction of the carve radius. MUST equal
+/// opaque.frag's kShapeAmp. The shader perturbs the hole's lateral radius by
+/// +/- this fraction, so the brush's lateral half-extent must be
+/// radius * (1 + kCarveRimAmp) to cover the OUTWARD half of that perturbation
+/// -- carving only `radius` left an un-backed band around every hole.
+inline constexpr float kCarveRimAmp = 0.25f;
+
+/// Minimum carve half-depth, in CELLS. A carve's true half-depth is
+/// kCarveDepthFactor * radius, which is under one cell for every radius below
+/// about 11 model units -- i.e. for every ordinary combat hit. A feature
+/// thinner than a cell does not survive trilinear reconstruction, so the
+/// field read "no damage" inside holes the hull shader had already cut and
+/// breach.frag's march bailed at its entry point: see-through hull.
+/// Flooring the half-depth here is what makes a small carve exist at all.
+/// MUST equal opaque.frag's kFieldDepthFloor.
+inline constexpr float kCarveDepthFloorCells = 1.25f;
+
+/// Constant offset added to the brush before the CSG max(), in CELLS. The
+/// floor above makes a carve representable; this makes it representable with
+/// MARGIN. Reconstruction is only tangent to the true surface at the
+/// boundary, so without it the reconstructed hole edge falls slightly inside
+/// the analytic one and the rim goes un-backed.
+///
+/// Measured: with the floor alone, worst-case coverage of the analytic hole
+/// is 73%; with both, it is 100% across cell 3.0-7.5 and radius 3-30.
+/// The cost is a damaged region 1.7x the nominal rim on average (3.3x for a
+/// tiny carve on a coarse lattice) -- suppressed wherever a tracked carve
+/// governs, and visible only as generous holes beyond the 24-carve ring.
+/// MUST equal opaque.frag's kFieldSdfOffset.
+inline constexpr float kCarveFieldOffsetCells = 1.25f;
+
 /// Subtract an oblate breach from the hull: full lateral radius `radius`,
 /// kCarveDepthFactor * radius along `normal_body`, centred on the hull surface.
 ///

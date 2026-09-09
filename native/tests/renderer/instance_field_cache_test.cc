@@ -751,9 +751,29 @@ TEST_F(InstanceFieldCacheTest, MergedDepositCarvesTheFieldAtTheSlotsStoredCentre
     const auto no_damage_bytes = voxel::pack_field_to_atlas(
         no_damage, voxel::atlas_layout_for(baked.dims));
     ASSERT_NE(expected_bytes, no_damage_bytes);
-    ASSERT_FLOAT_EQ(expected.distance_at(3, 0, 0), no_damage.distance_at(3, 0, 0))
-        << "sanity: b's cell must stay untouched in the reference "
-           "construction too, or this test cannot discriminate";
+    // Sanity, restated for the CONSERVATIVE brush: b's cell no longer holds
+    // the literal untouched no-damage value. field_brush.cc dilates every
+    // carve to the smallest shape this lattice can hold, and on a 10-unit
+    // cell that AABB reaches b even though the carve stays anchored at a --
+    // it writes a still-deeply-NEGATIVE (undamaged) distance there, it does
+    // not carve it. So the guard now says what it always meant: b's cell
+    // reads undamaged, and the two candidate carve centres remain
+    // distinguishable. The rival hypothesis is constructed explicitly rather
+    // than argued, so this cannot go vacuous unnoticed.
+    ASSERT_LT(expected.distance_at(3, 0, 0), 0.0f)
+        << "sanity: b's cell must still read undamaged in the reference "
+           "construction, or this test cannot discriminate";
+    voxel::DistanceField rival = no_damage;   // the bug: carve at the RAW hit
+    voxel::field_carve_oblate(rival, b, kUp, first.radius);
+    voxel::field_carve_oblate(rival, b, kUp, second.radius);
+    ASSERT_GT(rival.distance_at(3, 0, 0), 0.0f)
+        << "sanity: carving at b WOULD damage b's cell -- if it did not, "
+           "this test could not tell the two carve centres apart";
+    ASSERT_NE(voxel::pack_field_to_atlas(
+                  rival, voxel::atlas_layout_for(rival.dims)),
+              expected_bytes)
+        << "sanity: carving at a and carving at b must produce different "
+           "atlases, or this test cannot discriminate";
 
     EXPECT_EQ(read_atlas(*e), expected_bytes)
         << "a merged deposit must carve the field at the SLOT's stored "
@@ -943,10 +963,18 @@ TEST_F(InstanceFieldCacheTest, FieldStartsAsNoDamageNotHullGeometryFarFromAnyCar
     // InstanceFieldCache does.
     ASSERT_GT(expected.distance_at(0, 0, 0), 0.0f)
         << "sanity: the carve must actually change its own cell";
-    ASSERT_FLOAT_EQ(expected.distance_at(3, 3, 3), -127.0f)
+    // Restated for the CONSERVATIVE brush: the far cell no longer holds the
+    // literal untouched -127. field_brush.cc dilates every carve to the
+    // smallest shape the lattice can hold, and that AABB now reaches (3,3,3)
+    // and writes a still-deeply-negative distance there. The discrimination
+    // this guard exists for is untouched: the far cell must read NO DAMAGE
+    // (negative), never baked's false-positive +50. Starting from `baked`
+    // instead of the no-damage baseline would leave exactly +50 here,
+    // because the brush's max() can only raise a cell, never lower it.
+    ASSERT_LT(expected.distance_at(3, 3, 3), 0.0f)
         << "sanity: this test's own reference construction must show the "
-           "far cell as untouched no-damage, not baked's false-positive "
-           "+50 -- otherwise this test cannot discriminate the fix";
+           "far cell as no damage, not baked's false-positive +50 -- "
+           "otherwise this test cannot discriminate the fix";
 
     const voxel::AtlasLayout layout = voxel::atlas_layout_for(expected.dims);
     const auto expected_bytes = voxel::pack_field_to_atlas(expected, layout);
@@ -973,9 +1001,18 @@ TEST_F(InstanceFieldCacheTest, FieldStartsAsNoDamageNotHullGeometryFarFromAnyCar
     EXPECT_LT(far_decoded, kHullFieldIsoMarginMirror)
         << "far cell (byte " << static_cast<int>(far_byte) << ") must decode "
            "well below the discard margin -- i.e. NOT discarded";
-    EXPECT_EQ(far_byte, static_cast<std::uint8_t>(1))
-        << "far cell must be the most-negative byte (\"no damage\"), not "
-           "baked's own false-positive +50, which would encode to 178";
+    // Restated for the CONSERVATIVE brush: this is no longer the
+    // most-negative byte 1. voxel::kCarveFieldOffsetCells dilates every
+    // carve's write AABB, and on this 10-unit cell it sweeps past (3,3,3) and
+    // leaves the still-deeply-negative distance it computed there. The
+    // property under test is unchanged -- the cell must be on the NO-DAMAGE
+    // side of the 128 boundary, nowhere near baked's own false-positive +50
+    // (byte 178), which is what a field seeded from `baked` would show.
+    EXPECT_LT(far_byte, static_cast<std::uint8_t>(128))
+        << "far cell (byte " << static_cast<int>(far_byte) << ") must sit on "
+           "the no-damage side of the 128 boundary";
+    EXPECT_NE(far_byte, static_cast<std::uint8_t>(178))
+        << "far cell must not be baked's own false-positive +50";
 }
 
 }  // namespace

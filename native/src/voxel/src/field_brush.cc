@@ -27,12 +27,29 @@ void field_carve_oblate(DistanceField& f,
     const float nl = glm::length(n);
     n = (nl > 1e-4f) ? n / nl : glm::vec3(0.0f, 0.0f, 1.0f);
 
-    const float depth = kCarveDepthFactor * radius;
+    // Smallest cell axis: the field may be anisotropic, and every
+    // representability floor below has to hold on the WORST axis.
+    const float min_cell = std::min(f.cell.x, std::min(f.cell.y, f.cell.z));
 
-    // Only cells within the brush's AABB can change. The lateral reach is the
-    // full radius on every axis, so a radius-sized box bounds the oblate.
-    const glm::vec3 lo = center_body - glm::vec3(radius);
-    const glm::vec3 hi = center_body + glm::vec3(radius);
+    // Lateral half-extent covers the shader's OUTWARD rim perturbation, not
+    // just the nominal radius -- see kCarveRimAmp.
+    const float lat    = radius * (1.0f + kCarveRimAmp);
+    const float depth  = std::max(kCarveDepthFactor * radius,
+                                  kCarveDepthFloorCells * min_cell);
+    const float offset = kCarveFieldOffsetCells * min_cell;
+
+    // Only cells within the brush's AABB can change. The oblate is oriented
+    // along `n`, which is arbitrary in body frame, so the axis-aligned box
+    // must use the LARGEST half-extent on every axis. The offset dilates the
+    // brush's zero crossing outward by offset/|grad|, and the shallowest
+    // gradient is min(lat, depth)/max(lat, depth) -- so bound the reach by
+    // scaling the largest extent by the same dilation factor the shader
+    // computes. Under-sizing this box would silently truncate the carve at
+    // the box edge.
+    const float dil   = 1.0f + offset / std::min(lat, depth);
+    const float reach = std::max(lat, depth) * dil;
+    const glm::vec3 lo = center_body - glm::vec3(reach);
+    const glm::vec3 hi = center_body + glm::vec3(reach);
     auto to_cell = [&](const glm::vec3& p) {
         const glm::vec3 g = (p - f.origin) / f.cell;
         return glm::ivec3(int(std::floor(g.x)), int(std::floor(g.y)),
@@ -51,8 +68,10 @@ void field_carve_oblate(DistanceField& f,
             f.origin + (glm::vec3(x, y, z) + 0.5f) * f.cell;
         const glm::vec3 v = p - center_body;
         const float along   = glm::dot(v, n);
-        const glm::vec3 lat = v - along * n;
-        const float ld      = glm::length(lat);
+        // NB: `lat_vec`, not `lat` -- `lat` is the brush's lateral half-extent
+        // above, and shadowing it here silently reverted the rim dilation.
+        const glm::vec3 lat_vec = v - along * n;
+        const float ld          = glm::length(lat_vec);
 
         // Signed distance to the oblate, scaled back to model units. Dividing
         // each axis by its own half-extent turns the ellipsoid into a unit
@@ -60,14 +79,17 @@ void field_carve_oblate(DistanceField& f,
         // the correct sign at the ellipsoid boundary (shape fidelity). Monotonicity
         // is unconditional given the max() structure below: the scaling never
         // looks at d_old, only at -d_brush, so the max() cannot restore material.
-        const float u = ld / radius;
+        const float u = ld / lat;
         const float w = along / depth;
         const float unit = std::sqrt(u * u + w * w);
-        const float d_brush = (unit - 1.0f) * std::min(radius, depth);
+        const float d_brush = (unit - 1.0f) * std::min(lat, depth);
 
         const std::size_t i = f.index(x, y, z);
         const float d_old = static_cast<float>(f.dist[i]) * f.scale;
-        const float d_new = std::max(d_old, -d_brush);
+        // `+ offset` dilates the carve by a constant in the brush's own
+        // distance units. It is added to the BRUSH only, never to d_old, so
+        // the max() still cannot restore material: monotonicity holds.
+        const float d_new = std::max(d_old, -d_brush + offset);
 
         float q = std::round(d_new / f.scale);
         q = std::max(-127.0f, std::min(127.0f, q));
