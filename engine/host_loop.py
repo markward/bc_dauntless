@@ -4356,6 +4356,21 @@ def _ship_texture_search(nif_path, ship) -> list[str]:
     ``TextureNotFound`` and the whole ship is skipped — invisible, GetRadius()
     == 0, targeting reticle collapsed to a point.
 
+    The NIF's OWN directory is searched too, immediately after its tiered
+    subdirectory. Community ship mods have kept their textures loose beside
+    the .NIF for twenty years and stbc.exe loads them, so the bare directory
+    is a real search location — our reconstruction of FUN_0044f4a0 simply
+    did not capture it, and a reconstruction that omits a fallback is exactly
+    what silently breaks content the original handled. Without it such a ship
+    resolves nothing: model_build catches the TextureNotFound, substitutes its
+    magenta checkerboard, and the hull renders as a blown-out magenta
+    silhouette rather than failing loudly.
+
+    Order is load-bearing. ``<NIFdir>/<tier>`` stays FIRST so a properly
+    tiered ship still honours the texture-detail setting; the bare directory
+    comes next, before the shared dirs, so a ship's own texture wins over a
+    same-named file in SharedTextures.
+
     The legacy Federation shared dirs are appended as harmless trailing
     fallbacks so anything that previously resolved through them still does.
     """
@@ -4363,6 +4378,7 @@ def _ship_texture_search(nif_path, ship) -> list[str]:
     share = _ship_texture_share_path(ship)
     return [
         str(Path(nif_path).parent / tier),
+        str(Path(nif_path).parent),
         *[str(p) for p in _paths.game_asset_dirs(f"{share}/{tier}")],
         *[str(p) for p in _paths.game_asset_dirs(DEFAULT_TEXTURE_SEARCH)],
         *[str(p) for p in _paths.game_asset_dirs(
