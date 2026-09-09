@@ -426,7 +426,17 @@ def test_carve_survives_a_failing_effects_backend(monkeypatch):
     import Effects
     monkeypatch.setattr(Effects, "CreateDebrisExplosion",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    # Pin the death window and the cascade's RNG (see _pin_cascade_rand):
+    # left at the default unset-lifetime + real RNG, this assertion is only
+    # PROBABLY true -- at the true worst case (minimum 5.0s rolled duration,
+    # slowest legitimate blast spacing) as few as 12 blasts occur, and at a
+    # 30% carve chance each, P(zero carves) = 0.7**12 ~= 1.4%. Pinned as
+    # below, the cascade deterministically carves on every one of its ~67
+    # blasts (see _pin_cascade_rand's derivation) -- the assertion no longer
+    # depends on a draw at all.
+    _pin_cascade_rand(monkeypatch)
     ship = CarveRecordingShip(radius=4.0)
+    ship.GetLifeTime = lambda: 10.0
     _run_full_death(ship)
     assert ship.damage_calls, "VFX failure swallowed the hull damage too"
 
@@ -920,6 +930,26 @@ def _run_full_death(ship, seconds=None):
         ship_death.advance(1.0 / 60.0)
 
 
+# A fixed, non-adversarial RNG for tests whose assertions depend on a COUNT
+# derived from the cascade's random draws (blast spacing, the damage-chance
+# roll), rather than merely on its outcome shape. Drawing from the real
+# global RNG (App.g_kSystemWrapper) makes such a count depend on whatever ran
+# before this test in the suite's shared RNG stream -- the same class of bug
+# test_blasts_keep_lighting_the_scene_across_the_throes' long comment
+# documents for GetLifeTime. This covers the OTHER half: the number of
+# blasts, and how many of them carry a carve.
+#
+# n // 4 gives: rand(4) -> 1 (spacing 0.15s/step -- brisk but not degenerate;
+# 0 would collapse every blast onto the same instant), and critically
+# rand(10) -> 2, which satisfies `< DAMAGE_CHANCE_IN_10` (3) -- so EVERY
+# blast carves, deterministically, not merely "very likely". Ordinary
+# fixture: n // 2, used elsewhere (test_death_cascade_fireball.py's `mid`)
+# for pure-timing tests, cannot be reused here -- rand(10) -> 5 fails `< 3`,
+# so it would carve NOTHING, ever.
+def _pin_cascade_rand(monkeypatch):
+    monkeypatch.setattr(death_cascade, "_rand", lambda n: n // 4)
+
+
 def test_throes_duration_varies_per_ship():
     """BC rolls 5-15 s per ship; the old engine gave every ship a flat 5.0."""
     durations = set()
@@ -935,12 +965,27 @@ def test_throes_duration_varies_per_ship():
     assert max(durations) < death_cascade.THROES_MAX
 
 
-def test_death_carves_holes_through_the_dying_hull():
+def test_death_carves_holes_through_the_dying_hull(monkeypatch):
     """The headline behaviour: a ship dying under the cascade takes repeated
     AddDamage calls at BC's radius/4 and strength 600, which is what tears it
     open. The old sequence carved nothing."""
     from engine.appc import death_cascade
+    # Left at the default unset-lifetime + real RNG, `>= 3` is only PROBABLY
+    # true: a short rolled duration (BC's 5-15s branch) gives roughly 22
+    # blasts, and at a 30% carve chance the probability of fewer than 3
+    # carves is about 1% -- observed in the wild as this test failing once in
+    # five check_tests.sh runs and then hiding. Pinning GetLifeTime alone
+    # (as test_blasts_keep_lighting_the_scene_across_the_throes does) removes
+    # the DURATION randomness but not the per-blast spacing/carve-chance
+    # randomness stacked on top of it, so _pin_cascade_rand pins that too.
+    # Worst case is no longer probabilistic at all: with both pinned, the
+    # cascade deterministically produces 67 blasts over the 10s window and
+    # EVERY one of them carves (see _pin_cascade_rand's derivation of its
+    # rand(10) -> 2 branch), so len(ship.damage_calls) == 67, comfortably
+    # clearing the >= 3 floor with no dependence on any draw.
+    _pin_cascade_rand(monkeypatch)
     ship = CarveRecordingShip(radius=4.0)
+    ship.GetLifeTime = lambda: 10.0
     _run_full_death(ship)
 
     assert len(ship.damage_calls) >= 3, (
@@ -950,12 +995,26 @@ def test_death_carves_holes_through_the_dying_hull():
         assert strength == pytest.approx(death_cascade.DAMAGE_STRENGTH)
 
 
-def test_carves_are_spread_over_the_hull():
+def test_carves_are_spread_over_the_hull(monkeypatch):
     """Each blast samples GetRandomPointOnModel afresh, so the ship ends up
     holed all over rather than in one place."""
+    # CarveRecordingShip.GetRandomPointOnModel increments a counter on EVERY
+    # call and is called once per blast regardless of whether that blast
+    # rolls a carve, so the x values recorded in damage_calls are already
+    # guaranteed pairwise distinct by construction -- this assertion cannot
+    # fail from bad luck. Its actual "different kind of luck" is a VACUOUS
+    # pass: at the true worst case (minimum rolled duration, slowest
+    # legitimate spacing, zero successful carve rolls) damage_calls can be
+    # EMPTY, and `len(set([])) == len([])` (0 == 0) passes without having
+    # verified anything. Pinning as in the sibling tests above removes that
+    # possibility too: the cascade deterministically produces 67 carves over
+    # the 10s window, so `xs` is both non-trivial and distinct.
+    _pin_cascade_rand(monkeypatch)
     ship = CarveRecordingShip()
+    ship.GetLifeTime = lambda: 10.0
     _run_full_death(ship)
     xs = [pt.x for pt, _r, _s in ship.damage_calls]
+    assert len(xs) >= 3, f"only {len(xs)} carves -- too few to prove a spread"
     assert len(set(xs)) == len(xs)
 
 
