@@ -52,6 +52,24 @@ exactly, because stock was never touched.
 - **Conflict *resolution*.** Conflicts are detected and reported; ordering is
   alphabetical and arbitrary until Spec 2 provides explicit ordering.
 - **Mod-authored content in our own formats.** Only BC-shaped trees.
+- **Sandboxing third-party code.** An enabled mod's `Scripts/` are loaded and
+  **executed** by `_SDKFinder` like any SDK module — that is the whole point
+  of a mod that changes behaviour, and BC's paste-over model was no different.
+  There is no review, signing, or capability limit, and this spec does not
+  add one. The single guard is that a mod may not shadow a **standard
+  library** module name, which exists so that a mod accidentally shipping
+  `Scripts/pickle.py` fails legibly instead of surfacing as an unrelated
+  crash deep in engine code. It is not a security boundary and must not be
+  described as one.
+- **`sfx/` as a placeable content directory.** The real BC install root holds
+  `data/`, `scripts/` **and** `sfx/`, and `engine/lip_sync_runtime.py`
+  resolves `sfx/...` through `game_asset()` — but `_TARGET_FOR` maps only
+  `Data/` and `Scripts/`. A mod shipping voice or sound packs is therefore
+  reported "unplaced: sfx", or "no BC content found" if `sfx/` is all it
+  ships. That is a whole mod category this version does not support, named
+  here so the report's wording is understood as a limitation rather than a
+  bug. Adding it is one `_TARGET_FOR` entry plus a target root, deferred
+  because nothing else in the pipeline has been checked against it.
 
 ## Licensing constraint (why `mods/` is gitignored)
 
@@ -155,8 +173,15 @@ Collapsing `Ships` and `ships` to one key is **faithful**, not a
 compromise: on BC's filesystem they were one directory.
 
 Python module names *are* case-sensitive, so `_SDKFinder` performs the same
-folded lookup — a mod's `Scripts/Ships/Fsteamr.py` then resolves for both
-`import Ships.Fsteamr` and `import ships.Fsteamr`, again matching BC.
+folded lookup for the module it is asked to load. **Only the leaf lookup is
+folded.** `import ships.Fsteamr` first resolves the parent package `ships`,
+and that lookup is raw-case against the SDK, so on a case-sensitive
+filesystem `import Ships.Fsteamr` still fails at the `Ships` step — there is
+no stock `Ships/` directory to bind. What the fold buys is that a mod
+spelling the file `Scripts/Ships/Fsteamr.py` on disk still satisfies the
+import the SDK actually writes, `import ships.Fsteamr`. On APFS both
+spellings work, but by filesystem luck — the exact accident this spec exists
+to remove, so do not rely on it.
 
 **Safety of folding:** no two stock files may differ only by case, or folding
 would merge them. This holds by construction — BC content ships from a

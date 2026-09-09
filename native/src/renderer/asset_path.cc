@@ -24,11 +24,20 @@ std::map<std::string, std::string>& mutable_overrides() {
     return overrides;
 }
 
-// Mirrors engine/mods.py:fold() exactly -- the same three operations in the
-// same order: backslashes to forward slashes, strip leading AND trailing
-// '/', then lowercase. Python builds the map's keys and C++ looks them up,
-// so any divergence here means the map silently never hits. Keep both sides
-// in sync if either changes.
+// Mirrors engine/mods.py:fold() -- the same three operations in the same
+// order: backslashes to forward slashes, strip leading AND trailing '/',
+// then lowercase. Python builds the map's keys and C++ looks them up, so any
+// divergence here means the map silently never hits. Keep both sides in sync
+// if either changes.
+//
+// ONE EXCEPTION, and it is a real one: std::tolower lowercases BYTES, while
+// Python's str.lower() is Unicode-aware. A path component containing a
+// non-ASCII uppercase letter therefore folds differently on the two sides,
+// and that key is unreachable from C++ -- no error, the asset just silently
+// resolves to stock. BC's own content is ASCII, but a mod folder named by a
+// non-English author need not be. Fixing it means a Unicode-aware fold here
+// (or restricting the map to ASCII-foldable keys); until then this comment
+// is the record.
 std::string fold_key(const std::string& path) {
     std::string out;
     out.reserve(path.size());
