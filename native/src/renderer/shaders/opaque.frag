@@ -725,8 +725,25 @@ void main() {
                         vec3 up = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
                         vec3 t  = normalize(cross(up, n));
                         vec3 b  = cross(n, t);
-                        vec2 uv = vec2(dot(lateral, t), dot(lateral, b))
-                                  / (r * kFrameUvScale) * 0.5 + 0.5;
+                        // Per-carve stencil ORIENTATION. Without this, `t`/`b`
+                        // depend only on the breach normal, so every breach on
+                        // a similarly-facing surface -- the whole top of a
+                        // saucer -- gets Damage.tga stamped with the same basis
+                        // AND the same centred crop. Adjacent hits then read as
+                        // one stamp repeated rather than as separate damage.
+                        //
+                        // Seeded from the carve centre: stable across frames
+                        // (so the lattice does not crawl), different per carve,
+                        // and identical in the u_carve_invert marking pass
+                        // because that derives it from the same `c`. If the two
+                        // ever disagreed the stencil would stop matching the
+                        // hole it is cut from.
+                        float ang = vh3(c * 0.37) * 6.28318530718;
+                        float cs  = cos(ang), sn = sin(ang);
+                        vec2  luv = vec2(dot(lateral, t), dot(lateral, b));
+                        luv = vec2(cs * luv.x - sn * luv.y,
+                                   sn * luv.x + cs * luv.y);
+                        vec2 uv = luv / (r * kFrameUvScale) * 0.5 + 0.5;
                         float a    = texture(u_damage_decal, uv).a;
                         float frac = sqrt(e);                   // 0 center .. 1 rim
                         // Keep a hull strut where the stencil is opaque (the lattice)
