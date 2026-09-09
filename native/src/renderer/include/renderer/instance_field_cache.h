@@ -15,15 +15,32 @@
 
 namespace renderer {
 
-/// Per-instance mutable hull damage field.
+/// Per-instance mutable hull DAMAGE field -- NOT a copy of the hull's own
+/// shape.
 ///
 /// Task 3's HullVolumeCache bakes ONE immutable signed distance field per
-/// hull SOURCE and never mutates it -- every instance of that hull (every
-/// Galaxy in the sector) must not share one battle-scarred field. This class
-/// is the per-INSTANCE layer on top: on an instance's first carve() it
-/// copies the shared baked field into a private, mutable field just for that
-/// instance, then applies voxel::field_carve_oblate to the copy. Later
-/// carves mutate that same private copy in place.
+/// hull SOURCE (the hull's own triangles) and never mutates it -- every
+/// instance of that hull (every Galaxy in the sector) must not share one
+/// battle-scarred field. This class is the per-INSTANCE layer on top, but on
+/// an instance's first carve() it does NOT copy the baked field's cell
+/// values: it copies only the baked field's LATTICE (dims/origin/cell/scale)
+/// into a private, mutable field for that instance, with every cell set to
+/// -127 ("no damage anywhere"), then applies voxel::field_carve_oblate to
+/// that. Later carves mutate the same private field in place.
+///
+/// Why not copy the baked hull SDF itself (the design this class shipped
+/// with first, and the bug this comment now warns against): trilinear
+/// reconstruction of a hull SDF cannot represent a plate a few cells thick --
+/// the reconstructed surface lands inside the real one, so BOTH faces of a
+/// thin panel (the saucer rim, pylons) read "outside the hull" and opaque.frag
+/// discards them, live, on any ship carrying so much as one entry here. A
+/// damage-only field sidesteps this entirely: untouched hull is exactly the
+/// no-damage value (-127) everywhere, so it can never be discarded regardless
+/// of reconstruction error, and the only cells that carry any signal are
+/// ones a brush actually touched, where sub-cell error is harmless (the carve
+/// boundary already has kHullFieldIsoMargin's slack -- see opaque.frag).
+/// field_carve_oblate needs no change for this: it already computes
+/// `d = max(d_old, -d_brush)`, monotonic regardless of what d_old means.
 ///
 /// An instance that is never carve()'d has NO entry here at all -- get()
 /// returns nullptr, nothing is packed, nothing is uploaded. That is the
@@ -71,10 +88,12 @@ public:
     InstanceFieldCache(const InstanceFieldCache&) = delete;
     InstanceFieldCache& operator=(const InstanceFieldCache&) = delete;
 
-    /// Carve into this instance's field, creating it (copy-on-first-carve
-    /// from the baked cache) if it does not exist yet. No-op -- no entry is
-    /// created or touched -- when the hull has no baked field (missing or
-    /// unparseable source, or a genuinely empty mesh).
+    /// Carve into this instance's field, creating it (lattice-only
+    /// copy-on-first-carve from the baked cache, filled with "no damage") if
+    /// it does not exist yet. No-op -- no entry is created or touched --
+    /// when the hull has no baked field (missing or unparseable source, or a
+    /// genuinely empty mesh): the baked field is still the one thing that
+    /// tells this instance where its lattice sits and how coarse it is.
     void carve(scenegraph::InstanceId id, const std::filesystem::path& source,
                float authored_res, const glm::vec3& center_body,
                const glm::vec3& normal_body, float radius);
@@ -110,7 +129,12 @@ private:
     };
 
     struct Instance {
-        voxel::DistanceField field;   // this instance's own mutable copy
+        // This instance's own mutable DAMAGE field: same lattice as the
+        // baked hull field (dims/origin/cell/scale), but its cell VALUES
+        // are not the baked field's -- they start at -127 ("no damage") and
+        // only ever move where a carve touched them. See this header's
+        // class comment.
+        voxel::DistanceField field;
         Entry pub;
         bool dirty = true;
     };

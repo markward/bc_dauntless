@@ -153,7 +153,10 @@ uniform int u_carve_invert;   // 0 = normal hull draw; 1 = stencil-marking draw
 // Every Z-slice of the instance's DistanceField is tiled into one 2D texture
 // with a replicated 1-texel border per tile, so hardware bilinear filtering
 // INSIDE a slice cannot bleed into a neighbouring tile's data.
-uniform sampler2D u_hull_field;      // R8 slice atlas; 128 = the hull surface
+uniform sampler2D u_hull_field;      // R8 slice atlas; DAMAGE field (not hull
+                                      // shape -- renderer/instance_field_cache.h);
+                                      // 128 = a carve's zero crossing, 1 = the
+                                      // most-negative byte ("no damage")
 uniform int   u_hull_field_enabled;  // 0 = stock path, zero per-fragment cost
 uniform vec3  u_hull_field_origin;   // body frame, model units
 uniform vec3  u_hull_field_cell;     // model units per cell
@@ -175,10 +178,12 @@ float hull_field_slice(float slice, vec2 sxy, float tile_w, float tile_h) {
     return texture(u_hull_field, atlas_texel * u_hull_field_texel).r;
 }
 
-// Sample the per-instance hull field at a body-frame point, returning a
+// Sample the per-instance DAMAGE field at a body-frame point, returning a
 // value whose SIGN matches voxel::DistanceField's convention rescaled from
-// the packed encoding: negative = inside solid hull, positive = outside (a
-// carved cavity or genuinely outside the hull). ONE function -- every
+// the packed encoding: negative = no damage at this point (the untouched
+// default, -127, everywhere field_carve_oblate's brushes have never reached
+// -- this is NOT "inside solid hull" in the hull-SDF sense; it is simply
+// "not carved"), positive = carved (a discard). ONE function -- every
 // consumer of the field (today's clip, anything added later) must sample
 // through here so they cannot drift apart.
 //
@@ -222,18 +227,28 @@ float sample_hull_field(vec3 p_body) {
 
     float v0 = hull_field_slice(s0, sxy, tile_w, tile_h);
     float v1 = hull_field_slice(s1, sxy, tile_w, tile_h);
-    return mix(v0, v1, wz) - (128.0 / 255.0);   // > 0 outside the hull, < 0 inside
+    return mix(v0, v1, wz) - (128.0 / 255.0);   // > 0 carved (discard), < 0 no damage
 }
 
 // Discard margin, in sample_hull_field's own return units. MUST be > 0, not
-// 0 -- every fragment this shader shades sits ON the hull's mesh surface by
-// construction (that is what is being drawn), so its TRUE distance is ~0.
-// The baked field is the SDF of those same triangles, so on any locally
-// planar panel its zero crossing coincides with the drawn surface to within
-// quantisation -- at d == 0 exactly the SIGN of the decoded sample is
-// decided by rounding noise, not geometry. Comparing against a bare 0.0
-// there discards in a dithered speckle pattern across the WHOLE hull of any
-// damaged ship, not just where a carve actually cut material away.
+// 0.
+//
+// NOTE on what this guards, post hull-volume-field-transport's damage-field
+// fix: the per-instance field carries DAMAGE, not hull geometry
+// (renderer/instance_field_cache.h) -- every untouched cell is -127 ("no
+// damage"), nowhere near the zero crossing, so an UNDAMAGED fragment's
+// sampled value is never close enough to 0 for quantisation rounding to flip
+// its sign. This margin is therefore no longer guarding "every fragment on
+// the hull sits at d~0" (that framing described the OLD design, where this
+// field was a copy of the hull's own SDF, and rounding noise at that
+// everywhere-zero crossing produced hard-edged holes across the whole hull
+// the instant a ship took any damage at all -- see the fix's report). What
+// remains is the CARVE BOUNDARY: field_carve_oblate writes a real, brush-
+// shaped zero crossing at the rim of every cavity it cuts, and a fragment
+// right at that rim is exactly as exposed to quantisation rounding as any
+// fragment was under the old design -- just now confined to carved regions
+// instead of the whole hull. Comparing against a bare 0.0 there would
+// speckle that rim in a dithered pattern rather than cutting a clean edge.
 //
 // Derivation: sample_hull_field's return value is d / (scale * 255) plus at
 // most +-0.5/255 of rounding error (see its own derivation above) -- i.e.
@@ -246,23 +261,19 @@ float sample_hull_field(vec3 p_body) {
 //
 // SCOPE, and what this constant does NOT cover: the derivation above bounds
 // QUANTISATION error only (~0.5*scale, ~0.24 model units at BC's authored
-// 15-unit resolution and quality 1). The error that decides the sign at a
-// given surface fragment is actually TRILINEAR RECONSTRUCTION error against
-// the true continuous surface, which is ~0 on a locally planar panel (where
-// this margin's own derivation is scoped, and where almost the whole hull
-// is) but grows large at convex edges and sub-cell-thick features -- roughly
-// 0.24 CELLS (not 0.24 model units) at a fragment 0.1 cells from a 90-degree
-// exterior corner, i.e. ~3.6 model units at that same 15-unit/quality-1
-// resolution: 4-15x this margin. Enlarging kHullFieldIsoMargin to cover that
-// is NOT the fix (a cell-scaled margin would be ~32x larger here and would
-// start eating small carves -- the exact counter-pressure that made an iso
-// offset the right shape of fix over a cell-sized one). That residual is not
-// observable headlessly (every test in hull_field_clip_test.cc probes flat,
-// locally-planar synthetic fields) and needs the live check: if speckle
-// shows up localised to hull EDGES and thin plates specifically -- not
-// spread across whole flat panels -- that is this residual, not a driver
-// bug, and the fix is a larger margin or a different sampling strategy for
-// those regions, decided from what is actually seen live.
+// 15-unit resolution and quality 1). TRILINEAR RECONSTRUCTION error against
+// the true continuous carve boundary grows large at sub-cell-thick features
+// near a cavity's rim -- the same shape of error that, under the old
+// whole-hull-SDF design, discarded thin plating everywhere; here it is
+// confined to the immediate vicinity of an actual carve, where a wrong
+// discard reads as a slightly wrong hole edge rather than a vanished panel.
+// Enlarging kHullFieldIsoMargin to cover that residual is NOT the fix (a
+// cell-scaled margin would be ~32x larger here and would start eating small
+// carves). That residual is not observable headlessly (every test in
+// hull_field_clip_test.cc probes flat, locally-planar synthetic fields) and
+// needs the live check: if speckle shows up localised to a carve's own rim
+// on a thin-plated ship, that is this residual, not a driver bug or a
+// regression of the damage-field fix.
 const float kHullFieldIsoMargin = 0.5 / 255.0;
 
 // ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
@@ -757,10 +768,12 @@ void main() {
     // shape) is authoritative and untouched.
     if (u_hull_field_enabled != 0 && !inside_any_oblate) {
         // kHullFieldIsoMargin, not 0.0: see its derivation above this
-        // function -- every fragment here sits ON the hull surface (d ~ 0),
-        // so comparing the raw sign against zero would discard in a
-        // dithered speckle pattern decided by quantisation rounding rather
-        // than by real geometry.
+        // function. An UNDAMAGED fragment here reads -127 ("no damage"),
+        // nowhere near zero, so the margin is not guarding it -- it guards
+        // fragments right at a carve's own rim, where field_carve_oblate's
+        // brush actually crosses zero and quantisation rounding could
+        // otherwise decide the sign in a dithered speckle pattern instead
+        // of real geometry.
         bool field_cut = sample_hull_field(p_body) > kHullFieldIsoMargin;
         if (u_carve_invert != 0) {
             if (field_cut) marked = true;

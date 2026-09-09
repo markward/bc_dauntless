@@ -250,9 +250,16 @@ TEST(FieldAtlas, EmptyFieldPacksToNothing) {
            "when paired with an otherwise-valid layout";
 }
 
-TEST(FieldAtlas, UnusedTilesReadAsEmptySpace) {
+TEST(FieldAtlas, UnusedTilesReadAsNoDamage) {
     // dims.z = 3: tiles_x = ceil(sqrt(3)) = 2, tiles_y = ceil(3/2) = 2, so the
     // grid has 4 tile slots for 3 slices -- tile index 3 is unused.
+    //
+    // This atlas packs the per-instance DAMAGE field (renderer/
+    // instance_field_cache.h), not hull shape: d=127 (encode(127), the OLD
+    // fill value here) would decode as "carved" -- a sampling bug reaching
+    // an unused tile would read as a hole. d=-127 is the correct fill: the
+    // most-negative byte the format holds, i.e. "no damage", matching every
+    // untouched cell in a real instance field.
     const glm::ivec3 dims(4, 4, 3);
     const voxel::DistanceField f = pattern_field(dims);
     const voxel::AtlasLayout l = voxel::atlas_layout_for(dims);
@@ -266,8 +273,8 @@ TEST(FieldAtlas, UnusedTilesReadAsEmptySpace) {
     for (int x = 0; x < l.tile_w; ++x) {
         const int ax = unused_tile_ox + x;
         const int ay = unused_tile_oy + y;
-        EXPECT_EQ(bytes[static_cast<std::size_t>(ay) * l.width + ax], encode(127))
-            << "unused tile must read fully outside (d=127), not as hull, at ("
+        EXPECT_EQ(bytes[static_cast<std::size_t>(ay) * l.width + ax], encode(-127))
+            << "unused tile must read as no damage (d=-127), not as a hole, at ("
             << x << "," << y << ")";
     }
 }

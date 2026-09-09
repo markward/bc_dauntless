@@ -1,8 +1,13 @@
 // native/tests/renderer/instance_field_cache_test.cc
 //
-// renderer::InstanceFieldCache: one mutable signed distance field per
-// DAMAGED ship instance, copy-on-first-carve from the shared per-hull baked
-// field (voxel::HullVolumeCache), packed into a GL_R8 2D atlas on demand.
+// renderer::InstanceFieldCache: one mutable DAMAGE field per DAMAGED ship
+// instance, built on first carve() from the shared per-hull baked field's
+// LATTICE ONLY (voxel::HullVolumeCache -- dims/origin/cell/scale, not its
+// cell values, which are the hull's own SDF and NOT what this field stores),
+// packed into a GL_R8 2D atlas on demand. See no_damage_field() below and
+// instance_field_cache.h's class comment for why: copying the baked SDF's
+// values discarded large hard-edged chunks of undamaged hull live, on any
+// ship that had taken so much as one hit.
 //
 // Every test constructs its own local voxel::HullVolumeCache and injects it
 // via InstanceFieldCache's bake_cache constructor argument, rather than
@@ -134,6 +139,44 @@ std::vector<std::uint8_t> read_atlas(const InstanceFieldCache::Entry& e) {
     glBindTexture(GL_TEXTURE_2D, 0);
     glPixelStorei(GL_PACK_ALIGNMENT, prev_pack);
     return pixels;
+}
+
+// The production "no damage" baseline InstanceFieldCache::carve() actually
+// builds on an instance's first carve: `baked`'s LATTICE (dims/origin/cell/
+// scale) only, every cell at -127. Every test below that used to write
+// `voxel::DistanceField expected = baked;` before applying field_carve_oblate
+// was silently asserting the OLD (and now-fixed) "copy the hull SDF" design;
+// they build their reference field from this helper instead, so the
+// byte-for-byte comparisons check what InstanceFieldCache actually does
+// today. This mirrors instance_field_cache.cc's carve() construction rather
+// than calling it, so a regression in that construction (e.g. reverting to
+// `inst.field = baked`) is exactly what these tests catch -- see this file's
+// FieldStartsAsNoDamageNotHullGeometryFarFromAnyCarve for the test built
+// specifically to prove that.
+voxel::DistanceField no_damage_field(const voxel::DistanceField& baked) {
+    voxel::DistanceField f;
+    f.dims   = baked.dims;
+    f.origin = baked.origin;
+    f.cell   = baked.cell;
+    f.scale  = baked.scale;
+    f.dist.assign(static_cast<std::size_t>(baked.dims.x)
+                * static_cast<std::size_t>(baked.dims.y)
+                * static_cast<std::size_t>(baked.dims.z),
+                  static_cast<std::int8_t>(-127));
+    return f;
+}
+
+// Index into a packed atlas (voxel::pack_field_to_atlas's own documented
+// interior-texel placement: 'tile_ox + 1 + x, tile_oy + 1 + y' -- see
+// field_atlas.h) for one field cell (x, y, z). Lets a test pin exactly one
+// cell's byte without re-deriving the whole array.
+std::size_t atlas_interior_index(const voxel::AtlasLayout& l, int x, int y, int z) {
+    const int tile_ox = (z % l.tiles_x) * l.tile_w;
+    const int tile_oy = (z / l.tiles_x) * l.tile_h;
+    const int ax = tile_ox + 1 + x;
+    const int ay = tile_oy + 1 + y;
+    return static_cast<std::size_t>(ay) * static_cast<std::size_t>(l.width)
+         + static_cast<std::size_t>(ax);
 }
 
 constexpr float kAuthoredRes = 10.0f;
@@ -355,27 +398,28 @@ TEST_F(InstanceFieldCacheTest, TwoInstancesOfSameHullGetIndependentFields) {
     EXPECT_NE(ea->tex2d, eb->tex2d)
         << "distinct instances must not share one GL texture object";
 
-    // Independently-computed expectations: each starts from the SAME baked
-    // field but is carved ONLY at its own instance's location.
-    voxel::DistanceField expected_a = baked;
+    // Independently-computed expectations: each starts from the production
+    // "no damage" baseline (baked's LATTICE, not its cell values -- see
+    // no_damage_field) and is carved ONLY at its own instance's location.
+    voxel::DistanceField expected_a = no_damage_field(baked);
     voxel::field_carve_oblate(expected_a, p_a, kUp, radius);
     const voxel::AtlasLayout layout_a = voxel::atlas_layout_for(expected_a.dims);
     const std::vector<std::uint8_t> expected_a_bytes =
         voxel::pack_field_to_atlas(expected_a, layout_a);
 
-    voxel::DistanceField expected_b = baked;
+    voxel::DistanceField expected_b = no_damage_field(baked);
     voxel::field_carve_oblate(expected_b, p_b, kUp, radius);
     const voxel::AtlasLayout layout_b = voxel::atlas_layout_for(expected_b.dims);
     const std::vector<std::uint8_t> expected_b_bytes =
         voxel::pack_field_to_atlas(expected_b, layout_b);
 
     // Sanity: the two expectations must actually differ from each other and
-    // from the untouched baked field, or this test would pass vacuously no
-    // matter what InstanceFieldCache does.
-    const std::vector<std::uint8_t> baked_bytes =
-        voxel::pack_field_to_atlas(baked, voxel::atlas_layout_for(baked.dims));
-    ASSERT_NE(expected_a_bytes, baked_bytes);
-    ASSERT_NE(expected_b_bytes, baked_bytes);
+    // from the untouched no-damage baseline, or this test would pass
+    // vacuously no matter what InstanceFieldCache does.
+    const std::vector<std::uint8_t> no_damage_bytes = voxel::pack_field_to_atlas(
+        no_damage_field(baked), voxel::atlas_layout_for(baked.dims));
+    ASSERT_NE(expected_a_bytes, no_damage_bytes);
+    ASSERT_NE(expected_b_bytes, no_damage_bytes);
     ASSERT_NE(expected_a_bytes, expected_b_bytes);
 
     EXPECT_EQ(read_atlas(*ea), expected_a_bytes)
@@ -435,13 +479,13 @@ TEST_F(InstanceFieldCacheTest, ProductionDepositAppearsInBothSphereAndInstanceFi
     // tests in this file guard against).
     const InstanceFieldCache::Entry* e = cache.get(id);
     ASSERT_NE(e, nullptr);
-    voxel::DistanceField expected = baked;
+    voxel::DistanceField expected = no_damage_field(baked);
     voxel::field_carve_oblate(expected, center_body, kUp, result.radius);
     const auto expected_bytes = voxel::pack_field_to_atlas(
         expected, voxel::atlas_layout_for(expected.dims));
-    const auto baked_bytes = voxel::pack_field_to_atlas(
-        baked, voxel::atlas_layout_for(baked.dims));
-    ASSERT_NE(expected_bytes, baked_bytes)
+    const auto no_damage_bytes = voxel::pack_field_to_atlas(
+        no_damage_field(baked), voxel::atlas_layout_for(baked.dims));
+    ASSERT_NE(expected_bytes, no_damage_bytes)
         << "sanity: the carve must actually change something";
     EXPECT_EQ(read_atlas(*e), expected_bytes)
         << "the instance field must carry the SAME carve the sphere just "
@@ -485,9 +529,10 @@ TEST_F(InstanceFieldCacheTest, ThirtyCarvesAllSurviveInTheField) {
 
     // Independently-built expectation: apply the SAME oblate brush the
     // production carve uses, at every one of the 30 centres, to a private
-    // copy of the baked field -- built by this test, not read back from the
-    // cache under test.
-    voxel::DistanceField expected = baked;
+    // "no damage" field built from baked's lattice (not baked's cell
+    // values -- see no_damage_field) -- built by this test, not read back
+    // from the cache under test.
+    voxel::DistanceField expected = no_damage_field(baked);
     for (const glm::vec3& c : centers) {
         const renderer::HullCarveDepositResult result = renderer::hull_carve_deposit(
             sphere_field, &cache, id, src, kAuthoredRes, c, kUp,
@@ -507,11 +552,11 @@ TEST_F(InstanceFieldCacheTest, ThirtyCarvesAllSurviveInTheField) {
     // the cache under test): proves this test's own construction actually
     // touched all 30 cells, so the byte-equality below is not comparing two
     // equally-untouched arrays.
-    const auto baked_bytes = voxel::pack_field_to_atlas(
-        baked, voxel::atlas_layout_for(baked.dims));
+    const auto no_damage_bytes = voxel::pack_field_to_atlas(
+        no_damage_field(baked), voxel::atlas_layout_for(baked.dims));
     const auto expected_bytes = voxel::pack_field_to_atlas(
         expected, voxel::atlas_layout_for(expected.dims));
-    ASSERT_NE(expected_bytes, baked_bytes);
+    ASSERT_NE(expected_bytes, no_damage_bytes);
     for (int j = 0; j < 6; ++j) {
         for (int i = 0; i < 5; ++i) {
             EXPECT_GT(expected.distance_at(i, j, 0), 0.0f)
@@ -599,9 +644,9 @@ TEST_F(InstanceFieldCacheTest, DestroyedAndRecreatedInstanceDoesNotInheritOldFie
     ASSERT_NE(new_entry, nullptr);
 
     // Correctness: the new instance's field reflects ONLY its own carve --
-    // freshly copied from the baked field, not the old instance's
+    // freshly built from the no-damage baseline, not the old instance's
     // battle-scarred copy.
-    voxel::DistanceField expected_new = baked;
+    voxel::DistanceField expected_new = no_damage_field(baked);
     voxel::field_carve_oblate(expected_new, glm::vec3(35.0f, 35.0f, 35.0f),
                               kUp, new_result.radius);
     const auto expected_new_bytes = voxel::pack_field_to_atlas(
@@ -689,21 +734,24 @@ TEST_F(InstanceFieldCacheTest, MergedDepositCarvesTheFieldAtTheSlotsStoredCentre
     // Independently-built expectation: BOTH deposits landed on the SAME
     // slot, so a correct implementation carves the field at `a` twice (first
     // at first.radius, then again at the grown second.radius) -- never at
-    // `b`.
-    voxel::DistanceField expected = baked;
+    // `b`. Starts from the production "no damage" baseline (baked's lattice,
+    // not its cell values), matching what InstanceFieldCache::carve()
+    // actually builds on first use.
+    const voxel::DistanceField no_damage = no_damage_field(baked);
+    voxel::DistanceField expected = no_damage;
     voxel::field_carve_oblate(expected, a, kUp, first.radius);
     voxel::field_carve_oblate(expected, a, kUp, second.radius);
     const auto expected_bytes = voxel::pack_field_to_atlas(
         expected, voxel::atlas_layout_for(expected.dims));
 
     // Sanity: the reference construction actually changed something, and b's
-    // cell specifically stayed at the untouched baked value -- otherwise
+    // cell specifically stayed at the untouched no-damage value -- otherwise
     // this test could pass vacuously regardless of where the real
     // implementation carved.
-    const auto baked_bytes = voxel::pack_field_to_atlas(
-        baked, voxel::atlas_layout_for(baked.dims));
-    ASSERT_NE(expected_bytes, baked_bytes);
-    ASSERT_FLOAT_EQ(expected.distance_at(3, 0, 0), baked.distance_at(3, 0, 0))
+    const auto no_damage_bytes = voxel::pack_field_to_atlas(
+        no_damage, voxel::atlas_layout_for(baked.dims));
+    ASSERT_NE(expected_bytes, no_damage_bytes);
+    ASSERT_FLOAT_EQ(expected.distance_at(3, 0, 0), no_damage.distance_at(3, 0, 0))
         << "sanity: b's cell must stay untouched in the reference "
            "construction too, or this test cannot discriminate";
 
@@ -816,6 +864,118 @@ TEST_F(InstanceFieldCacheTest, CarveWithNoBackingMaterialIsAbsentFromField) {
             << "with backing material present, the field carve must proceed "
                "exactly as it did before this gate existed";
     }
+}
+
+// ── Damage-field fix (hull-volume-field-transport design error) ────────────
+//
+// THE bug this whole fix exists for, reproduced at the field-content level:
+// live testing found that as soon as a ship took ANY damage, large
+// hard-edged chunks vanished from the hull ALL OVER the ship -- the saucer
+// rim, the pylons, thin plating -- not just at the carve. Root cause: the
+// pre-fix design copied the baked hull SDF's own cell VALUES
+// (`inst.field = baked`) into the instance field, and trilinear
+// reconstruction of that SDF cannot represent a plate a few cells thick --
+// the reconstructed surface lands inside the real one, so both faces read
+// "outside the hull" (positive) and opaque.frag discards them, everywhere
+// this happened on the mesh, the instant the instance had ANY field entry
+// at all (frame.cc enables the clip per-INSTANCE, not per-fragment).
+//
+// The fix: the instance field carries DAMAGE, not hull geometry. It starts
+// as baked's LATTICE ONLY (dims/origin/cell/scale) with every cell at -127
+// ("no damage"), so untouched hull is always the no-damage value regardless
+// of what the baked SDF's reconstruction would have said there, and only a
+// carve's own brush ever writes a different value.
+//
+// `baked` below is deliberately uniform +50 -- not a realistic hull SDF
+// value at every cell, but the live bug's worst-case OUTPUT: every
+// untouched cell reading "outside the hull" under the old copy-the-SDF
+// design, exactly what a thin-plated ship produced in practice. This test
+// does not attempt to reproduce the reconstruction-error geometry itself
+// (that needs a real mesh); it goes straight to the field values that
+// geometry produces, which is what InstanceFieldCache and opaque.frag
+// actually consume.
+//
+// Discrimination: reverting instance_field_cache.cc's carve() back to
+// `inst.field = baked;` makes the far cell probed below encode(50) = 178
+// (positive -- discarded) instead of encode(-127) = 1 (no damage -- kept).
+// Confirmed live: reverting that one line and re-running just this test
+// fails both the byte-array EXPECT_EQ and the explicit far-byte/margin
+// assertions below; restoring the fix and re-running passes again (see the
+// task report for the transcript, and a byte-diff proving the restore was
+// exact).
+TEST_F(InstanceFieldCacheTest, FieldStartsAsNoDamageNotHullGeometryFarFromAnyCarve) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_no_damage_baseline");
+    const auto src = make_source("hull_no_damage_baseline.nif", "hull");
+
+    voxel::DistanceField baked;
+    baked.dims   = glm::ivec3(4, 4, 4);
+    baked.origin = glm::vec3(0.0f);
+    baked.cell   = glm::vec3(10.0f);
+    baked.scale  = 1.0f;
+    baked.dist.assign(static_cast<std::size_t>(4 * 4 * 4),
+                      static_cast<std::int8_t>(50));
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, baked));
+
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+
+    // Carve cell (0,0,0) only -- see TwoInstancesOfSameHullGetIndependentFields
+    // above for why a radius-3 carve on a 10-unit cell cannot touch any
+    // other cell.
+    const glm::vec3 carve_center(5.0f, 5.0f, 5.0f);
+    cache.carve(id, src, kAuthoredRes, carve_center, kUp, 3.0f);
+
+    const InstanceFieldCache::Entry* e = cache.get(id);
+    ASSERT_NE(e, nullptr);
+
+    // Independently-built expectation: the production "no damage" baseline
+    // (baked's LATTICE only -- see no_damage_field), carved at the same
+    // point.
+    voxel::DistanceField expected = no_damage_field(baked);
+    voxel::field_carve_oblate(expected, carve_center, kUp, 3.0f);
+
+    // Sanity on the reference construction itself: the carved cell must
+    // actually read positive (it WAS carved), and the FAR cell -- (3,3,3),
+    // nowhere near the carve -- must read the untouched no-damage value
+    // (-127), NOT baked's false-positive +50. If this sanity check itself
+    // failed, the test below could pass vacuously no matter what
+    // InstanceFieldCache does.
+    ASSERT_GT(expected.distance_at(0, 0, 0), 0.0f)
+        << "sanity: the carve must actually change its own cell";
+    ASSERT_FLOAT_EQ(expected.distance_at(3, 3, 3), -127.0f)
+        << "sanity: this test's own reference construction must show the "
+           "far cell as untouched no-damage, not baked's false-positive "
+           "+50 -- otherwise this test cannot discriminate the fix";
+
+    const voxel::AtlasLayout layout = voxel::atlas_layout_for(expected.dims);
+    const auto expected_bytes = voxel::pack_field_to_atlas(expected, layout);
+    const auto actual_bytes = read_atlas(*e);
+    EXPECT_EQ(actual_bytes, expected_bytes)
+        << "a carve anywhere on the hull must leave every OTHER cell at "
+           "the no-damage baseline, never at the baked field's own "
+           "(possibly false-positive) distance value";
+
+    // Explicit far-cell check, independent of the whole-array compare above:
+    // pin cell (3,3,3)'s actual production byte and decode it exactly the
+    // way opaque.frag's sample_hull_field does (field_atlas.h's encoding),
+    // so "reads no damage and is NOT discarded" is a readable assertion on
+    // its own, not just inferred from an array-equality failure elsewhere.
+    const std::size_t far_idx = atlas_interior_index(layout, 3, 3, 3);
+    ASSERT_LT(far_idx, actual_bytes.size());
+    const std::uint8_t far_byte = actual_bytes[far_idx];
+    const float far_decoded = (static_cast<float>(far_byte) / 255.0f)
+                             - (128.0f / 255.0f);
+    // 0.5/255 mirrors opaque.frag's kHullFieldIsoMargin (shaders/
+    // opaque.frag) -- reproduced here only to state the discard condition
+    // in the test's own words, not as a second implementation of the clip.
+    constexpr float kHullFieldIsoMarginMirror = 0.5f / 255.0f;
+    EXPECT_LT(far_decoded, kHullFieldIsoMarginMirror)
+        << "far cell (byte " << static_cast<int>(far_byte) << ") must decode "
+           "well below the discard margin -- i.e. NOT discarded";
+    EXPECT_EQ(far_byte, static_cast<std::uint8_t>(1))
+        << "far cell must be the most-negative byte (\"no damage\"), not "
+           "baked's own false-positive +50, which would encode to 178";
 }
 
 }  // namespace

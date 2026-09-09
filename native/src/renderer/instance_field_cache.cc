@@ -5,6 +5,7 @@
 #include <voxel/field_brush.h>
 
 #include <algorithm>
+#include <cstdint>
 
 #include <glad/glad.h>
 
@@ -30,10 +31,12 @@ void InstanceFieldCache::carve(scenegraph::InstanceId id,
                                float radius) {
     auto it = instances_.find(id);
     if (it == instances_.end()) {
-        // Resolve the shared per-hull baked field this instance's private
-        // copy starts from. `authored_res` is BC's raw SetDamageResolution
-        // ratio, passed straight through -- HullVolumeCache::get is the one
-        // that divides it by quality, not us (see instance_field_cache.h /
+        // Resolve the shared per-hull baked field: this instance's private
+        // field takes only its LATTICE (dims/origin/cell/scale), not its
+        // distance values -- see instance_field_cache.h's class comment for
+        // why. `authored_res` is BC's raw SetDamageResolution ratio, passed
+        // straight through -- HullVolumeCache::get is the one that divides
+        // it by quality, not us (see instance_field_cache.h /
         // carve_field_cache.h's warnings about this).
         voxel::HullVolumeCache& cache =
             bake_cache_ != nullptr ? *bake_cache_ : renderer::hull_volume_cache();
@@ -42,9 +45,23 @@ void InstanceFieldCache::carve(scenegraph::InstanceId id,
         if (baked.empty()) return;   // hull has no baked field: stay absent
 
         Instance inst;
-        inst.field = baked;   // COPY -- this instance's own mutable field,
-                              // independent of the shared baked original and
-                              // of every other instance's copy of it.
+        // LATTICE ONLY -- this instance's own mutable field, independent of
+        // the shared baked original and of every other instance's copy of
+        // it, and NOT a copy of `baked`'s cell values. Every cell starts at
+        // -127, the most-negative int8: "no damage anywhere". Only
+        // field_carve_oblate's brushes ever raise a cell toward/through zero
+        // (monotonic -- field_brush.h), so untouched hull always reads the
+        // most-negative byte this field can hold and opaque.frag's clip can
+        // never discard it, whatever the reconstruction error at that point.
+        inst.field.dims   = baked.dims;
+        inst.field.origin = baked.origin;
+        inst.field.cell   = baked.cell;
+        inst.field.scale  = baked.scale;
+        inst.field.dist.assign(
+            static_cast<std::size_t>(baked.dims.x)
+                * static_cast<std::size_t>(baked.dims.y)
+                * static_cast<std::size_t>(baked.dims.z),
+            static_cast<std::int8_t>(-127));
         it = instances_.emplace(id, std::move(inst)).first;
     }
 

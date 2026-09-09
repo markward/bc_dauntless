@@ -57,10 +57,19 @@ std::vector<std::uint8_t> pack_field_to_atlas(const DistanceField& f,
         return {};
     }
 
-    constexpr std::uint8_t kOutside = 128 + 127;   // unused tile: fully outside
+    // Unused tile fill: the per-instance field carries DAMAGE, not hull
+    // shape (instance_field_cache.h) -- negative means "no damage", positive
+    // means "carved/discard". 128 - 127 = 1 is the most-negative byte the
+    // format can hold, i.e. "deepest no-damage", so a sampling bug that
+    // reaches an unused tile reads as untouched hull rather than as a hole.
+    // The OLD polarity here (128 + 127, "fully outside the hull") was
+    // correct only while this atlas packed a hull SDF; under the damage
+    // encoding that same byte would read as "deep inside a carve" --
+    // exactly backwards -- so this is a deliberate flip, not a renaming.
+    constexpr std::uint8_t kNoDamage = 128 - 127;
     std::vector<std::uint8_t> out(
         static_cast<std::size_t>(l.width) * static_cast<std::size_t>(l.height),
-        kOutside);
+        kNoDamage);
 
     auto encode = [](std::int8_t d) -> std::uint8_t {
         return static_cast<std::uint8_t>(static_cast<int>(d) + 128);

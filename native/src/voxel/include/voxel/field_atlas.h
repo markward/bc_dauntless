@@ -51,8 +51,10 @@ AtlasLayout atlas_layout_for(const glm::ivec3& dims);
 /// neighbouring tile's data.
 ///
 /// Any tile beyond `dims.z` (when `tiles_x * tiles_y > dims.z`) is filled
-/// with `128 + 127` (fully outside), so a sampling bug that reaches an
-/// unused tile reads as empty space rather than as hull.
+/// with `128 - 127` (the most-negative byte the format holds, i.e. "no
+/// damage" under the per-instance field's damage encoding -- see
+/// renderer/instance_field_cache.h), so a sampling bug that reaches an
+/// unused tile reads as untouched hull rather than as a hole.
 ///
 /// Returns an empty vector when `f.empty()`, when `f.dims` has a
 /// non-positive component, when `!l.valid()`, when `l`'s `tile_w`/`tile_h`/
