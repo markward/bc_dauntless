@@ -13,11 +13,19 @@ namespace renderer {
 /// Triangulation: lat × lon segments split 1:2 so target_tris=256
 /// produces 8 lat × 16 lon segments = 128 quads = 256 tris.
 ///
-/// Winding: clockwise from outside the sphere. With this project's
-/// `glFrontFace(GL_CW)` convention, the exterior faces are "front" by GL's
-/// definition. Both users (backdrop_pass.cc for the skybox, breach_pass.cc
-/// for the scoop interior) call `glCullFace(GL_FRONT)` to draw only the inner
-/// wall (back faces from outside = the face seen from inside the sphere).
+/// Winding: COUNTER-clockwise from outside the sphere (this comment
+/// previously said "clockwise" under a claimed `glFrontFace(GL_CW)`
+/// convention -- both wrong: `pipeline.cc` sets `glFrontFace(GL_CCW)`, and
+/// a hand signed-area check of sphere_mesh.cc's own triangle (a,b,d) at
+/// theta=0,phi=0 gives CCW, not CW -- see sphere_mesh.cc's own comment for
+/// the derivation). Under the actual `glFrontFace(GL_CCW)`, the exterior
+/// faces are "front" by GL's definition, so users call
+/// `glCullFace(GL_FRONT)` to draw only the inner wall (back faces from
+/// outside = the face seen from inside the sphere): backdrop_pass.cc for
+/// the skybox, sun_pass.cc, shield_pass.cc, nebula_pass.cc. (breach_pass.cc
+/// used this sphere pre-Task-3 for the per-carve scoop; it now builds its
+/// own unit-cube box proxy, `build_unit_box_cpu` in breach_pass.cc, with an
+/// EMPIRICALLY (not hand-)derived winding -- see that function's header.)
 ///
 /// UV layout: u = lon / (2π) ∈ [0,1], v = (lat + π/2) / π ∈ [0,1].
 /// Texture stretching at the poles is acceptable for BC's stars.tga.

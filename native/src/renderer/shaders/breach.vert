@@ -17,14 +17,14 @@
 // see it -- no duplicate uniform, no risk of the two disagreeing.
 //
 // Winding (the CPU-side mesh in breach_pass.cc's build_unit_box_cpu, not
-// anything in this file): EMPIRICALLY verified, not derived from
-// build_uv_sphere's stated "clockwise from outside" convention -- see that
-// function's own header comment for the measured result and why a naive
-// per-face CW/CCW prediction didn't carry over. Rendered with
-// glCullFace(GL_FRONT), so only the box's FAR faces (as seen from the
-// camera) survive rasterisation -- exactly the point where the view ray
-// EXITS the box at every covered pixel. breach.frag's main() relies on
-// that: v_body_pos IS the ray's own box-exit point, with no separate
+// anything in this file): counter-clockwise from outside on every face --
+// the same convention build_uv_sphere.cc uses (see that function's own
+// comment; a stale claim there that it was "clockwise" turned out to be
+// wrong and has been corrected). Rendered with glCullFace(GL_FRONT), so
+// only the box's FAR faces (as seen from the camera) survive rasterisation
+// -- exactly the point where the view ray EXITS the box at every covered
+// pixel. breach.frag's main() relies on that: v_body_pos IS the ray's own
+// box-exit point, with no separate
 // computation needed.
 //
 // NOTE: the old per-carve deformation (u_carve_center/u_carve_radius/

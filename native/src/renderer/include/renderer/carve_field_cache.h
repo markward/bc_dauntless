@@ -39,6 +39,20 @@ bool carve_has_backing(const voxel::VoxelVolume& fill,
 
 /// How DEEP the hull material runs inward from a carve, in cells.
 ///
+/// ORPHANED as of raymarched-breach-interior Task 3: this and
+/// kMinCavityCells had exactly one production caller, breach_pass.cc's
+/// per-carve CPU gate, removed when that pass switched to one box-proxy
+/// draw per instance -- the equivalent question (does real hull material
+/// back a reported cavity wall?) is now asked per-FRAGMENT, more precisely,
+/// by breach.frag's own u_fill/u_fill_backing check at the raymarch's
+/// hit_point, not per-carve on the CPU. Only carve_cavity_test.cc still
+/// calls this function (this project's rule: never orphan a test silently
+/// — that file's own header says so too). Not removed here: retiring truly
+/// dead surface (as opposed to noting it) is a separate cleanup, and this
+/// function's OWN logic (and carve_has_backing's, which is NOT orphaned --
+/// frame.cc's hull-clip path still calls it) may still be useful if a
+/// future CPU-side gate is reintroduced.
+///
 /// A different question from carve_has_backing, and the two must not be
 /// conflated: that one asks "is there anything to cut into at all?", this asks
 /// "is there enough of it to be worth drawing a cavity in?".

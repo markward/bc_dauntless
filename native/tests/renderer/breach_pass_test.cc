@@ -14,12 +14,37 @@
 // draws whose PIXELS are read back and asserted on — not a hand re-derivation
 // of the shader's own logic.
 //
+// SCALE: every carved band in every field here is at least 75 model units
+// wide (3 * 25). This is not arbitrary — it matches breach.frag's
+// find_breach_entry, whose coarse search stride (kBreachCoarseStride = 25,
+// derived from MIN_CARVE_RADIUS_GU, engine/appc/hull_carve.py) is sized
+// against the SMALLEST LEGAL carve's diameter (50 model units), an
+// absolute, cell-independent quantity. A code review caught that this
+// file's ORIGINAL fields used 1-9-model-unit-wide bands (fine for the
+// pre-fix, cell-relative entry search, which has since been replaced) —
+// those would now be silently stepped over by the coarse search, which
+// would make every "should render" test in this file pass for the WRONG
+// reason (a stale field this pass can't actually find, not a working
+// search). See breach.frag's find_breach_entry for the coarse-stride
+// derivation itself.
+//
+// make_single_cavity_field() additionally uses a SMALL cell (5, not 25) to
+// grow the field's own box diagonal well past the reach the PRE-fix entry
+// search (cell-relative, like raymarch_breach_cavity's own march) would
+// have had — see that function's own comment for why band width and box
+// reach are two SEPARATE things to get right, and why the same review
+// caught this file's tests initially passing even with the reach half of
+// the fix reverted.
+//
 //  GL tests (skip without a context):
 //    - draw_instance with a real cavity over a solid fill: interior visible.
 //    - Stencil gate: stencil==0 blocks the interior (cannot float in space).
 //    - Empty fill discards every fragment (see-through).
 //    - No field entry (tex2d==0): the pass is a no-op (draw_calls()==0).
-//    - Molten-rim emissive: fresh breach renders brighter than cold.
+//    - Molten-rim emissive: fresh breach renders brighter than cold, AND
+//      (Task 3 obligation #2) a fresh event far from the shaded point does
+//      NOT reignite it — age alone is not enough now that one draw covers
+//      the whole instance, not one carve.
 //    - Task 3 obligation #1 (retires breach_raymarch_test.cc's
 //      RaymarchAloneCannotDistinguishABrushBoundaryFromRealBacking): a
 //      raymarch hit with no real backing material does NOT paint, paired
@@ -30,7 +55,9 @@
 //    - A field carrying MORE than HullCarveField::kMaxCarves (24) distinct
 //      damage sites still renders the interior for the last of them — the
 //      artifact this whole plan exists to remove — paired with a negative
-//      control (an untouched gap) to rule out "everything always renders".
+//      control (a camera inside the field's own untouched tail, looking
+//      AWAY from every site, toward the box's own edge) to rule out
+//      "everything always renders" regardless of the search's own reach.
 //    - render()'s own gate: an instance with no InstanceFieldCache entry
 //      (never carved) issues zero draws, checked BEFORE any model/fill
 //      lookup (a lookup that asserts if called proves the ordering).
@@ -67,61 +94,72 @@ namespace {
 constexpr int kW = 64;
 constexpr int kH = 64;
 
-// ── Fill volumes (unchanged builders from the pre-Task-3 file: these are
-// plain VoxelVolume data, independent of the carve/field representation) ───
+// ── Fill volumes ─────────────────────────────────────────────────────────
+// All rescaled to match this file's realistic cell=25 fields (see this
+// file's header comment) — the pre-fix versions covered only a few model
+// units and no longer reach any hit_point these fields raymarch to.
 
-// Solid (127) everywhere in [-4,4]^3: comfortably covers every hit_point
-// this file's single-site fields (below) ever raymarches to.
+// Solid (127) everywhere in x,y=[-10,10], z=[-50,275]: comfortably covers
+// every hit_point make_single_cavity_field() (below) ever raymarches to.
+// Deliberately a SMALL cell (5, not 25): see make_single_cavity_field's own
+// header comment for why the fill's cell size does not need to match the
+// field's (it never did -- u_fill and u_hull_field are independent volumes
+// in the shader).
 voxel::VoxelVolume solid_fill() {
     voxel::VoxelVolume v;
-    v.dims   = {8, 8, 8};
-    v.origin = {-4.f, -4.f, -4.f};
-    v.cell   = {1.f, 1.f, 1.f};
-    v.occ.assign(8 * 8 * 8, 127);
+    v.dims   = {4, 4, 66};
+    v.origin = {-10.f, -10.f, -50.f};
+    v.cell   = {5.f, 5.f, 5.f};
+    v.occ.assign(static_cast<std::size_t>(4 * 4 * 66), 127);
     return v;
 }
 
-// Empty (0) everywhere in [-2,2]^3: every fragment's backing check fails.
+// Empty (0) over the same box as solid_fill(): every fragment's backing
+// check fails.
 voxel::VoxelVolume empty_fill() {
     voxel::VoxelVolume v;
-    v.dims   = {4, 4, 4};
-    v.origin = {-2.f, -2.f, -2.f};
-    v.cell   = {1.f, 1.f, 1.f};
-    v.occ.assign(4 * 4 * 4, 0);
+    v.dims   = {4, 4, 66};
+    v.origin = {-10.f, -10.f, -50.f};
+    v.cell   = {5.f, 5.f, 5.f};
+    v.occ.assign(static_cast<std::size_t>(4 * 4 * 66), 0);
     return v;
 }
 
-// 75 (just above kIsovalue=64, inside the rim band) everywhere in [-2,2]^3.
+// 75 (just above kIsovalue=64, inside the rim band) over the same box as
+// solid_fill().
 voxel::VoxelVolume rim_fill() {
     voxel::VoxelVolume v;
-    v.dims   = {4, 4, 4};
-    v.origin = {-2.f, -2.f, -2.f};
-    v.cell   = {1.f, 1.f, 1.f};
-    v.occ.assign(4 * 4 * 4, 75);
+    v.dims   = {4, 4, 66};
+    v.origin = {-10.f, -10.f, -50.f};
+    v.cell   = {5.f, 5.f, 5.f};
+    v.occ.assign(static_cast<std::size_t>(4 * 4 * 66), 75);
     return v;
 }
 
-// Solid (127) everywhere in a big box covering the multi-site field below,
-// INCLUDING its trailing untouched pad (x:[-2,14], y:[-2,14], z:[-5,895] --
-// make_multi_site_field(30)'s own box tops out at 21*30+3*80=870).
+// Solid (127) everywhere in a big box covering the multi-site field below
+// (x,y in [-10,115], z in [-10,3890] -- make_multi_site_field(30)'s own box
+// tops out at 153*25=3825, see that function's own comment).
 voxel::VoxelVolume wide_solid_fill() {
     voxel::VoxelVolume v;
-    v.dims   = {4, 4, 90};
-    v.origin = {-2.f, -2.f, -5.f};
-    v.cell   = {4.f, 4.f, 10.f};
-    v.occ.assign(static_cast<std::size_t>(4 * 4 * 90), 127);
+    v.dims   = {5, 5, 156};
+    v.origin = {-10.f, -10.f, -10.f};
+    v.cell   = {25.f, 25.f, 25.f};
+    v.occ.assign(static_cast<std::size_t>(5 * 5 * 156), 127);
     return v;
 }
 
-// Solid (127) in ONLY a single 1-unit-thick z-slice, z in [2,3], covering
-// x:[-2,2], y:[-2,2] — a "thin plate" for the floating-hit test below.
-// Outside that z range the fill's own texture-coordinate range check
-// (breach.frag main()) discards, same as "no material".
+// Solid (127) in ONLY a single 10-unit-thick z-slice, z in [65,75],
+// covering x,y=[-10,10] -- a "thin plate" right at make_single_cavity_field()'s
+// own carved band's HIGH-z (camera-entry) edge, for the floating-hit test
+// below. hit_point (the far/EXIT crossing, near z=0 -- see that field's own
+// comment) sits nowhere near this slice. Outside this z range the fill's own
+// texture-coordinate range check (breach.frag main()) discards, same as "no
+// material".
 voxel::VoxelVolume thin_plate_fill() {
     voxel::VoxelVolume v;
     v.dims   = {4, 4, 1};
-    v.origin = {-2.f, -2.f, 2.f};
-    v.cell   = {1.f, 1.f, 1.f};
+    v.origin = {-10.f, -10.f, 65.f};
+    v.cell   = {5.f, 5.f, 10.f};
     v.occ.assign(4 * 4 * 1, 127);
     return v;
 }
@@ -132,7 +170,7 @@ voxel::VoxelVolume thin_plate_fill() {
 // project's per-file test convention; see instance_field_cache_test.cc's own
 // header comment for that convention). Every (x,y) at a given Z slice gets
 // the same value: a pure single-axis slab, varied along Z to match this
-// file's cam_looking_at_origin()-style cameras (which all look along -Z). ──
+// file's cameras (which all look along Z, one axis or the other). ─────────
 
 voxel::DistanceField make_z_slab_field(glm::ivec3 dims, glm::vec3 origin, glm::vec3 cell,
                                        const std::vector<std::int8_t>& z_values) {
@@ -152,34 +190,54 @@ voxel::DistanceField make_z_slab_field(glm::ivec3 dims, glm::vec3 origin, glm::v
     return f;
 }
 
-// ONE cavity: intact (idx 0-2, z centres -1.5/-0.5/0.5), carved (idx 3-4,
-// z centres 1.5/2.5), intact again (idx 5, z centre 3.5). Box: x,y in
-// [-2,2], z in [-2,4] — inside solid_fill()'s [-4,4]^3.
-voxel::DistanceField make_single_cavity_field() {
-    const std::vector<std::int8_t> z_values = {-100, -100, -100, 100, 100, -100};
-    return make_z_slab_field(glm::ivec3(4, 4, 6), glm::vec3(-2.0f), glm::vec3(1.0f), z_values);
-}
-
-// A carve BRUSH punched clean through a "thin plate": intact (idx 0-1, z
-// centres -1.5/-0.5), carved (idx 2-4, z centres 0.5/1.5/2.5 — a 3-cell-thick
-// bounded brush, standing in for field_carve_oblate's own bounded shape),
-// intact again (idx 5-7, z centres 3.5/4.5/5.5). Box: x,y in [-2,2],
-// z in [-2,6].
+// ONE bounded cavity, sized to discriminate the reach fix, not just the
+// stride fix. A field with cell=25 (matching kBreachCoarseStride) and a
+// small overall box has a diagonal too short to distinguish the fixed
+// entry search from the ORIGINAL BUG (reusing raymarch_breach_cavity's
+// fine, cell-relative step): a code review caught that an earlier version
+// of this field -- cell=25, box diagonal ~266 model units -- passed EVERY
+// test in this file even with the entry search's stride/budget reverted to
+// the pre-fix cell-relative pair (fine_step=0.5*cell=12.5, kBreachMaxSteps
+// steps => reach=800, comfortably more than 266). That defeated the whole
+// point: the tests would have stayed green through the exact regression
+// this task exists to catch.
 //
-// The camera below enters from +Z (idx 7 first) and finds ITS ENTRY crossing
-// around z~3 (between idx5 intact and idx4 carved), then raymarch_breach_
-// cavity finds the FAR/EXIT crossing around z~0 (between idx2 carved and
-// idx1 intact) -- well below thin_plate_fill()'s solid slice at z=[2,3], and
-// well within wide-enough fills that DO cover z~0.
-voxel::DistanceField make_through_plate_field() {
-    const std::vector<std::int8_t> z_values = {-100, -100, 100, 100, 100, -100, -100, -100};
-    return make_z_slab_field(glm::ivec3(4, 4, 8), glm::vec3(-2.0f), glm::vec3(1.0f), z_values);
+// So the CELL here is small (5, distinct from kBreachCoarseStride, and
+// deliberately NOT what governs whether a carve gets stepped over -- see
+// below) but the CARVED BAND is still 15 cells = 75 model units wide (the
+// smallest legal carve's diameter, same requirement as ever -- carve size
+// is absolute, not cell-relative, so widening the band in CELL count while
+// shrinking the cell is exactly how to keep the band's ABSOLUTE width fixed
+// while growing the field's overall extent). The camera below (cam_through_
+// cavity) then sits far enough from the band that the OLD fine-relative
+// reach (64 * 0.5 * 5 = 160 model units) cannot reach it, while the FIXED
+// coarse reach (64 * 25 = 1600) comfortably can.
+//
+// Layout: intact (idx 0-9, body z in [-50,0]), CARVED (idx 10-24, body z in
+// [0,75] -- 75 model units), intact (idx 25-64, body z in [75,275]).
+// Box: x,y in [-10,10], z in [-50,275] -- inside solid_fill()'s x,y=[-10,10],
+// z=[-50,275].
+//
+// Reused by BOTH the "single cavity" tests (solid/empty/rim fill covering
+// the whole box) and the "floating hit" tests (a fill covering only part of
+// it) -- it is the SAME field either way; only the fill and the question
+// asked of hit_point differ. cam_through_cavity finds its COARSE entry
+// somewhere in the carved band (idx 10-24) after crossing ~195 model units
+// of the intact-after region (idx 25-64), then raymarch_breach_cavity's own
+// FINE march finds the EXIT crossing near z=0 (between idx10's carved cell
+// and idx9's intact one) -- this is hit_point for every test using this
+// field.
+voxel::DistanceField make_single_cavity_field() {
+    std::vector<std::int8_t> z_values(65, -100);
+    for (int i = 10; i <= 24; ++i) z_values[static_cast<std::size_t>(i)] = 100;
+    return make_z_slab_field(glm::ivec3(4, 4, 65), glm::vec3(-10.0f, -10.0f, -50.0f),
+                             glm::vec3(5.0f), z_values);
 }
 
-// `n` independent damage sites along Z, each a 3-cell carved band separated
-// by 4 cells of untouched field, period 7 cells: site i's carved cells are
-// [7*i+2, 7*i+4]. cell=3 model units, so site i's carved z-range (cell
-// centres) is [(7*i+2.5)*3, (7*i+4.5)*3] = [21*i+7.5, 21*i+13.5].
+// `n` independent damage sites along Z, each a realistic 3-cell (75 model
+// unit) carved band separated by 2 cells (50 model units) of untouched
+// field, period 5 cells (125 model units): site i's carved cells are
+// [5*i+2, 5*i+4], body z in [25*(5*i+2), 25*(5*i+5)] = [125*i+50, 125*i+125].
 //
 // n=30 is used deliberately, not an arbitrary "a lot": scenegraph::
 // HullCarveField::kMaxCarves is 24, so a field encoding 30 independent sites
@@ -188,21 +246,23 @@ voxel::DistanceField make_through_plate_field() {
 // beyond anything a 24-slot sphere ring could ever represent, by
 // construction rather than by argument.
 //
-// A `kPadCells`-cell untouched buffer follows the last site, deliberately
-// wider (240 model units) than breach.frag's own search budget
-// (kBreachMaxSteps * kHullFieldStepFrac * cell = 64*0.5*3 = 96 model units):
-// the negative-control test below places its camera in the MIDDLE of this
-// buffer specifically so that budget, searching in EITHER direction from
-// there, cannot reach site (n-1)'s band (up to 96 units away is not enough
-// to cross a 240-unit clear buffer) -- see cam_at_site's own comment for why
-// this matters (an early version of this test put the camera far from every
-// site and let it search inward, which meant the fixed 96-unit budget could
-// reach an adjacent site from ANY point when sites were only 21 units
-// apart, making a "negative control" meaningless).
-// Box: x,y in [0,12], z in [0, 21*n + 3*kPadCells].
+// `kPadCells` (3 cells = 75 model units) of untouched field follow the
+// last site. The negative-control test below does NOT rely on this pad
+// being wider than the search budget (an EARLIER version of this field and
+// its camera did exactly that, and the fix that widened
+// find_breach_entry's own reach to properly span a whole box -- see that
+// function's derivation in breach.frag -- broke it: a "negative control"
+// whose only defence is "the search can't reach that far" stops being a
+// negative control once the search CAN reach that far, which was the whole
+// point of the fix). Instead the negative-control camera sits INSIDE this
+// pad and looks AWAY from every site (toward increasing Z, out of the
+// box) -- see cam_looking_away's own comment -- so the ENTIRE remaining
+// ray, out to the box's own edge, is genuinely, unconditionally untouched
+// field, regardless of how large the search's own budget is.
+// Box: x,y in [0,100], z in [0, 125*n + 25*kPadCells].
 voxel::DistanceField make_multi_site_field(int n) {
-    const int period    = 7;
-    const int kPadCells = 80;
+    const int period    = 5;
+    const int kPadCells = 3;
     const int dims_z    = period * n + kPadCells;
     std::vector<std::int8_t> z_values(static_cast<std::size_t>(dims_z), -100);
     for (int i = 0; i < n; ++i) {
@@ -210,26 +270,14 @@ voxel::DistanceField make_multi_site_field(int n) {
         z_values[static_cast<std::size_t>(period * i + 3)] = 100;
         z_values[static_cast<std::size_t>(period * i + 4)] = 100;
     }
-    return make_z_slab_field(glm::ivec3(4, 4, dims_z), glm::vec3(0.0f), glm::vec3(3.0f),
+    return make_z_slab_field(glm::ivec3(4, 4, dims_z), glm::vec3(0.0f), glm::vec3(25.0f),
                              z_values);
 }
 
 // Body-frame Z centre of multi-site field site `i`'s MIDDLE carved cell
-// (7*i+3), matching make_multi_site_field's own layout above.
+// (5*i+3), matching make_multi_site_field's own layout above.
 float multi_site_z(int i) {
-    return (7.0f * static_cast<float>(i) + 3.5f) * 3.0f;
-}
-
-// Body-frame Z centre of a cell deep inside make_multi_site_field(n)'s
-// trailing untouched buffer -- always -100, and (with kPadCells=80, cell=3)
-// at least 120 model units from site (n-1)'s own band in either direction,
-// comfortably beyond the ~96-unit search budget. Used by the negative
-// control below.
-float multi_site_gap_z(int n) {
-    const int period    = 7;
-    const int kPadCells  = 80;
-    const int idx = period * n + kPadCells / 2;
-    return (static_cast<float>(idx) + 0.5f) * 3.0f;
+    return (5.0f * static_cast<float>(i) + 3.5f) * 25.0f;
 }
 
 // Pack `f` into a GL_R8 2D atlas exactly as InstanceFieldCache::upload()
@@ -340,57 +388,71 @@ protected:
         return s;
     }
 
-    // Camera looking at the origin along -Z — matches every make_z_slab_
-    // field above (varied along Z only), so the primary (screen-centre) ray
-    // travels straight down the axis the fields vary on.
-    static scenegraph::Camera cam_looking_at_origin() {
+    // Camera for make_single_cavity_field(): starts at z=270, deep in the
+    // field's own "intact after" region (idx 25-64, z in [75,275]), 195
+    // model units clear of the carved band's own high-z edge (75). That
+    // distance is chosen to be BEYOND the pre-fix entry search's reach
+    // (64 steps * 0.5 * cell(5) = 160 model units) and WITHIN the fixed
+    // one's (64 * kBreachCoarseStride(25) = 1600) -- see
+    // make_single_cavity_field's own comment for why this, not just a
+    // wide-enough carved band, is what makes this file's tests actually
+    // discriminate the reach fix rather than merely the stride fix.
+    // target=(0,0,-50) (deep in the intact-before region) gives a pure -Z
+    // ray direction; far=400 clears the box's own exit distance
+    // (|270-(-50)|=320).
+    static scenegraph::Camera cam_through_cavity() {
         scenegraph::Camera c;
-        c.eye    = glm::vec3(0.f, 0.f, 5.f);
-        c.target = glm::vec3(0.f);
+        c.eye    = glm::vec3(0.f, 0.f, 270.f);
+        c.target = glm::vec3(0.f, 0.f, -50.f);
         c.up     = glm::vec3(0.f, 1.f, 0.f);
         c.fov_y_rad = glm::radians(45.f);
         c.aspect = 1.0f;
         c.near   = 0.1f;
-        c.far    = 50.f;
+        c.far    = 400.f;
         return c;
     }
 
-    // Camera looking down -Z from further out (z=7) — used by the
-    // through-plate field (box z in [-2,6], vs. the single-cavity field's
-    // [-2,4]), so the camera still starts outside the box.
-    static scenegraph::Camera cam_looking_at_origin_from_z7() {
-        scenegraph::Camera c = cam_looking_at_origin();
-        c.eye    = glm::vec3(0.f, 0.f, 7.f);
-        c.target = glm::vec3(0.f, 0.f, -2.f);
-        return c;
-    }
-
-    // Camera aimed at Z location `target_z` in a multi_site field (x,y = 6,6
-    // -- centred on that field's x,y = [0,12] box), positioned CLOSE to it
-    // (8 units of +Z head-room, comfortably above one carved band's own
-    // 9-unit thickness) rather than far above the whole field.
-    //
-    // This is deliberate, not just convenient: breach.frag's box-entry
-    // search (find_breach_entry) is bounded to ~96 model units (see
-    // make_multi_site_field's header comment for the derivation). Sites
-    // recur every 21 units, so a camera FAR from the field searching inward
-    // would have that same fixed 96-unit budget reach WHICHEVER site
-    // happens to be within range of wherever the search starts -- not
-    // necessarily the one `target_z` names -- making "aim at site i" and
-    // "aim at the gap" indistinguishable from the search's point of view.
-    // Starting close to `target_z` (eye ends up INSIDE the field's box on
-    // every axis, so breach_box_entry_t's analytic entry clamps to the
-    // camera's own position) makes the search begin exactly where the test
-    // means it to.
+    // Camera aimed at Z location `target_z` in a multi_site field (x,y =
+    // 50,50 -- centred on that field's x,y = [0,100] box), positioned
+    // CLOSE to it (45 units of +Z head-room -- comfortably above one
+    // carved band's own 75-unit thickness, half-width 37.5) rather than
+    // far above the whole field, so find_breach_entry's search begins
+    // exactly where the test means it to (see this file's header comment
+    // and make_multi_site_field's own comment for why "far away, search
+    // inward" stopped being a valid design once the search's own reach was
+    // fixed to span the whole box).
     static scenegraph::Camera cam_at_site(float target_z, float far_hint) {
         scenegraph::Camera c;
-        c.eye    = glm::vec3(6.f, 6.f, target_z + 8.f);
-        c.target = glm::vec3(6.f, 6.f, target_z);
+        c.eye    = glm::vec3(50.f, 50.f, target_z + 45.f);
+        c.target = glm::vec3(50.f, 50.f, target_z);
         c.up     = glm::vec3(0.f, 1.f, 0.f);
         c.fov_y_rad = glm::radians(45.f);
         c.aspect = 1.0f;
         c.near   = 0.1f;
         c.far    = far_hint;
+        return c;
+    }
+
+    // Negative-control camera for the "beyond 24 carves" test: `eye_z` sits
+    // INSIDE make_multi_site_field's own trailing untouched pad, and the
+    // ray looks TOWARD +Z (`target_z` > `eye_z`) -- AWAY from every carved
+    // site, which all sit at LOWER z. The remaining ray, from `eye_z` to
+    // the box's own +Z edge, is therefore genuinely, unconditionally clear
+    // of carved material, independent of the search's own budget -- unlike
+    // a "camera far away, ray travels back toward the sites" design, which
+    // a sufficiently large search budget will always eventually defeat
+    // (see make_multi_site_field's own comment for why an earlier version
+    // of this test relied on exactly that and broke when the entry search's
+    // reach was fixed).
+    static scenegraph::Camera cam_looking_away(float eye_z, float target_z) {
+        scenegraph::Camera c;
+        c.eye    = glm::vec3(50.f, 50.f, eye_z);
+        c.target = glm::vec3(50.f, 50.f, target_z);
+        c.up     = glm::vec3(0.f, 1.f, 0.f);
+        c.fov_y_rad = glm::radians(45.f);
+        c.aspect = 1.0f;
+        c.near   = 0.1f;
+        c.far    = 5000.f;
         return c;
     }
 
@@ -437,7 +499,7 @@ TEST_F(BreachPassGLTest, SolidFillDrawsInterior) {
     voxel::VoxelVolume fill = solid_fill();
     const voxel::DistanceField field = make_single_cavity_field();
     const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
-    scenegraph::Camera cam = cam_looking_at_origin();
+    scenegraph::Camera cam = cam_through_cavity();
 
     mark_hull_cut();   // the interior draws only where hull was cut away
     pass.draw_instance(/*instance_key=*/1, fill, entry,
@@ -463,7 +525,7 @@ TEST_F(BreachPassGLTest, StencilZeroBlocksInteriorSoItCannotFloatInOpenSpace) {
     voxel::VoxelVolume fill = solid_fill();   // fill says "material here"
     const voxel::DistanceField field = make_single_cavity_field();
     const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
-    scenegraph::Camera cam = cam_looking_at_origin();
+    scenegraph::Camera cam = cam_through_cavity();
 
     pass.draw_instance(/*instance_key=*/2, fill, entry,
                        glm::mat4(1.0f), cam, *pipeline);
@@ -488,7 +550,7 @@ TEST_F(BreachPassGLTest, EmptyFillDiscardsInterior) {
     voxel::VoxelVolume fill = empty_fill();
     const voxel::DistanceField field = make_single_cavity_field();
     const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
-    scenegraph::Camera cam = cam_looking_at_origin();
+    scenegraph::Camera cam = cam_through_cavity();
 
     mark_hull_cut();
     pass.draw_instance(/*instance_key=*/3, fill, entry,
@@ -518,7 +580,7 @@ TEST_F(BreachPassGLTest, NoFieldEntryDrawsNothing) {
     renderer::BreachPass pass;
     voxel::VoxelVolume fill = solid_fill();
     const renderer::InstanceFieldCache::Entry entry;  // tex2d == 0, default
-    scenegraph::Camera cam = cam_looking_at_origin();
+    scenegraph::Camera cam = cam_through_cavity();
 
     pass.draw_instance(/*instance_key=*/4, fill, entry,
                        glm::mat4(1.0f), cam, *pipeline);
@@ -531,9 +593,23 @@ TEST_F(BreachPassGLTest, NoFieldEntryDrawsNothing) {
         << "Centre pixel is lit with no field entry — the pass should be a no-op";
 }
 
+// hit_point for make_single_cavity_field() + cam_through_cavity(): the EXIT
+// crossing near body z=0 (see that field's own comment), x,y~=0 for the
+// screen-centre ray. Used by the rim-emissive tests below to place
+// u_breach_center where hit_point actually lands -- Task 3 obligation #2
+// (breach.frag's u_breach_center comment) means heat is now gated by
+// distance from that centre too, not just by age, so a test of the AGE
+// gate specifically must put the "fresh" event's centre where the shaded
+// point actually is, or the position gate would zero heat regardless of
+// age and the test would prove nothing about age at all.
+constexpr float kCavityHitX = 0.0f;
+constexpr float kCavityHitY = 0.0f;
+constexpr float kCavityHitZ = 0.0f;
+
 TEST_F(BreachPassGLTest, HotBreachBrighterThanCold) {
     const voxel::DistanceField field = make_single_cavity_field();
-    scenegraph::Camera cam = cam_looking_at_origin();
+    scenegraph::Camera cam = cam_through_cavity();
+    const glm::vec3 hit_center(kCavityHitX, kCavityHitY, kCavityHitZ);
 
     clear_framebuffer();
     mark_hull_cut();
@@ -546,7 +622,8 @@ TEST_F(BreachPassGLTest, HotBreachBrighterThanCold) {
         const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
         pass.draw_instance(/*instance_key=*/10, fill, entry,
                            glm::mat4(1.0f), cam, *pipeline,
-                           scenegraph::kRimLife + 1.f);  // cold
+                           scenegraph::kRimLife + 1.f,  // cold
+                           hit_center, 100.f);
         glFinish();
         EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in cold breach draw";
         cold_sum = read_frame_sum();
@@ -561,9 +638,15 @@ TEST_F(BreachPassGLTest, HotBreachBrighterThanCold) {
         renderer::BreachPass pass;
         voxel::VoxelVolume fill = rim_fill();
         const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+        // breach_radius=100: generous relative to kEventFalloffMul=3 (see
+        // breach.frag) so the whole visible interior -- not just the exact
+        // centre pixel -- stays within the positional falloff; this test is
+        // about the AGE gate, so the position gate should not be the
+        // limiting factor here (that gets its own test below).
         pass.draw_instance(/*instance_key=*/11, fill, entry,
                            glm::mat4(1.0f), cam, *pipeline,
-                           0.f);  // fresh (hot)
+                           0.f,  // fresh (hot)
+                           hit_center, 100.f);
         glFinish();
         EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in hot breach draw";
         hot_sum = read_frame_sum();
@@ -575,6 +658,70 @@ TEST_F(BreachPassGLTest, HotBreachBrighterThanCold) {
         << cold_sum << " — rim emissive did not contribute";
 }
 
+// Task 3 obligation #2 (breach.frag's u_breach_center comment): a FRESH
+// event (age=0) whose centre is nowhere near the shaded hit_point must NOT
+// light it up -- this is what stops one fresh hit from re-igniting every
+// OTHER, already-cooled hole on the same instance, now that there is one
+// draw per instance instead of one per carve. Same field/camera/fill as
+// HotBreachBrighterThanCold's hot case (so the ONLY variable is the
+// event's position), compared against that SAME test's cold baseline:
+// if the position gate were missing (or always-open), this frame's sum
+// would match HotBreachBrighterThanCold's hot_sum, not its cold_sum.
+TEST_F(BreachPassGLTest, HotBreachFarFromHitPointDoesNotReignite) {
+    const voxel::DistanceField field = make_single_cavity_field();
+    scenegraph::Camera cam = cam_through_cavity();
+
+    // "Hot but positionally irrelevant": age=0 (would be maximally hot at
+    // the RIGHT location -- see HotBreachBrighterThanCold) but centred
+    // 10000 units away with a small radius, far outside even a generous
+    // falloff.
+    long long far_sum = 0;
+    {
+        clear_framebuffer();
+        mark_hull_cut();
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        renderer::BreachPass pass;
+        voxel::VoxelVolume fill = rim_fill();
+        const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+        pass.draw_instance(/*instance_key=*/12, fill, entry,
+                           glm::mat4(1.0f), cam, *pipeline,
+                           0.f,
+                           glm::vec3(10000.f, 10000.f, 10000.f), 25.f);
+        glFinish();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in far-event breach draw";
+        far_sum = read_frame_sum();
+    }
+
+    // Genuinely cold baseline (age >= kRimLife), same field/camera/fill.
+    long long cold_sum = 0;
+    {
+        clear_framebuffer();
+        mark_hull_cut();
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        renderer::BreachPass pass;
+        voxel::VoxelVolume fill = rim_fill();
+        const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
+        pass.draw_instance(/*instance_key=*/13, fill, entry,
+                           glm::mat4(1.0f), cam, *pipeline,
+                           scenegraph::kRimLife + 1.f);
+        glFinish();
+        EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error in cold breach draw";
+        cold_sum = read_frame_sum();
+    }
+
+    // Same threshold logic as HotBreachBrighterThanCold: a cold frame and
+    // this "hot but positionally irrelevant" frame should be
+    // indistinguishable (both have heat==0 at every fragment), so this must
+    // NOT exceed the cold baseline by the margin a genuinely hot,
+    // correctly-positioned frame does.
+    EXPECT_LE(far_sum, cold_sum + 32)
+        << "A fresh (age=0) event centred 10000 units from hit_point lit the frame up "
+           "(sum=" << far_sum << " vs cold baseline=" << cold_sum << ") -- the emissive "
+           "term must be gated by distance from the event's own centre, not by age alone";
+}
+
 // ── Task 3 obligation #1: a raymarch hit with no real backing material must
 // not paint (retires breach_raymarch_test.cc's
 // RaymarchAloneCannotDistinguishABrushBoundaryFromRealBacking, which
@@ -582,9 +729,9 @@ TEST_F(BreachPassGLTest, HotBreachBrighterThanCold) {
 // isolation -- that function is UNCHANGED; the fix lives in main(), which
 // this pair exercises end-to-end through the real production shader). ──────
 
-// Negative: the field's carved brush has a bounded far edge (hit_point ~
-// z=0), but the fill's only solid material is a thin slice at z=[2,3] --
-// hit_point sits well outside it. Must discard: "a hole is a hole".
+// Negative: make_single_cavity_field()'s hit_point (the EXIT crossing, near
+// z=0) sits well outside thin_plate_fill()'s only solid material
+// (z=[85,100], near the band's OTHER edge). Must discard: "a hole is a hole".
 TEST_F(BreachPassGLTest, HitWithNoBackingMaterialDoesNotPaint) {
     clear_framebuffer();
     glEnable(GL_DEPTH_TEST);
@@ -593,9 +740,9 @@ TEST_F(BreachPassGLTest, HitWithNoBackingMaterialDoesNotPaint) {
 
     renderer::BreachPass pass;
     voxel::VoxelVolume fill = thin_plate_fill();
-    const voxel::DistanceField field = make_through_plate_field();
+    const voxel::DistanceField field = make_single_cavity_field();
     const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
-    scenegraph::Camera cam = cam_looking_at_origin_from_z7();
+    scenegraph::Camera cam = cam_through_cavity();
 
     pass.draw_instance(/*instance_key=*/20, fill, entry,
                        glm::mat4(1.0f), cam, *pipeline);
@@ -606,14 +753,15 @@ TEST_F(BreachPassGLTest, HitWithNoBackingMaterialDoesNotPaint) {
     auto px = read_center();
     EXPECT_LT(px[0] + px[1] + px[2], 16)
         << "Centre pixel is lit (R=" << (int)px[0] << " G=" << (int)px[1] << " B=" << (int)px[2]
-        << ") -- the raymarch found a wall (the carve brush's bounded far edge) but there is "
-           "no real hull material there; it must not paint";
+        << ") -- the raymarch found a wall but there is no real hull material there; "
+           "it must not paint";
 }
 
 // Positive control: IDENTICAL field/camera, but fill now covers the whole
-// box (wide_solid_fill spans past both z=[2,3] and z=0). Proves the negative
-// result above is not a vacuously-always-discarding check -- flipping only
-// the fill flips the outcome.
+// box (solid_fill(), which spans z=[-50,200] -- past both thin_plate_fill's
+// z=[65,75] and hit_point's z~=0). Proves the negative result above is
+// not a vacuously-always-discarding check -- flipping only the fill flips
+// the outcome.
 TEST_F(BreachPassGLTest, HitWithRealBackingMaterialPaints) {
     clear_framebuffer();
     glEnable(GL_DEPTH_TEST);
@@ -621,10 +769,10 @@ TEST_F(BreachPassGLTest, HitWithRealBackingMaterialPaints) {
     mark_hull_cut();
 
     renderer::BreachPass pass;
-    voxel::VoxelVolume fill = solid_fill();   // covers [-4,4]^3 -- includes hit_point~z=0
-    const voxel::DistanceField field = make_through_plate_field();
+    voxel::VoxelVolume fill = solid_fill();   // covers [-50,275] on Z -- includes hit_point~z=0
+    const voxel::DistanceField field = make_single_cavity_field();
     const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
-    scenegraph::Camera cam = cam_looking_at_origin_from_z7();
+    scenegraph::Camera cam = cam_through_cavity();
 
     pass.draw_instance(/*instance_key=*/21, fill, entry,
                        glm::mat4(1.0f), cam, *pipeline);
@@ -671,7 +819,7 @@ TEST_F(BreachPassGLTest, OneDrawIssuedRegardlessOfDamageSiteCount) {
 TEST_F(BreachPassGLTest, InteriorRendersForACarveBeyondTheTwentyFourSlotRing) {
     voxel::VoxelVolume fill = wide_solid_fill();
     const voxel::DistanceField field = make_multi_site_field(30);
-    const float field_max_z = field.origin.z + field.dims.z * field.cell.z;
+    const float field_max_z = field.origin.z + field.dims.z * field.cell.z;  // 3825
 
     // Positive: site index 29 -- the 30th site, beyond HullCarveField::
     // kMaxCarves (24) by construction (see make_multi_site_field's header
@@ -695,13 +843,15 @@ TEST_F(BreachPassGLTest, InteriorRendersForACarveBeyondTheTwentyFourSlotRing) {
                "should render an interior -- this is the artifact the plan exists to remove";
     }
 
-    // Negative control: aim deep into the field's trailing untouched pad
-    // (multi_site_gap_z(30) -- at least 120 model units from site 29's own
-    // band in either direction, comfortably beyond the ~96-unit search
-    // budget; see make_multi_site_field's header comment) -- must stay
-    // background. Rules out "this field renders an interior everywhere
-    // regardless of the camera", which would make the positive result
-    // above vacuous.
+    // Negative control: camera sits ONE CELL (25 units) inside the field's
+    // own trailing untouched pad (dims_z=153, so pad cells are [150,153),
+    // body z in [3750,3825]; eye at z=3775 is 25 units past the pad's own
+    // start) and looks AWAY from every site (target_z=3825, the box's own
+    // +Z edge) -- see cam_looking_away's own comment for why this, not a
+    // "far away and hope the budget doesn't reach", is what makes this a
+    // genuine negative control. Must stay background: rules out "this
+    // field renders an interior everywhere regardless of the camera",
+    // which would make the positive result above vacuous.
     {
         clear_framebuffer();
         glEnable(GL_DEPTH_TEST);
@@ -710,16 +860,17 @@ TEST_F(BreachPassGLTest, InteriorRendersForACarveBeyondTheTwentyFourSlotRing) {
 
         renderer::BreachPass pass;
         const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
-        scenegraph::Camera cam = cam_at_site(multi_site_gap_z(30), field_max_z + 500.f);
+        scenegraph::Camera cam = cam_looking_away(/*eye_z=*/3775.f, /*target_z=*/field_max_z);
 
         pass.draw_instance(/*instance_key=*/32, fill, entry,
                            glm::mat4(1.0f), cam, *pipeline);
         glFinish();
-        EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error targeting the inter-site gap";
+        EXPECT_EQ(glGetError(), GL_NO_ERROR) << "GL error looking away into the pad";
         auto px = read_center();
         EXPECT_LT(px[0] + px[1] + px[2], 16)
-            << "Centre pixel lit at an untouched gap between sites -- expected background, "
-               "or the positive result at site 29 would not be meaningful evidence";
+            << "Centre pixel lit while looking away from every site into the field's own "
+               "untouched tail -- expected background, or the positive result at site 29 "
+               "would not be meaningful evidence";
     }
 }
 
@@ -734,7 +885,7 @@ TEST_F(BreachPassGLTest, UndamagedInstanceIssuesNoDraws) {
     renderer::InstanceFieldCache field_cache;  // nothing ever carve()'d
     renderer::CarveFieldCache    carve_cache;  // real, but must never be touched
     renderer::BreachPass         pass;
-    scenegraph::Camera cam = cam_looking_at_origin();
+    scenegraph::Camera cam = cam_through_cavity();
 
     // A lookup that fails the test if invoked: proves field_cache->get()
     // gates BEFORE any model lookup happens at all, for the undamaged case.
@@ -768,7 +919,7 @@ TEST_F(BreachPassGLTest, StencilAndCullStateRestoredAfterDrawInstance) {
     voxel::VoxelVolume fill = solid_fill();
     const voxel::DistanceField field = make_single_cavity_field();
     const renderer::InstanceFieldCache::Entry entry = make_field_entry(field);
-    scenegraph::Camera cam = cam_looking_at_origin();
+    scenegraph::Camera cam = cam_through_cavity();
 
     pass.draw_instance(/*instance_key=*/40, fill, entry,
                        glm::mat4(1.0f), cam, *pipeline);

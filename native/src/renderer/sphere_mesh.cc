@@ -44,17 +44,28 @@ assets::MeshCpu build_uv_sphere(int target_tris) {
         }
     }
 
-    // Indices: clockwise winding from OUTSIDE the sphere. The inside-sphere
-    // passes (BackdropPass, SunPass) cull GL_FRONT so the inside is drawn.
-    // Verified correct under glFrontFace(GL_CCW) after the 2026-06-18
-    // right-handed un-mirror (docs/superpowers/plans/).
+    // Indices: COUNTER-clockwise winding from OUTSIDE the sphere -- this
+    // comment previously (wrongly) said "clockwise"; a code review for
+    // raymarched-breach-interior Task 3 worked the actual triangle (a,b,d)
+    // by hand at theta=0, phi=0 (a right-handed tangent-plane signed-area
+    // check, viewed from outside along -X with world-up +Z) and got a
+    // POSITIVE signed area, i.e. CCW, not the CW this comment used to
+    // claim. The inside-sphere passes (BackdropPass, SunPass) cull
+    // GL_FRONT so the inside is drawn -- correct under glFrontFace(GL_CCW)
+    // (standard: cull(FRONT) removes CCW-facing triangles, i.e. the near/
+    // outward side, leaving the far/inward side visible) after the
+    // 2026-06-18 right-handed un-mirror (docs/superpowers/plans/). The
+    // stale "clockwise" claim here is what a Task 3 hand-derivation for a
+    // NEW box mesh (breach_pass.cc's build_unit_box_cpu) faithfully
+    // reproduced and then had to correct against a real GL render --
+    // see that function's own header comment.
     for (int i = 0; i < lat_segs; ++i) {
         for (int j = 0; j < lon_segs; ++j) {
             std::uint32_t a = static_cast<std::uint32_t>( i      * (lon_segs + 1) + j     );
             std::uint32_t b = static_cast<std::uint32_t>( i      * (lon_segs + 1) + j + 1 );
             std::uint32_t c = static_cast<std::uint32_t>((i + 1) * (lon_segs + 1) + j     );
             std::uint32_t d = static_cast<std::uint32_t>((i + 1) * (lon_segs + 1) + j + 1 );
-            // Quad (a, b, d, c) → two CW triangles from outside.
+            // Quad (a, b, d, c) → two CCW triangles from outside.
             cpu.indices.push_back(a); cpu.indices.push_back(b); cpu.indices.push_back(d);
             cpu.indices.push_back(a); cpu.indices.push_back(d); cpu.indices.push_back(c);
         }

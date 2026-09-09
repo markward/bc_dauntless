@@ -110,13 +110,27 @@ public:
     /// the molten-rim emissive. Pass 0.0f for a fresh (hot) proxy, or
     /// kRimLife + 1 (the default) for a cold/no-event proxy — which is
     /// byte-identical to the pre-emissive scoop.
+    ///
+    /// `breach_center`/`breach_radius` are that SAME event's own
+    /// `center_body`/`radius` (scenegraph::BreachEvent — both already
+    /// carried by the event ring, no new plumbing upstream of this pass).
+    /// One instance can hold several old, cooled breaches alongside one
+    /// fresh one; `u_breach_age` alone is a single scalar applied to every
+    /// fragment on the WHOLE instance, so without a position the molten-rim
+    /// term would re-ignite every old hole on the hull, not just the fresh
+    /// one. breach.frag gates the emissive by distance from `breach_center`
+    /// (scaled by `breach_radius`) as well as by age. Defaults (origin,
+    /// 0) are harmless when `breach_age` is also left at its cold default —
+    /// heat is already 0 from the age term in that case.
     void draw_instance(std::uintptr_t instance_key,
                        const voxel::VoxelVolume& fill,
                        const InstanceFieldCache::Entry& field,
                        const glm::mat4& world_xf,
                        const scenegraph::Camera& camera,
                        Pipeline& pipeline,
-                       float breach_age = scenegraph::kRimLife + 1.f);
+                       float breach_age = scenegraph::kRimLife + 1.f,
+                       const glm::vec3& breach_center = glm::vec3(0.0f),
+                       float breach_radius = 0.0f);
 
     /// Total number of box-proxy draw calls (glDrawElements invocations)
     /// issued by this pass instance so far, across every render()/
@@ -145,7 +159,9 @@ private:
                         const glm::mat4& world_xf,
                         const scenegraph::Camera& camera,
                         Pipeline& pipeline,
-                        float breach_age,     // age of matching event; large = cold
+                        float breach_age,             // age of matching event; large = cold
+                        const glm::vec3& breach_center,  // that event's own centre, body frame
+                        float breach_radius,          // that event's own visible radius
                         unsigned int damage_tex);  // current animation frame texture
 
     // Build (once) a fill GL_R8 3D texture from a VoxelVolume.

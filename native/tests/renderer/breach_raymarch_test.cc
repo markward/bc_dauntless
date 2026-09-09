@@ -796,11 +796,18 @@ namespace {
 // breach.frag's find_breach_entry() -- a second bounded loop, walking from
 // the box's own entry point to the fragment's exit point looking for where
 // the ray first crosses INTO carved material -- is what tells that case
-// apart before handing off to raymarch_breach_cavity(). It deliberately
-// reuses kBreachMaxSteps rather than inventing a second named bound: its own
-// reach is bounded by the SAME field-diagonal argument raymarch_breach_
-// cavity's own header comment makes (both loops can only ever march at most
-// the field's own box diagonal in one straight line).
+// apart before handing off to raymarch_breach_cavity(). It uses its OWN
+// named bound, kBreachCoarseMaxSteps, and its own COARSE, cell-independent
+// stride (kBreachCoarseStride, 25 model units -- derived from
+// MIN_CARVE_RADIUS_GU, engine/appc/hull_carve.py) rather than reusing
+// raymarch_breach_cavity's kBreachMaxSteps/kHullFieldStepFrac pair: a code
+// review caught that the first version DID reuse the fine, cell-relative
+// step here, which reintroduced this plan's own see-through defect for any
+// breach far enough from the box's own entry face (the fine stride's reach
+// is bounded to ~32 cells, far short of a real hull's own box diagonal --
+// see find_breach_entry's own derivation comment in breach.frag for the
+// measured numbers). Two DIFFERENT named bounds for two DIFFERENT jobs is
+// correct here, not an inconsistency to clean up.
 //
 // This guard was originally written expecting exactly ONE such loop in the
 // whole file; per this file's own header comment ("Nothing calls this

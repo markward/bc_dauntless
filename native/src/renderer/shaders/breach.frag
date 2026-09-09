@@ -76,6 +76,20 @@ uniform vec3  u_camera_pos_body;
 uniform float u_breach_age;
 uniform float u_rim_life;
 
+// u_breach_center/u_breach_radius: that SAME event's own body-frame centre
+// and visible radius (scenegraph::BreachEvent -- BreachPass::render() reads
+// both off the freshest active event, same source as u_breach_age). Task 3
+// obligation #2: with one draw per INSTANCE (not per carve any more),
+// u_breach_age is a single scalar shared by every fragment on the whole
+// hull -- a ship can carry several old, cooled breaches alongside one fresh
+// one, and age alone cannot tell them apart spatially. Without a position,
+// heat (below) would be uniform across the instance and the fresh event's
+// glow would re-ignite every OTHER hole on the same hull, not just its own.
+// main() additionally gates heat by distance from u_breach_center (scaled
+// by u_breach_radius), so only the fragment's OWN nearby hole lights up.
+uniform vec3  u_breach_center;
+uniform float u_breach_radius;
+
 // Copied verbatim (not shared: embed_shader reads one file at a time --
 // see native/src/renderer/CMakeLists.txt:5-11) from opaque.frag's hull-clip
 // field sampling, byte-identical between the drift-guard markers below
@@ -381,7 +395,15 @@ bool raymarch_breach_cavity(vec3 ro, vec3 rd, out vec3 hit_point, out vec3 hit_n
 // Components of `rd` at or near 0 produce +-inf in `inv_rd`; the min/max
 // reduction below is still correct under IEEE arithmetic (a ray parallel to
 // a slab either always or never lies within it along that axis, and +-inf
-// sorts to the correct side of both cases).
+// sorts to the correct side of both cases). NOT covered by that argument: a
+// component of `rd` EXACTLY 0 with `ro` landing EXACTLY on that slab's own
+// plane produces `0 * inf = NaN` in `t0`/`t1` for that component, which
+// would then poison `tmin`/`t_enter` (`min`/`max` with a NaN operand is
+// itself NaN or arbitrary, driver-dependent, in GLSL). Left unguarded:
+// `rd` is a normalised view-ray direction from a real camera position, and
+// `ro` sits exactly on a specific axis-aligned plane only for a
+// zero-measure set of camera positions/orientations -- practically
+// unreachable, not proven unreachable.
 //
 // Clamped to >= 0 so a camera already inside the box (a first-person/cinematic
 // view close to a hull breach) searches from the camera itself rather than
@@ -403,22 +425,66 @@ float breach_box_entry_t(vec3 ro, vec3 rd) {
     return max(t_enter, 0.0);
 }
 
-// Search for where the view ray first crosses INTO carved material, walking
-// from the box's own entry point (t_start, from breach_box_entry_t) out to
-// this fragment's own exit point (t_end, == v_body_pos's distance from ro --
-// see breach_box_entry_t's comment). Unlike raymarch_breach_cavity, this does
-// NOT assume `ro` starts inside carved material -- that guarantee is exactly
-// what the old per-carve sphere proxy gave for free, and the box proxy
-// cannot: it covers the whole field, so this loop is what tells "this ray
-// touches a carve" apart from "it doesn't" before handing off to
-// raymarch_breach_cavity.
+// Smallest legal carve's radius, in MODEL UNITS: == MIN_CARVE_RADIUS_GU
+// (engine/appc/hull_carve.py, 0.25 GU), converted via 1 model unit =
+// 0.01 GU (engine/units.py) -- i.e. 25.0. This is an ABSOLUTE quantity,
+// independent of any ship's field cell size -- unlike the fine march's own
+// step (kHullFieldStepFrac * cell, which scales WITH the field's
+// resolution), a carve's physical size does not shrink just because a
+// hull's authored field happens to be coarse. See find_breach_entry's own
+// derivation comment for why this is what has to bound the entry search's
+// stride -- a fix found by a live GL test failing, not derived up front:
+// the first version of this search reused the FINE, cell-relative step,
+// which is correct for raymarch_breach_cavity's job (finding a cavity's own
+// nearby far wall) but wrong for this one (finding ANY point across an
+// entire hull-sized box), and silently reintroduced this plan's own
+// see-through defect for any breach far enough from the box's entry face --
+// see this task's report for the measured numbers.
+const float kBreachCoarseStride = 25.0;
+
+// See find_breach_entry's own "BUDGET" paragraph.
+const int kBreachCoarseMaxSteps = 64;
+
+// Find a point ANYWHERE inside carved material along the ray, for
+// raymarch_breach_cavity to continue from -- NOT the precise entry crossing
+// (no interpolation/refinement here). That is sufficient: raymarch_breach_
+// cavity's own FINE march (unchanged) finds the far wall to full precision
+// regardless of exactly where within the carve this function's own coarse
+// sample landed, since it marches FORWARD until the field drops back below
+// margin -- a location determined purely by the carve's own far edge, not
+// by how this function got inside it. Unlike raymarch_breach_cavity, this
+// does NOT assume `ro` starts inside carved material -- that guarantee is
+// exactly what the old per-carve sphere proxy gave for free, and the box
+// proxy cannot: it covers the whole field, so this is what tells "this ray
+// touches a carve" apart from "it doesn't" before handing off.
 //
-// Same step size as raymarch_breach_cavity (kHullFieldStepFrac * the
-// smallest field cell -- see that function's own derivation) and the same
-// kBreachMaxSteps bound, for the same reason: this loop's own reach need
-// never exceed the field's box diagonal (breach_field_reach()), which bounds
-// t_end - t_start by construction -- both ro+rd*t_start and ro+rd*t_end
-// (== v_body_pos) lie on or inside the box.
+// STRIDE: kBreachCoarseStride (25.0 model units) -- HALF the smallest legal
+// carve's diameter (2 * 25.0 = 50.0). This is the same pigeonhole margin
+// kHullFieldStepFrac already uses for the fine march's cell-sized features
+// ("two samples per feature width is the minimum spacing that cannot
+// straddle the WHOLE feature without landing inside it at least once"),
+// applied here to the smallest possible CARVE instead of a field CELL. A
+// coarser stride could step over the smallest legal carve entirely --
+// exactly the bug the fine (cell-relative) stride had here: at a Galaxy's
+// cell=5, kHullFieldStepFrac*cell = 2.5 units, which is NOT the problem (it
+// is finer, not coarser) -- the problem was the fine stride's REACH
+// (bounded by kBreachMaxSteps, 32 cells = 160 units), not its resolution;
+// this function needs a stride coarse enough to cover a whole box cheaply
+// while still guaranteed not to miss a carve, which the fine stride's tiny
+// step size could never do within any reasonable step budget.
+//
+// BUDGET: kBreachCoarseMaxSteps * kBreachCoarseStride = 64 * 25.0 = 1600
+// model units -- comfortably past Galaxy's own measured field diagonal
+// (871, see raymarch_breach_cavity's own reach comment), the largest real
+// reference this codebase has. In practice the loop's `t > t_end` check
+// (t_end is THIS FRAGMENT's own box-exit distance -- see breach_box_entry_t
+// -- which is always <= the field's own box diagonal for any ray through
+// it) terminates the search before the step count ever does; the fixed
+// step count is a generous safety net, not the binding constraint --
+// exactly the OPPOSITE of raymarch_breach_cavity's own budget (see that
+// function's "which cap binds where" paragraph), where the step count binds
+// first because a cavity's own depth is small. This search's job is to
+// cross the WHOLE box, so the distance bound has to be the one that governs.
 //
 // Returns false -- entry_point left at vec3(0.0), caller must discard, same
 // "a hole is a hole" rule as everywhere else in this file -- when the ray
@@ -427,9 +493,8 @@ float breach_box_entry_t(vec3 ro, vec3 rd) {
 // WHOLE hull while any single carve is a small local feature within it.
 bool find_breach_entry(vec3 ro, vec3 rd, float t_start, float t_end, out vec3 entry_point) {
     entry_point = vec3(0.0);
-    float step_len = max(breach_min_cell() * kHullFieldStepFrac, 1e-5);
-    for (int j = 0; j < kBreachMaxSteps; ++j) {
-        float t = t_start + step_len * float(j);
+    for (int j = 0; j < kBreachCoarseMaxSteps; ++j) {
+        float t = t_start + kBreachCoarseStride * float(j);
         if (t > t_end) return false;
         vec3 p = ro + rd * t;
         if (sample_hull_field(p) > kHullFieldIsoMargin) {
@@ -546,8 +611,28 @@ void main() {
     vec3 c      = muted * light;
 
     // ── Molten rim emissive ──────────────────────────────────────────────────
-    // heat: 1 at birth (age=0) → 0 at kRimLife. Clamped to [0,1].
+    // heat: 1 at birth (age=0) → 0 at kRimLife, ADDITIONALLY gated by
+    // distance from the freshest event's own centre (u_breach_center's own
+    // comment above -- Task 3 obligation #2): u_breach_age is one scalar
+    // shared by every fragment on the whole instance now that there is one
+    // draw per instance, not per carve, so without a positional gate a
+    // fresh hit anywhere on the hull would re-ignite every OTHER, already-
+    // cooled hole on the same instance too.
     float heat = clamp(1.0 - u_breach_age / u_rim_life, 0.0, 1.0);
+    if (heat > 0.0) {
+        // kEventFalloffMul: multiple of the event's own carve radius before
+        // the glow fully fades. 3x gives a soft halo a bit larger than the
+        // hole itself without reaching a neighbouring breach elsewhere on
+        // the hull. max(u_breach_radius, 1e-3) avoids a degenerate
+        // zero-radius smoothstep (edge==edge*mul==0) -- unreachable when
+        // heat>0 already implies a real event was bound (radius>0), but
+        // cheap to guard defensively anyway.
+        const float kEventFalloffMul = 3.0;
+        float event_dist   = length(hit_point - u_breach_center);
+        float event_radius = max(u_breach_radius, 1e-3);
+        float event_w = 1.0 - smoothstep(event_radius, event_radius * kEventFalloffMul, event_dist);
+        heat *= event_w;
+    }
     if (heat > 0.0) {
         // Rim weight: proximity to the iso surface (the shallow cut edge where
         // the hole opens). Near the rim the fill is just above iso; deeper into

@@ -96,21 +96,24 @@ assets::Texture load_damage_tga(const char* path) {
 // chosen so cross(U, V) == the face's OUTWARD normal (a right-handed
 // tangent basis).
 //
-// Winding: EMPIRICALLY DETERMINED, not derived from build_uv_sphere.cc's
-// "clockwise from outside" claim — a hand derivation predicted
-// (p00,p01,p11)/(p00,p11,p10) (planar signed-area CW as seen from outside,
-// worked by hand for the canonical +Z face: U=(1,0,0), V=(0,1,0), giving the
-// standard "looking down -Z from +Z" 2D view, where (0,0)->(0,1)->(1,1) has
-// negative signed area) would match the sphere's convention, but a real GL
-// render (BreachPassGLTest.SolidFillDrawsInterior) showed the OPPOSITE
-// triangulation is what actually survives glCullFace(GL_FRONT) as this
-// pass's visible far wall — i.e. (p00,p11,p01)/(p00,p10,p11) below. A flat
-// per-face tangent-basis "CW/CCW" computation apparently does not carry over
-// to the sphere's (theta, phi) parametrisation the way it was assumed to;
-// rather than assert an unverified reason for the mismatch, this comment
-// just states the measured, working result. Both meshes are drawn with
-// glCullFace(GL_FRONT) so only the back (far, as seen from outside) faces
-// survive rasterisation.
+// Winding: (p00,p11,p01)/(p00,p10,p11) below is COUNTER-clockwise from
+// outside, on every face — the correct, standard convention, and the SAME
+// one build_uv_sphere.cc actually uses (see that file's own comment).
+//
+// This took a real GL render to get right rather than a hand derivation: a
+// first version here reproduced sphere_mesh.cc's PRE-fix comment, which
+// claimed "clockwise from outside" — a hand signed-area check for the +Z
+// face (U=(1,0,0), V=(0,1,0), the standard "looking down -Z from +Z" 2D
+// view) taking that claim at face value predicted (p00,p01,p11)/
+// (p00,p11,p10) instead. BreachPassGLTest.SolidFillDrawsInterior failed
+// against that prediction — cull(FRONT) was keeping the near face instead
+// of the far one — and the OPPOSITE triangulation (below) was what actually
+// worked. sphere_mesh.cc's "clockwise" comment was independently re-checked
+// by hand afterward (a code review caught it) and found to have simply been
+// wrong the whole time: build_uv_sphere IS also CCW-from-outside, so the two
+// meshes agree after all — see sphere_mesh.cc's corrected comment for that
+// derivation. Both meshes are drawn with glCullFace(GL_FRONT) so only the
+// back (far, as seen from outside) faces survive rasterisation.
 assets::MeshCpu build_unit_box_cpu() {
     using assets::MeshCpu;
 
@@ -254,6 +257,8 @@ void BreachPass::draw_box_proxy(const InstanceFieldCache::Entry& field,
                                 const scenegraph::Camera& camera,
                                 Pipeline& pipeline,
                                 float breach_age,
+                                const glm::vec3& breach_center,
+                                float breach_radius,
                                 unsigned int damage_tex) {
     // Camera world position: inverse of view matrix column 3, computed once
     // CPU-side per draw (not per fragment). Matches how the opaque pass derives
@@ -293,8 +298,16 @@ void BreachPass::draw_box_proxy(const InstanceFieldCache::Entry& field,
 
     // Molten-rim emissive: age of the nearest active breach event.
     // breach_age >= kRimLife → heat = 0 → no emissive (cold hole).
-    shader.set_float("u_breach_age", breach_age);
-    shader.set_float("u_rim_life",   scenegraph::kRimLife);
+    // breach_center/breach_radius: that SAME event's own position, so
+    // breach.frag can gate the emissive by DISTANCE from it too -- see
+    // breach_pass.h's draw_instance doc and breach.frag's own comment at
+    // its u_breach_center declaration for why age alone (a single scalar
+    // for the whole instance) is not enough once there is more than one
+    // hole on a hull.
+    shader.set_float("u_breach_age",    breach_age);
+    shader.set_float("u_rim_life",      scenegraph::kRimLife);
+    shader.set_vec3("u_breach_center",  breach_center);
+    shader.set_float("u_breach_radius", breach_radius);
 
     // Per-instance damage-field atlas — unit 2 (0=u_fill sampler3D,
     // 1=u_damage_tex). MUST be set on EVERY draw through this function: an
@@ -338,7 +351,9 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
                                const glm::mat4& world_xf,
                                const scenegraph::Camera& camera,
                                Pipeline& pipeline,
-                               float breach_age) {
+                               float breach_age,
+                               const glm::vec3& breach_center,
+                               float breach_radius) {
     if (field.tex2d == 0) return;   // no damage field: nothing to raymarch
 
     ensure_box();
@@ -355,7 +370,8 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
 
     begin_scoop_state();
     draw_box_proxy(field, fe.tex3d, fill.origin, fill.cell, fill.dims,
-                   world_xf, camera, pipeline, breach_age, damage_frames_[0]);
+                   world_xf, camera, pipeline, breach_age,
+                   breach_center, breach_radius, damage_frames_[0]);
     end_scoop_state();
 
     // Restore texture bindings.
@@ -421,21 +437,31 @@ void BreachPass::render(const scenegraph::World& world,
 
             ensure_state();
 
-            // Molten-rim age: with one draw per instance (not per carve)
-            // there is no single carve slot to measure age from any more.
-            // Use the MOST RECENT (smallest age) active breach event on the
-            // instance as a whole-instance approximation — a simplification
-            // from the old per-carve-localised glow (see this class's header
-            // comment), not a per-fragment reconstruction of it.
+            // Molten-rim age + position: with one draw per instance (not
+            // per carve) there is no single carve slot to draw from any
+            // more, so this passes the MOST RECENT (smallest age) active
+            // breach event's own age AND centre/radius through to the
+            // shader, which gates the emissive by distance from that centre
+            // as well as by age (breach.frag's u_breach_center comment) —
+            // an OLD, cooled hole elsewhere on the same hull must not
+            // re-ignite just because a DIFFERENT, fresh hit landed anywhere
+            // else on the instance.
             float breach_age = scenegraph::kRimLife + 1.f;  // default: cold
+            glm::vec3 breach_center(0.0f);
+            float breach_radius = 0.0f;
             for (const auto& ev : inst.breach_events.slots()) {
                 if (!ev.active) continue;
                 const float age = now - ev.birth_time;
-                if (age < breach_age) breach_age = age;
+                if (age < breach_age) {
+                    breach_age    = age;
+                    breach_center = ev.center_body;
+                    breach_radius = ev.radius;
+                }
             }
 
             draw_box_proxy(*field, ce->tex3d, ce->origin, ce->cell, ce->dims,
-                           inst.world, camera, pipeline, breach_age, frame_tex);
+                           inst.world, camera, pipeline, breach_age,
+                           breach_center, breach_radius, frame_tex);
         });
 
     if (any_state_changed) {
