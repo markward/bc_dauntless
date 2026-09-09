@@ -1395,3 +1395,86 @@ The gate cannot see whether a ship is really selectable, and this project's conv
 3. **QuickBattle → the Steamrunner and the three Intrepid variants appear in the ship lists.** This is the acceptance test: it is the thing that has never worked.
 4. Select one as the player ship and start the battle — it must spawn, be flyable, and have working AI as an opponent. A ship that appears but will not spawn means the table injection is shaped wrongly, which is exactly the failure the E2E test is built to catch first.
 5. The Steamrunner's report line should say its `AutoTargeting` tech is not installed.
+
+---
+
+### Task 8: Inject registered ships into the BUILT QuickBattle menus
+
+**Added after Task 7's end-to-end test failed.** Feeding the five tables is
+necessary but not sufficient: `GenerateShipMenu` builds the ship pane from
+hardcoded per-ship `if (iShipsUnlocked1 & AKIRA)` lines and never reads those
+tables. Ships register and no menu shows them - the feature currently delivers
+nothing a player can see. This is the floor named in
+`2026-09-09-mod-distribution-tiers-design.md`.
+
+**Files:**
+- Modify: `engine/foundation/quickbattle.py`
+- Modify: `engine/host_loop.py` (call the injection once the dialog is built)
+- Test: `tests/unit/test_foundation_menu_injection.py`, and
+  `tests/host/test_foundation_quickbattle_e2e.py` (Task 7's failing test must
+  now pass - do NOT weaken its assertion to make it green)
+
+**Interfaces:**
+- Consumes: `registered()` from Task 3; `menuGroup`/`playerMenuGroup` from Task 2
+- Produces: `inject_into_menus(qb=_UNSET) -> int` - buttons added; idempotent
+
+**What our picker actually needs.** `engine/ui/quick_battle_setup_panel.py`'s
+`_collect_categories` (lines 89-119) DFS-walks the pane subtree for
+`STCharacterMenu` nodes and treats their `STButton` children as ships. So a
+registered ship becomes visible the moment a category bearing its group label
+contains a button for it. Nothing else in the panel changes.
+
+**Button wiring.** `CreateBridgeMenuButton(name, eventType, subType, character)`
+returns `App.STButton_CreateW(name, event)` with the event int set to the ship
+type. Use `ET_SELECT_SHIP_TYPE` with the ship's `sid` for the catalog and
+`ET_SELECT_PLAYER_SHIP_TYPE` for the player menu. Both are assigned real values
+at runtime by QuickBattle's own init, so read them off the module rather than
+assuming a constant.
+
+- [ ] **Step 1: Write the failing test**
+
+See the test file listed above; it must cover: a registered ship becomes a
+button in its group; the button carries the ship's own type id and the correct
+event type; an existing category is reused rather than duplicated; an unknown
+group gets a new category; injection is idempotent; and no registered ships
+adds nothing.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `uv run pytest tests/unit/test_foundation_menu_injection.py -v`
+Expected: FAIL - `AttributeError: module has no attribute 'inject_into_menus'`
+
+- [ ] **Step 3: Write minimal implementation**
+
+`inject_into_menus(qb=_UNSET)` walks `registered()`, skips ids already
+injected, finds the ship's `ShipDefinition` via `all_definitions()`, and for
+each of (`g_pShipsPane`, `menuGroup`, `ET_SELECT_SHIP_TYPE`) and
+(`g_pPlayerPane`, `playerMenuGroup`, `ET_SELECT_PLAYER_SHIP_TYPE`): finds an
+existing `STCharacterMenu` with that label by the same DFS our picker uses,
+creates one on the pane if absent, and adds
+`module.CreateBridgeMenuButton(name, event, sid, g_pXO)` to it. A `None` group
+is skipped. Track injected ids in a module set so repeat calls add nothing, and
+clear that set in `reset()`.
+
+Then call it from `engine/host_loop.py` where the QuickBattle dialog has just
+been built, before the setup panel first reads the widget tree. Find that point
+by reading the surrounding code; if no single clean seam exists, report that
+rather than scattering calls.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `uv run pytest tests/unit/test_foundation_menu_injection.py tests/host/test_foundation_quickbattle_e2e.py -v`
+Expected: PASS - including Task 7's previously-failing E2E test, with its
+assertion unchanged.
+
+- [ ] **Step 5: Run the FULL gate**
+
+Run: `scripts/check_tests.sh`
+Expected: exit 0, back to the single baselined failure.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add engine/foundation/quickbattle.py engine/host_loop.py tests/unit/test_foundation_menu_injection.py
+git commit -m "feat(foundation): inject registered ships into the built QuickBattle menus"
+```
