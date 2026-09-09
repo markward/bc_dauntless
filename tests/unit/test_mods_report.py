@@ -179,3 +179,159 @@ def test_a_pure_addition_is_still_not_an_override_under_case_sensitivity(tmp_pat
     game = _CaseSensitiveRoot({"Data/Icons/Ships/Galaxy.tga"})
     mods.classify(idx, game, _CaseSensitiveRoot(set()))
     assert idx.overrides == []
+
+
+# ── Why a ship did not appear ───────────────────────────────────────────────
+# Two real cases from the six-mod corpus, both of which left the player with
+# no explanation at all:
+#
+#   VoyagerCubeHP ships ships/Hardpoints/VoyagerCube.py and NO ship script.
+#   Its readme requires "Voyager Borg Cube installed" -- it upgrades a ship
+#   from another mod. Absent that mod, the cube cannot appear, and nothing
+#   said so.
+#
+#   CGSovereign ships ships/Sovereign.py over the stock one. It REPLACES the
+#   stock Sovereign rather than adding a ship, so there is deliberately no
+#   new row in the picker -- which looks identical to "the mod didn't load".
+
+def _hardpoint(root, name):
+    _touch(root / "Scripts" / "ships" / "Hardpoints" / (name + ".py"))
+
+
+def test_hardpoint_without_a_ship_script_is_reported(tmp_path):
+    game, sdk = _roots(tmp_path)
+    _hardpoint(tmp_path / "mods" / "CubeHP", "VoyagerCube")
+    idx = mods.build_index(tmp_path / "mods")
+    mods.classify(idx, game, sdk)
+
+    status = {m.name: m for m in idx.mods}["CubeHP"]
+    assert status.orphan_hardpoints == ["VoyagerCube"]
+    text = mods.describe(idx)
+    assert "VoyagerCube" in text and "no ship script" in text
+
+
+_SHIP_STATS = '''
+def GetShipStats():
+	return {
+		"Name": "%s",
+		"HardpointFile": "%s",
+	}
+'''
+
+
+def _ship_script(root, script_name, hardpoint_name):
+    """A ship script that NAMES its hardpoint, which is the real link.
+
+    The hardpoint file need not share the ship script's name: stock
+    Galaxy.py declares "galaxy", but the LC Intrepid pack's LCintrepidZZ.py
+    declares "LCintrepidHP". Assuming the stock convention was a law produced
+    a false orphan report against a pack that works perfectly.
+    """
+    _touch(root / "Scripts" / "ships" / (script_name + ".py"),
+           _SHIP_STATS % (script_name, hardpoint_name))
+
+
+def test_a_hardpoint_whose_ship_the_same_mod_ships_is_not_orphaned(tmp_path):
+    game, sdk = _roots(tmp_path)
+    root = tmp_path / "mods" / "Whole"
+    _hardpoint(root, "NewShip")
+    _ship_script(root, "NewShip", "NewShip")
+    idx = mods.build_index(tmp_path / "mods")
+    mods.classify(idx, game, sdk)
+
+    assert {m.name: m for m in idx.mods}["Whole"].orphan_hardpoints == []
+
+
+def test_a_hardpoint_named_differently_from_its_ship_is_not_orphaned(tmp_path):
+    """The LC Intrepid case, verbatim: LCintrepidZZ.py declares
+    HardpointFile "LCintrepidHP". Nothing links them by filename."""
+    game, sdk = _roots(tmp_path)
+    root = tmp_path / "mods" / "LC Intrepid Pack"
+    _hardpoint(root, "LCintrepidHP")
+    _ship_script(root, "LCintrepidZZ", "LCintrepidHP")
+    idx = mods.build_index(tmp_path / "mods")
+    mods.classify(idx, game, sdk)
+
+    status = {m.name: m for m in idx.mods}["LC Intrepid Pack"]
+    assert status.orphan_hardpoints == []
+
+
+def test_single_quoted_hardpoint_declarations_are_read_too(tmp_path):
+    game, sdk = _roots(tmp_path)
+    root = tmp_path / "mods" / "Quoted"
+    _hardpoint(root, "OddHP")
+    _touch(root / "Scripts" / "ships" / "Odd.py",
+           "def GetShipStats():\n\treturn {'HardpointFile': 'OddHP'}\n")
+    idx = mods.build_index(tmp_path / "mods")
+    mods.classify(idx, game, sdk)
+
+    assert {m.name: m for m in idx.mods}["Quoted"].orphan_hardpoints == []
+
+
+def test_a_hardpoint_whose_ship_ANOTHER_mod_ships_is_not_orphaned(tmp_path):
+    """The base mod being installed is exactly the case this must not flag."""
+    game, sdk = _roots(tmp_path)
+    _hardpoint(tmp_path / "mods" / "CubeHP", "VoyagerCube")
+    _ship_script(tmp_path / "mods" / "CubeBase", "VoyagerCube", "VoyagerCube")
+    idx = mods.build_index(tmp_path / "mods")
+    mods.classify(idx, game, sdk)
+
+    assert {m.name: m for m in idx.mods}["CubeHP"].orphan_hardpoints == []
+
+
+def test_a_hardpoint_upgrading_a_STOCK_ship_is_not_orphaned(tmp_path):
+    """A hardpoint-only upgrade to a stock hull is a normal, working mod."""
+    game, sdk = _roots(tmp_path)
+    _touch(sdk / "ships" / "Galaxy.py", "stock")
+    _hardpoint(tmp_path / "mods" / "GalaxyHP", "Galaxy")
+    idx = mods.build_index(tmp_path / "mods")
+    mods.classify(idx, game, sdk)
+
+    assert {m.name: m for m in idx.mods}["GalaxyHP"].orphan_hardpoints == []
+
+
+def test_replacing_a_stock_ship_script_is_reported(tmp_path):
+    game, sdk = _roots(tmp_path)
+    _touch(sdk / "ships" / "Sovereign.py", "stock")
+    _touch(tmp_path / "mods" / "CGSov" / "Scripts" / "ships" / "Sovereign.py")
+    idx = mods.build_index(tmp_path / "mods")
+    mods.classify(idx, game, sdk)
+
+    status = {m.name: m for m in idx.mods}["CGSov"]
+    assert status.replaces_ships == ["Sovereign"]
+    assert "replaces stock ship" in mods.describe(idx)
+
+
+def test_adding_a_new_ship_script_is_not_a_replacement(tmp_path):
+    game, sdk = _roots(tmp_path)
+    _touch(sdk / "ships" / "Sovereign.py", "stock")
+    _touch(tmp_path / "mods" / "Additive" / "Scripts" / "ships" / "LCintrepidZZ.py")
+    idx = mods.build_index(tmp_path / "mods")
+    mods.classify(idx, game, sdk)
+
+    status = {m.name: m for m in idx.mods}["Additive"]
+    assert status.replaces_ships == []
+    assert "replaces stock ship" not in mods.describe(idx)
+
+
+def test_a_hardpoint_replacement_is_not_reported_as_a_ship_replacement(tmp_path):
+    """ships/Hardpoints/X.py lives under ships/ too -- it must not be read as
+    a replacement of the ship script X."""
+    game, sdk = _roots(tmp_path)
+    _touch(sdk / "ships" / "Hardpoints" / "Galaxy.py", "stock")
+    _hardpoint(tmp_path / "mods" / "GalaxyHP", "Galaxy")
+    idx = mods.build_index(tmp_path / "mods")
+    mods.classify(idx, game, sdk)
+
+    assert {m.name: m for m in idx.mods}["GalaxyHP"].replaces_ships == []
+
+
+def test_a_mod_with_neither_condition_gains_no_extra_report_text(tmp_path):
+    game, sdk = _roots(tmp_path)
+    _touch(tmp_path / "mods" / "Plain" / "Data" / "thing.nif")
+    idx = mods.build_index(tmp_path / "mods")
+    mods.classify(idx, game, sdk)
+
+    text = mods.describe(idx)
+    assert "no ship script" not in text
+    assert "replaces stock ship" not in text
