@@ -51,14 +51,32 @@
 
 #include <voxel/distance_field.h>
 #include <voxel/field_atlas.h>
+#include <voxel/field_brush.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <regex>
+#include <sstream>
+#include <string>
 #include <vector>
 
 namespace {
+
+// Read a shader straight off disk, the way breach_raymarch_test.cc's
+// IsoMarginMatchesOpaqueFragsValue does -- the SAME mechanism, deliberately,
+// rather than a second one. These are text-level drift guards, not GL tests.
+std::string read_shader_source(const char* rel) {
+    const std::filesystem::path p = std::filesystem::path(OPEN_STBC_PROJECT_ROOT)
+                                  / "native" / "src" / "renderer" / "shaders" / rel;
+    std::ifstream in(p);
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
 
 static constexpr int kW = 64;
 static constexpr int kH = 64;
@@ -799,6 +817,61 @@ TEST_F(HullFieldClipTest, FieldSuppressedInTheBandBetweenThePerturbedAndUnpertur
            "ring where the noise happens to dip the rim inward";
 }
 
+// ── Task 2(a): the suppression bound must be the DILATED carve region ─────
+//
+// field_brush.cc rounds every carve up to the smallest shape the lattice can
+// hold (kCarveDepthFloorCells, kCarveFieldOffsetCells), so the field reads
+// "damaged" in a ring OUTSIDE the nominal oblate. Suppressing the field only
+// inside the nominal oblate lets it cut that ring with its own smooth edge --
+// visibly enlarging every tracked hole and erasing the jagged noise rim and
+// the struts the live pass approved.
+//
+// Geometry (all exact, no GPU noise involved -- the fragment never enters the
+// sphere block's noise branch at all):
+//   probe field cell = 1.0 on every axis  =>  cellmin = 1.0
+//   r = 2.0  =>  lat = r*(1+kShapeAmp) = 2.5
+//                dep = max(kDepthFactor*r, kFieldDepthFloor*cellmin)
+//                    = max(0.9, 1.25) = 1.25
+//                dil = 1 + kFieldSdfOffset*cellmin / min(lat,dep)
+//                    = 1 + 1.25/1.25 = 2.0
+//   carve centre 3.5 to the -X side of the centre fragment, normal +Z and the
+//   fixture's triangle flat in Z, so along = 0 and ld ~= 3.516.
+//     ld > r*(1+kShapeAmp) = 2.5  -> the sphere block's own guard is FALSE:
+//        this fragment is outside the nominal oblate on BOTH the perturbed
+//        (e < 1) and the unperturbed test, so the pre-Task-2 gate left it
+//        unsuppressed and the field discarded it.
+//     unit = ld/lat ~= 1.406 < dil = 2.0 -> inside the region the brush
+//        actually dilated this carve to, so the field must be suppressed and
+//        the hull fragment must SURVIVE.
+TEST_F(HullFieldClipTest, FieldSuppressedOutToTheBrushesDilatedBound) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+    set_uniforms(prog);
+
+    const glm::vec4 sphere(-3.5f, 0.0f, 0.0f, 2.0f);
+    const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+    prog.set_int("u_carve_enabled", 1);
+    prog.set_int("u_carve_count", 1);
+    prog.set_vec4_array("u_carve_spheres", &sphere, 1);
+    prog.set_vec3_array("u_carve_normals", &normal, 1);
+
+    // Field independently marks this point cut (the same +80 probe cell
+    // FragmentInsideCarvedRegionIsDiscarded proves does discard on its own).
+    const voxel::DistanceField field = make_probe_field(/*center_value=*/80);
+    enable_field(prog, field, /*invert=*/false);
+
+    draw();
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    auto px = read_center();
+    EXPECT_GT(px[0] + px[1] + px[2], 128 * 3 / 2)
+        << "Center pixel is dark (R=" << (int)px[0] << " G=" << (int)px[1]
+        << " B=" << (int)px[2]
+        << ") -- this fragment is outside the nominal oblate but inside the "
+           "region field_brush.cc dilated the carve to. The field must be "
+           "suppressed out to the DILATED bound, or it cuts a smooth ring "
+           "around every tracked hole and erases the noise rim and struts";
+}
+
 // ── Important 3 fix: frame.cc's draw_model uniform-setting block ──────────
 //
 // Everything above drives opaque.frag's uniforms directly via the test's
@@ -983,6 +1056,70 @@ TEST_F(HullFieldDrawModelTest, EntryPresentForcesShipWorldInvEvenWithNoOtherBody
     glDeleteTextures(1, &tex);
 }
 
+// ── Task 2(b): no baked field => no holes ────────────────────────────────
+//
+// breach_pass.cc returns early when the instance has no InstanceFieldCache
+// entry, so it draws no interior. draw_model used to set u_carve_enabled = 1
+// regardless, which meant a hull whose bake failed got holes from the sphere
+// path with nothing behind them: unconditional see-through. A hole is a hole
+// -- if we cannot draw what is behind it, we do not cut it.
+//
+// Both halves are asserted in one test on purpose: "carves disabled" alone
+// would pass against a draw_model that simply never enables carves at all.
+TEST_F(HullFieldDrawModelTest, CarvesAreDisabledWithoutAFieldAndEnabledWithOne) {
+    renderer::Shader& prog = pipeline->opaque_shader();
+
+    scenegraph::HullCarveField carve;
+    scenegraph::HullCarve& c = carve.add(glm::vec3(0.0f), /*influ_radius=*/2.0f,
+                                         /*strength=*/500.0f,
+                                         glm::vec3(0.0f, 0.0f, 1.0f));
+    c.radius = 2.0f;   // caller owns the visible radius; >0 or frame.cc skips it
+    ASSERT_EQ(carve.count(), 1u);
+
+    const GLuint program = prog.program();
+    auto carve_enabled = [&]() {
+        GLint v = -1;
+        glGetUniformiv(program, glGetUniformLocation(program, "u_carve_enabled"), &v);
+        return v;
+    };
+
+    renderer::draw_model(empty_model, glm::mat4(1.0f), prog, pipeline->skinned_shader(),
+                         white_tex_, black_tex_, /*rim_strength=*/0.0f,
+                         no_decals, no_glow, /*decal_time=*/0.0f,
+                         /*emissive_scale=*/1.0f, no_palette, carve,
+                         no_lights, /*dyn_light_count=*/0,
+                         /*carve_fill=*/nullptr, /*carve_invert=*/false,
+                         /*hull_field=*/nullptr);
+    EXPECT_EQ(carve_enabled(), 0)
+        << "draw_model cut holes on an instance with no baked field -- "
+           "breach_pass draws no interior there, so the hole is see-through";
+
+    // Same carve, now WITH a field entry: the holes must come back.
+    const voxel::DistanceField field = make_probe_field(/*center_value=*/0);
+    voxel::AtlasLayout layout;
+    GLuint tex = upload_field_atlas(field, layout);
+    renderer::InstanceFieldCache::Entry entry;
+    entry.tex2d  = tex;
+    entry.layout = layout;
+    entry.origin = field.origin;
+    entry.cell   = field.cell;
+    entry.dims   = field.dims;
+    entry.scale  = field.scale;
+
+    renderer::draw_model(empty_model, glm::mat4(1.0f), prog, pipeline->skinned_shader(),
+                         white_tex_, black_tex_, /*rim_strength=*/0.0f,
+                         no_decals, no_glow, /*decal_time=*/0.0f,
+                         /*emissive_scale=*/1.0f, no_palette, carve,
+                         no_lights, /*dyn_light_count=*/0,
+                         /*carve_fill=*/nullptr, /*carve_invert=*/false,
+                         &entry);
+    EXPECT_EQ(carve_enabled(), 1)
+        << "draw_model must still cut holes when the instance HAS a field";
+
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+    glDeleteTextures(1, &tex);
+}
+
 // Behaviour 5 (regression canary): degenerate vertex normal + ambient
 // gradient ON must stay finite -- AND must actually render, not just "not
 // crash". Copied structure from
@@ -1027,4 +1164,32 @@ TEST_F(HullFieldClipTest, DegenerateNormalWithGradientOnStaysFinite) {
         << ") -- adding the hull-field sampler/sampling code reopened the "
            "same class of driver hazard the sphere-clip guard fixed";
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// The GLSL and C++ copies of the brush constants are separate literals in
+// separately compiled languages; nothing but this test stops them drifting.
+// If they drift, the shader suppresses the field over a different region
+// than the brush dilated, and a ring of un-backed hull reappears around
+// every tracked hole -- the exact defect Task 1 exists to remove.
+//
+// Matched with a REGEX, not a fixed "const float <name> = " prefix: this
+// shader column-aligns its constant declarations (`const float kShapeAmp    =
+// 0.25;`), so a fixed-prefix find() would report kShapeAmp missing and the
+// guard would fail for the wrong reason.
+TEST(HullFieldClip, GlslBrushConstantsMatchCxx) {
+    const std::string src = read_shader_source("opaque.frag");
+    ASSERT_FALSE(src.empty()) << "opaque.frag could not be read";
+    auto glsl_const = [&](const char* name) -> float {
+        const std::regex re(std::string("const\\s+float\\s+") + name
+                            + "\\s*=\\s*([^;]+);");
+        std::smatch m;
+        EXPECT_TRUE(std::regex_search(src, m, re))
+            << name << " missing from opaque.frag";
+        if (!std::regex_search(src, m, re)) return -1.0f;
+        return std::stof(m[1].str());
+    };
+    EXPECT_FLOAT_EQ(glsl_const("kFieldDepthFloor"), voxel::kCarveDepthFloorCells);
+    EXPECT_FLOAT_EQ(glsl_const("kFieldSdfOffset"),  voxel::kCarveFieldOffsetCells);
+    EXPECT_FLOAT_EQ(glsl_const("kShapeAmp"),        voxel::kCarveRimAmp);
+    EXPECT_FLOAT_EQ(glsl_const("kDepthFactor"),     voxel::kCarveDepthFactor);
 }

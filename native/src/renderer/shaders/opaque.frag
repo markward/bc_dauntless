@@ -314,6 +314,15 @@ const float kShapeAmp    = 0.25;
 const float kShapeFreq   = 4.0;
 const float kPhase       = 0.13;
 
+// Field-brush dilation, in CELLS. GLSL const has no linkage across the
+// C++/GLSL boundary, so these are this shader's own copies of
+// voxel::kCarveDepthFloorCells and voxel::kCarveFieldOffsetCells --
+// NOT independently chosen values. HullFieldClip.GlslBrushConstantsMatchCxx
+// fails if they drift. See field_brush.h for the derivation and the measured
+// coverage they buy.
+const float kFieldDepthFloor = 1.25;
+const float kFieldSdfOffset  = 1.25;
+
 float vh3(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453123); }
 float vnoise3(vec3 p){
     vec3 i = floor(p), f = fract(p);
@@ -670,12 +679,12 @@ void main() {
     // interior align by construction. u_carve_count == 0 (or disabled) = stock path.
     //
     // UNCHANGED from before the hull-field clip existed, with one addition:
-    // `inside_any_oblate` records whether this fragment fell inside ANY
-    // TRACKED oblate (the same `e < 1.0` test the framework lattice already
-    // computes), so the field block below can defer to this block wherever
-    // it applies. See that block's comment for why.
+    // `field_suppressed` records whether this fragment fell inside the region
+    // the FIELD BRUSH dilated any TRACKED carve to (field_brush.cc), so the
+    // field block below can defer to this block wherever it applies. See that
+    // block's comment for why.
     bool marked = false;
-    bool inside_any_oblate = false;
+    bool field_suppressed = false;
     if (u_carve_enabled != 0 && u_carve_count > 0) {
         for (int i = 0; i < u_carve_count; i++) {
             vec3 c  = u_carve_spheres[i].xyz;
@@ -687,6 +696,24 @@ void main() {
             float along  = dot(v, n);
             vec3 lateral = v - along * n;
             float ld     = length(lateral);
+            // Region the FIELD BRUSH dilated this carve to (field_brush.cc).
+            // The field is deliberately generous -- a carve is rounded up to
+            // what the lattice can hold -- so suppressing the field only
+            // inside the nominal oblate would let it cut a smooth ring
+            // around every tracked hole, erasing the noise rim and the
+            // struts. This bound is a strict superset of the `e < 1.0` hole
+            // test below (its lateral extent is r*(1+kShapeAmp) >= r_eff),
+            // which is why no union with the unperturbed test is needed.
+            // Computed OUTSIDE the guard below on purpose: the dilated
+            // region reaches past that guard's box whenever the cell is
+            // coarse relative to the carve.
+            float cellmin = min(u_hull_field_cell.x,
+                                min(u_hull_field_cell.y, u_hull_field_cell.z));
+            float lat = r * (1.0 + kShapeAmp);
+            float dep = max(kDepthFactor * r, kFieldDepthFloor * cellmin);
+            float dil = 1.0 + (kFieldSdfOffset * cellmin) / min(lat, dep);
+            float unit = sqrt((ld * ld) / (lat * lat) + (along * along) / (dep * dep));
+            if (unit < dil) field_suppressed = true;
             if (ld < r * (1.0 + kShapeAmp) && abs(along) < kDepthFactor * r * (1.0 + kShapeAmp)) {
                 // Azimuthal noise on the lateral radius (jagged rim); same
                 // azimuth term the scoop uses, so the hole edge aligns.
@@ -694,27 +721,17 @@ void main() {
                 float r_eff = r * (1.0 + kShapeAmp * (vnoise3(az * kShapeFreq + c * kPhase) * 2.0 - 1.0));
                 float dz = along / (kDepthFactor * r);
                 float e  = (ld * ld) / (r_eff * r_eff) + dz * dz;   // <1 inside the oblate
-                // field_carve_oblate carves the UNPERTURBED oblate -- full
-                // radius `r`, no noise (it has no access to this per-fragment
-                // screen-space hash, only geometry). `e` alone is therefore a
-                // STRICT SUBSET of what the field cut whenever the noise dips
-                // r_eff below r: the band r_eff < ld < r is outside e<1.0 but
-                // inside what the field carved, so gating suppression on e<1.0
-                // alone would leave the field free to cut a smooth-edged ring
-                // there with no scoop behind it (breach.vert builds the scoop
-                // from r_eff too) -- a see-through gap around roughly half of
-                // every tracked breach's rim. Union in the UNPERTURBED test so
-                // that band is covered too. The e<1.0 half stays needed on its
-                // own for the opposite case: where noise pushes r_eff ABOVE r,
-                // a fragment can be inside the perturbed (sphere-drawn) oblate
-                // while outside the field's unperturbed carve -- e.g. a strut
-                // the lattice keeps beyond the field's cut must stay kept, not
-                // be silently re-exposed to field suppression only to find the
-                // field never touched it anyway (harmless either way, but the
-                // sphere block's own decision must still run untouched there).
-                if ((ld * ld) / (r * r) + dz * dz < 1.0) inside_any_oblate = true;
+                // No suppression bookkeeping here: `field_suppressed` was set
+                // above from the dilated bound, which contains BOTH this
+                // perturbed test and the unperturbed oblate the brush carves.
+                // The band r_eff < ld < r (where the noise dips the rim
+                // inward) is inside what the field cut but outside `e < 1.0`;
+                // before the dilated bound existed that band had to be unioned
+                // in by hand, or the field cut a smooth-edged ring there with
+                // no scoop behind it (breach.vert builds the scoop from r_eff
+                // too) -- a see-through gap around roughly half of every
+                // tracked breach's rim.
                 if (e < 1.0) {
-                    inside_any_oblate = true;
                     // ── Skeletal framework lattice (INSIDE the breach) ──────────
                     // Don't cut a clean hole: leave torn HULL STRUTS bridging the
                     // breach where Damage.tga's stencil is opaque; the gaps between
@@ -766,26 +783,31 @@ void main() {
     }
 
     // ── Hull-field clip (hull-volume-field-transport, Task 5) ──────────────
-    // Evaluated AFTER the sphere block, and only where `!inside_any_oblate`:
+    // Evaluated AFTER the sphere block, and only where `!field_suppressed`:
     // a TRACKED carve's shape, jagged noise rim, and framework-lattice strut
     // decision above are computed from real geometry (the sphere, its
     // normal, Damage.tga's stencil); the field has none of that -- it only
     // knows "carved or not" at a point. If the field discarded unconditionally
     // it would OVERRIDE the sphere block's own decision inside every tracked
     // oblate: every strut the lattice just decided to keep would still be cut
-    // (field_carve_oblate carved that exact region unconditionally), the
+    // (field_carve_oblate carved that exact region unconditionally), and the
     // jagged noise rim would be replaced by the field's smooth, un-perturbed
-    // edge, and the hull hole would extend past where the sphere-and-noise-
-    // derived breach scoop actually draws (Global Constraint 6: hole and
-    // scoop must not drift, and the scoop still derives from the sphere
-    // list this plan does not remove).
+    // edge.
     //
-    // Gating on `!inside_any_oblate` means the field can only ever ADD a
+    // The gate is the region the brush DILATED a tracked carve to, not the
+    // nominal oblate: field_brush.cc rounds every carve up to the smallest
+    // shape the lattice can hold (kCarveDepthFloorCells,
+    // kCarveFieldOffsetCells), so a ring outside the nominal oblate is still
+    // damaged in the field. Suppressing only inside the nominal oblate would
+    // let the field cut that ring with a smooth edge, visibly enlarging every
+    // tracked hole and erasing the rim.
+    //
+    // Gating on `!field_suppressed` means the field can only ever ADD a
     // discard where the sphere block does not already govern -- i.e. damage
     // beyond the 24-sphere ceiling, which is the plan's actual win. Inside a
-    // tracked oblate, the sphere block's decision (struts, noise rim, hole
-    // shape) is authoritative and untouched.
-    if (u_hull_field_enabled != 0 && !inside_any_oblate) {
+    // tracked carve's dilated region, the sphere block's decision (struts,
+    // noise rim, hole shape) is authoritative and untouched.
+    if (u_hull_field_enabled != 0 && !field_suppressed) {
         // kHullFieldIsoMargin, not 0.0: see its derivation above this
         // function. An UNDAMAGED fragment here reads -127 ("no damage"),
         // nowhere near zero, so the margin is not guarding it -- it guards

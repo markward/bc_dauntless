@@ -516,7 +516,11 @@ void draw_model(const assets::Model& model,
                 normals[ns] = s.surface_normal;
                 ++ns;
             }
-            prog.set_int("u_carve_enabled", 1);
+            // A hull with no baked field has no interior: breach_pass.cc
+            // returns early on a null InstanceFieldCache entry. Cutting holes
+            // anyway would show space through the ship. "A hole is a hole":
+            // if we cannot draw what is behind it, we do not cut it.
+            prog.set_int("u_carve_enabled", hull_field != nullptr ? 1 : 0);
             prog.set_int("u_carve_count", ns);
             prog.set_int("u_carve_invert", carve_invert ? 1 : 0);
             if (ns > 0) {
