@@ -1,6 +1,8 @@
 # Mod Overlay — Design
 
-**Status:** approved, not yet implemented
+**Status:** implemented on `worktree-mod-support` (10 tasks, reviewed per task
+plus one whole-branch pass). Live verification still outstanding — see the
+plan's "Live verification" section.
 **Date:** 2026-09-08
 **Line citations verified at:** `e1bd950e` (they drift between branches —
 re-check before relying on one)
