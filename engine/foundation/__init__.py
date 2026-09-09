@@ -57,6 +57,49 @@ def load_plugins():
     return _lp()
 
 
+def describe(report) -> str:
+    """The boot report. Empty when nothing loaded, like mods.describe()."""
+    if not (report.ships or report.autoload or report.failures):
+        return ""
+
+    lines = ["foundation:"]
+    if report.ships:
+        lines.append("  %d ship script(s), %d registered"
+                     % (len(report.ships), len(_registered_names())))
+    if report.autoload:
+        lines.append("  %d plugin(s) run" % len(report.autoload))
+
+    # Every tech any definition declares is "not installed" while
+    # FoundationTech is out of scope. FTech itself logs and continues in
+    # this exact case, so this reports the ecosystem's own behaviour
+    # rather than announcing a fault of ours.
+    from engine.foundation.shipdef import all_definitions
+    techs = sorted({t for d in all_definitions() for t in (d.dTechs or {})})
+    if techs:
+        lines.append("  techs declared but not installed: %s"
+                     % ", ".join(techs))
+
+    races = sorted(synthesised_races() - {"FedShipDef", "BorgShipDef"})
+    if races:
+        lines.append("  unanticipated race factories used: %s"
+                     % ", ".join(races))
+
+    for name, err in _sound_failures_as_pairs():
+        lines.append("  WARNING sound %s: %s" % (name, err))
+    for script, err in report.failures:
+        lines.append("  WARNING %s failed: %s" % (script, err))
+    return "\n".join(lines)
+
+
+def _registered_names():
+    from engine.foundation import quickbattle
+    return [n for n, _sid in quickbattle.registered()]
+
+
+def _sound_failures_as_pairs():
+    return [(s.split(" ", 1)[0], s) for s in _sound_failures]
+
+
 def sound_failures() -> list:
     return list(_sound_failures)
 
@@ -74,13 +117,22 @@ def SoundDef(file, name, volume=1.0, dict=None):
     through paths.game_asset, so a mod-supplied wav is found -- which is
     why sfx/ had to become placeable content first.
 
+    `volume` is applied via the returned TGSound's own SetVolume -- the same
+    mechanism LoadBridge.py already uses unconditionally on a LoadSound
+    result -- so a mod authoring e.g. 0.3 is no longer silently promoted to
+    full volume. Guarded with hasattr rather than an `is not None` check: a
+    caller (test or otherwise) that hands back something other than a real
+    TGSound is left alone rather than crashing on a method it never had.
+
     A failure is recorded, never raised: an unplayable sound must not abort
     the Autoload script that declares it.
     """
     from engine import paths
     try:
         path = str(paths.game_asset(file))
-        _sound_manager().LoadSound(path, name, 0)
+        snd = _sound_manager().LoadSound(path, name, 0)
+        if hasattr(snd, "SetVolume"):
+            snd.SetVolume(volume)
     except Exception as exc:
         _sound_failures.append("%s (%s): %s: %s"
                                % (name, file, type(exc).__name__, exc))

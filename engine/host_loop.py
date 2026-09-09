@@ -7321,6 +7321,16 @@ def run(mission_name: Optional[str] = None,
 
     _setup_sdk()
 
+    # Foundation plugins register ships into QuickBattle's tables, so this
+    # must run before any QuickBattle pane is built. The SDK finder has to
+    # be installed first: Custom/Ships scripts do `import Foundation` and
+    # import other SDK modules.
+    from engine import foundation as _foundation
+    _fnd_report = _foundation.load_plugins()
+    _fnd_text = _foundation.describe(_fnd_report)
+    if _fnd_text:
+        print(_fnd_text, file=sys.stderr)
+
     import App
     from engine.core.loop import GameLoop
     # Hoisted out of the per-tick loop body — imported once per run()
