@@ -750,6 +750,10 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 Left alone deliberately. The cost is a few hundred thousand flops per carve, and a large carve already visited 1,728 cells before this plan, so the order of magnitude is unchanged. Worth tightening only if a profile ever points at `field_carve_oblate`; correctness does not depend on it.
 
+**The rim noise has a dead spot at the body origin, and existing tests survive it by luck.** `vh3(0,0,0)` is `fract(sin(0) * k)` = exactly 0 on any precision, so `vnoise3` near the body origin is ~1e-4 and the noise term contributes ~6e-6 there. In this test harness the identity matrices make `p_body` the fragment's NDC position, so the *centre pixel* sits 0.006 from that origin and cannot see the feature at all — Task 3's behavioural tests read the whole frame instead. It is also why no existing centre-pixel test regressed: `HullFieldIsoMarginTest.ValueJustPastHalfAStepDiscards` has a 0.00078 margin against a 6e-6 perturbation. That is luck, not design. Any future test probing a non-centre pixel, and any change to `kFieldRimFreq`, can disturb it. In game the dead spot is inside the hull and invisible.
+
+Relatedly: never assert *which* pixels the rim noise spares. `vh3` is `fract(sin(x) * 43758)`, so a float32 GPU and a double host disagree wildly on any individual lattice hash — a 1e-5 error in `sin` becomes ~0.4 in the hash. Frame-wide "some, and not all" statements are the only portable assertions.
+
 **Task 1 trap for Task 2's implementer:** in `field_brush.cc` the loop-local `lateral` vector was named `lat`, colliding with the new `float lat` half-extent. It shadowed silently and would have reverted the whole rim dilation had the types been compatible; the vector is now `lat_vec`. `opaque.frag` already calls its vector `lateral`, so `float lat` is safe there — but check, do not assume.
 
 ## Live verification briefing
