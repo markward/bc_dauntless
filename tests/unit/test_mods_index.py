@@ -123,3 +123,33 @@ def test_permission_error_in_one_mod_does_not_prevent_others(tmp_path):
     finally:
         # Restore permissions so tmp_path teardown can clean up.
         os.chmod(bad_dir, 0o755)
+
+
+def test_sfx_maps_to_the_game_target(tmp_path):
+    """A mod's sfx/ tree is placeable content, not an unplaced curiosity.
+
+    The real BC install root holds data/, scripts/ AND sfx/, and
+    engine/lip_sync_runtime.py already resolves "sfx/..." through
+    game_asset(). A voice or weapon-sound pack ships only sfx/, so without
+    this such a mod reports "no BC content found" and contributes nothing.
+    """
+    _touch(tmp_path / "M" / "sfx" / "Weapons" / "Zap.wav")
+    idx = mods.build_index(tmp_path)
+    hit = idx.lookup("sfx/Weapons/zap.wav")
+    assert hit is not None
+    assert hit.target == "game"
+    assert hit.abs_path == tmp_path / "M" / "sfx" / "Weapons" / "Zap.wav"
+
+
+def test_sfx_is_no_longer_reported_unplaced(tmp_path):
+    _touch(tmp_path / "M" / "sfx" / "a.wav")
+    idx = mods.build_index(tmp_path)
+    status = {m.name: m for m in idx.mods}["M"]
+    assert status.unplaced == []
+    assert status.placed == 1
+
+
+def test_sfx_content_root_is_found_from_sfx_alone(tmp_path):
+    """A mod shipping ONLY sfx/ must still be recognised as BC content."""
+    _touch(tmp_path / "SoundPack" / "sfx" / "Weapons" / "a.wav")
+    assert mods.find_content_root(tmp_path / "SoundPack") == tmp_path / "SoundPack"

@@ -21,7 +21,7 @@ from engine import paths
 
 # Top-level directories inside a mod that we know how to place. Lowercase
 # because every comparison here is case-folded.
-CONTENT_DIRS = frozenset({"data", "scripts"})
+CONTENT_DIRS = frozenset({"data", "scripts", "sfx"})
 
 CLI_FLAG = "--mods-dir"
 ENV_VAR = "DAUNTLESS_MODS_DIR"
@@ -116,6 +116,7 @@ IGNORED_SUFFIXES = (".txt", ".html", ".htm", ".pdf", ".rtf", ".doc")
 _TARGET_FOR = {
     "data": "game",     # paths-guard: kind label, keys paths.game_root()
     "scripts": "sdk",   # paths-guard: kind label, keys paths.sdk_scripts()
+    "sfx": "game",      # paths-guard: kind label, keys paths.game_root()
 }
 
 

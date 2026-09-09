@@ -63,15 +63,6 @@ exactly, because stock was never touched.
   `Scripts/pickle.py` fails legibly instead of surfacing as an unrelated
   crash deep in engine code. It is not a security boundary and must not be
   described as one.
-- **`sfx/` as a placeable content directory.** The real BC install root holds
-  `data/`, `scripts/` **and** `sfx/`, and `engine/lip_sync_runtime.py`
-  resolves `sfx/...` through `game_asset()` — but `_TARGET_FOR` maps only
-  `Data/` and `Scripts/`. A mod shipping voice or sound packs is therefore
-  reported "unplaced: sfx", or "no BC content found" if `sfx/` is all it
-  ships. That is a whole mod category this version does not support, named
-  here so the report's wording is understood as a limitation rather than a
-  bug. Adding it is one `_TARGET_FOR` entry plus a target root, deferred
-  because nothing else in the pipeline has been checked against it.
 
 ## Licensing constraint (why `mods/` is gitignored)
 
@@ -153,6 +144,7 @@ directory where we have two. The content root's children map by name:
 |---|---|
 | `Data/` | `game_root()/data/…` |
 | `Scripts/` | `sdk_scripts()/…` |
+| `sfx/` | `game_root()/sfx/…` |
 | anything else | not placed; recorded and reported |
 
 ### Case-folding is load-bearing
@@ -381,7 +373,7 @@ constraint above).
 **Index construction**
 - content-root descent: flat, nested once, none found, depth cap exceeded
 - case folding: all three real collisions above
-- two-root mapping; unknown top-level directory recorded, not dropped
+- three-root mapping (`data`, `scripts`, `sfx`); unknown top-level directory recorded, not dropped
 - junk files ignored but counted
 
 **Classification**
