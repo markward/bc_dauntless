@@ -24,6 +24,17 @@ COLLISION_DAMAGE_COEFF = 5.0     # KE -> hull-damage-points; calibrated against
                                  # trivial. Tune in-engine by feel. See spec §9.
 COLLISION_DECAY_TAU = 0.5        # collision-velocity overlay decay time constant (s)
 COLLISION_FALLBACK_MASS = 1.0e4  # nominal mass for a ship reporting GetMass()==0
+COLLISION_GRIND_COEFF = 2.5      # sustained-contact (abrasion) damage, in hull
+                                 # points per (reduced-mass unit x GU of slip).
+                                 # Calibrated so a Galaxy-class pair (mu = 60)
+                                 # grinding at 0.5 GU/s of contact slip crosses
+                                 # scenegraph::kHullCarveStrengthIso (150 --
+                                 # the first visible hole) after ~2 s, and a
+                                 # docking nudge at 0.05 GU/s takes ~20 s to do
+                                 # the same. Distinct from COLLISION_DAMAGE_
+                                 # COEFF because this is a work RATE (linear in
+                                 # slip speed, scaled by dt), not the quadratic
+                                 # kinetic energy of an impact.
 COLLISION_RADIUS_SCALE = 0.8     # effective collision boundary as a fraction of
                                  # rA+rB: objects close 20% of the bounding-
                                  # sphere gap before a hit registers, compensating
@@ -39,6 +50,9 @@ class _Body:
     inv_mass: float
     is_movable: bool
     velocity: TGPoint3   # world thrust velocity + current overlay
+    angular: TGPoint3    # WORLD-frame angular velocity (rad/s); zero for
+                         # immovables. Body-frame at rest in ShipClass -- see
+                         # _resolve_body for the rotation into world space.
 
 
 def _overlay_vec(obj):
@@ -113,6 +127,21 @@ def _resolve_body(obj, position: TGPoint3 = None) -> "_Body":
         inv_mass = 1.0 / m
         movable = True
         v = obj.GetVelocity()
+        # Contact-point velocity is v_cm + omega x r, and omega was missing
+        # entirely: a ship spinning against another hull reported (0, 0, 0)
+        # and never registered a collision at all. `_current_angular_velocity`
+        # is BODY frame -- ship_motion._integrate_rotation post-multiplies the
+        # delta (R . D), per CLAUDE.md's rotation convention -- so it has to be
+        # rotated into world space before it can be crossed with a world-space
+        # contact arm. obj.__dict__ lookup, not getattr: TGObject.__getattr__
+        # hands back a truthy _Stub for any unknown attribute, which would slip
+        # a non-vector into the cross product.
+        cav = obj.__dict__.get("_current_angular_velocity")
+        if cav is not None and (cav.x or cav.y or cav.z):
+            w = TGPoint3(cav.x, cav.y, cav.z)
+            w.MultMatrixLeft(obj.GetWorldRotation())
+        else:
+            w = TGPoint3(0.0, 0.0, 0.0)
     else:
         # Planets/moons/suns AND immobile ships (SetStatic / SetStationary):
         # fixed anchors. inv_mass 0 + zero velocity means the mover takes the
@@ -120,10 +149,11 @@ def _resolve_body(obj, position: TGPoint3 = None) -> "_Body":
         inv_mass = 0.0
         movable = False
         v = TGPoint3(0.0, 0.0, 0.0)
+        w = TGPoint3(0.0, 0.0, 0.0)
     cv = _overlay_vec(obj)
     if cv is not None:
         v = v + cv
-    return _Body(obj, center, radius, inv_mass, movable, v)
+    return _Body(obj, center, radius, inv_mass, movable, v, w)
 
 
 def _ke_damage(inv_sum: float, v_rel: float) -> float:
@@ -191,7 +221,69 @@ def _deepest_piece_overlap(obj_a, obj_b):
     return best if best is not None else ()
 
 
-def _respond_pair(a: "_Body", b: "_Body", ship_instances=None):
+def _contact_point_velocity(body: "_Body", cx: float, cy: float, cz: float):
+    """Rigid-body velocity of the material point at (cx, cy, cz):
+    ``v_cm + omega x r``, with ``r`` the arm from the body's centre.
+
+    Returns v_cm unchanged for a body with no angular velocity, so a
+    non-rotating pair is arithmetically identical to the pre-omega code.
+    """
+    w = body.angular
+    if not (w.x or w.y or w.z):
+        return body.velocity.x, body.velocity.y, body.velocity.z
+    rx, ry, rz = cx - body.center.x, cy - body.center.y, cz - body.center.z
+    return (body.velocity.x + w.y * rz - w.z * ry,
+            body.velocity.y + w.z * rx - w.x * rz,
+            body.velocity.z + w.x * ry - w.y * rx)
+
+
+def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
+                   inv_sum: float, dt: float, ship_instances=None) -> None:
+    """Abrasion damage for a contact that is not closing.
+
+    Physically this is friction work: force times sliding distance. We have no
+    contact force, so reduced mass stands in for it, and the distance is the
+    slip travelled this frame. Hence LINEAR in speed and scaled by dt -- unlike
+    the impact channel, which is the quadratic kinetic energy of a collision.
+
+    The speed used is the contact-point relative velocity with the RECEDING
+    part of its normal component removed: sliding counts, and so does a part
+    swinging inward under rotation, but two hulls bouncing apart do not get
+    charged for separating.
+
+    Emits no event and applies no impulse -- see the caller.
+    """
+    if not (dt > 0.0):
+        return
+    ax, ay, az = _contact_point_velocity(a, cx, cy, cz)
+    bx, by, bz = _contact_point_velocity(b, cx, cy, cz)
+    rvx, rvy, rvz = bx - ax, by - ay, bz - az
+    v_n = rvx * nx + rvy * ny + rvz * nz
+    tx, ty, tz = rvx - v_n * nx, rvy - v_n * ny, rvz - v_n * nz
+    approach = -v_n if v_n < 0.0 else 0.0
+    slip = math.sqrt(tx * tx + ty * ty + tz * tz + approach * approach)
+    if slip <= 0.0:
+        return
+    mu = 1.0 / inv_sum
+    damage = COLLISION_GRIND_COEFF * mu * slip * dt
+    if damage <= 0.0:
+        return
+
+    from engine.appc.combat import apply_hit
+    contact = TGPoint3(cx, cy, cz)
+    n_ab = TGPoint3(nx, ny, nz)
+    n_ba = TGPoint3(-nx, -ny, -nz)
+    if a.is_movable:
+        apply_hit(a.obj, damage, contact, source=b.obj, normal=n_ab,
+                  ship_instances=ship_instances, weapon_type=None,
+                  bypass_shields=True)
+    if b.is_movable:
+        apply_hit(b.obj, damage, contact, source=a.obj, normal=n_ba,
+                  ship_instances=ship_instances, weapon_type=None,
+                  bypass_shields=True)
+
+
+def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
     """Resolve one body pair. On an approaching overlap: inject a
     mass-weighted impulse into each movable body's overlay, de-penetrate
     positions, and apply KE damage via combat.apply_hit. Returns the
@@ -237,20 +329,44 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None):
         dist = ndist
         sum_r = ra + rb
         nx, ny, nz = ndx / ndist, ndy / ndist, ndz / ndist
+        # Contact point: on the surface of A's overlapping piece, facing B.
+        cx, cy, cz = pa.x + nx * ra, pa.y + ny * ra, pa.z + nz * ra
     else:
         nx, ny, nz = dx / dist, dy / dist, dz / dist
+        eff_ra = a.radius * COLLISION_RADIUS_SCALE
+        cx, cy, cz = (a.center.x + nx * eff_ra,
+                      a.center.y + ny * eff_ra,
+                      a.center.z + nz * eff_ra)
 
-    # Closing speed along the normal (negative = approaching).
+    # Closing speed along the normal (negative = approaching). CENTRE-OF-MASS
+    # velocity only, deliberately: this drives the impulse and the debounce,
+    # and the impulse can only change LINEAR velocity. Feeding a rotating
+    # body's contact-point velocity in here would re-fire the impulse every
+    # frame -- nothing it does can reduce omega -- and fling the pair apart.
     rvx = b.velocity.x - a.velocity.x
     rvy = b.velocity.y - a.velocity.y
     rvz = b.velocity.z - a.velocity.z
     v_rel = rvx * nx + rvy * ny + rvz * nz
-    if v_rel >= 0.0:
-        return None  # receding / resting: debounce
 
     inv_sum = a.inv_mass + b.inv_mass
     if inv_sum <= 0.0:
         return None  # two immovables
+
+    if v_rel >= 0.0:
+        # Receding or resting. No impulse, no de-penetration, and NO EVENT --
+        # _emit_object_collision must stay on the impact path, because
+        # MissionLib.FriendlyFireCollisionHandler turns one into a game over
+        # and a grind would post it every frame.
+        #
+        # But contact with relative motion still abrades, which the bare
+        # `return None` here missed: 120 frames of pressing into a hull
+        # registered exactly ONE hit, because the first frame's impulse flips
+        # the pair to receding and every later frame bailed. A ship grinding
+        # by rotation never even got that, since omega was absent from the
+        # velocity entirely.
+        _grind_contact(a, b, cx, cy, cz, nx, ny, nz, inv_sum, dt,
+                       ship_instances)
+        return None
 
     # Mass-weighted impulse magnitude.
     j = -(1.0 + COLLISION_RESTITUTION) * v_rel / inv_sum
@@ -427,7 +543,7 @@ def _apply_overlay_all(objects, dt: float) -> None:
         cv.z *= decay
 
 
-def resolve_collisions(objects, ship_instances=None):
+def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     """Snapshot every object into a _Body and resolve all unordered pairs.
     Returns the list of collision tuples from _respond_pair (for tests /
     debugging). De-penetration mutates positions in place; with n small and
@@ -455,7 +571,7 @@ def resolve_collisions(objects, ship_instances=None):
             if (b_obj.GetObjID() in _collision_disabled_ids(a_obj)
                     or a_obj.GetObjID() in _collision_disabled_ids(b_obj)):
                 continue
-            hit = _respond_pair(bodies[i], bodies[k], ship_instances)
+            hit = _respond_pair(bodies[i], bodies[k], ship_instances, dt)
             if hit is not None:
                 hits.append(hit)
     return hits
@@ -492,4 +608,4 @@ def tick_collisions(dt: float, ship_instances=None):
     if disable_collisions_active():
         return []
     return resolve_collisions([o for o in objects if _collisions_enabled(o)],
-                              ship_instances=ship_instances)
+                              ship_instances=ship_instances, dt=dt)
