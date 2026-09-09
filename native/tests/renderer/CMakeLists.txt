@@ -58,6 +58,7 @@ add_executable(renderer_tests
     breach_venting_test.cc
     breach_debris_test.cc
     breach_field_sampling_test.cc
+    breach_raymarch_test.cc
     comm_pass_test.cc
     viewscreen_brightness_test.cc
     viewscreen_static_pass_test.cc

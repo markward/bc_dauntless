@@ -137,6 +137,126 @@ float sample_hull_field(vec3 p_body) {
 }
 // === HULL_FIELD_SAMPLING END ===
 
+// Cavity-wall raymarch (raymarched-breach-interior Task 2). Not called by
+// main() below yet -- Task 3 replaces the per-carve sphere proxy with one
+// per-instance box and wires a call to raymarch_breach_cavity() from there,
+// binding the atlas on texture unit 2. Written now so it can be compiled
+// and tested in isolation against the field-sampling code above (see
+// native/tests/renderer/breach_raymarch_test.cc, which splices this file's
+// own production text onto a test-only main()).
+//
+// A fragment that will reach this pass is, by the stencil (breach_pass.cc,
+// GL_EQUAL against 1), one where sample_hull_field(entry point) already
+// reads > kHullFieldIsoMargin -- i.e. carved. From `ro` (that entry point,
+// body frame) this steps `rd` (body frame, UNIT length, pointing FURTHER
+// INTO the hull) until the field falls back to <= margin: the far wall of
+// the cavity.
+
+// GLSL const has no linkage across two separately compiled programs, so
+// this is breach.frag's own copy of the VALUE -- not a second, independently
+// chosen threshold (native/tests/renderer/breach_raymarch_test.cc's
+// IsoMarginMatchesOpaqueFragsValue guards the two never drifting apart).
+// See opaque.frag's kHullFieldIsoMargin for the derivation: half a
+// quantisation step, dimensionless in sample_hull_field's own return units,
+// so it is correct for any instance's `scale` unchanged.
+const float kHullFieldIsoMargin = 0.5 / 255.0;
+
+// Smallest field-cell axis: the field can in principle be anisotropic, and
+// the march must resolve detail on whichever axis is thinnest.
+float breach_min_cell() {
+    return min(u_hull_field_cell.x, min(u_hull_field_cell.y, u_hull_field_cell.z));
+}
+
+// Step-size derivation: a step of a full cell can still land on samples
+// that bracket the WHOLE crossing (a single iso crossing between two
+// adjacent slice centres is always caught by pigeonhole once the step is
+// no larger than the crossing band itself), but it locates that crossing
+// coarsely, and it is the minimum margin before a genuinely thin feature
+// -- a wall closer to the field's per-cell resolution limit than the ~1
+// cell interpolation band above -- can be stepped over entirely between
+// two samples that both land on its carved flanks. Half a cell is the
+// Nyquist step for a linear feature (the iso crossing is a POINT on a 1-D
+// profile along the ray, not a band with area to miss): two samples per
+// cell is the minimum spacing that cannot straddle a whole cell width
+// without landing inside it at least once. Finer than that only spends
+// more fragments for no better a hit, since the crossing itself is then
+// refined analytically below (linear interpolation between the two
+// bracketing samples, not the step grid) rather than by taking smaller
+// steps.
+const float kHullFieldStepFrac = 0.5;
+
+// Bounded steps -- an unbounded loop in a fragment shader is a hang, not a
+// slow frame. kBreachMaxDist is a belt-and-braces cap independent of step
+// count, in case a degenerate (near-zero) u_hull_field_cell would otherwise
+// demand many more steps than the budget to cover any useful distance;
+// kBreachMaxSteps caps the loop directly regardless of either.
+const int   kBreachMaxSteps = 64;
+const float kBreachMaxDist  = 64.0;   // model units -- past any BC hull's extent
+
+// Field gradient by central differences, body-frame units. Points toward
+// INCREASING field value -- i.e. toward the carved/cavity side, away from
+// intact material -- which is the "out of the wall, into the open cavity"
+// direction the interior shading needs: a wall lit as though its normal
+// pointed at the solid material behind it would read inside-out.
+vec3 breach_field_gradient(vec3 p) {
+    float h = max(breach_min_cell() * 0.25, 1e-5);
+    float dx = sample_hull_field(p + vec3(h, 0.0, 0.0)) - sample_hull_field(p - vec3(h, 0.0, 0.0));
+    float dy = sample_hull_field(p + vec3(0.0, h, 0.0)) - sample_hull_field(p - vec3(0.0, h, 0.0));
+    float dz = sample_hull_field(p + vec3(0.0, 0.0, h)) - sample_hull_field(p - vec3(0.0, 0.0, h));
+    vec3 g = vec3(dx, dy, dz);
+    float len = length(g);
+    // Degenerate (flat) gradient: fall back to a fixed unit vector rather
+    // than dividing by ~0 -- never NaN, even though this should not occur
+    // at a genuine iso crossing.
+    return len > 1e-8 ? g / len : vec3(0.0, 0.0, 1.0);
+}
+
+// `ro`/`rd` body frame; `rd` MUST be unit length (the step below assumes
+// unit-speed marching). Returns false -- a MISS, paint nothing, the same
+// "a hole is a hole" rule the fill mask above already applies -- when:
+//   * `ro` is not already inside carved material (nothing to march INTO), or
+//   * the field never falls back below the margin within the bounded
+//     step/distance budget: a carve that cuts clean through a thin plate
+//     has no far wall, and drawing a wall at the box edge or the ship's far
+//     side would be wrong.
+bool raymarch_breach_cavity(vec3 ro, vec3 rd, out vec3 hit_point, out vec3 hit_normal) {
+    float step_len = max(breach_min_cell() * kHullFieldStepFrac, 1e-5);
+
+    float prev = sample_hull_field(ro);
+    if (prev <= kHullFieldIsoMargin) {
+        return false;   // not starting inside carved material: no cavity here
+    }
+
+    vec3 p_prev = ro;
+    // Loop bound is the named compile-time constant directly (not a
+    // runtime-derived step count) -- see
+    // BreachRaymarchStaticGuard.LoopBoundIsANamedCompileTimeConstant. The
+    // distance cap is enforced separately inside the loop, so a degenerate
+    // (near-zero) u_hull_field_cell still bails out on distance rather than
+    // spending the whole step budget crawling a few model units.
+    for (int i = 0; i < kBreachMaxSteps; ++i) {
+        float dist = step_len * float(i + 1);
+        if (dist > kBreachMaxDist) {
+            return false;
+        }
+        vec3 p_next = ro + rd * dist;
+        float v = sample_hull_field(p_next);
+        if (v <= kHullFieldIsoMargin) {
+            // Refine within this one step by linearly interpolating the two
+            // bracketing samples -- no extra texture fetch, and exact for a
+            // field that (like the true cavity boundary near its wall) is
+            // locally linear between them.
+            float t = clamp((prev - kHullFieldIsoMargin) / max(prev - v, 1e-6), 0.0, 1.0);
+            hit_point  = mix(p_prev, p_next, t);
+            hit_normal = breach_field_gradient(hit_point);
+            return true;
+        }
+        prev   = v;
+        p_prev = p_next;
+    }
+    return false;   // ran the whole budget: no crossing, no far wall
+}
+
 out vec4 frag_color;
 
 // Blackbody-ish ramp keyed on heat 0..1 (white-hot -> red -> black).
