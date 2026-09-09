@@ -19,6 +19,7 @@ shipList = ShipList()
 
 _RACE_FACTORY = re.compile(r"^([A-Z][A-Za-z0-9]*)ShipDef$")
 _synthesised: set = set()
+_sound_failures: list = []
 
 
 def synthesised_races():
@@ -56,12 +57,42 @@ def load_plugins():
     return _lp()
 
 
+def sound_failures() -> list:
+    return list(_sound_failures)
+
+
+def _sound_manager():
+    """The live TGSoundManager. Indirected so tests can substitute one."""
+    import App
+    return App.g_kSoundManager
+
+
+def SoundDef(file, name, volume=1.0, dict=None):
+    """Register a named sound, as LoadTacticalSounds.py does.
+
+    `file` is install-relative (e.g. "sfx/Weapons/X.wav") and resolves
+    through paths.game_asset, so a mod-supplied wav is found -- which is
+    why sfx/ had to become placeable content first.
+
+    A failure is recorded, never raised: an unplayable sound must not abort
+    the Autoload script that declares it.
+    """
+    from engine import paths
+    try:
+        path = str(paths.game_asset(file))
+        _sound_manager().LoadSound(path, name, 0)
+    except Exception as exc:
+        _sound_failures.append("%s (%s): %s: %s"
+                               % (name, file, type(exc).__name__, exc))
+
+
 def reset():
     """Drop all registered state. Tests only."""
     for k in [k for k in ShipDef.__dict__ if not k.startswith("_")]:
         delattr(ShipDef, k)
     shipList._items.clear()
     _synthesised.clear()
+    _sound_failures.clear()
     # Definitions accumulate on construction, so this must be cleared too
     # or they leak between tests and inflate describe()'s tech list.
     from engine.foundation.shipdef import _ALL_DEFINITIONS
