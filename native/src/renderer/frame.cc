@@ -5,9 +5,11 @@
 #include "renderer/bone_palette.h"
 #include "renderer/shader.h"
 #include "renderer/carve_field_cache.h"
+#include "renderer/instance_field_cache.h"
 #include "renderer/dynamic_lights.h"
 #include "renderer/aabb.h"
 #include <renderer/asset_path.h>
+#include <renderer/model_draw_helpers.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -370,7 +372,8 @@ void draw_model(const assets::Model& model,
                     dyn_lights,
                 int dyn_light_count,
                 const voxel::VoxelVolume* carve_fill,
-                bool carve_invert) {
+                bool carve_invert,
+                const InstanceFieldCache::Entry* hull_field) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -513,7 +516,11 @@ void draw_model(const assets::Model& model,
                 normals[ns] = s.surface_normal;
                 ++ns;
             }
-            prog.set_int("u_carve_enabled", 1);
+            // A hull with no baked field has no interior: breach_pass.cc
+            // returns early on a null InstanceFieldCache entry. Cutting holes
+            // anyway would show space through the ship. "A hole is a hole":
+            // if we cannot draw what is behind it, we do not cut it.
+            prog.set_int("u_carve_enabled", hull_field != nullptr ? 1 : 0);
             prog.set_int("u_carve_count", ns);
             prog.set_int("u_carve_invert", carve_invert ? 1 : 0);
             if (ns > 0) {
@@ -529,6 +536,50 @@ void draw_model(const assets::Model& model,
             prog.set_int("u_carve_invert", carve_invert ? 1 : 0);
         }
 
+    }
+
+    // ── Per-instance hull distance field (hull-volume-field-transport,
+    // Task 5) ────────────────────────────────────────────────────────────
+    // Bind the atlas InstanceFieldCache built for this instance, if the
+    // caller resolved one. hull_field == nullptr is BOTH an undamaged
+    // instance (no entry exists yet) and every call site until the render
+    // loop threads a real InstanceFieldCache through FrameSubmitter's
+    // field_cache parameter -- either way u_hull_field_enabled=0 keeps
+    // opaque.frag on its documented zero-cost branch, so an undamaged ship
+    // renders byte-identically to before this feature existed.
+    //
+    // Unit 6 is free in this pass (0=base, 1=glow, 2=specular, 3=damage
+    // decal, 4=normal map, 5=shadow map) and MUST be assigned on every path,
+    // enabled or not: an unset sampler uniform defaults to unit 0 in GLSL and
+    // would collide with the bound base-colour texture there
+    // (GL_INVALID_OPERATION on every draw).
+    {
+        prog.set_int("u_hull_field", 6);
+        prog.set_int("u_hull_field_enabled", hull_field != nullptr ? 1 : 0);
+        if (hull_field != nullptr) {
+            // u_ship_world_inv (p_body reconstruction) is otherwise only set
+            // above when this instance has active carve spheres, decals, or
+            // glow regions. An InstanceFieldCache::Entry persists independent
+            // of the 24-slot sphere ring, so a field-enabled instance with
+            // none of those active would otherwise sample the field through
+            // a STALE matrix left by whichever instance drew last -- reading
+            // a different ship's body frame. Pre-existing gap in the other
+            // three blocks' shared assumption, unreachable before the field
+            // existed to be sampled through it.
+            prog.set_mat4("u_ship_world_inv", glm::inverse(world));
+            glActiveTexture(GL_TEXTURE6);
+            glBindTexture(GL_TEXTURE_2D, hull_field->tex2d);
+            glActiveTexture(GL_TEXTURE0);  // restore default active unit
+            prog.set_vec3("u_hull_field_origin", hull_field->origin);
+            prog.set_vec3("u_hull_field_cell",   hull_field->cell);
+            prog.set_vec3("u_hull_field_dims",   glm::vec3(hull_field->dims));
+            prog.set_vec2("u_hull_field_tiles",
+                         glm::vec2(static_cast<float>(hull_field->layout.tiles_x),
+                                   static_cast<float>(hull_field->layout.tiles_y)));
+            prog.set_vec2("u_hull_field_texel",
+                         glm::vec2(1.0f / static_cast<float>(hull_field->layout.width),
+                                   1.0f / static_cast<float>(hull_field->layout.height)));
+        }
     }
 
     // ── Skeletal framework lattice (Damage.tga alpha stencil) ─────────────────
@@ -742,7 +793,8 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
                                    const Lighting& lighting,
                                    float decal_time,
                                    CarveFieldCache* carve_cache,
-                                   const std::vector<DynamicLightDescriptor>* dyn_lights) {
+                                   const std::vector<DynamicLightDescriptor>* dyn_lights,
+                                   InstanceFieldCache* field_cache) {
     // Per-frame uniforms common to the static AND skinned programs (view/proj,
     // camera, ambient, directional lights). The skinned vertex stage pairs with
     // opaque.frag, so the fragment-side uniforms are identical; applying the
@@ -787,12 +839,15 @@ void FrameSubmitter::submit_opaque(const scenegraph::World& world,
         std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> lights{};
         const int light_count =
             select_instance_dynamic_lights(inst, m, dyn_lights, lights);
+        const InstanceFieldCache::Entry* field_entry =
+            field_cache != nullptr ? field_cache->get(inst.id) : nullptr;
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
                           inst.emissive_scale, palette, inst.carve,
                           lights, light_count,
-                          carve_fill_entry(carve_cache, m, inst.carve));
+                          carve_fill_entry(carve_cache, m, inst.carve),
+                          /*carve_invert=*/false, field_entry);
     });
 }
 
@@ -805,7 +860,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                                            float decal_time,
                                            CarveFieldCache* carve_cache,
                                            float ambient_scale,
-                                           const std::vector<DynamicLightDescriptor>* dyn_lights) {
+                                           const std::vector<DynamicLightDescriptor>* dyn_lights,
+                                           InstanceFieldCache* field_cache) {
     // See submit_opaque: configure the common per-frame uniforms on BOTH the
     // static and skinned programs. The static-program set is unchanged.
     auto configure_common = [&](Shader& s) {
@@ -850,12 +906,15 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> lights{};
         const int light_count =
             select_instance_dynamic_lights(inst, m, dyn_lights, lights);
+        const InstanceFieldCache::Entry* field_entry =
+            field_cache != nullptr ? field_cache->get(inst.id) : nullptr;
         if (m) draw_model(*m, inst.world, shader, pipeline.skinned_shader(),
                           white, black, rim_strength,
                           inst.decals, inst.glow_regions, decal_time,
                           inst.emissive_scale, palette, inst.carve,
                           lights, light_count,
-                          carve_fill_entry(carve_cache, m, inst.carve));
+                          carve_fill_entry(carve_cache, m, inst.carve),
+                          /*carve_invert=*/false, field_entry);
     });
 }
 
@@ -864,13 +923,21 @@ void FrameSubmitter::submit_carve_stencil(const scenegraph::World& world,
                                           Pipeline& pipeline,
                                           const ModelLookup& lookup,
                                           scenegraph::Pass pass,
-                                          CarveFieldCache* carve_cache) {
+                                          CarveFieldCache* carve_cache,
+                                          InstanceFieldCache* field_cache) {
     if (!dauntless_hull_damage::enabled()) return;
 
     // Collect first so the GL state change is skipped entirely in the common
     // case of an undamaged scene.
     std::vector<const scenegraph::Instance*> carved;
     world.for_each_visible_in_pass(pass, [&](const scenegraph::Instance& inst) {
+        // Filters on the SPHERE ring, not the per-instance field -- correct
+        // today only because HullCarveField::add never evicts down to zero
+        // (the ring only grows/merges until eviction swaps in a new carve,
+        // it has no clear()). A field-only damage source (no matching sphere
+        // slot) would silently skip this stencil pass; if HullCarveField
+        // ever gains a clear() this condition needs a field.count()-style
+        // check added alongside it.
         if (inst.carve.count() > 0) carved.push_back(&inst);
     });
     if (carved.empty()) return;
@@ -900,6 +967,8 @@ void FrameSubmitter::submit_carve_stencil(const scenegraph::World& world,
         if (!m->skeleton.bones.empty())
             palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
         std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> lights{};
+        const InstanceFieldCache::Entry* field_entry =
+            field_cache != nullptr ? field_cache->get(inst->id) : nullptr;
         // u_carve_invert is set INSIDE draw_model's carve block (it needs the
         // same program the block configures), so it is passed through here.
         draw_model(*m, inst->world, shader, pipeline.skinned_shader(),
@@ -908,7 +977,7 @@ void FrameSubmitter::submit_carve_stencil(const scenegraph::World& world,
                    inst->emissive_scale, palette, inst->carve,
                    lights, /*dyn_light_count=*/0,
                    carve_fill_entry(carve_cache, m, inst->carve),
-                   /*carve_invert=*/true);
+                   /*carve_invert=*/true, field_entry);
     }
 
     // Back to the GL default (0xFF), NOT 0x00: glClear(GL_STENCIL_BUFFER_BIT)
@@ -934,7 +1003,8 @@ void FrameSubmitter::submit_opaque_instance(const scenegraph::World& world,
                                             const Lighting& lighting,
                                             float decal_time,
                                             CarveFieldCache* carve_cache,
-                                            const std::vector<DynamicLightDescriptor>* dyn_lights) {
+                                            const std::vector<DynamicLightDescriptor>* dyn_lights,
+                                            InstanceFieldCache* field_cache) {
     const scenegraph::Instance* inst = world.get(instance_id);
     if (!inst) return;
     const assets::Model* m = lookup(inst->model_handle);
@@ -978,49 +1048,20 @@ void FrameSubmitter::submit_opaque_instance(const scenegraph::World& world,
     std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> lights{};
     const int light_count =
         select_instance_dynamic_lights(*inst, m, dyn_lights, lights);
+    const InstanceFieldCache::Entry* field_entry =
+        field_cache != nullptr ? field_cache->get(inst->id) : nullptr;
     draw_model(*m, inst->world, shader, pipeline.skinned_shader(),
                white, black, rim_strength,
                inst->decals, inst->glow_regions, decal_time,
                inst->emissive_scale, palette, inst->carve,
                lights, light_count,
-               carve_fill_entry(carve_cache, m, inst->carve));
+               carve_fill_entry(carve_cache, m, inst->carve),
+               /*carve_invert=*/false, field_entry);
 }
 
 // ── Shadow depth pre-pass ──────────────────────────────────────────────────
 
 namespace {
-
-// Position-only mirror of draw_model's node walk + per-mesh draw. Sets only
-// u_model (u_light_view_proj is set once by the caller) and issues the same
-// VAO bind + glDrawElements as draw_model. No materials, textures, decals,
-// glow, carve, or skinning: casters in Pass::Space are rim_eligible hulls,
-// which are static models — their geometry already lives in the bind-pose
-// VAOs that draw_model renders. (A skinned model handed here would draw in
-// bind pose, but no rim_eligible Space instance is skinned, so it never is.)
-void draw_model_depth_only(const assets::Model& model,
-                           const glm::mat4& world,
-                           Shader& prog) {
-    std::vector<glm::mat4> world_per_node(model.nodes.size(), glm::mat4(1.0f));
-    if (!model.nodes.empty()) {
-        world_per_node[model.root_node] =
-            world * model.nodes[model.root_node].local_transform;
-    }
-    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
-        const auto& node = model.nodes[i];
-        if (node.parent_index >= 0) {
-            world_per_node[i] =
-                world_per_node[node.parent_index] * node.local_transform;
-        }
-        for (int mesh_idx : node.meshes) {
-            const auto& mesh = model.meshes[mesh_idx];
-            prog.set_mat4("u_model", world_per_node[i]);
-            glBindVertexArray(mesh.vao());
-            glDrawElements(GL_TRIANGLES, mesh.index_count(),
-                           GL_UNSIGNED_INT, nullptr);
-        }
-    }
-    glBindVertexArray(0);
-}
 
 // Frame-scoped active-shadow state. Set once per frame by host_bindings.cc and
 // read by the opaque pass (Task 6). Defaults make shadows absent until set.
@@ -1052,12 +1093,20 @@ void submit_shadow_depth(const scenegraph::World& world,
     prog.use();
     prog.set_mat4("u_light_view_proj", light.view_proj);
 
+    // draw_model_positions_only (renderer/model_draw_helpers.h) sets only
+    // u_model per mesh (u_light_view_proj is set once above) and issues the
+    // same VAO bind + glDrawElements draw_model uses. No materials,
+    // textures, decals, glow, carve, or skinning: casters in Pass::Space are
+    // rim_eligible hulls, which are static models -- their geometry already
+    // lives in the bind-pose VAOs that draw_model renders. (A skinned model
+    // handed here would draw in bind pose, but no rim_eligible Space
+    // instance is skinned, so it never is.)
     world.for_each_visible_in_pass(
         scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
             if (!inst.rim_eligible) return;  // ships + stations only
             const assets::Model* m = lookup(inst.model_handle);
             if (!m) return;
-            draw_model_depth_only(*m, inst.world, prog);
+            draw_model_positions_only(*m, inst.world, prog);
         });
 
     // Restore opaque-pass defaults so later passes are unaffected.

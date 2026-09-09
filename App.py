@@ -117,6 +117,12 @@ from engine.appc.objects import (
     ObjectClass_Cast, PhysicsObjectClass_Cast, DamageableObject_Cast,
     ObjectClass_GetObject, ObjectClass_GetObjectByID,
     DamageableObject_GetObjectByID,
+    DamageableObject_SetDamageGeometryEnabled,
+    DamageableObject_IsDamageGeometryEnabled,
+    DamageableObject_SetVolumeDamageGeometryEnabled,
+    DamageableObject_IsVolumeDamageGeometryEnabled,
+    DamageableObject_SetBreakableComponentsEnabled,
+    DamageableObject_IsBreakableComponentsEnabled,
     PhysicsObjectClass_GetObject,
     IsNull,
 )

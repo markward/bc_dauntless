@@ -3,16 +3,15 @@
 
 #include <renderer/pipeline.h>
 #include <renderer/carve_field_cache.h>
+#include <renderer/instance_field_cache.h>
+#include <renderer/model_draw_helpers.h>
 #include <renderer/asset_path.h>
-#include "sphere_mesh.h"
 
 #include <scenegraph/breach_events.h>
 #include <scenegraph/camera.h>
-#include <scenegraph/hull_carve.h>
 #include <scenegraph/instance.h>
 #include <scenegraph/world.h>
 #include <assets/model.h>
-#include <assets/mesh.h>
 #include <assets/texture.h>
 
 #include <glad/glad.h>
@@ -51,16 +50,8 @@ constexpr const char* kDamageFramePaths[4] = {
 // a lively damage shimmer on the breach interior. Eyeball-tunable.
 constexpr float kDamageAnimFps = 8.0f;
 
-// Target triangle count for the scoop sphere. 16×24 lat/lon segments ≈ 768
-// triangles: more than enough resolution for a 1–5 GU breach.
-constexpr int kSphereTargetTris = 768;
-
 // Triplanar texture scale: 1 period over ~40 model units (body-frame).
-// The carve scoop spans ~50-400 model units (radius 25-200), so this gives
-// roughly 1-10 readable Damage.tga features across a breach. The old 1/4
-// tiled the 128px texture ~12-50x across a scoop; minified through mipmaps
-// that averaged to the texture's mean colour and read as a flat, untextured
-// surface. Eyeball-tunable: lower = larger features.
+// Eyeball-tunable: lower = larger features.
 constexpr float kTexScale = 1.0f / 40.0f;
 
 // Returns the uploaded texture (id() == 0 on failure). The CALLER owns the
@@ -107,12 +98,6 @@ BreachPass::~BreachPass() {
     }
 }
 
-void BreachPass::ensure_sphere() {
-    if (sphere_mesh_) return;
-    assets::MeshCpu cpu = build_uv_sphere(kSphereTargetTris);
-    sphere_mesh_ = std::make_unique<assets::Mesh>(assets::upload_mesh(cpu));
-}
-
 void BreachPass::ensure_damage_frames() {
     if (damage_frames_tried_) return;
     damage_frames_tried_ = true;
@@ -152,10 +137,12 @@ unsigned int BreachPass::upload_fill_tex(const voxel::VoxelVolume& fill) {
 }
 
 namespace {
-// The scoop's GL state, in ONE place so render() and draw_instance() cannot
-// diverge. Depth ON, cull FRONT (the recessed inner wall), and — the part that
-// must not be forgotten by either caller — the stencil test that keeps the
-// scoop out of open space.
+// The pass's GL state, in ONE place so render() and draw_instance() cannot
+// diverge. Depth ON, cull BACK (round 3: this pass now draws the REAL hull
+// mesh, the same outward-facing winding the opaque pass uses -- not a
+// back-face-culled proxy shell any more), and — the part that must not be
+// forgotten by either caller — the stencil test that keeps this draw out of
+// open space.
 //
 // `discard` writes no depth, so a hole in the hull and empty space look
 // identical from here, and BC's fill mask reaches up to ~3 cells past the hull
@@ -167,7 +154,7 @@ void begin_scoop_state() {
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
     glEnable(GL_CULL_FACE);
-    glCullFace(GL_FRONT);
+    glCullFace(GL_BACK);
     glEnable(GL_STENCIL_TEST);
     glStencilFunc(GL_EQUAL, 1, 0xFF);
     glStencilMask(0x00);            // test only; never write
@@ -183,33 +170,57 @@ void end_scoop_state() {
 }
 }  // namespace
 
-void BreachPass::draw_scoop(const glm::vec3& center_body,
-                             float radius,
-                             const glm::vec3& surface_normal,
-                             unsigned int fill_tex,
-                             const glm::vec3& fill_origin,
-                             const glm::vec3& fill_cell,
-                             const glm::ivec3& fill_dims,
-                             const glm::mat4& world_xf,
-                             const scenegraph::Camera& camera,
-                             Pipeline& pipeline,
-                             float breach_age,
-                             unsigned int damage_tex) {
+void BreachPass::draw_hull_proxy(const assets::Model& model,
+                                 const InstanceFieldCache::Entry& field,
+                                 unsigned int fill_tex,
+                                 const glm::vec3& fill_origin,
+                                 const glm::vec3& fill_cell,
+                                 const glm::ivec3& fill_dims,
+                                 const glm::mat4& world_xf,
+                                 const scenegraph::Camera& camera,
+                                 Pipeline& pipeline,
+                                 float breach_age,
+                                 const glm::vec3& breach_center,
+                                 float breach_radius,
+                                 unsigned int damage_tex) {
     // Camera world position: inverse of view matrix column 3, computed once
     // CPU-side per draw (not per fragment). Matches how the opaque pass derives
-    // u_camera_pos_ws in submit_opaque / submit_opaque_in_pass.
-    const glm::vec3 cam_pos_ws =
-        glm::vec3(glm::inverse(camera.view_matrix())[3]);
+    // u_camera_pos_ws in submit_opaque / submit_opaque_in_pass. NOT uploaded to
+    // the shader -- breach.frag holds no world-space uniform at all (see its own
+    // comment at u_camera_pos_body); this is purely the input to cam_pos_body.
+    const glm::mat4 view_inv   = glm::inverse(camera.view_matrix());
+    const glm::vec3 cam_pos_ws = glm::vec3(view_inv[3]);
+
+    // Camera position in THIS instance's body frame — the ray origin every
+    // fragment marches from, and the eye point it shades against
+    // (breach.frag's u_camera_pos_body). One matrix inverse per draw, not per
+    // fragment.
+    const glm::mat4 world_inv = glm::inverse(world_xf);
+    const glm::vec3 cam_pos_body =
+        glm::vec3(world_inv * glm::vec4(cam_pos_ws, 1.0f));
 
     auto& shader = pipeline.breach_shader();
     shader.use();
-    shader.set_mat4("u_model",           world_xf);
+    // u_model is set PER MESH inside draw_model_positions_only (a model's
+    // sub-meshes can each carry their own node-local transform); u_view/proj
+    // and every other uniform below are the same for the whole instance.
     shader.set_mat4("u_view",            camera.view_matrix());
     shader.set_mat4("u_proj",            camera.proj_matrix());
-    shader.set_vec3("u_camera_pos_ws",   cam_pos_ws);
-    shader.set_vec3("u_carve_center",    center_body);
-    shader.set_float("u_carve_radius",   radius);
-    shader.set_vec3("u_carve_normal",    surface_normal);
+    shader.set_vec3("u_camera_pos_body", cam_pos_body);
+    // Inverse of the instance world matrix, WITHOUT the node chain that
+    // draw_model_positions_only folds into u_model. This is what gets
+    // breach.vert's NODE-LOCAL vertex attribute into the ship's BODY frame --
+    // the frame the damage field was baked in (voxel/voxelize.cc's
+    // collect_hull_triangles composes the node chain), the frame the fill
+    // volume, cam_pos_body above and breach_center below all use, and the
+    // frame opaque.frag reconstructs with its own u_ship_world_inv (frame.cc)
+    // before running the very carve test whose discard stamps the stencil this
+    // pass draws under:
+    //   breach.vert: v_body_pos = u_ship_world_inv * u_model * a_pos
+    //                           = node_chain * a_pos            (BODY frame)
+    // The un-inverted world matrix is deliberately NOT uploaded: breach.frag
+    // works entirely in body frame and has nothing to do with world space.
+    shader.set_mat4("u_ship_world_inv",   world_inv);
 
     // Fill mask (original uncarved fill).
     shader.set_int("u_fill",    0);
@@ -228,8 +239,33 @@ void BreachPass::draw_scoop(const glm::vec3& center_body,
 
     // Molten-rim emissive: age of the nearest active breach event.
     // breach_age >= kRimLife → heat = 0 → no emissive (cold hole).
-    shader.set_float("u_breach_age", breach_age);
-    shader.set_float("u_rim_life",   scenegraph::kRimLife);
+    // breach_center/breach_radius: that SAME event's own position, so
+    // breach.frag can gate the emissive by DISTANCE from it too -- see
+    // breach_pass.h's draw_instance doc and breach.frag's own comment at
+    // its u_breach_center declaration for why age alone (a single scalar
+    // for the whole instance) is not enough once there is more than one
+    // hole on a hull.
+    shader.set_float("u_breach_age",    breach_age);
+    shader.set_float("u_rim_life",      scenegraph::kRimLife);
+    shader.set_vec3("u_breach_center",  breach_center);
+    shader.set_float("u_breach_radius", breach_radius);
+
+    // Per-instance damage-field atlas — unit 2 (0=u_fill sampler3D,
+    // 1=u_damage_tex). MUST be set on EVERY draw through this function: an
+    // unset sampler uniform defaults to unit 0 in GLSL and would collide
+    // with u_fill's bound sampler3D there (GL_INVALID_OPERATION on every
+    // draw — measured elsewhere in this project, see this pass's header
+    // comment and opaque.frag's own unit-6 binding in frame.cc).
+    shader.set_int("u_hull_field", 2);
+    shader.set_vec3("u_hull_field_origin", field.origin);
+    shader.set_vec3("u_hull_field_cell",   field.cell);
+    shader.set_vec3("u_hull_field_dims",   glm::vec3(field.dims));
+    shader.set_vec2("u_hull_field_tiles",
+                    glm::vec2(static_cast<float>(field.layout.tiles_x),
+                              static_cast<float>(field.layout.tiles_y)));
+    shader.set_vec2("u_hull_field_texel",
+                    glm::vec2(1.0f / static_cast<float>(field.layout.width),
+                              1.0f / static_cast<float>(field.layout.height)));
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_3D, fill_tex);
@@ -237,23 +273,34 @@ void BreachPass::draw_scoop(const glm::vec3& center_body,
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, damage_tex);
 
-    glBindVertexArray(sphere_mesh_->vao());
-    glDrawElements(GL_TRIANGLES,
-                   static_cast<GLsizei>(sphere_mesh_->index_count()),
-                   GL_UNSIGNED_INT, nullptr);
-    glBindVertexArray(0);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, field.tex2d);
+
+    glActiveTexture(GL_TEXTURE0);  // restore default active unit
+
+    // Draw the REAL hull mesh (round 3): each fragment surviving the
+    // stencil test above sits exactly on the hull surface at a carved
+    // point -- see this pass's own header comment for why that removes the
+    // need for any entry search in breach.frag. May issue more than one
+    // glDrawElements call (one per sub-mesh); see draw_calls()'s own doc
+    // for why that is an asset property, not a regression toward one draw
+    // per carve.
+    draw_model_positions_only(model, world_xf, shader);
+    ++draw_calls_;
 }
 
 void BreachPass::draw_instance(std::uintptr_t instance_key,
                                const voxel::VoxelVolume& fill,
-                               const scenegraph::HullCarveField& carve,
+                               const InstanceFieldCache::Entry& field,
+                               const assets::Model& model,
                                const glm::mat4& world_xf,
                                const scenegraph::Camera& camera,
                                Pipeline& pipeline,
-                               float breach_age) {
-    if (carve.count() == 0) return;
+                               float breach_age,
+                               const glm::vec3& breach_center,
+                               float breach_radius) {
+    if (field.tex2d == 0) return;   // no damage field: nothing to raymarch
 
-    ensure_sphere();
     ensure_damage_frames();
 
     // Build + upload the fill 3D texture. In the test/standalone path there is
@@ -266,24 +313,14 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     if (fe.tex3d == 0) return;
 
     begin_scoop_state();
-
-    for (const auto& s : carve.slots()) {
-        if (!s.active) continue;
-        if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
-        if (!carve_has_backing(fill, s.center_body, s.surface_normal)) continue;
-        // Too little material behind the breach to build a cavity in: draw
-        // nothing and let it show through. See carve_cavity_depth_cells.
-        if (carve_cavity_depth_cells(fill, s.center_body, s.surface_normal)
-            < CarveFieldCache::kMinCavityCells) continue;
-        draw_scoop(s.center_body, s.radius, s.surface_normal,
-                   fe.tex3d, fill.origin, fill.cell, fill.dims,
-                   world_xf, camera, pipeline,
-                   breach_age, damage_frames_[0]);
-    }
-
+    draw_hull_proxy(model, field, fe.tex3d, fill.origin, fill.cell, fill.dims,
+                    world_xf, camera, pipeline, breach_age,
+                    breach_center, breach_radius, damage_frames_[0]);
     end_scoop_state();
 
     // Restore texture bindings.
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
@@ -295,14 +332,15 @@ void BreachPass::render(const scenegraph::World& world,
                         Pipeline& pipeline,
                         const ModelLookup& lookup,
                         CarveFieldCache& carve_cache,
+                        InstanceFieldCache* field_cache,
                         float now) {
     if (!dauntless_hull_damage::enabled()) return;
+    if (field_cache == nullptr) return;   // feature unavailable: nothing to draw
 
-    ensure_sphere();
     ensure_damage_frames();
 
-    // Current animation frame, cycled by the game clock. All scoops drawn this
-    // frame share it. frame_tex may be 0 (asset missing) → shader grey base.
+    // Current animation frame, cycled by the game clock. All proxies drawn
+    // this frame share it. frame_tex may be 0 (asset missing) → shader grey base.
     int frame = 0;
     if (now > 0.f) {
         frame = static_cast<int>(now * kDamageAnimFps) & 3;  // % 4, now >= 0
@@ -319,57 +357,54 @@ void BreachPass::render(const scenegraph::World& world,
     world.for_each_visible_in_pass(
         scenegraph::Pass::Space,
         [&](const scenegraph::Instance& inst) {
-            if (inst.carve.count() == 0) return;
+            // Checked FIRST, before any model/fill lookup: an instance that
+            // was never carved (or whose hull has no baked field at all) has
+            // no InstanceFieldCache entry — see that header's class comment
+            // — so this is the exact "undamaged instance" gate, and the
+            // cheapest possible one (one map lookup, no model/asset touch).
+            const InstanceFieldCache::Entry* field = field_cache->get(inst.id);
+            if (field == nullptr) return;
+            if (field->tex2d == 0) return;   // defensive: entry exists but upload failed
+
             const assets::Model* model = lookup(inst.model_handle);
             if (!model) return;
             if (model->source.empty()) return;
 
             const CarveFieldCache::Entry* ce =
                 carve_cache.get_for_source(model->source);
-            if (ce == nullptr) return;
-
-            // Same fill the gate consults, CPU-side. Cheap: source-keyed and
-            // already decoded for the texture upload above.
-            const voxel::VoxelVolume& fill =
-                carve_cache.volume_for_source(model->source);
+            if (ce == nullptr) return;   // no original-fill volume: can't gate the interior
+            // ce->{origin,cell,dims} already describe the same fill volume
+            // the shader's own backing check samples (CarveFieldCache::get_
+            // for_source built ce->tex3d from it) — no separate
+            // volume_for_source() lookup needed here.
 
             ensure_state();
 
-            for (const auto& s : inst.carve.slots()) {
-                if (!s.active) continue;
-                if (s.radius <= 0.0f) continue;   // sub-iso accumulation: invisible
-                // Backing-material gate: frame.cc leaves the hull UNCUT for this
-                // carve, so its scoop would be hidden behind intact hull. Skip
-                // the draw rather than rely on the depth test to eat it — and,
-                // more importantly, keep the two passes reading the SAME gate so
-                // they cannot drift apart.
-                if (!carve_has_backing(fill, s.center_body, s.surface_normal))
-                    continue;
-                // A hull too thin to hold a cavity gets no scoop at all: the
-                // mask would collapse to a mid-plane sheet of damage material
-                // that backfills the hole instead of revealing depth. See
-                // carve_cavity_depth_cells.
-                if (carve_cavity_depth_cells(fill, s.center_body,
-                                             s.surface_normal)
-                    < CarveFieldCache::kMinCavityCells)
-                    continue;
-
-                // Find the nearest active breach event for this carve slot.
-                float breach_age = scenegraph::kRimLife + 1.f;  // default: cold
-                float best_dist  = 1e30f;
-                for (const auto& ev : inst.breach_events.slots()) {
-                    if (!ev.active) continue;
-                    const float d = glm::length(ev.center_body - s.center_body);
-                    if (d < best_dist) {
-                        best_dist   = d;
-                        breach_age  = now - ev.birth_time;
-                    }
+            // Molten-rim age + position: with one draw per instance (not
+            // per carve) there is no single carve slot to draw from any
+            // more, so this passes the MOST RECENT (smallest age) active
+            // breach event's own age AND centre/radius through to the
+            // shader, which gates the emissive by distance from that centre
+            // as well as by age (breach.frag's u_breach_center comment) —
+            // an OLD, cooled hole elsewhere on the same hull must not
+            // re-ignite just because a DIFFERENT, fresh hit landed anywhere
+            // else on the instance.
+            float breach_age = scenegraph::kRimLife + 1.f;  // default: cold
+            glm::vec3 breach_center(0.0f);
+            float breach_radius = 0.0f;
+            for (const auto& ev : inst.breach_events.slots()) {
+                if (!ev.active) continue;
+                const float age = now - ev.birth_time;
+                if (age < breach_age) {
+                    breach_age    = age;
+                    breach_center = ev.center_body;
+                    breach_radius = ev.radius;
                 }
-
-                draw_scoop(s.center_body, s.radius, s.surface_normal,
-                           ce->tex3d, ce->origin, ce->cell, ce->dims,
-                           inst.world, camera, pipeline, breach_age, frame_tex);
             }
+
+            draw_hull_proxy(*model, *field, ce->tex3d, ce->origin, ce->cell, ce->dims,
+                            inst.world, camera, pipeline, breach_age,
+                            breach_center, breach_radius, frame_tex);
         });
 
     if (any_state_changed) {
@@ -379,6 +414,8 @@ void BreachPass::render(const scenegraph::World& world,
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
         // Restore texture bindings.
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE0);

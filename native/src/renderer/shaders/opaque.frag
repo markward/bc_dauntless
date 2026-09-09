@@ -137,6 +137,147 @@ uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
 // see-through bug.
 uniform int u_carve_invert;   // 0 = normal hull draw; 1 = stencil-marking draw
 
+// ── Per-instance hull distance field (hull-volume-field-transport, Task 5) ──
+// Replaces the 24-sphere ceiling for the hull-clip DISCARD decision: the
+// field carries the UNION of every carve ever made (voxel::field_carve_oblate
+// is monotonic -- see field_brush.h), not just the 24 most recently active
+// spheres above. u_hull_field_enabled == 0 is the stock path -- zero
+// per-fragment cost, byte-identical to today. Everything ELSE (the breach
+// scoop, the framework lattice below, the decal ring) still derives from the
+// sphere list untouched; this block only ever ADDS a discard, it never keeps
+// a fragment the sphere block would otherwise cut.
+//
+// u_hull_field is a 2D R8 slice atlas, NOT a sampler3D: measured on this
+// machine, a sampler3D in this shader corrupts shading across four unrelated
+// test suites even on a branch that never executes (renderer/field_atlas.h).
+// Every Z-slice of the instance's DistanceField is tiled into one 2D texture
+// with a replicated 1-texel border per tile, so hardware bilinear filtering
+// INSIDE a slice cannot bleed into a neighbouring tile's data.
+// === HULL_FIELD_SAMPLING BEGIN === KEEP IN SYNC with breach.frag's copy between its own matching markers -- enforced by native/tests/renderer/breach_field_sampling_test.cc
+uniform sampler2D u_hull_field;      // R8 slice atlas; DAMAGE field (not hull
+                                      // shape -- renderer/instance_field_cache.h);
+                                      // 128 = a carve's zero crossing, 1 = the
+                                      // most-negative byte ("no damage")
+uniform int   u_hull_field_enabled;  // 0 = stock path, zero per-fragment cost
+uniform vec3  u_hull_field_origin;   // body frame, model units
+uniform vec3  u_hull_field_cell;     // model units per cell
+uniform vec3  u_hull_field_dims;     // float (dims.x, dims.y, dims.z) -- avoids int division below
+uniform vec2  u_hull_field_tiles;    // tiles_x, tiles_y (voxel::AtlasLayout)
+uniform vec2  u_hull_field_texel;    // 1 / atlas size, i.e. (1/width, 1/height)
+
+// Fetch one Z-slice's raw (normalised [0,1]) texel at continuous in-slice
+// coordinate `sxy` (sample-space: an integer component lands exactly on that
+// index's stored sample; -1 and dims are the replicated border). `slice` is
+// a float holding an already-clamped integer index into [0, dims.z - 1].
+float hull_field_slice(float slice, vec2 sxy, float tile_w, float tile_h) {
+    float tile_ox = mod(slice, u_hull_field_tiles.x) * tile_w;
+    float tile_oy = floor(slice / u_hull_field_tiles.x) * tile_h;
+    // +1 skips the tile's own border column/row; +0.5 lands on the texel
+    // CENTRE so texture() samples exactly the stored value at sxy == integer,
+    // matching voxel::pack_field_to_atlas's interior-texel placement.
+    vec2 atlas_texel = vec2(tile_ox, tile_oy) + 1.0 + sxy + 0.5;
+    return texture(u_hull_field, atlas_texel * u_hull_field_texel).r;
+}
+
+// Sample the per-instance DAMAGE field at a body-frame point, returning a
+// value whose SIGN matches voxel::DistanceField's convention rescaled from
+// the packed encoding: negative = no damage at this point (the untouched
+// default, -127, everywhere field_carve_oblate's brushes have never reached
+// -- this is NOT "inside solid hull" in the hull-SDF sense; it is simply
+// "not carved"), positive = carved (a discard). ONE function -- every
+// consumer of the field (today's clip, anything added later) must sample
+// through here so they cannot drift apart.
+//
+// Encoding: pack_field_to_atlas stores byte = round(d / scale) + 128, so
+// texture() (GL_R8, normalised) returns byte / 255 = (round(d/scale) + 128)
+// / 255. Subtracting 128/255 EXACTLY (not 0.5 -- 128/255 = 0.50196..., a
+// half-quantisation-step bias toward "outside" at exactly the boundary
+// Critical 1's kHullFieldIsoMargin exists to guard) leaves
+// round(d/scale) / 255 -- i.e. this function's return value is
+// d / (scale * 255), plus at most +-0.5/255 of rounding error. That last
+// fact is what makes kHullFieldIsoMargin below scale-independent: see its
+// derivation.
+//
+// Z has no atlas border (slices are whole tiles, not filtered together by
+// hardware) -- the two bracketing slices are fetched by hand and lerped,
+// which is exactly what the atlas border on X/Y exists to make safe to do
+// per-slice via hardware bilinear.
+float sample_hull_field(vec3 p_body) {
+    // DistanceField cell (x,y,z)'s stored sample sits at body-frame position
+    // origin + (idx + 0.5) * cell (voxel/field_brush.cc, distance_field.h),
+    // so subtracting 0.5 after dividing by cell converts a corner-relative
+    // coordinate into "sample space", where an exact integer lands on a
+    // stored sample and hardware bilinear does the rest between them.
+    vec3 g = (p_body - u_hull_field_origin) / u_hull_field_cell - 0.5;
+
+    // Clamp X/Y into the atlas' own padded range [-1, dims]: precisely the
+    // border pack_field_to_atlas replicated, so this can never read a
+    // neighbouring tile no matter how far outside the field's box p_body is.
+    vec2 sxy = clamp(g.xy, vec2(-1.0), u_hull_field_dims.xy);
+
+    // Z: clamp into the valid slice range FIRST (there is no border to fall
+    // back on), then bracket with the next slice up, clamped at the top edge
+    // so s1 never reaches an out-of-range (or unused/kOutside) tile.
+    float sz = clamp(g.z, 0.0, u_hull_field_dims.z - 1.0);
+    float s0 = floor(sz);
+    float s1 = min(s0 + 1.0, u_hull_field_dims.z - 1.0);
+    float wz = sz - s0;
+
+    float tile_w = u_hull_field_dims.x + 2.0;   // voxel::AtlasLayout::tile_w
+    float tile_h = u_hull_field_dims.y + 2.0;   // voxel::AtlasLayout::tile_h
+
+    float v0 = hull_field_slice(s0, sxy, tile_w, tile_h);
+    float v1 = hull_field_slice(s1, sxy, tile_w, tile_h);
+    return mix(v0, v1, wz) - (128.0 / 255.0);   // > 0 carved (discard), < 0 no damage
+}
+// === HULL_FIELD_SAMPLING END ===
+
+// Discard margin, in sample_hull_field's own return units. MUST be > 0, not
+// 0.
+//
+// NOTE on what this guards, post hull-volume-field-transport's damage-field
+// fix: the per-instance field carries DAMAGE, not hull geometry
+// (renderer/instance_field_cache.h) -- every untouched cell is -127 ("no
+// damage"), nowhere near the zero crossing, so an UNDAMAGED fragment's
+// sampled value is never close enough to 0 for quantisation rounding to flip
+// its sign. This margin is therefore no longer guarding "every fragment on
+// the hull sits at d~0" (that framing described the OLD design, where this
+// field was a copy of the hull's own SDF, and rounding noise at that
+// everywhere-zero crossing produced hard-edged holes across the whole hull
+// the instant a ship took any damage at all -- see the fix's report). What
+// remains is the CARVE BOUNDARY: field_carve_oblate writes a real, brush-
+// shaped zero crossing at the rim of every cavity it cuts, and a fragment
+// right at that rim is exactly as exposed to quantisation rounding as any
+// fragment was under the old design -- just now confined to carved regions
+// instead of the whole hull. Comparing against a bare 0.0 there would
+// speckle that rim in a dithered pattern rather than cutting a clean edge.
+//
+// Derivation: sample_hull_field's return value is d / (scale * 255) plus at
+// most +-0.5/255 of rounding error (see its own derivation above) -- i.e.
+// exactly HALF A QUANTISATION STEP of margin, expressed in encoded byte
+// units, cancels the per-instance `scale` entirely: half a step in model
+// units is 0.5 * scale, and (0.5 * scale) / (scale * 255) == 0.5 / 255
+// regardless of what `scale` (cell size, hull, quality) actually is. This
+// is therefore the SMALLEST margin that fully absorbs quantisation
+// rounding, for any instance -- not an arbitrary safety pad.
+//
+// SCOPE, and what this constant does NOT cover: the derivation above bounds
+// QUANTISATION error only (~0.5*scale, ~0.24 model units at BC's authored
+// 15-unit resolution and quality 1). TRILINEAR RECONSTRUCTION error against
+// the true continuous carve boundary grows large at sub-cell-thick features
+// near a cavity's rim -- the same shape of error that, under the old
+// whole-hull-SDF design, discarded thin plating everywhere; here it is
+// confined to the immediate vicinity of an actual carve, where a wrong
+// discard reads as a slightly wrong hole edge rather than a vanished panel.
+// Enlarging kHullFieldIsoMargin to cover that residual is NOT the fix (a
+// cell-scaled margin would be ~32x larger here and would start eating small
+// carves). That residual is not observable headlessly (every test in
+// hull_field_clip_test.cc probes flat, locally-planar synthetic fields) and
+// needs the live check: if speckle shows up localised to a carve's own rim
+// on a thin-plated ship, that is this residual, not a driver bug or a
+// regression of the damage-field fix.
+const float kHullFieldIsoMargin = 0.5 / 255.0;
+
 // ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
 // Projects Damage.tga's alpha channel onto the hull in an annular band around
 // each breach. High alpha = structural strut (kept); low alpha = gap (discarded).
@@ -172,6 +313,40 @@ const float kDepthFactor = 0.45;  // depth = kDepthFactor * radius (shallow)
 const float kShapeAmp    = 0.25;
 const float kShapeFreq   = 4.0;
 const float kPhase       = 0.13;
+
+// Field-brush dilation, in CELLS. GLSL const has no linkage across the
+// C++/GLSL boundary, so these are this shader's own copies of
+// voxel::kCarveDepthFloorCells and voxel::kCarveFieldOffsetCells --
+// NOT independently chosen values. HullFieldClip.GlslBrushConstantsMatchCxx
+// fails if they drift. See field_brush.h for the derivation and the measured
+// coverage they buy.
+const float kFieldDepthFloor = 1.25;
+const float kFieldSdfOffset  = 1.25;
+
+// Body-space erosion of the FIELD's hole edge, so a hole cut beyond the
+// 24-carve ring gets a broken rim instead of the brush's smooth ellipsoid.
+// Tracked carves do not use this -- they have a real per-carve azimuth and
+// their own noise (kShapeAmp above); beyond the ring there is no per-carve
+// frame to build an azimuth from, which is the whole point of being out
+// there, so the perturbation has to come from a body-space field instead.
+//
+// ONE-SIDED BY CONSTRUCTION: vnoise3 returns [0,1] and the term is ADDED to
+// the iso margin, so it can only ever RAISE the threshold and SHRINK the
+// hole. A signed version (the *2-1 remap the sphere block's own rim noise
+// uses) would grow the hole past the region field_brush.cc guarantees
+// damage in, putting un-backed hull at the rim -- the see-through defect
+// this plan removes. HullFieldClip.FieldRimNoiseOnlyShrinksTheHole guards
+// the source text; FieldRimNoiseNeverCutsBelowThePlainMargin guards the
+// behaviour. breach.frag is deliberately NOT given this term: its plain
+// margin stays a LOWER threshold than the hull's, which keeps
+// hole (subset of) interior by construction.
+//
+// 0.06 in sample_hull_field's return units is about half a cell: scale is
+// 4*cell/127 model units per step, so 0.5*cell is 15.875 steps = 0.0623
+// after the /255 normalisation. Because scale is proportional to cell, this
+// is the same half cell on every ship without needing a uniform.
+const float kFieldRimNoise = 0.06;
+const float kFieldRimFreq  = 0.35;   // cycles per model unit
 
 float vh3(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453123); }
 float vnoise3(vec3 p){
@@ -527,7 +702,19 @@ void main() {
     // Discard hull fragments inside any active carve sphere. The breach pass
     // renders the exposed interior (scoop) within the same spheres, so hole and
     // interior align by construction. u_carve_count == 0 (or disabled) = stock path.
+    //
+    // UNCHANGED from before the hull-field clip existed, with one addition:
+    // `field_suppressed` records whether this fragment fell inside the region
+    // the FIELD BRUSH dilated any TRACKED carve to (field_brush.cc), so the
+    // field block below can defer to this block wherever it applies. See that
+    // block's comment for why.
     bool marked = false;
+    bool field_suppressed = false;
+    // Loop-invariant: the field lattice is per-instance, not per-carve. Hoisted
+    // out of the carve loop below, where it was recomputed for every one of up
+    // to 24 active carves on every fragment.
+    float cellmin = min(u_hull_field_cell.x,
+                        min(u_hull_field_cell.y, u_hull_field_cell.z));
     if (u_carve_enabled != 0 && u_carve_count > 0) {
         for (int i = 0; i < u_carve_count; i++) {
             vec3 c  = u_carve_spheres[i].xyz;
@@ -539,6 +726,29 @@ void main() {
             float along  = dot(v, n);
             vec3 lateral = v - along * n;
             float ld     = length(lateral);
+            // Region the FIELD BRUSH dilated this carve to (field_brush.cc).
+            // The field is deliberately generous -- a carve is rounded up to
+            // what the lattice can hold -- so suppressing the field only
+            // inside the nominal oblate would let it cut a smooth ring
+            // around every tracked hole, erasing the noise rim and the
+            // struts. This bound is a strict superset of the `e < 1.0` hole
+            // test below (its lateral extent is r*(1+kShapeAmp) >= r_eff),
+            // which is why no union with the unperturbed test is needed.
+            // Computed OUTSIDE the guard below on purpose: the dilated
+            // region reaches past that guard's box whenever the cell is
+            // coarse relative to the carve.
+            // `cellmin` is loop-INVARIANT -- hoisted above the loop, where it
+            // is computed once per fragment instead of once per active carve.
+            //
+            // Compared SQUARED: `unit < dil` with both sides non-negative is
+            // exactly `unit^2 < dil^2`, so this drops a sqrt from every
+            // fragment-carve pair (up to 24 per fragment) with no change of
+            // result whatsoever.
+            float lat = r * (1.0 + kShapeAmp);
+            float dep = max(kDepthFactor * r, kFieldDepthFloor * cellmin);
+            float dil = 1.0 + (kFieldSdfOffset * cellmin) / min(lat, dep);
+            float unit2 = (ld * ld) / (lat * lat) + (along * along) / (dep * dep);
+            if (unit2 < dil * dil) field_suppressed = true;
             if (ld < r * (1.0 + kShapeAmp) && abs(along) < kDepthFactor * r * (1.0 + kShapeAmp)) {
                 // Azimuthal noise on the lateral radius (jagged rim); same
                 // azimuth term the scoop uses, so the hole edge aligns.
@@ -546,6 +756,16 @@ void main() {
                 float r_eff = r * (1.0 + kShapeAmp * (vnoise3(az * kShapeFreq + c * kPhase) * 2.0 - 1.0));
                 float dz = along / (kDepthFactor * r);
                 float e  = (ld * ld) / (r_eff * r_eff) + dz * dz;   // <1 inside the oblate
+                // No suppression bookkeeping here: `field_suppressed` was set
+                // above from the dilated bound, which contains BOTH this
+                // perturbed test and the unperturbed oblate the brush carves.
+                // The band r_eff < ld < r (where the noise dips the rim
+                // inward) is inside what the field cut but outside `e < 1.0`;
+                // before the dilated bound existed that band had to be unioned
+                // in by hand, or the field cut a smooth-edged ring there with
+                // no scoop behind it (breach.vert builds the scoop from r_eff
+                // too) -- a see-through gap around roughly half of every
+                // tracked breach's rim.
                 if (e < 1.0) {
                     // ── Skeletal framework lattice (INSIDE the breach) ──────────
                     // Don't cut a clean hole: leave torn HULL STRUTS bridging the
@@ -559,8 +779,25 @@ void main() {
                         vec3 up = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
                         vec3 t  = normalize(cross(up, n));
                         vec3 b  = cross(n, t);
-                        vec2 uv = vec2(dot(lateral, t), dot(lateral, b))
-                                  / (r * kFrameUvScale) * 0.5 + 0.5;
+                        // Per-carve stencil ORIENTATION. Without this, `t`/`b`
+                        // depend only on the breach normal, so every breach on
+                        // a similarly-facing surface -- the whole top of a
+                        // saucer -- gets Damage.tga stamped with the same basis
+                        // AND the same centred crop. Adjacent hits then read as
+                        // one stamp repeated rather than as separate damage.
+                        //
+                        // Seeded from the carve centre: stable across frames
+                        // (so the lattice does not crawl), different per carve,
+                        // and identical in the u_carve_invert marking pass
+                        // because that derives it from the same `c`. If the two
+                        // ever disagreed the stencil would stop matching the
+                        // hole it is cut from.
+                        float ang = vh3(c * 0.37) * 6.28318530718;
+                        float cs  = cos(ang), sn = sin(ang);
+                        vec2  luv = vec2(dot(lateral, t), dot(lateral, b));
+                        luv = vec2(cs * luv.x - sn * luv.y,
+                                   sn * luv.x + cs * luv.y);
+                        vec2 uv = luv / (r * kFrameUvScale) * 0.5 + 0.5;
                         float a    = texture(u_damage_decal, uv).a;
                         float frac = sqrt(e);                   // 0 center .. 1 rim
                         // Keep a hull strut where the stencil is opaque (the lattice)
@@ -578,12 +815,80 @@ void main() {
                 }
             }
         }
-        // Marking pass: anything NOT inside a cut must not stamp the stencil.
-        if (u_carve_invert != 0 && !marked) discard;
-    } else if (u_carve_invert != 0) {
-        // Marking pass with no carves at all: nothing to stamp.
-        discard;
     }
+
+    // ── Hull-field clip (hull-volume-field-transport, Task 5) ──────────────
+    // Evaluated AFTER the sphere block, and only where `!field_suppressed`:
+    // a TRACKED carve's shape, jagged noise rim, and framework-lattice strut
+    // decision above are computed from real geometry (the sphere, its
+    // normal, Damage.tga's stencil); the field has none of that -- it only
+    // knows "carved or not" at a point. If the field discarded unconditionally
+    // it would OVERRIDE the sphere block's own decision inside every tracked
+    // oblate: every strut the lattice just decided to keep would still be cut
+    // (field_carve_oblate carved that exact region unconditionally), and the
+    // jagged noise rim would be replaced by the field's smooth, un-perturbed
+    // edge.
+    //
+    // The gate is the region the brush DILATED a tracked carve to, not the
+    // nominal oblate: field_brush.cc rounds every carve up to the smallest
+    // shape the lattice can hold (kCarveDepthFloorCells,
+    // kCarveFieldOffsetCells), so a ring outside the nominal oblate is still
+    // damaged in the field. Suppressing only inside the nominal oblate would
+    // let the field cut that ring with a smooth edge, visibly enlarging every
+    // tracked hole and erasing the rim.
+    //
+    // Gating on `!field_suppressed` means the field can only ever ADD a
+    // discard where the sphere block does not already govern -- i.e. damage
+    // beyond the 24-sphere ceiling, which is the plan's actual win. Inside a
+    // tracked carve's dilated region, the sphere block's decision (struts,
+    // noise rim, hole shape) is authoritative and untouched.
+    if (u_hull_field_enabled != 0 && !field_suppressed) {
+        // kHullFieldIsoMargin, not 0.0: see its derivation above this
+        // function. An UNDAMAGED fragment here reads -127 ("no damage"),
+        // nowhere near zero, so the margin is not guarding it -- it guards
+        // fragments right at a carve's own rim, where field_carve_oblate's
+        // brush actually crosses zero and quantisation rounding could
+        // otherwise decide the sign in a dithered speckle pattern instead
+        // of real geometry.
+        //
+        // The threshold is raised (never lowered) by body-space noise, so
+        // the field's own hole edge breaks up instead of reading as the
+        // brush's smooth ellipsoid. See kFieldRimNoise for why the term is
+        // strictly one-sided.
+        // SHORT-CIRCUIT, and it is load-bearing for frame rate, not tidiness.
+        // vnoise3 is EIGHT sin-based hashes, and this block runs on every
+        // fragment of every damaged hull that no tracked carve suppresses --
+        // i.e. essentially the whole visible surface of every ship that has
+        // ever been hit. Evaluating the noise there unconditionally cost
+        // eight transcendentals per fragment across the entire fleet.
+        //
+        // kFieldRimNoise * vnoise3(...) is >= 0 by construction (vnoise3
+        // returns [0,1] and the term is added, never subtracted -- see the
+        // constant's comment and FieldRimNoiseNeverCutsBelowThePlainMargin).
+        // So `fv > kHullFieldIsoMargin` is a NECESSARY condition for a cut,
+        // and testing it first is EXACTLY equivalent, not an approximation:
+        // any fragment it rejects would have been rejected by the full test
+        // too, whatever the noise happened to be. Undamaged fragments -- the
+        // overwhelming majority -- now pay two texture fetches instead of
+        // two fetches plus eight sins.
+        float fv = sample_hull_field(p_body);
+        bool field_cut = false;
+        if (fv > kHullFieldIsoMargin) {
+            field_cut = fv
+                      > kHullFieldIsoMargin + kFieldRimNoise * vnoise3(p_body * kFieldRimFreq);
+        }
+        if (u_carve_invert != 0) {
+            if (field_cut) marked = true;
+        } else if (field_cut) {
+            discard;
+        }
+    }
+
+    // Marking pass: anything NOT marked by EITHER mechanism (field or sphere)
+    // must not stamp the stencil. Covers the old "no carves at all" fallback
+    // too: with both blocks above skipped (disabled or empty), `marked` is
+    // still false here, so this discards exactly as it always did.
+    if (u_carve_invert != 0 && !marked) discard;
 
     // Shadow attenuates ONLY the sun (directional index 0). When shadows are
     // off, sun_shadow_factor() returns 1.0, so the ×sf below is the identity

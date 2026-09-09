@@ -43,7 +43,9 @@ _REQUIRED_BINDINGS = frozenset({
     "dust_set_density", "dust_set_enabled", "filmic_enabled",
     "filmic_set_enabled", "frame", "get_instance_bounds",
     "get_instance_head_center", "hdr_lens_flare_enabled",
-    "hdr_lens_flare_set_enabled", "hdr_set_enabled", "init", "letterbox_set",
+    "hdr_lens_flare_set_enabled", "hdr_set_enabled", "hull_volume_prewarm",
+    "hull_volume_set_cache_root", "hull_volume_set_resolution",
+    "init", "letterbox_set",
     "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "model_bounds",
     "motion_blur_enabled",
@@ -480,6 +482,63 @@ def set_hdr_lens_flare_enabled(enabled: bool) -> None:
     """Toggle image-based Modern Lens Flares (Modern VFX). Default: on. When on,
     the classic per-sun billboard flares are suppressed by the host loop."""
     _h.hdr_lens_flare_set_enabled(enabled)
+
+
+def hull_volume_set_cache_root(root: str) -> None:
+    """Where the native HullVolumeCache reads/writes its on-disk .dhv bakes.
+
+    Pushed once at boot (host_loop.run, right after set_game_root) with
+    engine.paths.hull_volume_cache_root() -- <project root>/cache/hull_volumes,
+    matching the cache/icons/... convention in engine/ui/weapon_icons.py.
+    Only the value in place before the cache's first use takes effect; the
+    native singleton is constructed lazily on first lookup and does not
+    re-root itself afterward (see carve_field_cache.h).
+
+    No hasattr guard, deliberately. host_loop.py:4780's comment documents a
+    feature that shipped completely inert because a hasattr guard turned a
+    loud missing-binding failure into a silent per-ship skip.
+    """
+    _h.hull_volume_set_cache_root(str(root))
+
+
+def hull_volume_set_resolution(iid: InstanceId, resolution: float) -> None:
+    """Record BC's authored damage-volume RESOLUTION for this instance's hull.
+
+    This is `ShipProperty.SetDamageResolution` as authored (Shuttle 6, Akira 8,
+    Galaxy 10, Warbird 12, stations 15) -- a per-ship detail RATIO, NOT a cell
+    size. The cell size is `authored_res / quality`, computed by
+    `voxel::HullVolumeCache::get`. Passing this value where a cell size is
+    expected bakes the hull at `quality`x too coarse -- silently, since the
+    volume still works, just at lower fidelity.
+
+    No hasattr guard, deliberately. host_loop.py:4780 documents a feature that
+    shipped completely inert because a hasattr guard turned a loud missing-
+    binding failure into a silent per-ship skip.
+    """
+    _h.hull_volume_set_resolution(iid, float(resolution))
+
+
+def hull_volume_prewarm(iid: InstanceId) -> None:
+    """Force this instance's hull damage field to bake now, at spawn time.
+
+    Design spec §4 puts the bake "on first use of a hull, during model
+    load" -- without this call nothing pre-warms it, so `HullVolumeCache::get`
+    instead runs for the first time from inside `hull_carve_add`, mid-combat:
+    a full NIF re-parse, voxelization, distance transform, and up to a
+    ~2.4 MB `.dhv` write, spec-measured at 57ms (Galor) to 192ms (Warbird) --
+    4-12 dropped frames on the first hit against each new hull class. Call
+    this right after `hull_volume_set_resolution`, at spawn, to move that
+    cost to mission load instead.
+
+    No-op when no resolution has been pushed for this hull yet -- there is
+    nothing to bake at the native default.
+
+    No hasattr guard, deliberately, matching hull_volume_set_resolution and
+    hull_volume_set_cache_root above -- see host_loop.py:4780's comment about
+    a feature that shipped completely inert because a guard turned a loud
+    missing-binding failure into a silent skip.
+    """
+    _h.hull_volume_prewarm(iid)
 
 
 def set_nonfinite_probe_enabled(enabled: bool, dump_dir: str = "",

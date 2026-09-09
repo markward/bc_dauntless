@@ -1,6 +1,7 @@
 add_executable(voxel_tests
     volume_test.cc
     voxelize_test.cc
+    voxelize_resolution_test.cc
     decode_test.cc
     iou_test.cc
     iou_realdata_test.cc
@@ -8,6 +9,11 @@ add_executable(voxel_tests
     surface_decode_test.cc
     plane_index_test.cc
     dual_contour_test.cc
+    distance_field_test.cc
+    dhv_test.cc
+    hull_volume_cache_test.cc
+    field_brush_test.cc
+    field_atlas_test.cc
 )
 target_link_libraries(voxel_tests PRIVATE voxel GTest::gtest_main)
 target_compile_definitions(voxel_tests PRIVATE

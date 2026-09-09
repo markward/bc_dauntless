@@ -4,6 +4,10 @@
 #include <glad/glad.h>
 
 #include <cmath>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <unordered_map>
 
 namespace renderer {
 
@@ -59,6 +63,60 @@ float carve_cavity_depth_cells(const voxel::VoxelVolume& fill,
     }
     return CarveFieldCache::kCavityMaxCells * static_cast<float>(hits)
            / CarveFieldCache::kCavityTaps;
+}
+
+namespace {
+std::unordered_map<std::string, float>& resolution_table() {
+    static std::unordered_map<std::string, float> t;
+    return t;
+}
+}  // namespace
+
+void set_hull_volume_resolution(const std::filesystem::path& source, float authored_res) {
+    if (source.empty() || !(authored_res > 0.0f)) return;
+    resolution_table()[source.string()] = authored_res;
+}
+
+float hull_volume_resolution(const std::filesystem::path& source) {
+    auto it = resolution_table().find(source.string());
+    return (it == resolution_table().end()) ? 0.0f : it->second;
+}
+
+namespace {
+std::filesystem::path& mutable_hull_volume_cache_root() {
+    static std::filesystem::path root;  // empty until set_hull_volume_cache_root runs
+    return root;
+}
+
+// Best-effort fallback when nothing configured a root before the first bake:
+// the system temp directory, so a missing/never-called boot step degrades to
+// "no cross-run persistence" rather than a crash or a write into cwd. If even
+// that is unavailable (sandboxed environment, no TMPDIR), fall back to a
+// relative path -- HullVolumeCache::get and dhv.h's write_dhv are already
+// best-effort about a missing/unwritable directory.
+std::filesystem::path fallback_hull_volume_cache_root() {
+    std::error_code ec;
+    std::filesystem::path tmp = std::filesystem::temp_directory_path(ec);
+    if (ec || tmp.empty()) return "dauntless_hull_volumes_cache";
+    return tmp / "dauntless_hull_volumes_cache";
+}
+}  // namespace
+
+void set_hull_volume_cache_root(const std::filesystem::path& root) {
+    mutable_hull_volume_cache_root() = root;
+}
+
+voxel::HullVolumeCache& hull_volume_cache() {
+    // Magic-static lambda: computed once, the first time this is called, using
+    // whatever set_hull_volume_cache_root configured at that moment. A
+    // std::unique_ptr rather than a by-value static because HullVolumeCache
+    // has no default constructor -- its root is only known at first use.
+    static std::unique_ptr<voxel::HullVolumeCache> instance = [] {
+        std::filesystem::path root = mutable_hull_volume_cache_root();
+        if (root.empty()) root = fallback_hull_volume_cache_root();
+        return std::make_unique<voxel::HullVolumeCache>(std::move(root));
+    }();
+    return *instance;
 }
 
 CarveFieldCache::~CarveFieldCache() {

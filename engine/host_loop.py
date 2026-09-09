@@ -4813,6 +4813,24 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
         iid = r_.create_instance(handle)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
+        # BC's authored damage-volume RESOLUTION for this hull
+        # (ShipProperty.SetDamageResolution) -- a per-ship ratio, NOT a cell
+        # size; the native baker derives cell = authored_res / quality.
+        # Best-effort: never block spawn.
+        try:
+            from engine.appc.hull_volume import push_resolution
+            push_resolution(ship, iid)
+        except Exception as _e:
+            dev_mode.log_swallowed("push hull volume resolution", _e)
+        # Pre-warm the bake NOW, at spawn, instead of paying it lazily on
+        # this hull's first combat hit (spec §4; up to 192ms measured on a
+        # Warbird). Separate try/except, same "never block spawn" contract
+        # as push_resolution above.
+        try:
+            from engine.appc.hull_volume import prewarm_field
+            prewarm_field(iid)
+        except Exception as _e:
+            dev_mode.log_swallowed("prewarm hull volume field", _e)
         render_instances.register(ship, iid)
         # Fresnel rim applies to ship hulls only — planets share the opaque
         # shader and must stay rim-free (default ineligible).
@@ -5189,6 +5207,8 @@ class HostController:
         hit_feedback._pending_carve_strength.clear()
         from engine.appc import hull_hit_smoke
         hull_hit_smoke.reset()
+        from engine.appc import damage_geometry
+        damage_geometry.reset()
         # The dynamic-light distance gate's camera eye belongs to the mission
         # that solved it. The next mission's ships spawn wherever its sets put
         # them, so a carried-over eye can cull their lights on the first frame,
@@ -5462,6 +5482,24 @@ class _MissionLoader:
             iid = r_.create_instance(handle)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
+            # BC's authored damage-volume RESOLUTION for this hull
+            # (ShipProperty.SetDamageResolution) -- a per-ship ratio, NOT a
+            # cell size; the native baker derives cell = authored_res / quality.
+            # Best-effort: never block spawn.
+            try:
+                from engine.appc.hull_volume import push_resolution
+                push_resolution(ship, iid)
+            except Exception as _e:
+                dev_mode.log_swallowed("push hull volume resolution", _e)
+            # Pre-warm the bake NOW, at spawn, instead of paying it lazily on
+            # this hull's first combat hit (spec §4; up to 192ms measured on
+            # a Warbird). Separate try/except, same "never block spawn"
+            # contract as push_resolution above.
+            try:
+                from engine.appc.hull_volume import prewarm_field
+                prewarm_field(iid)
+            except Exception as _e:
+                dev_mode.log_swallowed("prewarm hull volume field", _e)
             render_instances.register(ship, iid)
             # Fresnel rim applies to ship hulls only — planets share the
             # opaque shader and must stay rim-free (default ineligible).
@@ -7334,6 +7372,12 @@ def run(mission_name: Optional[str] = None,
     # AttributeError here -- and before any pass constructs: their texture
     # constants are relative now.
     r.set_game_root(str(_paths.game_root()))
+    # Where the native HullVolumeCache bakes/reads .dhv files for per-instance
+    # hull damage fields. Pushed here, right alongside set_game_root, for the
+    # same reason: it must land before the first hull volume lookup, and
+    # nothing else at boot touches one yet. No try/except -- a broken binding
+    # here must be as loud as a broken set_game_root, not silently skipped.
+    r.hull_volume_set_cache_root(str(_paths.hull_volume_cache_root()))
     # Pushed alongside set_game_root, not before -- the C++ side resolves a
     # relative asset path onto the game root, so its override map must land
     # no earlier than the root itself. mods.current() is whatever

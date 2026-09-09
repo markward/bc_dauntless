@@ -91,6 +91,8 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <array>
+#include <cstdio>
+#include <unordered_set>
 #include "developer_mode.h"
 
 #ifdef DAUNTLESS_ENABLE_CEF
@@ -259,6 +261,30 @@ std::unique_ptr<renderer::BreachPass>        g_breach_pass;
 // discard otherwise). The opaque hull clip is a pure sphere test — it needs no
 // fill texture. Owns GL textures; lives/dies with the GL context.
 std::unique_ptr<renderer::CarveFieldCache>   g_carve_cache;
+// Per-instance mutable hull damage field (hull-volume-field-transport Task
+// 6): carved alongside HullCarveField (the sphere ring above) on every
+// hull_carve_add deposit, via renderer::hull_carve_deposit, using the SAME
+// body-frame centre/normal/derived visible radius the sphere receives. Unlike
+// g_carve_cache (one STATIC original-fill texture per hull SOURCE), this one
+// is keyed per INSTANCE and mutable -- every damaged ship gets its own
+// battle-scarred copy. Owns GL atlas textures; lives/dies with the GL
+// context, like every other *_pass/*_cache global here.
+//
+// KNOWN, ACCEPTED CONSEQUENCE (hull-volume-field-transport plan 2a; the fix
+// is plan 2b's job, not this one's): the breach scoop (submit_carve_stencil
+// above, breach.vert/frag) still derives its geometry ENTIRELY from the
+// sphere ring, which this plan deliberately leaves in place. The field has
+// no such 24-slot ceiling, so a carve that never fit in the ring -- the 25th+
+// on one hull, or one merged into a slot the ring later evicts -- cuts a
+// real hole in opaque.frag via this cache, but the scoop never draws
+// anything behind it (submit_carve_stencil only stamps for instances with
+// carve.count() > 0, and only where a sphere still exists to be stamped from).
+// The result is a genuine see-through hole rather than a filled cavity for
+// any carve past the ring's capacity. This project has previously chosen "a
+// hole is a hole" over a wrongly-filled hole (see backing-material gate,
+// carve_field_cache.h), so this is the accepted failure mode here, not a bug
+// to chase -- expect it in a live death-cascade past 24 accumulated carves.
+std::unique_ptr<renderer::InstanceFieldCache> g_instance_field_cache;
 std::vector<renderer::SubsystemPin>          g_subsystem_pins;
 std::unique_ptr<renderer::SubsystemPinPass>  g_subsystem_pin_pass;
 // Developer debug overlay (Ship Property Viewer "Glow Regions" toggle):
@@ -632,6 +658,7 @@ void init(int width, int height, const std::string& title) {
     g_cloak_pass         = std::make_unique<renderer::CloakRefractionPass>();
     g_breach_pass        = std::make_unique<renderer::BreachPass>();
     g_carve_cache        = std::make_unique<renderer::CarveFieldCache>();
+    g_instance_field_cache = std::make_unique<renderer::InstanceFieldCache>();
     // The breach pass lazily loads its own animated interior texture
     // (game/data/Damage1..4.tga) on first draw — no host wiring needed.
     g_subsystem_pin_pass  = std::make_unique<renderer::SubsystemPinPass>();
@@ -700,6 +727,7 @@ void shutdown() {
     g_cloak_pass.reset();
     g_breach_pass.reset();   // releases the sphere mesh + fill textures while the GL context lives
     g_carve_cache.reset();   // releases the carved-fill 3D textures (GL alive)
+    g_instance_field_cache.reset();  // releases every damaged instance's atlas (GL alive)
     g_subsystem_pin_pass.reset();
     g_debug_volume_pass.reset();
     g_gizmo_pass.reset();
@@ -902,7 +930,7 @@ void frame() {
             g_submitter->submit_opaque_in_pass(
                 g_world, cam, *g_pipeline, lookup, g_lighting,
                 scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
-                ambient_scale, dyn_lights);
+                ambient_scale, dyn_lights, g_instance_field_cache.get());
         }
         // Stencil-mark where the hull was cut away, so the scoop below draws
         // only through real holes and never in open space. Must sit between the
@@ -912,17 +940,23 @@ void frame() {
             DAUNTLESS_FRAME_SCOPE("space.carve_stencil");
             g_submitter->submit_carve_stencil(g_world, cam, *g_pipeline, lookup,
                                               scenegraph::Pass::Space,
-                                              g_carve_cache.get());
+                                              g_carve_cache.get(),
+                                              g_instance_field_cache.get());
         }
-        // Breach scoop pass: for each active carve sphere, draws the front-
-        // face-culled sphere inner wall masked by the original hull fill
-        // (triplanar Damage.tga). Runs right after the opaque hull
-        // (depth-test/write on) so the scoop shows only through clip holes.
-        // Gated on dauntless_hull_damage::enabled() inside the pass (no-op when off).
+        // Breach interior pass (raymarched-breach-interior Task 3): one
+        // hull-mesh draw per DAMAGED instance -- the same geometry and the
+        // same winding (cull BACK) the opaque pass drew, under the carve
+        // stencil -- raymarching the
+        // per-instance damage field per fragment to find the cavity wall,
+        // masked by the original hull fill (triplanar Damage.tga). Runs
+        // right after the opaque hull (depth-test/write on) so the interior
+        // shows only through clip holes. Gated on
+        // dauntless_hull_damage::enabled() inside the pass (no-op when off).
         if (g_breach_pass && g_carve_cache) {
             DAUNTLESS_FRAME_SCOPE("space.breach");
             g_breach_pass->render(g_world, cam, *g_pipeline, lookup,
-                                  *g_carve_cache, g_decal_game_time);
+                                  *g_carve_cache, g_instance_field_cache.get(),
+                                  g_decal_game_time);
         }
         if (g_shield_pass) {
             DAUNTLESS_FRAME_SCOPE("space.shield");
@@ -1216,7 +1250,7 @@ void frame() {
             g_submitter->submit_opaque_instance(
                 g_world, g_hologram_ship.instance, g_camera, *g_pipeline, lookup,
                 g_lighting, g_decal_game_time, g_carve_cache.get(),
-                &g_dynamic_lights);
+                &g_dynamic_lights, g_instance_field_cache.get());
         } else if (g_hologram_pass) {
             g_hologram_pass->render(g_hologram_ship, g_world, g_camera,
                                     *g_pipeline, lookup);
@@ -1791,6 +1825,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   // too late if teardown+reload happen inside a single frame).
                   g_bridge_node_anims.stop(id.index);
                   g_bridge_node_ids.erase(id.index);
+                  // Release this instance's private damage field + GL atlas
+                  // NOW, not whenever it next happens to be evicted:
+                  // InstanceFieldCache is keyed on the FULL InstanceId
+                  // (index+generation), so a new instance recycling this same
+                  // index (World bumps the generation on every reuse) could
+                  // never read this entry back even without this call -- but
+                  // skipping it would leak the GL texture for the rest of the
+                  // process's life every time a damaged ship is destroyed.
+                  if (g_instance_field_cache) g_instance_field_cache->forget(id);
               }
           },
           py::arg("id"));
@@ -4113,28 +4156,78 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const float influ_model = influ_radius * inv_s;
               const float floor_model = floor_radius * inv_s;
 
-              // Accumulate strength; derive the visible radius from the grown
-              // total (BC's additive metaball field) but never shrink, and never
-              // below the caller's floor (authored / core-breach carves want a
-              // guaranteed size; combat hits pass floor 0 and stay invisible
-              // until the accumulated strength crosses the iso).
-              scenegraph::HullCarve& c =
-                  inst->carve.add(pb, influ_model, strength, nb);
-              const float prev_radius = c.radius;
-              // Strength -> an ABSOLUTE carve radius (GU): a weapon carves the
-              // same hole whatever it hits, so no scaling by hull size.
-              // radius_modifier is BC's per-ship DamageRadMod (default 1.0; only
-              // big fixed structures set it bigger).
-              const float vis_gu =
-                  scenegraph::hull_carve_strength_to_radius_gu(c.strength)
-                  * radius_modifier;
-              const float vis_model = vis_gu * inv_s;
-              c.radius = std::max(c.radius, std::max(floor_model, vis_model));
+              // Resolve this instance's hull source + authored damage
+              // resolution the same way hull_volume_set_resolution /
+              // compute_capsule_region do -- model->source is the key
+              // breach_pass.cc and CarveFieldCache::get_for_source already
+              // use, so InstanceFieldCache::carve looks up the SAME baked
+              // field those consume. An unresolvable model (no source) just
+              // means the field side stays a no-op; the sphere ring below is
+              // unaffected.
+              const assets::Model* model = resolve_model(inst->model_handle);
+              const std::filesystem::path source =
+                  (model != nullptr) ? model->source : std::filesystem::path{};
+              const float authored_res =
+                  source.empty() ? 0.0f : renderer::hull_volume_resolution(source);
+
+              // A resolved hull source with NO resolution ever pushed for it
+              // (engine/appc/hull_volume.py's push_resolution never ran, or
+              // ran for a different path) degrades silently and correctly:
+              // authored_res 0 -> HullVolumeCache::get derives cell 0 and
+              // bakes nothing -> InstanceFieldCache::carve sees an empty
+              // baked field and creates no entry. The sphere ring is
+              // unaffected either way. That silence is exactly the kind of
+              // inert-feature bug this project has shipped repeatedly (see
+              // CLAUDE.md's stub-hardening ratchet), so make it audible once
+              // per hull source rather than leaving it invisible.
+              if (!source.empty() && authored_res == 0.0f &&
+                  dauntless::is_developer_mode()) {
+                  static std::unordered_set<std::string> warned_sources;
+                  if (warned_sources.insert(source.string()).second) {
+                      std::fprintf(stderr,
+                                   "[hull_carve_add] no authored damage "
+                                   "resolution was ever pushed for hull "
+                                   "source \"%s\" -- its per-instance "
+                                   "distance field will stay absent for "
+                                   "every carve (sphere ring is unaffected).\n",
+                                   source.string().c_str());
+                  }
+              }
+
+              // Backing-material gate input: the same ORIGINAL fill volume
+              // frame.cc's sphere path already gates u_carve_spheres with
+              // (renderer::carve_has_backing / CarveFieldCache::
+              // volume_for_source). Null when there is no fill to gate with
+              // (no cache, no source, or a hull with no decoded mask) --
+              // hull_carve_deposit then carves the field ungated, matching
+              // frame.cc's carve_fill_entry falling back to nullptr in the
+              // same situation.
+              const voxel::VoxelVolume* fill_for_gate = nullptr;
+              if (!source.empty() && g_carve_cache) {
+                  const voxel::VoxelVolume& v =
+                      g_carve_cache->volume_for_source(source);
+                  if (!v.occ.empty()) fill_for_gate = &v;
+              }
+
+              // Deposit onto BOTH representations of this instance's damage
+              // (hull-volume-field-transport Task 6): the fixed 24-slot
+              // sphere ring (still what the breach scoop / framework lattice
+              // / breach-event ring below read) AND, alongside it, the
+              // per-instance distance field -- same body-frame centre,
+              // normal, and derived visible radius for both. See
+              // renderer::hull_carve_deposit's doc comment for why this
+              // arithmetic lives there rather than inline here.
+              const renderer::HullCarveDepositResult result =
+                  renderer::hull_carve_deposit(
+                      inst->carve, g_instance_field_cache.get(), id, source,
+                      authored_res, pb, nb, influ_model, strength,
+                      floor_model, radius_modifier, inv_s, fill_for_gate);
 
               // Breach event (transient VFX: debris, venting, rim) only when the
               // carve newly appears or visibly grows — sub-iso accumulation is
               // silent, so phaser dribble doesn't spray debris before it breaches.
-              if (c.radius > prev_radius + 1e-4f && c.radius > 0.0f) {
+              if (result.radius > result.prev_radius + 1e-4f &&
+                  result.radius > 0.0f) {
                   // Seed: deterministic hash of center_body XOR a per-push
                   // counter, to decorrelate closely-spaced breaches on one ship.
                   static std::uint64_t s_counter = 0;
@@ -4147,7 +4240,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   const std::uint64_t seed =
                       (bx * 2654435761ull) ^ (by * 805459861ull) ^
                       (bz * 3674653429ull) ^ (++s_counter * 6364136223846793005ull);
-                  inst->breach_events.push(pb, c.radius, nb,
+                  inst->breach_events.push(pb, result.radius, nb,
                                            g_decal_game_time, seed);
               }
           },
@@ -4165,6 +4258,86 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "(combat hits pass floor 0 and stay invisible until accumulated "
           "strength crosses the iso). time is accepted for call-shape symmetry "
           "with damage_decal_add but unused.");
+
+    // Where HullVolumeCache reads/writes its on-disk .dhv bakes. Pushed once
+    // from Python at boot, right alongside set_game_root -- see
+    // engine.renderer.hull_volume_set_cache_root (no hasattr guard there
+    // deliberately: host_loop.py's realize-set path documents a feature that
+    // shipped completely inert because a guard turned a loud missing-binding
+    // failure into a silent skip). Only the value in place at the FIRST call
+    // to renderer::hull_volume_cache() matters -- see that function's doc
+    // comment in carve_field_cache.h.
+    m.def("hull_volume_set_cache_root",
+          [](const std::string& root) {
+              renderer::set_hull_volume_cache_root(root);
+          },
+          py::arg("root"),
+          "Directory HullVolumeCache reads/writes its on-disk .dhv bakes "
+          "under. Set once from Python at boot, before any hull volume is "
+          "baked. Callable more than once, but only the value configured "
+          "before the cache's first use takes effect.");
+
+    // BC authors a damage-volume resolution per ship
+    // (ShipProperty.SetDamageResolution, in every hardpoint file). This is
+    // NOT the bake cell size -- it is a per-ship detail RATIO (Shuttle 6,
+    // Akira 8, Galaxy 10, Warbird 12, stations 15). HullVolumeCache::get
+    // derives the actual cell size in model units as
+    // `authored_res / quality`, where quality is the global fidelity
+    // multiplier (kDefaultQuality). Reading this value as a cell size
+    // directly bakes every hull at half the intended fidelity.
+    m.def("hull_volume_set_resolution",
+          [](scenegraph::InstanceId id, float resolution) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;      // stale id — drop silently
+              if (!(resolution > 0.0f)) return; // unset: keep the native default
+              // An Instance holds a model_handle, not a path. resolve_model is
+              // the idiom used throughout this file (e.g. compute_capsule_region,
+              // just below), and model->source is the same key breach_pass.cc:328
+              // hands to CarveFieldCache::get_for_source -- so the resolution is
+              // keyed by exactly the string the volume will be looked up by.
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr || model->source.empty()) return;
+              renderer::set_hull_volume_resolution(model->source, resolution);
+          },
+          pybind11::arg("instance_id"), pybind11::arg("resolution"));
+
+    // Spec §4 puts the bake "on first use of a hull, during model load" --
+    // without this call nothing pre-warmed it, so the bake instead ran
+    // lazily from hull_carve_add's field_cache->carve() the first time a
+    // player HIT that hull class, mid-combat: a full NIF re-parse +
+    // voxelization + distance transform + up to a ~2.4 MB .dhv write, spec-
+    // measured at 57ms (Galor) to 192ms (Warbird) -- 4-12 dropped frames on
+    // the first hit against each new hull class. Called from
+    // engine/appc/hull_volume.py's prewarm_field, right after
+    // push_resolution, at both host_loop.py spawn sites -- so the cost lands
+    // at mission load instead.
+    //
+    // Pure CPU + disk I/O (HullVolumeCache::get parses/voxelizes/bakes/reads
+    // .dhv; nothing here touches GL), so it is safe to call synchronously
+    // from Python at spawn time with no render context considerations --
+    // the exact same call InstanceFieldCache::carve() already makes lazily.
+    m.def("hull_volume_prewarm",
+          [](scenegraph::InstanceId id) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;  // stale id — drop silently
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr || model->source.empty()) return;
+              const float authored_res =
+                  renderer::hull_volume_resolution(model->source);
+              // No authored resolution pushed for this source (yet, or
+              // ever): the baker would derive cell 0 from it and bake
+              // nothing (see HullVolumeCache::get) -- match that no-op
+              // rather than forcing a bake at some arbitrary substitute
+              // resolution.
+              if (!(authored_res > 0.0f)) return;
+              renderer::hull_volume_cache().get(model->source, authored_res,
+                                                voxel::kDefaultQuality);
+          },
+          pybind11::arg("instance_id"),
+          "Force this instance's hull damage field to bake now (or load its "
+          "on-disk .dhv cache), instead of lazily on its first "
+          "hull_carve_add deposit during combat. No-op when no authored "
+          "resolution has been pushed for this hull yet.");
 
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,

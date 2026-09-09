@@ -16,11 +16,15 @@
 // draw_model takes a voxel::VoxelVolume* and CarveFieldCache's nested
 // constants, so the forward declaration below is not enough on its own.
 #include <renderer/carve_field_cache.h>
+// draw_model takes a const InstanceFieldCache::Entry* -- a nested type, so
+// (like CarveFieldCache above) the forward declaration below is not enough.
+#include <renderer/instance_field_cache.h>
 
 namespace assets { struct Model; }
 namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_t;
                        class DamageDecalRing; }
-namespace renderer { class Pipeline; class Shader; class CarveFieldCache; }
+namespace renderer { class Pipeline; class Shader; class CarveFieldCache;
+                     class InstanceFieldCache; }
 
 namespace renderer {
 
@@ -281,7 +285,14 @@ void draw_model(const assets::Model& model,
                     dyn_lights = {},
                 int dyn_light_count = 0,
                 const voxel::VoxelVolume* carve_fill = nullptr,
-                bool carve_invert = false);
+                bool carve_invert = false,
+                // Per-instance hull distance field (hull-volume-field-
+                // transport, Task 5): nullptr is BOTH an undamaged instance
+                // (InstanceFieldCache has no entry for it) and the default
+                // for every call site below until a resolved Entry is
+                // threaded in -- either way u_hull_field_enabled stays 0 and
+                // opaque.frag takes its documented zero-cost stock path.
+                const InstanceFieldCache::Entry* hull_field = nullptr);
 
 /// Release the process-lifetime damage-decal texture (game/data/Textures/
 /// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.
@@ -322,7 +333,13 @@ public:
                        const Lighting& lighting,
                        float decal_time = 0.0f,
                        CarveFieldCache* carve_cache = nullptr,
-                       const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
+                       const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr,
+                       // Per-instance hull field cache (Task 5 plumbing; the
+                       // owning cache is constructed and threaded in by
+                       // Task 6). nullptr (the default, and every call site
+                       // today) keeps every instance on draw_model's stock
+                       // hull_field==nullptr path.
+                       InstanceFieldCache* field_cache = nullptr);
 
     /// Like submit_opaque but only iterates instances tagged with `pass`.
     /// Used by the space pass to exclude bridge-tagged geometry, which
@@ -336,7 +353,8 @@ public:
                                float decal_time = 0.0f,
                                CarveFieldCache* carve_cache = nullptr,
                                float ambient_scale = 1.0f,
-                               const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
+                               const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr,
+                               InstanceFieldCache* field_cache = nullptr);
 
     /// Stamp the stencil buffer with "hull was cut away here", for every
     /// visible instance in `pass` that has active carves.
@@ -358,7 +376,8 @@ public:
                               Pipeline& pipeline,
                               const ModelLookup& lookup,
                               scenegraph::Pass pass,
-                              CarveFieldCache* carve_cache);
+                              CarveFieldCache* carve_cache,
+                              InstanceFieldCache* field_cache = nullptr);
 
     /// Draw a SINGLE instance (by id) through the full opaque lighting/texture
     /// path, ignoring its visibility flag. Used by the Ship Property Viewer's
@@ -373,7 +392,8 @@ public:
                                 const Lighting& lighting,
                                 float decal_time = 0.0f,
                                 CarveFieldCache* carve_cache = nullptr,
-                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
+                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr,
+                                InstanceFieldCache* field_cache = nullptr);
 
 private:
     /// Lazily-allocated 1x1 white texture used as a fallback when a material

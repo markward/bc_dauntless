@@ -8,6 +8,7 @@
 
 #include <glm/glm.hpp>
 
+#include <voxel/hull_volume_cache.h>
 #include <voxel/source_cache.h>
 #include <voxel/volume.h>
 
@@ -38,6 +39,20 @@ bool carve_has_backing(const voxel::VoxelVolume& fill,
 
 /// How DEEP the hull material runs inward from a carve, in cells.
 ///
+/// ORPHANED as of raymarched-breach-interior Task 3: this and
+/// kMinCavityCells had exactly one production caller, breach_pass.cc's
+/// per-carve CPU gate, removed when that pass switched to one hull-mesh
+/// draw per instance -- the equivalent question (does real hull material
+/// back a reported cavity wall?) is now asked per-FRAGMENT, more precisely,
+/// by breach.frag's own u_fill/u_fill_backing check at the raymarch's
+/// hit_point, not per-carve on the CPU. Only carve_cavity_test.cc still
+/// calls this function (this project's rule: never orphan a test silently
+/// — that file's own header says so too). Not removed here: retiring truly
+/// dead surface (as opposed to noting it) is a separate cleanup, and this
+/// function's OWN logic (and carve_has_backing's, which is NOT orphaned --
+/// frame.cc's hull-clip path still calls it) may still be useful if a
+/// future CPU-side gate is reintroduced.
+///
 /// A different question from carve_has_backing, and the two must not be
 /// conflated: that one asks "is there anything to cut into at all?", this asks
 /// "is there enough of it to be worth drawing a cavity in?".
@@ -62,6 +77,34 @@ bool carve_has_backing(const voxel::VoxelVolume& fill,
 float carve_cavity_depth_cells(const voxel::VoxelVolume& fill,
                                const glm::vec3& center_body,
                                const glm::vec3& normal_body);
+
+/// Record BC's authored damage-volume resolution (model units, from
+/// ShipProperty.SetDamageResolution) for a hull source. Set from Python at
+/// spawn. This is NOT a cell size -- HullVolumeCache::get derives the actual
+/// bake cell size from it as `authored_res / quality`.
+void set_hull_volume_resolution(const std::filesystem::path& source, float authored_res);
+
+/// The authored resolution for a hull source, or 0 when none was set. See
+/// set_hull_volume_resolution -- this is BC's raw SetDamageResolution value,
+/// not a cell size.
+float hull_volume_resolution(const std::filesystem::path& source);
+
+/// Configure where the process-wide HullVolumeCache reads/writes its on-disk
+/// .dhv bakes. Pushed once from Python at boot (via the
+/// hull_volume_set_cache_root binding, engine.renderer.hull_volume_set_cache_
+/// root), before anything calls hull_volume_cache(). Callable more than once,
+/// but only the value in place at the FIRST call to hull_volume_cache()
+/// matters -- the cache singleton below is constructed lazily and does not
+/// rebuild itself if the root changes afterward (this mirrors "push it once
+/// at boot" -- there is no live re-root use case, unlike set_game_root).
+void set_hull_volume_cache_root(const std::filesystem::path& root);
+
+/// The process-wide HullVolumeCache, constructed on first call with whatever
+/// root set_hull_volume_cache_root last configured. When nothing configured
+/// one (root is empty), falls back to a path under the system temp directory
+/// so the cache still works -- just without cross-run persistence -- rather
+/// than crashing or writing into the process's cwd.
+voxel::HullVolumeCache& hull_volume_cache();
 
 /// Shared STATIC original-fill cache (hull-breach-2b Path C).
 ///

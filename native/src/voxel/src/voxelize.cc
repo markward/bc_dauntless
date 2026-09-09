@@ -3,6 +3,7 @@
 #include <assets/model.h>
 #include <nif/block.h>
 #include <nif/file.h>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -68,13 +69,47 @@ std::vector<Tri> collect_hull_triangles(const assets::Model& model) {
 }
 
 void surface_voxelize(VoxelVolume& v, const std::vector<Tri>& tris) {
-    const int N = 16;  // samples per edge; dense enough to leave no gaps at grid res
+    // Sample spacing must be FINER than the cell, or the rasterized shell
+    // develops pinholes and solidify()'s flood fill pours through them and eats
+    // the interior -- the volume then looks full but is a hollow shell.
+    //
+    // A FIXED sample count cannot do this: it is correct only at the one
+    // resolution it was tuned for. The previous constant (16 per edge) was
+    // right at 48^3 and silently wrong above ~96^3. MEASURED 2026-09-08: solid
+    // fraction fell 13% -> 2% between 96^3 and 128^3, scaling as n^2.
+    const float min_cell = std::min(v.cell.x, std::min(v.cell.y, v.cell.z));
+    if (!(min_cell > 0.0f)) return;   // degenerate lattice: nothing to do
+
     for (const auto& t : tris) {
+        const float longest = std::max(glm::length(t.b - t.a),
+                             std::max(glm::length(t.c - t.a),
+                                      glm::length(t.c - t.b)));
+        // Half a cell between samples along the longest edge. The clamp ensures
+        // a single huge triangle doesn't cost O(n^4) work; N*N samples are taken.
+        //
+        // The bound is not arbitrary: the safety invariant is that edge_component_i / N
+        // must be <= 0.5*cell[i] for every axis i. For an edge spanning the full
+        // grid extent along axis i, max edge_component_i = (dims[i]-2)*cell[i].
+        // So we need N >= 2*(dims[i]-2) for each axis i. This holds for ANY dims,
+        // not just isotropic ones. A future caller passing anisotropic dims
+        // (e.g. 49x67x17 for a Galaxy hull) would silently reintroduce the pinhole
+        // bug under a flat 512 clamp if one axis had fewer cells.
+        //
+        // The bound is floored to 1 because degenerate grids (dims_i <= 2) would
+        // otherwise make max_samples <= 0, breaking the N >= 1 invariant. Without
+        // this floor, N could become 0 (causing NaN in u = 0.0/0) or negative
+        // (causing the loop to skip triangles silently).
+        int N = static_cast<int>(std::ceil(longest / (0.5f * min_cell)));
+        if (N < 1) N = 1;
+        const int max_samples = std::max(1, std::max({2 * (v.dims.x - 2), 2 * (v.dims.y - 2), 2 * (v.dims.z - 2)}));
+        if (N > max_samples) N = max_samples;
+
         for (int i = 0; i <= N; ++i)
         for (int j = 0; j + i <= N; ++j) {
-            float u = float(i) / N, w = float(j) / N;
-            glm::vec3 p = t.a + u * (t.b - t.a) + w * (t.c - t.a);
-            glm::ivec3 c = to_cell(v, p);
+            const float u = static_cast<float>(i) / N;
+            const float w = static_cast<float>(j) / N;
+            const glm::vec3 p = t.a + u * (t.b - t.a) + w * (t.c - t.a);
+            const glm::ivec3 c = to_cell(v, p);
             if (glm::all(glm::greaterThanEqual(c, glm::ivec3(0))) &&
                 glm::all(glm::lessThan(c, v.dims)))
                 v.set(c.x, c.y, c.z, true);

@@ -1,5 +1,16 @@
 // Cavity-depth probe (renderer::carve_cavity_depth_cells).
 //
+// ORPHANED as of raymarched-breach-interior Task 3: breach_pass.cc's
+// per-carve CPU gate (this function's one production caller) was removed
+// when that pass switched to one hull-mesh draw per instance -- the
+// equivalent question is now asked per-FRAGMENT by breach.frag's own
+// u_fill/u_fill_backing check at the raymarch's hit_point, not per-carve on
+// the CPU (see carve_field_cache.h's own note at this function's
+// declaration). This file is now the ONLY caller left; kept, not deleted,
+// per this project's rule against silently orphaning a test -- if you are
+// here because carve_cavity_depth_cells came up in a "why does this have no
+// callers" search, this is why, and it is expected, not a bug.
+//
 // The breach scoop draws the damage sphere's inner surface masked by the voxel
 // fill. That construction degenerates when the fill is thin: BC's authored
 // volumes are only a handful of nodes deep through a hull's vertical axis
