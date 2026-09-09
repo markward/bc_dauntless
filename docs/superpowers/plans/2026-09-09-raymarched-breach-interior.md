@@ -132,6 +132,28 @@ Commit: `refactor(renderer): retire the per-carve scoop path`.
 - A hull with more than 24 carves has interior behind every one of them.
 - An undamaged ship renders byte-identically to before.
 
+## Deferred to an end-of-implementation cleanup pass
+
+Recorded at Mark's request rather than left in conversation.
+
+**Share the field-sampling GLSL between `opaque.frag` and `breach.frag` for real,
+instead of duplicating it behind a drift guard.** Task 1 duplicates the block and
+enforces byte-identity with a test, because `embed_shader` reads one file at a time and
+a shared prelude needs its own `CMAKE_CONFIGURE_DEPENDS` — without that, editing the
+prelude silently ships the old shader, which is the exact trap
+`native/src/renderer/CMakeLists.txt:5-11` already documents and which cost a round
+during plan 2a.
+
+The guard test makes the duplication safe, not good. The cleanup pass should extract the
+block to a shared `.glsl` snippet, have `embed_shader` concatenate it, and add the
+snippet to `CONFIGURE_DEPENDS` so a prelude edit regenerates both headers. Verify by
+editing the snippet and confirming BOTH embedded headers change — a build that stays
+green after a prelude edit is the failure, not the success.
+
+Do this when the shader work has settled, not while it is still moving: the guard test
+is doing its job in the meantime, and a build-system change is the wrong thing to be
+debugging in the middle of a live-test cycle.
+
 ## What a live test should judge
 
 1. **Is the see-through gone?** Take a ship past ~24 hits and look for holes showing space. That is the whole point of this plan.
