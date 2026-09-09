@@ -3730,6 +3730,12 @@ def reset_sdk_globals() -> None:
     _tooltip_dispatch_state["last"] = -1e9
     from engine.appc.characters import CharacterClass_SetCurrentToolTipOwner
     CharacterClass_SetCurrentToolTipOwner(None)
+    # Drop the resolved projectile-module cache. It memoises import FAILURES
+    # too (so an unimportable mod projectile is not retried every shot), and a
+    # swap reloads the SDK tree — a failure cached against the old tree must
+    # not decide the next mission's torpedoes.
+    from engine.appc.weapon_subsystems import _reset_projectile_module_cache
+    _reset_projectile_module_cache()
     # Clear MissionLib's "viewscreen in use" flag. If a mission is swapped
     # away mid-briefing (while its bridge viewscreen shows a comm character),
     # g_bViewscreenOn is left at 1. On the next mission's load, the briefing's
@@ -4356,6 +4362,21 @@ def _ship_texture_search(nif_path, ship) -> list[str]:
     ``TextureNotFound`` and the whole ship is skipped — invisible, GetRadius()
     == 0, targeting reticle collapsed to a point.
 
+    The NIF's OWN directory is searched too, immediately after its tiered
+    subdirectory. Community ship mods have kept their textures loose beside
+    the .NIF for twenty years and stbc.exe loads them, so the bare directory
+    is a real search location — our reconstruction of FUN_0044f4a0 simply
+    did not capture it, and a reconstruction that omits a fallback is exactly
+    what silently breaks content the original handled. Without it such a ship
+    resolves nothing: model_build catches the TextureNotFound, substitutes its
+    magenta checkerboard, and the hull renders as a blown-out magenta
+    silhouette rather than failing loudly.
+
+    Order is load-bearing. ``<NIFdir>/<tier>`` stays FIRST so a properly
+    tiered ship still honours the texture-detail setting; the bare directory
+    comes next, before the shared dirs, so a ship's own texture wins over a
+    same-named file in SharedTextures.
+
     The legacy Federation shared dirs are appended as harmless trailing
     fallbacks so anything that previously resolved through them still does.
     """
@@ -4363,9 +4384,11 @@ def _ship_texture_search(nif_path, ship) -> list[str]:
     share = _ship_texture_share_path(ship)
     return [
         str(Path(nif_path).parent / tier),
-        str(_paths.game_asset(share) / tier),
-        str(_paths.game_asset(DEFAULT_TEXTURE_SEARCH)),
-        str(_paths.game_asset("data/Models/SharedTextures/FedBases/High")),
+        str(Path(nif_path).parent),
+        *[str(p) for p in _paths.game_asset_dirs(f"{share}/{tier}")],
+        *[str(p) for p in _paths.game_asset_dirs(DEFAULT_TEXTURE_SEARCH)],
+        *[str(p) for p in _paths.game_asset_dirs(
+            "data/Models/SharedTextures/FedBases/High")],
     ]
 
 
@@ -4844,7 +4867,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
                 print(f"[host_loop]   realize: shield register skipped for ship: "
                       f"{type(e).__name__}: {e}", flush=True)
 
-    planet_tex_search = str(_paths.game_asset(DEFAULT_PLANET_TEXTURE_SEARCH))
+    planet_tex_search = [str(p) for p in
+                         _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
     for planet in _iter_planets_in_set(pSet):
         if planet in session.planet_instances:
             continue
@@ -5301,6 +5325,23 @@ class _MissionLoader:
         import QuickBattle.QuickBattleGame as _QBGame
         _QBGame.Initialize(game)
 
+        # QuickBattle.Initialize (inside the cascade above) has just run
+        # BuildDialog(). A Foundation ship registered into the five tables
+        # (engine/foundation/quickbattle.py:register) is NOT yet a button
+        # anywhere: GenerateShipMenu is a hardcoded per-ship
+        # `if (iShipsUnlocked1 & AKIRA)` ladder that never reads those
+        # tables. Inject them into the built g_pShipsPane/g_pPlayerPane now,
+        # well before the Quick Battle Setup panel's first DFS read of the
+        # widget tree (it opens later, off the XO menu — see host_loop's
+        # boot sequence). A no-op when nothing is registered. Guarded so one
+        # broken mod ship cannot take the whole QuickBattle boot down with
+        # it.
+        try:
+            from engine.foundation import quickbattle as _fq
+            _fq.inject_into_menus()
+        except Exception as _e:
+            dev_mode.log_swallowed("Foundation QuickBattle menu injection", _e)
+
         # BC gives a Federation player ship a default registry / hull name
         # ("Dauntless" for a Galaxy, etc. — MissionLib's "default NCC"). QuickBattle
         # runs no script ReplaceTexture, so apply the class default here (before
@@ -5500,7 +5541,8 @@ class _MissionLoader:
                     print(f"[host_loop]   shield register skipped for ship: "
                           f"{type(e).__name__}: {e}", flush=True)
 
-        planet_tex_search = str(_paths.game_asset(DEFAULT_PLANET_TEXTURE_SEARCH))
+        planet_tex_search = [str(p) for p in
+                             _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
         for planet in _iter_planets(verbose=self._verbose):
             nif_path = _planet_nif_path(planet, verbose=self._verbose)
             if nif_path is None:
@@ -5876,14 +5918,15 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
         nif_abs = str(_paths.game_asset(nif))
         env = _App.g_kModelManager.env_for(nif)
         if env:
-            tex_abs = str(_paths.game_asset(env))
+            tex_abs = [str(p) for p in _paths.game_asset_dirs(env)]
         else:
             # No LoadModel-recorded env — comm sets declare geometry via
             # SetBackgroundModel, not LoadModel, so env_for is None. Set
             # textures live in <model_dir>/High by BC convention; use that
             # rather than the DBridge fallback (which holds only DBridge's tgas).
             import posixpath as _pp
-            tex_abs = str(_paths.game_asset(_pp.dirname(nif)) / "High")
+            tex_abs = [str(p) for p in
+                       _paths.game_asset_dirs(_pp.dirname(nif) + "/High")]
         if is_bridge:
             handle = r.load_model(nif_abs, tex_abs)
             iid = r.create_bridge_instance(handle)
@@ -5921,8 +5964,8 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
                 controller.viewscreen_instance = None
             vs_nif_abs = str(_paths.game_asset(vs.nif))
             vs_env = _App.g_kModelManager.env_for(vs.nif)
-            vs_tex = (str(_paths.game_asset(vs_env)) if vs_env
-                      else str(_paths.game_asset(DBRIDGE_TEX_REL)))
+            vs_tex = ([str(p) for p in _paths.game_asset_dirs(vs_env)] if vs_env
+                      else [str(p) for p in _paths.game_asset_dirs(DBRIDGE_TEX_REL)])
             vs_handle = r.load_model(vs_nif_abs, vs_tex)
             vs_iid = r.create_bridge_instance(vs_handle)
             r.set_world_transform(vs_iid, IDENTITY_MAT4)
@@ -7175,6 +7218,36 @@ def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
     if not resolution.ok:
         print(_paths.describe_failure(resolution), file=_sys.stderr)
         return None
+
+    # Mods layer over the resolved roots, so this must follow both configure()
+    # above and the resolution.ok check just above it. Roots are passed
+    # EXPLICITLY from the local `resolution` this function just computed,
+    # not read back via paths.game_root()/paths.sdk_scripts() -- those read
+    # the global paths._RESOLUTION, which a caller (a test that monkeypatches
+    # paths.configure to a no-op, holding its own fake Resolution) may
+    # deliberately leave stale or unconfigured. Reading the global here would
+    # silently fall through to ambient, real-machine path resolution instead
+    # of honouring that isolation. Guarded so a broken mods/ directory
+    # (unreadable tree, a bug in a mod's own script triggering an unexpected
+    # exception) never blocks boot -- it is reported and the game proceeds
+    # modless, same as if mods/ were absent. Same argv/env this function
+    # already resolved paths with, so a --mods-dir given at launch is
+    # honoured.
+    from engine import mods as _mods
+    try:
+        _mod_index = _mods.install(
+            argv=argv, env=env,
+            game_root=resolution.game,
+            sdk_scripts=_paths.sdk_scripts_in(resolution.sdk))
+    except Exception as _mod_exc:
+        import traceback as _traceback
+        print(f"[host_loop] mods.install() failed -- booting without mods: "
+              f"{_mod_exc!r}\n{_traceback.format_exc()}", file=_sys.stderr)
+    else:
+        _report = _mods.describe(_mod_index)
+        if _report:
+            print(_report, file=_sys.stderr)
+
     return resolution
 
 
@@ -7305,8 +7378,25 @@ def run(mission_name: Optional[str] = None,
     # nothing else at boot touches one yet. No try/except -- a broken binding
     # here must be as loud as a broken set_game_root, not silently skipped.
     r.hull_volume_set_cache_root(str(_paths.hull_volume_cache_root()))
+    # Pushed alongside set_game_root, not before -- the C++ side resolves a
+    # relative asset path onto the game root, so its override map must land
+    # no earlier than the root itself. mods.current() is whatever
+    # _resolve_paths_or_report installed above (or the empty index its own
+    # failure-isolation guard leaves in place).
+    from engine import mods as _mods
+    r.set_asset_overrides(_mods.renderer_overrides(_mods.current()))
 
     _setup_sdk()
+
+    # Foundation plugins register ships into QuickBattle's tables, so this
+    # must run before any QuickBattle pane is built. The SDK finder has to
+    # be installed first: Custom/Ships scripts do `import Foundation` and
+    # import other SDK modules.
+    from engine import foundation as _foundation
+    _fnd_report = _foundation.load_plugins()
+    _fnd_text = _foundation.describe(_fnd_report)
+    if _fnd_text:
+        print(_fnd_text, file=sys.stderr)
 
     import App
     from engine.core.loop import GameLoop

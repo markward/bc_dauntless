@@ -34,11 +34,14 @@ _PROJECT_ROOT = os.path.abspath(
 )
 
 
-def _damage_dir():
-    """Resolved at USE: a module-level constant would be captured at import,
-    before the first-run picker can change the root."""
+def _game_icon_file(stem: str):
+    """The TGA for one damage glyph, mod-aware.
+
+    Resolved as a single relative path rather than dir-then-join so an
+    installed mod's icon is found by the index. Resolved at USE.
+    """
     from engine import paths
-    return str(paths.game_asset("data/Icons/Damage"))
+    return paths.game_asset(f"data/Icons/Damage/{stem}.tga")
 
 
 _CURATED_DIR = os.path.join(
@@ -115,7 +118,8 @@ def trace_all() -> set[int]:
     tga_cache: dict[str, bytes] = {}
     for num, spec in ICON_REGISTRY.items():
         out_path = os.path.join(_SVG_CACHE_DIR, f"{num}.svg")
-        source_path = os.path.join(_damage_dir(), spec.tga)
+        stem = os.path.splitext(spec.tga)[0]
+        source_path = str(_game_icon_file(stem))
         if not os.path.isfile(source_path):
             continue
         if not _needs_rebuild(out_path, source_path):

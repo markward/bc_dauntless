@@ -10,7 +10,7 @@ from typing import Optional
 
 from engine.ui.panel import Panel
 from engine.ui import ship_icons
-from engine.ui.species_icons import stem_for_species
+from engine.ui.species_icons import stem_for_ship
 import engine.dev_mode as dev_mode
 
 
@@ -384,15 +384,12 @@ def _species_key_for(ship) -> str:
     Phase 1 ships expose `GetSpecies()` returning the integer enum
     from sdk/Build/scripts/Multiplayer/SpeciesToShip.py; we map that
     to the filename stem from sdk/Build/scripts/Icons/ShipIcons.py via
-    species_icons.stem_for_species.
+    species_icons.stem_for_ship, which prefers a Foundation ShipDef's
+    authored `iconName` over the species (a mod ship reuses a stock
+    species id, so the species alone draws the wrong hull).
     """
     try:
-        if not hasattr(ship, "GetSpecies"):
-            return ""
-        species_int = ship.GetSpecies()
-        if not isinstance(species_int, int):
-            return ""
-        stem = stem_for_species(species_int)
+        stem = stem_for_ship(ship)
         return stem if stem else ""
     except Exception:
         return ""

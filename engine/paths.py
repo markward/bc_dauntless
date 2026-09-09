@@ -373,9 +373,21 @@ def sdk_root() -> Path:
     return _root("sdk")
 
 
+def sdk_scripts_in(root: Path) -> Path:
+    """root/Build/scripts. Pure: takes the root rather than resolving one.
+
+    The one place that knows the SDK's on-disk layout -- sdk_scripts() below
+    is just this applied to the ambient sdk_root(). Exists so a caller that
+    already holds a resolved root (e.g. a Resolution from paths.resolve())
+    can derive the scripts dir without going through the global _RESOLUTION
+    -- see engine/mods.py:install()'s game_root/sdk_scripts parameters.
+    """
+    return root / "Build" / "scripts"
+
+
 def sdk_scripts() -> Path:
     """sdk_root()/Build/scripts — where the SDK's Python modules live."""
-    return sdk_root() / "Build" / "scripts"
+    return sdk_scripts_in(sdk_root())
 
 
 def sdk_data() -> Path:
@@ -384,7 +396,15 @@ def sdk_data() -> Path:
 
 
 def game_asset(rel) -> Path:
-    """Absolutise a BC-relative asset path, e.g. "data/Textures/x.tga"."""
+    """Absolutise a BC-relative asset path, e.g. "data/Textures/x.tga".
+
+    An installed mod that provides this path wins. Imported lazily, like
+    settings_store in resolve(), so engine.mods can import engine.paths.
+    """
+    from engine import mods
+    override = mods.game_override(rel)
+    if override is not None:
+        return override
     return game_root() / rel
 
 
@@ -399,6 +419,18 @@ def hull_volume_cache_root() -> Path:
     constant: callers must never capture its return value at import either.
     """
     return PROJECT_ROOT / "cache" / "hull_volumes"
+
+
+def game_asset_dirs(rel) -> list:
+    """Every directory to SEARCH for `rel`, mod directories first.
+
+    game_asset() answers "which file?", which a caller that scans a
+    directory cannot use. Always includes the stock directory last, so a
+    modless call is exactly today's single-directory behaviour wrapped in a
+    list.
+    """
+    from engine import mods
+    return [*mods.current().dirs_for(rel), game_root() / rel]
 
 
 # --- the failure message ----------------------------------------------------

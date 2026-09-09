@@ -398,19 +398,16 @@ class _FixImplicitRelativeImport(ast.NodeTransformer):
     Without this, ``import QuickBattle`` from QuickBattleAI binds the QuickBattle
     *package* instead of the sibling QuickBattle.QuickBattle module, so
     ``QuickBattle.GetCurrentAILevel()`` raises AttributeError. Mirrors
-    tools/mission_harness._FixImplicitRelativeImport."""
+    tools/mission_harness._FixImplicitRelativeImport.
 
-    def __init__(self, file_path):
-        p = Path(file_path)
-        try:
-            rel = p.relative_to(SDK_SCRIPTS)
-        except ValueError:
-            self._pkg = None
-            return
-        parent_parts = rel.parts[:-1]
-        self._pkg = ".".join(parent_parts) if parent_parts else None
-        self._pkg_dir = p.parent
-        self._self_name = p.stem
+    Takes the package and the sibling-lookup directories EXPLICITLY; see
+    _implicit_relative_fixer() for why it must not re-derive them from the
+    on-disk path."""
+
+    def __init__(self, pkg, sibling_dirs, self_name):
+        self._pkg = pkg
+        self._sibling_dirs = sibling_dirs
+        self._self_name = self_name
 
     def visit_Import(self, node):
         if not self._pkg or len(node.names) != 1:
@@ -419,7 +416,7 @@ class _FixImplicitRelativeImport(ast.NodeTransformer):
         if "." in alias.name or alias.asname is not None \
                 or alias.name == self._self_name:
             return node
-        if not (self._pkg_dir / (alias.name + ".py")).exists():
+        if not any((d / (alias.name + ".py")).exists() for d in self._sibling_dirs):
             return node
         return ast.ImportFrom(
             module=self._pkg, names=[ast.alias(name=alias.name, asname=None)],
@@ -427,12 +424,54 @@ class _FixImplicitRelativeImport(ast.NodeTransformer):
         )
 
 
+def _implicit_relative_fixer(file_path, logical_rel):
+    """Build _FixImplicitRelativeImport for a file about to be executed.
+
+    `logical_rel` is the path this module occupies RELATIVE TO THE SDK
+    SCRIPTS ROOT, which for a mod-provided file is not where it lives on
+    disk. This used to be derived from the on-disk path alone, which made
+    the whole transform a silent no-op for every mod-loaded script: a mod
+    file is never under the SDK scripts root, so relative_to() raised, the
+    package came out None, and visit_Import returned every node unchanged.
+    That is precisely the case the transform exists for — its own docstring
+    cites QuickBattle, which Foundation-style mods replace wholesale, and a
+    mod shipping Scripts/QuickBattle/QuickBattleAI.py hits the exact
+    AttributeError described above. Every other member of the compatibility
+    set applies to mod files; this was the one that did not.
+
+    Siblings are looked up in the mod directory AND the stock SDK package:
+    a mod that replaces one module of a package still relies on the stock
+    siblings being there. Mirrors tools/mission_harness._implicit_relative_fixer.
+    """
+    p = Path(file_path)
+    if logical_rel is None:
+        try:
+            logical_rel = p.relative_to(SDK_SCRIPTS)
+        except ValueError:
+            # Unknown provenance: no package, so no rewrite (as before).
+            return _FixImplicitRelativeImport(None, [], p.stem)
+    logical = Path(logical_rel)
+    parts = logical.parts
+    pkg = ".".join(parts[:-1]) if len(parts) > 1 else None
+    sibling_dirs = [p.parent]
+    if pkg:
+        sdk_dir = SDK_SCRIPTS.joinpath(*parts[:-1])
+        if sdk_dir != p.parent:
+            sibling_dirs.append(sdk_dir)
+    return _FixImplicitRelativeImport(pkg, sibling_dirs, logical.stem)
+
+
 class _SDKLoader(importlib.abc.Loader):
     """Load an SDK script with Python 2 compatibility fixes applied."""
 
-    def __init__(self, path: str, also_register_as: str = None):
+    def __init__(self, path: str, also_register_as: str = None,
+                 logical_rel: str = None):
         self.path = path
         self.also_register_as = also_register_as
+        # Where this file sits relative to the SDK scripts root LOGICALLY.
+        # Only a mod-provided file needs it stated; a stock file's on-disk
+        # path already answers the question.
+        self.logical_rel = logical_rel
 
     def create_module(self, spec):
         return None
@@ -446,7 +485,7 @@ class _SDKLoader(importlib.abc.Loader):
             warnings.simplefilter("ignore")
             tree = ast.parse(source, filename=self.path)
         tree = _MoveGlobalsToTop().visit(tree)
-        tree = _FixImplicitRelativeImport(self.path).visit(tree)
+        tree = _implicit_relative_fixer(self.path, self.logical_rel).visit(tree)
         tree = _FixDottedImport().visit(tree)
         tree = _FixPy2Sort().visit(tree)
         tree = _FixDictKeysIter().visit(tree)
@@ -484,6 +523,88 @@ class _SDKLoader(importlib.abc.Loader):
                       f"{type(_exc).__name__}: {_exc}", flush=True)
 
 
+def _mods_may_override(fullname):
+    """False for a standard-library or built-in module name.
+
+    _SDKFinder sits at sys.meta_path[0], ahead of BuiltinImporter and
+    PathFinder, so without this gate a mod shipping Scripts/copy_reg.py,
+    Scripts/types.py, Scripts/pickle.py or Scripts/string.py wins for every
+    stdlib import not already in sys.modules. Mods execute arbitrary Python
+    either way — their ship scripts run — so this is not a security boundary
+    and does not pretend to be one; what it buys is a legible failure
+    instead of accidental breakage surfacing as an unrelated crash deep in
+    engine code.
+
+    The gate applies to MOD overrides only. The stock SDK ships its own
+    string.py and copy_reg.py, setup_sdk() already carries a defensive
+    `import string` because of it, and how those resolve is deliberately
+    unchanged. Mirrors tools/mission_harness._mods_may_override."""
+    root = fullname.partition(".")[0]
+    return (root not in sys.stdlib_module_names
+            and root not in sys.builtin_module_names)
+
+
+def _mod_override_spec(fullname, logical, qualified=None):
+    """A ModuleSpec for a mod-provided module at SDK-relative `logical` (no
+    extension), or None if no mod provides it.
+
+    `qualified` is the dotted name the stock SDK layout gives this file when
+    that differs from `fullname` — the bare-name fallback imports `Fsteamr`
+    for what the SDK calls `ships.Fsteamr`, and both must end up bound to ONE
+    module object. Mirrors tools/mission_harness._mod_override_spec."""
+    from engine import mods as _mods
+    if not _mods_may_override(fullname):
+        return None
+    qualified = qualified or fullname
+    for suffix, is_pkg in ((".py", False), ("/__init__.py", True)):
+        hit = _mods.sdk_override(logical + suffix)
+        if hit is None:
+            continue
+        if qualified != fullname and qualified in sys.modules:
+            loader = _AliasLoader(sys.modules[qualified])
+        else:
+            loader = _SDKLoader(
+                str(hit),
+                also_register_as=(qualified if qualified != fullname else None),
+                logical_rel=logical + suffix)
+        spec = importlib.machinery.ModuleSpec(fullname, loader, origin=str(hit))
+        if is_pkg:
+            spec.submodule_search_locations = [str(Path(hit).parent)]
+        return spec
+    return None
+
+
+def _stock_dotted_name(logical, leaf_name):
+    """Dotted name for a folded index key, using the STOCK SDK's own spelling
+    for every parent directory that exists there.
+
+    Index keys are case-folded; module names are not. Registering
+    "ships.newship" for a file every other import spells "ships.NewShip"
+    would give two live module objects for one file — the duplicate-state
+    bug the bare-name branch exists to prevent. Mirrors
+    tools/mission_harness._stock_dotted_name."""
+    parts = logical.split("/")
+    out = []
+    cur = SDK_SCRIPTS
+    for part in parts[:-1]:
+        found = None
+        if cur is not None:
+            try:
+                for entry in sorted(cur.iterdir()):
+                    if entry.is_dir() and entry.name.lower() == part:
+                        found = entry.name
+                        cur = entry
+                        break
+            except OSError:
+                pass
+        if found is None:
+            found = part
+            cur = None
+        out.append(found)
+    out.append(leaf_name)
+    return ".".join(out)
+
+
 class _SDKFinder(importlib.abc.MetaPathFinder):
     """Find modules in sdk/Build/scripts/ and load them via _SDKLoader."""
 
@@ -494,6 +615,14 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
             return None
         if (PROJECT_ROOT / rel).is_dir() and (PROJECT_ROOT / rel / "__init__.py").exists():
             return None
+        # An installed mod's script wins over the stock SDK module. Checked
+        # after the project-root shims (those are OUR replacements and must
+        # not be overridable) and before the SDK itself. Never over the
+        # standard library -- see _mods_may_override().
+        from engine import mods as _mods
+        _spec = _mod_override_spec(fullname, rel)
+        if _spec is not None:
+            return _spec
         # Regular SDK module
         candidate = SDK_SCRIPTS / (rel + ".py")
         if candidate.exists():
@@ -519,6 +648,21 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
                 _p = Path(_search_dir)
                 if str(SDK_SCRIPTS) not in str(_p):
                     continue
+                # The index again, for the logical path this search directory
+                # implies. An import arriving through a parent package's
+                # __path__ (Characters -> Bridge/Characters) never matches the
+                # plain dotted lookup above, so without this a mod override
+                # loses to the stock file for that whole shape.
+                try:
+                    _dir_rel = _p.relative_to(SDK_SCRIPTS).as_posix()
+                except ValueError:
+                    _dir_rel = None
+                if _dir_rel is not None:
+                    _logical = child if _dir_rel == "." else f"{_dir_rel}/{child}"
+                    _spec = _mod_override_spec(
+                        fullname, _logical, _logical.replace("/", "."))
+                    if _spec is not None:
+                        return _spec
                 _cand = _p / (child + ".py")
                 if _cand.exists():
                     _rel_parts = _cand.relative_to(SDK_SCRIPTS).with_suffix("").parts
@@ -560,6 +704,15 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
             for candidate in matches:
                 rel_parts = candidate.relative_to(SDK_SCRIPTS).with_suffix("").parts
                 qualified = ".".join(rel_parts)
+                # A mod overriding this stock file must win HERE too. This
+                # branch used not to consult the index at all: it loaded the
+                # stock file and registered it as sys.modules[qualified], so a
+                # bare `import Fsteamr` arriving before the first
+                # `import ships.Fsteamr` permanently defeated the override and
+                # which one won depended on import order.
+                _spec = _mod_override_spec(fullname, "/".join(rel_parts), qualified)
+                if _spec is not None:
+                    return _spec
                 if qualified in sys.modules:
                     # Reuse the already-initialized module so module-level state
                     # (e.g. MissionShared.g_pDatabase) is shared, not reset.
@@ -569,6 +722,19 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
                     # so that package.Submodule attribute lookups work.
                     loader = _SDKLoader(str(candidate), also_register_as=qualified)
                 return importlib.machinery.ModuleSpec(fullname, loader, origin=str(candidate))
+            # No stock file of that name anywhere, but a mod may still add one
+            # in a subdirectory -- this branch is the only route to it. Cannot
+            # change stock behaviour: it runs only when the rglob found nothing.
+            for _key, _mf in sorted(_mods.current().files.items()):
+                if _mf.target != "sdk" or "/" not in _key:  # paths-guard: kind label
+                    continue
+                if _key.rpartition("/")[2] != fullname.lower() + ".py":
+                    continue
+                _logical = _key[:-len(".py")]
+                _spec = _mod_override_spec(
+                    fullname, _logical, _stock_dotted_name(_logical, fullname))
+                if _spec is not None:
+                    return _spec
         return None
 
 
@@ -702,6 +868,27 @@ def pytest_configure(config):
 # explicitly-requested fixtures, it cleans the *previous* test's leaks without
 # clobbering the current test's own setup.
 def _reset_leakable_engine_globals():
+    # Mod index: engine.mods._INDEX is exactly the kind of module global this
+    # fixture exists for -- a test that configures a fake mods tree would
+    # otherwise leave every later test resolving assets through it. Harmless
+    # so far only because each test_mods_* file carries its own _clear_index
+    # fixture; tests/unit/test_paths_late_reconfigure.py, which asserts
+    # _tgl_roots() is an exact 2-element list, is one leak away from breaking.
+    # Cleared FIRST, before the `import App` guard below can return early.
+    try:
+        from engine import mods as _mods
+        _mods.configure(None)
+    except Exception:
+        pass
+    # The projectile-module cache memoises import FAILURES, so one test
+    # firing a tube with an unimportable script would otherwise decide every
+    # later test's torpedoes for that script name.
+    try:
+        from engine.appc.weapon_subsystems import (
+            _reset_projectile_module_cache)
+        _reset_projectile_module_cache()
+    except Exception:
+        pass
     try:
         import App
     except Exception:

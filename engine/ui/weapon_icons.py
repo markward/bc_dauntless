@@ -73,11 +73,14 @@ _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
 
-def _game_icons_dir():
-    """Resolved at USE: a module-level constant would be captured at import,
-    before the first-run picker can change the root."""
+def _game_icon_file(stem: str):
+    """The atlas TGA named by `stem`, mod-aware.
+
+    Resolved as a single relative path rather than dir-then-join so an
+    installed mod's atlas is found by the index. Resolved at USE.
+    """
     from engine import paths
-    return str(paths.game_asset("data/Icons"))
+    return paths.game_asset(f"data/Icons/{stem}.tga")
 
 # Hand-authored SVGs (checked in). When a file exists here for a given
 # icon number it overrides the auto-traced fallback — the trace is a
@@ -134,7 +137,22 @@ ICON_REGISTRY: dict[int, IconSpec] = {
 
 # ── Tracer ──────────────────────────────────────────────────────────────
 
-def trace_atlas(tga_dir: str, registry: dict[int, IconSpec],
+def _atlas_source_path(spec: IconSpec, tga_dir: Optional[str]) -> str:
+    """The source TGA for one registry entry.
+
+    An explicit ``tga_dir`` (tests, callers pointing at a synthetic
+    fixture directory) is joined the old way. ``None`` means "the game's
+    own atlas" and is resolved one file at a time through
+    ``_game_icon_file`` so an installed mod's atlas is found by the
+    index — a directory built once cannot see it.
+    """
+    if tga_dir is not None:
+        return os.path.join(tga_dir, spec.tga)
+    stem = os.path.splitext(spec.tga)[0]
+    return str(_game_icon_file(stem))
+
+
+def trace_atlas(tga_dir: Optional[str], registry: dict[int, IconSpec],
                 output_dir: str) -> set[int]:
     """Trace every registered icon under ``tga_dir`` into
     ``output_dir/{num}.svg``. Returns the set of icon numbers actually
@@ -151,7 +169,7 @@ def trace_atlas(tga_dir: str, registry: dict[int, IconSpec],
 
     for num, spec in registry.items():
         out_path = os.path.join(output_dir, f"{num}.svg")
-        source_path = os.path.join(tga_dir, spec.tga)
+        source_path = _atlas_source_path(spec, tga_dir)
         if not os.path.isfile(source_path):
             continue
         if not _needs_rebuild(out_path, source_path):
@@ -178,7 +196,7 @@ def trace_all(tga_dir: Optional[str] = None,
               output_dir: Optional[str] = None) -> set[int]:
     """Convenience wrapper using the default game / cache directories."""
     return trace_atlas(
-        tga_dir=tga_dir or _game_icons_dir(),
+        tga_dir=tga_dir,
         registry=ICON_REGISTRY,
         output_dir=output_dir or _SVG_CACHE_DIR,
     )
@@ -216,7 +234,6 @@ def export_reference_pngs(tga_dir: Optional[str] = None,
 
     Idempotent — fresh PNGs are skipped, just like the tracer.
     """
-    tga_dir = tga_dir or _game_icons_dir()
     registry = registry or ICON_REGISTRY
     output_dir = output_dir or _REFERENCE_DIR
     os.makedirs(output_dir, exist_ok=True)
@@ -225,7 +242,7 @@ def export_reference_pngs(tga_dir: Optional[str] = None,
 
     for num, spec in registry.items():
         out_path = os.path.join(output_dir, f"{num}.png")
-        source_path = os.path.join(tga_dir, spec.tga)
+        source_path = _atlas_source_path(spec, tga_dir)
         if not os.path.isfile(source_path):
             continue
         if not _needs_rebuild(out_path, source_path):

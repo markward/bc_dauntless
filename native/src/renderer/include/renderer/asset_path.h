@@ -1,5 +1,6 @@
 // native/src/renderer/include/renderer/asset_path.h
 #pragma once
+#include <map>
 #include <string>
 
 namespace renderer {
@@ -39,6 +40,14 @@ inline bool is_absolute_asset_path(const std::string& path) {
 /// picker changes it after the window is already up.
 void set_game_root(const std::string& root);
 const std::string& game_root();
+
+/// Files supplied by installed mods, keyed by the case-folded relative path
+/// (lowercase, forward slashes) that engine/mods.py builds. A mod's file
+/// lives outside the game root, so no prefix can reach it -- this map is the
+/// only way C++-internal asset loads see mod content. Empty by default, so a
+/// modless run resolves byte-identically to before.
+void set_asset_overrides(const std::map<std::string, std::string>& overrides);
+void clear_asset_overrides();
 
 /// Resolve an SDK/BC asset path (relative to the game install root, e.g.
 /// "data/Textures/Effects/ExplosionB.tga") to an openable path.

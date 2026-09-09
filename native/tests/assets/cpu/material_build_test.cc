@@ -375,3 +375,59 @@ TEST(MaterialBuild, NoNormalSiblingLeavesBumpUnpopulated) {
     EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Base)].texture_index, 4);
     EXPECT_LT(m.stages[static_cast<std::size_t>(S::Bump)].texture_index, 0);
 }
+
+// --- a shape carrying BOTH texture properties ------------------------------
+//
+// Stock BC ships carry a bare NiTextureProperty, so this path never came up.
+// A Gamebryo multi-material export (an "__NDL_MultiMtl_Node" subtree, which
+// community ship mods do produce) gives each NiTriShape a NiTextureProperty
+// AND a NiMultiTextureProperty. build_material applies them in that order, so
+// the multitexture pass runs last and gets the final say over every stage.
+//
+// When that pass encounters a stage whose has_image is set but whose
+// image_link resolves to nothing, it must LEAVE the earlier value alone.
+// Writing the unresolved -1 through discards a perfectly good Base texture
+// and the hull renders untextured — white, with only its glow map showing.
+
+TEST(MaterialBuild, UnresolvedMultiTexStageDoesNotClobberResolvedBase) {
+    nif::NiTextureProperty tex;
+    tex.image_link = 100;
+
+    nif::NiMultiTextureProperty nmt;
+    nmt.elements[0].has_image  = true;
+    nmt.elements[0].image_link = 777;  // deliberately absent from the map
+
+    std::unordered_map<std::uint32_t, int> img_to_tex = {{100, 3}};
+
+    auto in = basic_inputs();
+    in.texture = &tex;
+    in.multi_texture = &nmt;
+    in.image_to_texture = &img_to_tex;
+
+    auto m = assets::detail::build_material(in);
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Base)].texture_index, 3)
+        << "an unresolvable multitexture stage 0 overwrote the Base texture "
+           "that NiTextureProperty had already resolved";
+}
+
+TEST(MaterialBuild, UnresolvedMultiTexStageLeavesAnEmptyStageEmpty) {
+    // The same guard must not invent a stage where there was none: an
+    // unresolved link with no prior value stays unpopulated rather than
+    // being written as -1 with stale sampler modes.
+    nif::NiMultiTextureProperty nmt;
+    nmt.elements[3].has_image  = true;
+    nmt.elements[3].image_link = 777;
+    nmt.elements[3].uv_set     = 1;
+
+    std::unordered_map<std::uint32_t, int> img_to_tex = {{100, 3}};
+
+    auto in = basic_inputs();
+    in.multi_texture = &nmt;
+    in.image_to_texture = &img_to_tex;
+
+    auto m = assets::detail::build_material(in);
+    using S = assets::Material::StageSlot;
+    EXPECT_LT(m.stages[static_cast<std::size_t>(S::Glow)].texture_index, 0);
+    EXPECT_EQ(m.stages[static_cast<std::size_t>(S::Glow)].uv_set, 0);
+}

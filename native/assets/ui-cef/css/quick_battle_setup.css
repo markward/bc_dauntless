@@ -95,8 +95,15 @@
 
 .qbs-row:hover { background: rgba(216, 94, 86, 0.18); }
 
+/* Depths 1-2 are the stock shape (category, then its ships) and keep their
+   original values so unmodded menus are pixel-identical. Depths 3-4 exist for
+   a Foundation SubMenu / SubSubMenu, which sits at depth 2 as a SIBLING of the
+   group's own ships — a submenu row carries a caret where a ship row carries
+   the 22px --leaf label margin, so the two align. */
 .qbs-row[data-depth="1"] { padding-left: 12px; }
 .qbs-row[data-depth="2"] { padding-left: 44px; }
+.qbs-row[data-depth="3"] { padding-left: 76px; }
+.qbs-row[data-depth="4"] { padding-left: 108px; }
 
 .qbs-row.disabled { opacity: 0.4; cursor: default; }
 .qbs-row.disabled:hover { background: transparent; }

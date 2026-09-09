@@ -36,11 +36,14 @@ from engine.ui.png_encoder import encode_png_rgba
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
-def _game_icons_dir():
-    """Resolved at USE: a module-level constant would be captured at import,
-    before the first-run picker can change the root."""
+def _game_icon_file(stem: str):
+    """The TGA for one species, mod-aware.
+
+    Resolved as a single relative path rather than dir-then-join so an
+    installed mod's icon is found by the index. Resolved at USE.
+    """
     from engine import paths
-    return str(paths.game_asset("data/Icons/Ships"))
+    return paths.game_asset(f"data/Icons/Ships/{stem}.tga")
 
 
 _CACHE_DIR      = os.path.join(_PROJECT_ROOT, "native", "assets", "ui-cef", "icons", "ships")
@@ -66,15 +69,28 @@ def icon_path_for_species(name: str) -> Optional[str]:
     if name in _resolved:
         return _resolved[name]
 
-    tga_path = os.path.join(_game_icons_dir(), name + ".tga")
+    tga_path = str(_game_icon_file(name))
     if not os.path.isfile(tga_path):
         _resolved[name] = None
         return None
 
-    with open(tga_path, "rb") as fp:
-        blob = fp.read()
-    width, height, rgba = decode_tga(blob)
-    png = encode_png_rgba(width, height, rgba)
+    # A silhouette is decoration; an unreadable icon must cost only itself.
+    # This runs from ShipDisplayPanel.render_payload, so anything raised here
+    # goes straight up through the panel registry and out of the host loop --
+    # which is exactly what happened when mod icons first reached this
+    # decoder and it met a Targa type it refused. Mod assets are untrusted
+    # input: cache the failure (so a per-frame render does not re-read and
+    # re-fail the same file every frame) and carry on without a silhouette.
+    try:
+        with open(tga_path, "rb") as fp:
+            blob = fp.read()
+        width, height, rgba = decode_tga(blob)
+        png = encode_png_rgba(width, height, rgba)
+    except Exception as _e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("ship icon %r unreadable" % tga_path, _e)
+        _resolved[name] = None
+        return None
 
     # Keep the disk cache for inspection / debugging.
     try:

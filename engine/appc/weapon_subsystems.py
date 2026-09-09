@@ -265,6 +265,72 @@ def _resolve_fire_sound(prop) -> str:
 
 
 
+# The substitute when a hardpoint's projectile module cannot be imported.
+# BC's own baseline round, and already the ammo layer's fallback: when
+# ships.py:_resolve_torpedo_ammo fails the same import it reports the type as
+# "Photon" with photon launch speed and power cost. Completing that here keeps
+# one story rather than a type calling itself Photon and firing nothing.
+_FALLBACK_PROJECTILE = "Tactical.Projectiles.PhotonTorpedo"
+
+# script name -> resolved module, or None once the fallback has also failed.
+# Also the once-per-script log gate: an unimportable module is unimportable
+# every shot, and a tube fires many times a minute.
+_projectile_modules: dict = {}
+
+
+def _resolve_projectile_module(script_name):
+    """The SDK module for `script_name`, falling back to the stock photon.
+
+    Community ship mods routinely ship projectile modules as Python 1.5
+    `.pyc` with NO source — the LC Intrepid pack's ZZ_VoyPhoton and
+    ZZ_Tricobalt are both magic 0x4E99, the Python `stbc.exe` embeds — and
+    CPython cannot load those. The mod overlay does index the `.pyc`, but the
+    SDK finders only ever look for `.py` / `/__init__.py`, so the import
+    raises either way.
+
+    Substituting a photon is a DELIBERATE INFIDELITY, chosen so a sideloaded
+    ship is flyable: a mod's tricobalt becomes an ordinary photon rather than
+    nothing at all. It is not a reconstruction of anything BC does. Before
+    this, the caller returned in silence AFTER Fire() had already spent the
+    round and reloaded the tube, so a mod's torpedoes drained the magazine
+    and launched nothing, with no event and no log.
+
+    Returns None only when the fallback itself cannot be imported, which
+    means the SDK tree is missing — the caller still declines to fire.
+    """
+    if script_name in _projectile_modules:
+        return _projectile_modules[script_name]
+
+    import importlib
+    from engine import dev_mode
+    try:
+        mod = importlib.import_module(script_name)
+    except Exception as _e:
+        # Not just ImportError: a Python-2-era module can also raise
+        # SyntaxError or AttributeError through the SDK loader's fixups, and
+        # every one of those leaves us equally unable to launch.
+        dev_mode.log_swallowed(
+            "projectile module %r unimportable; substituting %s"
+            % (script_name, _FALLBACK_PROJECTILE), _e)
+        try:
+            mod = importlib.import_module(_FALLBACK_PROJECTILE)
+        except Exception as _e2:
+            dev_mode.log_swallowed(
+                "fallback projectile %s unimportable" % _FALLBACK_PROJECTILE,
+                _e2)
+            mod = None
+
+    _projectile_modules[script_name] = mod
+    return mod
+
+
+def _reset_projectile_module_cache() -> None:
+    """Drop the resolved-module cache. Mission swaps reload the SDK tree and a
+    mod install can change what resolves, so a cached failure must not outlive
+    either."""
+    _projectile_modules.clear()
+
+
 def _spawn_projectile(emitter, mod, *, drf_override=0.0):
     """Spawn an in-flight projectile from `emitter` using SDK module `mod`.
 
@@ -2798,10 +2864,8 @@ class TorpedoTube(Weapon):
         if not script_name:
             return
 
-        import importlib
-        try:
-            mod = importlib.import_module(script_name)
-        except ImportError:
+        mod = _resolve_projectile_module(script_name)
+        if mod is None:
             return
 
         torp = _spawn_projectile(self, mod,

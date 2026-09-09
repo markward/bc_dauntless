@@ -212,13 +212,24 @@ void apply_multi_texture_property(
             }
         }
 
-        auto& stage = m.stages[static_cast<std::size_t>(target)];
         int tex_idx = -1;
         if (image_to_texture) {
             if (auto it = image_to_texture->find(el.image_link); it != image_to_texture->end()) {
                 tex_idx = it->second;
             }
         }
+        // A stage that claims an image but whose link resolves to nothing
+        // must not be written through. build_material runs this pass AFTER
+        // apply_texture_property, so an unconditional assignment here lets an
+        // unresolvable stage overwrite a Base texture the NiTextureProperty
+        // already resolved -- and a shape can carry both properties. Stock BC
+        // ships never do (they have a bare NiTextureProperty), but a Gamebryo
+        // multi-material export does, which is how community ship mods reach
+        // this path. The symptom was a hull rendering white with only its glow
+        // map visible, because Base had been reset to -1.
+        if (tex_idx < 0) continue;
+
+        auto& stage = m.stages[static_cast<std::size_t>(target)];
         stage.texture_index = tex_idx;
         stage.clamp_mode    = el.clamp_mode;
         stage.filter_mode   = el.filter_mode;

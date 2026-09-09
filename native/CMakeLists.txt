@@ -196,6 +196,7 @@ add_subdirectory(tools/dump_bridge_assets)
 add_subdirectory(tools/dump_nif_tree)
 add_subdirectory(tools/inspect_flip)
 add_subdirectory(tools/inspect_tex_props)
+add_subdirectory(tools/inspect_materials)
 add_subdirectory(tools/voxel_inspect)
 
 # GLFW is a runtime dep for the renderer host; tests reuse the same build.

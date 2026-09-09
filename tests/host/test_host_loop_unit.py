@@ -1,5 +1,27 @@
 """host_loop module imports cleanly and exposes the public symbols."""
+import pytest
+
 from tests.helpers import bc_assets
+
+
+@pytest.fixture(autouse=True)
+def _mods_scan_is_hermetic(monkeypatch, tmp_path):
+    """Isolate the real mods.install() scan Task 10 wired into host_loop.run().
+
+    Several tests below call the REAL host_loop.run() (including out of a
+    clean subprocess, whose `env` dict is copied from this process's own
+    os.environ AFTER this fixture runs, so it inherits the same isolation).
+    Since Task 10, that call reaches mods.install() on the success path.
+    Without this, that call resolves its mods root from real ambient
+    argv/env exactly as boot does in production -- correct for boot, but it
+    means these tests perform a LIVE scan of whatever sits in the
+    developer's own mods/ directory (this worktree keeps a real reference
+    mod there for manual verification), making their output and
+    mods._INDEX's contents machine-dependent. See
+    tests/host/test_host_loop_first_run.py's identical fixture for the full
+    discovery story.
+    """
+    monkeypatch.setenv("DAUNTLESS_MODS_DIR", str(tmp_path / "empty_mods"))
 
 
 def test_imports():

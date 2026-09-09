@@ -81,3 +81,59 @@ def test_cardassian_share_path_reaches_texture_search():
         "CardShips/High missing from texture search — Cardassian textures "
         f"cannot be resolved and the ship will be skipped. Got: {search}"
     )
+
+
+def test_nif_own_directory_is_in_the_texture_search():
+    """The NIF's OWN directory must be searched, not only <NIFdir>/<tier>.
+
+    Community ship mods have kept their textures loose beside the .NIF for
+    twenty years and stbc.exe loads them, so the bare directory is a real
+    search location and not a leniency for malformed content. Our loader
+    composed only ``<NIFdir>/<tier>``, so every such ship resolved nothing:
+    model_build caught the TextureNotFound, substituted its magenta
+    checkerboard, and the hull rendered as a blown-out magenta silhouette.
+
+    Ordering matters and is asserted here: ``<NIFdir>/<tier>`` must still come
+    FIRST so a properly tiered ship keeps honouring the detail setting, and
+    the bare directory must come BEFORE the shared dirs so a ship's own
+    texture wins over a same-named file in SharedTextures.
+    """
+    require_game_dir("data/Models/Ships")
+    from engine import host_loop as hl
+
+    App.g_kLODModelManager.Purge()
+
+    sess = hl.MissionSession(mission_name="t")
+    r = _CaptureRenderer()
+    s = SetClass_Create()
+    App.g_kSetManager.AddSet(s, "S")
+    ship = App.ShipClass_Create()
+    ship.SetName("Galaxy-1")
+    ship.SetScript("Galaxy")
+    s.AddObjectToSet(ship, "Galaxy-1")
+
+    hl.realize_set_objects(sess, s, r)
+
+    assert r.searches, "Galaxy was never handed to load_model"
+    search = _norm(r.searches[0])
+
+    model_dir = next((d for d in search
+                      if d.endswith("data/Models/Ships/Galaxy")), None)
+    assert model_dir is not None, (
+        "the NIF's own directory is absent from the texture search list; "
+        "a mod keeping its textures beside the .NIF cannot resolve them.\n"
+        "search list was:\n  " + "\n  ".join(search))
+
+    tier_dir = next((d for d in search
+                     if d.endswith("data/Models/Ships/Galaxy/High")), None)
+    assert tier_dir is not None, "the tiered dir vanished"
+    assert search.index(tier_dir) < search.index(model_dir), (
+        "<NIFdir>/<tier> must precede the bare <NIFdir> so a tiered ship "
+        "still honours the texture-detail setting")
+
+    shared = next((i for i, d in enumerate(search)
+                   if "SharedTextures" in d), None)
+    if shared is not None:
+        assert search.index(model_dir) < shared, (
+            "the ship's own directory must precede SharedTextures so its own "
+            "texture wins over a same-named shared one")

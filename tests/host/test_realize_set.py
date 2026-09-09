@@ -334,14 +334,70 @@ def test_realize_set_comm_geometry_is_idempotent():
 def test_realize_set_comm_texture_path_is_model_dir_high():
     """env_for is None for comm sets (SetupBridgeSet uses SetBackgroundModel, not
     LoadModel) — the texture search path must be <model_dir>/High, not the
-    DBridge fallback (which holds only DBridge's textures)."""
+    DBridge fallback (which holds only DBridge's textures). Now a mod-aware
+    list of search dirs (paths.game_asset_dirs); with no mods configured it
+    is the stock directory alone, per that function's modless invariant."""
     s = _comm_set_with_geometry()
     c = _CommCtl(); c.comm_instances_by_set = {}; c.nif_to_handle = {}
     r = _comm_renderer()
     hl.realize_set(c, r, s, is_bridge=False, comm_set_id=1)
     _nif_abs, tex_abs = r.loaded[0]
-    assert tex_abs.replace("\\", "/").endswith(
+    assert isinstance(tex_abs, list)
+    assert len(tex_abs) == 1
+    assert tex_abs[-1].replace("\\", "/").endswith(
         "data/Models/Sets/StarbaseControl/High")
+
+
+def test_realize_set_bridge_texture_dir_searches_mod_override(monkeypatch, tmp_path):
+    """The env-truthy branch (is_bridge=True and ModelManager.LoadModel
+    recorded a real env, per test_bridge_set_stubs.py:145-154's
+    test_model_manager_load_model_records_env) is the COMMON case: DBridge
+    and EBridge, the standard player bridges, always take it. Task 8's review
+    found this branch unconverted — game_asset(env) is an exact-key lookup
+    against a single mod FILE, and `env` here is a directory-shaped string
+    ("data/Models/Sets/DBridge/High/"), so it could never equal a leaf-file
+    key and the branch was structurally inert for mods no matter what a mod
+    provided. Proves a mod file under that directory now surfaces as a
+    search dir ahead of stock, mirroring the /High fallback branch above and
+    the structurally-parallel viewscreen site."""
+    import App
+    from engine import mods, paths
+
+    nif = "data/Models/Sets/DBridge/DBridge.nif"
+    env = "data/Models/Sets/DBridge/High/"
+    s, _obj = _bridge_set_with_geometry(nif)
+
+    mod_file = (tmp_path / "mods" / "M" / "Data" / "Models" / "Sets"
+                / "DBridge" / "High" / "hull.tga")
+    mod_file.parent.mkdir(parents=True, exist_ok=True)
+    mod_file.write_text("x")
+
+    game_root = tmp_path / "g"
+    monkeypatch.setattr(paths, "game_root", lambda: game_root)
+    monkeypatch.setattr(mods, "_INDEX", mods.build_index(tmp_path / "mods"))
+
+    prior_env = App.g_kModelManager._env.get(nif)
+    App.g_kModelManager.LoadModel(nif, None, env)
+    try:
+        class _C:
+            bridge_instance = None
+            nif_to_handle = {}
+            comm_instances_by_set = {}
+            officer_instances = []
+        c = _C(); r = _FakeRenderer()
+
+        hl.realize_set(c, r, s, is_bridge=True)
+
+        _nif_abs, tex_abs = r.loaded[0]
+        assert isinstance(tex_abs, list)
+        assert tex_abs[0] == str(mod_file.parent)
+        assert tex_abs[-1] == str(game_root / "data" / "Models" / "Sets"
+                                  / "DBridge" / "High")
+    finally:
+        if prior_env is None:
+            App.g_kModelManager._env.pop(nif, None)
+        else:
+            App.g_kModelManager._env[nif] = prior_env
 
 
 def test_realize_set_comm_tears_down_prior_instances_on_swap():

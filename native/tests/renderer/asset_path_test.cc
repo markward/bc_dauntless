@@ -123,3 +123,83 @@ TEST(AssetPath, EmptyRootFallsBackToTheDefault) {
     renderer::set_game_root("");
     EXPECT_EQ(renderer::game_root(), "game");
 }
+
+// --- mod overrides ----------------------------------------------------------
+//
+// A mod's file lives outside the game root entirely, so the root prefix can
+// never name it. The map is consulted first, keyed by the same case-folded
+// relative path engine/mods.py builds.
+
+namespace {
+struct OverrideGuard {
+    ~OverrideGuard() { renderer::clear_asset_overrides(); }
+};
+}  // namespace
+
+TEST(AssetPath, OverrideWinsOverTheRootPrefix) {
+    OverrideGuard guard;
+    renderer::set_asset_overrides({{"data/textures/spacedust.tga",
+                                    "/mods/M/Data/Textures/SpaceDust.tga"}});
+    EXPECT_EQ(resolve_asset_path("data/Textures/spacedust.tga"),
+              "/mods/M/Data/Textures/SpaceDust.tga");
+}
+
+TEST(AssetPath, OverrideLookupIsCaseInsensitive) {
+    OverrideGuard guard;
+    renderer::set_asset_overrides({{"data/textures/spacedust.tga", "/mods/x.tga"}});
+    EXPECT_EQ(resolve_asset_path("DATA/Textures/SPACEDUST.TGA"), "/mods/x.tga");
+}
+
+TEST(AssetPath, UnmatchedPathsStillUseTheRoot) {
+    OverrideGuard guard;
+    renderer::set_asset_overrides({{"data/textures/spacedust.tga", "/mods/x.tga"}});
+    EXPECT_EQ(resolve_asset_path("data/rough.tga"), "game/data/rough.tga");
+}
+
+TEST(AssetPath, ClearRestoresStockResolution) {
+    renderer::set_asset_overrides({{"data/rough.tga", "/mods/x.tga"}});
+    renderer::clear_asset_overrides();
+    EXPECT_EQ(resolve_asset_path("data/rough.tga"), "game/data/rough.tga");
+}
+
+TEST(AssetPath, AbsolutePathsAreNotOverridden) {
+    OverrideGuard guard;
+    renderer::set_asset_overrides({{"/abs/path.tga", "/mods/x.tga"}});
+    EXPECT_EQ(resolve_asset_path("/abs/path.tga"), "/abs/path.tga");
+}
+
+TEST(AssetPath, NoOverridesIsByteIdenticalToStock) {
+    OverrideGuard guard;
+    renderer::set_asset_overrides({});
+    EXPECT_EQ(resolve_asset_path("data/rough.tga"), "game/data/rough.tga");
+}
+
+// engine/mods.py:fold() is `.replace("\\", "/").strip("/").lower()` -- three
+// operations, in that order. fold_key must mirror all three, not just the
+// backslash swap and the lowering, or a key with a stray leading/trailing
+// separator silently never hits with no error anywhere.
+
+TEST(AssetPath, OverrideFoldStripsALeadingSeparatorLikePythonFold) {
+    // A literal leading '/' is already caught by the absolute-path guard on
+    // every platform, so it can never reach fold_key directly. A leading
+    // backslash is the one way a "leading separator" input reaches fold_key
+    // at all -- and only on POSIX, where kBackslash is an ordinary filename
+    // character rather than an absolute-path marker (asset_path.h's Windows
+    // arm treats it as absolute instead, so the map is never consulted there).
+    OverrideGuard guard;
+    renderer::set_asset_overrides({{"data/x.tga", "/mods/x.tga"}});
+    const std::string query = std::string(1, renderer::kBackslash) + "data/x.tga";
+#ifdef _WIN32
+    EXPECT_EQ(resolve_asset_path(query), query);
+#else
+    EXPECT_EQ(resolve_asset_path(query), "/mods/x.tga");
+#endif
+}
+
+TEST(AssetPath, OverrideFoldStripsATrailingSeparatorLikePythonFold) {
+    // Platform-agnostic: a trailing separator is never mistaken for an
+    // absolute-path marker, so this reaches fold_key identically everywhere.
+    OverrideGuard guard;
+    renderer::set_asset_overrides({{"data/x.tga", "/mods/x.tga"}});
+    EXPECT_EQ(resolve_asset_path("data/x.tga/"), "/mods/x.tga");
+}

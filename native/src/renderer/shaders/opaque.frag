@@ -1083,7 +1083,26 @@ void main() {
                           0.0, GLOW_HUE_MAX_DEG);
     vec3 glow_rgb = (hue_deg > 0.0) ? hue_rotate(glow.rgb, radians(hue_deg))
                                     : glow.rgb;
-    vec3 self_illum = u_emissive_scale * (u_emissive_color + glow_rgb * glow.a * gf * nac * region_gain);
+    // The material emissive is MODULATED BY THE BASE TEXTURE, not added flat.
+    // BC's fixed-function pipeline computes a vertex colour of
+    // (emissive + ambient + diffuse) and then modulates the texture by it —
+    // D3DTOP_MODULATE, the same APPLY_MODULATE our own material_build records
+    // for these stages. Adding u_emissive_color untextured instead makes a
+    // hull-wide emissive wash the ship out to flat white.
+    //
+    // Stock BC content hides this: 40 of the Akira's 44 materials are emissive
+    // 0.0, and the four that are 0.502 ('Engine - Big', 'Engine - Small',
+    // 'Red Bulb') sit on already-bright texels, so added and modulated look
+    // identical there. Community ship mods routinely carry a 3ds Max default of
+    // ~0.8 self-illumination across EVERY material, covering the whole hull —
+    // grey hull in the original game, blown-out white here. That is the case
+    // that tells the two formulations apart.
+    //
+    // The glow-map term is already textured (glow_rgb is a texture sample), so
+    // only the material term needs the base multiply. A material emissive of
+    // 0.0 leaves this byte-identical to before.
+    vec3 self_illum = u_emissive_scale *
+        (u_emissive_color * base.rgb + glow_rgb * glow.a * gf * nac * region_gain);
 
     // Emissive surfaces are light SOURCES, not mirrors. Suppress the reflective
     // diffuse + specular terms where the glow map emits, so a sunlit glow strip

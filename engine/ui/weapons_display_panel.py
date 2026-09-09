@@ -42,7 +42,7 @@ from typing import Optional
 from engine.appc import weapon_config
 from engine.ui import ship_icons, weapon_icons
 from engine.ui.panel import Panel
-from engine.ui.species_icons import stem_for_species
+from engine.ui.species_icons import stem_for_ship
 from engine.units import GUPS_TO_KPH
 
 
@@ -205,15 +205,14 @@ def _speed_label_for(ship, player_control) -> str:
 
 
 def _species_key_for(ship) -> str:
-    """Return the ship-icon filename stem (e.g. ``Galaxy``) for the
-    ship's species, or ``""`` if no icon is registered."""
+    """Return the ship-icon filename stem (e.g. ``Galaxy``) for the ship,
+    or ``""`` if no icon is registered.
+
+    Routes through `species_icons.stem_for_ship`, which prefers a
+    Foundation ShipDef's authored `iconName` — a mod ship reuses a stock
+    species id, so resolving from the species alone draws another ship."""
     try:
-        if not hasattr(ship, "GetSpecies"):
-            return ""
-        species_int = ship.GetSpecies()
-        if not isinstance(species_int, int):
-            return ""
-        stem = stem_for_species(species_int)
+        stem = stem_for_ship(ship)
         return stem if stem else ""
     except Exception:
         return ""
