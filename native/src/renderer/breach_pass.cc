@@ -4,6 +4,7 @@
 #include <renderer/pipeline.h>
 #include <renderer/carve_field_cache.h>
 #include <renderer/instance_field_cache.h>
+#include <renderer/model_draw_helpers.h>
 #include <renderer/asset_path.h>
 
 #include <scenegraph/breach_events.h>
@@ -11,13 +12,11 @@
 #include <scenegraph/instance.h>
 #include <scenegraph/world.h>
 #include <assets/model.h>
-#include <assets/mesh.h>
 #include <assets/texture.h>
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/matrix_inverse.hpp>
 
 #include <cstdint>
 #include <cstdio>
@@ -84,79 +83,6 @@ assets::Texture load_damage_tga(const char* path) {
     }
 }
 
-// Unit cube ([0,1]^3), one box proxy per damaged instance (raymarched-
-// breach-interior Task 3 — supersedes build_uv_sphere's per-carve sphere).
-//
-// 24 vertices (4 per face, not 8 shared corners): each face needs its own
-// flat winding, and duplicating corners is negligible cost for a mesh this
-// small (12 triangles total) versus the index bookkeeping of a shared-corner
-// cube.
-//
-// Each face is parameterised as p(u,v) = face_origin + u*U + v*V with U, V
-// chosen so cross(U, V) == the face's OUTWARD normal (a right-handed
-// tangent basis).
-//
-// Winding: (p00,p11,p01)/(p00,p10,p11) below is COUNTER-clockwise from
-// outside, on every face — the correct, standard convention, and the SAME
-// one build_uv_sphere.cc actually uses (see that file's own comment).
-//
-// This took a real GL render to get right rather than a hand derivation: a
-// first version here reproduced sphere_mesh.cc's PRE-fix comment, which
-// claimed "clockwise from outside" — a hand signed-area check for the +Z
-// face (U=(1,0,0), V=(0,1,0), the standard "looking down -Z from +Z" 2D
-// view) taking that claim at face value predicted (p00,p01,p11)/
-// (p00,p11,p10) instead. BreachPassGLTest.SolidFillDrawsInterior failed
-// against that prediction — cull(FRONT) was keeping the near face instead
-// of the far one — and the OPPOSITE triangulation (below) was what actually
-// worked. sphere_mesh.cc's "clockwise" comment was independently re-checked
-// by hand afterward (a code review caught it) and found to have simply been
-// wrong the whole time: build_uv_sphere IS also CCW-from-outside, so the two
-// meshes agree after all — see sphere_mesh.cc's corrected comment for that
-// derivation. Both meshes are drawn with glCullFace(GL_FRONT) so only the
-// back (far, as seen from outside) faces survive rasterisation.
-assets::MeshCpu build_unit_box_cpu() {
-    using assets::MeshCpu;
-
-    struct Face {
-        glm::vec3 origin, u, v, n;
-    };
-    // Six faces, each with its own right-handed (u, v, n=u×v) tangent basis
-    // — see this function's header comment for the winding derivation.
-    const Face faces[6] = {
-        {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {1, 0, 0}},   // +X
-        {{0, 0, 0}, {0, 0, 1}, {0, 1, 0}, {-1, 0, 0}},  // -X
-        {{0, 1, 0}, {0, 0, 1}, {1, 0, 0}, {0, 1, 0}},   // +Y
-        {{0, 0, 0}, {1, 0, 0}, {0, 0, 1}, {0, -1, 0}},  // -Y
-        {{0, 0, 1}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}},   // +Z
-        {{0, 0, 0}, {0, 1, 0}, {1, 0, 0}, {0, 0, -1}},  // -Z
-    };
-
-    MeshCpu cpu;
-    cpu.vertices.reserve(24);
-    cpu.indices.reserve(36);
-
-    for (const Face& f : faces) {
-        const std::uint32_t base = static_cast<std::uint32_t>(cpu.vertices.size());
-        const glm::vec3 p00 = f.origin;
-        const glm::vec3 p01 = f.origin + f.v;
-        const glm::vec3 p10 = f.origin + f.u;
-        const glm::vec3 p11 = f.origin + f.u + f.v;
-        for (const glm::vec3& p : {p00, p01, p10, p11}) {
-            MeshCpu::Vertex vert;
-            vert.position = p;
-            vert.normal   = f.n;
-            cpu.vertices.push_back(vert);
-        }
-        // p00=base+0, p01=base+1, p10=base+2, p11=base+3.
-        // Empirically-verified triangulation (see this function's header
-        // comment): (p00,p11,p01), (p00,p10,p11).
-        cpu.indices.push_back(base + 0); cpu.indices.push_back(base + 3); cpu.indices.push_back(base + 1);
-        cpu.indices.push_back(base + 0); cpu.indices.push_back(base + 2); cpu.indices.push_back(base + 3);
-    }
-
-    return cpu;
-}
-
 }  // namespace
 
 BreachPass::BreachPass() = default;
@@ -170,12 +96,6 @@ BreachPass::~BreachPass() {
             kv.second.tex3d = 0;
         }
     }
-}
-
-void BreachPass::ensure_box() {
-    if (box_mesh_) return;
-    assets::MeshCpu cpu = build_unit_box_cpu();
-    box_mesh_ = std::make_unique<assets::Mesh>(assets::upload_mesh(cpu));
 }
 
 void BreachPass::ensure_damage_frames() {
@@ -217,10 +137,12 @@ unsigned int BreachPass::upload_fill_tex(const voxel::VoxelVolume& fill) {
 }
 
 namespace {
-// The proxy's GL state, in ONE place so render() and draw_instance() cannot
-// diverge. Depth ON, cull FRONT (the recessed inner wall), and — the part that
-// must not be forgotten by either caller — the stencil test that keeps the
-// proxy out of open space.
+// The pass's GL state, in ONE place so render() and draw_instance() cannot
+// diverge. Depth ON, cull BACK (round 3: this pass now draws the REAL hull
+// mesh, the same outward-facing winding the opaque pass uses -- not a
+// back-face-culled proxy shell any more), and — the part that must not be
+// forgotten by either caller — the stencil test that keeps this draw out of
+// open space.
 //
 // `discard` writes no depth, so a hole in the hull and empty space look
 // identical from here, and BC's fill mask reaches up to ~3 cells past the hull
@@ -232,7 +154,7 @@ void begin_scoop_state() {
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
     glEnable(GL_CULL_FACE);
-    glCullFace(GL_FRONT);
+    glCullFace(GL_BACK);
     glEnable(GL_STENCIL_TEST);
     glStencilFunc(GL_EQUAL, 1, 0xFF);
     glStencilMask(0x00);            // test only; never write
@@ -248,18 +170,19 @@ void end_scoop_state() {
 }
 }  // namespace
 
-void BreachPass::draw_box_proxy(const InstanceFieldCache::Entry& field,
-                                unsigned int fill_tex,
-                                const glm::vec3& fill_origin,
-                                const glm::vec3& fill_cell,
-                                const glm::ivec3& fill_dims,
-                                const glm::mat4& world_xf,
-                                const scenegraph::Camera& camera,
-                                Pipeline& pipeline,
-                                float breach_age,
-                                const glm::vec3& breach_center,
-                                float breach_radius,
-                                unsigned int damage_tex) {
+void BreachPass::draw_hull_proxy(const assets::Model& model,
+                                 const InstanceFieldCache::Entry& field,
+                                 unsigned int fill_tex,
+                                 const glm::vec3& fill_origin,
+                                 const glm::vec3& fill_cell,
+                                 const glm::ivec3& fill_dims,
+                                 const glm::mat4& world_xf,
+                                 const scenegraph::Camera& camera,
+                                 Pipeline& pipeline,
+                                 float breach_age,
+                                 const glm::vec3& breach_center,
+                                 float breach_radius,
+                                 unsigned int damage_tex) {
     // Camera world position: inverse of view matrix column 3, computed once
     // CPU-side per draw (not per fragment). Matches how the opaque pass derives
     // u_camera_pos_ws in submit_opaque / submit_opaque_in_pass.
@@ -275,7 +198,9 @@ void BreachPass::draw_box_proxy(const InstanceFieldCache::Entry& field,
 
     auto& shader = pipeline.breach_shader();
     shader.use();
-    shader.set_mat4("u_model",           world_xf);
+    // u_model is set PER MESH inside draw_model_positions_only (a model's
+    // sub-meshes can each carry their own node-local transform); u_view/proj
+    // and every other uniform below are the same for the whole instance.
     shader.set_mat4("u_view",            camera.view_matrix());
     shader.set_mat4("u_proj",            camera.proj_matrix());
     shader.set_vec3("u_camera_pos_ws",   cam_pos_ws);
@@ -337,17 +262,21 @@ void BreachPass::draw_box_proxy(const InstanceFieldCache::Entry& field,
 
     glActiveTexture(GL_TEXTURE0);  // restore default active unit
 
-    glBindVertexArray(box_mesh_->vao());
-    glDrawElements(GL_TRIANGLES,
-                   static_cast<GLsizei>(box_mesh_->index_count()),
-                   GL_UNSIGNED_INT, nullptr);
-    glBindVertexArray(0);
+    // Draw the REAL hull mesh (round 3): each fragment surviving the
+    // stencil test above sits exactly on the hull surface at a carved
+    // point -- see this pass's own header comment for why that removes the
+    // need for any entry search in breach.frag. May issue more than one
+    // glDrawElements call (one per sub-mesh); see draw_calls()'s own doc
+    // for why that is an asset property, not a regression toward one draw
+    // per carve.
+    draw_model_positions_only(model, world_xf, shader);
     ++draw_calls_;
 }
 
 void BreachPass::draw_instance(std::uintptr_t instance_key,
                                const voxel::VoxelVolume& fill,
                                const InstanceFieldCache::Entry& field,
+                               const assets::Model& model,
                                const glm::mat4& world_xf,
                                const scenegraph::Camera& camera,
                                Pipeline& pipeline,
@@ -356,7 +285,6 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
                                float breach_radius) {
     if (field.tex2d == 0) return;   // no damage field: nothing to raymarch
 
-    ensure_box();
     ensure_damage_frames();
 
     // Build + upload the fill 3D texture. In the test/standalone path there is
@@ -369,9 +297,9 @@ void BreachPass::draw_instance(std::uintptr_t instance_key,
     if (fe.tex3d == 0) return;
 
     begin_scoop_state();
-    draw_box_proxy(field, fe.tex3d, fill.origin, fill.cell, fill.dims,
-                   world_xf, camera, pipeline, breach_age,
-                   breach_center, breach_radius, damage_frames_[0]);
+    draw_hull_proxy(model, field, fe.tex3d, fill.origin, fill.cell, fill.dims,
+                    world_xf, camera, pipeline, breach_age,
+                    breach_center, breach_radius, damage_frames_[0]);
     end_scoop_state();
 
     // Restore texture bindings.
@@ -393,7 +321,6 @@ void BreachPass::render(const scenegraph::World& world,
     if (!dauntless_hull_damage::enabled()) return;
     if (field_cache == nullptr) return;   // feature unavailable: nothing to draw
 
-    ensure_box();
     ensure_damage_frames();
 
     // Current animation frame, cycled by the game clock. All proxies drawn
@@ -459,9 +386,9 @@ void BreachPass::render(const scenegraph::World& world,
                 }
             }
 
-            draw_box_proxy(*field, ce->tex3d, ce->origin, ce->cell, ce->dims,
-                           inst.world, camera, pipeline, breach_age,
-                           breach_center, breach_radius, frame_tex);
+            draw_hull_proxy(*model, *field, ce->tex3d, ce->origin, ce->cell, ce->dims,
+                            inst.world, camera, pipeline, breach_age,
+                            breach_center, breach_radius, frame_tex);
         });
 
     if (any_state_changed) {

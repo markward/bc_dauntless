@@ -1,18 +1,24 @@
 #version 410 core
 
 // Breach interior — the far wall of a hull cavity, found by raymarching the
-// per-instance DAMAGE field through a per-instance BOX proxy (raymarched-
-// breach-interior Task 3; supersedes the old per-carve sphere scoop).
+// per-instance DAMAGE field starting from the REAL hull surface (raymarched-
+// breach-interior Task 3, round 3; supersedes both the original per-carve
+// sphere scoop AND round 1's box-proxy-plus-entry-search design).
 //
-// One draw per DAMAGED INSTANCE (breach_pass.cc's draw_box_proxy), not one
-// per carve: the box covers the instance's whole damage-field extent, so a
-// carve past the old 24-slot sphere ring's cap still gets an interior drawn
-// for it -- the field itself has no such cap. For each fragment:
-//   1. Reconstruct the view ray in body frame from v_body_pos (this box's
-//      far-face position -- see below) and u_camera_pos_body.
-//   2. Walk the ray to find where it first enters carved material
-//      (find_breach_entry), then raymarch from there to the cavity's far
-//      wall (raymarch_breach_cavity, Task 2) -- hit_point/hit_normal.
+// One draw per DAMAGED INSTANCE, not one per carve: breach_pass.cc draws the
+// SAME hull mesh geometry the opaque pass drew (renderer::
+// draw_model_positions_only), under the SAME carve stencil. A fragment
+// reaching main() below is therefore, by construction, sitting exactly on
+// the hull surface at a point sample_hull_field() already reads as carved
+// (> margin) -- the identical condition that made opaque.frag discard it and
+// the stencil pass mark it 1 in the first place. There is no search for
+// where the ray enters the carve: it already starts there. For each
+// fragment:
+//   1. Reconstruct the view ray in body frame: ro = v_body_pos (the hull
+//      surface itself), rd = the direction from the camera through it,
+//      continued further into the hull.
+//   2. Raymarch from ro to the cavity's far wall (raymarch_breach_cavity,
+//      Task 2, UNCHANGED since round 1) -- hit_point/hit_normal.
 //   3. Map hit_point to a texture coordinate in the ORIGINAL (uncarved) fill
 //      (GL_R8 3D texture). If the fill value is below u_fill_backing, there
 //      is no real hull material there → discard: this is what keeps a carve
@@ -22,20 +28,19 @@
 //   4. Triplanar projection of BC's Damage.tga onto hit_point -- muted grey
 //      interior shading, unchanged from the pre-Task-3 scoop.
 //
-// Rendered with glCullFace(GL_FRONT) so only the box's back (far) faces are
-// drawn; no geometry can poke out past the hull.
+// Rendered with the SAME cull/depth state as the opaque pass draws this mesh
+// with (normal front-facing, cull BACK) -- this is the real, outward-facing
+// hull surface, not a back-face-culled proxy shell; no geometry can poke out
+// past the hull because it IS the hull.
 // Depth-test ON, depth-write ON: the proxy hides behind intact hull (depth
-// written by the opaque pass) and shows only through an actual hole (no
-// depth there).
+// written by the opaque pass, at pixels the carve did NOT touch) and shows
+// only through an actual hole (no depth written there by the opaque pass,
+// since it discarded that fragment).
 
-// v_body_pos is the box's FAR-face position (this pass
-// rasterises only the box's back faces -- glCullFace(GL_FRONT), breach.vert)
-// -- i.e. exactly the point where this fragment's view ray EXITS the field's
-// AABB. v_body_normal/v_world_pos are gone: the box carries no meaningful
-// per-vertex normal (unlike the old per-carve sphere, whose vertex WAS the
-// outward normal), and the fragment recomputes its own world position from
-// whichever body-frame point it ends up shading (hit_point, not v_body_pos)
-// via u_model -- see main() below.
+// v_body_pos is the REAL hull mesh's own vertex position (breach.vert is now
+// a plain passthrough -- see that file's header). No box, no per-vertex
+// normal computed here: hit_normal (below) comes from the field's own
+// gradient, not from mesh geometry.
 in vec3 v_body_pos;
 
 // Original (uncarved) hull fill — static per hull, never rebuilt.
@@ -178,13 +183,13 @@ float sample_hull_field(vec3 p_body) {
 }
 // === HULL_FIELD_SAMPLING END ===
 
-// Cavity-wall raymarch (raymarched-breach-interior Task 2), called from
-// main() below via find_breach_entry (Task 3) once that has located where
-// the view ray first enters carved material. Originally written and tested
-// in isolation before Task 3 wired it in -- see
-// native/tests/renderer/breach_raymarch_test.cc, which splices this file's
-// own production text onto a test-only main() and still exercises this
-// function directly, independent of main()'s own box-proxy plumbing.
+// Cavity-wall raymarch (raymarched-breach-interior Task 2), called DIRECTLY
+// from main() below with ro = v_body_pos -- the real hull mesh surface point
+// (round 3: no entry search, see the retirement note above this function's
+// call site). Originally written and tested in isolation before Task 3
+// wired it in -- see native/tests/renderer/breach_raymarch_test.cc, which
+// splices this file's own production text onto a test-only main() and still
+// exercises this function directly, independent of main()'s own plumbing.
 //
 // A fragment that will reach this pass is, by the stencil (breach_pass.cc,
 // GL_EQUAL against 1), one where sample_hull_field(entry point) already
@@ -377,133 +382,22 @@ bool raymarch_breach_cavity(vec3 ro, vec3 rd, out vec3 hit_point, out vec3 hit_n
     return false;   // ran the whole budget: no crossing, no far wall
 }
 
-// ── Box-proxy entry search (raymarched-breach-interior Task 3) ─────────────
-//
-// raymarch_breach_cavity (above) requires its OWN `ro` to already sit inside
-// carved material -- true by construction for the old per-carve sphere (its
-// geometry WAS shaped to the carve, sized and centred on it) but not for this
-// task's box proxy, which covers the instance's WHOLE damage-field box: most
-// rays through it never touch a carve at all. These two helpers are what
-// main() uses to find where -- if anywhere -- a given view ray first crosses
-// into carved territory, before handing that point to raymarch_breach_cavity
-// to find the FAR wall of that same cavity.
-
-// Analytic (loop-free) ray/AABB entry distance: the smallest `t >= 0` at
-// which `ro + rd*t` crosses into the field's own body-frame box
-// (u_hull_field_origin .. + u_hull_field_cell*u_hull_field_dims -- the SAME
-// box breach.vert places its proxy geometry at). Standard slab test.
-// Components of `rd` at or near 0 produce +-inf in `inv_rd`; the min/max
-// reduction below is still correct under IEEE arithmetic (a ray parallel to
-// a slab either always or never lies within it along that axis, and +-inf
-// sorts to the correct side of both cases). NOT covered by that argument: a
-// component of `rd` EXACTLY 0 with `ro` landing EXACTLY on that slab's own
-// plane produces `0 * inf = NaN` in `t0`/`t1` for that component, which
-// would then poison `tmin`/`t_enter` (`min`/`max` with a NaN operand is
-// itself NaN or arbitrary, driver-dependent, in GLSL). Left unguarded:
-// `rd` is a normalised view-ray direction from a real camera position, and
-// `ro` sits exactly on a specific axis-aligned plane only for a
-// zero-measure set of camera positions/orientations -- practically
-// unreachable, not proven unreachable.
-//
-// Clamped to >= 0 so a camera already inside the box (a first-person/cinematic
-// view close to a hull breach) searches from the camera itself rather than
-// from behind it.
-//
-// The matching EXIT distance is NOT computed here: it is exactly t_exit as
-// main() derives it from v_body_pos, this fragment's own interpolated
-// position -- this pass rasterises the box's FAR faces only (see
-// breach.vert's header comment), so whatever face survives cull(GL_FRONT) at
-// this pixel already IS the ray's own box-exit point.
-float breach_box_entry_t(vec3 ro, vec3 rd) {
-    vec3 bmin = u_hull_field_origin;
-    vec3 bmax = u_hull_field_origin + u_hull_field_cell * u_hull_field_dims;
-    vec3 inv_rd = 1.0 / rd;
-    vec3 t0 = (bmin - ro) * inv_rd;
-    vec3 t1 = (bmax - ro) * inv_rd;
-    vec3 tmin = min(t0, t1);
-    float t_enter = max(max(tmin.x, tmin.y), tmin.z);
-    return max(t_enter, 0.0);
-}
-
-// Smallest legal carve's radius, in MODEL UNITS: == MIN_CARVE_RADIUS_GU
-// (engine/appc/hull_carve.py, 0.25 GU), converted via 1 model unit =
-// 0.01 GU (engine/units.py) -- i.e. 25.0. This is an ABSOLUTE quantity,
-// independent of any ship's field cell size -- unlike the fine march's own
-// step (kHullFieldStepFrac * cell, which scales WITH the field's
-// resolution), a carve's physical size does not shrink just because a
-// hull's authored field happens to be coarse. See find_breach_entry's own
-// derivation comment for why this is what has to bound the entry search's
-// stride -- a fix found by a live GL test failing, not derived up front:
-// the first version of this search reused the FINE, cell-relative step,
-// which is correct for raymarch_breach_cavity's job (finding a cavity's own
-// nearby far wall) but wrong for this one (finding ANY point across an
-// entire hull-sized box), and silently reintroduced this plan's own
-// see-through defect for any breach far enough from the box's entry face --
-// see this task's report for the measured numbers.
-const float kBreachCoarseStride = 25.0;
-
-// See find_breach_entry's own "BUDGET" paragraph.
-const int kBreachCoarseMaxSteps = 64;
-
-// Find a point ANYWHERE inside carved material along the ray, for
-// raymarch_breach_cavity to continue from -- NOT the precise entry crossing
-// (no interpolation/refinement here). That is sufficient: raymarch_breach_
-// cavity's own FINE march (unchanged) finds the far wall to full precision
-// regardless of exactly where within the carve this function's own coarse
-// sample landed, since it marches FORWARD until the field drops back below
-// margin -- a location determined purely by the carve's own far edge, not
-// by how this function got inside it. Unlike raymarch_breach_cavity, this
-// does NOT assume `ro` starts inside carved material -- that guarantee is
-// exactly what the old per-carve sphere proxy gave for free, and the box
-// proxy cannot: it covers the whole field, so this is what tells "this ray
-// touches a carve" apart from "it doesn't" before handing off.
-//
-// STRIDE: kBreachCoarseStride (25.0 model units) -- HALF the smallest legal
-// carve's diameter (2 * 25.0 = 50.0). This is the same pigeonhole margin
-// kHullFieldStepFrac already uses for the fine march's cell-sized features
-// ("two samples per feature width is the minimum spacing that cannot
-// straddle the WHOLE feature without landing inside it at least once"),
-// applied here to the smallest possible CARVE instead of a field CELL. A
-// coarser stride could step over the smallest legal carve entirely --
-// exactly the bug the fine (cell-relative) stride had here: at a Galaxy's
-// cell=5, kHullFieldStepFrac*cell = 2.5 units, which is NOT the problem (it
-// is finer, not coarser) -- the problem was the fine stride's REACH
-// (bounded by kBreachMaxSteps, 32 cells = 160 units), not its resolution;
-// this function needs a stride coarse enough to cover a whole box cheaply
-// while still guaranteed not to miss a carve, which the fine stride's tiny
-// step size could never do within any reasonable step budget.
-//
-// BUDGET: kBreachCoarseMaxSteps * kBreachCoarseStride = 64 * 25.0 = 1600
-// model units -- comfortably past Galaxy's own measured field diagonal
-// (871, see raymarch_breach_cavity's own reach comment), the largest real
-// reference this codebase has. In practice the loop's `t > t_end` check
-// (t_end is THIS FRAGMENT's own box-exit distance -- see breach_box_entry_t
-// -- which is always <= the field's own box diagonal for any ray through
-// it) terminates the search before the step count ever does; the fixed
-// step count is a generous safety net, not the binding constraint --
-// exactly the OPPOSITE of raymarch_breach_cavity's own budget (see that
-// function's "which cap binds where" paragraph), where the step count binds
-// first because a cavity's own depth is small. This search's job is to
-// cross the WHOLE box, so the distance bound has to be the one that governs.
-//
-// Returns false -- entry_point left at vec3(0.0), caller must discard, same
-// "a hole is a hole" rule as everywhere else in this file -- when the ray
-// never touches carved material between the box's own walls: the ordinary
-// case for most box-proxy fragments, since one instance's box covers its
-// WHOLE hull while any single carve is a small local feature within it.
-bool find_breach_entry(vec3 ro, vec3 rd, float t_start, float t_end, out vec3 entry_point) {
-    entry_point = vec3(0.0);
-    for (int j = 0; j < kBreachCoarseMaxSteps; ++j) {
-        float t = t_start + kBreachCoarseStride * float(j);
-        if (t > t_end) return false;
-        vec3 p = ro + rd * t;
-        if (sample_hull_field(p) > kHullFieldIsoMargin) {
-            entry_point = p;
-            return true;
-        }
-    }
-    return false;   // ran the whole budget: no carved material along this ray
-}
+// Round 1 of this task built a box proxy here (breach.vert placed a unit
+// cube at the field's own extent) plus an entry search, find_breach_entry,
+// to find where a ray first crossed into carved material before handing off
+// to raymarch_breach_cavity below. Round 3 retired BOTH: breach_pass.cc now
+// draws the REAL hull mesh under the carve stencil (renderer::
+// draw_model_positions_only), so a fragment reaching main() already sits
+// exactly on the hull surface at a carved point -- there is nothing left to
+// search for. This also retired an entry-search stride that could not
+// correctly bound itself either way: sized to the field's cell (the FIRST
+// version) it could not reach across a hull-sized box; sized to the
+// smallest carve's diameter (the review-round-2 fix) it could step over a
+// realistic carve's own much narrower along-normal extent (a carve's depth
+// is kCarveDepthFactor=0.45 of its radius, not its full diameter -- see
+// this task's report for the measured miss rates). Removing the search
+// removes both failure modes at once, rather than trading one for the
+// other.
 
 out vec4 frag_color;
 
@@ -521,28 +415,25 @@ vec3 blackbody(float heat) {
 
 void main() {
     // ── Reconstruct the view ray in body frame ─────────────────────────────
-    // v_body_pos is this fragment's position on the box's FAR face -- the
-    // only faces this pass rasterises (glCullFace(GL_FRONT), breach.vert).
-    // For a convex box that IS the ray's own box-exit point, so the whole
-    // ray is determined by it plus u_camera_pos_body.
-    vec3 ro = u_camera_pos_body;
-    vec3 rd = v_body_pos - ro;
-    float t_exit = length(rd);
-    if (t_exit < 1e-6) discard;   // camera exactly on the box surface: degenerate ray, nothing to march
-    rd /= t_exit;
+    // v_body_pos is the REAL hull mesh surface point this fragment sits on
+    // -- already inside carved material by construction (see this file's
+    // header comment): the stencil that gates this whole pass is stamped
+    // from the SAME sample_hull_field(surface point) > margin condition
+    // that makes THIS fragment reach main() at all. ro is simply that
+    // point; rd continues the camera's own view ray further into the hull
+    // (not the surface normal -- a hole viewed at a glancing angle should
+    // still look like a hole, following the actual line of sight).
+    vec3 ro = v_body_pos;
+    vec3 rd = v_body_pos - u_camera_pos_body;
+    float rd_len = length(rd);
+    if (rd_len < 1e-6) discard;   // camera exactly on the hull surface: degenerate ray, nothing to march
+    rd /= rd_len;
 
-    // ── Find where the ray first enters carved material ────────────────────
-    // This instance's box covers its WHOLE hull, not just one carve -- most
-    // rays through it never touch damage at all. find_breach_entry (see its
-    // header comment, above) is what tells that case apart, walking from the
-    // box's own analytic entry point out to this fragment's own exit point.
-    float t_enter = breach_box_entry_t(ro, rd);
-    vec3 entry_point;
-    if (!find_breach_entry(ro, rd, t_enter, t_exit, entry_point)) discard;
-
-    // ── March to the far wall of THAT cavity ────────────────────────────────
+    // ── March to the far wall of the cavity ─────────────────────────────────
+    // No entry search: ro already sits inside carved material (see above),
+    // exactly the precondition raymarch_breach_cavity's own header documents.
     vec3 hit_point, hit_normal;
-    if (!raymarch_breach_cavity(entry_point, rd, hit_point, hit_normal)) discard;
+    if (!raymarch_breach_cavity(ro, rd, hit_point, hit_normal)) discard;
 
     // ── Fill mask (Task 3 obligation #1) ────────────────────────────────────
     // The march alone cannot tell a real cavity wall from a carve brush's far

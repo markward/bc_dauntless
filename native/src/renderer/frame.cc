@@ -9,6 +9,7 @@
 #include "renderer/dynamic_lights.h"
 #include "renderer/aabb.h"
 #include <renderer/asset_path.h>
+#include <renderer/model_draw_helpers.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -1058,38 +1059,6 @@ void FrameSubmitter::submit_opaque_instance(const scenegraph::World& world,
 
 namespace {
 
-// Position-only mirror of draw_model's node walk + per-mesh draw. Sets only
-// u_model (u_light_view_proj is set once by the caller) and issues the same
-// VAO bind + glDrawElements as draw_model. No materials, textures, decals,
-// glow, carve, or skinning: casters in Pass::Space are rim_eligible hulls,
-// which are static models — their geometry already lives in the bind-pose
-// VAOs that draw_model renders. (A skinned model handed here would draw in
-// bind pose, but no rim_eligible Space instance is skinned, so it never is.)
-void draw_model_depth_only(const assets::Model& model,
-                           const glm::mat4& world,
-                           Shader& prog) {
-    std::vector<glm::mat4> world_per_node(model.nodes.size(), glm::mat4(1.0f));
-    if (!model.nodes.empty()) {
-        world_per_node[model.root_node] =
-            world * model.nodes[model.root_node].local_transform;
-    }
-    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
-        const auto& node = model.nodes[i];
-        if (node.parent_index >= 0) {
-            world_per_node[i] =
-                world_per_node[node.parent_index] * node.local_transform;
-        }
-        for (int mesh_idx : node.meshes) {
-            const auto& mesh = model.meshes[mesh_idx];
-            prog.set_mat4("u_model", world_per_node[i]);
-            glBindVertexArray(mesh.vao());
-            glDrawElements(GL_TRIANGLES, mesh.index_count(),
-                           GL_UNSIGNED_INT, nullptr);
-        }
-    }
-    glBindVertexArray(0);
-}
-
 // Frame-scoped active-shadow state. Set once per frame by host_bindings.cc and
 // read by the opaque pass (Task 6). Defaults make shadows absent until set.
 ShadowLight   g_active_shadow_light{};
@@ -1120,12 +1089,20 @@ void submit_shadow_depth(const scenegraph::World& world,
     prog.use();
     prog.set_mat4("u_light_view_proj", light.view_proj);
 
+    // draw_model_positions_only (renderer/model_draw_helpers.h) sets only
+    // u_model per mesh (u_light_view_proj is set once above) and issues the
+    // same VAO bind + glDrawElements draw_model uses. No materials,
+    // textures, decals, glow, carve, or skinning: casters in Pass::Space are
+    // rim_eligible hulls, which are static models -- their geometry already
+    // lives in the bind-pose VAOs that draw_model renders. (A skinned model
+    // handed here would draw in bind pose, but no rim_eligible Space
+    // instance is skinned, so it never is.)
     world.for_each_visible_in_pass(
         scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
             if (!inst.rim_eligible) return;  // ships + stations only
             const assets::Model* m = lookup(inst.model_handle);
             if (!m) return;
-            draw_model_depth_only(*m, inst.world, prog);
+            draw_model_positions_only(*m, inst.world, prog);
         });
 
     // Restore opaque-pass defaults so later passes are unaffected.

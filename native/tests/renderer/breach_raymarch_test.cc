@@ -789,39 +789,30 @@ namespace {
 // named, small, compile-time constant cannot become an unbounded loop
 // without also failing this test.
 //
-// UPDATED for Task 3 (raymarched-breach-interior): the box proxy cannot
-// assume its own view ray already starts inside carved material (the old
-// per-carve sphere's WHOLE geometry guaranteed that; the box covers an
-// instance's entire hull, so most rays through it touch no carve at all).
-// breach.frag's find_breach_entry() -- a second bounded loop, walking from
-// the box's own entry point to the fragment's exit point looking for where
-// the ray first crosses INTO carved material -- is what tells that case
-// apart before handing off to raymarch_breach_cavity(). It uses its OWN
-// named bound, kBreachCoarseMaxSteps, and its own COARSE, cell-independent
-// stride (kBreachCoarseStride, 25 model units -- derived from
-// MIN_CARVE_RADIUS_GU, engine/appc/hull_carve.py) rather than reusing
-// raymarch_breach_cavity's kBreachMaxSteps/kHullFieldStepFrac pair: a code
-// review caught that the first version DID reuse the fine, cell-relative
-// step here, which reintroduced this plan's own see-through defect for any
-// breach far enough from the box's own entry face (the fine stride's reach
-// is bounded to ~32 cells, far short of a real hull's own box diagonal --
-// see find_breach_entry's own derivation comment in breach.frag for the
-// measured numbers). Two DIFFERENT named bounds for two DIFFERENT jobs is
-// correct here, not an inconsistency to clean up.
+// UPDATED across three rounds of the raymarched-breach-interior task. Round
+// 1 shipped with exactly one loop (raymarch_breach_cavity's own). Round 2
+// added a second, find_breach_entry, to search a box proxy for where a ray
+// entered carved material -- necessary because the box (unlike the old
+// per-carve sphere, whose geometry guaranteed the ray already started
+// inside a carve) covered an instance's WHOLE hull, so most rays through it
+// touched no carve at all. Round 3 removed find_breach_entry (and the box
+// proxy it searched) entirely: breach_pass.cc now draws the REAL hull mesh
+// under the carve stencil, so a fragment reaching main() already sits
+// exactly on the hull surface at a carved point -- there is nothing left to
+// search for, and no second loop's own bound to validate. A round-2 fix
+// that widened find_breach_entry's stride to the smallest legal carve's
+// DIAMETER could still step over that same carve's much narrower
+// along-normal depth (kCarveDepthFactor=0.45 of radius, not the full
+// diameter) -- removing the search removed that failure mode too, rather
+// than trading one bound for another. This guard is back to validating the
+// ONE loop that has ever been genuinely necessary.
 //
-// This guard was originally written expecting exactly ONE such loop in the
-// whole file; per this file's own header comment ("Nothing calls this
-// function from breach.frag's own main() yet ... Task 3 wires it in"), a
-// second, deliberately added loop was the anticipated outcome once Task 3
-// landed, and the guard is updated here to match -- NOT relaxed to "at
-// least one", which would stop catching a THIRD loop appearing by accident.
-//
-// Matches EXACTLY TWO for-loops (asserted below), and additionally requires
-// BOTH to appear textually after `bool raymarch_breach_cavity(` -- today
-// there are only two for-loops in the whole file (raymarch_breach_cavity's
-// own, and find_breach_entry's), so the count check alone would already
-// catch a third, earlier loop; the anchor is a second, independent reason no
-// match could silently be validating the wrong loop.
+// Matches EXACTLY ONE for-loop (asserted below) and additionally requires
+// it to appear textually after `bool raymarch_breach_cavity(` -- today
+// there is only one for-loop in the whole file, so the first check alone
+// would already catch a second, earlier loop appearing (e.g. a future
+// change reintroducing a search); the anchor is a second, independent
+// reason the SAME match couldn't silently be validating the wrong loop.
 TEST(BreachRaymarchStaticGuard, LoopBoundIsANamedCompileTimeConstant) {
     const std::string src = read_file(shader_path("breach.frag"));
 
@@ -832,31 +823,28 @@ TEST(BreachRaymarchStaticGuard, LoopBoundIsANamedCompileTimeConstant) {
     const auto matches_begin = std::sregex_iterator(src.begin(), src.end(), loop_re);
     const auto matches_end   = std::sregex_iterator();
     const std::vector<std::smatch> matches(matches_begin, matches_end);
-    ASSERT_EQ(matches.size(), 2u)
-        << "breach.frag: expected exactly two bounded for-loops matching "
-           "'for (int i = 0; i < N; ...)' (raymarch_breach_cavity's own march, and "
-           "find_breach_entry's box-entry search -- see this test's header comment), "
-           "found " << matches.size()
-        << " -- this guard validates SPECIFIC loops' bounds and must be updated (not "
+    ASSERT_EQ(matches.size(), 1u)
+        << "breach.frag: expected exactly one bounded for-loop matching "
+           "'for (int i = 0; i < N; ...)', found " << matches.size()
+        << " -- this guard validates a SPECIFIC loop's bound and must be updated (not "
            "silently pass) if a loop count changes anywhere in this file";
-    for (const std::smatch& m : matches) {
-        ASSERT_GT(static_cast<std::size_t>(m.position(0)), fn_pos)
-            << "breach.frag: a matched for-loop appears before raymarch_breach_cavity's own "
-               "signature -- this guard is meant to validate loops AFTER that point only";
-        const std::string bound_name = m[1].str();
+    const std::smatch& m = matches.front();
+    ASSERT_GT(static_cast<std::size_t>(m.position(0)), fn_pos)
+        << "breach.frag: the matched for-loop appears before raymarch_breach_cavity's own "
+           "signature -- this guard is meant to validate THAT function's loop bound";
+    const std::string bound_name = m[1].str();
 
-        const std::regex const_re("const\\s+int\\s+" + bound_name + "\\s*=\\s*(\\d+)\\s*;");
-        std::smatch cm;
-        ASSERT_TRUE(std::regex_search(src, cm, const_re))
-            << bound_name << " must be declared 'const int " << bound_name
-            << " = <literal>;' -- a uniform bound could be set to something huge/degenerate at "
-               "runtime, and a variable computed inside the loop is not a fixed bound at all";
-        const int bound_value = std::stoi(cm[1].str());
-        EXPECT_GT(bound_value, 0);
-        EXPECT_LE(bound_value, 256)
-            << bound_name << " = " << bound_value
-            << " -- suspiciously large for a per-fragment loop; confirm this is intentional";
-    }
+    const std::regex const_re("const\\s+int\\s+" + bound_name + "\\s*=\\s*(\\d+)\\s*;");
+    std::smatch cm;
+    ASSERT_TRUE(std::regex_search(src, cm, const_re))
+        << bound_name << " must be declared 'const int " << bound_name
+        << " = <literal>;' -- a uniform bound could be set to something huge/degenerate at "
+           "runtime, and a variable computed inside the loop is not a fixed bound at all";
+    const int bound_value = std::stoi(cm[1].str());
+    EXPECT_GT(bound_value, 0);
+    EXPECT_LE(bound_value, 256)
+        << bound_name << " = " << bound_value
+        << " -- suspiciously large for a per-fragment loop; confirm this is intentional";
 }
 
 // Global Constraint / brief instruction: "kHullFieldIsoMargin is the
