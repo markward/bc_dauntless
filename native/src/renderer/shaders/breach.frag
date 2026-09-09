@@ -49,6 +49,94 @@ uniform float     u_tex_scale;     // body-units -> texture-period scale
 uniform float u_breach_age;
 uniform float u_rim_life;
 
+// Copied verbatim (not shared: embed_shader reads one file at a time --
+// see native/src/renderer/CMakeLists.txt:5-11) from opaque.frag's hull-clip
+// field sampling, byte-identical between the drift-guard markers below
+// (native/tests/renderer/breach_field_sampling_test.cc). Sampler unit: the
+// breach pass already binds unit 0 (u_fill) and unit 1 (u_damage_tex);
+// whichever pass wires this uniform MUST put it on unit 2 -- and must set
+// that unit on every code path, enabled or not, or an unset sampler
+// defaults to unit 0 and collides with u_fill's sampler3D there
+// (GL_INVALID_OPERATION on every draw).
+// === HULL_FIELD_SAMPLING BEGIN === KEEP IN SYNC with opaque.frag's copy between its own matching markers -- enforced by native/tests/renderer/breach_field_sampling_test.cc
+uniform sampler2D u_hull_field;      // R8 slice atlas; DAMAGE field (not hull
+                                      // shape -- renderer/instance_field_cache.h);
+                                      // 128 = a carve's zero crossing, 1 = the
+                                      // most-negative byte ("no damage")
+uniform int   u_hull_field_enabled;  // 0 = stock path, zero per-fragment cost
+uniform vec3  u_hull_field_origin;   // body frame, model units
+uniform vec3  u_hull_field_cell;     // model units per cell
+uniform vec3  u_hull_field_dims;     // float (dims.x, dims.y, dims.z) -- avoids int division below
+uniform vec2  u_hull_field_tiles;    // tiles_x, tiles_y (voxel::AtlasLayout)
+uniform vec2  u_hull_field_texel;    // 1 / atlas size, i.e. (1/width, 1/height)
+
+// Fetch one Z-slice's raw (normalised [0,1]) texel at continuous in-slice
+// coordinate `sxy` (sample-space: an integer component lands exactly on that
+// index's stored sample; -1 and dims are the replicated border). `slice` is
+// a float holding an already-clamped integer index into [0, dims.z - 1].
+float hull_field_slice(float slice, vec2 sxy, float tile_w, float tile_h) {
+    float tile_ox = mod(slice, u_hull_field_tiles.x) * tile_w;
+    float tile_oy = floor(slice / u_hull_field_tiles.x) * tile_h;
+    // +1 skips the tile's own border column/row; +0.5 lands on the texel
+    // CENTRE so texture() samples exactly the stored value at sxy == integer,
+    // matching voxel::pack_field_to_atlas's interior-texel placement.
+    vec2 atlas_texel = vec2(tile_ox, tile_oy) + 1.0 + sxy + 0.5;
+    return texture(u_hull_field, atlas_texel * u_hull_field_texel).r;
+}
+
+// Sample the per-instance DAMAGE field at a body-frame point, returning a
+// value whose SIGN matches voxel::DistanceField's convention rescaled from
+// the packed encoding: negative = no damage at this point (the untouched
+// default, -127, everywhere field_carve_oblate's brushes have never reached
+// -- this is NOT "inside solid hull" in the hull-SDF sense; it is simply
+// "not carved"), positive = carved (a discard). ONE function -- every
+// consumer of the field (today's clip, anything added later) must sample
+// through here so they cannot drift apart.
+//
+// Encoding: pack_field_to_atlas stores byte = round(d / scale) + 128, so
+// texture() (GL_R8, normalised) returns byte / 255 = (round(d/scale) + 128)
+// / 255. Subtracting 128/255 EXACTLY (not 0.5 -- 128/255 = 0.50196..., a
+// half-quantisation-step bias toward "outside" at exactly the boundary
+// Critical 1's kHullFieldIsoMargin exists to guard) leaves
+// round(d/scale) / 255 -- i.e. this function's return value is
+// d / (scale * 255), plus at most +-0.5/255 of rounding error. That last
+// fact is what makes kHullFieldIsoMargin below scale-independent: see its
+// derivation.
+//
+// Z has no atlas border (slices are whole tiles, not filtered together by
+// hardware) -- the two bracketing slices are fetched by hand and lerped,
+// which is exactly what the atlas border on X/Y exists to make safe to do
+// per-slice via hardware bilinear.
+float sample_hull_field(vec3 p_body) {
+    // DistanceField cell (x,y,z)'s stored sample sits at body-frame position
+    // origin + (idx + 0.5) * cell (voxel/field_brush.cc, distance_field.h),
+    // so subtracting 0.5 after dividing by cell converts a corner-relative
+    // coordinate into "sample space", where an exact integer lands on a
+    // stored sample and hardware bilinear does the rest between them.
+    vec3 g = (p_body - u_hull_field_origin) / u_hull_field_cell - 0.5;
+
+    // Clamp X/Y into the atlas' own padded range [-1, dims]: precisely the
+    // border pack_field_to_atlas replicated, so this can never read a
+    // neighbouring tile no matter how far outside the field's box p_body is.
+    vec2 sxy = clamp(g.xy, vec2(-1.0), u_hull_field_dims.xy);
+
+    // Z: clamp into the valid slice range FIRST (there is no border to fall
+    // back on), then bracket with the next slice up, clamped at the top edge
+    // so s1 never reaches an out-of-range (or unused/kOutside) tile.
+    float sz = clamp(g.z, 0.0, u_hull_field_dims.z - 1.0);
+    float s0 = floor(sz);
+    float s1 = min(s0 + 1.0, u_hull_field_dims.z - 1.0);
+    float wz = sz - s0;
+
+    float tile_w = u_hull_field_dims.x + 2.0;   // voxel::AtlasLayout::tile_w
+    float tile_h = u_hull_field_dims.y + 2.0;   // voxel::AtlasLayout::tile_h
+
+    float v0 = hull_field_slice(s0, sxy, tile_w, tile_h);
+    float v1 = hull_field_slice(s1, sxy, tile_w, tile_h);
+    return mix(v0, v1, wz) - (128.0 / 255.0);   // > 0 carved (discard), < 0 no damage
+}
+// === HULL_FIELD_SAMPLING END ===
+
 out vec4 frag_color;
 
 // Blackbody-ish ramp keyed on heat 0..1 (white-hot -> red -> black).

@@ -57,6 +57,7 @@ add_executable(renderer_tests
     breach_pass_test.cc
     breach_venting_test.cc
     breach_debris_test.cc
+    breach_field_sampling_test.cc
     comm_pass_test.cc
     viewscreen_brightness_test.cc
     viewscreen_static_pass_test.cc
@@ -74,6 +75,12 @@ target_link_libraries(renderer_tests
         renderer
         GTest::gtest_main
 )
+
+# breach_field_sampling_test.cc reads the .frag sources straight off disk (it
+# is a text-level drift guard, not a GL test) and needs the project root to
+# find them from wherever the test binary runs.
+target_compile_definitions(renderer_tests PRIVATE
+    OPEN_STBC_PROJECT_ROOT="${CMAKE_SOURCE_DIR}")
 
 # Force-load the nif static library so block parsers self-register via
 # static initializers (matches the pattern used by nif_tests / assets_tests).

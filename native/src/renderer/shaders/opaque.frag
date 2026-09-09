@@ -153,6 +153,7 @@ uniform int u_carve_invert;   // 0 = normal hull draw; 1 = stencil-marking draw
 // Every Z-slice of the instance's DistanceField is tiled into one 2D texture
 // with a replicated 1-texel border per tile, so hardware bilinear filtering
 // INSIDE a slice cannot bleed into a neighbouring tile's data.
+// === HULL_FIELD_SAMPLING BEGIN === KEEP IN SYNC with breach.frag's copy between its own matching markers -- enforced by native/tests/renderer/breach_field_sampling_test.cc
 uniform sampler2D u_hull_field;      // R8 slice atlas; DAMAGE field (not hull
                                       // shape -- renderer/instance_field_cache.h);
                                       // 128 = a carve's zero crossing, 1 = the
@@ -229,6 +230,7 @@ float sample_hull_field(vec3 p_body) {
     float v1 = hull_field_slice(s1, sxy, tile_w, tile_h);
     return mix(v0, v1, wz) - (128.0 / 255.0);   // > 0 carved (discard), < 0 no damage
 }
+// === HULL_FIELD_SAMPLING END ===
 
 // Discard margin, in sample_hull_field's own return units. MUST be > 0, not
 // 0.
