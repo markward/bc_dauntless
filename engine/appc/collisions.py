@@ -269,16 +269,34 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
     if damage <= 0.0:
         return
 
-    from engine.appc.combat import apply_hit
+    # Land each ship's abrasion on ITS OWN MESH, exactly as the impact path
+    # does: trace from the other body's centre into this ship along the
+    # contact line, and carve at the mesh surface with the MESH normal. The
+    # sphere-pair contact point is the fallback only. BC bounding spheres
+    # are 5-22x too loose (docs/engine and hull_bounds.py), so a carve
+    # deposited at the sphere surface sits off the hull entirely, and the
+    # centre-to-centre line is not the local surface normal -- the scoop
+    # would be both mis-placed and mis-oriented, which reads live as a hole
+    # with nothing behind it.
+    from engine.appc.combat import apply_hit, _resolve_hit_point
     contact = TGPoint3(cx, cy, cz)
     n_ab = TGPoint3(nx, ny, nz)
     n_ba = TGPoint3(-nx, -ny, -nz)
+    dist = math.sqrt((b.center.x - a.center.x) ** 2
+                     + (b.center.y - a.center.y) ** 2
+                     + (b.center.z - a.center.z) ** 2)
     if a.is_movable:
-        apply_hit(a.obj, damage, contact, source=b.obj, normal=n_ab,
+        pt_a, mesh_n_a = _resolve_hit_point(
+            ship_instances, a.obj, b.center, n_ba, dist, contact)
+        apply_hit(a.obj, damage, pt_a, source=b.obj,
+                  normal=(mesh_n_a if mesh_n_a is not None else n_ab),
                   ship_instances=ship_instances, weapon_type=None,
                   bypass_shields=True)
     if b.is_movable:
-        apply_hit(b.obj, damage, contact, source=a.obj, normal=n_ba,
+        pt_b, mesh_n_b = _resolve_hit_point(
+            ship_instances, b.obj, a.center, n_ab, dist, contact)
+        apply_hit(b.obj, damage, pt_b, source=a.obj,
+                  normal=(mesh_n_b if mesh_n_b is not None else n_ba),
                   ship_instances=ship_instances, weapon_type=None,
                   bypass_shields=True)
 

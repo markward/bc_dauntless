@@ -175,3 +175,46 @@ def test_grinding_never_posts_a_collision_event(monkeypatch, damage_calls):
     assert events == [], (
         f"grinding posted {len(events)} collision event(s); "
         "FriendlyFireCollisionHandler would end the mission")
+
+
+def test_grind_contact_is_refined_to_the_mesh_like_an_impact(monkeypatch):
+    """The grind must land on the HULL, not on the bounding sphere.
+
+    The impact path traces from the other body's centre into this ship and
+    carves at the mesh surface with the mesh normal. BC bounding spheres are
+    5-22x too loose, so a carve deposited at the sphere contact point sits
+    off the hull entirely, with a normal that is the centre-to-centre line
+    rather than the local surface -- a scoop oriented and positioned wrong.
+    Mirrors test_collisions.py::test_contact_point_refined_to_mesh_when_host_
+    present for the grind channel.
+    """
+    from engine import host_io
+    import engine.appc.combat as combat
+
+    captured = []
+    monkeypatch.setattr(
+        combat, "apply_hit",
+        lambda ship, dmg, hit_point, source=None, *, normal=None, **k:
+            captured.append((ship, hit_point, normal)))
+
+    def _fake_trace(iid, origin, direction, max_dist):
+        # Encode which ship was traced in x (= iid); distinctive mesh normal.
+        return ((float(iid), 7.0, 7.0), (0.0, 0.0, 1.0), 0.5)
+    monkeypatch.setattr(host_io, "ray_trace_mesh", _fake_trace)
+
+    a = _ship(0.0)
+    b = _ship(1.5)
+    a._current_angular_velocity = TGPoint3(0.0, 0.0, 2.0)
+    insts = {a: 11, b: 22}
+    from engine.appc.collisions import _resolve_body, _respond_pair
+    _respond_pair(_resolve_body(a), _resolve_body(b), insts, FRAME)
+
+    assert captured, "fixture did not grind"
+    pts = {id(s): hp for s, hp, _n in captured}
+    assert pts[id(a)].x == 11.0 and pts[id(a)].y == 7.0, (
+        f"ship a's grind landed at {pts[id(a)]}, not on its mesh")
+    assert pts[id(b)].x == 22.0 and pts[id(b)].y == 7.0, (
+        f"ship b's grind landed at {pts[id(b)]}, not on its mesh")
+    for _s, _hp, n in captured:
+        assert (n.x, n.y, n.z) == (0.0, 0.0, 1.0), (
+            f"grind used normal {n}, not the mesh surface normal")
