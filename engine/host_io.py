@@ -46,6 +46,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_dynamic_lights",
     "set_phaser_beams", "set_tractor_beams",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
+    "hull_split_detached", "hull_carve_capsule",
     "ray_trace_mesh",
     "transform_alloc", "transform_free", "transform_get_position",
     "transform_set_position", "transform_get_rotation", "transform_set_rotation",
@@ -298,6 +299,31 @@ def hull_carve_add(
         return
     _h.hull_carve_add(instance_id, world_point, world_normal, influ_radius,
                      strength, time, floor_radius, radius_modifier)
+
+
+def hull_split_detached(instance_id: int, min_cells: int) -> list:
+    """Run hull connectivity on `instance_id`'s damage field and split every
+    detached component out. Components with at least `min_cells` cells get a
+    new renderer instance (a chunk) and their own field; smaller ones are
+    simply removed from the parent. Returns a list of dicts (body-frame GAME
+    UNITS): instance_id (None for sub-floor), cells, centroid, bounds_min,
+    bounds_max, radius_gu. Empty when headless or nothing severed."""
+    if _h is None:
+        return []
+    return list(_h.hull_split_detached(instance_id, int(min_cells)))
+
+
+def hull_carve_capsule(
+    instance_id: int,
+    p0_world: Tuple[float, float, float],
+    p1_world: Tuple[float, float, float],
+    radius_gu: float,
+) -> None:
+    """Field-only swept cut between two WORLD points at `radius_gu`. Never
+    enters the sphere list. No-op when headless."""
+    if _h is None:
+        return
+    _h.hull_carve_capsule(instance_id, p0_world, p1_world, float(radius_gu))
 
 
 def ray_trace_mesh(

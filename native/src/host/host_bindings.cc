@@ -75,6 +75,7 @@
 #include <renderer/shadow_map_target.h>
 #include <renderer/asset_path.h>
 #include <renderer/ray_trace.h>
+#include <voxel/hull_connectivity.h>
 #include <renderer/glow_region.h>
 #include <renderer/node_anim.h>
 #include <renderer/bridge_node_anim_store.h>
@@ -4258,6 +4259,93 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "(combat hits pass floor 0 and stay invisible until accumulated "
           "strength crosses the iso). time is accepted for call-shape symmetry "
           "with damage_decal_add but unused.");
+
+    m.def("hull_split_detached",
+          [](scenegraph::InstanceId id, int min_cells) {
+              py::list out;
+              auto* inst = g_world.get(id);
+              if (inst == nullptr || !g_instance_field_cache) return out;
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr || model->source.empty()) return out;
+              const std::filesystem::path& source = model->source;
+              const float authored_res = renderer::hull_volume_resolution(source);
+              if (authored_res <= 0.0f) return out;
+
+              const voxel::DistanceField* damage = g_instance_field_cache->field(id);
+              if (damage == nullptr) return out;   // never carved: nothing to sever
+              const voxel::DistanceField& baked =
+                  renderer::hull_volume_cache().get(source, authored_res,
+                                                    voxel::kDefaultQuality);
+              if (baked.empty()) return out;
+
+              const voxel::ConnectivityResult r = voxel::hull_connectivity(baked, *damage);
+              if (r.detached.empty()) return out;
+
+              const float s = glm::length(glm::vec3(inst->world[0]));   // model->GU
+              for (const voxel::HullComponent& c : r.detached) {
+                  py::dict d;
+                  d["cells"] = c.cells;
+                  d["centroid"] = py::make_tuple(c.centroid_body.x * s,
+                                                 c.centroid_body.y * s,
+                                                 c.centroid_body.z * s);
+                  d["bounds_min"] = py::make_tuple(c.bounds_min_body.x * s,
+                                                   c.bounds_min_body.y * s,
+                                                   c.bounds_min_body.z * s);
+                  d["bounds_max"] = py::make_tuple(c.bounds_max_body.x * s,
+                                                   c.bounds_max_body.y * s,
+                                                   c.bounds_max_body.z * s);
+                  d["radius_gu"] = 0.5f * glm::length(c.bounds_max_body - c.bounds_min_body) * s;
+                  if (static_cast<int>(c.cells) >= min_cells) {
+                      const scenegraph::InstanceId child =
+                          g_world.create_instance(inst->model_handle);
+                      auto* cinst = g_world.get(child);
+                      if (cinst != nullptr) cinst->world = inst->world;
+                      if (g_instance_field_cache->split(id, child, c.cell_list)) {
+                          d["instance_id"] = child;
+                      } else {
+                          g_world.destroy_instance(child);
+                          d["instance_id"] = py::none();
+                          g_instance_field_cache->remove_cells(id, c.cell_list);
+                      }
+                  } else {
+                      g_instance_field_cache->remove_cells(id, c.cell_list);
+                      d["instance_id"] = py::none();
+                  }
+                  out.append(std::move(d));
+              }
+              return out;
+          },
+          py::arg("instance_id"), py::arg("min_cells"),
+          "Split every detached hull component out of an instance's damage "
+          "field. Components with >= min_cells cells become a new renderer "
+          "instance of the same model on a copied transform, with their own "
+          "field; smaller ones are removed from the parent. Positions are "
+          "body-frame GAME UNITS.");
+
+    m.def("hull_carve_capsule",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> p0_world,
+             std::tuple<float, float, float> p1_world,
+             float radius_gu) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr || !g_instance_field_cache) return;
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr || model->source.empty()) return;
+              const float authored_res = renderer::hull_volume_resolution(model->source);
+              const glm::vec3 a(std::get<0>(p0_world), std::get<1>(p0_world), std::get<2>(p0_world));
+              const glm::vec3 b(std::get<0>(p1_world), std::get<1>(p1_world), std::get<2>(p1_world));
+              const glm::vec3 pa = scenegraph::world_to_body(inst->world, a);
+              const glm::vec3 pb = scenegraph::world_to_body(inst->world, b);
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float inv_s = (s > 0.0f) ? 1.0f / s : 1.0f;
+              g_instance_field_cache->carve_capsule(id, model->source, authored_res,
+                                                    pa, pb, radius_gu * inv_s);
+          },
+          py::arg("instance_id"), py::arg("p0_world"), py::arg("p1_world"),
+          py::arg("radius_gu"),
+          "Field-only swept cut between two world points. Never enters the "
+          "sphere list -- beyond tracked carves the field is the hole "
+          "authority (plan 2c).");
 
     // Where HullVolumeCache reads/writes its on-disk .dhv bakes. Pushed once
     // from Python at boot, right alongside set_game_root -- see
