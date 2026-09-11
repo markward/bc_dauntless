@@ -352,3 +352,74 @@ TEST(FieldBrushCapsule, IsMonotonicAndLeavesFarCellsUntouched) {
     voxel::field_carve_capsule(f, glm::vec3(-10, 0, 0), glm::vec3(10, 0, 0), 2.0f);
     for (std::size_t i = 0; i < f.dist.size(); ++i) EXPECT_GE(f.dist[i], before[i]);
 }
+
+// The five no-op guards field_carve_capsule documents, one test each, mirroring
+// the oblate brush's guard tests (FieldBrush.EmptyFieldIsANoOp etc. above) shape
+// for shape -- so a future refactor cannot silently drop one.
+
+TEST(FieldBrushCapsule, EmptyFieldIsANoOp) {
+    voxel::DistanceField f;                  // dims {0,0,0}
+    voxel::field_carve_capsule(f, glm::vec3(0.0f), glm::vec3(1.0f, 0.0f, 0.0f), 5.0f);
+    EXPECT_TRUE(f.empty());
+}
+
+TEST(FieldBrushCapsule, NonPositiveRadiusIsANoOp) {
+    voxel::DistanceField f = solid_block(20);
+    const std::vector<std::int8_t> before = f.dist;
+    voxel::field_carve_capsule(f, glm::vec3(8.0f, 10.0f, 10.0f), glm::vec3(12.0f, 10.0f, 10.0f), 0.0f);
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_capsule(f, glm::vec3(8.0f, 10.0f, 10.0f), glm::vec3(12.0f, 10.0f, 10.0f), -3.0f);
+    EXPECT_EQ(f.dist, before);
+}
+
+TEST(FieldBrushCapsule, NonFiniteRadiusIsANoOp) {
+    voxel::DistanceField f = solid_block(20);
+    const std::vector<std::int8_t> before = f.dist;
+    voxel::field_carve_capsule(f, glm::vec3(8.0f, 10.0f, 10.0f), glm::vec3(12.0f, 10.0f, 10.0f),
+                               std::numeric_limits<float>::infinity());
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_capsule(f, glm::vec3(8.0f, 10.0f, 10.0f), glm::vec3(12.0f, 10.0f, 10.0f),
+                               std::numeric_limits<float>::quiet_NaN());
+    EXPECT_EQ(f.dist, before);
+}
+
+TEST(FieldBrushCapsule, NonFiniteEndpointComponentIsANoOp) {
+    voxel::DistanceField f = solid_block(20);
+    const std::vector<std::int8_t> before = f.dist;
+    const float inf = std::numeric_limits<float>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    voxel::field_carve_capsule(f, glm::vec3(inf, 10.0f, 10.0f), glm::vec3(12.0f, 10.0f, 10.0f), 4.0f);
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_capsule(f, glm::vec3(8.0f, nan, 10.0f), glm::vec3(12.0f, 10.0f, 10.0f), 4.0f);
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_capsule(f, glm::vec3(8.0f, 10.0f, -inf), glm::vec3(12.0f, 10.0f, 10.0f), 4.0f);
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_capsule(f, glm::vec3(8.0f, 10.0f, 10.0f), glm::vec3(inf, 10.0f, 10.0f), 4.0f);
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_capsule(f, glm::vec3(8.0f, 10.0f, 10.0f), glm::vec3(12.0f, nan, 10.0f), 4.0f);
+    EXPECT_EQ(f.dist, before);
+    voxel::field_carve_capsule(f, glm::vec3(8.0f, 10.0f, 10.0f), glm::vec3(12.0f, 10.0f, -inf), 4.0f);
+    EXPECT_EQ(f.dist, before);
+}
+
+TEST(FieldBrushCapsule, CarveOutsideTheGridDoesNotWriteOutOfBounds) {
+    // The segment (and its r+offset reach) sit entirely beyond the field's
+    // [0,20] bounds on every axis -- wholly off-grid.
+    voxel::DistanceField f = solid_block(20);
+    const std::vector<std::int8_t> before = f.dist;
+    voxel::field_carve_capsule(f, glm::vec3(500.0f, 500.0f, 500.0f),
+                               glm::vec3(510.0f, 500.0f, 500.0f), 5.0f);
+    EXPECT_EQ(f.dist, before);
+}
+
+TEST(FieldBrushCapsule, DegenerateSegmentBehavesAsSphereAndDoesNotProduceNaN) {
+    // p0 == p1: the segment collapses to a point, so the capsule must behave
+    // as a sphere of radius `radius` centred there, not a no-op and not NaN.
+    voxel::DistanceField f = solid_block(20);
+    const glm::vec3 p(10.0f, 10.0f, 10.0f);
+    voxel::field_carve_capsule(f, p, p, 4.0f);
+    for (std::int8_t v : f.dist) EXPECT_TRUE(v >= -127 && v <= 127);
+    const glm::ivec3 c = cell_of(f, p);
+    EXPECT_GT(f.distance_at(c.x, c.y, c.z), 0.0f)
+        << "a degenerate segment must still carve a sphere at p0, not no-op";
+}
