@@ -59,12 +59,16 @@ BFS). Output, per component: label, cell count, centroid (body frame, model
 units), axis-aligned bounds (body frame), and the list of cells.
 
 **When.** After a carve lands on an instance for which
-`breakables_allowed_for(ship)` is true. Never per frame. Carves are already
-throttled to `CARVE_EMIT_INTERVAL` (0.1 s) per ship, so the ceiling is ten fills
-per second per ship. **Skipped** when the carve's dilated brush touched no
-occupied cell — a hit into open space, or one that only deepened an existing hole
-without reaching new material, cannot have severed anything. The plan measures
-the fill on a Galaxy lattice (~512k cells) before anything depends on its cost.
+`breakables_allowed_for(ship)` is true. Never per frame. **Throttled per ship:**
+connectivity runs at most once per `kBreakupCheckInterval` (0.5 s) per ship; a
+carve that arrives inside the window marks the ship *pending* and the check runs
+on the next frame after the window elapses, so a burst of carves costs one fill
+and the last carve is never dropped. A sever detected half a second late is
+invisible; ten full-lattice fills a second on eight ships is not. (An earlier
+draft proposed skipping fills whose brush touched no occupied cell; the throttle
+is simpler, bounds the cost regardless of carve pattern, and needs no per-brush
+bookkeeping.) The plan measures the fill on a Galaxy lattice (~512k cells) before
+anything depends on its cost.
 
 **Signature:**
 
