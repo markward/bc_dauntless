@@ -23,6 +23,24 @@ InstanceFieldCache::~InstanceFieldCache() {
     }
 }
 
+InstanceFieldCache::Instance InstanceFieldCache::make_blank_like(
+        const voxel::DistanceField& lattice) {
+    // LATTICE ONLY -- see the class comment: an instance field takes the
+    // baked field's dims/origin/cell/scale and NOT its values. Every cell
+    // starts at -127, "no damage anywhere"; only brushes raise a cell.
+    Instance inst;
+    inst.field.dims   = lattice.dims;
+    inst.field.origin = lattice.origin;
+    inst.field.cell   = lattice.cell;
+    inst.field.scale  = lattice.scale;
+    inst.field.dist.assign(
+        static_cast<std::size_t>(lattice.dims.x)
+            * static_cast<std::size_t>(lattice.dims.y)
+            * static_cast<std::size_t>(lattice.dims.z),
+        static_cast<std::int8_t>(-127));
+    return inst;
+}
+
 void InstanceFieldCache::carve(scenegraph::InstanceId id,
                                const std::filesystem::path& source,
                                float authored_res,
@@ -44,29 +62,76 @@ void InstanceFieldCache::carve(scenegraph::InstanceId id,
             cache.get(source, authored_res, voxel::kDefaultQuality);
         if (baked.empty()) return;   // hull has no baked field: stay absent
 
-        Instance inst;
-        // LATTICE ONLY -- this instance's own mutable field, independent of
-        // the shared baked original and of every other instance's copy of
-        // it, and NOT a copy of `baked`'s cell values. Every cell starts at
-        // -127, the most-negative int8: "no damage anywhere". Only
-        // field_carve_oblate's brushes ever raise a cell toward/through zero
-        // (monotonic -- field_brush.h), so untouched hull always reads the
-        // most-negative byte this field can hold and opaque.frag's clip can
-        // never discard it, whatever the reconstruction error at that point.
-        inst.field.dims   = baked.dims;
-        inst.field.origin = baked.origin;
-        inst.field.cell   = baked.cell;
-        inst.field.scale  = baked.scale;
-        inst.field.dist.assign(
-            static_cast<std::size_t>(baked.dims.x)
-                * static_cast<std::size_t>(baked.dims.y)
-                * static_cast<std::size_t>(baked.dims.z),
-            static_cast<std::int8_t>(-127));
-        it = instances_.emplace(id, std::move(inst)).first;
+        it = instances_.emplace(id, make_blank_like(baked)).first;
     }
 
     voxel::field_carve_oblate(it->second.field, center_body, normal_body,
                               radius);
+    it->second.dirty = true;
+}
+
+const voxel::DistanceField* InstanceFieldCache::field(
+        scenegraph::InstanceId id) const {
+    auto it = instances_.find(id);
+    return it == instances_.end() ? nullptr : &it->second.field;
+}
+
+bool InstanceFieldCache::split(scenegraph::InstanceId parent,
+                               scenegraph::InstanceId child,
+                               const std::vector<glm::ivec3>& cells) {
+    auto pit = instances_.find(parent);
+    if (pit == instances_.end()) return false;
+    if (instances_.find(child) != instances_.end()) return false;
+
+    Instance c = make_blank_like(pit->second.field);
+    // The chunk is what the parent WAS on the component and nothing
+    // anywhere else: +127 ("fully carved") outside the component, so the
+    // hull clip discards every fragment that is not part of this piece.
+    std::fill(c.field.dist.begin(), c.field.dist.end(), static_cast<std::int8_t>(127));
+    voxel::DistanceField& pf = pit->second.field;
+    for (const auto& cc : cells) {
+        if (cc.x < 0 || cc.y < 0 || cc.z < 0 ||
+            cc.x >= pf.dims.x || cc.y >= pf.dims.y || cc.z >= pf.dims.z) continue;
+        const std::size_t i = pf.index(cc.x, cc.y, cc.z);
+        c.field.dist[i] = pf.dist[i];   // keep the holes it already had
+        pf.dist[i] = 127;               // and it is gone from the parent
+    }
+    c.dirty = true;
+    pit->second.dirty = true;
+    instances_.emplace(child, std::move(c));
+    return true;
+}
+
+bool InstanceFieldCache::remove_cells(scenegraph::InstanceId id,
+                                      const std::vector<glm::ivec3>& cells) {
+    auto it = instances_.find(id);
+    if (it == instances_.end()) return false;
+    voxel::DistanceField& f = it->second.field;
+    for (const auto& cc : cells) {
+        if (cc.x < 0 || cc.y < 0 || cc.z < 0 ||
+            cc.x >= f.dims.x || cc.y >= f.dims.y || cc.z >= f.dims.z) continue;
+        f.dist[f.index(cc.x, cc.y, cc.z)] = 127;
+    }
+    it->second.dirty = true;
+    return true;
+}
+
+void InstanceFieldCache::carve_capsule(scenegraph::InstanceId id,
+                                       const std::filesystem::path& source,
+                                       float authored_res,
+                                       const glm::vec3& p0_body,
+                                       const glm::vec3& p1_body,
+                                       float radius) {
+    auto it = instances_.find(id);
+    if (it == instances_.end()) {
+        voxel::HullVolumeCache& cache =
+            bake_cache_ != nullptr ? *bake_cache_ : renderer::hull_volume_cache();
+        const voxel::DistanceField& baked =
+            cache.get(source, authored_res, voxel::kDefaultQuality);
+        if (baked.empty()) return;
+        it = instances_.emplace(id, make_blank_like(baked)).first;
+    }
+    voxel::field_carve_capsule(it->second.field, p0_body, p1_body, radius);
     it->second.dirty = true;
 }
 

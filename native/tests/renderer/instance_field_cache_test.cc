@@ -1015,4 +1015,89 @@ TEST_F(InstanceFieldCacheTest, FieldStartsAsNoDamageNotHullGeometryFarFromAnyCar
         << "far cell must not be baked's own false-positive +50";
 }
 
+TEST_F(InstanceFieldCacheTest, SplitMovesComponentCellsToChildAndOutOfParent) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_split_cells");
+    const auto src = make_source("hull_split_cells.nif", "hull");
+    const voxel::DistanceField baked = make_baked_field();
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, baked));
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId parent{1, 0};
+    const scenegraph::InstanceId child{2, 0};
+    cache.carve(parent, src, kAuthoredRes, glm::vec3(5, 5, 5), kUp, 3.0f);
+
+    const voxel::DistanceField* before = cache.field(parent);
+    ASSERT_NE(before, nullptr);
+    const std::vector<std::int8_t> snapshot = before->dist;
+
+    std::vector<glm::ivec3> cells;                     // a 2x2x2 block
+    for (int z = 0; z < 2; ++z) for (int y = 0; y < 2; ++y) for (int x = 0; x < 2; ++x)
+        cells.emplace_back(x, y, z);
+    ASSERT_TRUE(cache.split(parent, child, cells));
+
+    const voxel::DistanceField* p = cache.field(parent);
+    const voxel::DistanceField* c = cache.field(child);
+    ASSERT_NE(p, nullptr);
+    ASSERT_NE(c, nullptr);
+    ASSERT_EQ(c->dims, p->dims);
+    ASSERT_EQ(c->origin, p->origin);
+    ASSERT_EQ(c->cell, p->cell);
+    std::vector<bool> in_comp(snapshot.size(), false);
+    for (const auto& cc : cells) in_comp[before->index(cc.x, cc.y, cc.z)] = true;
+    for (std::size_t i = 0; i < snapshot.size(); ++i) {
+        if (in_comp[i]) {
+            EXPECT_EQ(c->dist[i], snapshot[i]) << "child component cell " << i;
+            EXPECT_EQ(p->dist[i], 127)        << "parent component cell " << i;
+        } else {
+            EXPECT_EQ(c->dist[i], 127)        << "child non-component cell " << i;
+            EXPECT_EQ(p->dist[i], snapshot[i]) << "parent non-component cell " << i;
+        }
+    }
+    EXPECT_EQ(cache.size(), 2u);
+}
+
+TEST_F(InstanceFieldCacheTest, SplitRefusesMissingParentOrExistingChild) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_split_refuse");
+    const auto src = make_source("hull_split_refuse.nif", "hull");
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, make_baked_field()));
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId parent{1, 0}, child{2, 0}, absent{9, 0};
+    std::vector<glm::ivec3> cells{glm::ivec3(0, 0, 0)};
+    EXPECT_FALSE(cache.split(absent, child, cells));     // no such parent
+    cache.carve(parent, src, kAuthoredRes, glm::vec3(5, 5, 5), kUp, 3.0f);
+    ASSERT_TRUE(cache.split(parent, child, cells));
+    EXPECT_FALSE(cache.split(parent, child, cells));     // child already exists
+}
+
+TEST_F(InstanceFieldCacheTest, RemoveCellsSetsThemFullyCarved) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_remove_cells");
+    const auto src = make_source("hull_remove_cells.nif", "hull");
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, make_baked_field()));
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+    cache.carve(id, src, kAuthoredRes, glm::vec3(5, 5, 5), kUp, 3.0f);
+    // Snapshot cell (0,0,0) right after carve(), BEFORE remove_cells --
+    // not the blank-lattice -127, because this exact carve (radius 3,
+    // cell size 10, on this file's 4x4x4 grid) already touches (0,0,0)
+    // via field_carve_oblate's kCarveFieldOffsetCells dilation, same as
+    // FieldStartsAsNoDamageNotHullGeometryFarFromAnyCarve above proves
+    // for the even-farther cell (3,3,3) in this same fixture. "untouched"
+    // below means untouched BY remove_cells, not equal to the pristine
+    // no-damage value.
+    const voxel::DistanceField* before = cache.field(id);
+    ASSERT_NE(before, nullptr);
+    const std::int8_t untouched_before = before->dist[before->index(0, 0, 0)];
+
+    std::vector<glm::ivec3> cells{glm::ivec3(1, 1, 1), glm::ivec3(2, 1, 1)};
+    ASSERT_TRUE(cache.remove_cells(id, cells));
+    const voxel::DistanceField* f = cache.field(id);
+    EXPECT_EQ(f->dist[f->index(1, 1, 1)], 127);
+    EXPECT_EQ(f->dist[f->index(2, 1, 1)], 127);
+    EXPECT_EQ(f->dist[f->index(0, 0, 0)], untouched_before)
+        << "remove_cells must not touch cells outside its own list";
+    EXPECT_FALSE(cache.remove_cells(scenegraph::InstanceId{9, 0}, cells));
+}
+
 }  // namespace

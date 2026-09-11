@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <map>
+#include <vector>
 
 #include <glm/glm.hpp>
 
@@ -102,6 +103,26 @@ public:
     /// Uploads lazily when dirty. Must be called with a GL context current.
     const Entry* get(scenegraph::InstanceId id);
 
+    /// The instance's current damage field, or nullptr when it has none.
+    const voxel::DistanceField* field(scenegraph::InstanceId id) const;
+
+    /// Move `cells` out of `parent`'s field into a NEW entry for `child` on
+    /// the same lattice. child = parent's values on `cells`, +127 elsewhere;
+    /// parent = +127 on `cells`. Both marked dirty. False if parent has no
+    /// field or child already has one.
+    bool split(scenegraph::InstanceId parent, scenegraph::InstanceId child,
+               const std::vector<glm::ivec3>& cells);
+
+    /// Set `cells` to +127 on `id`'s field (a sub-floor component: the
+    /// material is gone, no chunk is made). False if no field.
+    bool remove_cells(scenegraph::InstanceId id, const std::vector<glm::ivec3>& cells);
+
+    /// Capsule counterpart of carve(): same lazy entry creation, same
+    /// lattice.
+    void carve_capsule(scenegraph::InstanceId id, const std::filesystem::path& source,
+                       float authored_res, const glm::vec3& p0_body,
+                       const glm::vec3& p1_body, float radius);
+
     /// Instance destroyed: release its entry and GL texture.
     void forget(scenegraph::InstanceId id);
 
@@ -146,6 +167,12 @@ private:
     // passed the !empty() check in carve(), but upload() does not assume
     // that invariant on its own).
     bool upload(Instance& inst);
+
+    // The lattice-only construction shared by carve() (on an instance's
+    // first carve) and split() (for the new child): copies `lattice`'s
+    // dims/origin/cell/scale but NOT its cell values -- every cell starts at
+    // -127, "no damage anywhere". See this header's class comment for why.
+    static Instance make_blank_like(const voxel::DistanceField& lattice);
 
     std::map<scenegraph::InstanceId, Instance, InstanceIdLess> instances_;
     voxel::HullVolumeCache* bake_cache_ = nullptr;
