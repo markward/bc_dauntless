@@ -290,3 +290,65 @@ TEST(FieldBrushConservative, HoleIsAlwaysBackedAcrossTheParameterRange) {
             << " hole fragments have no damage behind them";
     }
 }
+
+// A capsule cut must be backed by the field everywhere inside its nominal
+// radius, across the authored cell range and the cascade's radius range --
+// the same representability invariant plan 2c established for the oblate.
+TEST(FieldBrushCapsule, CutIsAlwaysBackedAcrossTheParameterRange) {
+    const float cells[] = {3.0f, 5.0f, 7.5f};
+    const float radii[] = {30.0f, 60.0f, 100.0f};   // 0.3, 0.6, 1.0 GU
+    for (float cell : cells)
+    for (float radius : radii) {
+        const int n = int(std::ceil((200.0f + radius * 4.0f + cell * 8.0f) / cell)) + 4;
+        voxel::DistanceField f;
+        f.dims = glm::ivec3(n, n / 2 + 8, n / 2 + 8);
+        f.cell = glm::vec3(cell);
+        f.scale = 4.0f * cell / 127.0f;
+        f.origin = glm::vec3(-0.5f * float(n) * cell,
+                             -0.5f * float(n / 2 + 8) * cell,
+                             -0.5f * float(n / 2 + 8) * cell)
+                 + glm::vec3(0.37f * cell);   // off-centre placement
+        f.dist.assign(std::size_t(f.dims.x) * f.dims.y * f.dims.z,
+                      static_cast<std::int8_t>(-127));
+
+        const glm::vec3 p0(-100.0f, 0.0f, 0.0f), p1(100.0f, 0.0f, 0.0f);
+        voxel::field_carve_capsule(f, p0, p1, radius);
+
+        int total = 0, undamaged = 0;
+        for (int i = 0; i <= 40; ++i) {              // along the segment
+            const float t = float(i) / 40.0f;
+            const glm::vec3 axis = p0 + (p1 - p0) * t;
+            for (int j = 0; j < 12; ++j) {           // around it
+                const float th = 6.28318530718f * float(j) / 12.0f;
+                for (int k = 1; k <= 4; ++k) {       // out to the nominal radius
+                    const float rad = radius * float(k) / 4.0f;
+                    const glm::vec3 p = axis + glm::vec3(0.0f, rad * std::cos(th), rad * std::sin(th));
+                    ++total;
+                    if (trilinear_int8(f, p) <= 0.5f) ++undamaged;
+                }
+            }
+        }
+        EXPECT_EQ(undamaged, 0) << "cell=" << cell << " radius=" << radius
+                                << ": " << undamaged << " of " << total
+                                << " capsule points have no damage";
+    }
+}
+
+TEST(FieldBrushCapsule, IsMonotonicAndLeavesFarCellsUntouched) {
+    voxel::DistanceField f;
+    f.dims = glm::ivec3(40, 20, 20);
+    f.cell = glm::vec3(5.0f);
+    f.scale = 4.0f * 5.0f / 127.0f;
+    f.origin = glm::vec3(-100.0f, -50.0f, -50.0f);
+    f.dist.assign(40u * 20u * 20u, static_cast<std::int8_t>(-127));
+    voxel::field_carve_capsule(f, glm::vec3(-40, 0, 0), glm::vec3(40, 0, 0), 10.0f);
+    // A cell far from the capsule is untouched.
+    EXPECT_EQ(f.dist[f.index(39, 19, 19)], -127);
+    // Carving the same capsule again changes nothing (idempotent under max).
+    const auto before = f.dist;
+    voxel::field_carve_capsule(f, glm::vec3(-40, 0, 0), glm::vec3(40, 0, 0), 10.0f);
+    EXPECT_EQ(f.dist, before);
+    // A smaller capsule inside it cannot restore material.
+    voxel::field_carve_capsule(f, glm::vec3(-10, 0, 0), glm::vec3(10, 0, 0), 2.0f);
+    for (std::size_t i = 0; i < f.dist.size(); ++i) EXPECT_GE(f.dist[i], before[i]);
+}

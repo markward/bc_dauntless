@@ -97,4 +97,55 @@ void field_carve_oblate(DistanceField& f,
     }
 }
 
+void field_carve_capsule(DistanceField& f,
+                         const glm::vec3& p0_body,
+                         const glm::vec3& p1_body,
+                         float radius) {
+    if (f.empty()) return;
+    if (!(radius > 0.0f) || !std::isfinite(radius)) return;
+    if (!(f.scale > 0.0f)) return;
+    for (int k = 0; k < 3; ++k) {
+        if (!std::isfinite(p0_body[k]) || !std::isfinite(p1_body[k])) return;
+    }
+
+    const float min_cell = std::min(f.cell.x, std::min(f.cell.y, f.cell.z));
+    const float r      = std::max(radius, kCarveDepthFloorCells * min_cell);
+    const float offset = kCarveFieldOffsetCells * min_cell;
+    const float reach  = r + offset;
+
+    const glm::vec3 lo = glm::min(p0_body, p1_body) - glm::vec3(reach);
+    const glm::vec3 hi = glm::max(p0_body, p1_body) + glm::vec3(reach);
+    auto to_cell = [&](const glm::vec3& p) {
+        const glm::vec3 g = (p - f.origin) / f.cell;
+        return glm::ivec3(int(std::floor(g.x)), int(std::floor(g.y)),
+                          int(std::floor(g.z)));
+    };
+    glm::ivec3 c0 = glm::max(to_cell(lo), glm::ivec3(0));
+    glm::ivec3 c1 = glm::min(to_cell(hi), f.dims - 1);
+    if (c0.x > c1.x || c0.y > c1.y || c0.z > c1.z) return;
+
+    const glm::vec3 ab = p1_body - p0_body;
+    const float ab2 = glm::dot(ab, ab);
+
+    for (int z = c0.z; z <= c1.z; ++z)
+    for (int y = c0.y; y <= c1.y; ++y)
+    for (int x = c0.x; x <= c1.x; ++x) {
+        const glm::vec3 p = f.origin + (glm::vec3(x, y, z) + 0.5f) * f.cell;
+        // Closest point on the segment.
+        const float t = (ab2 > 0.0f)
+            ? std::max(0.0f, std::min(1.0f, glm::dot(p - p0_body, ab) / ab2))
+            : 0.0f;
+        const glm::vec3 q = p0_body + ab * t;
+        const float d_brush = glm::length(p - q) - r;   // signed: <0 inside
+
+        const std::size_t i = f.index(x, y, z);
+        const float d_old = static_cast<float>(f.dist[i]) * f.scale;
+        const float d_new = std::max(d_old, -d_brush + offset);
+
+        float q8 = std::round(d_new / f.scale);
+        q8 = std::max(-127.0f, std::min(127.0f, q8));
+        f.dist[i] = static_cast<std::int8_t>(q8);
+    }
+}
+
 }  // namespace voxel

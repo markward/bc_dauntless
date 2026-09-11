@@ -66,4 +66,23 @@ void field_carve_oblate(DistanceField& f,
                         const glm::vec3& normal_body,
                         float radius);
 
+/// Subtract a CAPSULE -- every point within `radius` of the segment
+/// p0_body..p1_body -- from the field. The death cascade's swept cut: a line
+/// of material removed, so a dying hull can part at the neck or across the
+/// saucer, which no 0.3 GU sphere can do.
+///
+/// Same conservative treatment as the oblate (kCarveDepthFloorCells floors
+/// the radius, kCarveFieldOffsetCells dilates it), same CSG max(), same
+/// quantisation. The capsule's distance is exactly 1-Lipschitz, so the
+/// offset dilates it uniformly. It NEVER enters the sphere list: beyond
+/// tracked carves the field is the hole authority (plan 2c), so a capsule is
+/// cut, rimmed and given an interior entirely by machinery that exists.
+///
+/// Body frame, MODEL UNITS. Empty field, non-positive/non-finite radius,
+/// non-finite endpoints, or a capsule wholly off-grid are no-ops.
+void field_carve_capsule(DistanceField& f,
+                         const glm::vec3& p0_body,
+                         const glm::vec3& p1_body,
+                         float radius);
+
 }  // namespace voxel
