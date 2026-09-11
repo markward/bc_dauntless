@@ -84,6 +84,19 @@ TEST(HullConnectivity, MismatchedLatticesReturnEmpty) {
     EXPECT_TRUE(r.detached.empty());
 }
 
+TEST(HullConnectivity, MismatchedOriginReturnsEmpty) {
+    // Same dims and cell size as the baked field, but a different origin --
+    // the header's contract is "MUST share one lattice (dims/origin/cell)",
+    // not just matching dims. This must return gracefully in every build,
+    // never assert/abort (a Debug build has NDEBUG undefined).
+    const auto baked = make_dumbbell_baked();
+    voxel::DistanceField damage = undamaged_like(baked);
+    damage.origin = glm::vec3(1.0f, 0.0f, 0.0f);
+    const auto r = voxel::hull_connectivity(baked, damage);
+    EXPECT_EQ(r.main_body_cells, 0u);
+    EXPECT_TRUE(r.detached.empty());
+}
+
 TEST(HullConnectivity, GalaxySizedLatticeIsFastEnough) {
     voxel::DistanceField baked;
     baked.dims = glm::ivec3(101, 137, 37);

@@ -1,7 +1,6 @@
 // native/src/voxel/src/hull_connectivity.cc
 #include <voxel/hull_connectivity.h>
 
-#include <cassert>
 #include <limits>
 #include <vector>
 
@@ -72,8 +71,16 @@ ConnectivityResult hull_connectivity(const DistanceField& baked,
                                      const DistanceField& damage) {
     ConnectivityResult r;
     if (baked.empty() || damage.empty()) return r;
-    if (baked.dims != damage.dims || baked.dist.size() != damage.dist.size()) {
-        assert(false && "hull_connectivity: baked and damage lattices differ");
+    // The instance field copies the baked lattice by construction
+    // (renderer/instance_field_cache.cc), so any difference here is a
+    // caller bug, not rounding -- exact equality is correct. Return
+    // gracefully rather than reading out of bounds; do NOT assert, since
+    // an assert compiles away under NDEBUG and this contract must hold in
+    // every build, not just Debug.
+    if (baked.dims != damage.dims ||
+        baked.origin != damage.origin ||
+        baked.cell != damage.cell ||
+        baked.dist.size() != damage.dist.size()) {
         return r;
     }
 
