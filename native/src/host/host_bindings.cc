@@ -4285,6 +4285,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (const voxel::HullComponent& c : r.detached) {
                   py::dict d;
                   d["cells"] = c.cells;
+                  // Repeated on every dict rather than returned once: the
+                  // binding returns a flat list of components, and Python's
+                  // after_carve needs the parent's remaining occupied cells
+                  // (for the mass-fraction split) alongside each component
+                  // without a second call.
+                  d["main_body_cells"] = r.main_body_cells;
                   d["centroid"] = py::make_tuple(c.centroid_body.x * s,
                                                  c.centroid_body.y * s,
                                                  c.centroid_body.z * s);
@@ -4299,7 +4305,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       const scenegraph::InstanceId child =
                           g_world.create_instance(inst->model_handle);
                       auto* cinst = g_world.get(child);
-                      if (cinst != nullptr) cinst->world = inst->world;
+                      if (cinst != nullptr) {
+                          cinst->world = inst->world;
+                          // Copy render-cosmetic fields from parent to child
+                          // so a severed chunk keeps the hull's look --
+                          // without rim_eligible/rim_strength the Fresnel
+                          // rim term vanishes on the chunk the instant it
+                          // splits off.
+                          cinst->visible = inst->visible;
+                          cinst->pass = inst->pass;
+                          cinst->comm_set_id = inst->comm_set_id;
+                          cinst->rim_eligible = inst->rim_eligible;
+                          cinst->rim_strength = inst->rim_strength;
+                          cinst->emissive_scale = inst->emissive_scale;
+                      }
                       if (g_instance_field_cache->split(id, child, c.cell_list)) {
                           d["instance_id"] = child;
                       } else {
@@ -4320,7 +4339,28 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "field. Components with >= min_cells cells become a new renderer "
           "instance of the same model on a copied transform, with their own "
           "field; smaller ones are removed from the parent. Positions are "
-          "body-frame GAME UNITS.");
+          "body-frame GAME UNITS. Each dict also repeats main_body_cells, "
+          "the parent's remaining occupied cell count.");
+
+    m.def("breach_burst",
+          [](scenegraph::InstanceId id, std::tuple<float, float, float> body_point_gu,
+             float radius_gu) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float inv_s = (s > 0.0f) ? 1.0f / s : 1.0f;
+              const glm::vec3 pb(std::get<0>(body_point_gu) * inv_s,
+                                 std::get<1>(body_point_gu) * inv_s,
+                                 std::get<2>(body_point_gu) * inv_s);
+              const glm::vec3 nb = (glm::length(pb) > 1e-4f) ? glm::normalize(pb)
+                                                              : glm::vec3(0.f, 0.f, 1.f);
+              static std::uint64_t s_counter = 0;
+              inst->breach_events.push(pb, radius_gu * inv_s, nb, g_decal_game_time,
+                                       ++s_counter * 6364136223846793005ull);
+          },
+          py::arg("instance_id"), py::arg("body_point_gu"), py::arg("radius_gu"),
+          "Transient breach VFX (debris, venting, rim) at a body-frame point, "
+          "for a sub-floor severed component that becomes no chunk.");
 
     m.def("hull_carve_capsule",
           [](scenegraph::InstanceId id,

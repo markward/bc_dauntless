@@ -5187,6 +5187,8 @@ class HostController:
         ship_death.reset()
         from engine.appc import debris_chunk as _debris_chunk
         _debris_chunk.clear(r)
+        from engine.appc import hull_breakup as _hull_breakup
+        _hull_breakup.reset()
         _explosion_lights.reset()
         from engine.appc import object_lifetime
         object_lifetime.reset()
@@ -8966,6 +8968,8 @@ def run(mission_name: Optional[str] = None,
                 with frame_profiler.scope("sim.debris_chunks"):
                     from engine.appc import debris_chunk as _debris_chunk
                     _debris_chunk.tick(_player_dt, r)
+                    from engine.appc import hull_breakup as _hull_breakup
+                    _hull_breakup.drain()
 
                 with frame_profiler.scope("sim.collisions"):
                     collisions.tick_collisions(

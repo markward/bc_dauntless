@@ -46,7 +46,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_dynamic_lights",
     "set_phaser_beams", "set_tractor_beams",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
-    "hull_split_detached", "hull_carve_capsule",
+    "hull_split_detached", "hull_carve_capsule", "breach_burst",
     "ray_trace_mesh",
     "transform_alloc", "transform_free", "transform_get_position",
     "transform_set_position", "transform_get_rotation", "transform_set_rotation",
@@ -307,10 +307,21 @@ def hull_split_detached(instance_id: int, min_cells: int) -> list:
     new renderer instance (a chunk) and their own field; smaller ones are
     simply removed from the parent. Returns a list of dicts (body-frame GAME
     UNITS): instance_id (None for sub-floor), cells, centroid, bounds_min,
-    bounds_max, radius_gu. Empty when headless or nothing severed."""
+    bounds_max, radius_gu, main_body_cells (the parent's remaining occupied
+    cell count, repeated on every dict -- there is no separate call for it).
+    Empty when headless or nothing severed."""
     if _h is None:
         return []
     return list(_h.hull_split_detached(instance_id, int(min_cells)))
+
+
+def breach_burst(instance_id: int, body_point_gu, radius_gu: float) -> None:
+    """Transient breach VFX (debris, venting, rim) at a BODY-frame point --
+    for a sub-floor severed component that becomes no chunk. No-op when
+    headless."""
+    if _h is None:
+        return
+    _h.breach_burst(instance_id, tuple(body_point_gu), float(radius_gu))
 
 
 def hull_carve_capsule(

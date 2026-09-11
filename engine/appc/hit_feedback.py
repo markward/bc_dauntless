@@ -422,6 +422,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                         0.0,        # floor: combat carves are strength-gated
                         _vis_dmg_mod(ship, "_vis_dmg_radius_mod"),
                     )
+                    from engine.appc import hull_breakup
+                    hull_breakup.after_carve(ship, iid, ship_instances)
 
 
 def _play_audio(severity: Severity, point, weapon_type: str | None = None) -> None:

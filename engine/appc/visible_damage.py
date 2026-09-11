@@ -139,6 +139,8 @@ def _advance_one(entry, dt, ship_instances) -> bool:
         floor,
         rad_mod,
     )
+    from engine.appc import hull_breakup
+    hull_breakup.after_carve(ship, iid, ship_instances)
     return False   # emitted once -> drop
 
 
