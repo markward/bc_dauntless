@@ -411,6 +411,17 @@ but "if we cannot draw what is behind it, we do not cut it" is the rule now.
 
 ## 8. Breakable components
 
+> ⚠️ **SUPERSEDED 2026-09-11 by
+> `docs/superpowers/specs/2026-09-11-breakable-hull-components-design.md`.**
+> This section was written before plan 2a changed what the per-instance field
+> is. It says "flood-fill the field for connected components" — but the field
+> now carries *damage only* (every cell starts at -127; only a brush raises it)
+> and does not know where the hull is. Connectivity needs the baked hull SDF
+> **and** the damage field; the new spec is built on that. The gating table
+> and scale reality check below remain correct and are carried forward there.
+> Read the new spec; treat what follows as history.
+
+
 After a brush lands, flood-fill the field for connected components. If the hull
 has separated, the smaller component becomes its own object with its own
 transform and its own field.
