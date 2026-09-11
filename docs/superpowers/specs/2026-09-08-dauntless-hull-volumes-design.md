@@ -538,7 +538,24 @@ entries by header comparison, not by deletion.
    non-issue. Wants one live round to confirm.
 4. **Should authored sub-object boundaries bias where breaks occur?** Deferred;
    §2.7 records the data if we want it.
-5. **Why does a collision produce no visible hole?** Live-observed 2026-09-09,
+5. ✅ **RESOLVED 2026-09-11 — collisions now damage the hull (plan 3, first
+   slice).** The path was never broken; two mechanisms made sustained contact
+   inert: angular velocity was absent from the collision system entirely
+   (`_resolve_body` read only linear `GetVelocity()`, so a spinning ship in
+   contact reported velocity zero), and the `v_rel >= 0` debounce discarded a
+   resting contact outright (120 frames of pressing in registered ONE hit).
+   Fixed with a dt-scaled grind channel beside the debounce — the debounce
+   still governs impulse, since an impulse that cannot change omega would
+   re-fire every frame — and grinding deliberately posts NO
+   `ET_OBJECT_COLLISION`, because `FriendlyFireCollisionHandler` makes one a
+   game over. A follow-up fixed the grind landing on the bounding sphere
+   instead of the mesh, which is the likely cause of one live see-through
+   sighting that has not reproduced since. Live-verified: grinding gouges.
+   **What remains is that it gouges — a hole — because the `carve` brush is
+   the only brush that exists. The dent brush is the actual answer for
+   collisions and is still unbuilt.** Original text follows for the record.
+
+   ~~**Why does a collision produce no visible hole?**~~ Live-observed 2026-09-09,
    deferred to plan 3 by agreement. Dents are simply not built — there is no
    `dent` brush — but *carves* from collisions should already work: `collisions.py`
    routes kinetic impacts through `combat.apply_hit` with `bypass_shields=True`
