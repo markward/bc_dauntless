@@ -118,9 +118,10 @@ def _resolve_body(obj, position: TGPoint3 = None) -> "_Body":
     crossing per object. Defaults to obj.GetWorldLocation() so direct callers
     (unit tests, collision_avoidance.py) are unaffected."""
     from engine.appc.ships import ShipClass
+    from engine.appc.debris_chunk import DebrisChunk
     center = position if position is not None else obj.GetWorldLocation()
     radius = obj.GetRadius()
-    if isinstance(obj, ShipClass) and not obj.IsImmobile():
+    if isinstance(obj, (ShipClass, DebrisChunk)) and not obj.IsImmobile():
         m = obj.GetMass()
         if m <= 0.0:
             m = COLLISION_FALLBACK_MASS
@@ -608,6 +609,11 @@ def iter_collidables():
         for obj in iter_set_objects(pSet):
             if isinstance(obj, (ShipClass, Planet)) and obj.GetRadius() > 0.0:
                 yield obj
+    # Detached hull chunks are bodies too: they can be struck and can
+    # strike. Not ShipClass on purpose -- see debris_chunk.py.
+    from engine.appc import debris_chunk
+    for chunk in debris_chunk.live():
+        yield chunk
 
 
 def tick_collisions(dt: float, ship_instances=None):

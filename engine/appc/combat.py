@@ -289,6 +289,13 @@ def _iter_subsystems(ship):
                         yield c
         return
 
+    if not hasattr(ship, "GetNumChildSubsystems"):
+        # Neither subsystem surface exists at all -- e.g. a DebrisChunk,
+        # which is deliberately not a ShipClass and carries no subsystem
+        # API. Zero subsystems, not a crash: apply_hit's hull-only path
+        # (hull is already None too) still runs, so the hit is a no-op.
+        return
+
     n = ship.GetNumChildSubsystems()
     for i in range(n):
         s = ship.GetChildSubsystem(i)

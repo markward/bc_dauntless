@@ -5185,6 +5185,8 @@ class HostController:
         ship_lifecycle.reset()
         from engine.appc import ship_death
         ship_death.reset()
+        from engine.appc import debris_chunk as _debris_chunk
+        _debris_chunk.clear(r)
         _explosion_lights.reset()
         from engine.appc import object_lifetime
         object_lifetime.reset()
@@ -8960,6 +8962,10 @@ def run(mission_name: Optional[str] = None,
                 from engine import warp_vfx as _wv_state
                 _warp_state.tick_warp_states(_player_dt)
                 _warp_state.sync_flythrough(_wv_state.get().is_active())
+
+                with frame_profiler.scope("sim.debris_chunks"):
+                    from engine.appc import debris_chunk as _debris_chunk
+                    _debris_chunk.tick(_player_dt, r)
 
                 with frame_profiler.scope("sim.collisions"):
                     collisions.tick_collisions(
