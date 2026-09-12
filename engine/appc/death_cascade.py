@@ -84,6 +84,12 @@ FINAL_BARRAGE_LEAD = 2.5     # the big finish lands at fTotalLifeLeft - 2.5
 # expected count for the longest window (15 s / 0.225 s mean ~= 67).
 MAX_BLASTS = 200
 
+# Swept cut radius for the death cascade's damage branch on a BREAKABLE
+# ship. Larger than combat's kHullCarveRadiusMaxGu (0.3) on purpose: no
+# 0.3 GU sphere can sever a 3.5 GU saucer, and a capsule between two random
+# points on the hull is a crack, not a dimple. Field-only (plan 2c).
+kCascadeCapsuleRadiusGu = 0.6
+
 
 def _rand(n: int) -> int:
     """BC's RNG, so the cascade draws from the same stream the SDK does."""
@@ -185,6 +191,13 @@ def _fire(state: dict, sound_ok: bool) -> None:
 
         if rand(10) < DAMAGE_CHANCE_IN_10:
             ship.AddDamage(point, radius * DAMAGE_RADIUS_FRACTION, DAMAGE_STRENGTH)
+
+            from engine.appc import damage_geometry
+            if damage_geometry.breakables_allowed_for(ship):
+                from engine.appc import visible_damage
+                point2 = ship.GetRandomPointOnModel()
+                visible_damage.queue_world_capsule(ship, point, point2,
+                                                   kCascadeCapsuleRadiusGu)
 
         _debris_explosion(ship, point, radius * BLAST_SIZE_FRACTION, rand)
         _light(ship, radius * BLAST_SIZE_FRACTION)

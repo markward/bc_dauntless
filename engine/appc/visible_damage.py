@@ -72,6 +72,15 @@ def queue_world_carve(ship, pEmitPos, fRadius, fDamage=0.0) -> None:
     })
 
 
+def queue_world_capsule(ship, p0_world, p1_world, radius_gu) -> None:
+    """Queue a swept capsule cut between two WORLD points, emitted when the
+    ship is realised. Field-only: never enters the sphere list."""
+    _pending.append({"kind": "capsule", "ship": ship,
+                     "p0": TGPoint3(p0_world.x, p0_world.y, p0_world.z),
+                     "p1": TGPoint3(p1_world.x, p1_world.y, p1_world.z),
+                     "radius": float(radius_gu), "age": 0.0})
+
+
 def clear_for(ship) -> None:
     """Drop a ship's not-yet-emitted volumes (DamageableObject.RemoveVisibleDamage).
 
@@ -111,6 +120,14 @@ def _advance_one(entry, dt, ship_instances) -> bool:
     if iid is None:
         entry["age"] += dt
         return entry["age"] < MAX_PENDING_AGE
+
+    if entry.get("kind") == "capsule":
+        p0, p1 = entry["p0"], entry["p1"]
+        host_io.hull_carve_capsule(iid, (p0.x, p0.y, p0.z), (p1.x, p1.y, p1.z),
+                                   entry["radius"])
+        from engine.appc import hull_breakup
+        hull_breakup.after_carve(ship, iid, ship_instances)
+        return False
 
     world_pt, normal = _resolve(entry, ship, iid)
     if world_pt is None:
