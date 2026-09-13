@@ -264,3 +264,67 @@ saucer's mass and separation speed feel right. All are Python constants.
 - Biasing breaks toward authored hull sections (§2.7 of the parent spec, open
   question 4). The fill is emergent; sections can weight it later.
 - Chunk-on-chunk collision refinement beyond the sphere broad phase.
+
+## 12. Built
+
+**Status: built.** Commit range `68566a37..4c2fe739` (Tasks 1-7: connectivity,
+capsule brush, field split, host bindings, `DebrisChunk`, the `after_carve`
+hook, and the cascade capsule), plus the gating-test/spec commit that closes
+this plan.
+
+**Measured.** Task 1's `hull_connectivity` benchmark on a Galaxy-sized lattice:
+**2.9 ms in-suite, 5.3 ms isolated.** Well inside the 0.5 s throttle window
+(§3), even run every frame during a burst.
+
+**Deviations from §3-§9, ruled during execution:**
+
+1. **§3 — the "skip when the carve touched no occupied cell" idea was not
+   built; the per-ship throttle was, exactly as §3's text already describes.**
+   `kBreakupCheckInterval` (0.5 s) in `engine/appc/hull_breakup.py` gates
+   `hull_connectivity` per ship; a carve landing inside the window marks the
+   ship *pending* rather than being dropped, and `drain()` runs the deferred
+   check once the window elapses. This confirms §3 as written — recorded here
+   because the brush-touched-no-occupied-cell alternative was the one
+   discarded, not because the shipped behaviour differs from the prose.
+2. **§3 — no assert on lattice mismatch.** §3's prose says the mismatch check
+   "asserts that and returns an empty result." The shipped
+   `hull_connectivity` (`native/src/voxel/src/hull_connectivity.cc`) never
+   asserts: on ANY mismatch of `dims`, `origin`, `cell`, or `dist.size()`
+   between the baked and damage fields it returns an empty
+   `ConnectivityResult` unconditionally. The source comment is explicit:
+   "do NOT assert, since an assert compiles away under NDEBUG and this
+   contract must hold in every build, not just Debug."
+3. **§4 — the chunk instance copies more than "its own world transform."**
+   `hull_split_detached` (`native/src/host/host_bindings.cc`) additionally
+   copies `visible`, `pass`, `comm_set_id`, `rim_eligible`, `rim_strength`,
+   and `emissive_scale` from the parent instance onto the new child instance.
+   Without `rim_eligible`/`rim_strength` the Fresnel rim term would vanish on
+   a chunk the instant it splits off, so these are render-cosmetic
+   necessities the spec's "own world transform" undersold.
+4. **§5 — collision and combat needed two small guards beyond "extends
+   `iter_collidables`."** `engine/appc/collisions.py::_resolve_body` now
+   checks `isinstance(obj, (ShipClass, DebrisChunk))` rather than `ShipClass`
+   alone, so a chunk resolves as a movable body. `engine/appc/combat.py::
+   _iter_subsystems` gained a fallback: when neither `GetSubsystems` nor
+   `GetNumChildSubsystems` exists on the target (true of `DebrisChunk`, which
+   deliberately carries no subsystem API), it yields nothing instead of
+   raising — `apply_hit` on a chunk is then a no-op through the existing
+   hull-is-`None` path, not a crash.
+5. **§7 — severed-subsystem destruction is `sub.SetCondition(0.0)`,** the
+   single state-change hook that fires `_condition_changed()` (the
+   destroyed-event source), per §7's "condition set to zero through the
+   normal subsystem-damage path." **Open concern, not fixed in this plan:**
+   `SetCondition` also unconditionally auto-enqueues the subsystem on the
+   owning ship's repair bay (`subsystems.py::SetCondition ->
+   _auto_enqueue_for_repair`) whenever condition decreases. A subsystem that
+   left the ship along with its physical mount is therefore still queued as
+   repairable — nothing currently distinguishes "damaged in place" from
+   "severed and gone" at that call site.
+6. **§4 — sub-floor components burst via a new binding, not the existing
+   breach-debris call the spec assumed.** A component below `kChunkMinCells`
+   fires `host_io.breach_burst(iid, centroid_gu, 0.1)` — a new
+   `breach_burst` host binding — at a fixed **0.1 GU** radius, rather than
+   reusing an existing breach-debris entry point verbatim.
+
+`docs/superpowers/sdd/2026-09-11-breakable-hull-components/task-8-report.md`
+has the full gate output and file list for this closing task.
