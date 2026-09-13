@@ -313,18 +313,42 @@ this plan.
 5. **§7 — severed-subsystem destruction is `sub.SetCondition(0.0)`,** the
    single state-change hook that fires `_condition_changed()` (the
    destroyed-event source), per §7's "condition set to zero through the
-   normal subsystem-damage path." **Open concern, not fixed in this plan:**
-   `SetCondition` also unconditionally auto-enqueues the subsystem on the
-   owning ship's repair bay (`subsystems.py::SetCondition ->
-   _auto_enqueue_for_repair`) whenever condition decreases. A subsystem that
-   left the ship along with its physical mount is therefore still queued as
-   repairable — nothing currently distinguishes "damaged in place" from
-   "severed and gone" at that call site.
+   normal subsystem-damage path." **Repair concern: CLOSED.** An earlier
+   draft of this item worried that `SetCondition`'s auto-enqueue
+   (`subsystems.py::SetCondition -> _auto_enqueue_for_repair`) would queue
+   the severed subsystem as repairable. It cannot: the enqueue lands in
+   `RepairSubsystem.AddToRepairList` (`subsystems.py:2315`), which refuses
+   any subsystem whose `GetCondition() <= 0.0` — mirroring stock
+   `AddSubsystem`'s explicit `condition > 0` check — so a `SetCondition(0.0)`
+   is rejected at the queue and a severed subsystem is never repairable.
 6. **§4 — sub-floor components burst via a new binding, not the existing
    breach-debris call the spec assumed.** A component below `kChunkMinCells`
    fires `host_io.breach_burst(iid, centroid_gu, 0.1)` — a new
    `breach_burst` host binding — at a fixed **0.1 GU** radius, rather than
    reusing an existing breach-debris entry point verbatim.
+
+7. **§7 — subsystem membership is tested against the component's AABB,
+   not its cells (I5, deferred).** `hull_breakup._destroy_subsystems_inside`
+   destroys every subsystem whose body-frame mount lies inside the
+   component's axis-aligned bounds, whereas §7 says "inside one of the
+   component's cells." The two differ for a non-convex component: a long
+   segment cut off by a wide cascade capsule has an AABB that can enclose
+   mounts on hull that is still attached, so those subsystems are
+   over-killed. Deferred as a known approximation by review ruling; the
+   cell-exact test (the fill's `cell_list` is already returned) is the fix
+   when it is taken up.
+
+**Review fix wave (2026-09-13).** Post-build whole-branch review found and
+fixed: the bulk position fetch in `collisions.resolve_collisions` read
+`_xform` on chunks, which have none (frame-loop crash on the first sever);
+`DebrisChunk._loc` was the parent's origin, so a piece orbited its parent's
+origin instead of tumbling about its own centroid (now `_loc` is the piece
+centre and the mesh is placed at `_loc - R·centroid`); a fresh chunk ground
+its own parent for ~20 s (now masked via `_collision_disabled_ids` until the
+pair is clear); a chunk party on `ET_OBJECT_COLLISION` crashed
+`FriendlyFireCollisionHandler` (no SDK event is posted for chunk pairs); and
+`hull_connectivity` seeded the main body nearest the origin (now: label every
+component, the largest is the main body, lowest label wins a tie).
 
 `docs/superpowers/sdd/2026-09-11-breakable-hull-components/task-8-report.md`
 has the full gate output and file list for this closing task.
