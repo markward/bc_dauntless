@@ -16,6 +16,7 @@ eviction, and cleared on mission swap.
 """
 import math
 import random
+import weakref
 
 import engine.dev_mode as dev_mode
 from engine.appc.math import TGPoint3, TGMatrix3
@@ -34,14 +35,27 @@ _Z_AXIS = TGPoint3(0.0, 0.0, 1.0)
 
 
 class DebrisChunk:
+    """`_loc` is the PIECE's centre (the component centroid in world space),
+    not the parent's origin. The renderer instance shares the parent's model,
+    whose origin is the ship's origin, so the mesh is placed at
+    `_loc - R . centroid_body` each frame: the centroid then lands exactly on
+    `_loc`, and the tumble rotates the piece about itself. With `_loc` at the
+    model origin instead, a nacelle whose centroid sits 2 GU out swept a
+    2 GU circle at ~0.8 GU/s -- an orbit, not a tumble -- and its collision
+    sphere sat 2 GU away from the visible piece."""
+
     def __init__(self, iid, origin_ship, component_cells, mass, radius,
-                 scale, loc, rot, vel, angular, obj_id):
+                 scale, centroid_body, loc, rot, vel, angular, obj_id):
         self.iid = iid
-        self.origin_ship = origin_ship
+        # weakref: a chunk outlives its parent by design (spec §8, "parent
+        # death"), and a strong ref here would pin a dead ship -- and its
+        # transform slot -- for as long as the chunk lives.
+        self._origin_ref = weakref.ref(origin_ship)
         self.component_cells = int(component_cells)
         self.mass = float(mass)
         self.radius = float(radius)
         self.scale = float(scale)
+        self._centroid_body = centroid_body     # GU, parent body frame
         self._loc = loc
         self._rot = rot
         self._vel = vel
@@ -49,6 +63,17 @@ class DebrisChunk:
         # _resolve_body picks it up for the contact-point velocity.
         self._current_angular_velocity = angular
         self._obj_id = obj_id
+        # Symmetric pair mask collisions.resolve_collisions reads
+        # (obj.__dict__["_collision_disabled_ids"]). The chunk is born INSIDE
+        # its parent's sphere and recedes at kChunkSeparationSpeed, so
+        # without this the grind channel abrades the parent for the ~20 s it
+        # takes to clear. Emptied by tick() once the pair is clear, so a
+        # later re-contact counts.
+        self._collision_disabled_ids = frozenset()
+
+    @property
+    def origin_ship(self):
+        return self._origin_ref()
 
     # -- the surface collisions._resolve_body reads --------------------------
     def GetWorldLocation(self): return self._loc
@@ -58,10 +83,32 @@ class DebrisChunk:
     def GetRadius(self): return self.radius
     def GetMass(self): return self.mass
     def GetVelocity(self): return self._vel
-    def GetScale(self): return 1.0
+    def GetScale(self): return self.scale
     def IsImmobile(self): return False
     def GetObjID(self): return self._obj_id
     def GetHull(self): return None   # no hull: apply_hit is a no-op on us
+
+    def _mesh_origin(self):
+        """Where the shared model's origin goes so the piece's centroid
+        sits at `_loc` under the CURRENT rotation: `_loc - R . centroid`."""
+        c = self._centroid_body
+        off = TGPoint3(c.x, c.y, c.z)
+        off.MultMatrixLeft(self._rot)                  # body -> world
+        return TGPoint3(self._loc.x - off.x, self._loc.y - off.y, self._loc.z - off.z)
+
+    def _release_parent_mask_if_clear(self):
+        if not self._collision_disabled_ids:
+            return
+        parent = self._origin_ref()
+        if parent is None:
+            self._collision_disabled_ids = frozenset()
+            return
+        from engine.appc.collisions import COLLISION_RADIUS_SCALE
+        p = parent.GetWorldLocation()
+        dx, dy, dz = self._loc.x - p.x, self._loc.y - p.y, self._loc.z - p.z
+        reach = (self.radius + float(parent.GetRadius())) * COLLISION_RADIUS_SCALE
+        if dx * dx + dy * dy + dz * dz >= reach * reach:
+            self._collision_disabled_ids = frozenset()
 
 
 def spawn(iid, origin_ship, cells, centroid_gu, radius_gu,
@@ -72,15 +119,19 @@ def spawn(iid, origin_ship, cells, centroid_gu, radius_gu,
     cap happens on the next tick, when a renderer is in hand."""
     global _next_obj_id
     rng = rng or random
-    loc = origin_ship.GetWorldLocation()
+    ploc = origin_ship.GetWorldLocation()
     rot = origin_ship.GetWorldRotation()
     pv = origin_ship.GetVelocity()
 
-    push = TGPoint3(*centroid_gu)
-    n = math.sqrt(push.x * push.x + push.y * push.y + push.z * push.z)
+    centroid = TGPoint3(*centroid_gu)
+    world_c = TGPoint3(centroid.x, centroid.y, centroid.z)
+    world_c.MultMatrixLeft(rot)                       # body -> world
+    # The chunk's centre is the PIECE's centre, not the parent's origin.
+    loc = TGPoint3(ploc.x + world_c.x, ploc.y + world_c.y, ploc.z + world_c.z)
+
+    n = math.sqrt(world_c.x * world_c.x + world_c.y * world_c.y + world_c.z * world_c.z)
     if n > 1e-6:
-        push = TGPoint3(push.x / n, push.y / n, push.z / n)
-        push.MultMatrixLeft(rot)                      # body -> world
+        push = TGPoint3(world_c.x / n, world_c.y / n, world_c.z / n)
     else:
         push = TGPoint3(0.0, 0.0, 0.0)
     vel = TGPoint3(pv.x + push.x * kChunkSeparationSpeed,
@@ -99,8 +150,12 @@ def spawn(iid, origin_ship, cells, centroid_gu, radius_gu,
     _next_obj_id += 1
     chunk = DebrisChunk(iid, origin_ship, cells, mass, radius_gu,
                         float(origin_ship.GetScale()) if hasattr(origin_ship, "GetScale") else 1.0,
-                        TGPoint3(loc.x, loc.y, loc.z),
-                        _copy_rot(rot), vel, angular, _next_obj_id)
+                        centroid, loc, _copy_rot(rot), vel, angular, _next_obj_id)
+    # Class lookup, not getattr on the instance: TGObject.__getattr__ vends a
+    # truthy _Stub for any unknown name, and a fake parent in a test may
+    # carry no ObjID at all.
+    if getattr(type(origin_ship), "GetObjID", None) is not None:
+        chunk._collision_disabled_ids = frozenset((origin_ship.GetObjID(),))
     _live.append(chunk)
     return chunk
 
@@ -143,9 +198,11 @@ def tick(dt, renderer):
         v = c._vel
         c._loc = TGPoint3(c._loc.x + v.x * dt, c._loc.y + v.y * dt, c._loc.z + v.z * dt)
         _integrate_rotation(c, dt)
+        c._release_parent_mask_if_clear()
         try:
             renderer.set_world_transform(
-                c.iid, _world_matrix_from(c._loc, c._rot, BC_MODEL_SCALE * c.scale))
+                c.iid, _world_matrix_from(c._mesh_origin(), c._rot,
+                                          BC_MODEL_SCALE * c.scale))
         except Exception as _e:
             dev_mode.log_swallowed("debris chunk transform push", _e)
 

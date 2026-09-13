@@ -5186,7 +5186,7 @@ class HostController:
         from engine.appc import ship_death
         ship_death.reset()
         from engine.appc import debris_chunk as _debris_chunk
-        _debris_chunk.clear(r)
+        _debris_chunk.clear(self.renderer)
         from engine.appc import hull_breakup as _hull_breakup
         _hull_breakup.reset()
         _explosion_lights.reset()

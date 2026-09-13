@@ -1064,6 +1064,13 @@ def _reset_leakable_engine_globals():
         ("engine.appc.visible_damage", "_pending"),
         ("engine.audio.attached_sources", "_attached"),
         ("engine.audio.hum_allocator", "_humming"),
+        # Detached hull chunks + the per-ship breakup throttle: a chunk left
+        # live by one test is yielded by collisions.iter_collidables() in
+        # every later test, and a stale _pending entry re-runs a split on a
+        # ship that no longer exists.
+        ("engine.appc.debris_chunk", "_live"),
+        ("engine.appc.hull_breakup", "_pending"),
+        ("engine.appc.hull_breakup", "_last_check"),
     ):
         try:
             _m = sys.modules.get(_mod)

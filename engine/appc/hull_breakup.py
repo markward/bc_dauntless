@@ -85,6 +85,16 @@ def _check(ship, iid, ship_instances, now):
                 float(c["radius_gu"]), parent_mass, total_cells))
         except Exception as _e:
             dev_mode.log_swallowed("debris_chunk.spawn", _e)
+            # The native side created this instance BEFORE we got here.
+            # With no body to own it, it would sit in the scene for the
+            # rest of the mission -- outside the cap, the swap clear and
+            # the collision system. Lazy import: engine.renderer binds the
+            # host extension.
+            try:
+                from engine import renderer
+                renderer.destroy_instance(c["instance_id"])
+            except Exception as _e2:
+                dev_mode.log_swallowed("orphaned chunk instance destroy", _e2)
     return spawned
 
 

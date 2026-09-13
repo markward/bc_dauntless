@@ -110,3 +110,22 @@ def test_a_second_carve_inside_the_window_is_deferred_then_drained(monkeypatch):
     assert calls == [11, 11]                           # drained exactly once
     hull_breakup.drain(now=100.7)
     assert calls == [11, 11]                           # nothing left pending
+
+
+def test_a_spawn_failure_destroys_the_instance_the_native_side_already_made(monkeypatch):
+    # hull_split_detached has ALREADY created the renderer instance by the
+    # time Python spawns the body. If spawn raises, the instance must be
+    # destroyed, not left orphaned (invisible to the cap, the clear, and
+    # the collision system) for the rest of the mission.
+    from engine import renderer
+    from engine.appc import hull_breakup, debris_chunk as dc
+    monkeypatch.setattr(host_io, "hull_split_detached",
+                        lambda iid, m: [_component(9, 500, (1, 0, 0), (0.5, -.5, -.5), (1.5, .5, .5))])
+    def _boom(*a, **k):
+        raise RuntimeError("spawn failed")
+    monkeypatch.setattr(dc, "spawn", _boom)
+    destroyed = []
+    monkeypatch.setattr(renderer, "destroy_instance", lambda iid: destroyed.append(iid))
+    assert hull_breakup.after_carve(_Ship(radius=3.5), 11) == []
+    assert destroyed == [9]
+    assert dc.live() == []

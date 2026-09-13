@@ -447,6 +447,18 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
                   ship_instances=ship_instances, weapon_type=None,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
 
+    # No SDK event when either party is a detached hull chunk. The impulse
+    # and damage above have already landed; only the event is withheld.
+    # MissionLib.FriendlyFireCollisionHandler does ObjectClass_Cast on both
+    # parties and calls .GetName() on the result OUTSIDE its try -- a
+    # DebrisChunk is not an ObjectClass, casts to None, and every
+    # friendly-fire mission would traceback on the first chunk strike. The
+    # cloaked-collision line ("we hit a cloaked ship") is equally wrong for
+    # debris. Lazy import, as _resolve_body does.
+    from engine.appc.debris_chunk import DebrisChunk
+    if isinstance(a.obj, DebrisChunk) or isinstance(b.obj, DebrisChunk):
+        return (a.obj, b.obj, contact, v_rel)
+
     # A cloaked hull is still physically present: BC fires ET_CLOAKED_COLLISION
     # when something rams one (HelmMenuHandlers.CloakedCollision plays a line).
     _emit_cloaked_collision(a.obj, b.obj)
@@ -578,9 +590,17 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
     crossings, not the values observed."""
     from engine.appc.transform_store import get_store
     objects = list(objects)
-    positions = get_store().get_positions([o._xform for o in objects])
-    bodies = [_resolve_body(o, TGPoint3(*p))
-              for o, p in zip(objects, positions)]
+    # Only store-backed objects (ObjectClass allocates `_xform` in __init__)
+    # go through the bulk fetch. A DebrisChunk keeps its own TGPoint3 and
+    # has no slot -- reading `o._xform` on one raised AttributeError here,
+    # inside tick_collisions, which host_loop.run() does not guard, so the
+    # first severed chunk took the whole frame loop down. __dict__ probe,
+    # not hasattr: TGObject.__getattr__ vends a truthy _Stub for any unknown
+    # name, which would hand get_positions a non-handle.
+    stored = [o for o in objects if "_xform" in o.__dict__]
+    positions = get_store().get_positions([o._xform for o in stored])
+    by_id = {id(o): TGPoint3(*p) for o, p in zip(stored, positions)}
+    bodies = [_resolve_body(o, by_id.get(id(o))) for o in objects]
     hits = []
     for i in range(len(bodies)):
         for k in range(i + 1, len(bodies)):
