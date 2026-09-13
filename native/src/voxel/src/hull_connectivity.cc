@@ -85,30 +85,17 @@ ConnectivityResult hull_connectivity(const DistanceField& baked,
     }
 
     const std::size_t n = baked.dist.size();
-    // 0 = unlabelled. Main body gets a sentinel label that is never a
-    // component label; components are numbered 1..N afterwards.
-    constexpr std::uint32_t kMainBody = std::numeric_limits<std::uint32_t>::max();
+    // 0 = unlabelled; components are numbered 1..N in lattice scan order.
+    // Every component is labelled first, with no privileged seed -- the
+    // main body is chosen AFTERWARDS as the largest one. A seed at the cell
+    // nearest the origin made a small central fragment the "main body" when
+    // a cascade capsule hollowed the centre, and spawned the whole remaining
+    // hull as a chunk of it.
     std::vector<std::uint32_t> labels(n, 0);
     std::vector<std::size_t> stack;
     stack.reserve(4096);
 
-    // Seed: occupied cell nearest the body-frame origin.
-    std::size_t seed = n;
-    float best = std::numeric_limits<float>::max();
-    const glm::ivec3 d = baked.dims;
-    for (int z = 0; z < d.z; ++z)
-    for (int y = 0; y < d.y; ++y)
-    for (int x = 0; x < d.x; ++x) {
-        const std::size_t i = baked.index(x, y, z);
-        if (!occupied(baked, damage, i)) continue;
-        const glm::vec3 c = baked.origin + (glm::vec3(x, y, z) + 0.5f) * baked.cell;
-        const float dd = glm::dot(c, c);
-        if (dd < best) { best = dd; seed = i; }
-    }
-    if (seed == n) return r;   // nothing occupied at all
-
-    r.main_body_cells = flood(baked, damage, labels, stack, seed, kMainBody, nullptr);
-
+    std::vector<HullComponent> comps;
     std::uint32_t next = 1;
     for (std::size_t i = 0; i < n; ++i) {
         if (labels[i] != 0) continue;
@@ -116,8 +103,23 @@ ConnectivityResult hull_connectivity(const DistanceField& baked,
         HullComponent comp;
         comp.label = next;
         flood(baked, damage, labels, stack, i, next, &comp);
-        r.detached.push_back(std::move(comp));
+        comps.push_back(std::move(comp));
         ++next;
+    }
+    if (comps.empty()) return r;   // nothing occupied at all
+
+    // Largest wins; strict '>' keeps the lowest label on a tie, which is
+    // deterministic (scan order) and what the dumbbell test pins.
+    std::size_t main = 0;
+    for (std::size_t k = 1; k < comps.size(); ++k) {
+        if (comps[k].cells > comps[main].cells) main = k;
+    }
+    r.main_body_cells = comps[main].cells;
+    r.main_body_label = comps[main].label;
+    r.detached.reserve(comps.size() - 1);
+    for (std::size_t k = 0; k < comps.size(); ++k) {
+        if (k == main) continue;
+        r.detached.push_back(std::move(comps[k]));
     }
     return r;
 }

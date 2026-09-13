@@ -11,10 +11,11 @@
 
 namespace voxel {
 
-/// One detached piece of hull: every occupied cell NOT reachable from the
-/// main body's seed by 6-connectivity.
+/// One detached piece of hull: a 6-connected component of the occupied
+/// cells that is not the main body.
 struct HullComponent {
-    std::uint32_t label = 0;                 // 1..N (0 is the main body)
+    std::uint32_t label = 0;                 // 1..N, lattice scan order; the
+                                             // main body's label is absent
     std::size_t   cells = 0;
     glm::vec3     centroid_body{0.0f};       // model units, body frame
     glm::vec3     bounds_min_body{0.0f};     // cell-centre extents
@@ -23,7 +24,8 @@ struct HullComponent {
 };
 
 struct ConnectivityResult {
-    std::size_t main_body_cells = 0;
+    std::size_t   main_body_cells = 0;
+    std::uint32_t main_body_label = 0;       // 0 when nothing is occupied
     std::vector<HullComponent> detached;     // empty when nothing severed
 };
 
@@ -31,10 +33,13 @@ struct ConnectivityResult {
 ///
 /// A cell is OCCUPIED iff `baked.dist <= 0` (inside the authored hull) AND
 /// `damage.dist <= 0` (not carved -- the same "not past the iso" test the
-/// hull clip makes, in stored int8 units). The main body is the 6-connected
-/// region containing the seed: the occupied cell whose centre is nearest the
-/// body-frame origin. Everything occupied but unreached is a detached
-/// component.
+/// hull clip makes, in stored int8 units). Every occupied cell is labelled
+/// into a 6-connected component first, with no privileged seed; the main
+/// body is then the LARGEST component (ties: lowest label, i.e. first in
+/// lattice scan order), and every other component is detached. Seeding at
+/// the cell nearest the origin was wrong: a cascade capsule that hollows
+/// the centre leaves a small fragment there, and the whole remaining hull
+/// would have spawned as a chunk of it.
 ///
 /// Both fields MUST share one lattice (dims/origin/cell). The per-instance
 /// damage field copies the baked field's lattice by construction
