@@ -34,7 +34,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 18 | SortedRegionMenu_GetRoot() | GetNumChildren | 15124 | 34/416 | 2026-08-30 23:25 UTC |  |
 | 19 | App | CharacterClass_IsCollisionAlertEnabled | 10998 | 333/416 | 2026-08-31 11:12 UTC |  |
 | 20 | TGPane | GetBottom | 10080 | 265/416 | 2026-08-31 11:12 UTC |  |
-| 21 | ShipClass | GetTargetOffsetTG | 6002 | 190/416 | 2026-08-31 11:12 UTC |  |
+| 21 | ShipClass | GetTargetOffsetTG | 6002 | 190/416 | 2026-08-31 11:12 UTC | 2026-09-14 |
 | 22 | PhaserSystem | CanFire | 5864 | 2/416 | 2026-08-30 21:41 UTC |  |
 | 23 | PhaserSystem | GetAmmo | 5864 | 2/416 | 2026-08-30 21:41 UTC |  |
 | 24 | TorpedoSystem | CanFire | 5864 | 2/416 | 2026-08-30 21:41 UTC |  |

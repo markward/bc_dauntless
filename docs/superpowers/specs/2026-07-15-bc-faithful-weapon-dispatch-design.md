@@ -460,3 +460,48 @@ Decompiled `stbc.exe` settles both halves of the question:
   gap doc territory.
 
 **Live verification pending:** Mark runs the §8 QuickBattle pass (items 1-6) before this branch merges.
+
+## 11. Addendum 2026-09-14 — pulse cannons are AIMED at launch (not tubes)
+
+§3.1's "the aim point never steers the launch" is a **torpedo-tube** rule.
+It was silently applied to pulse cannons too (`_spawn_projectile` was the
+only spawn path), so every disruptor bolt left along the cannon's
+`OrientationForward` regardless of target — and since every stock pulse
+module authors `GuidanceLifetime 0.0`, that direction was final. Live
+symptom: "disruptors don't track at all".
+
+Clean-room answer (read from the retail binary; PulseWeapon vtable
+`0x00893318`, slots `+0x7C` targeted / `+0x80` no-target): the targeted pulse
+path solves a **led** launch direction and the arc is a pure fire/no-fire
+gate on it — never a clamp. In prose:
+
+- aim = target centre + the weapon's local aim offset, rotated by the
+  target's rotation and scaled by its scale — the **same** `0x005852A0`
+  resolver as the tube's fire gate;
+- v_eff = launch speed + (shipVel − targetVel) · unit(aim − muzzle);
+  t = |aim − muzzle| / v_eff;
+- predicted = aim + targetVel·t + ½·targetAccel·t² − shipVel·t (the lead
+  helper `0x005A0B50` is *used* here, where the tube path discards it; the
+  −shipVel·t term cancels the drift the bolt inherits);
+- launchDir = unit(predicted − muzzle); refuse if v_eff ≤ 0, t ≤ 0,
+  t > module `GetLifetime()` (default 8), range > 30·v_eff, or launchDir
+  outside the authored arc (`Forward`/`Right`/`Up` atan2 tests against
+  `ArcWidth`/`ArcHeightAngles`);
+- velocity = launchDir × module `GetLaunchSpeed()` + shipVel; target id +
+  offset stamped on the bolt.
+- No target on the weapon **or** its ship → `OrientationForward` rotated to
+  world (slot `+0x80`). `FireAtTarget` (`0x005762B0`) is the network-replay
+  entry, not a local path.
+
+Built as `_solve_pulse_launch_direction` + `PulseWeapon.Fire` in
+`engine/appc/weapon_subsystems.py`; pinned by
+`tests/unit/test_pulse_aimed_launch.py`. Same change made
+`ShipClass.GetTargetOffsetTG` real (the player's fire path hands it to
+`StartFiring` as the aim offset; it was heatmap stub #21) and
+`Torpedo.SetTargetOffset` real. BC's solver speed lives in a per-weapon
+field (`PulseWeapon+0xCC`) the script must keep equal to the module's
+`GetLaunchSpeed()`; we read the module for both, which is the faithful
+single source (the SDK AI leads with `PulseWeapon.GetLaunchSpeed()` too).
+
+Torpedo-to-centre is **not** affected and remains faithful (§5.5 of the RE
+doc: `Guide` leads the centre; the offset is dead weight in flight).

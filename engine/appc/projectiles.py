@@ -60,7 +60,7 @@ class Torpedo(ObjectClass):
     __slots__ = (
         "_velocity", "_age", "_ttl",
         "_damage", "_damage_radius_factor",
-        "_target_ship",
+        "_target_ship", "_target_offset",
         "_guidance_lifetime", "_guidance_initial", "_max_angular_accel",
         "_last_seen_target_pos", "_last_target_vel",
         "_source_ship", "_id", "_bubble_entry",
@@ -82,6 +82,10 @@ class Torpedo(ObjectClass):
         self._damage = 0.0
         self._damage_radius_factor = 0.0
         self._target_ship = None
+        # Target-local aim offset stamped at fire time (BC torp+0x11C..+0x124).
+        # Rides the projectile for the wire and for SDK readers; in-flight
+        # guidance never reads it (audited §5.5 -- Guide leads the CENTRE).
+        self._target_offset = None
         self._guidance_lifetime = 4.0
         self._guidance_initial = 4.0
         self._max_angular_accel = 0.125
@@ -184,6 +188,14 @@ class Torpedo(ObjectClass):
             import App
             return App.NULL_ID
         return target.GetObjID()
+    def SetTargetOffset(self, v) -> None:
+        """SWIG `Torpedo.SetTargetOffset` (App.py:5931); MissionLib.py:3245
+        passes the aimed subsystem's local position."""
+        self._target_offset = (TGPoint3(v.x, v.y, v.z)
+                               if isinstance(v, TGPoint3) else None)
+    def GetTargetOffset(self):
+        return self._target_offset
+
     def SetDamageRadiusFactor(self, v) -> None:   self._damage_radius_factor = float(v)
     def GetDamageRadiusFactor(self) -> float:     return self._damage_radius_factor
     def SetGuidanceLifetime(self, v) -> None:
