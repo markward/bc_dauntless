@@ -2,7 +2,6 @@
 #include <voxel/hull_connectivity.h>
 
 #include <limits>
-#include <unordered_set>
 #include <vector>
 
 namespace voxel {
@@ -163,34 +162,48 @@ Severance hull_severance_local(const DistanceField& baked,
               glm::min(box.hi + 1, d - 1)};
     if (visit_cap == 0) visit_cap = kSeveranceVisitFactor * e.volume();
 
-    std::unordered_set<std::size_t> targets;
+    // Two bitmaps over the lattice -- targets and visited -- rather than
+    // hash sets: one bit per cell is 8 KB on a Galaxy and 210 KB on the
+    // largest station, cleared in microseconds, and every membership test
+    // is a shift and a mask. (A hash-set version cost 190 ms per check at
+    // -O0 on a Galaxy: worse than the full BFS it was meant to avoid.)
+    const std::size_t n = baked.dist.size();
+    std::vector<std::uint64_t> target_bits((n + 63) / 64, 0);
+    std::vector<std::uint64_t> visited_bits((n + 63) / 64, 0);
+    auto test = [](const std::vector<std::uint64_t>& b, std::size_t i) {
+        return (b[i >> 6] >> (i & 63)) & 1u;
+    };
+    auto set = [](std::vector<std::uint64_t>& b, std::size_t i) {
+        b[i >> 6] |= (std::uint64_t{1} << (i & 63));
+    };
+
+    std::size_t remaining = 0;
+    std::size_t seed = 0;
     for (int z = e.lo.z; z <= e.hi.z; ++z)
     for (int y = e.lo.y; y <= e.hi.y; ++y)
     for (int x = e.lo.x; x <= e.hi.x; ++x) {
         const std::size_t i = baked.index(x, y, z);
-        if (occupied(baked, damage, i)) targets.insert(i);
+        if (!occupied(baked, damage, i)) continue;
+        if (remaining == 0) seed = i;
+        set(target_bits, i);
+        ++remaining;
     }
-    if (targets.empty()) return Severance::kConnected;   // nothing here to sever
+    if (remaining == 0) return Severance::kConnected;   // nothing here to sever
 
     // Breadth-first flood from one target over occupied cells anywhere in
     // the lattice until every target is reached or the budget runs out.
     // Breadth-first, not depth-first, on purpose: the targets sit within a
     // few cells of the seed, and a DFS would happily run down a nacelle
-    // before finishing the shell. A hash set of visited cells, not a
-    // lattice-sized bitmap: the point is to touch O(cap) memory, not
-    // O(lattice).
-    const std::size_t seed = *targets.begin();
-    std::unordered_set<std::size_t> visited;
-    visited.reserve(visit_cap + 1);
+    // before finishing the shell.
     std::vector<std::size_t> queue;
     queue.reserve(visit_cap + 1);
     queue.push_back(seed);
-    visited.insert(seed);
-    std::size_t remaining = targets.size();
+    set(visited_bits, seed);
+    std::size_t visited = 1;
     for (std::size_t head = 0; head < queue.size(); ++head) {
         const std::size_t i = queue[head];
-        if (targets.erase(i) != 0 && --remaining == 0) return Severance::kConnected;
-        if (visited.size() > visit_cap) return Severance::kUnknown;
+        if (test(target_bits, i) && --remaining == 0) return Severance::kConnected;
+        if (visited > visit_cap) return Severance::kUnknown;
         const int x = static_cast<int>(i % static_cast<std::size_t>(d.x));
         const int y = static_cast<int>((i / static_cast<std::size_t>(d.x)) % static_cast<std::size_t>(d.y));
         const int z = static_cast<int>(i / (static_cast<std::size_t>(d.x) * static_cast<std::size_t>(d.y)));
@@ -201,8 +214,10 @@ Severance hull_severance_local(const DistanceField& baked,
             if (nx[k] < 0 || ny[k] < 0 || nz[k] < 0 ||
                 nx[k] >= d.x || ny[k] >= d.y || nz[k] >= d.z) continue;
             const std::size_t j = baked.index(nx[k], ny[k], nz[k]);
+            if (test(visited_bits, j)) continue;
             if (!occupied(baked, damage, j)) continue;
-            if (!visited.insert(j).second) continue;
+            set(visited_bits, j);
+            ++visited;
             queue.push_back(j);
         }
     }
