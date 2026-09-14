@@ -119,6 +119,20 @@ def test_get_incoming_ids_returns_iterable_of_ints():
     assert all(isinstance(i, int) for i in ids)
 
 
+def test_get_incoming_ids_returns_a_mutable_list():
+    # ConditionIncomingTorps.py:166 stores the return value as
+    # self.liIncoming and then .append()s (:270) / .remove()s (:278) on it
+    # from EnteredSet/ExitedSet. A tuple raised AttributeError on every
+    # torpedo entering the set (swallowed by the event dispatcher), so the
+    # condition never tracked torps that spawned after SetupInitialState.
+    ship = _ship(0, 0, 0)
+    _torp((0, 100, 0), (0, -50, 0))
+    ids = App.AIScriptAssist_GetIncomingTorpIDsInSet(ship, None, 18.0, NULL_ID, 0)
+    ids.append(999)
+    ids.remove(999)
+    assert isinstance(ids, list)
+
+
 # ── The firing-object match filter (param 4 / param 5) ───────────────────────
 
 def test_source_filter_matches_only_the_named_firing_object():

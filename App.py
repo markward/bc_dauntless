@@ -814,8 +814,10 @@ class FuzzyLogic:
 def AIScriptAssist_GetIncomingTorpIDsInSet(pShip, pSet, fDangerTimeThreshold,
                                            iFiringObjectID, bMatchFiringObject):
     from engine.appc.projectiles import incoming_ids
-    return tuple(incoming_ids(pShip, float(fDangerTimeThreshold),
-                              int(iFiringObjectID), bool(bMatchFiringObject)))
+    # Must be a fresh LIST: ConditionIncomingTorps.py:166 keeps the return
+    # value as self.liIncoming and .append()s/.remove()s on it (:270, :278).
+    return list(incoming_ids(pShip, float(fDangerTimeThreshold),
+                             int(iFiringObjectID), bool(bMatchFiringObject)))
 
 
 def AIScriptAssist_TorpIsIncoming(pShip, pTorp, fDangerTimeThreshold,
