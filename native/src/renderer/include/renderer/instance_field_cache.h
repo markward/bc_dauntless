@@ -126,6 +126,16 @@ public:
     /// Instance destroyed: release its entry and GL texture.
     void forget(scenegraph::InstanceId id);
 
+    /// The union of every brush box written to `id` since the last take
+    /// (empty for an unknown instance, or when nothing was carved since),
+    /// and clears it. This is what the severance check consumes -- see
+    /// voxel::hull_severance_local -- and it is deliberately separate from
+    /// the upload's own dirty box: the render and the Python-side check run
+    /// on different cadences, so each keeps its own accumulator. split()
+    /// and remove_cells() do not touch it: they are the OUTPUT of a check,
+    /// not new damage.
+    voxel::CellBox take_severance_box(scenegraph::InstanceId id);
+
     std::size_t size() const { return instances_.size(); }
 
     /// How many times get() has actually re-uploaded a texture, as opposed
@@ -134,6 +144,13 @@ public:
     /// re-uploads a whole atlas every frame is otherwise indistinguishable
     /// from one that works.
     std::size_t uploads() const { return uploads_; }
+
+    /// How many of those uploads were REGION uploads (glTexSubImage2D of the
+    /// dirty box only) rather than a whole-atlas glTexImage2D. Every upload
+    /// after an instance's first should be one, except after split() /
+    /// remove_cells(); the test pins that, since a cache that quietly fell
+    /// back to full uploads would still render correctly.
+    std::size_t partial_uploads() const { return partial_uploads_; }
 
 private:
     // Deliberately not std::unordered_map<InstanceId, ...>: that needs a
@@ -157,7 +174,17 @@ private:
         // class comment.
         voxel::DistanceField field;
         Entry pub;
-        bool dirty = true;
+        // The packed atlas bytes stay resident so a later carve can
+        // re-encode only its box into them (voxel::pack_field_region_to_
+        // atlas) and upload that rectangle; `dirty_box` is the union of the
+        // brush boxes since the last upload. `full` forces a whole-atlas
+        // pack + glTexImage2D: the first upload, and after split() /
+        // remove_cells(), which touch arbitrary cells.
+        std::vector<std::uint8_t> atlas;
+        voxel::CellBox dirty_box;
+        voxel::CellBox sever_box;
+        bool full = true;
+        bool dirty() const { return full || !dirty_box.empty(); }
     };
 
     // Packs `inst.field` and uploads it to `inst.pub.tex2d` (creating the
@@ -177,6 +204,7 @@ private:
     std::map<scenegraph::InstanceId, Instance, InstanceIdLess> instances_;
     voxel::HullVolumeCache* bake_cache_ = nullptr;
     std::size_t uploads_ = 0;
+    std::size_t partial_uploads_ = 0;
 };
 
 /// Result of hull_carve_deposit: the sphere slot's visible radius before and

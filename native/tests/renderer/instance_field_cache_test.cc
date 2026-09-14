@@ -1101,3 +1101,130 @@ TEST_F(InstanceFieldCacheTest, RemoveCellsSetsThemFullyCarved) {
 }
 
 }  // namespace
+
+// ── Incremental upload ──────────────────────────────────────────────────────
+// A carve after the first upload must NOT re-pack and re-specify the whole
+// atlas (33 ms + a 2.8 MB glTexImage2D per carve on a Warbird at -O0): it
+// re-encodes the brush's box and sends only those texels. What the GPU holds
+// afterwards must still be byte-identical to a full pack of the field --
+// that is the only correctness question, and it is asked by readback.
+
+namespace {
+
+std::vector<std::uint8_t> full_pack_of(const InstanceFieldCache& cache,
+                                       scenegraph::InstanceId id,
+                                       const InstanceFieldCache::Entry& e) {
+    const voxel::DistanceField* f = cache.field(id);
+    EXPECT_NE(f, nullptr);
+    return voxel::pack_field_to_atlas(*f, e.layout);
+}
+
+}  // namespace
+
+TEST_F(InstanceFieldCacheTest, LaterCarvesUploadOnlyTheirRegionAndStayByteExact) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_partial_upload");
+    const auto src = make_source("hull_partial_upload.nif", "hull");
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, make_baked_field()));
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+
+    cache.carve(id, src, kAuthoredRes, glm::vec3(5, 5, 5), kUp, 3.0f);
+    const InstanceFieldCache::Entry* e = cache.get(id);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(cache.uploads(), 1u);
+    EXPECT_EQ(cache.partial_uploads(), 0u) << "the first upload is the full one";
+    EXPECT_EQ(read_atlas(*e), full_pack_of(cache, id, *e));
+
+    // Opposite corner: a box that touches the lattice edge, so the border
+    // texels beside it must be refreshed too.
+    cache.carve(id, src, kAuthoredRes, glm::vec3(35, 35, 35), kUp, 3.0f);
+    e = cache.get(id);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(cache.uploads(), 2u);
+    EXPECT_EQ(cache.partial_uploads(), 1u) << "the second carve must take the region path";
+    EXPECT_EQ(read_atlas(*e), full_pack_of(cache, id, *e));
+
+    // Two carves between gets accumulate into one region upload; a capsule
+    // is a brush like any other.
+    cache.carve(id, src, kAuthoredRes, glm::vec3(0.5f, 20, 20), kUp, 3.0f);
+    cache.carve_capsule(id, src, kAuthoredRes, glm::vec3(10, 30, 5),
+                        glm::vec3(30, 30, 5), 2.0f);
+    e = cache.get(id);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(cache.uploads(), 3u);
+    EXPECT_EQ(cache.partial_uploads(), 2u);
+    EXPECT_EQ(read_atlas(*e), full_pack_of(cache, id, *e));
+}
+
+TEST_F(InstanceFieldCacheTest, SplitAndRemoveCellsTakeTheFullUploadPath) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_full_after_split");
+    const auto src = make_source("hull_full_after_split.nif", "hull");
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, make_baked_field()));
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId parent{1, 0};
+    const scenegraph::InstanceId child{2, 0};
+    cache.carve(parent, src, kAuthoredRes, glm::vec3(5, 5, 5), kUp, 3.0f);
+    ASSERT_NE(cache.get(parent), nullptr);
+
+    std::vector<glm::ivec3> cells;
+    for (int z = 0; z < 2; ++z) for (int y = 0; y < 2; ++y) for (int x = 0; x < 2; ++x)
+        cells.emplace_back(x, y, z);
+    ASSERT_TRUE(cache.split(parent, child, cells));
+    const InstanceFieldCache::Entry* p = cache.get(parent);
+    const InstanceFieldCache::Entry* c = cache.get(child);
+    ASSERT_NE(p, nullptr);
+    ASSERT_NE(c, nullptr);
+    EXPECT_EQ(cache.partial_uploads(), 0u) << "split is a whole-field change";
+    EXPECT_EQ(read_atlas(*p), full_pack_of(cache, parent, *p));
+    EXPECT_EQ(read_atlas(*c), full_pack_of(cache, child, *c));
+
+    std::vector<glm::ivec3> more{glm::ivec3(3, 3, 3), glm::ivec3(3, 3, 4)};
+    ASSERT_TRUE(cache.remove_cells(parent, more));
+    p = cache.get(parent);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(cache.partial_uploads(), 0u);
+    EXPECT_EQ(read_atlas(*p), full_pack_of(cache, parent, *p));
+
+    // And after those, a plain carve is incremental again.
+    cache.carve(parent, src, kAuthoredRes, glm::vec3(20, 20, 20), kUp, 3.0f);
+    p = cache.get(parent);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(cache.partial_uploads(), 1u);
+    EXPECT_EQ(read_atlas(*p), full_pack_of(cache, parent, *p));
+}
+
+// ── Severance box ───────────────────────────────────────────────────────────
+// The box the severance check consumes: the union of every brush since the
+// last take, independent of the upload's own dirty box (the render and the
+// Python-side check run on different cadences).
+TEST_F(InstanceFieldCacheTest, SeveranceBoxAccumulatesCarvesUntilTaken) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_sever_box");
+    const auto src = make_source("hull_sever_box.nif", "hull");
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, make_baked_field()));
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+    EXPECT_TRUE(cache.take_severance_box(id).empty()) << "unknown instance";
+
+    cache.carve(id, src, kAuthoredRes, glm::vec3(5, 5, 5), kUp, 3.0f);
+    ASSERT_NE(cache.get(id), nullptr);          // an upload does not consume it
+    cache.carve(id, src, kAuthoredRes, glm::vec3(35, 35, 35), kUp, 3.0f);
+
+    const voxel::DistanceField* f = cache.field(id);
+    ASSERT_NE(f, nullptr);
+    auto cell_of = [&](glm::vec3 p) {
+        const glm::vec3 g = (p - f->origin) / f->cell;
+        return glm::ivec3(int(std::floor(g.x)), int(std::floor(g.y)), int(std::floor(g.z)));
+    };
+    const voxel::CellBox b = cache.take_severance_box(id);
+    ASSERT_FALSE(b.empty());
+    EXPECT_TRUE(b.contains(cell_of(glm::vec3(5, 5, 5))));
+    EXPECT_TRUE(b.contains(cell_of(glm::vec3(35, 35, 35))));
+    EXPECT_TRUE(cache.take_severance_box(id).empty()) << "taking clears it";
+
+    cache.carve_capsule(id, src, kAuthoredRes, glm::vec3(10, 30, 5),
+                        glm::vec3(30, 30, 5), 2.0f);
+    EXPECT_FALSE(cache.take_severance_box(id).empty());
+}
