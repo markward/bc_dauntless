@@ -278,3 +278,96 @@ TEST(FieldAtlas, UnusedTilesReadAsNoDamage) {
             << x << "," << y << ")";
     }
 }
+
+// ── Region re-pack ──────────────────────────────────────────────────────────
+// pack_field_region_to_atlas updates a resident atlas for one CellBox. The
+// only thing that matters about it: after any brush, region-packing the
+// brush's box into the previously-packed atlas must equal a full re-pack
+// byte for byte -- including the replicated border texels when the box
+// touches a lattice edge, which is the case a naive implementation misses.
+
+namespace {
+
+void mutate_box(voxel::DistanceField& f, const voxel::CellBox& b, int delta) {
+    for (int z = b.lo.z; z <= b.hi.z; ++z)
+    for (int y = b.lo.y; y <= b.hi.y; ++y)
+    for (int x = b.lo.x; x <= b.hi.x; ++x)
+        f.dist[f.index(x, y, z)] = static_cast<std::int8_t>(
+            f.dist[f.index(x, y, z)] + delta);
+}
+
+void expect_region_equals_full(glm::ivec3 dims, const voxel::CellBox& box) {
+    voxel::DistanceField f = pattern_field(dims);
+    const voxel::AtlasLayout l = voxel::atlas_layout_for(dims);
+    std::vector<std::uint8_t> atlas = voxel::pack_field_to_atlas(f, l);
+    mutate_box(f, box, 7);
+    ASSERT_TRUE(voxel::pack_field_region_to_atlas(f, l, box, atlas));
+    const std::vector<std::uint8_t> full = voxel::pack_field_to_atlas(f, l);
+    ASSERT_EQ(atlas.size(), full.size());
+    std::size_t first_diff = full.size();
+    for (std::size_t i = 0; i < full.size(); ++i)
+        if (atlas[i] != full[i]) { first_diff = i; break; }
+    EXPECT_EQ(first_diff, full.size())
+        << "region pack diverges from full pack at atlas byte " << first_diff
+        << " (x=" << first_diff % l.width << ", y=" << first_diff / l.width << ")";
+}
+
+}  // namespace
+
+TEST(FieldAtlasRegion, InteriorBoxMatchesFullRepack) {
+    expect_region_equals_full(glm::ivec3(9, 7, 6),
+                              voxel::CellBox{glm::ivec3(2, 2, 1), glm::ivec3(5, 4, 3)});
+}
+
+TEST(FieldAtlasRegion, EdgeTouchingBoxRefreshesTheBorder) {
+    // Touches x=0, y=max and z=max at once.
+    expect_region_equals_full(glm::ivec3(9, 7, 6),
+                              voxel::CellBox{glm::ivec3(0, 4, 3), glm::ivec3(3, 6, 5)});
+}
+
+TEST(FieldAtlasRegion, WholeLatticeBoxMatchesFullRepack) {
+    expect_region_equals_full(glm::ivec3(9, 7, 6),
+                              voxel::CellBox{glm::ivec3(0), glm::ivec3(8, 6, 5)});
+}
+
+TEST(FieldAtlasRegion, SingleCellCornerBox) {
+    expect_region_equals_full(glm::ivec3(9, 7, 6),
+                              voxel::CellBox{glm::ivec3(8, 6, 5), glm::ivec3(8, 6, 5)});
+}
+
+TEST(FieldAtlasRegion, RejectsAnEmptyBoxAMismatchedAtlasOrAnOutOfRangeBox) {
+    voxel::DistanceField f = pattern_field(glm::ivec3(9, 7, 6));
+    const voxel::AtlasLayout l = voxel::atlas_layout_for(f.dims);
+    std::vector<std::uint8_t> atlas = voxel::pack_field_to_atlas(f, l);
+    EXPECT_FALSE(voxel::pack_field_region_to_atlas(f, l, voxel::CellBox{}, atlas));
+    std::vector<std::uint8_t> wrong(atlas.size() - 1);
+    EXPECT_FALSE(voxel::pack_field_region_to_atlas(
+        f, l, voxel::CellBox{glm::ivec3(0), glm::ivec3(1)}, wrong));
+    EXPECT_FALSE(voxel::pack_field_region_to_atlas(
+        f, l, voxel::CellBox{glm::ivec3(0), glm::ivec3(9, 6, 5)}, atlas))
+        << "hi.x == dims.x is out of range";
+    EXPECT_FALSE(voxel::pack_field_region_to_atlas(
+        f, l, voxel::CellBox{glm::ivec3(-1, 0, 0), glm::ivec3(1)}, atlas));
+}
+
+TEST(FieldAtlasRegion, TileRectForASliceCoversTheBoxAndItsBorder) {
+    const voxel::AtlasLayout l = voxel::atlas_layout_for(glm::ivec3(9, 7, 6));
+    // Interior box: rect is the box, shifted by the tile origin + 1 border.
+    voxel::AtlasRect r = voxel::atlas_rect_for(l, glm::ivec3(9, 7, 6),
+                                               voxel::CellBox{glm::ivec3(2, 2, 1), glm::ivec3(5, 4, 3)}, 1);
+    const int tile_ox = (1 % l.tiles_x) * l.tile_w;
+    const int tile_oy = (1 / l.tiles_x) * l.tile_h;
+    EXPECT_EQ(r.x, tile_ox + 1 + 2);
+    EXPECT_EQ(r.y, tile_oy + 1 + 2);
+    EXPECT_EQ(r.w, 4);
+    EXPECT_EQ(r.h, 3);
+    // Edge-touching box: widened by one texel on each touching side.
+    r = voxel::atlas_rect_for(l, glm::ivec3(9, 7, 6),
+                              voxel::CellBox{glm::ivec3(0, 4, 3), glm::ivec3(3, 6, 5)}, 5);
+    const int tile_ox5 = (5 % l.tiles_x) * l.tile_w;
+    const int tile_oy5 = (5 / l.tiles_x) * l.tile_h;
+    EXPECT_EQ(r.x, tile_ox5);            // x=0 touched: includes the left border
+    EXPECT_EQ(r.w, 5);                   // 4 cells + 1 border column
+    EXPECT_EQ(r.y, tile_oy5 + 1 + 4);
+    EXPECT_EQ(r.h, 4);                   // 3 cells + 1 border row (y=max touched)
+}

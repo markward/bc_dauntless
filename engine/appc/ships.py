@@ -1605,6 +1605,21 @@ class ShipClass(DamageableObject):
     def GetTargetSubsystem(self):                 return self._target_subsystem
     def SetTargetSubsystem(self, s) -> None:      self._target_subsystem = s
 
+    def GetTargetOffsetTG(self) -> TGPoint3:
+        """Target-local aim offset the player's fire path hands to
+        StartFiring (TacticalInterfaceHandlers.py:362, alongside GetTarget()).
+        SDK-inferred semantics: the locked subsystem's local position, zero
+        without a lock -- the same offset the AI builds from
+        pSubsystem.GetPositionTG() (AI/Preprocessors.py:462) and MissionLib
+        stamps via Torpedo.SetTargetOffset(pSubsystem.GetPosition()).  Was a
+        silent _Stub (heatmap rank 21), so every player shot aimed at the
+        hull centre regardless of the lock."""
+        sub = self._target_subsystem
+        pos = sub.GetPositionTG() if (sub is not None and hasattr(sub, "GetPositionTG")) else None
+        if isinstance(pos, TGPoint3):
+            return TGPoint3(pos.x, pos.y, pos.z)
+        return TGPoint3(0.0, 0.0, 0.0)
+
     # ── Lifecycle state ──────────────────────────────────────────────────────
     def IsDocked(self) -> int:    return 1 if self._docked else 0
     def SetDocked(self, v) -> None:

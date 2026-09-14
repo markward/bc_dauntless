@@ -29,6 +29,38 @@ inline constexpr float kDefaultBandCells = 4.0f;
 /// the Warbird cut breaches into nothing was expressed in cells, and the
 /// Warbird's authored cells are 25 model units against the fleet's 15 -- so
 /// "2 cells" silently meant 50 units on one ship and 30 on every other.
+/// An inclusive box of lattice cells, the unit every incremental consumer of
+/// a DistanceField works in: the brushes return the box they wrote, the atlas
+/// upload re-encodes only that box, and the severance check floods from its
+/// shell. Empty (lo > hi) means "no cell" -- the default, and what a no-op
+/// brush returns -- so a consumer can `include()` boxes blindly and test
+/// `empty()` once at the end.
+struct CellBox {
+    glm::ivec3 lo{1, 1, 1};
+    glm::ivec3 hi{0, 0, 0};
+
+    bool empty() const { return lo.x > hi.x || lo.y > hi.y || lo.z > hi.z; }
+    bool contains(const glm::ivec3& c) const {
+        return !empty() && c.x >= lo.x && c.y >= lo.y && c.z >= lo.z &&
+               c.x <= hi.x && c.y <= hi.y && c.z <= hi.z;
+    }
+    /// Grow to the union with `other`; an empty `other` changes nothing and
+    /// an empty `this` becomes `other`.
+    void include(const CellBox& other) {
+        if (other.empty()) return;
+        if (empty()) { *this = other; return; }
+        lo = glm::min(lo, other.lo);
+        hi = glm::max(hi, other.hi);
+    }
+    /// Cell count, 0 when empty.
+    std::size_t volume() const {
+        if (empty()) return 0;
+        return static_cast<std::size_t>(hi.x - lo.x + 1)
+             * static_cast<std::size_t>(hi.y - lo.y + 1)
+             * static_cast<std::size_t>(hi.z - lo.z + 1);
+    }
+};
+
 struct DistanceField {
     glm::ivec3 dims{0};
     glm::vec3  origin{0.0f};   // body-frame position of cell (0,0,0)'s min corner

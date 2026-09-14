@@ -82,13 +82,22 @@ def _pulse_weapon(*, module_name=_MODULE, with_power_property=False,
     return cannon
 
 
+def _enemy():
+    """A real target 100 GU dead ahead: the targeted fire path now resolves
+    an aim point on it and refuses anything it cannot resolve (BC slot
+    +0x7C), so a bare string no longer stands in for a target."""
+    enemy = ShipClass_Create("Enemy")
+    enemy.SetWorldLocation(TGPoint3(0, 100, 0))
+    return enemy
+
+
 # ── Spawn / charge / cooldown ───────────────────────────────────────────────
 
 def test_fire_spawns_one_bolt_with_module_payload():
     _active.clear()
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
     assert len(_active) == 1
     bolt = _active[-1]
     assert bolt._damage == 220.0
@@ -101,7 +110,7 @@ def test_fire_charges_one_shot_and_starts_cooldown():
     _active.clear()
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
     # 3.8 - (1.0 × MED 1.0): one bolt's cost, not the whole tank.
     assert cannon._charge_level == pytest.approx(2.8)
     assert cannon._cooldown_remaining == 0.2
@@ -113,9 +122,9 @@ def test_second_immediate_fire_is_no_op():
     _active.clear()
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
         assert len(_active) == 1
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
     # Cooldown active -> CanFire 0 -> no new bolt.
     assert len(_active) == 1
     _active.clear()
@@ -126,7 +135,7 @@ def test_fire_does_not_set_firing_or_loop_handle():
     _active.clear()
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
     assert cannon._firing is False
     assert cannon._loop_handle is None
     _active.clear()
@@ -138,7 +147,7 @@ def test_update_charge_decrements_cooldown():
     _active.clear()
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
     cannon.UpdateCharge(dt=0.1)
     assert abs(cannon._cooldown_remaining - 0.1) < 1e-9
     cannon.UpdateCharge(dt=0.2)  # past the 0.2 cooldown total
@@ -150,7 +159,7 @@ def test_update_charge_recharges_never_discharges():
     _active.clear()
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
     # One shot's cost taken (3.8 -> 2.8); recharge refills it (firing stays
     # False, so UpdateCharge never takes the drain branch).
     cannon.UpdateCharge(dt=1.0)
@@ -164,7 +173,7 @@ def test_fire_empty_module_name_silent_no_op():
     _active.clear()
     cannon = _pulse_weapon(module_name="")
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")  # must not raise
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))  # must not raise
     assert len(_active) == 0
     # Charge not dumped, no cooldown started.
     assert cannon._charge_level == 3.8
@@ -180,7 +189,7 @@ def test_fire_succeeds_regardless_of_battery():
     cannon = _pulse_weapon(with_power_property=True, available=0.0, main_battery=0.0)
     ship = cannon._climb_to_ship()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
     assert len(_active) == 1
     # Battery NOT changed by Fire
     assert ship.GetPowerSubsystem().GetMainBatteryPower() == 0.0
@@ -193,7 +202,7 @@ def test_fire_does_not_drain_battery():
     cannon = _pulse_weapon(with_power_property=True, available=0.0, main_battery=100.0)
     ship = cannon._climb_to_ship()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
     assert len(_active) == 1
     assert ship.GetPowerSubsystem().GetMainBatteryPower() == 100.0
     _active.clear()
@@ -203,7 +212,7 @@ def test_fire_without_power_property_bypasses_gate():
     _active.clear()
     cannon = _pulse_weapon(with_power_property=False)
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
     assert len(_active) == 1
     _active.clear()
 
@@ -220,7 +229,7 @@ def test_fire_plays_launch_sound():
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance") as mock_mgr:
         mock_snd = mock_mgr.return_value.GetSound.return_value
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
         mock_mgr.return_value.GetSound.assert_called_with("Klingon Disruptor")
         mock_mgr.return_value.PlaySound.assert_not_called()
         bolt = _active[-1]
@@ -256,7 +265,7 @@ def test_stock_values_re_arm_and_refire_after_recharge():
     _active.clear()
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
         assert len(_active) == 1                      # first shot
         assert cannon._charge_level == pytest.approx(2.8)
         assert cannon.CanFire() == 0                  # on cooldown + below min
@@ -268,6 +277,6 @@ def test_stock_values_re_arm_and_refire_after_recharge():
 
         assert cannon._charge_level >= cannon._min_firing_charge
         assert cannon.CanFire() == 1                  # re-armed at MinFiringCharge
-        cannon.Fire(target="enemy", offset="hit")
+        cannon.Fire(target=_enemy(), offset=TGPoint3(0, 0, 0))
         assert len(_active) == 2                      # second shot fired
     _active.clear()

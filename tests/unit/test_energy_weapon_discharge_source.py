@@ -118,9 +118,14 @@ def _bop_cannon():
 
 
 def _fire(cannon):
+    """One bolt at a real target 100 GU dead ahead — the targeted fire path
+    resolves an aim point on it and refuses anything it cannot (BC slot
+    +0x7C), so a bare string no longer stands in for a target."""
+    enemy = ShipClass_Create("Enemy")
+    enemy.SetWorldLocation(TGPoint3(0, 100, 0))
     _active.clear()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
-        fired = cannon.Fire(target="enemy", offset="hit")
+        fired = cannon.Fire(target=enemy, offset=TGPoint3(0, 0, 0))
     _active.clear()
     return fired
 

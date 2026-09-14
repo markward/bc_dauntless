@@ -360,17 +360,117 @@ def _reset_projectile_module_cache() -> None:
     _projectile_modules.clear()
 
 
-def _spawn_projectile(emitter, mod, *, drf_override=0.0):
+def _emitter_forward_world(emitter, ship, *, skew=False) -> TGPoint3:
+    """The emitter's local forward (tube Direction / cannon OrientationForward)
+    rotated to world.  ``skew`` adds BC's +0.033 x Right fan in the LOCAL
+    frame first (audited §2.4.1; torpedo skew salvo only)."""
+    got = emitter.GetDirection() if hasattr(emitter, "GetDirection") else None
+    local = (TGPoint3(got.x, got.y, got.z) if isinstance(got, TGPoint3)
+             else TGPoint3(0.0, 1.0, 0.0))
+    if skew and getattr(emitter, "IsSkewFire", None) and emitter.IsSkewFire():
+        right = emitter.GetRight() if hasattr(emitter, "GetRight") else None
+        if isinstance(right, TGPoint3):
+            local = TGPoint3(local.x + 0.033 * right.x,
+                             local.y + 0.033 * right.y,
+                             local.z + 0.033 * right.z)
+    if ship is not None and hasattr(ship, "GetWorldRotation"):
+        rot = ship.GetWorldRotation()
+        if isinstance(rot, TGMatrix3):
+            local.MultMatrixLeft(rot)
+    return local
+
+
+# BC's range gate on the pulse launch solve: refuse when the predicted
+# intercept is further than this many seconds' worth of effective bolt speed.
+_PULSE_RANGE_GATE_SECONDS = 30.0
+_PULSE_DEFAULT_LIFETIME = 8.0        # C++ default when the module has no GetLifetime
+
+
+def _solve_pulse_launch_direction(cannon, ship, target, mod):
+    """BC's targeted pulse launch (PulseWeapon vtable slot +0x7C): a
+    world-space unit launch direction that LEADS the target, or None when
+    the shot must be refused.  Read from the retail binary 2026-09-14
+    (clean-room answer); prose, not transcription:
+
+      aim    = target centre + local aim offset, rotated & scaled (0x005852A0
+               -- the same resolver the torpedo tube's fire gate uses)
+      muzzle = cannon mount position in world
+      v_eff  = launchSpeed + (shipVel - targetVel) . unit(aim - muzzle)
+      t      = |aim - muzzle| / v_eff
+      pred   = aim + targetVel*t + 0.5*targetAccel*t^2   (lead helper 0x005A0B50)
+               - shipVel*t     (the bolt inherits shipVel; cancel that drift)
+      dir    = unit(pred - muzzle)
+
+    Refusals, in BC's order: v_eff <= 0 (target outruns the bolt), t <= 0,
+    t > the module's GetLifetime() (default 8 s), predicted range beyond
+    30 * v_eff.  The arc test is the caller's, on the returned direction.
+
+    launchSpeed is the module's GetLaunchSpeed() -- BC keeps a separate
+    per-weapon copy for the solver (PulseWeapon+0xCC) that script is
+    expected to keep equal to the module value; the SDK AI reads it via
+    PulseWeapon.GetLaunchSpeed() for its own lead, so one source is the
+    faithful reading.
+    """
+    aim = _resolve_torpedo_aim_point(cannon, target)
+    if aim is None:
+        return None
+    muzzle = cannon._emitter_world_position()
+    to_aim = aim - muzzle
+    dist = to_aim.Length()
+    if dist < 1e-6:
+        return None
+    u = TGPoint3(to_aim.x / dist, to_aim.y / dist, to_aim.z / dist)
+
+    def _vec(obj, name):
+        v = getattr(obj, name)() if (obj is not None and hasattr(obj, name)) else None
+        return v if isinstance(v, TGPoint3) else TGPoint3(0.0, 0.0, 0.0)
+
+    ship_vel = _vec(ship, "GetVelocityTG")
+    tgt_vel = _vec(target, "GetVelocityTG")
+    tgt_acc = _vec(target, "GetAccelerationTG")
+
+    launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
+    v_eff = launch_speed + (ship_vel - tgt_vel).Dot(u)
+    if v_eff <= 0.0:
+        return None
+    t = dist / v_eff
+    if t <= 0.0:
+        return None
+    lifetime = (float(mod.GetLifetime()) if hasattr(mod, "GetLifetime")
+                else _PULSE_DEFAULT_LIFETIME)
+    if t > lifetime:
+        return None
+    pred = TGPoint3(
+        aim.x + tgt_vel.x * t + 0.5 * tgt_acc.x * t * t - ship_vel.x * t,
+        aim.y + tgt_vel.y * t + 0.5 * tgt_acc.y * t * t - ship_vel.y * t,
+        aim.z + tgt_vel.z * t + 0.5 * tgt_acc.z * t * t - ship_vel.z * t,
+    )
+    launch = pred - muzzle
+    n = launch.Length()
+    if n < 1e-6 or n > _PULSE_RANGE_GATE_SECONDS * v_eff:
+        return None
+    return TGPoint3(launch.x / n, launch.y / n, launch.z / n)
+
+
+def _spawn_projectile(emitter, mod, *, drf_override=0.0, world_dir=None):
     """Spawn an in-flight projectile from `emitter` using SDK module `mod`.
 
     Shared by torpedo tubes and pulse-weapon cannons. Builds a Torpedo at the
     emitter's world position, runs mod.Create to populate visuals/behaviour,
     applies drf_override (the launcher's DamageRadiusFactor) when > 0, and
-    launches it BC-faithfully (audited §2.4.1): straight out the tube's
-    authored Direction (skewed +0.033 x Right when IsSkewFire) rotated to
-    world, at GetLaunchSpeed(), plus the firing ship's own linear velocity —
-    the aim point never steers the launch.  Registers it and plays
-    mod.GetLaunchSound.  Returns the Torpedo, or None if mod is unusable.
+    launches it at GetLaunchSpeed() plus the firing ship's own linear
+    velocity.  The launch DIRECTION differs by weapon class, and the caller
+    owns that choice:
+
+      * torpedo tubes pass ``world_dir=None`` -> straight out the tube's
+        authored Direction (skewed +0.033 x Right when IsSkewFire) rotated to
+        world (audited §2.4.1) -- the aim point never steers the launch;
+      * pulse cannons pass the world-space unit vector their launch solve
+        produced (``_solve_pulse_launch_direction``) -- for them the launch
+        IS the aim, since every stock pulse module authors zero guidance.
+
+    Registers it and plays mod.GetLaunchSound.  Returns the Torpedo, or None
+    if mod is unusable.
     """
     from engine.appc.projectiles import Torpedo, register
     from engine.appc.math import TGPoint3
@@ -395,28 +495,13 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0):
 
     launch_speed = float(mod.GetLaunchSpeed()) if hasattr(mod, "GetLaunchSpeed") else 0.0
 
-    # ── Launch trajectory (audited §2.4.1): the aim point NEVER steers the
-    # launch. Direction = tube-local Direction (skew: + 0.033 x Right, local
-    # frame, fixed sign) rotated to world; speed from the Python projectile
-    # module; plus the firing ship's own linear velocity.
-    local_dir = None
-    got = emitter.GetDirection() if hasattr(emitter, "GetDirection") else None
-    if isinstance(got, TGPoint3):
-        local_dir = TGPoint3(got.x, got.y, got.z)
-    if local_dir is None:
-        local_dir = TGPoint3(0.0, 1.0, 0.0)
-    if getattr(emitter, "IsSkewFire", None) and emitter.IsSkewFire():
-        right = emitter.GetRight() if hasattr(emitter, "GetRight") else None
-        if isinstance(right, TGPoint3):
-            local_dir = TGPoint3(local_dir.x + 0.033 * right.x,
-                                 local_dir.y + 0.033 * right.y,
-                                 local_dir.z + 0.033 * right.z)
-    world_dir = TGPoint3(local_dir.x, local_dir.y, local_dir.z)
-    if source_ship is not None and hasattr(source_ship, "GetWorldRotation"):
-        rot = source_ship.GetWorldRotation()
-        from engine.appc.math import TGMatrix3
-        if isinstance(rot, TGMatrix3):
-            world_dir.MultMatrixLeft(rot)
+    if isinstance(world_dir, TGPoint3):
+        world_dir = TGPoint3(world_dir.x, world_dir.y, world_dir.z)
+    else:
+        # ── Tube launch trajectory (audited §2.4.1): the aim point NEVER
+        # steers the launch. Direction = tube-local Direction (skew: + 0.033
+        # x Right, local frame, fixed sign) rotated to world.
+        world_dir = _emitter_forward_world(emitter, source_ship, skew=True)
     length = world_dir.Length()
     ship_vel = (source_ship.GetVelocityTG()
                 if source_ship is not None and hasattr(source_ship, "GetVelocityTG")
@@ -440,6 +525,7 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0):
     if (target_ship is not None
             and hasattr(target_ship, "IsDead") and not target_ship.IsDead()):
         torp._target_ship = target_ship
+        torp.SetTargetOffset(getattr(emitter, "_target_offset", None))
     else:
         torp._target_ship = None
 
@@ -2352,8 +2438,6 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         would double-fire every successful shot)."""
         if not self.CanFire():
             return False
-        if not self._aim_in_arc(target):
-            return False
         prop = self.GetProperty()
         script = prop.GetModuleName() if (prop is not None and hasattr(prop, "GetModuleName")) else ""
         if not script:
@@ -2363,7 +2447,33 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
             mod = importlib.import_module(script)
         except ImportError:
             return False
-        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor())
+        ship = self._climb_to_ship()
+        # BC WeaponSystem::Fire picks the branch: the weapon's own target,
+        # else the ship's current target, else the no-target slot (+0x80).
+        if target is None:
+            target = self._target
+        if target is None and ship is not None and hasattr(ship, "GetTarget"):
+            target = ship.GetTarget()
+        if target is not None and hasattr(target, "IsDead") and target.IsDead():
+            target = None
+        if target is not None:
+            # Targeted slot (+0x7C): stamp target + aim offset (BC
+            # Weapon+0x8C/+0x90..+0x98), solve the LED launch direction,
+            # then gate it on the authored arc -- a pure fire/no-fire test on
+            # the solved direction, never a clamp.
+            self._target = target
+            self._target_offset = offset if isinstance(offset, TGPoint3) else None
+            world_dir = _solve_pulse_launch_direction(self, ship, target, mod)
+            if world_dir is None or not _emitter_in_arc(self, ship, world_dir):
+                return False
+        else:
+            # No target anywhere (+0x80): straight out the cannon's
+            # OrientationForward.  Nothing to home on.
+            self._target = None
+            self._target_offset = None
+            world_dir = _emitter_forward_world(self, ship)
+        _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor(),
+                          world_dir=world_dir)
         # Discrete drain: a flat per-shot cost of NormalDischargeRate × the
         # power-setting scale (BC's GetPowerScaled), then the cooldown.  Not
         # a dump-to-zero — that made a stock BoP wait ~9 s between bolts

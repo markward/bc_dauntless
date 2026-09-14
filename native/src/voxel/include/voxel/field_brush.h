@@ -61,7 +61,12 @@ inline constexpr float kCarveFieldOffsetCells = 1.25f;
 /// +Z rather than producing NaN. Empty field, non-positive radius, non-finite
 /// radius, non-finite centre_body or normal_body components, or a carve
 /// entirely off the grid are all no-ops.
-void field_carve_oblate(DistanceField& f,
+///
+/// Returns the inclusive box of cells the brush WROTE (clamped to the
+/// lattice; empty for every no-op above). Every changed cell lies inside it;
+/// it is not promised tight. The atlas upload and the severance check both
+/// work on this box instead of the whole lattice -- see CellBox.
+CellBox field_carve_oblate(DistanceField& f,
                         const glm::vec3& center_body,
                         const glm::vec3& normal_body,
                         float radius);
@@ -79,8 +84,9 @@ void field_carve_oblate(DistanceField& f,
 /// cut, rimmed and given an interior entirely by machinery that exists.
 ///
 /// Body frame, MODEL UNITS. Empty field, non-positive/non-finite radius,
-/// non-finite endpoints, or a capsule wholly off-grid are no-ops.
-void field_carve_capsule(DistanceField& f,
+/// non-finite endpoints, or a capsule wholly off-grid are no-ops. Returns the
+/// written cell box, same contract as field_carve_oblate.
+CellBox field_carve_capsule(DistanceField& f,
                          const glm::vec3& p0_body,
                          const glm::vec3& p1_body,
                          float radius);

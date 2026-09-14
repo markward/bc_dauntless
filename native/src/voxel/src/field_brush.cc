@@ -6,13 +6,13 @@
 
 namespace voxel {
 
-void field_carve_oblate(DistanceField& f,
+CellBox field_carve_oblate(DistanceField& f,
                         const glm::vec3& center_body,
                         const glm::vec3& normal_body,
                         float radius) {
-    if (f.empty()) return;
-    if (!(radius > 0.0f)) return;
-    if (!(f.scale > 0.0f)) return;
+    if (f.empty()) return {};
+    if (!(radius > 0.0f)) return {};
+    if (!(f.scale > 0.0f)) return {};
 
     // Reject non-finite inputs. Infinity or NaN in center_body, normal_body, or
     // radius would lead to undefined behaviour in floor() and int casts below.
@@ -20,7 +20,7 @@ void field_carve_oblate(DistanceField& f,
         !std::isfinite(center_body.z) || !std::isfinite(radius) ||
         !std::isfinite(normal_body.x) || !std::isfinite(normal_body.y) ||
         !std::isfinite(normal_body.z)) {
-        return;
+        return {};
     }
 
     glm::vec3 n = normal_body;
@@ -59,7 +59,7 @@ void field_carve_oblate(DistanceField& f,
     glm::ivec3 c1 = to_cell(hi);
     c0 = glm::max(c0, glm::ivec3(0));
     c1 = glm::min(c1, f.dims - 1);
-    if (c0.x > c1.x || c0.y > c1.y || c0.z > c1.z) return;   // wholly off-grid
+    if (c0.x > c1.x || c0.y > c1.y || c0.z > c1.z) return {};   // wholly off-grid
 
     for (int z = c0.z; z <= c1.z; ++z)
     for (int y = c0.y; y <= c1.y; ++y)
@@ -95,17 +95,18 @@ void field_carve_oblate(DistanceField& f,
         q = std::max(-127.0f, std::min(127.0f, q));
         f.dist[i] = static_cast<std::int8_t>(q);
     }
+    return CellBox{c0, c1};
 }
 
-void field_carve_capsule(DistanceField& f,
+CellBox field_carve_capsule(DistanceField& f,
                          const glm::vec3& p0_body,
                          const glm::vec3& p1_body,
                          float radius) {
-    if (f.empty()) return;
-    if (!(radius > 0.0f) || !std::isfinite(radius)) return;
-    if (!(f.scale > 0.0f)) return;
+    if (f.empty()) return {};
+    if (!(radius > 0.0f) || !std::isfinite(radius)) return {};
+    if (!(f.scale > 0.0f)) return {};
     for (int k = 0; k < 3; ++k) {
-        if (!std::isfinite(p0_body[k]) || !std::isfinite(p1_body[k])) return;
+        if (!std::isfinite(p0_body[k]) || !std::isfinite(p1_body[k])) return {};
     }
 
     const float min_cell = std::min(f.cell.x, std::min(f.cell.y, f.cell.z));
@@ -122,7 +123,7 @@ void field_carve_capsule(DistanceField& f,
     };
     glm::ivec3 c0 = glm::max(to_cell(lo), glm::ivec3(0));
     glm::ivec3 c1 = glm::min(to_cell(hi), f.dims - 1);
-    if (c0.x > c1.x || c0.y > c1.y || c0.z > c1.z) return;
+    if (c0.x > c1.x || c0.y > c1.y || c0.z > c1.z) return {};
 
     const glm::vec3 ab = p1_body - p0_body;
     const float ab2 = glm::dot(ab, ab);
@@ -146,6 +147,7 @@ void field_carve_capsule(DistanceField& f,
         q8 = std::max(-127.0f, std::min(127.0f, q8));
         f.dist[i] = static_cast<std::int8_t>(q8);
     }
+    return CellBox{c0, c1};
 }
 
 }  // namespace voxel
