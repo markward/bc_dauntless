@@ -258,3 +258,15 @@ TEST(HullSeveranceLocal, BoxOnTheLatticeEdgeDoesNotReadOutOfBounds) {
     EXPECT_EQ(voxel::hull_severance_local(baked, damage, box, 100000),
               voxel::Severance::kConnected);
 }
+
+TEST(HullSeveranceLocal, ABoxCoveringMostOfTheLatticeHandsOffAtOnce) {
+    // With the default budget a near-whole-lattice box is the BFS's job:
+    // kUnknown without flooding. An explicit budget still runs the flood.
+    const auto baked = make_dumbbell_baked();
+    const auto damage = undamaged_like(baked);
+    const voxel::CellBox box{glm::ivec3(0, 0, 0), glm::ivec3(16, 6, 6)};
+    EXPECT_EQ(voxel::hull_severance_local(baked, damage, box),
+              voxel::Severance::kUnknown);
+    EXPECT_EQ(voxel::hull_severance_local(baked, damage, box, 100000),
+              voxel::Severance::kConnected);
+}

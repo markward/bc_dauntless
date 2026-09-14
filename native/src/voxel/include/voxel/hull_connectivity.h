@@ -81,9 +81,11 @@ inline constexpr std::size_t kSeveranceVisitFactor = 8;
 /// instance must therefore be the full BFS -- a hull whose BAKE is several
 /// components would otherwise never shed the extra ones.
 ///
-/// `visit_cap` 0 means kSeveranceVisitFactor x the expanded box's volume.
-/// An empty box or a lattice mismatch is kUnknown (never a false
-/// kConnected); no occupied cell near the box is kConnected.
+/// `visit_cap` 0 means kSeveranceVisitFactor x the expanded box's volume --
+/// and a box so large that this budget would cover the lattice (a cascade
+/// capsule across the hull) is kUnknown at once, since there is nothing
+/// local left to exploit. An empty box or a lattice mismatch is kUnknown
+/// (never a false kConnected); no occupied cell near the box is kConnected.
 Severance hull_severance_local(const DistanceField& baked,
                                const DistanceField& damage,
                                const CellBox& box,

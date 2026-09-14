@@ -160,14 +160,20 @@ Severance hull_severance_local(const DistanceField& baked,
     // carve, plus whatever survived inside it.
     CellBox e{glm::max(box.lo - 1, glm::ivec3(0)),
               glm::min(box.hi + 1, d - 1)};
-    if (visit_cap == 0) visit_cap = kSeveranceVisitFactor * e.volume();
+    const std::size_t n = baked.dist.size();
+    if (visit_cap == 0) {
+        // A box whose budget would cover the lattice anyway (a cascade
+        // capsule across the hull) has nothing local about it: hand it to
+        // the BFS now rather than flood most of the hull first.
+        if (e.volume() >= n / kSeveranceVisitFactor) return Severance::kUnknown;
+        visit_cap = kSeveranceVisitFactor * e.volume();
+    }
 
     // Two bitmaps over the lattice -- targets and visited -- rather than
     // hash sets: one bit per cell is 8 KB on a Galaxy and 210 KB on the
     // largest station, cleared in microseconds, and every membership test
     // is a shift and a mask. (A hash-set version cost 190 ms per check at
     // -O0 on a Galaxy: worse than the full BFS it was meant to avoid.)
-    const std::size_t n = baked.dist.size();
     std::vector<std::uint64_t> target_bits((n + 63) / 64, 0);
     std::vector<std::uint64_t> visited_bits((n + 63) / 64, 0);
     auto test = [](const std::vector<std::uint64_t>& b, std::size_t i) {
@@ -196,7 +202,7 @@ Severance hull_severance_local(const DistanceField& baked,
     // few cells of the seed, and a DFS would happily run down a nacelle
     // before finishing the shell.
     std::vector<std::size_t> queue;
-    queue.reserve(visit_cap + 1);
+    queue.reserve(4096);   // grows if needed; never sized from the cap
     queue.push_back(seed);
     set(visited_bits, seed);
     std::size_t visited = 1;
