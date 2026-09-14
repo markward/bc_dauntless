@@ -172,12 +172,27 @@ class ModStatus:
     unplaced: list = None        # top-level dir names we could not place
     read_error: bool = False     # set if any directory of this mod was unreadable
     requires: list = None        # frameworks this mod imports that are unavailable
+    # Ship names this mod carries a hardpoint for while NOTHING -- stock, this
+    # mod, or any other installed mod -- provides the ship script. The mod
+    # upgrades a hull it expects you to already have (VoyagerCubeHP's readme:
+    # "Requirements: ... Voyager Borg Cube installed"). Its ship cannot appear,
+    # and without this the player has no way to learn why.
+    orphan_hardpoints: list = None
+    # Stock ship scripts this mod replaces in place. Such a mod deliberately
+    # adds NO new row to the ship picker -- CGSovereign becomes *the*
+    # Sovereign -- which is indistinguishable from "the mod failed to load"
+    # unless we say so.
+    replaces_ships: list = None
 
     def __post_init__(self):
         if self.unplaced is None:
             self.unplaced = []
         if self.requires is None:
             self.requires = []
+        if self.orphan_hardpoints is None:
+            self.orphan_hardpoints = []
+        if self.replaces_ships is None:
+            self.replaces_ships = []
 
 
 @dataclass
@@ -316,6 +331,109 @@ def classify(index: ModIndex, game_root: Path, sdk_scripts: Path) -> None:
     index.overrides = [
         rel for rel, mf in sorted(index.files.items()) if _shadows_stock(mf)
     ]
+    _classify_ship_scripts(index, sdk_scripts)
+
+
+# ``ships/<name>.py`` and ``ships/hardpoints/<name>.py`` as folded index keys.
+# Both live under ships/, so the hardpoint pattern must be tested FIRST or a
+# hardpoint reads as a ship script of the same name.
+_HARDPOINT_KEY = re.compile(r"^ships/hardpoints/([^/]+)\.py$")
+_SHIP_KEY = re.compile(r"^ships/([^/]+)\.py$")
+
+# A ship script NAMES its hardpoint in GetShipStats:
+#     "HardpointFile": "LCintrepidHP"
+# That declaration is the only link between the two files. The names often
+# coincide -- stock Galaxy.py declares "galaxy" -- but they need not, and
+# assuming they must reported the working LC Intrepid pack (LCintrepidZZ.py ->
+# "LCintrepidHP") as three broken hardpoints.
+_HARDPOINT_DECL = re.compile(
+    r"""["']HardpointFile["']\s*:\s*["']([^"']+)["']""")
+
+
+def _classify_ship_scripts(index: ModIndex, sdk_scripts) -> None:
+    """Fill each mod's `orphan_hardpoints` and `replaces_ships`.
+
+    Both answer the same player question -- "why is this mod's ship not in the
+    picker?" -- for the two cases where the honest answer is "it was never
+    going to be":
+
+    * a hardpoint whose ship script nothing provides (an upgrade mod missing
+      its base mod), and
+    * a mod that replaces a stock ship in place rather than adding one.
+
+    Reads the mod's OWN ship scripts (already indexed, typically a few dozen
+    small files) to learn which hardpoints they claim, plus one stat per mod
+    hardpoint against the stock root. Never walks the install.
+    """
+    by_mod = {}
+    for status in index.mods:
+        by_mod[status.name] = status
+        # classify() may be called more than once on one index (tests, and a
+        # re-classify after a mod is toggled); accumulate nothing stale.
+        status.orphan_hardpoints = []
+        status.replaces_ships = []
+
+    claimed = _hardpoints_claimed_by_ship_scripts(index)
+
+    for key, mf in sorted(index.files.items()):
+        status = by_mod.get(mf.mod_name)
+        if status is None:
+            continue
+
+        hp = _HARDPOINT_KEY.match(key)
+        if hp is not None:
+            name = hp.group(1)
+            # A stock ship script may claim this hardpoint too. Reading all 52
+            # stock ship scripts at boot to find out would be the walk this
+            # function promises not to do, so fall back to the stock naming
+            # convention (ships/<hardpoint name>.py), which every stock ship
+            # follows -- Galaxy.py declares "galaxy".
+            if name in claimed:
+                continue
+            if (sdk_scripts / "ships" / f"{name}.py").exists():
+                continue
+            # Preserve the mod author's own capitalisation for the report;
+            # the index key is folded.
+            status.orphan_hardpoints.append(_raw_stem(mf, name))
+            continue
+
+        ship = _SHIP_KEY.match(key)
+        if ship is not None:
+            name = ship.group(1)
+            if (sdk_scripts / "ships" / f"{name}.py").exists():
+                status.replaces_ships.append(_raw_stem(mf, name))
+
+
+def _hardpoints_claimed_by_ship_scripts(index: ModIndex) -> set:
+    """Folded hardpoint names declared by any installed mod's ship script.
+
+    Cross-mod on purpose: VoyagerCubeHP upgrades a hull whose ship script
+    belongs to a DIFFERENT mod, so scoping this per-mod would report a
+    correctly-installed pair as broken.
+    """
+    claimed = set()
+    for key, mf in index.files.items():
+        if _SHIP_KEY.match(key) is None:
+            continue
+        try:
+            text = mf.abs_path.read_text(errors="replace")
+        except OSError:
+            # Unreadable ship script: say nothing rather than invent an
+            # orphan. read_error already flags the mod.
+            continue
+        for m in _HARDPOINT_DECL.finditer(text):
+            claimed.add(m.group(1).strip().lower())
+    return claimed
+
+
+def _raw_stem(mf: ModFile, folded_name: str) -> str:
+    """The mod author's spelling of a ship name, falling back to the folded
+    one when raw_rel is absent."""
+    if mf.raw_rel:
+        stem = mf.raw_rel.rsplit("/", 1)[-1]
+        if stem.lower().endswith(".py"):
+            return stem[:-3]
+    return folded_name
 
 
 def _imported_names(source: str) -> set:
@@ -356,14 +474,43 @@ def _imported_names(source: str) -> set:
     return names
 
 
+# Frameworks the ENGINE itself implements, mapped to the module that proves
+# it. `requires` means UNAVAILABLE, so a framework we reimplement must not be
+# listed -- every mod in the corpus imports Foundation, and reporting all six
+# as "requires: Foundation (unsupported)" told the player their mods would not
+# work while Foundation was registering 45 of their ships.
+#
+# Proved by import rather than asserted by a literal: if engine/foundation/ is
+# ever removed or renamed, the report corrects itself instead of lying in the
+# other direction. That failure mode is the entire reason this mapping exists.
+_ENGINE_FRAMEWORKS = {
+    "Foundation": "engine.foundation",
+}
+
+
+def _engine_provides(name: str) -> bool:
+    module = _ENGINE_FRAMEWORKS.get(name)
+    if module is None:
+        return False
+    import importlib
+    try:
+        importlib.import_module(module)
+    except Exception:
+        return False
+    return True
+
+
 def detect_frameworks(index: ModIndex) -> None:
     """Record which unavailable frameworks each mod imports.
 
-    A mod that SUPPLIES the framework does not require it -- checked against
-    the index, so a bundled Foundation counts as present.
+    Unavailable means neither the ENGINE nor a mod supplies it. A mod that
+    bundles its own copy does not require it -- checked against the index --
+    and neither does one importing a framework we reimplement.
     """
     provided = {Path(mf.rel).stem for mf in index.files.values()
                 if mf.rel.endswith(".py")}
+    provided |= {name.lower() for name in KNOWN_FRAMEWORKS
+                 if _engine_provides(name)}
     by_mod: dict = {status.name: status for status in index.mods}
     for status in index.mods:
         status.requires = []
@@ -436,6 +583,15 @@ def describe(index: ModIndex) -> str:
             line += f", unplaced: {', '.join(status.unplaced)}"
         if status.requires:
             line += f", requires: {', '.join(status.requires)} (unsupported)"
+        if status.replaces_ships:
+            # Said plainly because it explains an ABSENCE: a replacement mod
+            # adds no picker row on purpose.
+            line += (f", replaces stock ship "
+                     f"{', '.join(repr(s) for s in status.replaces_ships)}")
+        if status.orphan_hardpoints:
+            line += (f", hardpoint "
+                     f"{', '.join(repr(s) for s in status.orphan_hardpoints)}"
+                     f" has no ship script -- needs the base mod")
         if status.read_error:
             # An unreadable subtree is a PARTIAL failure: some files may have
             # been placed already, so the count stays and the warning is
