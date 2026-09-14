@@ -152,3 +152,109 @@ TEST(HullConnectivity, GalaxySizedLatticeIsFastEnough) {
     EXPECT_EQ(r.main_body_cells, 80u * 100u * 27u);
     EXPECT_LT(ms, 50.0);
 }
+
+// ── Local severance check ───────────────────────────────────────────────────
+// hull_severance_local answers "could the carve in `box` have cut anything
+// off?" by flooding from the box's shell, without walking the hull. It may
+// only ever say kConnected when nothing was severed; kUnknown hands the
+// question to the full BFS.
+
+namespace {
+
+// A hollow square ring, one cell thick, in the z=1 plane of a 63x63x3
+// lattice -- 244 cells round: the long-detour case. Cutting one ring cell
+// leaves the two sides joined only the long way round, further than the
+// default budget for a one-cell box (8 x 27 = 216 visits), which is what a
+// pylon hit looks like from inside its own carve box.
+voxel::DistanceField make_ring_baked() {
+    voxel::DistanceField f;
+    f.dims = glm::ivec3(63, 63, 3);
+    f.cell = glm::vec3(1.0f);
+    f.origin = glm::vec3(0.0f);
+    f.scale = 1.0f;
+    f.dist.assign(63u * 63u * 3u, static_cast<std::int8_t>(127));
+    for (int i = 1; i <= 61; ++i) {
+        f.dist[f.index(i, 1, 1)] = -10;  f.dist[f.index(i, 61, 1)] = -10;
+        f.dist[f.index(1, i, 1)] = -10;  f.dist[f.index(61, i, 1)] = -10;
+    }
+    return f;
+}
+
+}  // namespace
+
+TEST(HullSeveranceLocal, CarveInTheMiddleOfABlobIsConnected) {
+    const auto baked = make_dumbbell_baked();
+    auto damage = undamaged_like(baked);
+    damage.dist[damage.index(3, 3, 3)] = 127;         // centre of the left blob
+    const voxel::CellBox box{glm::ivec3(3, 3, 3), glm::ivec3(3, 3, 3)};
+    EXPECT_EQ(voxel::hull_severance_local(baked, damage, box),
+              voxel::Severance::kConnected);
+}
+
+TEST(HullSeveranceLocal, CuttingTheNeckIsNotConnected) {
+    const auto baked = make_dumbbell_baked();
+    auto damage = undamaged_like(baked);
+    damage.dist[damage.index(8, 3, 3)] = 127;
+    const voxel::CellBox box{glm::ivec3(8, 3, 3), glm::ivec3(8, 3, 3)};
+    EXPECT_EQ(voxel::hull_severance_local(baked, damage, box),
+              voxel::Severance::kUnknown);
+}
+
+TEST(HullSeveranceLocal, AnIslandLeftInsideTheBoxIsNotConnected) {
+    // Carve a 3x3x3 shell inside the left blob, leaving its centre cell as an
+    // island that touches nothing. The shell around the box is all still
+    // joined -- only the interior target is unreachable.
+    const auto baked = make_dumbbell_baked();
+    auto damage = undamaged_like(baked);
+    for (int z = 2; z <= 4; ++z) for (int y = 2; y <= 4; ++y) for (int x = 2; x <= 4; ++x)
+        if (!(x == 3 && y == 3 && z == 3)) damage.dist[damage.index(x, y, z)] = 127;
+    const voxel::CellBox box{glm::ivec3(2, 2, 2), glm::ivec3(4, 4, 4)};
+    EXPECT_EQ(voxel::hull_severance_local(baked, damage, box),
+              voxel::Severance::kUnknown);
+    // And the full BFS agrees that something came off.
+    EXPECT_EQ(voxel::hull_connectivity(baked, damage).detached.size(), 1u);
+}
+
+TEST(HullSeveranceLocal, LongDetourExceedsTheCapAndReportsUnknown) {
+    const auto baked = make_ring_baked();
+    auto damage = undamaged_like(baked);
+    damage.dist[damage.index(31, 1, 1)] = 127;        // cut the bottom side
+    const voxel::CellBox box{glm::ivec3(31, 1, 1), glm::ivec3(31, 1, 1)};
+    EXPECT_EQ(voxel::hull_severance_local(baked, damage, box),
+              voxel::Severance::kUnknown)
+        << "the two sides reconnect only 240 cells away, past the visit cap";
+    EXPECT_TRUE(voxel::hull_connectivity(baked, damage).detached.empty())
+        << "kUnknown is 'ask the BFS', not 'severed' -- the ring is still one piece";
+    // With an explicit cap big enough to walk the ring, the local check does
+    // reach every shell cell and says so.
+    EXPECT_EQ(voxel::hull_severance_local(baked, damage, box, 1000),
+              voxel::Severance::kConnected);
+}
+
+TEST(HullSeveranceLocal, NothingOccupiedNearTheBoxIsConnected) {
+    const auto baked = make_dumbbell_baked();
+    const auto damage = undamaged_like(baked);
+    const voxel::CellBox box{glm::ivec3(8, 0, 0), glm::ivec3(8, 0, 0)};   // empty corner
+    EXPECT_EQ(voxel::hull_severance_local(baked, damage, box),
+              voxel::Severance::kConnected);
+}
+
+TEST(HullSeveranceLocal, EmptyBoxOrMismatchedLatticeIsUnknown) {
+    const auto baked = make_dumbbell_baked();
+    const auto damage = undamaged_like(baked);
+    EXPECT_EQ(voxel::hull_severance_local(baked, damage, voxel::CellBox{}),
+              voxel::Severance::kUnknown);
+    auto other = damage;
+    other.dims.x += 1;
+    EXPECT_EQ(voxel::hull_severance_local(baked, other,
+                                          voxel::CellBox{glm::ivec3(3), glm::ivec3(3)}),
+              voxel::Severance::kUnknown);
+}
+
+TEST(HullSeveranceLocal, BoxOnTheLatticeEdgeDoesNotReadOutOfBounds) {
+    const auto baked = make_dumbbell_baked();
+    auto damage = undamaged_like(baked);
+    const voxel::CellBox box{glm::ivec3(0, 0, 0), glm::ivec3(16, 6, 6)};   // whole lattice
+    EXPECT_EQ(voxel::hull_severance_local(baked, damage, box, 100000),
+              voxel::Severance::kConnected);
+}
