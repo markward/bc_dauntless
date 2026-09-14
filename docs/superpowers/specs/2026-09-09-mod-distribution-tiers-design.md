@@ -68,7 +68,16 @@ it did under BC. These are not bugs to be fixed on sight — some are
 deliberate, live-verified divergences — but a mod author hitting one deserves
 to find it written down rather than discover it by feel.
 
-**`NormalDischargeRate` is live for us and dead for BC.** BC's firing path
+**RESOLVED 2026-09-14 — the paragraphs below are history.** The RE project
+read the binary: phasers drain from a power-level table and never read
+`NormalDischargeRate`; pulse weapons read it as a per-shot cost. Both are
+ported (see the experiment doc linked below, § Findings), so CGSovereign's
+`200.0` is now correctly ignored on its phasers and a mod's authored pulse
+cost is honoured. The one remaining mod-visible divergence in this family is
+tractors: BC never discharges them, we drain toward `MinFiringCharge` — only
+VoyagerCubeHP's `10.0` tractors would notice.
+
+**`NormalDischargeRate` is live for us and dead for BC.** *(historical)* BC's firing path
 reads a flat power-level table for energy-weapon discharge and never consults
 the hardpoint's `SetNormalDischargeRate`. We read the property. That
 divergence is on the *frozen, do-not-change* list in

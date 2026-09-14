@@ -306,20 +306,20 @@ In scope — all in `_EnergyWeaponFireMixin` / `PhaserSystem`:
 **Frozen — do NOT change (live-verified against the real game,
 2026-06-29 instrumented weapon-exchange probe):**
 
-- Discharge-rate source (we read the hardpoint's `NormalDischargeRate`; BC's
-  firing path reads a flat power-level table and leaves that property dead).
-  ⚠️ **This entry's justification does not hold, though the freeze stands
-  pending measurement.** All 208 emitters in all 52 stock hardpoint files
-  declare exactly `1.0` (measured 2026-09-09), so on stock content "read the
-  property" and "use a flat 1.0" are observationally identical — the
-  2026-06-29 probe ran on stock ships and therefore *could not* have
-  discriminated between them. Mod content diverges by 200x (CGSovereign
-  authors `200.0` on 30 emitters, draining a 1.0 tank in one tick) and a live
-  report says that is wrong. **Do not lift or re-justify this freeze from the
-  armchair in either direction** — resolve it with
-  [`../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md`](../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md),
-  which needs the flat table's actual values and a probe fired from a
-  NON-1.0 emitter.
+- ~~Discharge-rate source~~ **UNFROZEN and ported 2026-09-14.** The freeze
+  said we read the hardpoint's `NormalDischargeRate` and BC reads a flat
+  table, justified by the 2026-06-29 live measurements. That justification
+  never held: all 208 stock emitters declare `1.0`, so a stock-only probe
+  could not tell the two apart. The RE project then read the binary
+  (recorded in
+  [`../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md`](../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md)
+  § Findings): **phasers** drain from a power-level table (LOW 0.35 / MED
+  1.0 / HIGH 1.0 per second, indexed by the owning `PhaserSystem`'s level)
+  and never read the property; **pulse weapons** DO read it, as a per-shot
+  cost × their own PowerSetting scale (0.5 / 1.0 / 2.0). Both are now
+  implemented. Lesson for the next freeze: a live measurement only beats an
+  RE transcription where it could have *discriminated* — check what the
+  probe's content could show before citing it.
 - Damage formula and power-level damage scales (BC C++ table says
   LOW 0.25 / MED 0.5 / HIGH 0.5; our constants were verified end-to-end
   against real-game exchanges and may already absorb these factors).

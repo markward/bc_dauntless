@@ -1,9 +1,10 @@
 # Where does a firing energy weapon's discharge rate come from?
 
-Status: **PENDING** — needs BOTH the clean-room reference AND a live run
+Status: **RE HALF CLOSED 2026-09-14** (Q-D1..Q-D4 answered from the binary and
+ported); live half (Q-D5..Q-D7) still PENDING
 Author: 2026-09-09 session
 Created: 2026-09-09
-Closed:  —
+Closed:  — (reference half 2026-09-14; live half open)
 
 ## Goal
 
@@ -134,20 +135,76 @@ deliverable, not a sanity check.
 
 ## Findings
 
-*(pending)*
+**Reference half — answered 2026-09-14 by the clean-room RE project** (the
+server itself returned `no-match` on the property name, no object model for
+`EnergyWeaponProperty`, and below-floor on the behaviour question; the RE
+project reconstructed it from the image). Behavioural facts only are
+recorded here.
 
-- **Q-D1** — _TBD_
-- **Q-D2** — _TBD_
-- **Q-D3** — _TBD_ (the table's values; the deliverable if Model T wins)
-- **Q-D4** — _TBD_
-- **Q-D5/6/7** — _TBD_
+**Neither model was right. The property is not dead — but phasers don't read
+it.** Three energy-weapon subclasses, three consumption models; there is no
+shared base-class discharge (the common `UpdateCharge` has a recharge arm
+only):
+
+| Subclass | Drain | Reads `NormalDischargeRate`? |
+|---|---|---|
+| `PhaserBank` | per-second **table** × dt, continuous while the beam is up | **No** |
+| `PulseWeapon` | flat **per-shot** cost inside Fire = property × power scale | **Yes** |
+| `TractorBeamProjector` | none — charge is set to MaxCharge every tick (Medium-High) | No |
+
+- **Q-D1** — Phaser: a table, the sibling of the damage table and contiguous
+  with it. Damage `0x00893170` = LOW 0.25 / MED 0.5 / HIGH 0.5; **discharge
+  `0x0089317c..0x00893184` = LOW 0.35 / MED 1.0 / HIGH 1.0**; default arm
+  0.0. Indexed by the **owning `PhaserSystem`'s power level** (system field
+  `+0xf0`, reached through the bank's owner pointer) — not the bank, not the
+  property. Confidence High. CGSovereign at MED: 1.0 ÷ 1.0/s = **1.0 s**
+  drain; its authored 200.0 is never loaded.
+- **Q-D2** — Phaser: per second × dt (the same dt the recharge arm uses).
+  Pulse: per shot, no dt. One asymmetry to record: recharge is scaled by
+  bank condition, **discharge is not**. Confidence High.
+- **Q-D3** — Two sibling tables, not one (see Q-D1). For pulse the power
+  scale is applied to the *property*: LOW ×0.5 / MED ×1.0 / HIGH ×2.0,
+  on the weapon's own `EnergyWeapon` PowerSetting (`+0xac`) — a **different
+  field** from the phaser's `PhaserSystem` PowerLevel (`+0xf0`).
+- **Q-D4** — Yes, indexed by power level (both tables). Readers of the
+  property field: exactly one engine accessor with five callers — three in
+  the pulse power-scaling routine, one in a multiplayer state-hash
+  accumulator (Medium-High that it is sync, not gameplay), one the SWIG
+  getter. Zero on any phaser path.
+- **Also answered (not asked):** exhaustion stops the beam on the same
+  update, no interval (High). `CanFire` confirms §1.6's asymmetry directly:
+  `MinFiringCharge < charge` to start, `charge > 0` to sustain. **And a
+  two-stage fixed windup exists** on the phaser fire path: state 1 arms the
+  beam FX for **0.35 s with the charge frozen** (neither drained nor
+  recharged), state 2 connects for **0.25 s** (Medium-High), state 3 applies
+  damage. Drain runs only in states 2–3. So the retail ~1 s burst is
+  ~0.35 s windup + ~1.0 s of table drain, and even the old 5 ms bug would
+  have shown ≥0.35 s of beam under a correct windup model. **The windup is
+  NOT ported** — separate design; it touches beam FX and damage start.
+- **Q-D5/6/7** — _TBD_ (live). Now a confirmation run, not a discriminator:
+  the prediction for a CGSovereign phaser at MED is a ~1.35 s visible beam
+  with the charge slope at −1.0/s starting ~0.35 s after the fire press.
+
+**Ported 2026-09-14** (`engine/appc/weapon_subsystems.py`,
+`tests/unit/test_energy_weapon_discharge_source.py`): `PhaserBank` drains
+from `PHASER_DISCHARGE_BY_POWER_LEVEL` via the parent system's power level;
+`PulseWeapon.Fire` subtracts `NormalDischargeRate ×
+PULSE_COST_SCALE_BY_POWER_SETTING[PowerSetting]` instead of dumping to 0
+(stock BoP re-arms in ~2 s, not ~9 s). **Assumed, not RE'd:** the default
+PowerSetting is MED — the SDK never calls `SetPowerSetting` and the
+constructor value was not read. The `2026-07-15` spec's §7 frozen entry is
+rewritten accordingly. Not ported: tractor no-discharge (ours drains toward
+MinFiringCharge as a designed hold), the windup.
+
+The old §1.6 audit was half-right twice: it looked at a phaser and correctly
+saw a table, then generalised to "the property is dead", which is false for
+pulse. That is why it never reconciled with the 2026-06-29 measurements.
 
 Once answered:
 
-- If **Model T**, change `_EnergyWeaponFireMixin.UpdateCharge` to the measured
-  table and rewrite §7's frozen entry — recording that the original freeze
-  rested on stock-only evidence that could not discriminate, so nobody
-  re-freezes it on the same reasoning.
-- If **Model P**, the mods are simply authored this way, and the tier-1 gap
-  list in `2026-09-09-mod-distribution-tiers-design.md` should say so and stop
-  calling it a divergence.
+- ~~If **Model T**~~ Done (phaser). The freeze rested on stock-only evidence
+  that could not discriminate — recorded in §7 so nobody re-freezes it on
+  the same reasoning.
+- ~~If **Model P**~~ True for pulse only; the tier-1 gap list in
+  `2026-09-09-mod-distribution-tiers-design.md` is updated.
+- The live half (Q-D5..7) confirms the port; it no longer decides it.

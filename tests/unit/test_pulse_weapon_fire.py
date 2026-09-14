@@ -2,8 +2,10 @@
 
 BC pulse weapons (disruptors/cannons) fire discrete projectile shots, unlike
 phasers/tractors which hold a beam.  Fire spawns one bolt via the bound
-PulseDisruptor module, dumps all accumulated charge, and starts a per-shot
-cooldown timer.  No looping SFX; the launch sound comes from the module.
+PulseDisruptor module, subtracts a flat per-shot cost (NormalDischargeRate ×
+the PowerSetting scale — RE'd, see test_energy_weapon_discharge_source.py),
+and starts a per-shot cooldown timer.  No looping SFX; the launch sound
+comes from the module.
 
 Charge model from sdk/Build/scripts/ships/Hardpoints/birdofprey.py PortCannon:
 MaxCharge 3.8, MinFiringCharge 3.6, RechargeRate 0.4/s, NormalDischargeRate
@@ -16,6 +18,8 @@ true (charge >= MinFiringCharge and no cooldown active), regardless of battery
 level.  The main battery is NOT touched by Fire().
 """
 from unittest.mock import patch
+
+import pytest
 
 import App  # noqa: F401  (installs the SDK import finder via conftest)
 from engine.appc.math import TGPoint3
@@ -93,12 +97,13 @@ def test_fire_spawns_one_bolt_with_module_payload():
     _active.clear()
 
 
-def test_fire_dumps_charge_and_starts_cooldown():
+def test_fire_charges_one_shot_and_starts_cooldown():
     _active.clear()
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         cannon.Fire(target="enemy", offset="hit")
-    assert cannon._charge_level == 0.0
+    # 3.8 - (1.0 × MED 1.0): one bolt's cost, not the whole tank.
+    assert cannon._charge_level == pytest.approx(2.8)
     assert cannon._cooldown_remaining == 0.2
     assert cannon.CanFire() == 0
     _active.clear()
@@ -146,10 +151,10 @@ def test_update_charge_recharges_never_discharges():
     cannon = _pulse_weapon()
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         cannon.Fire(target="enemy", offset="hit")
-    # Charge dumped to 0; recharge fills it (firing stays False).
+    # One shot's cost taken (3.8 -> 2.8); recharge refills it (firing stays
+    # False, so UpdateCharge never takes the drain branch).
     cannon.UpdateCharge(dt=1.0)
-    assert cannon._charge_level > 0.0
-    assert cannon._charge_level == 0.4  # recharge_rate 0.4 * 1.0s
+    assert cannon._charge_level == pytest.approx(3.2)  # 2.8 + 0.4/s * 1.0s
     _active.clear()
 
 
@@ -253,12 +258,12 @@ def test_stock_values_re_arm_and_refire_after_recharge():
     with patch("engine.audio.tg_sound.TGSoundManager.instance"):
         cannon.Fire(target="enemy", offset="hit")
         assert len(_active) == 1                      # first shot
-        assert cannon._charge_level == 0.0
-        assert cannon.CanFire() == 0                  # on cooldown + uncharged
+        assert cannon._charge_level == pytest.approx(2.8)
+        assert cannon.CanFire() == 0                  # on cooldown + below min
 
-        # Recharge to full: 3.8 charge / 0.4 per-sec ≈ 9.5s. Step in 0.5s
-        # ticks well past that; cooldown (0.2s) clears in the first tick.
-        for _ in range(40):
+        # Recharge 2.8 -> 3.6: 0.8 / 0.4 per-sec = 2.0s. Step in 0.5s ticks
+        # well past that; cooldown (0.2s) clears in the first tick.
+        for _ in range(8):
             cannon.UpdateCharge(0.5)
 
         assert cannon._charge_level >= cannon._min_firing_charge

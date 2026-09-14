@@ -241,6 +241,34 @@ def _emitter_in_arc(emitter, ship, aim_world):
     return (yaw_lo <= yaw <= yaw_hi) and (pitch_lo <= pitch <= pitch_hi)
 
 
+# ── Discharge sources (RE'd from stbc.exe 2026-09-14; experiment doc
+# 2026-09-09-phaser-discharge-rate-source.md, Findings Q-D1..Q-D5) ────────
+#
+# Three energy-weapon subclasses, three consumption models.  There is NO
+# shared base-class discharge — the common UpdateCharge has a recharge arm
+# only — so the property the hardpoint authors as `NormalDischargeRate` is
+# read by exactly one gameplay path (pulse) and ignored by the other (phaser).
+#
+# PhaserBank: charge-units per SECOND while the beam is up, indexed by the
+# owning PhaserSystem's power level (system field, not the bank's).  It is
+# the sibling of the power-level DAMAGE table (0.25/0.5/0.5 at 0x00893170):
+# same index, contiguous, at 0x0089317c..0x00893184.  Not scaled by bank
+# condition (recharge is; discharge is not).
+PHASER_DISCHARGE_BY_POWER_LEVEL = (0.35, 1.0, 1.0)      # PP_LOW, PP_MEDIUM, PP_HIGH
+
+# PulseWeapon: a flat per-SHOT cost, taken inside Fire, of the authored
+# NormalDischargeRate × this scale on the weapon's OWN PowerSetting
+# (EnergyWeapon field — a different field from PhaserSystem.PowerLevel;
+# collapsing the two is the next bug of this shape).
+PULSE_COST_SCALE_BY_POWER_SETTING = (0.5, 1.0, 2.0)     # LOW, MED, HIGH
+
+# Default PowerSetting.  ASSUMED, not RE'd: the SDK never calls
+# EnergyWeapon.SetPowerSetting (zero call sites) and the constructor value
+# was not read from the image.  MED (×1.0) is the neutral choice — change it
+# here and in test_energy_weapon_discharge_source.py together.
+_DEFAULT_POWER_SETTING = 1
+
+
 def _init_energy_weapon_state(self):
     """Shared init for PhaserBank/PulseWeapon/TractorBeam runtime state.
 
@@ -253,6 +281,7 @@ def _init_energy_weapon_state(self):
     self._normal_discharge_rate: float = 0.0
     self._recharge_rate: float = 0.0
     self._charge_level: float = 0.0
+    self._power_setting: int = _DEFAULT_POWER_SETTING
     # Looped SFX handle started by Fire(), stopped by StopFiring().
     self._loop_handle = None
 
@@ -600,10 +629,25 @@ class _EnergyWeaponFireMixin:
     def IsFiring(self) -> int:
         return 1 if self._firing else 0
 
+    # EnergyWeapon.{Get,Set}PowerSetting (SWIG surface; zero SDK call sites).
+    # The EMITTER's own power field — consumed by PulseWeapon's per-shot
+    # cost.  Not the PhaserSystem power level.
+    def GetPowerSetting(self) -> int:
+        return self._power_setting
+
+    def SetPowerSetting(self, v) -> None:
+        self._power_setting = max(0, min(2, int(v)))
+
+    def _discharge_rate_per_second(self) -> float:
+        """Charge-units per second drained while the beam is held.  Default
+        reads the authored property; PhaserBank overrides with BC's
+        power-level table (see PHASER_DISCHARGE_BY_POWER_LEVEL)."""
+        return self._normal_discharge_rate
+
     def UpdateCharge(self, dt: float) -> None:
         if self._firing:
             self._charge_level = max(
-                0.0, self._charge_level - self._normal_discharge_rate * dt
+                0.0, self._charge_level - self._discharge_rate_per_second() * dt
             )
             if self._charge_level <= 0.0:
                 # Depletion auto-stop. BC's banks discharge all the way
@@ -2120,6 +2164,20 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
         self._target = None
         self._target_offset = None
 
+    def _discharge_rate_per_second(self) -> float:
+        """BC's phaser drain is the power-level TABLE on the owning
+        PhaserSystem, not the hardpoint's NormalDischargeRate (which the
+        phaser path never reads — every stock emitter authors 1.0, so the
+        two were indistinguishable until CGSovereign authored 200.0 and
+        emptied its tank in one tick).  A bank always hangs under a
+        PhaserSystem in BC; the MED fallback is defensive only."""
+        parent = self.GetParentSubsystem()
+        level = parent.GetPowerLevel() if hasattr(parent, "GetPowerLevel") else 1
+        try:
+            return PHASER_DISCHARGE_BY_POWER_LEVEL[level]
+        except (IndexError, TypeError):
+            return 0.0      # BC's default arm for an out-of-range level
+
     def Fire(self, target=None, offset=None) -> bool:
         """Wraps the shared beam-fire mixin to post ET_WEAPON_FIRED on the
         was-not-firing edge — the same edge the mixin already uses for the
@@ -2306,8 +2364,13 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         except ImportError:
             return False
         _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor())
-        # Discrete drain: dump accumulated charge + start cooldown. No held beam.
-        self._charge_level = 0.0
+        # Discrete drain: a flat per-shot cost of NormalDischargeRate × the
+        # power-setting scale (BC's GetPowerScaled), then the cooldown.  Not
+        # a dump-to-zero — that made a stock BoP wait ~9 s between bolts
+        # where BC waits ~2 s.  No held beam.
+        cost = (self._normal_discharge_rate
+                * PULSE_COST_SCALE_BY_POWER_SETTING[self._power_setting])
+        self._charge_level = max(0.0, self._charge_level - cost)
         self._cooldown_remaining = self.GetCooldownTime()
         return True
 

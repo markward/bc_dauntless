@@ -1,5 +1,10 @@
 """EnergyWeapon.UpdateCharge(dt): fills at _recharge_rate when on + idle,
-drains at _normal_discharge_rate when firing, auto-stops at zero.
+drains while firing, auto-stops at zero.
+
+The PhaserBank drain is BC's power-level table (PP_HIGH default → 1.0/s), NOT
+the `discharge=` value seeded below — that property is dead on the phaser
+path (tests/unit/test_energy_weapon_discharge_source.py).  The seeds here
+happen to equal the HIGH table entry, so the expected values are unchanged.
 """
 from engine.appc.subsystems import PhaserBank, PhaserSystem
 
