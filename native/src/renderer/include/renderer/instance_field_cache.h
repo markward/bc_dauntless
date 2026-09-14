@@ -126,6 +126,24 @@ public:
     /// Instance destroyed: release its entry and GL texture.
     void forget(scenegraph::InstanceId id);
 
+    /// The union of every brush box written to `id` since the last take
+    /// (empty for an unknown instance, or when nothing was carved since),
+    /// and clears it. This is what the severance check consumes -- see
+    /// voxel::hull_severance_local -- and it is deliberately separate from
+    /// the upload's own dirty box: the render and the Python-side check run
+    /// on different cadences, so each keeps its own accumulator. split()
+    /// and remove_cells() do not touch it: they are the OUTPUT of a check,
+    /// not new damage.
+    voxel::CellBox take_severance_box(scenegraph::InstanceId id);
+
+    /// True exactly once per instance: the first time the severance check
+    /// asks. That first check must be the full BFS (a hull whose bake is
+    /// already several components has to shed them once), and every check
+    /// after it may rely on the single-component invariant. False for an
+    /// unknown instance. A chunk created by split() is a new instance and
+    /// gets its own first check.
+    bool take_first_severance_check(scenegraph::InstanceId id);
+
     std::size_t size() const { return instances_.size(); }
 
     /// How many times get() has actually re-uploaded a texture, as opposed
@@ -134,6 +152,13 @@ public:
     /// re-uploads a whole atlas every frame is otherwise indistinguishable
     /// from one that works.
     std::size_t uploads() const { return uploads_; }
+
+    /// How many of those uploads were REGION uploads (glTexSubImage2D of the
+    /// dirty box only) rather than a whole-atlas glTexImage2D. Every upload
+    /// after an instance's first should be one, except after split() /
+    /// remove_cells(); the test pins that, since a cache that quietly fell
+    /// back to full uploads would still render correctly.
+    std::size_t partial_uploads() const { return partial_uploads_; }
 
 private:
     // Deliberately not std::unordered_map<InstanceId, ...>: that needs a
@@ -157,7 +182,18 @@ private:
         // class comment.
         voxel::DistanceField field;
         Entry pub;
-        bool dirty = true;
+        // The packed atlas bytes stay resident so a later carve can
+        // re-encode only its box into them (voxel::pack_field_region_to_
+        // atlas) and upload that rectangle; `dirty_box` is the union of the
+        // brush boxes since the last upload. `full` forces a whole-atlas
+        // pack + glTexImage2D: the first upload, and after split() /
+        // remove_cells(), which touch arbitrary cells.
+        std::vector<std::uint8_t> atlas;
+        voxel::CellBox dirty_box;
+        voxel::CellBox sever_box;
+        bool severance_checked = false;
+        bool full = true;
+        bool dirty() const { return full || !dirty_box.empty(); }
     };
 
     // Packs `inst.field` and uploads it to `inst.pub.tex2d` (creating the
@@ -177,12 +213,29 @@ private:
     std::map<scenegraph::InstanceId, Instance, InstanceIdLess> instances_;
     voxel::HullVolumeCache* bake_cache_ = nullptr;
     std::size_t uploads_ = 0;
+    std::size_t partial_uploads_ = 0;
 };
 
 /// Result of hull_carve_deposit: the sphere slot's visible radius before and
 /// after this deposit. Exists so hull_carve_deposit does not need to know
 /// anything about breach events itself -- the caller (host_bindings.cc's
 /// hull_carve_add) compares the two to decide whether to fire one.
+/// What hull_split_detached does before paying for voxel::hull_connectivity.
+enum class SeveranceDecision {
+    kSkip,     // nothing can have been severed since the last check
+    kFullBfs   // run hull_connectivity
+};
+
+/// The decision, as a pure function so the binding's glue is testable:
+/// `first` (take_first_severance_check) forces the full BFS; otherwise an
+/// empty `box` (nothing carved since the last check -- hull_breakup.drain
+/// can ask twice for one carve) skips it, and a non-empty box skips it only
+/// when voxel::hull_severance_local proves the carve cut nothing off.
+SeveranceDecision severance_decision(bool first,
+                                     const voxel::DistanceField& baked,
+                                     const voxel::DistanceField& damage,
+                                     const voxel::CellBox& box);
+
 struct HullCarveDepositResult {
     float prev_radius = 0.0f;  // c.radius BEFORE this deposit
     float radius = 0.0f;       // c.radius AFTER this deposit

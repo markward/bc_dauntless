@@ -68,4 +68,29 @@ AtlasLayout atlas_layout_for(const glm::ivec3& dims);
 std::vector<std::uint8_t> pack_field_to_atlas(const DistanceField& f,
                                               const AtlasLayout& l);
 
+/// A texel rectangle of the atlas: the sub-image a region upload sends.
+struct AtlasRect {
+    int x = 0, y = 0, w = 0, h = 0;
+};
+
+/// The atlas rectangle that slice `z` of `box` occupies, INCLUDING the
+/// replicated border texels on any side where the box touches the lattice
+/// edge (the border copies the edge cell, so it changes when the edge cell
+/// does). Caller guarantees `box` is non-empty, within `dims`, and that
+/// `z` lies in [box.lo.z, box.hi.z].
+AtlasRect atlas_rect_for(const AtlasLayout& l, const glm::ivec3& dims,
+                         const CellBox& box, int z);
+
+/// Re-encode only `box` into an atlas previously produced by
+/// pack_field_to_atlas for the same field and layout, so that a carve costs
+/// its own cell count rather than the whole lattice. Refreshes the border
+/// texels beside any lattice edge the box touches. The result is byte-
+/// identical to a fresh pack_field_to_atlas of the same field -- pinned by
+/// field_atlas_test. Returns false (writing nothing) for an empty or
+/// out-of-range box, a layout that does not match `f`, or an `atlas` whose
+/// size is not width*height.
+bool pack_field_region_to_atlas(const DistanceField& f, const AtlasLayout& l,
+                                const CellBox& box,
+                                std::vector<std::uint8_t>& atlas);
+
 }  // namespace voxel

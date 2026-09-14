@@ -3,9 +3,11 @@
 
 #include <renderer/carve_field_cache.h>
 #include <voxel/field_brush.h>
+#include <voxel/hull_connectivity.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 #include <glad/glad.h>
 
@@ -65,9 +67,10 @@ void InstanceFieldCache::carve(scenegraph::InstanceId id,
         it = instances_.emplace(id, make_blank_like(baked)).first;
     }
 
-    voxel::field_carve_oblate(it->second.field, center_body, normal_body,
-                              radius);
-    it->second.dirty = true;
+    const voxel::CellBox box = voxel::field_carve_oblate(
+        it->second.field, center_body, normal_body, radius);
+    it->second.dirty_box.include(box);
+    it->second.sever_box.include(box);
 }
 
 const voxel::DistanceField* InstanceFieldCache::field(
@@ -96,8 +99,8 @@ bool InstanceFieldCache::split(scenegraph::InstanceId parent,
         c.field.dist[i] = pf.dist[i];   // keep the holes it already had
         pf.dist[i] = 127;               // and it is gone from the parent
     }
-    c.dirty = true;
-    pit->second.dirty = true;
+    c.full = true;
+    pit->second.full = true;
     instances_.emplace(child, std::move(c));
     return true;
 }
@@ -112,7 +115,7 @@ bool InstanceFieldCache::remove_cells(scenegraph::InstanceId id,
             cc.x >= f.dims.x || cc.y >= f.dims.y || cc.z >= f.dims.z) continue;
         f.dist[f.index(cc.x, cc.y, cc.z)] = 127;
     }
-    it->second.dirty = true;
+    it->second.full = true;
     return true;
 }
 
@@ -131,8 +134,10 @@ void InstanceFieldCache::carve_capsule(scenegraph::InstanceId id,
         if (baked.empty()) return;
         it = instances_.emplace(id, make_blank_like(baked)).first;
     }
-    voxel::field_carve_capsule(it->second.field, p0_body, p1_body, radius);
-    it->second.dirty = true;
+    const voxel::CellBox box = voxel::field_carve_capsule(
+        it->second.field, p0_body, p1_body, radius);
+    it->second.dirty_box.include(box);
+    it->second.sever_box.include(box);
 }
 
 const InstanceFieldCache::Entry* InstanceFieldCache::get(
@@ -141,9 +146,10 @@ const InstanceFieldCache::Entry* InstanceFieldCache::get(
     if (it == instances_.end()) return nullptr;
 
     Instance& inst = it->second;
-    if (inst.dirty) {
+    if (inst.dirty()) {
         if (upload(inst)) {
-            inst.dirty = false;
+            inst.full = false;
+            inst.dirty_box = voxel::CellBox{};
             ++uploads_;
         }
     }
@@ -164,13 +170,47 @@ void InstanceFieldCache::forget(scenegraph::InstanceId id) {
     instances_.erase(it);
 }
 
+voxel::CellBox InstanceFieldCache::take_severance_box(scenegraph::InstanceId id) {
+    auto it = instances_.find(id);
+    if (it == instances_.end()) return voxel::CellBox{};
+    return std::exchange(it->second.sever_box, voxel::CellBox{});
+}
+
+bool InstanceFieldCache::take_first_severance_check(scenegraph::InstanceId id) {
+    auto it = instances_.find(id);
+    if (it == instances_.end()) return false;
+    return !std::exchange(it->second.severance_checked, true);
+}
+
+SeveranceDecision severance_decision(bool first,
+                                     const voxel::DistanceField& baked,
+                                     const voxel::DistanceField& damage,
+                                     const voxel::CellBox& box) {
+    if (first) return SeveranceDecision::kFullBfs;
+    if (box.empty()) return SeveranceDecision::kSkip;
+    return voxel::hull_severance_local(baked, damage, box) == voxel::Severance::kConnected
+               ? SeveranceDecision::kSkip
+               : SeveranceDecision::kFullBfs;
+}
+
 bool InstanceFieldCache::upload(Instance& inst) {
     const voxel::AtlasLayout layout = voxel::atlas_layout_for(inst.field.dims);
     if (!layout.valid()) return false;
 
-    const std::vector<std::uint8_t> pixels =
-        voxel::pack_field_to_atlas(inst.field, layout);
-    if (pixels.empty()) return false;
+    // Region path: the texture exists, nothing forced a full refresh, and
+    // the resident atlas can be patched in place. A failed region pack
+    // (which the voxel tests say cannot happen for an in-range box) falls
+    // through to the full path rather than leaving stale texels.
+    const bool region =
+        inst.pub.tex2d != 0 && !inst.full && !inst.dirty_box.empty() &&
+        inst.pub.layout.width == layout.width &&
+        inst.pub.layout.height == layout.height &&
+        voxel::pack_field_region_to_atlas(inst.field, layout, inst.dirty_box,
+                                          inst.atlas);
+    if (!region) {
+        inst.atlas = voxel::pack_field_to_atlas(inst.field, layout);
+        if (inst.atlas.empty()) return false;
+    }
 
     if (inst.pub.tex2d == 0) {
         GLuint t = 0;
@@ -180,6 +220,8 @@ bool InstanceFieldCache::upload(Instance& inst) {
 
     GLint prev_unpack = 0;
     glGetIntegerv(GL_UNPACK_ALIGNMENT, &prev_unpack);
+    GLint prev_row_length = 0;
+    glGetIntegerv(GL_UNPACK_ROW_LENGTH, &prev_row_length);
     GLint prev_unit = 0;
     glGetIntegerv(GL_ACTIVE_TEXTURE, &prev_unit);
     glActiveTexture(GL_TEXTURE0);
@@ -187,16 +229,35 @@ bool InstanceFieldCache::upload(Instance& inst) {
     glBindTexture(GL_TEXTURE_2D, inst.pub.tex2d);
     // pixels is one byte per texel, tightly packed row-major.
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    // GL_R8: 128 encodes the surface (see pack_field_to_atlas), matching the
-    // hull-clip shader's sample_hull_field, which subtracts 128.0/255.0 EXACTLY
-    // (NOT 0.5 -- opaque.frag's own comment at that subtraction calls out the
-    // distinction as load-bearing) before comparing against zero.
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, layout.width, layout.height, 0,
-                GL_RED, GL_UNSIGNED_BYTE, pixels.data());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    if (region) {
+        // One sub-image per touched slice, read straight out of the
+        // resident atlas: ROW_LENGTH makes GL stride by the full atlas
+        // width while we hand it the rectangle's top-left byte.
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, layout.width);
+        for (int z = inst.dirty_box.lo.z; z <= inst.dirty_box.hi.z; ++z) {
+            const voxel::AtlasRect r =
+                voxel::atlas_rect_for(layout, inst.field.dims, inst.dirty_box, z);
+            const std::uint8_t* src =
+                inst.atlas.data()
+                + static_cast<std::size_t>(r.y) * static_cast<std::size_t>(layout.width)
+                + static_cast<std::size_t>(r.x);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, r.x, r.y, r.w, r.h,
+                            GL_RED, GL_UNSIGNED_BYTE, src);
+        }
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, prev_row_length);
+        ++partial_uploads_;
+    } else {
+        // GL_R8: 128 encodes the surface (see pack_field_to_atlas), matching the
+        // hull-clip shader's sample_hull_field, which subtracts 128.0/255.0 EXACTLY
+        // (NOT 0.5 -- opaque.frag's own comment at that subtraction calls out the
+        // distinction as load-bearing) before comparing against zero.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, layout.width, layout.height, 0,
+                     GL_RED, GL_UNSIGNED_BYTE, inst.atlas.data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(static_cast<GLenum>(prev_unit));
     glPixelStorei(GL_UNPACK_ALIGNMENT, prev_unpack);
