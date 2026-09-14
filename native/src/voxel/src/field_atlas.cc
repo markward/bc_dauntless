@@ -99,4 +99,73 @@ std::vector<std::uint8_t> pack_field_to_atlas(const DistanceField& f,
     return out;
 }
 
+AtlasRect atlas_rect_for(const AtlasLayout& l, const glm::ivec3& dims,
+                         const CellBox& box, int z) {
+    const int tile_ox = (z % l.tiles_x) * l.tile_w;
+    const int tile_oy = (z / l.tiles_x) * l.tile_h;
+    // Texel coordinates run over [-1, dims] per slice (see pack_field_to_
+    // atlas): widen by one on each side that sits on the lattice edge.
+    const int tx0 = (box.lo.x == 0)          ? -1     : box.lo.x;
+    const int tx1 = (box.hi.x == dims.x - 1) ? dims.x : box.hi.x;
+    const int ty0 = (box.lo.y == 0)          ? -1     : box.lo.y;
+    const int ty1 = (box.hi.y == dims.y - 1) ? dims.y : box.hi.y;
+    AtlasRect r;
+    r.x = tile_ox + 1 + tx0;
+    r.y = tile_oy + 1 + ty0;
+    r.w = tx1 - tx0 + 1;
+    r.h = ty1 - ty0 + 1;
+    return r;
+}
+
+bool pack_field_region_to_atlas(const DistanceField& f, const AtlasLayout& l,
+                                const CellBox& box,
+                                std::vector<std::uint8_t>& atlas) {
+    if (f.empty() || !l.valid() || box.empty()) return false;
+    if (f.dims.x <= 0 || f.dims.y <= 0 || f.dims.z <= 0) return false;
+    if (l.tile_w != f.dims.x + 2 || l.tile_h != f.dims.y + 2 ||
+        l.slices != f.dims.z) {
+        return false;
+    }
+    if (l.tiles_x <= 0 || l.tiles_y <= 0 ||
+        l.tiles_x * l.tiles_y < l.slices ||
+        l.width < l.tile_w * l.tiles_x ||
+        l.height < l.tile_h * l.tiles_y) {
+        return false;
+    }
+    if (atlas.size() != static_cast<std::size_t>(l.width)
+                        * static_cast<std::size_t>(l.height)) {
+        return false;
+    }
+    if (box.lo.x < 0 || box.lo.y < 0 || box.lo.z < 0 ||
+        box.hi.x >= f.dims.x || box.hi.y >= f.dims.y || box.hi.z >= f.dims.z) {
+        return false;
+    }
+
+    auto encode = [](std::int8_t d) -> std::uint8_t {
+        return static_cast<std::uint8_t>(static_cast<int>(d) + 128);
+    };
+
+    for (int s = box.lo.z; s <= box.hi.z; ++s) {
+        const int tile_ox = (s % l.tiles_x) * l.tile_w;
+        const int tile_oy = (s / l.tiles_x) * l.tile_h;
+        // Same [-1, dims] texel range and clamp rule as the full pack, so
+        // the border beside a touched edge cell is re-derived from it.
+        const int ty0 = (box.lo.y == 0)            ? -1       : box.lo.y;
+        const int ty1 = (box.hi.y == f.dims.y - 1) ? f.dims.y : box.hi.y;
+        const int tx0 = (box.lo.x == 0)            ? -1       : box.lo.x;
+        const int tx1 = (box.hi.x == f.dims.x - 1) ? f.dims.x : box.hi.x;
+        for (int ty = ty0; ty <= ty1; ++ty) {
+            const int sy = std::clamp(ty, 0, f.dims.y - 1);
+            const int ay = tile_oy + 1 + ty;
+            for (int tx = tx0; tx <= tx1; ++tx) {
+                const int sx = std::clamp(tx, 0, f.dims.x - 1);
+                const int ax = tile_ox + 1 + tx;
+                atlas[static_cast<std::size_t>(ay) * l.width + ax] =
+                    encode(f.dist[f.index(sx, sy, s)]);
+            }
+        }
+    }
+    return true;
+}
+
 }  // namespace voxel
