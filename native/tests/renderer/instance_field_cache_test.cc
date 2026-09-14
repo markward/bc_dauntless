@@ -1228,3 +1228,88 @@ TEST_F(InstanceFieldCacheTest, SeveranceBoxAccumulatesCarvesUntilTaken) {
                         glm::vec3(30, 30, 5), 2.0f);
     EXPECT_FALSE(cache.take_severance_box(id).empty());
 }
+
+// ── Severance decision ──────────────────────────────────────────────────────
+// What hull_split_detached asks before paying for the full-lattice BFS. The
+// first check on an instance is always the full BFS -- hull_severance_local
+// is only sound once the field is known to be one component (see its doc).
+// After that: nothing carved since the last check, or a carve the local
+// flood proves harmless, skips the BFS.
+
+namespace {
+
+voxel::DistanceField dumbbell_baked() {
+    voxel::DistanceField f;
+    f.dims = glm::ivec3(17, 7, 7);
+    f.cell = glm::vec3(1.0f);
+    f.origin = glm::vec3(0.0f);
+    f.scale = 1.0f;
+    f.dist.assign(17u * 7u * 7u, static_cast<std::int8_t>(127));
+    auto inside = [&](int x, int y, int z) { f.dist[f.index(x, y, z)] = -10; };
+    for (int z = 1; z <= 5; ++z) for (int y = 1; y <= 5; ++y) {
+        for (int x = 1; x <= 5; ++x)   inside(x, y, z);
+        for (int x = 11; x <= 15; ++x) inside(x, y, z);
+    }
+    for (int x = 6; x <= 10; ++x) inside(x, 3, 3);
+    return f;
+}
+
+voxel::DistanceField undamaged(const voxel::DistanceField& baked) {
+    voxel::DistanceField d = baked;
+    d.dist.assign(baked.dist.size(), static_cast<std::int8_t>(-127));
+    return d;
+}
+
+}  // namespace
+
+TEST(SeveranceDecision, FirstCheckIsAlwaysTheFullBfs) {
+    const auto baked = dumbbell_baked();
+    const auto damage = undamaged(baked);
+    EXPECT_EQ(renderer::severance_decision(true, baked, damage, voxel::CellBox{}),
+              renderer::SeveranceDecision::kFullBfs);
+    EXPECT_EQ(renderer::severance_decision(true, baked, damage,
+                                           voxel::CellBox{glm::ivec3(3), glm::ivec3(3)}),
+              renderer::SeveranceDecision::kFullBfs);
+}
+
+TEST(SeveranceDecision, NothingCarvedSinceTheLastCheckSkips) {
+    const auto baked = dumbbell_baked();
+    const auto damage = undamaged(baked);
+    EXPECT_EQ(renderer::severance_decision(false, baked, damage, voxel::CellBox{}),
+              renderer::SeveranceDecision::kSkip);
+}
+
+TEST(SeveranceDecision, ALocallyConnectedCarveSkipsAndANeckCutDoesNot) {
+    const auto baked = dumbbell_baked();
+    auto damage = undamaged(baked);
+    damage.dist[damage.index(3, 3, 3)] = 127;
+    EXPECT_EQ(renderer::severance_decision(false, baked, damage,
+                                           voxel::CellBox{glm::ivec3(3), glm::ivec3(3)}),
+              renderer::SeveranceDecision::kSkip);
+    damage.dist[damage.index(8, 3, 3)] = 127;
+    EXPECT_EQ(renderer::severance_decision(false, baked, damage,
+                                           voxel::CellBox{glm::ivec3(8, 3, 3), glm::ivec3(8, 3, 3)}),
+              renderer::SeveranceDecision::kFullBfs);
+}
+
+TEST_F(InstanceFieldCacheTest, FirstSeveranceCheckIsReportedOncePerInstance) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_first_check");
+    const auto src = make_source("hull_first_check.nif", "hull");
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, make_baked_field()));
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+    EXPECT_FALSE(cache.take_first_severance_check(id)) << "unknown instance";
+    cache.carve(id, src, kAuthoredRes, glm::vec3(5, 5, 5), kUp, 3.0f);
+    EXPECT_TRUE(cache.take_first_severance_check(id));
+    EXPECT_FALSE(cache.take_first_severance_check(id));
+    cache.carve(id, src, kAuthoredRes, glm::vec3(35, 35, 35), kUp, 3.0f);
+    EXPECT_FALSE(cache.take_first_severance_check(id)) << "a carve does not reset it";
+
+    // A chunk split off is a fresh instance: its first check is full too.
+    const scenegraph::InstanceId child{2, 0};
+    std::vector<glm::ivec3> cells{glm::ivec3(0, 0, 0), glm::ivec3(1, 0, 0)};
+    ASSERT_TRUE(cache.split(id, child, cells));
+    EXPECT_TRUE(cache.take_first_severance_check(child));
+    EXPECT_FALSE(cache.take_first_severance_check(id)) << "the parent stays checked";
+}

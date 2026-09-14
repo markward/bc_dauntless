@@ -136,6 +136,14 @@ public:
     /// not new damage.
     voxel::CellBox take_severance_box(scenegraph::InstanceId id);
 
+    /// True exactly once per instance: the first time the severance check
+    /// asks. That first check must be the full BFS (a hull whose bake is
+    /// already several components has to shed them once), and every check
+    /// after it may rely on the single-component invariant. False for an
+    /// unknown instance. A chunk created by split() is a new instance and
+    /// gets its own first check.
+    bool take_first_severance_check(scenegraph::InstanceId id);
+
     std::size_t size() const { return instances_.size(); }
 
     /// How many times get() has actually re-uploaded a texture, as opposed
@@ -183,6 +191,7 @@ private:
         std::vector<std::uint8_t> atlas;
         voxel::CellBox dirty_box;
         voxel::CellBox sever_box;
+        bool severance_checked = false;
         bool full = true;
         bool dirty() const { return full || !dirty_box.empty(); }
     };
@@ -211,6 +220,22 @@ private:
 /// after this deposit. Exists so hull_carve_deposit does not need to know
 /// anything about breach events itself -- the caller (host_bindings.cc's
 /// hull_carve_add) compares the two to decide whether to fire one.
+/// What hull_split_detached does before paying for voxel::hull_connectivity.
+enum class SeveranceDecision {
+    kSkip,     // nothing can have been severed since the last check
+    kFullBfs   // run hull_connectivity
+};
+
+/// The decision, as a pure function so the binding's glue is testable:
+/// `first` (take_first_severance_check) forces the full BFS; otherwise an
+/// empty `box` (nothing carved since the last check -- hull_breakup.drain
+/// can ask twice for one carve) skips it, and a non-empty box skips it only
+/// when voxel::hull_severance_local proves the carve cut nothing off.
+SeveranceDecision severance_decision(bool first,
+                                     const voxel::DistanceField& baked,
+                                     const voxel::DistanceField& damage,
+                                     const voxel::CellBox& box);
+
 struct HullCarveDepositResult {
     float prev_radius = 0.0f;  // c.radius BEFORE this deposit
     float radius = 0.0f;       // c.radius AFTER this deposit

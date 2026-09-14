@@ -3,6 +3,7 @@
 
 #include <renderer/carve_field_cache.h>
 #include <voxel/field_brush.h>
+#include <voxel/hull_connectivity.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -173,6 +174,23 @@ voxel::CellBox InstanceFieldCache::take_severance_box(scenegraph::InstanceId id)
     auto it = instances_.find(id);
     if (it == instances_.end()) return voxel::CellBox{};
     return std::exchange(it->second.sever_box, voxel::CellBox{});
+}
+
+bool InstanceFieldCache::take_first_severance_check(scenegraph::InstanceId id) {
+    auto it = instances_.find(id);
+    if (it == instances_.end()) return false;
+    return !std::exchange(it->second.severance_checked, true);
+}
+
+SeveranceDecision severance_decision(bool first,
+                                     const voxel::DistanceField& baked,
+                                     const voxel::DistanceField& damage,
+                                     const voxel::CellBox& box) {
+    if (first) return SeveranceDecision::kFullBfs;
+    if (box.empty()) return SeveranceDecision::kSkip;
+    return voxel::hull_severance_local(baked, damage, box) == voxel::Severance::kConnected
+               ? SeveranceDecision::kSkip
+               : SeveranceDecision::kFullBfs;
 }
 
 bool InstanceFieldCache::upload(Instance& inst) {
