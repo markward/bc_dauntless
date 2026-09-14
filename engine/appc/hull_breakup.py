@@ -11,13 +11,20 @@ window marks the ship *pending* rather than being dropped -- `drain()`,
 called once per frame from host_loop, runs the deferred check as soon as the
 window has elapsed. A sever detected half a second late is invisible; running
 the BFS on every one of ten carves a second on eight ships is not.
+
+The native side (`hull_split_detached`) also asks a cheap local question
+before the BFS: after an instance's first check, a carve that its own
+neighbourhood proves harmless -- see `voxel::hull_severance_local` -- skips
+the full flood, and a check with no carve since the last one returns at
+once. So the throttle here bounds the RATE; the native check bounds the
+COST. Neither replaces the other.
 """
 import engine.dev_mode as dev_mode
 from engine import host_io
 from engine.appc import damage_geometry, debris_chunk
 from engine.appc.math import TGPoint3
 
-kBreakupCheckInterval = 0.5   # s; connectivity is a full-lattice BFS
+kBreakupCheckInterval = 0.5   # s; the full BFS is still the worst case
 
 _last_check: dict = {}        # id(ship) -> game time of last split
 _pending: dict = {}           # id(ship) -> (ship, iid, ship_instances)

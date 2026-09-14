@@ -4278,6 +4278,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                                     voxel::kDefaultQuality);
               if (baked.empty()) return out;
 
+              // Pay for the full-lattice BFS only when a carve since the
+              // last check could have cut something off; the first check
+              // on an instance is always the full one. See
+              // renderer::severance_decision.
+              const bool first = g_instance_field_cache->take_first_severance_check(id);
+              const voxel::CellBox box = g_instance_field_cache->take_severance_box(id);
+              if (renderer::severance_decision(first, baked, *damage, box) ==
+                  renderer::SeveranceDecision::kSkip) {
+                  return out;
+              }
+
               const voxel::ConnectivityResult r = voxel::hull_connectivity(baked, *damage);
               if (r.detached.empty()) return out;
 

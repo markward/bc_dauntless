@@ -423,3 +423,72 @@ TEST(FieldBrushCapsule, DegenerateSegmentBehavesAsSphereAndDoesNotProduceNaN) {
     EXPECT_GT(f.distance_at(c.x, c.y, c.z), 0.0f)
         << "a degenerate segment must still carve a sphere at p0, not no-op";
 }
+
+// ── Touched-cell box ────────────────────────────────────────────────────────
+// Both brushes return the inclusive cell box they wrote, so the atlas upload
+// and the severance check can work on that box instead of the whole lattice.
+// The contract is "every changed cell lies inside the box", not "the box is
+// tight" -- an over-wide box costs a few extra texels, an under-wide one
+// silently leaves stale texels on the GPU.
+
+TEST(FieldBrushBox, EveryChangedCellLiesInsideTheReportedBox) {
+    voxel::DistanceField f = solid_block(40);
+    const voxel::DistanceField before = f;
+    const voxel::CellBox box =
+        voxel::field_carve_oblate(f, glm::vec3(20.0f, 20.0f, 20.0f), kUp, 6.0f);
+    ASSERT_FALSE(box.empty());
+    for (int z = 0; z < 40; ++z) for (int y = 0; y < 40; ++y) for (int x = 0; x < 40; ++x) {
+        const std::size_t i = f.index(x, y, z);
+        if (f.dist[i] == before.dist[i]) continue;
+        EXPECT_TRUE(box.contains(glm::ivec3(x, y, z)))
+            << "cell (" << x << "," << y << "," << z << ") changed outside the box";
+    }
+    EXPECT_LT(box.hi.x - box.lo.x, 40 - 1) << "the box must not be the whole lattice";
+}
+
+TEST(FieldBrushBox, BoxIsClampedToTheLattice) {
+    voxel::DistanceField f = solid_block(20);
+    const voxel::CellBox box =
+        voxel::field_carve_oblate(f, glm::vec3(0.5f, 0.5f, 0.5f), kUp, 6.0f);
+    ASSERT_FALSE(box.empty());
+    EXPECT_EQ(box.lo, glm::ivec3(0));
+    EXPECT_LT(box.hi.x, 20);
+}
+
+TEST(FieldBrushBox, NoOpCarvesReportAnEmptyBox) {
+    voxel::DistanceField f = solid_block(20);
+    EXPECT_TRUE(voxel::field_carve_oblate(f, glm::vec3(10.0f), kUp, 0.0f).empty());
+    EXPECT_TRUE(voxel::field_carve_oblate(f, glm::vec3(500.0f, 10.0f, 10.0f), kUp, 2.0f).empty())
+        << "wholly off-grid";
+    voxel::DistanceField empty;
+    EXPECT_TRUE(voxel::field_carve_oblate(empty, glm::vec3(10.0f), kUp, 2.0f).empty());
+}
+
+TEST(FieldBrushBox, CapsuleReportsItsBoxToo) {
+    voxel::DistanceField f = solid_block(40);
+    const voxel::DistanceField before = f;
+    const voxel::CellBox box = voxel::field_carve_capsule(
+        f, glm::vec3(10.0f, 20.0f, 20.0f), glm::vec3(30.0f, 20.0f, 20.0f), 3.0f);
+    ASSERT_FALSE(box.empty());
+    for (int z = 0; z < 40; ++z) for (int y = 0; y < 40; ++y) for (int x = 0; x < 40; ++x) {
+        const std::size_t i = f.index(x, y, z);
+        if (f.dist[i] != before.dist[i])
+            EXPECT_TRUE(box.contains(glm::ivec3(x, y, z)));
+    }
+    EXPECT_TRUE(voxel::field_carve_capsule(f, glm::vec3(10.0f), glm::vec3(30.0f), 0.0f).empty());
+}
+
+TEST(FieldBrushBox, UnionGrowsToCoverBoth) {
+    voxel::CellBox a{glm::ivec3(2, 3, 4), glm::ivec3(5, 6, 7)};
+    voxel::CellBox b{glm::ivec3(0, 4, 9), glm::ivec3(3, 9, 9)};
+    a.include(b);
+    EXPECT_EQ(a.lo, glm::ivec3(0, 3, 4));
+    EXPECT_EQ(a.hi, glm::ivec3(5, 9, 9));
+    voxel::CellBox e;
+    ASSERT_TRUE(e.empty());
+    e.include(b);
+    EXPECT_EQ(e.lo, b.lo);
+    EXPECT_EQ(e.hi, b.hi);
+    b.include(voxel::CellBox{});
+    EXPECT_EQ(b.lo, glm::ivec3(0, 4, 9)) << "including an empty box changes nothing";
+}
