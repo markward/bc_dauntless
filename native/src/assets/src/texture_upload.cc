@@ -68,6 +68,18 @@ Texture upload_image(const Image& image, bool generate_mipmaps) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    // A one-channel image is a grayscale MASK (an 8-bit TGA spec/glow map,
+    // which is how mod authors commonly export them), but a bare GL_R8
+    // texture samples as (v, 0, 0, 1): green and blue read as zero, so any
+    // shader that multiplies by `.rgb` keeps only the red component. That is
+    // what tinted every CGSovereign specular highlight red in every system.
+    // Replicate R into G and B so the sampler sees neutral grey (v, v, v, 1).
+    // Sampling-time only; the texel storage is still one byte.
+    if (image.format == Image::Format::R8) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_RED);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+    }
     glBindTexture(GL_TEXTURE_2D, 0);
 
     check_gl("upload_image");
