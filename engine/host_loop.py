@@ -840,6 +840,32 @@ def _pump_held_weapons(ships_list, dt: float) -> None:
             sys_.update_weapons(dt)
 
 
+def _phaser_aim_point(ship, target):
+    """World point the firing `ship`'s phasers aim at on `target`, plus the
+    locked subsystem when the point IS that subsystem (else None).
+
+    Priority is BC's ShipClass target offset: Manual Aim's cursor pick
+    (ship.is_using_target_offset(), target-local & unscaled -> pos +
+    R·(offset·scale), the same transform _resolve_torpedo_aim_point applies),
+    else the locked subsystem's world position, else the target's centre.
+    ONE helper for both consumers -- the damage tick and the drawn beam --
+    so they can never disagree about where the beam lands."""
+    probe = getattr(type(ship), "is_using_target_offset", None)
+    if callable(probe) and ship.is_using_target_offset():
+        pos = target.GetWorldLocation()
+        o = ship.GetTargetOffsetTG()
+        scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
+        o = TGPoint3(o.x * scale, o.y * scale, o.z * scale)
+        rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
+        if isinstance(rot, TGMatrix3):
+            o.MultMatrixLeft(rot)
+        return TGPoint3(pos.x + o.x, pos.y + o.y, pos.z + o.z), None
+    target_sub = ship.GetTargetSubsystem() if hasattr(ship, "GetTargetSubsystem") else None
+    if target_sub is not None and hasattr(target_sub, "GetWorldLocation"):
+        return target_sub.GetWorldLocation(), target_sub
+    return target.GetWorldLocation(), None
+
+
 def _advance_combat(ships, dt: float, ship_instances=None,
                      ship_emitters=None, player=None) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
@@ -951,13 +977,7 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                 if not can_detect(ship, target):
                     bank.StopFiring()
                     continue
-                target_sub = (ship.GetTargetSubsystem()
-                              if hasattr(ship, "GetTargetSubsystem") else None)
-                if target_sub is not None and hasattr(target_sub, "GetWorldLocation"):
-                    target_pos = target_sub.GetWorldLocation()
-                else:
-                    target_pos = target.GetWorldLocation()
-                    target_sub = None
+                target_pos, target_sub = _phaser_aim_point(ship, target)
                 emitter_pos = bank._strip_emit_position(target_pos)
                 # Distance: emit point → target (drives damage falloff).
                 dx = target_pos.x - emitter_pos.x
@@ -1662,12 +1682,7 @@ def _beam_descriptor_pair(ship, bank, ship_instances):
     target = bank._target
     if target is None:
         return []
-    target_sub = (ship.GetTargetSubsystem()
-                  if hasattr(ship, "GetTargetSubsystem") else None)
-    if target_sub is not None and hasattr(target_sub, "GetWorldLocation"):
-        target_pos = target_sub.GetWorldLocation()
-    else:
-        target_pos = target.GetWorldLocation()
+    target_pos, target_sub = _phaser_aim_point(ship, target)
     # Strip emit point for curved phaser banks; point emitters (tractors,
     # Length 0) collapse this to the emitter mount world position.
     emitter_pos = bank._strip_emit_position(target_pos)

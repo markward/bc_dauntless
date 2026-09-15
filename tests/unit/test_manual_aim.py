@@ -106,3 +106,112 @@ def test_live_offset_tolerates_a_parent_without_the_manual_aim_api():
     class _Bare: pass
     sys_.SetParentShip(_Bare())
     assert sys_._live_held_offset() == "held"
+
+
+# ── Task 3: phaser aim point ─────────────────────────────────────────────────
+
+def _galaxy_target_at(x, y, z):
+    from engine.appc.ships import ShipClass_Create
+    t = ShipClass_Create("Galaxy")
+    t.SetTranslateXYZ(x, y, z)
+    return t
+
+
+def test_phaser_aim_point_is_the_locked_subsystem_when_no_manual_offset():
+    from engine.host_loop import _phaser_aim_point
+    from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import ShipSubsystem
+    ship = ShipClass()
+    target = _galaxy_target_at(0.0, 100.0, 0.0)
+    sub = ShipSubsystem("Bridge")
+    sub._position = TGPoint3(0.0, 0.0, 4.0)
+    sub.SetParentShip(target)
+    ship.SetTarget(target)
+    ship.SetTargetSubsystem(sub)
+
+    point, from_sub = _phaser_aim_point(ship, target)
+
+    assert from_sub is sub
+    expect = sub.GetWorldLocation()
+    assert (point.x, point.y, point.z) == (expect.x, expect.y, expect.z)
+
+
+def test_phaser_aim_point_is_target_centre_with_no_lock():
+    from engine.host_loop import _phaser_aim_point
+    from engine.appc.ships import ShipClass
+    ship = ShipClass()
+    target = _galaxy_target_at(0.0, 100.0, 0.0)
+    point, from_sub = _phaser_aim_point(ship, target)
+    assert from_sub is None
+    assert (point.x, point.y, point.z) == (0.0, 100.0, 0.0)
+
+
+def test_phaser_aim_point_uses_the_manual_offset_rotated_and_scaled():
+    """Manual offset is target-local & unscaled: world = pos + R·(o·scale).
+    Yaw the target 90° about Z so a body +X offset lands on world +Y."""
+    from engine.host_loop import _phaser_aim_point
+    from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import ShipSubsystem
+    from engine.appc.math import TGMatrix3
+    ship = ShipClass()
+    target = _galaxy_target_at(0.0, 100.0, 0.0)
+    rot = TGMatrix3()
+    rot.MakeZRotation(math.pi / 2.0)
+    target.SetMatrixRotation(rot)               # copied into the transform store
+    sub = ShipSubsystem("Bridge")
+    sub._position = TGPoint3(0.0, 0.0, 4.0)
+    sub.SetParentShip(target)
+    ship.SetTarget(target)
+    ship.SetTargetSubsystem(sub)
+    ship.set_manual_target_offset(TGPoint3(2.0, 0.0, 0.0))
+
+    point, from_sub = _phaser_aim_point(ship, target)
+
+    assert from_sub is None                       # cursor pick, not the lock
+    scale = float(target.GetScale())
+    assert abs(point.x - 0.0) < 1e-6
+    assert abs(point.y - (100.0 + 2.0 * scale)) < 1e-6
+    assert abs(point.z - 0.0) < 1e-6
+
+
+def test_advance_combat_routes_phaser_damage_at_the_manual_offset(monkeypatch):
+    """End-to-end through the damage tick: the fallback point handed to
+    combat._resolve_hit_point is the manual offset's world position."""
+    from engine import host_loop
+    import engine.appc.combat as combat_mod
+    from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import PhaserSystem, PhaserBank
+    ship = ShipClass()
+    ship.SetTranslateXYZ(0.0, 0.0, 0.0)
+    sys_ = PhaserSystem("Phasers")
+    sys_._max_condition = 100.0
+    sys_._condition = 100.0
+    sys_._disabled_percentage = 0.75
+    sys_.TurnOn()
+    b = PhaserBank("Bank0")
+    b._max_charge = 5.0; b._charge_level = 5.0; b._min_firing_charge = 3.0
+    b._max_damage = 1.0; b._max_damage_distance = 1000.0
+    b._max_condition = 100.0; b._condition = 100.0; b._disabled_percentage = 0.25
+    sys_.AddChildSubsystem(b)
+    ship.SetPhaserSystem(sys_)
+    target = _galaxy_target_at(0.0, 100.0, 0.0)
+    ship.SetTarget(target)
+    ship.set_manual_target_offset(TGPoint3(0.0, 0.0, 5.0))
+    sys_.StartFiring(target=target, offset=ship.GetTargetOffsetTG())
+    assert b.IsFiring() == 1
+
+    seen = []
+    real = combat_mod._resolve_hit_point
+    def spy(*a, **kw):
+        seen.append(kw["fallback_point"])
+        return real(*a, **kw)
+    monkeypatch.setattr(combat_mod, "_resolve_hit_point", spy)
+    monkeypatch.setattr(combat_mod, "apply_hit", lambda *a, **kw: None)
+
+    host_loop._advance_combat([ship, target], dt=1.0 / 60, ship_instances=None)
+
+    assert seen, "damage tick never resolved a hit point"
+    fp = seen[0]
+    scale = float(target.GetScale())
+    assert abs(fp.x) < 1e-6 and abs(fp.y - 100.0) < 1e-6
+    assert abs(fp.z - 5.0 * scale) < 1e-6
