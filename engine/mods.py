@@ -26,6 +26,11 @@ CONTENT_DIRS = frozenset({"data", "scripts", "sfx"})
 CLI_FLAG = "--mods-dir"
 ENV_VAR = "DAUNTLESS_MODS_DIR"
 
+# Boot with NO mods, whatever mods/ holds. Same flag/env pairing as the
+# root above; nothing reads either outside mods_disabled_by().
+DISABLE_FLAG = "--disable-mods"
+DISABLE_ENV_VAR = "DAUNTLESS_DISABLE_MODS"
+
 KNOWN_FRAMEWORKS = frozenset({
     "Foundation", "FoundationTech", "FoundationTriggers", "Registry",
 })
@@ -71,6 +76,27 @@ def mods_root(argv=None, env=None) -> Path:
         return paths.normalise(from_env)
 
     return paths.PROJECT_ROOT / "mods"
+
+
+def mods_disabled_by(argv=None, env=None) -> Optional[str]:
+    """The flag or env var that switched mods off, or None.
+
+    A stock-only run for bisecting "is it the mod or the engine?", or
+    for a player whose sideload broke the game. The flag needs no value;
+    the env var counts as set when non-empty, like DAUNTLESS_MODS_DIR.
+    """
+    import sys
+
+    if argv is None:
+        argv = sys.argv[1:]
+    if env is None:
+        env = os.environ
+
+    if DISABLE_FLAG in argv:
+        return DISABLE_FLAG
+    if env.get(DISABLE_ENV_VAR):
+        return DISABLE_ENV_VAR
+    return None
 
 
 def find_content_root(mod_dir: Path, max_depth: int = 3) -> Optional[Path]:
@@ -201,6 +227,10 @@ class ModIndex:
     mods: list
     conflicts: list = field(default_factory=list)
     overrides: list = field(default_factory=list)
+    # Which flag/env var switched mods off (see mods_disabled_by). None for
+    # a normal index, including a merely empty one -- describe() tells the
+    # two apart so a modless boot under the flag explains itself.
+    disabled_by: Optional[str] = None
 
     def lookup(self, rel) -> Optional[ModFile]:
         return self.files.get(fold(rel))
@@ -569,6 +599,8 @@ def sdk_override(module_rel) -> Optional[Path]:
 
 def describe(index: ModIndex) -> str:
     """The boot report. Empty when no mods are installed."""
+    if index.disabled_by:
+        return f"mods: disabled by {index.disabled_by}"
     if not index.mods:
         return ""
     lines = []
@@ -629,6 +661,14 @@ def install(argv=None, env=None, game_root=None, sdk_scripts=None) -> ModIndex:
         game_root = paths.game_root()
     if sdk_scripts is None:
         sdk_scripts = paths.sdk_scripts()
+    disabled_by = mods_disabled_by(argv=argv, env=env)
+    if disabled_by:
+        # No disk walk at all: every consumer reads current(), so an empty
+        # index here is "no mods" everywhere by construction -- asset
+        # overlay, both _SDKFinders, Foundation plugins, the C++ map.
+        index = ModIndex(files={}, mods=[], disabled_by=disabled_by)
+        configure(index)
+        return index
     index = build_index(mods_root(argv=argv, env=env))
     classify(index, game_root, sdk_scripts)
     detect_frameworks(index)

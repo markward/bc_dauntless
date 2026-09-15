@@ -330,6 +330,13 @@ establishes: the highest **set** source wins even when invalid, because
 falling through would silently run a different mod set than the one asked
 for.
 
+`--disable-mods` (or a non-empty `DAUNTLESS_DISABLE_MODS`) boots with no
+mods regardless of what `mods/` holds — a stock-only run for answering "is
+it the mod or the engine?". `install()` skips the disk walk and installs an
+empty index tagged `disabled_by`, so every consumer sees "no mods" by
+construction; the boot report says `mods: disabled by --disable-mods` rather
+than staying silent, so a modless run under the flag explains itself.
+
 This is not speculative generality — a git worktree and the main checkout
 each get their own `mods/` (the directory is gitignored and does not
 propagate), which is exactly the situation the flag resolves. Cheap now,

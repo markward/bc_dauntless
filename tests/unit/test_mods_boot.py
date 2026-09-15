@@ -94,3 +94,73 @@ def test_install_uses_explicit_roots_not_ambient_globals(monkeypatch, tmp_path):
                        game_root=game, sdk_scripts=sdk)
 
     assert idx.overrides == ["data/a.nif"]
+
+
+# ── --disable-mods / DAUNTLESS_DISABLE_MODS ────────────────────────────────
+# A populated mods/ is the fixture for every test here: the flag must win
+# over real content on disk, not merely agree with an absent directory.
+
+def _populated_mods(monkeypatch, tmp_path) -> Path:
+    monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "g")
+    monkeypatch.setattr(paths, "sdk_scripts", lambda: tmp_path / "s")
+    (tmp_path / "g").mkdir(); (tmp_path / "s").mkdir()
+    _touch(tmp_path / "mods" / "M" / "Data" / "a.nif")
+    _touch(tmp_path / "mods" / "M" / "Scripts" / "Custom" / "Ships" / "x.py")
+    return tmp_path / "mods"
+
+
+def test_disable_mods_flag_installs_an_empty_index_over_real_content(
+        monkeypatch, tmp_path):
+    root = _populated_mods(monkeypatch, tmp_path)
+    idx = mods.install(argv=["--mods-dir", str(root), "--disable-mods"], env={})
+    assert mods.current() is idx
+    assert idx.files == {}
+    assert idx.mods == []
+    assert idx.disabled_by == "--disable-mods"
+
+
+def test_disable_mods_env_var_installs_an_empty_index_over_real_content(
+        monkeypatch, tmp_path):
+    root = _populated_mods(monkeypatch, tmp_path)
+    idx = mods.install(argv=["--mods-dir", str(root)],
+                       env={"DAUNTLESS_DISABLE_MODS": "1"})
+    assert idx.files == {}
+    assert idx.disabled_by == "DAUNTLESS_DISABLE_MODS"
+
+
+def test_disable_mods_empty_env_var_is_unset(monkeypatch, tmp_path):
+    # Mirrors DAUNTLESS_MODS_DIR: an exported-but-empty variable is "not
+    # set", so `DAUNTLESS_DISABLE_MODS= ./build/dauntless` loads mods.
+    root = _populated_mods(monkeypatch, tmp_path)
+    idx = mods.install(argv=["--mods-dir", str(root)],
+                       env={"DAUNTLESS_DISABLE_MODS": ""})
+    assert idx.lookup("data/a.nif") is not None
+    assert idx.disabled_by is None
+
+
+def test_disable_mods_skips_the_disk_walk(monkeypatch, tmp_path):
+    root = _populated_mods(monkeypatch, tmp_path)
+    def _boom(_root):
+        raise AssertionError("build_index must not run when mods are disabled")
+    monkeypatch.setattr(mods, "build_index", _boom)
+    mods.install(argv=["--mods-dir", str(root), "--disable-mods"], env={})
+
+
+def test_populated_mods_still_load_without_the_flag(monkeypatch, tmp_path):
+    root = _populated_mods(monkeypatch, tmp_path)
+    idx = mods.install(argv=["--mods-dir", str(root)], env={})
+    assert idx.lookup("data/a.nif") is not None
+    assert idx.disabled_by is None
+
+
+def test_describe_names_the_flag_that_disabled_mods(monkeypatch, tmp_path):
+    root = _populated_mods(monkeypatch, tmp_path)
+    idx = mods.install(argv=["--mods-dir", str(root), "--disable-mods"], env={})
+    assert mods.describe(idx) == "mods: disabled by --disable-mods"
+
+
+def test_describe_names_the_env_var_that_disabled_mods(monkeypatch, tmp_path):
+    root = _populated_mods(monkeypatch, tmp_path)
+    idx = mods.install(argv=["--mods-dir", str(root)],
+                       env={"DAUNTLESS_DISABLE_MODS": "1"})
+    assert mods.describe(idx) == "mods: disabled by DAUNTLESS_DISABLE_MODS"
