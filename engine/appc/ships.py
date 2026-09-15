@@ -63,6 +63,16 @@ class ShipClass(DamageableObject):
         # Targeting state
         self._target = None
         self._target_subsystem = None
+        # Manual Aim (BC "mouse pick fire", H key): a target-LOCAL, unscaled
+        # aim point picked off the target's hull under the cursor each tick
+        # by engine.manual_aim.update. While _use_target_offset is set,
+        # GetTargetOffsetTG() hands this back instead of the locked
+        # subsystem's position -- E3M1.FixTargeting's UseTargetOffsetTG(0) is
+        # the documented way back ("fix the targeted location to match the
+        # targeted subsystem"). Spec: docs/superpowers/specs/
+        # 2026-09-15-manual-aim-pick-fire-design.md
+        self._manual_target_offset = None
+        self._use_target_offset = False
         # IsDocked drives cutscene + game-over branching in MissionLib and
         # per-mission scripts. Freshly-spawned ships are undocked. (_dying /
         # _dead are initialised by DamageableObject, which owns IsDying/IsDead.)
@@ -1596,6 +1606,9 @@ class ShipClass(DamageableObject):
         # run in this engine, so swallowing here would hide the first real
         # signal of a bug in code that has never executed.
         if self._target is not old_target:
+            # The manual aim offset is expressed in the OLD target's frame.
+            self._manual_target_offset = None
+            self._use_target_offset = False
             import App
             evt = App.TGEvent_Create()
             evt.SetEventType(App.ET_TARGET_WAS_CHANGED)
@@ -1613,12 +1626,37 @@ class ShipClass(DamageableObject):
         pSubsystem.GetPositionTG() (AI/Preprocessors.py:462) and MissionLib
         stamps via Torpedo.SetTargetOffset(pSubsystem.GetPosition()).  Was a
         silent _Stub (heatmap rank 21), so every player shot aimed at the
-        hull centre regardless of the lock."""
+        hull centre regardless of the lock.
+
+        While Manual Aim has a hull pick live (is_using_target_offset()),
+        the cursor-picked target-local point wins over the subsystem lock."""
+        if self._use_target_offset and self._manual_target_offset is not None:
+            m = self._manual_target_offset
+            return TGPoint3(m.x, m.y, m.z)
         sub = self._target_subsystem
         pos = sub.GetPositionTG() if (sub is not None and hasattr(sub, "GetPositionTG")) else None
         if isinstance(pos, TGPoint3):
             return TGPoint3(pos.x, pos.y, pos.z)
         return TGPoint3(0.0, 0.0, 0.0)
+
+    # ── Manual Aim (mouse pick fire) ─────────────────────────────────────
+    def UseTargetOffsetTG(self, v) -> None:
+        """SWIG ShipClass.UseTargetOffsetTG (App.py:5519). Only SDK caller is
+        E3M1.FixTargeting(…, 0). 0 drops the manual offset so the next
+        GetTargetOffsetTG reads the subsystem lock again; 1 merely re-arms
+        an offset that is already stored (no offset => nothing in use)."""
+        self._use_target_offset = bool(int(v))
+        if not self._use_target_offset:
+            self._manual_target_offset = None
+
+    def set_manual_target_offset(self, offset: TGPoint3) -> None:
+        """Engine-internal (not Appc surface): store the cursor pick as a
+        target-local, unscaled point and put it in use."""
+        self._manual_target_offset = TGPoint3(offset.x, offset.y, offset.z)
+        self._use_target_offset = True
+
+    def is_using_target_offset(self) -> bool:
+        return bool(self._use_target_offset and self._manual_target_offset is not None)
 
     # ── Lifecycle state ──────────────────────────────────────────────────────
     def IsDocked(self) -> int:    return 1 if self._docked else 0
