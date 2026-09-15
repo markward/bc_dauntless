@@ -85,7 +85,7 @@ def test_casts():
     assert STButton_Cast(btn) is btn
     assert STButton_Cast(None) is None
     assert STButton_Cast("nope") is None
-    win = STStylizedWindow_CreateW("Helm")
+    win = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "Helm")
     assert STStylizedWindow_Cast(win) is win
     rb = STRoundedButton_CreateW("OK")
     assert STRoundedButton_Cast(rb) is rb

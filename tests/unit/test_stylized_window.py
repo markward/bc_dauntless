@@ -10,26 +10,26 @@ def _reset_counter():
 
 
 def test_factory_returns_instance_with_title():
-    w = STStylizedWindow_CreateW("Briefing")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "Briefing")
     assert isinstance(w, _STStylizedWindow)
     assert w._title == "Briefing"
 
 
 def test_id_increments_per_instance():
-    a = STStylizedWindow_CreateW("A")
-    b = STStylizedWindow_CreateW("B")
+    a = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "A")
+    b = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "B")
     assert a._id == "stylized-1"
     assert b._id == "stylized-2"
 
 
 def test_initial_state_visible():
-    w = STStylizedWindow_CreateW("X")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "X")
     assert w._visible is True
     assert w._children == []
 
 
 def test_set_visible_toggle():
-    w = STStylizedWindow_CreateW("X")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "X")
     w.SetNotVisible()
     assert w._visible is False
     w.SetVisible()
@@ -37,14 +37,14 @@ def test_set_visible_toggle():
 
 
 def test_add_child_records_without_x_y_validation():
-    w = STStylizedWindow_CreateW("X")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "X")
     child = object()
     w.AddChild(child, 10.0, 20.0)
     assert child in w._children
 
 
 def test_add_child_extra_args_accepted():
-    w = STStylizedWindow_CreateW("X")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "X")
     # SDK call sites occasionally pass z or other extras; we accept *args.
     w.AddChild(object(), 0.0, 0.0, "extra", 99)
 
@@ -55,7 +55,7 @@ def test_add_child_extra_args_accepted():
 
 
 def test_snapshot_shape():
-    w = STStylizedWindow_CreateW("Mission Briefing")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "Mission Briefing")
     snap = w._snapshot()
     assert snap == {
         "type": "stylized",
@@ -66,32 +66,34 @@ def test_snapshot_shape():
 
 
 def test_snapshot_reflects_visibility():
-    w = STStylizedWindow_CreateW("X")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "X")
     w.SetNotVisible()
     assert w._snapshot()["visible"] is False
 
 
 def test_factory_accepts_extra_args_silently():
-    # SDK signature is STStylizedWindow_CreateW(title, parent, x, y, w, h, ...).
-    w = STStylizedWindow_CreateW("Title", None, 0.0, 0.0, 400, 300, 0)
+    # BridgeMenus.py:167 -- the longest SDK form: style, border, title, x, y,
+    # parent pane, and sizing args.
+    w = STStylizedWindow_CreateW("StylizedWindow", "NoMinimize", "Title",
+                                 0.0, 0.0, None, 1, 400, 300)
     assert w._title == "Title"
 
 
 def test_add_python_func_handler_for_instance_records():
-    w = STStylizedWindow_CreateW("X")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "X")
     w.AddPythonFuncHandlerForInstance(7, "module.handler")
     assert w._handler_registrations == [(7, "module.handler")]
 
 
 def test_add_python_func_handler_accepts_extra_args():
-    w = STStylizedWindow_CreateW("X")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "X")
     # SDK chains additional positional args (priority, flags) in some forms.
     w.AddPythonFuncHandlerForInstance(7, "module.handler", "extra1", 99)
     assert len(w._handler_registrations) == 1
 
 
 def test_interior_changed_size_accepts_any_args():
-    w = STStylizedWindow_CreateW("X")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "X")
     w.InteriorChangedSize()         # no args
     w.InteriorChangedSize(10, 20)   # SDK sometimes passes new bounds
     # No assertion needed — must not raise.
@@ -221,12 +223,27 @@ def test_obj_id_round_trips_through_the_object_registry():
     e.g. E1M1's Picard tutorial box, whose CloseInfoTarget rides on
     ET_CHARACTER_MENU and so runs whenever his menu is raised."""
     import App
-    w = STStylizedWindow_CreateW("Briefing")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "Briefing")
     assert App.TGObject_GetTGObjectPtr(w.GetObjID()) is w
     assert App.STStylizedWindow_Cast(App.TGObject_GetTGObjectPtr(w.GetObjID())) is w
 
 
 def test_obj_ids_are_distinct_per_window():
-    a = STStylizedWindow_CreateW("A")
-    b = STStylizedWindow_CreateW("B")
+    a = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "A")
+    b = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "B")
     assert a.GetObjID() != b.GetObjID()
+
+
+def test_factory_title_is_the_third_sdk_argument():
+    """Every SDK call site is ("StylizedWindow", <border style>, <title>, ...)
+    -- MissionLib.py:4209, BridgeMenus.py:167/200, the five bridge menu
+    handlers. Reading arg 0 as the title labelled every info box
+    "StylizedWindow" in-game."""
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "Tactical View Help")
+    assert w._title == "Tactical View Help"
+
+
+def test_factory_with_no_title_argument_is_untitled():
+    # MissionLib.py:1998 passes None; KeyboardConfig.py:78 passes "".
+    assert STStylizedWindow_CreateW("StylizedWindow", "RightBorder", None)._title == ""
+    assert STStylizedWindow_CreateW("StylizedWindow", "NoMinimize", "")._title == ""

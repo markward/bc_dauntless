@@ -841,8 +841,15 @@ class _NullBatchPane:
     def IsVisible(self) -> int:                      return 0
 
 
-def STStylizedWindow_CreateW(title="", *_extra) -> _STStylizedWindow:
-    """SDK signature: STStylizedWindow_CreateW(title, parent, x, y, w, h, …).
-    All args after the title are accepted and ignored — dauntless re-styles
-    via slot CSS rather than SDK pixel coords."""
-    return _STStylizedWindow(title)
+def STStylizedWindow_CreateW(style_name="StylizedWindow", border_style="",
+                             title=None, *_extra) -> _STStylizedWindow:
+    """SDK signature: STStylizedWindow_CreateW(style_name, border_style,
+    title, x, y, parent_pane, …). The title is the THIRD argument: every SDK
+    call site opens with the literal ("StylizedWindow", <"RightBorder" |
+    "NoMinimize" | "NormalStyle">, <title>) — MissionLib.py:4209 (info
+    boxes), BridgeMenus.py:167/200, the five Bridge/*MenuHandlers. Reading
+    arg 0 as the title labelled every in-game info box "StylizedWindow".
+    Everything after the title is accepted and ignored — dauntless re-styles
+    via slot CSS rather than SDK pixel coords. `None` (MissionLib.py:1998)
+    means untitled."""
+    return _STStylizedWindow("" if title is None else title)

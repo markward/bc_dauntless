@@ -18,6 +18,6 @@ def test_app_subtitle_window_cast_none_returns_none():
 
 
 def test_app_stylized_window_create_w_returns_instance():
-    w = App.STStylizedWindow_CreateW("Title")
+    w = App.STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "Title")
     assert isinstance(w, _STStylizedWindow)
     assert w._title == "Title"

@@ -1,5 +1,16 @@
 /* native/assets/ui-cef/css/info_box.css
-   Centred dauntless-styled modal stack for SDK info boxes. Re-style, not LCARS. */
+   Centred modal stack for SDK info boxes (MissionLib.SetupInfoBox*).
+
+   Chrome follows docs/ui_designs/08-modal-dialog.md — the same vocabulary
+   as every other dauntless panel: Antonio, the salmon Menu1 gradient header
+   with the locked top-right radius, near-opaque dark body, and a 3-sided
+   red U-frame that marks a MODAL (persistent panels use a left bar only).
+   The Close button is the LCARS pill row from that spec: hard-cornered
+   secondary button bookended by two red end-caps. Tokens are the shared
+   --bc-* palette declared in ship_display.css / target_list.css.
+
+   The earlier blue "holographic" look here was a placeholder from the
+   panel's first commit and matched nothing else on screen. */
 #sdk-infobox {
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
@@ -9,49 +20,91 @@
     justify-content: center;
     gap: 16px;
     pointer-events: none;       /* slot is transparent; modals re-enable */
-    z-index: 40;                /* above 3D scene + mirror, below pause menu */
+    z-index: 40;                /* above 3D scene + mirror, below the star
+                                   map / QB setup (50) and pause menu (100) */
+    font-family: "Antonio", "Antonio-Regular", sans-serif;
+    -webkit-font-smoothing: antialiased;
 }
 .info-box-modal {
     pointer-events: auto;
-    min-width: 340px;
-    max-width: 560px;
-    background: rgba(8, 18, 30, 0.92);
-    border: 1px solid #2f6f9f;
-    border-radius: 6px;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
-    color: #cfe6f5;
-    font-family: sans-serif;
-    padding: 14px 18px 16px;
+    width: 440px;               /* canonical modal width (08-modal-dialog) */
+    max-width: 60vw;
+    box-shadow: 0 6px 28px rgba(0, 0, 0, 0.55);
 }
 .info-box-title {
-    font-size: 16px;
+    background: linear-gradient(90deg, var(--bc-menu1-base, rgb(216, 94, 86)) 0%,
+                                       var(--bc-menu1-accent, rgb(216, 132, 80)) 100%);
+    color: rgb(0, 0, 0);        /* black on the salmon chrome, as bc-panel__header */
+    font-size: 14px;
     font-weight: 600;
-    color: #8fd0ff;
-    border-bottom: 1px solid #2f6f9f;
-    padding-bottom: 6px;
-    margin-bottom: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 4px 16px 4px 18px;
+    border-radius: 0 14px 0 0;
+    min-height: 20px;
 }
 .info-box-body {
+    background: rgba(10, 10, 16, 0.92);   /* --bc-modal-bg */
+    border-left:   3px solid var(--bc-menu1-base, rgb(216, 94, 86));
+    border-right:  3px solid var(--bc-menu1-base, rgb(216, 94, 86));
+    border-bottom: 3px solid var(--bc-menu1-base, rgb(216, 94, 86));
+    padding: 16px 20px 18px;
+    color: rgb(220, 210, 225);  /* --bc-row-text-dim */
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.55;
+    letter-spacing: 0.4px;
 }
+/* Key glyph chips (E1M1's W/S/A/D help text): Menu2 purple like a focused
+   menu row, so a key reads as an interactive token, not a link. The SDK
+   passes an explicit colour per glyph (g_kMainMenuButton2HighlightedColor)
+   that JS applies inline when it resolves; this is the default. */
 .info-box-key {
     display: inline-block;
-    border: 1px solid #5a93bf;
-    border-radius: 3px;
-    padding: 0 5px;
-    margin: 0 2px;
+    min-width: 1.2em;
+    text-align: center;
+    padding: 0 6px;
+    margin: 0 3px;
     font-weight: 600;
-    background: rgba(47, 111, 159, 0.25);
+    color: rgb(220, 210, 255);
+    background: rgb(37, 26, 64);
+    border-left: 2px solid rgb(147, 103, 255);
 }
+/* LCARS pill row: [L-cap][gap][button][gap][R-cap], right-aligned. */
+.info-box-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 18px;
+}
+.info-box-actions__row {
+    display: inline-flex;
+    align-items: stretch;
+    gap: 6px;
+}
+.info-box-cap {
+    width: 16px;
+    background: var(--bc-menu1-base, rgb(216, 94, 86));
+}
+.info-box-cap--l { border-radius: 12px 0 0 12px; }
+.info-box-cap--r { border-radius: 0 12px 12px 0; }
 .info-box-close {
-    margin-top: 14px;
-    padding: 5px 16px;
-    background: rgba(47, 111, 159, 0.4);
-    color: #e6f3ff;
-    border: 1px solid #5a93bf;
-    border-radius: 4px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 400;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    min-width: 90px;
+    padding: 6px 20px;
+    background: transparent;    /* secondary button: outline top/bottom only */
+    color: rgb(220, 210, 255);
+    border: 0;
+    border-top: 1px solid rgb(120, 90, 160);
+    border-bottom: 1px solid rgb(120, 90, 160);
+    border-radius: 0;
     cursor: pointer;
-    font-size: 13px;
+    transition: background-color 80ms linear, color 80ms linear;
 }
-.info-box-close:hover { background: rgba(90, 147, 191, 0.6); }
+.info-box-close:hover {
+    background: rgb(173, 132, 255);   /* Menu2 highlight, as .pause-row:hover */
+    color: #ffffff;
+}
+.info-box-close:active { background: rgb(147, 103, 255); }

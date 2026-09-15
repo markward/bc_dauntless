@@ -68,7 +68,7 @@ def test_stylized_window_and_subtitle_coexist_in_payload(monkeypatch):
     subtitle = top_window._the_top_window.FindMainWindow(top_window.MWT_SUBTITLE)
     subtitle.SetOn()
 
-    w = STStylizedWindow_CreateW("Mission Briefing")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "Mission Briefing")
     top_window._the_top_window.AddChild(w, 100.0, 50.0)
 
     panel = SDKMirrorPanel()

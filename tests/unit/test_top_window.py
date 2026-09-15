@@ -769,8 +769,8 @@ def test_reset_for_tests_replaces_subtitle_singleton():
 def test_reset_for_tests_resets_stylized_counter():
     from engine.appc import top_window
     from engine.appc.windows import _STStylizedWindow, STStylizedWindow_CreateW
-    STStylizedWindow_CreateW("A")
-    STStylizedWindow_CreateW("B")
+    STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "A")
+    STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "B")
     assert _STStylizedWindow._counter == 2
     top_window.reset_for_tests()
     assert _STStylizedWindow._counter == 0

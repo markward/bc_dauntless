@@ -93,6 +93,19 @@ class InfoBoxPanel(Panel):
         super().__init__()
         self._last_pushed: Optional[str] = None
         self._boxes_by_id: dict = {}
+        # Visible boxes that carry a Close button, in stack order (last =
+        # bottom of the CSS column). Only these can own ESC: a box without
+        # Close (E1M1's Picard tutorial box) is dismissed by a mission event,
+        # never by the player, so it must not block the pause menu.
+        self._closeable_ids: list = []
+        # On-screen rect of the modal stack in CEF view px, reported by JS
+        # ("bounds:x,y,w,h") after each render and on window resize. The host
+        # loop forwards left-clicks to CEF only inside a known bbox (see the
+        # _cursor_in_* ladder in host_loop.py) -- the modal is centred and
+        # sized by its text, so the only honest source for that bbox is the
+        # laid-out DOM. None until JS reports; stale rects are harmless
+        # because cursor_in_bounds() also requires is_open().
+        self._bounds: Optional[tuple] = None
 
     @property
     def name(self) -> str:
@@ -104,6 +117,7 @@ class InfoBoxPanel(Panel):
 
         entries: list = []
         self._boxes_by_id = {}
+        self._closeable_ids = []
         for (child, _x, _y) in TacticalControlWindow.GetInstance()._children:
             if not isinstance(child, _STStylizedWindow):
                 continue
@@ -124,6 +138,7 @@ class InfoBoxPanel(Panel):
             }
             if button is not None:
                 entry["button"] = {"id": child._id, "label": button.GetLabel()}
+                self._closeable_ids.append(child._id)
             entries.append(entry)
 
         payload = json.dumps({"entries": entries})
@@ -134,21 +149,58 @@ class InfoBoxPanel(Panel):
 
     def dispatch_event(self, action: str) -> bool:
         if action.startswith("close:"):
-            box_id = action[len("close:"):]
-            box = self._boxes_by_id.get(box_id)
-            if box is None:
-                # Box rebuilt/removed between frames — drop; next snapshot
-                # repairs the UI.
-                _logger.info("info-box: stale close id %s dropped", box_id)
-                return True
-            from engine.appc.characters import STButton
-            button = _find_first(box, lambda w: isinstance(w, STButton))
-            if button is not None:
-                button.SendActivationEvent()
-            else:
-                _logger.warning("info-box: box %s has no close button; ignoring close", box_id)
+            self._close(action[len("close:"):])
+            return True
+        if action.startswith("bounds:"):
+            try:
+                x, y, w, h = (float(v) for v in action[len("bounds:"):].split(","))
+                self._bounds = (x, y, w, h)
+            except ValueError:
+                _logger.warning("info-box: malformed bounds %r dropped", action)
+                self._bounds = None
             return True
         return False
+
+    def _close(self, box_id: str) -> None:
+        """Press the box's own Close button -- the SDK event path
+        (ET_INPUT_CLOSE_MENU -> MissionLib.CloseInfoBox + the mission's
+        handler, e.g. E1M1.TacticalInfoBoxClosed), never a bare
+        SetNotVisible, so the mission's "closed" flag is set too."""
+        box = self._boxes_by_id.get(box_id)
+        if box is None:
+            # Box rebuilt/removed between frames — drop; next snapshot
+            # repairs the UI.
+            _logger.info("info-box: stale close id %s dropped", box_id)
+            return
+        from engine.appc.characters import STButton
+        button = _find_first(box, lambda w: isinstance(w, STButton))
+        if button is not None:
+            button.SendActivationEvent()
+        else:
+            _logger.warning("info-box: box %s has no close button; ignoring close", box_id)
+
+    # ── Modal-blocker protocol (host_loop._modal_blockers) ──────────────────
+    # A visible box WITH a Close button is a modal the player dismisses, so
+    # it takes ESC ahead of the crew menu and the pause-menu toggle -- the
+    # same bracket as the star map and Quick Battle Setup, which sit above
+    # it (z-index 50 vs 40) and therefore precede it in the ladder.
+
+    def is_open(self) -> bool:
+        return bool(self._closeable_ids)
+
+    def handle_key_esc(self) -> None:
+        if self._closeable_ids:
+            self._close(self._closeable_ids[-1])
+
+    def cursor_in_bounds(self, mx: float, my: float) -> bool:
+        """Click-forwarding gate for the host loop, in CEF view px. Half-open
+        like the sibling _cursor_in_* bboxes. False whenever no closeable box
+        is up, so a rect left over from the last box never swallows phaser
+        fire."""
+        if not self.is_open() or self._bounds is None:
+            return False
+        x, y, w, h = self._bounds
+        return x <= mx < x + w and y <= my < y + h
 
     def invalidate(self) -> None:
         self._last_pushed = None

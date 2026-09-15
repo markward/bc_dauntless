@@ -72,7 +72,7 @@ def test_dedup_returns_none_on_unchanged_state():
 
 def test_stylized_window_appears_in_payload():
     _seed_subtitle()
-    w = STStylizedWindow_CreateW("Brief")
+    w = STStylizedWindow_CreateW("StylizedWindow", "RightBorder", "Brief")
     top_window._the_top_window.AddChild(w, 0.0, 0.0)
     p = SDKMirrorPanel()
     out = p.render_payload()

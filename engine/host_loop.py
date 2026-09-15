@@ -8202,10 +8202,16 @@ def run(mission_name: Optional[str] = None,
         # take ESC before the crew menu underneath it can (that ordering
         # bug closed the XO menu under the modal, leaving it un-closable).
         # The star map is in that same bracket, for that same reason.
+        # An SDK info box with a Close button (E1M1's tactical-view help)
+        # is a centred modal the player dismisses, so it takes ESC too --
+        # last, because the star map and Quick Battle Setup draw above it
+        # (z-index 50 vs 40). Without it, ESC raised the pause menu UNDER
+        # the box. InfoBoxPanel.is_open() is False for a box with no Close
+        # (the Picard tutorial box), which stays inert to ESC as before.
         _modal_blockers = [mission_picker, developer_options_panel,
                            ship_property_viewer, ai_inspector,
                            configuration_panel, star_map_panel,
-                           quick_battle_setup_panel]
+                           quick_battle_setup_panel, info_box_panel]
 
         # --- Unattended profiling capture -------------------------------
         # DAUNTLESS_PROFILE_FRAMES=N runs N frames with both halves of the
@@ -8599,11 +8605,19 @@ def run(mission_name: Optional[str] = None,
                         and _OR_X <= _mx < _OR_X + _OR_W
                         and _OR_Y <= _my < _OR_Y + _OR_H
                     )
+                    # SDK info box (#sdk-infobox): a centred modal sized by
+                    # its text, so there is no CSS constant to mirror here.
+                    # JS reports the laid-out rect ("info-box/bounds") after
+                    # each render and on resize; the panel gates it on a
+                    # closeable box being up. Without this the Close click
+                    # fell through to the 3D view (E1M1 tactical help box).
+                    _cursor_in_infobox = info_box_panel.cursor_in_bounds(_mx, _my)
                     _cursor_in_panel = (
                         _cursor_in_left_column or _cursor_in_bottom_row
                         or _cursor_in_top_right
                         or _cursor_in_modal
                         or _cursor_in_orders
+                        or _cursor_in_infobox
                     )
                     if _cef_send_mouse_click is not None and _cursor_in_panel:
                         if host_io.mouse_button_pressed(_h.keys.MOUSE_BUTTON_LEFT):
