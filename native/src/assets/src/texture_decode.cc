@@ -7,6 +7,8 @@
 
 #include <nif/block.h>
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 
 namespace assets {
@@ -63,6 +65,23 @@ Image decode_tga(std::span<const std::uint8_t> bytes) {
     img.pixels.assign(data, data + total);
     stbi_image_free(data);
     return img;
+}
+
+void reconstruct_normal_map_z(Image& image) {
+    std::size_t channels = 0;
+    switch (image.format) {
+        case Image::Format::RGBA8: channels = 4; break;
+        case Image::Format::RGB8:  channels = 3; break;
+        case Image::Format::R8:    return;   // no x/y to derive z from
+    }
+    const std::size_t texels = image.pixels.size() / channels;
+    for (std::size_t i = 0; i < texels; ++i) {
+        std::uint8_t* px = image.pixels.data() + i * channels;
+        const float x = px[0] / 127.5f - 1.0f;
+        const float y = px[1] / 127.5f - 1.0f;
+        const float z = std::sqrt(std::max(0.0f, 1.0f - x * x - y * y));
+        px[2] = static_cast<std::uint8_t>(std::lround((z * 0.5f + 0.5f) * 255.0f));
+    }
 }
 
 Image decode_raw_image(const nif::NiRawImageData& raw) {

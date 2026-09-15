@@ -868,7 +868,8 @@ assets::Image uniform_rgba(unsigned char r, unsigned char g,
 // same product), so every non-zero texel is the SPECULAR term alone. That is
 // the isolation the earlier whole-hull differencing attempt lacked.
 std::unique_ptr<assets::Model> build_quad(unsigned char nr, unsigned char ng,
-                                          bool specular_only) {
+                                          bool specular_only,
+                                          unsigned char nb = kBlue) {
     auto model = std::make_unique<assets::Model>();
 
     assets::MeshCpu cpu;
@@ -897,7 +898,7 @@ std::unique_ptr<assets::Model> build_quad(unsigned char nr, unsigned char ng,
     model->textures.push_back(
         assets::upload_image(uniform_rgba(255, 255, 255, 2), false));
     model->textures.push_back(
-        assets::upload_image(uniform_rgba(nr, ng, kBlue), false));
+        assets::upload_image(uniform_rgba(nr, ng, nb), false));
     model->textures.push_back(
         assets::upload_image(uniform_rgba(255, 255, 255, 2), false));
 
@@ -1265,6 +1266,66 @@ TEST_F(TangentBasisTest, SpecularOnlyDirectionalTracksPerturbedNormal) {
     EXPECT_LT(m_minus, 5.0)
         << "the -U tilt points the perturbed normal away from the half-vector, "
         << "so this must be black. plus=" << m_plus << " minus=" << m_minus;
+}
+
+// ── Specular anti-aliasing (Toksvig) ────────────────────────────────────────
+// When mipmapping averages a busy patch of normals the averaged vector gets
+// SHORTER, and that length is the only record of how much the normals under
+// one pixel disagree. Renormalising throws it away, and a power-1400 highlight
+// then sparkles across a distant hull as each pixel randomly hits or misses
+// it. The shader must instead broaden (and, energy-conserving, dim) the lobe
+// by that length: p' = p*ft, ft = s/(s + p(1-s)), scaled by (1+p')/(1+p).
+//
+// The rig cannot minify a real map, so it feeds the AVERAGE directly: a
+// uniform map encoding (0, 0, 0.506) -- blue 192 -- is exactly what a 50/50
+// mix of two opposed 60-degree tilts filters to. Its direction is +Z, same as
+// the unit flat map, so any difference on screen is the length alone.
+//
+// Light 60 degrees off +Z puts H 30 degrees off the normal: 0.866^48 = 0.001,
+// black, for the unit map. For the short map, ft = 0.506/(0.506+48*0.494) =
+// 0.021, p' = 1.0, energy factor 2.0/49 = 0.041, so 0.866 * 0.041 * 0.6 light
+// = 0.021 of full scale = ~16 of 765 channel-sum. Small, and decisively not 0.
+TEST_F(TangentBasisTest, ShortenedNormalBroadensSpecularLobe) {
+    using namespace tangent_probe;
+    dauntless_normal_map::set_enabled(true);
+    dauntless_normal_map::set_strength(1.0f);
+    dauntless_normal_map::set_flip_green(false);
+
+    constexpr unsigned char kShortBlue = 192;   // decodes to z = 0.506
+    auto unit_flat  = build_quad(kMid, kMid, /*specular_only=*/true, kBlue);
+    auto short_flat = build_quad(kMid, kMid, /*specular_only=*/true, kShortBlue);
+
+    const auto light = dir_light(glm::vec3(0.866f, 0.0f, 0.5f), 0.6f);
+
+    auto diffuse_witness = build_quad(kMid, kMid, /*specular_only=*/false);
+    render(*diffuse_witness, *p, light);
+    ASSERT_GT(quad_mean(), 50.0)
+        << "the probe quad is not on screen; the specular result below would "
+           "be measuring background, not a shading term";
+
+    render(*unit_flat, *p, light);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_unit = quad_mean();
+
+    render(*short_flat, *p, light);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double m_short = quad_mean();
+
+    EXPECT_LT(m_unit, 2.0)
+        << "a unit-length flat normal must leave the power-48 lobe untouched: "
+        << "30 degrees off-peak is black. unit=" << m_unit << " short=" << m_short;
+    EXPECT_GT(m_short, 8.0)
+        << "a shortened normal (a minified busy patch) must broaden the lobe so "
+        << "30 degrees off-peak is lit. unit=" << m_unit << " short=" << m_short;
+
+    // Strength 0 collapses the perturbation to the geometric normal, and the
+    // variance the length records is variance OF that perturbation -- so it
+    // must collapse too, or "strength 0 == disabled" stops being true.
+    dauntless_normal_map::set_strength(0.0f);
+    render(*short_flat, *p, light);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_LT(quad_mean(), 2.0)
+        << "at strength 0 the shortened map must not broaden anything";
 }
 
 // Dynamic-light specular (opaque.frag :639) -- the exact site e6744d0c fixed.

@@ -68,6 +68,18 @@ private:
 Image decode_tga(std::span<const std::uint8_t> bytes);
 Texture upload_image(const Image& image, bool generate_mipmaps = true);
 
+/// Rewrite a tangent-space normal map's blue channel as z = sqrt(1 - x^2 - y^2)
+/// from its red/green, in place. For a correctly encoded unit-length map this
+/// is the authored z to within quantisation; for a map whose blue was exported
+/// in unsigned 0..1 range (CGSovereign's top_normal.tga: 100% of its tilted
+/// texels are unit length under z = B/255, 30% under the standard B/127.5-1)
+/// it is the ONLY correct z -- read the standard way those texels come out
+/// past 90 degrees, the shader's max(z, 0) pins them horizontal, and a
+/// horizontal normal is immune to the strength multiplier. Recomputing every
+/// texel needs no per-map heuristic. x^2 + y^2 > 1 clamps to z = 0. R8 images
+/// have no x/y and are left untouched.
+void reconstruct_normal_map_z(Image& image);
+
 /// Set GL_TEXTURE_MAX_LEVEL on an already-uploaded texture. 1000 is GL's
 /// default (the full chain). Applied after upload rather than during it because
 /// the sensible clamp depends on how a texture is USED — the same sheet can be

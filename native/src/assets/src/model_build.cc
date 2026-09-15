@@ -264,6 +264,9 @@ TextureLoadResult load_all_textures(
                 try {
                     auto normal_bytes = read_file(normal_path);
                     Image normal_decoded = decode_tga(normal_bytes);
+                    // Blue re-derived from red/green: see texture.h. Done
+                    // BEFORE upload so the mip chain averages unit vectors.
+                    reconstruct_normal_map_z(normal_decoded);
                     Texture normal_tex = upload(normal_decoded, true);
                     const int normal_idx =
                         static_cast<int>(model.textures.size());

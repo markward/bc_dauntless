@@ -655,7 +655,18 @@ out vec4 frag_color;
 // divide to NaN, and a NaN normal poisons every downstream term and spreads
 // through the HDR bloom chain as hard-edged black rectangles (the same class of
 // bug the rim's clamp() above exists to prevent).
-vec3 perturb_normal(vec3 N, vec3 p, vec2 uv) {
+//
+// `sigma` is the Toksvig length: how much the normals under this pixel agree,
+// 1 = perfectly, less = a minified busy patch (mipmapping averages the encoded
+// vectors, and averaged unit vectors are SHORTER -- that length is the only
+// record of the spread, and renormalising below would throw it away). The
+// specular term uses it to broaden the lobe where the surface is busy at the
+// current viewing distance; up close every texel is unit length and sigma is
+// 1, so nothing changes. Strength scales the perturbation ANGLE by ~k, so the
+// recorded variance (1-s)/s scales by k^2: at strength 0 the perturbation is
+// gone and so is its variance (sigma == 1), keeping strength 0 == disabled.
+vec3 perturb_normal(vec3 N, vec3 p, vec2 uv, out float sigma) {
+    sigma = 1.0;
     vec3 dp1  = dFdx(p);
     vec3 dp2  = dFdy(p);
     vec2 duv1 = dFdx(uv);
@@ -674,6 +685,13 @@ vec3 perturb_normal(vec3 N, vec3 p, vec2 uv) {
     s.z = max(s.z, 0.0);             // malformed map (undershot/object-space/
                                       // greyscale-misnamed blue) must not flip
                                       // the normal to face-away at strength 0
+
+    float len_raw = clamp(length(s), 1e-3, 1.0);   // 8-bit unit vectors land
+                                                    // a hair over 1: clamp
+    float var = (1.0 - len_raw) / len_raw
+              * u_normal_strength * u_normal_strength;
+    sigma = 1.0 / (1.0 + var);
+
     s.xy *= u_normal_strength;       // strength 0 => s == (0, 0, z) => N
 
     float invmax = inversesqrt(maxlen);
@@ -691,9 +709,19 @@ void main() {
     // the Fresnel rim is a silhouette effect that crawls and sparkles across
     // greeble detail if it tracks a perturbed normal. n_shade carries the
     // normal-map perturbation for the lighting terms.
+    float n_sigma = 1.0;
     vec3 n_shade = (u_normal_enabled != 0)
-        ? perturb_normal(n, v_position_ws, v_uv)
+        ? perturb_normal(n, v_position_ws, v_uv, n_sigma)
         : n;
+
+    // Toksvig specular anti-aliasing. ft folds the normal spread under this
+    // pixel into a lower exponent; the (1+p')/(1+p) factor keeps the lobe's
+    // energy constant so a broadened highlight dims instead of blooming. At
+    // n_sigma == 1 (no map, or up close) ft == 1 and both are the identity, so
+    // the un-mapped path is byte-identical.
+    float spec_ft = n_sigma / (n_sigma + u_specular_power * (1.0 - n_sigma));
+    float spec_power = u_specular_power * spec_ft;
+    float spec_norm  = (1.0 + spec_power) / (1.0 + u_specular_power);
 
     // Body-frame fragment position (object-space carve + decals).
     vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
@@ -905,7 +933,7 @@ void main() {
 
         if (u_specular_enabled != 0) {
             vec3 H = normalize(L + V);
-            float s = pow(max(dot(n_shade, H), 0.0), u_specular_power) * step(0.0, nl);
+            float s = pow(max(dot(n_shade, H), 0.0), spec_power) * spec_norm * step(0.0, nl);
             spec_acc += sf * s * u_dir_light_color[i];
         }
     }
@@ -990,7 +1018,7 @@ void main() {
 
         if (u_specular_enabled != 0) {
             vec3 H = normalize(L + V);
-            float s = pow(max(dot(n_shade, H), 0.0), u_specular_power) * step(0.0, nl);
+            float s = pow(max(dot(n_shade, H), 0.0), spec_power) * spec_norm * step(0.0, nl);
             spec_acc += att * s * u_dyn_light_color[i];
         }
     }
