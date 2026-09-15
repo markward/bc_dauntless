@@ -269,6 +269,7 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
     damage = COLLISION_GRIND_COEFF * mu * slip * dt
     if damage <= 0.0:
         return
+    _dev_log_collision("GRIND", a, b, TGPoint3(cx, cy, cz), v_n, damage)
 
     # Land each ship's abrasion on ITS OWN MESH, exactly as the impact path
     # does: trace from the other body's centre into this ship along the
@@ -613,7 +614,47 @@ def resolve_collisions(objects, ship_instances=None, dt: float = 0.0):
             hit = _respond_pair(bodies[i], bodies[k], ship_instances, dt)
             if hit is not None:
                 hits.append(hit)
+                _dev_log_collision("IMPACT", bodies[i], bodies[k],
+                                   hit[2], hit[3])
     return hits
+
+
+# Developer-mode collision log. A live report of "the ship collided with
+# something" has no other trail: the impact channel posts an SDK event only
+# some missions handle, and the grind channel posts nothing at all. One line
+# per impact; grind lines are throttled to one per pair per second so a
+# sustained contact does not flood stderr at 60 Hz.
+_GRIND_LOG_PERIOD_S = 1.0
+_grind_log_last = {}
+
+
+def _dev_log_collision(kind, a, b, contact, v_rel, damage=None) -> None:
+    from engine import dev_mode
+    if not dev_mode.is_enabled():
+        return
+    import sys
+    import time
+    if kind == "GRIND":
+        key = (id(a.obj), id(b.obj))
+        now = time.monotonic()
+        if now - _grind_log_last.get(key, -1e9) < _GRIND_LOG_PERIOD_S:
+            return
+        _grind_log_last[key] = now
+
+    def name(o):
+        try:
+            return o.GetName()
+        except Exception:  # noqa: BLE001 - diagnostics only
+            return type(o).__name__
+    pa, pb = a.center, b.center
+    line = (f"[collision] {kind} {name(a.obj)!r} <-> {name(b.obj)!r} "
+            f"a=({pa.x:.1f},{pa.y:.1f},{pa.z:.1f}) "
+            f"b=({pb.x:.1f},{pb.y:.1f},{pb.z:.1f}) "
+            f"contact=({contact.x:.1f},{contact.y:.1f},{contact.z:.1f}) "
+            f"v_rel={v_rel:.3f}")
+    if damage is not None:
+        line += f" dmg/frame={damage:.4f}"
+    print(line, file=sys.stderr, flush=True)
 
 
 def iter_collidables():
