@@ -454,3 +454,43 @@ def test_stmenu_createw_child_renders_as_menu_node():
     assert orbit_node["label"] == "Orbit Planet"
     assert orbit_node["type"] == "menu"
     assert orbit_node["children"] == []
+
+
+_chosen_seen = []
+
+
+def _record_chosen(dest, event):
+    _chosen_seen.append(dest.GetButtonW("All Stop").IsChosen())
+
+
+def test_click_on_auto_choose_button_flips_chosen_before_its_event():
+    """BC order: an AutoChoose button toggles IsChosen() and THEN sends its
+    activation event -- TacticalMenuHandlers.Fire reads the new state."""
+    _chosen_seen.clear()
+    helm, btn = _build_helm_with_button()
+    btn.SetAutoChoose(1)
+    helm.AddPythonFuncHandlerForInstance(App.ET_ALL_STOP, __name__ + "._record_chosen")
+    panel = CrewMenuPanel()
+    panel.render_payload()
+    wid = ensure_widget_id(btn)
+    panel.dispatch_event(f"click:{wid}")
+    assert btn.IsChosen() == 1 and _chosen_seen == [1]
+    panel.dispatch_event(f"click:{wid}")
+    assert btn.IsChosen() == 0 and _chosen_seen == [1, 0]
+
+
+def test_click_on_plain_button_never_touches_chosen():
+    helm, btn = _build_helm_with_button()
+    panel = CrewMenuPanel()
+    panel.render_payload()
+    panel.dispatch_event(f"click:{ensure_widget_id(btn)}")
+    assert btn.IsChosen() == 0
+
+
+def test_payload_carries_chosen_and_reemits_when_it_flips():
+    helm, btn = _build_helm_with_button()
+    panel = CrewMenuPanel()
+    data = json.loads(panel.render_payload()[len("setCrewMenus("):-2])
+    assert data["menus"][0]["children"][0]["chosen"] is False
+    btn.SetChosen(1)
+    assert panel.render_payload() is not None       # diff-gate re-emits

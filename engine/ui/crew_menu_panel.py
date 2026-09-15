@@ -160,6 +160,7 @@ class CrewMenuPanel(Panel):
             "label": widget.GetLabel(),
             "enabled": bool(widget.IsEnabled()),
             "visible": bool(widget.IsVisible()),
+            "chosen": bool(widget.IsChosen()) if isinstance(widget, STButton) else False,
         }
         # Applies to every node type that gets an id — STMenu/submenu rows
         # (the E1M1 "Set Course" target is a submenu, not a leaf) AND
@@ -243,6 +244,8 @@ class CrewMenuPanel(Panel):
                 # (Hail -> Kiska's line, alert -> XO, Scan Area -> Miguel's
                 # ScanComplete). Firing a generic ack here doubled up with — and,
                 # being single-channel, preempted — that real dialogue.
+                if widget.IsAutoChoose():
+                    widget.SetChosen(not widget.IsChosen())
                 widget.SendActivationEvent()
                 if root is not None:
                     import App

@@ -542,3 +542,44 @@ def test_host_loop_registers_the_toggle_on_tcw_reset():
     i_init = src.index("TacticalInterfaceHandlers.Initialize(_fresh_tcw)")
     i_reg = src.index("manual_aim.register_toggle_handler(_fresh_tcw)")
     assert i_init < i_reg < i_init + 900
+
+
+# ── Task 8: Felix's button ───────────────────────────────────────────────────
+
+def test_clicking_manual_aim_in_felixs_menu_sets_mouse_pick_fire(monkeypatch):
+    """The SDK path with no keyboard: crew-menu click -> ET_FIRE at the
+    Tactical menu -> Bridge.TacticalMenuHandlers.Fire -> UpdateManualAim ->
+    SetMousePickFire(IsChosen())."""
+    import App
+    import json
+    from engine.ui.crew_menu_panel import CrewMenuPanel
+    from engine.appc.tg_ui.widgets import ensure_widget_id
+    import Bridge.TacticalMenuHandlers as T
+    from engine.core.game import Game, _set_current_game
+    from engine.appc.ships import ShipClass
+    monkeypatch.setattr(T, "UpdateOrders", lambda *a, **k: None)
+    monkeypatch.setattr(T, "UpdateOrderMenus", lambda *a, **k: None)
+    monkeypatch.setattr(T, "CheckFiring", lambda *a, **k: None)
+    # TacticalMenuHandlers.Fire returns early with no current player.
+    game = Game()
+    game.SetPlayer(ShipClass())
+    _set_current_game(game)
+    tcw, btn = _tcw_with_tactical_menu()
+    menu = tcw.GetTacticalMenu()
+    evt = App.TGIntEvent_Create()
+    evt.SetEventType(App.ET_FIRE)
+    evt.SetDestination(menu)
+    btn.SetActivationEvent(evt)
+    menu.AddPythonFuncHandlerForInstance(App.ET_FIRE, "Bridge.TacticalMenuHandlers.Fire")
+    tcw.AddMenuToList(menu)
+    panel = CrewMenuPanel()
+    panel.render_payload()
+
+    panel.dispatch_event(f"click:{ensure_widget_id(btn)}")
+    assert tcw.GetMousePickFire() == 1
+    data = json.loads(panel.render_payload()[len("setCrewMenus("):-2])
+    assert data["menus"][0]["children"][0]["chosen"] is True
+
+    panel.dispatch_event(f"click:{ensure_widget_id(btn)}")
+    assert tcw.GetMousePickFire() == 0
+    _set_current_game(None)

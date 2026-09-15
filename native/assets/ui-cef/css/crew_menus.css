@@ -38,6 +38,11 @@
 .crew-menu__row.disabled { opacity: 0.4; cursor: default; }
 .crew-menu__row.disabled:hover { background: transparent; }
 
+/* AutoChoose buttons (Manual Aim, Phasers Only, Target At Will): BC draws a
+   chosen button in its highlighted colour; we tint the row and add a check. */
+.crew-menu__row--chosen { background: rgba(216, 94, 86, 0.28); }
+.crew-menu__check { margin-left: auto; padding-left: 12px; opacity: 0.9; }
+
 /* Caret matches .target-list__caret — neutral white, glyph swapped in JS
    (no CSS rotate; rotation promotes the caret to its own GPU layer in CEF
    and blurs adjacent text). */

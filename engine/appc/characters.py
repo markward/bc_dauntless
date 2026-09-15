@@ -67,6 +67,7 @@ class STButton(TGPane):
         self._highlighted = False
         self._selected = False
         self._chosen = False
+        self._auto_choose = False
 
     def GetLabel(self) -> str:                    return self._label
     def SetLabel(self, label) -> None:            self._label = str(label)
@@ -115,7 +116,17 @@ class STButton(TGPane):
     def SetDisabledColor(self, *args) -> None:    pass
     def SetUseUIHeight(self, *args) -> None:      pass
     def SetJustification(self, *args) -> None:    pass
-    def SetAutoChoose(self, *args) -> None:        pass
+    def SetAutoChoose(self, value=1) -> None:
+        # BC: a click on an AutoChoose button flips IsChosen() BEFORE the
+        # activation event fires -- Bridge.TacticalMenuHandlers.Fire reads
+        # the NEW state ("If Manual Aim is now Off..."). The flip itself
+        # lives at the click site (engine/ui/crew_menu_panel.py) so a scripted
+        # SendActivationEvent never toggles.
+        self._auto_choose = bool(value)
+
+    def IsAutoChoose(self) -> int:
+        return 1 if self._auto_choose else 0
+
     def SetChoosable(self, *args) -> None:         pass
     def SetUseEndCaps(self, *args) -> None:        pass
     def Layout(self, *args) -> None:               pass

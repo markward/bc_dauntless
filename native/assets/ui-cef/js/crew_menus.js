@@ -92,7 +92,8 @@ function appendCrewRows(body, nodes, depth) {
 
     const row = document.createElement("div");
     row.className = "crew-menu__row" + (node.enabled ? "" : " disabled") +
-                    (hasChildren ? "" : " crew-menu__row--leaf");
+                    (hasChildren ? "" : " crew-menu__row--leaf") +
+                    (node.chosen ? " crew-menu__row--chosen" : "");
     row.setAttribute("data-depth", String(Math.min(depth, 2)));
     applyHighlightClasses(row, node);
 
@@ -107,6 +108,13 @@ function appendCrewRows(body, nodes, depth) {
     label.className = "crew-menu__label";
     label.textContent = node.label;
     row.appendChild(label);
+
+    if (node.chosen) {
+      const check = document.createElement("span");
+      check.className = "crew-menu__check";
+      check.textContent = "✓";
+      row.appendChild(check);
+    }
 
     if (node.enabled) {
       if (hasChildren) {
