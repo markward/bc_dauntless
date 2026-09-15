@@ -125,13 +125,21 @@ def SoundDef(file, name, volume=1.0, dict=None):
     TGSound is left alone rather than crashing on a method it never had.
 
     A failure is recorded, never raised: an unplayable sound must not abort
-    the Autoload script that declares it.
+    the Autoload script that declares it. That includes LoadSound handing
+    back None -- its no-exception answer for a missing file OR a backend
+    that refused the load (not init'ed yet, undecodable wav). The tier-1
+    floor is that the boot report NAMES what it could not resolve; this
+    path was silent, and it hid every CGSovereign weapon sound.
     """
     from engine import paths
     try:
         path = str(paths.game_asset(file))
         snd = _sound_manager().LoadSound(path, name, 0)
-        if hasattr(snd, "SetVolume"):
+        if snd is None:
+            _sound_failures.append(
+                "%s (%s): LoadSound returned None (file missing or the "
+                "audio backend refused it)" % (name, file))
+        elif hasattr(snd, "SetVolume"):
             snd.SetVolume(volume)
     except Exception as exc:
         _sound_failures.append("%s (%s): %s: %s"

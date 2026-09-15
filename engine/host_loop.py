@@ -7444,6 +7444,15 @@ def run(mission_name: Optional[str] = None,
 
     _setup_sdk()
 
+    # The audio backend must be live BEFORE Foundation plugins run: an
+    # Autoload SoundDef goes TGSoundManager.LoadSound -> _audio.load_sound,
+    # and the binding returns False (nothing registered, no exception) until
+    # _audio.init() has happened. With this call further down, every mod's
+    # weapon sounds silently failed to register -- CGSovereign fired mute
+    # phasers, quantums and photons. Idempotent, so the later call in
+    # init_audio() is a no-op.
+    init_audio_backend()
+
     # Foundation plugins register ships into QuickBattle's tables, so this
     # must run before any QuickBattle pane is built. The SDK finder has to
     # be installed first: Custom/Ships scripts do `import Foundation` and
@@ -7674,10 +7683,12 @@ def run(mission_name: Optional[str] = None,
         # _after_mission_loaded. No eager pre-game load — the SDK is the single
         # source of the bridge mesh.
 
-        # Bring the audio backend up BEFORE the mission loads: the mission's
-        # StartMission runs the real SDK LoadBridge.Load -> LoadSounds(), which
-        # must load bridge SFX into a live backend. Listener installs stay in
-        # init_audio() below (relocating them would change spawn-event capture).
+        # The audio backend is already up (brought up before Foundation
+        # plugins loaded, above) and it must stay up through the mission
+        # load: StartMission runs the real SDK LoadBridge.Load ->
+        # LoadSounds(), which loads bridge SFX into the live backend.
+        # Listener installs stay in init_audio() below (relocating them
+        # would change spawn-event capture).
         init_audio_backend()
         if boot_quickbattle:
             # Real SDK QuickBattle entry cascade: builds the QuickBattleRegion
