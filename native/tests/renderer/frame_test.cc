@@ -2616,3 +2616,94 @@ TEST_F(FrameTest, AmbientGradientBrightensTheLitSideRelativeToTheShadowSide) {
 }
 
 }  // namespace
+
+// ── NiFlipController frames in the SPACE pass ────────────────────────────
+//
+// The frame substitution existed only in the bridge pass (EBridge's LCARS);
+// the opaque pass bound stages[Base] and ignored Material::animation_index,
+// so a ship with a flip controller (CGSovereign's bussard collectors) drew
+// source 0 forever. The clock is `decal_time` — already GetGameTime() from
+// the host loop — so the frames freeze under pause like the bridge's do.
+namespace flip_probe {
+
+// A quad whose material animates RED -> GREEN with delta = 1 s. Texture 0
+// (red) is also the static Base, exactly as the builder assigns source 0.
+std::unique_ptr<assets::Model> build_animated_quad(bool wire_animation) {
+    using namespace tangent_probe;
+    auto model = build_quad(kMid, kMid, /*specular_only=*/false);
+    // Replace the white base (index 0) with red; append green as index 3.
+    model->textures[0] = assets::upload_image(uniform_rgba(255, 0, 0, 2), false);
+    model->textures.push_back(
+        assets::upload_image(uniform_rgba(0, 255, 0, 2), false));
+    assets::TextureAnimation anim;
+    anim.texture_indices = {0, 3};
+    anim.delta = 1.0;
+    model->texture_animations.push_back(anim);
+    model->materials[0].animation_index = wire_animation ? 0 : -1;
+    return model;
+}
+
+// tangent_probe::render with a caller-chosen game time.
+void render_at(const assets::Model& model, renderer::Pipeline& pipeline,
+               float game_time) {
+    scenegraph::World world;
+    auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(&model));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, tangent_probe::kEyeZ);
+    cam.target = glm::vec3(0.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    renderer::reset_model_radius_cache();
+    renderer::FrameSubmitter submitter;
+    submitter.submit_opaque(world, cam, pipeline,
+        [](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, tangent_probe::dir_light(glm::vec3(0.0f, 0.0f, 1.0f)),
+        /*decal_time=*/game_time, /*carve_cache=*/nullptr, nullptr);
+}
+
+// Centre pixel as (r, g).
+std::pair<int, int> centre_rg() {
+    unsigned char px4[4] = {0};
+    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px4);
+    return {px4[0], px4[1]};
+}
+
+}  // namespace flip_probe
+
+TEST_F(TangentBasisTest, OpaquePassSubstitutesFlipControllerFrameByGameTime) {
+    using namespace flip_probe;
+    auto quad = build_animated_quad(/*wire_animation=*/true);
+
+    render_at(*quad, *p, 0.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto t0 = centre_rg();
+    EXPECT_GT(t0.first, t0.second + 64) << "frame 0 must draw RED";
+
+    render_at(*quad, *p, 1.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto t1 = centre_rg();
+    EXPECT_GT(t1.second, t1.first + 64) << "frame 1 (t = delta) must draw GREEN";
+
+    // Wraps: t = 2 * delta is frame 0 again.
+    render_at(*quad, *p, 2.0f);
+    const auto t2 = centre_rg();
+    EXPECT_GT(t2.first, t2.second + 64) << "t = 2 * delta must wrap to RED";
+}
+
+// A material with no animation_index is untouched by game time: the static
+// Base draws at every t. This pins the byte-identical path for every stock
+// ship (none carries a NiFlipController).
+TEST_F(TangentBasisTest, OpaquePassLeavesUnanimatedMaterialOnStaticBase) {
+    using namespace flip_probe;
+    auto quad = build_animated_quad(/*wire_animation=*/false);
+    render_at(*quad, *p, 1.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto t1 = centre_rg();
+    EXPECT_GT(t1.first, t1.second + 64) << "unanimated material must stay RED";
+}

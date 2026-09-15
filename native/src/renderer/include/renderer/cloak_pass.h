@@ -49,6 +49,9 @@ public:
 
     /// Draw every descriptor into the currently-bound HDR target. No-op on an
     /// empty list. `time` is the wall clock in seconds (drives the shimmer).
+    /// `game_time` is GetGameTime() and advances NiFlipController frames on
+    /// the hull's Base textures, matching the opaque pass, so a cloaking
+    /// Sovereign's bussards keep cycling and freeze under pause.
     /// `lighting` + `ambient_scale` match the opaque pass so the cloaked hull
     /// shades identically (no lit/unlit brightness pop at the transition).
     /// Restores canonical opaque-pass GL state on exit.
@@ -59,7 +62,8 @@ public:
                 const ModelLookup& lookup,
                 float time,
                 const Lighting& lighting,
-                float ambient_scale);
+                float ambient_scale,
+                float game_time = 0.0f);
 
     void set_strength(float s)          { strength_ = s; }
     void set_dispersion(float d)        { dispersion_ = d; }

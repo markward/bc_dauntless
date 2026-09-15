@@ -308,6 +308,61 @@ protected:
         return f;
     }
 
+    // Root -> NiTriShape whose NiTextureProperty (block 4) hangs a
+    // NiFlipController (block 6) with three sources: bussard1/2/3 (blocks
+    // 5, 7, 8). `own_image` selects the authoring convention:
+    //   true  -> property.image_link = bussard1 (block 5) AND controller.
+    //            CGSovereign's bussard collectors (3ds Max exporter writes
+    //            the static image equal to source 0).
+    //   false -> property.image_link = 0; the controller alone supplies the
+    //            images. EBridge's LCARS panel.
+    // Identity link IDs (no block_ids).
+    nif::File file_with_flip_controller(bool own_image) {
+        nif::File f;
+        nif::NiNode root;                    // 0
+        root.av.obj.name = "Root";
+        root.child_links = {1};
+        f.blocks.push_back(root);
+        nif::NiTriShape tri;                 // 1
+        tri.av.obj.name = "Bussard";
+        tri.data_link = 2;
+        tri.av.property_links = {3, 4};
+        f.blocks.push_back(tri);
+        nif::NiTriShapeData d;               // 2
+        d.num_vertices = 3;
+        d.has_vertices = true;
+        d.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+        d.has_uv = true;
+        d.uv_sets.push_back({{0, 0}, {1, 0}, {0, 1}});
+        d.num_triangles = 1;
+        d.triangles.push_back({0, 1, 2});
+        f.blocks.push_back(d);
+        f.blocks.push_back(nif::NiMaterialProperty{});   // 3
+        nif::NiTextureProperty tex;          // 4
+        tex.image_link = own_image ? 5u : 0u;
+        tex.obj.controller_link = 6;
+        f.blocks.push_back(tex);
+        nif::NiImage b1;                     // 5
+        b1.use_external = 1;
+        b1.file_name = "bussard1.tga";
+        f.blocks.push_back(b1);
+        nif::NiFlipController ctrl;          // 6
+        ctrl.delta = 0.1111f;
+        ctrl.stop_time = 3 * 0.1111f;
+        ctrl.num_sources = 3;
+        ctrl.image_links = {5, 7, 8};
+        f.blocks.push_back(ctrl);
+        nif::NiImage b2;                     // 7
+        b2.use_external = 1;
+        b2.file_name = "bussard2.tga";
+        f.blocks.push_back(b2);
+        nif::NiImage b3;                     // 8
+        b3.use_external = 1;
+        b3.file_name = "bussard3.tga";
+        f.blocks.push_back(b3);
+        return f;
+    }
+
     // Minimal valid 2x1 24-bit uncompressed TGA (see texture_decode_test).
     static std::vector<std::uint8_t> valid_tga() {
         return {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 24, 0,
@@ -655,4 +710,105 @@ TEST(ModelBuildNormalDiscovery, ShipWithoutNormalSiblingsLeavesEveryBumpEmpty) {
     for (const auto& m : model.materials) {
         EXPECT_LT(m.stages[static_cast<std::size_t>(S::Bump)].texture_index, 0);
     }
+}
+
+
+// ── NiFlipController wiring ───────────────────────────────────────────────
+//
+// CGSovereign's bussard collectors author the flip the way the 3ds Max
+// exporter does: the NiTextureProperty carries its own image_link (equal to
+// the controller's source 0) AND a controller_link. The builder used to
+// require image_link == 0 (EBridge's authoring) and silently skipped this
+// shape, leaving the bussards static on bussard1.tga.
+TEST_F(ModelBuildTest, FlipControllerOnPropertyWithOwnImageIsWired) {
+    write_tga("bussard1.tga");
+    write_tga("bussard2.tga");
+    write_tga("bussard3.tga");
+    auto f = file_with_flip_controller(/*own_image=*/true);
+    auto model = assets::detail::build_model(f, make_ctx());
+
+    ASSERT_EQ(model.materials.size(), 1u);
+    ASSERT_EQ(model.texture_animations.size(), 1u)
+        << "a property with its own image AND a flip controller must animate";
+    EXPECT_EQ(model.materials[0].animation_index, 0);
+    // The static base stays the property's own image: it is what draws when
+    // a pass does not substitute frames.
+    EXPECT_EQ(base_texture_index(model), model.texture_animations[0].texture_indices[0]);
+}
+
+// Every source cycles, element 0 included. Both flip controllers in the
+// corpus author stop_time == num_sources * delta (EBridge 8 x 0.1667 =
+// 1.333; Sovereign 16 x 0.1111 = 1.778) — with source 0 held static as a
+// non-frame the exporter would have written (N-1) * delta. The Sovereign
+// also writes the property's static image EQUAL to source 0, which only
+// makes sense if source 0 is a frame the controller shows.
+TEST_F(ModelBuildTest, FlipControllerCyclesAllSourcesIncludingElementZero) {
+    write_tga("bussard1.tga");
+    write_tga("bussard2.tga");
+    write_tga("bussard3.tga");
+    for (bool own_image : {true, false}) {
+        auto f = file_with_flip_controller(own_image);
+        auto model = assets::detail::build_model(f, make_ctx());
+        ASSERT_EQ(model.texture_animations.size(), 1u) << "own_image=" << own_image;
+        const auto& anim = model.texture_animations[0];
+        ASSERT_EQ(anim.texture_indices.size(), 3u)
+            << "own_image=" << own_image << ": all 3 sources must be frames";
+        EXPECT_NEAR(anim.delta, 0.1111, 1e-6);
+        // Frames are distinct textures in source order; frame 0 is the
+        // property's base.
+        EXPECT_EQ(anim.texture_indices[0], base_texture_index(model));
+        EXPECT_NE(anim.texture_indices[0], anim.texture_indices[1]);
+        EXPECT_NE(anim.texture_indices[1], anim.texture_indices[2]);
+    }
+}
+
+// The EBridge authoring (image_link == 0, controller supplies the images)
+// keeps working: the property's Base stage is source 0 and it animates.
+TEST_F(ModelBuildTest, FlipControllerWithoutOwnImageStillAnimates) {
+    write_tga("bussard1.tga");
+    write_tga("bussard2.tga");
+    write_tga("bussard3.tga");
+    auto f = file_with_flip_controller(/*own_image=*/false);
+    auto model = assets::detail::build_model(f, make_ctx());
+    ASSERT_EQ(model.materials.size(), 1u);
+    ASSERT_EQ(model.texture_animations.size(), 1u);
+    EXPECT_EQ(model.materials[0].animation_index, 0);
+    EXPECT_GE(base_texture_index(model), 0)
+        << "Base stage must be assigned from the controller's source 0";
+}
+
+// The real thing: CGSovereign's Sovereign.nif (a mod overlay, present only
+// where it is installed) authors its bussard-collector flip with the
+// property's own image_link set AND a 16-frame controller. Every frame must
+// be wired and the material must point at the animation.
+TEST(ModelBuildRealAssets, CGSovereignBussardFlipIsWiredWithAllSixteenFrames) {
+    const fs::path root = fs::path(OPEN_STBC_PROJECT_ROOT);
+    const fs::path nif  = root / "mods/CGSovereign/data/Models/Ships/Sovereign/Sovereign.nif";
+    const fs::path tex  = root / "mods/CGSovereign/data/Models/Ships/Sovereign/High";
+    if (!fs::is_regular_file(nif)) GTEST_SKIP() << "asset missing: " << nif;
+
+    nif::File f = nif::load(nif);
+    assets::PathResolver resolver;
+    assets::detail::ModelBuildContext ctx;
+    ctx.resolver = &resolver;
+    ctx.texture_search_paths = {tex};
+    ctx.texture_uploader = stub_texture;
+    ctx.mesh_uploader = stub_mesh;
+    auto model = assets::detail::build_model(f, ctx);
+
+    ASSERT_EQ(model.texture_animations.size(), 1u);
+    const auto& anim = model.texture_animations[0];
+    EXPECT_EQ(anim.texture_indices.size(), 16u);
+    EXPECT_NEAR(anim.delta, 0.1111, 1e-3);
+    int animated_materials = 0;
+    for (const auto& m : model.materials) {
+        if (m.animation_index == 0) {
+            ++animated_materials;
+            EXPECT_EQ(m.stages[static_cast<std::size_t>(
+                          assets::Material::StageSlot::Base)].texture_index,
+                      anim.texture_indices[0])
+                << "static Base must be the controller's source 0";
+        }
+    }
+    EXPECT_GE(animated_materials, 1) << "no material references the bussard flip";
 }

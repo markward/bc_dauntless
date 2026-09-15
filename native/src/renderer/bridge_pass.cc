@@ -136,24 +136,9 @@ void draw_mesh(const assets::Model& model,
         ? static_cast<float>(mat.alpha_test_threshold) / 255.0f
         : -1.0f;
     shader.set_float("u_alpha_test_threshold", thresh);
-    int base_tex = mat.stages[
-        static_cast<std::size_t>(assets::Material::StageSlot::Base)
-    ].texture_index;
-    // NiFlipController-driven animation: replace base_tex with the
-    // current frame's texture index. Falls through to the static
-    // base_tex if the animation index is missing or its frame list
-    // failed to resolve.
-    if (mat.animation_index >= 0 &&
-        mat.animation_index < static_cast<int>(model.texture_animations.size()))
-    {
-        const auto& anim = model.texture_animations[mat.animation_index];
-        if (!anim.texture_indices.empty()) {
-            const int frame = assets::compute_flip_frame_index(
-                wall_time, anim.start_time, anim.frequency, anim.phase,
-                anim.delta, static_cast<int>(anim.texture_indices.size()));
-            base_tex = anim.texture_indices[frame];
-        }
-    }
+    // NiFlipController-driven animation (EBridge's LCARS): the current
+    // frame's texture, or the static Base when the material has none.
+    int base_tex = assets::animated_base_texture(model, mat, wall_time);
     // Flip V only for the viewscreen RTT feed: its FBO colour attachment is
     // bottom-up, the NIF screen UVs are top-down (see bridge.frag). The other
     // override — the SDK off texture — is a .tga and must NOT be flipped. Set

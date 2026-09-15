@@ -19,4 +19,14 @@ int compute_flip_frame_index(double t,
                              double delta,
                              int    num_sources);
 
+struct Model;
+struct Material;
+
+/// The Base-stage texture index `mat` should bind at game time `t`: the
+/// active NiFlipController frame when `mat.animation_index` names one of
+/// `model.texture_animations`, otherwise the material's static Base. Every
+/// pass that binds a Base texture (opaque, cloak, bridge) goes through this
+/// so a flip authored on a ship animates the same way one on a bridge does.
+int animated_base_texture(const Model& model, const Material& mat, double t);
+
 }  // namespace assets

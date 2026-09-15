@@ -1075,7 +1075,8 @@ void frame() {
         if (g_cloak_pass && !g_cloak_ships.empty()) {
             DAUNTLESS_FRAME_SCOPE("space.cloak");
             g_cloak_pass->render(g_cloak_ships, g_world, cam, *g_pipeline, lookup,
-                                 static_cast<float>(now), g_lighting, ambient_scale);
+                                 static_cast<float>(now), g_lighting, ambient_scale,
+                                 g_decal_game_time);
         }
     };
 

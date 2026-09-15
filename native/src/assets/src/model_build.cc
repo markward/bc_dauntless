@@ -642,12 +642,16 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
 
     auto child_to_parent = build_child_to_parent_map(f);
 
-    // NiFlipController plumbing. For every NiTextureProperty whose own
-    // image_link is 0 but whose controller_link resolves to a
-    // NiFlipController, build:
-    //   (a) flip_image_override_for_prop: (property link_id → frame-0
+    // NiFlipController plumbing. For every NiTextureProperty whose
+    // controller_link resolves to a NiFlipController, build:
+    //   (a) flip_image_override_for_prop: (property link_id → source-0
     //       NiImage link_id) so apply_texture_property assigns the
-    //       first frame to stages[Base].texture_index;
+    //       first frame to stages[Base].texture_index. Only needed for
+    //       the EBridge authoring, where the property's own image_link
+    //       is 0 and the controller alone supplies the images. The
+    //       3ds Max exporter (CGSovereign's bussards) writes the
+    //       property's image_link EQUAL to source 0 as well as the
+    //       controller — that image is already the Base, so no override.
     //   (b) flip_animation_index_for_prop: (property link_id →
     //       Model::texture_animations index) so the renderer can pick
     //       per-frame textures at draw time;
@@ -658,7 +662,6 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     for (std::size_t i = 0; i < f.blocks.size(); ++i) {
         const auto* prop = std::get_if<nif::NiTextureProperty>(&f.blocks[i]);
         if (!prop) continue;
-        if (prop->image_link != 0) continue;
         auto ctrl_idx = resolver.resolve(prop->obj.controller_link);
         if (ctrl_idx == LinkResolver::kInvalidIndex) continue;
         if (ctrl_idx >= f.blocks.size()) continue;
@@ -666,30 +669,33 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         if (!ctrl || ctrl->image_links.empty()) continue;
         const std::uint32_t prop_link_id =
             (i < f.block_ids.size()) ? f.block_ids[i] : static_cast<std::uint32_t>(i);
-        flip_image_override_for_prop[prop_link_id] = ctrl->image_links[0];
+        if (prop->image_link == 0) {
+            flip_image_override_for_prop[prop_link_id] = ctrl->image_links[0];
+        }
 
         TextureAnimation anim;
         anim.delta      = static_cast<double>(ctrl->delta);
         anim.start_time = static_cast<double>(ctrl->start_time);
         anim.frequency  = static_cast<double>(ctrl->frequency);
         anim.phase      = static_cast<double>(ctrl->phase);
-        // Skip image_links[0]: BC's NiFlipController treats element 0
-        // as the property's static base texture (the one BC would show
-        // if the controller weren't running), and cycles only elements
-        // 1..N. EBridge's LCarsSchematicRight is the base; LCarsAnim1
-        // ..LCarsAnim7 are the actual animation frames.
-        if (ctrl->image_links.size() >= 2) {
-            anim.texture_indices.reserve(ctrl->image_links.size() - 1);
-            for (std::size_t fi = 1; fi < ctrl->image_links.size(); ++fi) {
-                auto it = tex_result.image_to_texture.find(ctrl->image_links[fi]);
-                if (it == tex_result.image_to_texture.end()) {
-                    // Frame's NiImage didn't load — drop the whole anim
-                    // to avoid binding an invalid index later.
-                    anim.texture_indices.clear();
-                    break;
-                }
-                anim.texture_indices.push_back(it->second);
+        // Every source is a frame, element 0 included. This used to skip
+        // element 0 on the theory that it was a static base (EBridge's
+        // LCarsSchematicRight) — an inference from the filename, not RE'd.
+        // The authored timing says otherwise: both controllers in the
+        // corpus write stop_time == num_sources * delta (EBridge 8 x
+        // 0.1667 = 1.333, Sovereign 16 x 0.1111 = 1.778); a held source 0
+        // would give (N-1) * delta. The Sovereign also authors the
+        // property's static image equal to source 0.
+        anim.texture_indices.reserve(ctrl->image_links.size());
+        for (std::uint32_t link : ctrl->image_links) {
+            auto it = tex_result.image_to_texture.find(link);
+            if (it == tex_result.image_to_texture.end()) {
+                // Frame's NiImage didn't load — drop the whole anim
+                // to avoid binding an invalid index later.
+                anim.texture_indices.clear();
+                break;
             }
+            anim.texture_indices.push_back(it->second);
         }
         if (anim.texture_indices.empty()) continue;
         const int anim_idx = static_cast<int>(model.texture_animations.size());

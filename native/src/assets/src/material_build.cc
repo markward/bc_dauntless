@@ -93,8 +93,9 @@ void apply_texture_property(
     // NiFlipController override: when src.image_link is 0, the property's
     // texture is supplied by a NiFlipController hung off its
     // controller_link. flip_image_override_for_prop maps this property's
-    // link_id to the controller's frame-0 NiImage link — a static
-    // stand-in until per-frame animation lands.
+    // link_id to the controller's source-0 NiImage link — the static Base
+    // a pass draws when it does not substitute frames (the opaque, cloak
+    // and bridge passes all do, via Material::animation_index).
     std::uint32_t effective_image_link = src.image_link;
     if (effective_image_link == 0 && flip_image_override_for_prop) {
         auto it = flip_image_override_for_prop->find(texture_link_id);

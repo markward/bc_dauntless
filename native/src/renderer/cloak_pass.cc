@@ -3,6 +3,7 @@
 #include "renderer/frame.h"      // renderer::Lighting
 #include "renderer/pipeline.h"
 
+#include <assets/flip_frame.h>
 #include <assets/material.h>
 #include <assets/mesh.h>
 #include <assets/model.h>
@@ -58,7 +59,8 @@ void CloakRefractionPass::render(const std::vector<CloakShipDescriptor>& ships,
                                  const ModelLookup& lookup,
                                  float time,
                                  const Lighting& lighting,
-                                 float ambient_scale) {
+                                 float ambient_scale,
+                                 float game_time) {
     if (ships.empty()) return;
     ensure_fallbacks();
 
@@ -165,10 +167,11 @@ void CloakRefractionPass::render(const std::vector<CloakShipDescriptor>& ships,
                 shader.set_vec3("u_diffuse_color", mat.diffuse);
 
                 // Bind the hull's own base + glow textures so the cloaked hull
-                // keeps rendering its texture, glow-keyed to opacity.
-                const int base_tex = mat.stages[
-                    static_cast<std::size_t>(assets::Material::StageSlot::Base)
-                ].texture_index;
+                // keeps rendering its texture, glow-keyed to opacity. The base
+                // is the live NiFlipController frame where the material has
+                // one, as in the opaque pass.
+                const int base_tex = assets::animated_base_texture(
+                    *model, mat, static_cast<double>(game_time));
                 glActiveTexture(GL_TEXTURE1);
                 glBindTexture(GL_TEXTURE_2D, base_tex >= 0
                     ? model->textures[base_tex].id() : white_fallback_);

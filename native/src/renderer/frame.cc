@@ -27,6 +27,7 @@
 #include <scenegraph/damage_decals.h>
 #include <scenegraph/hull_carve.h>
 
+#include <assets/flip_frame.h>
 #include <assets/model.h>
 #include <assets/mesh.h>
 #include <assets/texture.h>
@@ -649,9 +650,13 @@ void draw_model(const assets::Model& model,
             // Self-illumination scale (1 = normal, 0 = destroyed/dark hull).
             prog.set_float("u_emissive_scale", emissive_scale);
 
-            const int base_tex = mat.stages[
-                static_cast<std::size_t>(assets::Material::StageSlot::Base)
-            ].texture_index;
+            // NiFlipController frames (CGSovereign's bussard collectors)
+            // ride on decal_time, which is GetGameTime() from the host
+            // loop — the same clock the bridge pass feeds its LCARS, so
+            // the frames freeze under pause. Static materials get their
+            // Base back unchanged.
+            const int base_tex = assets::animated_base_texture(
+                model, mat, static_cast<double>(decal_time));
             glActiveTexture(GL_TEXTURE0);
             if (base_tex >= 0) {
                 glBindTexture(GL_TEXTURE_2D, model.textures[base_tex].id());
