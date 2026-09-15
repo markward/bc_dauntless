@@ -408,3 +408,40 @@ def test_host_io_cursor_pos_is_none_headless(monkeypatch):
     from engine import host_io
     monkeypatch.setattr(host_io, "_h", None)
     assert host_io.cursor_pos() is None
+
+
+# ── Task 6: host-loop wiring (source-level guard; the loop body is not
+#    unit-callable). Ordering is the point: the pick is a SIM-side mutation
+#    that runs next to the key pollers, and the camera note is RENDER-side
+#    data only, after r.set_camera.
+
+def _host_loop_src():
+    import inspect
+    from engine import host_loop
+    return inspect.getsource(host_loop)
+
+
+def test_host_loop_runs_manual_aim_update_in_the_sim_block():
+    src = _host_loop_src()
+    i_poll = src.index("_poll_fire_keys(_h, input_map)")
+    i_upd = src.index("manual_aim.update(")
+    i_weap = src.index("_advance_weapons(_ships_this_tick, TICK_DT)")
+    assert i_poll < i_upd < i_weap, "update must run after the key pollers and before the weapon tick"
+    body = src[i_upd: i_upd + 400]
+    assert "is_exterior=view_mode.is_exterior" in body
+    assert "tcw=" in body and "player=player" in body
+
+
+def test_host_loop_notes_the_camera_after_the_exterior_set_camera():
+    src = _host_loop_src()
+    anchor = "r.set_camera(eye=eye, target=target, up=up_vec,\n                             fov_y_rad=director.fov_y_rad,\n                             near=1.0, far=5000.0)"
+    i_cam = src.index(anchor)
+    i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.fov_y_rad, 1.0, 5000.0)")
+    assert i_cam < i_note < i_cam + 600
+
+
+def test_host_loop_resets_manual_aim_on_tcw_reset():
+    src = _host_loop_src()
+    i_tcw = src.index("_TCW._instance = None")
+    i_reset = src.index("manual_aim.reset()")
+    assert i_tcw < i_reset < i_tcw + 400

@@ -28,6 +28,8 @@ from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
 from engine.ui.reticle_text import build_reticle_text, _ReticleCam
+from engine import manual_aim
+from engine.appc.windows import TacticalControlWindow
 from engine.ui.letterbox import LetterboxAnimator
 from engine.appc.character_position_zoom import (
     POSITION_ZOOM_SENTINEL,
@@ -3797,6 +3799,8 @@ def reset_sdk_globals() -> None:
     try:
         from engine.appc.windows import TacticalControlWindow as _TCW
         _TCW._instance = None
+        # Manual Aim: the noted camera belongs to the outgoing mission.
+        manual_aim.reset()
         # Warp-button / sorted-region registry must not leak across missions.
         from engine.appc.tg_ui import st_widgets
         st_widgets._reset_module_state()
@@ -8836,6 +8840,18 @@ def run(mission_name: Optional[str] = None,
                 _poll_raw_keyboard(_h, input_map)
                 _poll_skip_dialogue(_h, input_map)
 
+                # Manual Aim (H): re-pick the cursor's hull point on the
+                # player's target, or revert to the subsystem lock. Sim side
+                # on purpose -- it mutates the player's target offset, which
+                # the weapon tick below and the phaser tick in
+                # _advance_combat both read this same frame.
+                manual_aim.update(
+                    player=player,
+                    tcw=TacticalControlWindow.GetInstance(),
+                    ship_instances=(session.ship_instances if session is not None else None),
+                    is_exterior=view_mode.is_exterior,
+                )
+
                 # Advance weapon charge / reload for every ship in every
                 # active set.  Runs after AI/physics (approximate — the host
                 # loop is single-threaded and Python AI runs in the gameloop
@@ -9361,6 +9377,9 @@ def run(mission_name: Optional[str] = None,
                 r.set_camera(eye=eye, target=target, up=up_vec,
                              fov_y_rad=director.fov_y_rad,
                              near=1.0, far=5000.0)
+                # Manual Aim reads this camera on the NEXT sim tick to
+                # unproject the cursor. Data only -- no mutation here.
+                manual_aim.note_camera(eye, target, up_vec, director.fov_y_rad, 1.0, 5000.0)
                 # Feed the dynamic-light distance gate. Read by next frame's
                 # _advance_combat, which runs upstream of this solve.
                 _note_camera_eye(eye)
