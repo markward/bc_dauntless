@@ -102,9 +102,11 @@ def last_camera() -> Optional[AimCamera]:
 
 
 def reset() -> None:
-    """Mission swap / tests: forget the noted camera."""
-    global _last_cam
+    """Mission swap / tests: forget the noted camera and the last cursor
+    shape (so the next sync re-applies whatever the new state wants)."""
+    global _last_cam, _last_cursor_shape
     _last_cam = None
+    _last_cursor_shape = None
 
 
 def _revert(player) -> bool:
@@ -220,3 +222,34 @@ def register_toggle_handler(tcw) -> None:
         return
     tcw.AddPythonFuncHandlerForInstance(et, _TOGGLE_HANDLER)
     tcw._manual_aim_toggle_registered = True
+
+
+# ── Cursor shape ────────────────────────────────────────────────────────────
+# BC swaps the pointer for a targeting cursor while mouse pick fire is on.
+# The CEF layer is off-screen rendered and the host never relays CEF's
+# cursor-change callback, so a DOM `cursor:` rule is a no-op here -- the OS
+# pointer is GLFW's, set via the host's set_cursor_shape binding. "cell" has
+# no GLFW standard shape; crosshair is the nearest.
+_last_cursor_shape: Optional[str] = None
+
+
+def desired_cursor_shape(*, tcw, is_exterior: bool, ui_open: bool) -> str:
+    """"crosshair" while the pick can actually happen (flag on, exterior
+    view, no pause-layer UI over the scene); "arrow" everywhere else."""
+    if ui_open or not is_exterior or tcw is None or not tcw.GetMousePickFire():
+        return "arrow"
+    return "crosshair"
+
+
+def sync_cursor_shape(*, tcw, is_exterior: bool, ui_open: bool,
+                      set_shape=None) -> str:
+    """Per-frame, idempotent: only calls the host when the shape changes.
+    Runs unconditionally (paused or not) so opening the pause menu restores
+    the arrow the same frame."""
+    global _last_cursor_shape
+    from engine import host_io
+    shape = desired_cursor_shape(tcw=tcw, is_exterior=is_exterior, ui_open=ui_open)
+    if shape != _last_cursor_shape:
+        (set_shape or host_io.set_cursor_shape)(shape)
+        _last_cursor_shape = shape
+    return shape

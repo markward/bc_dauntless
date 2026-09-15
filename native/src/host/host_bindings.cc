@@ -4847,6 +4847,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("locked"),
           "Lock the cursor (hidden + raw deltas) or release it.");
 
+    m.def("set_cursor_shape",
+          [](const std::string& shape) {
+              if (!g_window) {
+                  throw std::runtime_error("set_cursor_shape: init must be called first");
+              }
+              if (shape == "crosshair") {
+                  g_window->set_cursor_shape(1);
+              } else if (shape == "arrow") {
+                  g_window->set_cursor_shape(0);
+              } else {
+                  throw std::invalid_argument("set_cursor_shape: unknown shape '" + shape + "'");
+              }
+          },
+          py::arg("shape"),
+          "OS pointer shape while unlocked: \"arrow\" or \"crosshair\" "
+          "(Manual Aim). Soft-guarded on the Python side (host_io) so a "
+          "stale module degrades to the arrow.");
+
     m.def("key_pressed",
           [](int key) {
               if (!g_window) {

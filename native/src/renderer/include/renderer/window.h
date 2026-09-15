@@ -4,6 +4,7 @@
 #include <string>
 
 struct GLFWwindow;
+struct GLFWcursor;
 
 namespace renderer {
 
@@ -68,6 +69,12 @@ public:
     /// normal cursor visible inside the window.
     void set_cursor_locked(bool locked) noexcept;
 
+    /// OS pointer shape while the cursor is unlocked: 0 = the platform arrow,
+    /// 1 = GLFW's standard crosshair (Manual Aim / mouse pick fire). The
+    /// crosshair cursor object is created on first use and owned here; a
+    /// locked (hidden) cursor is unaffected until it is released.
+    void set_cursor_shape(int shape) noexcept;
+
     /// Public entry point for GLFW cursor-pos events. Subsystems that
     /// register their own GLFW cursor-pos callback MUST also call this
     /// so the Window's mouse-delta accumulator stays current. Without
@@ -90,6 +97,7 @@ public:
 
 private:
     GLFWwindow* handle_ = nullptr;
+    GLFWcursor* crosshair_cursor_ = nullptr;
     int         swap_interval_ = 1;
     double      scroll_y_accum_ = 0.0;
     double      mouse_dx_accum_ = 0.0;

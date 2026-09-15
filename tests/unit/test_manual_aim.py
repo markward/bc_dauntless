@@ -714,3 +714,56 @@ def test_h_press_through_real_update_orders_does_not_raise(capsys):
         App.g_kSetManager._sets.clear()
         _set_current_game(None)
         manual_aim.reset()
+
+
+# ── Cursor shape: crosshair while Manual Aim is live in the exterior view ────
+
+def test_desired_cursor_shape_is_crosshair_only_in_exterior_with_flag_on():
+    from engine import manual_aim
+    assert manual_aim.desired_cursor_shape(tcw=_Tcw(True), is_exterior=True, ui_open=False) == "crosshair"
+    assert manual_aim.desired_cursor_shape(tcw=_Tcw(False), is_exterior=True, ui_open=False) == "arrow"
+    assert manual_aim.desired_cursor_shape(tcw=_Tcw(True), is_exterior=False, ui_open=False) == "arrow"
+    assert manual_aim.desired_cursor_shape(tcw=_Tcw(True), is_exterior=True, ui_open=True) == "arrow"
+    assert manual_aim.desired_cursor_shape(tcw=None, is_exterior=True, ui_open=False) == "arrow"
+
+
+def test_sync_cursor_shape_only_calls_the_host_on_a_change():
+    from engine import manual_aim
+    manual_aim.reset()
+    calls = []
+    kw = dict(is_exterior=True, ui_open=False, set_shape=calls.append)
+    manual_aim.sync_cursor_shape(tcw=_Tcw(True), **kw)
+    manual_aim.sync_cursor_shape(tcw=_Tcw(True), **kw)     # unchanged: no call
+    manual_aim.sync_cursor_shape(tcw=_Tcw(False), **kw)
+    assert calls == ["crosshair", "arrow"]
+
+
+def test_reset_forgets_the_last_cursor_shape_so_the_next_sync_reapplies():
+    from engine import manual_aim
+    manual_aim.reset()
+    calls = []
+    manual_aim.sync_cursor_shape(tcw=_Tcw(True), is_exterior=True, ui_open=False, set_shape=calls.append)
+    manual_aim.reset()
+    manual_aim.sync_cursor_shape(tcw=_Tcw(False), is_exterior=True, ui_open=False, set_shape=calls.append)
+    assert calls == ["crosshair", "arrow"]
+
+
+def test_host_io_set_cursor_shape_is_soft_guarded(monkeypatch):
+    """A stale .so without the binding must degrade to a no-op, not raise."""
+    import types
+    from engine import host_io
+    monkeypatch.setattr(host_io, "_h", types.SimpleNamespace())
+    host_io.set_cursor_shape("crosshair")          # no attribute: silent
+    seen = []
+    monkeypatch.setattr(host_io, "_h", types.SimpleNamespace(set_cursor_shape=seen.append))
+    host_io.set_cursor_shape("crosshair")
+    assert seen == ["crosshair"]
+
+
+def test_host_loop_syncs_the_cursor_shape_every_frame():
+    src = _host_loop_src()
+    i_mark = src.index('frame_profiler.mark("ui_panels")')
+    i_sync = src.index("manual_aim.sync_cursor_shape(")
+    assert i_mark < i_sync < i_mark + 700
+    body = src[i_sync: i_sync + 300]
+    assert "ui_open=pause.is_open" in body and "is_exterior=view_mode.is_exterior" in body

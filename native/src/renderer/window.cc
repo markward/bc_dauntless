@@ -96,6 +96,10 @@ void Window::set_swap_interval(int interval) noexcept {
 }
 
 Window::~Window() {
+    if (crosshair_cursor_) {
+        glfwDestroyCursor(crosshair_cursor_);
+        crosshair_cursor_ = nullptr;
+    }
     if (handle_) {
         glfwDestroyWindow(handle_);
         handle_ = nullptr;
@@ -105,6 +109,7 @@ Window::~Window() {
 
 Window::Window(Window&& other) noexcept
     : handle_(other.handle_),
+      crosshair_cursor_(other.crosshair_cursor_),
       scroll_y_accum_(other.scroll_y_accum_),
       mouse_dx_accum_(other.mouse_dx_accum_),
       mouse_dy_accum_(other.mouse_dy_accum_),
@@ -113,6 +118,7 @@ Window::Window(Window&& other) noexcept
       cursor_seeded_(other.cursor_seeded_),
       swap_interval_(other.swap_interval_) {
     other.handle_ = nullptr;
+    other.crosshair_cursor_ = nullptr;
     other.scroll_y_accum_ = 0.0;
     other.mouse_dx_accum_ = 0.0;
     other.mouse_dy_accum_ = 0.0;
@@ -122,11 +128,16 @@ Window::Window(Window&& other) noexcept
 
 Window& Window::operator=(Window&& other) noexcept {
     if (this != &other) {
+        if (crosshair_cursor_) {
+            glfwDestroyCursor(crosshair_cursor_);
+        }
         if (handle_) {
             glfwDestroyWindow(handle_);
             release_glfw();
         }
         handle_ = other.handle_;
+        crosshair_cursor_ = other.crosshair_cursor_;
+        other.crosshair_cursor_ = nullptr;
         scroll_y_accum_ = other.scroll_y_accum_;
         mouse_dx_accum_ = other.mouse_dx_accum_;
         mouse_dy_accum_ = other.mouse_dy_accum_;
@@ -226,6 +237,20 @@ void Window::consume_mouse_delta(double* dx, double* dy) noexcept {
     *dy = mouse_dy_accum_;
     mouse_dx_accum_ = 0.0;
     mouse_dy_accum_ = 0.0;
+}
+
+void Window::set_cursor_shape(int shape) noexcept {
+    if (!handle_) return;
+    if (shape == 1) {
+        if (!crosshair_cursor_) {
+            crosshair_cursor_ = glfwCreateStandardCursor(GLFW_CROSSHAIR_CURSOR);
+        }
+        // A null result (platform has no such shape) falls through to the
+        // arrow rather than leaving a stale pointer in place.
+        glfwSetCursor(handle_, crosshair_cursor_);
+    } else {
+        glfwSetCursor(handle_, nullptr);
+    }
 }
 
 void Window::set_cursor_locked(bool locked) noexcept {

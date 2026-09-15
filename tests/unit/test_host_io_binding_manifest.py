@@ -107,19 +107,21 @@ def test_manifest_matches_facade_references():
     )
 
 
-def test_optional_holds_exactly_the_starmap_profiler_and_vsync_bindings():
-    # Two soft-guarded surfaces, both for the same reason: a stale .so must
+def test_optional_holds_exactly_the_soft_guarded_bindings():
+    # Soft-guarded surfaces, all for the same reason: a stale .so must
     # degrade rather than raise. The star map must leave the Set Course modal
     # blank instead of raising AttributeError inside the helm menu; the frame
     # profiler must report "render half unavailable" instead of crashing the
-    # dev keybinding that toggles it. Lock the set so any future addition is a
-    # deliberate manifest edit, not an accident.
+    # dev keybinding that toggles it; the Manual Aim cursor shape must leave
+    # the arrow in place rather than raise every frame. Lock the set so any
+    # future addition is a deliberate manifest edit, not an accident.
     assert host_io._OPTIONAL_BINDINGS == frozenset({
         "starmap_set_enabled", "starmap_set_viewport",
         "starmap_set_camera", "starmap_set_scene",
         "profiler_set_enabled", "profiler_enabled",
         "profiler_scopes", "profiler_frame",
         "set_swap_interval", "swap_interval",
+        "set_cursor_shape",
     })
 
 

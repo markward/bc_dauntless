@@ -8322,6 +8322,12 @@ def run(mission_name: Optional[str] = None,
             # _pump_contacts. Kept separate because folding it into "input"
             # hid a multi-millisecond cost behind a name nobody would suspect.
             frame_profiler.mark("ui_panels")
+            # Manual Aim pointer: crosshair while the hull pick is possible,
+            # arrow otherwise. Unconditional (runs paused too) and idempotent.
+            manual_aim.sync_cursor_shape(
+                tcw=TacticalControlWindow.GetInstance(),
+                is_exterior=view_mode.is_exterior,
+                ui_open=pause.is_open)
             # Pump all CEF panels (target list, etc.) every tick. The
             # registry returns only payloads whose state changed since
             # the last call, so this is cheap when nothing's moving.

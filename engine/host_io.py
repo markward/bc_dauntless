@@ -72,6 +72,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "profiler_set_enabled", "profiler_enabled",
     "profiler_scopes", "profiler_frame",
     "set_swap_interval", "swap_interval",
+    "set_cursor_shape",
 })
 
 
@@ -194,6 +195,14 @@ def window_size() -> Tuple[int, int]:
     if _h is None:
         return (0, 0)
     return _h.window_size()
+
+
+def set_cursor_shape(shape: str) -> None:
+    """OS pointer shape: "arrow" or "crosshair" (Manual Aim). Soft-guarded:
+    a stale .so leaves the arrow in place rather than raising mid-frame."""
+    fn = getattr(_h, "set_cursor_shape", None)
+    if fn is not None:
+        fn(str(shape))
 
 
 def cursor_pos() -> Optional[Tuple[float, float]]:
