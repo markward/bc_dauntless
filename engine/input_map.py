@@ -71,6 +71,7 @@ ACTIONS: tuple = (
     ("fire_primary",         "Fire Phasers",             "Weapons",  "F"),
     ("fire_secondary",       "Fire Torpedoes",           "Weapons",  "X"),
     ("fire_tertiary",        "Fire Pulse / Disruptors",  "Weapons",  "G"),
+    ("manual_aim",           "Manual Aim (toggle)",      "Weapons",  "H"),
     ("talk_helm",            "Talk to Helm",             "Crew",     "F1"),
     ("talk_tactical",        "Talk to Tactical",         "Crew",     "F2"),
     ("talk_xo",              "Talk to First Officer",    "Crew",     "F3"),

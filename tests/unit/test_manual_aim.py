@@ -445,3 +445,100 @@ def test_host_loop_resets_manual_aim_on_tcw_reset():
     i_tcw = src.index("_TCW._instance = None")
     i_reset = src.index("manual_aim.reset()")
     assert i_tcw < i_reset < i_tcw + 400
+
+
+# ── Task 7: the H key ────────────────────────────────────────────────────────
+
+def _tcw_with_tactical_menu():
+    """Minimal Felix menu with the 'Manual Aim' button, registered on a fresh
+    TCW -- the shape Bridge.TacticalMenuHandlers.CreateMenus produces live
+    (see tests/unit/test_cutscene_menu_drop.py::_wired_officer)."""
+    import App
+    from engine.appc.windows import TacticalControlWindow
+    from engine.appc.characters import STTopLevelMenu_CreateW
+    TacticalControlWindow._instance = None
+    tcw = TacticalControlWindow.GetInstance()
+    db = App.g_kLocalizationManager.Load("data/TGL/Bridge Menus.tgl")
+    menu = STTopLevelMenu_CreateW(db.GetString("Tactical"))
+    btn = App.STButton_CreateW(db.GetString("Manual Aim"))
+    btn.SetAutoChoose(1)
+    btn.SetChosen(0)
+    btn.SetChoosable(1)
+    menu.AddChild(btn)
+    tcw.SetTacticalMenu(menu)
+    App.g_kLocalizationManager.Unload(db)
+    App.g_kKeyboardBinding.SetDefaultDestination(tcw)
+    return tcw, btn
+
+
+def test_h_keydown_toggles_mouse_pick_fire_end_to_end(monkeypatch):
+    """OnKeyDown(WC_H) -> DefaultKeyboardBinding (WC_H -> ET_INPUT_TOGGLE_
+    PICK_FIRE) -> SDK TacticalControlHandlers.TogglePickFire on the TCW ->
+    button chosen + SetMousePickFire(1). Second press turns it off."""
+    import App
+    from engine import manual_aim
+    import Bridge.TacticalMenuHandlers as T
+    monkeypatch.setattr(T, "UpdateOrders", lambda *a, **k: None)  # needs the full order panes
+    # tests/conftest.py's autouse fixture already registers the keyboard-binding
+    # handler; a second registration dispatches TogglePickFire twice per press.
+    tcw, btn = _tcw_with_tactical_menu()
+    App.TopWindow_GetTopWindow().ForceTacticalVisible()
+    manual_aim.register_toggle_handler(tcw)
+    import KeyConfig, DefaultKeyboardBinding
+    KeyConfig.MapScancodes()
+    DefaultKeyboardBinding.Initialize()
+
+    App.g_kInputManager.OnKeyDown(App.WC_H)
+    assert tcw.GetMousePickFire() == 1
+    assert btn.IsChosen() == 1
+
+    App.g_kInputManager.OnKeyDown(App.WC_H)
+    assert tcw.GetMousePickFire() == 0
+    assert btn.IsChosen() == 0
+
+
+def test_register_toggle_handler_is_idempotent(monkeypatch):
+    """TCW reset runs once per mission (re)load; a double registration
+    would toggle twice per press and never turn the mode on."""
+    import App
+    from engine import manual_aim
+    import Bridge.TacticalMenuHandlers as T
+    monkeypatch.setattr(T, "UpdateOrders", lambda *a, **k: None)
+    # tests/conftest.py's autouse fixture already registers the keyboard-binding
+    # handler; a second registration dispatches TogglePickFire twice per press.
+    tcw, btn = _tcw_with_tactical_menu()
+    App.TopWindow_GetTopWindow().ForceTacticalVisible()
+    manual_aim.register_toggle_handler(tcw)
+    manual_aim.register_toggle_handler(tcw)
+    import KeyConfig, DefaultKeyboardBinding
+    KeyConfig.MapScancodes()
+    DefaultKeyboardBinding.Initialize()
+    App.g_kInputManager.OnKeyDown(App.WC_H)
+    assert tcw.GetMousePickFire() == 1
+
+
+def test_fire_key_poller_forwards_h_as_wc_h(monkeypatch):
+    """_poll_fire_keys owns the H row (edge-detected like F/X/G) and
+    _owned_glfw_keys lists it so the raw poller never double-delivers."""
+    from engine import host_loop, host_io, input_map as im
+    import App
+    imap = im.InputMap()
+    down = {imap.code("manual_aim"): True}
+    monkeypatch.setattr(host_io, "key_state", lambda k: down.get(k, False))
+    monkeypatch.setattr(host_loop, "_modifier_state", lambda h: (False, False, False))
+    host_loop._fn_key_prev.clear()
+    got = []
+    monkeypatch.setattr(App.g_kInputManager, "OnKeyDown", lambda wc: got.append(wc))
+    monkeypatch.setattr(App.g_kInputManager, "OnKeyUp", lambda wc: None)
+
+    host_loop._poll_fire_keys(None, imap)
+
+    assert App.WC_H in got
+    assert imap.code("manual_aim") in host_loop._owned_glfw_keys(imap)
+
+
+def test_host_loop_registers_the_toggle_on_tcw_reset():
+    src = _host_loop_src()
+    i_init = src.index("TacticalInterfaceHandlers.Initialize(_fresh_tcw)")
+    i_reg = src.index("manual_aim.register_toggle_handler(_fresh_tcw)")
+    assert i_init < i_reg < i_init + 900

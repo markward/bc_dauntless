@@ -173,3 +173,26 @@ def update(*, player, tcw, ship_instances, is_exterior: bool,
         scale = 1.0
     player.set_manual_target_offset(TGPoint3(dx / scale, dy / scale, dz / scale))
     return True
+
+
+# ── SDK toggle handler ──────────────────────────────────────────────────────
+_TOGGLE_HANDLER = "TacticalControlHandlers.TogglePickFire"
+
+
+def register_toggle_handler(tcw) -> None:
+    """Bind ET_INPUT_TOGGLE_PICK_FIRE -> SDK TacticalControlHandlers.
+    TogglePickFire on the TacticalControlWindow.
+
+    BC's engine does this via TacticalControlHandlers.Initialize(pWindow)
+    (:35). We register ONLY the toggle: Initialize also binds a second
+    FirePrimary/Secondary/TertiaryWeapons trio, and TacticalInterface
+    Handlers.Initialize already owns those on our single TCW. Idempotent --
+    the TCW singleton is rebuilt per mission load, but a defensive second
+    call must not stack a second handler (two toggles per press == never on)."""
+    import App
+    import TacticalControlHandlers  # noqa: F401 -- SDK module; the handler is resolved by name
+    et = int(App.ET_INPUT_TOGGLE_PICK_FIRE)
+    if getattr(tcw, "_manual_aim_toggle_registered", False):
+        return
+    tcw.AddPythonFuncHandlerForInstance(et, _TOGGLE_HANDLER)
+    tcw._manual_aim_toggle_registered = True

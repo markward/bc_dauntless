@@ -103,3 +103,11 @@ def test_skip_dialogue_default_backspace():
     im = InputMap()
     assert im.name("skip_dialogue") == "Backspace"
     assert im.code("skip_dialogue") == GLFW_KEYS["Backspace"]
+
+
+def test_manual_aim_default_h_and_unique():
+    m = InputMap()
+    assert m.name("manual_aim") == "H"
+    assert m.code("manual_aim") == GLFW_KEYS["H"]
+    # H must not be the default of any other action.
+    assert [a for a in ACTIONS if a[3] == "H"] == [("manual_aim", "Manual Aim (toggle)", "Weapons", "H")]

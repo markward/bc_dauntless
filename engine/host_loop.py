@@ -544,6 +544,12 @@ def _poll_fire_keys(host, input_map) -> None:
         (input_map.code("fire_primary"),   App.WC_F),
         (input_map.code("fire_secondary"), App.WC_X),
         (input_map.code("fire_tertiary"),  App.WC_G),
+        # Manual Aim toggle: WC_H -> ET_INPUT_TOGGLE_PICK_FIRE
+        # (DefaultKeyboardBinding.py:154) -> TacticalControlHandlers.
+        # TogglePickFire, registered on the TCW by manual_aim.
+        # register_toggle_handler. Binding path (not raw) on purpose: this
+        # key's ET_INPUT_* consumer is live and wanted.
+        (input_map.code("manual_aim"),     App.WC_H),
     ), suppress=suppress)
 
 
@@ -608,7 +614,7 @@ def _owned_glfw_keys(input_map) -> set:
     native host may be absent (headless).
     """
     owned = {input_map.code(a) for a in (
-        "fire_primary", "fire_secondary", "fire_tertiary",
+        "fire_primary", "fire_secondary", "fire_tertiary", "manual_aim",
         "talk_helm", "talk_tactical", "talk_xo",
         "talk_science", "talk_engineering",
     )}
@@ -3830,6 +3836,10 @@ def reset_sdk_globals() -> None:
         except Exception as _e_tih:
             dev_mode.log_swallowed(
                 "TacticalInterfaceHandlers.Initialize after TCW reset", _e_tih)
+        # Manual Aim's H toggle. BC's C++ binds it through
+        # TacticalControlHandlers.Initialize, which we never call (its fire
+        # trio would double-dispatch F/X/G on this same TCW).
+        manual_aim.register_toggle_handler(_fresh_tcw)
         # ORDERING IS LOAD-BEARING: TacticalInterfaceHandlers.Initialize (just
         # above) registers the SDK's own BridgeHandlers.TalkTo* handlers on this
         # same TCW for the same ET_INPUT_TALK_TO_* events that
