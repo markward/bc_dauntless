@@ -38,6 +38,16 @@ entirely in `Appc` and is invisible to the SDK.
    from the bridge (Felix's menu), but no pick runs there.
 5. **Update every frame, no smoothing, no `ET_TARGET_OFFSET_CHANGED` emission**
    (its only SDK listener is commented out, `Camera.py:720`).
+6. **H also toggles the flag on the bridge with Felix's menu closed.** BC gates
+   on `pMenu.IsCompletelyVisible() or pTop.IsTacticalVisible()`; our
+   `STMenu.IsCompletelyVisible` is `IsVisible()` (always true headless), so
+   the gate always passes. Harmless: the pick is gated on the exterior view,
+   and the flag is dropped again when the bridge regains focus.
+7. **Chosen rows render for every chosen `STButton`, not only Manual Aim** —
+   "Target At Will" (chosen at creation) and the Destroy/Disable order
+   buttons show the tint + check from boot. BC draws chosen buttons
+   highlighted, so this is faithful, but it is a visible change beyond this
+   feature.
 
 ## Dauntless design
 

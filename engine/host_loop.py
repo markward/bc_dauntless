@@ -3838,8 +3838,15 @@ def reset_sdk_globals() -> None:
                 "TacticalInterfaceHandlers.Initialize after TCW reset", _e_tih)
         # Manual Aim's H toggle. BC's C++ binds it through
         # TacticalControlHandlers.Initialize, which we never call (its fire
-        # trio would double-dispatch F/X/G on this same TCW).
-        manual_aim.register_toggle_handler(_fresh_tcw)
+        # trio would double-dispatch F/X/G on this same TCW). Own try/except:
+        # this sits ahead of crew_menu_hotkeys.rewire() below, and a raise
+        # here must not skip that call the way a raise inside the enclosing
+        # try would.
+        try:
+            manual_aim.register_toggle_handler(_fresh_tcw)
+        except Exception as _e:
+            dev_mode.log_swallowed(
+                "manual_aim.register_toggle_handler after TCW reset", _e)
         # ORDERING IS LOAD-BEARING: TacticalInterfaceHandlers.Initialize (just
         # above) registers the SDK's own BridgeHandlers.TalkTo* handlers on this
         # same TCW for the same ET_INPUT_TALK_TO_* events that

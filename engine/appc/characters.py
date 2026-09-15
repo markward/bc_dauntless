@@ -81,7 +81,11 @@ class STButton(TGPane):
     def SetNotHighlighted(self, *args) -> None:   self._highlighted = False
     def SetSelected(self, *args) -> None:         self._selected = True
     def SetNotSelected(self, *args) -> None:      self._selected = False
-    def SetChosen(self, value=1) -> None:         self._chosen = bool(value)
+    def SetChosen(self, value=1, *_args) -> None:
+        # SWIG surface takes an optional notify flag: SetChosen(0, 0) at
+        # Bridge/TacticalMenuHandlers.py:1499, Multiplayer/MultiplayerMenus.py:2853.
+        # A headless button has nothing to notify, so it is accepted and ignored.
+        self._chosen = bool(value)
     def IsChosen(self) -> int:                    return 1 if self._chosen else 0
     def IsTypeOf(self, type_id) -> int:           return 0  # SDK class-id check; no hierarchy in Phase 1
 

@@ -639,3 +639,78 @@ def test_cutscene_start_on_the_bridge_drops_manual_aim():
     top.StartCutscene(1.0, 0.125, 1)
     assert tcw.GetMousePickFire() == 0 and btn.IsChosen() == 0
     top.EndCutscene(1.0)
+
+
+# ── Regression: SWIG's two-arg SetChosen, reached through the real SDK ──────
+
+def test_h_press_through_real_update_orders_does_not_raise(capsys):
+    """CRITICAL: turning Manual Aim ON makes Bridge.TacticalMenuHandlers.
+    UpdateOrderMenus' bAttackToggle branch reachable, and that branch calls
+    the SWIG two-arg form `pDestroyButton.SetChosen(0, 0)`
+    (TacticalMenuHandlers.py:1499). Runs the SDK COMPLETELY UNPATCHED --
+    UpdateOrders, UpdateOrderMenus and CheckFiring all execute for real --
+    against a bridge built by the real LoadBridge.Load, so this proves the
+    fix against the actual call site, not a stand-in.
+
+    Reuses tests/integration/test_warp_clears_target_on_arrival.py's
+    _bridge_world/_combat_scene fixtures: they are the only helpers in the
+    suite that load a real bridge with the real Bridge.TacticalMenuHandlers
+    order panes populated (_tcw_with_tactical_menu() above builds a bare
+    menu with none of that, which is why the existing end-to-end test needs
+    UpdateOrders monkeypatched)."""
+    import App
+    from engine import manual_aim
+    from engine.appc.input import register_input_handlers
+    from engine.appc.windows import TacticalControlWindow
+    from engine.core.game import _set_current_game
+    from tests.integration.test_warp_clears_target_on_arrival import (
+        _bridge_world, _combat_scene)
+
+    try:
+        mission = _bridge_world()
+        _combat_scene(mission)  # player + enemy in a set, player targeting enemy
+        # _bridge_world() clears App.g_kEventManager's broadcast-handler tables
+        # (including the conftest autouse fixture's own input registration)
+        # AFTER LoadBridge -- pressing H below needs it back, exactly once.
+        register_input_handlers(App.g_kEventManager)
+
+        top = App.TopWindow_GetTopWindow()
+        top.ForceTacticalVisible()
+        tcw = TacticalControlWindow.GetInstance()
+        manual_aim.register_toggle_handler(tcw)
+        App.g_kKeyboardBinding.SetDefaultDestination(tcw)
+        import KeyConfig, DefaultKeyboardBinding
+        KeyConfig.MapScancodes()
+        DefaultKeyboardBinding.Initialize()
+
+        db = App.g_kLocalizationManager.Load("data/TGL/Bridge Menus.tgl")
+        btn = App.STButton_Cast(tcw.GetTacticalMenu().GetButtonW(db.GetString("Manual Aim")))
+        App.g_kLocalizationManager.Unload(db)
+
+        App.g_kInputManager.OnKeyDown(App.WC_H)   # turn Manual Aim ON
+        assert tcw.GetMousePickFire() == 1
+        assert btn.IsChosen() == 1
+
+        App.g_kInputManager.OnKeyDown(App.WC_H)   # turn Manual Aim OFF
+        assert tcw.GetMousePickFire() == 0
+        assert btn.IsChosen() == 0
+
+        captured = capsys.readouterr()
+        assert "TypeError" not in captured.err, captured.err
+    finally:
+        # This is the only test in the suite that loads a REAL bridge (via
+        # _bridge_world) from outside tests/integration/test_warp_clears_
+        # target_on_arrival.py, whose own tests always call _bridge_world()
+        # again before touching TacticalControlWindow.GetInstance() -- so
+        # nothing there ever observes this file's leftover singleton. This
+        # file's neighbours (and test_crew_menu_panel.py, collected right
+        # after it in a full run) build their own bare TCW via GetInstance()
+        # and assume a fresh one; without this reset the leaked real
+        # "Tactical" menu shadows their synthetic one (proven live: it made
+        # test_opening_menu_fires_acknowledgement resolve speaker "Felix"
+        # instead of the synthetic menu's own "Tactical"). Mirrors the reset
+        # _bridge_world() itself runs at ITS start.
+        TacticalControlWindow._instance = None
+        App.g_kSetManager._sets.clear()
+        _set_current_game(None)
+        manual_aim.reset()
