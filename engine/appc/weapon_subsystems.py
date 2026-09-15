@@ -1238,6 +1238,21 @@ class WeaponSystem(PoweredSubsystem):
             if w is not None and hasattr(w, "StopFiring"):
                 w.StopFiring()
 
+    def _live_held_offset(self):
+        """The aim offset for THIS tick.
+
+        BC's StartFiring captures the offset once (Weapon+0x90..+0x98); with
+        Manual Aim the player's offset is re-picked off the hull every tick
+        (engine.manual_aim.update), so a torpedo/pulse fired mid-hold must
+        follow the cursor, not the keydown-time point. Only ShipClass
+        parents that report is_using_target_offset() switch; anything else
+        (AI ships, legacy fakes, no parent) keeps _held_offset."""
+        ship = self.GetParentShip()
+        probe = getattr(type(ship), "is_using_target_offset", None) if ship is not None else None
+        if callable(probe) and ship.is_using_target_offset():
+            return ship.GetTargetOffsetTG()
+        return getattr(self, "_held_offset", None)
+
     def StopFiringAtTarget(self, pTarget) -> None:
         """SDK Preprocessors.py:274/469 — alias for StopFiring() since
         headless doesn't model multi-target firing state."""
@@ -1336,7 +1351,7 @@ class WeaponSystem(PoweredSubsystem):
             return False
         self._prune_targets()
         target = self._target_list[0] if self._target_list else None
-        offset = getattr(self, "_held_offset", None)
+        offset = self._live_held_offset()
         groups = self._active_chain_groups()
         working = self._resolve_working_group()
         start_group = working
@@ -2188,7 +2203,7 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
             if em is not None and em.IsFiring():
                 self._sync_firing_event()
                 return False
-        fired = self._engage_beam(target, self._held_offset, ship)
+        fired = self._engage_beam(target, self._live_held_offset(), ship)
         self._sync_firing_event()
         return fired
 

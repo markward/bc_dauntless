@@ -72,3 +72,37 @@ def test_changing_target_clears_the_manual_offset():
     assert ship.is_using_target_offset() is True
     ship.SetTarget(b)                       # different object: clears
     assert ship.is_using_target_offset() is False
+
+
+# ── Task 2: weapon systems read the live offset ──────────────────────────────
+
+def test_weapon_system_uses_the_ships_live_offset_while_manual_aim_is_on():
+    """StartFiring captures the offset ONCE (_held_offset); with the cursor
+    moving every frame, a torpedo fired mid-hold must read the ship's
+    CURRENT offset, not the one captured at keydown."""
+    from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import TorpedoSystem
+    ship = ShipClass()
+    sys_ = TorpedoSystem("Torpedoes")
+    sys_.SetParentShip(ship)
+
+    sys_._held_offset = TGPoint3(0.0, 0.0, 0.0)          # captured at keydown
+    assert sys_._live_held_offset() is sys_._held_offset  # off: held wins
+
+    ship.set_manual_target_offset(TGPoint3(2.0, 0.0, 7.0))
+    live = sys_._live_held_offset()
+    assert (live.x, live.y, live.z) == (2.0, 0.0, 7.0)
+
+    ship.UseTargetOffsetTG(0)
+    assert sys_._live_held_offset() is sys_._held_offset
+
+
+def test_live_offset_tolerates_a_parent_without_the_manual_aim_api():
+    """Legacy fakes / no parent: fall back to _held_offset, never raise."""
+    from engine.appc.subsystems import TorpedoSystem
+    sys_ = TorpedoSystem("Torpedoes")
+    sys_._held_offset = "held"
+    assert sys_._live_held_offset() == "held"
+    class _Bare: pass
+    sys_.SetParentShip(_Bare())
+    assert sys_._live_held_offset() == "held"
