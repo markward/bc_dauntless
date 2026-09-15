@@ -583,3 +583,59 @@ def test_clicking_manual_aim_in_felixs_menu_sets_mouse_pick_fire(monkeypatch):
     panel.dispatch_event(f"click:{ensure_widget_id(btn)}")
     assert tcw.GetMousePickFire() == 0
     _set_current_game(None)
+
+
+# ── Task 9: drop on the bridge ───────────────────────────────────────────────
+
+def _armed_manual_aim():
+    import App
+    tcw, btn = _tcw_with_tactical_menu()
+    btn.SetChosen(1)
+    tcw.SetMousePickFire(1)
+    return App.TopWindow_GetTopWindow(), tcw, btn
+
+
+def test_drop_mode_clears_flag_and_button_only_when_bridge_visible():
+    from engine import manual_aim
+    top, tcw, btn = _armed_manual_aim()
+    top.ForceTacticalVisible()
+    manual_aim.drop_mode()
+    assert tcw.GetMousePickFire() == 1 and btn.IsChosen() == 1    # tactical: untouched
+    top._bridge_visible, top._tactical_visible = True, False       # flip flags silently
+    manual_aim.drop_mode()
+    assert tcw.GetMousePickFire() == 0 and btn.IsChosen() == 0
+
+
+def test_drop_mode_survives_a_tcw_without_a_tactical_menu():
+    from engine import manual_aim
+    from engine.appc.windows import TacticalControlWindow
+    import App
+    TacticalControlWindow._instance = None
+    tcw = TacticalControlWindow.GetInstance()
+    tcw.SetMousePickFire(1)
+    App.TopWindow_GetTopWindow().ForceBridgeVisible()
+    manual_aim.drop_mode()                       # must not raise (GetTacticalMenu() is None)
+    assert tcw.GetMousePickFire() == 0
+
+
+def test_flipping_to_the_bridge_drops_manual_aim():
+    """BridgeHandlers.GotFocus (:336) -> DropOutOfManualFireMode on every
+    tactical -> bridge flip; the reverse flip leaves it alone."""
+    top, tcw, btn = _armed_manual_aim()
+    top.ForceTacticalVisible()
+    top.ToggleBridgeAndTactical()                # -> bridge
+    assert top.IsBridgeVisible() and tcw.GetMousePickFire() == 0 and btn.IsChosen() == 0
+    btn.SetChosen(1); tcw.SetMousePickFire(1)
+    top.ToggleBridgeAndTactical()                # -> tactical
+    assert tcw.GetMousePickFire() == 1
+    top.ForceBridgeVisible()
+    assert tcw.GetMousePickFire() == 0
+
+
+def test_cutscene_start_on_the_bridge_drops_manual_aim():
+    top, tcw, btn = _armed_manual_aim()
+    top.ForceBridgeVisible()
+    btn.SetChosen(1); tcw.SetMousePickFire(1)
+    top.StartCutscene(1.0, 0.125, 1)
+    assert tcw.GetMousePickFire() == 0 and btn.IsChosen() == 0
+    top.EndCutscene(1.0)

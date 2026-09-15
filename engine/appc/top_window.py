@@ -101,6 +101,10 @@ class _TopWindow:
         # (0.125 = 6.25% per bar); bHideReticle hides the targeting
         # reticle. fTimeToComeIn is the bar slide-in duration.
         _drop_open_crew_menu()
+        # BridgeHandlers.DropMenusTurnBack also leaves Manual Aim (:1052);
+        # same moment, engine-side twin (BridgeHandlers is stubbed).
+        from engine import manual_aim
+        manual_aim.drop_mode()
         self._cutscene_active = True
         self._letterbox_covered = float(fCoveredArea)
         self._letterbox_transition_s = float(fTimeToComeIn)
@@ -158,6 +162,8 @@ class _TopWindow:
         self._bridge_visible = True
         self._tactical_visible = False
         self._leave_cinematic_for_view()
+        from engine import manual_aim
+        manual_aim.drop_mode()
 
     def ForceTacticalVisible(self) -> None:
         self._bridge_visible = False
@@ -204,6 +210,10 @@ class _TopWindow:
         self._bridge_visible, self._tactical_visible = (
             self._tactical_visible, self._bridge_visible,
         )
+        if self._bridge_visible:
+            # Bridge window GotFocus (BridgeHandlers.py:336) drops Manual Aim.
+            from engine import manual_aim
+            manual_aim.drop_mode()
 
     # ── Main windows ───────────────────────────────────────────
     def FindMainWindow(self, mwt):

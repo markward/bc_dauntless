@@ -179,6 +179,30 @@ def update(*, player, tcw, ship_instances, is_exterior: bool,
 _TOGGLE_HANDLER = "TacticalControlHandlers.TogglePickFire"
 
 
+def drop_mode() -> None:
+    """Leave Manual Aim when the BRIDGE is visible: clear the TCW flag and
+    resync Felix's button (Bridge.TacticalMenuHandlers.ResetPickFireButton).
+
+    Twin of the SDK's BridgeHandlers.DropOutOfManualFireMode (:1061), which
+    our harness stubs along with the rest of BridgeHandlers. BC calls it
+    from the bridge window's GotFocus (:336) and at cutscene start (:1052);
+    _TopWindow calls this from the same two moments. Tactical view: no-op,
+    exactly like the SDK's IsBridgeVisible() gate."""
+    import App
+    from engine.appc.windows import TacticalControlWindow
+    top = App.TopWindow_GetTopWindow()
+    if not top.IsBridgeVisible():
+        return
+    tcw = TacticalControlWindow.GetInstance()
+    tcw.SetMousePickFire(0)
+    # ResetPickFireButton dereferences GetTacticalMenu() with no None guard
+    # (the crash that got BridgeHandlers stubbed) -- guard it here instead
+    # of swallowing.
+    if tcw.GetTacticalMenu() is not None:
+        import Bridge.TacticalMenuHandlers as T
+        T.ResetPickFireButton()
+
+
 def register_toggle_handler(tcw) -> None:
     """Bind ET_INPUT_TOGGLE_PICK_FIRE -> SDK TacticalControlHandlers.
     TogglePickFire on the TacticalControlWindow.
