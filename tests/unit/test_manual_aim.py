@@ -215,3 +215,52 @@ def test_advance_combat_routes_phaser_damage_at_the_manual_offset(monkeypatch):
     scale = float(target.GetScale())
     assert abs(fp.x) < 1e-6 and abs(fp.y - 100.0) < 1e-6
     assert abs(fp.z - 5.0 * scale) < 1e-6
+
+
+# ── Task 4: cursor ray ───────────────────────────────────────────────────────
+
+def _dist_point_to_ray(p, origin, d):
+    v = (p[0] - origin[0], p[1] - origin[1], p[2] - origin[2])
+    t = v[0] * d[0] + v[1] * d[1] + v[2] * d[2]
+    c = (origin[0] + d[0] * t, origin[1] + d[1] * t, origin[2] + d[2] * t)
+    return math.sqrt(sum((p[i] - c[i]) ** 2 for i in range(3)))
+
+
+def test_cursor_ray_inverts_project_for_off_centre_points():
+    """Round trip: project a world point with the SPV projection the reticle
+    uses, feed the pixel back through cursor_ray, and the ray must pass
+    through the point (this is what makes the pick land where the cursor
+    is drawn). Off-axis camera so no axis-aligned shortcut passes."""
+    from engine.manual_aim import AimCamera, cursor_ray
+    from engine.ui.ship_property_viewer import project
+    cam = AimCamera(eye=(10.0, -50.0, 20.0), target=(0.0, 100.0, 0.0),
+                    up=(0.0, 0.0, 1.0), fov_y_rad=math.radians(60.0),
+                    near=1.0, far=5000.0)
+    viewport = (1600, 900)
+    for world in ((0.0, 100.0, 0.0), (30.0, 140.0, -12.0), (-25.0, 80.0, 18.0)):
+        sx, sy, _d, visible = project(world, cam, viewport)
+        assert visible
+        origin, direction = cursor_ray((sx, sy), viewport, cam)
+        assert origin == cam.eye()
+        assert abs(math.sqrt(sum(c * c for c in direction)) - 1.0) < 1e-9
+        assert _dist_point_to_ray(world, origin, direction) < 1e-6
+
+
+def test_cursor_ray_centre_pixel_is_the_camera_forward():
+    from engine.manual_aim import AimCamera, cursor_ray
+    cam = AimCamera(eye=(0.0, 0.0, 0.0), target=(0.0, 100.0, 0.0),
+                    up=(0.0, 0.0, 1.0), fov_y_rad=math.radians(45.0),
+                    near=1.0, far=5000.0)
+    _o, d = cursor_ray((400.0, 300.0), (800, 600), cam)
+    assert abs(d[0]) < 1e-9 and abs(d[1] - 1.0) < 1e-9 and abs(d[2]) < 1e-9
+
+
+def test_cursor_ray_rejects_degenerate_inputs():
+    from engine.manual_aim import AimCamera, cursor_ray
+    cam = AimCamera(eye=(0.0, 0.0, 0.0), target=(0.0, 100.0, 0.0),
+                    up=(0.0, 0.0, 1.0), fov_y_rad=math.radians(45.0),
+                    near=1.0, far=5000.0)
+    assert cursor_ray((1.0, 1.0), (0, 600), cam) is None
+    same = AimCamera(eye=(0.0, 0.0, 0.0), target=(0.0, 0.0, 0.0),
+                     up=(0.0, 0.0, 1.0), fov_y_rad=1.0, near=1.0, far=10.0)
+    assert cursor_ray((1.0, 1.0), (800, 600), same) is None
