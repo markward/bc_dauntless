@@ -79,20 +79,19 @@ struct BinHash {
 
 DistanceField distance_field_from_tris(const std::vector<Tri>& tris,
                                        glm::vec3 cell,
-                                       float band_cells) {
+                                       float band_cells,
+                                       std::size_t max_cells) {
     DistanceField f;
     if (tris.empty()) return f;
     if (!(cell.x > 0.0f) || !(cell.y > 0.0f) || !(cell.z > 0.0f)) return f;
     if (!(band_cells > 0.0f)) return f;
+    if (max_cells == 0) return f;
 
     glm::vec3 mn(1e30f), mx(-1e30f);
     for (const auto& t : tris) {
         mn = glm::min(mn, glm::min(t.a, glm::min(t.b, t.c)));
         mx = glm::max(mx, glm::max(t.a, glm::max(t.b, t.c)));
     }
-
-    const float band = band_cells * std::max(cell.x, std::max(cell.y, cell.z));
-    f.scale = band / 127.0f;
 
     // Margin: enough cells on EVERY side, on EVERY axis, that the WHOLE
     // outside band is representable -- a later stage samples the field at and
@@ -102,15 +101,47 @@ DistanceField distance_field_from_tris(const std::vector<Tri>& tris,
     // `band_cells` (never hardcoded) and symmetric: the same cell count is
     // added on the near and far side of each axis, so an anisotropic `cell`
     // still gets full band coverage on its finest (smallest) axis.
+    //
+    // Computed as a function of the cell because the cell may have to grow:
+    // extent / cell is unbounded, and BC's FedStarbase at its authored cell
+    // is a 28.7-billion-cell lattice (see kMaxFieldCells). Above `max_cells`
+    // the cell is scaled UNIFORMLY -- one factor on all three axes, so the
+    // margins in cells and any authored anisotropy are preserved -- by the
+    // cube root of the overshoot, and the lattice re-derived. cbrt is exact
+    // for the span term and slightly optimistic for the margin term, so this
+    // iterates (a handful of rounds at most; every round strictly shrinks the
+    // count) rather than trusting one step.
+    auto lattice_for = [&](const glm::vec3& c, glm::ivec3& margin,
+                           glm::ivec3& dims) -> std::size_t {
+        const float band = band_cells * std::max(c.x, std::max(c.y, c.z));
+        margin = glm::ivec3(static_cast<int>(std::ceil(band / c.x)),
+                            static_cast<int>(std::ceil(band / c.y)),
+                            static_cast<int>(std::ceil(band / c.z)));
+        const glm::vec3 span = (mx - mn) / c;
+        dims = glm::ivec3(static_cast<int>(std::ceil(span.x)) + 2 * margin.x,
+                          static_cast<int>(std::ceil(span.y)) + 2 * margin.y,
+                          static_cast<int>(std::ceil(span.z)) + 2 * margin.z);
+        return static_cast<std::size_t>(dims.x)
+             * static_cast<std::size_t>(dims.y)
+             * static_cast<std::size_t>(dims.z);
+    };
+    glm::ivec3 margin, dims;
+    std::size_t cells = lattice_for(cell, margin, dims);
+    for (int round = 0; cells > max_cells && round < 64; ++round) {
+        const double overshoot = static_cast<double>(cells)
+                               / static_cast<double>(max_cells);
+        // Never a no-op step: a tiny overshoot still has to move the cell.
+        const float k = std::max(1.001f, static_cast<float>(std::cbrt(overshoot)));
+        cell *= k;
+        cells = lattice_for(cell, margin, dims);
+    }
+    if (cells > max_cells) return f;   // could not fit: refuse, never allocate
+
+    const float band = band_cells * std::max(cell.x, std::max(cell.y, cell.z));
+    f.scale = band / 127.0f;
     f.cell = cell;
-    const glm::ivec3 margin(static_cast<int>(std::ceil(band / cell.x)),
-                            static_cast<int>(std::ceil(band / cell.y)),
-                            static_cast<int>(std::ceil(band / cell.z)));
     f.origin = mn - glm::vec3(margin) * cell;
-    const glm::vec3 span = (mx - mn) / cell;
-    f.dims = glm::ivec3(static_cast<int>(std::ceil(span.x)) + 2 * margin.x,
-                        static_cast<int>(std::ceil(span.y)) + 2 * margin.y,
-                        static_cast<int>(std::ceil(span.z)) + 2 * margin.z);
+    f.dims = dims;
 
     // Sign: the flood-filled occupancy of the SAME lattice.
     const VoxelVolume occ = voxelize_into(tris, f.dims, f.origin, f.cell);

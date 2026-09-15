@@ -347,3 +347,89 @@ TEST(DistanceField, HullThinnerThanOneCellStillReadsFiniteNearSurface) {
     // Far from the slab, the field still saturates normally.
     EXPECT_NEAR(f.distance_at(0, 0, 0), 127.0f * f.scale, 1e-3f);
 }
+
+// ── Lattice cell budget ────────────────────────────────────────────────────
+//
+// The baker derives the grid from extent / cell with no ceiling. BC's
+// FedStarbase hull is 19300 x 19336 x 32136 model units; at the authored
+// resolution's cell (15 / 2 = 7.5) that is a 2582 x 2587 x 4293 lattice --
+// 28.7 BILLION cells, 28.7 GB for the occupancy array alone -- and the
+// allocation trapped inside CEF's operator-new shim the moment E1M1 warped
+// the player to Starbase 12 (SIGTRAP, 2026-09-15). BC itself never bakes a
+// station that fine: every shipped station _vox.nif uses cell 85 against
+// the authored 15, and its largest volume in the whole corpus is 206k cells.
+// So the baker coarsens the cell uniformly until the lattice fits a budget,
+// the way BC's own authored volumes scale their cell with the hull.
+
+TEST(DistanceField, LatticeOverBudgetIsCoarsenedToFit) {
+    // 400 x 400 x 400 at cell 1 would be 64M cells (plus margin). Against a
+    // 4096-cell budget the baker must coarsen rather than allocate that.
+    const auto tris = box_tris(glm::vec3(0.0f), glm::vec3(400.0f));
+    const glm::vec3 requested(1.0f);
+    const std::size_t budget = 4096;
+    const voxel::DistanceField f = voxel::distance_field_from_tris(
+        tris, requested, voxel::kDefaultBandCells, budget);
+
+    ASSERT_FALSE(f.empty()) << "over-budget hull must still get a field";
+    const std::size_t cells = static_cast<std::size_t>(f.dims.x)
+                            * static_cast<std::size_t>(f.dims.y)
+                            * static_cast<std::size_t>(f.dims.z);
+    EXPECT_LE(cells, budget);
+    EXPECT_EQ(f.dist.size(), cells);
+
+    // Coarsened UNIFORMLY: every axis grows by the same factor, so an
+    // authored isotropic cell stays isotropic.
+    EXPECT_GT(f.cell.x, requested.x);
+    EXPECT_NEAR(f.cell.y / f.cell.x, 1.0f, 1e-5f);
+    EXPECT_NEAR(f.cell.z / f.cell.x, 1.0f, 1e-5f);
+
+    // Not coarsened MORE than the budget demands: one step finer must not
+    // fit. (Guards against a lazy "just use a huge cell" implementation.)
+    const glm::vec3 finer = f.cell * 0.9f;
+    const voxel::DistanceField g = voxel::distance_field_from_tris(
+        tris, finer, voxel::kDefaultBandCells, /*max_cells=*/SIZE_MAX);
+    const std::size_t finer_cells = static_cast<std::size_t>(g.dims.x)
+                                  * static_cast<std::size_t>(g.dims.y)
+                                  * static_cast<std::size_t>(g.dims.z);
+    EXPECT_GT(finer_cells, budget);
+
+    // The grid still covers the hull plus the full band on every side, at
+    // the COARSENED cell (the margin contract of GridCoversTheHullPlusAMargin
+    // holds after coarsening too).
+    const float band = voxel::kDefaultBandCells *
+        std::max({f.cell.x, f.cell.y, f.cell.z});
+    const glm::vec3 far = f.origin + glm::vec3(f.dims) * f.cell;
+    EXPECT_LE(f.origin.x, 0.0f - band + 1e-3f);
+    EXPECT_LE(f.origin.y, 0.0f - band + 1e-3f);
+    EXPECT_LE(f.origin.z, 0.0f - band + 1e-3f);
+    EXPECT_GE(far.x, 400.0f + band - 1e-3f);
+    EXPECT_GE(far.y, 400.0f + band - 1e-3f);
+    EXPECT_GE(far.z, 400.0f + band - 1e-3f);
+
+    // And the sign survives: centre inside, corner outside.
+    const glm::ivec3 c = cell_of(f, glm::vec3(200.0f));
+    EXPECT_LT(f.distance_at(c.x, c.y, c.z), 0.0f);
+    EXPECT_GT(f.distance_at(0, 0, 0), 0.0f);
+}
+
+TEST(DistanceField, LatticeUnderBudgetKeepsTheRequestedCell) {
+    const auto tris = box_tris(glm::vec3(0.0f), glm::vec3(100.0f));
+    const glm::vec3 requested(5.0f);
+    const voxel::DistanceField f = voxel::distance_field_from_tris(
+        tris, requested, voxel::kDefaultBandCells);
+    ASSERT_FALSE(f.empty());
+    EXPECT_EQ(f.cell, requested);
+}
+
+TEST(DistanceField, DefaultBudgetAdmitsEveryHullBCShipsAVolumeFor) {
+    // The largest lattice any hull with a BC _vox.nif produces at the
+    // authored resolution is SpaceFacility / FedOutpost: 153 x 283 x 310 =
+    // 13,422,690 cells (measured 2026-09-15, cached as
+    // cache/hull_volumes/4f499edff4966212.dhv and live-verified). The default
+    // budget must not coarsen those -- only hulls BC never voxelised at all
+    // (FedStarbase: 28.7G cells) or far beyond its own cell choice.
+    EXPECT_GE(voxel::kMaxFieldCells, std::size_t{153} * 283 * 310);
+    // ...and it must be a real ceiling, not a formality: FedStarbase's
+    // lattice must NOT fit.
+    EXPECT_LT(voxel::kMaxFieldCells, std::size_t{2582} * 2587 * 4293);
+}

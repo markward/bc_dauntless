@@ -1,6 +1,7 @@
 // native/src/voxel/include/voxel/distance_field.h
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include <glm/glm.hpp>
@@ -18,6 +19,25 @@ float point_triangle_distance(const glm::vec3& p, const Tri& t);
 /// value saturates: no consumer probes deeper than a few cells, so the exact
 /// far-field distance carries no information anyone uses.
 inline constexpr float kDefaultBandCells = 4.0f;
+
+/// Ceiling on the number of cells in one baked lattice. The grid is derived
+/// from hull extent / cell with nothing else bounding it, and BC's FedStarbase
+/// (19300 x 19336 x 32136 model units) at the authored resolution's 7.5-unit
+/// cell is 28.7 BILLION cells -- an allocation that trapped inside CEF's
+/// operator-new shim the moment E1M1 warped the player to Starbase 12. Above
+/// this budget the baker coarsens the cell uniformly until the lattice fits
+/// (see distance_field_from_tris), which is what BC's own authored volumes
+/// do: every shipped station _vox.nif uses cell 85 against the authored 15,
+/// and the largest volume in the whole corpus is 206k cells.
+///
+/// 2^24 sits just above the largest lattice any hull with a BC _vox produces
+/// at the authored resolution (SpaceFacility / FedOutpost: 153 x 283 x 310 =
+/// 13.4M, live-verified), so every hull BC voxelised bakes exactly as before
+/// and only FedStarbase (350x larger than the next hull) is coarsened.
+///
+/// This is a bake INPUT: changing it changes the output for hulls above the
+/// old or new value, so bump dhv.h's kBakerVersion in the same change.
+inline constexpr std::size_t kMaxFieldCells = std::size_t{1} << 24;
 
 /// Signed distance field over a uniform body-frame lattice, model units.
 ///
@@ -102,8 +122,16 @@ struct DistanceField {
 /// is sound); magnitude from the nearest triangle within `band_cells`,
 /// saturating beyond. Returns an empty field when `tris` is empty or `cell`
 /// is degenerate.
+///
+/// `max_cells` bounds the lattice: when the grid the requested `cell` implies
+/// (margins included) would exceed it, `cell` is scaled up UNIFORMLY -- every
+/// axis by the same factor, so an isotropic request stays isotropic -- to the
+/// smallest cell whose grid fits, and the returned field's `cell` reports
+/// what was actually used. Consumers must always read the field's own `cell`
+/// rather than recomputing it from the request.
 DistanceField distance_field_from_tris(const std::vector<Tri>& tris,
                                        glm::vec3 cell,
-                                       float band_cells = kDefaultBandCells);
+                                       float band_cells = kDefaultBandCells,
+                                       std::size_t max_cells = kMaxFieldCells);
 
 }  // namespace voxel
