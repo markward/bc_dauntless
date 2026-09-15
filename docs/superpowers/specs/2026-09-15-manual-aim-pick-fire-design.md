@@ -1,6 +1,6 @@
 # Manual Aim ("mouse pick fire", H key) — design
 
-**Status:** design for `docs/superpowers/plans/2026-09-15-manual-aim-pick-fire.md`.
+**Status:** implemented by docs/superpowers/plans/2026-09-15-manual-aim-pick-fire.md; awaiting live verification (see §Live verification).
 **Fidelity tier:** SDK-derived UI/state chain (TIER SDK) + five stated
 assumptions for the C++-only per-frame pick (the clean-room reference is
 silent — `search_reference("MousePickFire")` = measured no-match, 2026-09-15).
