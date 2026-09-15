@@ -43,7 +43,8 @@ _REQUIRED_BINDINGS = frozenset({
     "dust_set_density", "dust_set_enabled", "filmic_enabled",
     "filmic_set_enabled", "frame", "get_instance_bounds",
     "get_instance_head_center", "hdr_lens_flare_enabled",
-    "hdr_lens_flare_set_enabled", "hdr_set_enabled", "hull_volume_prewarm",
+    "hdr_lens_flare_set_enabled", "hdr_set_enabled",
+    "hull_volume_bake_to_disk", "hull_volume_prewarm",
     "hull_volume_set_cache_root", "hull_volume_set_resolution",
     "init", "letterbox_set",
     "load_animation_clips",
@@ -539,6 +540,22 @@ def hull_volume_prewarm(iid: InstanceId) -> None:
     missing-binding failure into a silent skip.
     """
     _h.hull_volume_prewarm(iid)
+
+
+def hull_volume_bake_to_disk(hull_path: str, authored_res: float) -> bool:
+    """Bake (or validate) one hull's on-disk `.dhv` at BC's authored
+    SetDamageResolution, WITHOUT touching the in-memory cache.
+
+    This is the boot-time pre-bake's unit of work (engine.appc.hull_volume.
+    prebake_all): the native side releases the GIL for the bake, so it is
+    safe -- and intended -- to call from a worker thread while the game loop
+    runs. `hull_path` must be the ABSOLUTE path the runtime will load the
+    model from (host_loop._ship_nif_path), because the cache key is that
+    string. Returns True when a valid file is on disk afterwards.
+
+    No hasattr guard, deliberately -- same reason as hull_volume_prewarm.
+    """
+    return bool(_h.hull_volume_bake_to_disk(str(hull_path), float(authored_res)))
 
 
 def set_nonfinite_probe_enabled(enabled: bool, dump_dir: str = "",

@@ -3676,6 +3676,22 @@ def _officer_zoom_factor(officer):
 _tooltip_dispatch_state = {"last": -1e9}
 
 
+def _start_hull_prebake() -> None:
+    """Kick off the boot-time hull-volume pre-bake (a daemon thread).
+
+    Runs after _setup_sdk (discovery imports ships/*.py through the SDK
+    finder) and after Foundation plugins (they add ship scripts). Best
+    effort by contract: the pre-bake only moves WHEN a bake happens, never
+    whether one does -- a hull it never reaches still bakes at spawn
+    exactly as before -- so nothing here may stop boot.
+    """
+    try:
+        from engine.appc import hull_volume
+        hull_volume.prebake_all()
+    except Exception as _e:  # noqa: BLE001 - never block boot
+        dev_mode.log_swallowed("start hull volume prebake", _e)
+
+
 def _setup_sdk() -> None:
     """Install SDK finder + AST transforms so SDK script imports work."""
     if str(PROJECT_ROOT) not in sys.path:
@@ -7437,6 +7453,8 @@ def run(mission_name: Optional[str] = None,
     _fnd_text = _foundation.describe(_fnd_report)
     if _fnd_text:
         print(_fnd_text, file=sys.stderr)
+
+    _start_hull_prebake()
 
     import App
     from engine.core.loop import GameLoop

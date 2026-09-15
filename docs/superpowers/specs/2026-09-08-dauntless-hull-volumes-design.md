@@ -136,6 +136,22 @@ Grid size implied by the authored resolution (the `cell` column below IS
 
 **Whole 18-ship fleet resident simultaneously: 1.0 MB at 1×, 7.2 MB at 2×.**
 
+⚠️ **Corrected 2026-09-15 — this table stops at ships, and stations are not
+ships.** FedStarbase's hull is 19300 × 19336 × 32136 model units (150 GU
+radius, 20× KessokHeavy linearly); at the authored cell 7.5 that is a
+2582 × 2587 × 4293 lattice, **28.7 billion cells**, and the allocation trapped
+inside CEF's `operator new` shim the moment E1M1 warped the player to
+Starbase 12. BC never bakes a station that fine: every shipped station
+`_vox.nif` uses **cell 85** against the authored 15, and BC's largest volume
+in the whole corpus is DryDock at 206k cells. FedStarbase has no `_vox` at
+all. The baker now carries a lattice budget, `voxel::kMaxFieldCells` (2²⁴),
+above which the cell is coarsened uniformly until the grid fits — the same
+"cell tracks the hull" choice BC's own authored volumes make. Measured on the
+real hulls: SpaceFacility / FedOutpost (13.4M) bake exactly as before;
+CardStation and CardStarbase (33M / 81M authored) coarsen to cell ≈ 9.5 / 12.9;
+FedStarbase bakes at cell 92.6 (217 × 217 × 355), which with its authored
+`DamageRadMod 15.0` is still ~8 cells across a maximum carve.
+
 ### 2.5 Bake cost is a first-load-only cost
 
 Occupancy voxelization alone (Galaxy, single-threaded, including NIF parse and
@@ -262,7 +278,18 @@ recorded in the header so a cache entry can never be misread.
 
 ## 4. Bake and cache
 
-**When.** On first use of a hull, during model load.
+**When.** ~~On first use of a hull, during model load.~~ **Revised
+2026-09-15:** at GAME load. `engine/appc/hull_volume.py:prebake_all` walks
+every `ships/*.py` the runtime could import (stock + mod overlay), resolves
+the same `(paths.game_asset(FilenameHigh), hardpoint SetDamageResolution)`
+pair the spawn path keys the cache on, and bakes whatever `.dhv` is missing or
+stale on a daemon thread, smallest hull first, through the GIL-releasing
+`hull_volume_bake_to_disk` → `voxel::ensure_dhv` (filesystem only; the
+cache's memo is never shared). The spawn-time `hull_volume_prewarm` stays as
+the fallback for a hull the worker has not reached. "First use" was sized from
+ships (57–192 ms); a station is seconds, and the first E1M1 warp to Starbase 12
+paid it at arrival. `FilenameHigh` only — Med/Low LODs, if ever loaded, are
+drawn without damage.
 
 **Where.** `<project_root>/cache/hull_volumes/<fingerprint>.dhv`, matching the
 existing `cache/icons/...` convention (`engine/ui/weapon_icons.py`). Already

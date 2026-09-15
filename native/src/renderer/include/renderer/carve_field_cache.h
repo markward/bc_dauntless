@@ -106,6 +106,13 @@ void set_hull_volume_cache_root(const std::filesystem::path& root);
 /// than crashing or writing into the process's cwd.
 voxel::HullVolumeCache& hull_volume_cache();
 
+/// The root hull_volume_cache() uses (or will use, if not yet constructed):
+/// the configured one, else the same temp-directory fallback. Exists so the
+/// boot-time pre-bake worker writes .dhv files exactly where the main-thread
+/// cache will look for them -- a worker baking under a different root is
+/// inert, indistinguishable from not running.
+std::filesystem::path effective_hull_volume_cache_root();
+
 /// Shared STATIC original-fill cache (hull-breach-2b Path C).
 ///
 /// Serves the original (UNCARVED) hull fill as a GL_R8 3D texture, built

@@ -4440,6 +4440,33 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           pybind11::arg("instance_id"), pybind11::arg("resolution"));
 
+    // Boot-time pre-bake (engine/appc/hull_volume.py's prebake_all): bake or
+    // validate ONE hull's .dhv on disk, under the same root the main-thread
+    // HullVolumeCache reads, and nothing else -- no memo, no resolution map,
+    // no GL. Called from a Python worker thread with the GIL RELEASED for the
+    // bake (up to ~8 s for a coarsened station at -O0), so the game loop and
+    // every other Python thread keep running; the filesystem is the only
+    // shared state, and write_dhv's temp-file + rename keeps a concurrent
+    // get on the main thread correct (it sees no file, or a complete one).
+    // `hull_path` must be the ABSOLUTE path the runtime will load the model
+    // from (host_loop's _ship_nif_path resolution) -- the cache key is that
+    // string, so any other spelling bakes an entry nothing will ever hit.
+    m.def("hull_volume_bake_to_disk",
+          [](const std::string& hull_path, float authored_res) -> bool {
+              if (!(authored_res > 0.0f)) return false;
+              const std::filesystem::path root =
+                  renderer::effective_hull_volume_cache_root();
+              py::gil_scoped_release release;
+              return voxel::ensure_dhv(root, hull_path, authored_res,
+                                       voxel::kDefaultQuality);
+          },
+          py::arg("hull_path"), py::arg("authored_res"),
+          "Bake (or validate) the on-disk .dhv for one hull at BC's authored "
+          "SetDamageResolution, releasing the GIL for the duration. Returns "
+          "True when a valid file is on disk afterwards; False for a missing "
+          "hull, a non-positive resolution, or a failed write. Safe to call "
+          "from a worker thread: touches only the filesystem.");
+
     // Spec §4 puts the bake "on first use of a hull, during model load" --
     // without this call nothing pre-warmed it, so the bake instead ran
     // lazily from hull_carve_add's field_cache->carve() the first time a

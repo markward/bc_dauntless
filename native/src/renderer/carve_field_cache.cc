@@ -106,15 +106,20 @@ void set_hull_volume_cache_root(const std::filesystem::path& root) {
     mutable_hull_volume_cache_root() = root;
 }
 
+std::filesystem::path effective_hull_volume_cache_root() {
+    std::filesystem::path root = mutable_hull_volume_cache_root();
+    if (root.empty()) root = fallback_hull_volume_cache_root();
+    return root;
+}
+
 voxel::HullVolumeCache& hull_volume_cache() {
     // Magic-static lambda: computed once, the first time this is called, using
     // whatever set_hull_volume_cache_root configured at that moment. A
     // std::unique_ptr rather than a by-value static because HullVolumeCache
     // has no default constructor -- its root is only known at first use.
     static std::unique_ptr<voxel::HullVolumeCache> instance = [] {
-        std::filesystem::path root = mutable_hull_volume_cache_root();
-        if (root.empty()) root = fallback_hull_volume_cache_root();
-        return std::make_unique<voxel::HullVolumeCache>(std::move(root));
+        return std::make_unique<voxel::HullVolumeCache>(
+            effective_hull_volume_cache_root());
     }();
     return *instance;
 }

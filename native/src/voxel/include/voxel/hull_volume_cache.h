@@ -22,6 +22,26 @@ namespace voxel {
 /// resident at 1x and 7.2 MB at 2x (MEASURED).
 inline constexpr float kDefaultQuality = 2.0f;
 
+/// Make sure `cache_root` holds a valid .dhv for (hull_nif, authored_res,
+/// quality): validate the existing file exactly as HullVolumeCache::get
+/// does, and bake + write one when it is missing or stale. Returns true when
+/// a valid file is on disk afterwards; false when there is nothing to bake
+/// from (the hull file does not exist -- nothing is written) or the write
+/// failed. A hull that exists but yields no triangles (not a NIF, empty
+/// mesh) still bakes and writes an EMPTY field, and that is a true result:
+/// it is a legitimate, cacheable answer, exactly as get treats it.
+///
+/// A free function touching ONLY the filesystem, on purpose: the boot-time
+/// pre-bake calls it from a worker thread so no mission ever bakes on the
+/// main thread, and HullVolumeCache's memo is not thread-safe. The
+/// filesystem is the sole shared state, and write_dhv's temp-file + rename
+/// means a concurrent get sees either no file (and bakes itself -- duplicate
+/// work, identical bytes, last rename wins) or a complete one.
+bool ensure_dhv(const std::filesystem::path& cache_root,
+                const std::filesystem::path& hull_nif,
+                float authored_res,
+                float quality);
+
 /// Bakes a hull's signed distance field on first use and caches it on disk.
 ///
 /// Lazy, in-memory-memoized, and keyed by hull path + authored resolution +

@@ -257,3 +257,83 @@ TEST(HullVolumeCache, RepeatedGetReturnsTheSameObject) {
     const voxel::DistanceField& b = c.get(src, 10.0f, 2.0f);
     EXPECT_EQ(&a, &b) << "references must stay stable for the cache's lifetime";
 }
+
+namespace {
+// Raw clock ticks: EXPECT_EQ on a file_time_type drags gtest's printer into
+// <format>, which this SDK's deployment target does not have.
+long long mtime_ticks(const std::filesystem::path& p) {
+    return static_cast<long long>(
+        std::filesystem::last_write_time(p).time_since_epoch().count());
+}
+}  // namespace
+
+// ── ensure_dhv: the bake-or-validate step on its own ───────────────────────
+//
+// The boot-time pre-bake runs this from a WORKER thread so a mission never
+// pays a bake on the main thread. It must therefore be a free function that
+// touches only the filesystem -- no HullVolumeCache memo, no shared map --
+// and it must be exactly the step `get` performs, so a file it writes is
+// one `get` accepts without rebaking.
+
+TEST(EnsureDhv, WritesTheFileGetWouldWrite) {
+    clear_scratch();
+    ScratchGuard guard;
+    const auto src = make_source("hullA.nif", "hull-a");
+    const auto cache_root = scratch_root() / "cache";
+
+    EXPECT_TRUE(voxel::ensure_dhv(cache_root, src, 10.0f, 2.0f));
+
+    voxel::HullVolumeCache c(cache_root);
+    EXPECT_TRUE(std::filesystem::exists(c.path_for(src, 10.0f, 2.0f)));
+    (void)c.get(src, 10.0f, 2.0f);
+    EXPECT_EQ(c.bakes(), 0u)
+        << "a file ensure_dhv wrote must satisfy get without a rebake -- "
+           "otherwise the pre-bake is inert and spawn pays the bake anyway";
+}
+
+TEST(EnsureDhv, ValidFileIsLeftAloneNotRewritten) {
+    clear_scratch();
+    ScratchGuard guard;
+    const auto src = make_source("hullA.nif", "hull-a");
+    const auto cache_root = scratch_root() / "cache";
+    ASSERT_TRUE(voxel::ensure_dhv(cache_root, src, 10.0f, 2.0f));
+
+    voxel::HullVolumeCache c(cache_root);
+    const auto file = c.path_for(src, 10.0f, 2.0f);
+    const auto before = mtime_ticks(file);
+    // Coarse-mtime filesystems: make sure a rewrite WOULD be observable.
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    EXPECT_TRUE(voxel::ensure_dhv(cache_root, src, 10.0f, 2.0f));
+    EXPECT_EQ(mtime_ticks(file), before)
+        << "a valid entry must not be rebaked -- the pre-bake runs every "
+           "boot, and rewriting the whole fleet each time defeats the cache";
+}
+
+TEST(EnsureDhv, StaleFileIsRebaked) {
+    clear_scratch();
+    ScratchGuard guard;
+    auto src = make_source("hullA.nif", "hull-a");
+    const auto cache_root = scratch_root() / "cache";
+    ASSERT_TRUE(voxel::ensure_dhv(cache_root, src, 10.0f, 2.0f));
+
+    voxel::HullVolumeCache c(cache_root);
+    const auto file = c.path_for(src, 10.0f, 2.0f);
+    const auto before = mtime_ticks(file);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    src = make_source("hullA.nif", "hull-a-edited!");   // size changes
+
+    EXPECT_TRUE(voxel::ensure_dhv(cache_root, src, 10.0f, 2.0f));
+    EXPECT_NE(mtime_ticks(file), before)
+        << "a fingerprint mismatch must rebake, exactly as get does";
+}
+
+TEST(EnsureDhv, MissingSourceReportsFalse) {
+    clear_scratch();
+    ScratchGuard guard;
+    const auto cache_root = scratch_root() / "cache";
+    EXPECT_FALSE(voxel::ensure_dhv(cache_root,
+                                   scratch_root() / "nope.nif", 10.0f, 2.0f))
+        << "nothing to bake from: the worker must be able to count this "
+           "as a skip rather than a success";
+}
