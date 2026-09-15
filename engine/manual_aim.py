@@ -82,3 +82,94 @@ def cursor_ray(cursor_xy, viewport, cam) -> Optional[Tuple[Vec3, Vec3]]:
     if d is None:
         return None
     return eye, d
+
+
+# ── Per-tick pick (sim side) ────────────────────────────────────────────────
+# The gameplay camera is only known on the RENDER side of the frame
+# (host_loop's r.set_camera call); note_camera parks it here -- data only,
+# no game-state mutation on the render side -- and the next sim tick's
+# update() reads it (one frame of camera lag, invisible at 60 Hz).
+_last_cam: Optional[AimCamera] = None
+
+
+def note_camera(eye, target, up, fov_y_rad, near, far) -> None:
+    global _last_cam
+    _last_cam = AimCamera(eye, target, up, fov_y_rad, near, far)
+
+
+def last_camera() -> Optional[AimCamera]:
+    return _last_cam
+
+
+def reset() -> None:
+    """Mission swap / tests: forget the noted camera."""
+    global _last_cam
+    _last_cam = None
+
+
+def _revert(player) -> bool:
+    if player.is_using_target_offset():
+        player.UseTargetOffsetTG(0)
+    return False
+
+
+def update(*, player, tcw, ship_instances, is_exterior: bool,
+           cursor_fb=None, viewport_fb=None, cam=None, ray_trace=None) -> bool:
+    """One sim tick of Manual Aim. The ONLY game-state mutation in this
+    module: sets or clears the player's manual target offset.
+
+    Returns True while a hull pick is live. Every other path -- flag off,
+    bridge view, no target / dead target, target has no render instance,
+    cursor off the hull -- reverts to UseTargetOffsetTG(0) (assumption 3:
+    revert immediately, never hold the last hit).
+
+    Only the CURRENT target's hull is traced (assumption 2: no retarget on
+    hover). The hit is stored target-local and UNSCALED, the same frame the
+    SDK's own offset producers use (pSubsystem.GetPosition()), so
+    _resolve_torpedo_aim_point / _phaser_aim_point's pos + R·(o·scale) lands
+    back on the picked point."""
+    from engine import host_io
+    from engine.appc import combat
+    from engine.appc.math import TGPoint3
+
+    if player is None:
+        return False
+    probe = getattr(type(player), "is_using_target_offset", None)
+    if not callable(probe):
+        return False
+    if not is_exterior or tcw is None or not tcw.GetMousePickFire():
+        return _revert(player)
+    target = player.GetTarget()
+    if target is None or (hasattr(target, "IsDead") and target.IsDead()):
+        return _revert(player)
+    iid = ship_instances.get(target) if ship_instances is not None else None
+    if iid is None:
+        return _revert(player)
+    if cam is None:
+        cam = _last_cam
+    if cursor_fb is None:
+        cursor_fb = host_io.cursor_pos()
+    if viewport_fb is None:
+        viewport_fb = host_io.framebuffer_size()
+    if cam is None or cursor_fb is None:
+        return _revert(player)
+    ray = cursor_ray(cursor_fb, viewport_fb, cam)
+    if ray is None:
+        return _revert(player)
+    origin, direction = ray
+    if ray_trace is None:
+        ray_trace = host_io.ray_trace_mesh
+    try:
+        hit = ray_trace(iid, origin, direction, cam.far)
+    except Exception:
+        # A native trace error must not kill the sim tick; treat as a miss.
+        hit = None
+    if hit is None:
+        return _revert(player)
+    (px, py, pz), _normal, _t = hit
+    dx, dy, dz = combat._body_frame_delta(target, TGPoint3(px, py, pz))
+    scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
+    if scale <= 1e-9:
+        scale = 1.0
+    player.set_manual_target_offset(TGPoint3(dx / scale, dy / scale, dz / scale))
+    return True

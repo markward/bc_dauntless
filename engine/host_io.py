@@ -45,6 +45,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_torpedoes", "set_shockwaves", "set_hit_vfx", "set_particle_emitters",
     "set_dynamic_lights",
     "set_phaser_beams", "set_tractor_beams",
+    "cursor_pos",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
     "hull_split_detached", "hull_carve_capsule", "breach_burst",
     "ray_trace_mesh",
@@ -193,6 +194,14 @@ def window_size() -> Tuple[int, int]:
     if _h is None:
         return (0, 0)
     return _h.window_size()
+
+
+def cursor_pos() -> Optional[Tuple[float, float]]:
+    """Cursor in FRAMEBUFFER (physical) pixels -- renderer/window.cc:173-182.
+    None when headless (no window to have a cursor in)."""
+    if _h is None:
+        return None
+    return _h.cursor_pos()
 
 
 # ── Per-frame VFX descriptor lists ───────────────────────────────────────────

@@ -264,3 +264,147 @@ def test_cursor_ray_rejects_degenerate_inputs():
     same = AimCamera(eye=(0.0, 0.0, 0.0), target=(0.0, 0.0, 0.0),
                      up=(0.0, 0.0, 1.0), fov_y_rad=1.0, near=1.0, far=10.0)
     assert cursor_ray((1.0, 1.0), (800, 600), same) is None
+
+
+# ── Task 5: per-tick pick / revert ───────────────────────────────────────────
+
+class _Tcw:
+    def __init__(self, on): self._on = on
+    def GetMousePickFire(self): return 1 if self._on else 0
+
+
+def _aim_fixture():
+    """Player at origin looking +Y (camera = chase, behind the player), a
+    Galaxy 100 GU ahead, cursor at screen centre, camera noted."""
+    from engine import manual_aim
+    from engine.appc.ships import ShipClass
+    from engine.appc.subsystems import ShipSubsystem
+    manual_aim.reset()
+    player = ShipClass()
+    target = _galaxy_target_at(0.0, 100.0, 0.0)
+    sub = ShipSubsystem("Bridge")
+    sub._position = TGPoint3(0.0, 0.0, 4.0)
+    sub.SetParentShip(target)
+    player.SetTarget(target)
+    player.SetTargetSubsystem(sub)
+    cam = manual_aim.AimCamera(eye=(0.0, -20.0, 5.0), target=(0.0, 100.0, 0.0),
+                               up=(0.0, 0.0, 1.0), fov_y_rad=math.radians(45.0),
+                               near=1.0, far=5000.0)
+    return manual_aim, player, target, cam
+
+
+def test_update_stores_the_hull_hit_as_a_target_local_unscaled_offset():
+    manual_aim, player, target, cam = _aim_fixture()
+    traced = []
+    def ray_trace(iid, origin, direction, max_dist):
+        traced.append((iid, origin, direction, max_dist))
+        return ((0.0, 90.0, 5.0), (0.0, -1.0, 0.0), 90.0)   # hull hit, world
+
+    live = manual_aim.update(player=player, tcw=_Tcw(True),
+                             ship_instances={target: 7}, is_exterior=True,
+                             cursor_fb=(400.0, 300.0), viewport_fb=(800, 600),
+                             cam=cam, ray_trace=ray_trace)
+
+    assert live is True
+    assert traced[0][0] == 7                       # traced the TARGET's hull
+    assert traced[0][1] == cam.eye()
+    assert traced[0][3] == cam.far
+    assert player.is_using_target_offset()
+    o = player.GetTargetOffsetTG()
+    scale = float(target.GetScale())
+    assert abs(o.x - 0.0) < 1e-6
+    assert abs(o.y - (-10.0 / scale)) < 1e-6         # 90 - 100, unscaled
+    assert abs(o.z - (5.0 / scale)) < 1e-6
+
+
+def test_update_reverts_to_the_subsystem_when_the_cursor_leaves_the_hull():
+    manual_aim, player, target, cam = _aim_fixture()
+    kw = dict(player=player, tcw=_Tcw(True), ship_instances={target: 7},
+              is_exterior=True, cursor_fb=(400.0, 300.0),
+              viewport_fb=(800, 600), cam=cam)
+    manual_aim.update(ray_trace=lambda *a: ((0.0, 90.0, 5.0), (0.0, -1.0, 0.0), 90.0), **kw)
+    assert player.is_using_target_offset()
+
+    live = manual_aim.update(ray_trace=lambda *a: None, **kw)   # miss
+
+    assert live is False
+    assert player.is_using_target_offset() is False
+    o = player.GetTargetOffsetTG()
+    assert (o.x, o.y, o.z) == (0.0, 0.0, 4.0)      # back on the lock
+
+
+def test_update_is_inert_when_the_flag_is_off_or_the_view_is_not_exterior():
+    manual_aim, player, target, cam = _aim_fixture()
+    calls = []
+    hit = lambda *a: (calls.append(a) or ((0.0, 90.0, 5.0), (0.0, -1.0, 0.0), 90.0))
+    base = dict(player=player, ship_instances={target: 7},
+                cursor_fb=(400.0, 300.0), viewport_fb=(800, 600), cam=cam,
+                ray_trace=hit)
+    assert manual_aim.update(tcw=_Tcw(False), is_exterior=True, **base) is False
+    assert manual_aim.update(tcw=_Tcw(True), is_exterior=False, **base) is False
+    assert calls == []                              # never traced
+    assert player.is_using_target_offset() is False
+
+
+def test_update_drops_a_live_offset_when_the_flag_turns_off():
+    manual_aim, player, target, cam = _aim_fixture()
+    player.set_manual_target_offset(TGPoint3(1.0, 1.0, 1.0))
+    manual_aim.update(player=player, tcw=_Tcw(False), ship_instances={target: 7},
+                      is_exterior=True, cursor_fb=(0.0, 0.0), viewport_fb=(800, 600),
+                      cam=cam, ray_trace=lambda *a: None)
+    assert player.is_using_target_offset() is False
+
+
+def test_update_only_picks_the_targeted_ship_never_a_bystander():
+    """Assumption 2 in the spec: no retarget on hover. A hit on another
+    ship's instance is not even attempted -- only the target's iid is traced."""
+    manual_aim, player, target, cam = _aim_fixture()
+    other = _galaxy_target_at(0.0, 60.0, 0.0)
+    traced = []
+    def ray_trace(iid, *a):
+        traced.append(iid)
+        return None
+    manual_aim.update(player=player, tcw=_Tcw(True),
+                      ship_instances={target: 7, other: 8}, is_exterior=True,
+                      cursor_fb=(400.0, 300.0), viewport_fb=(800, 600),
+                      cam=cam, ray_trace=ray_trace)
+    assert traced == [7]
+    assert player.GetTarget() is target
+
+
+def test_update_with_no_target_or_no_instance_reverts_without_tracing():
+    manual_aim, player, target, cam = _aim_fixture()
+    player.set_manual_target_offset(TGPoint3(1.0, 1.0, 1.0))
+    traced = []
+    manual_aim.update(player=player, tcw=_Tcw(True), ship_instances={},
+                      is_exterior=True, cursor_fb=(400.0, 300.0),
+                      viewport_fb=(800, 600), cam=cam,
+                      ray_trace=lambda *a: traced.append(a))
+    assert traced == [] and player.is_using_target_offset() is False
+    player.SetTarget(None)
+    assert manual_aim.update(player=player, tcw=_Tcw(True), ship_instances={target: 7},
+                             is_exterior=True, cursor_fb=(400.0, 300.0),
+                             viewport_fb=(800, 600), cam=cam,
+                             ray_trace=lambda *a: traced.append(a)) is False
+    assert traced == []
+
+
+def test_note_camera_is_data_only_and_read_by_update_by_default():
+    manual_aim, player, target, cam = _aim_fixture()
+    assert manual_aim.last_camera() is None
+    manual_aim.note_camera(cam.eye(), cam.target, cam.up(), cam.fov_y_rad, cam.near, cam.far)
+    noted = manual_aim.last_camera()
+    assert noted.eye() == cam.eye() and noted.far == cam.far
+    assert player.is_using_target_offset() is False           # no mutation
+    seen = []
+    manual_aim.update(player=player, tcw=_Tcw(True), ship_instances={target: 7},
+                      is_exterior=True, cursor_fb=(400.0, 300.0),
+                      viewport_fb=(800, 600),
+                      ray_trace=lambda iid, o, d, m: seen.append(o) or None)
+    assert seen == [cam.eye()]                                 # used the noted cam
+
+
+def test_host_io_cursor_pos_is_none_headless(monkeypatch):
+    from engine import host_io
+    monkeypatch.setattr(host_io, "_h", None)
+    assert host_io.cursor_pos() is None
