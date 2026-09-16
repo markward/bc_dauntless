@@ -30,8 +30,23 @@ def fov_distance_scale(fov_y_rad: float) -> float:
     (0.875² = 0.766). Applied at eye-placement time only, so the stored
     distances and their clamps stay in reference-FOV units and a FOV change
     never eats the player's zoom setting.
+
+    Narrow side (2026-09-16 live pass): the pure invariant was "about
+    perfect" at 45° but "a little too close" at 25° — a telephoto view of a
+    ship at the same screen size reads as too dominant. Below the reference
+    the ratio is raised to FOV_NARROW_EXPONENT; above it the ratio stands.
+    Continuous at the reference, and 45° is untouched. With 1.5: 30° is
+    ×1.30 (was ×1.19), 25° is ×1.69 (was ×1.42).
     """
-    return math.tan(EXTERIOR_FOV_Y_RAD / 2.0) / math.tan(fov_y_rad / 2.0)
+    ratio = math.tan(EXTERIOR_FOV_Y_RAD / 2.0) / math.tan(fov_y_rad / 2.0)
+    if ratio > 1.0:
+        return ratio ** FOV_NARROW_EXPONENT
+    return ratio
+
+
+# Exponent on the tan ratio for FOVs NARROWER than the reference — see
+# fov_distance_scale. 1.0 would be the pure apparent-size invariant.
+FOV_NARROW_EXPONENT = 1.5
 
 
 # BC's Chase mode, as authored (CameraModes.Chase, CameraModes.py:12-32) and

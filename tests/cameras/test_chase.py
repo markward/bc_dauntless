@@ -584,6 +584,23 @@ def test_fov_distance_scale_keeps_apparent_size_constant():
     assert fov_distance_scale(math.radians(25.0)) > 1.0      # narrower FOV → further out
 
 
+def test_fov_distance_scale_pushes_further_out_on_the_narrow_side():
+    """Live pass: the pure invariant was perfect at 45 deg but a little too
+    close at 25 deg — a telephoto view of a ship at the same screen size
+    reads as too dominant. Below the reference the tan ratio is raised to
+    FOV_NARROW_EXPONENT (> 1); above it the ratio is used as-is, so 45 deg
+    is untouched. Continuous at the reference (1^k == 1)."""
+    from engine.cameras import fov_distance_scale, FOV_NARROW_EXPONENT
+    ref, narrow, wide = math.radians(35.0), math.radians(25.0), math.radians(45.0)
+    ratio = math.tan(ref / 2) / math.tan(narrow / 2)
+    assert FOV_NARROW_EXPONENT > 1.0
+    assert fov_distance_scale(narrow) == pytest.approx(ratio ** FOV_NARROW_EXPONENT)
+    assert fov_distance_scale(narrow) > ratio
+    assert fov_distance_scale(wide) == pytest.approx(math.tan(ref / 2) / math.tan(wide / 2))
+    assert fov_distance_scale(ref - 1e-6) == pytest.approx(1.0, abs=1e-4)
+    assert fov_distance_scale(ref + 1e-6) == pytest.approx(1.0, abs=1e-4)
+
+
 def test_chase_eye_distance_is_scaled_by_fov_scale_not_the_stored_distance():
     """A wider FOV must not eat the user's zoom setting: the stored distance
     (and its clamps) stay in reference-FOV units; only the eye placement
