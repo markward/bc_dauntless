@@ -424,6 +424,25 @@ class TGSoundManager:
             return None
         return self.LoadSoundInGroup(filename, name, group)
 
+    def DeleteSound(self, name: str) -> None:
+        """Unload a single named sound. Mirrors Appc TGSoundManager.DeleteSound
+        (App.py:2125). The per-sound counterpart to DeleteAllSoundsInGroup:
+        Bridge/GalaxyBridge.py and Bridge/SovereignBridge.py's UnloadSounds()
+        call it to drop "LiftDoor" (loaded via LoadSoundInGroup under
+        "BridgeGeneric") when LoadBridge.Load switches configs — the first
+        caller to reach this under our shim, via install_quickbattle_hook
+        (engine/bridge_selection.py) driving a different-bridge RecreatePlayer.
+        Silently does nothing for an unknown name, matching Appc's tolerance
+        of scripts unloading a sound that was never loaded on this platform.
+        """
+        snd = self._sounds.pop(name, None)
+        if snd is None:
+            return
+        snd.Stop()
+        group = snd._group
+        if group in self._groups:
+            self._groups[group].discard(name)
+
     def DeleteAllSoundsInGroup(self, group: str) -> None:
         for name in self._groups.pop(group, set()):
             snd = self._sounds.pop(name, None)

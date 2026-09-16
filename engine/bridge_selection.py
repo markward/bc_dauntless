@@ -280,3 +280,52 @@ def load_bridge_pins(path=None) -> BridgePins:
     store = SettingsStore(path if path is not None else default_bridges_path())
     store.load()
     return BridgePins(store)
+
+
+# ── QuickBattle consumer ───────────────────────────────────────────────────
+
+def install_quickbattle_hook(qb_module, pins) -> bool:
+    """Wrap QuickBattle.RecreatePlayer so g_sBridgeType is resolved from the
+    matrix at the moment of use.
+
+    RecreatePlayer is the ONE chokepoint every QuickBattle player creation
+    funnels through -- Initialize, StartSimulation2, EndSimulation,
+    ShipDestroyed -- and it ends with LoadBridge.Load(g_sBridgeType)
+    (QuickBattle.py:2928). The SDK calls it as a module global, so replacing
+    the attribute reaches the two callers the host never sees. Precedent:
+    engine/foundation/quickbattle._ensure_build_dialog_reinjects.
+
+    Returns True when (re)installed, False when already bound to THIS exact
+    `pins` object, or `pins` is None. Call on EVERY load_quickbattle.
+
+    Rewraps rather than no-ops when RecreatePlayer is already wrapped for a
+    DIFFERENT pins object: `sys.modules['QuickBattle.QuickBattle']` is never
+    actually re-imported on a mission swap in this engine (importlib.import_
+    module just returns the cached module -- verified, not assumed; see
+    reset_sdk_globals/_init_mission, neither pops it from sys.modules), so a
+    fresh HostController with a fresh BridgePins reaching an already-hooked
+    module (headless tests build one per test) would otherwise stay bound to
+    the FIRST controller's pins forever. Rewrapping targets the stored TRUE
+    original (`_dauntless_bridge_orig`), never the previous wrapper --
+    wrapping a wrapper would run the stale g_sBridgeType write right after
+    ours and clobber it before RecreatePlayer's own body executes.
+    """
+    if pins is None:
+        return False
+    orig = getattr(qb_module, "RecreatePlayer", None)
+    if orig is None:
+        return False
+    if getattr(orig, "_dauntless_bridge_hook", False):
+        if getattr(orig, "_dauntless_bridge_pins", None) is pins:
+            return False
+        orig = orig._dauntless_bridge_orig
+
+    def _recreate_player_with_matrix_bridge(_orig=orig, _qb=qb_module, _pins=pins):
+        _qb.g_sBridgeType = _pins.resolve(getattr(_qb, "g_sPlayerType", None))
+        return _orig()
+
+    _recreate_player_with_matrix_bridge._dauntless_bridge_hook = True
+    _recreate_player_with_matrix_bridge._dauntless_bridge_pins = pins
+    _recreate_player_with_matrix_bridge._dauntless_bridge_orig = orig
+    qb_module.RecreatePlayer = _recreate_player_with_matrix_bridge
+    return True

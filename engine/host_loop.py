@@ -5203,6 +5203,10 @@ class HostController:
         # RecreatePlayer with a different g_sBridgeType) rebuilds the "bridge"
         # object + viewscreen and this is how the host notices.
         self.realized_bridge_config: str = ""
+        # The ship->bridge matrix (engine/bridge_selection.BridgePins). None
+        # in harnesses that never load it; load_quickbattle then installs no
+        # hook and the SDK's own g_sBridgeType default stands.
+        self.bridge_pins: Any = None
         # InstanceIds of placed-and-posed bridge officers. Owned by the
         # controller (like bridge_instance) so it survives mission swaps;
         # repopulated each load by realize_set's character loop, which
@@ -5381,6 +5385,12 @@ class _MissionLoader:
         # invariant) before the cascade builds the dialog.
         if App.g_kConfigMapping.LoadConfigFile("Options.cfg") == 0:
             App.g_kConfigMapping.SaveConfigFile("Options.cfg")
+
+        # Ship->bridge matrix: wrap RecreatePlayer before the cascade's
+        # Initialize runs it, so even the boot player gets the pinned bridge.
+        import QuickBattle.QuickBattle as _QB
+        from engine import bridge_selection as _bs
+        _bs.install_quickbattle_hook(_QB, self._c.bridge_pins)
 
         import QuickBattle.QuickBattleGame as _QBGame
         _QBGame.Initialize(game)
@@ -7782,6 +7792,10 @@ def run(mission_name: Optional[str] = None,
         # LoadSounds(), which loads bridge SFX into the live backend.
         # Listener installs stay in init_audio() below (relocating them
         # would change spawn-event capture).
+        # Before load_quickbattle: its RecreatePlayer hook reads
+        # controller.bridge_pins.
+        from engine import bridge_selection as _bs
+        controller.bridge_pins = _bs.load_bridge_pins()
         init_audio_backend()
         if boot_quickbattle:
             # Real SDK QuickBattle entry cascade: builds the QuickBattleRegion
