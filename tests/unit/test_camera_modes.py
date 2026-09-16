@@ -108,8 +108,8 @@ def test_dt_zero_does_not_snap_mid_sweep():
 
 
 from engine.appc.camera_modes import (
-    ChaseMode, TargetMode, CHASE_DEFAULT_DISTANCE,
-    TARGET_DEFAULT_DISTANCE, TARGET_DEFAULT_MINIMUM_DISTANCE,
+    ChaseMode, TargetMode, ZoomTargetMode, CHASE_DEFAULT_DISTANCE,
+    TARGET_DEFAULT_DISTANCE,
 )
 
 
@@ -188,42 +188,80 @@ def test_target_mode_standoff_is_distance_times_source_radius():
     assert abs(reach - TARGET_DEFAULT_DISTANCE * 2.0) < 1e-6
 
 
-def test_target_mode_standoff_clamped_to_maximum_distance():
-    """CinematicReverseTarget (F3) authors MaximumDistance 16.0: a starbase-
-    sized Source must not push the eye 80 GU out."""
+def test_target_mode_ideal_ignores_minimum_and_maximum_distance():
+    """Min/MaximumDistance are read in exactly ONE place in the binary: the
+    Zoom slot (TargetCameraMode 0x00422C20). GetIdealPosition (0x00422E20)
+    reads Distance raw and never clamps, so a starbase-sized Source at
+    CinematicReverseTarget's MaximumDistance 16.0 still stands off 4 x r."""
     src = _FakeTarget((0.0, 0.0, 0.0), radius=20.0)
     dst = _FakeTarget((0.0, 500.0, 0.0))
     m = TargetMode()
     m.SetAttrIDObject("Source", src)
     m.SetAttrIDObject("Target", dst)
     m.SetAttrFloat("MaximumDistance", 16.0)
+    m.SetAttrFloat("MinimumDistance", 2.0)
     m.SnapToIdealPosition()
     eye, _fwd, _up = m.Update()
     reach = math.sqrt(eye[0] ** 2 + eye[1] ** 2 + eye[2] ** 2)
-    assert abs(reach - 16.0) < 1e-6
+    assert abs(reach - TARGET_DEFAULT_DISTANCE * 20.0) < 1e-6
 
 
-def test_target_mode_standoff_clamped_to_minimum_distance():
-    src = _FakeTarget((0.0, 0.0, 0.0), radius=0.1)
-    dst = _FakeTarget((0.0, 100.0, 0.0))
+def test_zoom_scales_distance_by_one_minus_half_f():
+    """CameraObjectClass.Zoom(f) -> mode vt+0x84 -> FUN_0041F920:
+    Distance = clamp(Distance * (1 - 0.5 f), Min, Max). The shipped keyboard
+    binds f = +/-0.25 (DefaultUKKeyboardBinding.py:27-30)."""
+    m = TargetMode()
+    m.SetAttrFloat("MinimumDistance", 2.0)
+    m.SetAttrFloat("Distance", 4.0)
+    m.SetAttrFloat("MaximumDistance", 40.0)
+    m.Zoom(0.25)
+    assert abs(m.GetAttrFloat("Distance") - 3.5) < 1e-9
+    m.Zoom(-0.25)
+    assert abs(m.GetAttrFloat("Distance") - 3.9375) < 1e-9
+
+
+def test_zoom_clamps_to_min_and_max_in_radius_multiples():
+    """The clamp is on the RAW attribute (a radius multiple), before any
+    radius multiply: a Source of radius 20 zoomed out still stops at 40."""
+    src = _FakeTarget((0.0, 0.0, 0.0), radius=20.0)
+    dst = _FakeTarget((0.0, 5000.0, 0.0))
     m = TargetMode()
     m.SetAttrIDObject("Source", src)
     m.SetAttrIDObject("Target", dst)
+    m.SetAttrFloat("MinimumDistance", 2.0)
+    m.SetAttrFloat("Distance", 4.0)
+    m.SetAttrFloat("MaximumDistance", 40.0)
+    for _ in range(40):
+        m.Zoom(-1.0)
+    assert m.GetAttrFloat("Distance") == 40.0
     m.SnapToIdealPosition()
     eye, _fwd, _up = m.Update()
-    reach = math.sqrt(eye[0] ** 2 + eye[1] ** 2 + eye[2] ** 2)
-    assert abs(reach - TARGET_DEFAULT_MINIMUM_DISTANCE) < 1e-6
+    assert abs(math.sqrt(sum(c * c for c in eye)) - 40.0 * 20.0) < 1e-6
+    for _ in range(40):
+        m.Zoom(1.0)
+    assert m.GetAttrFloat("Distance") == 2.0
 
 
-def test_target_mode_look_between_blends_from_the_target_toward_the_source():
-    """LookBetween interpolates FROM THE TARGET back toward the Source: the
-    authored 0.05 nudges the aim 5% off the target so the source stays in
-    frame. Read the other way round (source → target) the camera would aim
-    5% of the way to the target — i.e. essentially AT the ship it is parked
-    behind, with the target off-screen entirely.
+def test_zoom_in_at_the_shipped_zoom_target_minimum_is_a_noop():
+    """CameraModes.ZoomTarget authors MinimumDistance == Distance == 4.0, so
+    the shipped Z-key view cannot zoom in, only out (to 20)."""
+    m = ZoomTargetMode()
+    m.SetAttrFloat("MinimumDistance", 4.0)
+    m.SetAttrFloat("Distance", 4.0)
+    m.SetAttrFloat("MaximumDistance", 20.0)
+    m.Zoom(0.25)
+    assert m.GetAttrFloat("Distance") == 4.0
+    m.Zoom(-0.25)
+    assert abs(m.GetAttrFloat("Distance") - 4.5) < 1e-9
 
-    Assert against a strongly off-axis eye (BackWatchPos 0 / UpWatchPos 1)
-    where the two readings are separable, at LookBetween 0.5.
+
+def test_target_mode_look_between_zero_is_source_one_is_target():
+    """GetIdealForward (0x004235E0): fwd = unit(LookBetween * T + (1 -
+    LookBetween) * S - eye). 0 = Source, 1 = Target; the authored 0.05 aims
+    almost at the player ship, with the target on the look axis beyond it.
+
+    Assert at 0.25 with a straight-up eye (BackWatchPos 0 / UpWatchPos 1),
+    where the two polarities land 50 GU apart.
     """
     src = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
     dst = _FakeTarget((0.0, 100.0, 0.0))
@@ -232,18 +270,15 @@ def test_target_mode_look_between_blends_from_the_target_toward_the_source():
     m.SetAttrIDObject("Target", dst)
     m.SetAttrFloat("BackWatchPos", 0.0)
     m.SetAttrFloat("UpWatchPos", 1.0)
-    m.SetAttrFloat("LookBetween", 0.5)
+    m.SetAttrFloat("LookBetween", 0.25)
     m.SnapToIdealPosition()
     eye, fwd, _up = m.Update()
     assert abs(eye[2] - TARGET_DEFAULT_DISTANCE) < 1e-6     # straight up, 4 GU
-    look = (0.0, 50.0, 0.0)                                  # halfway back
+    look = (0.0, 25.0, 0.0)                                  # a quarter of the way to T
     want = (look[0] - eye[0], look[1] - eye[1], look[2] - eye[2])
     n = math.sqrt(sum(c * c for c in want))
     for got, expect in zip(fwd, (c / n for c in want)):
         assert abs(got - expect) < 1e-9
-    # ...and measurably NOT aiming at the raw target, nor at the source.
-    assert abs(fwd[2] - (-4.0 / math.sqrt(100.0 ** 2 + 16.0))) > 1e-3
-    assert fwd[1] > 0.9
 
 
 def test_wide_target_stands_further_off_than_plain_target():
@@ -375,25 +410,73 @@ def test_placement_mode_invalid_when_target_dead():
 from engine.appc.camera_modes import ZoomTargetMode
 
 
-def test_zoom_target_mode_eye_at_source_looks_at_target():
-    src = _FakeTarget((5.0, 0.0, 0.0))
-    tgt = _FakeTarget((5.0, 10.0, 0.0))
+def test_zoom_target_mode_eye_stands_off_target_by_distance_times_target_radius():
+    """ZoomTargetCameraMode::GetIdealPosition (0x00423E20): eye = T +
+    unit(S - T) * (Distance * r_T), looking at T. Distance defaults to the
+    authored 4.0."""
+    src = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    tgt = _FakeTarget((0.0, 100.0, 0.0), radius=5.0)
     m = ZoomTargetMode()
     m.SetAttrIDObject("Source", src)
     m.SetAttrIDObject("Target", tgt)
     eye, fwd, up = m.Update()
-    assert eye == (5.0, 0.0, 0.0)
+    assert eye == (0.0, 80.0, 0.0)
     assert abs(fwd[1] - 1.0) < 1e-6                # looks +Y toward the target
+    assert up == (0.0, 0.0, 1.0)
+
+
+def test_zoom_target_mode_scales_with_the_targets_radius_not_the_sources():
+    src = _FakeTarget((0.0, 0.0, 0.0), radius=10.0)
+    tgt = _FakeTarget((0.0, 100.0, 0.0), radius=1.0)
+    m = ZoomTargetMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", tgt)
+    eye, _fwd, _up = m.Update()
+    assert eye == (0.0, 96.0, 0.0)
+
+
+def test_zoom_target_mode_pushes_the_eye_clear_of_the_source_hull():
+    """FUN_0041FF50 with both objects: the Source's centre must sit at least
+    r_S BEHIND the eye along the look axis, else the eye is pushed forward
+    by the deficit. Source r=3 at the origin, target r=1 five GU ahead:
+    the raw eye (0,1,0) is only 1 GU in front of the source's centre."""
+    src = _FakeTarget((0.0, 0.0, 0.0), radius=3.0)
+    tgt = _FakeTarget((0.0, 5.0, 0.0), radius=1.0)
+    m = ZoomTargetMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", tgt)
+    eye, fwd, _up = m.Update()
+    assert abs(eye[1] - 3.0) < 1e-9
+    assert abs(fwd[1] - 1.0) < 1e-6
+
+
+def test_zoom_target_mode_coincident_source_and_target_falls_back_to_source_forward():
+    """|S - T|^2 < 0.5 -> the line direction falls back to the Source's
+    forward (0x00423E20): the raw eye sits Distance * r_T AHEAD of T (+Y).
+    The own-hull push-out then carries the eye back through both hulls so
+    the Source is r_S behind it (single pass, literal FUN_0041FF50), and the
+    forward flip (0x00424210) turns the look away from a Source that ended up
+    in front. Degenerate by construction — the Z key never zooms on the
+    player's own ship — but it must not divide by zero."""
+    src = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    tgt = _FakeTarget((0.0, 0.1, 0.0), radius=2.0)
+    m = ZoomTargetMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", tgt)
+    eye, fwd, _up = m.Update()
+    assert abs(eye[0]) < 1e-9 and abs(eye[2]) < 1e-9     # on the forward axis
+    assert abs(eye[1] + 1.0) < 1e-9                       # r_S past the source
+    assert abs(fwd[1] + 1.0) < 1e-6                       # flipped: looking -Y
 
 
 def test_zoom_target_mode_source_none_uses_owner_camera():
-    tgt = _FakeTarget((0.0, 100.0, 0.0))
+    tgt = _FakeTarget((0.0, 100.0, 0.0), radius=1.0)
     m = ZoomTargetMode()
     m._owner_camera = _FakeTarget((0.0, 0.0, 0.0))  # camera at origin
     m.SetAttrIDObject("Target", tgt)
-    # Source left unset => falls back to the owning camera's pose.
+    # Source left unset => the owning camera's pose stands in for the Source.
     eye, fwd, up = m.Update()
-    assert eye == (0.0, 0.0, 0.0)
+    assert eye == (0.0, 96.0, 0.0)
     assert abs(fwd[1] - 1.0) < 1e-6
 
 

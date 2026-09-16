@@ -109,6 +109,26 @@ class CameraMode:
         """
         return None
 
+    # ── Zoom ──────────────────────────────────────────────────────────────────
+    def Zoom(self, f):
+        """CameraObjectClass.Zoom(f) → current mode vt+0x84 → FUN_0041F920:
+
+            Distance = clamp(Distance · (1 − 0.5·f), MinimumDistance, MaximumDistance)
+
+        This is the ONLY reader of Min/MaximumDistance in the binary — the
+        ideal-position path of every mode reads Distance raw and never clamps
+        — so the bounds are radius MULTIPLES (Distance's own units), applied
+        before any radius multiply. The shipped keyboard binds f = ±0.25
+        (DefaultUKKeyboardBinding.py:27-30): ×0.875 in, ×1.125 out — not
+        inverses. A mode without a Distance attr is left untouched.
+        """
+        if "Distance" not in self._attrs:
+            return
+        d = self.GetAttrFloat("Distance") * (1.0 - 0.5 * float(f))
+        lo = self.GetAttrFloat("MinimumDistance", d)
+        hi = self.GetAttrFloat("MaximumDistance", d)
+        self._attrs["Distance"] = max(lo, min(d, hi))
+
     # ── Sweep control ─────────────────────────────────────────────────────────
     def set_initial_pose(self, eye, fwd, up):
         self._cur = (tuple(eye), tuple(fwd), tuple(up))
@@ -298,8 +318,6 @@ TARGET_DEFAULT_BACK_WATCH_POS = 7.95     # back component of the eye offset
 TARGET_DEFAULT_UP_WATCH_POS = 0.95       # up component of the eye offset
 TARGET_DEFAULT_LOOK_BETWEEN = 0.05       # aim fraction, target → source
 TARGET_DEFAULT_DISTANCE = 4.0            # standoff, multiples of Source radius
-TARGET_DEFAULT_MINIMUM_DISTANCE = 2.0    # GU floor on that standoff
-TARGET_DEFAULT_MAXIMUM_DISTANCE = 40.0   # GU ceiling on that standoff
 
 
 class TargetMode(CameraMode):
@@ -312,70 +330,44 @@ class TargetMode(CameraMode):
     authored numbers, so every one of them has to come out of this one class,
     exactly as Chase/ReverseChase already do.
 
-    ⚠️ THE FRAMING IS INFERRED. The clean-room reference documents the camera
-    cluster's object model and per-frame tick (spec/CameraObjectClass.md) but
-    says nothing about any mode's placement algorithm, and every CameraMode
-    attribute is set through the generic SWIG attr bag, so no reconstructed
-    body names these attrs. What IS sourced is the attribute NAMES and their
-    authored VALUES, read verbatim: SweepTime 1.0, PositionThreshold 0.01,
-    DotThreshold 0.98, MinimumDistance 2.0, Distance 4.0, MaximumDistance 40.0,
-    BackWatchPos 7.95, UpWatchPos 0.95, LookBetween 0.05, MaxLagDist 1.0,
-    MaxUpAngleChange PI/2 — plus WideTarget's 8.0/32.0/64.0 + 8.0/1.25 and
-    CinematicReverseTarget's 2.0/4.0/16.0 + 7.95/0.95. Everything below is read
-    off those names and magnitudes.
-
-    Placement (INFERRED):
-      axis   = unit(target - source)                    # the look axis
-      offset = unit(-axis*BackWatchPos + source_up*UpWatchPos)
-      eye    = source + offset * reach
-      lookat = target + (source - target) * LookBetween
-      fwd    = unit(lookat - eye)
+    Placement — RE'd from the binary 2026-09-16 (TargetCameraMode ctor
+    0x00422890; GetIdealPosition 0x00422E20; GetIdealForward 0x004235E0):
+      D      = unit(WATCH − S)        WATCH = T + T.rot·TargetOffset (default 0)
+      UP2    = unit(D × S.up) × D
+      ACC    = unit(−BackWatchPos·D + UpWatchPos·UP2)
+      eye    = S + ACC · (Distance · r_SOURCE)         r = NIF bounding-sphere
+      lookat = LookBetween·T + (1 − LookBetween)·S     0 = Source, 1 = Target
+      fwd    = unit(lookat − eye)
     so the camera stands BEHIND the Source along the source→target axis and
-    slightly ABOVE it, with both objects in frame. This replaced putting the eye
-    EXACTLY at the source's origin and staring at the target — the live F3
-    defect (you sat inside the hull) — which used none of the authored attrs.
+    slightly ABOVE it, with both objects in frame.
 
-    BackWatchPos / UpWatchPos are read as a RATIO (a direction), not absolute
-    game units: 7.95 : 0.95 is a 6.8° lift, the same shape as ChaseMode's
-    authored DefaultPosition (0, -1.0, 0.1) — 5.7° — which our ChaseMode
-    normalises and scales by Distance for exactly this reason. Reading their
-    magnitudes as GU as well would have them fight `Distance` for control of the
-    standoff, and would make WideTarget (8.0 / 1.25) an almost identical shot to
-    Target (7.95 / 0.95) when the SDK plainly authors it as the wide one.
+    BackWatchPos / UpWatchPos form a vector that is NORMALISED and then scaled
+    by Distance·r, so only their ratio matters: 7.95 : 0.95 is a 6.8° lift; the
+    Warbird's AdjustCameraModesForShip override (8.0 / 2.0) is a 14° lift over
+    its wide flat hull at the same 4·r standoff.
 
-    `Distance` is the standoff, in multiples of the SOURCE's radius, clamped to
-    [MinimumDistance, MaximumDistance] absolute GU. Two reasons for the
-    radius-relative reading, both structural: Target authors the IDENTICAL
-    triple to Chase (2.0 / 4.0 / 40.0), which our ChaseMode already reads as
-    radius × Distance; and the eye is anchored to the Source, so the standoff
-    must scale with the hull it is parked behind or the shot clips a starbase
-    and abandons a shuttle. The clamps then do real work — they are the reason
-    the triple is a triple — bounding the radius-scaled reach in absolute GU
-    (a starbase Source at CinematicReverseTarget's Maximum 16.0 is pulled in
-    from 80 GU; a probe is pushed out to the Minimum 2.0). The radius is the
-    SOURCE's, not the Target's, because it is the Source the eye must clear.
+    `Distance` is a radius multiple and is read RAW here. Min/MaximumDistance
+    are consumed only by CameraMode.Zoom — the ideal never clamps, so a
+    starbase Source at CinematicReverseTarget's MaximumDistance 16.0 really
+    does stand off 4·r; the 16.0 only bounds where the player can zoom to.
 
-    `LookBetween` interpolates FROM THE TARGET back toward the Source, so the
-    authored 0.05 aims 5% off the target and keeps the source's shoulder in
-    frame. The opposite reading is self-refuting: 0.05 from the source would
-    aim the camera essentially AT the hull it is parked directly behind, with
-    the target off-screen — the mode would frame nothing.
+    `LookBetween` 0 = Source, 1 = Target: the authored 0.05 aims almost at the
+    player ship, with the target on the look axis beyond it. (Our earlier
+    reading had this inverted, argued from the framing rather than the code.)
 
-    Up is the SOURCE's up axis (GetCol(2), column-vector right-handed), which
-    is also the elevation reference the UpWatchPos lift is measured along, so
-    the shot stays level with the deck it is anchored to.
+    Up is the SOURCE's up axis (GetCol(2), column-vector right-handed).
 
     Validity: a dead/absent Source or Target, or a Source and Target at the same
     point (no axis, so no shot) — BC's authored Target → Chase edge does the
     fallback (Camera.py:634), as it does for TorpCam.
 
-    DELIBERATELY UNUSED: SweepTime, PositionThreshold, DotThreshold, MaxLagDist
-    and MaxUpAngleChange. Our sweep is the base class's global SWEEP_TAU_S glide
-    with the _pose_discontinuity cut, shared by all nine modes; there is no
-    defensible mapping from a per-mode sweep duration, a position/dot
-    convergence pair, a lag leash and an up-rotation rate limiter onto it that
-    is not simply invented. The same three sweep attrs are already unused on
-    every other mode that authors them (Chase, TorpCam, FreeOrbit...).
+    UNPORTED from the binary: the |D·S.up| > 0.6 branch (a raised-cosine blend
+    that adds RightPush·S.right and removes the up term when looking along the
+    Source's up axis); the lagged-sample pose the eye is built from (lag =
+    0.229·r, floor 0.125 s) and the MaxLagDist atan cap; MaxUpAngleChange's
+    per-frame roll limiter. SweepTime / PositionThreshold / DotThreshold are a
+    ONE-SHOT sweep on retarget in BC, not a follow rate; our sweep is the base
+    class's SWEEP_TAU_S glide with the _pose_discontinuity cut.
     """
 
     def _ideal(self, pose_of=None):
@@ -402,23 +394,17 @@ class TargetMode(CameraMode):
         reach = self._reach(src)
         eye = (s.x + ox / n * reach, s.y + oy / n * reach, s.z + oz / n * reach)
         between = self.GetAttrFloat("LookBetween", TARGET_DEFAULT_LOOK_BETWEEN)
-        look = (d.x + (s.x - d.x) * between,
-                d.y + (s.y - d.y) * between,
-                d.z + (s.z - d.z) * between)
+        look = (s.x + (d.x - s.x) * between,      # 0 = Source, 1 = Target
+                s.y + (d.y - s.y) * between,
+                s.z + (d.z - s.z) * between)
         fwd = _unit(look[0] - eye[0], look[1] - eye[1], look[2] - eye[2])
         return (eye, fwd, up)
 
     def _reach(self, src):
-        """Standoff from the Source: Distance × the Source's radius, clamped to
-        [MinimumDistance, MaximumDistance] in absolute GU (INFERRED — see the
-        class docstring)."""
-        reach = (self.GetAttrFloat("Distance", TARGET_DEFAULT_DISTANCE)
-                 * _target_radius(src))
-        hi = self.GetAttrFloat("MaximumDistance", TARGET_DEFAULT_MAXIMUM_DISTANCE)
-        if hi > 0.0:
-            reach = min(reach, hi)
-        return max(reach, self.GetAttrFloat("MinimumDistance",
-                                            TARGET_DEFAULT_MINIMUM_DISTANCE))
+        """Standoff from the Source: Distance × the Source's bounding-sphere
+        radius, unclamped (0x00422E20 — Min/Max live only in Zoom)."""
+        return (self.GetAttrFloat("Distance", TARGET_DEFAULT_DISTANCE)
+                * _target_radius(src))
 
 
 class PlacementMode(CameraMode):
@@ -991,17 +977,42 @@ class TorpCameraMode(CameraMode):
         return start + (later - start) * min(1.0, self._ride_t / span)
 
 
+ZOOM_TARGET_DEFAULT_DISTANCE = 4.0       # multiples of the TARGET's radius
+
+
 class ZoomTargetMode(CameraMode):
     """Zoom onto a target (BC's "ZoomTarget" — Camera.LowZoomTarget →
-    NewMode("ZoomTarget", [("Source", pSource), ("Target", pTarget)])). Eye at
-    the Source object's position, looking at Target, up from Source col2.
+    NewMode("ZoomTarget", [("Source", pSource), ("Target", pTarget)]); the held
+    Z key, TacticalInterfaceHandlers.ZoomTarget).
+
+    RE'd from the binary 2026-09-16 (ZoomTargetCameraMode ctor 0x004239C0;
+    GetIdealPosition 0x00423E20; GetIdealForward 0x00424210):
+      dir = S − T ; if |dir|² < 0.5: dir = S.forward     (test on the raw vector)
+      d   = Distance · r_TARGET                          NIF bounding-sphere radius
+      eye = T + unit(dir) · d
+      eye = PushOut(eye, T, S)   (FUN_0041FF50): S's centre must be ≥ r_S
+                                 BEHIND the eye along the look axis, else the
+                                 eye moves forward by the deficit — the camera
+                                 is always clear of your own hull
+      fwd = unit(T − eye); flipped if S is in FRONT of the eye (0x00424210)
+      up  = S.up re-orthogonalised
+    The radius is the TARGET's: a shuttle zooming on a starbase frames the
+    station at 4 station-radii, not 4 shuttle-radii. Distance is read raw;
+    the shipped MinimumDistance == Distance == 4.0 means zoom-in is a no-op
+    (CameraMode.Zoom) and only zoom-out, to 20·r_T, does anything.
+
+    UNPORTED: the nebula max (FUN_0041E720 — d is raised to the distance of
+    any nebula hit on the S→T segment); the special case that parks the eye
+    on the Source's own sphere when T is a PlacementObject or an un-sensed
+    target (no shipping script zooms a placement — only the Z key uses this
+    mode); the T-side push-out (never fires with Distance ≥ 2); lagged poses.
 
     Source fallback: BC's Camera.MakePlayerCamera_PlayerChanged wires
     Source=player on the player camera's zoom modes; our shim never runs it, so
-    when no live Source is wired the eye degrades to the OWNING camera's own
-    pose (_owner_camera) — "zoom from the current viewpoint toward the target".
-    A Source that was set but died invalidates the mode; only unset/None falls
-    back to the camera."""
+    when no live Source is wired the OWNING camera's own pose (_owner_camera)
+    stands in for the Source — "zoom from the current viewpoint toward the
+    target", radius 0 so no hull push-out. A Source that was set but died
+    invalidates the mode; only unset/None falls back to the camera."""
 
     def _ideal(self, pose_of=None):
         dst = self.GetAttrIDObject("Target")
@@ -1012,6 +1023,7 @@ class ZoomTargetMode(CameraMode):
             if not _target_alive(src):
                 return None
             s, R = _obj_pose(src, pose_of)
+            r_s = _target_radius(src, default=0.0)
         else:
             cam = self._owner_camera
             get_loc = getattr(cam, "GetWorldLocation", None)
@@ -1022,9 +1034,29 @@ class ZoomTargetMode(CameraMode):
             R = get_rot()
             if s is None or R is None:            # camera pose not resolvable
                 return None
-        d, _dR = _obj_pose(dst, pose_of)
-        eye = (s.x, s.y, s.z)
-        fwd = _unit(d.x - s.x, d.y - s.y, d.z - s.z)
+            r_s = 0.0
+        t, _tR = _obj_pose(dst, pose_of)
+        dx, dy, dz = s.x - t.x, s.y - t.y, s.z - t.z
+        if dx * dx + dy * dy + dz * dz < 0.5:
+            f = R.GetCol(1)
+            dx, dy, dz = f.x, f.y, f.z
+        dx, dy, dz = _unit(dx, dy, dz)
+        reach = (self.GetAttrFloat("Distance", ZOOM_TARGET_DEFAULT_DISTANCE)
+                 * _target_radius(dst))
+        ex, ey, ez = t.x + dx * reach, t.y + dy * reach, t.z + dz * reach
+        # Own-hull push-out: look axis is −dir; the Source's centre must be at
+        # least r_s behind the eye along it.
+        behind = (s.x - ex) * dx + (s.y - ey) * dy + (s.z - ez) * dz
+        if behind < r_s:
+            k = r_s - behind
+            ex, ey, ez = ex - dx * k, ey - dy * k, ez - dz * k
+        eye = (ex, ey, ez)
+        fwd = _unit(t.x - ex, t.y - ey, t.z - ez)
+        # 0x00424210: if the Source ended up in FRONT of the eye (the push-out
+        # carried the eye through it), look the other way.
+        if (s.x - ex) * fwd[0] + (s.y - ey) * fwd[1] + (s.z - ez) * fwd[2] > 0.0:
+            fwd = (-fwd[0], -fwd[1], -fwd[2])
         u = R.GetCol(2)
-        up = _unit(u.x, u.y, u.z)
+        dot = u.x * fwd[0] + u.y * fwd[1] + u.z * fwd[2]
+        up = _unit(u.x - dot * fwd[0], u.y - dot * fwd[1], u.z - dot * fwd[2])
         return (eye, fwd, up)
