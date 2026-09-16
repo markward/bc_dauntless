@@ -31,24 +31,31 @@ class _TrackingCamera:
     ZOOM_FACTOR_PER_PRESS: float = 0.9     # one =/- press = ×0.9 / ÷0.9
     ZOOM_MIN_RADII:        float = 0.74    # = 0.6 / 0.9² — pull the floor back
                                             # 2 zoom-out clicks from the
-                                            # CAM_MIN_RADII baseline so the
-                                            # closest framing is less oppressive
-                                            # (post-playtest tuning).
+                                            # CAM_MIN_RADII base so the
+                                            # tracking floor sits a bit further
+                                            # out than the chase floor.
     ZOOM_MAX_RADII:        float = 30.0    # reuse CAM_MAX_RADII semantics
-    # ZoomTarget seed = ZOOM_MIN_RADII pulled back (5 + DEFAULT_ZOOM_OUT_CLICKS)
-    # zoom-out clicks (÷0.9 each) so the initial framing starts further out.
-    ZOOM_DEFAULT_RADII:    float = ZOOM_MIN_RADII / (
-        ZOOM_FACTOR_PER_PRESS ** (5 + DEFAULT_ZOOM_OUT_CLICKS))
+    # ZoomTarget (held Z) distance, in multiples of the TARGET's bounding-
+    # sphere radius — BC's CameraModes.ZoomTarget triple (MinimumDistance
+    # 4.0 / Distance 4.0 / MaximumDistance 20.0), read raw by
+    # ZoomTargetCameraMode::GetIdealPosition (0x00423E20: d = Distance ×
+    # r_TARGET) and clamped only in the Zoom slot (FUN_0041F920). The seed
+    # sits ON the floor, so zoom-in from the default is a no-op, as in BC.
+    ZOOM_TARGET_DISTANCE_RADII: float = 4.0
+    ZOOM_TARGET_MIN_RADII:      float = 4.0
+    ZOOM_TARGET_MAX_RADII:      float = 20.0
 
     def __init__(self):
         self.v_fov_rad        = EXTERIOR_FOV_Y_RAD
         # Two persistent distance slots. d_chase_tracking is the chase
         # distance from the player in normal Tracking framing.
-        # d_chase_zoom is the eye-to-target distance in ZoomTarget mode.
         self.d_chase_tracking = 1.0   # seeded by set_ship_radius()
-        self.d_chase_zoom     = 1.0   # seeded by set_ship_radius()
         self.zoom_min         = 1.0   # seeded by set_ship_radius()
         self.zoom_max         = 1.0   # seeded by set_ship_radius()
+        # ZoomTarget eye-to-target distance as a multiple of the target's
+        # radius; the radius itself is read live in compute(), so retargeting
+        # re-frames automatically and the player's own size never enters.
+        self.zoom_target_radii = self.ZOOM_TARGET_DISTANCE_RADII
         # ZoomTarget sub-mode flag — toggled by enter/exit_zoom_target.
         self.zoom_target_active = False
         # Spring state (unchanged).
@@ -71,17 +78,14 @@ class _TrackingCamera:
             / (self.ZOOM_FACTOR_PER_PRESS ** DEFAULT_ZOOM_OUT_CLICKS))
         self.zoom_min         = self.ZOOM_MIN_RADII * radius
         self.zoom_max         = self.ZOOM_MAX_RADII * radius
-        # ZoomTarget seeds 5 zoom-out clicks above the minimum so the
-        # initial framing starts further out (see ZOOM_DEFAULT_RADII).
-        self.d_chase_zoom     = self.ZOOM_DEFAULT_RADII * radius
 
     def zoom_in(self) -> None:
         """Sticky zoom (= key): bring the camera closer to its anchor.
         Modifies whichever distance is active based on zoom_target_active."""
         if self.zoom_target_active:
-            self.d_chase_zoom = max(
-                self.d_chase_zoom * self.ZOOM_FACTOR_PER_PRESS,
-                self.zoom_min,
+            self.zoom_target_radii = max(
+                self.zoom_target_radii * self.ZOOM_FACTOR_PER_PRESS,
+                self.ZOOM_TARGET_MIN_RADII,
             )
         else:
             self.d_chase_tracking = max(
@@ -92,9 +96,9 @@ class _TrackingCamera:
     def zoom_out(self) -> None:
         """Sticky zoom (- key): push the camera farther from its anchor."""
         if self.zoom_target_active:
-            self.d_chase_zoom = min(
-                self.d_chase_zoom / self.ZOOM_FACTOR_PER_PRESS,
-                self.zoom_max,
+            self.zoom_target_radii = min(
+                self.zoom_target_radii / self.ZOOM_FACTOR_PER_PRESS,
+                self.ZOOM_TARGET_MAX_RADII,
             )
         else:
             self.d_chase_tracking = min(
@@ -104,7 +108,7 @@ class _TrackingCamera:
 
     def enter_zoom_target(self) -> None:
         """Activate the ZoomTarget sub-mode. Does NOT reset
-        d_chase_zoom — preserves it across press/release."""
+        zoom_target_radii — preserves it across press/release."""
         self.zoom_target_active = True
 
     def exit_zoom_target(self) -> None:
@@ -128,7 +132,7 @@ class _TrackingCamera:
             self.d_chase_tracking = (
             _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
             / (self.ZOOM_FACTOR_PER_PRESS ** DEFAULT_ZOOM_OUT_CLICKS))
-            self.d_chase_zoom     = self.ZOOM_DEFAULT_RADII * radius
+        self.zoom_target_radii = self.ZOOM_TARGET_DISTANCE_RADII
         # Flag reset is unconditional — runs even when zoom_max == 0
         # (i.e. snap() called before set_ship_radius).
         self.zoom_target_active = False
@@ -142,8 +146,9 @@ class _TrackingCamera:
         camera basis so player projects to y_p and target to y_t.
 
         When zoom_target_active is True, delegates to _compute_zoom_target
-        which places the eye on the player→target axis at d_chase_zoom
-        behind the target instead of the inscribed-angle solver.
+        which places the eye on the player→target axis at
+        zoom_target_radii × r_target behind the target instead of the
+        inscribed-angle solver.
 
         When dt is None, returns the solver output directly (no springs).
         When dt is a float, applies position + rotation springs.
@@ -171,8 +176,10 @@ class _TrackingCamera:
         e1, e3 = self._plane_basis(S, T, B)
 
         if self.zoom_target_active:
+            from engine.appc.camera_modes import _target_radius
             eye_solver, forward_solver, up_solver = self._compute_zoom_target(
                 S=S, T=T, e1=e1, e3=e3,
+                r_target=_target_radius(target), r_player=_target_radius(player),
             )
         else:
             eye_solver, forward_solver, up_solver = self._compute_tracking(
@@ -305,23 +312,29 @@ class _TrackingCamera:
 
         return eye_solver, forward_solver, up_solver
 
-    def _compute_zoom_target(self, *, S, T, e1, e3):
-        """ZoomTarget framing: eye on the ship→target axis at
-        effective_distance behind target, look-at = target.
-        See tracking-zoom-and-zoom-target spec §3.
-        """
-        D = _math.sqrt((T.x-S.x)**2 + (T.y-S.y)**2 + (T.z-S.z)**2)
-        # Clamp the *effective* distance to 0.9 × D only when target is
-        # strictly closer than d_chase_zoom. Stored field unchanged
-        # (preserves user's zoom setting for when D grows back).
-        if self.d_chase_zoom <= D:
-            effective = self.d_chase_zoom
-        else:
-            effective = 0.9 * D
+    def _compute_zoom_target(self, *, S, T, e1, e3, r_target=1.0, r_player=0.0):
+        """ZoomTarget framing per ZoomTargetCameraMode::GetIdealPosition
+        (0x00423E20): eye on the ship→target axis, zoom_target_radii ×
+        r_target behind the target, look-at = target.
 
+        Own-hull push-out (FUN_0041FF50, Source branch): the player's centre
+        must be at least r_player BEHIND the eye along the look axis, else
+        the eye moves forward by the deficit. This replaced a 0.9 × D clamp
+        that kept the eye in front of the target but could leave it inside
+        the player's own hull. Stored zoom_target_radii is never mutated.
+        """
+        effective = self.zoom_target_radii * r_target
         eye_solver = (T.x - effective * e1.x,
                       T.y - effective * e1.y,
                       T.z - effective * e1.z)
+        ahead = ((eye_solver[0] - S.x) * e1.x
+                 + (eye_solver[1] - S.y) * e1.y
+                 + (eye_solver[2] - S.z) * e1.z)
+        if ahead < r_player:
+            k = r_player - ahead
+            eye_solver = (eye_solver[0] + k * e1.x,
+                          eye_solver[1] + k * e1.y,
+                          eye_solver[2] + k * e1.z)
         # Forward = (T − eye) / |T − eye| = e1 (eye lies on the e1 line).
         forward_solver = (e1.x, e1.y, e1.z)
         # Up = e3 perpendicularised against forward. Identical pattern

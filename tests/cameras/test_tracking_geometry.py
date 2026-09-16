@@ -280,22 +280,23 @@ def test_solver_body_up_parallel_to_ship_target_does_not_crash():
 
 
 class _FakeShip:
-    """Minimal player/target stub: just the world transform getters."""
-    def __init__(self, loc, rot):
-        self._loc, self._rot = loc, rot
+    """Minimal player/target stub: world transform getters + bounding radius."""
+    def __init__(self, loc, rot, radius=1.0):
+        self._loc, self._rot, self._radius = loc, rot, radius
     def GetWorldLocation(self): return self._loc
     def GetWorldRotation(self): return self._rot
+    def GetRadius(self):        return self._radius
 
 
-def test_zoom_target_eye_on_player_target_axis_at_d_chase_zoom_from_target():
-    """ZoomTarget eye sits d_chase_zoom behind the target along the
-    ship→target axis (between player and target)."""
+def test_zoom_target_eye_on_player_target_axis_at_zoom_radii_from_target():
+    """ZoomTarget eye sits zoom_target_radii * r_target behind the target
+    along the ship→target axis (between player and target)."""
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
 
     tc = _TrackingCamera()
     tc.set_ship_radius(1.0)
-    tc.d_chase_zoom = 5.0
+    tc.zoom_target_radii = 5.0
     tc.zoom_target_active = True
 
     s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
@@ -322,7 +323,7 @@ def test_zoom_target_target_projects_to_screen_centre():
 
     tc = _TrackingCamera()
     tc.set_ship_radius(1.0)
-    tc.d_chase_zoom = 5.0
+    tc.zoom_target_radii = 5.0
     tc.zoom_target_active = True
 
     s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
@@ -340,25 +341,26 @@ def test_zoom_target_target_projects_to_screen_centre():
 
 
 def test_zoom_target_framing_invariant_across_range():
-    """Across target ranges 5, 50, 500 GU with fixed d_chase_zoom = 5,
-    target stays centred and eye is exactly d_chase_zoom from target."""
+    """Across target ranges 6, 50, 500 GU with fixed zoom_target_radii = 5,
+    target stays centred and eye is exactly 5 * r_target from target."""
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
 
-    for d in (5.0, 50.0, 500.0):
+    for d in (6.0, 50.0, 500.0):
         tc = _TrackingCamera()
         tc.set_ship_radius(1.0)
-        tc.d_chase_zoom = 5.0
+        tc.zoom_target_radii = 5.0
         tc.zoom_target_active = True
 
         s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
-        # d=5.0 exercises the d_chase_zoom == D boundary (clamp not triggered).
+        # d=6.0 puts the eye exactly r_player (1.0) ahead of the player's
+        # centre — the own-hull push-out boundary, not yet triggered.
         t_loc = TGPoint3(0.0, d, 0.0)
 
         eye, look_at, up = tc.compute(
             player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
 
-        # Distance from eye to target should be exactly d_chase_zoom = 5.
+        # Distance from eye to target should be exactly 5 * r_target(1.0) = 5.
         dx = t_loc.x - eye[0]; dy = t_loc.y - eye[1]; dz = t_loc.z - eye[2]
         assert math.sqrt(dx*dx + dy*dy + dz*dz) == pytest.approx(5.0, abs=1e-6), \
             f"range {d}: eye→target = {math.sqrt(dx*dx + dy*dy + dz*dz)}"
@@ -379,7 +381,7 @@ def test_zoom_target_inherits_player_roll_into_up():
 
     tc = _TrackingCamera()
     tc.set_ship_radius(1.0)
-    tc.d_chase_zoom = 5.0
+    tc.zoom_target_radii = 5.0
     tc.zoom_target_active = True
 
     s_loc = TGPoint3(0.0, 0.0, 0.0)
@@ -397,29 +399,75 @@ def test_zoom_target_inherits_player_roll_into_up():
     assert up[2] == pytest.approx(math.cos(math.radians(30)), abs=1e-6)
 
 
-def test_zoom_target_clamp_when_target_inside_d_chase_zoom():
-    """If D < d_chase_zoom, the eye placement must clamp to 0.9 × D so
-    the camera stays in front of the target (not past it). Stored
-    d_chase_zoom is NOT mutated (preserve user's zoom setting)."""
+def test_zoom_target_distance_scales_with_the_targets_radius_not_the_players():
+    """ZoomTargetCameraMode::GetIdealPosition (0x00423E20): d = Distance *
+    r_TARGET. A shuttle (r=0.3) zooming on a starbase (r=20) must frame the
+    station at 4 station-radii, not land inside its hull."""
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
 
     tc = _TrackingCamera()
-    tc.set_ship_radius(1.0)
-    tc.d_chase_zoom = 10.0  # user-set zoom: 10 GU
+    tc.set_ship_radius(0.3)
+    tc.zoom_target_active = True                     # zoom_target_radii at default 4.0
+
+    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
+    t_loc = TGPoint3(0.0, 500.0, 0.0)
+
+    eye, _, _ = tc.compute(
+        player=_FakeShip(s_loc, s_rot, radius=0.3),
+        target=_FakeShip(t_loc, s_rot, radius=20.0), dt=None)
+
+    assert eye[1] == pytest.approx(500.0 - 4.0 * 20.0, abs=1e-6)
+
+
+def test_zoom_target_pushes_the_eye_clear_of_the_players_own_hull():
+    """FUN_0041FF50, Source branch: the player's centre must be at least
+    r_player BEHIND the eye along the look axis, else the eye moves forward
+    by the deficit. Player r=3 at the origin, target r=1 five GU ahead at
+    the default 4 radii: raw eye (0,1,0) is only 1 GU ahead of the player's
+    centre -> pushed to (0,3,0). This replaces the old 0.9 x D clamp, which
+    kept the eye in front of the TARGET but could leave it inside the player.
+    The stored zoom_target_radii is not mutated."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera()
+    tc.set_ship_radius(3.0)
     tc.zoom_target_active = True
 
     s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
-    t_loc = TGPoint3(0.0, 3.0, 0.0)  # D = 3, d_chase_zoom = 10 → clamp
+    t_loc = TGPoint3(0.0, 5.0, 0.0)
+
+    eye, look_at, _ = tc.compute(
+        player=_FakeShip(s_loc, s_rot, radius=3.0),
+        target=_FakeShip(t_loc, s_rot, radius=1.0), dt=None)
+
+    assert eye[1] == pytest.approx(3.0, abs=1e-6)
+    assert look_at[1] > eye[1]                       # still looking at the target
+    assert tc.zoom_target_radii == pytest.approx(4.0, abs=1e-9)
+
+
+def test_zoom_target_target_without_a_radius_surface_is_framed_at_unit_radius():
+    """A target with no GetRadius (a waypoint stub) reads as r=1.0 so the
+    eye still stands off by zoom_target_radii GU rather than dividing by
+    nothing."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    class _NoRadius:
+        def __init__(self, loc): self._loc = loc
+        def GetWorldLocation(self): return self._loc
+        def GetWorldRotation(self): return TGMatrix3()
+
+    tc = _TrackingCamera()
+    tc.set_ship_radius(1.0)
+    tc.zoom_target_radii = 5.0
+    tc.zoom_target_active = True
 
     eye, _, _ = tc.compute(
-        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
-
-    # Eye should be at T - effective × e1 where effective = 0.9 × D = 2.7.
-    # So eye_y = 3.0 - 2.7 = 0.3.
-    assert eye[1] == pytest.approx(0.3, abs=1e-6)
-    # Stored d_chase_zoom unchanged.
-    assert tc.d_chase_zoom == pytest.approx(10.0, abs=1e-9)
+        player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3()),
+        target=_NoRadius(TGPoint3(0.0, 20.0, 0.0)), dt=None)
+    assert eye[1] == pytest.approx(15.0, abs=1e-6)
 
 
 # ── pose_of provider: camera reads interpolated poses (smooth-motion fix) ─────

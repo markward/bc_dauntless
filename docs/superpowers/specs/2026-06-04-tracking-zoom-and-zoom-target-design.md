@@ -1,7 +1,17 @@
 # Tracking Zoom + ZoomTarget Mode — Design
 
 **Date:** 2026-06-04
-**Status:** Design — ready for implementation plan
+**Status:** Shipped; ZoomTarget distance model SUPERSEDED 2026-09-16
+
+> **2026-09-16 — ZoomTarget distance re-based on the RE'd mode body.** The
+> `d_chase_zoom` / `ZOOM_DEFAULT_RADII` model below scaled the Z-key standoff
+> by the *player's* radius. `ZoomTargetCameraMode::GetIdealPosition`
+> (0x00423E20) computes `d = Distance × r_TARGET`, with `Min/MaximumDistance`
+> (4.0 / 20.0) read only in the Zoom slot (FUN_0041F920) as radius multiples.
+> `_TrackingCamera` now holds `zoom_target_radii` (seed 4.0, clamp [4, 20]) and
+> reads the target's radius live in `compute()`; the `0.9 × D` clamp is replaced
+> by BC's own-hull push-out (FUN_0041FF50: the player's centre must be ≥
+> `r_player` behind the eye). §2–§3 below describe the superseded model.
 
 ## Summary
 
