@@ -752,6 +752,14 @@ class BridgeSet(SetClass):
         self._viewscreen = viewscreen
         self.AddObjectToSet(viewscreen, name)
 
+    def DeleteObjectFromSet(self, name):
+        # LoadBridge.Load deletes "viewscreen" by name before the new config's
+        # CreateBridgeModel installs a replacement; drop the slot too so the
+        # host never re-realises the deleted object in between.
+        if name == "viewscreen":
+            self._viewscreen = None
+        super().DeleteObjectFromSet(name)
+
     # DeleteCameraFromSet is inherited from SetClass (identical body).
 
 

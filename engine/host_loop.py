@@ -5197,6 +5197,12 @@ class HostController:
         # NIF path currently bound to bridge_instance. Set by
         # realize_set when the SDK-created bridge object is realized.
         self.current_bridge_nif_abs: Optional[str] = None
+        # The SDK BridgeSet.GetConfig() name the bridge was last realised
+        # under. _reconcile_bridge_config compares the live value against it
+        # each tick: a runtime LoadBridge.Load("<other>") (QuickBattle's
+        # RecreatePlayer with a different g_sBridgeType) rebuilds the "bridge"
+        # object + viewscreen and this is how the host notices.
+        self.realized_bridge_config: str = ""
         # InstanceIds of placed-and-posed bridge officers. Owned by the
         # controller (like bridge_instance) so it survives mission swaps;
         # repopulated each load by realize_set's character loop, which
@@ -6062,6 +6068,76 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
     for character in _iter_set_characters(set_obj):     # same enumeration the
         _place_one_character(controller, r, character,  # old officer loop used
                              set_name, is_bridge, comm_set_id=comm_set_id)
+
+
+def _realize_bridge(controller, r) -> None:
+    """Realise the SDK "bridge" set: its config module's sounds, the
+    captain's-chair camera parameters, and the model/viewscreen/officer
+    render instances. Called from the post-load hook and again by
+    _reconcile_bridge_config whenever the set's config name changes at
+    runtime (a QuickBattle RecreatePlayer that loads a different bridge).
+
+    Deliberately NOT here: wire_after_mission_load, resolve_officer_menu_
+    layout and the hit-reaction re-registration. LoadBridge.Load on an
+    existing set neither rebuilds menus nor recreates characters -- it only
+    re-ConfigureCharacters them -- so those stay post-load-only.
+    """
+    global _BRIDGE_CAMERA_EYE, _BRIDGE_CAMERA_MOVE
+    global _BRIDGE_ZOOM_MIN, _BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_TIME, _BRIDGE_ZOOM_CAM
+    import App as _App
+    from engine.appc.bridge_set import BridgeSet
+    _bridge = _App.g_kSetManager.GetSet("bridge")
+    # Documented SDK deviation: LoadBridge.Load never calls the bridge config
+    # module's LoadSounds() -- see engine/bridge_sounds.py.
+    from engine import bridge_sounds
+    bridge_sounds.load_bridge_module_sounds(_bridge)
+    _cam = _bridge.GetCamera("maincamera") if _bridge is not None else None
+    if _cam is not None and hasattr(_cam, "position"):
+        # The seated captain eye is the bridge's pushed camera MODE's
+        # BasePosition, NOT the camera's .position (GalaxyBridge pushes a
+        # PlaceByDirection mode; Sovereign pushes none).
+        _mode = (_cam.GetCurrentCameraMode()
+                 if hasattr(_cam, "GetCurrentCameraMode") else None)
+        _base = _mode.GetAttrPoint("BasePosition") if _mode is not None else None
+        if _base is not None:
+            _BRIDGE_CAMERA_EYE = (_base.x, _base.y, _base.z)
+            _mov = _mode.GetAttrPoint("Movement")
+            if _mov is not None:
+                _BRIDGE_CAMERA_MOVE = ((_mov.x, _mov.y, _mov.z),
+                                       _mode.GetAttrFloat("StartMoveAngle"),
+                                       _mode.GetAttrFloat("EndMoveAngle"))
+            else:
+                _BRIDGE_CAMERA_MOVE = None
+        else:
+            _BRIDGE_CAMERA_EYE = getattr(_cam, "base_position", None) or _cam.position
+            _BRIDGE_CAMERA_MOVE = None
+        _BRIDGE_ZOOM_MIN = _cam.GetMinZoom()
+        _BRIDGE_ZOOM_MAX = _cam.GetMaxZoom()
+        _BRIDGE_ZOOM_TIME = _cam.GetZoomTime()
+        _BRIDGE_ZOOM_CAM = _cam
+    if _bridge is not None:
+        realize_set(controller, r, _bridge, is_bridge=True)
+        controller.realized_bridge_config = (
+            _bridge.GetConfig() if isinstance(_bridge, BridgeSet) else "")
+
+
+def _reconcile_bridge_config(controller, r) -> bool:
+    """Per-tick: re-realise the bridge if its SDK config name changed since
+    the last realise. Returns True when it did. No-op with no bridge set.
+
+    Gated on isinstance(_bridge, BridgeSet), NOT hasattr(_bridge, "GetConfig")
+    -- SetClass.__getattr__ returns a truthy stub for ANY unknown attribute,
+    so hasattr is always True on any set and would never gate.
+    """
+    import App as _App
+    from engine.appc.bridge_set import BridgeSet
+    _bridge = _App.g_kSetManager.GetSet("bridge")
+    if not isinstance(_bridge, BridgeSet):
+        return False
+    if _bridge.GetConfig() == controller.realized_bridge_config:
+        return False
+    _realize_bridge(controller, r)
+    return True
 
 
 def realize_all_sets(controller, r) -> None:
@@ -7696,7 +7772,7 @@ def run(mission_name: Optional[str] = None,
 
         # Bridge interior is created by the SDK path (LoadBridge.Load ->
         # Bridge.<name>.CreateBridgeModel) during the mission load below, then
-        # realized into a render instance by realize_all_sets in
+        # realized into a render instance by _realize_bridge in
         # _after_mission_loaded. No eager pre-game load — the SDK is the single
         # source of the bridge mesh.
 
@@ -7770,47 +7846,13 @@ def run(mission_name: Optional[str] = None,
             # still-unimplemented SDK surface is visible.
             # Step 5a: take the captain's-chair eye + zoom params from the SDK
             # maincamera (config-driven; replaces the hardcoded offsets table).
-            global _BRIDGE_CAMERA_EYE, _BRIDGE_CAMERA_MOVE
-            global _BRIDGE_ZOOM_MIN, _BRIDGE_ZOOM_MAX, _BRIDGE_ZOOM_TIME, _BRIDGE_ZOOM_CAM
             import App as _App
-            _bridge = _App.g_kSetManager.GetSet("bridge")
-            # Documented SDK deviation: LoadBridge.Load (run by the mission's
-            # StartMission just before this hook fires) never calls the bridge
-            # config module's LoadSounds() -- see engine/bridge_sounds.py for
-            # the full account of why we call it ourselves here.
-            from engine import bridge_sounds
-            bridge_sounds.load_bridge_module_sounds(_bridge)
-            _cam = _bridge.GetCamera("maincamera") if _bridge is not None else None
-            if _cam is not None and hasattr(_cam, "position"):
-                # The seated captain eye is the bridge's pushed camera MODE's
-                # BasePosition, NOT the camera's .position. GalaxyBridge pushes a
-                # PlaceByDirection mode whose BasePosition (= GetBaseCameraPosition,
-                # z=50) is the eye; .position is the ConfigureCharacters override
-                # (z=61.93) used only when the mode is popped (cutscenes).
-                # Sovereign pushes no mode and base_position == .position.
-                _mode = (_cam.GetCurrentCameraMode()
-                         if hasattr(_cam, "GetCurrentCameraMode") else None)
-                _base = _mode.GetAttrPoint("BasePosition") if _mode is not None else None
-                if _base is not None:                  # PlaceByDirection captain mode
-                    _BRIDGE_CAMERA_EYE = (_base.x, _base.y, _base.z)
-                    _mov = _mode.GetAttrPoint("Movement")
-                    if _mov is not None:
-                        _BRIDGE_CAMERA_MOVE = ((_mov.x, _mov.y, _mov.z),
-                                               _mode.GetAttrFloat("StartMoveAngle"),
-                                               _mode.GetAttrFloat("EndMoveAngle"))
-                    else:
-                        _BRIDGE_CAMERA_MOVE = None
-                else:                                  # no mode (e.g. Sovereign)
-                    _BRIDGE_CAMERA_EYE = getattr(_cam, "base_position", None) or _cam.position
-                    _BRIDGE_CAMERA_MOVE = None
-                _BRIDGE_ZOOM_MIN = _cam.GetMinZoom()
-                _BRIDGE_ZOOM_MAX = _cam.GetMaxZoom()
-                _BRIDGE_ZOOM_TIME = _cam.GetZoomTime()
-                _BRIDGE_ZOOM_CAM = _cam
-            # Realize every SDK-created set (the player bridge + any comm/
-            # remote sets) into render instances. The bridge is realized as
-            # is_bridge=True; comm sets with geometry/characters as False.
-            realize_all_sets(controller, r)
+            # Bridge sounds, camera eye/zoom harvest, and the bridge set's
+            # render instances; re-run per tick on a config change by
+            # _reconcile_bridge_config.
+            _realize_bridge(controller, r)
+            # Comm/remote sets with geometry or characters.
+            _realize_comm_sets(controller, r)
             _ensure_target_menu()
             # SDK LoadBridge.ConfigureForShip equivalent: attach each bridge
             # officer's menu-acknowledgement handlers (per-character guarded —
@@ -9548,6 +9590,10 @@ def run(mission_name: Optional[str] = None,
             # so it doesn't show on its own screen.
             _vs_obj = getattr(controller, "viewscreen_obj", None)
             r.set_viewscreen_enabled(_viewscreen_feed_on(_vs_obj))
+            # A runtime bridge swap (QuickBattle RecreatePlayer under a
+            # different g_sBridgeType) rebuilds the SDK "bridge" set's objects
+            # under a new config name; re-realise it here.
+            _reconcile_bridge_config(controller, r)
             # Realize any comm/remote set that appeared after mission load —
             # E6M2's FedOutpostSet_Graff is built lazily at dock time — so its
             # background geometry + characters render on the viewscreen instead
