@@ -1,9 +1,11 @@
 """Tests for the Task-5 per-frame subsystem-light-emitter producer.
 
-Mirrors the torpedo producer (`_build_dynamic_light_render_data`): body-frame
-emitter specs cached per ship at spawn are transformed to world space each
-frame and health-gated before being handed to `host_io.set_dynamic_lights`.
-See `.superpowers/sdd/2026-07-29-subsystem-light-emitters/task-5-brief.md`.
+Mirrors the torpedo producer (`_build_dynamic_light_render_data`) in shape,
+but the light stays body-frame: cached per-ship structs (built once at
+spawn) are health-gated and tagged with the ship's render `instance_id`,
+and the renderer resolves them to world through the hull's own matrix. See
+`.superpowers/sdd/2026-07-29-subsystem-light-emitters/task-5-brief.md` and
+`.superpowers/sdd/2026-09-16-instance-attached-emitter-lights/task-4-brief.md`.
 """
 import math
 
@@ -79,7 +81,15 @@ class _Ship:
         return self._loc
 
     def GetWorldRotation(self):
-        return self._rot
+        raise AssertionError(
+            "producer must not read GetWorldRotation: lights are body-frame and "
+            "resolved by the renderer through inst->world")
+
+
+def _entry(sub, spec, is_impulse=False, is_warp=False, phase=0.0):
+    """One cache entry in the Task-3 layout, struct prebuilt like the real cache."""
+    return (sub, is_impulse, is_warp, phase, spec,
+            light_emitters.emitter_spec_to_struct(spec))
 
 
 def test_healthy_point_emitter_identity_pose_produces_one_light():
@@ -90,7 +100,7 @@ def test_healthy_point_emitter_identity_pose_produces_one_light():
     spec = light_emitters.baked_emitters(prop)[0]
 
     ship_instances = {ship: 42}
-    ship_emitters = {42: [(sub, False, False, 0.0, spec)]}
+    ship_emitters = {42: [_entry(sub, spec)]}
 
     out = _build_emitter_light_render_data(ship_instances, ship_emitters)
 
@@ -100,6 +110,7 @@ def test_healthy_point_emitter_identity_pose_produces_one_light():
     assert d["color"] == (0.2, 0.4, 0.6)
     assert d["radius"] == 4.0
     assert d["intensity"] == 1.5
+    assert d["instance_id"] == 42
 
 
 def test_disabling_ship_light_emitters_produces_no_lights():
@@ -109,7 +120,7 @@ def test_disabling_ship_light_emitters_produces_no_lights():
     prop = _point_prop((1.0, 2.0, 3.0))
     spec = light_emitters.baked_emitters(prop)[0]
     ship_instances = {ship: 42}
-    ship_emitters = {42: [(_Sub(prop), False, False, 0.0, spec)]}
+    ship_emitters = {42: [_entry(_Sub(prop), spec)]}
 
     assert _build_emitter_light_render_data(ship_instances, ship_emitters)
 
@@ -133,16 +144,19 @@ def test_destroyed_parent_subsystem_emits_no_light():
     spec = light_emitters.baked_emitters(prop)[0]
 
     ship_instances = {ship: 7}
-    ship_emitters = {7: [(sub, False, False, 0.0, spec)]}
+    ship_emitters = {7: [_entry(sub, spec)]}
 
     out = _build_emitter_light_render_data(ship_instances, ship_emitters)
     assert out == []
 
 
-def test_rotated_translated_ship_transforms_body_position_to_world():
+def test_rotated_translated_ship_emits_body_frame_position_and_instance_id():
+    """The producer no longer transforms anything: the position stays the
+    authored body-frame offset and the dict carries the ship's render
+    instance id so the renderer resolves it through the hull's own matrix."""
     loc = (10.0, -5.0, 2.0)
     rot = TGMatrix3()
-    rot.MakeZRotation(math.pi / 2.0)  # 90 degrees about Z
+    rot.MakeZRotation(math.pi / 2.0)
     ship = _Ship(loc=loc, rot=rot)
     body_pos = (1.0, 0.0, 0.0)
     prop = _point_prop(body_pos)
@@ -150,132 +164,50 @@ def test_rotated_translated_ship_transforms_body_position_to_world():
     spec = light_emitters.baked_emitters(prop)[0]
 
     ship_instances = {ship: 3}
-    ship_emitters = {3: [(sub, False, False, 0.0, spec)]}
+    ship_emitters = {3: [_entry(sub, spec)]}
 
     out = _build_emitter_light_render_data(ship_instances, ship_emitters)
     assert len(out) == 1
-
-    expected_off = TGPoint3(*body_pos)
-    expected_off.MultMatrixLeft(rot)
-    expected = (loc[0] + expected_off.x, loc[1] + expected_off.y, loc[2] + expected_off.z)
-
-    got = out[0]["position"]
-    for g, e in zip(got, expected):
-        assert g == pytest.approx(e)
+    assert out[0]["position"] == pytest.approx(body_pos)
+    assert out[0]["instance_id"] == 3
+    assert "position_b" not in out[0]
 
 
-def test_strip_and_cone_transform_correctly_on_rotated_translated_ship():
-    """The point-only tests above never exercise `direction`/`position_b`.
-
-    A strip's two endpoints and a cone's direction must transform the same
-    way the producer documents: positions get loc + R*body (translation
-    included), direction gets R*body only (rotation-only, no translation).
-    """
-    loc = (10.0, -5.0, 2.0)
+def test_strip_and_cone_stay_body_frame_and_carry_instance_id():
     rot = TGMatrix3()
-    rot.MakeZRotation(math.pi / 2.0)  # 90 degrees about Z
-    ship = _Ship(loc=loc, rot=rot)
-
-    strip_body_pos = (1.0, 0.0, 0.0)
-    strip_axis = (0.0, 1.0, 0.0)
-    strip_length = 2.0
-    strip_prop = _emitter_prop("strip", strip_body_pos, axis=strip_axis,
-                                length=strip_length)
-    strip_sub = _Sub(strip_prop)
+    rot.MakeZRotation(math.pi / 2.0)
+    ship = _Ship(loc=(4.0, 4.0, 4.0), rot=rot)
+    strip_prop = _emitter_prop("strip", (1.0, 2.0, 3.0), axis=(0.0, -1.0, 0.0), length=2.0)
+    cone_prop = _emitter_prop("cone", (0.0, 0.0, 0.0), axis=(1.0, 0.0, 0.0),
+                              length=2.0, radius=1.0)
     strip_spec = light_emitters.baked_emitters(strip_prop)[0]
-
-    cone_body_pos = (0.0, 2.0, 0.0)
-    cone_axis = (0.0, -1.0, 0.0)
-    cone_prop = _emitter_prop("cone", cone_body_pos, axis=cone_axis,
-                               length=1.0, radius=1.0)
-    cone_sub = _Sub(cone_prop)
     cone_spec = light_emitters.baked_emitters(cone_prop)[0]
-
     ship_instances = {ship: 9}
-    ship_emitters = {9: [(strip_sub, False, False, 0.0, strip_spec),
-                          (cone_sub, False, False, 1.0, cone_spec)]}
+    ship_emitters = {9: [_entry(_Sub(strip_prop), strip_spec),
+                         _entry(_Sub(cone_prop), cone_spec)]}
 
     out = _build_emitter_light_render_data(ship_instances, ship_emitters)
     assert len(out) == 2
-    strip_out, cone_out = out[0], out[1]
-
-    # Strip endpoints: body-frame half-offsets from emitter_spec_to_struct,
-    # THEN loc + R*body (translation included) by the producer.
-    half = strip_length / 2.0
-    body_a = TGPoint3(strip_body_pos[0] - strip_axis[0] * half,
-                       strip_body_pos[1] - strip_axis[1] * half,
-                       strip_body_pos[2] - strip_axis[2] * half)
-    body_b = TGPoint3(strip_body_pos[0] + strip_axis[0] * half,
-                       strip_body_pos[1] + strip_axis[1] * half,
-                       strip_body_pos[2] + strip_axis[2] * half)
-    body_a.MultMatrixLeft(rot)
-    body_b.MultMatrixLeft(rot)
-    expected_a = (loc[0] + body_a.x, loc[1] + body_a.y, loc[2] + body_a.z)
-    expected_b = (loc[0] + body_b.x, loc[1] + body_b.y, loc[2] + body_b.z)
-    for g, e in zip(strip_out["position"], expected_a):
-        assert g == pytest.approx(e)
-    for g, e in zip(strip_out["position_b"], expected_b):
-        assert g == pytest.approx(e)
-
-    # Cone direction: rotation-only (R*body), NO translation added.
-    body_dir = TGPoint3(*cone_axis)
-    body_dir.MultMatrixLeft(rot)
-    expected_dir = (body_dir.x, body_dir.y, body_dir.z)
-    for g, e in zip(cone_out["direction"], expected_dir):
-        assert g == pytest.approx(e)
-    # Sanity: a unit direction, not a translated point -- proves `loc`
-    # (magnitude ~10) was never added in.
-    for g in cone_out["direction"]:
-        assert abs(g) <= 1.0 + 1e-6
+    strip, cone = out
+    assert strip["position"] == pytest.approx((1.0, 3.0, 3.0))
+    assert strip["position_b"] == pytest.approx((1.0, 1.0, 3.0))
+    assert strip["instance_id"] == 9
+    assert cone["direction"] == pytest.approx((1.0, 0.0, 0.0))
+    assert cone["up"] == pytest.approx(light_emitters.emitter_spec_to_struct(cone_spec)["up"])
+    assert cone["instance_id"] == 9
 
 
-def test_elliptical_cone_up_transforms_with_direction_on_rotated_ship():
-    """Task 2 Step 5: `up` is a world DIRECTION (rotation-only, no
-    translation) transformed the same way as `direction`; spot_tan_x/
-    spot_tan_y pass through the producer unchanged (body-frame ratios)."""
-    loc = (10.0, -5.0, 2.0)
-    rot = TGMatrix3()
-    rot.MakeZRotation(math.pi / 2.0)  # 90 degrees about Z
-    ship = _Ship(loc=loc, rot=rot)
-
-    cone_body_pos = (0.0, 2.0, 0.0)
-    cone_axis = (0.0, -1.0, 0.0)
-    cone_up = (1.0, 0.0, 0.0)   # already orthogonal to cone_axis
-    prop = SubsystemProperty("sub")
-    prop.SetLightEmitterKind(0, "cone")
-    prop.SetLightEmitterPosition(0, *cone_body_pos)
-    prop.SetLightEmitterAxis(0, *cone_axis)
-    prop.SetLightEmitterLength(0, 2.0)
-    prop.SetLightEmitterRadius(0, 1.0)
-    prop.SetLightEmitterRadiusY(0, 2.0)
-    prop.SetLightEmitterUp(0, *cone_up)
-    prop.SetLightEmitterColor(0, 1.0, 0.5, 0.25)
-    prop.SetLightEmitterIntensity(0, 2.5)
-    sub = _Sub(prop)
+def test_producer_does_not_mutate_the_cached_struct():
+    """Per-frame output is a COPY: intensity/instance_id must never leak
+    back into the cache entry shared across frames."""
+    ship = _Ship()
+    prop = _point_prop((1.0, 2.0, 3.0), intensity=2.0)
     spec = light_emitters.baked_emitters(prop)[0]
-
-    ship_instances = {ship: 11}
-    ship_emitters = {11: [(sub, False, False, 0.0, spec)]}
-
-    out = _build_emitter_light_render_data(ship_instances, ship_emitters)
-    assert len(out) == 1
-    d = out[0]
-
-    body_dir = TGPoint3(*cone_axis)
-    body_dir.MultMatrixLeft(rot)
-    body_up = TGPoint3(*cone_up)
-    body_up.MultMatrixLeft(rot)
-
-    for g, e in zip(d["direction"], (body_dir.x, body_dir.y, body_dir.z)):
-        assert g == pytest.approx(e)
-    for g, e in zip(d["up"], (body_up.x, body_up.y, body_up.z)):
-        assert g == pytest.approx(e)
-    # Rotation-only: not translated by `loc` (magnitude ~10).
-    for g in d["up"]:
-        assert abs(g) <= 1.0 + 1e-6
-
-    assert d["spot_tan_x"] == pytest.approx(1.0 / 2.0)
-    assert d["spot_tan_y"] == pytest.approx(2.0 / 2.0)
+    entry = _entry(_Sub(prop), spec)
+    out = _build_emitter_light_render_data({ship: 5}, {5: [entry]})
+    assert out[0]["instance_id"] == 5
+    assert "instance_id" not in entry[5]
+    assert entry[5]["intensity"] == 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -343,3 +275,26 @@ def test_cache_build_marks_impulse_membership_and_assigns_phase(monkeypatch):
     # phase = j * 1.7 + subsystem_index; both are index-0 emitters on their
     # subsystem (j=0), so phase == subsystem_index (0 then 1).
     assert {round(e[3], 3) for e in entries} == {0.0, 1.0}
+
+
+def test_cache_entries_carry_the_prebuilt_body_frame_struct(monkeypatch):
+    """The static geometry is converted ONCE at cache build, not per frame.
+    Entry layout: (sub, is_impulse, is_warp, phase, spec, struct)."""
+    prop = _emitter_prop("strip", (1.0, 2.0, 3.0), axis=(0.0, -1.0, 0.0), length=2.0)
+    sub = _Sub(prop)
+
+    class _Ship3:
+        pass
+    ship = _Ship3()
+    monkeypatch.setattr("engine.ui.ship_property_viewer._iter_subsystems",
+                        lambda s: [sub] if s is ship else [])
+
+    entries = _build_ship_emitter_cache(ship)
+    assert len(entries) == 1
+    assert len(entries[0]) == 6
+    _sub, _imp, _warp, _ph, spec, struct = entries[0]
+    assert struct == light_emitters.emitter_spec_to_struct(spec)
+    # Body-frame strip: endpoints straddle the authored position along the axis.
+    assert struct["position"] == pytest.approx((1.0, 3.0, 3.0))
+    assert struct["position_b"] == pytest.approx((1.0, 1.0, 3.0))
+    assert "instance_id" not in struct   # the producer adds it per frame

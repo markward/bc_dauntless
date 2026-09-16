@@ -156,12 +156,16 @@ def baked_emitters(prop) -> list:
 def emitter_spec_to_struct(spec: dict) -> dict:
     """Convert a BODY-frame emitter spec to set_dynamic_lights dict keys.
 
-    Positions/axis/up stay body-frame here; the host-loop producer transforms
-    them to world (up is a direction: rotation-only, like direction). Point
-    => degenerate segment (no position_b, no cone). Strip => two endpoints.
-    Cone => apex + direction + up + two spot tangents (`spot_tan_x` =
-    radius/length, `spot_tan_y` = radius_y/length -- NOT cosines; Task 1's
-    renderer consumes tangents directly for the elliptical cone).
+    Positions/axis/up stay body-frame here AND in the per-frame producer,
+    which only tags the dict with the ship's `instance_id`; the renderer
+    resolves them to world through the instance's own world matrix
+    (`resolve_attached_dynamic_lights`, run in `frame()` after the
+    transform-store sweep), so the cast light and the hull share one pose per
+    frame. Point => degenerate segment (no position_b, no cone). Strip => two
+    endpoints. Cone => apex + direction + up + two spot tangents
+    (`spot_tan_x` = radius/length, `spot_tan_y` = radius_y/length -- NOT
+    cosines; Task 1's renderer consumes tangents directly for the elliptical
+    cone).
     """
     kind = spec.get("kind", "point")
     px, py, pz = spec["position"]

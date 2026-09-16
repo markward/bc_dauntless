@@ -8,6 +8,8 @@
 
 #include <renderer/frame.h>
 
+namespace scenegraph { class World; }
+
 namespace renderer {
 
 /// Distance from point `p` to the segment `ab`. Degenerate segments
@@ -46,5 +48,24 @@ int select_dynamic_lights(
     const std::vector<DynamicLightDescriptor>& lights,
     const glm::vec3& instance_center_ws, float instance_radius_ws,
     std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>& out);
+
+/// Resolve every ATTACHED light (instance_id != {0,0}) in `lights` to world
+/// space through its instance's CURRENT `world` matrix, in place. Body
+/// positions are unscaled GU, so the instance's uniform scale (column-0
+/// length of `world`, the same recovery select_instance_dynamic_lights and
+/// shield_pass.cc use) is divided back out: p_world = t + (R·s·p)/s.
+/// Directions (cones only) are rotated and re-normalised. The resolved
+/// entry's instance_id is reset to the sentinel so nothing downstream can
+/// tell it was attached. An attached light whose instance no longer exists
+/// is erased (particle_pass.cc makes the same choice). Unattached entries
+/// are byte-identical before and after.
+///
+/// MUST run once per frame AFTER the transform-store sweep and every
+/// set_world_transform push have landed (host frame(): right after
+/// sync_instance_transforms_from_store()) — resolving at set_dynamic_lights
+/// time would read last frame's matrices, which is the hull/light jitter
+/// this exists to remove.
+void resolve_attached_dynamic_lights(const scenegraph::World& world,
+                                     std::vector<DynamicLightDescriptor>& lights);
 
 }  // namespace renderer

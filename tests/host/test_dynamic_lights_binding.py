@@ -60,3 +60,27 @@ def test_excess_entries_beyond_the_frame_cap_are_clamped_not_errored():
     import _dauntless_host
     lights = [_point_light() for _ in range(65)]
     _dauntless_host.set_dynamic_lights(lights)
+
+
+def test_instance_id_key_is_optional_and_accepts_none():
+    """`instance_id` is the second optional key (after position_b). Absent or
+    None => world-space light, exactly as before."""
+    import _dauntless_host
+    d = _point_light()
+    d["instance_id"] = None
+    _dauntless_host.set_dynamic_lights([d, _point_light()])
+
+
+def test_instance_id_accepts_an_instance_id_object():
+    import _dauntless_host
+    d = _point_light()
+    d["instance_id"] = _dauntless_host.InstanceId()   # the {0,0} sentinel
+    _dauntless_host.set_dynamic_lights([d])
+
+
+def test_instance_id_of_wrong_type_raises():
+    import _dauntless_host
+    d = _point_light()
+    d["instance_id"] = 42
+    with pytest.raises(Exception):
+        _dauntless_host.set_dynamic_lights([d])

@@ -1,7 +1,7 @@
 # Instance-attached emitter lights (design)
 
 **Date:** 2026-09-16
-**Status:** approved (Mark), ready for implementation plan
+**Status:** implemented 2026-09-16 (gate green); awaiting live verification on a 144 Hz display
 **Area:** renderer dynamic lights + host-loop emitter producer
 
 ## Goal
@@ -158,8 +158,9 @@ out.append(d)
 
 The call site stays in `_advance_combat`'s `cb.render_data` scope — with
 nothing pose-dependent leaving Python there is no ordering constraint left
-to protect. `_world_from_body` / `_rotate_body` remain for their other
-callers. `_build_dynamic_light_render_data` (torpedoes) and
+to protect. `_world_from_body` / `_rotate_body` had no other callers and were
+deleted (the SPV's `ship_property_viewer.world_from_body` is a different
+function). `_build_dynamic_light_render_data` (torpedoes) and
 `_build_explosion_light_render_data` are untouched.
 
 ### Manual-flight player
@@ -185,6 +186,7 @@ no special case.
 an attached light on an instance whose `world` is pushed via
 `set_world_transform` after the light list is set lights the hull at the
 pushed pose, proving the resolve runs after the sweep, not at binding time.
+*Implemented as a source-order guard instead (`tests/host/test_attached_lights_resolve_ordering.py`): `frame()` lives in the pybind host and needs a GL window, so the guard asserts the resolve call sits inside the `xform_sync` scope after the sweep and is absent from the `set_dynamic_lights` binding — it false-fails on a scope rename, never false-passes.*
 
 **Python — `tests/test_host_loop_emitter_lights.py`,
 `tests/unit/test_dynamic_light_render_marshal.py`:**

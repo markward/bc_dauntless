@@ -28,6 +28,7 @@
 #include <renderer/frame.h>
 #include <renderer/frame_timer.h>
 #include <renderer/lighting.h>
+#include <renderer/dynamic_lights.h>
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
 #include <renderer/dust_pass.h>
@@ -845,6 +846,11 @@ void frame() {
         // every draw pass) reads inst->world.
         DAUNTLESS_FRAME_SCOPE("xform_sync");
         sync_instance_transforms_from_store();
+        // Attached dynamic lights resolve through the SAME inst->world the
+        // hull draws with this frame. Must follow the sweep (store-bound
+        // ships) and every set_world_transform push (interpolated ships,
+        // which landed before frame() was entered).
+        renderer::resolve_attached_dynamic_lights(g_world, g_dynamic_lights);
     }
 
     {
@@ -2909,7 +2915,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   renderer::DynamicLightDescriptor l;
                   auto pos = d["position"].cast<std::tuple<float, float, float>>();
                   l.pos_a = {std::get<0>(pos), std::get<1>(pos), std::get<2>(pos)};
-                  // position_b is the ONE optional key: a point light is a
+                  // position_b and instance_id are the two optional keys
+                  // parsed unconditionally here: a point light is a
                   // degenerate segment (pos_b == pos_a), so absent/None both
                   // collapse to that same default rather than raising.
                   if (d.contains("position_b") && !d["position_b"].is_none()) {
@@ -2937,6 +2944,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   if (d.contains("spot_tan_y") && !d["spot_tan_y"].is_none()) {
                       l.spot_tan_y = d["spot_tan_y"].cast<float>();
                   }
+                  // Optional attachment (second optional key after position_b).
+                  // Set => the geometry above is BODY-frame and frame()
+                  // resolves it through inst->world after the store sweep.
+                  // Absent/None => world-space, byte-identical to before.
+                  if (d.contains("instance_id") && !d["instance_id"].is_none())
+                      l.instance_id = d["instance_id"].cast<scenegraph::InstanceId>();
                   g_dynamic_lights.push_back(l);
               }
           },
@@ -2947,7 +2960,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "optional cone keys direction (3-tuple, world-space axis), up "
           "(3-tuple, world-space axis orienting the ellipse; defaults to "
           "{0,1,0}), spot_tan_x and spot_tan_y (tan(half-angle) along right/up; "
-          "absent/None => not a cone, point/strip behaviour unchanged). "
+          "absent/None => not a cone, point/strip behaviour unchanged), and "
+          "instance_id (an InstanceId; when set, position/position_b/direction/"
+          "up above are BODY-frame and frame() resolves them through the "
+          "instance's world transform after the store sweep; absent/None => "
+          "world-space, unchanged). "
           "Clamped to kMaxDynamicLightsPerFrame entries.");
 
     m.def("set_shockwaves",

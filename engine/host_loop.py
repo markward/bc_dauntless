@@ -891,7 +891,9 @@ def _advance_combat(ships, dt: float, ship_instances=None,
     host_io.shield_hit) on the SHIELD severity path. `ship_emitters` is
     `session.ship_emitters` (render instance id -> cached body-frame
     subsystem light-emitter list); combined with `ship_instances` to feed
-    `_build_emitter_light_render_data` alongside the torpedo lights.
+    `_build_emitter_light_render_data`, which emits each light body-frame and
+    tagged with `instance_id` (the renderer resolves it to world through the
+    hull's own matrix) alongside the torpedo lights.
     `player` is passed through to that same producer, which needs it to decide
     whether the warp-nacelle brightening applies this frame (player-only).
     """
@@ -1202,28 +1204,11 @@ def _build_dynamic_light_render_data():
     return out
 
 
-def _world_from_body(loc, R, p):
-    """World point = ship_loc + R·p (column-vector, no scale) — CLAUDE.md
-    'Rotation matrix convention'. Mirrors ship_property_viewer.world_from_body
-    but takes an already-fetched (loc, R) pair so the per-frame producer
-    below only reads a ship's world transform once, not once per emitter."""
-    off = TGPoint3(p[0], p[1], p[2])
-    off.MultMatrixLeft(R)
-    return (loc.x + off.x, loc.y + off.y, loc.z + off.z)
-
-
-def _rotate_body(R, v):
-    """World direction = R·v (column-vector, no translation)."""
-    off = TGPoint3(v[0], v[1], v[2])
-    off.MultMatrixLeft(R)
-    return (off.x, off.y, off.z)
-
-
 def _build_ship_emitter_cache(ship, specs_of=None):
     """Body-frame light-emitter cache for one ship, built once at spawn.
 
-    Returns a list of `(sub, is_impulse, is_warp, phase, spec)` tuples — one
-    per baked LightEmitter* entry found on any SPV-visible subsystem
+    Returns a list of `(sub, is_impulse, is_warp, phase, spec, struct)` tuples
+    — one per baked LightEmitter* entry found on any SPV-visible subsystem
     (`ship_property_viewer._iter_subsystems`, the canonical walker: emitters
     can only be authored on subsystems the Ship Property Viewer can show).
     `is_impulse` marks membership in the ship's impulse-engine pod set
@@ -1232,7 +1217,10 @@ def _build_ship_emitter_cache(ship, specs_of=None):
     (`subsystem_glow.warp_pods`) so a nacelle's cast light spools up and
     bursts with its glow volume during a cross-system warp; `phase`
     (`j * 1.7 + subsystem_index`) desyncs the disabled-state flicker between
-    emitters. Best-effort by construction (callers wrap in try/except); a
+    emitters. `struct` is `light_emitters.emitter_spec_to_struct(spec)`, the
+    body-frame render dict, built here so SPV Save (`refresh_ship_emitters`)
+    refreshes it along with the spec.
+    Best-effort by construction (callers wrap in try/except); a
     subsystem with no
     `GetProperty` or no baked emitters is simply skipped.
 
@@ -1276,7 +1264,12 @@ def _build_ship_emitter_cache(ship, specs_of=None):
         is_impulse = id(sub) in impulse_ids
         is_warp = id(sub) in warp_ids
         for j, spec in enumerate(specs):
-            entries.append((sub, is_impulse, is_warp, j * 1.7 + si, spec))
+            # The static body-frame geometry (positions, cone tangents, colour,
+            # radius) is converted ONCE here; the per-frame producer only copies
+            # it and sets intensity + instance_id. The renderer resolves it to
+            # world through the hull's own matrix (resolve_attached_dynamic_lights).
+            struct = light_emitters.emitter_spec_to_struct(spec)
+            entries.append((sub, is_impulse, is_warp, j * 1.7 + si, spec, struct))
     return entries
 
 
@@ -1394,17 +1387,21 @@ def _build_explosion_light_render_data():
 
 def _build_emitter_light_render_data(ship_instances, ship_emitters,
                                      player=None):
-    """World-space dynamic lights from subsystem-attached light emitters.
+    """Body-frame dynamic lights from subsystem-attached light emitters,
+    tagged with each ship's render `instance_id`.
 
     `ship_instances` is the ship->render-instance-id dict (same one passed to
     `_build_particle_render_data`); `ship_emitters` is `session.ship_emitters`
     (instance id -> the `_build_ship_emitter_cache` list, cached at spawn).
-    Body-frame specs are transformed to world via the ship's world loc +
-    rotation (column-vector R·v), health-gated through
-    `light_emitters.resolve_emitter_intensity` (flicker while disabled, off
-    while destroyed), and impulse emitters brighten with commanded throttle.
-    Concatenated with the torpedo list at the `set_dynamic_lights` call site;
-    native clamps to 64 lights total, so no cap is needed here.
+    Body-frame structs (cached at spawn by `_build_ship_emitter_cache`) are
+    emitted as-is, tagged with the ship's render `instance_id`; the renderer
+    resolves them to world through the hull's own matrix after the transform
+    sweep, so the cast light is locked to the hull on any refresh rate.
+    Health-gated through `light_emitters.resolve_emitter_intensity` (flicker
+    while disabled, off while destroyed), and impulse emitters brighten with
+    commanded throttle. Concatenated with the torpedo list at the
+    `set_dynamic_lights` call site; native clamps to 64 lights total, so no
+    cap is needed here.
 
     Best-effort VFX: any failure producing one ship's or one emitter's light
     is swallowed (logged under --developer) rather than dropping the whole
@@ -1428,36 +1425,37 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
             continue
         try:
             loc = ship.GetWorldLocation()
-            R = ship.GetWorldRotation()
             frac = commanded_impulse_frac(ship)
         except Exception as _e:
-            dev_mode.log_swallowed("emitter light ship transform", _e)
+            dev_mode.log_swallowed("emitter light ship loc/throttle", _e)
             continue
         # Camera-distance gate, per SHIP rather than per emitter: emitters sit
         # within a couple of GU of hull centre, so hull-centre distance decides
         # the whole ship's emitters at once — one test instead of N, and no
         # chance of one nacelle fading a frame before the other. The early-out
-        # is the point: a gated-out ship skips every transform below.
+        # is the point: a gated-out ship skips every emitter below. The LIVE
+        # location is fine here: a one-tick error on the ~86 GU cull band is
+        # invisible, and it is the only pose read left in this producer.
         fade = _camera_distance_fade((loc.x, loc.y, loc.z))
         if fade is None:
             continue
         _wg = warp_glow if ship is player else None
-        for (sub, is_impulse, is_warp, phase, spec) in entries:
+        for (sub, is_impulse, is_warp, phase, spec, struct) in entries:
             try:
                 inten = light_emitters.resolve_emitter_intensity(
                     spec, sub, now, throttle_frac=frac, is_impulse=is_impulse,
                     powered=True, phase=phase, is_warp=is_warp, warp_glow=_wg)
                 if inten is None:
                     continue
-                d = light_emitters.emitter_spec_to_struct(spec)
+                # BODY-frame geometry, straight from the cache. No transform
+                # here: the renderer resolves it through the hull's own
+                # inst->world after the store sweep (resolve_attached_dynamic_
+                # lights), so the light and the hull share one pose per frame
+                # — interpolated, live or mid-handover alike. Shallow copy is
+                # enough: every value in `struct` is an immutable tuple/float.
+                d = dict(struct)
                 d["intensity"] = inten * fade
-                d["position"] = _world_from_body(loc, R, d["position"])
-                if "position_b" in d:
-                    d["position_b"] = _world_from_body(loc, R, d["position_b"])
-                if "direction" in d:
-                    d["direction"] = _rotate_body(R, d["direction"])
-                if "up" in d:
-                    d["up"] = _rotate_body(R, d["up"])
+                d["instance_id"] = iid
                 out.append(d)
             except Exception as _e:
                 dev_mode.log_swallowed("emitter light produce", _e)
@@ -4759,7 +4757,7 @@ class MissionSession:
     # `_build_ship_emitter_cache(ship)` list consumed each frame by
     # `_build_emitter_light_render_data`. Best-effort VFX; ships with no
     # baked LightEmitter* fields simply get an empty/absent entry.
-    ship_emitters: dict[int, list] = field(default_factory=dict)
+    ship_emitters: dict[object, list] = field(default_factory=dict)  # keyed by the renderer InstanceId (not int): the value is passed straight through as each light's instance_id
     planet_instances: dict[Any, int] = field(default_factory=dict)
     # Per-planet natural_scale = GetRadius() / NIF_extent, cached at load.
     # Ships share a single flat NIF→world scale (BC_MODEL_SCALE) so they
