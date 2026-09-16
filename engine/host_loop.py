@@ -8016,7 +8016,7 @@ def run(mission_name: Optional[str] = None,
         _settings.apply_all(_store, _settings_ctx)
         configuration_panel = ConfigurationPanel(
             tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay"),
-                  ("controls", "Controls")],
+                  ("controls", "Controls"), ("bridges", "Bridges")],
             initial_settings=_settings.snapshot_for_panel(_store, _settings_ctx),
             on_change=lambda key, value: _settings.set_setting(_store, key, value),
             on_reset=lambda section: _settings.reset_and_apply_section(
@@ -8046,6 +8046,7 @@ def run(mission_name: Optional[str] = None,
             set_camera_shake=_camera_shake.set_enabled,
             set_ambient_gradient=r.set_ambient_gradient_enabled,
             input_map=input_map,
+            bridge_pins=controller.bridge_pins,
         )
 
         # Quick Battle Setup panel — on-theme tabbed-modal shell (Ships tab).

@@ -136,6 +136,10 @@ class ConfigurationPanel(Panel):
                  set_camera_shake: Callable[[bool], None],
                  set_ambient_gradient: Callable[[bool], None],
                  input_map=None,
+                 # Bridges tab: the ship->bridge matrix (engine.bridge_selection.
+                 # BridgePins). Optional so existing construction/tests without
+                 # a bridges tab still work; the tab is inert without it.
+                 bridge_pins=None,
                  # GL_MAX_SAMPLES from the live context. Defaults to the
                  # highest mode we offer so every existing construction site
                  # and test shows all five segments; the host loop passes the
@@ -187,6 +191,9 @@ class ConfigurationPanel(Panel):
         # Controls tab: action → physical-key remapping (engine.input_map.InputMap).
         # Optional so existing construction/tests without a controls tab still work.
         self._input_map = input_map
+        self._bridge_pins = bridge_pins
+        self._bridge_add_ship: Optional[str] = None
+        self._bridge_add_bridge: Optional[str] = None
         # Persistence seam. Defaults are no-ops so the panel works standalone
         # and every existing construction site keeps compiling. The panel never
         # imports the settings store — the host loop binds these.
@@ -218,6 +225,7 @@ class ConfigurationPanel(Panel):
         self._focused = -1
         self._capturing_action = None
         self._controls_message = ""
+        self._bridge_add_ship = None
 
     def _controls_rows(self) -> list:
         """[{id, label, category, key}] for the Controls tab, in ACTIONS order."""
@@ -228,9 +236,31 @@ class ConfigurationPanel(Panel):
                  "key": self._input_map.name(aid)}
                 for (aid, label, cat, _default) in ACTIONS]
 
+    def _bridges_block(self) -> Optional[dict]:
+        """The Bridges tab payload, or None when the panel has no pins."""
+        if self._bridge_pins is None:
+            return None
+        from engine import bridge_selection as bs
+        available = bs.available_bridges()
+        if self._bridge_add_bridge is None and available:
+            self._bridge_add_bridge = available[0].script_name
+        unpinned = self._bridge_pins.unpinned_ships()
+        return {
+            "pins": [r._asdict() for r in self._bridge_pins.rows()],
+            "ships": [{"id": s, "label": bs.ship_label(s)} for s in unpinned],
+            "bridges_available": [{"id": b.script_name, "label": b.label}
+                                  for b in available],
+            "add_ship": self._bridge_add_ship,
+            "add_bridge": self._bridge_add_bridge,
+            "can_add": (self._bridge_add_ship is not None
+                        and self._bridge_add_bridge is not None),
+            "default_bridge_label": bs.bridge_label(bs.DEFAULT_BRIDGE),
+        }
+
     def render_payload(self) -> Optional[str]:
         controls_rows = self._controls_rows()
         controls_sig = tuple((r["id"], r["key"]) for r in controls_rows)
+        bridges = self._bridges_block()
         snapshot = (
             self._visible,
             tuple(self._tabs),
@@ -247,6 +277,7 @@ class ConfigurationPanel(Panel):
             self._settings.camera_shake_on,
             tuple(getattr(self._settings, k + "_on") for k in MASTER_KEYS),
             self._settings.fov_deg,
+            json.dumps(bridges, sort_keys=True) if bridges is not None else None,
         )
         if snapshot == self._last_pushed:
             return None
@@ -279,6 +310,8 @@ class ConfigurationPanel(Panel):
                    for k in MASTER_KEYS},
             },
         }
+        if bridges is not None:
+            payload["bridges"] = bridges
         return "setConfigurationPanel(" + json.dumps(payload) + ");"
 
     def dispatch_event(self, action: str) -> bool:
@@ -405,10 +438,50 @@ class ConfigurationPanel(Panel):
             self._settings.fov_deg = deg
             self._on_change("fov_deg", deg)
             return True
+        # ── Bridges tab: the ship->bridge matrix ─────────────────────────────
+        if action.startswith("bridge:"):
+            if self._bridge_pins is None:
+                return False
+            from engine import bridge_selection as bs
+            rest = action[len("bridge:"):]
+            if rest.startswith("ship:"):
+                ship = rest[len("ship:"):]
+                if ship not in self._bridge_pins.unpinned_ships():
+                    return False
+                self._bridge_add_ship = ship
+                return True
+            if rest.startswith("bridge:"):
+                bridge = rest[len("bridge:"):]
+                if not bs.is_available(bridge):
+                    return False
+                self._bridge_add_bridge = bridge
+                return True
+            if rest == "add":
+                if self._bridge_add_ship is None or self._bridge_add_bridge is None:
+                    return False
+                try:
+                    self._bridge_pins.add(self._bridge_add_ship, self._bridge_add_bridge)
+                except (bs.DuplicateShip, bs.UnknownBridge):
+                    # Only reachable by a race with a hand-edit; the re-push
+                    # shows the truth.
+                    self._bridge_add_ship = None
+                    return False
+                self._bridge_add_ship = None
+                return True
+            if rest.startswith("remove:"):
+                self._bridge_pins.remove(rest[len("remove:"):])
+                return True
+            return False
         if action.startswith("reset:"):
             # Per-tab reset. Scoped rather than global so a fat-finger can't
             # wipe keybindings, which the Controls tab resets on its own.
             section = action[len("reset:"):]
+            if section == "bridges":
+                if self._bridge_pins is None:
+                    return False
+                self._bridge_pins.reset()      # deletes bridges.json; settings.json untouched
+                self._bridge_add_ship = None
+                return True
             if section not in ("graphics", "gameplay"):
                 return False
             for field, value in self._on_reset(section).items():
@@ -420,6 +493,7 @@ class ConfigurationPanel(Panel):
                 self._selected_tab = tab_id
                 self._capturing_action = None   # leaving the tab cancels capture
                 self._controls_message = ""
+                self._bridge_add_ship = None
                 return True
             return False
         return False
@@ -491,6 +565,16 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("rebind:" + target)
         elif activate and kind == "tab":
             self.dispatch_event("tab:" + target)
+        elif activate and kind == "bridge_remove":
+            self.dispatch_event("bridge:remove:" + target)
+        elif activate and kind == "bridge_ship":
+            self.dispatch_event("bridge:ship:" + target)
+        elif activate and kind == "bridge_pick":
+            self.dispatch_event("bridge:bridge:" + target)
+        elif activate and kind == "ctrl" and target == "bridge_add":
+            self.dispatch_event("bridge:add")
+        elif activate and kind == "ctrl" and target == "reset_bridges":
+            self.dispatch_event("reset:bridges")
 
         if kind == "ctrl" and target == "fov":
             if _pressed(k_right):
@@ -541,4 +625,10 @@ class ConfigurationPanel(Panel):
             from engine.input_map import ACTION_IDS
             out += [("rebind", aid) for aid in ACTION_IDS]
             out += [("ctrl", "controls_reset")]
+        elif self._selected_tab == "bridges" and self._bridge_pins is not None:
+            from engine import bridge_selection as bs
+            out += [("bridge_remove", r.ship) for r in self._bridge_pins.rows()]
+            out += [("bridge_ship", s) for s in self._bridge_pins.unpinned_ships()]
+            out += [("bridge_pick", b.script_name) for b in bs.available_bridges()]
+            out += [("ctrl", "bridge_add"), ("ctrl", "reset_bridges")]
         return out
