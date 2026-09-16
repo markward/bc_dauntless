@@ -1222,8 +1222,8 @@ def _rotate_body(R, v):
 def _build_ship_emitter_cache(ship, specs_of=None):
     """Body-frame light-emitter cache for one ship, built once at spawn.
 
-    Returns a list of `(sub, is_impulse, is_warp, phase, spec)` tuples — one
-    per baked LightEmitter* entry found on any SPV-visible subsystem
+    Returns a list of `(sub, is_impulse, is_warp, phase, spec, struct)` tuples
+    — one per baked LightEmitter* entry found on any SPV-visible subsystem
     (`ship_property_viewer._iter_subsystems`, the canonical walker: emitters
     can only be authored on subsystems the Ship Property Viewer can show).
     `is_impulse` marks membership in the ship's impulse-engine pod set
@@ -1232,7 +1232,10 @@ def _build_ship_emitter_cache(ship, specs_of=None):
     (`subsystem_glow.warp_pods`) so a nacelle's cast light spools up and
     bursts with its glow volume during a cross-system warp; `phase`
     (`j * 1.7 + subsystem_index`) desyncs the disabled-state flicker between
-    emitters. Best-effort by construction (callers wrap in try/except); a
+    emitters. `struct` is `light_emitters.emitter_spec_to_struct(spec)`, the
+    body-frame render dict, built here so SPV Save (`refresh_ship_emitters`)
+    refreshes it along with the spec.
+    Best-effort by construction (callers wrap in try/except); a
     subsystem with no
     `GetProperty` or no baked emitters is simply skipped.
 
@@ -1276,7 +1279,12 @@ def _build_ship_emitter_cache(ship, specs_of=None):
         is_impulse = id(sub) in impulse_ids
         is_warp = id(sub) in warp_ids
         for j, spec in enumerate(specs):
-            entries.append((sub, is_impulse, is_warp, j * 1.7 + si, spec))
+            # The static body-frame geometry (positions, cone tangents, colour,
+            # radius) is converted ONCE here; the per-frame producer only copies
+            # it and sets intensity + instance_id. The renderer resolves it to
+            # world through the hull's own matrix (resolve_attached_dynamic_lights).
+            struct = light_emitters.emitter_spec_to_struct(spec)
+            entries.append((sub, is_impulse, is_warp, j * 1.7 + si, spec, struct))
     return entries
 
 

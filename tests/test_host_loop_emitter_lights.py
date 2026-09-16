@@ -343,3 +343,26 @@ def test_cache_build_marks_impulse_membership_and_assigns_phase(monkeypatch):
     # phase = j * 1.7 + subsystem_index; both are index-0 emitters on their
     # subsystem (j=0), so phase == subsystem_index (0 then 1).
     assert {round(e[3], 3) for e in entries} == {0.0, 1.0}
+
+
+def test_cache_entries_carry_the_prebuilt_body_frame_struct(monkeypatch):
+    """The static geometry is converted ONCE at cache build, not per frame.
+    Entry layout: (sub, is_impulse, is_warp, phase, spec, struct)."""
+    prop = _emitter_prop("strip", (1.0, 2.0, 3.0), axis=(0.0, -1.0, 0.0), length=2.0)
+    sub = _Sub(prop)
+
+    class _Ship3:
+        pass
+    ship = _Ship3()
+    monkeypatch.setattr("engine.ui.ship_property_viewer._iter_subsystems",
+                        lambda s: [sub] if s is ship else [])
+
+    entries = _build_ship_emitter_cache(ship)
+    assert len(entries) == 1
+    assert len(entries[0]) == 6
+    _sub, _imp, _warp, _ph, spec, struct = entries[0]
+    assert struct == light_emitters.emitter_spec_to_struct(spec)
+    # Body-frame strip: endpoints straddle the authored position along the axis.
+    assert struct["position"] == pytest.approx((1.0, 3.0, 3.0))
+    assert struct["position_b"] == pytest.approx((1.0, 1.0, 3.0))
+    assert "instance_id" not in struct   # the producer adds it per frame
