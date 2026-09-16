@@ -383,7 +383,7 @@ def test_director_zoom_in_in_chase_delegates_to_chase():
     seed_tracking = d.tracking.d_chase_tracking
     d.zoom_in()
     assert d.chase.distance == pytest.approx(
-        seed_chase * d.chase.ZOOM_FACTOR_PER_NOTCH)
+        seed_chase * d.chase.ZOOM_IN_FACTOR)
     assert d.tracking.d_chase_tracking == pytest.approx(seed_tracking)
 
 
@@ -395,7 +395,7 @@ def test_director_zoom_out_in_chase_delegates_to_chase():
     seed_tracking = d.tracking.d_chase_tracking
     d.zoom_out()
     assert d.chase.distance == pytest.approx(
-        seed_chase / d.chase.ZOOM_FACTOR_PER_NOTCH)
+        seed_chase * d.chase.ZOOM_OUT_FACTOR)
     assert d.tracking.d_chase_tracking == pytest.approx(seed_tracking)
 
 

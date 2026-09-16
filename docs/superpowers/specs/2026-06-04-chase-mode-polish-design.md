@@ -1,7 +1,19 @@
 # Chase Mode Polish — Design
 
 **Date:** 2026-06-04
-**Status:** Design — ready for implementation plan
+**Status:** Shipped; default framing + zoom step SUPERSEDED 2026-09-16 (pending live verification)
+
+> **2026-09-16 — Chase default framing and zoom step re-based on BC's own
+> Chase mode.** `ChaseCameraMode::GetIdealPosition` (0x00422400, RE'd) is
+> `eye = T + R · unit(DefaultPosition) · (Distance · r)` with the authored
+> `DefaultPosition (0, -1, 0.1)`, `Distance 4.0`, `Min/Max 2.0 / 40.0`
+> (radius multiples, applied only in the Zoom slot). The zoom step is
+> `Distance *= (1 - 0.5 f)` with `f = ±0.25` from the keyboard binding, i.e.
+> ×0.875 / ×1.125 — not inverses. `_ChaseCamera` now uses
+> `CHASE_DEFAULT_POSITION` / `CHASE_DISTANCE_RADII` / `CHASE_MIN_RADII` /
+> `CHASE_MAX_RADII` / `ZOOM_IN_FACTOR` / `ZOOM_OUT_FACTOR`; the `CAM_*` +
+> `DEFAULT_ZOOM_OUT_CLICKS` + `ZOOM_FACTOR_PER_NOTCH` model below is Tracking-only.
+> The orbit, pitch limit and rotation spring are unchanged and remain ours.
 
 ## Summary
 

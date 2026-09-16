@@ -11,7 +11,7 @@ import math as _math
 
 from engine.cameras import (
     EXTERIOR_FOV_Y_RAD, CAM_BACK_RADII, CAM_UP_RADII,
-    DEFAULT_ZOOM_OUT_CLICKS,
+    DEFAULT_ZOOM_OUT_CLICKS, ZOOM_IN_FACTOR, ZOOM_OUT_FACTOR,
 )
 
 
@@ -41,6 +41,8 @@ class _TrackingCamera:
     # ZoomTargetCameraMode::GetIdealPosition (0x00423E20: d = Distance ×
     # r_TARGET) and clamped only in the Zoom slot (FUN_0041F920). The seed
     # sits ON the floor, so zoom-in from the default is a no-op, as in BC.
+    # Being a BC mode, its zoom step is BC's (ZOOM_IN/OUT_FACTOR), not the
+    # tracking solver's symmetric ZOOM_FACTOR_PER_PRESS.
     ZOOM_TARGET_DISTANCE_RADII: float = 4.0
     ZOOM_TARGET_MIN_RADII:      float = 4.0
     ZOOM_TARGET_MAX_RADII:      float = 20.0
@@ -84,7 +86,7 @@ class _TrackingCamera:
         Modifies whichever distance is active based on zoom_target_active."""
         if self.zoom_target_active:
             self.zoom_target_radii = max(
-                self.zoom_target_radii * self.ZOOM_FACTOR_PER_PRESS,
+                self.zoom_target_radii * ZOOM_IN_FACTOR,
                 self.ZOOM_TARGET_MIN_RADII,
             )
         else:
@@ -97,7 +99,7 @@ class _TrackingCamera:
         """Sticky zoom (- key): push the camera farther from its anchor."""
         if self.zoom_target_active:
             self.zoom_target_radii = min(
-                self.zoom_target_radii / self.ZOOM_FACTOR_PER_PRESS,
+                self.zoom_target_radii * ZOOM_OUT_FACTOR,
                 self.ZOOM_TARGET_MAX_RADII,
             )
         else:

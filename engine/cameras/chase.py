@@ -1,9 +1,15 @@
 """Chase Mode — free-orbit chase camera.
 
-Arrow-key orbit + scroll-wheel zoom in the player ship's body frame.
-The orbit angles and distance are stored in ship-relative coordinates
-so the camera "rotates with" the ship: banking/pitching/yawing
-preserves the relative camera position.
+Arrow-key orbit + =/- zoom in the player ship's body frame. The orbit
+angles and distance are stored in ship-relative coordinates so the camera
+"rotates with" the ship: banking/pitching/yawing preserves the relative
+camera position.
+
+Default framing and the zoom step are BC's Chase mode (see the constants
+in engine/cameras/__init__.py): unit(0, -1, 0.1) × 4·r, zoom ×0.875 /
+×1.125 clamped to [2, 40]·r. The orbit, the pitch limit and the rotation
+spring are ours — BC's Chase snaps to a lagged pose instead (lag 0.229·r
+s, MaxLagDist atan cap), which is not ported.
 
 Conventions:
     orbit_yaw_rad   — rotation around ship-Z. 0 = directly behind,
@@ -20,8 +26,8 @@ a pure rename + move under Task 2 of the tracking-camera rework.
 import math as _math
 
 from engine.cameras import (
-    CAM_BACK_RADII, CAM_UP_RADII, CAM_MIN_RADII, CAM_MAX_RADII,
-    DEFAULT_ZOOM_OUT_CLICKS,
+    CHASE_DEFAULT_POSITION, CHASE_DISTANCE_RADII, CHASE_MIN_RADII,
+    CHASE_MAX_RADII, ZOOM_IN_FACTOR, ZOOM_OUT_FACTOR,
 )
 
 
@@ -29,10 +35,14 @@ class _ChaseCamera:
     """Arrow-key orbit + scroll-wheel zoom around the player ship."""
 
     TURN_RATE_RAD_PER_S    = 1.5                                # ~86°/s
-    ZOOM_FACTOR_PER_NOTCH  = 0.9                                # one scroll click ≈ 10%
+    ZOOM_IN_FACTOR         = ZOOM_IN_FACTOR                     # one = press
+    ZOOM_OUT_FACTOR        = ZOOM_OUT_FACTOR                    # one - press
     PITCH_LIMIT_RAD        = _math.radians(85)                  # avoid pole flip
     DEFAULT_YAW_RAD        = 0.0
-    DEFAULT_PITCH_RAD      = _math.atan2(CAM_UP_RADII, CAM_BACK_RADII)
+    # Elevation of BC's DefaultPosition direction above the body XY plane.
+    DEFAULT_PITCH_RAD      = _math.atan2(
+        CHASE_DEFAULT_POSITION[2],
+        _math.hypot(CHASE_DEFAULT_POSITION[0], CHASE_DEFAULT_POSITION[1]))
     SPRING_TAU_S           = 0.75                               # ~95% catch-up in 2.25s
     MOUSE_SENSITIVITY      = 0.005                              # radians per pixel
 
@@ -49,13 +59,9 @@ class _ChaseCamera:
         user zoom that has occurred since the last reset."""
         radius = max(radius, 1e-6)
         prev_default = getattr(self, "default_distance", None)
-        # Base framing distance, then nudged out by DEFAULT_ZOOM_OUT_CLICKS.
-        self.default_distance    = (
-            _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
-            / (self.ZOOM_FACTOR_PER_NOTCH ** DEFAULT_ZOOM_OUT_CLICKS)
-        )
-        self.distance_min        = CAM_MIN_RADII * radius
-        self.distance_max        = CAM_MAX_RADII * radius
+        self.default_distance    = CHASE_DISTANCE_RADII * radius
+        self.distance_min        = CHASE_MIN_RADII * radius
+        self.distance_max        = CHASE_MAX_RADII * radius
         if prev_default is None or getattr(self, "distance", prev_default) == prev_default:
             self.distance = self.default_distance
 
@@ -83,13 +89,13 @@ class _ChaseCamera:
         self.reverse_active = False
 
     def zoom_in(self) -> None:
-        """=-key press. Decrease distance, clamped at distance_min."""
-        self.distance = max(self.distance * self.ZOOM_FACTOR_PER_NOTCH,
+        """=-key press: BC's Zoom(+0.25) — ×0.875, clamped at distance_min."""
+        self.distance = max(self.distance * self.ZOOM_IN_FACTOR,
                             self.distance_min)
 
     def zoom_out(self) -> None:
-        """-key press. Increase distance, clamped at distance_max."""
-        self.distance = min(self.distance / self.ZOOM_FACTOR_PER_NOTCH,
+        """-key press: BC's Zoom(-0.25) — ×1.125, clamped at distance_max."""
+        self.distance = min(self.distance * self.ZOOM_OUT_FACTOR,
                             self.distance_max)
 
     def apply_mouse_delta(self, dx: float, dy: float) -> None:

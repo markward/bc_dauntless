@@ -28,7 +28,8 @@ def test_zoom_in_in_zoom_target_decreases_zoom_target_radii():
     seed_tracking = tc.d_chase_tracking
     seed_zoom = tc.zoom_target_radii
     tc.zoom_in()
-    assert tc.zoom_target_radii == pytest.approx(seed_zoom * tc.ZOOM_FACTOR_PER_PRESS)
+    # ZoomTarget is a BC mode: its step is CameraObjectClass.Zoom's x0.875.
+    assert tc.zoom_target_radii == pytest.approx(seed_zoom * 0.875)
     assert tc.d_chase_tracking == pytest.approx(seed_tracking)  # unchanged
 
 
@@ -46,7 +47,7 @@ def test_zoom_target_seeds_at_bc_shipped_distance_and_bounds():
     tc.zoom_in()
     assert tc.zoom_target_radii == pytest.approx(4.0)     # already at the floor
     tc.zoom_out()
-    assert tc.zoom_target_radii == pytest.approx(4.0 / tc.ZOOM_FACTOR_PER_PRESS)
+    assert tc.zoom_target_radii == pytest.approx(4.0 * 1.125)
 
 
 def test_zoom_out_in_zoom_target_clamps_at_max_radii():

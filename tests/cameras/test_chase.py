@@ -39,20 +39,44 @@ def _make_ship_pose(x=0.0, y=0.0, z=0.0):
     return loc, rot
 
 
-def test_default_state_matches_radius_framing():
-    """Defaults frame a unit-radius ship at -CAM_BACK_RADII forward + CAM_UP_RADII up."""
+def test_default_state_matches_bc_chase_framing():
+    """BC's Chase mode (CameraModes.Chase, body 0x00422400): the eye sits
+    at T + R * unit(DefaultPosition) * (Distance * r) — DefaultPosition
+    (0, -1, 0.1) is a DIRECTION (5.7 deg above astern), Distance 4.0 is the
+    standoff in radii. The DEFAULT distance we ship is a documented
+    widescreen deviation (CHASE_DISTANCE_RADII) and must stay inside BC's
+    authored [Min, Max] band; the authored value is kept as
+    BC_CHASE_DISTANCE_RADII so the deviation is visible, not silent."""
     from engine.cameras.chase import _ChaseCamera as _CameraControl
-    from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
-    from engine.cameras import DEFAULT_ZOOM_OUT_CLICKS
+    from engine.cameras import (
+        CHASE_DEFAULT_POSITION, CHASE_DISTANCE_RADII, BC_CHASE_DISTANCE_RADII,
+        CHASE_MIN_RADII, CHASE_MAX_RADII,
+    )
 
     cc = _CameraControl()
-    expected_dist  = (math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2)
-                      / (cc.ZOOM_FACTOR_PER_NOTCH ** DEFAULT_ZOOM_OUT_CLICKS))
-    expected_pitch = math.atan2(CAM_UP_RADII, CAM_BACK_RADII)
+    px, py, pz = CHASE_DEFAULT_POSITION
+    expected_pitch = math.atan2(pz, math.hypot(px, py))
 
-    assert cc.distance        == pytest.approx(expected_dist)
+    assert CHASE_DEFAULT_POSITION == (0.0, -1.0, 0.1)
+    assert BC_CHASE_DISTANCE_RADII == 4.0
+    assert (CHASE_MIN_RADII, CHASE_MAX_RADII) == (2.0, 40.0)
+    assert CHASE_MIN_RADII <= CHASE_DISTANCE_RADII <= CHASE_MAX_RADII
+    assert cc.distance        == pytest.approx(CHASE_DISTANCE_RADII)
+    assert cc.distance_min    == pytest.approx(2.0)
+    assert cc.distance_max    == pytest.approx(40.0)
     assert cc.orbit_pitch_rad == pytest.approx(expected_pitch)
+    assert cc.orbit_pitch_rad == pytest.approx(math.radians(5.71), abs=1e-3)
     assert cc.orbit_yaw_rad   == pytest.approx(0.0)
+
+
+def test_set_ship_radius_scales_distance_and_clamps_in_radii():
+    from engine.cameras.chase import _ChaseCamera
+    from engine.cameras import CHASE_DISTANCE_RADII
+    cc = _ChaseCamera()
+    cc.set_ship_radius(3.0)
+    assert cc.distance     == pytest.approx(CHASE_DISTANCE_RADII * 3.0)
+    assert cc.distance_min == pytest.approx(6.0)
+    assert cc.distance_max == pytest.approx(120.0)
 
 
 def test_right_arrow_increases_yaw():
@@ -120,21 +144,28 @@ def test_pitch_clamps_at_lower_limit():
     assert cc.orbit_pitch_rad == pytest.approx(-_CameraControl.PITCH_LIMIT_RAD)
 
 
+def _bc_chase_offset():
+    """unit(CHASE_DEFAULT_POSITION) * CHASE_DISTANCE_RADII for a unit-radius
+    ship: (back, up) magnitudes of the default eye offset in the body frame."""
+    from engine.cameras import CHASE_DEFAULT_POSITION, CHASE_DISTANCE_RADII
+    px, py, pz = CHASE_DEFAULT_POSITION
+    n = math.sqrt(px * px + py * py + pz * pz)
+    return (-py / n * CHASE_DISTANCE_RADII, pz / n * CHASE_DISTANCE_RADII)
+
+
 def test_compute_camera_at_defaults_at_origin_identity_rotation():
     """Default orbit + identity ship rotation places the eye at
-    (0, -CAM_BACK_RADII*r, CAM_UP_RADII*r) relative to a unit-radius ship."""
+    unit(0,-1,0.1) * 4 relative to a unit-radius ship."""
     from engine.cameras.chase import _ChaseCamera as _CameraControl
-    from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
-    from engine.cameras import DEFAULT_ZOOM_OUT_CLICKS
 
     cc = _CameraControl()
-    k = 1.0 / (cc.ZOOM_FACTOR_PER_NOTCH ** DEFAULT_ZOOM_OUT_CLICKS)
+    back, up_off = _bc_chase_offset()
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
     eye, target, up = cc.compute_camera(loc, rot)
 
-    assert eye[0] == pytest.approx(0.0,                 abs=1e-3)
-    assert eye[1] == pytest.approx(-CAM_BACK_RADII * k, abs=1e-3)
-    assert eye[2] == pytest.approx( CAM_UP_RADII * k,   abs=1e-3)
+    assert eye[0] == pytest.approx(0.0,     abs=1e-3)
+    assert eye[1] == pytest.approx(-back,   abs=1e-3)
+    assert eye[2] == pytest.approx( up_off, abs=1e-3)
     assert target == pytest.approx((0.0, 0.0, 0.0))
     assert up     == pytest.approx((0.0, 0.0, 1.0))
 
@@ -143,23 +174,19 @@ def test_compute_camera_offset_is_in_ship_body_frame():
     """Yaw the ship 90° around world Z. The camera-to-ship vector should
     rotate with the ship so the camera stays 'behind' the new heading."""
     from engine.cameras.chase import _ChaseCamera as _CameraControl
-    from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
-    from engine.cameras import DEFAULT_ZOOM_OUT_CLICKS
 
     cc = _CameraControl()
-    k = 1.0 / (cc.ZOOM_FACTOR_PER_NOTCH ** DEFAULT_ZOOM_OUT_CLICKS)
+    back, up_off = _bc_chase_offset()
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
     rot.MakeZRotation(math.radians(90))
     eye, target, _ = cc.compute_camera(loc, rot)
 
     # Ship's body-Y after a +90° yaw points along R.GetCol(1) = (-1, 0, 0)
     # under column-vector convention (see CLAUDE.md). Body-Z is unchanged
-    # (0, 0, 1). The camera sits at
-    #   -CAM_BACK_RADII*body_Y + CAM_UP_RADII*body_Z, scaled by the
-    #   default zoom-out nudge k.
-    expected_eye_x =  CAM_BACK_RADII * k
+    # (0, 0, 1). The camera sits at -back*body_Y + up_off*body_Z.
+    expected_eye_x =  back
     expected_eye_y =  0.0
-    expected_eye_z =  CAM_UP_RADII * k
+    expected_eye_z =  up_off
     assert eye[0] == pytest.approx(expected_eye_x, abs=1e-3)
     assert eye[1] == pytest.approx(expected_eye_y, abs=1e-3)
     assert eye[2] == pytest.approx(expected_eye_z, abs=1e-3)
@@ -299,17 +326,15 @@ def test_orbit_yaw_90_puts_camera_on_ship_right():
     """orbit_yaw=+90° at default pitch: camera should sit to the ship's right
     (body +X) and slightly above. Identity ship rotation."""
     from engine.cameras.chase import _ChaseCamera as _CameraControl
-    from engine.host_loop import CAM_BACK_RADII, CAM_UP_RADII
-    from engine.cameras import DEFAULT_ZOOM_OUT_CLICKS
     cc = _CameraControl()
-    k = 1.0 / (cc.ZOOM_FACTOR_PER_NOTCH ** DEFAULT_ZOOM_OUT_CLICKS)
+    back, up_off = _bc_chase_offset()
     cc.orbit_yaw_rad = math.radians(90)
     loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
     eye, _, _ = cc.compute_camera(loc, rot)
 
-    expected_x =  CAM_BACK_RADII * k                   # cos(default_pitch)*dist along +X
+    expected_x =  back                                 # cos(default_pitch)*dist along +X
     expected_y =  0.0
-    expected_z =  CAM_UP_RADII * k
+    expected_z =  up_off
     assert eye[0] == pytest.approx(expected_x, abs=1e-3)
     assert eye[1] == pytest.approx(expected_y, abs=1e-3)
     assert eye[2] == pytest.approx(expected_z, abs=1e-3)
@@ -339,12 +364,11 @@ def test_enter_exit_reverse_toggles_flag():
 
 
 def test_reverse_active_flips_eye_to_ship_front():
-    """With identity ship and default orbit (yaw=0, pitch≈atan2(0.25, 1.5)):
-    behind-ship eye is at (0, -CAM_BACK_RADII, CAM_UP_RADII). Reverse flips
+    """With identity ship and default orbit (yaw=0, pitch≈atan2(0.1, 1.0)):
+    behind-ship eye is at unit(0,-1,0.1) * 4. Reverse flips
     sign of x and y components; z component preserved (sign flip is in the
     (ox, oy) body-frame plane only)."""
     from engine.cameras.chase  import _ChaseCamera
-    from engine.cameras        import CAM_BACK_RADII, CAM_UP_RADII
     from engine.appc.math      import TGPoint3, TGMatrix3
 
     cc = _ChaseCamera()
@@ -398,22 +422,29 @@ def test_reverse_composes_with_orbit_yaw():
     assert eye_c == pytest.approx(eye_y, abs=1e-12)
 
 
-def test_chase_zoom_in_decreases_distance_by_factor():
+def test_chase_zoom_in_multiplies_distance_by_bc_step():
+    """CameraObjectClass.Zoom(f) -> FUN_0041F920: Distance *= (1 - 0.5 f),
+    with the shipped keyboard binding f = +0.25 for zoom-in -> x0.875."""
     from engine.cameras.chase import _ChaseCamera
+    from engine.cameras import ZOOM_IN_FACTOR
+    assert ZOOM_IN_FACTOR == pytest.approx(0.875)
     cc = _ChaseCamera()
     cc.set_ship_radius(1.0)
     seed = cc.distance
     cc.zoom_in()
-    assert cc.distance == pytest.approx(seed * cc.ZOOM_FACTOR_PER_NOTCH)
+    assert cc.distance == pytest.approx(seed * 0.875)
 
 
-def test_chase_zoom_out_increases_distance_by_factor():
+def test_chase_zoom_out_multiplies_distance_by_bc_step():
+    """f = -0.25 for zoom-out -> x1.125."""
     from engine.cameras.chase import _ChaseCamera
+    from engine.cameras import ZOOM_OUT_FACTOR
+    assert ZOOM_OUT_FACTOR == pytest.approx(1.125)
     cc = _ChaseCamera()
     cc.set_ship_radius(1.0)
     seed = cc.distance
     cc.zoom_out()
-    assert cc.distance == pytest.approx(seed / cc.ZOOM_FACTOR_PER_NOTCH)
+    assert cc.distance == pytest.approx(seed * 1.125)
 
 
 def test_chase_zoom_in_clamps_at_distance_min():
@@ -434,14 +465,16 @@ def test_chase_zoom_out_clamps_at_distance_max():
     assert cc.distance == pytest.approx(cc.distance_max)
 
 
-def test_chase_zoom_round_trip_returns_to_original():
+def test_chase_zoom_round_trip_drifts_inward_like_bc():
+    """x0.875 then x1.125 is x0.984375 — BC's in/out steps are NOT inverses,
+    so an in/out pair creeps the camera ~1.6% closer. Faithful, not a bug."""
     from engine.cameras.chase import _ChaseCamera
     cc = _ChaseCamera()
     cc.set_ship_radius(1.0)
     seed = cc.distance
     cc.zoom_in()
     cc.zoom_out()
-    assert cc.distance == pytest.approx(seed, abs=1e-9)
+    assert cc.distance == pytest.approx(seed * 0.984375, abs=1e-9)
 
 
 def test_chase_mouse_delta_yaw_additive():

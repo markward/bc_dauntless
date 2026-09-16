@@ -16,16 +16,44 @@ import math
 # so the constant is the source of truth at startup only.
 EXTERIOR_FOV_Y_RAD: float = math.radians(35.0)
 
-# Camera-follow distances as multiples of the player ship's GetRadius().
+# BC's Chase mode, as authored (CameraModes.Chase, CameraModes.py:12-32) and
+# as the binary reads it (ChaseCameraMode::GetIdealPosition 0x00422400, RE'd
+# 2026-09-16):  eye = T + R · unit(DefaultPosition) · (Distance · r).
+# DefaultPosition is a DIRECTION (normalised at set time, 0x004220A0) — 5.7°
+# above dead astern; Distance is the standoff in multiples of the ship's NIF
+# bounding-sphere radius (what GetRadius() returns); Min/MaximumDistance are
+# the same units and bound only the zoom step (FUN_0041F920).
+CHASE_DEFAULT_POSITION = (0.0, -1.0, 0.1)   # body frame: X right, Y fwd, Z up
+BC_CHASE_DISTANCE_RADII = 4.0               # BC's authored Distance — faithful
+CHASE_MIN_RADII        =  2.0
+CHASE_MAX_RADII        = 40.0
+# DELIBERATE DEVIATION (2026-09-16 live pass): the authored 4.0 is BC's exact
+# framing — our GetRadius() is within 10% of BC's merged NiBound for every
+# hull measured (Galaxy 4.03 vs 4.46 GU) and our 35° vertical FOV is
+# narrower than Gamebryo's 41° default — but on a widescreen window the same
+# angular size reads as "too far out" (a Galaxy saucer is ~24% of the frame
+# width vs ~28% at 4:3). Mark asked for it closer. Set back to
+# BC_CHASE_DISTANCE_RADII to restore the original. Min/Max stay authored.
+CHASE_DISTANCE_RADII   =  3.0
+
+# CameraObjectClass.Zoom(f) → mode vt+0x84 → FUN_0041F920:
+#   Distance = clamp(Distance · (1 − 0.5·f), Min, Max)
+# The shipped keyboard binds f = ±0.25 (DefaultUKKeyboardBinding.py:27-30),
+# so one press is ×0.875 in / ×1.125 out. They are not inverses: an in/out
+# pair drifts ~1.6% inward. Every BC mode shares this one body.
+ZOOM_IN_FACTOR  = 0.875
+ZOOM_OUT_FACTOR = 1.125
+
+# Tracking-mode (our inscribed-angle solver — no BC analogue) follow distances
+# as multiples of the player ship's GetRadius().
 CAM_BACK_RADII  =  1.5
 CAM_UP_RADII    =  0.25
 CAM_MIN_RADII   =  0.6
 CAM_MAX_RADII   = 30.0
 
-# Extra zoom-out clicks baked into every mode's default framing (Chase,
-# Tracking, and ZoomTarget), nudging the camera further back by default.
-# One click = ÷ the mode's per-notch zoom factor (~0.9), so N clicks ≈
-# ×(1/0.9)^N. Applied on top of each mode's base default distance.
+# Extra zoom-out clicks baked into Tracking's default framing, nudging the
+# camera further back by default. One click = ÷ the per-notch zoom factor
+# (~0.9), so N clicks ≈ ×(1/0.9)^N. Applied on top of the base distance.
 DEFAULT_ZOOM_OUT_CLICKS = 5
 
 from engine.cameras.director import CameraMode, _CameraDirector  # noqa: E402
