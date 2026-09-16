@@ -188,3 +188,13 @@ def test_js_shows_missing_markers_and_never_uses_a_native_select():
     assert "(missing)" in src
     assert "(ship not installed)" in src
     assert "<select" not in src.lower()
+
+
+def test_js_onclick_ids_are_js_escaped_not_just_html_escaped():
+    import re
+    src = _js_source()
+    assert "function _cpEventArg(" in src
+    body = re.search(r"function _cpRenderBridgesBody\(.*?\n\}", src, re.S).group(0)
+    for arg in ("p.ship", "s.id", "x.id"):
+        assert "_cpEventArg(" + arg + ")" in body, arg
+        assert "escapeHtmlCP(" + arg + ")" not in body, arg

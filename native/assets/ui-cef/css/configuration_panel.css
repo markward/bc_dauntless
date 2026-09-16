@@ -94,9 +94,13 @@
 }
 
 /* Keyboard focus shares the gold highlight the pause rows use, so the
-   row/tab that will activate on Enter is unmistakable. */
+   row/tab that will activate on Enter is unmistakable. Bridges-tab rows
+   reuse .sc-row (ship list) and bare .cp-toggle buttons (bridge picker,
+   Add) rather than .cp-row, so they need the same treatment here too. */
 .cp-tab.cp-focused,
-.cp-row.cp-focused {
+.cp-row.cp-focused,
+.sc-row.cp-focused,
+.cp-toggle.cp-focused {
     outline: 1px solid rgb(255, 210, 90);
     outline-offset: -1px;
 }

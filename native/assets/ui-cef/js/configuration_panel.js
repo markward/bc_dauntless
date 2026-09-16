@@ -14,6 +14,14 @@ function escapeHtmlCP(s) {
         .replace(/'/g, '&#39;');
 }
 
+// For an id interpolated inside a single-quoted onclick="dauntlessEvent('…')"
+// argument: JS-escape backslashes and single quotes FIRST, then HTML-escape.
+// The attribute value is entity-decoded before the handler is compiled, so
+// HTML escaping alone would hand the JS parser a bare quote.
+function _cpEventArg(s) {
+    return escapeHtmlCP(String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+}
+
 // Master toggles: one row over several renderer effects. Mirrors
 // MASTER_TOGGLES in configuration_panel.py; the two orderings are pinned
 // together by test_js_graphics_focusables_match_python.
@@ -280,7 +288,7 @@ function _cpRenderBridgesBody(state, focusables) {
               +     '<span class="cp-label cp-bridges__ship">' + shipTxt + '</span>'
               +     '<span class="cp-label cp-bridges__bridge">' + bridgeTxt + '</span>'
               +     '<button class="cp-toggle"'
-              +        ' onclick="dauntlessEvent(\'configuration/bridge:remove:' + escapeHtmlCP(p.ship) + '\')">Remove</button>'
+              +        ' onclick="dauntlessEvent(\'configuration/bridge:remove:' + _cpEventArg(p.ship) + '\')">Remove</button>'
               + '</div>';
     });
 
@@ -295,7 +303,7 @@ function _cpRenderBridgesBody(state, focusables) {
         const sel = s.id === b.add_ship;
         html += '<div class="sc-row' + (sel ? ' sc-row--selected' : '')
               +   (isFoc('bridge_ship', s.id) ? ' cp-focused' : '') + '"'
-              +   ' onclick="dauntlessEvent(\'configuration/bridge:ship:' + escapeHtmlCP(s.id) + '\')">'
+              +   ' onclick="dauntlessEvent(\'configuration/bridge:ship:' + _cpEventArg(s.id) + '\')">'
               +   escapeHtmlCP(s.label)
               + '</div>';
     });
@@ -305,7 +313,7 @@ function _cpRenderBridgesBody(state, focusables) {
         const on = x.id === b.add_bridge;
         html += '<button class="cp-toggle cp-bridges__pick' + (on ? ' cp-toggle--on' : '')
               +   (isFoc('bridge_pick', x.id) ? ' cp-focused' : '') + '"'
-              +   ' onclick="dauntlessEvent(\'configuration/bridge:bridge:' + escapeHtmlCP(x.id) + '\')">'
+              +   ' onclick="dauntlessEvent(\'configuration/bridge:bridge:' + _cpEventArg(x.id) + '\')">'
               +   escapeHtmlCP(x.label)
               + '</button>';
     });
