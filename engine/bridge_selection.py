@@ -163,3 +163,120 @@ def _ship_labels() -> dict:
 def ship_label(stem: str) -> str:
     """BC's display name for a ship script (Ships.tgl), else the stem."""
     return _ship_labels().get(stem) or stem
+
+
+# ── Pins (persisted: bridges.json) ─────────────────────────────────────────
+
+DEFAULT_PINS: dict = {
+    "Galaxy": "GalaxyBridge",
+    "Sovereign": "SovereignBridge",
+    "Akira": "SovereignBridge",
+}
+DEFAULT_BRIDGE = "GalaxyBridge"
+_PINS_SECTION = "pins"
+
+PinRow = namedtuple("PinRow",
+                    "ship ship_label bridge bridge_label ship_missing bridge_missing")
+
+
+class DuplicateShip(ValueError):
+    """add(): the ship already has a pin (edit = remove + add)."""
+
+
+class UnknownBridge(ValueError):
+    """add(): the bridge is not in available_bridges()."""
+
+
+def default_bridges_path() -> Path:
+    """Beside settings.json. Its own file so a player can back up / restore
+    bridge pins without dragging graphics settings along (spec decision 6).
+    A function, not a constant: the single seam to move for a read-only
+    install dir, like settings_store.default_settings_path()."""
+    from engine import settings_store
+    return settings_store.default_settings_path().parent / "bridges.json"
+
+
+class BridgePins:
+    """The ship->bridge map over a SettingsStore at bridges.json.
+
+    File absent  => a copy of DEFAULT_PINS.
+    File present => its "pins" section, authoritative even when {}.
+    Keys compare exactly as written: the panel always writes canonical
+    script stems, so a restored file behaves as it did when saved.
+    """
+
+    def __init__(self, store):
+        self.store = store
+        self._warned: set = set()
+
+    # -- read --
+    def pins(self) -> dict:
+        if not self.store.has_section(_PINS_SECTION):
+            return dict(DEFAULT_PINS)
+        raw = self.store._section(_PINS_SECTION)
+        return {str(k): str(v) for k, v in raw.items() if isinstance(v, str)}
+
+    def resolve(self, ship_name) -> str:
+        """The bridge config script to load for `ship_name`. Never raises."""
+        if not ship_name:
+            return DEFAULT_BRIDGE
+        bridge = self.pins().get(ship_name)
+        if bridge is None:
+            return DEFAULT_BRIDGE
+        if not is_available(bridge):
+            tag = (ship_name, bridge)
+            if tag not in self._warned:
+                self._warned.add(tag)
+                print("[bridge_selection] pin %s -> %s is not available; "
+                      "using %s" % (ship_name, bridge, DEFAULT_BRIDGE),
+                      flush=True)
+            return DEFAULT_BRIDGE
+        return bridge
+
+    def rows(self) -> list:
+        """Panel rows in file order, with labels and missing flags. Nothing
+        is pruned: a not-installed ship or an unavailable bridge is shown,
+        not hidden (the file is backed up, restored and hand-edited)."""
+        ships = set(available_ships())
+        return [PinRow(ship, ship_label(ship), bridge, bridge_label(bridge),
+                       ship not in ships, not is_available(bridge))
+                for ship, bridge in self.pins().items()]
+
+    def unpinned_ships(self) -> list:
+        pinned = set(self.pins())
+        return [s for s in available_ships() if s not in pinned]
+
+    # -- write --
+    def _write_all(self, mapping: dict) -> None:
+        """Write the WHOLE map. The first edit of a fresh install materialises
+        the defaults into the file, which is what lets a removed default
+        stay removed on the next launch. set_section (not per-key set) so an
+        empty map leaves a PRESENT empty section: authoritative "no pins"."""
+        self.store.set_section(_PINS_SECTION, dict(mapping))
+
+    def add(self, ship: str, bridge: str) -> None:
+        current = self.pins()
+        if ship in current:
+            raise DuplicateShip(ship)
+        if not is_available(bridge):
+            raise UnknownBridge(bridge)
+        current[ship] = bridge
+        self._write_all(current)
+
+    def remove(self, ship: str) -> None:
+        current = self.pins()
+        if ship not in current:
+            return
+        del current[ship]
+        self._write_all(current)
+
+    def reset(self) -> None:
+        """Delete the file: back to genuine first-launch (the defaults)."""
+        self.store.delete_file()
+
+
+def load_bridge_pins(path=None) -> BridgePins:
+    from engine.settings_store import SettingsStore
+    store = SettingsStore(path if path is not None else default_bridges_path())
+    store.load()
+    return BridgePins(store)

@@ -90,3 +90,117 @@ def test_reconfiguring_mods_invalidates_the_cache_without_clear_caches(fake_inst
     p.parent.mkdir(parents=True); p.write_text("# mod ship\n")
     mods.configure(mods.build_index(root))               # NO bs.clear_caches()
     assert "LCIntrepid" in bs.available_ships()
+
+
+# ---- BridgePins ---------------------------------------------------------------
+
+@pytest.fixture
+def pins(fake_install, tmp_path):
+    return bs.load_bridge_pins(tmp_path / "bridges.json")
+
+
+def test_absent_file_yields_the_three_defaults(pins):
+    assert pins.pins() == {"Galaxy": "GalaxyBridge",
+                           "Sovereign": "SovereignBridge",
+                           "Akira": "SovereignBridge"}
+    assert pins.pins() is not bs.DEFAULT_PINS      # a copy, never the constant
+
+
+def test_present_file_is_authoritative_even_when_empty(fake_install, tmp_path):
+    p = tmp_path / "bridges.json"
+    p.write_text('{"version": 1, "pins": {}}')
+    pins = bs.load_bridge_pins(p)
+    assert pins.pins() == {}
+    assert pins.resolve("Galaxy") == "GalaxyBridge"   # default bridge, not default PIN
+
+
+def test_resolve_pinned_unpinned_and_default(pins):
+    assert pins.resolve("Akira") == "SovereignBridge"
+    assert pins.resolve("BirdOfPrey") == "GalaxyBridge"
+    assert pins.resolve("") == "GalaxyBridge"
+    assert pins.resolve(None) == "GalaxyBridge"
+
+
+def test_missing_bridge_falls_back_keeps_the_pin_and_logs_once(pins, capsys):
+    pins.add("BirdOfPrey", "GalaxyBridge")
+    # Simulate a removed mod: hand-edit the file behind the store.
+    pins.store.set("pins", "BirdOfPrey", "VoyagerBridge")
+    assert pins.resolve("BirdOfPrey") == "GalaxyBridge"
+    assert pins.resolve("BirdOfPrey") == "GalaxyBridge"
+    assert pins.pins()["BirdOfPrey"] == "VoyagerBridge"      # not pruned
+    out = capsys.readouterr().out
+    assert out.count("BirdOfPrey -> VoyagerBridge") == 1
+
+
+def test_add_writes_the_whole_map_so_defaults_persist(pins, tmp_path):
+    import json
+    pins.add("BirdOfPrey", "SovereignBridge")
+    doc = json.loads((tmp_path / "bridges.json").read_text())
+    assert doc["pins"] == {"Galaxy": "GalaxyBridge",
+                           "Sovereign": "SovereignBridge",
+                           "Akira": "SovereignBridge",
+                           "BirdOfPrey": "SovereignBridge"}
+
+
+def test_remove_a_default_sticks(pins, tmp_path):
+    pins.remove("Akira")
+    again = bs.load_bridge_pins(tmp_path / "bridges.json")
+    assert "Akira" not in again.pins()
+    assert again.resolve("Akira") == "GalaxyBridge"
+
+
+def test_add_rejects_duplicate_ship_and_unknown_bridge(pins):
+    with pytest.raises(bs.DuplicateShip):
+        pins.add("Galaxy", "SovereignBridge")
+    with pytest.raises(bs.UnknownBridge):
+        pins.add("BirdOfPrey", "VoyagerBridge")
+    assert "BirdOfPrey" not in pins.pins()
+
+
+def test_remove_unknown_ship_is_a_noop(pins):
+    pins.remove("NotAShip")
+    assert len(pins.pins()) == 3
+
+
+def test_reset_deletes_the_file_and_restores_defaults(pins, tmp_path):
+    pins.remove("Akira")
+    assert (tmp_path / "bridges.json").exists()
+    pins.reset()
+    assert not (tmp_path / "bridges.json").exists()
+    assert pins.pins() == bs.DEFAULT_PINS
+
+
+def test_corrupt_file_is_quarantined_and_defaults_used(fake_install, tmp_path):
+    p = tmp_path / "bridges.json"
+    p.write_text("{not json")
+    pins = bs.load_bridge_pins(p)
+    assert pins.pins() == bs.DEFAULT_PINS
+    assert (tmp_path / "bridges.json.corrupt").exists()
+
+
+def test_rows_carry_labels_and_missing_flags(fake_install, tmp_path):
+    p = tmp_path / "bridges.json"
+    p.write_text('{"version": 1, "pins": {"Galaxy": "GalaxyBridge", '
+                 '"LCIntrepid": "VoyagerBridge"}}')
+    pins = bs.load_bridge_pins(p)
+    rows = pins.rows()
+    assert rows[0] == bs.PinRow("Galaxy", "Galaxy", "GalaxyBridge", "Galaxy",
+                                False, False)
+    assert rows[1] == bs.PinRow("LCIntrepid", "LCIntrepid", "VoyagerBridge",
+                                "Voyager", True, True)
+
+
+def test_rows_are_in_file_order(pins):
+    assert [r.ship for r in pins.rows()] == ["Galaxy", "Sovereign", "Akira"]
+
+
+def test_unpinned_ships_excludes_pinned(pins):
+    assert pins.unpinned_ships() == ["BirdOfPrey", "KessokLight"]
+    pins.add("BirdOfPrey", "GalaxyBridge")
+    assert pins.unpinned_ships() == ["KessokLight"]
+
+
+def test_default_bridges_path_sits_beside_settings_json():
+    from engine import settings_store
+    assert bs.default_bridges_path() == (
+        settings_store.default_settings_path().parent / "bridges.json")
