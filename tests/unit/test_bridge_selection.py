@@ -1,6 +1,7 @@
 """engine.bridge_selection — registry, ship universe, labels."""
 import pytest
 
+from engine import mods
 from engine import bridge_selection as bs
 from tests.helpers.bridge_fixtures import fake_install, install_mod   # noqa: F401
 
@@ -80,3 +81,12 @@ def test_missing_ships_tgl_does_not_raise(fake_install):
     (game_root / "data" / "TGL" / "Ships.tgl").unlink()
     bs.clear_caches()
     assert bs.ship_label("Galaxy") == "Galaxy"
+
+
+def test_reconfiguring_mods_invalidates_the_cache_without_clear_caches(fake_install, tmp_path):
+    assert "LCIntrepid" not in bs.available_ships()      # populate the cache
+    root = tmp_path / "mods"
+    p = root / "Intrepid" / "scripts" / "Ships" / "LCIntrepid.py"
+    p.parent.mkdir(parents=True); p.write_text("# mod ship\n")
+    mods.configure(mods.build_index(root))               # NO bs.clear_caches()
+    assert "LCIntrepid" in bs.available_ships()

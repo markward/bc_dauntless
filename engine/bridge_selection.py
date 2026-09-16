@@ -33,18 +33,27 @@ STOCK_BRIDGES: tuple = (
 _SHIP_KEY_RE = re.compile(r"^ships/([^/]+)\.py$")
 
 _cache: dict = {}
+_cache_index = None
 
 
 def clear_caches() -> None:
     """Tests only. Production memoises for the life of the process: the mod
     index is built once at boot and the SDK tree does not change mid-run."""
+    global _cache_index
     _cache.clear()
+    _cache_index = None
 
 
-def _cache_key(name: str):
-    # Keyed on the mod index identity so a reconfigured overlay (tests, a
-    # future hot reload) is never served a stale scan.
-    return (name, id(mods.current()))
+def _cache_for_current_index() -> dict:
+    """The memo dict for the CURRENT mod index. Holding a reference to the
+    index (not its id()) is what makes `is` sound: the held object cannot be
+    freed, so its address cannot be reused by a new index."""
+    global _cache_index
+    idx = mods.current()
+    if idx is not _cache_index:
+        _cache.clear()
+        _cache_index = idx
+    return _cache
 
 
 # ── Bridge registry ────────────────────────────────────────────────────────
@@ -60,13 +69,13 @@ def _scan_mod_bridges() -> list:
 
 
 def available_bridges() -> list:
-    key = _cache_key("bridges")
-    got = _cache.get(key)
+    cache = _cache_for_current_index()
+    got = cache.get("bridges")
     if got is None:
         stock_names = {b.script_name for b in STOCK_BRIDGES}
         got = list(STOCK_BRIDGES) + [b for b in _scan_mod_bridges()
                                      if b.script_name not in stock_names]
-        _cache[key] = got
+        cache["bridges"] = got
     return list(got)
 
 
@@ -124,8 +133,8 @@ def _mod_ship_stems() -> dict:
 def available_ships() -> list:
     """Script stems of every ship the player could fly, sorted by label.
     A mod override of a stock ship keeps the STOCK spelling (one row)."""
-    key = _cache_key("ships")
-    got = _cache.get(key)
+    cache = _cache_for_current_index()
+    got = cache.get("ships")
     if got is None:
         stock = _stock_ship_stems()
         merged = dict(stock)
@@ -133,13 +142,13 @@ def available_ships() -> list:
             if folded not in merged:
                 merged[folded] = stem
         got = sorted(merged.values(), key=lambda s: (ship_label(s).lower(), s))
-        _cache[key] = got
+        cache["ships"] = got
     return list(got)
 
 
 def _ship_labels() -> dict:
-    key = _cache_key("ship_labels")
-    got = _cache.get(key)
+    cache = _cache_for_current_index()
+    got = cache.get("ship_labels")
     if got is None:
         got = {}
         try:
@@ -147,7 +156,7 @@ def _ship_labels() -> dict:
             got = dict(read_tgl(paths.game_asset("data/TGL/Ships.tgl")).strings)
         except Exception as exc:          # missing/corrupt TGL: stems are fine
             dev_mode.log_swallowed("bridge_selection Ships.tgl", exc)
-        _cache[key] = got
+        cache["ship_labels"] = got
     return got
 
 
