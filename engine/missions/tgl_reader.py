@@ -136,6 +136,21 @@ def _parse(data: bytes, *, source: str) -> TGLFile:
     return out
 
 
+def build_tgl_bytes(strings: dict, sounds: dict | None = None) -> bytes:
+    """Inverse of _parse, for tests that need a real TGL on disk. Lives in
+    this file so the two layouts cannot drift apart."""
+    sounds = sounds or {}
+    keys = list(strings)
+    key_blob = b"".join(k.encode("ascii") + b"\x00" for k in keys)
+    val_blob = b"".join(strings[k].encode("utf-16-le") + b"\x00\x00" for k in keys)
+    file_blob = b"".join(sounds.get(k, "").encode("ascii") + b"\x00" for k in keys)
+    header = struct.pack(_HEADER_FMT, 0, 0, 0, len(keys), 0)
+    toc = b"".join(struct.pack("<3I", 0, 0, len(key_blob)) for _ in keys)
+    return (header + toc + key_blob
+            + struct.pack("<I", len(val_blob) // 2) + val_blob
+            + struct.pack("<I", len(file_blob)) + file_blob)
+
+
 def _split_ascii(blob: bytes) -> list[str]:
     if not blob:
         return []
