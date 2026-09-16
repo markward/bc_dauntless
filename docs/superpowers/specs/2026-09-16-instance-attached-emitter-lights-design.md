@@ -1,7 +1,7 @@
 # Instance-attached emitter lights (design)
 
 **Date:** 2026-09-16
-**Status:** approved (Mark), ready for implementation plan
+**Status:** implemented 2026-09-16 (gate green); awaiting live verification on a 144 Hz display
 **Area:** renderer dynamic lights + host-loop emitter producer
 
 ## Goal
