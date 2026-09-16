@@ -1,6 +1,6 @@
 # Ship → bridge matrix (auto-select the player bridge) — design
 
-**Status:** design approved 2026-09-16; awaiting implementation plan.
+**Status:** implemented by docs/superpowers/plans/2026-09-16-ship-bridge-matrix.md; awaiting live verification (§4 Live verification, items 1–5).
 **Fidelity tier:** SDK-derived load mechanism (TIER SDK) + a Dauntless-native
 selection service and settings UI that BC never had. The service is a
 *deliberate deviation* from BC's manual two-button picker, at Mark's direction.
