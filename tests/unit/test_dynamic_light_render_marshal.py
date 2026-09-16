@@ -100,3 +100,14 @@ def test_torpedo_with_no_create_call_is_skipped():
 def test_empty_registry_emits_no_lights():
     out = _build_dynamic_light_render_data()
     assert out == []
+
+
+def test_torpedo_lights_are_world_space_and_carry_no_instance_id():
+    """Torpedo lights are genuinely world-space; only ship emitters attach.
+    A stray instance_id here would make the renderer re-transform a world
+    position through some ship's matrix."""
+    _make_photon()          # registers one photon (same setup as
+                            # test_mixed_registry_emits_one_light_for_the_photon_only)
+    out = _build_dynamic_light_render_data()
+    assert len(out) == 1
+    assert "instance_id" not in out[0]
