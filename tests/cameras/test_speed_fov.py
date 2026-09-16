@@ -22,10 +22,18 @@ def test_speed_fov_boost_is_linear_to_four_degrees_at_4000_kph():
     assert speed_fov_boost_rad(_gups(4000.0)) == pytest.approx(math.radians(4.0))
 
 
-def test_speed_fov_boost_clamps_above_full_speed_and_below_zero():
+def test_speed_fov_boost_clamps_at_full_speed_either_way():
     from engine.cameras import speed_fov_boost_rad
-    assert speed_fov_boost_rad(_gups(12000.0)) == pytest.approx(math.radians(4.0))  # warp
-    assert speed_fov_boost_rad(-1.0) == 0.0
+    assert speed_fov_boost_rad(_gups(12000.0)) == pytest.approx(math.radians(4.0))    # warp
+    assert speed_fov_boost_rad(_gups(-12000.0)) == pytest.approx(math.radians(-4.0))
+
+
+def test_speed_fov_boost_is_signed_so_reversing_narrows():
+    """The argument is the FORWARD speed (velocity . ship-forward), not
+    |velocity|: astern motion narrows the FOV on the same curve."""
+    from engine.cameras import speed_fov_boost_rad
+    assert speed_fov_boost_rad(_gups(-2000.0)) == pytest.approx(math.radians(-2.0))
+    assert speed_fov_boost_rad(_gups(-4000.0)) == pytest.approx(math.radians(-4.0))
 
 
 def test_director_set_speed_widens_the_effective_fov_not_the_base():
@@ -90,6 +98,28 @@ def test_compute_camera_feeds_the_players_speed_to_the_director(bridge):
     v = _gups(4000.0)
     host_loop._compute_camera(_View(bridge), d, player=_Player((0.0, v, 0.0)), dt=None)
     assert d.effective_fov_y_rad == pytest.approx(d.fov_y_rad + math.radians(4.0))
+
+
+def test_compute_camera_feeds_the_forward_component_so_reverse_narrows():
+    """Identity rotation: ship-forward is +Y. Full impulse ASTERN must
+    narrow, not widen — |velocity| cannot tell the two apart."""
+    from engine import host_loop
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    v = _gups(4000.0)
+    host_loop._compute_camera(_View(False), d, player=_Player((0.0, -v, 0.0)), dt=None)
+    assert d.effective_fov_y_rad == pytest.approx(d.fov_y_rad - math.radians(4.0))
+
+
+def test_compute_camera_ignores_sideways_drift():
+    """Only the along-forward component counts; a pure lateral slide (a
+    tractor tow, a collision shove) is not 'going fast'."""
+    from engine import host_loop
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    v = _gups(4000.0)
+    host_loop._compute_camera(_View(False), d, player=_Player((v, 0.0, 0.0)), dt=None)
+    assert d.effective_fov_y_rad == pytest.approx(d.fov_y_rad)
 
 
 def test_exterior_render_and_unproject_paths_use_the_effective_fov():

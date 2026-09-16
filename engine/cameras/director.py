@@ -52,11 +52,12 @@ class _CameraDirector:
         self.chase.fov_scale     = scale
         self.tracking.fov_scale  = scale
 
-    def set_speed(self, speed_gups: float) -> None:
-        """Per-frame: widen the effective FOV with the player's speed. The
-        distance compensation is left keyed to the base FOV on purpose —
-        compensating the widening away would cancel the speed cue."""
-        self._speed_fov_boost    = speed_fov_boost_rad(speed_gups)
+    def set_speed(self, forward_speed_gups: float) -> None:
+        """Per-frame: widen the effective FOV with the player's FORWARD
+        speed (negative astern narrows it). The distance compensation is
+        left keyed to the base FOV on purpose — compensating the widening
+        away would cancel the speed cue."""
+        self._speed_fov_boost    = speed_fov_boost_rad(forward_speed_gups)
         self.tracking.v_fov_rad  = self.effective_fov_y_rad
 
     # ── mode transitions ─────────────────────────────────────────────

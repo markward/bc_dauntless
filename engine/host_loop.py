@@ -5740,8 +5740,9 @@ def _compute_camera(view_mode, director, *, player, dt, pose_of=None) -> tuple:
         loc = player.GetWorldLocation()
         rot = player.GetWorldRotation()
     # Speed-linked FOV, fed in BOTH view modes so the exterior view never
-    # opens on a stale boost after time on the bridge.
-    director.set_speed(_player_speed_gups(player))
+    # opens on a stale boost after time on the bridge. Forward component
+    # only: astern narrows, a lateral shove counts for nothing.
+    director.set_speed(_player_forward_speed_gups(player, rot))
     if view_mode.is_bridge:
         fwd = rot.GetCol(1)
         up  = rot.GetCol(2)
@@ -5752,15 +5753,17 @@ def _compute_camera(view_mode, director, *, player, dt, pose_of=None) -> tuple:
     return director.compute(player=player, dt=dt, pose_of=pose_of)
 
 
-def _player_speed_gups(player) -> float:
-    """|velocity| in GU/s, or 0 when the object has no real velocity surface
-    (a TGObject's __getattr__ hands back a truthy stub, so ask the MRO)."""
+def _player_forward_speed_gups(player, rot) -> float:
+    """velocity · ship-forward (rot.GetCol(1)) in GU/s — negative astern —
+    or 0 when the object has no real velocity surface (a TGObject's
+    __getattr__ hands back a truthy stub, so ask the MRO)."""
     from engine.core.ids import implements
     if player is None or not implements(player, "GetVelocityTG"):
         return 0.0
     try:
         v = player.GetVelocityTG()
-        return _math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+        f = rot.GetCol(1)
+        return v.x * f.x + v.y * f.y + v.z * f.z
     except Exception:
         return 0.0
 
