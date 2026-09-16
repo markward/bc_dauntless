@@ -1427,7 +1427,7 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
             loc = ship.GetWorldLocation()
             frac = commanded_impulse_frac(ship)
         except Exception as _e:
-            dev_mode.log_swallowed("emitter light ship transform", _e)
+            dev_mode.log_swallowed("emitter light ship loc/throttle", _e)
             continue
         # Camera-distance gate, per SHIP rather than per emitter: emitters sit
         # within a couple of GU of hull centre, so hull-centre distance decides
@@ -4757,7 +4757,7 @@ class MissionSession:
     # `_build_ship_emitter_cache(ship)` list consumed each frame by
     # `_build_emitter_light_render_data`. Best-effort VFX; ships with no
     # baked LightEmitter* fields simply get an empty/absent entry.
-    ship_emitters: dict[int, list] = field(default_factory=dict)
+    ship_emitters: dict[object, list] = field(default_factory=dict)  # keyed by the renderer InstanceId (not int): the value is passed straight through as each light's instance_id
     planet_instances: dict[Any, int] = field(default_factory=dict)
     # Per-planet natural_scale = GetRadius() / NIF_extent, cached at load.
     # Ships share a single flat NIF→world scale (BC_MODEL_SCALE) so they
