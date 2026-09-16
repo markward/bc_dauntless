@@ -277,3 +277,145 @@ TEST(SelectDynamicLights, TenInRangeLightsReturnsExactlyCeilingAndTopK) {
         EXPECT_FLOAT_EQ(selected_x[i], expected[i]);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// resolve_attached_dynamic_lights
+// ─────────────────────────────────────────────────────────────────────────
+
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/constants.hpp>
+#include <scenegraph/world.h>
+
+using renderer::resolve_attached_dynamic_lights;
+
+namespace {
+
+// T · R · S with R = 90° about +Z (maps body +X to world +Y), s = 2.5.
+glm::mat4 rotated_scaled_world(const glm::vec3& t, float s) {
+    const glm::mat4 T = glm::translate(glm::mat4(1.0f), t);
+    const glm::mat4 R = glm::rotate(glm::mat4(1.0f), glm::half_pi<float>(),
+                                    glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::mat4 S = glm::scale(glm::mat4(1.0f), glm::vec3(s));
+    return T * R * S;
+}
+
+void expect_vec3_near(const glm::vec3& got, const glm::vec3& want, float tol = 1e-4f) {
+    EXPECT_NEAR(got.x, want.x, tol);
+    EXPECT_NEAR(got.y, want.y, tol);
+    EXPECT_NEAR(got.z, want.z, tol);
+}
+
+}  // namespace
+
+TEST(ResolveAttachedDynamicLights, PointLightLandsAtTranslationPlusRotatedOffsetScaleDividedOut) {
+    scenegraph::World world;
+    const auto iid = world.create_instance(1);
+    const glm::vec3 t(10.0f, -5.0f, 2.0f);
+    world.set_world_transform(iid, rotated_scaled_world(t, 2.5f));
+
+    DynamicLightDescriptor l;
+    l.instance_id = iid;
+    l.pos_a = glm::vec3(1.0f, 0.0f, 0.0f);   // body-frame, unscaled GU
+    l.pos_b = l.pos_a;
+    std::vector<DynamicLightDescriptor> lights{l};
+
+    resolve_attached_dynamic_lights(world, lights);
+
+    ASSERT_EQ(lights.size(), 1u);
+    // R·(1,0,0) = (0,1,0); scale 2.5 must NOT appear in the offset.
+    expect_vec3_near(lights[0].pos_a, t + glm::vec3(0.0f, 1.0f, 0.0f));
+    expect_vec3_near(lights[0].pos_b, t + glm::vec3(0.0f, 1.0f, 0.0f));
+}
+
+TEST(ResolveAttachedDynamicLights, StripEndpointBResolvedIndependently) {
+    scenegraph::World world;
+    const auto iid = world.create_instance(1);
+    const glm::vec3 t(0.0f, 0.0f, 100.0f);
+    world.set_world_transform(iid, rotated_scaled_world(t, 3.0f));
+
+    DynamicLightDescriptor l;
+    l.instance_id = iid;
+    l.pos_a = glm::vec3(1.0f, 0.0f, 0.0f);
+    l.pos_b = glm::vec3(-1.0f, 0.0f, 0.0f);
+    std::vector<DynamicLightDescriptor> lights{l};
+
+    resolve_attached_dynamic_lights(world, lights);
+
+    ASSERT_EQ(lights.size(), 1u);
+    expect_vec3_near(lights[0].pos_a, t + glm::vec3(0.0f,  1.0f, 0.0f));
+    expect_vec3_near(lights[0].pos_b, t + glm::vec3(0.0f, -1.0f, 0.0f));
+}
+
+TEST(ResolveAttachedDynamicLights, ConeDirectionAndUpRotatedAndUnitLength) {
+    scenegraph::World world;
+    const auto iid = world.create_instance(1);
+    world.set_world_transform(iid, rotated_scaled_world(glm::vec3(0.0f), 4.0f));
+
+    DynamicLightDescriptor l;
+    l.instance_id = iid;
+    l.pos_a = l.pos_b = glm::vec3(0.0f);
+    l.direction  = glm::vec3(1.0f, 0.0f, 0.0f);
+    l.up         = glm::vec3(0.0f, 0.0f, 1.0f);
+    l.spot_tan_x = 0.5f;
+    l.spot_tan_y = 0.5f;
+    std::vector<DynamicLightDescriptor> lights{l};
+
+    resolve_attached_dynamic_lights(world, lights);
+
+    ASSERT_EQ(lights.size(), 1u);
+    expect_vec3_near(lights[0].direction, glm::vec3(0.0f, 1.0f, 0.0f));
+    expect_vec3_near(lights[0].up,        glm::vec3(0.0f, 0.0f, 1.0f));
+    EXPECT_NEAR(glm::length(lights[0].direction), 1.0f, 1e-5f);  // scale 4 divided out
+    EXPECT_NEAR(glm::length(lights[0].up),        1.0f, 1e-5f);
+}
+
+TEST(ResolveAttachedDynamicLights, UnattachedEntriesAreUntouched) {
+    scenegraph::World world;
+    DynamicLightDescriptor l;                       // instance_id == sentinel
+    l.pos_a = glm::vec3(7.0f, 8.0f, 9.0f);
+    l.pos_b = glm::vec3(1.0f, 2.0f, 3.0f);
+    l.direction = glm::vec3(0.0f, 1.0f, 0.0f);
+    l.up = glm::vec3(0.0f, 0.0f, 1.0f);
+    l.spot_tan_x = 0.3f;
+    std::vector<DynamicLightDescriptor> lights{l};
+
+    resolve_attached_dynamic_lights(world, lights);
+
+    ASSERT_EQ(lights.size(), 1u);
+    expect_vec3_near(lights[0].pos_a, l.pos_a, 0.0f);
+    expect_vec3_near(lights[0].pos_b, l.pos_b, 0.0f);
+    expect_vec3_near(lights[0].direction, l.direction, 0.0f);
+    expect_vec3_near(lights[0].up, l.up, 0.0f);
+}
+
+TEST(ResolveAttachedDynamicLights, MissingInstanceIsDropped) {
+    scenegraph::World world;
+    const auto iid = world.create_instance(1);
+    world.destroy_instance(iid);
+
+    DynamicLightDescriptor attached;
+    attached.instance_id = iid;
+    DynamicLightDescriptor plain;
+    plain.pos_a = plain.pos_b = glm::vec3(5.0f);
+    std::vector<DynamicLightDescriptor> lights{attached, plain};
+
+    resolve_attached_dynamic_lights(world, lights);
+
+    ASSERT_EQ(lights.size(), 1u);
+    expect_vec3_near(lights[0].pos_a, glm::vec3(5.0f), 0.0f);
+}
+
+TEST(ResolveAttachedDynamicLights, ResolvedEntryInstanceIdIsClearedToSentinel) {
+    scenegraph::World world;
+    const auto iid = world.create_instance(1);
+    world.set_world_transform(iid, glm::mat4(1.0f));
+
+    DynamicLightDescriptor l;
+    l.instance_id = iid;
+    std::vector<DynamicLightDescriptor> lights{l};
+
+    resolve_attached_dynamic_lights(world, lights);
+
+    ASSERT_EQ(lights.size(), 1u);
+    EXPECT_TRUE(lights[0].instance_id == scenegraph::InstanceId{});
+}

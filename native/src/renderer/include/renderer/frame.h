@@ -154,6 +154,12 @@ struct DynamicLightDescriptor {
     float     spot_tan_x = -1.0f;    // < 0 => not a cone. tan(half-angle) along `right` (= radius/length).
     glm::vec3 up{0.0f, 1.0f, 0.0f};  // cone up axis (world, unit) — orients the ellipse
     float     spot_tan_y = -1.0f;    // tan(half-angle) along `up` (= radius_y/length)
+    /// Attachment. {0,0} (the default) means every position/direction above
+    /// is already WORLD space. Set => pos_a, pos_b, direction and up are the
+    /// instance's BODY frame in unscaled GU, and frame() resolves them to
+    /// world through inst->world via resolve_attached_dynamic_lights before
+    /// any draw reads the list (same pattern as ParticleEmitterDescriptor).
+    scenegraph::InstanceId instance_id{};
 };
 inline constexpr int kMaxDynamicLightsPerFrame = 64;
 inline constexpr int kMaxDynamicLightsPerDraw  = 4;

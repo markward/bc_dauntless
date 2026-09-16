@@ -2,6 +2,7 @@
 #include "renderer/dynamic_lights.h"
 
 #include <algorithm>
+#include <scenegraph/world.h>
 
 namespace renderer {
 
@@ -77,6 +78,32 @@ int select_dynamic_lights(
     }
 
     return count;
+}
+
+void resolve_attached_dynamic_lights(const scenegraph::World& world,
+                                     std::vector<DynamicLightDescriptor>& lights) {
+    const scenegraph::InstanceId sentinel{};
+    auto out = lights.begin();
+    for (auto it = lights.begin(); it != lights.end(); ++it) {
+        DynamicLightDescriptor l = *it;
+        if (!(l.instance_id == sentinel)) {
+            const scenegraph::Instance* inst = world.get(l.instance_id);
+            if (inst == nullptr) continue;      // despawned between set and frame: drop
+            const glm::mat4& M = inst->world;
+            const glm::mat3 RS = glm::mat3(M);
+            const float s = std::max(glm::length(glm::vec3(M[0])), 1e-6f);
+            const glm::vec3 t = glm::vec3(M[3]);
+            l.pos_a = t + (RS * l.pos_a) / s;
+            l.pos_b = t + (RS * l.pos_b) / s;
+            if (l.spot_tan_x >= 0.0f) {
+                l.direction = glm::normalize(RS * l.direction);
+                l.up        = glm::normalize(RS * l.up);
+            }
+            l.instance_id = sentinel;
+        }
+        *out++ = l;
+    }
+    lights.erase(out, lights.end());
 }
 
 }  // namespace renderer
