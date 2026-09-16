@@ -30,7 +30,7 @@ const CP_GRAPHICS_STANDALONE = ['aa_mode', 'dust', 'fov'];
 const CP_GRAPHICS_TRAILING = [['camera_shake', 'Camera Shake']];
 // Per-tab "Reset to Defaults" rows. Scoped, not global: the Controls tab
 // resets its own bindings, so a fat-finger here can't wipe them.
-const CP_RESET_TARGETS = {graphics: 'reset_graphics', gameplay: 'reset_gameplay'};
+const CP_RESET_TARGETS = {graphics: 'reset_graphics', gameplay: 'reset_gameplay', bridges: 'reset_bridges'};
 const CP_GRAPHICS_CTRLS = CP_GRAPHICS_STANDALONE
     .concat(CP_MASTERS.map(m => m[0]))
     .concat(CP_GRAPHICS_TRAILING.map(t => t[0]))
@@ -82,6 +82,13 @@ function _cpFocusableList(state) {
     } else if (state.selected_tab === 'controls') {
         (state.controls || []).forEach(c => out.push({kind: 'rebind', target: c.id}));
         out.push({kind: 'ctrl', target: 'controls_reset'});
+    } else if (state.selected_tab === 'bridges') {
+        const b = state.bridges || {pins: [], ships: [], bridges_available: []};
+        b.pins.forEach(p => out.push({kind: 'bridge_remove', target: p.ship}));
+        b.ships.forEach(s => out.push({kind: 'bridge_ship', target: s.id}));
+        b.bridges_available.forEach(x => out.push({kind: 'bridge_pick', target: x.id}));
+        out.push({kind: 'ctrl', target: 'bridge_add'});
+        out.push({kind: 'ctrl', target: 'reset_bridges'});
     }
     return out;
 }
@@ -248,6 +255,84 @@ function _cpRenderControlsBody(state, focusables) {
     return html;
 }
 
+// Bridges tab — the ship->bridge matrix. Pinned rows with Remove, then an
+// add row: a scrollable ship list (unpinned ships only — Python enforces
+// "each ship once" by never offering a pinned one) and a bridge picker.
+// No native select element: CEF OSR has no popup surface for one.
+function _cpRenderBridgesBody(state, focusables) {
+    const focused = focusables[state.focused] || {};
+    const isFoc = (kind, target) => focused.kind === kind && focused.target === target;
+    const b = state.bridges || {pins: [], ships: [], bridges_available: [],
+                                add_ship: null, add_bridge: null, can_add: false,
+                                default_bridge_label: ''};
+    let html = '';
+
+    html += '<div class="cp-group-header">Pinned</div>';
+    if (b.pins.length === 0) {
+        html += '<div class="sc-note">No ships pinned.</div>';
+    }
+    b.pins.forEach(function (p) {
+        const shipTxt = escapeHtmlCP(p.ship_label)
+                      + (p.ship_missing ? ' <span class="cp-bridges__missing">(ship not installed)</span>' : '');
+        const bridgeTxt = escapeHtmlCP(p.bridge_label)
+                        + (p.bridge_missing ? ' <span class="cp-bridges__missing">(missing)</span>' : '');
+        html += '<div class="cp-row cp-bridges__pin' + (isFoc('bridge_remove', p.ship) ? ' cp-focused' : '') + '">'
+              +     '<span class="cp-label cp-bridges__ship">' + shipTxt + '</span>'
+              +     '<span class="cp-label cp-bridges__bridge">' + bridgeTxt + '</span>'
+              +     '<button class="cp-toggle"'
+              +        ' onclick="dauntlessEvent(\'configuration/bridge:remove:' + escapeHtmlCP(p.ship) + '\')">Remove</button>'
+              + '</div>';
+    });
+
+    html += '<hr class="cp-divider">';
+    html += '<div class="cp-group-header">Add a ship</div>';
+    html += '<div class="cp-bridges__add">';
+    html +=   '<div class="cp-bridges__ships">';
+    if (b.ships.length === 0) {
+        html += '<div class="sc-note">Every ship is pinned.</div>';
+    }
+    b.ships.forEach(function (s) {
+        const sel = s.id === b.add_ship;
+        html += '<div class="sc-row' + (sel ? ' sc-row--selected' : '')
+              +   (isFoc('bridge_ship', s.id) ? ' cp-focused' : '') + '"'
+              +   ' onclick="dauntlessEvent(\'configuration/bridge:ship:' + escapeHtmlCP(s.id) + '\')">'
+              +   escapeHtmlCP(s.label)
+              + '</div>';
+    });
+    html +=   '</div>';
+    html +=   '<div class="cp-bridges__picker">';
+    b.bridges_available.forEach(function (x) {
+        const on = x.id === b.add_bridge;
+        html += '<button class="cp-toggle cp-bridges__pick' + (on ? ' cp-toggle--on' : '')
+              +   (isFoc('bridge_pick', x.id) ? ' cp-focused' : '') + '"'
+              +   ' onclick="dauntlessEvent(\'configuration/bridge:bridge:' + escapeHtmlCP(x.id) + '\')">'
+              +   escapeHtmlCP(x.label)
+              + '</button>';
+    });
+    html +=     '<button class="cp-toggle cp-bridges__addbtn' + (b.can_add ? ' cp-toggle--on' : ' cp-toggle--disabled')
+          +       (isFoc('ctrl', 'bridge_add') ? ' cp-focused' : '') + '"'
+          +       (b.can_add ? ' onclick="dauntlessEvent(\'configuration/bridge:add\')"' : ' disabled')
+          +     '>Add</button>';
+    html +=   '</div>';
+    html += '</div>';
+
+    html += '<div class="sc-note">Ships without a pin use the '
+          + escapeHtmlCP(b.default_bridge_label) + ' bridge. '
+          + 'Changes apply the next time your ship is created.</div>';
+
+    // Inlined rather than via _cpResetRow: the action needs the literal
+    // string 'configuration/reset:bridges' in source (not built by
+    // concatenating a variable section name) for the structural test that
+    // greps the JS source text for every dispatched action.
+    html += '<hr class="cp-divider">';
+    html += '<div class="cp-row' + (isFoc('ctrl', 'reset_bridges') ? ' cp-focused' : '') + '">'
+          +   '<span class="cp-label">Reset to Defaults</span>'
+          +   '<button class="cp-toggle"'
+          +      ' onclick="dauntlessEvent(\'configuration/reset:bridges\')">Reset</button>'
+          + '</div>';
+    return html;
+}
+
 // "Press a key…" capture overlay, created/removed on demand so we don't have to
 // reserve a slot in hello.html. Shown whenever Python is mid-capture.
 function _cpUpdateCaptureOverlay(state) {
@@ -294,6 +379,8 @@ function setConfigurationPanel(state) {
             body.innerHTML = _cpRenderGameplayBody(state, focusables);
         } else if (state.selected_tab === 'controls') {
             body.innerHTML = _cpRenderControlsBody(state, focusables);
+        } else if (state.selected_tab === 'bridges') {
+            body.innerHTML = _cpRenderBridgesBody(state, focusables);
         } else {
             body.innerHTML = '';
         }

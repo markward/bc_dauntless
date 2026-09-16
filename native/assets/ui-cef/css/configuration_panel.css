@@ -264,3 +264,30 @@
 .cp-capture-msg {
     margin-top: 12px; font-size: 13px; color: rgb(255, 170, 90);
 }
+
+/* Bridges tab — ship->bridge matrix. Reuses cp-row/cp-toggle/sc-row; only
+   the two-column add area and the missing marker are new. */
+.cp-bridges__pin .cp-bridges__ship   { flex: 1 1 40%; }
+.cp-bridges__pin .cp-bridges__bridge { flex: 1 1 40%; }
+.cp-bridges__missing { color: #d85e56; font-size: 12px; letter-spacing: 0.04em; }
+
+.cp-bridges__add {
+    display: flex;
+    gap: 16px;
+    min-height: 0;
+}
+.cp-bridges__ships {
+    flex: 1 1 55%;
+    max-height: 180px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.cp-bridges__picker {
+    flex: 1 1 45%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.cp-bridges__pick { text-align: left; }
+.cp-bridges__addbtn { margin-top: auto; }
+.cp-toggle--disabled { opacity: 0.4; cursor: default; }

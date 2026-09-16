@@ -146,3 +146,45 @@ def test_payload_is_not_repushed_when_nothing_changed(pins):
     assert p.render_payload() is None
     p.dispatch_event("bridge:ship:BirdOfPrey")
     assert p.render_payload() is not None
+
+
+# ---- JS mirrors -----------------------------------------------------------------
+
+def _js_source():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    return (root / "native/assets/ui-cef/js/configuration_panel.js").read_text()
+
+
+def test_js_focusable_list_has_a_bridges_branch_in_python_order():
+    """_cpFocusableList's bridges branch must push, in order: one
+    bridge_remove per pin, one bridge_ship per unpinned ship, one bridge_pick
+    per available bridge, then bridge_add and reset_bridges — the order
+    ConfigurationPanel._focusables uses. Space on a focused row otherwise
+    fires the wrong control."""
+    import re
+    src = _js_source()
+    branch = re.search(r"selected_tab === 'bridges'\)\s*\{(.*?)\n    \}", src, re.S)
+    assert branch, "no bridges branch in _cpFocusableList"
+    body = branch.group(1)
+    order = [m for m in re.findall(r"kind: '(\w+)'", body)]
+    assert order == ["bridge_remove", "bridge_ship", "bridge_pick", "ctrl", "ctrl"]
+    assert re.search(r"target: 'bridge_add'", body)
+    assert re.search(r"target: 'reset_bridges'", body)
+
+
+def test_js_renders_the_bridges_tab_and_dispatches_every_action():
+    src = _js_source()
+    assert "_cpRenderBridgesBody" in src
+    assert "selected_tab === 'bridges'" in src
+    for action in ("configuration/bridge:ship:", "configuration/bridge:bridge:",
+                   "configuration/bridge:add", "configuration/bridge:remove:",
+                   "configuration/reset:bridges"):
+        assert action in src, action
+
+
+def test_js_shows_missing_markers_and_never_uses_a_native_select():
+    src = _js_source()
+    assert "(missing)" in src
+    assert "(ship not installed)" in src
+    assert "<select" not in src.lower()
