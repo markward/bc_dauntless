@@ -99,6 +99,19 @@ class BridgeCharacterAnimController:
         returns to when its transient queue empties (AT_DEFAULT)."""
         self._idle_clips[iid] = clip_index
 
+    def forget_instance(self, iid) -> None:
+        """Drop the idle/breathe registration for an iid whose render instance
+        has been destroyed (a runtime bridge swap tears officer instances down
+        before rebuilding them). stop(character) already evicts _active + any
+        pending turn/glance/default entries for the character; this ADDITION-
+        ALLY drops _idle_clips, which stop() deliberately leaves alone (a
+        still-live character must keep knowing how to resume breathing).
+        Idempotent; call once the character no longer carries this iid, so a
+        re-realise's fresh iid never inherits a phantom idle from the old
+        one."""
+        self._active.pop(iid, None)
+        self._idle_clips.pop(iid, None)
+
     def request_turn(self, character) -> None:
         """Queue a turn-to-captain (drained on the next update, which has the
         renderer). Called from CharacterClass.MenuUp via the registry."""

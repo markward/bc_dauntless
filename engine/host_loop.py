@@ -6069,6 +6069,41 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
     # Characters: tear down prior officer instances before re-placing (mission
     # swap re-realizes the bridge set; without this the old instances leak).
     if is_bridge:
+        # Clear every character's realisation tags BEFORE destroying its
+        # instance, or _place_one_character's idempotency guard (_render_
+        # instance is not None) skips it forever below. On a mission swap
+        # _iter_set_characters(set_obj) enumerates fresh, untagged
+        # characters -- nothing here has a tag, so this is a no-op and the
+        # mission-swap path stays byte-identical. On a runtime bridge swap
+        # (LoadBridge.Load's "set exists, different config" branch) the SAME
+        # CharacterClass objects remain in the set with stale tags from the
+        # prior realise -- exactly the case this loop must catch.
+        from engine.bridge_character_anim import get_controller as _get_anim_ctrl
+        _anim_ctrl = _get_anim_ctrl()
+        for character in _iter_set_characters(set_obj):
+            _iid = getattr(character, "_render_instance", None)
+            if _iid is None:
+                continue
+            if _anim_ctrl is not None:
+                try:
+                    # stop() evicts the live/pending transient clip (firing
+                    # any on_complete so a waiting TGSequence never hangs);
+                    # forget_instance() additionally drops the iid's idle/
+                    # breathe registration, which stop() deliberately leaves
+                    # alone for a still-live character.
+                    _anim_ctrl.stop(character)
+                    _anim_ctrl.forget_instance(_iid)
+                except Exception as _e:
+                    dev_mode.log_swallowed(
+                        "bridge anim controller teardown", _e)
+            try:
+                del character._render_instance
+            except AttributeError:
+                pass
+            try:
+                del character._placed_location
+            except AttributeError:
+                pass
         for _iid in controller.officer_instances:
             try:
                 r.destroy_instance(_iid)
@@ -6171,7 +6206,7 @@ def _realize_comm_sets(controller, r) -> None:
     """Realize every comm/remote set (one that declares a background model or
     characters) that isn't realized yet, allocating it a stable comm_set_id.
 
-    Runs at load (from realize_all_sets) AND once per tick, so a comm set
+    Runs at load (from _after_mission_loaded) AND once per tick, so a comm set
     created LATE gets realized too. E6M2's FedOutpostSet_Graff is built lazily
     by Systems/Starbase12/Starbase12_S.SetupGraffSet when the player docks —
     long after the one-shot load-time realize pass — so without a per-tick sweep

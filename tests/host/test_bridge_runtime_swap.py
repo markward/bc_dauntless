@@ -114,3 +114,66 @@ def test_bridge_set_delete_viewscreen_clears_the_slot():
     s.SetViewScreen(vs)
     s.DeleteObjectFromSet("viewscreen")
     assert s.GetViewScreen() is None
+
+
+# ── Officer re-placement across a runtime swap (Finding 1) ──────────────────
+# LoadBridge.Load's "set exists, different config" branch keeps the SAME
+# CharacterClass objects in the set and only re-ConfigureCharacters them (spec
+# §2). realize_set's officer teardown destroys the old render instances but,
+# without this fix, never clears the characters' _render_instance tag, so
+# _place_one_character's idempotency guard (~:6400) skips every one of them
+# forever -- an empty bridge after the first runtime swap.
+
+class _OfficerRenderer(_FakeRenderer):
+    """_FakeRenderer plus the skinned-officer assembly surface."""
+    def __init__(self):
+        super().__init__()
+        self.visible = {}
+
+    def assemble_officer(self, *a, **k):
+        iid = ("model", self._next); self._next += 1; return iid
+
+    def set_instance_rest_pose(self, iid, idx, at_start): pass
+    def set_visible(self, iid, vis): self.visible[iid] = vis
+    def load_instance_clip(self, iid, nif): return -1
+    def play_instance_idle(self, iid, idx): pass
+
+
+def _stub_placement(monkeypatch):
+    import engine.appc.bridge_placement as bp
+    monkeypatch.setattr(
+        bp, "capture_placement",
+        lambda ch: {"clip_nif": "data/animations/MiscEng02.NIF",
+                    "hidden": False, "sample_at_start": True})
+    monkeypatch.setattr(bp, "capture_breathing", lambda ch: None)
+
+
+def test_runtime_bridge_swap_re_places_the_officer(monkeypatch):
+    _fresh_sdk()
+    _stub_placement(monkeypatch)
+    from engine.appc.characters import CharacterClass
+
+    c, r = _controller(), _OfficerRenderer()
+    s = _install_bridge("GalaxyBridge", "data/Models/Sets/DBridge/DBridge.nif",
+                        "data/Models/Sets/DBridge/DBridgeViewScreen.nif")
+    officer = CharacterClass("body.nif", "head.nif")
+    officer.SetCharacterName("Riker")
+    s.AddObjectToSet(officer, "Riker")
+
+    hl._realize_bridge(c, r)
+    old_iid = officer._render_instance
+    assert old_iid is not None
+    assert c.officer_instances == [old_iid]
+
+    # Same set, SAME character object, different config -- exactly what
+    # LoadBridge.Load's "set exists, different config" branch leaves behind.
+    _install_bridge("SovereignBridge", "data/Models/Sets/EBridge/EBridge.nif",
+                    "data/Models/Sets/EBridge/EBridgeViewScreen.nif")
+
+    hl._realize_bridge(c, r)
+
+    assert old_iid in r.destroyed
+    new_iid = officer._render_instance
+    assert new_iid is not None
+    assert new_iid != old_iid
+    assert c.officer_instances == [new_iid]
