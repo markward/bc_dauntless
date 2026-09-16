@@ -148,6 +148,24 @@ def test_payload_is_not_repushed_when_nothing_changed(pins):
     assert p.render_payload() is not None
 
 
+def test_closed_panel_does_not_compute_the_bridges_block(pins, monkeypatch):
+    # render_payload used to call _bridges_block() -- rows()/unpinned_ships()/
+    # available_bridges()/json.dumps -- unconditionally, on every pump, even
+    # while the panel is closed. Spy on rows() to prove it now runs only
+    # while the panel is visible.
+    calls = []
+    real_rows = pins.rows
+    monkeypatch.setattr(pins, "rows", lambda: (calls.append(1), real_rows())[1])
+    p = _make(pins)
+
+    assert p.render_payload() is not None    # closed -> the hide payload
+    assert calls == []
+
+    p.open(); p.dispatch_event("tab:bridges")
+    assert p.render_payload() is not None
+    assert calls == [1]
+
+
 # ---- JS mirrors -----------------------------------------------------------------
 
 def _js_source():

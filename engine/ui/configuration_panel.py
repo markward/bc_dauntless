@@ -260,7 +260,12 @@ class ConfigurationPanel(Panel):
     def render_payload(self) -> Optional[str]:
         controls_rows = self._controls_rows()
         controls_sig = tuple((r["id"], r["key"]) for r in controls_rows)
-        bridges = self._bridges_block()
+        # Only compute the Bridges tab's block while the panel is actually
+        # open — rows()/unpinned_ships()/available_bridges()/json.dumps ran
+        # on EVERY pump otherwise, closed panel included. While closed the
+        # snapshot carries None for it; opening/closing still changes the
+        # snapshot (via _visible) and repushes.
+        bridges = self._bridges_block() if self._visible else None
         snapshot = (
             self._visible,
             tuple(self._tabs),
