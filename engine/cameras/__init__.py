@@ -16,6 +16,24 @@ import math
 # so the constant is the source of truth at startup only.
 EXTERIOR_FOV_Y_RAD: float = math.radians(35.0)
 
+def fov_distance_scale(fov_y_rad: float) -> float:
+    """Framing-distance multiplier that keeps a ship's apparent size constant
+    across the exterior FOV setting.
+
+    BC had no FOV option; every framing distance here was tuned at
+    EXTERIOR_FOV_Y_RAD. Apparent size goes as r / (d · tan(fov/2)), so
+    holding it constant means d · tan(fov/2) is constant:
+
+        scale = tan(ref/2) / tan(fov/2)
+
+    45° against the 35° reference is ×0.761 — two BC zoom notches
+    (0.875² = 0.766). Applied at eye-placement time only, so the stored
+    distances and their clamps stay in reference-FOV units and a FOV change
+    never eats the player's zoom setting.
+    """
+    return math.tan(EXTERIOR_FOV_Y_RAD / 2.0) / math.tan(fov_y_rad / 2.0)
+
+
 # BC's Chase mode, as authored (CameraModes.Chase, CameraModes.py:12-32) and
 # as the binary reads it (ChaseCameraMode::GetIdealPosition 0x00422400, RE'd
 # 2026-09-16):  eye = T + R · unit(DefaultPosition) · (Distance · r).

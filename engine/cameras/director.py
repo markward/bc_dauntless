@@ -8,7 +8,7 @@ stale state.
 """
 from enum import Enum
 
-from engine.cameras          import EXTERIOR_FOV_Y_RAD
+from engine.cameras          import EXTERIOR_FOV_Y_RAD, fov_distance_scale
 from engine.cameras.chase    import _ChaseCamera
 from engine.cameras.tracking import _TrackingCamera
 from engine.ui.target_reticle import target_aim_point
@@ -35,6 +35,9 @@ class _CameraDirector:
         reads self.fov_y_rad each frame for r.set_camera."""
         self.fov_y_rad           = rad
         self.tracking.v_fov_rad  = rad
+        scale = fov_distance_scale(rad)
+        self.chase.fov_scale     = scale
+        self.tracking.fov_scale  = scale
 
     # ── mode transitions ─────────────────────────────────────────────
 

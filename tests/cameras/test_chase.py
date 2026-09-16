@@ -563,3 +563,52 @@ def test_chase_snap_resets_distance_and_reverse():
     assert cc.distance == pytest.approx(cc.default_distance)
     assert cc.reverse_active is False
     assert cc._smoothed_rot is None
+
+
+# ── FOV compensation ─────────────────────────────────────────────────────────
+
+
+def test_fov_distance_scale_is_unity_at_the_reference_fov():
+    from engine.cameras import fov_distance_scale, EXTERIOR_FOV_Y_RAD
+    assert fov_distance_scale(EXTERIOR_FOV_Y_RAD) == pytest.approx(1.0)
+
+
+def test_fov_distance_scale_keeps_apparent_size_constant():
+    """Apparent size ~ r / (d * tan(fov/2)); holding it constant across FOV
+    means d scales by tan(ref/2) / tan(fov/2). 45 deg vs the 35 deg
+    reference is x0.761 — about two BC zoom notches (0.875^2 = 0.766)."""
+    from engine.cameras import fov_distance_scale
+    ref, fov = math.radians(35.0), math.radians(45.0)
+    assert fov_distance_scale(fov) == pytest.approx(math.tan(ref / 2) / math.tan(fov / 2))
+    assert fov_distance_scale(fov) == pytest.approx(0.761, abs=1e-3)
+    assert fov_distance_scale(math.radians(25.0)) > 1.0      # narrower FOV → further out
+
+
+def test_chase_eye_distance_is_scaled_by_fov_scale_not_the_stored_distance():
+    """A wider FOV must not eat the user's zoom setting: the stored distance
+    (and its clamps) stay in reference-FOV units; only the eye placement
+    is scaled."""
+    from engine.cameras.chase import _ChaseCamera
+    cc = _ChaseCamera()
+    cc.set_ship_radius(1.0)
+    assert cc.fov_scale == pytest.approx(1.0)
+    loc, rot = _make_ship_pose(0.0, 0.0, 0.0)
+    eye_ref, _, _ = cc.compute_camera(loc, rot)
+    cc.fov_scale = 0.5
+    eye_half, _, _ = cc.compute_camera(loc, rot)
+    for a, b in zip(eye_half, eye_ref):
+        assert a == pytest.approx(0.5 * b, abs=1e-9)
+    assert cc.distance == pytest.approx(cc.default_distance)
+
+
+def test_director_set_fov_propagates_fov_scale_to_both_cameras():
+    from engine.cameras.director import _CameraDirector
+    from engine.cameras import fov_distance_scale
+    d = _CameraDirector()
+    d.set_fov(math.radians(45.0))
+    want = fov_distance_scale(math.radians(45.0))
+    assert d.chase.fov_scale    == pytest.approx(want)
+    assert d.tracking.fov_scale == pytest.approx(want)
+    d.set_fov(math.radians(35.0))
+    assert d.chase.fov_scale    == pytest.approx(1.0)
+    assert d.tracking.fov_scale == pytest.approx(1.0)

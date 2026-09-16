@@ -520,3 +520,24 @@ def test_tracking_compute_reads_player_and_target_through_pose_of():
         assert a == pytest.approx(b + v, abs=1e-6)
     for a, b in zip(up1, up0):
         assert a == pytest.approx(b, abs=1e-6)
+
+
+def test_zoom_target_eye_distance_is_scaled_by_fov_scale():
+    """ZoomTarget standoff (zoom_target_radii * r_target) is scaled by the
+    FOV-compensation factor at placement time; the stored radii and the
+    own-hull push-out (absolute GU) are untouched."""
+    from engine.cameras.tracking import _TrackingCamera
+    from engine.appc.math         import TGPoint3, TGMatrix3
+
+    tc = _TrackingCamera()
+    tc.set_ship_radius(1.0)
+    tc.zoom_target_radii = 5.0
+    tc.zoom_target_active = True
+    tc.fov_scale = 0.5
+
+    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
+    t_loc = TGPoint3(0.0, 20.0, 0.0)
+    eye, _, _ = tc.compute(
+        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+    assert eye[1] == pytest.approx(20.0 - 2.5, abs=1e-9)
+    assert tc.zoom_target_radii == pytest.approx(5.0)

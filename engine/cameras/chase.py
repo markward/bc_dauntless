@@ -51,6 +51,9 @@ class _ChaseCamera:
         self.orbit_pitch_rad    = self.DEFAULT_PITCH_RAD
         self.reverse_active     = False
         self._smoothed_rot      = None  # seeded on first compute_camera(..., dt=...)
+        # FOV compensation (engine.cameras.fov_distance_scale); set by
+        # _CameraDirector.set_fov. Multiplies the eye distance at placement.
+        self.fov_scale          = 1.0
         self.set_ship_radius(1.0)
 
     def set_ship_radius(self, radius: float) -> None:
@@ -153,7 +156,7 @@ class _ChaseCamera:
         sy = _math.sin(yaw_effective)
         cp = _math.cos(self.orbit_pitch_rad)
         sp = _math.sin(self.orbit_pitch_rad)
-        d  = self.distance
+        d  = self.distance * self.fov_scale
 
         ox =  sy * cp * d
         oy = -cy * cp * d

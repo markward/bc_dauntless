@@ -58,6 +58,11 @@ class _TrackingCamera:
         # radius; the radius itself is read live in compute(), so retargeting
         # re-frames automatically and the player's own size never enters.
         self.zoom_target_radii = self.ZOOM_TARGET_DISTANCE_RADII
+        # FOV compensation (engine.cameras.fov_distance_scale); set by
+        # _CameraDirector.set_fov. Scales the ZoomTarget standoff at
+        # placement. The Tracking solver needs none — it frames by screen
+        # fraction and already reads v_fov_rad.
+        self.fov_scale = 1.0
         # ZoomTarget sub-mode flag — toggled by enter/exit_zoom_target.
         self.zoom_target_active = False
         # Spring state (unchanged).
@@ -325,7 +330,7 @@ class _TrackingCamera:
         that kept the eye in front of the target but could leave it inside
         the player's own hull. Stored zoom_target_radii is never mutated.
         """
-        effective = self.zoom_target_radii * r_target
+        effective = self.zoom_target_radii * r_target * self.fov_scale
         eye_solver = (T.x - effective * e1.x,
                       T.y - effective * e1.y,
                       T.z - effective * e1.z)
