@@ -512,3 +512,53 @@ def test_cinematic_lighting_still_drives_its_four_original_members():
     ctx.r.set_shadows_enabled.assert_called_once_with(True)
     ctx.r.set_nebula_lightning_enabled.assert_called_once_with(True)
     ctx.light_emitters.set_enabled.assert_called_once_with(True)
+
+
+# ---- has_section / delete_file (bridges.json needs "absent" vs "{}") ------
+
+def test_has_section_distinguishes_absent_from_empty(tmp_path):
+    from engine.settings_store import SettingsStore
+    p = tmp_path / "s.json"
+    p.write_text('{"version": 2, "pins": {}}')
+    store = SettingsStore(p); store.load()
+    assert store.has_section("pins") is True
+    assert store.has_section("graphics") is False
+
+
+def test_has_section_is_false_for_a_non_dict_value(tmp_path):
+    from engine.settings_store import SettingsStore
+    p = tmp_path / "s.json"
+    p.write_text('{"version": 2, "pins": 3}')
+    store = SettingsStore(p); store.load()
+    assert store.has_section("pins") is False
+
+
+def test_delete_file_removes_it_and_clears_memory(tmp_path):
+    from engine.settings_store import SettingsStore
+    p = tmp_path / "s.json"
+    store = SettingsStore(p); store.load()
+    store.set("pins", "Galaxy", "GalaxyBridge")
+    assert p.exists()
+    store.delete_file()
+    assert not p.exists()
+    assert store.has_section("pins") is False
+    assert store.get("pins", "Galaxy") is None
+
+
+def test_delete_file_when_absent_does_not_raise(tmp_path):
+    from engine.settings_store import SettingsStore
+    store = SettingsStore(tmp_path / "s.json"); store.load()
+    store.delete_file()   # no file yet
+
+
+def test_set_section_replaces_the_whole_section_and_saves(tmp_path):
+    import json
+    from engine.settings_store import SettingsStore
+    p = tmp_path / "s.json"
+    store = SettingsStore(p); store.load()
+    store.set("pins", "Galaxy", "GalaxyBridge")
+    store.set_section("pins", {"Akira": "SovereignBridge"})
+    assert json.loads(p.read_text())["pins"] == {"Akira": "SovereignBridge"}
+    store.set_section("pins", {})
+    assert json.loads(p.read_text())["pins"] == {}
+    assert store.has_section("pins") is True

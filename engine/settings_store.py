@@ -130,6 +130,13 @@ class SettingsStore:
     def has(self, section: str, key: str) -> bool:
         return key in self._section(section)
 
+    def has_section(self, section: str) -> bool:
+        """True only when the document carries `section` as an object — an
+        EMPTY section counts. `_section()` collapses absent and `{}` into the
+        same thing, which is right for key lookups and wrong for a store
+        whose whole meaning is "file present ⇒ authoritative" (bridges.json)."""
+        return isinstance(self._doc.get(section), dict)
+
     def get(self, section: str, key: str, default=None):
         return self._section(section).get(key, default)
 
@@ -145,6 +152,26 @@ class SettingsStore:
     def reset_section(self, section: str) -> None:
         self._doc.pop(section, None)
         self._save()
+
+    def set_section(self, section: str, mapping: dict) -> None:
+        """Replace a whole section and save. An empty mapping leaves a
+        PRESENT, empty section — for bridges.json that is an authoritative
+        'no pins', distinct from the absent-section defaults."""
+        self._doc[section] = dict(mapping)
+        self._save()
+
+    def delete_file(self) -> None:
+        """Remove the file and forget its contents. The 'absent ⇒ defaults'
+        store (bridges.json) uses this for Reset: emptying the document would
+        leave a present-but-empty file, which is an authoritative 'no pins',
+        not first-launch. Never raises."""
+        self._doc = {"version": SCHEMA_VERSION}
+        try:
+            self._path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            dev_mode.log_swallowed("SettingsStore.delete_file", exc)
 
     # ── Write ───────────────────────────────────────────────────────────────
     def _save(self) -> None:
