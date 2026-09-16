@@ -5739,6 +5739,9 @@ def _compute_camera(view_mode, director, *, player, dt, pose_of=None) -> tuple:
     else:
         loc = player.GetWorldLocation()
         rot = player.GetWorldRotation()
+    # Speed-linked FOV, fed in BOTH view modes so the exterior view never
+    # opens on a stale boost after time on the bridge.
+    director.set_speed(_player_speed_gups(player))
     if view_mode.is_bridge:
         fwd = rot.GetCol(1)
         up  = rot.GetCol(2)
@@ -5747,6 +5750,19 @@ def _compute_camera(view_mode, director, *, player, dt, pose_of=None) -> tuple:
         up_vec = (up.x, up.y, up.z)
         return eye, target, up_vec
     return director.compute(player=player, dt=dt, pose_of=pose_of)
+
+
+def _player_speed_gups(player) -> float:
+    """|velocity| in GU/s, or 0 when the object has no real velocity surface
+    (a TGObject's __getattr__ hands back a truthy stub, so ask the MRO)."""
+    from engine.core.ids import implements
+    if player is None or not implements(player, "GetVelocityTG"):
+        return 0.0
+    try:
+        v = player.GetVelocityTG()
+        return _math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+    except Exception:
+        return 0.0
 
 
 # ── ViewscreenZoomTarget (VZT) framing ─────────────────────────────────────────
@@ -9439,11 +9455,11 @@ def run(mission_name: Optional[str] = None,
                     r.set_spv_hull_mode(False)
                     _spv_hidden_iid = None
                 r.set_camera(eye=eye, target=target, up=up_vec,
-                             fov_y_rad=director.fov_y_rad,
+                             fov_y_rad=director.effective_fov_y_rad,
                              near=1.0, far=5000.0)
                 # Manual Aim reads this camera on the NEXT sim tick to
                 # unproject the cursor. Data only -- no mutation here.
-                manual_aim.note_camera(eye, target, up_vec, director.fov_y_rad, 1.0, 5000.0)
+                manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad, 1.0, 5000.0)
                 # Feed the dynamic-light distance gate. Read by next frame's
                 # _advance_combat, which runs upstream of this solve.
                 _note_camera_eye(eye)
@@ -9498,7 +9514,7 @@ def run(mission_name: Optional[str] = None,
                         cinematic_active=_reticle_top.is_cinematic_active()):
                     r.set_target_reticle(build_target_reticle(player))
                     _rcam = _ReticleCam(eye=eye, target=target, up=up_vec,
-                                        fov_y_rad=director.fov_y_rad,
+                                        fov_y_rad=director.effective_fov_y_rad,
                                         near=1.0, far=5000.0)
                     r.set_reticle_text(build_reticle_text(
                         player, _rcam, (_CEF_VIEW_W, _CEF_VIEW_H)))

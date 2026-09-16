@@ -8,7 +8,9 @@ stale state.
 """
 from enum import Enum
 
-from engine.cameras          import EXTERIOR_FOV_Y_RAD, fov_distance_scale
+from engine.cameras          import (
+    EXTERIOR_FOV_Y_RAD, fov_distance_scale, speed_fov_boost_rad,
+)
 from engine.cameras.chase    import _ChaseCamera
 from engine.cameras.tracking import _TrackingCamera
 from engine.ui.target_reticle import target_aim_point
@@ -28,16 +30,34 @@ class _CameraDirector:
         # Vertical FOV used for r.set_camera and Tracking's projection math.
         # Seeded from EXTERIOR_FOV_Y_RAD; runtime changes via set_fov().
         self.fov_y_rad         = EXTERIOR_FOV_Y_RAD
+        # Speed-linked widening on top of fov_y_rad (engine.cameras.
+        # speed_fov_boost_rad). Kept separate so the settings store, which
+        # reads fov_y_rad, never persists a boosted value.
+        self._speed_fov_boost  = 0.0
+
+    @property
+    def effective_fov_y_rad(self) -> float:
+        """The FOV actually rendered this frame: the user's setting plus the
+        speed boost. host_loop reads this for r.set_camera and for every
+        unprojection that must agree with it (reticle, manual aim)."""
+        return self.fov_y_rad + self._speed_fov_boost
 
     def set_fov(self, rad: float) -> None:
-        """Update the exterior vertical FOV. Propagates to the Tracking
-        solver so screen-Y / angle conversions stay in sync. host_loop
-        reads self.fov_y_rad each frame for r.set_camera."""
+        """Update the exterior vertical FOV (the persisted setting).
+        Propagates to the Tracking solver so screen-Y / angle conversions
+        stay in sync, and re-derives the FOV distance compensation."""
         self.fov_y_rad           = rad
-        self.tracking.v_fov_rad  = rad
+        self.tracking.v_fov_rad  = self.effective_fov_y_rad
         scale = fov_distance_scale(rad)
         self.chase.fov_scale     = scale
         self.tracking.fov_scale  = scale
+
+    def set_speed(self, speed_gups: float) -> None:
+        """Per-frame: widen the effective FOV with the player's speed. The
+        distance compensation is left keyed to the base FOV on purpose —
+        compensating the widening away would cancel the speed cue."""
+        self._speed_fov_boost    = speed_fov_boost_rad(speed_gups)
+        self.tracking.v_fov_rad  = self.effective_fov_y_rad
 
     # ── mode transitions ─────────────────────────────────────────────
 

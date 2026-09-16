@@ -434,9 +434,9 @@ def test_host_loop_runs_manual_aim_update_in_the_sim_block():
 
 def test_host_loop_notes_the_camera_after_the_exterior_set_camera():
     src = _host_loop_src()
-    anchor = "r.set_camera(eye=eye, target=target, up=up_vec,\n                             fov_y_rad=director.fov_y_rad,\n                             near=1.0, far=5000.0)"
+    anchor = "r.set_camera(eye=eye, target=target, up=up_vec,\n                             fov_y_rad=director.effective_fov_y_rad,\n                             near=1.0, far=5000.0)"
     i_cam = src.index(anchor)
-    i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.fov_y_rad, 1.0, 5000.0)")
+    i_note = src.index("manual_aim.note_camera(eye, target, up_vec, director.effective_fov_y_rad, 1.0, 5000.0)")
     assert i_cam < i_note < i_cam + 600
 
 

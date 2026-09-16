@@ -49,6 +49,25 @@ def fov_distance_scale(fov_y_rad: float) -> float:
 FOV_NARROW_EXPONENT = 1.5
 
 
+# Speed-linked FOV (ours, not BC's — BC had no FOV setting at all): the
+# exterior FOV widens linearly with the player's speed, reaching
+# +SPEED_FOV_BOOST_DEG at SPEED_FOV_FULL_KPH and holding there (warp is far
+# past it). 4000 kph is a hair above a Galaxy's full impulse (6.3 GU/s =
+# 3969 kph), so full impulse ≈ the full boost. Additive on the user's FOV
+# setting; deliberately NOT fed to fov_distance_scale, which would dolly the
+# camera in to cancel the widening.
+SPEED_FOV_BOOST_DEG = 4.0
+SPEED_FOV_FULL_KPH  = 4000.0
+
+
+def speed_fov_boost_rad(speed_gups: float) -> float:
+    """Extra vertical FOV, in radians, for a player moving at `speed_gups`."""
+    from engine.units import GUPS_TO_KPH
+    t = (speed_gups * GUPS_TO_KPH) / SPEED_FOV_FULL_KPH
+    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+    return math.radians(SPEED_FOV_BOOST_DEG) * t
+
+
 # BC's Chase mode, as authored (CameraModes.Chase, CameraModes.py:12-32) and
 # as the binary reads it (ChaseCameraMode::GetIdealPosition 0x00422400, RE'd
 # 2026-09-16):  eye = T + R · unit(DefaultPosition) · (Distance · r).
