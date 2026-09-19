@@ -1923,7 +1923,13 @@ def ShipClass_GetObjectByID(pSet_or_id, obj_id=_UNSET) -> "ShipClass | None":
     else:
         # 2-arg SDK form: ShipClass_GetObjectByID(pSet, id)
         real_id = obj_id
-    from engine.core.ids import get_object_by_id
+    try:
+        from engine.core.ids import get_object_by_id
+    except ImportError:
+        # Interpreter shutdown: sys.meta_path is None. Reachable from
+        # ConditionPulseReady.__del__ -> GetWeapons -> this lookup (same
+        # class of failure App.PulseWeapon_Cast guards).
+        return None
     obj = get_object_by_id(real_id)
     if isinstance(obj, ShipClass):
         return obj
