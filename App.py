@@ -499,6 +499,18 @@ def ShieldProperty_Cast(obj):
     return None
 
 
+def PulseWeaponProperty_Cast(obj):
+    """SDK Conditions/ConditionPulseReady.py:139 —
+    `App.PulseWeaponProperty_Cast(pWeapon.GetProperty()).GetOrientationForward()`.
+    Was undefined; the stub dotted to 0 and excluded every weapon, so
+    ConditionPulseReady read FALSE forever (heatmap ranks 83-88)."""
+    if isinstance(obj, _NamedStub):
+        return None
+    if isinstance(obj, PulseWeaponProperty):
+        return obj
+    return None
+
+
 def SubsystemProperty_Cast(obj):
     if isinstance(obj, _NamedStub):
         return None
