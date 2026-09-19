@@ -66,9 +66,13 @@ class TGTimerManager:
     def get_time(self) -> float:
         return self._time
 
-    def AddTimer(self, timer: TGTimer) -> None:
+    def AddTimer(self, timer: TGTimer) -> int:
+        """Returns the timer's object id. Conditions/ConditionAttacked.py:105
+        keys its forgiveness timers on this return value and deletes them
+        through DeleteTimer(id); a None return silently disabled cancel."""
         timer._fire_pending = False
         self._timers[timer.GetObjID()] = timer
+        return timer.GetObjID()
 
     def RemoveTimer(self, timer: "TGTimer | int") -> None:
         # Real Appc's RemoveTimer accepts either a TGTimer object or its
