@@ -665,16 +665,19 @@ class WarpSequence(TGSequence):
 
     def Completed(self) -> None:
         super().Completed()
-        engine = self._warp_engine()
-        if engine is not None and engine.GetWarpSequence() is self:
-            # Stated assumption: BC clears the sequence on arrival. The same
-            # ping fires, so the condition re-reads None and turns off.
-            engine.SetWarpSequence(None)
+        # Stated assumption: BC clears the sequence on arrival. The same
+        # ping fires, so the condition re-reads None and turns off.
+        self._detach_from_engine()
 
     def Abort(self) -> None:
         # An aborted warp must not leave ConditionWarpingToSet reading
         # "warping" forever -- mirror Completed()'s detach.
         super().Abort()
+        self._detach_from_engine()
+
+    def _detach_from_engine(self) -> None:
+        """Clear the engine's warp sequence, but only if it's still us --
+        never clobber a newer sequence that has since attached."""
         engine = self._warp_engine()
         if engine is not None and engine.GetWarpSequence() is self:
             engine.SetWarpSequence(None)

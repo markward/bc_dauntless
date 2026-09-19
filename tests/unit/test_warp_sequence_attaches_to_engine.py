@@ -38,12 +38,20 @@ class _StallAction(TGAction):
     matching SetWarpSequence(None) both fire, and both ET_SET_WARP_SEQUENCE
     events dispatch, before seq.Play() ever returns to the caller (confirmed
     by tracing ConditionWarpingToSet.SetStateFromSequence: it is called
-    twice per Play(), status 1 then 0, back-to-back). A real warp is held
-    open for real time by the flythrough VFX timers or by physical transit;
-    this stall action reproduces that hold in a headless unit test so the
-    attached-while-playing state in the Interfaces contract is actually
-    observable, and Completed()/Abort() can be invoked as the deliberate,
-    separate "arrival" step the brief's tests exercise."""
+    twice per Play(), status 1 then 0, back-to-back). This collapse is
+    headless-only, not a gap in production: in the rendered engine,
+    engine/host_loop.py::_flythrough_enabled (~line 7658) is hardcoded to
+    return True ("The set-to-set warp cinematic is part of the game, not a
+    setting"), so every real warp with a real destination takes the timed
+    flythrough branch in WarpSequence_Create and is genuinely held open by
+    warp_vfx's align/transit timers -- it only degrades to the instant swap
+    when nothing ever calls configure_warp_vfx (this headless test, most of
+    the test suite). This stall action reproduces that real hold in a
+    headless unit test so the attached-while-playing state in the
+    Interfaces contract is actually observable, and Completed()/Abort() can
+    be invoked as the deliberate, separate "arrival" step the brief's tests
+    exercise -- it models production, not a workaround for a production
+    bug."""
     def Play(self) -> None:
         self._playing = True
 
