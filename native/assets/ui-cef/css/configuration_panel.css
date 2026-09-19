@@ -296,8 +296,9 @@
 .cp-bridges__pick { width: 100%; text-align: left; }   /* overrides .cp-toggle's 48px */
 .cp-bridges__pin .cp-iconbtn { margin-left: 6px; }
 /* The Default row: one Edit icon, no Remove — pad so its icon lines up
-   under the mapped rows' Edit column instead of the Remove column. */
-.cp-bridges__default { margin-top: 4px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+   under the mapped rows' Edit column instead of the Remove column. No
+   border of its own: .cp-row's bottom border already separates rows, and
+   a top border here read as a double line. */
 .cp-bridges__default .cp-iconbtn { margin-right: 30px; }
 
 /* Icon button + page-drawn hover text. CEF OSR renders no native tooltip

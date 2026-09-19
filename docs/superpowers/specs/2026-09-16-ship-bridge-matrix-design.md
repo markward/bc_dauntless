@@ -316,7 +316,6 @@ panel copy.
   Sovereign       Sovereign              [✎] [✕]
   Akira           Sovereign              [✎] [✕]
   LCIntrepid      Voyager  (missing)     [✎] [✕]
-  ─────────────────────────────────────────────
   Default         Galaxy                 [✎]
 
  [            Add Mapping             ]
