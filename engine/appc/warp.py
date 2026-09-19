@@ -648,6 +648,37 @@ class WarpSequence(TGSequence):
     def GetDestination(self):   return self._dest_module
     def GetPlacementName(self):  return self._placement
 
+    def _warp_engine(self):
+        ship = self._ship
+        get = getattr(ship, "GetWarpEngineSubsystem", None)
+        return get() if callable(get) else None
+
+    def Play(self) -> None:
+        # Attach BEFORE the actions start so a ConditionWarpingToSet created
+        # mid-warp (SetupInitialState reads GetWarpSequence) sees us, and so
+        # SetWarpSequence's ET_SET_WARP_SEQUENCE ping reaches the ones that
+        # already exist. spec #8: nothing called SetWarpSequence in production.
+        engine = self._warp_engine()
+        if engine is not None:
+            engine.SetWarpSequence(self)
+        super().Play()
+
+    def Completed(self) -> None:
+        super().Completed()
+        engine = self._warp_engine()
+        if engine is not None and engine.GetWarpSequence() is self:
+            # Stated assumption: BC clears the sequence on arrival. The same
+            # ping fires, so the condition re-reads None and turns off.
+            engine.SetWarpSequence(None)
+
+    def Abort(self) -> None:
+        # An aborted warp must not leave ConditionWarpingToSet reading
+        # "warping" forever -- mirror Completed()'s detach.
+        super().Abort()
+        engine = self._warp_engine()
+        if engine is not None and engine.GetWarpSequence() is self:
+            engine.SetWarpSequence(None)
+
     # ── Cross-mission / cross-episode destination ────────────────────────────
     # BC's WarpSequence can target a new mission or episode as well as a new
     # set (WarpSequence_GetDestinationMission 0x0061f7a0,
