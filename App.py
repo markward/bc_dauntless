@@ -666,6 +666,14 @@ def PulseWeaponSystem_Cast(obj):
     return obj if isinstance(obj, PulseWeaponSystem) else None
 
 
+def WeaponSystem_Cast(obj):
+    """SDK AI/PlainAI/StarbaseAttack.py:112,129 —
+    `pWeapSystem = App.WeaponSystem_Cast(pSystem)` over a
+    CT_WEAPON_SYSTEM match. Any WeaponSystem (phaser/torpedo/pulse/tractor
+    aggregator OR a leaf bank, which subclasses WeaponSystem here) passes."""
+    return obj if isinstance(obj, WeaponSystem) else None
+
+
 def Weapon_Cast(obj):
     """SDK AI/PlainAI/IntelligentCircleObject.py:62-64 —
     `pWeapon = App.Weapon_Cast(pSystem.GetChildSubsystem(i))`, `if pWeapon:`.

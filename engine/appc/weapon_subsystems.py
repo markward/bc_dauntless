@@ -1144,6 +1144,12 @@ class WeaponSystem(PoweredSubsystem):
 
     def GetNumTargets(self) -> int:          return len(self._target_list)
 
+    def IsInTargetList(self, target) -> int:
+        """SDK AI/PlainAI/StarbaseAttack.py:114. Must be a real int: a stub
+        here is truthy, so `if not IsInTargetList(t): StartFiring(t)` never
+        fired (heatmap 116)."""
+        return 1 if target is not None and target in self._target_list else 0
+
     # ── Parent-aggregator predicates ───────────────────────────────────
     # WeaponSystem parents own their hardpoint emitters (PhaserBank,
     # TorpedoTube, PulseWeapon, TractorBeam) as _children. Damage lands
