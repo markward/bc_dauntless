@@ -109,6 +109,7 @@ from engine.appc.math import (
     TGPoint3_GetModelForward, TGPoint3_GetModelBackward,
     TGPoint3_GetModelUp, TGPoint3_GetModelDown,
     TGPoint3_GetModelRight, TGPoint3_GetModelLeft,
+    TGPoint3_GetRandomUnitVector,
 )
 from engine.appc.objects import (
     ObjectClass, PhysicsObjectClass, DamageableObject,

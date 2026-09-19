@@ -430,3 +430,24 @@ def TGPoint3_GetModelRight() -> TGPoint3:
 
 def TGPoint3_GetModelLeft() -> TGPoint3:
     return TGPoint3(-1.0, 0.0, 0.0)
+
+
+import random as _random
+
+_unit_vector_rng = _random.Random()
+
+
+def TGPoint3_GetRandomUnitVector() -> TGPoint3:
+    """Uniform random unit vector (Marsaglia). SDK callers:
+    AI/PlainAI/Flee.py:115, EvadeTorps.py:172, Warp.py:367,
+    AI/Preprocessors.py:1904 (AvoidObstacles). Each draws N candidates and
+    scores them, so the distribution must cover the whole sphere — a
+    biased draw would bias every flee/evade heading."""
+    while True:
+        a = _unit_vector_rng.uniform(-1.0, 1.0)
+        b = _unit_vector_rng.uniform(-1.0, 1.0)
+        s = a * a + b * b
+        if 0.0 < s < 1.0:
+            break
+    k = 2.0 * _math.sqrt(1.0 - s)
+    return TGPoint3(a * k, b * k, 1.0 - 2.0 * s)
