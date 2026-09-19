@@ -340,7 +340,8 @@ def test_js_bridges_copy_says_mapped_never_pinned():
 def test_js_shows_missing_markers_and_never_uses_a_native_select():
     src = _js_source()
     assert "(missing)" in src
-    assert "(ship not installed)" in src
+    assert "(not playable)" in src
+    assert "(ship not installed)" not in src
     assert "<select" not in src.lower()
 
 

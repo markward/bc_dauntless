@@ -49,14 +49,23 @@ names came from `data/TGL/Ships.tgl` (`BirdOfPrey` → *Bird of Prey*,
    tutorial missions **override by construction**: their literal
    `LoadBridge.Load("…")` calls never consult the service, so no hook, no SDK
    edit, no fidelity risk.
-2. **Ship universe = every `ships/<Name>.py` hardpoint script** visible through
-   the SDK scripts dir plus the mod overlay, keyed by script stem (what
-   `CreatePlayerShip` / `g_sPlayerType` take). Mode-agnostic; needs no
-   QuickBattle import to populate the panel from a campaign pause menu; picks
-   up sideloaded ships whether or not they went through Foundation. BC has no
-   "flyable" flag, so the list includes stations/probes — harmless noise.
-   Rejected: QuickBattle's friendly table (QB-flavoured, contradicts 1) and a
-   flyability heuristic (our invention, no BC authority).
+2. **Ship universe = BC's own player-ship menu** (revised 2026-09-19; the
+   first cut listed every `ships/<Name>.py` and the panel showed asteroids
+   and starbases). `GeneratePlayerShipMenu` (SDK `QuickBattle.py:1622–1703`)
+   hard-codes sixteen hulls — Akira, Ambassador, Galaxy, Nebula, Sovereign,
+   BirdOfPrey, Vorcha, Marauder, Warbird, Galor, Keldon, CardHybrid,
+   KessokLight, KessokHeavy, Shuttle, Transport — gated by unlock bitfields
+   that default to everything-unlocked (`:1181`) and which nothing in our
+   tree narrows. Mods extend that menu through Foundation's
+   `RegisterQBPlayerShipMenu` (we model it: `playerMenuGroup` on the
+   `ShipDefinition`, plugins loaded at boot before `bridge_pins`). So:
+   `STOCK_PLAYER_SHIPS` ∪ Foundation player registrations, each kept only
+   if its `ships/<stem>.py` exists in the SDK tree or the mod overlay. Keyed
+   by script stem (what `CreatePlayerShip` / `g_sPlayerType` take); still
+   mode-agnostic and needs no QuickBattle import. Rejected: the `ships/`
+   directory scan (too wide — stations, probes, campaign one-offs are
+   friend/enemy catalog entries only), QuickBattle's friendly table (it holds
+   the starbases too), and a flyability heuristic (our invention).
 3. **A pinned bridge that cannot be loaded ⇒ fall back to the default bridge,
    log once, keep the pin and show it as missing.** Never break the boot,
    always NAME what could not be resolved (the mod-support convention);
@@ -118,10 +127,14 @@ def available_ships() -> list[str]      # script stems, sorted, case-deduplicate
 def ship_label(stem) -> str             # Ships.tgl string, else stem
 ```
 
-Stems of `ships/*.py` from `paths.sdk_scripts()` plus the mod overlay
-(`mods.current()` index entries under `scripts/ships/`), excluding
-`__init__`, deduplicated case-insensitively (the overlay is case-folded),
-sorted by label. Resolved at call time — no module-level path constant
+`STOCK_PLAYER_SHIPS` (Decision 2) plus the `shipFile` of every Foundation
+definition with `playerMenuGroup` set, each kept only if a matching
+`ships/<stem>.py` exists in `paths.sdk_scripts()` or the mod overlay
+(`mods.current()` index entries under `scripts/ships/`), matched
+case-insensitively (the overlay is case-folded; the LC pack declares
+`LCintrepid` against `LCIntrepid.py`) — a stock override keeps the stock
+spelling, a mod registration takes its script's. Sorted by label. Resolved
+at call time — no module-level path constant
 (`tests/unit/test_path_indirection.py` guards this). `ship_label` reads
 `data/TGL/Ships.tgl` through `paths.game_asset` via the existing
 `engine.missions.tgl_reader`, cached per process.
@@ -186,7 +199,8 @@ structural; the guard keeps the panel honest. Editing = remove + add.
   document is cleared too), which makes "absent ⇒ defaults" the true
   first-launch state again.
 - **Tolerant read** (the file is backed up, restored and hand-edited): a ship
-  not in the current install stays and is shown as *(ship not installed)*;
+  outside `available_ships()` — absent, or installed but not a player hull —
+  stays and is shown as *(not playable)*;
   a bridge not available stays and is shown as *(missing)*. Nothing is
   pruned. Only a malformed file is quarantined.
 - `settings.json` is untouched; no `SETTINGS` row is added, so
@@ -326,7 +340,7 @@ Done footer stay put — Cancel / Save sit at the foot of the tab body):
 - Remove is the only edit; re-adding is the edit path.
 - A row whose bridge is unavailable carries `bridge_missing: true`; a row
   whose ship is not in `available_ships()` carries `ship_missing: true`. The
-  JS renders the *(missing)* / *(ship not installed)* suffix on the same row
+  JS renders the *(missing)* / *(not playable)* suffix on the same row
   with the same Remove button.
 - Reset on this tab calls `BridgePins.reset()` — per-tab, like the others,
   so it cannot touch graphics or keybindings.

@@ -294,7 +294,7 @@ function _cpRenderBridgesListView(b, isFoc) {
     }
     b.pins.forEach(function (p) {
         const shipTxt = escapeHtmlCP(p.ship_label)
-                      + (p.ship_missing ? ' <span class="cp-bridges__missing">(ship not installed)</span>' : '');
+                      + (p.ship_missing ? ' <span class="cp-bridges__missing">(not playable)</span>' : '');
         const bridgeTxt = escapeHtmlCP(p.bridge_label)
                         + (p.bridge_missing ? ' <span class="cp-bridges__missing">(missing)</span>' : '');
         html += '<div class="cp-row cp-bridges__pin' + (isFoc('bridge_remove', p.ship) ? ' cp-focused' : '') + '">'

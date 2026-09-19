@@ -32,6 +32,24 @@ STOCK_BRIDGES: tuple = (
 
 _SHIP_KEY_RE = re.compile(r"^ships/([^/]+)\.py$")
 
+# BC's own "Player and Region" picker: the hulls GeneratePlayerShipMenu
+# offers (sdk QuickBattle.py:1622-1703), by the script stem SelectPlayerShip
+# assigns to g_sPlayerType (g_dFriendlyShipTypeToDetails[type][0]). The
+# ships/ directory is NOT the player universe -- stations, asteroids, probes
+# and the campaign one-offs are friend/enemy catalog entries only. The unlock
+# bitfields that gate the menu default to everything-unlocked (:1181) and
+# nothing in this tree narrows them, so they are ignored here. Mods extend
+# the menu through Foundation's RegisterQBPlayerShipMenu.
+STOCK_PLAYER_SHIPS: tuple = (
+    "Akira", "Ambassador", "Galaxy", "Nebula", "Sovereign",      # Fed
+    "BirdOfPrey", "Vorcha",                                      # Klingon
+    "Marauder",                                                  # Ferengi
+    "Warbird",                                                   # Romulan
+    "Galor", "Keldon", "CardHybrid",                             # Cardassian
+    "KessokLight", "KessokHeavy",                                # Kessok
+    "Shuttle", "Transport",                                      # Other
+)
+
 _cache: dict = {}
 _cache_index = None
 
@@ -130,17 +148,39 @@ def _mod_ship_stems() -> dict:
     return out
 
 
+def _mod_player_ship_files() -> list:
+    """shipFile of every Foundation definition registered on the player
+    menu (RegisterQBPlayerShipMenu), in registration order. A definition
+    registered only for the friend/enemy catalog is not a player hull."""
+    from engine.foundation.shipdef import all_definitions
+    out = []
+    for d in all_definitions():
+        if getattr(d, "playerMenuGroup", None) is None:
+            continue
+        ship_file = getattr(d, "shipFile", None)
+        if ship_file:
+            out.append(str(ship_file))
+    return out
+
+
 def available_ships() -> list:
-    """Script stems of every ship the player could fly, sorted by label.
-    A mod override of a stock ship keeps the STOCK spelling (one row)."""
+    """Script stems of every ship BC's player picker would offer, sorted by
+    label: STOCK_PLAYER_SHIPS plus Foundation player-menu registrations,
+    each kept only if its ships/<stem>.py exists (stock tree or mod
+    overlay). A mod override of a stock ship keeps the STOCK spelling (one
+    row); a mod registration's spelling folds onto its script's."""
     cache = _cache_for_current_index()
     got = cache.get("ships")
     if got is None:
-        stock = _stock_ship_stems()
-        merged = dict(stock)
+        installed = dict(_stock_ship_stems())
         for folded, stem in _mod_ship_stems().items():
-            if folded not in merged:
-                merged[folded] = stem
+            installed.setdefault(folded, stem)
+        wanted = list(STOCK_PLAYER_SHIPS) + _mod_player_ship_files()
+        merged: dict = {}
+        for name in wanted:
+            stem = installed.get(name.lower())
+            if stem is not None:
+                merged.setdefault(name.lower(), stem)
         got = sorted(merged.values(), key=lambda s: (ship_label(s).lower(), s))
         cache["ships"] = got
     return list(got)
@@ -235,8 +275,9 @@ class BridgePins:
 
     def rows(self) -> list:
         """Panel rows in file order, with labels and missing flags. Nothing
-        is pruned: a not-installed ship or an unavailable bridge is shown,
-        not hidden (the file is backed up, restored and hand-edited)."""
+        is pruned: a ship outside available_ships() (absent, or installed
+        but not a player hull) or an unavailable bridge is shown, not
+        hidden (the file is backed up, restored and hand-edited)."""
         ships = set(available_ships())
         return [PinRow(ship, ship_label(ship), bridge, bridge_label(bridge),
                        ship not in ships, not is_available(bridge))
