@@ -1159,7 +1159,19 @@ class ObjectGroup(TGEventHandlerObject):
         TGObjPtrEvent, GetObjPtr() = the object, destination = the group.
         Called from SetClass after the object's containing-set is updated,
         because EnteredSet reads GetContainingSet().GetName() off the object.
-        The warp-transit set is NOT suppressed here (see plan Task 11)."""
+        The warp-transit set is NOT suppressed here (see plan Task 11).
+
+        Each dispatch is isolated in try/except: the destination (the group
+        itself) is a TGEventHandlerObject, so TGEventManager.AddEvent reaches
+        it through the deliberately UNguarded destination-dispatch path
+        (dest.ProcessEvent(event)) -- an SDK instance handler registered
+        there (e.g. HelmMenuHandlers.FriendlyEnteredSet, wired by
+        AddFleetCommandHandlers) can raise. BC's own event dispatch reports a
+        Python handler exception and keeps the engine ticking; a set add is
+        engine state and must never be unwound by a downstream handler
+        failing -- the same ruling as Task 12's DeleteObjectFromSet
+        broadcast. A failure in one group's handler must not stop the next
+        group in the loop from hearing the event either."""
         name = obj.GetName() if hasattr(obj, "GetName") else None
         if not name:
             return
@@ -1177,7 +1189,11 @@ class ObjectGroup(TGEventHandlerObject):
             evt.SetObjPtr(obj)
             evt.SetSource(obj)
             evt.SetDestination(group)
-            App.g_kEventManager.AddEvent(evt)
+            try:
+                App.g_kEventManager.AddEvent(evt)
+            except Exception:
+                App.g_kEventManager._log_broadcast_failure(
+                    "ObjectGroup membership -> %s" % type(group).__name__, evt)
 
 
 class ObjectGroupWithInfo(ObjectGroup):

@@ -1292,6 +1292,20 @@ def _reset_leakable_engine_globals():
         damage_geometry.reset()
     except Exception:
         pass
+    # ObjectGroup._live: a class-level WeakSet of every live group, used by
+    # ObjectGroup.broadcast_membership to find groups watching an object's
+    # name on every AddObjectToSet/RemoveObjectFromSet. A stale group left
+    # over from a prior test (something still holding a strong ref to it)
+    # can carry an SDK instance handler that dereferences
+    # App.Game_GetCurrentGame() -- None once that test's Game singleton is
+    # torn down -- so every LATER test's set add would run that dead
+    # handler. Clearing here ensures a prior test's groups can never receive
+    # membership events again.
+    try:
+        from engine.appc.objects import ObjectGroup
+        ObjectGroup._live.clear()
+    except Exception:
+        pass
     # TransformStore is deliberately NOT reset here. On the native backend
     # `_reset_store_for_tests()` only drops the Python wrapper object — the
     # C++ `dauntless::transform_store()` singleton and every slot it holds

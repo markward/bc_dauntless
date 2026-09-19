@@ -85,6 +85,45 @@ def test_non_ship_objects_also_post():
     assert [e[0] for e in rec.events] == ["in"]
 
 
+def _raising_handler(pGroup, evt):
+    raise RuntimeError("boom")
+
+
+def test_throwing_group_handler_does_not_unwind_the_set_add(capfd):
+    """A group's own instance handler -- registered via
+    AddPythonFuncHandlerForInstance with a dotted function name, the way
+    AddFleetCommandHandlers wires HelmMenuHandlers.FriendlyEnteredSet -- is
+    reached through TGEventManager.AddEvent's UNguarded destination dispatch
+    (dest.ProcessEvent(event)). If it raises, that must not unwind
+    SetClass.AddObjectToSet: a set add is engine state and must never be
+    undone by a downstream SDK handler failing, the same ruling as Task 12's
+    DeleteObjectFromSet broadcast. A second, well-behaved group must still
+    receive its event."""
+    throwing = ObjectGroup()
+    throwing.AddName("Bart")
+    throwing.SetEventFlag(App.ObjectGroup.ENTERED_SET)
+    throwing.AddPythonFuncHandlerForInstance(
+        App.ET_OBJECT_GROUP_OBJECT_ENTERED_SET,
+        "%s._raising_handler" % __name__,
+    )
+
+    healthy = ObjectGroup()
+    healthy.AddName("Bart")
+    rec = _subscribe(healthy)
+
+    pSet = App.SetClass_Create(); pSet.SetName("S"); App.g_kSetManager._sets["S"] = pSet
+    ship = _ship()
+
+    pSet.AddObjectToSet(ship, "Bart")  # must not raise
+
+    assert pSet.GetObject("Bart") is ship
+    assert ship.GetContainingSet() is pSet
+    assert rec.events == [("in", ship, healthy)]
+
+    out, err = capfd.readouterr()
+    assert "[events] broadcast handler" in err
+
+
 def test_set_event_flag_single_arg_applies_to_names_added_later():
     """ConditionExists.SetTarget does RemoveAllNames(); AddName(sTarget) after
     the group-level SetEventFlag(flag) call in its constructor. The flag must
