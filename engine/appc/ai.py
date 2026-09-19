@@ -326,13 +326,16 @@ class OptimizedFireScript:
     tree contains a PreprocessingAI — i.e. everything except Stop.
 
     Headless Phase 1 returns the generic _AIScriptInstance data-bag from
-    GetPreprocessingInstance, so no node is currently an instance of this
-    class: the isinstance check is False, the fire branch is skipped, and the
-    AI still installs (the ship maneuvers per the order).
+    GetPreprocessingInstance, so no node backed by that data-bag is an
+    instance of this class: the isinstance check is False for it, the fire
+    branch is skipped, and the AI still installs (the ship maneuvers per the
+    order) without engaging weapons.
 
-    TODO(combat-fidelity): to make player 'Attack' actually engage weapons,
-    have the fire preprocessor's GetPreprocessingInstance return an
-    OptimizedFireScript instance so the CheckFiring branch runs. Deferred.
+    The SDK-backed path is different: engine/appc/ai_optimized.py's
+    `_non_lethal_class` mixes this class into the bases of the dynamic
+    FireScript wrapper it builds, so a real bound FireScript node IS an
+    instance of this class and StartAI's discovery loop finds it. See
+    ai_optimized.py and tests/unit/test_optimized_fire_script_identity.py.
     """
     pass
 

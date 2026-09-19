@@ -435,7 +435,17 @@ def _non_lethal_class(base: type) -> type:
     }
     if base.__name__ == "FireScript":
         members["GetChildTargets"] = GetChildTargets
-    cls = type(base.__name__ + "_NonLethal", (base,), members)
+    bases = (base,)
+    if base.__name__ == "FireScript":
+        # BC's binary swaps FireScript for its native OptimizedFireScript
+        # (App.py:5186, a PreprocessingAI subclass carrying the control
+        # surface). TacticalMenuHandlers.GetPlayerFiringAIScripts:1861 finds
+        # the player's fire nodes by isinstance against that class — so the
+        # wrapper must BE one. The SDK FireScript already defines every
+        # method the binding lists (Preprocessors.py:172-230).
+        from engine.appc.ai import OptimizedFireScript
+        bases = (base, OptimizedFireScript)
+    cls = type(base.__name__ + "_NonLethal", bases, members)
     _NON_LETHAL_CLASSES[base] = cls
     # Register the dynamic class in the module globals so pickle can find it at
     # unpickle time via attribute lookup. Repeated calls are idempotent due to
