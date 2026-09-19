@@ -632,6 +632,19 @@ def PulseWeapon_Cast(obj):
     return obj if isinstance(obj, PulseWeapon) else None
 
 
+def PhaserBank_Cast(obj):
+    """SDK AI/PlainAI/PhaserSweep.py:52 and
+    Conditions/ConditionInPhaserFiringArc.py:173 —
+    `pBank = App.PhaserBank_Cast(pSystem.GetChildSubsystem(i))`.
+    Was undefined: a truthy _NamedStub made the sweep never pick a bank and
+    the arc condition read TRUE for every target (heatmap ranks 7-10/61)."""
+    try:
+        from engine.appc.weapon_subsystems import PhaserBank
+    except ImportError:
+        return None
+    return obj if isinstance(obj, PhaserBank) else None
+
+
 def PulseWeaponSystem_Cast(obj):
     """SDK AI/Preprocessors.py:771 (FireScript) —
     `pPulseSystem = App.PulseWeaponSystem_Cast(pWeaponSystem)`, then
