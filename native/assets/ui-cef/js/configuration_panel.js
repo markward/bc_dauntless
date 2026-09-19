@@ -93,12 +93,17 @@ function _cpFocusableList(state) {
     } else if (state.selected_tab === 'bridges') {
         const b = state.bridges || {pins: [], ships: [], bridges_available: [], adding: false};
         if (b.adding) {
-            b.ships.forEach(s => out.push({kind: 'bridge_ship', target: s.id}));
+            if (!b.edit_ship) {     // editing: the ship is fixed, no ship rows
+                b.ships.forEach(s => out.push({kind: 'bridge_ship', target: s.id}));
+            }
             b.bridges_available.forEach(x => out.push({kind: 'bridge_pick', target: x.id}));
             out.push({kind: 'ctrl', target: 'bridge_cancel'});
             out.push({kind: 'ctrl', target: 'bridge_add'});
         } else {
-            b.pins.forEach(p => out.push({kind: 'bridge_remove', target: p.ship}));
+            b.pins.forEach(p => {
+                out.push({kind: 'bridge_edit', target: p.ship});
+                out.push({kind: 'bridge_remove', target: p.ship});
+            });
             out.push({kind: 'ctrl', target: 'bridge_add_open'});
             out.push({kind: 'ctrl', target: 'reset_bridges'});
         }
@@ -269,10 +274,12 @@ function _cpRenderControlsBody(state, focusables) {
 }
 
 // Bridges tab — the ship->bridge matrix, two views inside the tab body.
-// List view: the mapped rows with Remove, an "Add Mapping" button, the
-// default-bridge note and the Reset row. Add view (state.bridges.adding):
+// List view: the mapped rows with Edit/Remove, an "Add Mapping" button,
+// the default-bridge note and the Reset row. Add view (state.bridges.adding):
 // a scrollable ship list (unmapped ships only — Python enforces "each ship
 // once" by never offering a mapped one), a bridge picker, and Cancel/Save.
+// Edit (edit_ship set) is the add view with the ship fixed: no ship list,
+// the picker starts on the row's current bridge, Save re-points it.
 // Python owns the view flag; ESC on the add view is its Cancel.
 // No native select element: CEF OSR has no popup surface for one.
 // Vocabulary: the UI says "mapping"/"mapped"; "pin" is the internal name.
@@ -280,8 +287,9 @@ function _cpRenderBridgesBody(state, focusables) {
     const focused = focusables[state.focused] || {};
     const isFoc = (kind, target) => focused.kind === kind && focused.target === target;
     const b = state.bridges || {pins: [], ships: [], bridges_available: [],
-                                adding: false, add_ship: null, add_bridge: null,
-                                can_add: false, default_bridge_label: ''};
+                                adding: false, edit_ship: null, add_ship: null,
+                                add_bridge: null, can_add: false,
+                                default_bridge_label: ''};
     return b.adding ? _cpRenderBridgesAddView(b, isFoc)
                     : _cpRenderBridgesListView(b, isFoc);
 }
@@ -297,10 +305,12 @@ function _cpRenderBridgesListView(b, isFoc) {
                       + (p.ship_missing ? ' <span class="cp-bridges__missing">(not playable)</span>' : '');
         const bridgeTxt = escapeHtmlCP(p.bridge_label)
                         + (p.bridge_missing ? ' <span class="cp-bridges__missing">(missing)</span>' : '');
-        html += '<div class="cp-row cp-bridges__pin' + (isFoc('bridge_remove', p.ship) ? ' cp-focused' : '') + '">'
+        html += '<div class="cp-row cp-bridges__pin">'
               +     '<span class="cp-label cp-bridges__ship">' + shipTxt + '</span>'
               +     '<span class="cp-label cp-bridges__bridge">' + bridgeTxt + '</span>'
-              +     '<button class="cp-toggle"'
+              +     '<button class="cp-toggle' + (isFoc('bridge_edit', p.ship) ? ' cp-focused' : '') + '"'
+              +        ' onclick="dauntlessEvent(\'configuration/bridge:edit:' + _cpEventArg(p.ship) + '\')">Edit</button>'
+              +     '<button class="cp-toggle' + (isFoc('bridge_remove', p.ship) ? ' cp-focused' : '') + '"'
               +        ' onclick="dauntlessEvent(\'configuration/bridge:remove:' + _cpEventArg(p.ship) + '\')">Remove</button>'
               + '</div>';
     });
@@ -335,18 +345,28 @@ function _cpRenderBridgesListView(b, isFoc) {
 
 function _cpRenderBridgesAddView(b, isFoc) {
     let html = '';
-    html += '<div class="cp-group-header">Add Mapping</div>';
+    const editing = !!b.edit_ship;
+    html += '<div class="cp-group-header">' + (editing ? 'Edit Mapping' : 'Add Mapping') + '</div>';
     html += '<div class="cp-bridges__add">';
-    html +=   '<div class="cp-bridges__ships">';
-    b.ships.forEach(function (s) {
-        const sel = s.id === b.add_ship;
-        html += '<div class="sc-row' + (sel ? ' sc-row--selected' : '')
-              +   (isFoc('bridge_ship', s.id) ? ' cp-focused' : '') + '"'
-              +   ' onclick="dauntlessEvent(\'configuration/bridge:ship:' + _cpEventArg(s.id) + '\')">'
-              +   escapeHtmlCP(s.label)
+    if (editing) {
+        // The ship is fixed: show it where the list would be. Its label
+        // comes from the row being edited (labels live on pins, not ships).
+        const row = b.pins.find(p => p.ship === b.edit_ship);
+        html += '<div class="cp-bridges__fixed">'
+              +   '<span class="cp-label">' + escapeHtmlCP(row ? row.ship_label : b.edit_ship) + '</span>'
               + '</div>';
-    });
-    html +=   '</div>';
+    } else {
+        html += '<div class="cp-bridges__ships">';
+        b.ships.forEach(function (s) {
+            const sel = s.id === b.add_ship;
+            html += '<div class="sc-row' + (sel ? ' sc-row--selected' : '')
+                  +   (isFoc('bridge_ship', s.id) ? ' cp-focused' : '') + '"'
+                  +   ' onclick="dauntlessEvent(\'configuration/bridge:ship:' + _cpEventArg(s.id) + '\')">'
+                  +   escapeHtmlCP(s.label)
+                  + '</div>';
+        });
+        html += '</div>';
+    }
     html +=   '<div class="cp-bridges__picker">';
     b.bridges_available.forEach(function (x) {
         const on = x.id === b.add_bridge;

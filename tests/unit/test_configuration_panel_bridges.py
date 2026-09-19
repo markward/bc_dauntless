@@ -138,6 +138,71 @@ def test_esc_in_the_add_view_cancels_the_add_not_the_panel(pins):
     assert not p.is_open()
 
 
+def test_edit_opens_the_view_on_the_rows_ship_and_current_bridge(pins):
+    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    assert p.dispatch_event("bridge:edit:Akira") is True
+    b = _body(p)["bridges"]
+    assert b["adding"] is True and b["edit_ship"] == "Akira"
+    assert b["add_ship"] == "Akira"
+    assert b["add_bridge"] == "SovereignBridge"     # the row's current bridge
+    assert b["can_add"] is True                     # Save is live at once
+
+
+def test_edit_save_replaces_the_bridge_and_returns_to_the_list(pins):
+    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    p.dispatch_event("bridge:edit:Akira")
+    assert p.dispatch_event("bridge:bridge:GalaxyBridge") is True
+    assert p.dispatch_event("bridge:add") is True
+    b = _body(p)["bridges"]
+    assert pins.pins()["Akira"] == "GalaxyBridge"
+    assert [r["ship"] for r in b["pins"]] == ["Galaxy", "Sovereign", "Akira"]
+    assert b["adding"] is False and b["edit_ship"] is None
+
+
+def test_edit_cancel_keeps_the_old_bridge(pins):
+    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    p.dispatch_event("bridge:edit:Akira"); p.dispatch_event("bridge:bridge:GalaxyBridge")
+    p.handle_key_esc()
+    assert p.is_open()
+    assert pins.pins()["Akira"] == "SovereignBridge"
+    b = _body(p)["bridges"]
+    assert b["adding"] is False and b["edit_ship"] is None and b["add_ship"] is None
+
+
+def test_edit_of_an_unmapped_ship_is_rejected(pins):
+    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    assert p.dispatch_event("bridge:edit:BirdOfPrey") is False
+    assert _body(p)["bridges"]["adding"] is False
+
+
+def test_edit_allows_a_row_whose_ship_or_bridge_is_missing(fake_install, tmp_path):
+    f = tmp_path / "bridges.json"
+    f.write_text('{"version": 1, "pins": {"LCIntrepid": "VoyagerBridge"}}')
+    pins = bs.load_bridge_pins(f)
+    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    assert p.dispatch_event("bridge:edit:LCIntrepid") is True
+    b = _body(p)["bridges"]
+    assert b["add_bridge"] == "GalaxyBridge"        # unavailable -> first available
+    p.dispatch_event("bridge:add")
+    assert pins.pins()["LCIntrepid"] == "GalaxyBridge"
+
+
+def test_edit_view_does_not_change_ship_and_has_no_ship_rows(pins):
+    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    p.dispatch_event("bridge:edit:Akira")
+    assert p.dispatch_event("bridge:ship:BirdOfPrey") is False
+    assert p._focusables() == [
+        ("tab", "graphics"), ("tab", "bridges"),
+        ("bridge_pick", "GalaxyBridge"), ("bridge_pick", "SovereignBridge"),
+        ("ctrl", "bridge_cancel"), ("ctrl", "bridge_add"),
+    ]
+
+
+def test_edit_is_a_list_view_control(pins):
+    p = _make(pins); _open_add(p)
+    assert p.dispatch_event("bridge:edit:Akira") is False
+
+
 def test_add_without_a_ship_is_rejected(pins):
     p = _make(pins); _open_add(p)
     assert p.dispatch_event("bridge:add") is False
@@ -192,8 +257,9 @@ def test_focusables_mirror_the_list_view_rows(pins):
     p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
     assert p._focusables() == [
         ("tab", "graphics"), ("tab", "bridges"),
-        ("bridge_remove", "Galaxy"), ("bridge_remove", "Sovereign"),
-        ("bridge_remove", "Akira"),
+        ("bridge_edit", "Galaxy"), ("bridge_remove", "Galaxy"),
+        ("bridge_edit", "Sovereign"), ("bridge_remove", "Sovereign"),
+        ("bridge_edit", "Akira"), ("bridge_remove", "Akira"),
         ("ctrl", "bridge_add_open"), ("ctrl", "reset_bridges"),
     ]
 
@@ -222,6 +288,10 @@ def test_keyboard_activation_drives_the_view_transitions(pins):
     p.handle_input(press(keys.KEY_ENTER))
     assert _body(p)["bridges"]["adding"] is True
     assert p._focused == -1                         # focus resets across views
+    p.dispatch_event("bridge:cancel")
+    p._focused = p._focusables().index(("bridge_edit", "Akira"))
+    p.handle_input(press(keys.KEY_ENTER))
+    assert _body(p)["bridges"]["edit_ship"] == "Akira"
     p._focused = p._focusables().index(("ctrl", "bridge_cancel"))
     p.handle_input(press(keys.KEY_ENTER))
     assert _body(p)["bridges"]["adding"] is False
@@ -306,7 +376,7 @@ def test_js_focusable_list_has_a_bridges_branch_in_python_order():
     assert "b.adding" in adding
     assert re.findall(r"kind: '(\w+)'", adding) == ["bridge_ship", "bridge_pick", "ctrl", "ctrl"]
     assert re.findall(r"target: '(\w+)'", adding) == ["bridge_cancel", "bridge_add"]
-    assert re.findall(r"kind: '(\w+)'", listing) == ["bridge_remove", "ctrl", "ctrl"]
+    assert re.findall(r"kind: '(\w+)'", listing) == ["bridge_edit", "bridge_remove", "ctrl", "ctrl"]
     assert re.findall(r"target: '(\w+)'", listing) == ["bridge_add_open", "reset_bridges"]
 
 
@@ -316,6 +386,7 @@ def test_js_renders_the_bridges_tab_and_dispatches_every_action():
     assert "selected_tab === 'bridges'" in src
     for action in ("configuration/bridge:ship:", "configuration/bridge:bridge:",
                    "configuration/bridge:add\\'", "configuration/bridge:add_open",
+                   "configuration/bridge:edit:",
                    "configuration/bridge:cancel", "configuration/bridge:remove:",
                    "configuration/reset:bridges"):
         assert action in src, action
@@ -331,7 +402,7 @@ def test_js_bridges_copy_says_mapped_never_pinned():
     visible = re.findall(r">([^<'\"]*?)<|'([^']*?)'", body)
     texts = " ".join(a or b for a, b in visible)
     assert not re.search(r"\bpin(ned|s)?\b", texts, re.I), texts
-    for copy in ("Mapped", "Add Mapping", "Cancel", "Save",
+    for copy in ("Mapped", "Add Mapping", "Edit Mapping", "Edit", "Cancel", "Save",
                  "No ships mapped.", "Every ship is mapped.",
                  "Ships without a mapping use the"):
         assert copy in body, copy

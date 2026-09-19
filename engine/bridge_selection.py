@@ -223,6 +223,10 @@ class DuplicateShip(ValueError):
     """add(): the ship already has a pin (edit = remove + add)."""
 
 
+class UnmappedShip(ValueError):
+    """set_bridge(): the ship has no mapping to change (use add)."""
+
+
 class UnknownBridge(ValueError):
     """add(): the bridge is not in available_bridges()."""
 
@@ -299,6 +303,17 @@ class BridgePins:
         current = self.pins()
         if ship in current:
             raise DuplicateShip(ship)
+        if not is_available(bridge):
+            raise UnknownBridge(bridge)
+        current[ship] = bridge
+        self._write_all(current)
+
+    def set_bridge(self, ship: str, bridge: str) -> None:
+        """Re-point an existing mapping. File order is kept (the row stays
+        where it was); the bridge must be available, the old one need not be."""
+        current = self.pins()
+        if ship not in current:
+            raise UnmappedShip(ship)
         if not is_available(bridge):
             raise UnknownBridge(bridge)
         current[ship] = bridge

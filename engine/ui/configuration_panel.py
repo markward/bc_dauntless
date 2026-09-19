@@ -198,6 +198,9 @@ class ConfigurationPanel(Panel):
         # the "Add Mapping" view (ship list + bridge picker + Cancel/Save).
         # Python owns the flag; JS only renders it.
         self._bridge_adding = False
+        # Set while the add view is editing an existing row: the ship is
+        # fixed and Save re-points its bridge instead of adding.
+        self._bridge_edit_ship: Optional[str] = None
         # Persistence seam. Defaults are no-ops so the panel works standalone
         # and every existing construction site keeps compiling. The panel never
         # imports the settings store — the host loop binds these.
@@ -231,6 +234,7 @@ class ConfigurationPanel(Panel):
         self._controls_message = ""
         self._bridge_add_ship = None
         self._bridge_adding = False
+        self._bridge_edit_ship = None
 
     def _controls_rows(self) -> list:
         """[{id, label, category, key}] for the Controls tab, in ACTIONS order."""
@@ -256,6 +260,7 @@ class ConfigurationPanel(Panel):
             "bridges_available": [{"id": b.script_name, "label": b.label}
                                   for b in available],
             "adding": self._bridge_adding,
+            "edit_ship": self._bridge_edit_ship,
             "add_ship": self._bridge_add_ship,
             "add_bridge": self._bridge_add_bridge,
             "can_add": (self._bridge_add_ship is not None
@@ -469,6 +474,21 @@ class ConfigurationPanel(Panel):
                 self._bridge_adding = True
                 self._focused = -1              # the focus list changes shape
                 return True
+            if rest.startswith("edit:"):
+                ship = rest[len("edit:"):]
+                if self._bridge_adding or ship not in self._bridge_pins.pins():
+                    return False
+                current = self._bridge_pins.pins()[ship]
+                available = bs.available_bridges()
+                self._bridge_add_ship = ship
+                self._bridge_edit_ship = ship
+                # An unavailable bridge (mod removed) falls to the first
+                # available so Save always writes something loadable.
+                self._bridge_add_bridge = current if bs.is_available(current) else (
+                    available[0].script_name if available else None)
+                self._bridge_adding = True
+                self._focused = -1              # the focus list changes shape
+                return True
             if rest == "cancel":
                 if not self._bridge_adding:
                     return False
@@ -479,6 +499,8 @@ class ConfigurationPanel(Panel):
                 return False
             if rest.startswith("ship:"):
                 ship = rest[len("ship:"):]
+                if self._bridge_edit_ship is not None:
+                    return False                # the ship is fixed while editing
                 if ship not in self._bridge_pins.unpinned_ships():
                     return False
                 self._bridge_add_ship = ship
@@ -493,8 +515,12 @@ class ConfigurationPanel(Panel):
                 if self._bridge_add_ship is None or self._bridge_add_bridge is None:
                     return False
                 try:
-                    self._bridge_pins.add(self._bridge_add_ship, self._bridge_add_bridge)
-                except (bs.DuplicateShip, bs.UnknownBridge):
+                    if self._bridge_edit_ship is not None:
+                        self._bridge_pins.set_bridge(self._bridge_edit_ship,
+                                                     self._bridge_add_bridge)
+                    else:
+                        self._bridge_pins.add(self._bridge_add_ship, self._bridge_add_bridge)
+                except (bs.DuplicateShip, bs.UnmappedShip, bs.UnknownBridge):
                     # Only reachable by a race with a hand-edit; the re-push
                     # shows the truth.
                     self._bridge_add_ship = None
@@ -534,6 +560,7 @@ class ConfigurationPanel(Panel):
             self._focused = -1              # the focus list changes shape
         self._bridge_adding = False
         self._bridge_add_ship = None
+        self._bridge_edit_ship = None
 
     def invalidate(self) -> None:
         # Focus reset is handled by close(); invalidate() is only the
@@ -610,6 +637,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("tab:" + target)
         elif activate and kind == "bridge_remove":
             self.dispatch_event("bridge:remove:" + target)
+        elif activate and kind == "bridge_edit":
+            self.dispatch_event("bridge:edit:" + target)
         elif activate and kind == "bridge_ship":
             self.dispatch_event("bridge:ship:" + target)
         elif activate and kind == "bridge_pick":
@@ -675,10 +704,12 @@ class ConfigurationPanel(Panel):
         elif self._selected_tab == "bridges" and self._bridge_pins is not None:
             from engine import bridge_selection as bs
             if self._bridge_adding:
-                out += [("bridge_ship", s) for s in self._bridge_pins.unpinned_ships()]
+                if self._bridge_edit_ship is None:      # editing: the ship is fixed
+                    out += [("bridge_ship", s) for s in self._bridge_pins.unpinned_ships()]
                 out += [("bridge_pick", b.script_name) for b in bs.available_bridges()]
                 out += [("ctrl", "bridge_cancel"), ("ctrl", "bridge_add")]
             else:
-                out += [("bridge_remove", r.ship) for r in self._bridge_pins.rows()]
+                for r in self._bridge_pins.rows():
+                    out += [("bridge_edit", r.ship), ("bridge_remove", r.ship)]
                 out += [("ctrl", "bridge_add_open"), ("ctrl", "reset_bridges")]
         return out

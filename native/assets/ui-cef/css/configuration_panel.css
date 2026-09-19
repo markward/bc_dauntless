@@ -294,6 +294,13 @@
     align-content: start;
 }
 .cp-bridges__pick { width: 100%; text-align: left; }   /* overrides .cp-toggle's 48px */
+.cp-bridges__pin .cp-toggle { width: auto; padding: 0 10px; margin-left: 6px; }
+.cp-bridges__fixed {
+    flex: 1 1 55%;
+    padding: 6px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    align-self: flex-start;
+}
 .cp-bridges__addrow { display: flex; margin: 8px 0 4px; }
 .cp-bridges__openbtn { flex: 1 1 auto; }
 .cp-bridges__actions {

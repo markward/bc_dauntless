@@ -153,6 +153,7 @@ class BridgePins:                       # thin façade over a SettingsStore
                                         # absent ⇒ copy of DEFAULT_PINS
     def resolve(self, ship_name) -> str
     def add(self, ship, bridge) -> None # raises DuplicateShip / UnknownBridge
+    def set_bridge(self, ship, bridge) -> None  # raises UnmappedShip / UnknownBridge; keeps file order
     def remove(self, ship) -> None
     def reset(self) -> None             # deletes the FILE
     def rows(self) -> list[PinRow]      # for the panel; see Section 3
@@ -298,10 +299,10 @@ panel copy.
 
 ```
  Mapped
-  Galaxy          Galaxy                 [Remove]
-  Sovereign       Sovereign              [Remove]
-  Akira           Sovereign              [Remove]
-  LCIntrepid      Voyager  (missing)     [Remove]
+  Galaxy          Galaxy            [Edit] [Remove]
+  Sovereign       Sovereign         [Edit] [Remove]
+  Akira           Sovereign         [Edit] [Remove]
+  LCIntrepid      Voyager (missing) [Edit] [Remove]
 
  [            Add Mapping             ]
  Ships without a mapping use the Galaxy bridge.
@@ -323,6 +324,21 @@ Done footer stay put — Cancel / Save sit at the foot of the tab body):
                               [Cancel]  [ Save ]
 ```
 
+**Edit Mapping view** (a row's *Edit*): the same view with the ship fixed —
+its label sits where the ship list would be, the picker starts on the
+row's current bridge (or the first available one if that bridge is gone),
+and Save re-points the mapping in place. Rows flagged *(not playable)* /
+*(missing)* can be edited; that is exactly when re-pointing is wanted.
+
+```
+ Edit Mapping
+  Ship                       Bridge
+  ┌──────────────────┐       (•) Galaxy
+  │ Akira            │       ( ) Sovereign
+  └──────────────────┘
+                              [Cancel]  [ Save ]
+```
+
 ### Rules (enforced in Python; the JS is dumb)
 
 - The ship list **excludes ships already mapped** — "once" is structural,
@@ -337,7 +353,9 @@ Done footer stay put — Cancel / Save sit at the foot of the tab body):
   does **not** close the panel; only the list view's ESC does.
 - Ship/bridge selection and Save are add-view controls: dispatched outside
   the view they are refused.
-- Remove is the only edit; re-adding is the edit path.
+- Edit changes a row's bridge only (`BridgePins.set_bridge`, which keeps
+  file order and refuses an unmapped ship); the ship of a mapping never
+  changes — that is Remove + Add.
 - A row whose bridge is unavailable carries `bridge_missing: true`; a row
   whose ship is not in `available_ships()` carries `ship_missing: true`. The
   JS renders the *(missing)* / *(not playable)* suffix on the same row
@@ -356,17 +374,18 @@ Done footer stay put — Cancel / Save sit at the foot of the tab body):
 - `render_payload` adds a `bridges` block — `pins: [{ship, ship_label,
   bridge, bridge_label, ship_missing, bridge_missing}]`, `ships: [{id,
   label}]` (unpinned only), `bridges_available: [{id, label}]`,
-  `adding`, `add_ship`, `add_bridge`, `can_add` — and folds it into the
+  `adding`, `edit_ship`, `add_ship`, `add_bridge`, `can_add` — and folds it into the
   change-detection snapshot so the push happens only on change.
-- Actions: `bridge:add_open`, `bridge:cancel`, `bridge:ship:<stem>`,
-  `bridge:bridge:<script>`, `bridge:add` (Save), `bridge:remove:<stem>`,
-  `reset:bridges`. All go through `dispatch_event`
+- Actions: `bridge:add_open`, `bridge:edit:<stem>`, `bridge:cancel`,
+  `bridge:ship:<stem>`, `bridge:bridge:<script>`, `bridge:add` (Save — adds,
+  or re-points when editing), `bridge:remove:<stem>`, `reset:bridges`. All go through `dispatch_event`
   and are best-effort: a `DuplicateShip` / `UnknownBridge` from `add` (only
   reachable by a race with a hand-edit) is swallowed and the payload
   re-pushed.
 - `_focusables` gains the tab's rows in rendered order per view — list
-  view: mapped rows' Remove buttons, Add Mapping, Reset; add view: ship
-  list, bridge radios, Cancel, Save — so keyboard/gamepad navigation keeps
+  view: each mapped row's Edit then Remove, Add Mapping, Reset; add view:
+  ship list (omitted when editing), bridge radios, Cancel, Save — so
+  keyboard/gamepad navigation keeps
   working. Focus resets on a view change because the list changes shape.
 
 ## Section 4 — Testing

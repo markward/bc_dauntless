@@ -192,6 +192,21 @@ def test_add_rejects_duplicate_ship_and_unknown_bridge(pins):
     assert "BirdOfPrey" not in pins.pins()
 
 
+def test_set_bridge_replaces_a_mapped_ships_bridge(pins, tmp_path):
+    pins.set_bridge("Akira", "GalaxyBridge")
+    assert pins.pins()["Akira"] == "GalaxyBridge"
+    assert bs.load_bridge_pins(tmp_path / "bridges.json").pins()["Akira"] == "GalaxyBridge"
+    assert [r.ship for r in pins.rows()] == ["Galaxy", "Sovereign", "Akira"]   # order kept
+
+
+def test_set_bridge_rejects_unmapped_ship_and_unknown_bridge(pins):
+    with pytest.raises(bs.UnmappedShip):
+        pins.set_bridge("BirdOfPrey", "GalaxyBridge")
+    with pytest.raises(bs.UnknownBridge):
+        pins.set_bridge("Akira", "VoyagerBridge")
+    assert pins.pins()["Akira"] == "SovereignBridge"
+
+
 def test_remove_unknown_ship_is_a_noop(pins):
     pins.remove("NotAShip")
     assert len(pins.pins()) == 3
