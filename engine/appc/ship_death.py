@@ -192,8 +192,10 @@ def _remove(ship) -> None:
     so firing ships drop their target pointers against a valid object."""
     _clear_target_locks(ship)
     try:
+        from engine.appc.objects import broadcast_object_deleted
         pSet = ship.GetContainingSet() if hasattr(ship, "GetContainingSet") else None
         if pSet is not None and hasattr(ship, "GetName"):
+            broadcast_object_deleted(ship)
             pSet.RemoveObjectFromSet(ship.GetName())
     except Exception as _e:
         dev_mode.log_swallowed("remove dead ship from set", _e)

@@ -5112,6 +5112,10 @@ def _process_object_deletions() -> None:
         doomed = [name for name, obj in list(objs.items())
                   if obj.__dict__.get("_delete_me", False)]
         for name in doomed:
+            obj = objs.get(name)
+            if obj is not None:
+                from engine.appc.objects import broadcast_object_deleted
+                broadcast_object_deleted(obj)
             pSet.RemoveObjectFromSet(name)
 
 

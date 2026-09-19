@@ -1303,6 +1303,22 @@ def ObjectGroupWithInfo_Cast(obj):
 
 # ── ObjectClass module-level helpers ──────────────────────────────────────────
 
+def broadcast_object_deleted(obj) -> None:
+    """Post ET_DELETE_OBJECT_PUBLIC (source == destination == obj) — BC's
+    "this object is leaving the world" notice. 14 SDK files subscribe with
+    target = the object (ConditionExists.py:39, MissionLib.py:2488).
+    Call ONLY where an object is actually destroyed: an explicit
+    DeleteObjectFromSet, the end of ship_death's linger, and the SetDeleteMe
+    sweep. RemoveObjectFromSet is also how warp MOVES a ship between sets,
+    so it must not post this."""
+    import App
+    evt = App.TGEvent_Create()
+    evt.SetEventType(App.ET_DELETE_OBJECT_PUBLIC)
+    evt.SetSource(obj)
+    evt.SetDestination(obj)
+    App.g_kEventManager.AddEvent(evt)
+
+
 def ObjectClass_Cast(obj) -> "ObjectClass | None":
     """Return obj if it is an ObjectClass, else None.
 
