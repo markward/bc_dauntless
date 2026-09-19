@@ -288,11 +288,12 @@
 }
 .cp-bridges__picker {
     flex: 1 1 45%;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 1fr 1fr;   /* bridges stack two-up as mods add more */
     gap: 6px;
+    align-content: start;
 }
-.cp-bridges__pick { text-align: left; }
+.cp-bridges__pick { width: 100%; text-align: left; }   /* overrides .cp-toggle's 48px */
 .cp-bridges__addrow { display: flex; margin: 8px 0 4px; }
 .cp-bridges__openbtn { flex: 1 1 auto; }
 .cp-bridges__actions {
