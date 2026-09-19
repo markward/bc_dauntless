@@ -293,5 +293,12 @@
     gap: 6px;
 }
 .cp-bridges__pick { text-align: left; }
-.cp-bridges__addbtn { margin-top: auto; }
+.cp-bridges__addrow { display: flex; margin: 8px 0 4px; }
+.cp-bridges__openbtn { flex: 1 1 auto; }
+.cp-bridges__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
 .cp-toggle--disabled { opacity: 0.4; cursor: default; }

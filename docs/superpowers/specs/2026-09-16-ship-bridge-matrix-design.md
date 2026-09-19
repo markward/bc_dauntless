@@ -275,31 +275,54 @@ classes. **No native `<select>`** — no CEF panel in the tree uses one (OSR
 dropdown popups need popup-surface handling we don't have); both pickers are
 in-panel lists.
 
+The tab body is **two views** (revised 2026-09-19 after the first pass
+shipped both on one page). The UI vocabulary is *mapping* / *mapped*; "pin"
+stays the internal name (`BridgePins`, `bridges.json`) and never appears in
+panel copy.
+
+**List view** (default):
+
 ```
- Pinned
+ Mapped
   Galaxy          Galaxy                 [Remove]
   Sovereign       Sovereign              [Remove]
   Akira           Sovereign              [Remove]
   LCIntrepid      Voyager  (missing)     [Remove]
 
- Add a ship
-  Ship                       Bridge
-  ┌──────────────────┐       ( ) Galaxy
-  │ Ambassador       │       (•) Sovereign
-  │ Bird of Prey     │
-  │ Galor        ▲▼  │                    [ Add ]
-  └──────────────────┘
- Ships without a pin use the Galaxy bridge.
+ [            Add Mapping             ]
+ Ships without a mapping use the Galaxy bridge.
  Changes apply the next time your ship is created.
                                      [Reset to Defaults]
 ```
 
+**Add Mapping view** (after *Add Mapping*; the tab strip and the panel's
+Done footer stay put — Cancel / Save sit at the foot of the tab body):
+
+```
+ Add Mapping
+  Ship                       Bridge
+  ┌──────────────────┐       ( ) Galaxy
+  │ Ambassador       │       (•) Sovereign
+  │ Bird of Prey     │
+  │ Galor        ▲▼  │
+  └──────────────────┘
+                              [Cancel]  [ Save ]
+```
+
 ### Rules (enforced in Python; the JS is dumb)
 
-- The ship list **excludes ships already pinned** — "once" is structural,
-  not a validation message. Add is disabled until both a ship and a bridge
-  are selected; Add writes the pin, clears the selection, and the ship drops
-  out of the list.
+- The ship list **excludes ships already mapped** — "once" is structural,
+  not a validation message. Save is disabled until a ship is selected (the
+  bridge pre-selects); Save writes the mapping and returns to the list view,
+  where the ship has dropped out of the add list.
+- *Add Mapping* is disabled (with "Every ship is mapped.") when no unmapped
+  ship remains; `bridge:add_open` is refused the same way for keyboard
+  activation.
+- Cancel, ESC, switching tab, Reset and closing the panel all leave the add
+  view and discard the selection. ESC on the add view is its Cancel — it
+  does **not** close the panel; only the list view's ESC does.
+- Ship/bridge selection and Save are add-view controls: dispatched outside
+  the view they are refused.
 - Remove is the only edit; re-adding is the edit path.
 - A row whose bridge is unavailable carries `bridge_missing: true`; a row
   whose ship is not in `available_ships()` carries `ship_missing: true`. The
@@ -307,8 +330,9 @@ in-panel lists.
   with the same Remove button.
 - Reset on this tab calls `BridgePins.reset()` — per-tab, like the others,
   so it cannot touch graphics or keybindings.
-- Bridge radio defaults to the first available bridge (Galaxy) so a
-  one-click Add is possible; ship selection starts empty.
+- Bridge radio defaults to the first available bridge (Galaxy) each time the
+  add view opens, so a one-click Save is possible; ship selection starts
+  empty.
 
 ### Panel plumbing
 
@@ -318,16 +342,18 @@ in-panel lists.
 - `render_payload` adds a `bridges` block — `pins: [{ship, ship_label,
   bridge, bridge_label, ship_missing, bridge_missing}]`, `ships: [{id,
   label}]` (unpinned only), `bridges_available: [{id, label}]`,
-  `add_ship`, `add_bridge`, `can_add` — and folds it into the
+  `adding`, `add_ship`, `add_bridge`, `can_add` — and folds it into the
   change-detection snapshot so the push happens only on change.
-- Actions: `bridge:ship:<stem>`, `bridge:bridge:<script>`, `bridge:add`,
-  `bridge:remove:<stem>`, `reset:bridges`. All go through `dispatch_event`
+- Actions: `bridge:add_open`, `bridge:cancel`, `bridge:ship:<stem>`,
+  `bridge:bridge:<script>`, `bridge:add` (Save), `bridge:remove:<stem>`,
+  `reset:bridges`. All go through `dispatch_event`
   and are best-effort: a `DuplicateShip` / `UnknownBridge` from `add` (only
   reachable by a race with a hand-edit) is swallowed and the payload
   re-pushed.
-- `_focusables` gains the tab's rows in rendered order (pinned rows' Remove
-  buttons, ship list, bridge radios, Add, Reset) so keyboard/gamepad
-  navigation keeps working.
+- `_focusables` gains the tab's rows in rendered order per view — list
+  view: mapped rows' Remove buttons, Add Mapping, Reset; add view: ship
+  list, bridge radios, Cancel, Save — so keyboard/gamepad navigation keeps
+  working. Focus resets on a view change because the list changes shape.
 
 ## Section 4 — Testing
 

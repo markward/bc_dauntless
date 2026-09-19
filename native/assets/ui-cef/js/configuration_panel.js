@@ -91,12 +91,17 @@ function _cpFocusableList(state) {
         (state.controls || []).forEach(c => out.push({kind: 'rebind', target: c.id}));
         out.push({kind: 'ctrl', target: 'controls_reset'});
     } else if (state.selected_tab === 'bridges') {
-        const b = state.bridges || {pins: [], ships: [], bridges_available: []};
-        b.pins.forEach(p => out.push({kind: 'bridge_remove', target: p.ship}));
-        b.ships.forEach(s => out.push({kind: 'bridge_ship', target: s.id}));
-        b.bridges_available.forEach(x => out.push({kind: 'bridge_pick', target: x.id}));
-        out.push({kind: 'ctrl', target: 'bridge_add'});
-        out.push({kind: 'ctrl', target: 'reset_bridges'});
+        const b = state.bridges || {pins: [], ships: [], bridges_available: [], adding: false};
+        if (b.adding) {
+            b.ships.forEach(s => out.push({kind: 'bridge_ship', target: s.id}));
+            b.bridges_available.forEach(x => out.push({kind: 'bridge_pick', target: x.id}));
+            out.push({kind: 'ctrl', target: 'bridge_cancel'});
+            out.push({kind: 'ctrl', target: 'bridge_add'});
+        } else {
+            b.pins.forEach(p => out.push({kind: 'bridge_remove', target: p.ship}));
+            out.push({kind: 'ctrl', target: 'bridge_add_open'});
+            out.push({kind: 'ctrl', target: 'reset_bridges'});
+        }
     }
     return out;
 }
@@ -263,21 +268,29 @@ function _cpRenderControlsBody(state, focusables) {
     return html;
 }
 
-// Bridges tab — the ship->bridge matrix. Pinned rows with Remove, then an
-// add row: a scrollable ship list (unpinned ships only — Python enforces
-// "each ship once" by never offering a pinned one) and a bridge picker.
+// Bridges tab — the ship->bridge matrix, two views inside the tab body.
+// List view: the mapped rows with Remove, an "Add Mapping" button, the
+// default-bridge note and the Reset row. Add view (state.bridges.adding):
+// a scrollable ship list (unmapped ships only — Python enforces "each ship
+// once" by never offering a mapped one), a bridge picker, and Cancel/Save.
+// Python owns the view flag; ESC on the add view is its Cancel.
 // No native select element: CEF OSR has no popup surface for one.
+// Vocabulary: the UI says "mapping"/"mapped"; "pin" is the internal name.
 function _cpRenderBridgesBody(state, focusables) {
     const focused = focusables[state.focused] || {};
     const isFoc = (kind, target) => focused.kind === kind && focused.target === target;
     const b = state.bridges || {pins: [], ships: [], bridges_available: [],
-                                add_ship: null, add_bridge: null, can_add: false,
-                                default_bridge_label: ''};
-    let html = '';
+                                adding: false, add_ship: null, add_bridge: null,
+                                can_add: false, default_bridge_label: ''};
+    return b.adding ? _cpRenderBridgesAddView(b, isFoc)
+                    : _cpRenderBridgesListView(b, isFoc);
+}
 
-    html += '<div class="cp-group-header">Pinned</div>';
+function _cpRenderBridgesListView(b, isFoc) {
+    let html = '';
+    html += '<div class="cp-group-header">Mapped</div>';
     if (b.pins.length === 0) {
-        html += '<div class="sc-note">No ships pinned.</div>';
+        html += '<div class="sc-note">No ships mapped.</div>';
     }
     b.pins.forEach(function (p) {
         const shipTxt = escapeHtmlCP(p.ship_label)
@@ -292,13 +305,39 @@ function _cpRenderBridgesBody(state, focusables) {
               + '</div>';
     });
 
+    const canOpen = b.ships.length > 0;
+    html += '<div class="cp-bridges__addrow">'
+          +   '<button class="cp-toggle cp-bridges__openbtn' + (canOpen ? '' : ' cp-toggle--disabled')
+          +       (isFoc('ctrl', 'bridge_add_open') ? ' cp-focused' : '') + '"'
+          +       (canOpen ? ' onclick="dauntlessEvent(\'configuration/bridge:add_open\')"' : ' disabled')
+          +   '>Add Mapping</button>'
+          + '</div>';
+    if (!canOpen) {
+        html += '<div class="sc-note">Every ship is mapped.</div>';
+    }
+
+    html += '<div class="sc-note">Ships without a mapping use the '
+          + escapeHtmlCP(b.default_bridge_label) + ' bridge. '
+          + 'Changes apply the next time your ship is created.</div>';
+
+    // Inlined rather than via _cpResetRow: the action needs the literal
+    // string 'configuration/reset:bridges' in source (not built by
+    // concatenating a variable section name) for the structural test that
+    // greps the JS source text for every dispatched action.
     html += '<hr class="cp-divider">';
-    html += '<div class="cp-group-header">Add a ship</div>';
+    html += '<div class="cp-row' + (isFoc('ctrl', 'reset_bridges') ? ' cp-focused' : '') + '">'
+          +   '<span class="cp-label">Reset to Defaults</span>'
+          +   '<button class="cp-toggle"'
+          +      ' onclick="dauntlessEvent(\'configuration/reset:bridges\')">Reset</button>'
+          + '</div>';
+    return html;
+}
+
+function _cpRenderBridgesAddView(b, isFoc) {
+    let html = '';
+    html += '<div class="cp-group-header">Add Mapping</div>';
     html += '<div class="cp-bridges__add">';
     html +=   '<div class="cp-bridges__ships">';
-    if (b.ships.length === 0) {
-        html += '<div class="sc-note">Every ship is pinned.</div>';
-    }
     b.ships.forEach(function (s) {
         const sel = s.id === b.add_ship;
         html += '<div class="sc-row' + (sel ? ' sc-row--selected' : '')
@@ -317,26 +356,18 @@ function _cpRenderBridgesBody(state, focusables) {
               +   escapeHtmlCP(x.label)
               + '</button>';
     });
-    html +=     '<button class="cp-toggle cp-bridges__addbtn' + (b.can_add ? ' cp-toggle--on' : ' cp-toggle--disabled')
-          +       (isFoc('ctrl', 'bridge_add') ? ' cp-focused' : '') + '"'
-          +       (b.can_add ? ' onclick="dauntlessEvent(\'configuration/bridge:add\')"' : ' disabled')
-          +     '>Add</button>';
     html +=   '</div>';
     html += '</div>';
 
-    html += '<div class="sc-note">Ships without a pin use the '
-          + escapeHtmlCP(b.default_bridge_label) + ' bridge. '
-          + 'Changes apply the next time your ship is created.</div>';
-
-    // Inlined rather than via _cpResetRow: the action needs the literal
-    // string 'configuration/reset:bridges' in source (not built by
-    // concatenating a variable section name) for the structural test that
-    // greps the JS source text for every dispatched action.
-    html += '<hr class="cp-divider">';
-    html += '<div class="cp-row' + (isFoc('ctrl', 'reset_bridges') ? ' cp-focused' : '') + '">'
-          +   '<span class="cp-label">Reset to Defaults</span>'
-          +   '<button class="cp-toggle"'
-          +      ' onclick="dauntlessEvent(\'configuration/reset:bridges\')">Reset</button>'
+    // Cancel / Save at the foot of the body; the panel's own Done footer
+    // stays put (choosing another tab or Done also discards the add).
+    html += '<div class="cp-bridges__actions">'
+          +   '<button class="cp-toggle' + (isFoc('ctrl', 'bridge_cancel') ? ' cp-focused' : '') + '"'
+          +       ' onclick="dauntlessEvent(\'configuration/bridge:cancel\')">Cancel</button>'
+          +   '<button class="cp-toggle' + (b.can_add ? ' cp-toggle--on' : ' cp-toggle--disabled')
+          +       (isFoc('ctrl', 'bridge_add') ? ' cp-focused' : '') + '"'
+          +       (b.can_add ? ' onclick="dauntlessEvent(\'configuration/bridge:add\')"' : ' disabled')
+          +   '>Save</button>'
           + '</div>';
     return html;
 }

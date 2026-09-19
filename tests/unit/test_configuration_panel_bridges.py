@@ -53,14 +53,33 @@ def test_payload_lists_pins_unpinned_ships_and_bridges(pins):
     assert b["ships"][0]["label"] == "Bird of Prey"
     assert b["bridges_available"] == [{"id": "GalaxyBridge", "label": "Galaxy"},
                                       {"id": "SovereignBridge", "label": "Sovereign"}]
+    assert b["adding"] is False                     # list view by default
     assert b["add_ship"] is None
     assert b["add_bridge"] == "GalaxyBridge"        # first available preselected
     assert b["can_add"] is False
     assert b["default_bridge_label"] == "Galaxy"
 
 
-def test_select_ship_then_add_pins_and_drops_it_from_the_list(pins):
+def _open_add(p):
+    p.open(); p.dispatch_event("tab:bridges")
+    assert p.dispatch_event("bridge:add_open") is True
+
+
+def test_add_open_enters_the_add_view_with_a_fresh_selection(pins):
     p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    p.dispatch_event("bridge:add_open"); p.dispatch_event("bridge:ship:BirdOfPrey")
+    p.dispatch_event("bridge:bridge:SovereignBridge")
+    p.dispatch_event("bridge:cancel")
+    assert p.dispatch_event("bridge:add_open") is True
+    b = _body(p)["bridges"]
+    assert b["adding"] is True
+    assert b["add_ship"] is None
+    assert b["add_bridge"] == "GalaxyBridge"        # back to the first available
+    assert b["can_add"] is False
+
+
+def test_select_ship_then_save_maps_it_and_returns_to_the_list(pins):
+    p = _make(pins); _open_add(p)
     assert p.dispatch_event("bridge:ship:BirdOfPrey") is True
     assert _body(p)["bridges"]["can_add"] is True
     assert p.dispatch_event("bridge:bridge:SovereignBridge") is True
@@ -68,23 +87,71 @@ def test_select_ship_then_add_pins_and_drops_it_from_the_list(pins):
     b = _body(p)["bridges"]
     assert pins.pins()["BirdOfPrey"] == "SovereignBridge"
     assert [s["id"] for s in b["ships"]] == ["KessokLight"]
+    assert b["adding"] is False                     # Save leaves the view
     assert b["add_ship"] is None                    # selection cleared
     assert b["can_add"] is False
 
 
-def test_add_without_a_ship_is_rejected(pins):
-    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
-    assert p.dispatch_event("bridge:add") is False
+def test_cancel_discards_the_selection_and_returns_to_the_list(pins):
+    p = _make(pins); _open_add(p)
+    p.dispatch_event("bridge:ship:BirdOfPrey")
+    assert p.dispatch_event("bridge:cancel") is True
+    b = _body(p)["bridges"]
+    assert b["adding"] is False
+    assert b["add_ship"] is None
     assert len(pins.pins()) == 3
 
 
-def test_selecting_a_pinned_ship_is_rejected(pins):
+def test_cancel_outside_the_add_view_is_rejected(pins):
     p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    assert p.dispatch_event("bridge:cancel") is False
+
+
+def test_selection_outside_the_add_view_is_rejected(pins):
+    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    assert p.dispatch_event("bridge:ship:BirdOfPrey") is False
+    assert p.dispatch_event("bridge:bridge:SovereignBridge") is False
+    assert p.dispatch_event("bridge:add") is False
+    assert _body(p)["bridges"]["add_ship"] is None
+
+
+def test_add_open_is_rejected_when_every_ship_is_mapped(fake_install, tmp_path):
+    p = _make(bs.load_bridge_pins(tmp_path / "bridges.json"))
+    p.open(); p.dispatch_event("tab:bridges")
+    for ship in ("BirdOfPrey", "KessokLight"):
+        p.dispatch_event("bridge:add_open")
+        p.dispatch_event("bridge:ship:" + ship)
+        p.dispatch_event("bridge:add")
+    assert p.dispatch_event("bridge:add_open") is False
+    b = _body(p)["bridges"]
+    assert b["ships"] == [] and b["adding"] is False
+
+
+def test_esc_in_the_add_view_cancels_the_add_not_the_panel(pins):
+    p = _make(pins); _open_add(p)
+    p.dispatch_event("bridge:ship:BirdOfPrey")
+    p.handle_key_esc()
+    assert p.is_open()
+    b = _body(p)["bridges"]
+    assert b["adding"] is False and b["add_ship"] is None
+    p.handle_key_esc()
+    assert not p.is_open()
+
+
+def test_add_without_a_ship_is_rejected(pins):
+    p = _make(pins); _open_add(p)
+    assert p.dispatch_event("bridge:add") is False
+    assert len(pins.pins()) == 3
+    assert _body(p)["bridges"]["adding"] is True    # still on the add view
+
+
+def test_selecting_a_pinned_ship_is_rejected(pins):
+    p = _make(pins); _open_add(p)
     assert p.dispatch_event("bridge:ship:Galaxy") is False
 
 
 def test_selecting_an_unknown_bridge_is_rejected(pins):
-    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    p = _make(pins); _open_add(p)
     assert p.dispatch_event("bridge:bridge:VoyagerBridge") is False
 
 
@@ -121,27 +188,69 @@ def test_reset_bridges_without_pins_is_rejected():
     assert p.dispatch_event("reset:bridges") is False
 
 
-def test_focusables_mirror_the_rendered_rows(pins):
+def test_focusables_mirror_the_list_view_rows(pins):
     p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
     assert p._focusables() == [
         ("tab", "graphics"), ("tab", "bridges"),
         ("bridge_remove", "Galaxy"), ("bridge_remove", "Sovereign"),
         ("bridge_remove", "Akira"),
-        ("bridge_ship", "BirdOfPrey"), ("bridge_ship", "KessokLight"),
-        ("bridge_pick", "GalaxyBridge"), ("bridge_pick", "SovereignBridge"),
-        ("ctrl", "bridge_add"), ("ctrl", "reset_bridges"),
+        ("ctrl", "bridge_add_open"), ("ctrl", "reset_bridges"),
     ]
 
 
-def test_leaving_the_tab_clears_the_add_selection(pins):
+def test_focusables_mirror_the_add_view_rows(pins):
+    p = _make(pins); _open_add(p)
+    assert p._focusables() == [
+        ("tab", "graphics"), ("tab", "bridges"),
+        ("bridge_ship", "BirdOfPrey"), ("bridge_ship", "KessokLight"),
+        ("bridge_pick", "GalaxyBridge"), ("bridge_pick", "SovereignBridge"),
+        ("ctrl", "bridge_cancel"), ("ctrl", "bridge_add"),
+    ]
+
+
+def test_keyboard_activation_drives_the_view_transitions(pins):
+    """Enter on the focused Add Mapping / Cancel / Save controls fires the
+    same actions the mouse does. _focused is set directly: the focus index
+    is what handle_input reads, and the test is about the activation branch,
+    not the arrow-key walk."""
+    keys = Mock(KEY_DOWN=1, KEY_UP=2, KEY_SPACE=3, KEY_ENTER=4, KEY_LEFT=5, KEY_RIGHT=6)
+    def press(code):
+        h = Mock(keys=keys); h.key_pressed = lambda c: c == code
+        return h
     p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    p._focused = p._focusables().index(("ctrl", "bridge_add_open"))
+    p.handle_input(press(keys.KEY_ENTER))
+    assert _body(p)["bridges"]["adding"] is True
+    assert p._focused == -1                         # focus resets across views
+    p._focused = p._focusables().index(("ctrl", "bridge_cancel"))
+    p.handle_input(press(keys.KEY_ENTER))
+    assert _body(p)["bridges"]["adding"] is False
+    p.dispatch_event("bridge:add_open"); p.dispatch_event("bridge:ship:BirdOfPrey")
+    p._focused = p._focusables().index(("ctrl", "bridge_add"))
+    p.handle_input(press(keys.KEY_ENTER))
+    assert pins.pins()["BirdOfPrey"] == "GalaxyBridge"
+    assert _body(p)["bridges"]["adding"] is False
+
+
+def test_leaving_the_tab_leaves_the_add_view_and_clears_the_selection(pins):
+    p = _make(pins); _open_add(p)
     p.dispatch_event("bridge:ship:BirdOfPrey")
     p.dispatch_event("tab:graphics"); p.dispatch_event("tab:bridges")
-    assert _body(p)["bridges"]["add_ship"] is None
+    b = _body(p)["bridges"]
+    assert b["adding"] is False and b["add_ship"] is None
+
+
+def test_closing_the_panel_leaves_the_add_view(pins):
+    p = _make(pins); _open_add(p)
+    p.close(); p.open()
+    assert _body(p)["bridges"]["adding"] is False
 
 
 def test_payload_is_not_repushed_when_nothing_changed(pins):
     p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    assert p.render_payload() is not None
+    assert p.render_payload() is None
+    p.dispatch_event("bridge:add_open")
     assert p.render_payload() is not None
     assert p.render_payload() is None
     p.dispatch_event("bridge:ship:BirdOfPrey")
@@ -174,21 +283,31 @@ def _js_source():
     return (root / "native/assets/ui-cef/js/configuration_panel.js").read_text()
 
 
+def _js_bridges_renderers():
+    """Source of _cpRenderBridgesBody and the per-view renderers it
+    dispatches to, concatenated."""
+    import re
+    return "\n".join(re.findall(r"function _cpRenderBridges\w*\(.*?\n\}", _js_source(), re.S))
+
+
 def test_js_focusable_list_has_a_bridges_branch_in_python_order():
-    """_cpFocusableList's bridges branch must push, in order: one
-    bridge_remove per pin, one bridge_ship per unpinned ship, one bridge_pick
-    per available bridge, then bridge_add and reset_bridges — the order
-    ConfigurationPanel._focusables uses. Space on a focused row otherwise
+    """_cpFocusableList's bridges branch must push, per view, exactly what
+    ConfigurationPanel._focusables does: add view = one bridge_ship per
+    unmapped ship, one bridge_pick per available bridge, then bridge_cancel
+    and bridge_add; list view = one bridge_remove per mapping, then
+    bridge_add_open and reset_bridges. Space on a focused row otherwise
     fires the wrong control."""
     import re
     src = _js_source()
     branch = re.search(r"selected_tab === 'bridges'\)\s*\{(.*?)\n    \}", src, re.S)
     assert branch, "no bridges branch in _cpFocusableList"
     body = branch.group(1)
-    order = [m for m in re.findall(r"kind: '(\w+)'", body)]
-    assert order == ["bridge_remove", "bridge_ship", "bridge_pick", "ctrl", "ctrl"]
-    assert re.search(r"target: 'bridge_add'", body)
-    assert re.search(r"target: 'reset_bridges'", body)
+    adding, listing = re.split(r"\}\s*else\s*\{", body)
+    assert "b.adding" in adding
+    assert re.findall(r"kind: '(\w+)'", adding) == ["bridge_ship", "bridge_pick", "ctrl", "ctrl"]
+    assert re.findall(r"target: '(\w+)'", adding) == ["bridge_cancel", "bridge_add"]
+    assert re.findall(r"kind: '(\w+)'", listing) == ["bridge_remove", "ctrl", "ctrl"]
+    assert re.findall(r"target: '(\w+)'", listing) == ["bridge_add_open", "reset_bridges"]
 
 
 def test_js_renders_the_bridges_tab_and_dispatches_every_action():
@@ -196,9 +315,26 @@ def test_js_renders_the_bridges_tab_and_dispatches_every_action():
     assert "_cpRenderBridgesBody" in src
     assert "selected_tab === 'bridges'" in src
     for action in ("configuration/bridge:ship:", "configuration/bridge:bridge:",
-                   "configuration/bridge:add", "configuration/bridge:remove:",
+                   "configuration/bridge:add\\'", "configuration/bridge:add_open",
+                   "configuration/bridge:cancel", "configuration/bridge:remove:",
                    "configuration/reset:bridges"):
         assert action in src, action
+
+
+def test_js_bridges_copy_says_mapped_never_pinned():
+    """The UI vocabulary is "mapping"/"mapped"; "pin" is the internal name
+    (BridgePins, bridges.json) and must not leak into the panel text. The
+    check is on rendered-text fragments inside the Bridges renderer, not on
+    identifiers like b.pins, which stay."""
+    import re
+    body = _js_bridges_renderers()
+    visible = re.findall(r">([^<'\"]*?)<|'([^']*?)'", body)
+    texts = " ".join(a or b for a, b in visible)
+    assert not re.search(r"\bpin(ned|s)?\b", texts, re.I), texts
+    for copy in ("Mapped", "Add Mapping", "Cancel", "Save",
+                 "No ships mapped.", "Every ship is mapped.",
+                 "Ships without a mapping use the"):
+        assert copy in body, copy
 
 
 def test_js_shows_missing_markers_and_never_uses_a_native_select():
@@ -209,10 +345,9 @@ def test_js_shows_missing_markers_and_never_uses_a_native_select():
 
 
 def test_js_onclick_ids_are_js_escaped_not_just_html_escaped():
-    import re
     src = _js_source()
     assert "function _cpEventArg(" in src
-    body = re.search(r"function _cpRenderBridgesBody\(.*?\n\}", src, re.S).group(0)
+    body = _js_bridges_renderers()
     for arg in ("p.ship", "s.id", "x.id"):
         assert "_cpEventArg(" + arg + ")" in body, arg
         assert "escapeHtmlCP(" + arg + ")" not in body, arg

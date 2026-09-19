@@ -194,6 +194,10 @@ class ConfigurationPanel(Panel):
         self._bridge_pins = bridge_pins
         self._bridge_add_ship: Optional[str] = None
         self._bridge_add_bridge: Optional[str] = None
+        # Bridges tab is two views inside the tab body: the mapping list, and
+        # the "Add Mapping" view (ship list + bridge picker + Cancel/Save).
+        # Python owns the flag; JS only renders it.
+        self._bridge_adding = False
         # Persistence seam. Defaults are no-ops so the panel works standalone
         # and every existing construction site keeps compiling. The panel never
         # imports the settings store — the host loop binds these.
@@ -226,6 +230,7 @@ class ConfigurationPanel(Panel):
         self._capturing_action = None
         self._controls_message = ""
         self._bridge_add_ship = None
+        self._bridge_adding = False
 
     def _controls_rows(self) -> list:
         """[{id, label, category, key}] for the Controls tab, in ACTIONS order."""
@@ -250,6 +255,7 @@ class ConfigurationPanel(Panel):
             "ships": [{"id": s, "label": bs.ship_label(s)} for s in unpinned],
             "bridges_available": [{"id": b.script_name, "label": b.label}
                                   for b in available],
+            "adding": self._bridge_adding,
             "add_ship": self._bridge_add_ship,
             "add_bridge": self._bridge_add_bridge,
             "can_add": (self._bridge_add_ship is not None
@@ -449,6 +455,28 @@ class ConfigurationPanel(Panel):
                 return False
             from engine import bridge_selection as bs
             rest = action[len("bridge:"):]
+            if rest.startswith("remove:"):
+                self._bridge_pins.remove(rest[len("remove:"):])
+                return True
+            if rest == "add_open":
+                # Nothing left to map -> the button is disabled in JS; a
+                # keyboard activation lands here and is refused the same way.
+                if self._bridge_adding or not self._bridge_pins.unpinned_ships():
+                    return False
+                self._bridge_add_ship = None
+                available = bs.available_bridges()
+                self._bridge_add_bridge = available[0].script_name if available else None
+                self._bridge_adding = True
+                self._focused = -1              # the focus list changes shape
+                return True
+            if rest == "cancel":
+                if not self._bridge_adding:
+                    return False
+                self._leave_bridge_add_view()
+                return True
+            # Everything below is an Add Mapping view control.
+            if not self._bridge_adding:
+                return False
             if rest.startswith("ship:"):
                 ship = rest[len("ship:"):]
                 if ship not in self._bridge_pins.unpinned_ships():
@@ -461,7 +489,7 @@ class ConfigurationPanel(Panel):
                     return False
                 self._bridge_add_bridge = bridge
                 return True
-            if rest == "add":
+            if rest == "add":                   # the view's Save button
                 if self._bridge_add_ship is None or self._bridge_add_bridge is None:
                     return False
                 try:
@@ -471,10 +499,7 @@ class ConfigurationPanel(Panel):
                     # shows the truth.
                     self._bridge_add_ship = None
                     return False
-                self._bridge_add_ship = None
-                return True
-            if rest.startswith("remove:"):
-                self._bridge_pins.remove(rest[len("remove:"):])
+                self._leave_bridge_add_view()
                 return True
             return False
         if action.startswith("reset:"):
@@ -485,7 +510,7 @@ class ConfigurationPanel(Panel):
                 if self._bridge_pins is None:
                     return False
                 self._bridge_pins.reset()      # deletes bridges.json; settings.json untouched
-                self._bridge_add_ship = None
+                self._leave_bridge_add_view()
                 return True
             if section not in ("graphics", "gameplay"):
                 return False
@@ -498,10 +523,17 @@ class ConfigurationPanel(Panel):
                 self._selected_tab = tab_id
                 self._capturing_action = None   # leaving the tab cancels capture
                 self._controls_message = ""
-                self._bridge_add_ship = None
+                self._leave_bridge_add_view()
                 return True
             return False
         return False
+
+    def _leave_bridge_add_view(self) -> None:
+        """Back to the Bridges tab's mapping list, selection discarded."""
+        if self._bridge_adding:
+            self._focused = -1              # the focus list changes shape
+        self._bridge_adding = False
+        self._bridge_add_ship = None
 
     def invalidate(self) -> None:
         # Focus reset is handled by close(); invalidate() is only the
@@ -509,8 +541,14 @@ class ConfigurationPanel(Panel):
         self._last_pushed = None
 
     def handle_key_esc(self) -> None:
-        if self._visible:
-            self.close()
+        if not self._visible:
+            return
+        # On the Add Mapping view ESC backs out to the mapping list, the
+        # same as its Cancel button; only the list view closes the panel.
+        if self._bridge_adding:
+            self.dispatch_event("bridge:cancel")
+            return
+        self.close()
 
     def handle_input(self, h) -> None:
         """Poll ↑/↓/←/→/Space/Enter when the panel is visible. Mirrors
@@ -578,6 +616,10 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("bridge:bridge:" + target)
         elif activate and kind == "ctrl" and target == "bridge_add":
             self.dispatch_event("bridge:add")
+        elif activate and kind == "ctrl" and target == "bridge_add_open":
+            self.dispatch_event("bridge:add_open")
+        elif activate and kind == "ctrl" and target == "bridge_cancel":
+            self.dispatch_event("bridge:cancel")
         elif activate and kind == "ctrl" and target == "reset_bridges":
             self.dispatch_event("reset:bridges")
 
@@ -632,8 +674,11 @@ class ConfigurationPanel(Panel):
             out += [("ctrl", "controls_reset")]
         elif self._selected_tab == "bridges" and self._bridge_pins is not None:
             from engine import bridge_selection as bs
-            out += [("bridge_remove", r.ship) for r in self._bridge_pins.rows()]
-            out += [("bridge_ship", s) for s in self._bridge_pins.unpinned_ships()]
-            out += [("bridge_pick", b.script_name) for b in bs.available_bridges()]
-            out += [("ctrl", "bridge_add"), ("ctrl", "reset_bridges")]
+            if self._bridge_adding:
+                out += [("bridge_ship", s) for s in self._bridge_pins.unpinned_ships()]
+                out += [("bridge_pick", b.script_name) for b in bs.available_bridges()]
+                out += [("ctrl", "bridge_cancel"), ("ctrl", "bridge_add")]
+            else:
+                out += [("bridge_remove", r.ship) for r in self._bridge_pins.rows()]
+                out += [("ctrl", "bridge_add_open"), ("ctrl", "reset_bridges")]
         return out
