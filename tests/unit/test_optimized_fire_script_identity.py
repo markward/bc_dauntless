@@ -63,17 +63,20 @@ def _mk_ship(name):
     """Same fixture shape as
     tests/integration/test_warp_clears_target_on_arrival.py::_mk_ship --
     powered weapon systems so StartAI's "NeedPower" gate does not refuse the
-    attack order."""
+    attack order. Registers every subsystem through its real setter (which
+    attaches the parent ship via ShipClass._attach_subsystem) rather than
+    poking private attributes -- ``ship._hull`` is the one conventional
+    exception (see the task brief)."""
     s = ShipClass()
     s.SetName(name)
     s._hull = HullSubsystem("H"); s._hull.SetMaxCondition(1000.0)
-    s._impulse_engine_subsystem = ImpulseEngineSubsystem("IES")
-    s._impulse_engine_subsystem.SetMaxSpeed(120.0)
-    s._sensor_subsystem = SensorSubsystem("Sensors")
-    phasers = PhaserSystem("P"); phasers._parent_ship = s
-    s.SetPhaserSystem(phasers)
-    torps = TorpedoSystem("T"); torps._parent_ship = s
-    torps._ammo_by_slot = {0: TorpedoAmmoType("Photon", launch_speed=19.0)}
+    impulse = ImpulseEngineSubsystem("IES")
+    impulse.SetMaxSpeed(120.0)
+    s.SetImpulseEngineSubsystem(impulse)
+    s.SetSensorSubsystem(SensorSubsystem("Sensors"))
+    s.SetPhaserSystem(PhaserSystem("P"))
+    torps = TorpedoSystem("T")
+    torps.AddAmmoType(TorpedoAmmoType("Photon", launch_speed=19.0))
     s.SetTorpedoSystem(torps)
     return s
 
