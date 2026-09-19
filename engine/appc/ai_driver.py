@@ -1411,6 +1411,29 @@ def _ensure_select_target_initialized(inst) -> None:
     App.g_kEventManager.AddBroadcastPythonMethodHandler(
         App.ET_WEAPON_HIT, inst.pEventHandler, "DamageEvent", pShip,
     )
+    # Neither this registration nor the three below are ever removed on node
+    # teardown (grep for RemoveBroadcastHandler in ai_driver.py/ai.py finds
+    # no call site) -- a pre-existing gap this task does not close.
+
+    # The native CodeAISet's other registrations (SDK Preprocessors.py:1094-
+    # 1157, commented out there because the native node did this work). Each
+    # handler just ForceUpdate()s so the next tick re-selects instead of
+    # waiting out the 5 s cadence. GROUP_CHANGED is not registered: no engine
+    # producer (see plan Task 11).
+    group = getattr(inst, "pTargetGroup", None)
+    if group is not None and callable(getattr(inst, "TargetEnteredSet", None)):
+        group.SetEventFlag(App.ObjectGroup.ENTERED_SET)
+        App.g_kEventManager.AddBroadcastPythonMethodHandler(
+            App.ET_OBJECT_GROUP_OBJECT_ENTERED_SET, inst.pEventHandler, "TargetEnteredSet", group)
+    if callable(getattr(inst, "OurShipEnteredSet", None)):
+        App.g_kEventManager.AddBroadcastPythonMethodHandler(
+            App.ET_ENTERED_SET, inst.pEventHandler, "OurShipEnteredSet", pShip)
+    if callable(getattr(inst, "ObjectDecloaked", None)):
+        # ObjectDecloaked filters on pTargetGroup.IsNameInGroup(destination
+        # name) itself (Preprocessors.py:1291-1295), so the broadcast target
+        # is None -- events.py:806-810 treats target=None as unfiltered.
+        App.g_kEventManager.AddBroadcastPythonMethodHandler(
+            App.ET_DECLOAK_BEGINNING, inst.pEventHandler, "ObjectDecloaked", None)
 
     # Initial ship-target push. NonFedAttack/FedAttack build SelectTarget
     # with ForceCurrentTargetString(sInitialTarget), which presets
