@@ -55,7 +55,13 @@ class TGCondition:
     def __init__(self):
         from engine.core import ids
         self._obj_id: int = ids.allocate_id()
-        ids.register(self)          # E2M0.py:156 looks conditions up by id
+        # Weak, not strong: E2M0.py:156 needs conditions findable by id, but
+        # SDK condition scripts rely on __del__ for teardown (ConditionInRange
+        # removes its ProximityCheck there; ConditionSingleShieldBelow calls
+        # RemoveShieldWatcher; ConditionPulseReady drops its range checks). A
+        # strong registry entry would keep every condition alive for the rest
+        # of the process and that teardown would never run.
+        ids.register_weak(self)
         self._status: int = 0
         self._handlers: list = []
         self._active: bool = False
