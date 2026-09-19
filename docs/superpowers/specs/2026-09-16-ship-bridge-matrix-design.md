@@ -299,16 +299,22 @@ panel copy.
 
 ```
  Mapped
-  Galaxy          Galaxy            [Edit] [Remove]
-  Sovereign       Sovereign         [Edit] [Remove]
-  Akira           Sovereign         [Edit] [Remove]
-  LCIntrepid      Voyager (missing) [Edit] [Remove]
+  Galaxy          Galaxy                 [✎] [✕]
+  Sovereign       Sovereign              [✎] [✕]
+  Akira           Sovereign              [✎] [✕]
+  LCIntrepid      Voyager  (missing)     [✎] [✕]
 
  [            Add Mapping             ]
  Ships without a mapping use the Galaxy bridge.
  Changes apply the next time your ship is created.
                                      [Reset to Defaults]
 ```
+
+Row actions are icon buttons (pencil = *Edit mapping*, ✕ = *Remove
+mapping*) with page-drawn hover text: the host's `CefDisplayHandler` has no
+`OnTooltip`, so a `title=` attribute never shows under OSR — `[data-tip]`
+draws its own via a CSS `::after`, on hover and on keyboard focus, to the
+left of the button so the scrolling body cannot clip it.
 
 **Add Mapping view** (after *Add Mapping*; the tab strip and the panel's
 Done footer stay put — Cancel / Save sit at the foot of the tab body):

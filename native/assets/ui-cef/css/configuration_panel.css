@@ -294,7 +294,41 @@
     align-content: start;
 }
 .cp-bridges__pick { width: 100%; text-align: left; }   /* overrides .cp-toggle's 48px */
-.cp-bridges__pin .cp-toggle { width: auto; padding: 0 10px; margin-left: 6px; }
+.cp-bridges__pin .cp-iconbtn { margin-left: 6px; }
+
+/* Icon button + page-drawn hover text. CEF OSR renders no native tooltip
+   (the host has no OnTooltip), so [data-tip] draws its own on :hover and on
+   keyboard focus. The tip sits to the LEFT of the button, inside the row:
+   .cp-body scrolls, so anything poking above the first row would clip. */
+.cp-iconbtn {
+    width: 24px;
+    height: 22px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+.cp-iconbtn svg { display: block; }
+[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    right: calc(100% + 8px);
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 3px 8px;
+    white-space: nowrap;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: #e6e9ee;
+    background: rgb(28, 31, 38);
+    border: 1px solid rgb(80, 88, 100);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 80ms linear;
+}
+[data-tip]:hover::after,
+.cp-focused[data-tip]::after { opacity: 1; }
 .cp-bridges__fixed {
     flex: 1 1 55%;
     padding: 6px 10px;

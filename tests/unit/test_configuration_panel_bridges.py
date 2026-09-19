@@ -441,3 +441,27 @@ def test_js_preserves_scroll_positions_across_a_rerender():
     restore = re.search(r"function _cpRestoreScroll\(.*?\n\}", src, re.S).group(0)
     assert "scrollTop" in capture and "scrollTop" in restore
     assert re.search(r"CP_SCROLLERS = \[[^\]]*'\.cp-bridges__ships'", src)
+
+
+def test_js_row_actions_are_icon_buttons_with_css_hover_text():
+    """Edit/Remove are icon buttons. The host's CefDisplayHandler has no
+    OnTooltip, so a title= attribute never shows under OSR; hover text is
+    drawn by the page from data-tip via a CSS ::after rule."""
+    import re
+    from pathlib import Path
+    src = _js_source()
+    body = _js_bridges_renderers()
+    row = re.search(r"cp-bridges__pin.*?</div>';", body, re.S).group(0)
+    assert "_cpIconButton('Edit mapping', CP_ICON_PENCIL" in row
+    assert "_cpIconButton('Remove mapping', CP_ICON_CROSS" in row
+    assert ">Edit</button>" not in row and ">Remove</button>" not in row
+    helper = re.search(r"function _cpIconButton\(.*?\n\}", src, re.S).group(0)
+    assert "data-tip=\"' + tip" in helper and "aria-label=\"' + tip" in helper
+    assert "title=" not in helper
+    for const in ("CP_ICON_PENCIL", "CP_ICON_CROSS"):
+        assert re.search(r"const %s =\s*'<svg" % const, src), const
+    root = Path(__file__).resolve().parents[2]
+    css = (root / "native/assets/ui-cef/css/configuration_panel.css").read_text()
+    assert re.search(r"\[data-tip\][^{]*:hover::after", css)
+    assert re.search(r"\.cp-focused\[data-tip\]::after|\[data-tip\]\.cp-focused::after", css)
+    assert "content: attr(data-tip)" in css

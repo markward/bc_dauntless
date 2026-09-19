@@ -294,6 +294,27 @@ function _cpRenderBridgesBody(state, focusables) {
                     : _cpRenderBridgesListView(b, isFoc);
 }
 
+// Row-action icons. Inline SVG: no font or asset dependency, and
+// currentColor picks up the cp-toggle text colour in every state.
+const CP_ICON_PENCIL =
+    '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">'
+  +   '<path d="M11.5 1.5l3 3L5 14H2v-3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>'
+  +   '<path d="M9.5 3.5l3 3" stroke="currentColor" stroke-width="1.5"/>'
+  + '</svg>';
+const CP_ICON_CROSS =
+    '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">'
+  +   '<path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
+  + '</svg>';
+
+// An icon button with page-drawn hover text. The host's CefDisplayHandler
+// implements no OnTooltip, so title= shows nothing under OSR; the tip is a
+// CSS ::after on [data-tip], shown on :hover and on keyboard focus.
+function _cpIconButton(tip, icon, focused, onclick) {
+    return '<button class="cp-toggle cp-iconbtn' + (focused ? ' cp-focused' : '') + '"'
+         +   ' data-tip="' + tip + '" aria-label="' + tip + '"'
+         +   ' onclick="' + onclick + '">' + icon + '</button>';
+}
+
 function _cpRenderBridgesListView(b, isFoc) {
     let html = '';
     html += '<div class="cp-group-header">Mapped</div>';
@@ -308,10 +329,10 @@ function _cpRenderBridgesListView(b, isFoc) {
         html += '<div class="cp-row cp-bridges__pin">'
               +     '<span class="cp-label cp-bridges__ship">' + shipTxt + '</span>'
               +     '<span class="cp-label cp-bridges__bridge">' + bridgeTxt + '</span>'
-              +     '<button class="cp-toggle' + (isFoc('bridge_edit', p.ship) ? ' cp-focused' : '') + '"'
-              +        ' onclick="dauntlessEvent(\'configuration/bridge:edit:' + _cpEventArg(p.ship) + '\')">Edit</button>'
-              +     '<button class="cp-toggle' + (isFoc('bridge_remove', p.ship) ? ' cp-focused' : '') + '"'
-              +        ' onclick="dauntlessEvent(\'configuration/bridge:remove:' + _cpEventArg(p.ship) + '\')">Remove</button>'
+              +     _cpIconButton('Edit mapping', CP_ICON_PENCIL, isFoc('bridge_edit', p.ship),
+                                    "dauntlessEvent('configuration/bridge:edit:" + _cpEventArg(p.ship) + "')")
+              +     _cpIconButton('Remove mapping', CP_ICON_CROSS, isFoc('bridge_remove', p.ship),
+                                    "dauntlessEvent('configuration/bridge:remove:" + _cpEventArg(p.ship) + "')")
               + '</div>';
     });
 
