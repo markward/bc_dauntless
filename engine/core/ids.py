@@ -29,6 +29,14 @@ def register(obj: "TGObject") -> None:
     _registry[obj.GetObjID()] = obj
 
 
+def allocate_id() -> int:
+    """Hand out the next object id without creating a TGObject. For classes
+    that must be findable via TGObject_GetTGObjectPtr but deliberately are
+    NOT TGObjects (TGCondition — a TGObject's __getattr__ stub would hide
+    condition-script bugs behind truthy stubs)."""
+    return next(_counter)
+
+
 class _Stub:
     """Recursive stub: attribute access and calls return another _Stub.
 

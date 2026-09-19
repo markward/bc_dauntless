@@ -253,6 +253,7 @@ from engine.appc.ai import (
     ArtificialIntelligence,
     TGCondition, TGConditionHandler,
     ConditionScript, ConditionScript_Create, ConditionScript_Cast,
+    TGCondition_Cast,
     PlainAI, PlainAI_Create,
     PriorityListAI, PriorityListAI_Create,
     SequenceAI, SequenceAI_Create,
@@ -1228,10 +1229,24 @@ class _TGTypedEvent:
     def __init__(self):
         self._event_type = 0
         self._destination = None
+        self._source = None
     def SetEventType(self, t): self._event_type = t
     def GetEventType(self): return self._event_type
     def SetDestination(self, d): self._destination = d
     def GetDestination(self): return self._destination
+    # Undefined (falling through to __getattr__'s _Stub) until 2026-09-19:
+    # SetSource was a no-op stub call and GetSource always returned a fresh,
+    # non-None _Stub — silent because these route through THIS module's own
+    # _Stub, not engine.core.stub_telemetry, so it never surfaced on the
+    # heatmap. MissionLib.ConditionChangedRedirect (:2536) does
+    # App.TGCondition_Cast(pEvent.GetSource()) — with GetSource() a stub, the
+    # cast always returned None and the redirect silently never fired,
+    # independent of the TGCondition_Cast gap itself. engine/appc/ai.py
+    # (TGCondition.SetStatus), ai_driver.py, bridge_officers.py and
+    # float_range_watcher.py already called SetSource on these events and
+    # relied on it silently doing nothing.
+    def SetSource(self, s): self._source = s
+    def GetSource(self): return self._source
     def __getattr__(self, name): return _Stub()
 
 class _TGIntEvent(_TGTypedEvent):

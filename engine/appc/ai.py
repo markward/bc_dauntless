@@ -53,9 +53,15 @@ class TGCondition:
     SDK uses int status (typically 0/1) but the comparison is value-based.
     """
     def __init__(self):
+        from engine.core import ids
+        self._obj_id: int = ids.allocate_id()
+        ids.register(self)          # E2M0.py:156 looks conditions up by id
         self._status: int = 0
         self._handlers: list = []
         self._active: bool = False
+
+    def GetObjID(self) -> int:
+        return self._obj_id
 
     def GetStatus(self) -> int:
         return self._status
@@ -144,13 +150,10 @@ class ConditionScript(TGCondition):
     ConditionInRange.__del__ (which deletes its proximity sphere) would never
     run.
     """
-    _next_id: int = 1
     _registry: dict = {}
 
     def __init__(self, module_name: str = "", class_name: str = "", *args):
         super().__init__()
-        self._obj_id = ConditionScript._next_id
-        ConditionScript._next_id += 1
         ConditionScript._registry[self._obj_id] = weakref.ref(self)
         self._module_name = module_name
         self._class_name = class_name
@@ -165,9 +168,6 @@ class ConditionScript(TGCondition):
             except Exception as e:
                 self._instance = None
                 self._init_error = (type(e).__name__, str(e))
-
-    def GetObjID(self) -> int:
-        return self._obj_id
 
     def RegisterExternalFunctions(self, pAI) -> None:
         """Forward to the wrapped script's own RegisterExternalFunctions.
@@ -233,6 +233,12 @@ def ConditionScript_Create(module_name: str, class_name: str, *args) -> Conditio
 
 def ConditionScript_Cast(obj):
     return obj if isinstance(obj, ConditionScript) else None
+
+
+def TGCondition_Cast(obj):
+    """SDK MissionLib.py:2536 (ConditionChangedRedirect) and E2M0.py:156.
+    Undefined, the stub's GetStatus() was truthy on both edges."""
+    return obj if isinstance(obj, TGCondition) else None
 
 
 def ConditionScript_GetByID(obj_id) -> "ConditionScript | None":
