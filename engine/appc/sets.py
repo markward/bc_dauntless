@@ -203,6 +203,8 @@ class SetClass(TGEventHandlerObject):
         # dead. _containing_set is already set above so EnterSet's
         # GetContainingSet().GetName() resolves. See _broadcast_set_transition.
         self._broadcast_set_transition(obj, entered=True)
+        from engine.appc.objects import ObjectGroup
+        ObjectGroup.broadcast_membership(obj, entered=True)
         return True
 
     @staticmethod
@@ -246,6 +248,8 @@ class SetClass(TGEventHandlerObject):
             contact_index.on_removed(self, obj)
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
+            from engine.appc.objects import ObjectGroup
+            ObjectGroup.broadcast_membership(obj, entered=False)
         return self._objects.pop(name, None)
 
     def DeleteObjectFromSet(self, name: str) -> None:
@@ -255,6 +259,8 @@ class SetClass(TGEventHandlerObject):
             contact_index.on_removed(self, obj)
             self._fire("removed", obj, name)
             self._broadcast_set_transition(obj, entered=False)
+            from engine.appc.objects import ObjectGroup
+            ObjectGroup.broadcast_membership(obj, entered=False)
         self._objects.pop(name, None)
 
     def _broadcast_set_transition(self, obj, *, entered: bool) -> None:

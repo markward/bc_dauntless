@@ -1048,16 +1048,27 @@ class ObjectGroup(TGEventHandlerObject):
     EXITED_SET = 4
     DESTROYED = 8
 
+    # Every live group, so a set add/remove can find the groups watching the
+    # object's name. Weak: a mission's condition drops its group when the
+    # condition dies, and the registry must not keep it (or its handlers) alive.
+    _live: "weakref.WeakSet" = weakref.WeakSet()
+
     def __init__(self):
         super().__init__()
         self._names: list[str] = []
         # Per-name event flags (SetEventFlag/ClearEventFlag/IsEventFlagSet).
         # SDK uses these to mark group-membership events as already-handled.
         self._event_flags: dict[str, set[int]] = {}
+        # Group-level defaults from the single-arg SetEventFlag(flag) form,
+        # applied to names added AFTER the call too (ConditionExists.SetTarget
+        # does RemoveAllNames(); AddName(sTarget) post-construction).
+        self._default_flags: set[int] = set()
+        ObjectGroup._live.add(self)
 
     def AddName(self, name: str) -> None:
         if name not in self._names:
             self._names.append(name)
+        self._event_flags.setdefault(name, set()).update(self._default_flags)
 
     def RemoveName(self, name: str) -> None:
         if name in self._names:
@@ -1124,6 +1135,7 @@ class ObjectGroup(TGEventHandlerObject):
         """
         if len(args) == 1:
             flag = int(args[0])
+            self._default_flags.add(flag)
             for name in self._names:
                 self._event_flags.setdefault(name, set()).add(flag)
         elif len(args) == 2:
@@ -1137,6 +1149,35 @@ class ObjectGroup(TGEventHandlerObject):
 
     def IsEventFlagSet(self, name: str, flag: int) -> int:
         return 1 if int(flag) in self._event_flags.get(name, set()) else 0
+
+    # ── Membership event broadcast ──────────────────────────────────────────
+    @classmethod
+    def broadcast_membership(cls, obj, *, entered: bool) -> None:
+        """Post ET_OBJECT_GROUP_OBJECT_{ENTERED,EXITED}_SET to every group
+        watching obj's name with the matching flag. Payload per the SDK
+        consumers (ConditionAllInSameSet.py:83-110, ConditionExists.py:84-90):
+        TGObjPtrEvent, GetObjPtr() = the object, destination = the group.
+        Called from SetClass after the object's containing-set is updated,
+        because EnteredSet reads GetContainingSet().GetName() off the object.
+        The warp-transit set is NOT suppressed here (see plan Task 11)."""
+        name = obj.GetName() if hasattr(obj, "GetName") else None
+        if not name:
+            return
+        import App
+        flag = cls.ENTERED_SET if entered else cls.EXITED_SET
+        et = (App.ET_OBJECT_GROUP_OBJECT_ENTERED_SET if entered
+              else App.ET_OBJECT_GROUP_OBJECT_EXITED_SET)
+        for group in list(cls._live):
+            if name not in group._names:
+                continue
+            if flag not in group._event_flags.get(name, ()):
+                continue
+            evt = App.TGObjPtrEvent_Create()
+            evt.SetEventType(et)
+            evt.SetObjPtr(obj)
+            evt.SetSource(obj)
+            evt.SetDestination(group)
+            App.g_kEventManager.AddEvent(evt)
 
 
 class ObjectGroupWithInfo(ObjectGroup):
