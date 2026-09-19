@@ -110,6 +110,7 @@ from engine.appc.math import (
     TGPoint3_GetModelUp, TGPoint3_GetModelDown,
     TGPoint3_GetModelRight, TGPoint3_GetModelLeft,
     TGPoint3_GetRandomUnitVector,
+    TGGeomUtils_LineSphereIntersection,
 )
 from engine.appc.objects import (
     ObjectClass, PhysicsObjectClass, DamageableObject,

@@ -451,3 +451,35 @@ def TGPoint3_GetRandomUnitVector() -> TGPoint3:
             break
     k = 2.0 * _math.sqrt(1.0 - s)
     return TGPoint3(a * k, b * k, 1.0 - 2.0 * s)
+
+
+def TGGeomUtils_LineSphereIntersection(start, ray, centre, radius,
+                                       near_out, far_out) -> int:
+    """Segment start→start+ray vs sphere(centre, radius). SDK caller:
+    AI/PlainAI/Intercept.py:326 (obstacle refinement). Returns 1 and writes
+    the entry point into near_out and exit point into far_out when the
+    SEGMENT (not the infinite line) touches the sphere; a start inside the
+    sphere reports start itself as the entry. Returns 0 and leaves the
+    out-params untouched otherwise. Stated assumption: BC's native routine
+    is segment-bounded — Intercept only cares about obstacles between it
+    and its destination."""
+    dx, dy, dz = ray.x, ray.y, ray.z
+    a = dx * dx + dy * dy + dz * dz
+    if a <= 0.0:
+        return 0
+    ox, oy, oz = start.x - centre.x, start.y - centre.y, start.z - centre.z
+    b = 2.0 * (ox * dx + oy * dy + oz * dz)
+    c = ox * ox + oy * oy + oz * oz - float(radius) * float(radius)
+    disc = b * b - 4.0 * a * c
+    if disc < 0.0:
+        return 0
+    root = _math.sqrt(disc)
+    t0 = (-b - root) / (2.0 * a)
+    t1 = (-b + root) / (2.0 * a)
+    if t1 < 0.0 or t0 > 1.0:
+        return 0
+    t_near = max(t0, 0.0)
+    t_far = min(t1, 1.0)
+    near_out.SetXYZ(start.x + dx * t_near, start.y + dy * t_near, start.z + dz * t_near)
+    far_out.SetXYZ(start.x + dx * t_far, start.y + dy * t_far, start.z + dz * t_far)
+    return 1
