@@ -201,6 +201,9 @@ class ConfigurationPanel(Panel):
         # Set while the add view is editing an existing row: the ship is
         # fixed and Save re-points its bridge instead of adding.
         self._bridge_edit_ship: Optional[str] = None
+        # Set while the add view is editing the Default row (the bridge for
+        # every unmapped ship): no ship at all, Save calls set_default_bridge.
+        self._bridge_edit_default = False
         # Persistence seam. Defaults are no-ops so the panel works standalone
         # and every existing construction site keeps compiling. The panel never
         # imports the settings store — the host loop binds these.
@@ -235,6 +238,7 @@ class ConfigurationPanel(Panel):
         self._bridge_add_ship = None
         self._bridge_adding = False
         self._bridge_edit_ship = None
+        self._bridge_edit_default = False
 
     def _controls_rows(self) -> list:
         """[{id, label, category, key}] for the Controls tab, in ACTIONS order."""
@@ -261,12 +265,19 @@ class ConfigurationPanel(Panel):
                                   for b in available],
             "adding": self._bridge_adding,
             "edit_ship": self._bridge_edit_ship,
+            "edit_default": self._bridge_edit_default,
+            "default": self._bridge_pins.default_row()._asdict(),
             "add_ship": self._bridge_add_ship,
             "add_bridge": self._bridge_add_bridge,
-            "can_add": (self._bridge_add_ship is not None
-                        and self._bridge_add_bridge is not None),
-            "default_bridge_label": bs.bridge_label(bs.DEFAULT_BRIDGE),
+            "can_add": self._bridge_can_save(),
         }
+
+    def _bridge_can_save(self) -> bool:
+        """Save needs a bridge, and a ship unless the Default row is being
+        edited (it has none)."""
+        if self._bridge_add_bridge is None:
+            return False
+        return self._bridge_edit_default or self._bridge_add_ship is not None
 
     def render_payload(self) -> Optional[str]:
         controls_rows = self._controls_rows()
@@ -489,6 +500,18 @@ class ConfigurationPanel(Panel):
                 self._bridge_adding = True
                 self._focused = -1              # the focus list changes shape
                 return True
+            if rest == "edit_default":
+                if self._bridge_adding:
+                    return False
+                current = self._bridge_pins.default_bridge()
+                available = bs.available_bridges()
+                self._bridge_add_ship = None
+                self._bridge_edit_default = True
+                self._bridge_add_bridge = current if bs.is_available(current) else (
+                    available[0].script_name if available else None)
+                self._bridge_adding = True
+                self._focused = -1              # the focus list changes shape
+                return True
             if rest == "cancel":
                 if not self._bridge_adding:
                     return False
@@ -499,7 +522,7 @@ class ConfigurationPanel(Panel):
                 return False
             if rest.startswith("ship:"):
                 ship = rest[len("ship:"):]
-                if self._bridge_edit_ship is not None:
+                if self._bridge_edit_ship is not None or self._bridge_edit_default:
                     return False                # the ship is fixed while editing
                 if ship not in self._bridge_pins.unpinned_ships():
                     return False
@@ -512,10 +535,12 @@ class ConfigurationPanel(Panel):
                 self._bridge_add_bridge = bridge
                 return True
             if rest == "add":                   # the view's Save button
-                if self._bridge_add_ship is None or self._bridge_add_bridge is None:
+                if not self._bridge_can_save():
                     return False
                 try:
-                    if self._bridge_edit_ship is not None:
+                    if self._bridge_edit_default:
+                        self._bridge_pins.set_default_bridge(self._bridge_add_bridge)
+                    elif self._bridge_edit_ship is not None:
                         self._bridge_pins.set_bridge(self._bridge_edit_ship,
                                                      self._bridge_add_bridge)
                     else:
@@ -561,6 +586,7 @@ class ConfigurationPanel(Panel):
         self._bridge_adding = False
         self._bridge_add_ship = None
         self._bridge_edit_ship = None
+        self._bridge_edit_default = False
 
     def invalidate(self) -> None:
         # Focus reset is handled by close(); invalidate() is only the
@@ -647,6 +673,8 @@ class ConfigurationPanel(Panel):
             self.dispatch_event("bridge:add")
         elif activate and kind == "ctrl" and target == "bridge_add_open":
             self.dispatch_event("bridge:add_open")
+        elif activate and kind == "ctrl" and target == "bridge_edit_default":
+            self.dispatch_event("bridge:edit_default")
         elif activate and kind == "ctrl" and target == "bridge_cancel":
             self.dispatch_event("bridge:cancel")
         elif activate and kind == "ctrl" and target == "reset_bridges":
@@ -704,12 +732,13 @@ class ConfigurationPanel(Panel):
         elif self._selected_tab == "bridges" and self._bridge_pins is not None:
             from engine import bridge_selection as bs
             if self._bridge_adding:
-                if self._bridge_edit_ship is None:      # editing: the ship is fixed
+                if self._bridge_edit_ship is None and not self._bridge_edit_default:
                     out += [("bridge_ship", s) for s in self._bridge_pins.unpinned_ships()]
                 out += [("bridge_pick", b.script_name) for b in bs.available_bridges()]
                 out += [("ctrl", "bridge_cancel"), ("ctrl", "bridge_add")]
             else:
                 for r in self._bridge_pins.rows():
                     out += [("bridge_edit", r.ship), ("bridge_remove", r.ship)]
-                out += [("ctrl", "bridge_add_open"), ("ctrl", "reset_bridges")]
+                out += [("ctrl", "bridge_edit_default"),
+                        ("ctrl", "bridge_add_open"), ("ctrl", "reset_bridges")]
         return out

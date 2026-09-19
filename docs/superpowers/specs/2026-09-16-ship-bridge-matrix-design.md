@@ -152,6 +152,9 @@ class BridgePins:                       # thin façade over a SettingsStore
     def pins(self) -> dict[str, str]    # file present ⇒ its "pins" (authoritative, even {});
                                         # absent ⇒ copy of DEFAULT_PINS
     def resolve(self, ship_name) -> str
+    def default_bridge(self) -> str     # the "default" section's bridge as written; absent ⇒ DEFAULT_BRIDGE
+    def default_row(self) -> DefaultRow # (bridge, bridge_label, bridge_missing) for the panel
+    def set_default_bridge(self, bridge) -> None  # raises UnknownBridge
     def add(self, ship, bridge) -> None # raises DuplicateShip / UnknownBridge
     def set_bridge(self, ship, bridge) -> None  # raises UnmappedShip / UnknownBridge; keeps file order
     def remove(self, ship) -> None
@@ -161,17 +164,23 @@ class BridgePins:                       # thin façade over a SettingsStore
 
 `resolve(ship)`:
 
-1. `bridge = pins().get(ship)`; if none ⇒ `DEFAULT_BRIDGE`.
-2. if `not is_available(bridge)` ⇒ `DEFAULT_BRIDGE`, and log **once per
+1. `bridge = pins().get(ship)`; if none ⇒ the **stored default**
+   (`default_bridge()`, the panel's Default row; revised 2026-09-19 — it
+   used to be the constant `DEFAULT_BRIDGE`).
+2. if `not is_available(bridge)` ⇒ the stored default, and log **once per
    (ship, bridge) per process** via `dev_mode.log_swallowed`-style boot-report
    line: `bridge pin Akira -> VoyagerBridge not available; using GalaxyBridge`.
    The pin is **not** removed.
-3. Never raises. Keys compare **exactly** as written (the panel always writes
+3. If the stored default is itself unavailable (a mod removed it) ⇒ the
+   stock `DEFAULT_BRIDGE` (`GalaxyBridge`, always present), logged once; the
+   stored value is kept and the Default row shows it *(missing)*.
+4. Never raises. Keys compare **exactly** as written (the panel always writes
    canonical stems; a restored file behaves as when saved).
 
 `add` rejects a ship already pinned (`DuplicateShip`) and a bridge not in
 `available_bridges()` (`UnknownBridge`). The dict makes "each ship once"
-structural; the guard keeps the panel honest. Editing = remove + add.
+structural; the guard keeps the panel honest. `set_bridge` re-points a row;
+`set_default_bridge` re-points the Default row.
 
 ### Storage: `bridges.json`
 
@@ -182,9 +191,13 @@ structural; the guard keeps the panel honest. Editing = remove + add.
     "Galaxy":    "GalaxyBridge",
     "Sovereign": "SovereignBridge",
     "Akira":     "SovereignBridge"
-  }
+  },
+  "default": { "bridge": "GalaxyBridge" }
 }
 ```
+
+`default` is written only once the Default row has been edited; a file
+without it (every file from before 2026-09-19) reads as `GalaxyBridge`.
 
 - Path from `bridge_selection.default_bridges_path()` — the single seam to
   move if the install dir is read-only. Sits next to `settings.json`
@@ -303,12 +316,19 @@ panel copy.
   Sovereign       Sovereign              [✎] [✕]
   Akira           Sovereign              [✎] [✕]
   LCIntrepid      Voyager  (missing)     [✎] [✕]
+  ─────────────────────────────────────────────
+  Default         Galaxy                 [✎]
 
  [            Add Mapping             ]
- Ships without a mapping use the Galaxy bridge.
  Changes apply the next time your ship is created.
                                      [Reset to Defaults]
 ```
+
+The **Default** row is the bridge every unmapped ship gets. It is always
+present — even with no ships mapped — has Edit but no Remove, and is the
+one row Reset restores rather than deletes (Reset deletes the file, so it
+goes back to Galaxy). Its Edit opens the edit view with "Default" as the
+fixed label; Save calls `set_default_bridge`.
 
 Row actions are icon buttons (pencil = *Edit mapping*, ✕ = *Remove
 mapping*) with page-drawn hover text: the host's `CefDisplayHandler` has no
@@ -380,16 +400,18 @@ and Save re-points the mapping in place. Rows flagged *(not playable)* /
 - `render_payload` adds a `bridges` block — `pins: [{ship, ship_label,
   bridge, bridge_label, ship_missing, bridge_missing}]`, `ships: [{id,
   label}]` (unpinned only), `bridges_available: [{id, label}]`,
-  `adding`, `edit_ship`, `add_ship`, `add_bridge`, `can_add` — and folds it into the
+  `adding`, `edit_ship`, `edit_default`, `default: {bridge, bridge_label,
+  bridge_missing}`, `add_ship`, `add_bridge`, `can_add` — and folds it into the
   change-detection snapshot so the push happens only on change.
-- Actions: `bridge:add_open`, `bridge:edit:<stem>`, `bridge:cancel`,
+- Actions: `bridge:add_open`, `bridge:edit:<stem>`, `bridge:edit_default`, `bridge:cancel`,
   `bridge:ship:<stem>`, `bridge:bridge:<script>`, `bridge:add` (Save — adds,
   or re-points when editing), `bridge:remove:<stem>`, `reset:bridges`. All go through `dispatch_event`
   and are best-effort: a `DuplicateShip` / `UnknownBridge` from `add` (only
   reachable by a race with a hand-edit) is swallowed and the payload
   re-pushed.
 - `_focusables` gains the tab's rows in rendered order per view — list
-  view: each mapped row's Edit then Remove, Add Mapping, Reset; add view:
+  view: each mapped row's Edit then Remove, the Default row's Edit, Add
+  Mapping, Reset; add view:
   ship list (omitted when editing), bridge radios, Cancel, Save — so
   keyboard/gamepad navigation keeps
   working. Focus resets on a view change because the list changes shape.

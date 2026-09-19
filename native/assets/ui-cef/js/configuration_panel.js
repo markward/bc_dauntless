@@ -104,6 +104,7 @@ function _cpFocusableList(state) {
                 out.push({kind: 'bridge_edit', target: p.ship});
                 out.push({kind: 'bridge_remove', target: p.ship});
             });
+            out.push({kind: 'ctrl', target: 'bridge_edit_default'});
             out.push({kind: 'ctrl', target: 'bridge_add_open'});
             out.push({kind: 'ctrl', target: 'reset_bridges'});
         }
@@ -274,8 +275,9 @@ function _cpRenderControlsBody(state, focusables) {
 }
 
 // Bridges tab — the ship->bridge matrix, two views inside the tab body.
-// List view: the mapped rows with Edit/Remove, an "Add Mapping" button,
-// the default-bridge note and the Reset row. Add view (state.bridges.adding):
+// List view: the mapped rows with Edit/Remove, then the Default row (the
+// bridge every unmapped ship gets; Edit only — it can never be removed),
+// an "Add Mapping" button and the Reset row. Add view (state.bridges.adding):
 // a scrollable ship list (unmapped ships only — Python enforces "each ship
 // once" by never offering a mapped one), a bridge picker, and Cancel/Save.
 // Edit (edit_ship set) is the add view with the ship fixed: no ship list,
@@ -287,9 +289,9 @@ function _cpRenderBridgesBody(state, focusables) {
     const focused = focusables[state.focused] || {};
     const isFoc = (kind, target) => focused.kind === kind && focused.target === target;
     const b = state.bridges || {pins: [], ships: [], bridges_available: [],
-                                adding: false, edit_ship: null, add_ship: null,
-                                add_bridge: null, can_add: false,
-                                default_bridge_label: ''};
+                                adding: false, edit_ship: null, edit_default: false,
+                                add_ship: null, add_bridge: null, can_add: false,
+                                default: {bridge: '', bridge_label: '', bridge_missing: false}};
     return b.adding ? _cpRenderBridgesAddView(b, isFoc)
                     : _cpRenderBridgesListView(b, isFoc);
 }
@@ -336,6 +338,18 @@ function _cpRenderBridgesListView(b, isFoc) {
               + '</div>';
     });
 
+    // The Default row: what every unmapped ship gets. Editable, never
+    // removable, so no ✕ — and rendered even when no ship is mapped.
+    const d = b.default || {bridge: '', bridge_label: '', bridge_missing: false};
+    const defaultTxt = escapeHtmlCP(d.bridge_label)
+                     + (d.bridge_missing ? ' <span class="cp-bridges__missing">(missing)</span>' : '');
+    html += '<div class="cp-row cp-bridges__pin cp-bridges__default">'
+          +     '<span class="cp-label cp-bridges__ship">Default</span>'
+          +     '<span class="cp-label cp-bridges__bridge">' + defaultTxt + '</span>'
+          +     _cpIconButton('Edit default', CP_ICON_PENCIL, isFoc('ctrl', 'bridge_edit_default'),
+                              "dauntlessEvent('configuration/bridge:edit_default')")
+          + '</div>';
+
     const canOpen = b.ships.length > 0;
     html += '<div class="cp-bridges__addrow">'
           +   '<button class="cp-toggle cp-bridges__openbtn' + (canOpen ? '' : ' cp-toggle--disabled')
@@ -347,9 +361,7 @@ function _cpRenderBridgesListView(b, isFoc) {
         html += '<div class="sc-note">Every ship is mapped.</div>';
     }
 
-    html += '<div class="sc-note">Ships without a mapping use the '
-          + escapeHtmlCP(b.default_bridge_label) + ' bridge. '
-          + 'Changes apply the next time your ship is created.</div>';
+    html += '<div class="sc-note">Changes apply the next time your ship is created.</div>';
 
     // Inlined rather than via _cpResetRow: the action needs the literal
     // string 'configuration/reset:bridges' in source (not built by
@@ -366,15 +378,17 @@ function _cpRenderBridgesListView(b, isFoc) {
 
 function _cpRenderBridgesAddView(b, isFoc) {
     let html = '';
-    const editing = !!b.edit_ship;
+    const editing = !!b.edit_ship || !!b.edit_default;
     html += '<div class="cp-group-header">' + (editing ? 'Edit Mapping' : 'Add Mapping') + '</div>';
     html += '<div class="cp-bridges__add">';
     if (editing) {
         // The ship is fixed: show it where the list would be. Its label
-        // comes from the row being edited (labels live on pins, not ships).
+        // comes from the row being edited (labels live on pins, not ships);
+        // the Default row has no ship and reads "Default".
         const row = b.pins.find(p => p.ship === b.edit_ship);
+        const fixed = b.edit_default ? 'Default' : (row ? row.ship_label : b.edit_ship);
         html += '<div class="cp-bridges__fixed">'
-              +   '<span class="cp-label">' + escapeHtmlCP(row ? row.ship_label : b.edit_ship) + '</span>'
+              +   '<span class="cp-label">' + escapeHtmlCP(fixed) + '</span>'
               + '</div>';
     } else {
         html += '<div class="cp-bridges__ships">';

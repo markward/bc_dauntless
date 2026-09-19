@@ -214,6 +214,9 @@ DEFAULT_PINS: dict = {
 }
 DEFAULT_BRIDGE = "GalaxyBridge"
 _PINS_SECTION = "pins"
+_DEFAULT_SECTION = "default"        # {"bridge": "<script>"}; absent => DEFAULT_BRIDGE
+_DEFAULT_KEY = "bridge"
+DefaultRow = namedtuple("DefaultRow", "bridge bridge_label bridge_missing")
 
 PinRow = namedtuple("PinRow",
                     "ship ship_label bridge bridge_label ship_missing bridge_missing")
@@ -245,6 +248,8 @@ class BridgePins:
 
     File absent  => a copy of DEFAULT_PINS.
     File present => its "pins" section, authoritative even when {}.
+    The bridge for an unmapped ship is the "default" section's "bridge"
+    (absent => DEFAULT_BRIDGE); it is the one row the panel cannot remove.
     Keys compare exactly as written: the panel always writes canonical
     script stems, so a restored file behaves as it did when saved.
     """
@@ -260,22 +265,46 @@ class BridgePins:
         raw = self.store._section(_PINS_SECTION)
         return {str(k): str(v) for k, v in raw.items() if isinstance(v, str)}
 
+    def default_bridge(self) -> str:
+        """The stored default as written (it may be unavailable -- the row
+        shows it missing); DEFAULT_BRIDGE when nothing is stored."""
+        got = self.store.get(_DEFAULT_SECTION, _DEFAULT_KEY)
+        return got if isinstance(got, str) and got else DEFAULT_BRIDGE
+
+    def _loadable_default(self) -> str:
+        """default_bridge() if it can be loaded, else the stock DEFAULT_BRIDGE
+        (always present), logged once."""
+        bridge = self.default_bridge()
+        if is_available(bridge):
+            return bridge
+        tag = ("*default*", bridge)
+        if tag not in self._warned:
+            self._warned.add(tag)
+            print("[bridge_selection] default bridge %s is not available; "
+                  "using %s" % (bridge, DEFAULT_BRIDGE), flush=True)
+        return DEFAULT_BRIDGE
+
     def resolve(self, ship_name) -> str:
         """The bridge config script to load for `ship_name`. Never raises."""
         if not ship_name:
-            return DEFAULT_BRIDGE
+            return self._loadable_default()
         bridge = self.pins().get(ship_name)
         if bridge is None:
-            return DEFAULT_BRIDGE
+            return self._loadable_default()
         if not is_available(bridge):
+            fallback = self._loadable_default()
             tag = (ship_name, bridge)
             if tag not in self._warned:
                 self._warned.add(tag)
                 print("[bridge_selection] pin %s -> %s is not available; "
-                      "using %s" % (ship_name, bridge, DEFAULT_BRIDGE),
+                      "using %s" % (ship_name, bridge, fallback),
                       flush=True)
-            return DEFAULT_BRIDGE
+            return fallback
         return bridge
+
+    def default_row(self) -> DefaultRow:
+        bridge = self.default_bridge()
+        return DefaultRow(bridge, bridge_label(bridge), not is_available(bridge))
 
     def rows(self) -> list:
         """Panel rows in file order, with labels and missing flags. Nothing
@@ -318,6 +347,11 @@ class BridgePins:
             raise UnknownBridge(bridge)
         current[ship] = bridge
         self._write_all(current)
+
+    def set_default_bridge(self, bridge: str) -> None:
+        if not is_available(bridge):
+            raise UnknownBridge(bridge)
+        self.store.set(_DEFAULT_SECTION, _DEFAULT_KEY, bridge)
 
     def remove(self, ship: str) -> None:
         current = self.pins()

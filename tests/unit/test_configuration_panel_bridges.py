@@ -57,7 +57,9 @@ def test_payload_lists_pins_unpinned_ships_and_bridges(pins):
     assert b["add_ship"] is None
     assert b["add_bridge"] == "GalaxyBridge"        # first available preselected
     assert b["can_add"] is False
-    assert b["default_bridge_label"] == "Galaxy"
+    assert b["default"] == {"bridge": "GalaxyBridge", "bridge_label": "Galaxy",
+                            "bridge_missing": False}
+    assert b["edit_default"] is False
 
 
 def _open_add(p):
@@ -198,6 +200,48 @@ def test_edit_view_does_not_change_ship_and_has_no_ship_rows(pins):
     ]
 
 
+def test_edit_default_opens_the_view_on_the_current_default(pins):
+    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    assert p.dispatch_event("bridge:edit_default") is True
+    b = _body(p)["bridges"]
+    assert b["adding"] is True and b["edit_default"] is True
+    assert b["edit_ship"] is None and b["add_bridge"] == "GalaxyBridge"
+    assert b["can_add"] is True
+    assert p.dispatch_event("bridge:ship:BirdOfPrey") is False   # no ship here
+    assert p._focusables() == [
+        ("tab", "graphics"), ("tab", "bridges"),
+        ("bridge_pick", "GalaxyBridge"), ("bridge_pick", "SovereignBridge"),
+        ("ctrl", "bridge_cancel"), ("ctrl", "bridge_add"),
+    ]
+
+
+def test_edit_default_save_sets_the_default_and_returns(pins):
+    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    p.dispatch_event("bridge:edit_default")
+    p.dispatch_event("bridge:bridge:SovereignBridge")
+    assert p.dispatch_event("bridge:add") is True
+    b = _body(p)["bridges"]
+    assert pins.default_bridge() == "SovereignBridge"
+    assert b["default"]["bridge_label"] == "Sovereign"
+    assert b["adding"] is False and b["edit_default"] is False
+    assert len(pins.pins()) == 3                    # no row was added
+
+
+def test_edit_default_cancel_keeps_it(pins):
+    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    p.dispatch_event("bridge:edit_default"); p.dispatch_event("bridge:bridge:SovereignBridge")
+    p.handle_key_esc()
+    assert pins.default_bridge() == "GalaxyBridge"
+    assert _body(p)["bridges"]["edit_default"] is False
+
+
+def test_there_is_no_remove_for_the_default(pins):
+    p = _make(pins); p.open(); p.dispatch_event("tab:bridges")
+    assert p.dispatch_event("bridge:remove:__default__") is True   # a no-op remove
+    assert pins.default_bridge() == "GalaxyBridge"
+    assert ("bridge_remove", "__default__") not in p._focusables()
+
+
 def test_edit_is_a_list_view_control(pins):
     p = _make(pins); _open_add(p)
     assert p.dispatch_event("bridge:edit:Akira") is False
@@ -260,6 +304,7 @@ def test_focusables_mirror_the_list_view_rows(pins):
         ("bridge_edit", "Galaxy"), ("bridge_remove", "Galaxy"),
         ("bridge_edit", "Sovereign"), ("bridge_remove", "Sovereign"),
         ("bridge_edit", "Akira"), ("bridge_remove", "Akira"),
+        ("ctrl", "bridge_edit_default"),
         ("ctrl", "bridge_add_open"), ("ctrl", "reset_bridges"),
     ]
 
@@ -376,8 +421,8 @@ def test_js_focusable_list_has_a_bridges_branch_in_python_order():
     assert "b.adding" in adding
     assert re.findall(r"kind: '(\w+)'", adding) == ["bridge_ship", "bridge_pick", "ctrl", "ctrl"]
     assert re.findall(r"target: '(\w+)'", adding) == ["bridge_cancel", "bridge_add"]
-    assert re.findall(r"kind: '(\w+)'", listing) == ["bridge_edit", "bridge_remove", "ctrl", "ctrl"]
-    assert re.findall(r"target: '(\w+)'", listing) == ["bridge_add_open", "reset_bridges"]
+    assert re.findall(r"kind: '(\w+)'", listing) == ["bridge_edit", "bridge_remove", "ctrl", "ctrl", "ctrl"]
+    assert re.findall(r"target: '(\w+)'", listing) == ["bridge_edit_default", "bridge_add_open", "reset_bridges"]
 
 
 def test_js_renders_the_bridges_tab_and_dispatches_every_action():
@@ -386,7 +431,7 @@ def test_js_renders_the_bridges_tab_and_dispatches_every_action():
     assert "selected_tab === 'bridges'" in src
     for action in ("configuration/bridge:ship:", "configuration/bridge:bridge:",
                    "configuration/bridge:add\\'", "configuration/bridge:add_open",
-                   "configuration/bridge:edit:",
+                   "configuration/bridge:edit:", "configuration/bridge:edit_default",
                    "configuration/bridge:cancel", "configuration/bridge:remove:",
                    "configuration/reset:bridges"):
         assert action in src, action
@@ -403,9 +448,18 @@ def test_js_bridges_copy_says_mapped_never_pinned():
     texts = " ".join(a or b for a, b in visible)
     assert not re.search(r"\bpin(ned|s)?\b", texts, re.I), texts
     for copy in ("Mapped", "Add Mapping", "Edit Mapping", "Edit", "Cancel", "Save",
-                 "No ships mapped.", "Every ship is mapped.",
-                 "Ships without a mapping use the"):
+                 "No ships mapped.", "Every ship is mapped.", "Default"):
         assert copy in body, copy
+    assert "Ships without a mapping use the" not in body
+
+
+def test_js_default_row_has_edit_but_no_remove():
+    import re
+    body = _js_bridges_renderers()
+    row = re.search(r"cp-bridges__default.*?</div>';", body, re.S).group(0)
+    assert "_cpIconButton('Edit default', CP_ICON_PENCIL" in row
+    assert "bridge:edit_default" in row
+    assert "Remove" not in row and "bridge:remove" not in row
 
 
 def test_js_shows_missing_markers_and_never_uses_a_native_select():

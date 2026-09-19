@@ -207,9 +207,58 @@ def test_set_bridge_rejects_unmapped_ship_and_unknown_bridge(pins):
     assert pins.pins()["Akira"] == "SovereignBridge"
 
 
+def test_default_bridge_is_galaxy_until_set_and_persists(pins, tmp_path):
+    assert pins.default_bridge() == "GalaxyBridge"
+    pins.set_default_bridge("SovereignBridge")
+    assert pins.default_bridge() == "SovereignBridge"
+    assert pins.resolve("BirdOfPrey") == "SovereignBridge"       # unmapped ship
+    assert pins.resolve(None) == "SovereignBridge"
+    again = bs.load_bridge_pins(tmp_path / "bridges.json")
+    assert again.default_bridge() == "SovereignBridge"
+    assert again.pins() == bs.DEFAULT_PINS          # pins untouched by the write
+
+
+def test_set_default_bridge_rejects_an_unknown_bridge(pins):
+    with pytest.raises(bs.UnknownBridge):
+        pins.set_default_bridge("VoyagerBridge")
+    assert pins.default_bridge() == "GalaxyBridge"
+
+
+def test_a_missing_stored_default_falls_to_galaxy_and_logs_once(fake_install, tmp_path, capsys):
+    f = tmp_path / "bridges.json"
+    f.write_text('{"version": 1, "pins": {}, "default": {"bridge": "VoyagerBridge"}}')
+    pins = bs.load_bridge_pins(f)
+    assert pins.default_bridge() == "VoyagerBridge"            # kept, shown missing
+    assert pins.default_row().bridge_missing is True
+    assert pins.resolve("Galaxy") == "GalaxyBridge"
+    assert pins.resolve("Akira") == "GalaxyBridge"
+    out = capsys.readouterr().out
+    assert out.count("VoyagerBridge") == 1
+    assert "default" in out
+
+
+def test_default_row_carries_label_and_flag(pins):
+    row = pins.default_row()
+    assert row.bridge == "GalaxyBridge" and row.bridge_label == "Galaxy"
+    assert row.bridge_missing is False
+
+
+def test_a_mapped_bridge_that_is_missing_falls_to_the_stored_default(pins, capsys):
+    pins.set_default_bridge("SovereignBridge")
+    pins.add("BirdOfPrey", "GalaxyBridge")
+    pins.store.set("pins", "BirdOfPrey", "VoyagerBridge")       # hand-edit
+    assert pins.resolve("BirdOfPrey") == "SovereignBridge"
+
+
 def test_remove_unknown_ship_is_a_noop(pins):
     pins.remove("NotAShip")
     assert len(pins.pins()) == 3
+
+
+def test_reset_clears_the_stored_default_too(pins, tmp_path):
+    pins.set_default_bridge("SovereignBridge")
+    pins.reset()
+    assert pins.default_bridge() == "GalaxyBridge"
 
 
 def test_reset_deletes_the_file_and_restores_defaults(pins, tmp_path):
