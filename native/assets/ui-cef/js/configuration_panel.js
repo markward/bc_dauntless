@@ -399,6 +399,29 @@ function _cpUpdateCaptureOverlay(state) {
       + '</div>';
 }
 
+// Scroll offsets that must survive a body rebuild: the body itself plus
+// each inner scroller, keyed by selector so a container that is absent
+// after the rebuild (view changed) is simply skipped.
+const CP_SCROLLERS = ['.cp-bridges__ships'];
+
+function _cpCaptureScroll(body) {
+    const out = {body: body.scrollTop};
+    CP_SCROLLERS.forEach(sel => {
+        const el = body.querySelector(sel);
+        if (el) out[sel] = el.scrollTop;
+    });
+    return out;
+}
+
+function _cpRestoreScroll(body, scrolled) {
+    body.scrollTop = scrolled.body;
+    CP_SCROLLERS.forEach(sel => {
+        if (!(sel in scrolled)) return;
+        const el = body.querySelector(sel);
+        if (el) el.scrollTop = scrolled[sel];
+    });
+}
+
 function setConfigurationPanel(state) {
     const root = document.getElementById('configuration-panel');
     if (!root) return;
@@ -412,6 +435,12 @@ function setConfigurationPanel(state) {
     if (tabstrip) tabstrip.innerHTML = _cpRenderTabstrip(state, focusables);
     const body = document.getElementById('cp-body');
     if (body) {
+        // innerHTML replaces the tab body wholesale on every push, and a
+        // push follows every click (the click changes the payload), so any
+        // scroll position inside the body would snap back to 0 — picking a
+        // ship in the Bridges add list scrolled the pick out of view. Read
+        // the scrolling containers' offsets before the swap, restore after.
+        const scrolled = _cpCaptureScroll(body);
         if (state.selected_tab === 'graphics') {
             body.innerHTML = _cpRenderGraphicsBody(state, focusables);
         } else if (state.selected_tab === 'gameplay') {
@@ -423,6 +452,7 @@ function setConfigurationPanel(state) {
         } else {
             body.innerHTML = '';
         }
+        _cpRestoreScroll(body, scrolled);
     }
     _cpUpdateCaptureOverlay(state);
     root.style.display = 'flex';

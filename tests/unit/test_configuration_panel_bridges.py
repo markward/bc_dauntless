@@ -351,3 +351,21 @@ def test_js_onclick_ids_are_js_escaped_not_just_html_escaped():
     for arg in ("p.ship", "s.id", "x.id"):
         assert "_cpEventArg(" + arg + ")" in body, arg
         assert "escapeHtmlCP(" + arg + ")" not in body, arg
+
+
+def test_js_preserves_scroll_positions_across_a_rerender():
+    """Every Python push rebuilds the tab body with innerHTML, which drops
+    the ship list's scroll position — clicking a ship (a payload change)
+    snapped the list back to the top so the pick vanished off-screen.
+    setConfigurationPanel must read the scrollTop of the scrolling
+    containers before the swap and write it back after."""
+    import re
+    src = _js_source()
+    fn = re.search(r"function setConfigurationPanel\(.*?\n\}", src, re.S).group(0)
+    swap = fn.index("body.innerHTML")
+    assert "_cpCaptureScroll(body)" in fn[:swap], "scroll not captured before the rebuild"
+    assert "_cpRestoreScroll(body" in fn[swap:], "scroll not restored after the rebuild"
+    capture = re.search(r"function _cpCaptureScroll\(.*?\n\}", src, re.S).group(0)
+    restore = re.search(r"function _cpRestoreScroll\(.*?\n\}", src, re.S).group(0)
+    assert "scrollTop" in capture and "scrollTop" in restore
+    assert re.search(r"CP_SCROLLERS = \[[^\]]*'\.cp-bridges__ships'", src)
