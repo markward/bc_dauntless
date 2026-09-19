@@ -404,6 +404,12 @@ class ArtificialIntelligence:
         # reached this node on the active path this tick", set/cleared by
         # SetActive()/SetInactive() below.
         self._is_active_in_tree: bool = False
+        # Per-node script-exception record, set by ai_driver._run_script_step
+        # when this node's SDK script call (leaf Update, preprocessor method,
+        # GotFocus/LostFocus) raises. (type_name, message), or None when no
+        # error has occurred. The AI inspector reads it; task 9 depends on it
+        # always existing.
+        self._last_script_error: "tuple | None" = None
         type(self)._allocate_id(self)
 
     @classmethod

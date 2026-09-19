@@ -1055,6 +1055,16 @@ def _reset_leakable_engine_globals():
         App.g_kSoundManager = _mgr
     except Exception:
         pass
+    # AI script-exception dedup log: ai_driver._run_script_step prints a
+    # given (node id, exception type) at most once so a persistently-raising
+    # script doesn't spam every tick. Node ids are recycled across test/
+    # mission-scoped ArtificialIntelligence instances, so a stale entry
+    # could suppress a genuinely new test's dev-mode print.
+    try:
+        from engine.appc import ai_driver as _ai_driver
+        _ai_driver.reset_script_error_log()
+    except Exception:
+        pass
     # Accumulator lists drained per mission tick in production.
     for _mod, _attr in (
         ("engine.appc.projectiles", "_active"),
