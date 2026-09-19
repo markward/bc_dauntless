@@ -180,9 +180,30 @@ def _mark_dead(ship) -> None:
     """End of throes: mark the ship dead and broadcast ET_OBJECT_DESTROYED so
     mission logic and ship_lifecycle.publish_destroyed (fired by SetDead) run
     on schedule. The hull stays in its set and keeps its target locks — it
-    lingers as a selectable wreck for WRECK_LINGER_DURATION."""
+    lingers as a selectable wreck for WRECK_LINGER_DURATION.
+
+    Also tears down the ship's AI tree (spec #15): nothing outside ships.py
+    ever touches the AI slot, so a destroyed ship's tree otherwise stays
+    installed on the hulk forever, and its Warp leaf never runs LostFocus
+    (which re-enables the collisions it disabled) — a killed ship mid-warp
+    would end up permanently non-collidable.
+
+    Tear the AI down the way ClearAI does — LostFocus down the tree (Warp's
+    re-enables collisions, FireScript's stops firing) and detach — but
+    WITHOUT ET_AI_DONE: that event means "the tree finished", and missions
+    gate beats on it. A ship that died did not finish its orders."""
     if hasattr(ship, "SetDead"):
         ship.SetDead()
+    # ship.__dict__.get, not getattr: a TGObject.__getattr__ stub would
+    # otherwise masquerade as a real (but empty) _ai attribute.
+    ai = ship.__dict__.get("_ai")
+    if ai is not None:
+        try:
+            ship._deactivate_ai_tree(ai)
+        except Exception as _e:
+            dev_mode.log_swallowed("deactivate AI tree on death", _e)
+        ship._ai = None
+        ship._insystem_warp_transit = None
     _broadcast_destroyed(ship)
 
 
