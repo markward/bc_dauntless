@@ -193,9 +193,12 @@ def _remove(ship) -> None:
     _clear_target_locks(ship)
     try:
         from engine.appc.objects import broadcast_object_deleted
+        broadcast_object_deleted(ship)
+    except Exception as _e:
+        dev_mode.log_swallowed("ET_DELETE_OBJECT_PUBLIC broadcast", _e)
+    try:
         pSet = ship.GetContainingSet() if hasattr(ship, "GetContainingSet") else None
         if pSet is not None and hasattr(ship, "GetName"):
-            broadcast_object_deleted(ship)
             pSet.RemoveObjectFromSet(ship.GetName())
     except Exception as _e:
         dev_mode.log_swallowed("remove dead ship from set", _e)

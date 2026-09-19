@@ -5115,7 +5115,10 @@ def _process_object_deletions() -> None:
             obj = objs.get(name)
             if obj is not None:
                 from engine.appc.objects import broadcast_object_deleted
-                broadcast_object_deleted(obj)
+                try:
+                    broadcast_object_deleted(obj)
+                except Exception as _e:
+                    dev_mode.log_swallowed("ET_DELETE_OBJECT_PUBLIC broadcast", _e)
             pSet.RemoveObjectFromSet(name)
 
 

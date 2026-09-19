@@ -59,3 +59,20 @@ def test_a_plain_set_move_is_not_a_delete():
     other = App.SetClass_Create(); other.SetName("T"); App.g_kSetManager._sets["T"] = other
     pSet.RemoveObjectFromSet("Bart"); other.AddObjectToSet(ship, "Bart")
     assert cond.GetStatus() == 1
+
+
+def _raising_subscriber(pObject, pEvent):
+    raise RuntimeError("boom")
+
+
+def test_a_throwing_subscriber_does_not_block_removal():
+    """Destination dispatch (events.py TGEventManager.AddEvent) is
+    deliberately unguarded, so a handler registered directly on the object
+    itself propagates. broadcast_object_deleted must not be folded into the
+    same try as the removal it precedes, or a bad subscriber leaves a
+    permanently stuck corpse in its set."""
+    pSet, ship, cond = _scene()
+    ship.AddPythonFuncHandlerForInstance(
+        App.ET_DELETE_OBJECT_PUBLIC, __name__ + "._raising_subscriber")
+    ship_death._remove(ship)
+    assert pSet.GetObject("Bart") is None

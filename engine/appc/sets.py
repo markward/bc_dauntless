@@ -261,7 +261,11 @@ class SetClass(TGEventHandlerObject):
             self._broadcast_set_transition(obj, entered=False)
             from engine.appc.objects import ObjectGroup, broadcast_object_deleted
             ObjectGroup.broadcast_membership(obj, entered=False)
-            broadcast_object_deleted(obj)
+            try:
+                broadcast_object_deleted(obj)
+            except Exception as _e:
+                import engine.dev_mode as dev_mode
+                dev_mode.log_swallowed("ET_DELETE_OBJECT_PUBLIC broadcast", _e)
         self._objects.pop(name, None)
 
     def _broadcast_set_transition(self, obj, *, entered: bool) -> None:
