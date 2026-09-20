@@ -108,3 +108,51 @@ def test_grind_hits_are_collision_typed_with_the_slip_as_tangent(hits):
     ya = {round(kw["hit_tangent"].y) for s, kw in grinds if s is a}
     yb = {round(kw["hit_tangent"].y) for s, kw in grinds if s is b}
     assert ya == {-1} and yb == {1}, "each hull's scratch runs the way the OTHER hull moved across it"
+
+
+# ── "collision" must behave exactly like None for audio and smoke (spec §1) ──
+
+def test_hull_smoke_ignores_collision_exactly_like_none(monkeypatch):
+    from engine.appc import hull_hit_smoke
+    from engine import host_io
+    emitted = []
+    monkeypatch.setattr(hull_hit_smoke, "_emit_smoke",
+                        lambda *a, **k: emitted.append(a))
+    # If the weapon gate were to let "collision" through, the next gate is
+    # world_to_body; make it succeed so a leak would reach _emit_smoke.
+    monkeypatch.setattr(host_io, "world_to_body",
+                        lambda *a, **k: ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0)))
+    ship = _ship(0.0)
+    pt, n = TGPoint3(0, 0, 0), TGPoint3(0, 0, 1)
+    hull_hit_smoke.maybe_emit(ship, pt, n, None, ship_instances={ship: 1})
+    hull_hit_smoke.maybe_emit(ship, pt, n, "collision", ship_instances={ship: 1})
+    assert emitted == []
+    # Control — the gate is real: a torpedo with a forced roll DOES emit.
+    import App
+    monkeypatch.setattr(App.g_kSystemWrapper, "GetRandomNumber", lambda n: 0,
+                        raising=False)
+    hull_hit_smoke.maybe_emit(ship, pt, n, "torpedo", ship_instances={ship: 1})
+    assert emitted, "control: torpedo smoke should have fired"
+
+
+def test_hull_audio_picks_the_same_pool_for_collision_and_none(monkeypatch):
+    from engine.appc import hit_feedback
+    import App
+    lookups = []
+
+    class _Snd:
+        def Play(self, position=None): return None
+
+    class _Mgr:
+        def GetSound(self, name):
+            lookups.append(name); return _Snd()
+
+    monkeypatch.setattr(App, "g_kSoundManager", _Mgr(), raising=False)
+    import LoadTacticalSounds, LoadDamageHitSounds
+    monkeypatch.setattr(LoadTacticalSounds, "GetRandomSound", lambda pool: pool[0])
+    monkeypatch.setattr(LoadDamageHitSounds, "GetRandomSound", lambda pool: pool[0])
+    hit_feedback.reset_audio_throttle()
+    hit_feedback._play_audio(hit_feedback.Severity.HULL, TGPoint3(0, 0, 0), None)
+    hit_feedback.reset_audio_throttle()
+    hit_feedback._play_audio(hit_feedback.Severity.HULL, TGPoint3(0, 0, 0), "collision")
+    assert len(lookups) == 2 and lookups[0] == lookups[1]

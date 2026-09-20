@@ -264,3 +264,52 @@ def test_world_carve_survives_a_raising_trace(host, monkeypatch):
     assert host.carves, "a failing normal probe must not lose the carve"
     _iid, _point, normal, *_rest = host.carves[0]
     assert normal == pytest.approx((0.6, 0.8, 0.0))
+
+
+# ── Scuff seeding (developer Damage Preview) ────────────────────────────────
+
+class _DecalSpy:
+    def __init__(self):
+        self.decals = []
+
+    def __call__(self, iid, point, normal, radius, intensity, weapon_class, time,
+                 world_tangent=None):
+        self.decals.append((iid, point, normal, radius, intensity, weapon_class,
+                            time, world_tangent))
+
+
+@pytest.fixture
+def decal_host(monkeypatch):
+    spy = _DecalSpy()
+    monkeypatch.setattr(host_io, "damage_decal_add", spy)
+    return spy
+
+
+def test_body_scuff_emits_a_scuff_decal_in_world_space(decal_host, host):
+    from engine.appc.damage_decals import WEAPON_CLASS_SCUFF
+    rot = TGMatrix3().MakeZRotation(3.14159265358979 / 2.0)   # body +X -> world +Y
+    ship = _Ship(loc=TGPoint3(10.0, -5.0, 2.0), rot=rot)
+    visible_damage.queue_body_scuff(ship, 1.0, 0.0, 0.0, radius_gu=1.5,
+                                    tangent_body=(0.0, 1.0, 0.0), intensity=0.7)
+    visible_damage.advance(0.0, {ship: 1})
+
+    assert host.carves == [], "a scuff must not carve"
+    (iid, point, normal, radius, intensity, cls, _t, tangent), = decal_host.decals
+    assert iid == 1
+    assert point == pytest.approx((10.0, -4.0, 2.0))
+    assert normal == pytest.approx((0.0, 1.0, 0.0))     # outward radial (no mesh)
+    assert tangent == pytest.approx((-1.0, 0.0, 0.0))   # body +Y -> world -X
+    assert radius == pytest.approx(1.5)
+    assert intensity == pytest.approx(0.7)
+    assert cls == WEAPON_CLASS_SCUFF
+
+
+def test_body_scuff_defers_until_the_instance_is_realized(decal_host):
+    ship = _Ship()
+    visible_damage.queue_body_scuff(ship, 1.0, 0.0, 0.0, radius_gu=1.0)
+    visible_damage.advance(0.0, {})
+    assert decal_host.decals == []
+    visible_damage.advance(0.0, {ship: 7})
+    assert len(decal_host.decals) == 1
+    visible_damage.advance(0.0, {ship: 7})
+    assert len(decal_host.decals) == 1, "emitted once, then dropped"

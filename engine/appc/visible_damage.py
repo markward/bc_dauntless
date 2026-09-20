@@ -38,7 +38,7 @@ MAX_PENDING_AGE = 5.0
 NORMAL_PROBE_MARGIN_GU = 0.5
 
 # Registry of not-yet-emitted volumes. Each entry:
-#   {"ship", "kind": "body"|"world", "pt": (x, y, z), "radius": float, "age": float}
+#   {"ship", "kind": "body"|"world"|"capsule"|"scuff", "pt": (x, y, z), "radius": float, "age": float}
 _pending: list[dict] = []
 
 
@@ -79,6 +79,22 @@ def queue_world_capsule(ship, p0_world, p1_world, radius_gu) -> None:
                      "p0": TGPoint3(p0_world.x, p0_world.y, p0_world.z),
                      "p1": TGPoint3(p1_world.x, p1_world.y, p1_world.z),
                      "radius": float(radius_gu), "age": 0.0})
+
+
+def queue_body_scuff(ship, x, y, z, radius_gu, tangent_body=(1.0, 0.0, 0.0),
+                     intensity=1.0) -> None:
+    """Queue a collision-scuff DECAL (no carve) at a body-frame point. Used by
+    the developer Damage Preview mission to seed known scuffs for live tuning.
+    `tangent_body` is the slip direction in the body frame; realised through
+    host_io.damage_decal_add once the ship's render instance exists."""
+    if ship is None:
+        return
+    _pending.append({
+        "ship": ship, "kind": "scuff",
+        "pt": (float(x), float(y), float(z)),
+        "radius": float(radius_gu), "intensity": float(intensity),
+        "tangent": tuple(float(c) for c in tangent_body), "age": 0.0,
+    })
 
 
 def clear_for(ship) -> None:
@@ -127,6 +143,31 @@ def _advance_one(entry, dt, ship_instances) -> bool:
                                    entry["radius"])
         from engine.appc import hull_breakup
         hull_breakup.after_carve(ship, iid, ship_instances)
+        return False
+
+    if entry.get("kind") == "scuff":
+        world_pt, normal = _resolve(dict(entry, kind="body"), ship, iid)
+        if world_pt is None:
+            return False
+        mesh = _mesh_normal(iid, world_pt, normal)
+        if mesh is not None:
+            normal = mesh
+        tx, ty, tz = entry["tangent"]
+        tangent = TGPoint3(tx, ty, tz)
+        if hasattr(ship, "GetWorldRotation"):
+            rot = ship.GetWorldRotation()
+            if isinstance(rot, TGMatrix3):
+                tangent.MultMatrixLeft(rot)
+        from engine.appc import damage_decals
+        host_io.damage_decal_add(
+            iid,
+            (world_pt.x, world_pt.y, world_pt.z),
+            (normal.x, normal.y, normal.z),
+            entry["radius"], entry["intensity"],
+            damage_decals.WEAPON_CLASS_SCUFF,
+            damage_decals.current_game_time(),
+            world_tangent=(tangent.x, tangent.y, tangent.z),
+        )
         return False
 
     world_pt, normal = _resolve(entry, ship, iid)

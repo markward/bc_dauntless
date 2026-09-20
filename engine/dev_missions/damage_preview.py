@@ -63,6 +63,26 @@ def Initialize(pMission):
     DamageAkira = importlib.import_module(_DAMAGE_SCRIPT)
     DamageAkira.AddDamage(pWreck)
 
+    # Three collision scuffs for live tuning of the scuff decal (spec
+    # 2026-09-20-collision-scuff-normal-decals-design.md §5): small, medium
+    # and large radii, three slip directions, the large one straddling the
+    # saucer/hull curve. Body-frame offsets in GU. Measured offline via
+    # `build/native/tools/dump_bounds -gu -p -q <x,y,z> Akira.nif` (never
+    # launch the game to check placement): model_r=5.1 GU overall; the dense
+    # hull-core piece cluster (saucer + engineering hull) spans roughly
+    # X in [-2.7, 1.3], Y in [-0.5, 0.8], Z in [-0.6, 1.2], with the nacelles
+    # extending much farther out (X ~ +-4.2). All three points below probe as
+    # "inside" a hull piece with the nearest real vertex only 0.1-0.3 GU away
+    # (well inside the 0.5 GU standoff `_mesh_normal` probes), so they land on
+    # the hull rather than in space.
+    from engine.appc import visible_damage
+    visible_damage.queue_body_scuff(pWreck, 0.6, 0.4, 0.15, radius_gu=0.6,
+                                    tangent_body=(1.0, 0.0, 0.0))
+    visible_damage.queue_body_scuff(pWreck, -0.5, 0.2, 0.15, radius_gu=1.5,
+                                    tangent_body=(0.0, 1.0, 0.0))
+    visible_damage.queue_body_scuff(pWreck, 0.0, -0.6, 0.05, radius_gu=3.5,
+                                    tangent_body=(0.7, 0.7, 0.0))
+
     # Friendly so the wreck is a clean, non-hostile contact.
     pFriendlies = pMission.GetFriendlyGroup()
     pFriendlies.AddName("Player")
