@@ -125,10 +125,13 @@ def test_throwing_group_handler_does_not_unwind_the_set_add(capfd):
 
 
 def test_set_event_flag_single_arg_applies_to_names_added_later():
-    """ConditionExists.SetTarget does RemoveAllNames(); AddName(sTarget) after
-    the group-level SetEventFlag(flag) call in its constructor. The flag must
-    still apply to the freshly (re-)added name, or the re-armed condition
-    never hears its target arrive."""
+    """Defensive, not traced: BC's single-arg SetEventFlag(flag) form has no
+    documented "does it cover names added later" story, and the real SDK
+    caller (ConditionExists.SetTarget) always calls RemoveAllNames()/AddName()
+    BEFORE re-arming the flag, so this ordering is never actually exercised
+    by ConditionExists. _default_flags exists so a caller that DOES arm the
+    flag first still gets correct behaviour for names added afterward,
+    rather than silently going deaf."""
     grp = ObjectGroup()
     grp.SetEventFlag(App.ObjectGroup.ENTERED_SET)  # called before any name exists
     grp.RemoveAllNames()
@@ -139,3 +142,26 @@ def test_set_event_flag_single_arg_applies_to_names_added_later():
     pSet = App.SetClass_Create(); pSet.SetName("S"); App.g_kSetManager._sets["S"] = pSet
     ship = _ship(); pSet.AddObjectToSet(ship, "Homer")
     assert rec.events == [("in", ship, grp)]
+
+
+def test_set_event_flag_re_registers_a_group_dropped_from_live():
+    """host_loop.reset_sdk_globals clears ObjectGroup._live on every mission
+    swap (Important 3, 2026-09-19 NPC AI contract review fix wave) -- there
+    is no Game-level player group surviving a swap to justify keeping a
+    prior mission's groups registered. A group that re-arms its flags after
+    that reset (the SDK's own AddFleetCommandHandlers pattern: set flags when
+    you register handlers) must be live again, or every group built before a
+    swap goes permanently deaf even though it is still holding handlers."""
+    grp = ObjectGroup(); grp.AddName("Bart")
+    rec = _subscribe(grp)          # arms ENTERED_SET/EXITED_SET via SetEventFlag
+    assert grp in ObjectGroup._live
+
+    ObjectGroup._live.clear()      # simulate reset_sdk_globals on a mission swap
+    assert grp not in ObjectGroup._live
+
+    grp.SetEventFlag(App.ObjectGroup.ENTERED_SET)   # re-arm, as a re-registering caller would
+    assert grp in ObjectGroup._live
+
+    pSet = App.SetClass_Create(); pSet.SetName("S"); App.g_kSetManager._sets["S"] = pSet
+    ship = _ship(); pSet.AddObjectToSet(ship, "Bart")
+    assert ("in", ship, grp) in rec.events

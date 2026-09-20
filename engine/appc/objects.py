@@ -1132,7 +1132,17 @@ class ObjectGroup(TGEventHandlerObject):
             SetEventFlag(flag)        → group-level: apply to all watched names
         SDK conditions use the single-arg form to mark "I want enter/exit
         events for everything in my group."
+
+        Self-healing membership in `_live`: a group that (re-)arms its event
+        flags is re-registered for `broadcast_membership` regardless of
+        whether `_live` was cleared out from under it (e.g. by a mission
+        swap). `WeakSet.add` is idempotent, so this is free for the common
+        case where the group is already registered. This mirrors the SDK's
+        own pattern -- `AddFleetCommandHandlers` sets flags when it
+        registers handlers, i.e. flag-arming and "wants events" are the same
+        act.
         """
+        ObjectGroup._live.add(self)
         if len(args) == 1:
             flag = int(args[0])
             self._default_flags.add(flag)
@@ -1159,7 +1169,13 @@ class ObjectGroup(TGEventHandlerObject):
         TGObjPtrEvent, GetObjPtr() = the object, destination = the group.
         Called from SetClass after the object's containing-set is updated,
         because EnteredSet reads GetContainingSet().GetName() off the object.
-        The warp-transit set is NOT suppressed here (see plan Task 11).
+        The warp-transit set is NOT suppressed here, unlike
+        _broadcast_set_transition in sets.py: BC has a real "warp" set
+        (FollowThroughWarp.py:119), so a transiting ship's group membership
+        genuinely enters and exits it. The EXIT from the real source set is
+        a separate broadcast from a separate RemoveObjectFromSet call and
+        fires regardless of this set's suppression state -- one does not
+        gate the other (see plan Task 11).
 
         Each dispatch is isolated in try/except: the destination (the group
         itself) is a TGEventHandlerObject, so TGEventManager.AddEvent reaches
@@ -1326,13 +1342,26 @@ def broadcast_object_deleted(obj) -> None:
     Call ONLY where an object is actually destroyed: an explicit
     DeleteObjectFromSet, the end of ship_death's linger, and the SetDeleteMe
     sweep. RemoveObjectFromSet is also how warp MOVES a ship between sets,
-    so it must not post this."""
+    so it must not post this.
+
+    The destination (obj itself) is a TGEventHandlerObject, so
+    TGEventManager.AddEvent reaches it through the deliberately UNguarded
+    destination-dispatch path (dest.ProcessEvent(event)) — an SDK instance
+    handler (ConditionExists.Deleted) can raise. Guarded here, once, so
+    every caller is a single plain call: matching BC's own policy of
+    reporting a Python handler exception and continuing, the same ruling as
+    ObjectGroup.broadcast_membership above."""
     import App
     evt = App.TGEvent_Create()
     evt.SetEventType(App.ET_DELETE_OBJECT_PUBLIC)
     evt.SetSource(obj)
     evt.SetDestination(obj)
-    App.g_kEventManager.AddEvent(evt)
+    try:
+        App.g_kEventManager.AddEvent(evt)
+    except Exception:
+        App.g_kEventManager._log_broadcast_failure(
+            "ET_DELETE_OBJECT_PUBLIC -> %s" % (
+                obj.GetName() if hasattr(obj, "GetName") else obj), evt)
 
 
 def ObjectClass_Cast(obj) -> "ObjectClass | None":

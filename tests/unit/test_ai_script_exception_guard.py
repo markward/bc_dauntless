@@ -30,7 +30,7 @@ def _ship(pSet, name):
     return s
 
 
-def test_raising_plain_ai_reports_active_and_records_the_error():
+def test_raising_plain_ai_reports_active_and_records_the_error(capfd):
     App.g_kSetManager._sets.clear()
     pSet = App.SetClass_Create(); pSet.SetName("S"); App.g_kSetManager._sets["S"] = pSet
     ship = _ship(pSet, "A")
@@ -40,8 +40,22 @@ def test_raising_plain_ai_reports_active_and_records_the_error():
     assert status == ArtificialIntelligence.US_ACTIVE
     assert plain._last_script_error[0] == "RuntimeError"
 
+    captured = capfd.readouterr()
+    assert captured.out == ""
+    assert "[ai] A node 'Boom' raised RuntimeError: scripted failure — continuing" in captured.err
+    assert "RuntimeError: scripted failure" in captured.err   # traceback tail
 
-def test_raising_preprocessor_does_not_stop_the_other_ship():
+    # Once per (node id, exception type): a second raise of the SAME type on
+    # the SAME node must not print a second report.
+    status = tick_ai(plain, 0.0)
+    assert status == ArtificialIntelligence.US_ACTIVE
+    assert plain._script_instance.calls == 2
+    captured = capfd.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_raising_preprocessor_does_not_stop_the_other_ship(capfd):
     App.g_kSetManager._sets.clear()
     pSet = App.SetClass_Create(); pSet.SetName("S"); App.g_kSetManager._sets["S"] = pSet
     bad = _ship(pSet, "Bad"); good = _ship(pSet, "Good")
@@ -57,3 +71,7 @@ def test_raising_preprocessor_does_not_stop_the_other_ship():
     tick_all_ai(0.0)          # must not raise
     assert ticked, "the healthy ship was never ticked after the bad one raised"
     assert pp._last_script_error[0] == "AttributeError"
+
+    captured = capfd.readouterr()
+    assert captured.out == ""
+    assert "[ai] Bad node 'PP' raised AttributeError: GetChildTargets — continuing" in captured.err

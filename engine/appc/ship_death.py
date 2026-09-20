@@ -208,21 +208,29 @@ def _mark_dead(ship) -> None:
 
 
 def _remove(ship) -> None:
-    """End of linger: release every lock held on the wreck, then remove it from
-    its set. Order matters — locks clear while the handle is still in the set
-    so firing ships drop their target pointers against a valid object."""
+    """End of linger: release every lock held on the wreck, remove it from its
+    set, then broadcast the delete. Order matters twice over: locks clear
+    while the handle is still in the set so firing ships drop their target
+    pointers against a valid object; and the set removal (which posts
+    EXITED_SET) happens BEFORE ET_DELETE_OBJECT_PUBLIC so an object "leaves
+    the set" before it "leaves the world" — the same order DeleteObjectFromSet
+    already used, now matched here (see M5 in the 2026-09-19 NPC AI contract
+    review fix wave). ConditionExists.Deleted, the SDK's own subscriber, only
+    needs the event and never reads set membership, so nothing depends on the
+    old order.
+
+    The set removal keeps its own try: it guards the removal itself, not the
+    broadcast that follows. broadcast_object_deleted guards its own dispatch
+    internally, so it is one plain call here."""
     _clear_target_locks(ship)
-    try:
-        from engine.appc.objects import broadcast_object_deleted
-        broadcast_object_deleted(ship)
-    except Exception as _e:
-        dev_mode.log_swallowed("ET_DELETE_OBJECT_PUBLIC broadcast", _e)
     try:
         pSet = ship.GetContainingSet() if hasattr(ship, "GetContainingSet") else None
         if pSet is not None and hasattr(ship, "GetName"):
             pSet.RemoveObjectFromSet(ship.GetName())
     except Exception as _e:
         dev_mode.log_swallowed("remove dead ship from set", _e)
+    from engine.appc.objects import broadcast_object_deleted
+    broadcast_object_deleted(ship)
 
 
 def retire(ship) -> None:

@@ -410,8 +410,9 @@ class ArtificialIntelligence:
         # Per-node script-exception record, set by ai_driver._run_script_step
         # when this node's SDK script call (leaf Update, preprocessor method,
         # GotFocus/LostFocus) raises. (type_name, message), or None when no
-        # error has occurred. The AI inspector reads it; task 9 depends on it
-        # always existing.
+        # error has occurred. Recorded for inspection (the AI inspector may
+        # surface it later); always eagerly initialised so a reader never
+        # sees a TGObject.__getattr__ stub in its place.
         self._last_script_error: "tuple | None" = None
         type(self)._allocate_id(self)
 

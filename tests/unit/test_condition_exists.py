@@ -83,7 +83,8 @@ def test_condition_exists_flips_to_zero_on_delete_event():
 
 def test_condition_exists_flips_to_one_on_entered_set_event():
     """Object isn't in any set yet → condition is 0. Add the object to a
-    set and fire ET_OBJECT_GROUP_OBJECT_ENTERED_SET → condition flips to 1."""
+    set → the real producer (ObjectGroup.broadcast_membership, spec #4)
+    posts ET_OBJECT_GROUP_OBJECT_ENTERED_SET and the condition flips to 1."""
     _reset_app_state()
     cs = ConditionScript_Create("Conditions.ConditionExists",
                                 "ConditionExists", "Bart")
@@ -92,13 +93,5 @@ def test_condition_exists_flips_to_one_on_entered_set_event():
     pSet = App.SetClass_Create(); pSet.SetName("S")
     ship = ShipClass(); pSet.AddObjectToSet(ship, "Bart")
     App.g_kSetManager._sets["S"] = pSet
-
-    # The condition's ObjectGroup is registered for ENTERED_SET events.
-    # Fire the event; destination is the ObjectGroup.
-    pGroup = cs._instance.pObjectGroup
-    evt = TGEvent_Create()
-    evt.SetEventType(App.ET_OBJECT_GROUP_OBJECT_ENTERED_SET)
-    evt.SetDestination(pGroup)
-    App.g_kEventManager.AddEvent(evt)
 
     assert cs.GetStatus() == 1

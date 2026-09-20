@@ -14,7 +14,7 @@ from engine.appc.ai import PlainAI_Create
 from engine.appc.objects import ObjectGroup
 from engine.appc.ships import ShipClass
 from engine.appc.subsystems import HullSubsystem
-from engine.appc.weapon_subsystems import PhaserSystem, PhaserBank, WeaponSystem, TorpedoSystem
+from engine.appc.weapon_subsystems import PhaserSystem, WeaponSystem, TorpedoSystem
 
 
 def _reset_app_state():

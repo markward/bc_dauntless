@@ -3,8 +3,6 @@
 Nothing outside ships.py touched the AI slot, so a destroyed ship's Warp
 leaf never ran LostFocus (which re-enables collisions) and its tree stayed
 installed on a hulk."""
-import pytest
-
 import App
 from engine.appc import ship_death
 from engine.appc.ai import PlainAI_Create

@@ -20,7 +20,6 @@ import os
 import random
 import time as _time
 
-from engine import dev_mode
 from engine.appc.ai import (
     ArtificialIntelligence, PlainAI, PriorityListAI, SequenceAI,
     ConditionalAI, PreprocessingAI, BuilderAI, RandomAI,
@@ -221,9 +220,12 @@ def _run_script_step(ai, call):
     (US_ACTIVE / PS_NORMAL) or simply ignores the return value (the focus
     hooks).
 
-    The failure is recorded on the node (AI inspector reads it) and printed
-    once per (node id, exception type) under --developer. Silent in
-    production, like BC.
+    The failure is recorded on the node for inspection (the AI inspector may
+    surface it later) and reported UNCONDITIONALLY -- header line and
+    traceback both to stderr, once per (node id, exception type). BC's
+    embedded interpreter printed every script traceback to its own console;
+    this matches events.py's `_log_broadcast_failure` policy for the same
+    reason: a silently-swallowed script crash is worse than a noisy log.
     """
     try:
         return call()
@@ -232,13 +234,13 @@ def _run_script_step(ai, call):
         key = (ai.GetID(), type(exc).__name__)
         if key not in _reported_script_errors:
             _reported_script_errors.add(key)
-            if dev_mode.is_enabled():
-                import traceback
-                ship = ai.GetShip()
-                name = ship.GetName() if ship is not None and hasattr(ship, "GetName") else "?"
-                print(f"[ai] {name} node '{ai.GetName()}' raised "
-                      f"{type(exc).__name__}: {exc}")
-                traceback.print_exc()
+            import sys
+            import traceback
+            ship = ai.GetShip()
+            name = ship.GetName() if ship is not None and hasattr(ship, "GetName") else "?"
+            print(f"[ai] {name} node '{ai.GetName()}' raised "
+                  f"{type(exc).__name__}: {exc} — continuing", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
         return None
 
 

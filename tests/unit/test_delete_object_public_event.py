@@ -65,14 +65,19 @@ def _raising_subscriber(pObject, pEvent):
     raise RuntimeError("boom")
 
 
-def test_a_throwing_subscriber_does_not_block_removal():
+def test_a_throwing_subscriber_does_not_block_removal(capfd):
     """Destination dispatch (events.py TGEventManager.AddEvent) is
     deliberately unguarded, so a handler registered directly on the object
-    itself propagates. broadcast_object_deleted must not be folded into the
-    same try as the removal it precedes, or a bad subscriber leaves a
-    permanently stuck corpse in its set."""
+    itself can raise straight out of AddEvent. broadcast_object_deleted
+    guards that call itself and reports via events.py's always-on broadcast-
+    failure policy, rather than propagating. It also runs AFTER ship_death
+    removes the ship from its set (M5 ordering), so a raising subscriber
+    cannot leave a permanently stuck corpse in its set either way."""
     pSet, ship, cond = _scene()
     ship.AddPythonFuncHandlerForInstance(
         App.ET_DELETE_OBJECT_PUBLIC, __name__ + "._raising_subscriber")
     ship_death._remove(ship)
     assert pSet.GetObject("Bart") is None
+
+    captured = capfd.readouterr()
+    assert "[events] broadcast handler" in captured.err
