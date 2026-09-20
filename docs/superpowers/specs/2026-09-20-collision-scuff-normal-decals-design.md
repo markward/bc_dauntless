@@ -119,6 +119,15 @@ Tangent source in `collisions.py`:
   length is below `1e-6`, pass `None` (the ring's `add` then derives a stable
   perpendicular of the normal — a dead-on bump has no preferred direction).
 
+The tangent's SIGN is visually unobservable: the shader's relief is driven by
+`sin(k·u+φ)` and a symmetric noise field with a hashed phase `φ`, so `+T` and
+`-T` produce the same pattern class on screen. The per-hull sign convention
+above (each ship's scratch runs the way the *other* hull moved across it) is
+tested in Python (it decides which value lands in `tangent_body`), but it
+cannot be confirmed by looking at a rendered scuff — it would only matter if
+a future asymmetric directional term (e.g. a one-sided highlight along +T)
+were added to the shader.
+
 Radius: `scuff_radius_gu = clamp(sqrt(2 · R_min · pen), SCUFF_RADIUS_MIN_GU, SCUFF_RADIUS_MAX_GU)`
 where `R_min` is the smaller of the two overlapping pieces' scaled radii and
 `pen` their overlap (`_deepest_piece_overlap` already computes both; the
