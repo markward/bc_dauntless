@@ -313,3 +313,27 @@ def test_body_scuff_defers_until_the_instance_is_realized(decal_host):
     assert len(decal_host.decals) == 1
     visible_damage.advance(0.0, {ship: 7})
     assert len(decal_host.decals) == 1, "emitted once, then dropped"
+
+
+def test_body_scuff_anchors_at_the_mesh_surface_not_the_authored_point(
+        decal_host, host, monkeypatch):
+    """The authored body point sits INSIDE the hull (0.1-0.3 GU below the
+    surface, like any AddObjectDamageVolume sphere) -- a real collision decal
+    anchors at _resolve_hit_point's mesh point (combat.py), so a preview
+    scuff must too. Before this fix the scuff branch only asked _mesh_normal
+    for the normal and kept the authored (interior) point regardless."""
+    hit_point = (11.0, -4.2, 2.05)
+    hit_normal = (0.0, 1.0, 0.0)
+    monkeypatch.setattr(host_io, "ray_trace_mesh",
+                        lambda iid, o, d, m: (hit_point, hit_normal, 0.05))
+
+    ship = _Ship(loc=TGPoint3(10.0, -5.0, 2.0))
+    visible_damage.queue_body_scuff(ship, 1.0, 0.0, 0.0, radius_gu=1.5)
+    visible_damage.advance(0.0, {ship: 1})
+
+    assert host.carves == [], "a scuff must not carve"
+    (_iid, point, normal, *_rest), = decal_host.decals
+    assert point == pytest.approx(hit_point), (
+        "scuff decal stayed at the authored (interior) point instead of the "
+        "ray-traced hull surface")
+    assert normal == pytest.approx(hit_normal)

@@ -254,7 +254,7 @@ def _contact_point_velocity(body: "_Body", cx: float, cy: float, cz: float):
 
 def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
                    inv_sum: float, dt: float, ship_instances=None,
-                   scuff_radius: float = 0.0) -> None:
+                   scuff_radius: float | None = None) -> None:
     """Abrasion damage for a contact that is not closing.
 
     Physically this is friction work: force times sliding distance. We have no
@@ -269,6 +269,9 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
 
     Emits no event and applies no impulse -- see the caller. Routes as
     weapon_type "collision" with the slip direction as the scuff tangent.
+    `scuff_radius` is the decal's visual size in GU; None (the default) is
+    passed straight through to `apply_hit`'s `decal_radius`, which then falls
+    back to the weapon radius -- NOT a radius-0 decal.
     """
     if not (dt > 0.0):
         return

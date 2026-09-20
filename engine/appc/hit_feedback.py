@@ -217,11 +217,13 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     (shield flash, sparks, decal, carve) are skipped.
     App.g_kSoundManager=None silently skips audio.
 
-    `weapon_type` is "phaser" / "torpedo" / None. Used by _play_audio to
-    match SDK Effects.py semantics: phaser-on-shields is silent (stock BC
-    has no PhaserShieldHit handler); torpedo-on-shields plays from
-    g_lsWeaponExplosions (matching Effects.TorpedoShieldHit). HULL and
-    CRITICAL fire regardless of weapon_type.
+    `weapon_type` is "phaser" / "torpedo" / "collision" / None. Used by
+    _play_audio to match SDK Effects.py semantics: phaser-on-shields is
+    silent (stock BC has no PhaserShieldHit handler); torpedo-on-shields
+    plays from g_lsWeaponExplosions (matching Effects.TorpedoShieldHit).
+    "collision" (collisions.py's grind/impact contacts) and None both fall
+    into the not-phaser-not-torpedo branch everywhere this is checked. HULL
+    and CRITICAL fire regardless of weapon_type.
 
     `tangent` is the world-space slip direction (TGPoint3) for a collision
     scuff, or None. `decal_radius` overrides `radius` for the DECAL ONLY —

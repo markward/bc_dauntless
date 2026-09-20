@@ -595,9 +595,9 @@ def cloak_shields_suspended(ship) -> bool:
 # apply_hit's weapon_type string → the engine's WeaponHitEvent enum. BC's
 # disruptor/pulse bolts are Torpedo payloads (sdk/.../Tactical/Projectiles/
 # CardassianDisruptor.py builds a pTorp), so they belong on TORPEDO. Anything
-# not in this table — collisions (weapon_type=None), warp-core-breach
-# shockwaves — is NOT weapon fire and reports NON_WEAPON rather than silently
-# passing for a phaser (0).
+# not in this table — "collision" (collisions.py's grind/impact contacts),
+# warp-core-breach shockwaves, or no weapon_type at all — is NOT weapon fire
+# and reports NON_WEAPON rather than silently passing for a phaser (0).
 _WEAPON_TYPE_IDS = {
     "phaser":  WeaponHitEvent.PHASER,
     "torpedo": WeaponHitEvent.TORPEDO,
