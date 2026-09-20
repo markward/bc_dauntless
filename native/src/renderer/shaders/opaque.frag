@@ -116,6 +116,9 @@ const float kScuffBuckleAmp   = 0.35;                 // dh per unit, buckle wav
 const float kScuffBuckleFreq  = 6.2831853 / 24.0;     // rad/unit: 24-unit wavelength
 const float kScuffScratchAmp  = 0.25;                 // dh per unit, scratch grooves
 const float kScuffScratchFreq = 6.2831853 / 3.0;      // rad/unit: 3-unit wavelength
+const vec3  kScuffMetal       = vec3(0.62);           // bare-metal albedo on scratch ridges
+const float kScuffAlbedoGain  = 0.6;                  // how far ridges go toward kScuffMetal
+const float kScuffGrime       = 0.25;                 // rim darkening at the patch edge
 
 // ── Hull-breach hole: pure damage-sphere clip ─────────────────────────────
 // Discard hull fragments inside any active carve sphere. The breach pass
@@ -558,8 +561,16 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         // Scratches: h = A n(k w)  →  ∂h/∂w = A k n'(k w), central difference.
         float x = kScuffScratchFreq * w;
         const float e = 0.05;
+        float nw  = snoise1(x);
         float dnw = (snoise1(x + e) - snoise1(x - e)) / (2.0 * e);
         float gw = kScuffScratchAmp * kScuffScratchFreq * dnw * win;
+
+        // Albedo: bare metal where the scratch field peaks (ridges), and a
+        // thin grime band at the rim. Both confined by win / wn like the relief.
+        float scratch = smoothstep(0.55, 0.8, nw * 0.5 + 0.5) * win;
+        base_rgb = mix(base_rgb, kScuffMetal, scratch * kScuffAlbedoGain);
+        float rim = smoothstep(0.75, 0.95, r) * (1.0 - smoothstep(0.95, 1.0, r));
+        base_rgb *= 1.0 - kScuffGrime * rim * inten * wn;
 
         vec3 T_ws = normalize(u_ship_world_rot * T);
         vec3 B_ws = normalize(u_ship_world_rot * B);

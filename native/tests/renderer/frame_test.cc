@@ -1565,6 +1565,36 @@ TEST_F(ScuffTest, HasNoEmberSoItIsBlackWhenUnlit) {
     EXPECT_GT(block_mean(108, 108, 40, 40), 0.0) << "control: scorch ember should glow unlit";
 }
 
+TEST_F(ScuffTest, AlbedoLightensScratchRidgesAndDarkensTheRimUnderAmbientOnlyLight) {
+    using namespace scuff_probe;
+    auto quad = build_quad(/*grey=*/80);
+    renderer::Lighting amb;
+    amb.ambient = glm::vec3(1.0f);
+    amb.directional_count = 0;
+
+    Seed none;
+    render(*quad, *p, amb, none);
+    const double base_mean = block_mean(108, 108, 40, 40);
+    const double base_sd   = block_stddev(108, 108, 40, 40);
+    ASSERT_LT(base_sd, 1.0);
+
+    Seed s; s.active = true;
+    render(*quad, *p, amb, s);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    // Ridges: some pixels in the core are LIGHTER than the flat base.
+    std::vector<unsigned char> buf(40 * 40 * 4);
+    glReadPixels(108, 108, 40, 40, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    double brightest = 0.0;
+    for (int i = 0; i < 40 * 40; ++i)
+        brightest = std::max(brightest, double(buf[i*4] + buf[i*4+1] + buf[i*4+2]));
+    EXPECT_GT(brightest, base_mean + 12.0) << "no bare-metal lightening on the scratch ridges";
+    EXPECT_GT(block_stddev(108, 108, 40, 40), 3.0) << "albedo is uniform inside the scuff";
+    // Rim band (r in 0.75..0.95 of a 60-unit radius = 45..57 units = 67..84 px
+    // from the centre): a thin 6x20 block at x=128+70..76 is darker than base.
+    const double rim = block_mean(198, 118, 6, 20);
+    EXPECT_LT(rim, base_mean - 2.0) << "no grime darkening at the rim";
+}
+
 // Count "direction changes" (sign flips of consecutive deltas) in a sequence,
 // ignoring deltas smaller than `eps` so floating/quantisation noise is not
 // mistaken for a real reversal. A strictly monotonic sequence has 0 changes;
