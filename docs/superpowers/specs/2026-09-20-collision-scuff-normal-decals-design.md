@@ -49,7 +49,7 @@ normal-map path shipped 2026-08-20 gives us the lighting hook for it.
 | Question | Decision |
 |---|---|
 | Normal source | **Procedural in-shader** (analytic height field, closed-form gradient). No texture asset, no authoring-convention traps. |
-| Colour term | **Light albedo scrape**: bare-metal lightening confined to scratch lines + faint grime edge. No ember, no flicker, no emissive. |
+| Colour term | **Light albedo scrape**: bare-metal lightening confined to scratch lines + a faint grime fill (revised from a rim ring after the first live pass, see §4). No ember, no flicker, no emissive. |
 | Patch size | **From contact geometry**: chord of the overlapping hull pieces, clamped to a band. |
 | Ring integration | **New class in the existing ring**, not a second ring. |
 
@@ -83,8 +83,9 @@ normal-map path shipped 2026-08-20 gives us the lighting hook for it.
   (`DECAL_EMIT_INTERVAL`), so consecutive decals further apart than `0.5 r`
   allocate new slots and form a chain of circles overlapping at ≥ `0.5 r`
   spacing. Overlapping scuffs share the same slip tangent, so the ripple
-  pattern is continuous across the chain. Capsule/ellipse records are
-  explicitly **out of scope**; revisit only if a live grind reads as beads.
+  pattern is continuous across the chain, and the shader composites them as
+  a **union** (§4) so the chain reads as one scrape rather than a row of
+  stamps. Capsule/ellipse records are explicitly **out of scope**.
 
 ### 3. Data — one field, one uniform array, one kwarg chain
 
@@ -140,7 +141,10 @@ for the `damage_decal_add` call when set. ⚠️ It must NOT travel as
 ([combat.py:816](../../../engine/appc/combat.py#L816)), the carve influence
 radius and `WeaponHitEvent.SetRadius`, so reusing it would widen collision
 *damage*. Collisions keep today's `r_hit` (the 0.15 GU default) for all of
-those. Initial band `[0.5, 4.0]` GU — **a tuning constant, judged live**.
+those. Band `[0.1, 0.5]` GU — **a tuning constant, judged live**. (The
+first pass shipped `[0.5, 4.0]`: a Galaxy is only ~±1.8 GU long, so the old
+minimum was a 100-model-unit stamp and clamped every real chord UP; ship-piece
+contacts chord to ~0.1–0.3 GU.)
 `decal_radius_scale(SCUFF) = 1.0` (the chord already is the visual size).
 
 Intensity: the existing `decal_intensity(absorbed_hull)` mapping. Grind ticks
@@ -171,7 +175,9 @@ T    = t;  B = cross(dn, t)          // right-handed local frame on the hull
 d    = p_body - point
 u    = dot(d, T);  w = dot(d, B)     // model units
 r    = length(d) / radius            // 0 centre .. 1 edge
-win  = (1 - smoothstep(0.6, 1.0, r)) * intensity * wn
+edge = fbm((u, w) · k_e) · bl_e            // noise-broken edge; inward-only, band-limited
+r_n  = r · (1 + kScuffEdgeNoise · edge)     // r_n >= r, so the r >= 1 cull stays exact
+win  = (1 - smoothstep(0.35, 1.0, r_n)) * intensity * wn
 wn   = smoothstep(NORMAL_MIN, 1.0, dot(n_body, dn))   // same far-face guard as the other classes
 ```
 
@@ -201,10 +207,17 @@ before the loop, in uniform control flow; a `fwidth` inside a loop that
 Accumulation and perturbation (once per fragment, after the loop):
 
 ```
-g_u += ∂h/∂u;  g_w += ∂h/∂w              // summed across overlapping scuffs
-T_ws = normalize(R · T);  B_ws = normalize(R · B)   // R = mat3(inverse(u_ship_world_inv)) — pass u_ship_world_rot
-n_shade = normalize(n_shade - g_u·T_ws - g_w·B_ws)
+over  = 1 - cov                            // "over" compositing: what this scuff may still add
+dn_ws -= (g_u·T_ws + g_w·B_ws) · over      // T_ws = normalize(R · T), B_ws = normalize(R · B), R = u_ship_world_rot
+cov   += win · over                        // union coverage of every scuff so far
+n_shade = normalize(n_shade + dn_ws)       // once, after the loop
 ```
+
+Scuffs composite as a **union, not a sum**: the first live pass summed the
+relief, re-mixed the bare metal and multiplied the grime wherever scuffs
+overlapped, so a grind streak (a chain of circles) showed brighter, busier
+crossings ringed by grime. With "over" coverage the overlap of two scuffs
+looks like one scuff.
 
 A `u_ship_world_rot` (`mat3`) uniform is set beside `u_ship_world_inv` when
 `u_decal_count > 0`; the inverse is not recomputed in the shader.
@@ -212,13 +225,17 @@ A `u_ship_world_rot` (`mat3`) uniform is set beside `u_ship_world_inv` when
 **Albedo** (same pass, before lighting):
 
 ```
-scratch_mask = smoothstep(0.55, 0.8, noise1(w·k_s) * 0.5 + 0.5) * win
+scratch_mask = max over scuffs of smoothstep(0.55, 0.8, noise1(w·k_s) * 0.5 + 0.5) * win
+// once, after the loop, when cov > 0:
 base.rgb = mix(base.rgb, kScuffMetal, scratch_mask * kScuffAlbedoGain)
-base.rgb *= 1.0 - kScuffGrime * smoothstep(0.75, 0.95, r) * (1 - smoothstep(0.95, 1.0, r)) * intensity * wn
+base.rgb *= 1.0 - kScuffGrime * cov
 ```
 
-`kScuffMetal` is a neutral light grey (`vec3(0.62)`), the grime ring is a thin
-faint darkening at the patch edge. Both are tuning constants.
+`kScuffMetal` is a neutral light grey (`vec3(0.62)`); grime is a soft **fill**,
+darkest where coverage is full and fading out through the noisy edge. The
+first pass drew grime as a rim *ring* (`r` 0.75–0.95), which put a circle
+round every scuff and made a streak read as crossing rings — do not bring
+the ring back. Both are tuning constants.
 
 Contract (identical to the material normal map's): the scuff pass writes
 **only `n_shade` and `base`**. It never touches the shadow-bias normal, the
@@ -227,7 +244,8 @@ Fresnel rim, `n_body`, the carve loop, `decal_emissive`, or `glow_flicker`.
 Tuning constants are `kScuff*` `const`s at the top of `opaque.frag` (rebuild to
 tune), the same convention as `kHullCarve*`. Initial values (model units,
 Galaxy hull ≈ ±178): `A_b = 0.35`, `k_b = 2π/24` (24-unit wavelength),
-`A_s = 0.25`, `k_s = 2π/3`, `kScuffAlbedoGain = 0.6`, `kScuffGrime = 0.25`.
+`A_s = 0.25`, `k_s = 2π/3`, `kScuffAlbedoGain = 0.6`, `kScuffGrime = 0.25`,
+`kScuffEdgeNoise = 0.35`, `kScuffEdgeFreq = 1/9`.
 These are starting points for the live pass, not measured values.
 
 Cost: zero when `u_decal_count == 0` (undamaged hull — the production path
@@ -238,8 +256,8 @@ class; a Scuff record costs two `sin`/`cos`, two noise taps and two `fwidth`.
 ### 5. Live-tuning vehicle
 
 `engine/dev_missions/damage_preview.py` seeds three Scuff decals on the Akira
-wreck after its authored damage: small (0.6 GU), medium (1.5 GU), large
-(3.5 GU) radii, three different tangents, the large one straddling the
+wreck after its authored damage: small (0.15 GU), medium (0.3 GU), large
+(0.5 GU) radii — the band's floor, middle and ceiling — three different tangents, the large one straddling the
 saucer/hull curve so the far-face guard and the frame construction on a curved
 surface get eyeballed. Seeded via `host_io.damage_decal_add` directly (world
 point from `ship.GetWorldLocation()` + a body offset rotated through

@@ -48,14 +48,24 @@ def _respond(a, b, dt=FRAME):
 # ── radius ──────────────────────────────────────────────────────────────────
 
 def test_scuff_radius_is_the_overlap_chord():
-    # sqrt(2 * R * pen): R=1, pen=0.5 -> 1.0
-    assert collisions.scuff_radius_gu(1.0, 0.5) == pytest.approx(1.0)
+    # sqrt(2 * R * pen): R=0.2, pen=0.1 -> 0.2 (inside the band, unclamped)
+    assert collisions.scuff_radius_gu(0.2, 0.1) == pytest.approx(0.2)
 
 
 def test_scuff_radius_is_clamped_to_the_band():
     assert collisions.scuff_radius_gu(1.0, 1e-6) == collisions.SCUFF_RADIUS_MIN_GU
     assert collisions.scuff_radius_gu(50.0, 50.0) == collisions.SCUFF_RADIUS_MAX_GU
     assert collisions.scuff_radius_gu(1.0, 0.0) == collisions.SCUFF_RADIUS_MIN_GU
+
+
+def test_scuff_band_is_ship_sized_not_hull_sized():
+    # Live pass 2026-09-20: [0.5, 4.0] read as a stamp bigger than a saucer
+    # (a Galaxy is ~±1.8 GU long) and clamped every real chord UP. A typical
+    # ship-piece contact (R 0.3 GU, pen 0.05 GU) chords to ~0.17 GU and must
+    # pass through the band unclamped.
+    assert collisions.SCUFF_RADIUS_MIN_GU == 0.1
+    assert collisions.SCUFF_RADIUS_MAX_GU == 0.5
+    assert collisions.scuff_radius_gu(0.3, 0.05) == pytest.approx((2 * 0.3 * 0.05) ** 0.5)
 
 
 # ── impact ──────────────────────────────────────────────────────────────────

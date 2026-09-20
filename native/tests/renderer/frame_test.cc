@@ -1498,13 +1498,14 @@ struct Seed {
 
 // Camera on +Z looking at the origin. eye_z = 150 puts ~1.48 px per model
 // unit on screen (256 px / (2 * 150 * tan 30deg)); the quad overfills the view.
-void render(const assets::Model& model, renderer::Pipeline& pipeline,
-            const renderer::Lighting& lighting, const Seed& seed,
-            float eye_z = 150.0f, const glm::mat4& world_xform = glm::mat4(1.0f)) {
+void render_seeds(const assets::Model& model, renderer::Pipeline& pipeline,
+                  const renderer::Lighting& lighting, const std::vector<Seed>& seeds,
+                  float eye_z = 150.0f, const glm::mat4& world_xform = glm::mat4(1.0f)) {
     scenegraph::World world;
     auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&model));
     world.set_world_transform(iid, world_xform);
-    if (seed.active) {
+    for (const Seed& seed : seeds) {
+        if (!seed.active) continue;
         world.get(iid)->decals.add(seed.point, seed.normal, seed.radius,
                                    seed.intensity, seed.cls, 0.0f, seed.tangent);
     }
@@ -1522,6 +1523,22 @@ void render(const assets::Model& model, renderer::Pipeline& pipeline,
         [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
         }, lighting, /*decal_time=*/1.0f, /*carve_cache=*/nullptr, nullptr);
+}
+
+void render(const assets::Model& model, renderer::Pipeline& pipeline,
+            const renderer::Lighting& lighting, const Seed& seed,
+            float eye_z = 150.0f, const glm::mat4& world_xform = glm::mat4(1.0f)) {
+    render_seeds(model, pipeline, lighting, std::vector<Seed>{seed}, eye_z, world_xform);
+}
+
+// Brightest channel-sum over a block (lower-left x0,y0).
+double block_max(int x0, int y0, int w, int h) {
+    std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
+    glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    double m = 0.0;
+    for (int i = 0; i < w * h; ++i)
+        m = std::max(m, double(buf[i*4] + buf[i*4+1] + buf[i*4+2]));
+    return m;
 }
 
 // Population std-dev of the channel sum over a block (lower-left x0,y0).
@@ -1644,10 +1661,74 @@ TEST_F(ScuffTest, AlbedoLightensScratchRidgesAndDarkensTheRimUnderAmbientOnlyLig
         brightest = std::max(brightest, double(buf[i*4] + buf[i*4+1] + buf[i*4+2]));
     EXPECT_GT(brightest, base_mean + 12.0) << "no bare-metal lightening on the scratch ridges";
     EXPECT_GT(block_stddev(108, 108, 40, 40), 3.0) << "albedo is uniform inside the scuff";
-    // Rim band (r in 0.75..0.95 of a 60-unit radius = 45..57 units = 67..84 px
-    // from the centre): a thin 6x20 block at x=128+70..76 is darker than base.
+}
+
+// Live pass 2026-09-20: the grime RING drew a circle around every scuff and a
+// grind streak read as a chain of crossing rings. Grime is now a soft FILL
+// that fades outward with the (noise-broken) window, so the rim band must not
+// be darker than the interior. The base grey is chosen to equal kScuffMetal
+// (0.62 -> 158/255) so the bare-metal mix is a no-op and grime is the ONLY
+// albedo term left to measure.
+TEST_F(ScuffTest, GrimeIsASoftFillNotARing) {
+    using namespace scuff_probe;
+    auto quad = build_quad(/*grey=*/158);
+    renderer::Lighting amb;
+    amb.ambient = glm::vec3(1.0f);
+    amb.directional_count = 0;
+
+    Seed none;
+    render(*quad, *p, amb, none);
+    const double base_mean = block_mean(108, 108, 40, 40);
+
+    Seed s; s.active = true;                       // radius 60 -> ~89 px
+    render(*quad, *p, amb, s);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    // Interior band, r ~ 0.45..0.55: x = 128+40..48, 20 px tall.
+    const double mid = block_mean(168, 118, 8, 20);
+    // Rim band, r ~ 0.79..0.86: x = 128+70..76.
     const double rim = block_mean(198, 118, 6, 20);
-    EXPECT_LT(rim, base_mean - 2.0) << "no grime darkening at the rim";
+    EXPECT_LT(mid, base_mean - 2.0) << "no grime in the interior — it is a ring, not a fill";
+    EXPECT_GE(rim, mid - 1.0) << "the rim is darker than the interior — that is a ring";
+}
+
+// Live pass 2026-09-20: overlapping scuffs (a grind streak is a chain of them)
+// stacked — relief summed, bare metal re-mixed, grime multiplied — so the
+// crossings were brighter, busier and ringed. Scuffs now composite as a UNION:
+// the overlap of two scuffs must look like one scuff, not two on top of each
+// other. Seeds at x = -20 / +20 (radius 60) both cover the centre block at
+// r <= 0.56.
+TEST_F(ScuffTest, TwoOverlappingScuffsDoNotStack) {
+    using namespace scuff_probe;
+    Seed a; a.active = true; a.point = glm::vec3(-20.0f, 0.0f, 0.0f);
+    Seed b; b.active = true; b.point = glm::vec3(+20.0f, 0.0f, 0.0f);
+
+    // Albedo under ambient-only light (relief cannot contribute).
+    auto quad = build_quad(/*grey=*/80);
+    renderer::Lighting amb;
+    amb.ambient = glm::vec3(1.0f);
+    amb.directional_count = 0;
+    render(*quad, *p, amb, a);
+    const double max_a  = block_max(108, 108, 40, 40);
+    const double mean_a = block_mean(108, 108, 40, 40);
+    render(*quad, *p, amb, b);
+    const double max_b  = block_max(108, 108, 40, 40);
+    const double mean_b = block_mean(108, 108, 40, 40);
+    render_seeds(*quad, *p, amb, {a, b});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_LE(block_max(108, 108, 40, 40), std::max(max_a, max_b) + 3.0)
+        << "bare-metal ridges got brighter where two scuffs overlap";
+    EXPECT_LE(block_mean(108, 108, 40, 40), std::max(mean_a, mean_b) + 3.0)
+        << "the overlap is lighter than either scuff alone";
+
+    // Relief under oblique light: the overlap's shading variance stays in the
+    // band of a single scuff instead of doubling.
+    render(*quad, *p, oblique(), a);
+    const double sd_a = block_stddev(108, 108, 40, 40);
+    ASSERT_GT(sd_a, 6.0) << "rig sanity: a single scuff must show relief";
+    render_seeds(*quad, *p, oblique(), {a, b});
+    const double sd_ab = block_stddev(108, 108, 40, 40);
+    EXPECT_LE(sd_ab, sd_a * 1.5)
+        << "relief doubled in the overlap (stddev " << sd_ab << " vs single " << sd_a << ")";
 }
 
 // At eye_z = 2400 one model unit is ~0.09 px: the 3-unit scratch wavelength

@@ -76,11 +76,11 @@ def Initialize(pMission):
     # (well inside the 0.5 GU standoff `_mesh_normal` probes), so they land on
     # the hull rather than in space.
     from engine.appc import visible_damage
-    visible_damage.queue_body_scuff(pWreck, 0.6, 0.4, 0.15, radius_gu=0.6,
+    visible_damage.queue_body_scuff(pWreck, 0.6, 0.4, 0.15, radius_gu=0.15,
                                     tangent_body=(1.0, 0.0, 0.0))
-    visible_damage.queue_body_scuff(pWreck, -0.5, 0.2, 0.15, radius_gu=1.5,
+    visible_damage.queue_body_scuff(pWreck, -0.5, 0.2, 0.15, radius_gu=0.3,
                                     tangent_body=(0.0, 1.0, 0.0))
-    visible_damage.queue_body_scuff(pWreck, 0.0, -0.6, 0.05, radius_gu=3.5,
+    visible_damage.queue_body_scuff(pWreck, 0.0, -0.6, 0.05, radius_gu=0.5,
                                     tangent_body=(0.7, 0.7, 0.0))
 
     # Friendly so the wreck is a clean, non-hostile contact.

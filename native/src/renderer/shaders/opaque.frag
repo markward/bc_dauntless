@@ -127,7 +127,14 @@ const float kScuffScratchAmp  = 0.25;                 // dh per unit, scratch gr
 const float kScuffScratchFreq = 6.2831853 / 3.0;      // rad/unit: 3-unit wavelength
 const vec3  kScuffMetal       = vec3(0.62);           // bare-metal albedo on scratch ridges
 const float kScuffAlbedoGain  = 0.6;                  // how far ridges go toward kScuffMetal
-const float kScuffGrime       = 0.25;                 // rim darkening at the patch edge
+const float kScuffGrime       = 0.25;                 // soft grime FILL: darkest at the core,
+                                                       // fading out with the window (not a ring —
+                                                       // a ring drew a circle round every scuff and
+                                                       // a grind streak read as crossing rings)
+const float kScuffEdgeNoise   = 0.35;                 // fraction the edge is pushed INWARD by
+                                                       // noise; breaks the disc outline. Only ever
+                                                       // shrinks, so the r >= 1 cull stays exact.
+const float kScuffEdgeFreq    = 1.0 / 9.0;            // edge-noise cycles per model unit
 
 // ── Hull-breach hole: pure damage-sphere clip ─────────────────────────────
 // Discard hull fragments inside any active carve sphere. The breach pass
@@ -550,6 +557,14 @@ float scuff_bandlimit(float fw, float k) {
 // Fresnel rim, n_body, the carve loop, decal_emissive or glow_flicker.
 void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_rgb) {
     vec3 dn_ws = vec3(0.0);
+    // Scuffs composite as a UNION, not a sum: `cov` is the "over" coverage of
+    // every scuff seen so far, each new one only contributes into (1 - cov),
+    // and the albedo terms are applied ONCE after the loop from cov and the
+    // max scratch mask. A grind streak is a chain of overlapping circles; with
+    // per-scuff mixing the crossings doubled the relief, re-lightened the
+    // ridges and multiplied the grime (live pass 2026-09-20).
+    float cov = 0.0;
+    float scratch_mask = 0.0;
     // Per-pixel footprint, model units. Uniform control flow: the loop below
     // `continue`s per decal, and GLSL derivatives are undefined inside that.
     vec3 fw_p = fwidth(p_body);
@@ -574,7 +589,18 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         float bl_w = scuff_bandlimit(dot(abs(B), fw_p), kScuffScratchFreq);
         float u = dot(d, T);                          // along the slip
         float w = dot(d, B);                          // across the slip
-        float win = (1.0 - smoothstep(0.6, 1.0, r)) * inten * wn;
+        // Noise-broken, soft edge: push r outward by up to kScuffEdgeNoise so
+        // no fragment sees a clean circle. Inward-only (r_n >= r), so the
+        // r >= 1 cull above is still the exact outer bound.
+        // Band-limited like the relief terms: past ~2 px per wavelength the
+        // noise would alias into the window as speckle, so the edge relaxes
+        // back to a disc at range (where the outline is sub-pixel anyway).
+        float bl_e = scuff_bandlimit(max(dot(abs(T), fw_p), dot(abs(B), fw_p)),
+                                     6.2831853 * kScuffEdgeFreq);
+        float edge = fbm(vec2(u, w) * kScuffEdgeFreq) * bl_e;
+        float r_n  = r * (1.0 + kScuffEdgeNoise * edge);
+        float win  = (1.0 - smoothstep(0.35, 1.0, r_n)) * inten * wn;
+        float over = 1.0 - cov;                       // what this scuff may still add
         float phase = dhash(point.xy + point.z) * 6.2831853;
 
         // Buckle: h = A sin(k u + φ)  →  ∂h/∂u = A k cos(k u + φ)
@@ -589,19 +615,23 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         float gw = kScuffScratchAmp * kScuffScratchFreq * dnw * win;
         gw *= bl_w;
 
-        // Albedo: bare metal where the scratch field peaks (ridges), and a
-        // thin grime band at the rim. Both confined by win / wn like the relief.
-        // Ridges are the same frequency as the grooves and alias the same way;
-        // the grime rim below is low-frequency and stays unfaded.
-        float scratch_mask = smoothstep(0.55, 0.8, nw * 0.5 + 0.5) * win;
-        scratch_mask *= bl_w;
-        base_rgb = mix(base_rgb, kScuffMetal, scratch_mask * kScuffAlbedoGain);
-        float rim = smoothstep(0.75, 0.95, r) * (1.0 - smoothstep(0.95, 1.0, r));
-        base_rgb *= 1.0 - kScuffGrime * rim * inten * wn;
+        // Bare-metal ridge mask where the scratch field peaks; max across
+        // scuffs (a ridge is a ridge, two scuffs do not make it brighter).
+        // Ridges are the same frequency as the grooves and alias the same way.
+        scratch_mask = max(scratch_mask,
+                           smoothstep(0.55, 0.8, nw * 0.5 + 0.5) * win * bl_w);
 
         vec3 T_ws = normalize(u_ship_world_rot * T);
         vec3 B_ws = normalize(u_ship_world_rot * B);
-        dn_ws -= gu * T_ws + gw * B_ws;
+        dn_ws -= (gu * T_ws + gw * B_ws) * over;
+        cov   += win * over;
+    }
+    if (cov > 0.0) {
+        // Albedo once, from the union: bare metal on the ridges, and a soft
+        // grime fill that is darkest where coverage is full and fades out
+        // through the noisy edge with it.
+        base_rgb = mix(base_rgb, kScuffMetal, scratch_mask * kScuffAlbedoGain);
+        base_rgb *= 1.0 - kScuffGrime * cov;
     }
     if (dot(dn_ws, dn_ws) > 0.0) n_shade = normalize(n_shade + dn_ws);
 }

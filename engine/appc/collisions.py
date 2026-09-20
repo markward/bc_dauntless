@@ -45,8 +45,11 @@ COLLISION_RADIUS_SCALE = 0.8     # effective collision boundary as a fraction of
 # sqrt(2 * R_small * pen) clamped to this band; it is VISUAL ONLY and never
 # feeds apply_hit's splash radius (which sets the subsystem catchment).
 # Spec: docs/superpowers/specs/2026-09-20-collision-scuff-normal-decals-design.md §3
-SCUFF_RADIUS_MIN_GU = 0.5
-SCUFF_RADIUS_MAX_GU = 4.0
+# Band tightened after the 2026-09-20 live pass: [0.5, 4.0] read as a stamp
+# bigger than a saucer (a Galaxy is ~±1.8 GU long) and, since ship-piece
+# contacts chord to ~0.1-0.3 GU, the old minimum clamped every real hit UP.
+SCUFF_RADIUS_MIN_GU = 0.1
+SCUFF_RADIUS_MAX_GU = 0.5
 
 
 def scuff_radius_gu(r_small: float, pen: float) -> float:
