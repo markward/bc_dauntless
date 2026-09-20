@@ -396,15 +396,17 @@ void draw_model(const assets::Model& model,
         glm::vec4 a[scenegraph::DamageDecalRing::kMaxDecals];
         glm::vec4 b[scenegraph::DamageDecalRing::kMaxDecals];
         glm::vec4 c[scenegraph::DamageDecalRing::kMaxDecals];
+        glm::vec4 d[scenegraph::DamageDecalRing::kMaxDecals];   // tangent_body.xyz, _
         int n = 0;
         if (dauntless_decals::enabled()) {
-            for (const auto& d : decals.slots()) {
-                if (!d.active) continue;
-                a[n] = glm::vec4(d.point_body, d.intensity);
-                b[n] = glm::vec4(d.normal_body, d.radius);  // already model units
-                c[n] = glm::vec4(d.birth_time,
-                                 static_cast<float>(static_cast<std::uint32_t>(d.weapon_class)),
+            for (const auto& dec : decals.slots()) {
+                if (!dec.active) continue;
+                a[n] = glm::vec4(dec.point_body, dec.intensity);
+                b[n] = glm::vec4(dec.normal_body, dec.radius);  // already model units
+                c[n] = glm::vec4(dec.birth_time,
+                                 static_cast<float>(static_cast<std::uint32_t>(dec.weapon_class)),
                                  0.0f, 0.0f);
+                d[n] = glm::vec4(dec.tangent_body, 0.0f);
                 ++n;
             }
         }
@@ -413,9 +415,13 @@ void draw_model(const assets::Model& model,
             prog.set_vec4_array("u_decal_a", a, n);
             prog.set_vec4_array("u_decal_b", b, n);
             prog.set_vec4_array("u_decal_c", c, n);
+            prog.set_vec4_array("u_decal_d", d, n);
             // world->body for the opaque shader's body-frame fragment
             // reconstruction (opaque.frag: p_body / n_body).
             prog.set_mat4("u_ship_world_inv", glm::inverse(world));
+            // Body->world rotation (x uniform scale) for the scuff pass's
+            // tangent frame; the shader normalises after use.
+            prog.set_mat3("u_ship_world_rot", glm::mat3(world));
             prog.set_float("u_decal_time", decal_time);
         }
     }

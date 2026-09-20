@@ -105,6 +105,17 @@ uniform vec4  u_decal_b[MAX_DECALS];         // normal_body.xyz, radius (model u
 uniform vec4  u_decal_c[MAX_DECALS];         // birth_time, weapon_class, _, _
 uniform mat4  u_ship_world_inv;              // inverse(ship world): world->body
 uniform float u_decal_time;                  // game-time seconds (ember clock)
+uniform vec4  u_decal_d[MAX_DECALS];         // tangent_body.xyz (unit, ⟂ normal; Scuff), _
+uniform mat3  u_ship_world_rot;              // body->world rotation (x uniform scale)
+
+// ── Collision scuffs (class 2): procedural relief, pre-lighting ───────────
+// Spec: docs/superpowers/specs/2026-09-20-collision-scuff-normal-decals-design.md §4
+// All lengths in MODEL units (Galaxy hull ≈ ±178). Tuning constants: rebuild
+// to change, same convention as kHullCarve*. Starting values, judged live.
+const float kScuffBuckleAmp   = 0.35;                 // dh per unit, buckle waves
+const float kScuffBuckleFreq  = 6.2831853 / 24.0;     // rad/unit: 24-unit wavelength
+const float kScuffScratchAmp  = 0.25;                 // dh per unit, scratch grooves
+const float kScuffScratchFreq = 6.2831853 / 3.0;      // rad/unit: 3-unit wavelength
 
 // ── Hull-breach hole: pure damage-sphere clip ─────────────────────────────
 // Discard hull fragments inside any active carve sphere. The breach pass
@@ -510,6 +521,53 @@ float fbm(vec2 v) {
     for (int i = 0; i < 3; ++i) { s += amp * vnoise(v * freq); freq *= 2.1; amp *= 0.5; }
     return s;
 }
+
+// 1-D value noise in [-1, 1] (a fixed row of the 2-D noise).
+float snoise1(float x) { return vnoise(vec2(x, 17.3)) * 2.0 - 1.0; }
+
+// Collision scuffs — the PRE-LIGHTING half of the decal ring. Perturbs the
+// shading normal (relief) and the base albedo (Task 3) inside each Scuff
+// decal. Writes ONLY n_shade and base_rgb: never the shadow-bias normal, the
+// Fresnel rim, n_body, the carve loop, decal_emissive or glow_flicker.
+void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_rgb) {
+    vec3 dn_ws = vec3(0.0);
+    for (int i = 0; i < u_decal_count; ++i) {
+        if (u_decal_c[i].y < 1.5) continue;          // Scuff only (class 2)
+        vec3  point  = u_decal_a[i].xyz;
+        float inten  = u_decal_a[i].w;
+        vec3  dn     = u_decal_b[i].xyz;
+        float radius = u_decal_b[i].w;
+        if (radius <= 0.0) continue;
+        vec3  d = p_body - point;
+        float r = length(d) / radius;
+        if (r >= 1.0) continue;                       // outside: byte-identical
+        // Same far-face guard as the other classes.
+        float wn = smoothstep(NORMAL_MIN, 1.0, dot(n_body, dn));
+        if (wn <= 0.0) continue;
+
+        vec3  T = u_decal_d[i].xyz;
+        vec3  B = cross(dn, T);
+        float u = dot(d, T);                          // along the slip
+        float w = dot(d, B);                          // across the slip
+        float win = (1.0 - smoothstep(0.6, 1.0, r)) * inten * wn;
+        float phase = dhash(point.xy + point.z) * 6.2831853;
+
+        // Buckle: h = A sin(k u + φ)  →  ∂h/∂u = A k cos(k u + φ)
+        float gu = kScuffBuckleAmp * kScuffBuckleFreq
+                 * cos(kScuffBuckleFreq * u + phase) * win;
+        // Scratches: h = A n(k w)  →  ∂h/∂w = A k n'(k w), central difference.
+        float x = kScuffScratchFreq * w;
+        const float e = 0.05;
+        float dnw = (snoise1(x + e) - snoise1(x - e)) / (2.0 * e);
+        float gw = kScuffScratchAmp * kScuffScratchFreq * dnw * win;
+
+        vec3 T_ws = normalize(u_ship_world_rot * T);
+        vec3 B_ws = normalize(u_ship_world_rot * B);
+        dn_ws -= gu * T_ws + gw * B_ws;
+    }
+    if (dot(dn_ws, dn_ws) > 0.0) n_shade = normalize(n_shade + dn_ws);
+}
+
 // Blackbody-ish ramp keyed on heat 0..1 (white-hot -> red -> black).
 vec3 blackbody(float heat) {
     vec3 cold = vec3(0.0);
@@ -531,6 +589,7 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
                      + p_body.z * vec2(NOISE_SCALE, NOISE_SCALE * 0.7));
 
     for (int i = 0; i < u_decal_count; ++i) {
+        if (u_decal_c[i].y > 1.5) continue;   // Scuff: handled pre-lighting by apply_scuffs
         vec3  point = u_decal_a[i].xyz;
         float intensity = u_decal_a[i].w;
         vec3  dn = u_decal_b[i].xyz;
@@ -714,6 +773,19 @@ void main() {
         ? perturb_normal(n, v_position_ws, v_uv, n_sigma)
         : n;
 
+    // Body-frame fragment position (object-space carve + decals).
+    vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
+    // Body-frame normal for object-space decals.
+    vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
+    vec4 base = texture(u_base_color, v_uv);
+
+    // Collision scuffs (class 2): the PRE-LIGHTING half of the decal ring.
+    // Must run before the Toksvig spec_ft line below and before any lighting
+    // term reads n_shade, since it perturbs n_shade (and, from Task 3, base.rgb).
+    if (u_decal_count > 0) {
+        apply_scuffs(p_body, n_body, n_shade, base.rgb);
+    }
+
     // Toksvig specular anti-aliasing. ft folds the normal spread under this
     // pixel into a lower exponent; the (1+p')/(1+p) factor keeps the lobe's
     // energy constant so a broadened highlight dims instead of blooming. At
@@ -722,9 +794,6 @@ void main() {
     float spec_ft = n_sigma / (n_sigma + u_specular_power * (1.0 - n_sigma));
     float spec_power = u_specular_power * spec_ft;
     float spec_norm  = (1.0 + spec_power) / (1.0 + u_specular_power);
-
-    // Body-frame fragment position (object-space carve + decals).
-    vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
 
     // ── Hull-breach hole: pure damage-sphere clip ──────────────────────────
     // Discard hull fragments inside any active carve sphere. The breach pass
@@ -1023,7 +1092,6 @@ void main() {
         }
     }
 
-    vec4 base = texture(u_base_color, v_uv);
     // lit_dyn folds in EXACTLY where ambient + directional combine, so
     // material/diffuse color and base texture multiply it the same way.
     // MEAN-PRESERVING: dot(N, dir) averages to zero over a sphere, so the
@@ -1060,9 +1128,6 @@ void main() {
         amb = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
     }
     vec3 lit  = (amb + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
-
-    // Body-frame normal for object-space decals.
-    vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
 
     vec3 decal_emissive = vec3(0.0);
     float glow_flicker = 1.0;

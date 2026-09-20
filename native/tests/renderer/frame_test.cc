@@ -24,6 +24,7 @@
 #include <assets/texture.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -1381,6 +1382,187 @@ TEST_F(TangentBasisTest, SpecularOnlyDynamicLightTracksPerturbedNormal) {
     EXPECT_LT(m_minus, 5.0)
         << "the -U tilt points the perturbed normal away from the half-vector, "
         << "so this must be black. plus=" << m_plus << " minus=" << m_minus;
+}
+
+// ── Collision scuffs: procedural relief in the decal ring ──────────────────
+// Spec: docs/superpowers/specs/2026-09-20-collision-scuff-normal-decals-design.md
+// A 200x200 MODEL-UNIT quad (Galaxy-scale, so the kScuff* wavelengths are in
+// their intended regime), white diffuse, NO material normal map. The scuff is
+// seeded straight into the ring so the test needs no game assets.
+namespace scuff_probe {
+
+constexpr float kHalf = 100.0f;
+
+std::unique_ptr<assets::Model> build_quad(unsigned char grey = 255) {
+    auto model = std::make_unique<assets::Model>();
+    assets::MeshCpu cpu;
+    cpu.material_index = 0;
+    cpu.node_index     = 0;
+    auto push = [&cpu](float x, float y, float u, float v) {
+        assets::MeshCpu::Vertex vt;
+        vt.position = glm::vec3(x, y, 0.0f);
+        vt.normal   = glm::vec3(0.0f, 0.0f, 1.0f);
+        vt.uv       = glm::vec2(u, v);
+        cpu.vertices.push_back(vt);
+    };
+    push(-kHalf, -kHalf, 0.0f, 0.0f);
+    push( kHalf, -kHalf, 1.0f, 0.0f);
+    push( kHalf,  kHalf, 1.0f, 1.0f);
+    push(-kHalf,  kHalf, 0.0f, 1.0f);
+    cpu.indices = {0, 1, 2, 0, 2, 3};
+    assets::Mesh mesh = assets::upload_mesh(cpu);
+    mesh.set_cpu_data(cpu);
+    model->meshes.push_back(std::move(mesh));
+    model->textures.push_back(
+        assets::upload_image(tangent_probe::uniform_rgba(grey, grey, grey, 2), false));
+    using Slot = assets::Material::StageSlot;
+    assets::Material mat;
+    mat.diffuse    = glm::vec3(1.0f);
+    mat.specular   = glm::vec3(0.0f);
+    mat.emissive   = glm::vec3(0.0f);
+    mat.glossiness = 0.0f;
+    mat.stages[static_cast<size_t>(Slot::Base)].texture_index = 0;
+    model->materials.push_back(mat);
+    assets::Node node;
+    node.name   = "scuff_quad";
+    node.meshes = {0};
+    model->nodes.push_back(node);
+    model->root_node = 0;
+    return model;
+}
+
+struct Seed {
+    bool active = false;
+    glm::vec3 point{0.0f};
+    glm::vec3 normal{0.0f, 0.0f, 1.0f};
+    glm::vec3 tangent{1.0f, 0.0f, 0.0f};
+    float radius = 60.0f;      // model units
+    float intensity = 1.0f;
+    scenegraph::WeaponClass cls = scenegraph::WeaponClass::Scuff;
+};
+
+// Camera on +Z looking at the origin. eye_z = 150 puts ~1.48 px per model
+// unit on screen (256 px / (2 * 150 * tan 30deg)); the quad overfills the view.
+void render(const assets::Model& model, renderer::Pipeline& pipeline,
+            const renderer::Lighting& lighting, const Seed& seed,
+            float eye_z = 150.0f) {
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&model));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+    if (seed.active) {
+        world.get(iid)->decals.add(seed.point, seed.normal, seed.radius,
+                                   seed.intensity, seed.cls, 0.0f, seed.tangent);
+    }
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, eye_z);
+    cam.target = glm::vec3(0.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+    glViewport(0, 0, 256, 256);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    renderer::reset_model_radius_cache();
+    renderer::FrameSubmitter submitter;
+    submitter.submit_opaque(world, cam, pipeline,
+        [](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        }, lighting, /*decal_time=*/1.0f, /*carve_cache=*/nullptr, nullptr);
+}
+
+// Population std-dev of the channel sum over a block (lower-left x0,y0).
+double block_stddev(int x0, int y0, int w, int h) {
+    std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
+    glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    double mean = 0.0;
+    for (int i = 0; i < w * h; ++i) mean += buf[i*4] + buf[i*4+1] + buf[i*4+2];
+    mean /= (w * h);
+    double var = 0.0;
+    for (int i = 0; i < w * h; ++i) {
+        const double v = buf[i*4] + buf[i*4+1] + buf[i*4+2];
+        var += (v - mean) * (v - mean);
+    }
+    return std::sqrt(var / (w * h));
+}
+
+// Oblique light so relief shows as shading variation (head-on light hides it).
+renderer::Lighting oblique() { return tangent_probe::dir_light(glm::vec3(0.5f, 0.3f, 0.8f)); }
+
+}  // namespace scuff_probe
+
+class ScuffTest : public ::testing::Test {
+protected:
+    std::unique_ptr<renderer::Window>   w;
+    std::unique_ptr<renderer::Pipeline> p;
+    void SetUp() override {
+        try {
+            w = std::make_unique<renderer::Window>(256, 256, "scuff", false);
+        } catch (const std::runtime_error& e) {
+            GTEST_SKIP() << "no GL context: " << e.what();
+        }
+        p = std::make_unique<renderer::Pipeline>();
+    }
+};
+
+// Footprint: seed at the origin, radius 60 model units = ~89 px at eye_z 150.
+// Inside block: 40x40 px centred (well inside the 0.6 plateau of `win`).
+// Outside block: the top-left 40x40 corner, >150 px from the centre.
+TEST_F(ScuffTest, PerturbsShadingInsideTheFootprintOnly) {
+    using namespace scuff_probe;
+    auto quad = build_quad();
+    Seed none;
+    render(*quad, *p, oblique(), none);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto base_frame = read_frame();
+    const double base_in  = block_stddev(108, 108, 40, 40);
+    ASSERT_LT(base_in, 1.0) << "the undamaged quad must be flat-lit";
+
+    Seed s; s.active = true;
+    render(*quad, *p, oblique(), s);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto scuffed = read_frame();
+    const double in = block_stddev(108, 108, 40, 40);
+    EXPECT_GT(in, 6.0) << "no relief inside the scuff footprint (stddev " << in << ")";
+
+    // Outside the footprint: byte-identical (the loop `continue`s at r >= 1).
+    size_t diff = 0;
+    for (int y = 200; y < 240; ++y)
+        for (int x = 8; x < 48; ++x) {
+            const size_t i = (static_cast<size_t>(y) * 256 + x) * 4;
+            if (base_frame[i] != scuffed[i] || base_frame[i+1] != scuffed[i+1]
+                || base_frame[i+2] != scuffed[i+2]) ++diff;
+        }
+    EXPECT_EQ(diff, 0u) << "scuff leaked outside its radius";
+}
+
+TEST_F(ScuffTest, OnTheFarFaceLeavesTheNearFaceUntouched) {
+    using namespace scuff_probe;
+    auto quad = build_quad();
+    Seed none;
+    render(*quad, *p, oblique(), none);
+    const auto base_frame = read_frame();
+    Seed s; s.active = true; s.normal = glm::vec3(0, 0, -1);   // faces AWAY
+    render(*quad, *p, oblique(), s);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_EQ(differing_texels(base_frame, read_frame()), 0u)
+        << "a scuff whose normal faces away perturbed the camera-facing surface";
+}
+
+// The Scuff class must be skipped by the post-lighting scorch loop: with no
+// light at all, a Scorch would still render its ember; a Scuff must be black.
+TEST_F(ScuffTest, HasNoEmberSoItIsBlackWhenUnlit) {
+    using namespace scuff_probe;
+    auto quad = build_quad();
+    renderer::Lighting dark = tangent_probe::dir_light(glm::vec3(0, 0, 1), 0.0f);
+    Seed s; s.active = true;
+    render(*quad, *p, dark, s);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_EQ(block_mean(108, 108, 40, 40), 0.0) << "unlit scuff is not black — ember/flicker leaked in";
+
+    // Control: the same seed as Scorch is NOT black (its fresh ember glows),
+    // proving the assertion above can fail.
+    Seed sc = s; sc.cls = scenegraph::WeaponClass::Scorch;
+    render(*quad, *p, dark, sc);
+    EXPECT_GT(block_mean(108, 108, 40, 40), 0.0) << "control: scorch ember should glow unlit";
 }
 
 // Count "direction changes" (sign flips of consecutive deltas) in a sequence,

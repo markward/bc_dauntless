@@ -4114,8 +4114,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
              std::tuple<float, float, float> world_point,
              std::tuple<float, float, float> world_normal,
              float radius, float intensity,
-             std::uint32_t weapon_class, float time) {
-              if (weapon_class > 1u) return;  // unknown weapon class — drop silently
+             std::uint32_t weapon_class, float time,
+             std::tuple<float, float, float> world_tangent) {
+              if (weapon_class > 2u) return;  // unknown weapon class — drop silently
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id — drop silently
               const glm::vec3 pw(std::get<0>(world_point),
@@ -4126,6 +4127,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(world_normal));
               const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
               const glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
+              const glm::vec3 tw(std::get<0>(world_tangent),
+                                 std::get<1>(world_tangent),
+                                 std::get<2>(world_tangent));
+              // Zero stays zero (world_dir_to_body returns a length-0 input
+              // unchanged); the ring then derives a perpendicular.
+              const glm::vec3 tb = scenegraph::world_dir_to_body(inst->world, tw);
               // Convert radius game-units -> NIF/model units here (the same
               // space as pb), so the ring's merge test and the shader both work
               // in model units. s = |world's X column| = the uniform NIF->world
@@ -4134,14 +4141,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const float radius_model = (s > 0.0f) ? radius / s : radius;
               inst->decals.add(pb, nb, radius_model, intensity,
                                static_cast<scenegraph::WeaponClass>(weapon_class),
-                               time);
+                               time, tb);
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("radius"), py::arg("intensity"),
           py::arg("weapon_class"), py::arg("time"),
+          py::arg("world_tangent") = std::make_tuple(0.0f, 0.0f, 0.0f),
           "Record an object-space damage decal on a ship instance. World-space "
           "point/normal are transformed into the ship body frame. weapon_class: "
-          "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor).");
+          "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor), 2=Scuff (collision; "
+          "world_tangent = slip direction, zero = no preferred direction).");
 
     m.def("hull_carve_add",
           [](scenegraph::InstanceId id,
