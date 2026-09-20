@@ -1,7 +1,7 @@
 # Collision scuff decals — procedural normal + albedo (design)
 
 **Date:** 2026-09-20
-**Status:** approved design, not yet implemented
+**Status:** implemented 2026-09-20 (gate green); awaiting live verification (Damage Preview + QuickBattle ram/grind)
 **Area:** damage decals (`scenegraph::DamageDecalRing`, `opaque.frag`), collision response (`engine/appc/collisions.py`)
 
 ## Goal
