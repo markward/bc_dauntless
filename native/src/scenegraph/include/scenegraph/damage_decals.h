@@ -23,7 +23,10 @@ enum class WeaponClass : std::uint32_t {
 struct DamageDecal {
     glm::vec3     point_body{0.0f};
     glm::vec3     normal_body{0.0f};
-    float         radius = 0.0f;       // r_hit, game units
+    float         radius = 0.0f;       // r_hit (or, for Scuff, the contact
+                                       // chord), in MODEL units -- the
+                                       // binding converts from game units
+                                       // before calling add()
     float         intensity = 0.0f;    // [0,1], deposit darkness / hole threshold
     float         birth_time = 0.0f;   // seconds (game clock); drives ember cooling
     WeaponClass   weapon_class = WeaponClass::Scorch;

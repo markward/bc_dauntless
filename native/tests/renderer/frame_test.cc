@@ -14,6 +14,7 @@
 #include <renderer/window.h>
 
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <scenegraph/world.h>
 #include <scenegraph/camera.h>
@@ -1431,6 +1432,60 @@ std::unique_ptr<assets::Model> build_quad(unsigned char grey = 255) {
     return model;
 }
 
+// A center-fan quad (5 verts / 4 tris, fanning from the origin to the same
+// 4 corners as build_quad) instead of build_quad's 2-triangle diagonal split.
+// The diagonal split is NOT 4-fold symmetric: rotating triangle (V0,V1,V2) by
+// +90deg about +Z carries it onto world positions (V1,V2,V3) -- the OTHER
+// diagonal's triangle, which this mesh never defines (it only has (V0,V2,V3))
+// -- so a rotated render interpolates a screen region from a genuinely
+// different vertex triple than the identity render used for that same region,
+// and even though both reconstruct the same body position in the limit, the
+// floating-point summation order differs enough to occasionally flip an
+// 8-bit output near a steep noise gradient. The fan is 4-fold symmetric:
+// rotating triangle (C,V0,V1) by +90deg carries it onto world positions
+// (C,V1,V2), which the identity render already renders AS triangle (C,V1,V2)
+// -- same 3 vertices, same order -- so the rasterizer's interpolation is
+// bit-identical between the two renders. Used only by
+// RotatedInstanceMatchesEquivalentBodyTangent, which needs true bit-exactness.
+std::unique_ptr<assets::Model> build_quad_fan(unsigned char grey = 255) {
+    auto model = std::make_unique<assets::Model>();
+    assets::MeshCpu cpu;
+    cpu.material_index = 0;
+    cpu.node_index     = 0;
+    auto push = [&cpu](float x, float y, float u, float v) {
+        assets::MeshCpu::Vertex vt;
+        vt.position = glm::vec3(x, y, 0.0f);
+        vt.normal   = glm::vec3(0.0f, 0.0f, 1.0f);
+        vt.uv       = glm::vec2(u, v);
+        cpu.vertices.push_back(vt);
+    };
+    push(0.0f, 0.0f, 0.5f, 0.5f);            // 0: center
+    push(-kHalf, -kHalf, 0.0f, 0.0f);        // 1: V0
+    push( kHalf, -kHalf, 1.0f, 0.0f);        // 2: V1
+    push( kHalf,  kHalf, 1.0f, 1.0f);        // 3: V2
+    push(-kHalf,  kHalf, 0.0f, 1.0f);        // 4: V3
+    cpu.indices = {0, 1, 2,  0, 2, 3,  0, 3, 4,  0, 4, 1};
+    assets::Mesh mesh = assets::upload_mesh(cpu);
+    mesh.set_cpu_data(cpu);
+    model->meshes.push_back(std::move(mesh));
+    model->textures.push_back(
+        assets::upload_image(tangent_probe::uniform_rgba(grey, grey, grey, 2), false));
+    using Slot = assets::Material::StageSlot;
+    assets::Material mat;
+    mat.diffuse    = glm::vec3(1.0f);
+    mat.specular   = glm::vec3(0.0f);
+    mat.emissive   = glm::vec3(0.0f);
+    mat.glossiness = 0.0f;
+    mat.stages[static_cast<size_t>(Slot::Base)].texture_index = 0;
+    model->materials.push_back(mat);
+    assets::Node node;
+    node.name   = "scuff_quad_fan";
+    node.meshes = {0};
+    model->nodes.push_back(node);
+    model->root_node = 0;
+    return model;
+}
+
 struct Seed {
     bool active = false;
     glm::vec3 point{0.0f};
@@ -1445,10 +1500,10 @@ struct Seed {
 // unit on screen (256 px / (2 * 150 * tan 30deg)); the quad overfills the view.
 void render(const assets::Model& model, renderer::Pipeline& pipeline,
             const renderer::Lighting& lighting, const Seed& seed,
-            float eye_z = 150.0f) {
+            float eye_z = 150.0f, const glm::mat4& world_xform = glm::mat4(1.0f)) {
     scenegraph::World world;
     auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&model));
-    world.set_world_transform(iid, glm::mat4(1.0f));
+    world.set_world_transform(iid, world_xform);
     if (seed.active) {
         world.get(iid)->decals.add(seed.point, seed.normal, seed.radius,
                                    seed.intensity, seed.cls, 0.0f, seed.tangent);
@@ -1621,6 +1676,56 @@ TEST_F(ScuffTest, IsBandLimitedSoItDoesNotSparkleAtRange) {
     const double far_sd = block_stddev(122, 122, 12, 12);
     EXPECT_LT(far_sd, 3.0) << "scuff sparkles at range (stddev " << far_sd
                            << ", near " << near_sd << ")";
+}
+
+// u_ship_world_rot is uploaded as glm::mat3(world) (frame.cc) and used to
+// carry the decal's BODY-frame tangent/bitangent into world space (T_ws,
+// B_ws) for the scuff relief. A +90deg rotation about +Z of a body tangent
+// (1,0,0) lands on world (0,1,0) -- the same T_ws an UNROTATED instance
+// produces from a body tangent of (0,1,0) directly. Seed point/normal/dn
+// are body-frame and identical either way (origin, +Z), and the quad's
+// world footprint is itself invariant under a +Z 90deg turn (a square
+// centred at the origin), so p_body / n_body / the fwidth derivatives /
+// the hash phase (keyed on the body-frame point) are all identical between
+// the two renders too. Net: the images must be byte-for-byte identical.
+// A transposed u_ship_world_rot would instead send T=(1,0,0) to world
+// (0,-1,0) at +90deg, flipping the sign of T_ws and changing the image --
+// 180deg would NOT catch that (a transpose of a 180 rotation is itself,
+// up to sign, indistinguishable here), which is why this uses 90deg.
+TEST_F(ScuffTest, RotatedInstanceMatchesEquivalentBodyTangent) {
+    using namespace scuff_probe;
+    // build_quad_fan, not build_quad: see its comment -- a 2-triangle
+    // diagonal-split quad is not 4-fold symmetric under +90deg about +Z, so
+    // it interpolates the reconstructed body position from a genuinely
+    // different vertex triple between the two renders and picks up a few
+    // scattered 1-LSB floating-point artifacts unrelated to u_ship_world_rot.
+    auto quad = build_quad_fan();
+
+    // Built by hand rather than glm::rotate(..., half_pi, ...): sinf/cosf of
+    // half_pi<float>() are not bit-exact 1/0 (cos comes out ~-4.37e-8), and
+    // that epsilon is enough to flip an 8-bit-quantized texel here and there
+    // once it propagates through the noise derivatives -- an artifact of
+    // float trig, not of u_ship_world_rot. An exact +90deg-about-+Z matrix
+    // (columns (0,1,0), (-1,0,0), (0,0,1)) keeps the comparison bit-exact.
+    const glm::mat4 rot90z(glm::vec4(0.0f, 1.0f, 0.0f, 0.0f),
+                            glm::vec4(-1.0f, 0.0f, 0.0f, 0.0f),
+                            glm::vec4(0.0f, 0.0f, 1.0f, 0.0f),
+                            glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+
+    Seed rotated; rotated.active = true; rotated.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+    render(*quad, *p, oblique(), rotated, /*eye_z=*/150.0f, rot90z);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto rotated_frame = read_frame();
+
+    Seed identity; identity.active = true; identity.tangent = glm::vec3(0.0f, 1.0f, 0.0f);
+    render(*quad, *p, oblique(), identity, /*eye_z=*/150.0f, glm::mat4(1.0f));
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const auto identity_frame = read_frame();
+
+    EXPECT_EQ(differing_texels(rotated_frame, identity_frame), 0u)
+        << "a +90deg world rotation with body tangent (1,0,0) must match an "
+        << "unrotated instance with body tangent (0,1,0) byte-for-byte -- "
+        << "u_ship_world_rot is likely transposed";
 }
 
 // Count "direction changes" (sign flips of consecutive deltas) in a sequence,

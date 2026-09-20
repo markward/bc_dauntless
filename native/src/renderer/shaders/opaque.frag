@@ -114,7 +114,16 @@ uniform mat3  u_ship_world_rot;              // body->world rotation (x uniform 
 // to change, same convention as kHullCarve*. Starting values, judged live.
 const float kScuffBuckleAmp   = 0.35;                 // dh per unit, buckle waves
 const float kScuffBuckleFreq  = 6.2831853 / 24.0;     // rad/unit: 24-unit wavelength
-const float kScuffScratchAmp  = 0.25;                 // dh per unit, scratch grooves
+const float kScuffScratchAmp  = 0.25;                 // dh per unit, scratch grooves.
+                                                       // snoise1's slope peaks at ~3
+                                                       // (smoothstep-interpolated value
+                                                       // noise remapped to [-1,1]), so
+                                                       // the effective scratch tilt is
+                                                       // ~3x kScuffScratchAmp*kScuffScratchFreq
+                                                       // -- this constant bites ~3x harder
+                                                       // than kScuffBuckleAmp for the same
+                                                       // number (buckle's slope is the plain
+                                                       // cosine of a sine, peak 1).
 const float kScuffScratchFreq = 6.2831853 / 3.0;      // rad/unit: 3-unit wavelength
 const vec3  kScuffMetal       = vec3(0.62);           // bare-metal albedo on scratch ridges
 const float kScuffAlbedoGain  = 0.6;                  // how far ridges go toward kScuffMetal
@@ -584,9 +593,9 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         // thin grime band at the rim. Both confined by win / wn like the relief.
         // Ridges are the same frequency as the grooves and alias the same way;
         // the grime rim below is low-frequency and stays unfaded.
-        float scratch = smoothstep(0.55, 0.8, nw * 0.5 + 0.5) * win;
-        scratch *= bl_w;
-        base_rgb = mix(base_rgb, kScuffMetal, scratch * kScuffAlbedoGain);
+        float scratch_mask = smoothstep(0.55, 0.8, nw * 0.5 + 0.5) * win;
+        scratch_mask *= bl_w;
+        base_rgb = mix(base_rgb, kScuffMetal, scratch_mask * kScuffAlbedoGain);
         float rim = smoothstep(0.75, 0.95, r) * (1.0 - smoothstep(0.95, 1.0, r));
         base_rgb *= 1.0 - kScuffGrime * rim * inten * wn;
 
