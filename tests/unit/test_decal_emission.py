@@ -19,17 +19,17 @@ class _Pt:
 class _DecalCapture:
     """Positional-arg capture matching host_io.damage_decal_add's signature
     (instance_id, world_point, world_normal, radius, intensity, weapon_class,
-    time)."""
+    time, world_tangent=None)."""
 
     def __init__(self):
         self.decal_calls = []
 
     def __call__(self, instance_id, world_point, world_normal,
-                 radius, intensity, weapon_class, time):
+                 radius, intensity, weapon_class, time, world_tangent=None):
         self.decal_calls.append(dict(
             instance_id=instance_id, world_point=world_point,
             world_normal=world_normal, radius=radius, intensity=intensity,
-            weapon_class=weapon_class, time=time))
+            weapon_class=weapon_class, time=time, world_tangent=world_tangent))
 
 
 class _Hull:
@@ -67,7 +67,7 @@ def patched(monkeypatch):
 
 
 def _dispatch(*, absorbed_hull, weapon_type="torpedo", normal=_Pt(0, 0, 1),
-              persist_decal=True):
+              persist_decal=True, tangent=None, decal_radius=None):
     ship = _Ship()
     hit_feedback.dispatch(
         ship=ship, source=None, point=_Pt(1, 2, 3), normal=normal,
@@ -76,6 +76,7 @@ def _dispatch(*, absorbed_hull, weapon_type="torpedo", normal=_Pt(0, 0, 1),
         absorbed_hull=absorbed_hull, sub_transition=None,
         ship_instances={ship: "IID"},
         weapon_type=weapon_type, radius=0.2, persist_decal=persist_decal,
+        tangent=tangent, decal_radius=decal_radius,
     )
 
 
@@ -130,3 +131,25 @@ def test_no_decal_when_persist_decal_false(patched, decal):
     # reported for the transient spark, but must NOT leave a persistent scar.
     _dispatch(absorbed_hull=5.0, persist_decal=False)
     assert decal.decal_calls == []
+
+
+def test_collision_emits_scuff_with_tangent_and_decal_radius(patched, decal):
+    _dispatch(absorbed_hull=5.0, weapon_type="collision",
+              tangent=_Pt(0, 1, 0), decal_radius=2.5)
+    assert len(decal.decal_calls) == 1
+    c = decal.decal_calls[0]
+    assert c["weapon_class"] == dd.WEAPON_CLASS_SCUFF
+    assert c["world_tangent"] == (0, 1, 0)
+    assert c["radius"] == pytest.approx(2.5)        # chord, scale 1.0 — NOT 0.2 * anything
+
+
+def test_weapon_callers_pass_no_tangent_and_keep_the_weapon_radius(patched, decal):
+    _dispatch(absorbed_hull=5.0)                     # torpedo, radius=0.2
+    c = decal.decal_calls[0]
+    assert c["world_tangent"] is None
+    assert c["radius"] == pytest.approx(0.2 * dd.decal_radius_scale(dd.WEAPON_CLASS_SCORCH))
+
+
+def test_decal_radius_none_falls_back_to_the_hit_radius_for_a_collision(patched, decal):
+    _dispatch(absorbed_hull=5.0, weapon_type="collision")
+    assert decal.decal_calls[0]["radius"] == pytest.approx(0.2)

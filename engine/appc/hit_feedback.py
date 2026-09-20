@@ -196,6 +196,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              weapon_type: str | None = None, radius: float = 0.0,
              persist_decal: bool = True,
              allow_hull_carve: bool = True,
+             tangent=None, decal_radius: float | None = None,
              shield_point=None) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
@@ -221,6 +222,11 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     has no PhaserShieldHit handler); torpedo-on-shields plays from
     g_lsWeaponExplosions (matching Effects.TorpedoShieldHit). HULL and
     CRITICAL fire regardless of weapon_type.
+
+    `tangent` is the world-space slip direction (TGPoint3) for a collision
+    scuff, or None. `decal_radius` overrides `radius` for the DECAL ONLY —
+    the carve and everything else keep `radius` (spec §3: `r_hit` also sets
+    the subsystem catchment, so it must not carry the scuff size).
     """
     # Deferred — engine.appc.hit_vfx imports Severity from this module,
     # so a module-level import here would be circular.
@@ -367,14 +373,17 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             key = (id(ship), wclass)
             if now - _last_decal_emit.get(key, -1e9) >= DECAL_EMIT_INTERVAL:
                 _last_decal_emit[key] = now
+                vis_r = float(decal_radius) if decal_radius is not None else float(radius)
                 host_io.damage_decal_add(
                     iid,
                     (point.x, point.y, point.z),
                     (normal.x, normal.y, normal.z),
-                    float(radius) * damage_decals.decal_radius_scale(wclass),
+                    vis_r * damage_decals.decal_radius_scale(wclass),
                     damage_decals.decal_intensity(absorbed_hull),
                     wclass,
                     now,
+                    world_tangent=((tangent.x, tangent.y, tangent.z)
+                                   if tangent is not None else None),
                 )
 
     # 5. Hull carve (breach): deposit field strength; eligible ships only;
