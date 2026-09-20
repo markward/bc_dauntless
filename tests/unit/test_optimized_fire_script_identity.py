@@ -111,8 +111,26 @@ def _bridge_world():
             sys.modules.pop(name)
     LoadBridge.Load("GalaxyBridge")
     import Bridge.TacticalMenuHandlers as TMH
-    import MissionLib
-    MissionLib.g_sPlayerShipController = None
+    # Reset through TMH's OWN bound `MissionLib` reference, not a fresh
+    # top-level `import MissionLib`. Bridge.TacticalMenuHandlers is a real
+    # (non-stub) module the loop above does not pop, so once it has been
+    # imported anywhere in the session it stays cached with whatever
+    # `MissionLib` module object was live at ITS import time. Some other
+    # test file's fixture (tests/integration/tutorial/test_m2objects.py's
+    # `game_context` teardown) does `del sys.modules["MissionLib"]`, so a
+    # later `import MissionLib` in *this* function can silently bind to a
+    # brand-new module object -- setting g_sPlayerShipController on that
+    # one leaves TMH's internal calls (GetOrderString ->
+    # MissionLib.GetPlayerShipController()) still reading the OLD, stale
+    # object, which can carry a leaked non-Tactical controller (e.g.
+    # "Helm") forward from whatever last used it. That produced exactly
+    # this failure: GetHighLevelOrder() returned None (order state forced
+    # to -1) because GetOrderString's very first check,
+    # `MissionLib.GetPlayerShipController() not in (None, "Tactical")`,
+    # read the stale object's leftover value. Going through `TMH.MissionLib`
+    # guarantees we reset the exact object TMH's own module-level code will
+    # consult, regardless of any sys.modules swap elsewhere in the suite.
+    TMH.MissionLib.g_sPlayerShipController = None
     TMH.g_iAutoTargetChange = 0
     return mission
 
