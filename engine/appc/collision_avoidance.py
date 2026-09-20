@@ -18,15 +18,21 @@ Architecture note — global routine vs PreprocessingAI
 -----------------------------------------------------
 The SDK ``AvoidObstacles.Update`` returns ``PS_SKIP_ACTIVE`` while it is
 actively overriding the course (suppressing the contained AI) and
-``PS_NORMAL`` otherwise. Dauntless runs avoidance as a single global
-per-tick routine (``tick_collision_avoidance``) called from
-engine/core/loop.py AFTER ``tick_all_ai`` and BEFORE
-``tick_all_ship_motion`` — not as a per-AI PreprocessingAI. Because it runs
-after the AI has written its heading/throttle, "actively overriding" is the
-global-routine analog of ``PS_SKIP_ACTIVE``: while evading, this routine
-fully owns the ship's heading + thrust for that tick (it wins by running
-last). We record that state per ship (``is_overriding``) so the behaviour is
-observable/testable; not overriding == ``PS_NORMAL``.
+``PS_NORMAL`` otherwise. This module also exposes a standalone global
+per-tick routine, ``tick_collision_avoidance``, but it has **no engine
+caller** — ``engine/core/loop.py`` does not call it
+(``test_the_game_loop_no_longer_runs_a_second_controller`` pins that), and
+nothing else in ``engine/`` does either. It is reachable only from tests
+(``tests/integration/test_collision_avoidance.py`` and others), which is
+where the duplicate second-controller pass it once represented was retired
+from. The production path is per-AI, inside the ``PreprocessingAI`` node:
+``ai_optimized.py``'s ``AvoidObstacles`` node calls
+``collision_avoidance.course_override_for(self)`` (``ai_optimized.py:269``),
+which is this module's analog of ``AvoidObstacles.Update`` — it returns the
+override (or ``(None, None)`` for ``PS_NORMAL``) for that one node, run in
+place by the AI tree rather than as a second global pass. We record that
+state per ship (``is_overriding``) so the behaviour is observable/testable;
+not overriding == ``PS_NORMAL``.
 
 Gating: only ships with an attached AI (``GetAI()`` is not None) are steered.
 The player ship is driven by _PlayerControl with ``GetAI() == None``, so it

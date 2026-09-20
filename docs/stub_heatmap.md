@@ -14,20 +14,20 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 
 | rank | owner | attr | total hits | coverage | lastSeenOn | markedResolvedOn |
 |---|---|---|---|---|---|---|
-| 1 | TGPoint3_GetRandomUnitVector() | x | 80805 | 23/416 | 2026-08-31 11:12 UTC |  |
-| 2 | TGPoint3_GetRandomUnitVector() | y | 80805 | 23/416 | 2026-08-31 11:12 UTC |  |
-| 3 | TGPoint3_GetRandomUnitVector() | z | 80805 | 23/416 | 2026-08-31 11:12 UTC |  |
+| 1 | TGPoint3_GetRandomUnitVector() | x | 80805 | 23/416 | 2026-08-31 11:12 UTC | 2026-09-19 |
+| 2 | TGPoint3_GetRandomUnitVector() | y | 80805 | 23/416 | 2026-08-31 11:12 UTC | 2026-09-19 |
+| 3 | TGPoint3_GetRandomUnitVector() | z | 80805 | 23/416 | 2026-08-31 11:12 UTC | 2026-09-19 |
 | 4 | TGParagraph | SetString | 45066 | 175/416 | 2026-08-18 15:23 UTC |  |
 | 5 | TGIcon | GetRight | 42952 | 280/416 | 2026-08-31 11:12 UTC |  |
-| 6 | App | TGPoint3_GetRandomUnitVector | 28222 | 23/416 | 2026-08-31 11:12 UTC |  |
-| 7 | PhaserBank_Cast() | CalculateRoughDirection | 23864 | 20/416 | 2026-08-22 10:15 UTC |  |
-| 8 | PhaserBank_Cast() | CalculateRoughDirection().Dot | 23864 | 20/416 | 2026-08-22 10:15 UTC |  |
-| 9 | PhaserBank_Cast() | CanFire | 23864 | 20/416 | 2026-08-22 10:15 UTC |  |
-| 10 | PhaserBank_Cast() | GetChargeLevel | 23864 | 20/416 | 2026-08-22 10:15 UTC |  |
-| 11 | TGPoint3_GetRandomUnitVector() | Dot | 20976 | 14/416 | 2026-08-31 11:12 UTC |  |
-| 12 | TGPoint3_GetRandomUnitVector() | GetPerpendicularComponent | 20888 | 14/416 | 2026-08-31 11:12 UTC |  |
-| 13 | TGPoint3_GetRandomUnitVector() | GetPerpendicularComponent().Dot | 20888 | 14/416 | 2026-08-31 11:12 UTC |  |
-| 14 | TGPoint3_GetRandomUnitVector() | GetPerpendicularComponent().Unitize | 20888 | 14/416 | 2026-08-31 11:12 UTC |  |
+| 6 | App | TGPoint3_GetRandomUnitVector | 28222 | 23/416 | 2026-08-31 11:12 UTC | 2026-09-19 |
+| 7 | PhaserBank_Cast() | CalculateRoughDirection | 23864 | 20/416 | 2026-08-22 10:15 UTC | 2026-09-19 |
+| 8 | PhaserBank_Cast() | CalculateRoughDirection().Dot | 23864 | 20/416 | 2026-08-22 10:15 UTC | 2026-09-19 |
+| 9 | PhaserBank_Cast() | CanFire | 23864 | 20/416 | 2026-08-22 10:15 UTC | 2026-09-19 |
+| 10 | PhaserBank_Cast() | GetChargeLevel | 23864 | 20/416 | 2026-08-22 10:15 UTC | 2026-09-19 |
+| 11 | TGPoint3_GetRandomUnitVector() | Dot | 20976 | 14/416 | 2026-08-31 11:12 UTC | 2026-09-19 |
+| 12 | TGPoint3_GetRandomUnitVector() | GetPerpendicularComponent | 20888 | 14/416 | 2026-08-31 11:12 UTC | 2026-09-19 |
+| 13 | TGPoint3_GetRandomUnitVector() | GetPerpendicularComponent().Dot | 20888 | 14/416 | 2026-08-31 11:12 UTC | 2026-09-19 |
+| 14 | TGPoint3_GetRandomUnitVector() | GetPerpendicularComponent().Unitize | 20888 | 14/416 | 2026-08-31 11:12 UTC | 2026-09-19 |
 | 15 | App | UtopiaModule_ConvertGameUnitsToKilometers | 18077 | 72/416 | 2026-08-21 12:29 UTC |  |
 | 16 | TGFrame | GetRight | 15151 | 88/416 | 2026-08-31 08:32 UTC |  |
 | 17 | App | SortedRegionMenu_GetRoot | 15124 | 34/416 | 2026-08-30 23:25 UTC |  |
@@ -74,7 +74,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 58 | CharacterClass | SetBlinkStages | 683 | 72/416 | 2026-08-22 09:52 UTC |  |
 | 59 | Planet | GetCloakingSubsystem | 619 | 2/416 | 2026-08-17 14:57 UTC |  |
 | 60 | Planet | GetCloakingSubsystem.IsTryingToCloak | 619 | 2/416 | 2026-08-17 14:57 UTC |  |
-| 61 | App | PhaserBank_Cast | 608 | 22/416 | 2026-08-22 10:15 UTC |  |
+| 61 | App | PhaserBank_Cast | 608 | 22/416 | 2026-08-22 10:15 UTC | 2026-09-19 |
 | 62 | App | g_kMainMenuButton2HighlightedColor | 542 | 77/416 | 2026-08-22 08:23 UTC |  |
 | 63 | STTopLevelMenu | GetContainingWindow | 542 | 86/416 | 2026-08-22 09:52 UTC |  |
 | 64 | App | ExplodeEmitterProperty_Create | 527 | 86/416 | 2026-08-22 09:52 UTC |  |
@@ -84,7 +84,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 68 | KeyboardBinding | FindKey | 462 | 76/416 | 2026-08-22 08:23 UTC |  |
 | 69 | Game | AddPersistentModule | 414 | 414/416 | 2026-08-31 11:12 UTC |  |
 | 70 | _STStylizedWindow | ScrollToTop | 409 | 193/416 | 2026-08-31 11:12 UTC |  |
-| 71 | App | WarpSequence_Cast | 294 | 61/416 | 2026-08-11 17:55 UTC |  |
+| 71 | App | WarpSequence_Cast | 294 | 61/416 | 2026-08-11 17:55 UTC | 2026-08-11 |
 | 72 | STTargetMenu | GetHeight | 271 | 86/416 | 2026-08-22 09:52 UTC |  |
 | 73 | STTargetMenu | Resize | 271 | 86/416 | 2026-08-22 09:52 UTC |  |
 | 74 | STTopLevelMenu | GetContainingWindow.GetBorderWidth | 271 | 86/416 | 2026-08-22 09:52 UTC |  |
@@ -96,15 +96,15 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 80 | TGParagraph | SetFontGroup | 180 | 86/416 | 2026-08-22 09:52 UTC |  |
 | 81 | WaypointEvent_Create() | GetEventType | 180 | 31/416 | 2026-08-10 11:34 UTC |  |
 | 82 | TGParagraph | RecalcBounds | 157 | 17/416 | 2026-08-22 10:15 UTC |  |
-| 83 | App | PulseWeaponProperty_Cast | 148 | 26/416 | 2026-08-28 15:05 UTC |  |
+| 83 | App | PulseWeaponProperty_Cast | 148 | 26/416 | 2026-08-28 15:05 UTC | 2026-09-19 |
 | 84 | CharacterClass | SetLookAtAdj | 148 | 71/416 | 2026-08-22 09:52 UTC |  |
-| 85 | PulseWeaponProperty_Cast() | GetOrientationForward | 148 | 26/416 | 2026-08-28 15:05 UTC |  |
-| 86 | PulseWeaponProperty_Cast() | GetOrientationForward().x | 148 | 26/416 | 2026-08-28 15:05 UTC |  |
-| 87 | PulseWeaponProperty_Cast() | GetOrientationForward().y | 148 | 26/416 | 2026-08-28 15:05 UTC |  |
-| 88 | PulseWeaponProperty_Cast() | GetOrientationForward().z | 148 | 26/416 | 2026-08-28 15:05 UTC |  |
-| 89 | WarpSequence_Cast() | GetDestination | 140 | 60/416 | 2026-08-11 17:55 UTC |  |
-| 90 | WarpSequence_Cast() | GetDestinationMission | 140 | 60/416 | 2026-08-11 17:55 UTC |  |
-| 91 | Torpedo_Cast() | GetObjID | 110 | 9/416 | 2026-07-17 19:27 UTC |  |
+| 85 | PulseWeaponProperty_Cast() | GetOrientationForward | 148 | 26/416 | 2026-08-28 15:05 UTC | 2026-09-19 |
+| 86 | PulseWeaponProperty_Cast() | GetOrientationForward().x | 148 | 26/416 | 2026-08-28 15:05 UTC | 2026-09-19 |
+| 87 | PulseWeaponProperty_Cast() | GetOrientationForward().y | 148 | 26/416 | 2026-08-28 15:05 UTC | 2026-09-19 |
+| 88 | PulseWeaponProperty_Cast() | GetOrientationForward().z | 148 | 26/416 | 2026-08-28 15:05 UTC | 2026-09-19 |
+| 89 | WarpSequence_Cast() | GetDestination | 140 | 60/416 | 2026-08-11 17:55 UTC | 2026-08-11 |
+| 90 | WarpSequence_Cast() | GetDestinationMission | 140 | 60/416 | 2026-08-11 17:55 UTC | 2026-08-11 |
+| 91 | Torpedo_Cast() | GetObjID | 110 | 9/416 | 2026-07-17 19:27 UTC | 2026-08-09 |
 | 92 | App | MapWindow_Cast | 102 | 85/416 | 2026-08-30 23:25 UTC |  |
 | 93 | MapWindow_Cast() | IsWindowActive | 102 | 85/416 | 2026-08-30 23:25 UTC |  |
 | 94 | TacticalControlWindow | SetNotVisible | 102 | 85/416 | 2026-08-30 23:25 UTC |  |
@@ -128,14 +128,14 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 112 | _CinematicWindow | AddChild | 57 | 18/416 | 2026-08-22 10:15 UTC |  |
 | 113 | _CinematicWindow | DeleteChild | 51 | 13/416 | 2026-08-22 10:15 UTC |  |
 | 114 | TGEvent | GetObjPtr | 33 | 1/416 | 2026-08-22 07:37 UTC |  |
-| 115 | App | WeaponSystem_Cast | 30 | 1/416 | 2026-08-17 16:31 UTC |  |
-| 116 | WeaponSystem_Cast() | IsInTargetList | 28 | 1/416 | 2026-08-17 16:31 UTC |  |
+| 115 | App | WeaponSystem_Cast | 30 | 1/416 | 2026-08-17 16:31 UTC | 2026-09-19 |
+| 116 | WeaponSystem_Cast() | IsInTargetList | 28 | 1/416 | 2026-08-17 16:31 UTC | 2026-09-19 |
 | 117 | App | InterfaceModule_ForceFocusOnObject | 24 | 7/416 | 2026-08-31 08:32 UTC |  |
 | 118 | CharacterClass | SetAsExtra | 21 | 7/416 | 2026-08-22 09:52 UTC |  |
 | 119 | Waypoint | StartGetSubsystemMatch | 19 | 4/416 | 2026-08-06 10:09 UTC |  |
 | 120 | ShipClass | SetTargetable | 18 | 3/416 | 2026-08-06 10:09 UTC |  |
 | 121 | App | BlinkingLightProperty_Create | 16 | 8/416 | 2026-08-30 22:10 UTC |  |
-| 122 | App | TGCondition_Cast | 16 | 2/416 | 2026-08-21 15:53 UTC |  |
+| 122 | App | TGCondition_Cast | 16 | 2/416 | 2026-08-21 15:53 UTC | 2026-09-19 |
 | 123 | BlinkingLightProperty_Create() | GetName | 16 | 8/416 | 2026-08-30 22:10 UTC |  |
 | 124 | BlinkingLightProperty_Create() | SetColor | 16 | 8/416 | 2026-08-30 22:10 UTC |  |
 | 125 | BlinkingLightProperty_Create() | SetDuration | 16 | 8/416 | 2026-08-30 22:10 UTC |  |
@@ -143,7 +143,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 127 | BlinkingLightProperty_Create() | SetPeriod | 16 | 8/416 | 2026-08-30 22:10 UTC |  |
 | 128 | BlinkingLightProperty_Create() | SetPosition | 16 | 8/416 | 2026-08-30 22:10 UTC |  |
 | 129 | BlinkingLightProperty_Create() | SetRadius | 16 | 8/416 | 2026-08-30 22:10 UTC |  |
-| 130 | TGCondition_Cast() | GetStatus | 16 | 2/416 | 2026-08-21 15:53 UTC |  |
+| 130 | TGCondition_Cast() | GetStatus | 16 | 2/416 | 2026-08-21 15:53 UTC | 2026-09-19 |
 | 131 | SensorSubsystem | SetNumProbes | 14 | 9/416 | 2026-08-21 20:37 UTC |  |
 | 132 | App | WarpFlash_CreateWithoutShip | 9 | 9/416 | 2026-08-21 20:37 UTC |  |
 | 133 | WarpEngineSubsystem | GetWarpExitLocation | 9 | 9/416 | 2026-08-21 20:37 UTC |  |
@@ -180,7 +180,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | 164 | STSubPane | GetConceptualParent | 2 | 1/416 | 2026-08-21 15:53 UTC |  |
 | 165 | STSubPane | GetConceptualParent.SetNotVisible | 2 | 1/416 | 2026-08-21 15:53 UTC |  |
 | 166 | TacticalControlWindow | GetOpenMenu | 2 | 1/416 | 2026-08-21 15:53 UTC |  |
-| 167 | WeaponSystem_Cast() | StopFiring | 2 | 1/416 | 2026-08-17 16:31 UTC |  |
+| 167 | WeaponSystem_Cast() | StopFiring | 2 | 1/416 | 2026-08-17 16:31 UTC | 2026-09-19 |
 | 168 | App | CharacterClass_GetCharacterFromMenu | 1 | 1/416 | 2026-08-21 15:53 UTC |  |
 | 169 | App | InterfaceModule_DoTheRightThing | 1 | 1/416 | 2026-07-13 23:39 UTC |  |
 | 170 | App | STStylizedWindow_Create | 1 | 1/416 | 2026-07-13 23:39 UTC |  |

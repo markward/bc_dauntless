@@ -587,6 +587,12 @@ re-evaluates when the sequence changes instead of only at construction —
 correct before, but never timely. This also closes the residual flagged in
 `CLAUDE.md`'s "AI surface & gaps" row.
 
+The emitter above was real but unreachable in production: nothing called
+`SetWarpSequence`, only tests did. The state attach (`WarpSequence.Play` →
+`SetWarpSequence`) landed 2026-09-19 in `18fc21b6`, so the emitter is now
+reachable in production — see
+`docs/engine/npc-ai-contract-review-2026-09-19.md` gap #8.
+
 ---
 
 ## Summary table
