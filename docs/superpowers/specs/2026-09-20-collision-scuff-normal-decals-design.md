@@ -103,7 +103,7 @@ the normal". Defaulted so weapon
 callers do not change. **Two façade edits are mandatory**: `engine/renderer.py`
 name table + wrapper, and `engine/host_io.damage_decal_add(..., world_tangent=None)`.
 
-Python thread: `apply_hit(hit_tangent=None)` → `hit_feedback.dispatch(tangent=None)`
+Python thread: `apply_hit(hit_tangent=None, decal_radius=None)` → `hit_feedback.dispatch(tangent=None, decal_radius=None)`
 → `host_io.damage_decal_add(world_tangent=…)`. `hit_tangent` is a world-space
 `TGPoint3` or `None`.
 
@@ -120,9 +120,15 @@ where `R_min` is the smaller of the two overlapping pieces' scaled radii and
 `pen` their overlap (`_deepest_piece_overlap` already computes both; the
 whole-bound fallback uses the two root radii and `sum_r − dist`). Computed once
 in `_respond_pair` and handed to `_grind_contact`, then passed as
-`apply_hit(splash_radius=scuff_radius_gu)`. Initial band `[0.5, 4.0]` GU —
-**a tuning constant, judged live**. `decal_radius_scale(SCUFF) = 1.0` (the
-chord already is the visual size).
+`apply_hit(decal_radius=scuff_radius_gu)` — a **new, decal-only kwarg**
+forwarded to `dispatch(decal_radius=…)`, which uses it in place of `radius`
+for the `damage_decal_add` call when set. ⚠️ It must NOT travel as
+`splash_radius`: `r_hit` also sets the subsystem-damage catchment
+([combat.py:816](../../../engine/appc/combat.py#L816)), the carve influence
+radius and `WeaponHitEvent.SetRadius`, so reusing it would widen collision
+*damage*. Collisions keep today's `r_hit` (the 0.15 GU default) for all of
+those. Initial band `[0.5, 4.0]` GU — **a tuning constant, judged live**.
+`decal_radius_scale(SCUFF) = 1.0` (the chord already is the visual size).
 
 Intensity: the existing `decal_intensity(absorbed_hull)` mapping. Grind ticks
 are tiny per frame, so merges accumulate a scuff's intensity over a sustained
@@ -267,8 +273,10 @@ lit quad, directional light, no material normal map:
   whole-bound fallback.
 - Grind passes the slip vector as `hit_tangent`; impact passes the
   normal-stripped relative velocity; dead-on impact passes `None`.
-- `dispatch` forwards `tangent` to `host_io.damage_decal_add` (fake host_io);
-  weapon callers pass `None`.
+- `dispatch` forwards `tangent` and `decal_radius` to `host_io.damage_decal_add`
+  (fake host_io); weapon callers pass `None` and the decal keeps `radius`.
+- A collision `apply_hit` leaves `r_hit`, the subsystem catchment, the carve
+  influence radius and `WeaponHitEvent.GetRadius()` exactly as before.
 - Façade manifest test picks up the new binding name.
 
 **Gate:** `scripts/check_tests.sh` before merge. The green gate cannot see the
@@ -301,8 +309,8 @@ visibly evicts scorch marks, split it out then.
 | `native/src/renderer/shaders/opaque.frag` | `apply_scuffs` pre-lighting pass, Scuff `continue` in the post-lighting loop, `kScuff*` consts, `p_body` reorder |
 | `engine/renderer.py`, `engine/host_io.py` | façade name table + wrapper with `world_tangent` |
 | `engine/appc/damage_decals.py` | `WEAPON_CLASS_SCUFF`, `weapon_class_for("collision")`, radius scale 1.0 |
-| `engine/appc/combat.py` | `apply_hit(hit_tangent=None)` forwarded to dispatch |
-| `engine/appc/hit_feedback.py` | `dispatch(tangent=None)` → `host_io.damage_decal_add` |
+| `engine/appc/combat.py` | `apply_hit(hit_tangent=None, decal_radius=None)` forwarded to dispatch; `r_hit` untouched |
+| `engine/appc/hit_feedback.py` | `dispatch(tangent=None, decal_radius=None)` → `host_io.damage_decal_add` |
 | `engine/appc/collisions.py` | `weapon_type="collision"`, chord radius, tangent on impact + grind |
 | `engine/dev_missions/damage_preview.py` | three seeded scuffs |
 | tests as listed in §6 | |
