@@ -100,8 +100,12 @@ The tangent is transformed with `world_dir_to_body` like the normal and handed
 to `DamageDecalRing::add`, which owns the orthogonalise-or-derive step (so the
 C++ ring tests cover it). A zero tangent means "derive a perpendicular from
 the normal". Defaulted so weapon
-callers do not change. **Two façade edits are mandatory**: `engine/renderer.py`
-name table + wrapper, and `engine/host_io.damage_decal_add(..., world_tangent=None)`.
+callers do not change. The façade wrapper is `engine/host_io.damage_decal_add`
+(it already lists the binding, so no manifest change — only the wrapper gains
+`world_tangent=None`). ⚠️ The four unit-test spies that mirror this wrapper's
+positional signature (`test_decal_emission.py`, `test_apply_hit_intensity.py`
+and the lambdas in `test_hit_vfx_flash_anchor.py` / `test_combat_cheats.py`)
+must accept the new keyword in the same change.
 
 Python thread: `apply_hit(hit_tangent=None, decal_radius=None)` → `hit_feedback.dispatch(tangent=None, decal_radius=None)`
 → `host_io.damage_decal_add(world_tangent=…)`. `hit_tangent` is a world-space
@@ -177,9 +181,12 @@ taps — it is 1-D). The `win` derivative is dropped deliberately: the windowed
 edge is soft and a slope discontinuity there is invisible.
 
 **Band-limiting is mandatory** for procedural relief. Each term's amplitude is
-multiplied by `1 − smoothstep(0.25, 0.5, fwidth(x) · k / (2π))` for its own
+multiplied by `1 − smoothstep(0.25, 0.5, fw_x · k / (2π))` for its own
 axis `x ∈ {u, w}` and frequency `k`, so a term fades out before its wavelength
-falls under ~2–4 pixels. This is the procedural stand-in for the Toksvig
+falls under ~2–4 pixels. `fw_x` is the per-pixel footprint of that axis,
+estimated as `dot(abs(T), fwidth(p_body))` — `fwidth(p_body)` is taken ONCE
+before the loop, in uniform control flow; a `fwidth` inside a loop that
+`continue`s per decal is undefined in GLSL. This is the procedural stand-in for the Toksvig
 `sigma` the texture path has; without it scratches sparkle at range.
 
 Accumulation and perturbation (once per fragment, after the loop):
@@ -260,8 +267,6 @@ lit quad, directional light, no material normal map:
   threshold (guards the `fwidth` fade).
 - `ScuffDoesNotMirrorToTheFarFace`: a scuff seeded on +Z leaves the −Z face
   byte-identical (the `wn` guard).
-- `ScuffDoesNotChangeTheStencilCut`: stencil marking with `u_carve_invert`
-  is unchanged with a Scuff present (the pass touches no discard).
 - Existing `UndamagedInstanceGlowMatchesEmptyRingBaseline` keeps passing —
   the production path with no decals is byte-identical.
 
@@ -277,7 +282,7 @@ lit quad, directional light, no material normal map:
   (fake host_io); weapon callers pass `None` and the decal keeps `radius`.
 - A collision `apply_hit` leaves `r_hit`, the subsystem catchment, the carve
   influence radius and `WeaponHitEvent.GetRadius()` exactly as before.
-- Façade manifest test picks up the new binding name.
+- The existing façade manifest test stays green (no new binding name).
 
 **Gate:** `scripts/check_tests.sh` before merge. The green gate cannot see the
 look — the live pass in §5 is the acceptance test
@@ -307,7 +312,8 @@ visibly evicts scorch marks, split it out then.
 | `native/src/host/host_bindings.cc` | `world_tangent` arg, class guard `> 2u` |
 | `native/src/renderer/frame.cc` | `u_decal_d` upload, `u_ship_world_rot` |
 | `native/src/renderer/shaders/opaque.frag` | `apply_scuffs` pre-lighting pass, Scuff `continue` in the post-lighting loop, `kScuff*` consts, `p_body` reorder |
-| `engine/renderer.py`, `engine/host_io.py` | façade name table + wrapper with `world_tangent` |
+| `engine/host_io.py` | `damage_decal_add(..., world_tangent=None)` wrapper |
+| `engine/appc/visible_damage.py` | `queue_body_scuff` (deferred, realises like authored volumes) — the seeding primitive for §5 |
 | `engine/appc/damage_decals.py` | `WEAPON_CLASS_SCUFF`, `weapon_class_for("collision")`, radius scale 1.0 |
 | `engine/appc/combat.py` | `apply_hit(hit_tangent=None, decal_radius=None)` forwarded to dispatch; `r_hit` untouched |
 | `engine/appc/hit_feedback.py` | `dispatch(tangent=None, decal_radius=None)` → `host_io.damage_decal_add` |
