@@ -60,7 +60,8 @@ class _Host:
         return ((5.0, 0.0, 0.0), self._normal, 5.0)
 
     def damage_decal_add(self, instance_id, world_point, world_normal,
-                         radius, intensity, weapon_class, time):
+                         radius, intensity, weapon_class, time,
+                         world_tangent=None):
         self.decal_calls.append(dict(
             instance_id=instance_id, world_point=world_point,
             world_normal=world_normal, weapon_class=weapon_class))
