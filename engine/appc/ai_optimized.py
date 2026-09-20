@@ -402,17 +402,50 @@ def _non_lethal_class(base: type) -> type:
             return App.PreprocessingAI.PS_NORMAL
         return result
 
-    cls = type(
-        base.__name__ + "_NonLethal",
-        (base,),
-        {
-            "Update": Update,
-            "__doc__": (
-                "SDK %s with its lethal PS_DONE return translated to "
-                "PS_NORMAL. See engine/appc/ai_optimized.py." % base.__name__
-            ),
-        },
-    )
+    def GetChildTargets(self, pSubsystem):
+        """Targetable, still-alive descendants of a non-targetable subsystem.
+
+        Called from the SDK's ChooseTargetSubsystem (Preprocessors.py:832)
+        and defined nowhere in the SDK — it belonged to BC's NATIVE
+        FireScript, which is unreconstructed. Stated assumption: the only
+        reading under which the SDK loop makes sense. Every stock hardpoint
+        marks its aggregator systems SetTargetable(0) and their banks/tubes
+        targetable (galaxy.py:774-995), so this branch is the common case for
+        any explicit TargetSubsystems list (Fleet/DisableTarget, Player/
+        Disable*). Without it: AttributeError out of the AI tick.
+        """
+        out = []
+        n = int(pSubsystem.GetNumChildSubsystems()) if hasattr(pSubsystem, "GetNumChildSubsystems") else 0
+        for i in range(n):
+            child = pSubsystem.GetChildSubsystem(i)
+            if child is None:
+                continue
+            if child.IsTargetable() and child.GetCondition() > 0:
+                out.append(child)
+            else:
+                out.extend(GetChildTargets(self, child))
+        return out
+
+    members = {
+        "Update": Update,
+        "__doc__": (
+            "SDK %s with its lethal PS_DONE return translated to "
+            "PS_NORMAL. See engine/appc/ai_optimized.py." % base.__name__
+        ),
+    }
+    if base.__name__ == "FireScript":
+        members["GetChildTargets"] = GetChildTargets
+    bases = (base,)
+    if base.__name__ == "FireScript":
+        # BC's binary swaps FireScript for its native OptimizedFireScript
+        # (App.py:5186, a PreprocessingAI subclass carrying the control
+        # surface). TacticalMenuHandlers.GetPlayerFiringAIScripts:1861 finds
+        # the player's fire nodes by isinstance against that class — so the
+        # wrapper must BE one. The SDK FireScript already defines every
+        # method the binding lists (Preprocessors.py:172-230).
+        from engine.appc.ai import OptimizedFireScript
+        bases = (base, OptimizedFireScript)
+    cls = type(base.__name__ + "_NonLethal", bases, members)
     _NON_LETHAL_CLASSES[base] = cls
     # Register the dynamic class in the module globals so pickle can find it at
     # unpickle time via attribute lookup. Repeated calls are idempotent due to

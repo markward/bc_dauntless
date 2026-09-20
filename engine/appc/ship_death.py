@@ -180,16 +180,48 @@ def _mark_dead(ship) -> None:
     """End of throes: mark the ship dead and broadcast ET_OBJECT_DESTROYED so
     mission logic and ship_lifecycle.publish_destroyed (fired by SetDead) run
     on schedule. The hull stays in its set and keeps its target locks — it
-    lingers as a selectable wreck for WRECK_LINGER_DURATION."""
+    lingers as a selectable wreck for WRECK_LINGER_DURATION.
+
+    Also tears down the ship's AI tree (spec #15): nothing outside ships.py
+    ever touches the AI slot, so a destroyed ship's tree otherwise stays
+    installed on the hulk forever, and its Warp leaf never runs LostFocus
+    (which re-enables the collisions it disabled) — a killed ship mid-warp
+    would end up permanently non-collidable.
+
+    Tear the AI down the way ClearAI does — LostFocus down the tree (Warp's
+    re-enables collisions, FireScript's stops firing) and detach — but
+    WITHOUT ET_AI_DONE: that event means "the tree finished", and missions
+    gate beats on it. A ship that died did not finish its orders."""
     if hasattr(ship, "SetDead"):
         ship.SetDead()
+    # ship.__dict__.get, not getattr: a TGObject.__getattr__ stub would
+    # otherwise masquerade as a real (but empty) _ai attribute.
+    ai = ship.__dict__.get("_ai")
+    if ai is not None:
+        try:
+            ship._deactivate_ai_tree(ai)
+        except Exception as _e:
+            dev_mode.log_swallowed("deactivate AI tree on death", _e)
+        ship._ai = None
+        ship._insystem_warp_transit = None
     _broadcast_destroyed(ship)
 
 
 def _remove(ship) -> None:
-    """End of linger: release every lock held on the wreck, then remove it from
-    its set. Order matters — locks clear while the handle is still in the set
-    so firing ships drop their target pointers against a valid object."""
+    """End of linger: release every lock held on the wreck, remove it from its
+    set, then broadcast the delete. Order matters twice over: locks clear
+    while the handle is still in the set so firing ships drop their target
+    pointers against a valid object; and the set removal (which posts
+    EXITED_SET) happens BEFORE ET_DELETE_OBJECT_PUBLIC so an object "leaves
+    the set" before it "leaves the world" — the same order DeleteObjectFromSet
+    already used, now matched here (see M5 in the 2026-09-19 NPC AI contract
+    review fix wave). ConditionExists.Deleted, the SDK's own subscriber, only
+    needs the event and never reads set membership, so nothing depends on the
+    old order.
+
+    The set removal keeps its own try: it guards the removal itself, not the
+    broadcast that follows. broadcast_object_deleted guards its own dispatch
+    internally, so it is one plain call here."""
     _clear_target_locks(ship)
     try:
         pSet = ship.GetContainingSet() if hasattr(ship, "GetContainingSet") else None
@@ -197,6 +229,8 @@ def _remove(ship) -> None:
             pSet.RemoveObjectFromSet(ship.GetName())
     except Exception as _e:
         dev_mode.log_swallowed("remove dead ship from set", _e)
+    from engine.appc.objects import broadcast_object_deleted
+    broadcast_object_deleted(ship)
 
 
 def retire(ship) -> None:

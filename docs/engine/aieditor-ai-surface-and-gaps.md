@@ -152,7 +152,7 @@ highest-signal checklist because each is a discrete engine capability a doctrine
 
 | Preprocessor | Purpose | Dauntless status |
 |---|---|---|
-| **Fire Preprocess** | weapon firing (`FireScript`) | ✅ wired — `ai_driver.py:_ensure_fire_script_initialized` (line 364) |
+| **Fire Preprocess** | weapon firing (`FireScript`) | ✅ wired — `CodeAISet` is dispatched at bind, `engine/appc/ai.py:~921` (the `_ensure_fire_script_initialized` this row used to cite was deleted; see `docs/engine/npc-ai-contract-review-2026-09-19.md` §5) |
 | **Select Target** | target selection + damage tracking (`SelectTarget`) | ✅ wired — `ai_driver.py:_ensure_select_target_initialized` (line 312) |
 | **Alert Level** | alert-state escalation | ✅ works — handled via the generic `GotFocus` path (`ai_driver.py:242`); `ShipClass.SetAlertLevel` implemented (`ships.py:474`, collapses the XO-menu layer) |
 | **Avoid Obstacles** | collision avoidance | ⚠️ partial — [`collision_avoidance.py`](../../../engine/appc/collision_avoidance.py) (188 ln) referenced from `core/loop.py`; minimal vs. SDK |
@@ -167,7 +167,7 @@ is why Alert Level works without special-casing.
 
 ---
 
-## 4. Layer C — the 34 Condition classes (the silent-degradation surface)
+## 4. Layer C — the 33 Condition classes (the silent-degradation surface)
 
 `ConditionalAI` is only as capable as the `ConditionScript`s wired into it. Dauntless loads the
 real `Conditions/*.py` via `ConditionScript` in `ai.py`, but **each condition calls Appc query
@@ -384,6 +384,12 @@ program's own names — `SetActive` / `SetInactive` / `GotFocus` / `LostFocus`
 
 ## 6. Prioritized gap list
 
+> **See `docs/engine/npc-ai-contract-review-2026-09-19.md` for the current,
+> superseding gap list.** That review re-audited AI/Conditions coverage
+> mechanically (name + class-surface + four slice audits) and closed all 15
+> gaps it found (Tasks 1–15 of `2026-09-19-npc-ai-contract-gaps`); its §2
+> table is the up-to-date ranked list, not the one below.
+
 Ordered by leverage.
 
 1. ~~**Condition-class coverage audit (highest leverage).**~~ ✅ **DONE 2026-08-11.** All ~10
@@ -504,4 +510,4 @@ actually *hit at runtime*, which is what separates a live bug (Gaps C1/C2) from 
   [`engine/appc/sensor_detection.py`](../../../engine/appc/sensor_detection.py),
   [`engine/core/loop.py`](../../../engine/core/loop.py).
 - **SDK runtime authored by the editor:** `sdk/Build/scripts/AI/` (`PlainAI/`, `Compound/`,
-  `Fleet/`, `Player/`, `Preprocessors.py`), `sdk/Build/scripts/Conditions/` (34 classes).
+  `Fleet/`, `Player/`, `Preprocessors.py`), `sdk/Build/scripts/Conditions/` (33 classes).

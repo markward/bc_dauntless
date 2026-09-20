@@ -1055,6 +1055,16 @@ def _reset_leakable_engine_globals():
         App.g_kSoundManager = _mgr
     except Exception:
         pass
+    # AI script-exception dedup log: ai_driver._run_script_step prints a
+    # given (node id, exception type) at most once so a persistently-raising
+    # script doesn't spam every tick. Node ids are recycled across test/
+    # mission-scoped ArtificialIntelligence instances, so a stale entry
+    # could suppress a genuinely new test's dev-mode print.
+    try:
+        from engine.appc import ai_driver as _ai_driver
+        _ai_driver.reset_script_error_log()
+    except Exception:
+        pass
     # Accumulator lists drained per mission tick in production.
     for _mod, _attr in (
         ("engine.appc.projectiles", "_active"),
@@ -1280,6 +1290,20 @@ def _reset_leakable_engine_globals():
     try:
         from engine.appc import damage_geometry
         damage_geometry.reset()
+    except Exception:
+        pass
+    # ObjectGroup._live: a class-level WeakSet of every live group, used by
+    # ObjectGroup.broadcast_membership to find groups watching an object's
+    # name on every AddObjectToSet/RemoveObjectFromSet. A stale group left
+    # over from a prior test (something still holding a strong ref to it)
+    # can carry an SDK instance handler that dereferences
+    # App.Game_GetCurrentGame() -- None once that test's Game singleton is
+    # torn down -- so every LATER test's set add would run that dead
+    # handler. Clearing here ensures a prior test's groups can never receive
+    # membership events again.
+    try:
+        from engine.appc.objects import ObjectGroup
+        ObjectGroup._live.clear()
     except Exception:
         pass
     # TransformStore is deliberately NOT reset here. On the native backend

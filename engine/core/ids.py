@@ -1,13 +1,26 @@
 import itertools
+import weakref
 
 from engine.core import stub_telemetry
 
 _counter = itertools.count(1)
 _registry: dict[int, "TGObject"] = {}
+_weak_registry: dict[int, "weakref.ref"] = {}
 
 
 def get_object_by_id(obj_id: int) -> "TGObject | None":
-    return _registry.get(obj_id)
+    obj = _registry.get(obj_id)
+    if obj is not None:
+        return obj
+    ref = _weak_registry.get(obj_id)
+    if ref is None:
+        return None
+    obj = ref()
+    if obj is None:
+        # Referent already collected -- drop the dead entry rather than
+        # leaving it to be found (and re-derefed) again.
+        _weak_registry.pop(obj_id, None)
+    return obj
 
 
 def unregister(obj_id: int) -> None:
@@ -21,12 +34,29 @@ def unregister(obj_id: int) -> None:
     engine/appc/actions.py TGSequence for the sole current caller.
     """
     _registry.pop(obj_id, None)
+    _weak_registry.pop(obj_id, None)
 
 
 def register(obj: "TGObject") -> None:
     """Re-add an object to the id registry (e.g. a completed sequence that is
     replayed). Idempotent."""
     _registry[obj.GetObjID()] = obj
+
+
+def register_weak(obj) -> None:
+    """Register an id-addressable object WITHOUT keeping it alive. For
+    objects whose SDK class relies on __del__ for teardown (TGCondition:
+    ConditionInRange removes its ProximityCheck there) — a strong entry
+    would defeat that. Resolved by get_object_by_id like a strong entry."""
+    _weak_registry[obj.GetObjID()] = weakref.ref(obj)
+
+
+def allocate_id() -> int:
+    """Hand out the next object id without creating a TGObject. For classes
+    that must be findable via TGObject_GetTGObjectPtr but deliberately are
+    NOT TGObjects (TGCondition — a TGObject's __getattr__ stub would hide
+    condition-script bugs behind truthy stubs)."""
+    return next(_counter)
 
 
 class _Stub:

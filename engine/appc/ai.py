@@ -53,9 +53,21 @@ class TGCondition:
     SDK uses int status (typically 0/1) but the comparison is value-based.
     """
     def __init__(self):
+        from engine.core import ids
+        self._obj_id: int = ids.allocate_id()
+        # Weak, not strong: E2M0.py:156 needs conditions findable by id, but
+        # SDK condition scripts rely on __del__ for teardown (ConditionInRange
+        # removes its ProximityCheck there; ConditionSingleShieldBelow calls
+        # RemoveShieldWatcher; ConditionPulseReady drops its range checks). A
+        # strong registry entry would keep every condition alive for the rest
+        # of the process and that teardown would never run.
+        ids.register_weak(self)
         self._status: int = 0
         self._handlers: list = []
         self._active: bool = False
+
+    def GetObjID(self) -> int:
+        return self._obj_id
 
     def GetStatus(self) -> int:
         return self._status
@@ -144,13 +156,10 @@ class ConditionScript(TGCondition):
     ConditionInRange.__del__ (which deletes its proximity sphere) would never
     run.
     """
-    _next_id: int = 1
     _registry: dict = {}
 
     def __init__(self, module_name: str = "", class_name: str = "", *args):
         super().__init__()
-        self._obj_id = ConditionScript._next_id
-        ConditionScript._next_id += 1
         ConditionScript._registry[self._obj_id] = weakref.ref(self)
         self._module_name = module_name
         self._class_name = class_name
@@ -165,9 +174,6 @@ class ConditionScript(TGCondition):
             except Exception as e:
                 self._instance = None
                 self._init_error = (type(e).__name__, str(e))
-
-    def GetObjID(self) -> int:
-        return self._obj_id
 
     def RegisterExternalFunctions(self, pAI) -> None:
         """Forward to the wrapped script's own RegisterExternalFunctions.
@@ -233,6 +239,12 @@ def ConditionScript_Create(module_name: str, class_name: str, *args) -> Conditio
 
 def ConditionScript_Cast(obj):
     return obj if isinstance(obj, ConditionScript) else None
+
+
+def TGCondition_Cast(obj):
+    """SDK MissionLib.py:2536 (ConditionChangedRedirect) and E2M0.py:156.
+    Undefined, the stub's GetStatus() was truthy on both edges."""
+    return obj if isinstance(obj, TGCondition) else None
 
 
 def ConditionScript_GetByID(obj_id) -> "ConditionScript | None":
@@ -314,13 +326,16 @@ class OptimizedFireScript:
     tree contains a PreprocessingAI — i.e. everything except Stop.
 
     Headless Phase 1 returns the generic _AIScriptInstance data-bag from
-    GetPreprocessingInstance, so no node is currently an instance of this
-    class: the isinstance check is False, the fire branch is skipped, and the
-    AI still installs (the ship maneuvers per the order).
+    GetPreprocessingInstance, so no node backed by that data-bag is an
+    instance of this class: the isinstance check is False for it, the fire
+    branch is skipped, and the AI still installs (the ship maneuvers per the
+    order) without engaging weapons.
 
-    TODO(combat-fidelity): to make player 'Attack' actually engage weapons,
-    have the fire preprocessor's GetPreprocessingInstance return an
-    OptimizedFireScript instance so the CheckFiring branch runs. Deferred.
+    The SDK-backed path is different: engine/appc/ai_optimized.py's
+    `_non_lethal_class` mixes this class into the bases of the dynamic
+    FireScript wrapper it builds, so a real bound FireScript node IS an
+    instance of this class and StartAI's discovery loop finds it. See
+    ai_optimized.py and tests/unit/test_optimized_fire_script_identity.py.
     """
     pass
 
@@ -392,6 +407,13 @@ class ArtificialIntelligence:
         # reached this node on the active path this tick", set/cleared by
         # SetActive()/SetInactive() below.
         self._is_active_in_tree: bool = False
+        # Per-node script-exception record, set by ai_driver._run_script_step
+        # when this node's SDK script call (leaf Update, preprocessor method,
+        # GotFocus/LostFocus) raises. (type_name, message), or None when no
+        # error has occurred. Recorded for inspection (the AI inspector may
+        # surface it later); always eagerly initialised so a reader never
+        # sees a TGObject.__getattr__ stub in its place.
+        self._last_script_error: "tuple | None" = None
         type(self)._allocate_id(self)
 
     @classmethod

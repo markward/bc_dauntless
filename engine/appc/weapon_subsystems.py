@@ -1144,6 +1144,17 @@ class WeaponSystem(PoweredSubsystem):
 
     def GetNumTargets(self) -> int:          return len(self._target_list)
 
+    def IsInTargetList(self, target) -> int:
+        """SDK AI/PlainAI/StarbaseAttack.py:114. Must be a real int: a stub
+        here is truthy, so `if not IsInTargetList(t): StartFiring(t)` never
+        fired (heatmap 116). Identity, not `in` (which is `==` under the
+        hood): `_Stub.__eq__` (engine/core/ids.py) returns
+        `isinstance(o, _Stub)`, so any two stubs compare equal and a stub
+        target would read as "in the list" against any stub entry."""
+        if target is None:
+            return 0
+        return 1 if any(t is target for t in self._target_list) else 0
+
     # ── Parent-aggregator predicates ───────────────────────────────────
     # WeaponSystem parents own their hardpoint emitters (PhaserBank,
     # TorpedoTube, PulseWeapon, TractorBeam) as _children. Damage lands

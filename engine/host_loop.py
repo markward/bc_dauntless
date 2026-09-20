@@ -3755,6 +3755,17 @@ def reset_sdk_globals() -> None:
     # the process.
     from engine.appc import contact_index
     contact_index.reset()
+    # ObjectGroup._live: clear for parity with the per-test reset
+    # (tests/conftest.py). Game.GetPlayerGroup() returns None in this engine
+    # (engine/core/game.py:~446) -- there is no persistent Game-level player
+    # group surviving a swap to justify leaving a prior mission's groups
+    # registered -- so a stale group with an SDK instance handler must not go
+    # on hearing the next mission's set adds. Registration is self-healing:
+    # ObjectGroup.SetEventFlag re-adds `self` to `_live`, so any group that
+    # re-arms its flags after this reset (AddFleetCommandHandlers does, at
+    # registration) is live again.
+    from engine.appc.objects import ObjectGroup
+    ObjectGroup._live.clear()
     # Reset the UpdateToolTip throttle and clear the tooltip owner. Without
     # this, _tooltip_dispatch_state["last"] keeps the PRIOR mission's game
     # time (which can be minutes) while the new mission's clock restarts at
@@ -5112,7 +5123,18 @@ def _process_object_deletions() -> None:
         doomed = [name for name, obj in list(objs.items())
                   if obj.__dict__.get("_delete_me", False)]
         for name in doomed:
+            obj = objs.get(name)
+            # Remove from the set (posts EXITED_SET) BEFORE broadcasting the
+            # delete, matching DeleteObjectFromSet / ship_death._remove — an
+            # object "leaves the set" before it "leaves the world" (M5,
+            # 2026-09-19 NPC AI contract review fix wave). obj stays a valid
+            # reference after the pop; only the set's own name->obj entry is
+            # gone. broadcast_object_deleted guards its own dispatch, so this
+            # is one plain call.
             pSet.RemoveObjectFromSet(name)
+            if obj is not None:
+                from engine.appc.objects import broadcast_object_deleted
+                broadcast_object_deleted(obj)
 
 
 def _sync_quick_battle_panel(controller) -> None:

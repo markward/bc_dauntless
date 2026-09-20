@@ -109,6 +109,8 @@ from engine.appc.math import (
     TGPoint3_GetModelForward, TGPoint3_GetModelBackward,
     TGPoint3_GetModelUp, TGPoint3_GetModelDown,
     TGPoint3_GetModelRight, TGPoint3_GetModelLeft,
+    TGPoint3_GetRandomUnitVector,
+    TGGeomUtils_LineSphereIntersection,
 )
 from engine.appc.objects import (
     ObjectClass, PhysicsObjectClass, DamageableObject,
@@ -251,6 +253,7 @@ from engine.appc.ai import (
     ArtificialIntelligence,
     TGCondition, TGConditionHandler,
     ConditionScript, ConditionScript_Create, ConditionScript_Cast,
+    TGCondition_Cast,
     PlainAI, PlainAI_Create,
     PriorityListAI, PriorityListAI_Create,
     SequenceAI, SequenceAI_Create,
@@ -498,6 +501,18 @@ def ShieldProperty_Cast(obj):
     return None
 
 
+def PulseWeaponProperty_Cast(obj):
+    """SDK Conditions/ConditionPulseReady.py:139 —
+    `App.PulseWeaponProperty_Cast(pWeapon.GetProperty()).GetOrientationForward()`.
+    Was undefined; the stub dotted to 0 and excluded every weapon, so
+    ConditionPulseReady read FALSE forever (heatmap ranks 83-88)."""
+    if isinstance(obj, _NamedStub):
+        return None
+    if isinstance(obj, PulseWeaponProperty):
+        return obj
+    return None
+
+
 def SubsystemProperty_Cast(obj):
     if isinstance(obj, _NamedStub):
         return None
@@ -631,6 +646,19 @@ def PulseWeapon_Cast(obj):
     return obj if isinstance(obj, PulseWeapon) else None
 
 
+def PhaserBank_Cast(obj):
+    """SDK AI/PlainAI/PhaserSweep.py:52 and
+    Conditions/ConditionInPhaserFiringArc.py:173 —
+    `pBank = App.PhaserBank_Cast(pSystem.GetChildSubsystem(i))`.
+    Was undefined: a truthy _NamedStub made the sweep never pick a bank and
+    the arc condition read TRUE for every target (heatmap ranks 7-10/61)."""
+    try:
+        from engine.appc.weapon_subsystems import PhaserBank
+    except ImportError:
+        return None
+    return obj if isinstance(obj, PhaserBank) else None
+
+
 def PulseWeaponSystem_Cast(obj):
     """SDK AI/Preprocessors.py:771 (FireScript) —
     `pPulseSystem = App.PulseWeaponSystem_Cast(pWeaponSystem)`, then
@@ -638,6 +666,14 @@ def PulseWeaponSystem_Cast(obj):
     truthy _NamedStub took the branch and int()-coerced GetNumChildSubsystems
     to 0 — the AI never enumerated pulse-weapon firing directions at all."""
     return obj if isinstance(obj, PulseWeaponSystem) else None
+
+
+def WeaponSystem_Cast(obj):
+    """SDK AI/PlainAI/StarbaseAttack.py:112,129 —
+    `pWeapSystem = App.WeaponSystem_Cast(pSystem)` over a
+    CT_WEAPON_SYSTEM match. Any WeaponSystem (phaser/torpedo/pulse/tractor
+    aggregator OR a leaf bank, which subclasses WeaponSystem here) passes."""
+    return obj if isinstance(obj, WeaponSystem) else None
 
 
 def Weapon_Cast(obj):
@@ -1193,10 +1229,24 @@ class _TGTypedEvent:
     def __init__(self):
         self._event_type = 0
         self._destination = None
+        self._source = None
     def SetEventType(self, t): self._event_type = t
     def GetEventType(self): return self._event_type
     def SetDestination(self, d): self._destination = d
     def GetDestination(self): return self._destination
+    # Undefined (falling through to __getattr__'s _Stub) until 2026-09-19:
+    # SetSource was a no-op stub call and GetSource always returned a fresh,
+    # non-None _Stub — silent because these route through THIS module's own
+    # _Stub, not engine.core.stub_telemetry, so it never surfaced on the
+    # heatmap. MissionLib.ConditionChangedRedirect (:2536) does
+    # App.TGCondition_Cast(pEvent.GetSource()) — with GetSource() a stub, the
+    # cast always returned None and the redirect silently never fired,
+    # independent of the TGCondition_Cast gap itself. engine/appc/ai.py
+    # (TGCondition.SetStatus), ai_driver.py, bridge_officers.py and
+    # float_range_watcher.py already called SetSource on these events and
+    # relied on it silently doing nothing.
+    def SetSource(self, s): self._source = s
+    def GetSource(self): return self._source
     def __getattr__(self, name): return _Stub()
 
 class _TGIntEvent(_TGTypedEvent):

@@ -20,7 +20,6 @@ import os
 import random
 import time as _time
 
-from engine import dev_mode
 from engine.appc.ai import (
     ArtificialIntelligence, PlainAI, PriorityListAI, SequenceAI,
     ConditionalAI, PreprocessingAI, BuilderAI, RandomAI,
@@ -210,6 +209,52 @@ def _timed_dispatch(handler, ai, game_time):
         _AI_CHILD_TIME[0] = outer_child + total
 
 
+_reported_script_errors: set = set()
+
+
+def _run_script_step(ai, call):
+    """Run one SDK script entry point (a leaf Update, a preprocessor method, or
+    a GotFocus/LostFocus hook) under BC's policy: a Python exception is
+    reported and the frame continues. Returns the call's result, or None on
+    failure -- every caller already maps None to "no status change"
+    (US_ACTIVE / PS_NORMAL) or simply ignores the return value (the focus
+    hooks).
+
+    The failure is recorded on the node for inspection (the AI inspector may
+    surface it later) and reported UNCONDITIONALLY -- header line and
+    traceback both to stderr, once per (node id, exception type). BC's
+    embedded interpreter printed every script traceback to its own console;
+    this matches events.py's `_log_broadcast_failure` policy for the same
+    reason: a silently-swallowed script crash is worse than a noisy log.
+    """
+    try:
+        return call()
+    except Exception as exc:                     # noqa: BLE001 -- policy
+        ai._last_script_error = (type(exc).__name__, str(exc))
+        key = (ai.GetID(), type(exc).__name__)
+        if key not in _reported_script_errors:
+            _reported_script_errors.add(key)
+            import sys
+            import traceback
+            ship = ai.GetShip()
+            name = ship.GetName() if ship is not None and hasattr(ship, "GetName") else "?"
+            print(f"[ai] {name} node '{ai.GetName()}' raised "
+                  f"{type(exc).__name__}: {exc} — continuing", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+        return None
+
+
+def reset_script_error_log() -> None:
+    """Clear the per-(node id, exception type) dedup log for _run_script_step.
+
+    node ids are recycled across missions (ArtificialIntelligence._next_id is
+    process-lifetime but test/mission-scoped node objects are not), so a
+    stale entry could suppress a genuinely new error's dev-mode print after a
+    mission swap. Called from tests/conftest.py's autouse
+    _reset_leakable_engine_globals."""
+    _reported_script_errors.clear()
+
+
 def ai_breakdown_report(ticks: int = 0) -> str:
     ticks = ticks or _AI_TICKS[0]
     if not _AI_BREAKDOWN:
@@ -378,7 +423,7 @@ def _dispatch_lost_focus(node) -> None:
     inst = _focus_instance_of(node)
     lost = getattr(inst, "LostFocus", None) if inst is not None else None
     if callable(lost):
-        lost()
+        _run_script_step(node, lost)
     node._has_focus = False
     node.__dict__["_got_focus_called"] = False
 
@@ -455,7 +500,7 @@ def _flush_pending_got_focus() -> None:
             continue
         got = getattr(inst, "GotFocus", None)
         if callable(got):
-            got()
+            _run_script_step(node, got)
         node.__dict__["_got_focus_called"] = True
 
 
@@ -501,7 +546,7 @@ def _tick_plain(ai: PlainAI, game_time: float) -> int:
         # SetScriptModule is the one transient case, and the cap picks it up
         # within AI_MAX_SLEEP_TICKS.
         return ai._status
-    status = update_fn()
+    status = _run_script_step(ai, update_fn)
     if status is None:
         status = US_ACTIVE
     ai._status = int(status)
@@ -1239,9 +1284,9 @@ def _tick_preprocessing(ai: PreprocessingAI, game_time: float) -> int:
     if game_time >= ai._next_update_time:
         bound = getattr(inst, method)
         if arity >= 1:
-            result = bound(game_time + 1.0)
+            result = _run_script_step(ai, lambda: bound(game_time + 1.0))
         else:
-            result = bound()
+            result = _run_script_step(ai, bound)
 
         if result is None:
             result = PS_NORMAL
@@ -1368,6 +1413,29 @@ def _ensure_select_target_initialized(inst) -> None:
     App.g_kEventManager.AddBroadcastPythonMethodHandler(
         App.ET_WEAPON_HIT, inst.pEventHandler, "DamageEvent", pShip,
     )
+    # Neither this registration nor the three below are ever removed on node
+    # teardown (grep for RemoveBroadcastHandler in ai_driver.py/ai.py finds
+    # no call site) -- a pre-existing gap this task does not close.
+
+    # The native CodeAISet's other registrations (SDK Preprocessors.py:1094-
+    # 1157, commented out there because the native node did this work). Each
+    # handler just ForceUpdate()s so the next tick re-selects instead of
+    # waiting out the 5 s cadence. GROUP_CHANGED is not registered: no engine
+    # producer (see plan Task 11).
+    group = getattr(inst, "pTargetGroup", None)
+    if group is not None and callable(getattr(inst, "TargetEnteredSet", None)):
+        group.SetEventFlag(App.ObjectGroup.ENTERED_SET)
+        App.g_kEventManager.AddBroadcastPythonMethodHandler(
+            App.ET_OBJECT_GROUP_OBJECT_ENTERED_SET, inst.pEventHandler, "TargetEnteredSet", group)
+    if callable(getattr(inst, "OurShipEnteredSet", None)):
+        App.g_kEventManager.AddBroadcastPythonMethodHandler(
+            App.ET_ENTERED_SET, inst.pEventHandler, "OurShipEnteredSet", pShip)
+    if callable(getattr(inst, "ObjectDecloaked", None)):
+        # ObjectDecloaked filters on pTargetGroup.IsNameInGroup(destination
+        # name) itself (Preprocessors.py:1291-1295), so the broadcast target
+        # is None -- events.py:806-810 treats target=None as unfiltered.
+        App.g_kEventManager.AddBroadcastPythonMethodHandler(
+            App.ET_DECLOAK_BEGINNING, inst.pEventHandler, "ObjectDecloaked", None)
 
     # Initial ship-target push. NonFedAttack/FedAttack build SelectTarget
     # with ForceCurrentTargetString(sInitialTarget), which presets
