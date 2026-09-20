@@ -1098,6 +1098,19 @@ def _reset_leakable_engine_globals():
         _chars.CharacterClass_SetCurrentToolTipOwner(None)
     except Exception:
         pass
+    # Subtitles flag (engine.appc.crew_speech._subtitles_enabled): a scalar
+    # module global that host_loop.run() sets from the USER'S real
+    # settings.json (settings_store.apply_all). One test boots the real host
+    # loop (tests/host/test_host_loop_lighting.py::
+    # test_verbose_mode_logs_lighting_on_tick0), so on a machine whose
+    # settings.json says "subtitles": false every later crew-speech /
+    # subtitle test saw a disabled channel and failed while passing alone
+    # (17 tests, 2026-09-20). Restore the code default, not the user's.
+    try:
+        import engine.appc.crew_speech as _crew_speech
+        _crew_speech.set_subtitles_enabled(True)
+    except Exception:
+        pass
     # Cached real-BridgeHandlers module (engine.ui.tooltip_dispatch
     # ._real_bridge_handlers): a test that calls _bridge_handlers() caches the
     # real module on this global; leaving it set would let a later test's
