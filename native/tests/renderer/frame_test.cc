@@ -1595,6 +1595,34 @@ TEST_F(ScuffTest, AlbedoLightensScratchRidgesAndDarkensTheRimUnderAmbientOnlyLig
     EXPECT_LT(rim, base_mean - 2.0) << "no grime darkening at the rim";
 }
 
+// At eye_z = 2400 one model unit is ~0.09 px: the 3-unit scratch wavelength
+// is 0.28 px (pure aliasing if not faded) and the 24-unit buckle is 2.2 px
+// (inside the fade band). The quad is ~18 px wide; sample its central 12x12.
+//
+// Seed radius 200 (not the 100-unit quad half-extent): the sampled 12x12
+// block's corners reach ~92 model units from the centre, which at radius
+// 100 falls inside the grime rim's transition band (r in [0.75, 0.95] =
+// 75-95 units) — and the rim is deliberately NOT band-limited (it is a
+// low-frequency darkening, not procedural relief/albedo), so that band's
+// own sharp edge reads as sparkle unrelated to what this test checks. At
+// radius 200 the whole quad (half-diagonal ~141 units) stays under r=0.71,
+// below the rim's 0.75 onset, so the rim never engages and the measurement
+// isolates the relief/scratch band-limiting under test.
+TEST_F(ScuffTest, IsBandLimitedSoItDoesNotSparkleAtRange) {
+    using namespace scuff_probe;
+    auto quad = build_quad();
+    Seed s; s.active = true; s.radius = 200.0f;   // the whole quad is scuffed
+    render(*quad, *p, oblique(), s, /*eye_z=*/150.0f);
+    const double near_sd = block_stddev(108, 108, 40, 40);
+    ASSERT_GT(near_sd, 6.0) << "rig sanity: relief must be visible up close";
+
+    render(*quad, *p, oblique(), s, /*eye_z=*/2400.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const double far_sd = block_stddev(122, 122, 12, 12);
+    EXPECT_LT(far_sd, 3.0) << "scuff sparkles at range (stddev " << far_sd
+                           << ", near " << near_sd << ")";
+}
+
 // Count "direction changes" (sign flips of consecutive deltas) in a sequence,
 // ignoring deltas smaller than `eps` so floating/quantisation noise is not
 // mistaken for a real reversal. A strictly monotonic sequence has 0 changes;

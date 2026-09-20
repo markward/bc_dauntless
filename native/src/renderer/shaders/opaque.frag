@@ -528,12 +528,22 @@ float fbm(vec2 v) {
 // 1-D value noise in [-1, 1] (a fixed row of the 2-D noise).
 float snoise1(float x) { return vnoise(vec2(x, 17.3)) * 2.0 - 1.0; }
 
+// Band-limit a procedural term: 1 when its wavelength spans >= 4 px, 0 at
+// <= 2 px. `fw` is the axis footprint in model units per pixel, `k` rad/unit.
+float scuff_bandlimit(float fw, float k) {
+    float cycles_per_px = fw * k / 6.2831853;
+    return 1.0 - smoothstep(0.25, 0.5, cycles_per_px);
+}
+
 // Collision scuffs — the PRE-LIGHTING half of the decal ring. Perturbs the
 // shading normal (relief) and the base albedo (Task 3) inside each Scuff
 // decal. Writes ONLY n_shade and base_rgb: never the shadow-bias normal, the
 // Fresnel rim, n_body, the carve loop, decal_emissive or glow_flicker.
 void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_rgb) {
     vec3 dn_ws = vec3(0.0);
+    // Per-pixel footprint, model units. Uniform control flow: the loop below
+    // `continue`s per decal, and GLSL derivatives are undefined inside that.
+    vec3 fw_p = fwidth(p_body);
     for (int i = 0; i < u_decal_count; ++i) {
         if (u_decal_c[i].y < 1.5) continue;          // Scuff only (class 2)
         vec3  point  = u_decal_a[i].xyz;
@@ -550,6 +560,9 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
 
         vec3  T = u_decal_d[i].xyz;
         vec3  B = cross(dn, T);
+        // Axis footprints: |T·dp| <= dot(|T|, |dp|), a conservative estimate.
+        float bl_u = scuff_bandlimit(dot(abs(T), fw_p), kScuffBuckleFreq);
+        float bl_w = scuff_bandlimit(dot(abs(B), fw_p), kScuffScratchFreq);
         float u = dot(d, T);                          // along the slip
         float w = dot(d, B);                          // across the slip
         float win = (1.0 - smoothstep(0.6, 1.0, r)) * inten * wn;
@@ -558,16 +571,21 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         // Buckle: h = A sin(k u + φ)  →  ∂h/∂u = A k cos(k u + φ)
         float gu = kScuffBuckleAmp * kScuffBuckleFreq
                  * cos(kScuffBuckleFreq * u + phase) * win;
+        gu *= bl_u;
         // Scratches: h = A n(k w)  →  ∂h/∂w = A k n'(k w), central difference.
         float x = kScuffScratchFreq * w;
         const float e = 0.05;
         float nw  = snoise1(x);
         float dnw = (snoise1(x + e) - snoise1(x - e)) / (2.0 * e);
         float gw = kScuffScratchAmp * kScuffScratchFreq * dnw * win;
+        gw *= bl_w;
 
         // Albedo: bare metal where the scratch field peaks (ridges), and a
         // thin grime band at the rim. Both confined by win / wn like the relief.
+        // Ridges are the same frequency as the grooves and alias the same way;
+        // the grime rim below is low-frequency and stays unfaded.
         float scratch = smoothstep(0.55, 0.8, nw * 0.5 + 0.5) * win;
+        scratch *= bl_w;
         base_rgb = mix(base_rgb, kScuffMetal, scratch * kScuffAlbedoGain);
         float rim = smoothstep(0.75, 0.95, r) * (1.0 - smoothstep(0.95, 1.0, r));
         base_rgb *= 1.0 - kScuffGrime * rim * inten * wn;
