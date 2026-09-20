@@ -1,7 +1,8 @@
 // native/src/platform/folder_picker.cc
 //
 // Fallback for platforms with no folder-chooser implementation. Compiles
-// to nothing on Apple, where folder_picker.mm provides the symbol.
+// to nothing on Apple (folder_picker.mm provides the symbol) and on Windows
+// (folder_picker_win.cc).
 //
 // Returning nullopt is not a stub awaiting completion so much as a
 // deliberate degradation: boot treats it exactly like a cancel and prints
@@ -10,7 +11,7 @@
 
 #include "folder_picker.h"
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
 
 namespace dauntless::platform {
 
@@ -21,4 +22,4 @@ std::optional<std::string> pick_folder(const std::string& /*title*/,
 
 }  // namespace dauntless::platform
 
-#endif  // !__APPLE__
+#endif  // !__APPLE__ && !_WIN32

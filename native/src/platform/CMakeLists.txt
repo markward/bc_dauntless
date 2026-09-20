@@ -7,6 +7,8 @@
 set(PLATFORM_SOURCES exe_path.cc folder_picker.cc)
 if(APPLE)
     list(APPEND PLATFORM_SOURCES folder_picker.mm)
+elseif(WIN32)
+    list(APPEND PLATFORM_SOURCES folder_picker_win.cc)
 endif()
 
 add_library(platform STATIC ${PLATFORM_SOURCES})
@@ -15,6 +17,9 @@ add_library(platform STATIC ${PLATFORM_SOURCES})
 # framework; both _dauntless_host and the host binary do.
 if(APPLE)
     target_link_libraries(platform PUBLIC "-framework AppKit")
+elseif(WIN32)
+    # IFileDialog: CoCreateInstance lives in ole32, the CLSID/IID in uuid.
+    target_link_libraries(platform PUBLIC ole32 uuid)
 endif()
 
 target_include_directories(platform PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
