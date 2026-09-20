@@ -41,6 +41,20 @@ COLLISION_RADIUS_SCALE = 0.8     # effective collision boundary as a fraction of
                                  # for hulls sitting well inside their generous
                                  # bounding spheres (e.g. Galaxy saucer+nacelles)
 
+# Scuff decal size band (GU). The decal radius is the contact chord
+# sqrt(2 * R_small * pen) clamped to this band; it is VISUAL ONLY and never
+# feeds apply_hit's splash radius (which sets the subsystem catchment).
+# Spec: docs/superpowers/specs/2026-09-20-collision-scuff-normal-decals-design.md §3
+SCUFF_RADIUS_MIN_GU = 0.5
+SCUFF_RADIUS_MAX_GU = 4.0
+
+
+def scuff_radius_gu(r_small: float, pen: float) -> float:
+    """Chord of two overlapping spheres, from the smaller radius and the
+    overlap depth, clamped to [SCUFF_RADIUS_MIN_GU, SCUFF_RADIUS_MAX_GU]."""
+    chord = math.sqrt(max(0.0, 2.0 * r_small * pen))
+    return min(SCUFF_RADIUS_MAX_GU, max(SCUFF_RADIUS_MIN_GU, chord))
+
 
 @dataclass
 class _Body:
@@ -239,7 +253,8 @@ def _contact_point_velocity(body: "_Body", cx: float, cy: float, cz: float):
 
 
 def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
-                   inv_sum: float, dt: float, ship_instances=None) -> None:
+                   inv_sum: float, dt: float, ship_instances=None,
+                   scuff_radius: float = 0.0) -> None:
     """Abrasion damage for a contact that is not closing.
 
     Physically this is friction work: force times sliding distance. We have no
@@ -252,7 +267,8 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
     swinging inward under rotation, but two hulls bouncing apart do not get
     charged for separating.
 
-    Emits no event and applies no impulse -- see the caller.
+    Emits no event and applies no impulse -- see the caller. Routes as
+    weapon_type "collision" with the slip direction as the scuff tangent.
     """
     if not (dt > 0.0):
         return
@@ -270,6 +286,16 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
     if damage <= 0.0:
         return
     _dev_log_collision("GRIND", a, b, TGPoint3(cx, cy, cz), v_n, damage)
+
+    # Scuff tangent: the slip direction itself, sign per ship (each hull's
+    # scratch runs the way the OTHER hull moved across it). No slip (pure
+    # approach, no tangential component) -> None; the ring derives one.
+    tlen = math.sqrt(tx * tx + ty * ty + tz * tz)
+    if tlen > 1e-6:
+        tan_a = TGPoint3(tx / tlen, ty / tlen, tz / tlen)
+        tan_b = TGPoint3(-tx / tlen, -ty / tlen, -tz / tlen)
+    else:
+        tan_a = tan_b = None
 
     # Land each ship's abrasion on ITS OWN MESH, exactly as the impact path
     # does: trace from the other body's centre into this ship along the
@@ -292,14 +318,16 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
             ship_instances, a.obj, b.center, n_ba, dist, contact)
         apply_hit(a.obj, damage, pt_a, source=b.obj,
                   normal=(mesh_n_a if mesh_n_a is not None else n_ab),
-                  ship_instances=ship_instances, weapon_type=None,
+                  ship_instances=ship_instances, weapon_type="collision",
+                  hit_tangent=tan_a, decal_radius=scuff_radius,
                   bypass_shields=True)
     if b.is_movable:
         pt_b, mesh_n_b = _resolve_hit_point(
             ship_instances, b.obj, a.center, n_ab, dist, contact)
         apply_hit(b.obj, damage, pt_b, source=a.obj,
                   normal=(mesh_n_b if mesh_n_b is not None else n_ba),
-                  ship_instances=ship_instances, weapon_type=None,
+                  ship_instances=ship_instances, weapon_type="collision",
+                  hit_tangent=tan_b, decal_radius=scuff_radius,
                   bypass_shields=True)
 
 
@@ -358,6 +386,13 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
                       a.center.y + ny * eff_ra,
                       a.center.z + nz * eff_ra)
 
+    # Scuff decal size from the contact geometry (visual only; see scuff_radius_gu).
+    if narrowed:
+        r_small = min(ra, rb)
+    else:
+        r_small = min(a.radius, b.radius) * COLLISION_RADIUS_SCALE
+    scuff_r = scuff_radius_gu(r_small, sum_r - dist)
+
     # Closing speed along the normal (negative = approaching). CENTRE-OF-MASS
     # velocity only, deliberately: this drives the impulse and the debounce,
     # and the impulse can only change LINEAR velocity. Feeding a rotating
@@ -367,6 +402,16 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
     rvy = b.velocity.y - a.velocity.y
     rvz = b.velocity.z - a.velocity.z
     v_rel = rvx * nx + rvy * ny + rvz * nz
+
+    # Slip direction for the scuff: relative velocity with its normal part
+    # removed. Dead-on (no slip) -> None; the ring derives a perpendicular.
+    tvx, tvy, tvz = rvx - v_rel * nx, rvy - v_rel * ny, rvz - v_rel * nz
+    tlen = math.sqrt(tvx * tvx + tvy * tvy + tvz * tvz)
+    if tlen > 1e-6:
+        tan_a = TGPoint3(tvx / tlen, tvy / tlen, tvz / tlen)    # how b moves across a
+        tan_b = TGPoint3(-tvx / tlen, -tvy / tlen, -tvz / tlen) # how a moves across b
+    else:
+        tan_a = tan_b = None
 
     inv_sum = a.inv_mass + b.inv_mass
     if inv_sum <= 0.0:
@@ -385,7 +430,7 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
         # by rotation never even got that, since omega was absent from the
         # velocity entirely.
         _grind_contact(a, b, cx, cy, cz, nx, ny, nz, inv_sum, dt,
-                       ship_instances)
+                       ship_instances, scuff_r)
         return None
 
     # Mass-weighted impulse magnitude.
@@ -433,7 +478,8 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
             b.center, TGPoint3(-nx, -ny, -nz), dist, contact)
         apply_hit(a.obj, damage, pt_a, source=b.obj,
                   normal=(mesh_n_a if mesh_n_a is not None else TGPoint3(nx, ny, nz)),
-                  ship_instances=ship_instances, weapon_type=None,
+                  ship_instances=ship_instances, weapon_type="collision",
+                  hit_tangent=tan_a, decal_radius=scuff_r,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
     if b.is_movable:
         eff_rb = b.radius * COLLISION_RADIUS_SCALE
@@ -445,7 +491,8 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
             a.center, TGPoint3(nx, ny, nz), dist, fb_b)
         apply_hit(b.obj, damage, pt_b, source=a.obj,
                   normal=(mesh_n_b if mesh_n_b is not None else TGPoint3(-nx, -ny, -nz)),
-                  ship_instances=ship_instances, weapon_type=None,
+                  ship_instances=ship_instances, weapon_type="collision",
+                  hit_tangent=tan_b, decal_radius=scuff_r,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
 
     # No SDK event when either party is a detached hull chunk. The impulse
