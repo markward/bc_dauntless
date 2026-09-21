@@ -7996,6 +7996,10 @@ def run(mission_name: Optional[str] = None,
                                 module_name="engine.dev_missions.combat_stress",
                                 dir_name="Combat Stress",
                                 display_name="Combat Stress",
+                            ), MissionEntry(
+                                module_name="engine.dev_missions.collision_sim",
+                                dir_name="Collision Sim",
+                                display_name="Collision Sim",
                             )],
                         )],
                     ))

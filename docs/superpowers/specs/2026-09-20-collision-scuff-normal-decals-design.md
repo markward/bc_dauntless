@@ -279,6 +279,13 @@ point from `ship.GetWorldLocation()` + a body offset rotated through
 `GetWorldRotation()`, normal from `ray_trace` when available, else the body
 axis). Dev-mode only, like the mission itself.
 
+A second developer mission, **Collision Sim** (`engine/dev_missions/collision_sim.py`),
+parks the player Galaxy 0.2 GU above a `SetStatic` Warbird so a slow roll or
+pitch grinds the saucer rim into its wings — a reproducible low-speed contact
+that needs no AI and no ram. The static Warbird is a fixed anchor and takes
+no decals; the scuffs land on the Galaxy (external camera). Placement
+measured with `dump_bounds` (see the module docstring).
+
 Acceptance is the live pass: (a) Damage Preview — does relief + scratch read
 as a scrape at close, medium and far range with no sparkle; (b) QuickBattle —
 ram an NPC dead-on (scuff with no preferred direction, and a carve if fast),
