@@ -187,3 +187,25 @@ def test_dent_weight_reaches_the_decal(patched, decal):
     assert decal.decal_calls[0]["dent"] == 1.0
     _dispatch(absorbed_hull=5.0)                 # weapons: never a dent
     assert decal.decal_calls[1]["dent"] == 0.0
+
+
+def test_developer_mode_logs_each_decal_emit_to_stderr(patched, decal, monkeypatch, capsys):
+    """Live 2026-09-21: 'I can't see any decals' had no trail — nothing said
+    whether a decal was emitted, of which class, where, or how big. Under
+    --developer every emit prints one line to stderr; production is silent."""
+    from engine import dev_mode
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    _dispatch(absorbed_hull=5.0, weapon_type="collision", tangent=_Pt(0, 1, 0),
+              decal_radius=0.3, decal_dent=1.0)
+    err = capsys.readouterr().err
+    lines = [l for l in err.splitlines() if l.startswith("[decal]")]
+    assert len(lines) == 1, err
+    assert "class=2" in lines[0] and "dent=1.0" in lines[0] and "r=0.300" in lines[0]
+    assert "(1.0,2.0,3.0)" in lines[0]                  # the world point
+
+
+def test_decal_emit_log_is_silent_outside_developer_mode(patched, decal, monkeypatch, capsys):
+    from engine import dev_mode
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
+    _dispatch(absorbed_hull=5.0, weapon_type="collision")
+    assert "[decal]" not in capsys.readouterr().err
