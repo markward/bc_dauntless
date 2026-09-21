@@ -69,6 +69,11 @@ def cache_hull_bound_spheres(ship, spheres) -> None:
     ship.__dict__.pop(_BOUND_R_ATTR, None)
 
 
+def hull_piece_count(ship) -> int:
+    """How many pieces `ship` carries (0 = none cached). Diagnostics only."""
+    return len(ship.__dict__.get(_ATTR) or ())
+
+
 def has_hull_bounds(ship) -> bool:
     """Whether `ship` has per-shape bounds to descend.
 

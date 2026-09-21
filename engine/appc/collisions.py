@@ -730,6 +730,10 @@ def _dev_log_collision(kind, a, b, contact, v_rel, damage=None) -> None:
             f"v_rel={v_rel:.3f}")
     if damage is not None:
         line += f" dmg/frame={damage:.4f}"
+    # Which narrow phase ran: a side with 0 pieces means the pair fell back to
+    # whole-body spheres (a 2x-inflated contact that touches nothing real).
+    from engine.appc.hull_bounds import hull_piece_count
+    line += f" pieces=a:{hull_piece_count(a.obj)}/b:{hull_piece_count(b.obj)}"
     print(line, file=sys.stderr, flush=True)
 
 

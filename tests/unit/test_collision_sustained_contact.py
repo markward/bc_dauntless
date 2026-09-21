@@ -257,3 +257,20 @@ def test_dev_log_is_silent_outside_developer_mode(monkeypatch, capsys, damage_ca
     b = _ship(1.5, vx=-1.0)
     C.resolve_collisions([a, b], None, FRAME)
     assert "[collision]" not in capsys.readouterr().err
+
+
+def test_dev_log_reports_each_sides_hull_piece_count(monkeypatch, capsys, damage_calls):
+    """Live 2026-09-21 (Collision Sim): every contact sat on the whole-body
+    sphere for the whole session, so one side had no cached pieces — but the
+    log could not say which. It now prints pieces=a:<n>/b:<n>."""
+    from engine import dev_mode
+    from engine.appc import hull_bounds
+    import engine.appc.collisions as C
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    a = _ship(0.0, vx=1.0)
+    b = _ship(1.5, vx=-1.0)
+    hull_bounds.cache_hull_bound_spheres(a, [(0.0, 0.0, 0.0, 10.0), (5.0, 0.0, 0.0, 5.0)])
+    C.resolve_collisions([a, b], None, FRAME)
+    err = capsys.readouterr().err
+    impact = [l for l in err.splitlines() if "IMPACT" in l]
+    assert len(impact) == 1 and "pieces=a:2/b:0" in impact[0], impact
