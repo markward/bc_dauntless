@@ -187,9 +187,9 @@ Height field `h(u, w)` — two analytic terms, gradient in closed form:
 |---|---|---|
 | buckle (grind) | `A_b · sin(k_b·u + φ) · win` | compression waves with crests **perpendicular** to the slip — the "waves in the metal" |
 | scratches (grind) | `A_s · noise1(w · k_s) · win` | grooves running **along** the slip; varies across `w`, near-constant along `u` |
-| facets | one random constant tilt per Worley cell over `(u, w)`, cell size `max(kScuffFacetMin, radius / kScuffFacetsAcross)` — **panels scale with the dent** | piecewise-**flat** panels whose normals jump at the cell borders — the crease lines of crumpled sheet metal. Facets keyed on the mesh triangles (`gl_PrimitiveID`) were tried at the third live pass and removed at the fourth: the hulls are tessellated to 3–16 model units, far finer than any panel, so they read as a highlighted wireframe over the patch |
+| panels | one random constant tilt per cell of a **rectangular grid in the hull's texture (UV) space**, `kScuffPanelsPerUV` cells across the texture — the hull's own plating, fixed pitch, independent of the dent's size and slip direction (fifth live pass, from a mockup) | piecewise-**flat** panels whose normals jump at the grid lines — the crease lines of crumpled sheet metal; the same panel bends the same way under every scuff. Tried and removed: Worley cells in the decal frame (an irregular mosaic) and facets keyed on the mesh triangles via `gl_PrimitiveID` (the hulls are tessellated to 3–16 model units, so they read as a highlighted wireframe) |
 | dish (impact) | `h = −D·R·(1 − r²)²` → `dh/dρ = 4·D·r·(1 − r²)` radially | the overall concave dent: rim normals lean inward, so one side faces the light and the other away |
-| creases (impact, albedo) | thin Worley `F2 − F1` band | bare metal where two facets meet |
+| creases (albedo) | thin band along the panel grid lines | bare metal where two panels meet |
 
 **The crumple is always on; `dent` (`u_decal_c[i].z`) only scales the
 scratching.** Added after the second live pass (a photo of a rear-ended car:
@@ -259,9 +259,9 @@ Tuning constants are `kScuff*` `const`s at the top of `opaque.frag` (rebuild to
 tune), the same convention as `kHullCarve*`. Initial values (model units,
 Galaxy hull ≈ ±178): `A_b = 0.35`, `k_b = 2π/24` (24-unit wavelength),
 `A_s = 0.12`, `k_s = 2π/3`, `kScuffAlbedoGain = 0.4`, `kScuffGrime = 0.25`,
-`kScuffEdgeNoise = 0.35`, `kScuffEdgeFreq = 1/9`; crumple: `kScuffFacetsAcross = 2.5`,
-`kScuffFacetMin = 8`, `kScuffFacetTilt = 0.30`, `kScuffDishDepth = 0.15`,
-`kScuffCreaseWidth = 0.12`, `kScuffDentScratch = 0.1`.
+`kScuffEdgeNoise = 0.35`, `kScuffEdgeFreq = 1/9`; crumple: `kScuffPanelsPerUV = 32`,
+`kScuffFacetTilt = 0.30`, `kScuffDishDepth = 0.15`, `kScuffCreaseWidth = 0.12`,
+`kScuffDentScratch = 0.1`.
 These are starting points for the live pass, not measured values.
 
 Cost: zero when `u_decal_count == 0` (undamaged hull — the production path
@@ -336,9 +336,10 @@ lit quad, directional light, no material normal map:
 - `DentIsPiecewiseFlatFacetsNotScratches`: mean |neighbour Δ| / stddev of a
   dent is under half a scrape's (few large jumps at creases vs. change every
   couple of pixels).
-- `DentFacetsScaleWithTheDentRadius`: under head-on light the pixel-to-pixel
-  roughness of a radius-160 dent is under 60 % of a radius-40 dent's (fixed
-  cells gave the same at both — measured).
+- `DentPanelsFollowTheTextureGridNotTheSlipDirection`: under head-on light
+  the column profile of shading jumps is the same for two scuffs whose slip
+  tangents differ by 45° (correlation 0.999 measured; Worley cells in the
+  decal frame gave 0.06).
 - Existing `UndamagedInstanceGlowMatchesEmptyRingBaseline` keeps passing —
   the production path with no decals is byte-identical.
 

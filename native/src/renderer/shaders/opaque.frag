@@ -140,16 +140,19 @@ const float kScuffEdgeFreq    = 1.0 / 9.0;            // edge-noise cycles per m
 // rear-ended car, live pass 2026-09-21). u_decal_c.z is the decal's "dent"
 // weight, which only scales the scratch model above DOWN: 0 = grind (full
 // scratches over the crumple), 1 = impact (kScuffDentScratch of them).
-const float kScuffFacetsAcross = 2.5;                // crumple facets (Worley cells) per dent RADIUS:
-                                                       // panels scale with the dent, as in the car
-                                                       // photo, so a big dent gets big panels
-const float kScuffFacetMin    = 8.0;                  // model units; floor for tiny scuffs
-const float kScuffFacetTilt   = 0.30;                 // max facet slope, dh per unit (~17 deg)
-// Facets keyed on the mesh TRIANGLES (gl_PrimitiveID) were tried and removed
-// 2026-09-21: the hulls are tessellated to 3-16 units, far finer than any
-// panel, so they read as a highlighted wireframe over the patch.
+const float kScuffPanelsPerUV = 32.0;                 // crumple panels = the hull's own PLATING: a
+                                                       // rectangular grid in the hull's texture (UV)
+                                                       // space, this many cells across the texture.
+                                                       // Fixed pitch, independent of the dent's size
+                                                       // or slip direction (fifth live pass, from a
+                                                       // mockup). Worley cells (decal frame) read as
+                                                       // an irregular mosaic; facets keyed on the
+                                                       // mesh triangles (gl_PrimitiveID) read as a
+                                                       // wireframe -- the hulls are tessellated to
+                                                       // 3-16 units. Both tried and removed.
+const float kScuffFacetTilt   = 0.30;                 // max panel slope, dh per unit (~17 deg)
 const float kScuffDishDepth   = 0.15;                 // dish depth as a fraction of the radius
-const float kScuffCreaseWidth = 0.12;                 // F2-F1 band (cell units) exposed as bare metal
+const float kScuffCreaseWidth = 0.12;                 // border band (cell units) exposed as bare metal
 const float kScuffDentScratch = 0.1;                  // how much of the scratch term a dent keeps
 
 // ── Hull-breach hole: pure damage-sphere clip ─────────────────────────────
@@ -560,21 +563,6 @@ float fbm(vec2 v) {
 // 1-D value noise in [-1, 1] (a fixed row of the 2-D noise).
 float snoise1(float x) { return vnoise(vec2(x, 17.3)) * 2.0 - 1.0; }
 
-// 2-D Worley (cellular) noise: nearest and second-nearest feature distances
-// in cell units, and the winning cell's integer id (for a per-facet hash).
-void worley2(vec2 p, out float f1, out float f2, out vec2 id) {
-    vec2 i = floor(p), f = fract(p);
-    f1 = 8.0; f2 = 8.0; id = i;
-    for (int y = -1; y <= 1; ++y)
-    for (int x = -1; x <= 1; ++x) {
-        vec2 g = vec2(float(x), float(y));
-        vec2 o = vec2(dhash(i + g), dhash(i + g + 17.0));   // feature point in that cell
-        float d = length(g + o - f);
-        if (d < f1) { f2 = f1; f1 = d; id = i + g; }
-        else if (d < f2) { f2 = d; }
-    }
-}
-
 // Band-limit a procedural term: 1 when its wavelength spans >= 4 px, 0 at
 // <= 2 px. `fw` is the axis footprint in model units per pixel, `k` rad/unit.
 float scuff_bandlimit(float fw, float k) {
@@ -586,7 +574,7 @@ float scuff_bandlimit(float fw, float k) {
 // shading normal (relief) and the base albedo (Task 3) inside each Scuff
 // decal. Writes ONLY n_shade and base_rgb: never the shadow-bias normal, the
 // Fresnel rim, n_body, the carve loop, decal_emissive or glow_flicker.
-void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_rgb) {
+void apply_scuffs(vec3 p_body, vec3 n_body, vec2 uv, inout vec3 n_shade, inout vec3 base_rgb) {
     vec3 dn_ws = vec3(0.0);
     // Scuffs composite as a UNION, not a sum: `cov` is the "over" coverage of
     // every scuff seen so far, each new one only contributes into (1 - cov),
@@ -599,6 +587,19 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
     // Per-pixel footprint, model units. Uniform control flow: the loop below
     // `continue`s per decal, and GLSL derivatives are undefined inside that.
     vec3 fw_p = fwidth(p_body);
+    // Hull plating grid in texture space (uniform control flow, see above).
+    vec2  panel_uv  = uv * kScuffPanelsPerUV;
+    vec2  panel_id  = floor(panel_uv);
+    vec2  panel_f   = fract(panel_uv);
+    float panel_fw  = max(fwidth(panel_uv.x), fwidth(panel_uv.y));   // cells per px
+    // Constant random lean per panel; the same panel bends the same way
+    // under every scuff, so overlapping scuffs agree.
+    vec2  panel_tilt = (vec2(dhash(panel_id + 3.1), dhash(panel_id + 9.7)) * 2.0 - 1.0)
+                     * kScuffFacetTilt;
+    // Crease: bare metal along the panel borders (distance to the nearest
+    // grid line, in cell units).
+    float panel_edge = min(min(panel_f.x, 1.0 - panel_f.x), min(panel_f.y, 1.0 - panel_f.y));
+    float bl_panel   = scuff_bandlimit(panel_fw, 6.2831853);       // one cycle per cell
     for (int i = 0; i < u_decal_count; ++i) {
         if (u_decal_c[i].y < 1.5) continue;          // Scuff only (class 2)
         vec3  point  = u_decal_a[i].xyz;
@@ -656,12 +657,8 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         float fw_max = max(dot(abs(T), fw_p), dot(abs(B), fw_p));
         // Facets: one constant random tilt per Worley cell, so the normal is
         // piecewise-flat and jumps at the cell borders — the crease lines.
-        float facet = max(kScuffFacetMin, radius / kScuffFacetsAcross);
-        float f1, f2; vec2 cell;
-        worley2(vec2(u, w) / facet + phase, f1, f2, cell);
-        vec2 tilt = (vec2(dhash(cell + 3.1), dhash(cell + 9.7)) * 2.0 - 1.0)
-                  * kScuffFacetTilt;
-        float bl_f = scuff_bandlimit(fw_max, 6.2831853 / facet);
+        vec2  tilt = panel_tilt;
+        float bl_f = bl_panel;
         // Dish: h = -D R (1 - r^2)^2 -> dh/drho = 4 D r (1 - r^2) along the
         // radial direction; the rim's normals lean inward, so one side of the
         // dent faces the light and the other faces away.
@@ -670,8 +667,8 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         float slope = 4.0 * kScuffDishDepth * r_n * (1.0 - r_n * r_n);
         float bl_d = scuff_bandlimit(fw_max, 3.1415926 / radius);
         vec2 g_dent = (tilt * bl_f + radial * slope * bl_d) * win;
-        // Creases show bare metal where two facets meet (thin F2-F1 band).
-        float crease = (1.0 - smoothstep(0.0, kScuffCreaseWidth, f2 - f1)) * win * bl_f;
+        // Creases show bare metal along the panel borders.
+        float crease = (1.0 - smoothstep(0.0, kScuffCreaseWidth, panel_edge)) * win * bl_f;
 
         // The crumple (facets + dish) is a property of the CONTACT and is
         // always on -- a slow grind pressed into a hull buckles just like an
@@ -914,7 +911,7 @@ void main() {
     // Must run before the Toksvig spec_ft line below and before any lighting
     // term reads n_shade, since it perturbs n_shade (and, from Task 3, base.rgb).
     if (u_decal_count > 0) {
-        apply_scuffs(p_body, n_body, n_shade, base.rgb);
+        apply_scuffs(p_body, n_body, v_uv, n_shade, base.rgb);
     }
 
     // Toksvig specular anti-aliasing. ft folds the normal spread under this

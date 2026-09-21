@@ -1843,37 +1843,64 @@ TEST_F(ScuffTest, DentIsPiecewiseFlatFacetsNotScratches) {
     const double r_dent  = roughness();
     const double sd_dent = block_stddev(108, 108, 40, 40);
     EXPECT_GT(sd_dent, 6.0) << "dent shows no relief at all";
-    EXPECT_LT(r_dent, r_scrape * 0.5)
+    // Measured 0.27 vs 0.41 with 9 px plating panels (the crumple alone has
+    // a border every ~9 px; the scratches change every couple of pixels).
+    EXPECT_LT(r_dent, r_scrape * 0.8)
         << "dent is as rough pixel-to-pixel as scratches (" << r_dent << " vs " << r_scrape << ")";
 }
 
-// Live pass 2026-09-21 (fourth): facets keyed on the mesh triangles read as
-// a highlighted wireframe -- the hulls are tessellated to 3-16 model units,
-// far finer than any panel -- so facets are Worley cells sized RELATIVE TO
-// THE DENT (about kScuffFacetsAcross per radius). A bigger dent must show
-// bigger panels: under head-on light (N.L = cos(tilt), direction-blind) the
-// shading changes only at cell borders, so the pixel-to-pixel roughness
-// (mean |neighbour delta| / stddev) falls as the cells grow. Fixed-size
-// cells would give the same roughness at both radii.
-TEST_F(ScuffTest, DentFacetsScaleWithTheDentRadius) {
+// Live pass 2026-09-21 (fifth, from a mockup): the crumple panels are the
+// hull's own PLATING -- a regular rectangular grid aligned with the texture,
+// fixed pitch, independent of the dent's size or slip direction. So the
+// facet cells come from the hull UVs, and their layout must NOT turn when the
+// decal's slip tangent does. Under head-on light (direction-blind) the
+// shading jumps only at panel borders; the column profile of horizontal
+// jumps therefore matches between two renders whose tangents differ by 45deg
+// (Worley cells in the decal frame turned with the tangent -- correlation
+// ~0). The near-diagonal scratch residual is 10% at dent=1 and averages out
+// along columns.
+TEST_F(ScuffTest, DentPanelsFollowTheTextureGridNotTheSlipDirection) {
     using namespace scuff_probe;
     auto quad = build_quad();
     renderer::Lighting head_on = tangent_probe::dir_light(glm::vec3(0.0f, 0.0f, 1.0f));
-    auto roughness = [&]() {
-        const double d = block_neighbour_delta_px(108, 108, 40, 40);
-        const double sd = block_stddev(108, 108, 40, 40);
-        return sd > 0.0 ? d / sd : 0.0;
+    auto column_profile = [&]() {
+        const int x0 = 108, y0 = 108, w = 40, h = 40;
+        std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
+        glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        auto sum = [&](int x, int y) {
+            const int i = (y * w + x) * 4;
+            return double(buf[i] + buf[i+1] + buf[i+2]);
+        };
+        // Count only real JUMPS (> 6 levels): the dish is a smooth radial
+        // gradient common to both renders and must not carry the correlation.
+        std::vector<double> prof(w - 1, 0.0);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x + 1 < w; ++x)
+                if (std::abs(sum(x + 1, y) - sum(x, y)) > 6.0) prof[x] += 1.0;
+        return prof;
     };
-    // Probe block spans +-20 px = +-13.5 units; well inside both dents.
-    Seed small; small.active = true; small.dent = 1.0f; small.radius = 40.0f;
-    render(*quad, *p, head_on, small);
-    const double r_small = roughness();
-    Seed big = small; big.radius = 160.0f;
-    render(*quad, *p, head_on, big);
+    auto correlation = [](const std::vector<double>& a, const std::vector<double>& b) {
+        double ma = 0, mb = 0;
+        for (size_t i = 0; i < a.size(); ++i) { ma += a[i]; mb += b[i]; }
+        ma /= a.size(); mb /= b.size();
+        double sab = 0, saa = 0, sbb = 0;
+        for (size_t i = 0; i < a.size(); ++i) {
+            sab += (a[i] - ma) * (b[i] - mb); saa += (a[i] - ma) * (a[i] - ma); sbb += (b[i] - mb) * (b[i] - mb);
+        }
+        return (saa > 0 && sbb > 0) ? sab / std::sqrt(saa * sbb) : 0.0;
+    };
+    Seed a; a.active = true; a.dent = 1.0f; a.radius = 40.0f; a.tangent = glm::vec3(1, 0, 0);
+    render(*quad, *p, head_on, a);
+    const auto pa = column_profile();
+    Seed b = a; b.tangent = glm::vec3(0.7071f, 0.7071f, 0.0f);
+    render(*quad, *p, head_on, b);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    const double r_big = roughness();
-    EXPECT_LT(r_big, r_small * 0.6)
-        << "facets did not grow with the dent (roughness big " << r_big << " vs small " << r_small << ")";
+    const auto pb = column_profile();
+    double total = 0; for (double v : pa) total += v;
+    ASSERT_GT(total, 40.0) << "rig sanity: no panel borders in the block";
+    // Measured: 0.999 with texture-grid panels, 0.06 with Worley cells.
+    EXPECT_GT(correlation(pa, pb), 0.9)
+        << "panel borders moved when the slip tangent turned: the cells are not texture-aligned";
 }
 
 // At eye_z = 2400 one model unit is ~0.09 px: the 3-unit scratch wavelength
