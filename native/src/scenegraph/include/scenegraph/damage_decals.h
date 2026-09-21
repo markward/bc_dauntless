@@ -11,9 +11,11 @@ namespace scenegraph {
 /// Weapon class drives the decal's visual behaviour (Phase 2 shader).
 /// - HeatGlow (phaser): transient emissive bloom, reclaimed when cold.
 /// - Scorch  (torpedo/disruptor): persistent deposit + blackbody ember.
+/// - Scuff   (collision scrape): procedural relief + albedo, no ember.
 enum class WeaponClass : std::uint32_t {
     HeatGlow = 0,
     Scorch   = 1,
+    Scuff    = 2,
 };
 
 /// One object-space impact record, stored in the ship's body frame so it
@@ -21,12 +23,22 @@ enum class WeaponClass : std::uint32_t {
 struct DamageDecal {
     glm::vec3     point_body{0.0f};
     glm::vec3     normal_body{0.0f};
-    float         radius = 0.0f;       // r_hit, game units
+    float         radius = 0.0f;       // r_hit (or, for Scuff, the contact
+                                       // chord), in MODEL units -- the
+                                       // binding converts from game units
+                                       // before calling add()
     float         intensity = 0.0f;    // [0,1], deposit darkness / hole threshold
     float         birth_time = 0.0f;   // seconds (game clock); drives ember cooling
     WeaponClass   weapon_class = WeaponClass::Scorch;
     bool          active = false;
     std::uint64_t seq = 0;             // FIFO insertion order (0 = never used)
+    /// Unit slip direction in the body frame, orthogonal to normal_body.
+    /// Scuff only; zero for the other classes.
+    glm::vec3     tangent_body{0.0f};
+    /// Scuff only: 1 = an impact (crumpled facets + dish), 0 = a grind
+    /// (scratches). Merges keep the max, so a grind over an impact stays a
+    /// dent and an impact on a scrape upgrades it. Shader reads u_decal_c.z.
+    float         dent = 0.0f;
 };
 
 /// Transform a world-space point into a ship's body frame.
@@ -36,6 +48,12 @@ glm::vec3 world_to_body(const glm::mat4& ship_world, const glm::vec3& p_world);
 /// Transform a world-space direction into the ship's body frame and
 /// renormalise. Returns the input length-0 vector unchanged.
 glm::vec3 world_dir_to_body(const glm::mat4& ship_world, const glm::vec3& dir_world);
+
+/// Unit tangent on the surface with normal `normal`, as close as possible to
+/// `hint`: the hint projected onto the tangent plane and renormalised. A zero
+/// or normal-parallel hint yields a deterministic perpendicular of `normal`
+/// (cross with the world axis least aligned with it).
+glm::vec3 tangent_on_surface(const glm::vec3& normal, const glm::vec3& hint);
 
 /// Fixed-capacity per-instance decal store with merge-then-FIFO insertion.
 class DamageDecalRing {
@@ -52,8 +70,12 @@ public:
     /// `radius` is r_hit in game units and is expected to be > 0 (it comes
     /// from WeaponHitEvent); a zero radius collapses the merge window to a
     /// point, so only exactly-coincident same-class hits would merge.
+    /// `tangent_body` is the slip direction hint (Scuff); it is orthogonalised
+    /// against `normal_body` via `tangent_on_surface`. Ignored for the other classes.
+    /// `dent` (Scuff only) is the impact weight, clamped to [0, 1]; see DamageDecal::dent.
     void add(const glm::vec3& point_body, const glm::vec3& normal_body,
-             float radius, float intensity, WeaponClass weapon_class, float now);
+             float radius, float intensity, WeaponClass weapon_class, float now,
+             const glm::vec3& tangent_body = glm::vec3(0.0f), float dent = 0.0f);
 
     /// Reclaim cold HeatGlow decals (age beyond kHeatGlowLifetime).
     void tick(float now);

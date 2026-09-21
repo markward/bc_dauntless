@@ -10,6 +10,7 @@ host.damage_decal_add.
 # Mirror of scenegraph::WeaponClass (native/src/scenegraph/damage_decals.h).
 WEAPON_CLASS_HEAT_GLOW = 0   # phaser — transient emissive bloom
 WEAPON_CLASS_SCORCH = 1      # torpedo / disruptor — persistent deposit + ember
+WEAPON_CLASS_SCUFF = 2       # collision — procedural relief + bare-metal scratches, no ember
 
 # Hull damage that maps to a full-intensity (1.0) decal. Tuning constant;
 # spec §3.6 fixes only the contract (monotonic, clamped). Calibrated against
@@ -27,6 +28,7 @@ INTENSITY_REFERENCE_DAMAGE = 0.5
 _RADIUS_SCALE = {
     WEAPON_CLASS_HEAT_GLOW: 0.5,
     WEAPON_CLASS_SCORCH: 2.25,
+    WEAPON_CLASS_SCUFF: 1.0,     # the contact chord IS the visual size (spec §3)
 }
 
 
@@ -36,13 +38,17 @@ def decal_radius_scale(weapon_class: int) -> float:
 
 
 def weapon_class_for(weapon_type):
-    """Map a weapon_type string ("phaser" / "torpedo" / ...) to a decal class.
+    """Map a weapon_type string ("phaser" / "torpedo" / "collision" / ...) to a
+    decal class.
 
-    Only "phaser" produces the transient heat-glow class; everything else
-    (torpedo, disruptor, None, unknown) deposits persistent scorch.
+    "phaser" -> transient heat-glow; "collision" -> scuff (collisions.py passes
+    it explicitly so a scrape never inherits the torpedo ember); everything
+    else (torpedo, disruptor, None, unknown) -> persistent scorch.
     """
     if weapon_type == "phaser":
         return WEAPON_CLASS_HEAT_GLOW
+    if weapon_type == "collision":
+        return WEAPON_CLASS_SCUFF
     return WEAPON_CLASS_SCORCH
 
 

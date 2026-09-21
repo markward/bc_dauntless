@@ -2326,6 +2326,20 @@ class _PlayerControl:
         GetCol(2)) stayed put. Negating restores "press right → turn right /
         roll right". See docs/superpowers/plans/2026-06-18-render-handedness-
         unmirror.md."""
+        # Publish the body-frame angular velocity the collision model reads
+        # (collisions._resolve_body: contact-point velocity = v_cm + omega x r).
+        # Same mapping as the AI handoff (_sync_ship_integrator_from_control):
+        # pitch = cav.x, yaw = -cav.z, roll = -cav.y. Written EVERY tick, zero
+        # included, so a released key stops the ship "spinning" against a
+        # neighbour. Live 2026-09-21: without this the player could pitch the
+        # saucer 180 degrees through a Warbird with no contact -- rotation had
+        # zero slip, so no grind, no impulse, no scuff -- while the first bit
+        # of thrust (v_cm != 0) collided at once.
+        cav = player.__dict__.get("_current_angular_velocity")
+        if cav is not None:
+            cav.x = pitch_rate
+            cav.z = -yaw_rate
+            cav.y = -roll_rate
         if not (pitch_rate or yaw_rate or roll_rate):
             return
         R = player.GetWorldRotation()
@@ -4814,6 +4828,33 @@ def _iter_planets_in_set(pSet) -> Iterable:
             yield obj
 
 
+def _cache_ship_hull_pieces(ship, handle, r_) -> None:
+    """Cache the hull's individual pieces on `ship` for shape-aware collision
+    and avoidance (engine.appc.hull_bounds). GetRadius() is one sphere round
+    the whole model and so cannot express a CONCAVE hull: a ship in a
+    starbase's docking bay sits well inside it while touching no structure,
+    and a ship with no pieces is shoved off another hull long before the
+    meshes can touch.
+
+    ONE helper for BOTH realize sites (realize_set_objects and
+    _MissionLoader._realize_session). Live 2026-09-21 the second site had
+    never called this: every ship realized through the mission controller
+    collided as a 2x-inflated whole-body sphere (hull_piece_count == 0),
+    so collision scuffs were zero-energy sphere kisses.
+
+    Called DIRECTLY, not through a getattr guard. model_bounds is in
+    engine.renderer's _REQUIRED_BINDINGS, so validate_bindings() already fails
+    loudly at boot if it is missing -- an hasattr guard on top of that converts
+    the loud failure into a silent one, which is how the feature first shipped
+    inert (binding present on _h, absent from the facade's name table).
+    """
+    try:
+        from engine.appc.hull_bounds import cache_hull_bound_spheres
+        cache_hull_bound_spheres(ship, r_.model_bounds(handle))
+    except Exception as _e:
+        dev_mode.log_swallowed("realize hull bound spheres", _e)
+
+
 def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> None:
     """Build render instances for ONE set's ships/planets mid-mission.
 
@@ -4854,23 +4895,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False) -> No
                 ship.SetRadius(extent * BC_MODEL_SCALE)
             except Exception as _e:
                 dev_mode.log_swallowed("realize ship.SetRadius fallback", _e)
-        # The hull's individual pieces, for shape-aware collision/avoidance.
-        # GetRadius() above is one sphere round the whole model and so cannot
-        # express a CONCAVE hull: a ship in a starbase's docking bay sits well
-        # inside it while touching no actual structure.
-        #
-        # Called DIRECTLY, not through a getattr guard. model_bounds is in
-        # engine.renderer's _REQUIRED_BINDINGS, so validate_bindings() already
-        # fails loudly at boot if it is missing — and an hasattr guard on top of
-        # that converts the loud failure into a silent one. It did exactly that:
-        # the binding existed on _h but was absent from the façade's name table,
-        # so the guard skipped every ship and the whole feature shipped inert,
-        # indistinguishable from not being wired up.
-        try:
-            from engine.appc.hull_bounds import cache_hull_bound_spheres
-            cache_hull_bound_spheres(ship, r_.model_bounds(handle))
-        except Exception as _e:
-            dev_mode.log_swallowed("realize hull bound spheres", _e)
+        _cache_ship_hull_pieces(ship, handle, r_)
         iid = r_.create_instance(handle)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
@@ -5571,6 +5596,7 @@ class _MissionLoader:
                     ship.SetRadius(extent * BC_MODEL_SCALE)
                 except Exception as _e:
                     dev_mode.log_swallowed("ship.SetRadius fallback", _e)
+            _cache_ship_hull_pieces(ship, handle, r_)
             iid = r_.create_instance(handle)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
@@ -7588,6 +7614,10 @@ def run(mission_name: Optional[str] = None,
     # AttributeError here -- and before any pass constructs: their texture
     # constants are relative now.
     r.set_game_root(str(_paths.game_root()))
+    # Project-authored renderer assets (native/assets/): the collision-scuff
+    # normal map resolves against this, not the BC install. Bare, like the
+    # two pushes around it.
+    r.set_project_asset_root(str(_paths.project_asset_root()))
     # Where the native HullVolumeCache bakes/reads .dhv files for per-instance
     # hull damage fields. Pushed here, right alongside set_game_root, for the
     # same reason: it must land before the first hull volume lookup, and
@@ -7996,6 +8026,10 @@ def run(mission_name: Optional[str] = None,
                                 module_name="engine.dev_missions.combat_stress",
                                 dir_name="Combat Stress",
                                 display_name="Combat Stress",
+                            ), MissionEntry(
+                                module_name="engine.dev_missions.collision_sim",
+                                dir_name="Collision Sim",
+                                display_name="Collision Sim",
                             )],
                         )],
                     ))

@@ -421,6 +421,15 @@ def hull_volume_cache_root() -> Path:
     return PROJECT_ROOT / "cache" / "hull_volumes"
 
 
+def project_asset_root() -> Path:
+    """Where PROJECT-authored renderer assets live -- <PROJECT_ROOT>/native/
+    assets (the collision-scuff normal map under textures/, the CEF UI under
+    ui-cef/). Distinct from game_root(): BC content is the player's install,
+    this is ours. Computed fresh on every call, like hull_volume_cache_root().
+    """
+    return PROJECT_ROOT / "native" / "assets"
+
+
 def game_asset_dirs(rel) -> list:
     """Every directory to SEARCH for `rel`, mod directories first.
 

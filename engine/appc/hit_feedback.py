@@ -196,6 +196,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              weapon_type: str | None = None, radius: float = 0.0,
              persist_decal: bool = True,
              allow_hull_carve: bool = True,
+             tangent=None, decal_radius: float | None = None,
+             decal_dent: float = 0.0,
              shield_point=None) -> None:
     """Per-impact fan-out: VFX + audio + camera shake.
 
@@ -216,11 +218,19 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     (shield flash, sparks, decal, carve) are skipped.
     App.g_kSoundManager=None silently skips audio.
 
-    `weapon_type` is "phaser" / "torpedo" / None. Used by _play_audio to
-    match SDK Effects.py semantics: phaser-on-shields is silent (stock BC
-    has no PhaserShieldHit handler); torpedo-on-shields plays from
-    g_lsWeaponExplosions (matching Effects.TorpedoShieldHit). HULL and
-    CRITICAL fire regardless of weapon_type.
+    `weapon_type` is "phaser" / "torpedo" / "collision" / None. Used by
+    _play_audio to match SDK Effects.py semantics: phaser-on-shields is
+    silent (stock BC has no PhaserShieldHit handler); torpedo-on-shields
+    plays from g_lsWeaponExplosions (matching Effects.TorpedoShieldHit).
+    "collision" (collisions.py's grind/impact contacts) and None both fall
+    into the not-phaser-not-torpedo branch everywhere this is checked. HULL
+    and CRITICAL fire regardless of weapon_type.
+
+    `tangent` is the world-space slip direction (TGPoint3) for a collision
+    scuff, or None. `decal_dent` is the scuff's impact weight (1 = crumple,
+    0 = scrape). `decal_radius` overrides `radius` for the DECAL ONLY —
+    the carve and everything else keep `radius` (spec §3: `r_hit` also sets
+    the subsystem catchment, so it must not carry the scuff size).
     """
     # Deferred — engine.appc.hit_vfx imports Severity from this module,
     # so a module-level import here would be circular.
@@ -367,14 +377,18 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             key = (id(ship), wclass)
             if now - _last_decal_emit.get(key, -1e9) >= DECAL_EMIT_INTERVAL:
                 _last_decal_emit[key] = now
+                vis_r = float(decal_radius) if decal_radius is not None else float(radius)
                 host_io.damage_decal_add(
                     iid,
                     (point.x, point.y, point.z),
                     (normal.x, normal.y, normal.z),
-                    float(radius) * damage_decals.decal_radius_scale(wclass),
+                    vis_r * damage_decals.decal_radius_scale(wclass),
                     damage_decals.decal_intensity(absorbed_hull),
                     wclass,
                     now,
+                    world_tangent=((tangent.x, tangent.y, tangent.z)
+                                   if tangent is not None else None),
+                    dent=float(decal_dent),
                 )
 
     # 5. Hull carve (breach): deposit field strength; eligible ships only;

@@ -101,3 +101,34 @@ def test_player_control_publishes_zero_velocity_when_stationary():
 
     v = player.GetVelocity()
     assert v.x == 0.0 and v.y == 0.0 and v.z == 0.0
+
+
+def test_player_control_publishes_body_angular_velocity_for_collisions():
+    """Live 2026-09-21 (Collision Sim): the player could pitch the saucer
+    180 degrees straight through a Warbird with no contact, because manual
+    flight wrote the new rotation matrix directly and never published
+    ship._current_angular_velocity -- the field collisions._resolve_body
+    reads for contact-point velocity (omega x r). With omega absent a
+    rotating hull has zero slip: no grind, no impulse, no scuff. Translation
+    (v_cm != 0) registered fine, which is why "it only collides when I fire
+    the engines". Mapping is the AI-handoff one: pitch = cav.x, yaw = -cav.z,
+    roll = -cav.y (see _sync_ship_integrator_from_control)."""
+    from engine.host_loop import _PlayerControl
+
+    pc = _PlayerControl()
+    player = _player()
+
+    class _HoldPitchDown(_FakeHost):
+        def key_state(self, code):
+            return code == pc._input_map.code("pitch_down")
+
+    pc.apply(player, 1.0 / 60.0, _HoldPitchDown())
+    assert pc._current_pitch_rate < 0.0, "fixture inert: pitch key not seen"
+    cav = player.__dict__["_current_angular_velocity"]
+    assert cav.x == pc._current_pitch_rate and cav.y == 0.0 and cav.z == 0.0
+
+    # Releasing the key must zero it again (the fallback ramp is instant), or
+    # a parked ship would keep "spinning" against a neighbour forever.
+    pc.apply(player, 1.0 / 60.0, _FakeHost())
+    cav = player.__dict__["_current_angular_velocity"]
+    assert (cav.x, cav.y, cav.z) == (0.0, 0.0, 0.0)

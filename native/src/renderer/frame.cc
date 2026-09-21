@@ -10,6 +10,7 @@
 #include "renderer/aabb.h"
 #include <renderer/asset_path.h>
 #include <renderer/model_draw_helpers.h>
+#include <renderer/scuff_texture.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -387,6 +388,9 @@ void draw_model(const assets::Model& model,
                             static_cast<int>(bone_palette.size()));
     }
 
+    // Whether any decal is active on this draw: the scuff pass then needs
+    // each mesh's per-triangle edge directions (unit 7).
+    bool decals_present = false;
     // ── Per-instance damage decals (Phase 2) ───────────────────────────────
     // Pack the active ring into vec4 arrays. point_body and radius are both in
     // NIF/model units (damage_decal_add converts radius GU->model before
@@ -396,26 +400,34 @@ void draw_model(const assets::Model& model,
         glm::vec4 a[scenegraph::DamageDecalRing::kMaxDecals];
         glm::vec4 b[scenegraph::DamageDecalRing::kMaxDecals];
         glm::vec4 c[scenegraph::DamageDecalRing::kMaxDecals];
+        glm::vec4 d[scenegraph::DamageDecalRing::kMaxDecals];   // tangent_body.xyz, _
         int n = 0;
         if (dauntless_decals::enabled()) {
-            for (const auto& d : decals.slots()) {
-                if (!d.active) continue;
-                a[n] = glm::vec4(d.point_body, d.intensity);
-                b[n] = glm::vec4(d.normal_body, d.radius);  // already model units
-                c[n] = glm::vec4(d.birth_time,
-                                 static_cast<float>(static_cast<std::uint32_t>(d.weapon_class)),
-                                 0.0f, 0.0f);
+            for (const auto& dec : decals.slots()) {
+                if (!dec.active) continue;
+                a[n] = glm::vec4(dec.point_body, dec.intensity);
+                b[n] = glm::vec4(dec.normal_body, dec.radius);  // already model units
+                c[n] = glm::vec4(dec.birth_time,
+                                 static_cast<float>(static_cast<std::uint32_t>(dec.weapon_class)),
+                                 dec.dent,     // Scuff: 1 impact crumple, 0 grind scratches
+                                 0.0f);
+                d[n] = glm::vec4(dec.tangent_body, 0.0f);
                 ++n;
             }
         }
         prog.set_int("u_decal_count", n);
+        decals_present = n > 0;
         if (n > 0) {
             prog.set_vec4_array("u_decal_a", a, n);
             prog.set_vec4_array("u_decal_b", b, n);
             prog.set_vec4_array("u_decal_c", c, n);
+            prog.set_vec4_array("u_decal_d", d, n);
             // world->body for the opaque shader's body-frame fragment
             // reconstruction (opaque.frag: p_body / n_body).
             prog.set_mat4("u_ship_world_inv", glm::inverse(world));
+            // Body->world rotation (x uniform scale) for the scuff pass's
+            // tangent frame; the shader normalises after use.
+            prog.set_mat3("u_ship_world_rot", glm::mat3(world));
             prog.set_float("u_decal_time", decal_time);
         }
     }
@@ -726,6 +738,16 @@ void draw_model(const assets::Model& model,
             prog.set_float("u_normal_strength", dauntless_normal_map::strength());
             prog.set_int  ("u_normal_flip_g",
                 dauntless_normal_map::flip_green() ? 1 : 0);
+
+            // Collision-scuff normal map (renderer/scuff_texture.h) on unit 7
+            // (assigned once in Pipeline's constructor). Loaded lazily, bound
+            // only when a decal is active so the undamaged path stays
+            // byte-identical; 0 => the shader draws scuffs without relief.
+            GLuint scuff_map = decals_present ? ensure_scuff_normal_texture() : 0;
+            glActiveTexture(GL_TEXTURE7);
+            glBindTexture(GL_TEXTURE_2D, scuff_map);
+            glActiveTexture(GL_TEXTURE0);  // restore default active unit
+            prog.set_int("u_scuff_map_ok", scuff_map != 0 ? 1 : 0);
 
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);

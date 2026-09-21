@@ -202,6 +202,15 @@ Akira 8, kessokmine 2 … — is still stored-but-unused in `engine/appc/ships.p
 BC's `SetSurfaceDamageRes`, the carve **granularity** knob, complementary to these
 modifiers.)
 
+### Collision scuffs (below-iso, non-carving hits)
+A collision that never crosses the carve iso previously left no visible mark at all.
+It now routes through `weapon_type="collision"` to a dedicated `WeaponClass::Scuff`
+decal — procedural relief plus bare-metal scratch lines rendered pre-lighting, distinct
+from the scorch/breach decals above — instead of accumulating carve strength. This is
+additive to, not a replacement for, Gaps 1–4: the carve/strength pipeline and its iso
+threshold are unchanged, and a hit that does cross the iso still carves as before. See
+[`2026-09-20-collision-scuff-normal-decals-design.md`](../superpowers/specs/2026-09-20-collision-scuff-normal-decals-design.md).
+
 ---
 
 ## Observations (lower / no action)

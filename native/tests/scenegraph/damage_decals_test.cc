@@ -156,3 +156,127 @@ TEST(DamageDecalRing, ScorchSurvivesHeatGlowFlooding) {
     }
     EXPECT_TRUE(scorch_present) << "phaser flooding evicted the persistent scorch";
 }
+
+// ── Collision scuffs (spec 2026-09-20 §1–§3) ────────────────────────────────
+
+TEST(TangentOnSurface, ProjectsTheHintOntoThePlaneAndNormalises) {
+    const glm::vec3 t = scenegraph::tangent_on_surface({0, 0, 1}, {2.0f, 0.0f, 5.0f});
+    EXPECT_NEAR(t.x, 1.0f, 1e-5f);
+    EXPECT_NEAR(t.y, 0.0f, 1e-5f);
+    EXPECT_NEAR(t.z, 0.0f, 1e-5f);
+}
+
+TEST(TangentOnSurface, ZeroOrParallelHintDerivesAUnitPerpendicular) {
+    for (const glm::vec3 hint : {glm::vec3(0.0f), glm::vec3(0, 0, 3)}) {
+        const glm::vec3 t = scenegraph::tangent_on_surface({0, 0, 1}, hint);
+        EXPECT_NEAR(glm::length(t), 1.0f, 1e-5f);
+        EXPECT_NEAR(glm::dot(t, glm::vec3(0, 0, 1)), 0.0f, 1e-5f);
+    }
+    // Deterministic: the same inputs always give the same tangent.
+    EXPECT_EQ(scenegraph::tangent_on_surface({0, 1, 0}, {}),
+              scenegraph::tangent_on_surface({0, 1, 0}, {}));
+}
+
+TEST(DamageDecalRing, ScuffStoresAUnitTangentOrthogonalToItsNormal) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.5f, WeaponClass::Scuff, 0.0f,
+             /*tangent=*/{3.0f, 0.0f, 9.0f});
+    const DamageDecal* d = first_active(ring);
+    ASSERT_NE(d, nullptr);
+    EXPECT_EQ(d->weapon_class, WeaponClass::Scuff);
+    EXPECT_NEAR(d->tangent_body.x, 1.0f, 1e-5f);
+    EXPECT_NEAR(glm::dot(d->tangent_body, d->normal_body), 0.0f, 1e-5f);
+}
+
+TEST(DamageDecalRing, ScuffWithNoTangentStillGetsAUnitPerpendicular) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.5f, WeaponClass::Scuff, 0.0f);
+    const DamageDecal* d = first_active(ring);
+    ASSERT_NE(d, nullptr);
+    EXPECT_NEAR(glm::length(d->tangent_body), 1.0f, 1e-5f);
+    EXPECT_NEAR(glm::dot(d->tangent_body, d->normal_body), 0.0f, 1e-5f);
+}
+
+TEST(DamageDecalRing, CoLocatedScuffsMergeAndTakeTheFreshTangent) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 0.0f, {1, 0, 0});
+    ring.add({1, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 1.0f, {0, 1, 0});
+    EXPECT_EQ(ring.count(), 1u);
+    const DamageDecal* d = first_active(ring);
+    ASSERT_NE(d, nullptr);
+    EXPECT_NEAR(d->intensity, 0.8f, 1e-5f);
+    EXPECT_NEAR(d->tangent_body.y, 1.0f, 1e-5f);
+}
+
+TEST(DamageDecalRing, ScuffDoesNotMergeIntoAScorchAtTheSamePoint) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scorch, 0.0f);
+    ring.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 1.0f, {1, 0, 0});
+    EXPECT_EQ(ring.count(), 2u);
+}
+
+TEST(DamageDecalRing, ScuffEvictsHeatGlowBeforeAnyScorch) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 0.2f, 1.0f, WeaponClass::Scorch, 0.0f);   // oldest
+    for (int i = 0; i < 23; ++i) {
+        ring.add({static_cast<float>(i + 1) * 10.0f, 0, 0}, {0, 0, 1},
+                 0.2f, 0.5f, WeaponClass::HeatGlow, static_cast<float>(i));
+    }
+    ASSERT_EQ(ring.count(), 24u);
+    ring.add({999, 0, 0}, {0, 0, 1}, 0.2f, 0.5f, WeaponClass::Scuff, 50.0f, {1, 0, 0});
+    bool scorch_present = false;
+    for (const auto& d : ring.slots())
+        if (d.active && d.weapon_class == WeaponClass::Scorch) scorch_present = true;
+    EXPECT_TRUE(scorch_present) << "a scuff evicted the persistent scorch instead of a HeatGlow";
+}
+
+TEST(DamageDecalRing, RingOfPersistentClassesEvictsTheOldestOverall) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 0.2f, 1.0f, WeaponClass::Scuff, 0.0f, {1, 0, 0});  // seq 1
+    for (int i = 0; i < 23; ++i) {
+        ring.add({static_cast<float>(i + 1) * 10.0f, 0, 0}, {0, 0, 1},
+                 0.2f, 0.5f, WeaponClass::Scorch, static_cast<float>(i));
+    }
+    ASSERT_EQ(ring.count(), 24u);
+    ring.add({999, 0, 0}, {0, 0, 1}, 0.2f, 0.5f, WeaponClass::Scuff, 50.0f, {1, 0, 0});
+    for (const auto& d : ring.slots())
+        if (d.active) EXPECT_NE(d.point_body.x, 0.0f) << "the oldest (x=0) scuff should be gone";
+}
+
+TEST(DamageDecalRing, TickNeverReclaimsAScuff) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 0.2f, 1.0f, WeaponClass::Scuff, 0.0f, {1, 0, 0});
+    ring.tick(1e6f);
+    EXPECT_EQ(ring.count(), 1u);
+}
+
+// ── Dent weight: impacts crumple (1), grinds scrape (0) ─────────────────────
+
+TEST(DamageDecalRing, ScuffStoresItsDentWeight) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.5f, WeaponClass::Scuff, 0.0f,
+             /*tangent=*/{1, 0, 0}, /*dent=*/1.0f);
+    const DamageDecal* d = first_active(ring);
+    ASSERT_NE(d, nullptr);
+    EXPECT_FLOAT_EQ(d->dent, 1.0f);
+}
+
+TEST(DamageDecalRing, DentWeightDefaultsToScrape) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.5f, WeaponClass::Scuff, 0.0f, {1, 0, 0});
+    EXPECT_FLOAT_EQ(first_active(ring)->dent, 0.0f);
+}
+
+TEST(DamageDecalRing, MergingAGrindIntoAnImpactKeepsTheDent) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 0.0f, {1, 0, 0}, 1.0f);
+    ring.add({1, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 1.0f, {1, 0, 0}, 0.0f);
+    ASSERT_EQ(ring.count(), 1u);
+    EXPECT_FLOAT_EQ(first_active(ring)->dent, 1.0f);
+    // ...and an impact landing on a scrape upgrades it.
+    ring.add({1, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 2.0f, {1, 0, 0}, 0.0f);
+    DamageDecalRing ring2;
+    ring2.add({0, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 0.0f, {1, 0, 0}, 0.0f);
+    ring2.add({1, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 1.0f, {1, 0, 0}, 1.0f);
+    EXPECT_FLOAT_EQ(first_active(ring2)->dent, 1.0f);
+}

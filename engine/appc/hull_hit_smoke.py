@@ -59,7 +59,10 @@ def maybe_emit(ship, point, normal, weapon_type, ship_instances=None,
     """Emit a stock-faithful hull-hit smoke puff, or do nothing.
 
     `point` / `normal` are world-space TGPoint3 (`.x/.y/.z`); `weapon_type` is
-    "torpedo" / "phaser" / None; `ship_instances` maps ship -> renderer instance
+    "torpedo" / "phaser" / "collision" / None -- only "torpedo"/"phaser" have a
+    roll threshold in `_HULL_SMOKE_ROLL`, so "collision" (collisions.py's
+    grind/impact contacts) and None both no-op here, same as any other
+    unlisted weapon_type. `ship_instances` maps ship -> renderer instance
     id; `source` is the firing ship, used only to key the beam throttle. No-op
     unless the weapon is a torpedo/phaser, the beam throttle allows a roll, the
     probability roll passes, detail level >= MEDIUM, and the impact resolves to

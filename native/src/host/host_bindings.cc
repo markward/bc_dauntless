@@ -26,6 +26,7 @@
 #include <renderer/animation_update.h>
 #include <renderer/channel_binder.h>
 #include <renderer/frame.h>
+#include <renderer/scuff_texture.h>
 #include <renderer/frame_timer.h>
 #include <renderer/lighting.h>
 #include <renderer/dynamic_lights.h>
@@ -701,6 +702,8 @@ void shutdown() {
     // collides with a 3D texture id there (GL_INVALID_OPERATION). See
     // renderer::reset_damage_decal_texture().
     renderer::reset_damage_decal_texture();
+    // Same hazard for the collision-scuff normal map (renderer/scuff_texture.h).
+    renderer::reset_scuff_normal_texture();
     g_loaded_models.clear();
     // Handle-recycling hazard: see the matching call in init(). Pure CPU
     // state (no GL), safe regardless of context currency.
@@ -1727,6 +1730,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Absolute path to the BC game install. Every relative asset path "
           "the renderer resolves is joined onto this. Default is the literal "
           "\"game\" (cwd-relative). Callable more than once.");
+
+    m.def("set_project_asset_root",
+          [](const std::string& root) { renderer::set_project_asset_root(root); },
+          py::arg("root"),
+          "Absolute path to the checkout's native/assets: project-authored "
+          "renderer textures (the collision-scuff normal map) resolve against "
+          "this, never the BC install. Pushed at boot beside set_game_root.");
 
     m.def("set_asset_overrides",
           [](const std::map<std::string, std::string>& overrides) {
@@ -4114,8 +4124,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
              std::tuple<float, float, float> world_point,
              std::tuple<float, float, float> world_normal,
              float radius, float intensity,
-             std::uint32_t weapon_class, float time) {
-              if (weapon_class > 1u) return;  // unknown weapon class — drop silently
+             std::uint32_t weapon_class, float time,
+             std::tuple<float, float, float> world_tangent, float dent) {
+              if (weapon_class > 2u) return;  // unknown weapon class — drop silently
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id — drop silently
               const glm::vec3 pw(std::get<0>(world_point),
@@ -4126,6 +4137,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(world_normal));
               const glm::vec3 pb = scenegraph::world_to_body(inst->world, pw);
               const glm::vec3 nb = scenegraph::world_dir_to_body(inst->world, nw);
+              const glm::vec3 tw(std::get<0>(world_tangent),
+                                 std::get<1>(world_tangent),
+                                 std::get<2>(world_tangent));
+              // Zero stays zero (world_dir_to_body returns a length-0 input
+              // unchanged); the ring then derives a perpendicular.
+              const glm::vec3 tb = scenegraph::world_dir_to_body(inst->world, tw);
               // Convert radius game-units -> NIF/model units here (the same
               // space as pb), so the ring's merge test and the shader both work
               // in model units. s = |world's X column| = the uniform NIF->world
@@ -4134,14 +4151,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const float radius_model = (s > 0.0f) ? radius / s : radius;
               inst->decals.add(pb, nb, radius_model, intensity,
                                static_cast<scenegraph::WeaponClass>(weapon_class),
-                               time);
+                               time, tb, dent);
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("radius"), py::arg("intensity"),
           py::arg("weapon_class"), py::arg("time"),
+          py::arg("world_tangent") = std::make_tuple(0.0f, 0.0f, 0.0f),
+          py::arg("dent") = 0.0f,
           "Record an object-space damage decal on a ship instance. World-space "
           "point/normal are transformed into the ship body frame. weapon_class: "
-          "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor).");
+          "0=HeatGlow (phaser), 1=Scorch (torpedo/disruptor), 2=Scuff (collision; "
+          "world_tangent = slip direction, zero = no preferred direction; "
+          "dent 1 = impact crumple, 0 = grind scratches).");
 
     m.def("hull_carve_add",
           [](scenegraph::InstanceId id,

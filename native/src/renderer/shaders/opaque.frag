@@ -105,6 +105,40 @@ uniform vec4  u_decal_b[MAX_DECALS];         // normal_body.xyz, radius (model u
 uniform vec4  u_decal_c[MAX_DECALS];         // birth_time, weapon_class, _, _
 uniform mat4  u_ship_world_inv;              // inverse(ship world): world->body
 uniform float u_decal_time;                  // game-time seconds (ember clock)
+uniform vec4  u_decal_d[MAX_DECALS];         // tangent_body.xyz (unit, ⟂ normal; Scuff), _
+uniform sampler2D u_scuff_map;               // unit 7: tiling crumpled-metal tangent-space
+                                             // normal map (renderer/scuff_texture.h)
+uniform int   u_scuff_map_ok;                // 0 = not loaded: scuffs draw albedo only
+uniform mat3  u_ship_world_rot;              // body->world rotation (x uniform scale)
+
+// ── Collision scuffs (class 2): a splatted normal map, pre-lighting ───────
+// Spec: docs/superpowers/specs/2026-09-20-collision-scuff-normal-decals-design.md §4
+// Each scuff is a patch of ONE tiling crumpled-sheet-metal normal map
+// (u_scuff_map), sampled in the scuff's own slip frame at a per-scuff random
+// offset, so no two scuffs are the same stamp. The relief comes from the
+// map; the shader adds bare metal where the sheet creases, a grime fill,
+// and a noise-broken edge. Lengths in MODEL units; rebuild to tune.
+// Tried and removed (seven live passes, 2026-09-20/21): procedural
+// scratches + buckle waves, then a crumple model of dished facets on a
+// mesh-oriented panel grid -- every version read as a stencil or a grid.
+const float kScuffTexSpan     = 0.25;                 // fraction of the map one scuff's
+                                                       // DIAMETER spans (0.25 => a 2048 map
+                                                       // shows 512 texels across a scuff)
+const float kScuffRelief      = 1.0;                  // relief gain for an impact (dent 1)
+const float kScuffGrindRelief = 0.6;                  // ...and for a grind (dent 0), as a
+                                                       // fraction of the impact's
+const int   kScuffFlipGreen   = 0;                    // 1 if the map's green is DirectX -Y
+const vec3  kScuffMetal       = vec3(0.62);           // bare-metal albedo on the creases
+const float kScuffAlbedoGain  = 0.4;                  // how far creases go toward kScuffMetal
+const float kScuffMetalTilt   = 0.35;                 // |n.xy| at which a crease is fully bare
+const float kScuffGrime       = 0.25;                 // soft grime FILL: darkest at the core,
+                                                       // fading out with the window (not a ring —
+                                                       // a ring drew a circle round every scuff and
+                                                       // a grind streak read as crossing rings)
+const float kScuffEdgeNoise   = 0.6;                  // fraction the edge is pushed INWARD by
+                                                       // noise; breaks the disc outline. Only ever
+                                                       // shrinks, so the r >= 1 cull stays exact.
+const float kScuffEdgeFreq    = 1.0 / 6.0;            // edge-noise cycles per model unit
 
 // ── Hull-breach hole: pure damage-sphere clip ─────────────────────────────
 // Discard hull fragments inside any active carve sphere. The breach pass
@@ -510,6 +544,111 @@ float fbm(vec2 v) {
     for (int i = 0; i < 3; ++i) { s += amp * vnoise(v * freq); freq *= 2.1; amp *= 0.5; }
     return s;
 }
+
+// Band-limit a procedural term: 1 when its wavelength spans >= 4 px, 0 at
+// <= 2 px. `fw` is the axis footprint in model units per pixel, `k` rad/unit.
+float scuff_bandlimit(float fw, float k) {
+    float cycles_per_px = fw * k / 6.2831853;
+    return 1.0 - smoothstep(0.25, 0.5, cycles_per_px);
+}
+
+// Collision scuffs — the PRE-LIGHTING half of the decal ring. Perturbs the
+// shading normal (from the splatted map) and the base albedo inside each
+// Scuff decal. Writes ONLY n_shade and base_rgb: never the shadow-bias
+// normal, the Fresnel rim, n_body, the carve loop, decal_emissive or
+// glow_flicker.
+void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_rgb) {
+    vec3 dn_ws = vec3(0.0);
+    // Scuffs composite as a UNION, not a sum: `cov` is the "over" coverage of
+    // every scuff seen so far, each new one only contributes into (1 - cov),
+    // and the albedo terms are applied ONCE after the loop from cov and the
+    // over-composited crease mask. A grind streak is a chain of overlapping circles; with
+    // per-scuff mixing the crossings doubled the relief, re-lightened the
+    // ridges and multiplied the grime (live pass 2026-09-20).
+    float cov = 0.0;
+    float metal_mask = 0.0;
+    // Per-pixel footprint, model units. Uniform control flow: the loop below
+    // `continue`s per decal, GLSL derivatives are undefined inside that, and
+    // so is texture() with implicit LOD -- the map is sampled with
+    // textureGrad from these.
+    vec3 fw_p = fwidth(p_body);
+    vec3 dpdx = dFdx(p_body);
+    vec3 dpdy = dFdy(p_body);
+    for (int i = 0; i < u_decal_count; ++i) {
+        if (u_decal_c[i].y < 1.5) continue;          // Scuff only (class 2)
+        vec3  point  = u_decal_a[i].xyz;
+        float inten  = u_decal_a[i].w;
+        vec3  dn     = u_decal_b[i].xyz;
+        float radius = u_decal_b[i].w;
+        if (radius <= 0.0) continue;
+        vec3  d = p_body - point;
+        float r = length(d) / radius;
+        if (r >= 1.0) continue;                       // outside: byte-identical
+        // Same far-face guard as the other classes.
+        float wn = smoothstep(NORMAL_MIN, 1.0, dot(n_body, dn));
+        if (wn <= 0.0) continue;
+
+        vec3  T = u_decal_d[i].xyz;
+        vec3  B = cross(dn, T);
+        float u = dot(d, T);                          // along the slip
+        float w = dot(d, B);                          // across the slip
+        // Noise-broken, soft edge: push r outward by up to kScuffEdgeNoise so
+        // no fragment sees a clean circle. Inward-only (r_n >= r), so the
+        // r >= 1 cull above is still the exact outer bound. Band-limited:
+        // past ~2 px per wavelength the noise would alias into the window as
+        // speckle, so the edge relaxes back to a disc at range (where the
+        // outline is sub-pixel anyway).
+        float bl_e = scuff_bandlimit(max(dot(abs(T), fw_p), dot(abs(B), fw_p)),
+                                     6.2831853 * kScuffEdgeFreq);
+        // The noise fades in with r (r^2 here), so the plateau stays a
+        // plateau: multiplicative noise alone mottled the grime in the core.
+        float edge = fbm(vec2(u, w) * kScuffEdgeFreq) * bl_e * r * r;
+        float r_n  = r * (1.0 + kScuffEdgeNoise * edge);
+        float win  = (1.0 - smoothstep(0.25, 1.0, r_n)) * inten * wn;
+        float over = 1.0 - cov;                       // what this scuff may still add
+
+        // The map, in the slip frame: u along T, w along B, kScuffTexSpan of
+        // the map across the diameter, at a per-scuff offset so each scuff is
+        // a different patch (GL_REPEAT). Mipmapped through explicit
+        // gradients: the band limit at range.
+        float scale = kScuffTexSpan / (2.0 * radius);
+        vec2  off   = vec2(dhash(point.xy + point.z), dhash(point.yz + point.x));
+        vec2  uv    = vec2(u, w) * scale + off;
+        vec2  duvdx = vec2(dot(dpdx, T), dot(dpdx, B)) * scale;
+        vec2  duvdy = vec2(dot(dpdy, T), dot(dpdy, B)) * scale;
+        vec3  s     = vec3(0.0, 0.0, 1.0);
+        if (u_scuff_map_ok != 0) {
+            s = textureGrad(u_scuff_map, uv, duvdx, duvdy).xyz * 2.0 - 1.0;
+            if (kScuffFlipGreen != 0) s.y = -s.y;
+            s.z = max(s.z, 0.05);                     // never past horizontal
+        }
+        // An impact (dent 1) shows the full relief, a grind a fraction of it.
+        float dent = clamp(u_decal_c[i].z, 0.0, 1.0);
+        float gain = kScuffRelief * mix(kScuffGrindRelief, 1.0, dent);
+        // Tangent-space normal (x, y, z) in the (T, B, n) basis => the
+        // perturbed normal is n + (x/z) T + (y/z) B before renormalising.
+        vec2  g = (s.xy / s.z) * gain * win;
+        // Creases -- where the sheet tilts hardest -- show bare metal,
+        // composited "over" like the relief: each scuff is a different patch
+        // of the map, and a max of two patches is brighter than either.
+        float crease = smoothstep(0.1, kScuffMetalTilt, length(s.xy)) * win;
+        metal_mask += crease * over;
+
+        vec3 T_ws = normalize(u_ship_world_rot * T);
+        vec3 B_ws = normalize(u_ship_world_rot * B);
+        dn_ws += (g.x * T_ws + g.y * B_ws) * over;
+        cov   += win * over;
+    }
+    if (cov > 0.0) {
+        // Albedo once, from the union: bare metal on the creases, and a soft
+        // grime fill that is darkest where coverage is full and fades out
+        // through the noisy edge with it.
+        base_rgb = mix(base_rgb, kScuffMetal, metal_mask * kScuffAlbedoGain);
+        base_rgb *= 1.0 - kScuffGrime * cov;
+    }
+    if (dot(dn_ws, dn_ws) > 0.0) n_shade = normalize(n_shade + dn_ws);
+}
+
 // Blackbody-ish ramp keyed on heat 0..1 (white-hot -> red -> black).
 vec3 blackbody(float heat) {
     vec3 cold = vec3(0.0);
@@ -531,6 +670,7 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
                      + p_body.z * vec2(NOISE_SCALE, NOISE_SCALE * 0.7));
 
     for (int i = 0; i < u_decal_count; ++i) {
+        if (u_decal_c[i].y > 1.5) continue;   // Scuff: handled pre-lighting by apply_scuffs
         vec3  point = u_decal_a[i].xyz;
         float intensity = u_decal_a[i].w;
         vec3  dn = u_decal_b[i].xyz;
@@ -714,6 +854,19 @@ void main() {
         ? perturb_normal(n, v_position_ws, v_uv, n_sigma)
         : n;
 
+    // Body-frame fragment position (object-space carve + decals).
+    vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
+    // Body-frame normal for object-space decals.
+    vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
+    vec4 base = texture(u_base_color, v_uv);
+
+    // Collision scuffs (class 2): the PRE-LIGHTING half of the decal ring.
+    // Must run before the Toksvig spec_ft line below and before any lighting
+    // term reads n_shade, since it perturbs n_shade (and, from Task 3, base.rgb).
+    if (u_decal_count > 0) {
+        apply_scuffs(p_body, n_body, n_shade, base.rgb);
+    }
+
     // Toksvig specular anti-aliasing. ft folds the normal spread under this
     // pixel into a lower exponent; the (1+p')/(1+p) factor keeps the lobe's
     // energy constant so a broadened highlight dims instead of blooming. At
@@ -722,9 +875,6 @@ void main() {
     float spec_ft = n_sigma / (n_sigma + u_specular_power * (1.0 - n_sigma));
     float spec_power = u_specular_power * spec_ft;
     float spec_norm  = (1.0 + spec_power) / (1.0 + u_specular_power);
-
-    // Body-frame fragment position (object-space carve + decals).
-    vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
 
     // ── Hull-breach hole: pure damage-sphere clip ──────────────────────────
     // Discard hull fragments inside any active carve sphere. The breach pass
@@ -1023,7 +1173,6 @@ void main() {
         }
     }
 
-    vec4 base = texture(u_base_color, v_uv);
     // lit_dyn folds in EXACTLY where ambient + directional combine, so
     // material/diffuse color and base texture multiply it the same way.
     // MEAN-PRESERVING: dot(N, dir) averages to zero over a sphere, so the
@@ -1060,9 +1209,6 @@ void main() {
         amb = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
     }
     vec3 lit  = (amb + lit_dir + lit_dyn) * u_diffuse_color * base.rgb;
-
-    // Body-frame normal for object-space decals.
-    vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
 
     vec3 decal_emissive = vec3(0.0);
     float glow_flicker = 1.0;

@@ -38,7 +38,7 @@ MAX_PENDING_AGE = 5.0
 NORMAL_PROBE_MARGIN_GU = 0.5
 
 # Registry of not-yet-emitted volumes. Each entry:
-#   {"ship", "kind": "body"|"world", "pt": (x, y, z), "radius": float, "age": float}
+#   {"ship", "kind": "body"|"world"|"capsule"|"scuff", "pt": (x, y, z), "radius": float, "age": float}
 _pending: list[dict] = []
 
 
@@ -79,6 +79,24 @@ def queue_world_capsule(ship, p0_world, p1_world, radius_gu) -> None:
                      "p0": TGPoint3(p0_world.x, p0_world.y, p0_world.z),
                      "p1": TGPoint3(p1_world.x, p1_world.y, p1_world.z),
                      "radius": float(radius_gu), "age": 0.0})
+
+
+def queue_body_scuff(ship, x, y, z, radius_gu, tangent_body=(1.0, 0.0, 0.0),
+                     intensity=1.0, dent=0.0) -> None:
+    """Queue a collision-scuff DECAL (no carve) at a body-frame point. Used by
+    the developer Damage Preview mission to seed known scuffs for live tuning.
+    `tangent_body` is the slip direction in the body frame; `dent` is the
+    impact weight (1 crumples, 0 scrapes); realised through
+    host_io.damage_decal_add once the ship's render instance exists."""
+    if ship is None:
+        return
+    _pending.append({
+        "ship": ship, "kind": "scuff",
+        "pt": (float(x), float(y), float(z)),
+        "radius": float(radius_gu), "intensity": float(intensity),
+        "tangent": tuple(float(c) for c in tangent_body), "age": 0.0,
+        "dent": float(dent),
+    })
 
 
 def clear_for(ship) -> None:
@@ -127,6 +145,37 @@ def _advance_one(entry, dt, ship_instances) -> bool:
                                    entry["radius"])
         from engine.appc import hull_breakup
         hull_breakup.after_carve(ship, iid, ship_instances)
+        return False
+
+    if entry.get("kind") == "scuff":
+        world_pt, normal = _resolve(dict(entry, kind="body"), ship, iid)
+        if world_pt is None:
+            return False
+        # Anchor at the hull SURFACE, not the authored (interior) point: a
+        # real collision decal is anchored at _resolve_hit_point's mesh point
+        # (combat.py), and the authored body point sits 0.1-0.3 GU below the
+        # surface like any other AddObjectDamageVolume sphere -- see
+        # _mesh_probe. Take BOTH the point and normal when the trace
+        # succeeds; keep the authored point + radial-normal guess otherwise
+        # (headless / no instance -- the existing scuff tests exercise this).
+        mesh_pt, mesh_normal = _mesh_probe(iid, world_pt, normal)
+        if mesh_normal is not None:
+            normal = mesh_normal
+        if mesh_pt is not None:
+            world_pt = mesh_pt
+        tx, ty, tz = entry["tangent"]
+        tangent = _body_dir_to_world(ship, tx, ty, tz)
+        from engine.appc import damage_decals
+        host_io.damage_decal_add(
+            iid,
+            (world_pt.x, world_pt.y, world_pt.z),
+            (normal.x, normal.y, normal.z),
+            entry["radius"], entry["intensity"],
+            damage_decals.WEAPON_CLASS_SCUFF,
+            damage_decals.current_game_time(),
+            world_tangent=(tangent.x, tangent.y, tangent.z),
+            dent=entry.get("dent", 0.0),
+        )
         return False
 
     world_pt, normal = _resolve(entry, ship, iid)
@@ -190,6 +239,38 @@ def _resolve(entry, ship, iid=None):
     return world_pt, normal
 
 
+def _mesh_probe(iid, world_pt, radial):
+    """Ray-trace the true hull surface near `world_pt`, along `radial`.
+
+    Returns `(surface_point, surface_normal)` as TGPoint3s, or `(None, None)`
+    if unobtainable (no instance, no radial, miss, or a raised trace). Holds
+    the trace logic shared by `_mesh_normal` (normal only, for carves -- see
+    its docstring for why the normal matters) and the scuff branch of
+    `_advance_one` (point AND normal, so a scuff decal anchors at the visible
+    skin rather than the authored point, which sits inside the hull like any
+    other AddObjectDamageVolume sphere).
+    """
+    if iid is None or radial is None:
+        return None, None
+    try:
+        origin = (world_pt.x + radial.x * NORMAL_PROBE_MARGIN_GU,
+                  world_pt.y + radial.y * NORMAL_PROBE_MARGIN_GU,
+                  world_pt.z + radial.z * NORMAL_PROBE_MARGIN_GU)
+        hit = host_io.ray_trace_mesh(
+            iid, origin, (-radial.x, -radial.y, -radial.z),
+            NORMAL_PROBE_MARGIN_GU * 2.0)
+    except Exception as _e:
+        dev_mode.log_swallowed("probe carve surface point/normal", _e)
+        return None, None
+    if not hit:
+        return None, None
+    (px, py, pz), (nx, ny, nz), _t = hit
+    normal = TGPoint3(float(nx), float(ny), float(nz))
+    if normal.Unitize() <= 1e-6:
+        return None, None
+    return TGPoint3(float(px), float(py), float(pz)), normal
+
+
 def _mesh_normal(iid, world_pt, radial):
     """The TRUE hull surface normal at `world_pt`, or None if unobtainable.
 
@@ -217,24 +298,11 @@ def _mesh_normal(iid, world_pt, radial):
     Raise-safe and miss-safe: the caller keeps the radial guess, because an
     approximate carve beats no carve (authored wrecks must still appear
     headless, where there is no instance to trace against).
+
+    Thin wrapper over `_mesh_probe` -- kept so existing carve callers and
+    tests need no change; the point half of the probe is unused here.
     """
-    if iid is None or radial is None:
-        return None
-    try:
-        origin = (world_pt.x + radial.x * NORMAL_PROBE_MARGIN_GU,
-                  world_pt.y + radial.y * NORMAL_PROBE_MARGIN_GU,
-                  world_pt.z + radial.z * NORMAL_PROBE_MARGIN_GU)
-        hit = host_io.ray_trace_mesh(
-            iid, origin, (-radial.x, -radial.y, -radial.z),
-            NORMAL_PROBE_MARGIN_GU * 2.0)
-    except Exception as _e:
-        dev_mode.log_swallowed("probe carve surface normal", _e)
-        return None
-    if not hit:
-        return None
-    nx, ny, nz = hit[1]
-    normal = TGPoint3(float(nx), float(ny), float(nz))
-    return None if normal.Unitize() <= 1e-6 else normal
+    return _mesh_probe(iid, world_pt, radial)[1]
 
 
 def _outward_normal(world_pt, loc, ship):
@@ -248,6 +316,22 @@ def _outward_normal(world_pt, loc, ship):
     if n.Unitize() <= 1e-6:
         return _ship_up(ship)
     return n
+
+
+def _body_dir_to_world(ship, x, y, z) -> TGPoint3:
+    """Rotate a body-frame direction into world space via `R = ship.
+    GetWorldRotation()` (`v_world = R . v_body`, CLAUDE.md's column-vector
+    convention), or return it unrotated when the ship exposes no real
+    `TGMatrix3` rotation (legacy test fakes / headless). Shared "rotate a
+    body vector through GetWorldRotation if it is a TGMatrix3" guard --
+    `_resolve`'s body-frame offset keeps its own copy (a slightly different
+    shape: it also folds the outward-normal fallback), left alone here."""
+    v = TGPoint3(x, y, z)
+    if hasattr(ship, "GetWorldRotation"):
+        rot = ship.GetWorldRotation()
+        if isinstance(rot, TGMatrix3):
+            v.MultMatrixLeft(rot)
+    return v
 
 
 def _ship_up(ship):

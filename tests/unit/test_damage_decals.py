@@ -27,3 +27,16 @@ def test_current_game_time_is_float_and_safe_without_app(monkeypatch):
     # With no usable App clock, returns 0.0 rather than raising.
     monkeypatch.setattr(dd, "_game_time_source", lambda: (_ for _ in ()).throw(RuntimeError()))
     assert dd.current_game_time() == 0.0
+
+
+def test_collision_maps_to_scuff():
+    assert dd.weapon_class_for("collision") == dd.WEAPON_CLASS_SCUFF == 2
+
+
+def test_none_still_maps_to_scorch_so_splash_and_breach_callers_are_unchanged():
+    assert dd.weapon_class_for(None) == dd.WEAPON_CLASS_SCORCH
+
+
+def test_scuff_radius_scale_is_identity():
+    # The contact chord IS the visual size (spec §3).
+    assert dd.decal_radius_scale(dd.WEAPON_CLASS_SCUFF) == 1.0

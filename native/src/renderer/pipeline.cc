@@ -70,6 +70,17 @@ namespace renderer {
 Pipeline::Pipeline() {
     opaque_ = std::make_unique<Shader>(shader_src::opaque_vs, shader_src::opaque_fs);
     skinned_ = std::make_unique<Shader>(shader_src::skinned_vs, shader_src::opaque_fs);
+    // opaque.frag's collision-scuff normal map (renderer/scuff_texture.h)
+    // lives on unit 7 for the program's whole life. Assigned HERE, once, not
+    // per draw: every path that draws with this program (draw_model, the
+    // carve-stencil pass, the hull-clip / cloak parity test rigs) would
+    // otherwise leave it at unit 0 with the base texture. Harmless for two
+    // sampler2Ds, but the predecessor was a samplerBuffer and two sampler
+    // TYPES on one unit is GL_INVALID_OPERATION at draw -- keep the habit.
+    for (Shader* sh : {opaque_.get(), skinned_.get()}) {
+        sh->use();
+        sh->set_int("u_scuff_map", 7);
+    }
     backdrop_ = std::make_unique<Shader>(shader_src::backdrop_vs, shader_src::backdrop_fs);
     sun_ = std::make_unique<Shader>(shader_src::sun_vs, shader_src::sun_fs);
     sun_flare_ = std::make_unique<Shader>(shader_src::sun_flare_vs, shader_src::sun_flare_fs);

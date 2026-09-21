@@ -85,7 +85,8 @@ def weapon_splash_radius(hardpoint_weapon, payload_template) -> float:
 
 def _resolve_hit_point(ship_instances, ship,
                        ray_origin, ray_direction,
-                       max_dist: float, fallback_point):
+                       max_dist: float, fallback_point,
+                       sphere_fallback: bool = True):
     """Three-tier hit-point fallback. Returns ``(point, normal)``.
 
     ``normal`` is a unit ``TGPoint3`` only when the mesh trace
@@ -95,7 +96,10 @@ def _resolve_hit_point(ship_instances, ship,
     1. Mesh trace via ``host_io.ray_trace_mesh`` (requires a renderer
        InstanceId for this ship). Returns the surface point and the
        surface normal.
-    2. Bounding-sphere entry. No normal available.
+    2. Bounding-sphere entry. No normal available. Skipped when
+       ``sphere_fallback`` is False: collisions pass a piece-boundary
+       ``fallback_point`` that is far closer to the hull than the
+       ~2x-inflated whole-body sphere (collisions._trace_own_hull).
     3. ``fallback_point`` passed by the caller (torpedo position or
        phaser target_pos). No normal.
     """
@@ -117,6 +121,8 @@ def _resolve_hit_point(ship_instances, ship,
     if result is not None:
         (px, py, pz), (nx, ny, nz), _t = result
         return TGPoint3(px, py, pz), TGPoint3(nx, ny, nz)
+    if not sphere_fallback:
+        return fallback_point, None
     center = ship.GetWorldLocation()
     radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
     entry = ray_sphere_entry(ray_origin, ray_direction, max_dist,
@@ -595,9 +601,9 @@ def cloak_shields_suspended(ship) -> bool:
 # apply_hit's weapon_type string → the engine's WeaponHitEvent enum. BC's
 # disruptor/pulse bolts are Torpedo payloads (sdk/.../Tactical/Projectiles/
 # CardassianDisruptor.py builds a pTorp), so they belong on TORPEDO. Anything
-# not in this table — collisions (weapon_type=None), warp-core-breach
-# shockwaves — is NOT weapon fire and reports NON_WEAPON rather than silently
-# passing for a phaser (0).
+# not in this table — "collision" (collisions.py's grind/impact contacts),
+# warp-core-breach shockwaves, or no weapon_type at all — is NOT weapon fire
+# and reports NON_WEAPON rather than silently passing for a phaser (0).
 _WEAPON_TYPE_IDS = {
     "phaser":  WeaponHitEvent.PHASER,
     "torpedo": WeaponHitEvent.TORPEDO,
@@ -612,7 +618,9 @@ def apply_hit(ship, damage: float, hit_point, source, *,
               splash_radius: float | None = None,
               damage_hull: bool = True,
               bypass_shields: bool = False,
-              shield_point=None) -> None:
+              shield_point=None,
+              hit_tangent=None, decal_radius: float | None = None,
+              decal_dent: float = 0.0) -> None:
     """Apply `damage` to `ship` per the spherical-splash attribution model.
 
     Flow:
@@ -676,6 +684,13 @@ def apply_hit(ship, damage: float, hit_point, source, *,
                               behind the beam's own tip and, for an oblique
                               shot, in a different direction from the bubble
                               centre entirely.
+        hit_tangent          — world-space slip direction for a collision
+                              scuff, or None.
+        decal_radius         — visual decal radius in GU; overrides `r_hit`
+                              for the decal ONLY, never for the subsystem
+                              catchment / carve / WeaponHitEvent.
+        decal_dent           — collision scuff impact weight: 1 crumples
+                              (facets + dish), 0 scrapes (scratches).
     """
     from engine.appc.events import WeaponHitEvent
     from engine.appc import hit_feedback
@@ -855,6 +870,8 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             persist_decal=_commit,
             allow_hull_carve=damage_hull,
             shield_point=shield_point,
+            tangent=hit_tangent, decal_radius=decal_radius,
+            decal_dent=decal_dent,
         )
     except Exception as _e:
         dev_mode.log_swallowed("hit_feedback.dispatch", _e)
