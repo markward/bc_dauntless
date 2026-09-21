@@ -14,7 +14,6 @@ bottom of subsystems.py guarantees the normal load order).
 """
 
 import math as _math
-import random
 
 from engine.core import ids
 from engine.appc.math import TGPoint3, TGMatrix3
@@ -1307,10 +1306,16 @@ class WeaponSystem(PoweredSubsystem):
         # Re-seed reads the PRE-EXISTING state: a continuously-firing weapon
         # zeroes; everything else draws fresh. BC's draw distribution is
         # unverified in the corpus — uniform(0, 0.33) is our choice.
-        if weapon.IsFiring():
-            weapon._fire_timer = 0.0
-        else:
-            weapon._fire_timer = random.uniform(0.0, self.FIRE_TIMER_THRESHOLD)
+        # Re-seed to ZERO after every attempt, firing or not. The dispatch
+        # spec left BC's re-seed distribution unverified and chose
+        # uniform(0, 0.33); the original exe's captures settle it
+        # (stbc-oracle bible §3/§4): torpedo tubes launch a deterministic
+        # 0.656 s (40 ticks, ± 1) apart — the 0.5 s system gate plus one
+        # further 0.33 s attempt, i.e. two whole thresholds — and a Warbird
+        # cannon's second bolt follows its first by 0.34 s, one threshold.
+        # A random draw put the next attempt anywhere in a 0.33 s window and
+        # made our spacing 0.50–0.83 s.
+        weapon._fire_timer = 0.0
         if not weapon.CanFire():
             weapon.StopFiring()      # what makes a beam vanish on charge-out
             return False
@@ -1696,7 +1701,27 @@ class TorpedoSystem(WeaponSystem):
         # ShipScriptActions.py:400, MissionLib.py:611, E2M0.py:720
         # (App.AT_TWO = 1).  Second arg is always 0 in the SDK (reload
         # time/flag) — accepted, ignored.
+        #
+        # Switching to a DIFFERENT type unloads every tube: measured on the
+        # original exe (stbc-oracle bible §4 T4, `torpedo_sovereign_quantum_57`)
+        # the Sovereign's first quantum salvo after SetAmmoType(1) needs ~45 s
+        # — its ReloadDelay is 40 s — and BC's decompiled switch path calls the
+        # tube's unload (TorpedoTube.UnloadTorpedo, FUN_0057D9A0). Re-selecting
+        # the type already loaded is left alone: every starbase dock ends with
+        # SetAmmoType(GetAmmoTypeNumber(), 0), and emptying the tubes on that
+        # is not something the capture shows.
+        before = self.GetCurrentAmmoSlot()
         self.SetCurrentAmmoSlot(int(ammo_index))
+        if self.GetCurrentAmmoSlot() != before:
+            for i in range(self.GetNumWeapons()):
+                tube = self.GetWeapon(i)
+                unload = getattr(tube, "UnloadTorpedo", None)
+                if not callable(unload):
+                    continue
+                ready = getattr(tube, "GetNumReady", None)
+                n = int(ready()) if callable(ready) else 0
+                for _ in range(n):
+                    unload()
 
     def GetAmmoType(self, slot: int):
         return self._ammo_by_slot.get(int(slot))
@@ -3213,12 +3238,10 @@ class TorpedoTube(Weapon):
         """Remove one ready round; its slot goes back into cooldown.
 
         Mirrors BC's decompiled FUN_0057D9A0 (combat-and-damage.md:833-838),
-        which stock BC calls on an ammo-type switch. SDK-facing surface only:
-        our TorpedoSystem.SetAmmoType (weapon_subsystems.py — see its
-        docstring) SELECTS a slot and explicitly ignores its second arg; it
-        never calls UnloadTorpedo. As of this writing UnloadTorpedo has zero
-        callers anywhere in this engine, the tests, or the SDK — do not infer
-        that SetAmmoType wires it in."""
+        which stock BC calls on an ammo-type switch. TorpedoSystem.SetAmmoType
+        calls it for every ready round of every tube when the selected slot
+        actually CHANGES — stbc-oracle bible §4 T4 measured the switch
+        unloading the Sovereign's tubes for one full ReloadDelay."""
         if self._num_ready <= 0:
             return
         self._num_ready -= 1

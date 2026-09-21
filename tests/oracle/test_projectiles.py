@@ -72,7 +72,7 @@ def test_p2_bird_of_prey_bolt_damage(oracle):
 
 
 @bible_xfail("P2", "Bird of Prey fires pairs every 2.28 s (± 0.1 s)",
-             "pairs every ~2.45 s")
+             "pairs every 2.0 / 2.67 / 2.33 s alternating — the wait to recharge back over MinFiringCharge, quantised to the 0.33 s attempt cadence; resolves with the MinFiringCharge question (B8, P1)")
 def test_p2_bird_of_prey_pairs_every_2_28_s(oracle):
     """P2 — pairs every 2.28 s (± 0.1 s)."""
     s = oracle(attacker="BirdOfPrey", range_gu=40)
@@ -144,8 +144,6 @@ def test_t1_positron_torpedo_2200(oracle):
         assert d == pytest.approx(2200.0, abs=0.5)
 
 
-@bible_xfail("T2", "tubes launch 0.656 s (40 ticks) apart, ± 1 tick",
-             "gaps are 0.50 / 0.58 / 0.68 s — irregular")
 def test_t2_tubes_fire_0_656_s_apart(oracle):
     """T2 — `torpedo_galaxy_front_57`: four forward tubes in sequence."""
     s = oracle(attacker="Galaxy", range_gu=57)
@@ -170,8 +168,6 @@ def test_t3_flight_time_for_57_gu(oracle, attacker, flight_s):
     assert hits[0][0] - t0 == pytest.approx(flight_s, abs=0.5)
 
 
-@bible_xfail("T4", "switching ammo type unloads the tubes: Sovereign ReloadDelay 40 s before the first quantum salvo",
-             "SetAmmoType is a pure slot select — the new type fires immediately")
 def test_t4_ammo_switch_unloads_tubes(oracle):
     """T4 — `torpedo_sovereign_quantum_57`: first quantum salvo needs ~45 s
     after `SetAmmoType(1)`; nothing launches in the first 30 s."""
