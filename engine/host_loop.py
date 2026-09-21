@@ -2326,6 +2326,20 @@ class _PlayerControl:
         GetCol(2)) stayed put. Negating restores "press right → turn right /
         roll right". See docs/superpowers/plans/2026-06-18-render-handedness-
         unmirror.md."""
+        # Publish the body-frame angular velocity the collision model reads
+        # (collisions._resolve_body: contact-point velocity = v_cm + omega x r).
+        # Same mapping as the AI handoff (_sync_ship_integrator_from_control):
+        # pitch = cav.x, yaw = -cav.z, roll = -cav.y. Written EVERY tick, zero
+        # included, so a released key stops the ship "spinning" against a
+        # neighbour. Live 2026-09-21: without this the player could pitch the
+        # saucer 180 degrees through a Warbird with no contact -- rotation had
+        # zero slip, so no grind, no impulse, no scuff -- while the first bit
+        # of thrust (v_cm != 0) collided at once.
+        cav = player.__dict__.get("_current_angular_velocity")
+        if cav is not None:
+            cav.x = pitch_rate
+            cav.z = -yaw_rate
+            cav.y = -roll_rate
         if not (pitch_rate or yaw_rate or roll_rate):
             return
         R = player.GetWorldRotation()

@@ -61,11 +61,10 @@ def test_warbird_is_static_and_parked_the_measured_gap_below(spawned):
     assert name == "Warbird"
     assert warbird.IsImmobile(), "the target must be a fixed anchor (SetStatic)"
     p = warbird.GetWorldLocation()
-    # Galaxy lowest point -1.07 GU, Warbird highest +1.53 GU, 0.4 GU clearance
-    # (measured with dump_bounds; see the mission's comment).
+    # Measured in PIECE-sphere terms (see the mission docstring): -3.8 leaves
+    # the deepest pair 0.32 GU clear at rest; -3.0 already overlapped.
     assert (p.x, p.y) == (0.0, 0.0)
-    assert p.z == pytest.approx(-(1.07 + 1.53 + collision_sim.CLEARANCE_GU))
-    assert collision_sim.CLEARANCE_GU == 0.4
+    assert p.z == pytest.approx(collision_sim.ANVIL_Z_GU) and collision_sim.ANVIL_Z_GU == -3.8
 
 
 def test_both_ships_are_friendly_so_nothing_shoots(spawned):

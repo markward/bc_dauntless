@@ -1,8 +1,8 @@
 """Developer-only "Collision Sim" mission.
 
-Spawns the player Galaxy parked directly ABOVE a static Romulan Warbird with
-0.4 GU of clearance, so a slow roll or pitch swings the saucer rim down into
-the Warbird's wings: a reproducible low-speed hull contact for judging the
+Spawns the player Galaxy parked directly ABOVE a static Romulan Warbird, close
+enough that ~10 degrees of pitch or ~20 degrees of roll grinds the saucer
+into the Warbird's wings: a reproducible low-speed hull contact for judging the
 collision scuff decals live (spec
 docs/superpowers/specs/2026-09-20-collision-scuff-normal-decals-design.md §5)
 without depending on AI or on flying a ram.
@@ -12,13 +12,16 @@ takes no impulse, no damage and therefore NO decals (collisions.py treats an
 immobile body like a planet). The scuffs land on the Galaxy — watch it from
 the external camera.
 
-Placement (GU, measured offline with `build/native/tools/dump_bounds -gu -v`;
-never launch the game to check): Galaxy ~101 model units/GU, lowest point the
-engineering hull at z ~ -1.07 (saucer underside ~ -0.32, rim at x ~ +-2.3);
-Warbird ~100 model units/GU, highest point the dorsal spine / wing tops at
-z ~ +1.53, wings spanning x ~ +-4.8. Both at identity rotation (forward +Y),
-Warbird centre at z = -(1.07 + 1.53 + CLEARANCE_GU). A ~25 degree roll or
-pitch brings the saucer rim to the wing tops.
+Placement (GU): the collision solver sees hull PIECES -- bounding spheres
+round flat plates, with up to ~1.5 GU of slack above the Warbird's wing mesh
+-- so the gap that matters is the one between piece spheres, not meshes.
+Measured offline by simulating the shipping splitter's 128 pieces per hull
+(`build/native/tools/dump_bounds -gu -p`, overlap when d < 0.8 * (ra + rb) as
+collisions.py does): with the Warbird's centre at ANVIL_Z_GU the deepest pair
+is 0.32 GU CLEAR at rest, and first contact comes at ~10 degrees of nose-down
+pitch or ~20 degrees of roll. At -3.0 (the mesh-based gap first tried) the
+pieces already overlapped by 0.44 GU at rest. Never launch the game to check
+placement.
 
 Registered into the dev mission picker ("Developer" family) by
 engine/host_loop.py — dev mode only, never present in production builds.
@@ -27,10 +30,7 @@ import App
 import MissionLib
 import loadspacehelper
 
-GALAXY_LOWEST_GU = 1.07      # below the Galaxy's centre (engineering hull)
-WARBIRD_HIGHEST_GU = 1.53    # above the Warbird's centre (dorsal spine)
-CLEARANCE_GU = 0.4           # gap at rest; piece spheres carry ~0.1-0.4 GU of
-                             # slack round the plates, so 0.2 could touch at spawn
+ANVIL_Z_GU = -3.8            # Warbird centre below the Galaxy's; see the docstring
 
 
 def PreLoadAssets(pMission):
@@ -61,10 +61,9 @@ def Initialize(pMission):
     pPlayer.SetTranslateXYZ(0.0, 0.0, 0.0)
     pPlayer.UpdateNodeOnly()
 
-    # The anvil: a static Warbird parked CLEARANCE_GU under the Galaxy.
+    # The anvil: a static Warbird parked ANVIL_Z_GU under the Galaxy.
     pAnvil = loadspacehelper.CreateShip("Warbird", pSet, "Anvil", "")
-    pAnvil.SetTranslateXYZ(0.0, 0.0,
-                           -(GALAXY_LOWEST_GU + WARBIRD_HIGHEST_GU + CLEARANCE_GU))
+    pAnvil.SetTranslateXYZ(0.0, 0.0, ANVIL_Z_GU)
     pAnvil.SetStatic(1)
     pAnvil.UpdateNodeOnly()
 
