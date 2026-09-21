@@ -187,7 +187,7 @@ Height field `h(u, w)` — two analytic terms, gradient in closed form:
 |---|---|---|
 | buckle (grind) | `A_b · sin(k_b·u + φ) · win` | compression waves with crests **perpendicular** to the slip — the "waves in the metal" |
 | scratches (grind) | `A_s · noise1(w · k_s) · win` | grooves running **along** the slip; varies across `w`, near-constant along `u` |
-| facets (impact) | one random constant tilt per **mesh triangle** (`gl_PrimitiveID`-hashed; `kScuffMeshFacets = 1`), or per Worley cell over `(u, w)` at 0 | piecewise-**flat** panels whose normals jump at the panel borders — the crease lines of crumpled sheet metal. Mesh mode makes the creases the hull's own triangle edges (third live pass: "align the panel edges with the mesh"); its tilt is keyed on the triangle alone so two impacts bend a panel the same way. Mesh facets carry no crease albedo (no edge distance without barycentrics) — the crease reads through the shading jump |
+| facets | one random constant tilt per Worley cell over `(u, w)`, cell size `max(kScuffFacetMin, radius / kScuffFacetsAcross)` — **panels scale with the dent** | piecewise-**flat** panels whose normals jump at the cell borders — the crease lines of crumpled sheet metal. Facets keyed on the mesh triangles (`gl_PrimitiveID`) were tried at the third live pass and removed at the fourth: the hulls are tessellated to 3–16 model units, far finer than any panel, so they read as a highlighted wireframe over the patch |
 | dish (impact) | `h = −D·R·(1 − r²)²` → `dh/dρ = 4·D·r·(1 − r²)` radially | the overall concave dent: rim normals lean inward, so one side faces the light and the other away |
 | creases (impact, albedo) | thin Worley `F2 − F1` band | bare metal where two facets meet |
 
@@ -258,9 +258,9 @@ Fresnel rim, `n_body`, the carve loop, `decal_emissive`, or `glow_flicker`.
 Tuning constants are `kScuff*` `const`s at the top of `opaque.frag` (rebuild to
 tune), the same convention as `kHullCarve*`. Initial values (model units,
 Galaxy hull ≈ ±178): `A_b = 0.35`, `k_b = 2π/24` (24-unit wavelength),
-`A_s = 0.25`, `k_s = 2π/3`, `kScuffAlbedoGain = 0.6`, `kScuffGrime = 0.25`,
-`kScuffEdgeNoise = 0.35`, `kScuffEdgeFreq = 1/9`; dents: `kScuffFacetSize = 10`,
-`kScuffFacetTilt = 0.30`, `kScuffMeshFacets = 1`, `kScuffDishDepth = 0.15`,
+`A_s = 0.12`, `k_s = 2π/3`, `kScuffAlbedoGain = 0.4`, `kScuffGrime = 0.25`,
+`kScuffEdgeNoise = 0.35`, `kScuffEdgeFreq = 1/9`; crumple: `kScuffFacetsAcross = 2.5`,
+`kScuffFacetMin = 8`, `kScuffFacetTilt = 0.30`, `kScuffDishDepth = 0.15`,
 `kScuffCreaseWidth = 0.12`, `kScuffDentScratch = 0.1`.
 These are starting points for the live pass, not measured values.
 
@@ -320,10 +320,11 @@ lit quad, directional light, no material normal map:
 - `ScuffHasNoEmberAndLeavesGlowUntouched`: `decal_emissive` contribution zero
   (probe code path / render with zero diffuse and assert black inside the
   patch), glow map pixels unchanged.
-- `ScuffIsBandLimitedAtDistance`: the same scuff rendered with the camera far
-  enough that the scratch wavelength is < 2 px shows mean |second difference|
-  (curvature — the dish is a legitimate smooth gradient at range and must not
-  count) under 8; 3.7 measured with the fade, 64.5 without.
+- `ScuffIsBandLimitedAtDistance`: aliasing measured as sensitivity to a
+  sub-pixel (0.045 px) shift of the seed at range — a band-limited scuff
+  changes by < 2 levels/px, an unfaded one re-rolls its speckle (8.6 measured
+  with the fade forced off). Variance/curvature could not tell a legitimately
+  5 px dent from speckle.
 - `ScuffDoesNotMirrorToTheFarFace`: a scuff seeded on +Z leaves the −Z face
   byte-identical (the `wn` guard).
 - `DishShadesOneSideOfTheRimDarkerThanTheOtherForGrindsAndImpacts`: under a
@@ -335,9 +336,9 @@ lit quad, directional light, no material normal map:
 - `DentIsPiecewiseFlatFacetsNotScratches`: mean |neighbour Δ| / stddev of a
   dent is under half a scrape's (few large jumps at creases vs. change every
   couple of pixels).
-- `DentFacetsFollowTheMeshTriangles`: on the four-wedge fan quad under a
-  head-on light, two probes in the same triangle shade identically and a probe
-  in the neighbouring triangle differs (fails under Worley cells — measured).
+- `DentFacetsScaleWithTheDentRadius`: under head-on light the pixel-to-pixel
+  roughness of a radius-160 dent is under 60 % of a radius-40 dent's (fixed
+  cells gave the same at both — measured).
 - Existing `UndamagedInstanceGlowMatchesEmptyRingBaseline` keeps passing —
   the production path with no decals is byte-identical.
 

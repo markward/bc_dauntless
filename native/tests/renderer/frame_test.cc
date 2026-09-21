@@ -1558,6 +1558,46 @@ double block_stddev(int x0, int y0, int w, int h) {
     return std::sqrt(var / (w * h));
 }
 
+// Mean |channel-sum difference| between neighbouring pixels, both axes.
+double block_neighbour_delta_px(int x0, int y0, int w, int h) {
+    std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
+    glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    auto sum = [&](int x, int y) {
+        const int i = (y * w + x) * 4;
+        return double(buf[i] + buf[i+1] + buf[i+2]);
+    };
+    double acc = 0.0; int n = 0;
+    for (int y = 0; y + 1 < h; ++y)
+        for (int x = 0; x + 1 < w; ++x) {
+            acc += std::abs(sum(x, y) - sum(x + 1, y));
+            acc += std::abs(sum(x, y) - sum(x, y + 1));
+            n += 2;
+        }
+    return n ? acc / n : 0.0;
+}
+
+// Mean |second difference| of the channel sum over a block, both axes.
+// Aliasing (speckle) has large curvature at every pixel; a legitimate smooth
+// feature such as the dent's dish -- a near-linear gradient when it spans the
+// whole far quad -- has almost none. Plain neighbour deltas cannot tell the
+// two apart (the dish alone measured ~5 levels/px at range).
+double block_curvature(int x0, int y0, int w, int h) {
+    std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
+    glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    auto sum = [&](int x, int y) {
+        const int i = (y * w + x) * 4;
+        return double(buf[i] + buf[i+1] + buf[i+2]);
+    };
+    double acc = 0.0; int n = 0;
+    for (int y = 1; y + 1 < h; ++y)
+        for (int x = 1; x + 1 < w; ++x) {
+            acc += std::abs(sum(x - 1, y) - 2.0 * sum(x, y) + sum(x + 1, y));
+            acc += std::abs(sum(x, y - 1) - 2.0 * sum(x, y) + sum(x, y + 1));
+            n += 2;
+        }
+    return n ? acc / n : 0.0;
+}
+
 // Oblique light so relief shows as shading variation (head-on light hides it).
 renderer::Lighting oblique() { return tangent_probe::dir_light(glm::vec3(0.5f, 0.3f, 0.8f)); }
 
@@ -1661,7 +1701,9 @@ TEST_F(ScuffTest, AlbedoLightensScratchRidgesAndDarkensTheRimUnderAmbientOnlyLig
     double brightest = 0.0;
     for (int i = 0; i < 40 * 40; ++i)
         brightest = std::max(brightest, double(buf[i*4] + buf[i*4+1] + buf[i*4+2]));
-    EXPECT_GT(brightest, base_mean + 12.0) << "no bare-metal lightening on the scratch ridges";
+    // Ridges lighten by ~+9 levels after the 25% grime fill at gain 0.4
+    // (measured); the flat base has none.
+    EXPECT_GT(brightest, base_mean + 6.0) << "no bare-metal lightening on the scratch ridges";
     EXPECT_GT(block_stddev(108, 108, 40, 40), 3.0) << "albedo is uniform inside the scuff";
 }
 
@@ -1747,9 +1789,12 @@ TEST_F(ScuffTest, DishShadesOneSideOfTheRimDarkerThanTheOtherForGrindsAndImpacts
     using namespace scuff_probe;
     auto quad = build_quad();
     renderer::Lighting side = tangent_probe::dir_light(glm::vec3(0.8f, 0.0f, 0.6f));
+    // Whole half-annuli (r ~ 0.35..0.9, 50 px wide x 60 px tall each side):
+    // the random facet tilts (24-unit cells at this radius) average out over
+    // ~10 cells per side, leaving the dish's systematic lean.
     auto rim_pair = [&]() {
-        const double lit_side  = block_mean(128 - 67, 118, 14, 20);   // -X side
-        const double dark_side = block_mean(128 + 53, 118, 14, 20);   // +X side
+        const double lit_side  = block_mean(128 - 80, 98, 50, 60);   // -X side
+        const double dark_side = block_mean(128 + 30, 98, 50, 60);   // +X side
         return std::make_pair(lit_side, dark_side);
     };
     for (float dentw : {0.0f, 1.0f}) {
@@ -1757,7 +1802,7 @@ TEST_F(ScuffTest, DishShadesOneSideOfTheRimDarkerThanTheOtherForGrindsAndImpacts
         render(*quad, *p, side, s);
         ASSERT_EQ(glGetError(), GL_NO_ERROR);
         auto [lit, dark] = rim_pair();
-        EXPECT_GT(lit - dark, 25.0) << "dent=" << dentw << " rim shows no dish: " << lit << " vs " << dark;
+        EXPECT_GT(lit - dark, 10.0) << "dent=" << dentw << " rim shows no dish: " << lit << " vs " << dark;
     }
 }
 
@@ -1802,32 +1847,33 @@ TEST_F(ScuffTest, DentIsPiecewiseFlatFacetsNotScratches) {
         << "dent is as rough pixel-to-pixel as scratches (" << r_dent << " vs " << r_scrape << ")";
 }
 
-// Live pass 2026-09-21: "align the panel edges with the nearby edges of the
-// mesh". One facet per mesh TRIANGLE (gl_PrimitiveID-hashed tilt): inside a
-// triangle the tilt is constant, so under a head-on light (N.L = cos(tilt),
-// direction-blind, and the dish is radially symmetric) two blocks in the SAME
-// triangle at the same radius shade identically, while a block in the
-// neighbouring triangle at that radius shades differently. Worley cells
-// (~15 px here) would split the 28 px between the two same-triangle blocks.
-TEST_F(ScuffTest, DentFacetsFollowTheMeshTriangles) {
+// Live pass 2026-09-21 (fourth): facets keyed on the mesh triangles read as
+// a highlighted wireframe -- the hulls are tessellated to 3-16 model units,
+// far finer than any panel -- so facets are Worley cells sized RELATIVE TO
+// THE DENT (about kScuffFacetsAcross per radius). A bigger dent must show
+// bigger panels: under head-on light (N.L = cos(tilt), direction-blind) the
+// shading changes only at cell borders, so the pixel-to-pixel roughness
+// (mean |neighbour delta| / stddev) falls as the cells grow. Fixed-size
+// cells would give the same roughness at both radii.
+TEST_F(ScuffTest, DentFacetsScaleWithTheDentRadius) {
     using namespace scuff_probe;
-    auto quad = build_quad_fan();          // 4 wedges meeting at the centre
+    auto quad = build_quad();
     renderer::Lighting head_on = tangent_probe::dir_light(glm::vec3(0.0f, 0.0f, 1.0f));
-    // Radius 300 units (~444 px): the probes below sit at r ~ 0.05, where the
-    // dish slope (4 D r (1 - r^2) ~ 0.03) is negligible next to the facet
-    // tilt, so within one triangle the shading is the facet's alone.
-    Seed dent; dent.active = true; dent.dent = 1.0f; dent.radius = 300.0f;
-    render(*quad, *p, head_on, dent);
+    auto roughness = [&]() {
+        const double d = block_neighbour_delta_px(108, 108, 40, 40);
+        const double sd = block_stddev(108, 108, 40, 40);
+        return sd > 0.0 ? d / sd : 0.0;
+    };
+    // Probe block spans +-20 px = +-13.5 units; well inside both dents.
+    Seed small; small.active = true; small.dent = 1.0f; small.radius = 40.0f;
+    render(*quad, *p, head_on, small);
+    const double r_small = roughness();
+    Seed big = small; big.radius = 160.0f;
+    render(*quad, *p, head_on, big);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    // Top wedge (|x| < y): two blocks 20 px apart (Worley cells are ~15 px).
-    const double top_l = block_mean(128 - 10 - 4, 128 + 20 - 4, 8, 8);
-    const double top_r = block_mean(128 + 10 - 4, 128 + 20 - 4, 8, 8);
-    // Right wedge (x > |y|), same radius.
-    const double right = block_mean(128 + 20 - 4, 128 + 10 - 4, 8, 8);
-    EXPECT_LT(std::abs(top_l - top_r), 3.0)
-        << "same triangle, different shading: " << top_l << " vs " << top_r;
-    EXPECT_GT(std::abs(top_l - right), 6.0)
-        << "neighbouring triangle shades the same: " << top_l << " vs " << right;
+    const double r_big = roughness();
+    EXPECT_LT(r_big, r_small * 0.6)
+        << "facets did not grow with the dent (roughness big " << r_big << " vs small " << r_small << ")";
 }
 
 // At eye_z = 2400 one model unit is ~0.09 px: the 3-unit scratch wavelength
@@ -1843,46 +1889,39 @@ TEST_F(ScuffTest, DentFacetsFollowTheMeshTriangles) {
 // radius 200 the whole quad (half-diagonal ~141 units) stays under r=0.71,
 // below the rim's 0.75 onset, so the rim never engages and the measurement
 // isolates the relief/scratch band-limiting under test.
-// Mean |second difference| of the channel sum over a block, both axes.
-// Aliasing (speckle) has large curvature at every pixel; a legitimate smooth
-// feature such as the dent's dish -- a near-linear gradient when it spans the
-// whole far quad -- has almost none. Plain neighbour deltas cannot tell the
-// two apart (the dish alone measured ~5 levels/px at range).
-double block_curvature(int x0, int y0, int w, int h) {
-    std::vector<unsigned char> buf(static_cast<size_t>(w) * h * 4);
-    glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
-    auto sum = [&](int x, int y) {
-        const int i = (y * w + x) * 4;
-        return double(buf[i] + buf[i+1] + buf[i+2]);
-    };
-    double acc = 0.0; int n = 0;
-    for (int y = 1; y + 1 < h; ++y)
-        for (int x = 1; x + 1 < w; ++x) {
-            acc += std::abs(sum(x - 1, y) - 2.0 * sum(x, y) + sum(x + 1, y));
-            acc += std::abs(sum(x, y - 1) - 2.0 * sum(x, y) + sum(x, y + 1));
-            n += 2;
-        }
-    return n ? acc / n : 0.0;
-}
-
 TEST_F(ScuffTest, IsBandLimitedSoItDoesNotSparkleAtRange) {
     using namespace scuff_probe;
     auto quad = build_quad();
-    Seed s; s.active = true; s.radius = 200.0f;   // the whole quad is scuffed
+    Seed s; s.active = true; s.radius = 60.0f;    // a live-sized scuff (0.6 GU)
     render(*quad, *p, oblique(), s, /*eye_z=*/150.0f);
     const double near_d = block_curvature(108, 108, 40, 40);
     ASSERT_GT(near_d, 4.0) << "rig sanity: relief must be visible up close";
 
-    // eye_z 2400: ~0.09 px per unit, so the 3-unit scratches and the
-    // 10-unit facets are far below a pixel and must have faded out; the
-    // dish (radius 200 units ~ 18 px) is a smooth gradient and may remain.
+    // Aliasing is SENSITIVITY TO SUB-PIXEL PHASE: at eye_z 2400 (~0.09 px per
+    // unit) the 3-unit scratches and 24-unit facets are below a pixel, so if
+    // they are properly faded, nudging the seed by half a unit (0.045 px)
+    // must leave the image essentially unchanged; unfaded, the speckle they
+    // alias into re-rolls wholesale. A single-frame variance/curvature cannot
+    // tell a legitimately 5 px dent from speckle -- this can.
     render(*quad, *p, oblique(), s, /*eye_z=*/2400.0f);
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
-    // Measured: 3.7 with the fade (the dish's own curvature + 8-bit
-    // quantisation), 64.5 with scuff_bandlimit forced to 1.0.
-    const double far_d = block_curvature(122, 122, 12, 12);
-    EXPECT_LT(far_d, 8.0) << "scuff sparkles at range (curvature " << far_d
-                          << ", near " << near_d << ")";
+    const auto a = read_frame();
+    Seed t = s; t.point = glm::vec3(0.5f, 0.3f, 0.0f);
+    render(*quad, *p, oblique(), t, /*eye_z=*/2400.0f);
+    const auto b = read_frame();
+    double acc = 0.0; int n = 0;
+    for (int y = 120; y < 136; ++y)
+        for (int x = 120; x < 136; ++x) {
+            const size_t i = (static_cast<size_t>(y) * 256 + x) * 4;
+            acc += std::abs(int(a[i]) + int(a[i+1]) + int(a[i+2])
+                            - int(b[i]) - int(b[i+1]) - int(b[i+2]));
+            ++n;
+        }
+    // Measured: 8.6 levels/px with scuff_bandlimit forced to 1.0.
+    const double phase_sensitivity = acc / n;
+    EXPECT_LT(phase_sensitivity, 2.0)
+        << "scuff sparkles at range: a 0.045 px seed shift changed the image by "
+        << phase_sensitivity << " levels/px (near curvature " << near_d << ")";
 }
 
 // u_ship_world_rot is uploaded as glm::mat3(world) (frame.cc) and used to

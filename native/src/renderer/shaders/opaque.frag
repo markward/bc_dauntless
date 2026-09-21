@@ -114,7 +114,7 @@ uniform mat3  u_ship_world_rot;              // body->world rotation (x uniform 
 // to change, same convention as kHullCarve*. Starting values, judged live.
 const float kScuffBuckleAmp   = 0.35;                 // dh per unit, buckle waves
 const float kScuffBuckleFreq  = 6.2831853 / 24.0;     // rad/unit: 24-unit wavelength
-const float kScuffScratchAmp  = 0.25;                 // dh per unit, scratch grooves.
+const float kScuffScratchAmp  = 0.12;                 // dh per unit, scratch grooves.
                                                        // snoise1's slope peaks at ~3
                                                        // (smoothstep-interpolated value
                                                        // noise remapped to [-1,1]), so
@@ -126,7 +126,7 @@ const float kScuffScratchAmp  = 0.25;                 // dh per unit, scratch gr
                                                        // cosine of a sine, peak 1).
 const float kScuffScratchFreq = 6.2831853 / 3.0;      // rad/unit: 3-unit wavelength
 const vec3  kScuffMetal       = vec3(0.62);           // bare-metal albedo on scratch ridges
-const float kScuffAlbedoGain  = 0.6;                  // how far ridges go toward kScuffMetal
+const float kScuffAlbedoGain  = 0.4;                  // how far ridges go toward kScuffMetal
 const float kScuffGrime       = 0.25;                 // soft grime FILL: darkest at the core,
                                                        // fading out with the window (not a ring —
                                                        // a ring drew a circle round every scuff and
@@ -140,11 +140,14 @@ const float kScuffEdgeFreq    = 1.0 / 9.0;            // edge-noise cycles per m
 // rear-ended car, live pass 2026-09-21). u_decal_c.z is the decal's "dent"
 // weight, which only scales the scratch model above DOWN: 0 = grind (full
 // scratches over the crumple), 1 = impact (kScuffDentScratch of them).
-const float kScuffFacetSize   = 10.0;                 // model units per crumple facet (Worley cell)
+const float kScuffFacetsAcross = 2.5;                // crumple facets (Worley cells) per dent RADIUS:
+                                                       // panels scale with the dent, as in the car
+                                                       // photo, so a big dent gets big panels
+const float kScuffFacetMin    = 8.0;                  // model units; floor for tiny scuffs
 const float kScuffFacetTilt   = 0.30;                 // max facet slope, dh per unit (~17 deg)
-const float kScuffMeshFacets  = 1.0;                  // 1: one facet per mesh TRIANGLE (creases =
-                                                       // mesh edges, gl_PrimitiveID-hashed tilt);
-                                                       // 0: Worley cells of kScuffFacetSize
+// Facets keyed on the mesh TRIANGLES (gl_PrimitiveID) were tried and removed
+// 2026-09-21: the hulls are tessellated to 3-16 units, far finer than any
+// panel, so they read as a highlighted wireframe over the patch.
 const float kScuffDishDepth   = 0.15;                 // dish depth as a fraction of the radius
 const float kScuffCreaseWidth = 0.12;                 // F2-F1 band (cell units) exposed as bare metal
 const float kScuffDentScratch = 0.1;                  // how much of the scratch term a dent keeps
@@ -653,16 +656,12 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         float fw_max = max(dot(abs(T), fw_p), dot(abs(B), fw_p));
         // Facets: one constant random tilt per Worley cell, so the normal is
         // piecewise-flat and jumps at the cell borders — the crease lines.
+        float facet = max(kScuffFacetMin, radius / kScuffFacetsAcross);
         float f1, f2; vec2 cell;
-        worley2(vec2(u, w) / kScuffFacetSize + phase, f1, f2, cell);
-        vec2 tilt_cell = vec2(dhash(cell + 3.1), dhash(cell + 9.7)) * 2.0 - 1.0;
-        // Mesh-aligned: the hull's own triangles are its panels, so bend each
-        // one as a unit. Keyed on the triangle alone (not the decal) so two
-        // impacts on one panel bend it the same way instead of fighting.
-        vec2 tri = vec2(float(gl_PrimitiveID), 0.0);
-        vec2 tilt_tri = vec2(dhash(tri + 3.1), dhash(tri + 9.7)) * 2.0 - 1.0;
-        vec2 tilt = mix(tilt_cell, tilt_tri, kScuffMeshFacets) * kScuffFacetTilt;
-        float bl_f = scuff_bandlimit(fw_max, 6.2831853 / kScuffFacetSize);
+        worley2(vec2(u, w) / facet + phase, f1, f2, cell);
+        vec2 tilt = (vec2(dhash(cell + 3.1), dhash(cell + 9.7)) * 2.0 - 1.0)
+                  * kScuffFacetTilt;
+        float bl_f = scuff_bandlimit(fw_max, 6.2831853 / facet);
         // Dish: h = -D R (1 - r^2)^2 -> dh/drho = 4 D r (1 - r^2) along the
         // radial direction; the rim's normals lean inward, so one side of the
         // dent faces the light and the other faces away.
@@ -671,11 +670,8 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
         float slope = 4.0 * kScuffDishDepth * r_n * (1.0 - r_n * r_n);
         float bl_d = scuff_bandlimit(fw_max, 3.1415926 / radius);
         vec2 g_dent = (tilt * bl_f + radial * slope * bl_d) * win;
-        // Creases show bare metal where two Worley facets meet (thin F2-F1
-        // band). Mesh facets have no edge distance without barycentrics, so
-        // their creases read through the shading jump alone.
-        float crease = (1.0 - smoothstep(0.0, kScuffCreaseWidth, f2 - f1)) * win * bl_f
-                     * (1.0 - kScuffMeshFacets);
+        // Creases show bare metal where two facets meet (thin F2-F1 band).
+        float crease = (1.0 - smoothstep(0.0, kScuffCreaseWidth, f2 - f1)) * win * bl_f;
 
         // The crumple (facets + dish) is a property of the CONTACT and is
         // always on -- a slow grind pressed into a hull buckles just like an
