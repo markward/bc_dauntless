@@ -48,11 +48,14 @@ def test_p1_warbird_bolt_damage(oracle):
     assert all(d == pytest.approx(200.0, abs=1.0) for _, d in hits), hits
 
 
+@bible_xfail("P1", "Warbird burst: 4 bolts, then 4 more 0.34 s later — each cannon fires twice per charge (MaxCharge 2.0, cost 1.0 at MED), then recharges",
+             "one bolt per cannon, then ~2.3 s of nothing: MinFiringCharge 1.2 blocks the second shot at charge 1.0 until recharge (0.09/s) clears it — the same MinFiringCharge gate the B8 capture contradicts")
 def test_p1_warbird_eight_bolts_per_burst(oracle):
-    """P1 — 4 emitters, 8 bolts in 2.7 s (± 1 bolt), then recharge."""
+    """P1 — `pulse_warbird_front_40`: 8 bolts land inside one second of the
+    first (± 1 bolt); the 1600-point burst then repeats every ~2.7 s."""
     s = oracle(attacker="Warbird", range_gu=40)
     s.fire("pulse")
-    launches = _launches(s, 2.7)
+    launches = _launches(s, 1.0)
     assert 7 <= len(launches) <= 9, launches
 
 
