@@ -186,7 +186,8 @@ wn   = smoothstep(NORMAL_MIN, 1.0, dot(n_body, dn))   // same far-face guard as 
 buckle waves, then a crumple of dished facets on a mesh-oriented panel grid —
 read as a stencil or a grid, however it was aligned. Mark supplied a 2048²
 crumpled-sheet-metal normal map instead; use it as is.) The map is a project
-asset, `native/assets/textures/scuff_normal.png` (or `.tga`; OpenGL +Y
+asset, `native/assets/textures/scuff_normal.tga` (uncompressed 24-bit — the
+asset decoder is `STBI_ONLY_TGA` and refuses a PNG as "indexed"; OpenGL +Y
 green, `kScuffFlipGreen` if not), loaded once per GL session by
 `renderer/scuff_texture.{h,cc}` (`ensure_scuff_normal_texture`, mipmapped,
 `GL_REPEAT`) against a new **project asset root** — `renderer::
@@ -401,7 +402,7 @@ visibly evicts scorch marks, split it out then.
 | `native/src/host/host_bindings.cc` | `world_tangent` arg, class guard `> 2u` |
 | `native/src/renderer/frame.cc` | `u_decal_d` upload, `u_ship_world_rot`, unit-7 bind of the scuff map |
 | `native/src/renderer/scuff_texture.{h,cc}`, `asset_path.{h,cc}` | lazy scuff-map load, test override, project asset root |
-| `native/assets/textures/scuff_normal.png` | the map (Mark's crumpled-sheet sample, 2048²) — NOT in `game/` |
+| `native/assets/textures/scuff_normal.tga` | the map (Mark's crumpled-sheet sample, 2048²) — NOT in `game/` |
 | `engine/paths.py`, `engine/renderer.py`, `engine/host_loop.py` | `project_asset_root()`, `set_project_asset_root` façade, boot push |
 | `native/src/renderer/shaders/opaque.frag` | `apply_scuffs` pre-lighting pass (splatted map), Scuff `continue` in the post-lighting loop, `kScuff*` consts, `p_body` reorder |
 | `engine/host_io.py` | `damage_decal_add(..., world_tangent=None)` wrapper |

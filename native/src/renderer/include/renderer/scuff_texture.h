@@ -4,8 +4,8 @@
 namespace renderer {
 
 /// The collision-scuff normal map: a tiling crumpled-sheet-metal tangent-space
-/// normal map (OpenGL +Y green) at <project assets>/textures/scuff_normal.png
-/// (or .tga). opaque.frag's apply_scuffs samples it in each scuff's own slip
+/// normal map (OpenGL +Y green) at <project assets>/textures/scuff_normal.tga
+/// (uncompressed 24-bit; the decoder is TGA-only). opaque.frag's apply_scuffs samples it in each scuff's own slip
 /// frame on texture unit 7, so every scuff is a differently placed, rotated
 /// patch of the same sheet.
 ///

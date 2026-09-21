@@ -26,6 +26,8 @@
 *.ogg
 *.wma
 *.bik
+# Project-authored renderer textures are ours, not BC content
+!native/assets/textures/*.tga
 *.tgl
 *.max
 *.dlu

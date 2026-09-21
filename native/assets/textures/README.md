@@ -7,4 +7,4 @@ looked up under `game/`.
 
 | File | Used by | Contract |
 |---|---|---|
-| `scuff_normal.png` (or `.tga`) | `opaque.frag:apply_scuffs` via `scuff_texture.cc` | Tiling tangent-space normal map of crumpled sheet metal, OpenGL +Y green (`kScuffFlipGreen` in the shader if not), 2048² recommended; z is re-derived from x/y at load. Absent ⇒ logged once, scuffs draw albedo only. |
+| `scuff_normal.tga` | `opaque.frag:apply_scuffs` via `scuff_texture.cc` | Uncompressed 24-bit TGA (the asset decoder is TGA-only — a PNG is refused as "indexed"); tiling tangent-space normal map of crumpled sheet metal, OpenGL +Y green (`kScuffFlipGreen` in the shader if not), 2048² recommended; z is re-derived from x/y at load. Absent ⇒ logged once, scuffs draw albedo only. |

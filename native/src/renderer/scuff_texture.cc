@@ -33,18 +33,13 @@ unsigned int ensure_scuff_normal_texture() {
     if (g_tried) return g_id;
     g_tried = true;
 
-    // decode_tga is stb_image underneath and takes PNG as well as TGA.
-    const char* kCandidates[] = {"textures/scuff_normal.png", "textures/scuff_normal.tga"};
+    // TGA, not PNG: the asset decoder is built STBI_ONLY_TGA (BC content is
+    // all TGA) and its header sniff refuses a PNG as "indexed".
+    const std::string resolved = project_asset_path("textures/scuff_normal.tga");
     std::vector<std::uint8_t> bytes;
-    std::string resolved;
-    for (const char* rel : kCandidates) {
-        resolved = project_asset_path(rel);
-        if (read_file(resolved, bytes)) break;
-        resolved.clear();
-    }
-    if (resolved.empty()) {
+    if (!read_file(resolved, bytes)) {
         std::fprintf(stderr, "[scuff] no normal map at %s -- collision scuffs draw "
-                     "albedo only\n", project_asset_path(kCandidates[0]).c_str());
+                     "albedo only\n", resolved.c_str());
         return 0;
     }
     try {
