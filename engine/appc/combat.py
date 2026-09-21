@@ -85,7 +85,8 @@ def weapon_splash_radius(hardpoint_weapon, payload_template) -> float:
 
 def _resolve_hit_point(ship_instances, ship,
                        ray_origin, ray_direction,
-                       max_dist: float, fallback_point):
+                       max_dist: float, fallback_point,
+                       sphere_fallback: bool = True):
     """Three-tier hit-point fallback. Returns ``(point, normal)``.
 
     ``normal`` is a unit ``TGPoint3`` only when the mesh trace
@@ -95,7 +96,10 @@ def _resolve_hit_point(ship_instances, ship,
     1. Mesh trace via ``host_io.ray_trace_mesh`` (requires a renderer
        InstanceId for this ship). Returns the surface point and the
        surface normal.
-    2. Bounding-sphere entry. No normal available.
+    2. Bounding-sphere entry. No normal available. Skipped when
+       ``sphere_fallback`` is False: collisions pass a piece-boundary
+       ``fallback_point`` that is far closer to the hull than the
+       ~2x-inflated whole-body sphere (collisions._trace_own_hull).
     3. ``fallback_point`` passed by the caller (torpedo position or
        phaser target_pos). No normal.
     """
@@ -117,6 +121,8 @@ def _resolve_hit_point(ship_instances, ship,
     if result is not None:
         (px, py, pz), (nx, ny, nz), _t = result
         return TGPoint3(px, py, pz), TGPoint3(nx, ny, nz)
+    if not sphere_fallback:
+        return fallback_point, None
     center = ship.GetWorldLocation()
     radius = ship.GetRadius() if hasattr(ship, "GetRadius") else 0.0
     entry = ray_sphere_entry(ray_origin, ray_direction, max_dist,

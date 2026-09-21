@@ -59,6 +59,39 @@ def scuff_radius_gu(r_small: float, pen: float) -> float:
     return min(SCUFF_RADIUS_MAX_GU, max(SCUFF_RADIUS_MIN_GU, chord))
 
 
+# How far OUTSIDE a ship's contact boundary the hull trace starts (GU). Piece
+# spheres sit at most a fraction of a GU outside the true hull, so 1 GU is
+# safely clear of the mesh while staying far inside the other ship's reach.
+SCUFF_TRACE_STANDOFF_GU = 1.0
+
+
+def _trace_own_hull(ship_instances, body: "_Body", boundary, n_out, reach: float):
+    """Refine a collision contact onto `body`'s OWN mesh. Returns (point, normal).
+
+    `boundary` is this body's contact-boundary point facing the other ship
+    (its piece surface, within piece slack of the real hull) and `n_out` the
+    unit contact normal pointing OUT of this body. The ray starts
+    SCUFF_TRACE_STANDOFF_GU outside the boundary and runs back INTO the body
+    for `reach`, so it crosses the hull where the pieces actually touch.
+
+    Live 2026-09-21: the trace used to start at the OTHER ship's body centre
+    along the piece normal. A wing-tip-vs-saucer contact then traced from the
+    warbird's centre, hundreds of model units from that wing, missed, and fell
+    through to _resolve_hit_point's whole-body sphere entry -- ~1 GU off the
+    hull on a 2x-inflated root sphere -- so a ship-sized scuff touched no
+    fragment. A miss now anchors at the boundary itself (sphere_fallback off).
+    """
+    from engine.appc.combat import _resolve_hit_point
+    s = SCUFF_TRACE_STANDOFF_GU
+    origin = TGPoint3(boundary.x + n_out.x * s,
+                      boundary.y + n_out.y * s,
+                      boundary.z + n_out.z * s)
+    into = TGPoint3(-n_out.x, -n_out.y, -n_out.z)
+    pt, mesh_n = _resolve_hit_point(ship_instances, body.obj, origin, into,
+                                    s + reach, boundary, sphere_fallback=False)
+    return pt, (mesh_n if mesh_n is not None else n_out)
+
+
 @dataclass
 class _Body:
     obj: object
@@ -257,7 +290,8 @@ def _contact_point_velocity(body: "_Body", cx: float, cy: float, cz: float):
 
 def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
                    inv_sum: float, dt: float, ship_instances=None,
-                   scuff_radius: float | None = None) -> None:
+                   scuff_radius: float | None = None,
+                   boundary_b=None, reach: float = 0.0) -> None:
     """Abrasion damage for a contact that is not closing.
 
     Physically this is friction work: force times sliding distance. We have no
@@ -304,34 +338,28 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
         tan_a = tan_b = None
 
     # Land each ship's abrasion on ITS OWN MESH, exactly as the impact path
-    # does: trace from the other body's centre into this ship along the
-    # contact line, and carve at the mesh surface with the MESH normal. The
-    # sphere-pair contact point is the fallback only. BC bounding spheres
-    # are 5-22x too loose (docs/engine and hull_bounds.py), so a carve
-    # deposited at the sphere surface sits off the hull entirely, and the
-    # centre-to-centre line is not the local surface normal -- the scoop
-    # would be both mis-placed and mis-oriented, which reads live as a hole
-    # with nothing behind it.
-    from engine.appc.combat import apply_hit, _resolve_hit_point
+    # does: trace from just outside this ship's contact boundary back into it
+    # (_trace_own_hull) and carve at the mesh surface with the MESH normal;
+    # a miss anchors at the boundary. BC bounding spheres are 5-22x too loose
+    # (docs/engine and hull_bounds.py), so anything deposited at a sphere
+    # surface sits off the hull entirely, and the centre-to-centre line is
+    # not the local surface normal -- the scoop would be both mis-placed and
+    # mis-oriented, which reads live as a hole with nothing behind it.
+    from engine.appc.combat import apply_hit
     contact = TGPoint3(cx, cy, cz)
     n_ab = TGPoint3(nx, ny, nz)
     n_ba = TGPoint3(-nx, -ny, -nz)
-    dist = math.sqrt((b.center.x - a.center.x) ** 2
-                     + (b.center.y - a.center.y) ** 2
-                     + (b.center.z - a.center.z) ** 2)
+    if boundary_b is None:
+        boundary_b = contact
     if a.is_movable:
-        pt_a, mesh_n_a = _resolve_hit_point(
-            ship_instances, a.obj, b.center, n_ba, dist, contact)
-        apply_hit(a.obj, damage, pt_a, source=b.obj,
-                  normal=(mesh_n_a if mesh_n_a is not None else n_ab),
+        pt_a, n_a = _trace_own_hull(ship_instances, a, contact, n_ab, reach)
+        apply_hit(a.obj, damage, pt_a, source=b.obj, normal=n_a,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_a, decal_radius=scuff_radius,
                   bypass_shields=True)
     if b.is_movable:
-        pt_b, mesh_n_b = _resolve_hit_point(
-            ship_instances, b.obj, a.center, n_ab, dist, contact)
-        apply_hit(b.obj, damage, pt_b, source=a.obj,
-                  normal=(mesh_n_b if mesh_n_b is not None else n_ba),
+        pt_b, n_b = _trace_own_hull(ship_instances, b, boundary_b, n_ba, reach)
+        apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_b, decal_radius=scuff_radius,
                   bypass_shields=True)
@@ -397,7 +425,16 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
         r_small = min(ra, rb)
     else:
         r_small = min(a.radius, b.radius) * COLLISION_RADIUS_SCALE
-    scuff_r = scuff_radius_gu(r_small, sum_r - dist)
+    pen = sum_r - dist
+    scuff_r = scuff_radius_gu(r_small, pen)
+    # Each ship's contact BOUNDARY point (its piece surface facing the other):
+    # a's is the contact itself; b's sits `pen` back along the normal. These
+    # are what the hull traces start from and fall back to (_trace_own_hull).
+    # Deliberately NOT the whole-body sphere surface, which after the piece
+    # narrow phase can sit ~1 GU off the hull.
+    boundary_a = TGPoint3(cx, cy, cz)
+    boundary_b = TGPoint3(cx - nx * pen, cy - ny * pen, cz - nz * pen)
+    trace_reach = 2.0 * sum_r
 
     # Closing speed along the normal (negative = approaching). CENTRE-OF-MASS
     # velocity only, deliberately: this drives the impulse and the debounce,
@@ -436,7 +473,7 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
         # by rotation never even got that, since omega was absent from the
         # velocity entirely.
         _grind_contact(a, b, cx, cy, cz, nx, ny, nz, inv_sum, dt,
-                       ship_instances, scuff_r)
+                       ship_instances, scuff_r, boundary_b, trace_reach)
         return None
 
     # Mass-weighted impulse magnitude.
@@ -464,39 +501,25 @@ def _respond_pair(a: "_Body", b: "_Body", ship_instances=None, dt: float = 0.0):
         b.obj.SetTranslateXYZ(p.x + nx * s, p.y + ny * s, p.z + nz * s)
 
     # KE impact damage routed through the existing weapons path. Each ship's
-    # hit lands on its OWN hull: trace from the other body's centre into this
-    # ship along the contact line so combat._resolve_hit_point refines the
-    # contact point + surface normal to the mesh (host present) exactly as the
-    # weapons path does, falling back to the bounding-sphere surface + the
-    # geometric normal when headless. `contact` (a's sphere surface) is the
-    # nominal point returned for tests/debugging and the A-side fallback.
-    from engine.appc.combat import apply_hit, _resolve_hit_point
+    # hit lands on its OWN hull: _trace_own_hull traces from just outside that
+    # ship's contact boundary back into it, refining point + normal to the
+    # mesh (host present) exactly as the weapons path does, and anchors at
+    # the boundary itself on a miss or headless. `contact` (a's boundary) is
+    # the nominal point returned for tests/debugging.
+    from engine.appc.combat import apply_hit
     damage = _ke_damage(inv_sum, v_rel)
-    # Fallback contact sits on the SCALED sphere surface (where the collision
-    # actually registered); mesh refinement overrides it when a host is present.
-    eff_ra = a.radius * COLLISION_RADIUS_SCALE
-    contact = TGPoint3(a.center.x + nx * eff_ra,
-                       a.center.y + ny * eff_ra,
-                       a.center.z + nz * eff_ra)
+    contact = boundary_a
+    n_ab = TGPoint3(nx, ny, nz)
+    n_ba = TGPoint3(-nx, -ny, -nz)
     if a.is_movable:
-        pt_a, mesh_n_a = _resolve_hit_point(
-            ship_instances, a.obj,
-            b.center, TGPoint3(-nx, -ny, -nz), dist, contact)
-        apply_hit(a.obj, damage, pt_a, source=b.obj,
-                  normal=(mesh_n_a if mesh_n_a is not None else TGPoint3(nx, ny, nz)),
+        pt_a, n_a = _trace_own_hull(ship_instances, a, boundary_a, n_ab, trace_reach)
+        apply_hit(a.obj, damage, pt_a, source=b.obj, normal=n_a,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_a, decal_radius=scuff_r,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
     if b.is_movable:
-        eff_rb = b.radius * COLLISION_RADIUS_SCALE
-        fb_b = TGPoint3(b.center.x - nx * eff_rb,
-                        b.center.y - ny * eff_rb,
-                        b.center.z - nz * eff_rb)
-        pt_b, mesh_n_b = _resolve_hit_point(
-            ship_instances, b.obj,
-            a.center, TGPoint3(nx, ny, nz), dist, fb_b)
-        apply_hit(b.obj, damage, pt_b, source=a.obj,
-                  normal=(mesh_n_b if mesh_n_b is not None else TGPoint3(-nx, -ny, -nz)),
+        pt_b, n_b = _trace_own_hull(ship_instances, b, boundary_b, n_ba, trace_reach)
+        apply_hit(b.obj, damage, pt_b, source=a.obj, normal=n_b,
                   ship_instances=ship_instances, weapon_type="collision",
                   hit_tangent=tan_b, decal_radius=scuff_r,
                   bypass_shields=True)  # kinetic impact: AddDamage primitive, skips shields
